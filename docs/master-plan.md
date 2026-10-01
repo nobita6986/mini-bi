@@ -127,31 +127,36 @@ Web giao migration + contract + fixture trước; n8n xác nhận contract rồi
 
 ## 7. P1 — BoD Dashboard MVP
 
-**Đầu vào:** P0 đạt nghiệm thu; chỉ số kết quả và nguồn pilot đã được chủ dự án xác nhận.
+**Đầu vào:** P0 PASS. Grain R1 đã chốt: `source + business_date + project + recruiter + provider_type + employment_type = recruited_count`.
 
-### AI Coding Web
+### Phạm vi báo cáo BoD (rebaseline theo nghiệp vụ thật)
 
-- Overview: kết quả tổng, trend, so sánh kỳ trước, ranking và phân tích team/nhân viên/project.
-- Bộ lọc hôm nay, tuần, tháng, quý, năm và khoảng tùy chọn; filter lưu trên URL.
-- Drill-down Company → Team → Employee → Daily Results; project là chiều phân tích riêng.
-- Responsive mobile/desktop; trạng thái loading, empty, error và last successful sync.
-- Dùng reporting query chung; không hard-code entity hoặc tính chỉ số khác n8n.
-- Nếu target chưa có, chỉ hiển thị kết quả thực tế; không tạo KPI giả.
+- Tổng số người tuyển; theo ngày/khoảng ngày; theo dự án; theo người tuyển; theo HRP/Vendor; theo loại hình làm việc; **kết hợp** các chiều.
+- Source coverage, freshness và trạng thái dữ liệu (per-source).
+- Date range + filter lưu trên URL; responsive mobile/desktop; loading/empty/error rõ ràng.
 
-### AI Assistant n8n
+### Ngoài phạm vi P1 (đã loại)
 
-- Kết nối nguồn pilot thật, mapping theo mẫu đã duyệt.
-- Đồng bộ theo lịch cấu hình, normalize và upsert.
-- Validate tối thiểu định danh, ngày, kiểu số và trường bắt buộc.
-- Log số dòng đọc/chấp nhận/từ chối và lỗi; đối soát với Sheet.
+- Company → Team → Employee hierarchy; Employee daily result; Candidate drill-down.
+- Dữ liệu cột D–I/M; KPI/target/commission/payroll; suy luận hoặc AI phân loại.
 
-### Bàn giao và nghiệm thu
+### Các bước bắt buộc
 
-Web có thể dựng UI với fixture theo contract trong khi n8n nối dữ liệu thật. Chỉ coi P1 hoàn thành khi dashboard dùng dữ liệu thật, tổng và breakdown khớp bộ đối soát đã duyệt; filter và drill-down nhất quán.
+1. **P1-W01** — metric/filter/source-scope contract.
+2. **P1-W02** — reporting query/read-model theo grain R1.
+3. **P1-W03** — access gate pilot trước khi mở dữ liệu thật.
+4. Overview dashboard BoD.
+5. Báo cáo chi tiết theo project / recruiter / HRP-Vendor / employment type.
+6. Date range/filter URL.
+7. Data status/freshness/source coverage.
+8. Cô lập fixture khỏi số liệu BoD.
+9. Mobile/performance.
+10. Đối soát tổng dashboard với DB.
+11. Sau khi access/source scope ổn định: schedule mỗi 6 giờ + trigger bot `/sync` (cùng gọi ingestion workflow idempotent).
 
-BoD có thể hiểu kết quả và các đóng góp chính trong khoảng 10–20 giây trên điện thoại qua một buổi dùng thử. Đây là tiêu chí trải nghiệm, không phải cam kết thời gian tải.
+Không đổi contract v0.2 âm thầm; nếu P1 cần schema mới phải version/review riêng.
 
-**Bảo mật P1:** nếu chưa có Supabase Auth đầy đủ, môi trường pilot phải có kiểm soát truy cập phía server/hosting. URL khó đoán không phải kiểm soát truy cập. Demo công khai chỉ dùng dữ liệu giả/đã khử nhạy cảm; dữ liệu kinh doanh thật không mở công khai.
+**Bảo mật P1:** bắt buộc access gate P1-W03 trước khi mở dữ liệu thật; không coi `PIPELINE_CHECK_ENABLED=true` là đủ an toàn cho URL public.
 
 ## 8. P2 — Data Platform & Reliability
 
