@@ -11,7 +11,8 @@
     "db:migrate": "node scripts/apply-migrations.mjs",
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",
-    "docs:check": "node scripts/check-doc-examples.mjs"
+    "docs:check": "node scripts/check-doc-examples.mjs",
+    "test": "node --test src/lib/reporting/pipeline-check.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
