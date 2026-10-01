@@ -17,12 +17,12 @@ const parsers = {
 };
 
 const inputClass =
-  "h-9 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-400";
+  "h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
     <label htmlFor={id} className="flex min-w-0 flex-col gap-1 text-sm">
-      <span className="font-medium text-zinc-600 dark:text-zinc-400">{label}</span>
+      <span className="font-medium text-slate-600 dark:text-slate-400">{label}</span>
       {children}
     </label>
   );
@@ -31,12 +31,25 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 export function DashboardFilters({ options }: { options: ReportingOptionsCatalog }) {
   const [filters, setFilters] = useQueryStates(parsers, { shallow: false });
 
-  const hasFilters = Boolean(
-    filters.from || filters.to || filters.project || filters.recruiter || filters.provider || filters.employment || filters.source
-  );
+  const activeCount = [filters.from, filters.to, filters.project, filters.recruiter, filters.provider, filters.employment, filters.source].filter(Boolean).length;
 
   return (
-    <section aria-label="Bộ lọc báo cáo" className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+    <section aria-label="Bộ lọc báo cáo" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Bộ lọc</h2>
+          {activeCount > 0 ? (
+            <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">
+              {activeCount} filter đang áp dụng
+            </span>
+          ) : null}
+        </div>
+        {activeCount > 0 ? (
+          <button type="button" onClick={() => setFilters(null)} className="inline-flex h-8 items-center rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40">
+            Xóa bộ lọc
+          </button>
+        ) : null}
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field id="f-from" label="Từ ngày">
           <input id="f-from" type="date" className={inputClass} value={filters.from ?? ""} onChange={(e) => setFilters({ from: e.target.value || null })} />
@@ -75,13 +88,6 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
           </select>
         </Field>
       </div>
-      {hasFilters ? (
-        <div className="mt-3 flex justify-end">
-          <button type="button" onClick={() => setFilters(null)} className="inline-flex h-9 items-center rounded-md border border-zinc-300 px-3 text-sm text-zinc-700 hover:bg-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-400 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
-            Xóa bộ lọc
-          </button>
-        </div>
-      ) : null}
     </section>
   );
 }
