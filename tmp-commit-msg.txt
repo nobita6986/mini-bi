@@ -1,8 +1,0 @@
-P0-T1-G1-R1-DOCFIX: sua vi du payload trong contract va handoff
-
-- Sua vi du contract: rows_read=4, rows_valid=4 (breakdown 3+1=4).
-- Sua vi du handoff: rows_read=9, rows_valid=7, rows_rejected=2, rows_warned=2, warning_issues=3.
-- Placeholder thay bang gia tri hop le; J/L sai gui literal __invalid__.
-- Them muc Mapping payload: o trong -> null; J/L ngoai danh muc -> __invalid__; khoa gop nhom.
-- Them scripts/check-doc-examples.mjs + pnpm docs:check (6/6 vi du JSON pass).
-- Khong thay doi migration, RPC, schema hay contract semantics.
