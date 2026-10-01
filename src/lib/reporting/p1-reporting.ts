@@ -6,6 +6,7 @@ export type RunStatus = "running" | "succeeded" | "partial" | "failed";
 export interface ReportingSource {
   id: string;
   drive_file_id: string;
+  file_name: string;
   active: boolean;
   is_test: boolean;
   latest_run_status: RunStatus | null;
@@ -39,6 +40,7 @@ export type ReportingSourceStatus =
 export interface ReportingSourceStatusRow {
   id: string;
   drive_file_id: string;
+  fileName: string;
   latestRunStatus: RunStatus | null;
   lastSuccessfulSyncAt: string | null;
   lastSeenAt: string | null;
@@ -147,7 +149,7 @@ function sumBy(rows: ReportingFact[], key: keyof ReportingFact): Record<string, 
  * 2) Hòa => chọn ổn định bằng localeCompare("vi") (nhỏ nhất trước).
  * 3) Sentinel luôn hiển thị nhãn cố định.
  */
-function selectDisplay(key: string, displayCounts: ReadonlyMap<string, number>): string {
+export function selectDisplay(key: string, displayCounts: ReadonlyMap<string, number>): string {
   if (key === "__unknown__") return "Không xác định";
   if (key === "__invalid__") return "Không hợp lệ";
   let best = "";
@@ -254,6 +256,7 @@ export function computeReporting(
     return {
       id: s.id,
       drive_file_id: s.drive_file_id,
+      fileName: s.file_name,
       latestRunStatus: s.latest_run_status,
       lastSuccessfulSyncAt: s.last_successful_sync_at,
       lastSeenAt: s.last_seen_at,
@@ -282,6 +285,62 @@ export function computeReporting(
     coverage: { expected: visible.length, succeeded, partial, failed, neverSucceeded, coverageRatio },
     sources: sourceRows,
     dateExtent: { min: minDate, max: maxDate },
-    empty: { noSources: scope.length === 0, noFacts: scope.length > 0 && rows.length === 0 },
+    empty: { noSources: scope.length === 0, noFacts: scope.length > 0 && scopeFacts.length === 0 },
+  };
+}
+
+/** Dòng thô từ view reporting_dimension_options_v01 (dimension, key, display, weight). */
+export interface DimensionOptionRow {
+  dimension: string;
+  key: string;
+  display: string;
+  recruited_count: number;
+}
+
+/** Một lựa chọn filter (identity = key; display chỉ để trình bày). */
+export interface DimensionOption {
+  key: string;
+  display: string;
+}
+
+export interface DimensionOptions {
+  projects: DimensionOption[];
+  recruiters: DimensionOption[];
+  providers: DimensionOption[];
+  employments: DimensionOption[];
+}
+
+/**
+ * Gom danh mục dimension từ view options (scope active && !is_test, đã lọc ở DB).
+ * Group theo (dimension, key), chọn display theo đúng quy tắc (max recruited_count,
+ * hòa thì localeCompare("vi"), sentinel cố định) — dùng chung selectDisplay để không
+ * trùng business formula với breakdown.
+ */
+export function buildDimensionOptions(rows: DimensionOptionRow[]): DimensionOptions {
+  const groups: Record<string, Map<string, Map<string, number>>> = {
+    project: new Map(),
+    recruiter: new Map(),
+    provider: new Map(),
+    employment: new Map(),
+  };
+  for (const row of rows) {
+    const byKey = groups[row.dimension];
+    if (!byKey) continue;
+    let byDisplay = byKey.get(row.key);
+    if (!byDisplay) {
+      byDisplay = new Map();
+      byKey.set(row.key, byDisplay);
+    }
+    byDisplay.set(row.display, (byDisplay.get(row.display) ?? 0) + row.recruited_count);
+  }
+  const toArray = (byKey: Map<string, Map<string, number>>): DimensionOption[] =>
+    [...byKey.entries()]
+      .map(([key, byDisplay]) => ({ key, display: selectDisplay(key, byDisplay) }))
+      .sort((a, b) => a.display.localeCompare(b.display, "vi"));
+  return {
+    projects: toArray(groups.project),
+    recruiters: toArray(groups.recruiter),
+    providers: toArray(groups.provider),
+    employments: toArray(groups.employment),
   };
 }

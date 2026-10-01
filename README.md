@@ -5,9 +5,9 @@ Hệ thống báo cáo kết quả kinh doanh và quản trị KPI cho BoD / Lea
 Luồng dữ liệu: **Google Sheets → n8n → Supabase/PostgreSQL → Next.js → người dùng**.
 "Kết quả kinh doanh" trong dự án này là **số người được tuyển theo ngày**, không phải tiền.
 
-> Trạng thái hiện tại: **P0 (Foundation)**. Repo có trang nền, data contract và ingestion
-> boundary trên Supabase DEV. **Chưa có** dashboard BoD (P1), auth (P3), KPI (P4),
-> và chưa có workflow n8n trong repo này.
+> Trạng thái hiện tại: **P1 (Dashboard MVP)**. Đã có dashboard BoD tại `/dashboard` (được
+> bảo vệ bằng access gate pilot), data contract và ingestion boundary trên Supabase DEV.
+> **Chưa có** auth đầy đủ (P3), KPI (P4), và chưa có workflow n8n trong repo này.
 
 ## Tài liệu baseline
 
@@ -152,6 +152,16 @@ HTTP Basic Auth ở tầng Next.js Proxy (`src/proxy.ts`), dùng HTTPS trên dom
 Thiếu biến ở production/preview ⇒ gate fail closed (503). Cấu hình credential là việc của chủ dự án
 qua Vercel env; repo chỉ khai báo **tên biến** (xem `.env.example`), không chứa giá trị.
 
+## Dashboard BoD (`/dashboard`)
+
+Server-rendered (`force-dynamic`), đọc qua `fetchReporting` + `fetchReportingOptions` (service-role,
+server-only). Hiển thị: tổng người tuyển, xu hướng theo ngày (zero-fill), breakdown theo dự án /
+người tuyển / HRP-Vendor / loại hình, coverage/freshness per-source — **không** hiển thị PII.
+
+- Filter URL bằng `nuqs` (`from/to/project/recruiter/provider/employment/source`), server parser là nguồn chân lý.
+- Chart bằng `recharts@3`; option catalog từ view `reporting_dimension_options_v01` (service-role-only).
+- Route được access gate P1-W03 bảo vệ trước khi query.
+
 ## Cấu trúc repo
 
 ```text
@@ -183,4 +193,4 @@ automation/n8n/             (dành cho T2) workflow export, mapping, runbook
 - Access gate pilot (Basic Auth) đã triển khai ở **P1-W03** cho `/dashboard`, `/pipeline-check`, `/api/reporting`; guard `PIPELINE_CHECK_ENABLED` ở `/pipeline-check` là lớp chống vô tình public route độc lập.
 - Chưa có run-start marker/lease chống chạy đồng thời; xem `docs/handoffs/p0-t1-g1.md`.
 - Chưa có lịch sử snapshot (chỉ giữ bản hiện hành).
-- Chưa có UI vận hành nguồn dữ liệu (P2) và chưa có dashboard (P1).
+- Chưa có UI vận hành nguồn dữ liệu (P2); dashboard BoD đã có ở P1-W04 (`/dashboard`).

@@ -8,6 +8,7 @@
     {
       "id": "00000000-0000-4000-8000-000000000001",
       "drive_file_id": "report_daily_S1",
+      "file_name": "Report S1.xlsx",
       "active": true,
       "is_test": false,
       "latest_run_status": "succeeded",
@@ -16,6 +17,7 @@
     {
       "id": "00000000-0000-4000-8000-000000000002",
       "drive_file_id": "report_daily_S2",
+      "file_name": "Report S2.xlsx",
       "active": true,
       "is_test": false,
       "latest_run_status": "partial",
@@ -24,6 +26,7 @@
     {
       "id": "00000000-0000-4000-8000-000000000003",
       "drive_file_id": "report_daily_S3",
+      "file_name": "Report S3.xlsx",
       "active": true,
       "is_test": false,
       "latest_run_status": "failed",
@@ -32,6 +35,7 @@
     {
       "id": "00000000-0000-4000-8000-000000000004",
       "drive_file_id": "report_daily_S4",
+      "file_name": "Report S4.xlsx",
       "active": true,
       "is_test": false,
       "latest_run_status": "failed",
@@ -40,6 +44,7 @@
     {
       "id": "00000000-0000-4000-8000-0000000000ff",
       "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+      "file_name": "Fixture Report.xlsx",
       "active": true,
       "is_test": true,
       "latest_run_status": "succeeded",

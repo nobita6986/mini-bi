@@ -37,7 +37,7 @@ export async function fetchReporting(
     // 1. Sources: chỉ reporting scope (active && !is_test) — không tải fixture.
     const sourcesRes = await sb
       .from("data_sources")
-      .select("id, drive_file_id, active, is_test, last_seen_at, last_successful_sync_at")
+      .select("id, drive_file_id, file_name, active, is_test, last_seen_at, last_successful_sync_at")
       .eq("active", true)
       .eq("is_test", false);
     if (sourcesRes.error) throw sourcesRes.error;
