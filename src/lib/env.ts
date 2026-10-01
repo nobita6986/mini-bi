@@ -69,5 +69,7 @@ export function getEnvVarStatus(): EnvVarStatus[] {
     read("NEXT_PUBLIC_SUPABASE_URL", "public"),
     read("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "public"),
     read("SUPABASE_SECRET_KEY", "server"),
+    read("PILOT_ACCESS_USERNAME", "server"),
+    read("PILOT_ACCESS_PASSWORD", "server"),
   ];
 }
