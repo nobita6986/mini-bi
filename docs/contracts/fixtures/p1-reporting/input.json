@@ -1,0 +1,141 @@
+{
+  "fixture_version": "p1-reporting-fixture/0.1",
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "reporting_contract": "p1-reporting-v0.1",
+  "note": "Dữ liệu tổng hợp; không chứa dữ liệu thật/PII.",
+  "reporting_scope_rule": "active=true AND is_test=false",
+  "sources": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "drive_file_id": "report_daily_S1",
+      "active": true,
+      "is_test": false,
+      "latest_run_status": "succeeded",
+      "last_successful_sync_at": "2026-10-03T01:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "drive_file_id": "report_daily_S2",
+      "active": true,
+      "is_test": false,
+      "latest_run_status": "partial",
+      "last_successful_sync_at": "2026-10-02T00:30:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "drive_file_id": "report_daily_S3",
+      "active": true,
+      "is_test": false,
+      "latest_run_status": "failed",
+      "last_successful_sync_at": "2026-10-01T09:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "drive_file_id": "report_daily_S4",
+      "active": true,
+      "is_test": false,
+      "latest_run_status": "failed",
+      "last_successful_sync_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000ff",
+      "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+      "active": true,
+      "is_test": true,
+      "latest_run_status": "succeeded",
+      "last_successful_sync_at": "2026-10-01T00:00:00Z"
+    }
+  ],
+  "breakdown": [
+    {
+      "source_id": "00000000-0000-4000-8000-000000000001",
+      "business_date": "2026-10-01",
+      "project_display": "Dự án A",
+      "recruiter_display": "Nguyễn Văn A",
+      "provider_type_display": "HRP",
+      "employment_type_display": "Thời vụ",
+      "recruited_count": 3
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000001",
+      "business_date": "2026-10-01",
+      "project_display": "Dự án A",
+      "recruiter_display": "Trần Thị B",
+      "provider_type_display": "Vendor",
+      "employment_type_display": "Chính thức",
+      "recruited_count": 2
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000001",
+      "business_date": "2026-10-02",
+      "project_display": "Dự án B",
+      "recruiter_display": "Nguyễn Văn A",
+      "provider_type_display": "Vendor",
+      "employment_type_display": "Chính thức",
+      "recruited_count": 1
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000002",
+      "business_date": "2026-10-02",
+      "project_display": "Dự án B",
+      "recruiter_display": "Lê Văn C",
+      "provider_type_display": "HRP",
+      "employment_type_display": "Thời vụ",
+      "recruited_count": 2
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000002",
+      "business_date": "2026-10-02",
+      "project_display": "Không xác định",
+      "recruiter_display": "Không xác định",
+      "provider_type_display": "Không xác định",
+      "employment_type_display": "Không xác định",
+      "recruited_count": 1
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000002",
+      "business_date": "2026-10-03",
+      "project_display": "Dự án C",
+      "recruiter_display": "Không xác định",
+      "provider_type_display": "Vendor",
+      "employment_type_display": "Không hợp lệ",
+      "recruited_count": 4
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000002",
+      "business_date": "2026-10-03",
+      "project_display": "Dự án C",
+      "recruiter_display": "Lê Văn C",
+      "provider_type_display": "Không hợp lệ",
+      "employment_type_display": "Thời vụ",
+      "recruited_count": 3
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-000000000003",
+      "business_date": "2026-10-01",
+      "project_display": "Dự án A",
+      "recruiter_display": "Nguyễn Văn A",
+      "provider_type_display": "HRP",
+      "employment_type_display": "Chính thức",
+      "recruited_count": 2
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-0000000000ff",
+      "business_date": "2026-10-01",
+      "project_display": "Dự án Fixture",
+      "recruiter_display": "Người Fixture",
+      "provider_type_display": "HRP",
+      "employment_type_display": "Thời vụ",
+      "recruited_count": 100
+    },
+    {
+      "source_id": "00000000-0000-4000-8000-0000000000ff",
+      "business_date": "2026-10-02",
+      "project_display": "Dự án Fixture",
+      "recruiter_display": "Người Fixture",
+      "provider_type_display": "Vendor",
+      "employment_type_display": "Chính thức",
+      "recruited_count": 100
+    }
+  ]
+}

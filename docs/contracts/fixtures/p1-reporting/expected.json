@@ -1,0 +1,129 @@
+{
+  "fixture_version": "p1-reporting-fixture/0.1",
+  "reporting_contract": "p1-reporting-v0.1",
+  "cases": {
+    "no_filter": {
+      "recruited_total": 18,
+      "by_date": {
+        "2026-10-01": 7,
+        "2026-10-02": 4,
+        "2026-10-03": 7
+      },
+      "by_project": {
+        "Dự án A": 7,
+        "Dự án B": 3,
+        "Dự án C": 7,
+        "Không xác định": 1
+      },
+      "by_recruiter": {
+        "Không xác định": 5,
+        "Lê Văn C": 5,
+        "Nguyễn Văn A": 6,
+        "Trần Thị B": 2
+      },
+      "by_provider": {
+        "HRP": 7,
+        "Không hợp lệ": 3,
+        "Không xác định": 1,
+        "Vendor": 7
+      },
+      "by_employment": {
+        "Chính thức": 5,
+        "Không hợp lệ": 4,
+        "Không xác định": 1,
+        "Thời vụ": 8
+      }
+    },
+    "date_range": {
+      "from": "2026-10-02",
+      "to": "2026-10-03",
+      "recruited_total": 11,
+      "by_date": {
+        "2026-10-02": 4,
+        "2026-10-03": 7
+      }
+    },
+    "project_provider": {
+      "project_key": "dự án a",
+      "project_display": "Dự án A",
+      "provider_key": "hrp",
+      "provider_display": "HRP",
+      "recruited_total": 5
+    },
+    "recruiter_employment": {
+      "recruiter_key": "nguyễn văn a",
+      "recruiter_display": "Nguyễn Văn A",
+      "employment_key": "chính thức",
+      "employment_display": "Chính thức",
+      "recruited_total": 3
+    },
+    "unknown_invalid_groups": {
+      "provider_unknown": 1,
+      "provider_invalid": 3,
+      "employment_unknown": 1,
+      "employment_invalid": 4,
+      "project_unknown": 1,
+      "recruiter_unknown": 5
+    },
+    "fixture_exclusion": {
+      "recruited_total": 18,
+      "fixture_source_ids": [
+        "P0FIXTURE_DRIVE_FILE_A"
+      ],
+      "fixture_recruited_excluded": 200,
+      "included_source_count": 4
+    },
+    "coverage": {
+      "sources_expected": 4,
+      "sources_succeeded": 1,
+      "sources_partial": 1,
+      "sources_failed": 2,
+      "sources_never_succeeded": 1,
+      "coverage_ratio": 0.75
+    },
+    "breakdown_consistency": [
+      {
+        "scope": "no_filter",
+        "dimension": "by_date",
+        "sum": 18,
+        "recruited_total": 18,
+        "consistent": true
+      },
+      {
+        "scope": "no_filter",
+        "dimension": "by_project",
+        "sum": 18,
+        "recruited_total": 18,
+        "consistent": true
+      },
+      {
+        "scope": "no_filter",
+        "dimension": "by_recruiter",
+        "sum": 18,
+        "recruited_total": 18,
+        "consistent": true
+      },
+      {
+        "scope": "no_filter",
+        "dimension": "by_provider",
+        "sum": 18,
+        "recruited_total": 18,
+        "consistent": true
+      },
+      {
+        "scope": "no_filter",
+        "dimension": "by_employment",
+        "sum": 18,
+        "recruited_total": 18,
+        "consistent": true
+      },
+      {
+        "scope": "date_range",
+        "dimension": "by_date",
+        "sum": 11,
+        "recruited_total": 11,
+        "consistent": true
+      }
+    ]
+  }
+}

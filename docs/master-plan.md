@@ -129,6 +129,8 @@ Web giao migration + contract + fixture trước; n8n xác nhận contract rồi
 
 **Đầu vào:** P0 PASS. Grain R1 đã chốt: `source + business_date + project + recruiter + provider_type + employment_type = recruited_count`.
 
+Reporting contract BoD P1 đã khóa: `docs/contracts/p1-reporting-v0.1.md`.
+
 ### Phạm vi báo cáo BoD (rebaseline theo nghiệp vụ thật)
 
 - Tổng số người tuyển; theo ngày/khoảng ngày; theo dự án; theo người tuyển; theo HRP/Vendor; theo loại hình làm việc; **kết hợp** các chiều.
