@@ -118,6 +118,11 @@ export function countActiveFilterCriteria(f: FilterCriteriaInput): number {
   return (f.from || f.to ? 1 : 0) + dimensions;
 }
 
+/** "Tất cả thời gian" active khi from/to đều trống (chỉ clear date range). */
+export function isAllTimeActive(from: string | null | undefined, to: string | null | undefined): boolean {
+  return !from && !to;
+}
+
 /** Trả key preset nếu from/to khớp chính xác một preset; ngược lại null. */
 export function matchDatePreset(
   from: string | null | undefined,

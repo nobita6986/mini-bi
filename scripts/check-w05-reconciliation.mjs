@@ -100,16 +100,15 @@ console.log("");
 console.log("--- bySource ---");
 for (const [id, v] of Object.entries(bySource)) console.log("  " + label(id) + " = " + v);
 console.log("");
-// Row count (grain rows) per source so với rows_valid của T2.
-const rowCount = {};
-for (const r of factRows) rowCount[r.source_id] = (rowCount[r.source_id] || 0) + 1;
-console.log("--- rows_valid (T2) vs row count (DB) ---");
-let rowsMatch = true;
+// Bất biến đúng: SUM(recruited_count) theo source = rows_valid của latest run.
+// (KHÔNG so rows_valid với số dòng grain — một grain có thể có recruited_count > 1.)
+console.log("--- SUM(recruited_count) vs rows_valid (T2) ---");
+let sumMatches = true;
 for (const r of runs.rows) {
-  const dbRows = rowCount[r.source_id] || 0;
-  const ok = dbRows === r.rows_valid;
-  rowsMatch = rowsMatch && ok;
-  console.log("  " + label(r.source_id) + ": rows_valid=" + r.rows_valid + " db_rows=" + dbRows + " match=" + ok);
+  const people = bySource[r.source_id] || 0;
+  const ok = people === r.rows_valid;
+  sumMatches = sumMatches && ok;
+  console.log("  " + label(r.source_id) + ": sum_recruited=" + people + " rows_valid=" + r.rows_valid + " match=" + ok);
 }
 console.log("");
 console.log("--- unknown/invalid có mặt? ---");
@@ -130,7 +129,7 @@ const checks = {
   byProvider: bucketSum(rm.byProvider) === rm.recruitedTotal,
   byEmployment: bucketSum(rm.byEmployment) === rm.recruitedTotal,
   fixture_excluded: rm.sources.every((s) => fixtures.every((f) => f.id !== s.id)),
-  rows_valid_matches_db: rowsMatch,
+  sum_recruited_matches_rows_valid: sumMatches,
 };
 console.log("--- Invariants (tổng mỗi breakdown = recruitedTotal) ---");
 for (const [k, v] of Object.entries(checks)) console.log("  " + k + " = " + v);

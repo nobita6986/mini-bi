@@ -93,14 +93,6 @@ export function buildCategorySegments(buckets: Record<string, ReportingBucket>):
   }));
 }
 
-export interface TreemapDatum {
-  key: string;
-  name: string;
-  size: number;
-  color: string;
-  [k: string]: unknown;
-}
-
 export interface BarDatum {
   key: string;
   name: string;
@@ -109,11 +101,68 @@ export interface BarDatum {
   [k: string]: unknown;
 }
 
-/** Top-N cho treemap (dự án); full list vẫn giữ ở bảng thu gọn (không mất). */
-export function buildTreemapData(buckets: Record<string, ReportingBucket>, top: number): TreemapDatum[] {
-  return sortByValueDesc(Object.values(buckets))
-    .slice(0, top)
-    .map((b) => ({ key: b.key, name: b.display, size: b.recruitedCount, color: stableColorForKey(b.key) }));
+export const PROJECT_DONUT_MAX_SLICES = 8;
+export const OTHER_KEY = "__other__";
+export const OTHER_COLOR = "#94a3b8"; // slate — nhóm "Khác"
+
+export interface ProjectDonutSlice {
+  key: string;
+  display: string;
+  value: number;
+  color: string;
+  percent: number;
+  isOther?: boolean;
+}
+
+/** Đảm bảo hai lát LIỀN KỀ không trùng màu (deterministic; không đổi màu sentinel/other). */
+function resolveAdjacentColors(base: string[]): string[] {
+  const out = [...base];
+  for (let i = 0; i < out.length; i++) {
+    const prev = i > 0 ? out[i - 1] : null;
+    const next = i < out.length - 1 ? out[i + 1] : null;
+    if (out[i] !== prev && out[i] !== next) continue;
+    const start = Math.max(0, (CATEGORY_PALETTE as readonly string[]).indexOf(out[i]));
+    for (let step = 1; step <= CATEGORY_PALETTE.length; step++) {
+      const cand = CATEGORY_PALETTE[(start + step) % CATEGORY_PALETTE.length];
+      if (cand !== prev && cand !== next) { out[i] = cand; break; }
+    }
+  }
+  return out;
+}
+
+/**
+ * Donut "theo dự án": tối đa 8 dự án thường + "Khác" (gộp phần còn lại) + sentinel riêng.
+ * Tổng value của mọi lát (kể cả "Khác") = tổng recruitedCount đầu vào.
+ */
+export function buildProjectDonutData(buckets: Record<string, ReportingBucket>): ProjectDonutSlice[] {
+  const list = Object.values(buckets);
+  const total = list.reduce((a, b) => a + b.recruitedCount, 0);
+  const sorted = sortByValueDesc(list);
+  const sentinels = sorted.filter((b) => b.key === "__unknown__" || b.key === "__invalid__");
+  const regular = sorted.filter((b) => b.key !== "__unknown__" && b.key !== "__invalid__");
+
+  const slices: ReportingBucket[] = [
+    ...regular.slice(0, PROJECT_DONUT_MAX_SLICES),
+    ...(regular.length > PROJECT_DONUT_MAX_SLICES
+      ? [{ key: OTHER_KEY, display: "Khác", recruitedCount: regular.slice(PROJECT_DONUT_MAX_SLICES).reduce((a, b) => a + b.recruitedCount, 0) }]
+      : []),
+    ...sentinels,
+  ];
+  slices.sort((a, b) =>
+    a.recruitedCount !== b.recruitedCount ? b.recruitedCount - a.recruitedCount : a.display.localeCompare(b.display, "vi")
+  );
+
+  const baseColors = slices.map((s) => (s.key === OTHER_KEY ? OTHER_COLOR : stableColorForKey(s.key)));
+  const colors = resolveAdjacentColors(baseColors);
+
+  return slices.map((s, i) => ({
+    key: s.key,
+    display: s.display,
+    value: s.recruitedCount,
+    color: colors[i],
+    percent: percentageOfTotal(s.recruitedCount, total),
+    isOther: s.key === OTHER_KEY,
+  }));
 }
 
 /** Top-N cho horizontal bar (người tuyển). */

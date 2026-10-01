@@ -4,9 +4,11 @@ import { test } from "node:test";
 import {
   buildBarData,
   buildCategorySegments,
+  buildProjectDonutData,
   buildSourceStatusSegments,
-  buildTreemapData,
   percentageOfTotal,
+  PROJECT_DONUT_MAX_SLICES,
+  OTHER_KEY,
   stableColorForKey,
   UNKNOWN_COLOR,
   INVALID_COLOR,
@@ -98,7 +100,6 @@ test("8. Top 10 không làm thay đổi full list", () => {
   const list = [];
   for (let i = 0; i < 15; i++) list.push(["k" + i, "D" + i, i + 1]);
   const b = buckets(list);
-  assert.equal(buildTreemapData(b, 10).length, 10);
   assert.equal(buildBarData(b, 10).length, 10);
   assert.equal(Object.keys(b).length, 15); // full list không mất
 });
@@ -107,8 +108,59 @@ test("9. chart view-model không chứa candidate PII", () => {
   const b = buckets([["dự án a", "Dự án A", 7]]);
   const seg = buildCategorySegments(b)[0];
   assert.deepEqual(Object.keys(seg).sort(), ["color", "display", "key", "percent", "value"]);
-  const treemap = buildTreemapData(b, 1)[0];
-  assert.deepEqual(Object.keys(treemap).sort(), ["color", "key", "name", "size"]);
+  const donut = buildProjectDonutData(b)[0];
+  assert.deepEqual(Object.keys(donut).sort(), ["color", "display", "isOther", "key", "percent", "value"]);
   const forbidden = ["ho_ten", "full_name", "candidate", "cccd", "sdt", "phone", "email", "raw"];
-  for (const k of Object.keys({ ...seg, ...treemap })) assert.ok(!forbidden.includes(k));
+  for (const k of Object.keys({ ...seg, ...donut })) assert.ok(!forbidden.includes(k));
+});
+
+test("10. donut total = recruitedTotal (kể cả sentinel)", () => {
+  const b = buckets([["a", "A", 7], ["b", "B", 5], ["__unknown__", "Không xác định", 2], ["__invalid__", "Không hợp lệ", 1]]);
+  const slices = buildProjectDonutData(b);
+  assert.equal(slices.reduce((x, s) => x + s.value, 0), 15);
+});
+
+test("11. 'Khác' gộp phần dự án thường còn lại; full list không mất", () => {
+  const list = [];
+  for (let i = 0; i < 12; i++) list.push(["k" + i, "D" + i, i + 1]);
+  list.push(["__unknown__", "Không xác định", 3]);
+  const b = buckets(list);
+  const slices = buildProjectDonutData(b);
+  // 8 dự án thường + 1 'Khác' + 1 sentinel = 10 lát
+  assert.equal(slices.length, PROJECT_DONUT_MAX_SLICES + 2);
+  assert.ok(slices.some((s) => s.key === OTHER_KEY));
+  const other = slices.find((s) => s.key === OTHER_KEY);
+  // phần còn lại = 4 dự án nhỏ nhất (k3..k0 = 4+3+2+1 = 10)
+  assert.equal(other.value, 10);
+  // tổng mọi lát = tổng bucket = 1..12 (78) + 3 = 81
+  assert.equal(slices.reduce((x, s) => x + s.value, 0), 81);
+  assert.equal(Object.keys(b).length, 13); // full list vẫn đủ 13 project
+});
+
+test("12. unknown/invalid không bị gộp vào 'Khác'", () => {
+  const list = [];
+  for (let i = 0; i < 10; i++) list.push(["k" + i, "D" + i, 1]);
+  list.push(["__unknown__", "Không xác định", 4], ["__invalid__", "Không hợp lệ", 2]);
+  const slices = buildProjectDonutData(buckets(list));
+  assert.ok(slices.some((s) => s.key === "__unknown__"));
+  assert.ok(slices.some((s) => s.key === "__invalid__"));
+  const other = slices.find((s) => s.key === OTHER_KEY);
+  assert.equal(other.value, 2); // chỉ 2 dự án thường (k8,k9) bị gộp, không gộp sentinel
+});
+
+test("13. visible slices không collision màu liền kề", () => {
+  // 20 project cùng hash về cùng màu (ép collision) — dùng key giả định.
+  const list = [];
+  for (let i = 0; i < 20; i++) list.push(["p" + i, "D" + i, 20 - i]);
+  const slices = buildProjectDonutData(buckets(list));
+  for (let i = 1; i < slices.length; i++) {
+    assert.notEqual(slices[i].color, slices[i - 1].color, "lát liền kề trùng màu tại " + i);
+  }
+});
+
+test("14. tooltip/legend giữ tên đầy đủ (không rút gọn)", () => {
+  const b = buckets([["dự án alpha", "Dự án Alpha Beta Gamma Delta", 5]]);
+  const slices = buildProjectDonutData(b);
+  assert.equal(slices[0].display, "Dự án Alpha Beta Gamma Delta");
+  assert.equal(slices[0].key, "dự án alpha");
 });

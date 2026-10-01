@@ -222,6 +222,12 @@ test("21. empty: source có facts nhưng dimension filter không khớp => noMat
   assert.equal(r.empty.noMatches, true);
 });
 
+test("16b. grain row recruited_count=2 vẫn hợp lệ (SUM count, không phải row count)", () => {
+  // Một grain row chứa recruited_count=2 (hai người cùng grain đã được gộp).
+  const r = computeReporting([SRC], [fact(SRC.id, { recruited_count: 2 })], {}, new Set([SRC.id]));
+  assert.equal(r.recruitedTotal, 2); // = SUM(recruited_count), KHÔNG phải số dòng grain (1)
+});
+
 test("22. options query failure không thành empty catalog (ok:false, không có options)", () => {
   const err = reportingQueryFailed();
   assert.equal(err.ok, false);

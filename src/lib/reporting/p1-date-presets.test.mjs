@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   computeDatePresets,
   countActiveFilterCriteria,
+  isAllTimeActive,
   matchDatePreset,
   todayInHoChiMinh,
 } from "./p1-date-presets.ts";
@@ -81,6 +82,14 @@ test("13. active preset matching", () => {
 test("14. custom range không active", () => {
   assert.equal(matchDatePreset("2026-09-25", "2026-10-01", REF), null);
   assert.equal(matchDatePreset(null, null, REF), null);
+});
+
+test("15a. isAllTimeActive khi from/to đều trống", () => {
+  assert.equal(isAllTimeActive(null, null), true);
+  assert.equal(isAllTimeActive("", ""), true);
+  assert.equal(isAllTimeActive(undefined, undefined), true);
+  assert.equal(isAllTimeActive("2026-09-26", null), false);
+  assert.equal(isAllTimeActive("2026-09-26", "2026-10-02"), false);
 });
 
 test("15. countActiveFilterCriteria: date range là một tiêu chí", () => {
