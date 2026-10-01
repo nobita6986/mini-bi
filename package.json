@@ -12,7 +12,7 @@
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",
     "docs:check": "node scripts/check-doc-examples.mjs",
-    "test": "node --test src/lib/reporting/pipeline-check.test.mjs src/lib/reporting/pipeline-check-guard.test.mjs"
+    "test": "node --test src/lib/reporting/pipeline-check.test.mjs src/lib/reporting/pipeline-check-guard.test.mjs src/lib/reporting/p1-reporting.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

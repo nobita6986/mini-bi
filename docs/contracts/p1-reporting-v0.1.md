@@ -41,6 +41,8 @@
 | `sources_never_succeeded` | Số source có `last_successful_sync_at IS NULL` (chưa từng có snapshot) |
 | `coverage_ratio` | `(sources_expected − sources_never_succeeded) / sources_expected` |
 
+> **Clarification (W02):** `coverage_ratio` mang nghĩa **“tỷ lệ nguồn đã từng có snapshot”**, **không** phải tỷ lệ nguồn healthy. Các trạng thái `succeeded`/`partial`/`failed` vẫn phải trả riêng. Khi `sources_expected = 0`, `coverage_ratio = null` (không chia 0, không giả thành 100%). Đây là clarification, không đổi công thức hay version.
+
 ### 2.5. Freshness
 - Hiển thị `last_successful_sync_at` và trạng thái run gần nhất (per-source).
 - **Chưa** tự đặt ngưỡng stale theo giờ vì cadence chưa bật. Khi schedule 6 giờ được kích hoạt, stale threshold là quyết định/version riêng.

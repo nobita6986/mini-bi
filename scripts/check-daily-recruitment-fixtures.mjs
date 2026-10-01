@@ -445,6 +445,31 @@ async function main() {
     check("SEC", "anon không ghi được data_sources", Boolean(writeError), writeError ? writeError.message : "anon ghi thành công (!)");
   }
 
+  // ========================== SCOPE: cô lập fixture khỏi reporting scope =====
+  {
+    // Chỉ đánh dấu CHÍNH XÁC hai fixture ID đã khóa là is_test=true (không dùng pattern rộng).
+    const { error: markErr } = await admin
+      .from("data_sources")
+      .update({ is_test: true })
+      .in("drive_file_id", [DRIVE_FILE_A, DRIVE_FILE_B]);
+    check("SCOPE", "đánh dấu is_test=true cho 2 fixture", !markErr, markErr && markErr.message);
+
+    const { data: allSources, error: listErr } = await admin
+      .from("data_sources")
+      .select("drive_file_id, is_test");
+    check("SCOPE", "đọc data_sources không lỗi", !listErr, listErr && listErr.message);
+
+    const rows = allSources ?? [];
+    const fixtureA = rows.find((r) => r.drive_file_id === DRIVE_FILE_A);
+    const fixtureB = rows.find((r) => r.drive_file_id === DRIVE_FILE_B);
+    check("SCOPE", "fixture A có is_test=true", Boolean(fixtureA) && fixtureA.is_test === true, JSON.stringify(fixtureA));
+    check("SCOPE", "fixture B có is_test=true", Boolean(fixtureB) && fixtureB.is_test === true, JSON.stringify(fixtureB));
+
+    // Nguồn thật / nguồn khác không được đánh dấu test.
+    const wronglyTest = rows.filter((r) => r.is_test === true && r.drive_file_id !== DRIVE_FILE_A && r.drive_file_id !== DRIVE_FILE_B);
+    check("SCOPE", "không source nào khác bị đánh dấu is_test=true", wronglyTest.length === 0, JSON.stringify(wronglyTest.map((r) => r.drive_file_id)));
+  }
+
   // ============================================================= báo cáo
   console.log("");
   console.log("CASE  OK    KIỂM TRA");
