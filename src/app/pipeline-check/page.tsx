@@ -17,17 +17,17 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Pipeline check — mini-bi" };
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-3 text-base font-semibold text-zinc-900 dark:text-zinc-50">{children}</h2>;
+  return <h2 className="mb-3 text-base font-semibold text-foreground">{children}</h2>;
 }
 
 function DimensionList({ title, items }: { title: string; items: DimensionBreakdown[] }) {
   return (
     <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{title}</p>
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">{title}</p>
       {items.length === 0 ? (
-        <p className="text-xs text-zinc-400">—</p>
+        <p className="text-xs text-muted">—</p>
       ) : (
-        <ul className="space-y-1 text-xs text-zinc-700 dark:text-zinc-200">
+        <ul className="space-y-1 text-xs text-foreground">
           {items.map((item) => (
             <li key={item.label} className="flex justify-between gap-2">
               <span className="truncate">{item.label}</span>
@@ -54,8 +54,8 @@ export default async function PipelineCheckPage() {
     return (
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
         <header className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Pipeline check</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase.</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Pipeline check</h1>
+          <p className="mt-1 text-sm text-muted">Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase.</p>
         </header>
         <ErrorState title="Không tải được dữ liệu pipeline" detail={result.code + " · " + result.message} />
       </main>
@@ -69,8 +69,8 @@ export default async function PipelineCheckPage() {
     return (
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
         <header className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Pipeline check</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase.</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Pipeline check</h1>
+          <p className="mt-1 text-sm text-muted">Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase.</p>
         </header>
         <EmptyState
           title="Chưa có nguồn dữ liệu"
@@ -91,12 +91,12 @@ export default async function PipelineCheckPage() {
       </div>
 
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Pipeline check</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Pipeline check</h1>
+        <p className="mt-1 text-sm text-muted">
           Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase · contract{" "}
           <span className="font-mono text-xs">{DAILY_RECRUITMENT_BREAKDOWN_CONTRACT_VERSION}</span>
         </p>
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Tạo lúc: {formatTimestamp(generatedAt)}</p>
+        <p className="mt-1 text-xs text-muted">Tạo lúc: {formatTimestamp(generatedAt)}</p>
       </header>
 
       {!hasRuns ? (
@@ -160,9 +160,9 @@ export default async function PipelineCheckPage() {
           <EmptyState title="Có nguồn nhưng chưa có snapshot" description="Chưa có dữ liệu trong daily_recruitment_breakdown." />
         ) : (
           <>
-            <div className="mb-4 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <div className="mb-4 overflow-x-auto rounded-lg border border-border">
               <table className="w-full min-w-[480px] text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                <thead className="bg-muted/10 text-xs uppercase tracking-wide text-muted">
                   <tr>
                     <th className="px-3 py-2 font-medium">business_date</th>
                     <th className="px-3 py-2 font-medium">Nguồn</th>
@@ -170,9 +170,9 @@ export default async function PipelineCheckPage() {
                     <th className="px-3 py-2 text-right font-medium">Nhóm</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+                <tbody className="divide-y divide-border">
                   {data.snapshot.byDateSource.map((row, i) => (
-                    <tr key={i} className="text-zinc-700 dark:text-zinc-200">
+                    <tr key={i} className="text-foreground">
                       <td className="px-3 py-2 font-mono text-xs">{row.businessDate}</td>
                       <td className="px-3 py-2">{row.fileName}</td>
                       <td className="px-3 py-2 text-right font-mono text-xs">{row.recruitedCount}</td>
@@ -198,9 +198,9 @@ export default async function PipelineCheckPage() {
         {data.issues.length === 0 ? (
           <EmptyState title="Không có lỗi hoặc cảnh báo" description="Không có sync_errors trong 200 dòng gần nhất." />
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[560px] text-left text-sm">
-              <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+              <thead className="bg-muted/10 text-xs uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-3 py-2 font-medium">Nguồn</th>
                   <th className="px-3 py-2 font-medium">Hàng</th>
@@ -209,9 +209,9 @@ export default async function PipelineCheckPage() {
                   <th className="px-3 py-2 font-medium">Thời điểm</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+              <tbody className="divide-y divide-border">
                 {data.issues.map((issue, i) => (
-                  <tr key={i} className="text-zinc-700 dark:text-zinc-200">
+                  <tr key={i} className="text-foreground">
                     <td className="px-3 py-2">{issue.fileName}</td>
                     <td className="px-3 py-2 font-mono text-xs">{issue.sourceRowNumber ?? "—"}</td>
                     <td className="px-3 py-2">
@@ -235,7 +235,7 @@ export default async function PipelineCheckPage() {
         )}
       </section>
 
-      <footer className="text-xs text-zinc-400">
+      <footer className="text-xs text-muted">
         Timestamp hiển thị theo Asia/Ho_Chi_Minh (GMT+7). Trang không áp dụng ngưỡng “stale” — chỉ hiển thị freshness thực tế.
       </footer>
     </main>

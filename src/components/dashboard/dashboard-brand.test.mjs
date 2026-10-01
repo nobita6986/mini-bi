@@ -44,6 +44,33 @@ test("filter bar uses a single nuqs state and does not scroll on preset change",
   assert.ok(src.includes("shallow: false"), "filter changes must refetch server data");
 });
 
+test("logo plate larger than R5 (h-16 sm:h-20) and not distorted", () => {
+  const src = readFileSync(viewPath, "utf8");
+  assert.ok(src.includes("h-16"), "plate must be h-16 on mobile");
+  assert.ok(src.includes("sm:h-20"), "plate must be sm:h-20 on desktop");
+  assert.ok(src.includes('className="h-full w-auto"'), "logo keeps w-auto (no crop/distort)");
+  assert.ok(src.includes('bg-white p-1'), "plate stays white in all themes/modes");
+});
+
+test("timestamp nằm trong text column, cùng trục trái với title", () => {
+  const src = readFileSync(viewPath, "utf8");
+  const colStart = src.indexOf('className="min-w-0"');
+  const sel = src.indexOf("<ThemeSelector");
+  assert.ok(colStart !== -1 && sel !== -1 && sel > colStart, "text column then theme selector");
+  const col = src.slice(colStart, sel);
+  assert.ok(col.includes("BoD · Báo cáo điều hành"), "label in column");
+  assert.ok(col.includes("Tổng quan tuyển dụng"), "title in column");
+  assert.ok(col.includes("Báo cáo tạo lúc"), "timestamp in column");
+});
+
+test("theme selector được render trong header", () => {
+  const src = readFileSync(viewPath, "utf8");
+  assert.ok(src.includes("<ThemeSelector"), "ThemeSelector in header");
+  const sel = readFileSync(join(repoRoot, "src", "components", "dashboard", "theme-selector.tsx"), "utf8");
+  assert.ok(sel.includes("Màu giao diện"), "selector label");
+  assert.ok(sel.includes("aria-checked"), "radiogroup uses aria-checked");
+});
+
 test("filter bar is sticky and the advanced disclosure is accessible", () => {
   const src = readFileSync(filtersPath, "utf8");
   assert.ok(src.includes("sticky top-2 z-20"), "sticky bar with controlled z-index");

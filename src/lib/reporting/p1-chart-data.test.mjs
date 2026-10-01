@@ -10,8 +10,8 @@ import {
   PROJECT_DONUT_MAX_SLICES,
   OTHER_KEY,
   stableColorForKey,
-  UNKNOWN_COLOR,
-  INVALID_COLOR,
+  UNKNOWN_SLOT,
+  INVALID_SLOT,
 } from "./p1-chart-data.ts";
 
 function src(id, status) {
@@ -43,11 +43,20 @@ test("1. stableColorForKey: cùng key luôn cùng màu, không phụ thuộc th�
   assert.equal(stableColorForKey("dự án a"), stableColorForKey("dự án a"));
 });
 
-test("2. sentinel colors cố định", () => {
-  assert.equal(stableColorForKey("__unknown__"), UNKNOWN_COLOR);
-  assert.equal(stableColorForKey("__invalid__"), INVALID_COLOR);
-  assert.equal(UNKNOWN_COLOR, "#f59e0b");
-  assert.equal(INVALID_COLOR, "#f43f5e");
+test("2. sentinel slot cố định (amber/rose semantic)", () => {
+  assert.equal(stableColorForKey("__unknown__"), UNKNOWN_SLOT);
+  assert.equal(stableColorForKey("__invalid__"), INVALID_SLOT);
+  assert.equal(UNKNOWN_SLOT, "warning");
+  assert.equal(INVALID_SLOT, "error");
+});
+
+test("2b. category key map deterministic vào chart slot (chart-1..chart-8)", () => {
+  const slot = stableColorForKey("dự án a");
+  assert.match(slot, /^chart-[1-8]$/);
+  assert.equal(stableColorForKey("dự án a"), slot);
+  // sentinel không bao giờ là chart slot
+  assert.equal(stableColorForKey("__unknown__"), "warning");
+  assert.equal(stableColorForKey("__invalid__"), "error");
 });
 
 test("3. donut (provider) total = recruitedTotal", () => {
@@ -92,8 +101,8 @@ test("7. unknown/invalid vẫn xuất hiện trong segments", () => {
   const seg = buildCategorySegments(b);
   assert.ok(seg.some((s) => s.key === "__unknown__"));
   assert.ok(seg.some((s) => s.key === "__invalid__"));
-  assert.equal(seg.find((s) => s.key === "__unknown__").color, UNKNOWN_COLOR);
-  assert.equal(seg.find((s) => s.key === "__invalid__").color, INVALID_COLOR);
+  assert.equal(seg.find((s) => s.key === "__unknown__").color, UNKNOWN_SLOT);
+  assert.equal(seg.find((s) => s.key === "__invalid__").color, INVALID_SLOT);
 });
 
 test("8. Top 10 không làm thay đổi full list", () => {

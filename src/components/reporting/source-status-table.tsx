@@ -5,9 +5,9 @@ import { StatusBadge } from "./status-badge";
 
 export function SourceStatusTable({ sources }: { sources: SourceStatus[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[980px] text-left text-sm">
-        <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+        <thead className="bg-muted/10 text-xs uppercase tracking-wide text-muted">
           <tr>
             <th className="px-3 py-2 font-medium">Nguồn</th>
             <th className="px-3 py-2 font-medium">Drive ID</th>
@@ -22,16 +22,16 @@ export function SourceStatusTable({ sources }: { sources: SourceStatus[] }) {
             <th className="px-3 py-2 font-medium">error_code</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+        <tbody className="divide-y divide-border">
           {sources.map((s) => {
             const run = s.latestRun;
             return (
-              <tr key={s.id} className="align-top text-zinc-700 dark:text-zinc-200">
+              <tr key={s.id} className="align-top text-foreground">
                 <td className="px-3 py-2">
-                  <div className="font-medium text-zinc-900 dark:text-zinc-50">{s.fileName}</div>
-                  <div className="text-xs text-zinc-500 dark:text-zinc-400">{s.sheetName}</div>
+                  <div className="font-medium text-foreground">{s.fileName}</div>
+                  <div className="text-xs text-muted">{s.sheetName}</div>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs text-zinc-500 dark:text-zinc-400" title={s.driveFileId}>
+                <td className="px-3 py-2 font-mono text-xs text-muted" title={s.driveFileId}>
                   {shortenId(s.driveFileId)}
                 </td>
                 <td className="px-3 py-2">
@@ -40,13 +40,13 @@ export function SourceStatusTable({ sources }: { sources: SourceStatus[] }) {
                       active
                     </span>
                   ) : (
-                    <span className="inline-flex rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    <span className="inline-flex rounded-full bg-muted/20 px-2 py-0.5 text-xs font-medium text-muted">
                       inactive
                     </span>
                   )}
                 </td>
                 <td className="px-3 py-2">
-                  {run ? <StatusBadge status={run.status} /> : <span className="text-xs text-zinc-400">chưa có run</span>}
+                  {run ? <StatusBadge status={run.status} /> : <span className="text-xs text-muted">chưa có run</span>}
                 </td>
                 <td className="px-3 py-2 text-xs">{formatTimestamp(run?.startedAt)}</td>
                 <td className="px-3 py-2 text-xs">{formatTimestamp(run?.finishedAt)}</td>

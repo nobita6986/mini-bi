@@ -1,38 +1,21 @@
 /**
- * P1-T1-W04-R2 — Chart data helpers (thuần, không import value từ module khác để Node test chạy được).
+ * P1-T1-W04-R6 — Chart data helpers (thuần, không import VALUE từ module khác để Node test chạy được).
  *
- * Màu category ổn định theo normalized key (hash deterministic), sentinel cố định,
- * status cố định. KHÔNG tạo index-based random color.
+ * Trả về COLOR SLOT ổn định (không phải hex) theo normalized key (hash deterministic).
+ * Hex thật do theme registry resolve (chart-1..8 theo theme; semantic cố định).
+ * Không tạo index-based random color.
  */
+
+import type { ColorSlot, ChartSlot } from "../theme/theme-registry";
 
 import type { ReportingBucket, ReportingSourceStatusRow } from "./p1-reporting";
 
-/** Bảng màu category ổn định (không đổi theo thứ tự/sort/filter). */
-export const CATEGORY_PALETTE = [
-  "#6366f1", // indigo
-  "#0ea5e9", // sky
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#8b5cf6", // violet
-  "#14b8a6", // teal
-  "#f97316", // orange
-  "#ec4899", // pink
-  "#84cc16", // lime
-  "#22d3ee", // cyan
-] as const;
+export const CHART_SLOT_COUNT = 8; // mirror theme-registry (Node-test isolation)
 
-export const UNKNOWN_COLOR = "#f59e0b"; // amber — Không xác định
-export const INVALID_COLOR = "#f43f5e"; // rose — Không hợp lệ
-
-/** Màu semantic cố định cho provider (HRP/Vendor) và employment (Thời vụ/Chính thức). */
-const FIXED_COLORS: Record<string, string> = {
-  hrp: "#0ea5e9",
-  vendor: "#8b5cf6",
-  "thời vụ": "#10b981",
-  "chính thức": "#6366f1",
-  __unknown__: UNKNOWN_COLOR,
-  __invalid__: INVALID_COLOR,
-};
+/** Semantic slot cố định (amber/rose/slate) — sentinel + "Khác". */
+export const UNKNOWN_SLOT: ColorSlot = "warning"; // amber — Không xác định
+export const INVALID_SLOT: ColorSlot = "error"; // rose — Không hợp lệ
+export const OTHER_SLOT: ColorSlot = "slate"; // slate — nhóm "Khác"
 
 function hashString(s: string): number {
   let h = 5381;
@@ -42,19 +25,24 @@ function hashString(s: string): number {
   return Math.abs(h);
 }
 
-/** Màu ổn định theo normalized key; sentinel + catalog luôn dùng màu cố định. */
-export function stableColorForKey(key: string): string {
-  if (FIXED_COLORS[key]) return FIXED_COLORS[key];
-  return CATEGORY_PALETTE[hashString(key) % CATEGORY_PALETTE.length];
+function chartSlotForIndex(i: number): ChartSlot {
+  return ("chart-" + (i + 1)) as ChartSlot;
 }
 
-export const STATUS_COLORS = {
-  succeeded: "#10b981", // emerald
-  partial: "#f59e0b", // amber
-  failed: "#f43f5e", // rose
-  running: "#0ea5e9", // sky
-  noRun: "#a1a1aa", // zinc
-} as const;
+/** Slot ổn định theo normalized key; sentinel luôn dùng slot semantic cố định. */
+export function stableColorForKey(key: string): ColorSlot {
+  if (key === "__unknown__") return UNKNOWN_SLOT;
+  if (key === "__invalid__") return INVALID_SLOT;
+  return chartSlotForIndex(hashString(key) % CHART_SLOT_COUNT);
+}
+
+export const STATUS_COLORS: Record<string, ColorSlot> = {
+  succeeded: "success", // emerald
+  partial: "warning", // amber
+  failed: "error", // rose
+  running: "running", // sky
+  noRun: "slate", // slate
+};
 
 /** Tỷ lệ phần trăm an toàn: total <= 0 trả 0 (không NaN/Infinity). */
 export function percentageOfTotal(count: number, total: number): number {
@@ -66,7 +54,7 @@ export interface ChartSegment {
   key: string;
   display: string;
   value: number;
-  color: string;
+  color: ColorSlot;
   percent: number;
   [k: string]: unknown;
 }
@@ -97,34 +85,46 @@ export interface BarDatum {
   key: string;
   name: string;
   value: number;
-  color: string;
+  color: ColorSlot;
   [k: string]: unknown;
 }
 
 export const PROJECT_DONUT_MAX_SLICES = 8;
 export const OTHER_KEY = "__other__";
-export const OTHER_COLOR = "#94a3b8"; // slate — nhóm "Khác"
 
 export interface ProjectDonutSlice {
   key: string;
   display: string;
   value: number;
-  color: string;
+  color: ColorSlot;
   percent: number;
   isOther?: boolean;
 }
 
-/** Đảm bảo hai lát LIỀN KỀ không trùng màu (deterministic; không đổi màu sentinel/other). */
-function resolveAdjacentColors(base: string[]): string[] {
+function isChartSlot(slot: ColorSlot): slot is ChartSlot {
+  return slot.startsWith("chart-");
+}
+
+function chartSlotIndex(slot: ChartSlot): number {
+  return Number(slot.slice("chart-".length)) - 1;
+}
+
+/** Đảm bảo hai lát chart LIỀN KỀ không trùng slot (deterministic; không đổi semantic). */
+function resolveAdjacentSlots(base: ColorSlot[]): ColorSlot[] {
   const out = [...base];
   for (let i = 0; i < out.length; i++) {
+    const slot = out[i];
+    if (!isChartSlot(slot)) continue;
     const prev = i > 0 ? out[i - 1] : null;
     const next = i < out.length - 1 ? out[i + 1] : null;
-    if (out[i] !== prev && out[i] !== next) continue;
-    const start = Math.max(0, (CATEGORY_PALETTE as readonly string[]).indexOf(out[i]));
-    for (let step = 1; step <= CATEGORY_PALETTE.length; step++) {
-      const cand = CATEGORY_PALETTE[(start + step) % CATEGORY_PALETTE.length];
-      if (cand !== prev && cand !== next) { out[i] = cand; break; }
+    if (slot !== prev && slot !== next) continue;
+    const start = chartSlotIndex(slot);
+    for (let step = 1; step <= CHART_SLOT_COUNT; step++) {
+      const cand = chartSlotForIndex((start + step) % CHART_SLOT_COUNT);
+      if (cand !== prev && cand !== next) {
+        out[i] = cand;
+        break;
+      }
     }
   }
   return out;
@@ -152,8 +152,8 @@ export function buildProjectDonutData(buckets: Record<string, ReportingBucket>):
     a.recruitedCount !== b.recruitedCount ? b.recruitedCount - a.recruitedCount : a.display.localeCompare(b.display, "vi")
   );
 
-  const baseColors = slices.map((s) => (s.key === OTHER_KEY ? OTHER_COLOR : stableColorForKey(s.key)));
-  const colors = resolveAdjacentColors(baseColors);
+  const baseColors: ColorSlot[] = slices.map((s) => (s.key === OTHER_KEY ? OTHER_SLOT : stableColorForKey(s.key)));
+  const colors = resolveAdjacentSlots(baseColors);
 
   return slices.map((s, i) => ({
     key: s.key,
@@ -175,7 +175,7 @@ export function buildBarData(buckets: Record<string, ReportingBucket>, top: numb
 export interface StatusSegment {
   label: string;
   count: number;
-  color: string;
+  color: ColorSlot;
 }
 
 /**

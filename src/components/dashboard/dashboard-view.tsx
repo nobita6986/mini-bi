@@ -20,20 +20,21 @@ import { ProviderDonut } from "./provider-donut";
 import { RecruiterBarChart } from "./recruiter-bar-chart";
 import { SourceStatusBar } from "./source-status-bar";
 import { SourceStatusTable } from "./source-status-table";
+import { ThemeSelector } from "./theme-selector";
 import { TrendChart } from "./trend-chart";
 
 function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
   const sorted = sortBuckets(buckets);
   return (
     <details className="mt-3">
-      <summary className="cursor-pointer text-sm font-medium text-indigo-600 dark:text-indigo-400">
+      <summary className="cursor-pointer text-sm font-medium text-primary">
         Xem danh sách đầy đủ ({sorted.length})
       </summary>
       <div className="mt-2 max-h-72 overflow-y-auto">
         <table className="w-full text-sm">
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-border">
             {sorted.map((b) => (
-              <tr key={b.key} className="text-slate-700 dark:text-slate-200">
+              <tr key={b.key} className="text-foreground">
                 <td className="py-1.5">{b.display}</td>
                 <td className="py-1.5 text-right font-mono">{b.recruitedCount}</td>
               </tr>
@@ -49,20 +50,25 @@ export function DashboardView({ report, optionsResult }: { report: ReportingFetc
   const generatedAt = report.ok ? report.generatedAt : undefined;
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
-      <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-sky-50 px-5 py-4 dark:border-slate-800 dark:from-indigo-950/40 dark:via-slate-900 dark:to-sky-950/40">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="flex h-14 shrink-0 items-center justify-center rounded-lg bg-white p-1 shadow-sm ring-1 ring-slate-200 sm:h-16">
-            <Image src="/brand/hrpartner-logo.png" alt="HR Partner" width={2166} height={1706} priority className="h-full w-auto" />
+      <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+            <div className="flex h-16 shrink-0 items-center justify-center rounded-lg bg-white p-1 shadow-sm ring-1 ring-border sm:h-20">
+              <Image src="/brand/hrpartner-logo.png" alt="HR Partner" width={2166} height={1706} priority className="h-full w-auto" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
+              <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
+              <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+              {generatedAt ? (
+                <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
+              ) : null}
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-indigo-600 dark:text-indigo-300">BoD · Báo cáo điều hành</p>
-            <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">Tổng quan tuyển dụng</h1>
-            <p className="mt-0.5 max-w-2xl text-sm text-slate-600 dark:text-slate-300">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+          <div className="shrink-0">
+            <ThemeSelector />
           </div>
         </div>
-        {generatedAt ? (
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
-        ) : null}
       </header>
 
       <div className="mt-4">
@@ -79,11 +85,11 @@ export function DashboardView({ report, optionsResult }: { report: ReportingFetc
 function ReportError({ report }: { report: Extract<ReportingFetchResult, { ok: false }> }) {
   if (report.code === "INVALID_FILTER") {
     return (
-      <div role="alert" className="rounded-2xl border border-rose-300 bg-rose-50 px-6 py-10 dark:border-rose-900 dark:bg-rose-950">
-        <p className="text-sm font-semibold text-rose-800 dark:text-rose-200">Bộ lọc không hợp lệ</p>
-        <p className="mt-2 text-sm text-rose-700 dark:text-rose-300">{report.message}</p>
+      <div role="alert" className="rounded-2xl border border-red-300 bg-red-50 px-6 py-10 dark:border-red-900 dark:bg-red-950">
+        <p className="text-sm font-semibold text-red-800 dark:text-red-200">Bộ lọc không hợp lệ</p>
+        <p className="mt-2 text-sm text-red-700 dark:text-red-300">{report.message}</p>
         <p className="mt-4">
-          <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-rose-700 px-3 text-sm font-medium text-white hover:bg-rose-600">
+          <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
             Xóa bộ lọc
           </Link>
         </p>
@@ -105,11 +111,11 @@ function FiltersOrError({ optionsResult }: { optionsResult: ReportingOptionsResu
 
 function NoMatchesBlock() {
   return (
-    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center dark:border-slate-700 dark:bg-slate-900">
-      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Không có dữ liệu khớp bộ lọc hiện tại</p>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Không có ngày/dự án/người tuyển/nhóm nào khớp bộ lọc đang chọn.</p>
+    <div className="rounded-2xl border border-dashed border-border bg-muted/10 px-6 py-12 text-center">
+      <p className="text-sm font-medium text-foreground">Không có dữ liệu khớp bộ lọc hiện tại</p>
+      <p className="mt-1 text-sm text-muted">Không có ngày/dự án/người tuyển/nhóm nào khớp bộ lọc đang chọn.</p>
       <p className="mt-4">
-        <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-500">
+        <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
           Xóa bộ lọc
         </Link>
       </p>
@@ -151,10 +157,10 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
       ) : (
         <>
           <section aria-label="Chỉ số chính" className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <KpiCard label="Tổng tuyển mới" value={data.recruitedTotal} hint="số người tuyển trong kết quả" accent="#6366f1" />
-            <KpiCard label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="#0ea5e9" />
-            <KpiCard label="Nguồn báo cáo" value={data.coverage.expected} hint={data.coverage.succeeded + " đã đồng bộ"} accent="#8b5cf6" />
-            <KpiCard label="Độ phủ dữ liệu" value={everSnapshotted + "/" + data.coverage.expected} hint={(ratio === null ? "—" : Math.round(ratio * 100) + "% nguồn từng có snapshot")} accent="#10b981" />
+            <KpiCard label="Tổng tuyển mới" value={data.recruitedTotal} hint="số người tuyển trong kết quả" accent="var(--primary)" />
+            <KpiCard label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
+            <KpiCard label="Nguồn báo cáo" value={data.coverage.expected} hint={data.coverage.succeeded + " đã đồng bộ"} accent="var(--accent)" />
+            <KpiCard label="Độ phủ dữ liệu" value={everSnapshotted + "/" + data.coverage.expected} hint={(ratio === null ? "—" : Math.round(ratio * 100) + "% nguồn từng có snapshot")} accent="var(--semantic-success)" />
           </section>
 
           <section aria-label="Xu hướng tuyển dụng">
@@ -162,21 +168,21 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
               <CardHeader title="Xu hướng tuyển dụng" description="Số người tuyển theo ngày; những ngày không có record thể hiện là 0 trên biểu đồ." />
               <TrendChart data={trend} />
               <details className="mt-3">
-                <summary className="cursor-pointer text-sm font-medium text-indigo-600 dark:text-indigo-400">
+                <summary className="cursor-pointer text-sm font-medium text-primary">
                   Xem chi tiết {dataDays.length} ngày
                 </summary>
                 <div className="mt-2 max-h-72 overflow-y-auto">
                   <table className="w-full min-w-[300px] text-left text-sm">
                     <caption className="sr-only">Bảng số người tuyển theo ngày (chỉ các ngày có tuyển dụng)</caption>
-                    <thead className="sticky top-0 bg-white text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900 dark:text-slate-400">
-                      <tr className="border-b border-slate-100 dark:border-slate-800">
+                    <thead className="sticky top-0 bg-surface text-xs uppercase tracking-wide text-muted">
+                      <tr className="border-b border-border">
                         <th className="py-1.5 font-medium">Ngày</th>
                         <th className="py-1.5 text-right font-medium">Số người</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    <tbody className="divide-y divide-border">
                       {dataDays.map((p) => (
-                        <tr key={p.date} className="text-slate-700 dark:text-slate-200">
+                        <tr key={p.date} className="text-foreground">
                           <td className="py-1.5 font-mono text-xs">{p.date}</td>
                           <td className="py-1.5 text-right font-mono">{p.count}</td>
                         </tr>
@@ -218,7 +224,7 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
           <div className="mt-4">
             <SourceStatusTable sources={data.sources} />
           </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Chưa tự đặt ngưỡng “cũ” theo giờ — chỉ hiển thị freshness thực tế.</p>
+          <p className="mt-2 text-xs text-muted">Chưa tự đặt ngưỡng “cũ” theo giờ — chỉ hiển thị freshness thực tế.</p>
         </Card>
       </section>
     </div>

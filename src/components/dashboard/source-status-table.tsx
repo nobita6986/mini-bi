@@ -13,9 +13,9 @@ const TONES: Record<ReportingSourceStatus, string> = {
 
 export function SourceStatusTable({ sources }: { sources: ReportingSourceStatusRow[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[640px] text-left text-sm">
-        <thead className="bg-zinc-50 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+        <thead className="bg-muted/10 text-xs uppercase tracking-wide text-muted">
           <tr>
             <th className="px-3 py-2 font-medium">Nguồn</th>
             <th className="px-3 py-2 font-medium">Trạng thái</th>
@@ -24,10 +24,10 @@ export function SourceStatusTable({ sources }: { sources: ReportingSourceStatusR
             <th className="px-3 py-2 font-medium">Đóng góp kết quả</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+        <tbody className="divide-y divide-border">
           {sources.map((s) => (
-            <tr key={s.id} className="text-zinc-700 dark:text-zinc-200">
-              <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">{s.fileName}</td>
+            <tr key={s.id} className="text-foreground">
+              <td className="px-3 py-2 font-medium text-foreground">{s.fileName}</td>
               <td className="px-3 py-2">
                 <span className={"inline-flex rounded-full px-2 py-0.5 text-xs font-medium " + TONES[s.status]}>
                   {sourceStatusLabel(s.status)}

@@ -1,22 +1,56 @@
 @import "tailwindcss";
 
+/* Fallback = theme mặc định (hr-partner) light — trước khi inline script áp theme thật.
+   Script trong <head> ghi đè các biến này trước paint (không flash, không hydration mismatch). */
 :root {
-  --background: #f8fafc;
+  color-scheme: light;
+  --background: #f7f9ff;
   --foreground: #0f172a;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --surface: #ffffff;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --primary: #333f99;
+  --secondary: #0284c7;
+  --accent: #c2410c;
+  --ring: #333f99;
+  --tooltip: #ffffff;
+  --on-primary: #ffffff;
+  --chart-1: #3745a5;
+  --chart-2: #0284c7;
+  --chart-3: #ea580c;
+  --chart-4: #e11d48;
+  --chart-5: #059669;
+  --chart-6: #7c3aed;
+  --chart-7: #ca8a04;
+  --chart-8: #475569;
+  --semantic-success: #047857;
+  --semantic-warning: #b45309;
+  --semantic-error: #be123c;
+  --semantic-running: #0369a1;
+  --semantic-slate: #64748b;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #020617;
-    --foreground: #e2e8f0;
+    color-scheme: dark;
   }
+}
+
+/* Semantic utility classes đọc từ CSS custom properties (do theme registry set). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-ring: var(--ring);
+  --color-tooltip: var(--tooltip);
+  --color-on-primary: var(--on-primary);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 body {
