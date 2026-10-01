@@ -5,6 +5,8 @@ import { parseAsString, useQueryStates } from "nuqs";
 
 import { EMPLOYMENT_OPTIONS, PROVIDER_OPTIONS } from "@/lib/reporting/p1-dashboard";
 import type { ReportingOptionsCatalog } from "@/lib/reporting/p1-dashboard";
+import { computeDatePresets, countActiveFilterCriteria, matchDatePreset } from "@/lib/reporting/p1-date-presets";
+import { cn } from "@/lib/utils";
 
 const parsers = {
   from: parseAsString,
@@ -31,7 +33,19 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 export function DashboardFilters({ options }: { options: ReportingOptionsCatalog }) {
   const [filters, setFilters] = useQueryStates(parsers, { shallow: false });
 
-  const activeCount = [filters.from, filters.to, filters.project, filters.recruiter, filters.provider, filters.employment, filters.source].filter(Boolean).length;
+  const now = new Date();
+  const presets = computeDatePresets(now);
+  const activePresetKey = matchDatePreset(filters.from, filters.to, now);
+  const activeCount = countActiveFilterCriteria(filters);
+  const countLabel = activeCount === 1 ? "1 tiêu chí đang áp dụng" : activeCount + " tiêu chí đang áp dụng";
+
+  const chip = (active: boolean) =>
+    cn(
+      "inline-flex h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40",
+      active
+        ? "border-indigo-600 bg-indigo-600 text-white dark:border-indigo-500 dark:bg-indigo-500"
+        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
+    );
 
   return (
     <section aria-label="Bộ lọc báo cáo" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -40,7 +54,7 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
           <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Bộ lọc</h2>
           {activeCount > 0 ? (
             <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">
-              {activeCount} filter đang áp dụng
+              {countLabel}
             </span>
           ) : null}
         </div>
@@ -50,6 +64,18 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
           </button>
         ) : null}
       </div>
+
+      <div role="group" aria-label="Khoảng thời gian nhanh" className="mb-3 flex flex-wrap gap-1.5">
+        {presets.map((p) => (
+          <button key={p.key} type="button" aria-pressed={activePresetKey === p.key} onClick={() => setFilters({ from: p.from, to: p.to })} className={chip(activePresetKey === p.key)}>
+            {p.label}
+          </button>
+        ))}
+        <button type="button" aria-pressed={false} onClick={() => setFilters({ from: null, to: null })} className={chip(false)}>
+          Tất cả thời gian
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field id="f-from" label="Từ ngày">
           <input id="f-from" type="date" className={inputClass} value={filters.from ?? ""} onChange={(e) => setFilters({ from: e.target.value || null })} />
