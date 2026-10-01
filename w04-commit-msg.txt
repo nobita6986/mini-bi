@@ -1,9 +1,0 @@
-P0-T1-W04-R1: trang kiem tra pipeline /pipeline-check
-
-- Read-model server-only chi doc data_sources, sync_runs, sync_errors, daily_recruitment_breakdown.
-- Tong quan: nguon, active, run gan nhat, last successful sync, counters, recruited total + groups.
-- Bang trang thai nguon + snapshot theo ngay/nguon + phan bo theo chieu + loi/canh bao.
-- Xu ly cac trang thai: empty, co nguon chua run, chua snapshot, partial, failed, db/query error (khong hien 0).
-- Components tai su dung: StatusBadge, SummaryCard, SourceStatusTable, EmptyState, ErrorState.
-- Unit test computePipelineData (6 test); screenshot bang chung trong docs/acceptance/.
-- Khong sua migration/schema/RPC/contract; khong lo service-role key; khong hien PII.
