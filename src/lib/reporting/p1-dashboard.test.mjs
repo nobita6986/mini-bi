@@ -10,7 +10,7 @@ import {
   topBuckets,
 } from "./p1-dashboard.ts";
 import { paginateAll } from "./p1-reporting-pagination.ts";
-import { buildDimensionOptions, computeReporting, selectDisplay } from "./p1-reporting.ts";
+import { buildDimensionOptions, computeReporting, reportingQueryFailed, selectDisplay } from "./p1-reporting.ts";
 
 function fact(source_id, overrides = {}) {
   return {
@@ -176,4 +176,58 @@ test("15. không có candidate PII trong bucket/option (chỉ key/display/count)
   assert.deepEqual(Object.keys(src).sort(), ["fileName", "id"]);
   const forbidden = ["ho_ten", "full_name", "candidate", "cccd", "sdt", "phone", "email", "raw"];
   for (const k of Object.keys({ ...bucket, ...opt, ...src })) assert.ok(!forbidden.includes(k));
+});
+
+test("16. empty: scope rỗng => noSources", () => {
+  const r = computeReporting([], [], {}, new Set());
+  assert.equal(r.empty.noSources, true);
+  assert.equal(r.empty.noFacts, false);
+  assert.equal(r.empty.noMatches, false);
+});
+
+test("17. empty: có source nhưng presence rỗng => noFacts", () => {
+  const r = computeReporting([SRC], [], {}, new Set());
+  assert.equal(r.empty.noSources, false);
+  assert.equal(r.empty.noFacts, true);
+  assert.equal(r.empty.noMatches, false);
+});
+
+test("18. empty: có facts nhưng dimension filter không khớp => noMatches", () => {
+  const facts = [fact(SRC.id, { project_key: "p1", project_display: "P1" })];
+  const r = computeReporting([SRC], facts, { project: "nonexistent" }, new Set([SRC.id]));
+  assert.equal(r.empty.noSources, false);
+  assert.equal(r.empty.noFacts, false);
+  assert.equal(r.empty.noMatches, true);
+});
+
+test("19. empty: date range không khớp => noMatches", () => {
+  const facts = [fact(SRC.id, { business_date: "2026-10-01" })];
+  const r = computeReporting([SRC], facts, { from: "2026-11-01", to: "2026-11-30" }, new Set([SRC.id]));
+  assert.equal(r.empty.noMatches, true);
+  assert.equal(r.empty.noFacts, false);
+});
+
+test("20. empty: source được chọn chưa có facts => noFacts", () => {
+  const srcB = { ...SRC, id: "22222222-2222-4222-8222-222222222222", file_name: "B.xlsx" };
+  const facts = [fact(SRC.id)];
+  const r = computeReporting([SRC, srcB], facts, { source: srcB.id }, new Set([SRC.id]));
+  assert.equal(r.empty.noFacts, true);
+  assert.equal(r.empty.noMatches, false);
+});
+
+test("21. empty: source có facts nhưng dimension filter không khớp => noMatches", () => {
+  const facts = [fact(SRC.id, { project_key: "p1", project_display: "P1" })];
+  const r = computeReporting([SRC], facts, { source: SRC.id, project: "nonexistent" }, new Set([SRC.id]));
+  assert.equal(r.empty.noFacts, false);
+  assert.equal(r.empty.noMatches, true);
+});
+
+test("22. options query failure không thành empty catalog (ok:false, không có options)", () => {
+  const err = reportingQueryFailed();
+  assert.equal(err.ok, false);
+  assert.ok(!("options" in err));
+  assert.ok(!("data" in err));
+  const healthyEmpty = { ok: true, options: { dimensions: { projects: [], recruiters: [], providers: [], employments: [] }, sources: [] } };
+  assert.notDeepEqual(err, healthyEmpty);
+  assert.equal(healthyEmpty.ok, true);
 });

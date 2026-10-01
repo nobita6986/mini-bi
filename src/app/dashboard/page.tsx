@@ -2,9 +2,9 @@ import { connection } from "next/server";
 import Link from "next/link";
 
 import { buildDailyTrend, sortBuckets, topBuckets } from "@/lib/reporting/p1-dashboard";
-import type { ReportingOptionsCatalog } from "@/lib/reporting/p1-dashboard";
 import { fetchReporting } from "@/lib/reporting/p1-reporting-server";
 import { fetchReportingOptions } from "@/lib/reporting/p1-options-server";
+import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
 import { formatTimestamp } from "@/lib/format";
 
@@ -23,10 +23,31 @@ export const metadata = { title: "Báo cáo tuyển dụng — mini-bi" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-const EMPTY_CATALOG: ReportingOptionsCatalog = {
-  dimensions: { projects: [], recruiters: [], providers: [], employments: [] },
-  sources: [],
-};
+function FiltersOrError({ optionsResult }: { optionsResult: ReportingOptionsResult }) {
+  if (optionsResult.ok) {
+    return <DashboardFilters options={optionsResult.options} />;
+  }
+  return (
+    <Alert tone="error" title="Không tải được danh mục bộ lọc">
+      <p>{optionsResult.code} · {optionsResult.message}</p>
+      <p>Dữ liệu bên dưới vẫn đúng cho URL hiện tại, nhưng không thể chọn bộ lọc. Hãy thử tải lại trang.</p>
+    </Alert>
+  );
+}
+
+function NoMatchesBlock() {
+  return (
+    <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-6 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900">
+      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Không có dữ liệu khớp bộ lọc hiện tại</p>
+      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Không có ngày/dự án/người tuyển/nhóm nào khớp bộ lọc đang chọn.</p>
+      <p className="mt-4">
+        <Link href="/dashboard" className="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300">
+          Xóa bộ lọc
+        </Link>
+      </p>
+    </div>
+  );
+}
 
 function BreakdownBlock({ title, buckets, top }: { title: string; buckets: Record<string, ReportingBucket>; top?: boolean }) {
   const sorted = sortBuckets(buckets);
@@ -93,15 +114,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           )}
         </div>
       ) : (
-        <DashboardBody data={report.data} options={options.ok ? options.options : EMPTY_CATALOG} />
+        <DashboardBody data={report.data} optionsResult={options} />
       )}
     </main>
   );
 }
 
-function DashboardBody({ data, options }: { data: ReportingData; options: ReportingOptionsCatalog }) {
+function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsResult: ReportingOptionsResult }) {
   const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
-  const daysWithData = Object.values(data.byDate).filter((c) => c > 0).length;
+  const dataDays = trend.filter((p) => p.count > 0);
   const everSnapshotted = data.coverage.expected - data.coverage.neverSucceeded;
   const ratio = data.coverage.coverageRatio;
   const nonCovered = data.sources.filter((s) => s.status !== "covered").length;
@@ -109,7 +130,7 @@ function DashboardBody({ data, options }: { data: ReportingData; options: Report
   if (data.empty.noSources) {
     return (
       <div className="space-y-4">
-        <DashboardFilters options={options} />
+        <FiltersOrError optionsResult={optionsResult} />
         <EmptyState title="Chưa có nguồn dữ liệu" description="Chưa có reporting source nào (active và không phải test). Khi n8n chạy workflow lần đầu, nguồn sẽ xuất hiện." />
       </div>
     );
@@ -117,7 +138,7 @@ function DashboardBody({ data, options }: { data: ReportingData; options: Report
 
   return (
     <div className="space-y-6">
-      <DashboardFilters options={options} />
+      <FiltersOrError optionsResult={optionsResult} />
 
       {nonCovered > 0 ? (
         <Alert tone="warning" title="Trạng thái dữ liệu cần lưu ý">
@@ -127,12 +148,14 @@ function DashboardBody({ data, options }: { data: ReportingData; options: Report
 
       {data.empty.noFacts ? (
         <EmptyState title="Có nguồn nhưng chưa có dữ liệu tuyển dụng" description="Các nguồn trong scope chưa có snapshot nào trong daily_recruitment_breakdown." />
+      ) : data.empty.noMatches ? (
+        <NoMatchesBlock />
       ) : (
         <>
           <section aria-label="Tổng quan">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <SummaryCard label="Tổng người tuyển" value={data.recruitedTotal} hint="sum(recruited_count)" />
-              <SummaryCard label="Số ngày có tuyển" value={daysWithData} hint="trong kết quả hiện tại" />
+              <SummaryCard label="Số ngày có tuyển" value={dataDays.length} hint="trong kết quả hiện tại" />
               <SummaryCard label="Nguồn trong scope" value={data.coverage.expected} hint={data.coverage.succeeded + " đã đồng bộ"} />
               <SummaryCard label="Nguồn từng có snapshot" value={everSnapshotted} hint={"tỷ lệ " + (ratio === null ? "—" : Math.round(ratio * 100) + "%")} />
             </div>
@@ -149,7 +172,7 @@ function DashboardBody({ data, options }: { data: ReportingData; options: Report
               <TrendChart data={trend} />
               <div className="mt-2 overflow-x-auto">
                 <table className="w-full min-w-[320px] text-left text-sm">
-                  <caption className="sr-only">Bảng số người tuyển theo ngày</caption>
+                  <caption className="sr-only">Bảng số người tuyển theo ngày (chỉ các ngày có tuyển dụng)</caption>
                   <thead className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                     <tr className="border-b border-zinc-100 dark:border-zinc-900">
                       <th className="py-1.5 font-medium">Ngày</th>
@@ -157,7 +180,7 @@ function DashboardBody({ data, options }: { data: ReportingData; options: Report
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                    {trend.map((p) => (
+                    {dataDays.map((p) => (
                       <tr key={p.date} className="text-zinc-700 dark:text-zinc-200">
                         <td className="py-1.5 font-mono text-xs">{p.date}</td>
                         <td className="py-1.5 text-right font-mono">{p.count}</td>
@@ -166,6 +189,7 @@ function DashboardBody({ data, options }: { data: ReportingData; options: Report
                   </tbody>
                 </table>
               </div>
+              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Biểu đồ zero-fill các ngày không có record (thể hiện là 0). Bảng chỉ liệt kê {dataDays.length} ngày thực sự có tuyển dụng.</p>
             </Card>
           </section>
 

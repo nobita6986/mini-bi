@@ -81,7 +81,7 @@ export interface ReportingData {
   sources: ReportingSourceStatusRow[];
   /** Extent của RESULT sau mọi filter (min/max business_date của facts đã lọc). */
   dateExtent: { min: string | null; max: string | null };
-  empty: { noSources: boolean; noFacts: boolean };
+  empty: { noSources: boolean; noFacts: boolean; noMatches: boolean };
 }
 
 /** Mô tả fact query sẽ được áp dụng xuống DB (để server query + test kiểm chứng). */
@@ -247,11 +247,12 @@ export function computeReporting(
   const coverageRatio = visible.length === 0 ? null : (visible.length - neverSucceeded) / visible.length;
 
   const contributingIds = new Set(rows.map((r) => r.source_id));
+  const hasCurrentFactsOf = (s: ReportingSource): boolean =>
+    sourcesWithFacts ? sourcesWithFacts.has(s.id) : scopeFacts.some((f) => f.source_id === s.id);
+
   const sourceRows: ReportingSourceStatusRow[] = visible.map((s) => {
     const everSucceeded = s.last_successful_sync_at !== null;
-    const hasCurrentFacts = sourcesWithFacts
-      ? sourcesWithFacts.has(s.id)
-      : scopeFacts.some((f) => f.source_id === s.id);
+    const hasCurrentFacts = hasCurrentFactsOf(s);
     const contributes = contributingIds.has(s.id);
     return {
       id: s.id,
@@ -285,7 +286,11 @@ export function computeReporting(
     coverage: { expected: visible.length, succeeded, partial, failed, neverSucceeded, coverageRatio },
     sources: sourceRows,
     dateExtent: { min: minDate, max: maxDate },
-    empty: { noSources: scope.length === 0, noFacts: scope.length > 0 && scopeFacts.length === 0 },
+    empty: {
+      noSources: scope.length === 0,
+      noFacts: scope.length > 0 && !visible.some(hasCurrentFactsOf),
+      noMatches: scope.length > 0 && visible.some(hasCurrentFactsOf) && rows.length === 0,
+    },
   };
 }
 
