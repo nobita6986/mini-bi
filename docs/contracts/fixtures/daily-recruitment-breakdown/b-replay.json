@@ -1,0 +1,55 @@
+{
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+  "file_name": "P0 Fixture - Sheet tuyen dung A",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "sync_run_id": "22222222-2222-4222-8222-222222222222",
+  "snapshot_at": "2026-10-01T10:00:00Z",
+  "rows_read": 15,
+  "rows_valid": 15,
+  "rows_rejected": 0,
+  "breakdown": [
+    {
+      "business_date": "2026-10-01",
+      "project": "Dự án A",
+      "recruiter": "Nguyễn Văn A",
+      "provider_type": "HRP",
+      "employment_type": "Thời vụ",
+      "recruited_count": 3
+    },
+    {
+      "business_date": "2026-10-01",
+      "project": "Dự án A",
+      "recruiter": "Nguyễn Văn A",
+      "provider_type": "HRP",
+      "employment_type": "Chính thức",
+      "recruited_count": 1
+    },
+    {
+      "business_date": "2026-10-01",
+      "project": "Dự án A",
+      "recruiter": "Trần Thị B",
+      "provider_type": "Vendor",
+      "employment_type": "Thời vụ",
+      "recruited_count": 2
+    },
+    {
+      "business_date": "2026-10-01",
+      "project": "Dự án B",
+      "recruiter": "Trần Thị B",
+      "provider_type": "Vendor",
+      "employment_type": "Chính thức",
+      "recruited_count": 4
+    },
+    {
+      "business_date": "2026-10-02",
+      "project": "Dự án B",
+      "recruiter": "Nguyễn Văn A",
+      "provider_type": "HRP",
+      "employment_type": "Chính thức",
+      "recruited_count": 5
+    }
+  ]
+}

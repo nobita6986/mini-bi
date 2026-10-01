@@ -15,7 +15,8 @@ Luồng dữ liệu: **Google Sheets → n8n → Supabase/PostgreSQL → Next.js
 |---|---|
 | `docs/master-plan.md` | Mục tiêu, kiến trúc, phạm vi, roadmap P0–P4 |
 | `docs/P0.md` … `docs/P4.md` | Kế hoạch thực thi từng phase |
-| `docs/contracts/daily-recruitment-count-v0.1.md` | **Data contract v0.1** (nguồn tham chiếu cho T2/n8n) |
+| `docs/contracts/daily-recruitment-breakdown-v0.2.md` | **Data contract v0.2** — nguồn tham chiếu cho T2/n8n |
+| `docs/contracts/daily-recruitment-count-v0.1.md` | Contract v0.1 — **đã retire**, chỉ còn giá trị lịch sử |
 | `docs/handoffs/p0-t1-g1.md` | Handoff kỹ thuật của task P0-T1-G1 (không chứa secret) |
 | `docs/acceptance/p0-t1-g1-fixtures.md` | Kết quả kiểm thử contract |
 
@@ -95,28 +96,31 @@ cục bộ — script sẽ in cảnh báo rõ ràng.
 ## Ingestion boundary
 
 ```sql
-public.replace_daily_recruitment_snapshot_v01(p_payload jsonb) returns jsonb
+public.replace_daily_recruitment_breakdown_snapshot_v02(p_payload jsonb) returns jsonb
 ```
 
 - Chỉ `service_role` được thực thi; `PUBLIC`/`anon`/`authenticated` đã bị thu hồi quyền.
-- Payload là **tổng hợp** theo contract `daily-recruitment-count/0.1`; **không** chứa dữ liệu ứng viên.
-- Thay thế toàn bộ snapshot daily counts của đúng một source trong một transaction.
+- Grain: `(source, business_date, project, recruiter, provider_type, employment_type) = recruited_count`.
+- Bốn chiều phân loại: **Dự án · Người tuyển · HRP/Vendor · Loại hình làm việc** (Thời vụ/Chính thức).
+- Payload là **tổng hợp**; **không** chứa họ tên/ngày sinh/CCCD/địa chỉ/SĐT/ghi chú ứng viên hay raw row.
+- Thay thế toàn bộ aggregate của đúng một source trong một transaction.
+- Payload sai hoặc lỗi ghi ⇒ **giữ nguyên snapshot thành công gần nhất**.
 - Cùng payload gửi lại ⇒ `outcome = unchanged`, không tạo duplicate.
 
-Chi tiết đầy đủ: `docs/contracts/daily-recruitment-count-v0.1.md`.
+Chi tiết đầy đủ: `docs/contracts/daily-recruitment-breakdown-v0.2.md`.
 
 ## Cấu trúc repo
 
 ```text
 src/app/                    layout, trang nền
 src/components/ui/          UI primitives (Card, Alert)
-src/lib/contracts/          schema/type của data contract
+src/lib/contracts/          schema/type + hàm chuẩn hóa của data contract v0.2
 src/lib/supabase/           Supabase server client
 src/lib/env.ts              validation biến môi trường
 supabase/migrations/        DDL + RPC có version
 supabase/certs/             root CA pin cho pooler (chứng chỉ công khai)
 scripts/                    migration runner, fixture check, secret check
-docs/contracts/             contract + fixture
+docs/contracts/             contract v0.2 (+ v0.1 đã retire) và fixture
 docs/acceptance/            bằng chứng kiểm thử
 docs/handoffs/              handoff kỹ thuật
 automation/n8n/             (dành cho T2) workflow export, mapping, runbook

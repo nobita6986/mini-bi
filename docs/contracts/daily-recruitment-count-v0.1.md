@@ -1,9 +1,19 @@
 # Data Contract — Daily Recruitment Count v0.1
 
+> ## ⚠️ ĐÃ BỊ THAY THẾ (SUPERSEDED) — KHÔNG DÙNG CHO TÍCH HỢP MỚI
+>
+> Contract này đã **retire** theo **T0 Change Request — P0/P1 Reporting Grain Update**.
+> Grain `(source, business_date)` không đủ để phân loại theo dự án / người tuyển / HRP-Vendor / loại hình làm việc.
+>
+> - Contract đang hiệu lực: **`daily-recruitment-breakdown/0.2`** — `docs/contracts/daily-recruitment-breakdown-v0.2.md`
+> - RPC `replace_daily_recruitment_snapshot_v01` và bảng `daily_recruitment_counts` **đã bị gỡ** khỏi DEV
+>   bằng migration `20261001130000_p0_retire_daily_recruitment_count_v01.sql`.
+> - Tài liệu này chỉ còn giá trị lịch sử.
+
 | Thuộc tính | Giá trị |
 |---|---|
 | Contract version | `daily-recruitment-count/0.1` |
-| Trạng thái | Đã triển khai trên DEV (P0-T1-G1) |
+| Trạng thái | **RETIRED** — đã bị thay thế bởi `daily-recruitment-breakdown/0.2` |
 | Baseline | `docs/master-plan.md` v1.0, `docs/P0.md` v1.0 |
 | Owner contract | T1 (WEB) |
 | Reviewer | T2 (n8n) |

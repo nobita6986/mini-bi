@@ -100,7 +100,7 @@ async function main() {
     select table_name
       from information_schema.tables
      where table_schema = 'public'
-       and table_name in ('data_sources', 'sync_runs', 'daily_recruitment_counts', 'sync_errors')
+       and table_name in ('data_sources', 'sync_runs', 'daily_recruitment_breakdown', 'sync_errors')
      order by table_name
   `);
   console.log("Bảng hiện có:", tables.map((r) => r.table_name).join(", ") || "(không có)");

@@ -1,0 +1,23 @@
+{
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_B",
+  "file_name": "P0 Fixture - Sheet tuyen dung B",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "sync_run_id": "88888888-8888-4888-8888-888888888888",
+  "snapshot_at": "2026-10-01T16:00:00Z",
+  "rows_read": 7,
+  "rows_valid": 7,
+  "rows_rejected": 0,
+  "breakdown": [
+    {
+      "business_date": "2026-10-05",
+      "project": "Dự án Z",
+      "recruiter": "Lê Văn C",
+      "provider_type": "Vendor",
+      "employment_type": "Chính thức",
+      "recruited_count": 7
+    }
+  ]
+}

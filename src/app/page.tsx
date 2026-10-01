@@ -2,7 +2,7 @@ import { connection } from "next/server";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
-import { DAILY_RECRUITMENT_COUNT_CONTRACT_VERSION, DAILY_RECRUITMENT_RPC_NAME } from "@/lib/contracts/daily-recruitment-count";
+import { DAILY_RECRUITMENT_BREAKDOWN_CONTRACT_VERSION, DAILY_RECRUITMENT_BREAKDOWN_RPC_NAME } from "@/lib/contracts/daily-recruitment-breakdown";
 import { getEnvVarStatus } from "@/lib/env";
 
 export const metadata = {
@@ -67,11 +67,13 @@ export default async function Home() {
         <CardHeader title="Data contract đang áp dụng" description="Nguồn tham chiếu cho tích hợp với workflow n8n." />
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
           <dt className="text-zinc-500 dark:text-zinc-400">Contract version</dt>
-          <dd className="font-mono text-xs text-zinc-800 dark:text-zinc-200">{DAILY_RECRUITMENT_COUNT_CONTRACT_VERSION}</dd>
+          <dd className="font-mono text-xs text-zinc-800 dark:text-zinc-200">{DAILY_RECRUITMENT_BREAKDOWN_CONTRACT_VERSION}</dd>
           <dt className="text-zinc-500 dark:text-zinc-400">Ingestion RPC</dt>
-          <dd className="font-mono text-xs text-zinc-800 dark:text-zinc-200">{DAILY_RECRUITMENT_RPC_NAME}</dd>
+          <dd className="font-mono text-xs text-zinc-800 dark:text-zinc-200">{DAILY_RECRUITMENT_BREAKDOWN_RPC_NAME}</dd>
+          <dt className="text-zinc-500 dark:text-zinc-400">Chiều phân loại</dt>
+          <dd className="text-zinc-800 dark:text-zinc-200">Dự án · Người tuyển · HRP/Vendor · Loại hình làm việc</dd>
           <dt className="text-zinc-500 dark:text-zinc-400">Tài liệu</dt>
-          <dd className="font-mono text-xs text-zinc-800 dark:text-zinc-200">docs/contracts/daily-recruitment-count-v0.1.md</dd>
+          <dd className="font-mono text-xs text-zinc-800 dark:text-zinc-200">docs/contracts/daily-recruitment-breakdown-v0.2.md</dd>
         </dl>
       </Card>
     </main>

@@ -1,0 +1,23 @@
+{
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+  "file_name": "P0 Fixture - Sheet tuyen dung A",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "sync_run_id": "66666666-6666-4666-8666-666666666666",
+  "snapshot_at": "2026-10-01T14:00:00Z",
+  "rows_read": 4,
+  "rows_valid": 4,
+  "rows_rejected": 0,
+  "breakdown": [
+    {
+      "business_date": "2026-10-04",
+      "project": "Dự án A",
+      "recruiter": "Nguyễn Văn A",
+      "provider_type": "HRP",
+      "employment_type": "Thời vụ",
+      "recruited_count": 4
+    }
+  ]
+}
