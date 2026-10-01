@@ -29,7 +29,9 @@
 
 ### 2.3. Breakdown
 - Theo `project`, `recruiter`, `provider_type`, `employment_type`, và tổ hợp các chiều (AND).
-- Mỗi breakdown dùng `*_display` để hiển thị; key dùng cho filter/group (xem §6).
+- Mỗi breakdown dùng `*_key` làm identity group; `*_display` chỉ để trình bày.
+
+> **Clarification (W02-R2):** breakdown group theo **key** (`project_key`/`recruiter_key`/`provider_type_key`/`employment_type_key`), không theo display. Bucket đầu ra có dạng `{ key, display, recruitedCount }`. Chọn display khi nhiều source cùng key nhưng khác casing: (1) display có tổng `recruited_count` lớn nhất; (2) hòa thì chọn ổn định bằng `localeCompare("vi")`; (3) `__unknown__` → “Không xác định”, `__invalid__` → “Không hợp lệ”. Tổng `recruitedCount` mọi bucket vẫn bằng `recruited_total`. Đây là clarification, không đổi version.
 
 ### 2.4. Source coverage (từ `data_sources` + `sync_runs`)
 | Field | Định nghĩa |
@@ -41,11 +43,32 @@
 | `sources_never_succeeded` | Số source có `last_successful_sync_at IS NULL` (chưa từng có snapshot) |
 | `coverage_ratio` | `(sources_expected − sources_never_succeeded) / sources_expected` |
 
+> **Clarification (W02-R2):** `coverage_ratio` dựa trên **everSucceeded** (`last_successful_sync_at != null`), không dựa trên trạng thái run hiện tại. Khi có filter `source=<uuid>`, coverage và source-status list chỉ phản ánh source được chọn; không có `source` filter thì phản ánh toàn reporting scope. `dateExtent` là extent của **result sau mọi filter** (min/max `business_date` của facts đã lọc), không phải toàn scope.
+
 > **Clarification (W02):** `coverage_ratio` mang nghĩa **“tỷ lệ nguồn đã từng có snapshot”**, **không** phải tỷ lệ nguồn healthy. Các trạng thái `succeeded`/`partial`/`failed` vẫn phải trả riêng. Khi `sources_expected = 0`, `coverage_ratio = null` (không chia 0, không giả thành 100%). Đây là clarification, không đổi công thức hay version.
 
 ### 2.5. Freshness
 - Hiển thị `last_successful_sync_at` và trạng thái run gần nhất (per-source).
 - **Chưa** tự đặt ngưỡng stale theo giờ vì cadence chưa bật. Khi schedule 6 giờ được kích hoạt, stale threshold là quyết định/version riêng.
+
+### 2.6. Source status / contribution (clarification W02-R2)
+Mỗi source trong status list có 3 field tách biệt:
+
+| Field | Định nghĩa |
+|---|---|
+| `everSucceeded` | `last_successful_sync_at != null` (đã từng có snapshot thành công) |
+| `hasCurrentFacts` | source có ≥1 fact trong snapshot hiện hành (độc lập filter) |
+| `contributes` | source có facts đang được cộng vào result (sau filter), kể cả snapshot từ partial |
+
+Status:
+- `succeeded` → `covered`
+- `partial` → `incomplete`
+- `failed` + có snapshot/facts cũ → `stale_snapshot`
+- `failed` + không có snapshot → `never_succeeded`
+- `running` → `running` (riêng, **không** gán `stale_snapshot`/`no_run`)
+- chưa có run → `no_run`
+
+Source `partial` lần đầu có valid facts: facts vẫn được tính, `contributes=true`, `everSucceeded=false` (coverage_ratio chưa tính source đó là từng succeeded), `status=incomplete`.
 
 ## 3. Source scope
 
@@ -72,6 +95,8 @@ Reporting scope (nguồn BoD P1): `data_sources.active = true AND data_sources.i
 | `partial` | Dùng các hàng valid đã publish (partial vẫn publish theo R1) | `incomplete`; không tính fully covered |
 | `failed` (có snapshot cũ) | Dùng snapshot thành công cũ | hiển thị lỗi/freshness |
 | `failed` (chưa từng succeeded) | Không đóng góp metric | thuộc `sources_never_succeeded` |
+| `running` | Không đóng góp metric (run chưa xong) | trạng thái `running` riêng |
+| `partial` (lần đầu, chưa từng succeeded) | Dùng các hàng valid đã publish; `contributes=true` | `incomplete`; vẫn thuộc `sources_never_succeeded` |
 | DB/query error | Trả error state | **không** hiển thị số 0 như dữ liệu thật |
 
 - Không biến source failed thành 0 người. Không giả số rejected thành 0 người hợp lệ.
@@ -102,6 +127,7 @@ Quy tắc:
 - Các filter chiều kết hợp bằng **AND**. Thiếu filter chiều ⇒ All.
 - URL dùng **normalized key / source UUID**, không dùng display label làm identity.
 - Giá trị filter không hợp lệ phải được validate; **không** tạo SQL động.
+- **Clarification (W02-R2):** dimension/date filters chỉ ảnh hưởng recruited metrics/breakdowns và `dateExtent`; coverage/source-status list chỉ phụ thuộc `source` filter (không có `source` thì là toàn scope). `source` filter không fallback “All” khi UUID ngoài scope — trả validation error.
 - Không hard-code dependency `nuqs` trong contract; lựa chọn thư viện thuộc W02/UI review.
 
 ## 7. Trend và ngày không có record

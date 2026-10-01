@@ -10,28 +10,28 @@
         "2026-10-03": 7
       },
       "by_project": {
-        "Dự án A": 7,
-        "Dự án B": 3,
-        "Dự án C": 7,
-        "Không xác định": 1
+        "dự án a": { "key": "dự án a", "display": "Dự án A", "recruitedCount": 7 },
+        "dự án b": { "key": "dự án b", "display": "Dự án B", "recruitedCount": 3 },
+        "dự án c": { "key": "dự án c", "display": "Dự án C", "recruitedCount": 7 },
+        "__unknown__": { "key": "__unknown__", "display": "Không xác định", "recruitedCount": 1 }
       },
       "by_recruiter": {
-        "Không xác định": 5,
-        "Lê Văn C": 5,
-        "Nguyễn Văn A": 6,
-        "Trần Thị B": 2
+        "lê văn c": { "key": "lê văn c", "display": "Lê Văn C", "recruitedCount": 5 },
+        "nguyễn văn a": { "key": "nguyễn văn a", "display": "Nguyễn Văn A", "recruitedCount": 6 },
+        "trần thị b": { "key": "trần thị b", "display": "Trần Thị B", "recruitedCount": 2 },
+        "__unknown__": { "key": "__unknown__", "display": "Không xác định", "recruitedCount": 5 }
       },
       "by_provider": {
-        "HRP": 7,
-        "Không hợp lệ": 3,
-        "Không xác định": 1,
-        "Vendor": 7
+        "hrp": { "key": "hrp", "display": "HRP", "recruitedCount": 7 },
+        "vendor": { "key": "vendor", "display": "Vendor", "recruitedCount": 7 },
+        "__unknown__": { "key": "__unknown__", "display": "Không xác định", "recruitedCount": 1 },
+        "__invalid__": { "key": "__invalid__", "display": "Không hợp lệ", "recruitedCount": 3 }
       },
       "by_employment": {
-        "Chính thức": 5,
-        "Không hợp lệ": 4,
-        "Không xác định": 1,
-        "Thời vụ": 8
+        "thời vụ": { "key": "thời vụ", "display": "Thời vụ", "recruitedCount": 8 },
+        "chính thức": { "key": "chính thức", "display": "Chính thức", "recruitedCount": 5 },
+        "__unknown__": { "key": "__unknown__", "display": "Không xác định", "recruitedCount": 1 },
+        "__invalid__": { "key": "__invalid__", "display": "Không hợp lệ", "recruitedCount": 4 }
       }
     },
     "date_range": {
@@ -82,48 +82,12 @@
       "coverage_ratio": 0.75
     },
     "breakdown_consistency": [
-      {
-        "scope": "no_filter",
-        "dimension": "by_date",
-        "sum": 18,
-        "recruited_total": 18,
-        "consistent": true
-      },
-      {
-        "scope": "no_filter",
-        "dimension": "by_project",
-        "sum": 18,
-        "recruited_total": 18,
-        "consistent": true
-      },
-      {
-        "scope": "no_filter",
-        "dimension": "by_recruiter",
-        "sum": 18,
-        "recruited_total": 18,
-        "consistent": true
-      },
-      {
-        "scope": "no_filter",
-        "dimension": "by_provider",
-        "sum": 18,
-        "recruited_total": 18,
-        "consistent": true
-      },
-      {
-        "scope": "no_filter",
-        "dimension": "by_employment",
-        "sum": 18,
-        "recruited_total": 18,
-        "consistent": true
-      },
-      {
-        "scope": "date_range",
-        "dimension": "by_date",
-        "sum": 11,
-        "recruited_total": 11,
-        "consistent": true
-      }
+      { "scope": "no_filter", "dimension": "by_date", "sum": 18, "recruited_total": 18, "consistent": true },
+      { "scope": "no_filter", "dimension": "by_project", "sum": 18, "recruited_total": 18, "consistent": true },
+      { "scope": "no_filter", "dimension": "by_recruiter", "sum": 18, "recruited_total": 18, "consistent": true },
+      { "scope": "no_filter", "dimension": "by_provider", "sum": 18, "recruited_total": 18, "consistent": true },
+      { "scope": "no_filter", "dimension": "by_employment", "sum": 18, "recruited_total": 18, "consistent": true },
+      { "scope": "date_range", "dimension": "by_date", "sum": 11, "recruited_total": 11, "consistent": true }
     ]
   }
 }

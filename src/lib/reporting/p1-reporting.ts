@@ -28,7 +28,13 @@ export interface ReportingFact {
   recruited_count: number;
 }
 
-export type ReportingSourceStatus = "covered" | "incomplete" | "stale_snapshot" | "never_succeeded" | "no_run";
+export type ReportingSourceStatus =
+  | "covered"
+  | "incomplete"
+  | "stale_snapshot"
+  | "never_succeeded"
+  | "running"
+  | "no_run";
 
 export interface ReportingSourceStatusRow {
   id: string;
@@ -36,8 +42,20 @@ export interface ReportingSourceStatusRow {
   latestRunStatus: RunStatus | null;
   lastSuccessfulSyncAt: string | null;
   lastSeenAt: string | null;
+  /** Đã từng có snapshot thành công (last_successful_sync_at != null). */
+  everSucceeded: boolean;
+  /** Có ít nhất một fact trong snapshot hiện hành (độc lập filter). */
+  hasCurrentFacts: boolean;
+  /** Có facts đang được cộng vào result (sau filter), kể cả snapshot partial. */
   contributes: boolean;
   status: ReportingSourceStatus;
+}
+
+/** Bucket của một breakdown theo chiều (identity = key; display chỉ để trình bày). */
+export interface ReportingBucket {
+  key: string;
+  display: string;
+  recruitedCount: number;
 }
 
 export interface ReportingCoverage {
@@ -53,14 +71,27 @@ export interface ReportingData {
   applied: ReportingFilters;
   recruitedTotal: number;
   byDate: Record<string, number>;
-  byProject: Record<string, number>;
-  byRecruiter: Record<string, number>;
-  byProvider: Record<string, number>;
-  byEmployment: Record<string, number>;
+  byProject: Record<string, ReportingBucket>;
+  byRecruiter: Record<string, ReportingBucket>;
+  byProvider: Record<string, ReportingBucket>;
+  byEmployment: Record<string, ReportingBucket>;
   coverage: ReportingCoverage;
   sources: ReportingSourceStatusRow[];
+  /** Extent của RESULT sau mọi filter (min/max business_date của facts đã lọc). */
   dateExtent: { min: string | null; max: string | null };
   empty: { noSources: boolean; noFacts: boolean };
+}
+
+/** Mô tả fact query sẽ được áp dụng xuống DB (để server query + test kiểm chứng). */
+export interface ReportingFactQuery {
+  scopeIds: string[];
+  source?: string;
+  from?: string;
+  to?: string;
+  project?: string;
+  recruiter?: string;
+  provider?: string;
+  employment?: string;
 }
 
 export const REPORTING_QUERY_FAILED_CODE = "REPORTING_QUERY_FAILED";
@@ -76,7 +107,32 @@ export function reportingQueryFailed(): { ok: false; code: string; message: stri
   return { ok: false, code: REPORTING_QUERY_FAILED_CODE, message: REPORTING_QUERY_FAILED_MESSAGE };
 }
 
-function groupBy(rows: ReportingFact[], key: keyof ReportingFact): Record<string, number> {
+/**
+ * Lập fact query cần đẩy xuống DB. Khi scope rỗng => skip (không query facts).
+ * Scope luôn được lọc ở DB (không tải fixture ra khỏi DB); các filter khác
+ * cũng truyền xuống DB; read-model chỉ validate/filter lại phòng thủ.
+ */
+export function buildReportingFactQuery(
+  filters: ReportingFilters,
+  scopeIds: ReadonlySet<string>
+): { skip: boolean; query: ReportingFactQuery } {
+  const ids = Array.from(scopeIds);
+  return {
+    skip: ids.length === 0,
+    query: {
+      scopeIds: ids,
+      source: filters.source,
+      from: filters.from,
+      to: filters.to,
+      project: filters.project,
+      recruiter: filters.recruiter,
+      provider: filters.provider,
+      employment: filters.employment,
+    },
+  };
+}
+
+function sumBy(rows: ReportingFact[], key: keyof ReportingFact): Record<string, number> {
   const map = new Map<string, number>();
   for (const row of rows) {
     const k = String(row[key]);
@@ -86,16 +142,83 @@ function groupBy(rows: ReportingFact[], key: keyof ReportingFact): Record<string
 }
 
 /**
+ * Chọn display cho một bucket (identity = key).
+ * 1) Chọn display có tổng recruited_count lớn nhất.
+ * 2) Hòa => chọn ổn định bằng localeCompare("vi") (nhỏ nhất trước).
+ * 3) Sentinel luôn hiển thị nhãn cố định.
+ */
+function selectDisplay(key: string, displayCounts: ReadonlyMap<string, number>): string {
+  if (key === "__unknown__") return "Không xác định";
+  if (key === "__invalid__") return "Không hợp lệ";
+  let best = "";
+  let bestCount = -1;
+  for (const [display, count] of displayCounts) {
+    if (
+      count > bestCount ||
+      (count === bestCount && (best === "" || display.localeCompare(best, "vi") < 0))
+    ) {
+      best = display;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Group một chiều theo KEY (không theo display). Kết quả: Record<key, bucket>.
+ * Tổng recruitedCount của mọi bucket bằng tổng recruited_count của rows đầu vào.
+ */
+function groupByDimension(
+  rows: ReportingFact[],
+  keyField: keyof ReportingFact,
+  displayField: keyof ReportingFact
+): Record<string, ReportingBucket> {
+  const buckets = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const k = String(row[keyField]);
+    const d = String(row[displayField]);
+    let byDisplay = buckets.get(k);
+    if (!byDisplay) {
+      byDisplay = new Map();
+      buckets.set(k, byDisplay);
+    }
+    byDisplay.set(d, (byDisplay.get(d) ?? 0) + row.recruited_count);
+  }
+  const out: Record<string, ReportingBucket> = {};
+  for (const k of [...buckets.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const byDisplay = buckets.get(k)!;
+    let total = 0;
+    for (const count of byDisplay.values()) total += count;
+    out[k] = { key: k, display: selectDisplay(k, byDisplay), recruitedCount: total };
+  }
+  return out;
+}
+
+function sourceStatus(
+  s: ReportingSource,
+  hasCurrentFacts: boolean
+): ReportingSourceStatus {
+  if (s.latest_run_status === "succeeded") return "covered";
+  if (s.latest_run_status === "partial") return "incomplete";
+  if (s.latest_run_status === "failed") return hasCurrentFacts ? "stale_snapshot" : "never_succeeded";
+  if (s.latest_run_status === "running") return "running";
+  return "no_run";
+}
+
+/**
  * Read-model thuần cho reporting BoD P1 (contract p1-reporting/0.1).
  *
- * - Scope = active=true AND is_test=false.
- * - Facts được lọc theo scope + date + dimension + source (AND).
- * - Sum recruited_count (không đếm dòng aggregate).
+ * - Scope = active=true AND is_test=false (sources đầu vào đã là scope).
+ * - Facts đầu vào đã được lọc ở DB (scope + source + date + dimensions);
+ *   read-model vẫn lọc lại phòng thủ.
+ * - `sourcesWithFacts`: tập source_id có ít nhất một fact trong snapshot hiện hành
+ *   (độc lập filter), để phân biệt stale_snapshot vs never_succeeded.
  */
 export function computeReporting(
   sources: ReportingSource[],
   facts: ReportingFact[],
-  filters: ReportingFilters
+  filters: ReportingFilters,
+  sourcesWithFacts?: ReadonlySet<string>
 ): ReportingData {
   const scope = sources.filter((s) => s.active && !s.is_test);
   const scopeIds = new Set(scope.map((s) => s.id));
@@ -113,34 +236,37 @@ export function computeReporting(
 
   const recruitedTotal = rows.reduce((a, r) => a + r.recruited_count, 0);
 
-  const succeeded = scope.filter((s) => s.latest_run_status === "succeeded").length;
-  const partial = scope.filter((s) => s.latest_run_status === "partial").length;
-  const failed = scope.filter((s) => s.latest_run_status === "failed").length;
-  const neverSucceeded = scope.filter((s) => s.last_successful_sync_at === null).length;
-  const coverageRatio = scope.length === 0 ? null : (scope.length - neverSucceeded) / scope.length;
+  // Coverage/status chỉ phản ánh scope (hoặc source được chọn nếu có source filter).
+  const visible = filters.source ? scope.filter((s) => s.id === filters.source) : scope;
+  const succeeded = visible.filter((s) => s.latest_run_status === "succeeded").length;
+  const partial = visible.filter((s) => s.latest_run_status === "partial").length;
+  const failed = visible.filter((s) => s.latest_run_status === "failed").length;
+  const neverSucceeded = visible.filter((s) => s.last_successful_sync_at === null).length;
+  const coverageRatio = visible.length === 0 ? null : (visible.length - neverSucceeded) / visible.length;
 
-  // contributes = đã từng có snapshot (last_successful_sync_at khác null), không phụ thuộc filter.
-  const sourceRows: ReportingSourceStatusRow[] = scope.map((s) => {
-    const contributes = s.last_successful_sync_at !== null;
-    let status: ReportingSourceStatus;
-    if (s.latest_run_status === "succeeded") status = "covered";
-    else if (s.latest_run_status === "partial") status = "incomplete";
-    else if (s.latest_run_status === "failed") status = contributes ? "stale_snapshot" : "never_succeeded";
-    else status = contributes ? "stale_snapshot" : "no_run";
+  const contributingIds = new Set(rows.map((r) => r.source_id));
+  const sourceRows: ReportingSourceStatusRow[] = visible.map((s) => {
+    const everSucceeded = s.last_successful_sync_at !== null;
+    const hasCurrentFacts = sourcesWithFacts
+      ? sourcesWithFacts.has(s.id)
+      : scopeFacts.some((f) => f.source_id === s.id);
+    const contributes = contributingIds.has(s.id);
     return {
       id: s.id,
       drive_file_id: s.drive_file_id,
       latestRunStatus: s.latest_run_status,
       lastSuccessfulSyncAt: s.last_successful_sync_at,
       lastSeenAt: s.last_seen_at,
+      everSucceeded,
+      hasCurrentFacts,
       contributes,
-      status,
+      status: sourceStatus(s, hasCurrentFacts),
     };
   });
 
   let minDate: string | null = null;
   let maxDate: string | null = null;
-  for (const f of scopeFacts) {
+  for (const f of rows) {
     if (minDate === null || f.business_date < minDate) minDate = f.business_date;
     if (maxDate === null || f.business_date > maxDate) maxDate = f.business_date;
   }
@@ -148,12 +274,12 @@ export function computeReporting(
   return {
     applied: filters,
     recruitedTotal,
-    byDate: groupBy(rows, "business_date"),
-    byProject: groupBy(rows, "project_display"),
-    byRecruiter: groupBy(rows, "recruiter_display"),
-    byProvider: groupBy(rows, "provider_type_display"),
-    byEmployment: groupBy(rows, "employment_type_display"),
-    coverage: { expected: scope.length, succeeded, partial, failed, neverSucceeded, coverageRatio },
+    byDate: sumBy(rows, "business_date"),
+    byProject: groupByDimension(rows, "project_key", "project_display"),
+    byRecruiter: groupByDimension(rows, "recruiter_key", "recruiter_display"),
+    byProvider: groupByDimension(rows, "provider_type_key", "provider_type_display"),
+    byEmployment: groupByDimension(rows, "employment_type_key", "employment_type_display"),
+    coverage: { expected: visible.length, succeeded, partial, failed, neverSucceeded, coverageRatio },
     sources: sourceRows,
     dateExtent: { min: minDate, max: maxDate },
     empty: { noSources: scope.length === 0, noFacts: scope.length > 0 && rows.length === 0 },

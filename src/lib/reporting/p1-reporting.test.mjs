@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 import { normalizeDimensionKey } from "../contracts/daily-recruitment-breakdown.ts";
 import { parseReportingFilters, isRealCalendarDate } from "./p1-filter.ts";
-import { computeReporting, reportingQueryFailed, REPORTING_QUERY_FAILED_CODE } from "./p1-reporting.ts";
+import { computeReporting, reportingQueryFailed, buildReportingFactQuery, REPORTING_QUERY_FAILED_CODE } from "./p1-reporting.ts";
 
 const dir = path.join(process.cwd(), "docs", "contracts", "fixtures", "p1-reporting");
 const input = JSON.parse(readFileSync(path.join(dir, "input.json"), "utf8"));
@@ -39,6 +39,25 @@ function run(params) {
   return computeReporting(sources, facts, parsed.filters);
 }
 
+function fact(source_id, overrides = {}) {
+  return {
+    source_id,
+    business_date: "2026-10-01",
+    project_key: "dự án a",
+    project_display: "Dự án A",
+    recruiter_key: "nguyễn văn a",
+    recruiter_display: "Nguyễn Văn A",
+    provider_type_key: "hrp",
+    provider_type_display: "HRP",
+    employment_type_key: "thời vụ",
+    employment_type_display: "Thời vụ",
+    recruited_count: 1,
+    ...overrides,
+  };
+}
+
+const SRC = { id: "11111111-1111-4111-8111-111111111111", drive_file_id: "SYN", active: true, is_test: false, last_seen_at: null };
+
 test("1. no filter = 18", () => {
   assert.equal(run({}).recruitedTotal, expected.cases.no_filter.recruited_total);
 });
@@ -70,7 +89,7 @@ test("5. unknown/invalid groups", () => {
 test("6. fixture 200 người bị loại", () => {
   const r = run({});
   assert.equal(r.recruitedTotal, 18);
-  assert.ok(!r.byProject["Dự án Fixture"]);
+  assert.ok(!r.byProject["dự án fixture"]);
   assert.ok(!r.sources.some((s) => s.drive_file_id === "P0FIXTURE_DRIVE_FILE_A"));
   assert.equal(r.recruitedTotal + 200, 218);
 });
@@ -88,12 +107,20 @@ test("7. coverage counts + ratio 0.75", () => {
 
 test("8. breakdown totals khớp recruitedTotal", () => {
   const r = run({});
-  const sum = (o) => Object.values(o).reduce((a, v) => a + v, 0);
+  const sum = (o) => Object.values(o).reduce((a, v) => a + (typeof v === "number" ? v : v.recruitedCount), 0);
   assert.equal(sum(r.byDate), r.recruitedTotal);
   assert.equal(sum(r.byProject), r.recruitedTotal);
   assert.equal(sum(r.byRecruiter), r.recruitedTotal);
   assert.equal(sum(r.byProvider), r.recruitedTotal);
   assert.equal(sum(r.byEmployment), r.recruitedTotal);
+});
+
+test("8b. breakdown buckets khớp expected.json (key + display + count)", () => {
+  const r = run({});
+  assert.deepEqual(r.byProject, expected.cases.no_filter.by_project);
+  assert.deepEqual(r.byRecruiter, expected.cases.no_filter.by_recruiter);
+  assert.deepEqual(r.byProvider, expected.cases.no_filter.by_provider);
+  assert.deepEqual(r.byEmployment, expected.cases.no_filter.by_employment);
 });
 
 test("9. expected=0 => coverageRatio=null", () => {
@@ -132,4 +159,117 @@ test("14. DB error không trở thành dữ liệu 0", () => {
   assert.ok(!("data" in err));
   const empty = computeReporting([], [], {});
   assert.equal(empty.empty.noSources, true);
+});
+
+test("15. casing/whitespace/NFC tương đương => một project bucket (group theo key)", () => {
+  const fs = [
+    fact(SRC.id, { project_key: "dự án a", project_display: "Dự án A", recruited_count: 2 }),
+    fact(SRC.id, { project_key: "dự án a", project_display: "dự án a", recruited_count: 1 }),
+    fact(SRC.id, { project_key: "dự án a", project_display: "DỰ ÁN A", recruited_count: 3 }),
+  ];
+  const r = computeReporting([SRC], fs, {});
+  assert.equal(Object.keys(r.byProject).length, 1);
+  assert.deepEqual(r.byProject["dự án a"], { key: "dự án a", display: "DỰ ÁN A", recruitedCount: 6 });
+  assert.equal(r.byProject["dự án a"].recruitedCount, r.recruitedTotal);
+});
+
+test("16. recruiter khác casing nhưng cùng key => một bucket", () => {
+  const fs = [
+    fact(SRC.id, { recruiter_key: "nguyễn văn a", recruiter_display: "Nguyễn Văn A", recruited_count: 1 }),
+    fact(SRC.id, { recruiter_key: "nguyễn văn a", recruiter_display: "NGUYỄN VĂN A", recruited_count: 2 }),
+  ];
+  const r = computeReporting([SRC], fs, {});
+  assert.equal(Object.keys(r.byRecruiter).length, 1);
+  assert.deepEqual(r.byRecruiter["nguyễn văn a"], { key: "nguyễn văn a", display: "NGUYỄN VĂN A", recruitedCount: 3 });
+});
+
+test("17. display hòa chọn ổn định bằng localeCompare(vi)", () => {
+  const fs = [
+    fact(SRC.id, { project_key: "x", project_display: "Beta", recruited_count: 2 }),
+    fact(SRC.id, { project_key: "x", project_display: "Alpha", recruited_count: 2 }),
+  ];
+  const r = computeReporting([SRC], fs, {});
+  assert.deepEqual(r.byProject["x"], { key: "x", display: "Alpha", recruitedCount: 4 });
+});
+
+test("18. sentinel display cố định", () => {
+  const fs = [
+    fact(SRC.id, { project_key: "__unknown__", project_display: "bất kỳ", recruited_count: 1 }),
+    fact(SRC.id, { project_key: "__invalid__", project_display: "sai", recruited_count: 1 }),
+  ];
+  const r = computeReporting([SRC], fs, {});
+  assert.equal(r.byProject["__unknown__"].display, "Không xác định");
+  assert.equal(r.byProject["__invalid__"].display, "Không hợp lệ");
+});
+
+test("19. partial lần đầu có facts: contributes=true, everSucceeded=false, incomplete", () => {
+  const src = { ...SRC, latest_run_status: "partial", last_successful_sync_at: null };
+  const fs = [fact(src.id, { recruited_count: 5 })];
+  const r = computeReporting([src], fs, {}, new Set([src.id]));
+  assert.equal(r.recruitedTotal, 5);
+  assert.equal(r.sources.length, 1);
+  const s = r.sources[0];
+  assert.equal(s.status, "incomplete");
+  assert.equal(s.contributes, true);
+  assert.equal(s.everSucceeded, false);
+  assert.equal(s.hasCurrentFacts, true);
+  assert.equal(r.coverage.neverSucceeded, 1);
+  assert.equal(r.coverage.coverageRatio, 0);
+});
+
+test("20. latest running => status running (không stale/no_run)", () => {
+  const src = { ...SRC, latest_run_status: "running", last_successful_sync_at: "2026-10-01T00:00:00Z" };
+  const r = computeReporting([src], [], {}, new Set());
+  assert.equal(r.sources[0].status, "running");
+  assert.equal(r.sources[0].everSucceeded, true);
+  assert.equal(r.sources[0].contributes, false);
+});
+
+test("21. failed + không facts => never_succeeded; failed + facts => stale_snapshot", () => {
+  const noFacts = { ...SRC, latest_run_status: "failed", last_successful_sync_at: null };
+  const withFacts = { ...SRC, id: "22222222-2222-4222-8222-222222222222", latest_run_status: "failed", last_successful_sync_at: null };
+  const r = computeReporting([noFacts, withFacts], [fact(withFacts.id, { recruited_count: 2 })], {}, new Set([withFacts.id]));
+  const byId = Object.fromEntries(r.sources.map((s) => [s.id, s]));
+  assert.equal(byId[noFacts.id].status, "never_succeeded");
+  assert.equal(byId[noFacts.id].hasCurrentFacts, false);
+  assert.equal(byId[withFacts.id].status, "stale_snapshot");
+  assert.equal(byId[withFacts.id].hasCurrentFacts, true);
+});
+
+test("22. source filter chỉ phản ánh coverage/status của source được chọn", () => {
+  const sid = "00000000-0000-4000-8000-000000000002";
+  const r = run({ source: sid });
+  assert.equal(r.coverage.expected, 1);
+  assert.equal(r.sources.length, 1);
+  assert.equal(r.sources[0].id, sid);
+  assert.equal(r.sources[0].status, "incomplete");
+  assert.equal(r.coverage.partial, 1);
+});
+
+test("23. dateExtent là extent của result sau filter", () => {
+  assert.deepEqual(run({}).dateExtent, { min: "2026-10-01", max: "2026-10-03" });
+  assert.deepEqual(run({ from: "2026-10-02", to: "2026-10-03" }).dateExtent, { min: "2026-10-02", max: "2026-10-03" });
+});
+
+test("24. buildReportingFactQuery: scope rỗng => skip, không query facts", () => {
+  const plan = buildReportingFactQuery({}, new Set());
+  assert.equal(plan.skip, true);
+  assert.deepEqual(plan.query.scopeIds, []);
+});
+
+test("25. buildReportingFactQuery: filter được truyền xuống DB", () => {
+  const ids = new Set(["a", "b"]);
+  const plan = buildReportingFactQuery(
+    { from: "2026-10-01", to: "2026-10-31", project: "dự án a", recruiter: "nguyễn văn a", provider: "hrp", employment: "thời vụ", source: "a" },
+    ids
+  );
+  assert.equal(plan.skip, false);
+  assert.deepEqual(plan.query.scopeIds, ["a", "b"]);
+  assert.equal(plan.query.source, "a");
+  assert.equal(plan.query.from, "2026-10-01");
+  assert.equal(plan.query.to, "2026-10-31");
+  assert.equal(plan.query.project, "dự án a");
+  assert.equal(plan.query.recruiter, "nguyễn văn a");
+  assert.equal(plan.query.provider, "hrp");
+  assert.equal(plan.query.employment, "thời vụ");
 });
