@@ -83,8 +83,8 @@ Bảng lưu song song **key** (đã chuẩn hóa, dùng gộp nhóm và làm kh�
   "trigger_type": "manual",
   "snapshot_at": "2026-10-01T09:30:00Z",
   "timezone": "Asia/Ho_Chi_Minh",
-  "rows_read": 15,
-  "rows_valid": 15,
+  "rows_read": 4,
+  "rows_valid": 4,
   "rows_rejected": 0,
   "rows_warned": 0,
   "warning_issues": 0,
@@ -191,6 +191,38 @@ Ví dụ đã kiểm thử: `" hrp "` → key `hrp` / display `HRP`; `"chính   
 
 Với `project` và `recruiter`, các nhãn `-`, `N/A`, `không có` vẫn là **giá trị thật** (khác `__unknown__`),
 vì việc quy chúng về "Không xác định" là một suy luận nghiệp vụ chưa được duyệt.
+
+### 5.3. Mapping payload — T2 gửi gì
+
+**Ô trống trên Sheet — T2 gửi `null`, KHÔNG gửi literal `"Không xác định"`.** Database sẽ chuyển `null`
+thành key `__unknown__` và display `"Không xác định"`.
+
+| Cột nguồn | Field payload | Ô trống ⇒ gửi | Database lưu |
+|---|---|---|---|
+| B (Dự án) | `project` | `null` | key `__unknown__`, display `Không xác định` |
+| C (Ngày vào) | `business_date` | — (C trống ⇒ hàng rejected, xem §6) | — |
+| J (HRP/Vendor) | `provider_type` | `null` | key `__unknown__`, display `Không xác định` |
+| K (Người tuyển) | `recruiter` | `null` | key `__unknown__`, display `Không xác định` |
+| L (Loại hình) | `employment_type` | `null` | key `__unknown__`, display `Không xác định` |
+
+**J/L ngoài danh mục — T2 gửi literal `"__invalid__"`** (không gửi giá trị thô). Database sẽ canonicalize
+display thành `"Không hợp lệ"`. **Vẫn phải** tạo `row_issues` warning tương ứng.
+
+| Cột nguồn | Ô ngoài danh mục ⇒ gửi | Database lưu | Warning bắt buộc |
+|---|---|---|---|
+| J (HRP/Vendor) | `"provider_type": "__invalid__"` | key `__invalid__`, display `Không hợp lệ` | `INVALID_PROVIDER_TYPE` |
+| L (Loại hình) | `"employment_type": "__invalid__"` | key `__invalid__`, display `Không hợp lệ` | `INVALID_EMPLOYMENT_TYPE` |
+
+**Khóa gộp nhóm trước khi tạo `breakdown`** (group bằng key đã chuẩn hóa):
+
+| Field | Khóa gộp nhóm |
+|---|---|
+| `project` / `recruiter` | NFC → trim → gộp khoảng trắng → lowercase |
+| `provider_type` | `hrp` \| `vendor` \| `__unknown__` \| `__invalid__` |
+| `employment_type` | `thời vụ` \| `chính thức` \| `__unknown__` \| `__invalid__` |
+
+- Group bằng **key chuẩn hóa**; `project` / `recruiter` **display** giữ giá trị đã trim/gộp khoảng trắng.
+- **Không** gửi hai phần tử `breakdown` có cùng normalized grain key.
 
 ---
 
