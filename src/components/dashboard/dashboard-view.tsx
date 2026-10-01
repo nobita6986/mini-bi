@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
 import { buildBarData, buildCategorySegments, buildProjectDonutData, buildSourceStatusSegments } from "@/lib/reporting/p1-chart-data";
@@ -48,11 +49,19 @@ export function DashboardView({ report, optionsResult }: { report: ReportingFetc
   const generatedAt = report.ok ? report.generatedAt : undefined;
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
-      <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-sky-50 px-5 py-5 dark:border-slate-800 dark:from-indigo-950/40 dark:via-slate-900 dark:to-sky-950/40">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">Tổng quan tuyển dụng</h1>
-        <p className="mt-0.5 max-w-2xl text-sm text-slate-600 dark:text-slate-300">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+      <header className="rounded-2xl border border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-sky-50 px-5 py-4 dark:border-slate-800 dark:from-indigo-950/40 dark:via-slate-900 dark:to-sky-950/40">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="flex h-14 shrink-0 items-center justify-center rounded-lg bg-white p-1 shadow-sm ring-1 ring-slate-200 sm:h-16">
+            <Image src="/brand/hrpartner-logo.png" alt="HR Partner" width={2166} height={1706} priority className="h-full w-auto" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-indigo-600 dark:text-indigo-300">BoD · Báo cáo điều hành</p>
+            <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">Tổng quan tuyển dụng</h1>
+            <p className="mt-0.5 max-w-2xl text-sm text-slate-600 dark:text-slate-300">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+          </div>
+        </div>
         {generatedAt ? (
-          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
         ) : null}
       </header>
 

@@ -19,7 +19,7 @@ const parsers = {
 };
 
 const inputClass =
-  "h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+  "h-11 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
 function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   return (
@@ -31,7 +31,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 }
 
 export function DashboardFilters({ options }: { options: ReportingOptionsCatalog }) {
-  const [filters, setFilters] = useQueryStates(parsers, { shallow: false });
+  const [filters, setFilters] = useQueryStates(parsers, { shallow: false, scroll: false });
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const now = new Date();
@@ -43,26 +43,27 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
 
   const chip = (active: boolean) =>
     cn(
-      "inline-flex h-8 shrink-0 items-center rounded-full border px-3 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40",
+      "inline-flex h-11 shrink-0 items-center rounded-full border px-3 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40",
       active
         ? "border-indigo-600 bg-indigo-600 text-white dark:border-indigo-500 dark:bg-indigo-500"
         : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
     );
 
   return (
-    <section aria-label="Bộ lọc báo cáo" className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+    <>
+      <section aria-label="Bộ lọc báo cáo" className="sticky top-2 z-20 rounded-2xl border border-slate-200 bg-white/90 p-3.5 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Bộ lọc</h2>
           <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">{countLabel}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" aria-expanded={advancedOpen} aria-controls="advanced-filters" onClick={() => setAdvancedOpen((o) => !o)} className="inline-flex h-8 items-center rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+          <button type="button" aria-expanded={advancedOpen} aria-controls="advanced-filters" onClick={() => setAdvancedOpen((o) => !o)} className="inline-flex h-11 items-center rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
             <span aria-hidden className="mr-1">{advancedOpen ? "▾" : "▸"}</span>
             Bộ lọc nâng cao
           </button>
           {activeCount > 0 ? (
-            <button type="button" onClick={() => setFilters(null)} className="inline-flex h-8 items-center rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40">
+            <button type="button" onClick={() => setFilters(null)} className="inline-flex h-11 items-center rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40">
               Xóa bộ lọc
             </button>
           ) : null}
@@ -79,9 +80,10 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
           Tất cả thời gian
         </button>
       </div>
+      </section>
 
-      <div id="advanced-filters" hidden={!advancedOpen} className="mt-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div id="advanced-filters" hidden={!advancedOpen} className="mt-2 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="grid max-h-[70vh] grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-4">
           <Field id="f-from" label="Từ ngày">
             <input id="f-from" type="date" className={inputClass} value={filters.from ?? ""} onChange={(e) => setFilters({ from: e.target.value || null })} />
           </Field>
@@ -120,6 +122,6 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
           </Field>
         </div>
       </div>
-    </section>
+    </>
   );
 }
