@@ -11,6 +11,8 @@
 ## 1. Nguyên tắc
 
 - Đọc duy nhất bảng `daily_recruitment_breakdown` (+ `data_sources`/`sync_runs` cho scope/coverage/freshness).
+- Latest run và presence đọc qua view service-role-only: `reporting_latest_sync_runs_v01`, `reporting_sources_with_current_facts_v01`.
+- **Data completeness:** không bao giờ công bố dữ liệu bị truncate như dữ liệu đầy đủ (xem §11).
 - Không tính target, KPI, conversion, commission hoặc payroll.
 - Không suy luận/AI phân loại. Không đọc/hiển thị dữ liệu ứng viên (D–I/M).
 - `Không xác định` và `Không hợp lệ` **vẫn được tính** vào tổng và **phải hiển thị thành nhóm/filter riêng**, không ẩn.
@@ -158,3 +160,11 @@ Quy tắc:
 
 - Cơ chế access gate cụ thể (hosting auth, basic auth, proxy…).
 - Nguyên tắc giữ nguyên: **gate chạy trước query**; chưa có gate thì **không** bật `/pipeline-check` hoặc dashboard dữ liệu thật trên production.
+
+## 11. Data completeness & pagination (clarification W02-R3)
+
+- Fact query (`daily_recruitment_breakdown`) phải phân trang đầy đủ: page size ≤ 1.000, order ổn định theo đúng khóa chính (`source_id, business_date, project_key, recruiter_key, provider_type_key, employment_type_key`), `.range(from, to)` inclusive.
+- Mọi page áp dụng **cùng** reporting scope + toàn bộ filter (source/from/to/project/recruiter/provider/employment).
+- Lấy `count: "exact"` và xác nhận tổng số dòng thu được bằng exact count trước khi trả kết quả.
+- Nếu page lỗi, count thiếu/null, count không khớp, hoặc vượt hard ceiling: trả lỗi reporting (`REPORTING_QUERY_FAILED` / `REPORTING_COUNT_MISMATCH` / `REPORTING_RESULT_TOO_LARGE`); **tuyệt đối không** trả `ok:true` với dữ liệu một phần, **không** biến lỗi thành tổng 0.
+- Scope rỗng ⇒ không query presence/facts, trả empty state hợp lệ với `coverage_ratio = null`.

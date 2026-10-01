@@ -444,19 +444,25 @@ async function main() {
     const { error: writeError } = await anon.from(SOURCES_TABLE).insert({ drive_file_id: "P0FIXTURE_ANON", file_name: "x", sheet_name: "y" });
     check("SEC", "anon không ghi được data_sources", Boolean(writeError), writeError ? writeError.message : "anon ghi thành công (!)");
 
-    // View latest run (reporting): service-role-only. anon/authenticated không đọc được.
+    // View reporting (latest-run + presence): service-role-only. anon/authenticated không đọc được.
     const viewSelect = await anon.from("reporting_latest_sync_runs_v01").select("source_id").limit(1);
     check("SEC", "anon không đọc được view reporting_latest_sync_runs_v01", Boolean(viewSelect.error) || (Array.isArray(viewSelect.data) && viewSelect.data.length === 0), viewSelect.error ? viewSelect.error.code + " " + viewSelect.error.message : JSON.stringify(viewSelect.data));
+    const presenceSelect = await anon.from("reporting_sources_with_current_facts_v01").select("source_id").limit(1);
+    check("SEC", "anon không đọc được view reporting_sources_with_current_facts_v01", Boolean(presenceSelect.error) || (Array.isArray(presenceSelect.data) && presenceSelect.data.length === 0), presenceSelect.error ? presenceSelect.error.code + " " + presenceSelect.error.message : JSON.stringify(presenceSelect.data));
 
     const vc = new pg.Client({ connectionString: config.databaseUrl, ssl: buildSslOptions() });
     await vc.connect();
     const { rows: grantRows } = await vc.query(
-      "select g.grantee, has_table_privilege(g.grantee, 'public.reporting_latest_sync_runs_v01', 'SELECT') as can_select from (values ('anon'),('authenticated'),('public'),('service_role')) as g(grantee)"
+      "select g.grantee, " +
+      " has_table_privilege(g.grantee, 'public.reporting_latest_sync_runs_v01', 'SELECT') as latest_can_select, " +
+      " has_table_privilege(g.grantee, 'public.reporting_sources_with_current_facts_v01', 'SELECT') as presence_can_select " +
+      " from (values ('anon'),('authenticated'),('public'),('service_role')) as g(grantee)"
     );
     await vc.end();
-    const priv = Object.fromEntries(grantRows.map((g) => [g.grantee, g.can_select]));
-    check("SEC", "view latest-run: anon/authenticated/public KHÔNG có SELECT", priv.anon === false && priv.authenticated === false && priv.public === false, JSON.stringify(priv));
-    check("SEC", "view latest-run: service_role có SELECT", priv.service_role === true, JSON.stringify(priv));
+    const priv = Object.fromEntries(grantRows.map((g) => [g.grantee, g]));
+    const deny = (r) => r.latest_can_select === false && r.presence_can_select === false;
+    check("SEC", "view latest-run + presence: anon/authenticated/public KHÔNG có SELECT", deny(priv.anon) && deny(priv.authenticated) && deny(priv.public), JSON.stringify(priv));
+    check("SEC", "view latest-run + presence: service_role có SELECT", priv.service_role.latest_can_select === true && priv.service_role.presence_can_select === true, JSON.stringify(priv));
   }
 
   // ========================== SCOPE: cô lập fixture khỏi reporting scope =====

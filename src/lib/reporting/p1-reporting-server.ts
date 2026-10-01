@@ -3,8 +3,13 @@ import "server-only";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
 import { parseReportingFilters } from "./p1-filter";
-import { buildReportingFactQuery, computeReporting, reportingQueryFailed } from "./p1-reporting";
+import {
+  buildReportingFactQuery,
+  computeReporting,
+  reportingQueryFailed,
+} from "./p1-reporting";
 import type { ReportingData, ReportingFact, ReportingSource, RunStatus } from "./p1-reporting";
+import { paginateAll, REPORTING_FACT_ORDER, REPORTING_PAGE_SIZE } from "./p1-reporting-pagination";
 
 export type ReportingFetchResult =
   | { ok: true; data: ReportingData; generatedAt: string }
@@ -17,12 +22,11 @@ const FACT_COLUMNS =
  * Data access server-only cho reporting BoD P1 (contract p1-reporting/0.1).
  *
  * - Source query ngay ở DB bằng active=true AND is_test=false (không tải fixture metadata).
- * - Latest run lấy từ view reporting_latest_sync_runs_v01 (service-role-only, deterministic
- *   started_at DESC, run_id DESC) — không dùng .limit() trên lịch sử.
- * - Fact query lọc scope + source + date + dimensions ngay ở DB; read-model chỉ validate lại.
- * - Scope rỗng => không query facts, trả empty state hợp lệ (coverageRatio=null).
- * - KHÔNG tạo page/API public. P1-W03 phải gate trước khi gọi hàm này.
- * - KHÔNG đọc/trả PII.
+ * - Presence từ view reporting_sources_with_current_facts_v01 (DISTINCT source_id, service-role-only).
+ * - Latest run từ view reporting_latest_sync_runs_v01 (deterministic, service-role-only).
+ * - Fact query phân trang đầy đủ (page <= 1000) + kiểm tra exact count; không silent truncate.
+ * - Scope rỗng => không query presence/facts, trả empty state hợp lệ (coverageRatio=null).
+ * - KHÔNG tạo page/API public. P1-W03 phải gate trước khi gọi hàm này. KHÔNG đọc/trả PII.
  */
 export async function fetchReporting(
   params: Record<string, string | string[] | undefined>
@@ -71,32 +75,39 @@ export async function fetchReporting(
       latest_run_status: latestBySource.get(s.id) ?? null,
     }));
 
-    // 3. Presence: distinct source_id có fact trong scope (data-minimal: chỉ UUID).
+    // 3. Presence từ view (DISTINCT source_id, data-minimal: chỉ UUID).
     const presenceRes = await sb
-      .from("daily_recruitment_breakdown")
+      .from("reporting_sources_with_current_facts_v01")
       .select("source_id")
       .in("source_id", scopeIdArray);
     if (presenceRes.error) throw presenceRes.error;
     const sourcesWithFacts = new Set<string>((presenceRes.data ?? []).map((r) => r.source_id));
 
-    // 4. Metric facts: lọc scope + source + date + dimensions ngay ở DB.
+    // 4. Metric facts: lọc scope + source + date + dimensions + order ổn định ở DB.
     const plan = buildReportingFactQuery(parsed.filters, scopeIds);
-    let query = sb
+    let q = sb
       .from("daily_recruitment_breakdown")
-      .select(FACT_COLUMNS)
+      .select(FACT_COLUMNS, { count: "exact" })
       .in("source_id", plan.query.scopeIds);
-    if (plan.query.source) query = query.eq("source_id", plan.query.source);
-    if (plan.query.from) query = query.gte("business_date", plan.query.from);
-    if (plan.query.to) query = query.lte("business_date", plan.query.to);
-    if (plan.query.project) query = query.eq("project_key", plan.query.project);
-    if (plan.query.recruiter) query = query.eq("recruiter_key", plan.query.recruiter);
-    if (plan.query.provider) query = query.eq("provider_type_key", plan.query.provider);
-    if (plan.query.employment) query = query.eq("employment_type_key", plan.query.employment);
-    const factsRes = await query;
-    if (factsRes.error) throw factsRes.error;
+    if (plan.query.source) q = q.eq("source_id", plan.query.source);
+    if (plan.query.from) q = q.gte("business_date", plan.query.from);
+    if (plan.query.to) q = q.lte("business_date", plan.query.to);
+    if (plan.query.project) q = q.eq("project_key", plan.query.project);
+    if (plan.query.recruiter) q = q.eq("recruiter_key", plan.query.recruiter);
+    if (plan.query.provider) q = q.eq("provider_type_key", plan.query.provider);
+    if (plan.query.employment) q = q.eq("employment_type_key", plan.query.employment);
+    for (const col of REPORTING_FACT_ORDER) q = q.order(col);
 
-    const facts = (factsRes.data ?? []) as ReportingFact[];
-    const data = computeReporting(sources, facts, parsed.filters, sourcesWithFacts);
+    const paged = await paginateAll<ReportingFact>(async ([from, to]) => {
+      const res = await q.range(from, to);
+      if (res.error) {
+        return { rows: [], count: null, error: { code: res.error.code, message: res.error.message } };
+      }
+      return { rows: (res.data ?? []) as ReportingFact[], count: res.count ?? null };
+    }, { pageSize: REPORTING_PAGE_SIZE });
+    if (!paged.ok) return paged;
+
+    const data = computeReporting(sources, paged.rows, parsed.filters, sourcesWithFacts);
     return { ok: true, data, generatedAt: new Date().toISOString() };
   } catch (error) {
     // Chỉ log mã lỗi (an toàn); không log message/credential/URL/payload.
