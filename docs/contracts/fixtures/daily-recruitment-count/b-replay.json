@@ -1,0 +1,23 @@
+{
+  "contract_version": "daily-recruitment-count/0.1",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+  "file_name": "P0 Fixture - Sheet tuyen dung A",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "sync_run_id": "22222222-2222-4222-8222-222222222222",
+  "snapshot_at": "2026-10-01T10:00:00Z",
+  "rows_read": 11,
+  "rows_valid": 11,
+  "rows_rejected": 0,
+  "daily_counts": [
+    {
+      "business_date": "2026-10-01",
+      "recruited_count": 4
+    },
+    {
+      "business_date": "2026-10-02",
+      "recruited_count": 7
+    }
+  ]
+}
