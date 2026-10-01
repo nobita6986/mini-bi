@@ -5,11 +5,12 @@
   "sheet_name": "Sheet1",
   "trigger_type": "manual",
   "timezone": "Asia/Ho_Chi_Minh",
-  "sync_run_id": "44444444-4444-4444-8444-444444444444",
-  "snapshot_at": "2026-10-01T12:00:00Z",
   "rows_read": 10,
   "rows_valid": 10,
   "rows_rejected": 0,
+  "rows_warned": 0,
+  "warning_issues": 0,
+  "row_issues": [],
   "breakdown": [
     {
       "business_date": "2026-10-01",
@@ -43,5 +44,7 @@
       "employment_type": "Chính thức",
       "recruited_count": 5
     }
-  ]
+  ],
+  "sync_run_id": "44444444-4444-4444-8444-444444444444",
+  "snapshot_at": "2026-10-01T12:00:00Z"
 }

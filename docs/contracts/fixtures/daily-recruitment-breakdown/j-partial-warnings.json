@@ -1,0 +1,63 @@
+{
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+  "file_name": "P0 Fixture - Sheet tuyen dung A",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "rows_read": 7,
+  "rows_valid": 7,
+  "rows_rejected": 0,
+  "rows_warned": 3,
+  "warning_issues": 4,
+  "row_issues": [
+    {
+      "source_row_number": 20,
+      "issue_level": "warning",
+      "error_code": "INVALID_PROVIDER_TYPE"
+    },
+    {
+      "source_row_number": 21,
+      "issue_level": "warning",
+      "error_code": "INVALID_EMPLOYMENT_TYPE"
+    },
+    {
+      "source_row_number": 22,
+      "issue_level": "warning",
+      "error_code": "INVALID_PROVIDER_TYPE"
+    },
+    {
+      "source_row_number": 22,
+      "issue_level": "warning",
+      "error_code": "INVALID_EMPLOYMENT_TYPE"
+    }
+  ],
+  "breakdown": [
+    {
+      "business_date": "2026-10-08",
+      "project": "Dự án Q",
+      "recruiter": "Nguyễn Văn A",
+      "provider_type": "abc",
+      "employment_type": "Thời vụ",
+      "recruited_count": 2
+    },
+    {
+      "business_date": "2026-10-08",
+      "project": "Dự án Q",
+      "recruiter": "Trần Thị B",
+      "provider_type": "Vendor",
+      "employment_type": "xyz",
+      "recruited_count": 1
+    },
+    {
+      "business_date": "2026-10-08",
+      "project": "Dự án Q",
+      "recruiter": "Lê Văn C",
+      "provider_type": "zzz",
+      "employment_type": "yyy",
+      "recruited_count": 4
+    }
+  ],
+  "sync_run_id": "20202020-2020-4020-8020-202020202020",
+  "snapshot_at": "2026-10-01T19:00:00Z"
+}

@@ -1,0 +1,12 @@
+{
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_A",
+  "file_name": "P0 Fixture - Sheet tuyen dung A",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "sync_run_id": "30303030-3030-4030-8030-303030303030",
+  "snapshot_at": "2026-10-01T20:00:00Z",
+  "error_code": "SOURCE_READ_FAILED",
+  "sanitized_reason": "Không đọc được nguồn (quyền hoặc mạng)"
+}

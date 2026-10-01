@@ -1,0 +1,11 @@
+{
+  "contract_version": "daily-recruitment-breakdown/0.2",
+  "drive_file_id": "P0FIXTURE_DRIVE_FILE_B",
+  "file_name": "P0 Fixture - Sheet tuyen dung B",
+  "sheet_name": "Sheet1",
+  "trigger_type": "manual",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "sync_run_id": "40404040-4040-4040-8040-404040404040",
+  "snapshot_at": "2026-10-01T21:00:00Z",
+  "error_code": "FILE_NOT_NATIVE_SHEET"
+}

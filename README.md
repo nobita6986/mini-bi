@@ -96,7 +96,8 @@ cục bộ — script sẽ in cảnh báo rõ ràng.
 ## Ingestion boundary
 
 ```sql
-public.replace_daily_recruitment_breakdown_snapshot_v02(p_payload jsonb) returns jsonb
+public.replace_daily_recruitment_breakdown_snapshot_v02(p_payload jsonb) returns jsonb  -- snapshot
+public.record_recruitment_source_failure_v01(p_payload jsonb)             returns jsonb  -- lỗi đọc nguồn
 ```
 
 - Chỉ `service_role` được thực thi; `PUBLIC`/`anon`/`authenticated` đã bị thu hồi quyền.
@@ -106,6 +107,11 @@ public.replace_daily_recruitment_breakdown_snapshot_v02(p_payload jsonb) returns
 - Thay thế toàn bộ aggregate của đúng một source trong một transaction.
 - Payload sai hoặc lỗi ghi ⇒ **giữ nguyên snapshot thành công gần nhất**.
 - Cùng payload gửi lại ⇒ `outcome = unchanged`, không tạo duplicate.
+- **Nguồn chuẩn:** tab `Sheet1` — B = Dự án · C = Ngày vào · J = HRP/Vendor · K = Người tuyển · L = Loại hình lao động.
+- J chỉ nhận `HRP`/`Vendor`; L chỉ nhận `Thời vụ`/`Chính thức`. Giá trị ngoài danh mục vào nhóm **Không hợp lệ** kèm warning, hàng vẫn được tính.
+- Envelope có `rows_warned`, `warning_issues`, `row_issues` (chỉ 3 field: `source_row_number`, `issue_level`, `error_code`); `sync_run_id` phải là UUID v4.
+- `succeeded` và `partial` đều thay aggregate; `failed` thì không. `last_successful_sync_at` chỉ cập nhật khi `succeeded`.
+- Không đọc được nguồn ⇒ gọi `record_recruitment_source_failure_v01` (giữ nguyên aggregate, không cập nhật last success).
 
 Chi tiết đầy đủ: `docs/contracts/daily-recruitment-breakdown-v0.2.md`.
 
