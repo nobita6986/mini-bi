@@ -10,16 +10,19 @@ import type {
   RunRow,
   SourceRow,
 } from "./pipeline-check";
+import { sanitizePipelineError } from "./pipeline-check-safety";
 
 export type PipelineCheckResult =
   | { ok: true; data: PipelineCheckData; generatedAt: string }
-  | { ok: false; message: string };
+  | { ok: false; code: string; message: string };
 
 /**
  * Đọc dữ liệu vận hành từ Supabase (server-only, dùng service-role key).
  *
  * CHỈ đọc 4 bảng: data_sources, sync_runs, sync_errors, daily_recruitment_breakdown.
  * KHÔNG đọc/hiển thị dữ liệu ứng viên hay PII. KHÔNG ghi dữ liệu.
+ *
+ * Khi lỗi: KHÔNG trả raw provider message ra UI — chỉ trả code + thông báo ổn định.
  */
 export async function fetchPipelineCheck(): Promise<PipelineCheckResult> {
   try {
@@ -46,7 +49,7 @@ export async function fetchPipelineCheck(): Promise<PipelineCheckResult> {
 
     const firstError = [sourcesRes, runsRes, breakdownRes, errorsRes].map((r) => r.error).find((e) => e);
     if (firstError) {
-      throw new Error("Lỗi truy vấn Supabase: " + (firstError.message ?? "không rõ"));
+      throw firstError;
     }
 
     const data = computePipelineData(
@@ -58,6 +61,13 @@ export async function fetchPipelineCheck(): Promise<PipelineCheckResult> {
 
     return { ok: true, data, generatedAt: new Date().toISOString() };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    // Chỉ log mã lỗi (an toàn) để chẩn đoán server-side. KHÔNG log message,
+    // credential, authorization header, URL chứa secret hay payload nhạy cảm.
+    const safeCode =
+      error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
+        ? String((error as { code: string }).code)
+        : "unknown";
+    console.error("[pipeline-check] query failed. code=" + safeCode);
+    return { ok: false, ...sanitizePipelineError() };
   }
 }

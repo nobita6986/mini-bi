@@ -1,4 +1,7 @@
+import { notFound } from "next/navigation";
+
 import { fetchPipelineCheck } from "@/lib/reporting/pipeline-check-server";
+import { isPipelineCheckEnabled } from "@/lib/reporting/pipeline-check-safety";
 import { formatTimestamp } from "@/lib/format";
 import type { DimensionBreakdown } from "@/lib/reporting/pipeline-check";
 import { DAILY_RECRUITMENT_BREAKDOWN_CONTRACT_VERSION } from "@/lib/contracts/daily-recruitment-breakdown";
@@ -40,6 +43,11 @@ function DimensionList({ title, items }: { title: string; items: DimensionBreakd
 }
 
 export default async function PipelineCheckPage() {
+  // Deployment safety guard: chạy TRƯỚC mọi DB query / trước khi tạo Supabase client.
+  if (!isPipelineCheckEnabled(process.env.NODE_ENV, process.env.PIPELINE_CHECK_ENABLED)) {
+    notFound();
+  }
+
   const result = await fetchPipelineCheck();
 
   if (!result.ok) {
@@ -49,7 +57,7 @@ export default async function PipelineCheckPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Pipeline check</h1>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase.</p>
         </header>
-        <ErrorState detail={result.message} />
+        <ErrorState title="Không tải được dữ liệu pipeline" detail={result.code + " · " + result.message} />
       </main>
     );
   }
@@ -79,7 +87,7 @@ export default async function PipelineCheckPage() {
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
       <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
-        Trang vận hành — phạm vi DEV/local. Cần access gate trước khi dùng với dữ liệu thật (P3). Không hiển thị dữ liệu cá nhân ứng viên.
+        Trang vận hành — DEV/local. Production bị tắt mặc định (PIPELINE_CHECK_ENABLED=true để bật). Dữ liệu thật/BoD cần access gate P1-W03. Không hiển thị dữ liệu cá nhân ứng viên.
       </div>
 
       <header className="mb-6">

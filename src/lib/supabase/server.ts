@@ -10,8 +10,9 @@ import { getServerEnv } from "@/lib/env";
  * BYPASS RLS. Chỉ được gọi trong server runtime. Không truyền client này,
  * không truyền key này, và không trả dữ liệu thô từ nó về trình duyệt.
  *
- * P0 chưa có Auth người dùng nên web cần quyền đọc phía server. Khi P1-W03/P3
- * làm access layer, cần tách role reader hạn chế quyền thay vì dùng key đặc quyền.
+ * P0 chưa có Auth người dùng nên web cần quyền đọc phía server. Khi P1-W03
+ * (access gate pilot trước dữ liệu thật) và P3 (role đầy đủ) làm access layer,
+ * cần tách role reader hạn chế quyền thay vì dùng key đặc quyền.
  */
 export function createServiceSupabaseClient(): SupabaseClient {
   const env = getServerEnv();
