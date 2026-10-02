@@ -1,6 +1,11 @@
 /**
  * P1.5-W04A — Rate limit có trần, thuần, deterministic (testable) cho mutation cấu hình.
- * Cửa sổ trượt trong bộ nhớ tiến trình; KHÔNG phải hàng rào phân tán (ghi rõ hạn chế).
+ *
+ * R1 (E) — CÔNG BỐ CHÍNH XÁC: đây là limiter **process-local / best-effort** cho pilot. Cửa sổ trượt nằm
+ * trong bộ nhớ CỦA MỘT tiến trình serverless, nên khi có nhiều instance thì trần thực tế có thể cao hơn
+ * cấu hình. Nó KHÔNG phải hard distributed rate limit và không phải hàng rào chống abuse.
+ * P3 PHẢI thay bằng limiter atomic ở DB/KV (ví dụ bảng counter + upsert trong transaction) khoá theo
+ * **authenticated actor** (user thật + org), và trả 429 nhất quán giữa các instance.
  */
 
 export type RateLimiter = {

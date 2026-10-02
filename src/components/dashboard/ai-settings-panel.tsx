@@ -192,13 +192,58 @@ export function AiSettingsPanel() {
   const [providerProfile, setProviderProfile] = useState(DEFAULT_PROVIDER_PROFILE);
   const [apiKey, setApiKey] = useState("");
 
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
   const triggerRef = useRef<HTMLButtonElement>(null);
   const apiUrlRef = useRef<HTMLInputElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
 
-  const closeDrawer = useCallback(() => {
+  /** Reset form về ĐÚNG trạng thái server đã tải (nguồn an toàn duy nhất). */
+  const resetFormToServerState = useCallback((next: AiConfigView | null) => {
+    setProviderProfile(next?.provider_profile || DEFAULT_PROVIDER_PROFILE);
+    setModel(next?.model ?? "");
+    setApiUrl("");
+    setApiKey("");
+  }, []);
+
+  /**
+   * R1 (A) — dirty state theo dõi URL/model/profile/API key: đóng khi dirty phải hỏi xác nhận.
+   */
+  const dirty =
+    apiKey.length > 0 ||
+    apiUrl.trim().length > 0 ||
+    model.trim() !== (config?.model ?? "") ||
+    (providerProfile.trim() || DEFAULT_PROVIDER_PROFILE) !== (config?.provider_profile || DEFAULT_PROVIDER_PROFILE);
+
+  const performClose = useCallback(() => {
+    setConfirmDiscard(false);
     setOpen(false);
     triggerRef.current?.focus();
   }, []);
+
+  /**
+   * MỌI đường dismiss (Escape, overlay, nút Đóng, toggle trigger) đi qua đây:
+   * - busy ⇒ KHÔNG đóng panel;
+   * - dirty ⇒ hiện xác nhận bỏ thay đổi trước.
+   */
+  const requestClose = useCallback(() => {
+    if (busy) return;
+    if (dirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    performClose();
+  }, [busy, dirty, performClose]);
+
+  /** Owner xác nhận bỏ: xoá API key NGAY và reset form về server state an toàn rồi mới đóng. */
+  const discardChanges = useCallback(() => {
+    setApiKey("");
+    resetFormToServerState(config);
+    setErrorText("");
+    setNoticeText("");
+    setStatusText("Đã bỏ thay đổi chưa lưu.");
+    performClose();
+  }, [config, performClose, resetFormToServerState]);
 
   const loadSettings = useCallback(async () => {
     setBusy(true);
@@ -234,28 +279,76 @@ export function AiSettingsPanel() {
 
   useEffect(() => {
     if (!open) return;
-    apiUrlRef.current?.focus();
+    const target = apiUrlRef.current ?? drawerRef.current;
+    target?.focus();
   }, [open]);
 
+  /**
+   * R1 (A) — Focus trap THẬT cho drawer aria-modal: Tab/Shift+Tab quay vòng trong panel,
+   * focus không thoát ra nền; Escape chỉ đóng khi không busy.
+   */
   useEffect(() => {
     if (!open) return;
+    const FOCUSABLE_SELECTOR =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    const focusables = () => {
+      const nodes = drawerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+      return nodes ? Array.from(nodes).filter((node) => node.getAttribute("aria-hidden") !== "true") : [];
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        closeDrawer();
+        requestClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      const inside = drawerRef.current?.contains(document.activeElement as Node | null) ?? false;
+      if (items.length === 0) {
+        event.preventDefault();
+        drawerRef.current?.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey) {
+        if (!inside || document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        }
+        return;
+      }
+      if (!inside || document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, closeDrawer]);
+
+    const onFocusIn = (event: FocusEvent) => {
+      const node = event.target as Node | null;
+      if (!drawerRef.current || !node) return;
+      if (drawerRef.current.contains(node)) return;
+      const items = focusables();
+      if (items.length > 0) items[0].focus();
+      else drawerRef.current.focus();
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+    };
+  }, [open, requestClose]);
 
   const applyConfig = useCallback((next: AiConfigView | null) => {
     setConfig(next);
-    if (!next) return;
-    setProviderProfile(next.provider_profile || DEFAULT_PROVIDER_PROFILE);
-    setModel(next.model);
-    setApiUrl("");
-  }, []);
+    setConfirmDiscard(false);
+    // Sau mutation thành công: form trở về server state và API key đã được xoá.
+    resetFormToServerState(next);
+  }, [resetFormToServerState]);
 
   const runRequest = useCallback(
     async (
@@ -389,7 +482,7 @@ export function AiSettingsPanel() {
         aria-controls="ai-settings-drawer"
         onClick={() => {
           if (open) {
-            closeDrawer();
+            requestClose();
             return;
           }
           setOpen(true);
@@ -401,13 +494,15 @@ export function AiSettingsPanel() {
 
       {open ? (
         <>
-          <div aria-hidden onClick={closeDrawer} className="fixed inset-0 z-40 bg-black/40" />
+          <div aria-hidden onClick={requestClose} className="fixed inset-0 z-40 bg-black/40" />
 
           <aside
+            ref={drawerRef}
             id="ai-settings-drawer"
             role="dialog"
             aria-modal="true"
             aria-labelledby="ai-settings-title"
+            tabIndex={-1}
             className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[26rem] sm:rounded-l-2xl sm:p-5"
           >
             <header className="flex items-start justify-between gap-3">
@@ -419,7 +514,7 @@ export function AiSettingsPanel() {
                   Dành cho Owner (pilot): khai báo provider, model và API key cho trợ lý AI.
                 </p>
               </div>
-              <button type="button" onClick={closeDrawer} disabled={busy} className={secondaryButtonClass}>
+              <button type="button" onClick={requestClose} disabled={busy} className={secondaryButtonClass}>
                 Đóng
               </button>
             </header>
@@ -429,6 +524,30 @@ export function AiSettingsPanel() {
               {noticeText ? <span className="mt-1 block font-medium text-foreground">{noticeText}</span> : null}
               {errorText ? <span className="mt-1 block font-medium text-foreground">{errorText}</span> : null}
             </p>
+
+            {confirmDiscard ? (
+              <div
+                role="alertdialog"
+                aria-labelledby="ai-discard-title"
+                aria-describedby="ai-discard-detail"
+                className="rounded-2xl border border-border bg-surface p-3"
+              >
+                <p id="ai-discard-title" className="text-sm font-semibold text-foreground">
+                  Bỏ thay đổi chưa lưu?
+                </p>
+                <p id="ai-discard-detail" className="mt-1 text-xs text-muted">
+                  API key đang nhập sẽ bị xoá khỏi bộ nhớ trình duyệt và form trở về trạng thái đã lưu trên server.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" onClick={discardChanges} className={primaryButtonClass}>
+                    Bỏ thay đổi
+                  </button>
+                  <button type="button" onClick={() => setConfirmDiscard(false)} className={secondaryButtonClass}>
+                    Ở lại
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <section className="rounded-2xl border border-border bg-surface p-3">
               <h3 className="text-sm font-semibold text-foreground">Cấu hình hiện tại</h3>

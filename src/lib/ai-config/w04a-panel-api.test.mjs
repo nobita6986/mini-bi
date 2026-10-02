@@ -132,7 +132,9 @@ test("W04A-P5: body bounded + JSON object; thông điệp lỗi không chứa n�
   });
   const large = await readSettingsBody(tooLarge);
   assert.equal(large.ok, false);
-  assert.equal(large.code, "INVALID_INPUT");
+  // R1 (B): vượt trần byte ⇒ 413 (AI_RESULT_TOO_LARGE), không phải 422 chung.
+  assert.equal(large.code, "RESULT_TOO_LARGE");
+  assert.equal(httpStatusFor(toApiCode(large.code)), 413);
 
   const arrayBody = new Request("https://bi.example.com/api/ai/settings", { method: "POST", body: "[1,2,3]" });
   const arrayResult = await readSettingsBody(arrayBody);

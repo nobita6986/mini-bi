@@ -12,7 +12,8 @@ import "server-only";
 
 import { PROVIDER_PROFILES } from "@/lib/ai-config/provider-profiles.ts";
 import { PILOT_ACTOR_REF } from "@/lib/ai-config/settings-flag.ts";
-import { guardSettingsRequest, readSettingsBody, settingsError, settingsJson } from "@/lib/ai-config/server/route-helpers.mjs";
+import { guardSettingsRequest, settingsError, settingsJson } from "@/lib/ai-config/server/route-helpers.mjs";
+import { readSettingsJsonBody } from "@/lib/ai-config/server/route-body";
 import { createSettingsWiring } from "@/lib/ai-config/server/settings-wiring";
 
 export const runtime = "nodejs";
@@ -27,6 +28,8 @@ export async function GET(request: Request) {
   if (!wired.ok) return settingsError(wired.code, wired.message);
 
   const result = await wired.service.status();
+  // R1 (C): lỗi DB/transport/malformed KHÔNG được trả thành config:null giả.
+  if (!result.ok) return settingsError(result.code, result.message);
   return settingsJson({
     ok: true,
     config: result.config,
@@ -43,7 +46,7 @@ export async function POST(request: Request) {
   const wired = createSettingsWiring();
   if (!wired.ok) return settingsError(wired.code, wired.message);
 
-  const body = await readSettingsBody(request);
+  const body = await readSettingsJsonBody(request);
   if (!body.ok) return settingsError(body.code, body.message);
 
   const result = await wired.service.save(body.value);

@@ -52,13 +52,14 @@ test("drawer đóng được bằng Escape, bằng nút Đóng và bằng click 
     "phải đăng ký listener keydown để bắt Escape",
   );
   assert.ok(source.includes("Đóng"), 'phải có nút "Đóng"');
+  // R1 (A): mọi đường dismiss đi qua requestClose (busy ⇒ không đóng, dirty ⇒ hỏi xác nhận).
   assert.ok(
-    source.includes("onClick={closeDrawer}"),
-    "overlay và nút Đóng phải gọi closeDrawer",
+    source.includes("onClick={requestClose}"),
+    "overlay và nút Đóng phải gọi requestClose",
   );
   assert.ok(
-    source.includes("apiUrlRef.current?.focus()"),
-    "khi mở phải focus vào input API URL",
+    source.includes("apiUrlRef.current ?? drawerRef.current"),
+    "khi mở phải focus vào input API URL (fallback: drawer)",
   );
   assert.ok(
     source.includes("triggerRef.current?.focus()"),
@@ -217,4 +218,57 @@ test("toàn bộ nhãn nút chính là tiếng Việt theo yêu cầu", () => {
   for (const label of ["Lưu cấu hình", "Kiểm tra kết nối", "Xoay API key", "Kích hoạt", "Tắt cấu hình"]) {
     assert.ok(source.includes(label), 'phải có nút "' + label + '"');
   }
+});
+
+// ---------------------------------------------------------------------------
+// W04A-R1 (A) — Modal accessibility + secret lifecycle
+// ---------------------------------------------------------------------------
+
+test("R1-A1: focus trap thật — Tab/Shift+Tab quay vòng trong drawer, không thoát ra nền", () => {
+  assert.ok(source.includes('const FOCUSABLE_SELECTOR'), "phải có selector phần tử focus được");
+  assert.ok(source.includes('event.key !== "Tab"'), "phải xử lý phím Tab");
+  assert.ok(source.includes("event.shiftKey"), "phải xử lý Shift+Tab");
+  assert.ok(countOccurrences(source, "event.preventDefault()") >= 3, "Tab/Escape phải preventDefault để không thoát nền");
+  assert.ok(source.includes("first.focus()"), "Tab ở phần tử cuối phải quay về phần tử đầu");
+  assert.ok(source.includes("last.focus()"), "Shift+Tab ở phần tử đầu phải quay về phần tử cuối");
+  assert.ok(source.includes('document.addEventListener("focusin"'), "phải kéo focus về panel nếu nó thoát ra nền");
+  assert.ok(source.includes("tabIndex={-1}"), "drawer phải nhận được focus khi không còn phần tử nào focus được");
+});
+
+test("R1-A2: busy chặn MỌI đường dismiss (Escape, overlay, nút Đóng, toggle trigger)", () => {
+  assert.ok(source.includes("if (busy) return;"), "requestClose phải chặn khi busy");
+  assert.ok(!source.includes("onClick={closeDrawer}"), "không còn đường đóng trực tiếp bỏ qua guard");
+  assert.ok(source.includes("onClick={requestClose}"), "overlay/nút Đóng phải đi qua requestClose");
+  const escapeBlock = source.slice(source.indexOf('event.key === "Escape"'), source.indexOf('event.key === "Escape"') + 160);
+  assert.ok(escapeBlock.includes("requestClose()"), "Escape phải đi qua requestClose (busy ⇒ không đóng)");
+  assert.ok(source.includes("if (open) {") && source.includes("requestClose();"), "toggle trigger cũng phải đi qua requestClose");
+});
+
+test("R1-A3: dirty state theo dõi URL/model/profile/API key và hỏi xác nhận khi đóng", () => {
+  assert.ok(source.includes("const dirty ="), "phải có dirty state");
+  for (const part of ["apiKey.length > 0", "apiUrl.trim().length > 0", "model.trim() !== (config?.model", "providerProfile.trim()"]) {
+    assert.ok(source.includes(part), "dirty phải theo dõi: " + part);
+  }
+  assert.ok(source.includes('role="alertdialog"'), "phải có hộp xác nhận bỏ thay đổi");
+  assert.ok(source.includes("Bỏ thay đổi chưa lưu?"), "phải hỏi rõ trước khi bỏ thay đổi");
+  assert.ok(source.includes("Bỏ thay đổi") && source.includes("Ở lại"), "phải có hai lựa chọn Bỏ thay đổi / Ở lại");
+  assert.ok(source.includes("if (dirty) {") && source.includes("setConfirmDiscard(true)"), "đóng khi dirty phải mở xác nhận");
+});
+
+test("R1-A4: xác nhận bỏ ⇒ clear API key NGAY và reset form về server state", () => {
+  const discardBlock = source.slice(source.indexOf("const discardChanges"), source.indexOf("const discardChanges") + 420);
+  assert.ok(discardBlock.includes('setApiKey("")'), "discardChanges phải clear API key ngay");
+  assert.ok(discardBlock.includes("resetFormToServerState(config)"), "discardChanges phải reset form về server state");
+  assert.ok(discardBlock.indexOf('setApiKey("")') < discardBlock.indexOf("performClose()"), "clear key phải xảy ra TRƯỚC khi đóng");
+  const resetBlock = source.slice(source.indexOf("const resetFormToServerState"), source.indexOf("const resetFormToServerState") + 320);
+  assert.ok(resetBlock.includes('setApiUrl("")'), "reset phải xoá API URL đang nhập");
+  assert.ok(resetBlock.includes('setApiKey("")'), "reset phải xoá API key");
+  assert.ok(resetBlock.includes("next?.model ?? \"\""), "reset phải đưa model về giá trị server");
+});
+
+test("R1-A5: không lưu secret vào bất kỳ persistence nào của browser", () => {
+  for (const forbidden of ["localStorage", "sessionStorage", "document.cookie", "indexedDB"]) {
+    assert.ok(!source.includes(forbidden), "panel không được dùng " + forbidden);
+  }
+  assert.equal(countOccurrences(source, "value={apiKey}"), 1, "API key chỉ được render trong input password");
 });

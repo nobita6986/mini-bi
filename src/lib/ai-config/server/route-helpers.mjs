@@ -12,6 +12,11 @@ import { httpStatusFor, toApiCode } from "../settings-codes.ts";
 import { isAiSettingsEnabled, PILOT_ACTOR_REF } from "../settings-flag.ts";
 import { createRateLimiter } from "../rate-limit.ts";
 
+/**
+ * R1 (B) — TRẦN BYTE CỨNG cho body settings (20 KiB, đo UTF-8/byte thật).
+ * Không dùng `string.length`; request không có Content-Length (chunked) được đọc theo từng chunk
+ * và DỪNG NGAY khi tổng byte vượt trần (không đọc toàn bộ body rồi mới kiểm tra).
+ */
 export const MAX_SETTINGS_BODY_BYTES = 20 * 1024;
 export const SETTINGS_MUTATION_LIMIT = 20;
 export const SETTINGS_MUTATION_WINDOW_MS = 60_000;
@@ -21,7 +26,13 @@ const mutationLimiter = createRateLimiter({
   window_ms: SETTINGS_MUTATION_WINDOW_MS,
 });
 
-/** Trần rate limit theo actor pilot (bộ nhớ tiến trình — ghi rõ hạn chế, P3 sẽ thay bằng phân tán). */
+/**
+ * R1 (E) — Rate limit cho mutation settings.
+ *
+ * ĐÂY LÀ LIMITER **PROCESS-LOCAL / BEST-EFFORT** cho pilot: cửa sổ trượt nằm trong bộ nhớ MỘT tiến trình
+ * serverless, KHÔNG phải hard distributed rate limit (nhiều instance ⇒ trần thực tế có thể cao hơn).
+ * P3 PHẢI thay bằng limiter atomic ở DB/KV theo **authenticated actor** (khoá theo user thật + org).
+ */
 export function checkSettingsRateLimit(actorRef = PILOT_ACTOR_REF) {
   return mutationLimiter.check(actorRef);
 }
@@ -69,18 +80,64 @@ export function guardSettingsRequest(request, options = {}) {
   return { ok: true };
 }
 
-export async function readSettingsBody(request) {
+const TOO_LARGE = { ok: false, code: "RESULT_TOO_LARGE", message: "body quá lớn" };
+
+/**
+ * Đọc body với trần BYTE cứng. Trả { ok:true, bytes } | { ok:false, code, message }.
+ * Không bao giờ nạp quá trần vào bộ nhớ: vượt trần ⇒ cancel stream ngay.
+ */
+export async function readBoundedBodyBytes(request, maxBytes = MAX_SETTINGS_BODY_BYTES) {
   const contentLength = request.headers.get("content-length");
-  if (contentLength && Number.parseInt(contentLength, 10) > MAX_SETTINGS_BODY_BYTES) {
-    return { ok: false, code: "INVALID_INPUT", message: "body quá lớn" };
+  if (contentLength !== null && contentLength !== undefined) {
+    const declared = Number.parseInt(contentLength, 10);
+    if (!Number.isSafeInteger(declared) || declared < 0) {
+      return { ok: false, code: "INVALID_INPUT", message: "content-length không hợp lệ" };
+    }
+    if (declared > maxBytes) return TOO_LARGE;
   }
-  let text;
+
+  const stream = request.body;
+  if (!stream) return { ok: true, bytes: 0, chunks: [] };
+
+  const reader = stream.getReader();
+  const chunks = [];
+  let total = 0;
   try {
-    text = await request.text();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      total += chunk.byteLength;
+      if (total > maxBytes) {
+        // Dừng ngay, không đọc tiếp phần còn lại của body.
+        try {
+          await reader.cancel();
+        } catch {
+          /* stream đã đóng */
+        }
+        return TOO_LARGE;
+      }
+      chunks.push(chunk);
+    }
   } catch {
     return { ok: false, code: "INVALID_INPUT", message: "không đọc được body" };
   }
-  if (text.length > MAX_SETTINGS_BODY_BYTES) return { ok: false, code: "INVALID_INPUT", message: "body quá lớn" };
+  return { ok: true, bytes: total, chunks };
+}
+
+/** Đọc + parse JSON body với trần byte cứng; thông điệp lỗi KHÔNG echo nội dung body. */
+export async function readSettingsBody(request, maxBytes = MAX_SETTINGS_BODY_BYTES) {
+  const bounded = await readBoundedBodyBytes(request, maxBytes);
+  if (!bounded.ok) return bounded;
+
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(
+      bounded.bytes === 0 ? new Uint8Array(0) : Buffer.concat(bounded.chunks.map((chunk) => Buffer.from(chunk)), bounded.bytes)
+    );
+  } catch {
+    return { ok: false, code: "INVALID_INPUT", message: "không giải mã được body" };
+  }
   if (text.trim() === "") return { ok: true, value: {} };
   try {
     const parsed = JSON.parse(text);

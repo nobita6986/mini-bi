@@ -39,11 +39,12 @@ export const MAX_MODEL_LENGTH = 256;
 export const TEST_TIMEOUT_MS = 5_000;
 export const TEST_MAX_RESPONSE_BYTES = 64 * 1024;
 
-export type SettingsStatusResult = {
-  ok: true;
-  config: ConfigReadProjection | null;
-  active: ConfigReadProjection | null;
-};
+/** Kết quả đọc PHÂN BIỆT: thành công (config có thể null) | từ chối hợp lệ | lỗi hạ tầng/malformed. */
+export type StoreRead<T> = { ok: true; config: T | null } | StoreFail;
+
+export type SettingsStatusResult =
+  | { ok: true; config: ConfigReadProjection | null; active: ActiveConfigProjection | null }
+  | StoreFail;
 
 export type SettingsMutationResult = { ok: true; config: ConfigReadProjection } | StoreFail;
 
@@ -65,11 +66,22 @@ export type StoreOk = { ok: true; config: ProviderConfig };
 export type StoreFail = { ok: false; code: string; message: string };
 export type StoreResult = StoreOk | StoreFail;
 
+export type ActiveConfigProjection = {
+  config_id: string;
+  provider_profile: string;
+  model: string;
+  version: number;
+  status: string;
+  verified_at: string | null;
+  sanitized_host: string;
+};
+
 export type ConfigStore = {
-  readCurrent(configId: string): Promise<ProviderConfig | null>;
-  readVersion(configId: string, version: number): Promise<ProviderConfig | null>;
+  /** R1 (C): read trả StoreRead — KHÔNG được biến lỗi DB/malformed thành null ("not configured" giả). */
+  readCurrent(configId: string): Promise<StoreRead<ProviderConfig>>;
+  readVersion(configId: string, version: number): Promise<StoreRead<ProviderConfig>>;
   /** Projection của config đang active (KHÔNG envelope) — dùng cho panel và enqueue gate. */
-  readActiveProjection(): Promise<ConfigReadProjection | null>;
+  readActiveProjection(): Promise<StoreRead<ActiveConfigProjection>>;
   saveVersion(input: {
     expected_version: number | null;
     config: ProviderConfig;
@@ -149,19 +161,24 @@ export function validateSaveInput(body: unknown): {
   };
 }
 
-/** Trạng thái sanitized cho panel (KHÔNG có envelope/URL đầy đủ). */
+/**
+ * Trạng thái sanitized cho panel (KHÔNG có envelope/URL đầy đủ).
+ * R1 (C): lỗi đọc (DB/transport/malformed) ⇒ trả lỗi sanitized, KHÔNG trả config:null giả.
+ */
 export async function readSettingsStatus(input: {
   store: ConfigStore;
   config_id?: string;
-}): Promise<{ ok: true; config: ConfigReadProjection | null; active: ConfigReadProjection | null }> {
+}): Promise<SettingsStatusResult> {
   const [current, active] = await Promise.all([
     input.store.readCurrent(input.config_id ?? PILOT_CONFIG_ID),
     input.store.readActiveProjection(),
   ]);
+  if (!current.ok) return current;
+  if (!active.ok) return active;
   return {
     ok: true,
-    config: current ? projectConfig(current) : null,
-    active,
+    config: current.config ? projectConfig(current.config) : null,
+    active: active.config,
   };
 }
 
@@ -176,7 +193,9 @@ export async function saveProviderConfig(input: {
   const parsed = validateSaveInput(input.body);
   if (!parsed.ok) return fail("INVALID_INPUT");
   const now = input.now ?? new Date();
-  const current = await input.store.readCurrent(PILOT_CONFIG_ID);
+  const read = await input.store.readCurrent(PILOT_CONFIG_ID);
+  if (!read.ok) return read;
+  const current = read.config;
   if (current && parsed.value.expected_version !== current.version) {
     await input.store.recordRejected({
       config_id: current.config_id,
@@ -236,12 +255,16 @@ export async function rotateProviderKey(input: {
   if (typeof apiKey !== "string" || apiKey.length === 0 || apiKey.length > MAX_SECRET_LENGTH || !isControlFreeString(apiKey)) {
     return fail("INVALID_INPUT");
   }
-  if (expected !== undefined && expected !== null && (!Number.isSafeInteger(expected) || (expected as number) < 1)) {
-    return fail("INVALID_INPUT");
-  }
-  const current = await input.store.readCurrent(PILOT_CONFIG_ID);
+  /**
+   * R1 (D) — Rotate BẮT BUỘC `expected_version` là integer >= 1 (optimistic concurrency):
+   * thiếu hoặc sai kiểu ⇒ AI_INPUT_INVALID; DB RPC vẫn là authority cuối cùng.
+   */
+  if (!Number.isSafeInteger(expected) || (expected as number) < 1) return fail("INVALID_INPUT");
+  const read = await input.store.readCurrent(PILOT_CONFIG_ID);
+  if (!read.ok) return read;
+  const current = read.config;
   if (!current) return fail("NOT_FOUND");
-  if ((expected ?? current.version) !== current.version) {
+  if (expected !== current.version) {
     await input.store.recordRejected({
       config_id: current.config_id,
       version: current.version,
@@ -296,12 +319,17 @@ export async function testProviderConnection(input: {
   if (version !== undefined && version !== null && (!Number.isSafeInteger(version) || (version as number) < 1)) {
     return fail("INVALID_INPUT");
   }
-  const current = await input.store.readCurrent(PILOT_CONFIG_ID);
-  if (!current) return fail("NOT_FOUND");
-  const target = version === undefined || version === null
-    ? current
-    : await input.store.readVersion(PILOT_CONFIG_ID, version as number);
-  if (!target) return fail("NOT_FOUND");
+  const readCurrent = await input.store.readCurrent(PILOT_CONFIG_ID);
+  if (!readCurrent.ok) return readCurrent;
+  if (!readCurrent.config) return fail("NOT_FOUND");
+  const current = readCurrent.config;
+  let target = current;
+  if (version !== undefined && version !== null) {
+    const readVersion = await input.store.readVersion(PILOT_CONFIG_ID, version as number);
+    if (!readVersion.ok) return readVersion;
+    if (!readVersion.config) return fail("NOT_FOUND");
+    target = readVersion.config;
+  }
 
   let secret: string;
   let probe: { url: string; method: "POST"; headers: Record<string, string>; body: string };
@@ -377,7 +405,9 @@ export async function activateProviderConfig(input: {
   const record = (input.body ?? {}) as Record<string, unknown>;
   const version = record.version;
   if (!Number.isSafeInteger(version) || (version as number) < 1) return fail("INVALID_INPUT");
-  const target = await input.store.readVersion(PILOT_CONFIG_ID, version as number);
+  const read = await input.store.readVersion(PILOT_CONFIG_ID, version as number);
+  if (!read.ok) return read;
+  const target = read.config;
   if (!target) return fail("NOT_FOUND");
   if (target.status !== "verified" || !target.verified_at) return fail("NOT_VERIFIED");
   const activated = await input.store.activate({
@@ -397,7 +427,9 @@ export async function disableProviderConfig(input: {
   const record = (input.body ?? {}) as Record<string, unknown>;
   const version = record.version;
   if (!Number.isSafeInteger(version) || (version as number) < 1) return fail("INVALID_INPUT");
-  const target = await input.store.readVersion(PILOT_CONFIG_ID, version as number);
+  const read = await input.store.readVersion(PILOT_CONFIG_ID, version as number);
+  if (!read.ok) return read;
+  const target = read.config;
   if (!target) return fail("NOT_FOUND");
   const disabled = await input.store.disable({
     config_id: target.config_id,

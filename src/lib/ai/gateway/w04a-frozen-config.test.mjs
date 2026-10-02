@@ -307,3 +307,41 @@ test("W04A-F8: projectClaim từ chối provider config không đầy đủ/khô
     assert.equal(result.code, "AI_INTERNAL");
   }
 });
+
+test("W04A-R1-F9: lỗi hạ tầng khi đọc provider config KHÔNG bị đổi thành AI_CONFIG_REQUIRED", async () => {
+  const packet = packetFor();
+
+  // (1) Enqueue gate: active() lỗi hạ tầng ⇒ AI_INTERNAL, KHÔNG phải AI_CONFIG_REQUIRED, không tạo job.
+  const enqueueQueue = createMemoryQueue();
+  const enqueueService = makeService({
+    queue: enqueueQueue,
+    packet,
+    providerConfig: createMemoryProviderConfig({ activeFailure: { code: "AI_INTERNAL" } }),
+  }).service;
+  const enqueued = await enqueueService.enqueueReport(enqueueArgs());
+  assert.equal(enqueued.ok, false);
+  assert.equal(enqueued.code, "AI_INTERNAL", "lỗi hạ tầng phải giữ AI_INTERNAL");
+  assert.notEqual(enqueued.code, "AI_CONFIG_REQUIRED");
+  assert.equal(enqueueQueue.store.jobs.size, 0);
+
+  // (2) Worker: material() lỗi hạ tầng ⇒ fail-closed với AI_INTERNAL, 0 provider/usage/revision.
+  const workerQueue = createMemoryQueue();
+  const counter = { calls: 0 };
+  const workerConfig = createMemoryProviderConfig({ materialFailure: { code: "AI_INTERNAL" } });
+  const workerService = makeService({
+    queue: workerQueue,
+    packet,
+    providerConfig: workerConfig,
+    adapterFactory: () => ({ ok: true, adapter: countingAdapter(counter) }),
+  }).service;
+  const seeded = await workerService.enqueueReport(enqueueArgs());
+  assert.equal(seeded.ok, true, "enqueue vẫn thành công vì config active đọc được");
+
+  const run = await workerService.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
+  assert.equal(run.ok, true);
+  assert.notEqual(run.results[0].kind, "completed");
+  assert.equal(run.results[0].error_code, "AI_INTERNAL", "không được đổi lỗi hạ tầng thành AI_CONFIG_REQUIRED");
+  assert.equal(counter.calls, 0, "0 provider call");
+  assert.equal(workerQueue.store.usage.size, 0, "0 usage");
+  assert.equal(workerQueue.store.revisions.size, 0, "0 revision");
+});
