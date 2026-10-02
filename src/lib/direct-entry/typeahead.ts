@@ -37,3 +37,10 @@ export function moveTypeaheadIndex(index: number, count: number, direction: "up"
   if (direction === "down") return index < 0 ? 0 : (index + 1) % count;
   return index < 0 ? count - 1 : (index - 1 + count) % count;
 }
+
+export function resolveTypeaheadSelection(
+  options: readonly TypeaheadOption[],
+  optionId: string,
+): string | null {
+  return options.some(({ id }) => id === optionId) ? optionId : null;
+}

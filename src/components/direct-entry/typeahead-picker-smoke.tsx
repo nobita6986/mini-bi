@@ -4,41 +4,50 @@ import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   matchTypeaheadIds,
   moveTypeaheadIndex,
+  resolveTypeaheadSelection,
   typeaheadKeyAction,
   type TypeaheadOption,
 } from "@/lib/direct-entry/typeahead";
 
-interface PickerOption extends TypeaheadOption {
-  kind: "recruiter" | "team" | "bank";
+export interface PickerOption extends TypeaheadOption {
+  provider: string;
+  team: string;
 }
 
-// Synthetic stand-in for the server's already-active/effective projection.
-const projectedOptions: readonly PickerOption[] = [
-  { id: "synthetic-recruiter-hrp-1", label: "CongHr1", groupLabel: "HRP · Team Bắc", kind: "recruiter" },
-  { id: "synthetic-recruiter-hrp-2", label: "CongHr2", groupLabel: "HRP · Team Nam", kind: "recruiter" },
-  { id: "synthetic-recruiter-vendor-1", label: "ChungVendor", groupLabel: "Vendor · Team Bắc", kind: "recruiter" },
-  { id: "synthetic-team-north", label: "Team Bắc", groupLabel: "Team", kind: "team" },
-  { id: "synthetic-bank-north", label: "Ngân ha\u0300ng Bắc", groupLabel: "Bank", kind: "bank" },
+const smokeOptions: readonly PickerOption[] = [
+  { id: "synthetic-recruiter-hrp-1", label: "CongHr1", groupLabel: "HRP · Team Bắc", provider: "HRP", team: "Bắc" },
+  { id: "synthetic-recruiter-hrp-2", label: "CongHr2", groupLabel: "HRP · Team Nam", provider: "HRP", team: "Nam" },
+  { id: "synthetic-recruiter-vendor-1", label: "ChungVendor", groupLabel: "Vendor · Team Bắc", provider: "Vendor", team: "Bắc" },
 ];
 
-export function TypeaheadPickerSmoke() {
-  const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export function RecruiterTypeahead({
+  id,
+  options,
+  value,
+  onChange,
+  label = "Người tuyển",
+}: {
+  id: string;
+  options: readonly PickerOption[];
+  value: string;
+  onChange: (recruiterId: string) => void;
+  label?: string;
+}) {
+  const selectedLabel = options.find((option) => option.id === value)?.label ?? "";
+  const [query, setQuery] = useState(selectedLabel);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const composing = useRef(false);
-  const inputId = "direct-entry-picker-smoke";
-  const listId = `${inputId}-options`;
-  const visibleIds = useMemo(
-    () => matchTypeaheadIds(projectedOptions, query),
-    [query],
-  );
+  const listId = `${id}-options`;
+  const visibleIds = useMemo(() => matchTypeaheadIds(options, query), [options, query]);
   const activeId = activeIndex < 0 ? undefined : visibleIds[activeIndex];
 
-  const choose = (id: string) => {
-    const option = projectedOptions.find((item) => item.id === id);
+  const choose = (optionId: string) => {
+    const stableId = resolveTypeaheadSelection(options, optionId);
+    if (stableId === null) return;
+    const option = options.find(({ id: optionKey }) => optionKey === stableId);
     if (!option) return;
-    setSelectedId(id);
+    onChange(stableId);
     setQuery(option.label);
     setOpen(false);
     setActiveIndex(-1);
@@ -64,10 +73,10 @@ export function TypeaheadPickerSmoke() {
   };
 
   return (
-    <div>
-      <label htmlFor={inputId}>Tìm recruiter, team hoặc ngân hàng</label>
+    <div className="relative">
+      <label htmlFor={id}>{label}</label>
       <input
-        id={inputId}
+        id={id}
         role="combobox"
         aria-autocomplete="list"
         aria-controls={listId}
@@ -76,19 +85,22 @@ export function TypeaheadPickerSmoke() {
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
-          setSelectedId(null);
           setActiveIndex(-1);
           setOpen(true);
         }}
         onCompositionStart={() => { composing.current = true; }}
-        onCompositionEnd={() => { composing.current = false; }}
+        onCompositionEnd={(event) => {
+          composing.current = false;
+          setQuery(event.currentTarget.value);
+          setActiveIndex(-1);
+          setOpen(true);
+        }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
       />
-      <span aria-live="polite">Selected ID: {selectedId ?? "none"}</span>
       {open && (
-        <ul id={listId} role="listbox" aria-label="Matching records">
-          {projectedOptions.filter(({ id }) => visibleIds.includes(id)).map((option) => (
+        <ul id={listId} role="listbox" aria-label={`${label} — gợi ý`}>
+          {options.filter(({ id: optionId }) => visibleIds.includes(optionId)).map((option) => (
             <li
               id={`${listId}-${encodeURIComponent(option.id)}`}
               key={option.id}
@@ -98,12 +110,27 @@ export function TypeaheadPickerSmoke() {
               onClick={() => choose(option.id)}
             >
               <span>{option.label}</span>
-              <span> — {option.groupLabel}</span>
-              <span className="sr-only"> ({option.kind})</span>
+              <span> — {option.provider} · Team {option.team}</span>
             </li>
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+export function TypeaheadPickerSmoke() {
+  const [selectedId, setSelectedId] = useState("");
+  return (
+    <div>
+      <RecruiterTypeahead
+        id="direct-entry-picker-smoke"
+        label="Tìm recruiter"
+        options={smokeOptions}
+        value={selectedId}
+        onChange={setSelectedId}
+      />
+      <span aria-live="polite">Selected ID: {selectedId || "none"}</span>
     </div>
   );
 }

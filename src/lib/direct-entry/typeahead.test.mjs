@@ -4,8 +4,15 @@ import test from "node:test";
 import {
   matchTypeaheadIds,
   moveTypeaheadIndex,
+  resolveTypeaheadSelection,
   typeaheadKeyAction,
 } from "./typeahead.ts";
+import {
+  editDirectEntryRow,
+  INITIAL_DIRECT_ENTRY_ROWS,
+  isDirectEntryUiEnabled,
+  stableDirectEntryRowKey,
+} from "./ui-model.ts";
 
 const options = [
   { id: "rec-hrp-1", label: "CongHr1", groupLabel: "HRP · Team Bắc" },
@@ -42,4 +49,23 @@ test("keyboard actions wrap, commit explicitly, and do not commit during IME com
   assert.equal(typeaheadKeyAction("Enter", true), "ignore");
   assert.equal(typeaheadKeyAction("ArrowDown", true), "ignore");
   assert.equal(typeaheadKeyAction("x", false), null);
+});
+
+test("selection emits only an existing stable recruiter ID, never display text", () => {
+  assert.equal(resolveTypeaheadSelection(options, "rec-hrp-2"), "rec-hrp-2");
+  assert.equal(resolveTypeaheadSelection(options, "CongHr2"), null);
+  assert.equal(resolveTypeaheadSelection(options, "unknown"), null);
+});
+
+test("route gate fails closed and local edits preserve stable row identity", () => {
+  assert.equal(isDirectEntryUiEnabled(undefined), false);
+  assert.equal(isDirectEntryUiEnabled("false"), false);
+  assert.equal(isDirectEntryUiEnabled("TRUE"), false);
+  assert.equal(isDirectEntryUiEnabled("true"), true);
+  const [first, second] = INITIAL_DIRECT_ENTRY_ROWS;
+  const edited = editDirectEntryRow(INITIAL_DIRECT_ENTRY_ROWS, first.rowId, { project: "Локально изменено" });
+  assert.equal(edited[0].project, "Локально изменено");
+  assert.equal(edited[1], second);
+  assert.equal(stableDirectEntryRowKey(edited[0]), first.rowId);
+  assert.notEqual(edited[0].rowId, edited[0].employeeCode);
 });
