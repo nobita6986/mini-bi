@@ -1,7 +1,7 @@
 {
-  "case_id": "p15-period-ref-type-mismatch",
-  "description": "period_ref prefix khác period.type",
-  "expect_code": "PERIOD_REF_TYPE_MISMATCH",
+  "case_id": "p26-team-ambiguous-with-subjects",
+  "description": "ambiguous nhưng vẫn còn team subject",
+  "expect_code": "TEAM_MAPPING_INCONSISTENT",
   "context_case": "c01",
   "packet": {
     "contract_version": "analysis-packet/0.1",
@@ -24,7 +24,7 @@
       ]
     },
     "period": {
-      "period_ref": "month:2026-10",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -384,13 +384,13 @@
       }
     ],
     "team_mapping": {
-      "availability": "available",
-      "mapped_recruited_count": 30,
-      "unmapped_recruited_count": 0,
-      "ambiguous_recruited_count": 0,
-      "coverage_ratio": 1,
+      "availability": "ambiguous",
+      "mapped_recruited_count": 0,
+      "unmapped_recruited_count": 12,
+      "ambiguous_recruited_count": 18,
+      "coverage_ratio": 0,
       "teams_in_scope": 2,
-      "reason_code": "TEAM_MAPPING_AVAILABLE"
+      "reason_code": "TEAM_MAPPING_AMBIGUOUS"
     }
   }
 }

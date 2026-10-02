@@ -18,7 +18,8 @@
         "evidence_refs": [
           "ev_01",
           "ev_02",
-          "ev_03"
+          "ev_03",
+          "ev_04"
         ],
         "confidence": "high",
         "limitations": [
@@ -33,7 +34,8 @@
     "executive_evidence_refs": [
       "ev_01",
       "ev_02",
-      "ev_03"
+      "ev_03",
+      "ev_04"
     ]
   }
 }

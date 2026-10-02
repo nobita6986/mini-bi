@@ -24,8 +24,9 @@ import {
   SCOPE_SUBJECT_REF,
   SUBJECT_REF_RE,
   TEAM_SUBJECT_REF_RE,
-  extractNumericTokens,
-  isGroundedToken,
+  extractIsoDates,
+  extractNumericClaims,
+  isGroundedClaim,
   mergeGroundingSets,
   scanProhibitedContent,
 } from "./shared.mjs";
@@ -78,6 +79,8 @@ export interface BusinessAnalysisContext {
   insufficientKeys: string[];
   /** Team mapping availability từ packet (`available` | `partial` | `unavailable` | `ambiguous`). */
   teamAvailability: string;
+  /** Ngày được phép nhắc tới (R2): period start/end, comparable start/end, series period_start/period_end. */
+  allowedDates: string[];
 }
 
 function firstIssue(error: z.ZodError): ContractValidationError {
@@ -89,17 +92,29 @@ function firstIssue(error: z.ZodError): ContractValidationError {
   return { ok: false, code, message: raw + (path ? " @ " + path : ""), path };
 }
 
+/** Mọi ISO date trong text phải nằm trong allowedDates (R2 — không bỏ qua date im lặng). */
+function checkDates(text: string, allowedDates: Set<string>, at: string): ContractValidationError | null {
+  for (const date of extractIsoDates(text)) {
+    if (!allowedDates.has(date)) {
+      return { ok: false, code: "UNGROUNDED_DATE_CLAIM", message: "ngày " + date + " không thuộc packet", path: at };
+    }
+  }
+  return null;
+}
+
 /**
- * Claim số phải đối chiếu được evidence được trích dẫn (unit-aware, không dung sai).
- * Trả lỗi đầu tiên hoặc null.
+ * Claim số phải đối chiếu được evidence được trích dẫn (unit-aware R2, không dung sai, không cross-unit).
+ * Date được validate trước, sau đó mới loại date khỏi numeric parsing.
  */
-function checkGrounding(text: string, evidenceList: EvidenceLite[], at: string): ContractValidationError | null {
-  const tokens = extractNumericTokens(text);
-  if (tokens.length === 0) return null;
+function checkGrounding(text: string, evidenceList: EvidenceLite[], allowedDates: Set<string>, at: string): ContractValidationError | null {
+  const dateError = checkDates(text, allowedDates, at);
+  if (dateError) return dateError;
+  const claims = extractNumericClaims(text);
+  if (claims.length === 0) return null;
   const sets = mergeGroundingSets(evidenceList);
-  for (const token of tokens) {
-    if (!isGroundedToken(token, sets)) {
-      return { ok: false, code: "UNGROUNDED_NUMERIC_CLAIM", message: "số " + token + " không khớp evidence được trích dẫn (unit-aware)", path: at };
+  for (const claim of claims) {
+    if (!isGroundedClaim(claim, sets)) {
+      return { ok: false, code: "UNGROUNDED_NUMERIC_CLAIM", message: "số " + claim.token + " không khớp evidence được trích dẫn (unit-aware)", path: at };
     }
   }
   return null;
@@ -129,6 +144,7 @@ export function validateBusinessAnalysis(
   const evidenceIds = new Set(context.evidenceIds);
   const subjectRefs = new Set(context.subjectRefs);
   const evidenceById = new Map(context.evidence.map((e) => [e.evidence_id, e]));
+  const allowedDates = new Set(context.allowedDates);
 
   // Executive grounding: ref tồn tại + mọi claim số (executive + overall_limitations) phải ground.
   const execEvidence: EvidenceLite[] = [];
@@ -137,10 +153,10 @@ export function validateBusinessAnalysis(
     const ev = evidenceById.get(ref);
     if (ev) execEvidence.push(ev);
   }
-  const execGrounding = checkGrounding(report.executive_analysis, execEvidence, "executive_analysis");
+  const execGrounding = checkGrounding(report.executive_analysis, execEvidence, allowedDates, "executive_analysis");
   if (execGrounding) return execGrounding;
   for (let i = 0; i < report.overall_limitations.length; i++) {
-    const g = checkGrounding(report.overall_limitations[i], execEvidence, "overall_limitations[" + i + "]");
+    const g = checkGrounding(report.overall_limitations[i], execEvidence, allowedDates, "overall_limitations[" + i + "]");
     if (g) return g;
   }
 
@@ -197,8 +213,13 @@ export function validateBusinessAnalysis(
       }
     }
 
+    for (let li = 0; li < finding.limitations.length; li++) {
+      const d = checkDates(finding.limitations[li], allowedDates, at + ".limitations[" + li + "]");
+      if (d) return d;
+    }
+
     const ground = finding.evidence_refs.map((ref) => evidenceById.get(ref)).filter((e) => e !== undefined);
-    const g = checkGrounding([finding.headline, finding.analysis, finding.recommended_action ?? ""].join(" "), ground, at);
+    const g = checkGrounding([finding.headline, finding.analysis, finding.recommended_action ?? ""].join(" "), ground, allowedDates, at);
     if (g) return g;
   }
 

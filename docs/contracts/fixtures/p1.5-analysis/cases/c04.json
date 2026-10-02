@@ -273,9 +273,11 @@
     ],
     "team_mapping": {
       "availability": "unavailable",
-      "coverage_ratio": null,
-      "mapped_subjects": 0,
-      "unmapped_subjects": 0,
+      "mapped_recruited_count": 0,
+      "unmapped_recruited_count": 6,
+      "ambiguous_recruited_count": 0,
+      "coverage_ratio": 0,
+      "teams_in_scope": 0,
       "reason_code": "TEAM_MAPPING_UNAVAILABLE"
     }
   },

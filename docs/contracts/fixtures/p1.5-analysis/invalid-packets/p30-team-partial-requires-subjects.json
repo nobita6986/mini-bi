@@ -1,6 +1,8 @@
 {
-  "case_id": "c09",
-  "title": "Project có Vendor share 100% nhưng mẫu chỉ 1 người",
+  "case_id": "p30-team-partial-requires-subjects",
+  "description": "partial nhưng không có team subject trong scope",
+  "expect_code": "TEAM_MAPPING_INCONSISTENT",
+  "context_case": "c12",
   "packet": {
     "contract_version": "analysis-packet/0.1",
     "generated_at": "2026-10-05T00:00:00Z",
@@ -38,13 +40,22 @@
       }
     },
     "totals": {
-      "current": 1,
-      "comparable": 1,
+      "current": 14,
+      "comparable": 14,
       "delta": 0,
       "delta_pct": 0
     },
     "drivers": {
-      "project": [],
+      "project": [
+        {
+          "subject_ref": "project_04",
+          "current": 14,
+          "comparable": 14,
+          "delta": 0,
+          "delta_contribution_share": null,
+          "share_of_current": null
+        }
+      ],
       "recruiter": [],
       "team": [],
       "provider": [],
@@ -127,15 +138,15 @@
     },
     "project_provider_mix": [
       {
-        "subject_ref": "project_01",
-        "project_total": 1,
-        "hrp_count": 0,
-        "vendor_count": 1,
+        "subject_ref": "project_04",
+        "project_total": 14,
+        "hrp_count": 7,
+        "vendor_count": 7,
         "unknown_count": 0,
         "invalid_count": 0,
-        "known_total": 1,
-        "hrp_share": 0,
-        "vendor_share": 1,
+        "known_total": 14,
+        "hrp_share": 0.5,
+        "vendor_share": 0.5,
         "known_coverage": 1
       }
     ],
@@ -143,37 +154,37 @@
       {
         "key": "trend_weekly",
         "required_points": 4,
-        "actual_points": 2,
-        "status": "not_met",
-        "reason_code": "BASELINE_NOT_MET"
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
       },
       {
         "key": "trend_monthly",
         "required_points": 3,
-        "actual_points": 2,
-        "status": "not_met",
-        "reason_code": "BASELINE_NOT_MET"
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
       },
       {
         "key": "trend_quarterly",
         "required_points": 4,
-        "actual_points": 2,
-        "status": "not_met",
-        "reason_code": "BASELINE_NOT_MET"
+        "actual_points": 5,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
       },
       {
         "key": "day_of_week",
         "required_points": 8,
-        "actual_points": 2,
-        "status": "not_met",
-        "reason_code": "BASELINE_NOT_MET"
+        "actual_points": 10,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
       },
       {
         "key": "consistency",
         "required_points": 4,
-        "actual_points": 2,
-        "status": "not_met",
-        "reason_code": "BASELINE_NOT_MET"
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
       }
     ],
     "subjects": [
@@ -183,7 +194,7 @@
         "catalog_key": null
       },
       {
-        "ref": "project_01",
+        "ref": "project_04",
         "kind": "project",
         "catalog_key": null
       }
@@ -191,13 +202,13 @@
     "evidence": [
       {
         "evidence_id": "ev_01",
-        "metric": "project_total",
+        "metric": "recruited_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
         "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
-        "subject_ref": "project_01",
-        "value": 1,
+        "subject_ref": "scope",
+        "value": 14,
         "unit": "people",
         "sufficiency": "met",
         "quality": "ok",
@@ -205,108 +216,41 @@
       },
       {
         "evidence_id": "ev_02",
+        "metric": "project_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "week:2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_04",
+        "value": 14,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_03",
         "metric": "project_vendor_share",
         "formula": "vendor_count / known_total",
         "formula_version": "v0.1",
         "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
-        "subject_ref": "project_01",
-        "value": 1,
+        "subject_ref": "project_04",
+        "value": 0.5,
         "unit": "ratio",
-        "sufficiency": "not_met",
+        "sufficiency": "met",
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
     ],
     "team_mapping": {
-      "availability": "unavailable",
-      "mapped_recruited_count": 0,
-      "unmapped_recruited_count": 1,
+      "availability": "partial",
+      "mapped_recruited_count": 5,
+      "unmapped_recruited_count": 9,
       "ambiguous_recruited_count": 0,
-      "coverage_ratio": 0,
+      "coverage_ratio": 0.35714285714285715,
       "teams_in_scope": 0,
-      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+      "reason_code": "TEAM_MAPPING_PARTIAL"
     }
-  },
-  "expected": {
-    "packet_valid": true,
-    "insufficient_keys": [
-      "trend_weekly",
-      "trend_monthly",
-      "trend_quarterly",
-      "day_of_week",
-      "consistency"
-    ],
-    "min_findings": 1,
-    "max_confidence": "medium",
-    "allowed_categories": [
-      "provider_mix",
-      "data_quality"
-    ],
-    "forbidden_claims": [
-      "PROHIBITED_CAUSAL_CLAIM"
-    ],
-    "invariants": [
-      "1/1 Vendor không được trình bày như 100/100 Vendor; phải nêu mẫu nhỏ"
-    ]
-  },
-  "allowed_analysis": {
-    "contract_version": "business-analysis/0.1",
-    "period_ref": "week:2026-W40",
-    "report_status": "draft",
-    "executive_analysis": "Một dự án chỉ có một người và toàn bộ thuộc Vendor; mẫu quá nhỏ để kết luận.",
-    "findings": [
-      {
-        "finding_id": "f_01",
-        "category": "provider_mix",
-        "subject_ref": "project_01",
-        "headline": "Dự án có tỷ lệ Vendor 100% nhưng chỉ 1 người",
-        "analysis": "Dự án này có tổng 1 người và 1 người thuộc Vendor; mẫu quá nhỏ nên tỷ lệ 100% chỉ mang tính mô tả.",
-        "evidence_refs": [
-          "ev_01",
-          "ev_02"
-        ],
-        "confidence": "low",
-        "limitations": [
-          "Mẫu chỉ 1 người, không đủ để kết luận phụ thuộc Vendor."
-        ],
-        "recommended_action": null
-      }
-    ],
-    "overall_limitations": [],
-    "executive_evidence_refs": [
-      "ev_01",
-      "ev_02"
-    ]
-  },
-  "forbidden_analysis": {
-    "contract_version": "business-analysis/0.1",
-    "period_ref": "week:2026-W40",
-    "report_status": "draft",
-    "executive_analysis": "Dự án này phụ thuộc hoàn toàn vào Vendor.",
-    "findings": [
-      {
-        "finding_id": "f_01",
-        "category": "risk",
-        "subject_ref": "project_01",
-        "headline": "Dự án phụ thuộc Vendor nghiêm trọng",
-        "analysis": "Tỷ lệ Vendor của dự án là 100% nên đây là rủi ro phụ thuộc nghiêm trọng.",
-        "evidence_refs": [
-          "ev_01",
-          "ev_02"
-        ],
-        "confidence": "high",
-        "limitations": [
-          "Mẫu chỉ 1 người."
-        ],
-        "recommended_action": null
-      }
-    ],
-    "overall_limitations": [],
-    "executive_evidence_refs": [
-      "ev_01",
-      "ev_02"
-    ]
-  },
-  "forbidden_expected_code": "HIGH_CONFIDENCE_WITHOUT_SUFFICIENCY"
+  }
 }

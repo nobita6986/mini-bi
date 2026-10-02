@@ -1,6 +1,6 @@
 {
-  "case_id": "p22-team-mapping-partial-coverage",
-  "description": "team partial nhưng coverage_ratio = 1",
+  "case_id": "p25-team-ambiguous-zero-count",
+  "description": "ambiguous nhưng ambiguous_recruited_count = 0",
   "expect_code": "TEAM_MAPPING_INCONSISTENT",
   "context_case": "c01",
   "packet": {
@@ -48,24 +48,7 @@
     "drivers": {
       "project": [],
       "recruiter": [],
-      "team": [
-        {
-          "subject_ref": "team_01",
-          "current": 12,
-          "comparable": 8,
-          "delta": 4,
-          "delta_contribution_share": 0.667,
-          "share_of_current": null
-        },
-        {
-          "subject_ref": "team_02",
-          "current": 10,
-          "comparable": 9,
-          "delta": 1,
-          "delta_contribution_share": 0.167,
-          "share_of_current": null
-        }
-      ],
+      "team": [],
       "provider": [
         {
           "subject_ref": "provider_hrp",
@@ -253,16 +236,6 @@
         "catalog_key": null
       },
       {
-        "ref": "team_01",
-        "kind": "team",
-        "catalog_key": null
-      },
-      {
-        "ref": "team_02",
-        "kind": "team",
-        "catalog_key": null
-      },
-      {
         "ref": "project_01",
         "kind": "project",
         "catalog_key": null
@@ -327,34 +300,6 @@
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       },
       {
-        "evidence_id": "ev_04",
-        "metric": "team_delta",
-        "formula": "current - comparable by team",
-        "formula_version": "v0.1",
-        "period_ref": "week:2026-W40",
-        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
-        "subject_ref": "team_01",
-        "value": 4,
-        "unit": "people",
-        "sufficiency": "met",
-        "quality": "ok",
-        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
-      },
-      {
-        "evidence_id": "ev_05",
-        "metric": "team_delta_share",
-        "formula": "team_delta / total_delta",
-        "formula_version": "v0.1",
-        "period_ref": "week:2026-W40",
-        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
-        "subject_ref": "team_01",
-        "value": 0.667,
-        "unit": "ratio",
-        "sufficiency": "met",
-        "quality": "ok",
-        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
-      },
-      {
         "evidence_id": "ev_06",
         "metric": "project_vendor_share",
         "formula": "vendor_count / known_total",
@@ -384,11 +329,13 @@
       }
     ],
     "team_mapping": {
-      "availability": "partial",
-      "coverage_ratio": 1,
-      "mapped_subjects": 2,
-      "unmapped_subjects": 0,
-      "reason_code": "TEAM_MAPPING_AVAILABLE"
+      "availability": "ambiguous",
+      "mapped_recruited_count": 0,
+      "unmapped_recruited_count": 30,
+      "ambiguous_recruited_count": 0,
+      "coverage_ratio": 0,
+      "teams_in_scope": 2,
+      "reason_code": "TEAM_MAPPING_AMBIGUOUS"
     }
   }
 }

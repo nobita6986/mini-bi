@@ -250,13 +250,29 @@
         "sufficiency": "not_met",
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_04",
+        "metric": "periods_completed",
+        "formula": "count(completed periods in baseline window)",
+        "formula_version": "v0.1",
+        "period_ref": "week:2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 2,
+        "unit": "count",
+        "sufficiency": "not_met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
     ],
     "team_mapping": {
       "availability": "unavailable",
-      "coverage_ratio": null,
-      "mapped_subjects": 0,
-      "unmapped_subjects": 0,
+      "mapped_recruited_count": 0,
+      "unmapped_recruited_count": 9,
+      "ambiguous_recruited_count": 0,
+      "coverage_ratio": 0,
+      "teams_in_scope": 0,
       "reason_code": "TEAM_MAPPING_UNAVAILABLE"
     }
   },
@@ -298,7 +314,8 @@
         "evidence_refs": [
           "ev_01",
           "ev_02",
-          "ev_03"
+          "ev_03",
+          "ev_04"
         ],
         "confidence": "low",
         "limitations": [
@@ -313,7 +330,8 @@
     "executive_evidence_refs": [
       "ev_01",
       "ev_02",
-      "ev_03"
+      "ev_03",
+      "ev_04"
     ]
   },
   "forbidden_analysis": {
@@ -342,7 +360,8 @@
     "executive_evidence_refs": [
       "ev_01",
       "ev_02",
-      "ev_03"
+      "ev_03",
+      "ev_04"
     ]
   },
   "forbidden_expected_code": "HIGH_CONFIDENCE_WITHOUT_SUFFICIENCY"

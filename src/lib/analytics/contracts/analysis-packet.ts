@@ -122,9 +122,11 @@ export const analysisPacketSchema = z
     }),
     team_mapping: z.strictObject({
       availability: z.enum(TEAM_AVAILABILITY),
+      mapped_recruited_count: z.number().int().min(0),
+      unmapped_recruited_count: z.number().int().min(0),
+      ambiguous_recruited_count: z.number().int().min(0),
       coverage_ratio: unitLike.nullable(),
-      mapped_subjects: z.number().int().min(0),
-      unmapped_subjects: z.number().int().min(0),
+      teams_in_scope: z.number().int().min(0),
       reason_code: z.string().regex(/^[A-Z][A-Z0-9_]{2,40}$/),
     }),
     period: z.strictObject({
@@ -162,9 +164,9 @@ export const analysisPacketSchema = z
       formula: z.literal(STABILITY_FORMULA),
       formula_version: z.literal(STABILITY_FORMULA_VERSION),
       period_points: z.number().int().min(0).max(400),
-      mean: z.number().finite().nullable(),
-      stddev: z.number().finite().nullable(),
-      cv: z.number().finite().nullable(),
+      mean: z.number().finite().min(0).nullable(),
+      stddev: z.number().finite().min(0).nullable(),
+      cv: z.number().finite().min(0).nullable(),
       trend_direction: z.enum(TREND_DIRECTIONS),
       volatility: z.enum(VOLATILITY_LEVELS),
     }),
@@ -297,20 +299,47 @@ export function checkPacketSemantics(packet: AnalysisPacket): ContractValidation
     }
   }
 
-  // 0c. Team mapping (R1): optional, không suy team từ recruiter/source/project.
+  // 0c. Team mapping (R2): fact-weighted theo sum(recruited_count), KHÔNG dùng số team làm tử số coverage.
   const tm = packet.team_mapping;
   const teamSubjectCount = packet.subjects.filter((s) => TEAM_SUBJECT_REF_RE.test(s.ref)).length;
-  if (tm.mapped_subjects !== teamSubjectCount) {
-    return fail("TEAM_MAPPING_INCONSISTENT", "mapped_subjects không khớp số team subject trong scope", "team_mapping");
+  const current = packet.totals.current;
+  const teamSum = tm.mapped_recruited_count + tm.unmapped_recruited_count + tm.ambiguous_recruited_count;
+  if (teamSum !== current) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "mapped + unmapped + ambiguous != totals.current", "team_mapping");
   }
-  if ((tm.availability === "unavailable" || tm.availability === "ambiguous") && (teamSubjectCount > 0 || packet.drivers.team.length > 0)) {
-    return fail("TEAM_MAPPING_INCONSISTENT", "team " + tm.availability + " nhưng vẫn có team subject/driver", "team_mapping");
+  if (tm.teams_in_scope !== teamSubjectCount) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "teams_in_scope không khớp số subject kind=team", "team_mapping");
   }
-  if (tm.availability === "available" && tm.coverage_ratio !== 1) {
-    return fail("TEAM_MAPPING_INCONSISTENT", "team available phải có coverage_ratio = 1", "team_mapping");
+  if (current > 0) {
+    const expectedCoverage = tm.mapped_recruited_count / current;
+    if (tm.coverage_ratio === null || Math.abs(tm.coverage_ratio - expectedCoverage) > 1e-9) {
+      return fail("TEAM_MAPPING_INCONSISTENT", "coverage_ratio không khớp mapped_recruited_count / totals.current", "team_mapping");
+    }
+  } else if (tm.coverage_ratio !== null) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "totals.current = 0 nhưng coverage_ratio khác null", "team_mapping");
   }
-  if (tm.availability === "partial" && (tm.coverage_ratio === null || tm.coverage_ratio <= 0 || tm.coverage_ratio >= 1)) {
-    return fail("TEAM_MAPPING_INCONSISTENT", "team partial phải có coverage_ratio trong (0,1)", "team_mapping");
+  if (tm.availability === "available") {
+    if (tm.unmapped_recruited_count !== 0 || tm.ambiguous_recruited_count !== 0 || tm.coverage_ratio !== 1) {
+      return fail("TEAM_MAPPING_INCONSISTENT", "available: unmapped = 0, ambiguous = 0, coverage = 1", "team_mapping");
+    }
+  } else if (tm.availability === "partial") {
+    const okPartial = tm.mapped_recruited_count > 0 && tm.unmapped_recruited_count > 0 && tm.ambiguous_recruited_count === 0 && tm.coverage_ratio !== null && tm.coverage_ratio > 0 && tm.coverage_ratio < 1;
+    if (!okPartial) return fail("TEAM_MAPPING_INCONSISTENT", "partial: mapped > 0, unmapped > 0, ambiguous = 0, 0 < coverage < 1", "team_mapping");
+    if (teamSubjectCount === 0) return fail("TEAM_MAPPING_INCONSISTENT", "partial phải có team subject trong scope", "team_mapping");
+  } else if (tm.availability === "unavailable") {
+    if (tm.mapped_recruited_count !== 0 || tm.ambiguous_recruited_count !== 0) {
+      return fail("TEAM_MAPPING_INCONSISTENT", "unavailable: mapped = 0, ambiguous = 0", "team_mapping");
+    }
+    if (teamSubjectCount > 0 || packet.drivers.team.length > 0) {
+      return fail("TEAM_MAPPING_INCONSISTENT", "unavailable: không team subject/driver", "team_mapping");
+    }
+  } else if (tm.availability === "ambiguous") {
+    if (tm.ambiguous_recruited_count <= 0) {
+      return fail("TEAM_MAPPING_INCONSISTENT", "ambiguous: ambiguous_recruited_count > 0", "team_mapping");
+    }
+    if (teamSubjectCount > 0 || packet.drivers.team.length > 0) {
+      return fail("TEAM_MAPPING_INCONSISTENT", "ambiguous: tắt team subject/driver để không suy luận sai", "team_mapping");
+    }
   }
 
   // 1. Evidence: id duy nhất, snapshot khớp packet, subject tồn tại.

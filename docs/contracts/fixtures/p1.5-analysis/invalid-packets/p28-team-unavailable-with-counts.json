@@ -1,6 +1,6 @@
 {
-  "case_id": "p21-team-mapping-inconsistent",
-  "description": "team unavailable nhưng vẫn có team subject",
+  "case_id": "p28-team-unavailable-with-counts",
+  "description": "unavailable nhưng mapped > 0",
   "expect_code": "TEAM_MAPPING_INCONSISTENT",
   "context_case": "c01",
   "packet": {
@@ -385,10 +385,12 @@
     ],
     "team_mapping": {
       "availability": "unavailable",
-      "coverage_ratio": null,
-      "mapped_subjects": 2,
-      "unmapped_subjects": 0,
-      "reason_code": "TEAM_MAPPING_AVAILABLE"
+      "mapped_recruited_count": 10,
+      "unmapped_recruited_count": 20,
+      "ambiguous_recruited_count": 0,
+      "coverage_ratio": 0.3333333333333333,
+      "teams_in_scope": 2,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
     }
   }
 }

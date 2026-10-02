@@ -20,6 +20,13 @@ function contextFromPacket(packet) {
     evidence: packet.evidence.map((e) => ({ evidence_id: e.evidence_id, value: e.value, unit: e.unit })),
     insufficientKeys: packet.sufficiency.filter((s) => s.status === "not_met").map((s) => s.key),
     teamAvailability: packet.team_mapping.availability,
+    allowedDates: [...new Set([
+      packet.period.start,
+      packet.period.end,
+      packet.period.comparable ? packet.period.comparable.start : null,
+      packet.period.comparable ? packet.period.comparable.end : null,
+      ...packet.series.points.flatMap((p) => [p.period_start, p.period_end]),
+    ].filter(Boolean))],
   };
 }
 function contextForCase(id) {
@@ -417,20 +424,20 @@ test("R1 team: unavailable/ambiguous phải rỗng team subject + driver", () =>
   const base = caseById("c01").packet;
   const mk = () => JSON.parse(JSON.stringify(base));
   const unavailable = mk();
-  unavailable.team_mapping = { availability: "unavailable", coverage_ratio: null, mapped_subjects: 0, unmapped_subjects: 0, reason_code: "TEAM_MAPPING_UNAVAILABLE" };
+  unavailable.team_mapping = { availability: "unavailable", mapped_recruited_count: 0, unmapped_recruited_count: unavailable.totals.current, ambiguous_recruited_count: 0, coverage_ratio: 0, teams_in_scope: 0, reason_code: "TEAM_MAPPING_UNAVAILABLE" };
   unavailable.subjects = unavailable.subjects.filter((s) => s.kind !== "team");
   unavailable.drivers.team = [];
   unavailable.evidence = unavailable.evidence.filter((e) => e.subject_ref !== "team_01" && e.subject_ref !== "team_02");
   assert.ok(validateAnalysisPacket(unavailable).ok, "team unavailable rỗng phải hợp lệ");
 
   const incomplete = mk();
-  incomplete.team_mapping = { availability: "ambiguous", coverage_ratio: null, mapped_subjects: 0, unmapped_subjects: 0, reason_code: "TEAM_MAPPING_AMBIGUOUS" };
+  incomplete.team_mapping = { availability: "ambiguous", mapped_recruited_count: 0, unmapped_recruited_count: 12, ambiguous_recruited_count: 18, coverage_ratio: 0, teams_in_scope: 2, reason_code: "TEAM_MAPPING_AMBIGUOUS" };
   assert.equal(validateAnalysisPacket(incomplete).code, "TEAM_MAPPING_INCONSISTENT");
 });
 
 test("R1 team: partial yêu cầu coverage trong (0,1) và finding team phải có limitation, không high", () => {
   const packet = JSON.parse(JSON.stringify(caseById("c01").packet));
-  packet.team_mapping = { availability: "partial", coverage_ratio: 0.5, mapped_subjects: 2, unmapped_subjects: 1, reason_code: "TEAM_MAPPING_PARTIAL" };
+  packet.team_mapping = { availability: "partial", mapped_recruited_count: 15, unmapped_recruited_count: 15, ambiguous_recruited_count: 0, coverage_ratio: 0.5, teams_in_scope: 2, reason_code: "TEAM_MAPPING_PARTIAL" };
   const pv = validateAnalysisPacket(packet);
   assert.ok(pv.ok, pv.ok ? "" : pv.code + " " + pv.message);
   const ctx = contextFromPacket(pv.value);
@@ -451,4 +458,140 @@ test("R1 team: mapping unavailable thì finding team bị chặn bởi SUBJECT_O
   teamFinding.subject_ref = "team_01";
   a.findings = [teamFinding];
   assert.equal(validateBusinessAnalysis(a, ctx).code, "SUBJECT_OUT_OF_SCOPE");
+});
+
+// ---------------------------------------------------------------------------
+// R2 — unit-context grounding, date grounding, team fact-weighted semantics
+// ---------------------------------------------------------------------------
+
+function minimalPacket(evidenceList) {
+  const base = JSON.parse(JSON.stringify(caseById("c01").packet));
+  const zero = { top1_ref: null, top1_share: null, top3_share: null, distinct_subjects: 0 };
+  base.totals = { current: 30, comparable: null, delta: null, delta_pct: null };
+  base.drivers = { project: [], recruiter: [], team: [], provider: [], employment: [] };
+  base.concentration = { project: { ...zero }, recruiter: { ...zero }, team: { ...zero }, provider: { ...zero }, employment: { ...zero } };
+  base.project_provider_mix = [];
+  base.subjects = [{ ref: "scope", kind: "project", catalog_key: null }];
+  base.team_mapping = { availability: "unavailable", mapped_recruited_count: 0, unmapped_recruited_count: 30, ambiguous_recruited_count: 0, coverage_ratio: 0, teams_in_scope: 0, reason_code: "TEAM_MAPPING_UNAVAILABLE" };
+  base.evidence = evidenceList.map((e, i) => ({
+    evidence_id: "ev_" + String(i + 1).padStart(2, "0"),
+    metric: "metric_" + (i + 1),
+    formula: "sum(recruited_count)",
+    formula_version: "v0.1",
+    period_ref: base.period.period_ref,
+    scope_ref: base.scope.scope_hash,
+    subject_ref: "scope",
+    value: e.value,
+    unit: e.unit,
+    sufficiency: "met",
+    quality: "ok",
+    snapshot_ref: base.snapshot.hash,
+  }));
+  return base;
+}
+
+function unitAnalysis(packet, text) {
+  const ids = packet.evidence.map((e) => e.evidence_id);
+  return {
+    contract_version: "business-analysis/0.1",
+    period_ref: packet.period.period_ref,
+    report_status: "draft",
+    executive_analysis: "Kỳ này được đánh giá dựa trên dữ liệu reporting hiện có và không có sai lệch bất thường.",
+    executive_evidence_refs: ids,
+    findings: [{
+      finding_id: "f_01",
+      category: "trend",
+      subject_ref: "scope",
+      headline: "Kiểm tra claim số theo đơn vị",
+      analysis: text,
+      evidence_refs: ids,
+      confidence: "medium",
+      limitations: [],
+      recommended_action: null,
+    }],
+    overall_limitations: [],
+  };
+}
+
+function checkUnit(unit, value, text) {
+  const packet = minimalPacket([{ unit, value }]);
+  const pv = validateAnalysisPacket(packet);
+  assert.ok(pv.ok, "packet " + unit + ": " + (pv.ok ? "" : pv.code + " " + pv.message));
+  return validateBusinessAnalysis(unitAnalysis(pv.value, text), contextFromPacket(pv.value));
+}
+
+test("R2 unit-context: percent KHÔNG ground token plain", () => {
+  assert.equal(checkUnit("percent", 50, "Dự án có 50 người trong kỳ này.").code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.ok(checkUnit("percent", 50, "Tỷ lệ Vendor là 50% trong kỳ này.").ok);
+});
+
+test("R2 unit-context: ratio KHÔNG ground token plain, chỉ ground claim %", () => {
+  assert.equal(checkUnit("ratio", 0.5, "Dự án có 50 người trong kỳ này.").code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.ok(checkUnit("ratio", 0.5, "Tỷ lệ Vendor là 50% trong kỳ này.").ok);
+});
+
+test("R2 unit-context: people không ground 'ngày'", () => {
+  assert.equal(checkUnit("people", 5, "Dự án cần 5 ngày để hoàn tất kỳ này.").code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.ok(checkUnit("people", 5, "Dự án ghi nhận 5 người trong kỳ này.").ok);
+});
+
+test("R2 unit-context: days không ground 'người'", () => {
+  assert.equal(checkUnit("days", 7, "Dự án ghi nhận 7 người trong kỳ này.").code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.ok(checkUnit("days", 7, "Dự án cần 7 ngày để hoàn tất kỳ này.").ok);
+});
+
+test("R2 unit-context: count không ground 'người'", () => {
+  assert.equal(checkUnit("count", 4, "Dự án ghi nhận 4 người trong kỳ này.").code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.ok(checkUnit("count", 4, "Dự án có 4 nguồn trong kỳ này.").ok);
+});
+
+test("R2 unit-context: plain không unit hint chỉ ground bằng count-family", () => {
+  assert.ok(checkUnit("people", 5, "Chỉ số ghi nhận 5 cho kỳ này trên toàn scope.").ok);
+  assert.equal(checkUnit("ratio", 0.5, "Chỉ số ghi nhận 0.5 cho kỳ này trên toàn scope.").code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.equal(checkUnit("percent", 50, "Chỉ số ghi nhận 50 cho kỳ này trên toàn scope.").code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+test("R2 date: ngày thuộc packet PASS, ngày bịa FAIL trong finding", () => {
+  const c = caseById("c01");
+  const ctx = contextForCase("c01");
+  const mk = (text) => { const a = JSON.parse(JSON.stringify(c.allowed_analysis)); a.findings = [a.findings[0]]; a.findings[0].analysis = text; return a; };
+  const allowed = c.packet.period.start;
+  assert.ok(ctx.allowedDates.includes(allowed));
+  assert.ok(validateBusinessAnalysis(mk("Tổng ngày " + allowed + " là 30 người so với 24 người kỳ trước."), ctx).ok);
+  assert.equal(validateBusinessAnalysis(mk("Tổng ngày 2026-11-30 là 30 người so với 24 người kỳ trước."), ctx).code, "UNGROUNDED_DATE_CLAIM");
+});
+
+test("R2 date: kiểm tra cả executive, overall_limitations và finding limitations", () => {
+  const ctx = contextForCase("c01");
+  const mk = (mutate) => { const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis)); mutate(a); return a; };
+  assert.equal(validateBusinessAnalysis(mk((a) => { a.executive_analysis = "Tính đến ngày 2026-12-31, kỳ này ghi nhận 30 người so với 24 người kỳ trước."; }), ctx).code, "UNGROUNDED_DATE_CLAIM");
+  assert.equal(validateBusinessAnalysis(mk((a) => { a.overall_limitations = ["Dữ liệu chỉ đầy đủ đến 2026-11-01 nên cần kiểm tra thêm."]; }), ctx).code, "UNGROUNDED_DATE_CLAIM");
+  assert.equal(validateBusinessAnalysis(mk((a) => { a.findings[0].limitations = ["Chỉ có dữ liệu đến 2026-11-01."]; }), ctx).code, "UNGROUNDED_DATE_CLAIM");
+});
+
+test("R2 stability: mean/stddev/cv âm bị schema reject", () => {
+  const mk = (mutate) => { const p = JSON.parse(JSON.stringify(caseById("c01").packet)); mutate(p); return p; };
+  assert.equal(validateAnalysisPacket(mk((p) => { p.stability.mean = -1; })).code, "SCHEMA_INVALID");
+  assert.equal(validateAnalysisPacket(mk((p) => { p.stability.stddev = -1; })).code, "SCHEMA_INVALID");
+  assert.equal(validateAnalysisPacket(mk((p) => { p.stability.cv = -0.1; })).code, "SCHEMA_INVALID");
+});
+
+test("R2 team: invariants fact-weighted theo recruited_count", () => {
+  const base = caseById("c01").packet;
+  const mk = (tm) => { const p = JSON.parse(JSON.stringify(base)); p.team_mapping = tm; return p; };
+  const okTm = { availability: "available", mapped_recruited_count: 30, unmapped_recruited_count: 0, ambiguous_recruited_count: 0, coverage_ratio: 1, teams_in_scope: 2, reason_code: "TEAM_MAPPING_AVAILABLE" };
+  assert.ok(validateAnalysisPacket(mk(okTm)).ok);
+  assert.equal(validateAnalysisPacket(mk({ ...okTm, unmapped_recruited_count: 1 })).code, "TEAM_MAPPING_INCONSISTENT");
+  assert.equal(validateAnalysisPacket(mk({ ...okTm, teams_in_scope: 9 })).code, "TEAM_MAPPING_INCONSISTENT");
+  assert.equal(validateAnalysisPacket(mk({ availability: "partial", mapped_recruited_count: 10, unmapped_recruited_count: 20, ambiguous_recruited_count: 0, coverage_ratio: 0.9, teams_in_scope: 2, reason_code: "TEAM_MAPPING_PARTIAL" })).code, "TEAM_MAPPING_INCONSISTENT");
+  assert.equal(validateAnalysisPacket(mk({ availability: "ambiguous", mapped_recruited_count: 0, unmapped_recruited_count: 30, ambiguous_recruited_count: 0, coverage_ratio: 0, teams_in_scope: 2, reason_code: "TEAM_MAPPING_AMBIGUOUS" })).code, "TEAM_MAPPING_INCONSISTENT");
+  const zeroCurrent = JSON.parse(JSON.stringify(base));
+  zeroCurrent.totals = { current: 0, comparable: null, delta: null, delta_pct: null };
+  zeroCurrent.project_provider_mix = [];
+  zeroCurrent.team_mapping = { availability: "unavailable", mapped_recruited_count: 0, unmapped_recruited_count: 0, ambiguous_recruited_count: 0, coverage_ratio: null, teams_in_scope: 0, reason_code: "TEAM_MAPPING_UNAVAILABLE" };
+  zeroCurrent.subjects = zeroCurrent.subjects.filter((s) => s.kind !== "team");
+  zeroCurrent.drivers.team = [];
+  zeroCurrent.evidence = zeroCurrent.evidence.filter((e) => !e.subject_ref.startsWith("team_"));
+  const zeroRes = validateAnalysisPacket(zeroCurrent);
+  assert.ok(zeroRes.ok, zeroRes.ok ? "" : zeroRes.code + " " + zeroRes.message);
 });

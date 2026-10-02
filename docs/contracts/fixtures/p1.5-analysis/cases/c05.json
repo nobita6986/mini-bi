@@ -299,9 +299,11 @@
     ],
     "team_mapping": {
       "availability": "unavailable",
-      "coverage_ratio": null,
-      "mapped_subjects": 0,
-      "unmapped_subjects": 0,
+      "mapped_recruited_count": 0,
+      "unmapped_recruited_count": 18,
+      "ambiguous_recruited_count": 0,
+      "coverage_ratio": 0,
+      "teams_in_scope": 0,
       "reason_code": "TEAM_MAPPING_UNAVAILABLE"
     }
   },
@@ -326,7 +328,7 @@
     "contract_version": "business-analysis/0.1",
     "period_ref": "week:2026-W40",
     "report_status": "draft",
-    "executive_analysis": "Tổng kỳ này là 18 người so với 20 kỳ trước; hai nguồn chưa ở trạng thái đầy đủ nên độ tin cậy bị giới hạn.",
+    "executive_analysis": "Tổng kỳ này là 18 người so với 20 người kỳ trước; hai nguồn chưa ở trạng thái đầy đủ nên độ tin cậy bị giới hạn.",
     "findings": [
       {
         "finding_id": "f_01",
@@ -395,7 +397,7 @@
     "contract_version": "business-analysis/0.1",
     "period_ref": "week:2026-W40",
     "report_status": "draft",
-    "executive_analysis": "Tổng kỳ này là 18 người so với 20 kỳ trước; hai nguồn chưa ở trạng thái đầy đủ nên độ tin cậy bị giới hạn.",
+    "executive_analysis": "Tổng kỳ này là 18 người so với 20 người kỳ trước; hai nguồn chưa ở trạng thái đầy đủ nên độ tin cậy bị giới hạn.",
     "findings": [
       {
         "finding_id": "f_01",

@@ -208,19 +208,60 @@ export function scanProhibitedContent(value, path = "$") {
   return null;
 }
 
-/** Bỏ ISO date khỏi text trước khi trích số (tránh 2026/10/01 thành claim số). */
-export function stripIsoDates(text) {
-  return String(text).replace(/\d{4}-\d{2}-\d{2}/g, " ");
+// ---------------------------------------------------------------------------
+// R2 — Date grounding + numeric claims có unit hint
+// ---------------------------------------------------------------------------
+
+export const ISO_DATE_IN_TEXT_RE = /\d{4}-\d{2}-\d{2}/g;
+
+/** Mọi ISO date xuất hiện trong text (KHÔNG được bỏ qua im lặng). */
+export function extractIsoDates(text) {
+  return String(text).match(ISO_DATE_IN_TEXT_RE) ?? [];
 }
 
-/** Trích các token số (có/không dấu %) từ text; bỏ qua năm 4 chữ số. */
-export function extractNumericTokens(text) {
+/** Che ISO date bằng khoảng trắng SAU khi đã validate date (tránh tách 2026-10-01 thành 3 số). */
+export function blankIsoDates(text) {
+  return String(text).replace(ISO_DATE_IN_TEXT_RE, " ");
+}
+
+/**
+ * Từ vựng unit hint (R2). Thứ tự count trước people để "người tuyển" thắng "người".
+ */
+export const UNIT_HINT_WORDS = {
+  count: ["người tuyển", "nguồn", "dự án", "team", "kỳ", "điểm", "nhóm", "dòng", "bản ghi", "lần"],
+  people: ["người", "lao động", "nhân sự", "nhân viên"],
+  days: ["ngày"],
+};
+export const UNIT_HINT_ORDER = ["count", "people", "days"];
+
+/** Unit hint của từ đứng ngay sau token (null nếu không có unit word). */
+export function unitHintAfter(text, endIndex) {
+  const rest = String(text).slice(endIndex).replace(/^[\s:]+/, "").toLowerCase();
+  for (const hint of UNIT_HINT_ORDER) {
+    for (const word of UNIT_HINT_WORDS[hint]) {
+      if (!rest.startsWith(word)) continue;
+      const tail = rest.slice(word.length);
+      if (tail === "" || !/^\p{L}/u.test(tail)) return hint;
+    }
+  }
+  return null;
+}
+
+/**
+ * Trích numeric claims: { token, normalizedValue, isPercent, unitHint }.
+ * Bỏ ISO date trước khi trích; bỏ qua năm 4 chữ số.
+ */
+export function extractNumericClaims(text) {
+  const src = blankIsoDates(text);
   const out = [];
   const re = /\d+(?:[.,]\d+)?%?/g;
   let m;
-  while ((m = re.exec(stripIsoDates(text))) !== null) {
-    if (/^(?:19|20)\d{2}$/.test(m[0])) continue;
-    out.push(m[0]);
+  while ((m = re.exec(src)) !== null) {
+    const token = m[0];
+    const isPercent = token.endsWith("%");
+    const normalizedValue = token.replace("%", "").replace(",", ".");
+    if (/^(?:19|20)\d{2}$/.test(normalizedValue)) continue;
+    out.push({ token, normalizedValue, isPercent, unitHint: isPercent ? null : unitHintAfter(src, m.index + token.length) });
   }
   return out;
 }
@@ -229,12 +270,11 @@ export function extractNumericTokens(text) {
 // Unit-aware numeric grounding (R1 — bỏ dung sai ±1/2% và bỏ quy đổi ×100 vô điều kiện)
 // ---------------------------------------------------------------------------
 
-export const GROUNDING_RULES_VERSION = "unit-grounding/1.0";
+export const GROUNDING_RULES_VERSION = "unit-grounding/2.0";
 
 /** Đơn vị "đếm được" — chỉ ground claim số không có dấu % và khớp CHÍNH XÁC giá trị. */
 export const COUNT_UNITS = ["people", "count", "days"];
 /** Số chữ số thập phân được phép cho từng dạng representation (deterministic, có version). */
-export const RATIO_PLAIN_DECIMALS = [2, 3];
 export const RATIO_PERCENT_DECIMALS = [0, 1, 2];
 export const PERCENT_DECIMALS = [0, 1, 2];
 
@@ -251,56 +291,54 @@ export function canonicalNumber(n) {
 }
 
 /**
- * Tập token được phép ground từ MỘT evidence, tách theo dạng claim:
- * - `plain`: claim số không có dấu % (theo unit của evidence).
- * - `percent`: claim có dấu % (chỉ ratio/percent).
- * Không có dung sai: claim phải khớp chính xác một representation deterministic.
+ * Ground set của MỘT evidence, tách theo family (R2):
+ * - people/count/days: chỉ ground claim plain ĐÚNG family (khớp chính xác value hoặc |value|).
+ * - ratio: CHỈ ground claim có dấu % (value × 100). Ratio raw (không %) không được ground.
+ * - percent: CHỈ ground claim có dấu % (theo representation deterministic).
+ * Không dung sai, không cross-unit, không quy đổi ×100 cho đơn vị đếm.
  */
 export function groundingSetsFor(evidence) {
-  const plain = new Set();
-  const percent = new Set();
+  const sets = { percent: new Set(), people: new Set(), count: new Set(), days: new Set() };
   const unit = evidence && evidence.unit;
   const v = evidence && evidence.value;
-  if (typeof v !== "number" || !Number.isFinite(v)) return { plain, percent };
+  if (typeof v !== "number" || !Number.isFinite(v)) return sets;
 
   if (COUNT_UNITS.includes(unit)) {
-    plain.add(canonicalNumber(v));
-    plain.add(canonicalNumber(Math.abs(v))); // "giảm 6" cho delta -6
+    sets[unit].add(canonicalNumber(v));
+    sets[unit].add(canonicalNumber(Math.abs(v))); // "giảm 6" cho delta -6
   } else if (unit === "ratio") {
-    plain.add(canonicalNumber(v));
-    for (const d of RATIO_PLAIN_DECIMALS) plain.add(canonicalNumber(roundTo(v, d)));
     const p = v * 100;
-    percent.add(canonicalNumber(p));
-    for (const d of RATIO_PERCENT_DECIMALS) percent.add(canonicalNumber(roundTo(p, d)));
+    sets.percent.add(canonicalNumber(p));
+    for (const d of RATIO_PERCENT_DECIMALS) sets.percent.add(canonicalNumber(roundTo(p, d)));
   } else if (unit === "percent") {
-    plain.add(canonicalNumber(v));
-    for (const d of PERCENT_DECIMALS) plain.add(canonicalNumber(roundTo(v, d)));
-    percent.add(canonicalNumber(v));
-    for (const d of PERCENT_DECIMALS) percent.add(canonicalNumber(roundTo(v, d)));
+    sets.percent.add(canonicalNumber(v));
+    for (const d of PERCENT_DECIMALS) sets.percent.add(canonicalNumber(roundTo(v, d)));
   }
-  return { plain, percent };
+  return sets;
 }
 
-/** Chuẩn hóa token claim: bỏ %, đổi ',' thập phân thành '.'. */
-export function normalizeNumericToken(token) {
-  return String(token).replace("%", "").replace(",", ".");
-}
-
-/** Token có ground được bởi tập hợp ground đã gộp không (không dung sai). */
-export function isGroundedToken(token, groundSets) {
-  const isPercent = String(token).endsWith("%");
-  const set = isPercent ? groundSets.percent : groundSets.plain;
-  return set.has(normalizeNumericToken(token));
-}
-
-/** Gộp ground sets của nhiều evidence. */
+/** Gộp ground sets của nhiều evidence theo family. */
 export function mergeGroundingSets(evidenceList) {
-  const plain = new Set();
-  const percent = new Set();
+  const merged = { percent: new Set(), people: new Set(), count: new Set(), days: new Set() };
   for (const e of evidenceList) {
     const s = groundingSetsFor(e);
-    for (const x of s.plain) plain.add(x);
-    for (const x of s.percent) percent.add(x);
+    for (const family of ["percent", "people", "count", "days"]) {
+      for (const x of s[family]) merged[family].add(x);
+    }
   }
-  return { plain, percent };
+  return merged;
+}
+
+/**
+ * Claim có ground được không (R2).
+ * - claim % ⇒ chỉ percent set (ratio/percent evidence).
+ * - claim plain có unit hint ⇒ chỉ đúng family đó.
+ * - claim plain không unit hint ⇒ hợp của people/count/days (không có percent).
+ */
+export function isGroundedClaim(claim, sets) {
+  if (claim.isPercent) return sets.percent.has(claim.normalizedValue);
+  if (claim.unitHint === "people") return sets.people.has(claim.normalizedValue);
+  if (claim.unitHint === "count") return sets.count.has(claim.normalizedValue);
+  if (claim.unitHint === "days") return sets.days.has(claim.normalizedValue);
+  return sets.people.has(claim.normalizedValue) || sets.count.has(claim.normalizedValue) || sets.days.has(claim.normalizedValue);
 }

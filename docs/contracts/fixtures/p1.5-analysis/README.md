@@ -8,16 +8,18 @@ tên file/Drive ID hay secret. Fixture chỉ dùng để test strict schema + lu
 | Thư mục | Nội dung |
 |---|---|
 | `cases/` | **12** golden case. Mỗi file: `{ case_id, title, packet, expected, allowed_analysis, forbidden_analysis, forbidden_expected_code }` |
-| `invalid-packets/` | **22** packet sai. Mỗi file: `{ case_id, description, expect_code, context_case, packet }` |
-| `invalid-analysis/` | **22** output sai. Mỗi file: `{ case_id, description, expect_code, context_case, analysis }` |
+| `invalid-packets/` | **30** packet sai. Mỗi file: `{ case_id, description, expect_code, context_case, packet }` |
+| `invalid-analysis/` | **25** output sai. Mỗi file: `{ case_id, description, expect_code, context_case, analysis }` |
 | `valid/` | 1 packet hợp lệ + 1 output hợp lệ (positive path) |
 
 ## Cách test dùng fixture
 
 1. `validateAnalysisPacket(case.packet)` phải `ok`.
-2. Context cho output dựng từ packet đã validate: `{ periodRef, evidenceIds, subjectRefs, evidence, insufficientKeys, teamAvailability }`.
+2. Context cho output dựng từ packet đã validate:
+   `{ periodRef, evidenceIds, subjectRefs, evidence, insufficientKeys, teamAvailability, allowedDates }`.
    `insufficientKeys` = các sufficiency key có `status = "not_met"` (phải khớp `expected.insufficient_keys`);
-   `teamAvailability` = `packet.team_mapping.availability`.
+   `teamAvailability` = `packet.team_mapping.availability`;
+   `allowedDates` = period start/end + comparable start/end + series period_start/period_end (R2).
 3. `validateBusinessAnalysis(case.allowed_analysis, context)` phải `ok` — đây là “finding được phép”.
 4. `validateBusinessAnalysis(case.forbidden_analysis, context)` phải fail đúng `forbidden_expected_code` — “finding bị cấm”.
 5. Với `invalid-*/`: validator phải trả đúng `expect_code`.
@@ -50,6 +52,16 @@ tên file/Drive ID hay secret. Fixture chỉ dùng để test strict schema + lu
 - 8 invalid packet mới: period type/range mismatch, comparable khác loại kỳ, stability/volatility sai, team mapping sai.
 - 8 invalid analysis mới: thiếu ref executive, ref executive treo, số executive/limitation không ground,
   findings rỗng không limitation, cross-unit %, count 1 ground “100 người”, percent lệch representation.
+
+## R2 hardening (đã áp dụng trong fixture)
+
+- `team_mapping` chuyển sang semantics **fact-weighted**: `mapped_recruited_count` / `unmapped_recruited_count` /
+  `ambiguous_recruited_count` (đơn vị = số người, `sum(recruited_count)`) + `coverage_ratio` + `teams_in_scope`.
+  Ba count cộng lại = `totals.current`; `coverage_ratio = mapped / totals.current` (null khi current = 0).
+- 8 invalid packet mới cho team (sum, coverage derivation, ambiguous rỗng/có subject, scope count, unavailable có count,
+  partial thiếu subject) và 1 cho stability âm.
+- 3 invalid analysis mới cho date grounding (finding / executive / overall_limitations).
+- `stability.mean/stddev/cv` bắt buộc `>= 0` khi khác null.
 
 ## Invariants toán học được test
 

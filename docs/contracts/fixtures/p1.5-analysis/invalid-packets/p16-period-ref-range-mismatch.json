@@ -380,9 +380,11 @@
     ],
     "team_mapping": {
       "availability": "available",
+      "mapped_recruited_count": 30,
+      "unmapped_recruited_count": 0,
+      "ambiguous_recruited_count": 0,
       "coverage_ratio": 1,
-      "mapped_subjects": 2,
-      "unmapped_subjects": 0,
+      "teams_in_scope": 2,
       "reason_code": "TEAM_MAPPING_AVAILABLE"
     }
   }
