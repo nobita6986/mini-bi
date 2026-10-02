@@ -197,15 +197,21 @@ function rpcAdapter(client) {
     await client.query("savepoint direct_entry_rpc");
     try {
       await client.query("set local role service_role");
-      const { rows } = name === "direct_entry_create_batch"
-        ? await client.query(
-          "select public.direct_entry_create_batch($1::uuid, $2::uuid, $3::jsonb, $4::text) as data",
-          [args.p_auth_subject, args.p_app_user_id, JSON.stringify(args.p_rows), args.p_idempotency_key],
-        )
-        : await client.query(
-          "select public.direct_entry_read_projection($1::uuid, $2::uuid, $3::uuid) as data",
-          [args.p_auth_subject, args.p_app_user_id, args.p_entry_id],
-        );
+      let query;
+      let values;
+      if (name === "direct_entry_create_batch") {
+        query = "select public.direct_entry_create_batch($1::uuid, $2::uuid, $3::jsonb, $4::text) as data";
+        values = [args.p_auth_subject, args.p_app_user_id, JSON.stringify(args.p_rows), args.p_idempotency_key];
+      } else if (name === "direct_entry_read_projection") {
+        query = "select public.direct_entry_read_projection($1::uuid, $2::uuid, $3::uuid) as data";
+        values = [args.p_auth_subject, args.p_app_user_id, args.p_entry_id];
+      } else if (name === "direct_entry_input_catalog") {
+        query = "select public.direct_entry_input_catalog($1::uuid, $2::uuid, $3::date) as data";
+        values = [args.p_auth_subject, args.p_app_user_id, args.p_effective_date];
+      } else {
+        throw new Error("Unexpected Direct Entry RPC");
+      }
+      const { rows } = await client.query(query, values);
       await client.query("reset role");
       await client.query("release savepoint direct_entry_rpc");
       return { data: rows[0].data, error: null };
@@ -242,7 +248,7 @@ async function main() {
             and p.proname like 'direct_entry_%'
             and has_function_privilege('service_role', p.oid, 'execute')) as rpc_count
     `);
-    assert.deepEqual(inventoryRows[0], { migrations: 23, rpc_count: 18 });
+    assert.deepEqual(inventoryRows[0], { migrations: 24, rpc_count: 20 });
 
     const repository = createDirectEntryWriteRepository(rpcAdapter(client));
     const authorized = actor(fixture.authSubject, fixture.appUserId);

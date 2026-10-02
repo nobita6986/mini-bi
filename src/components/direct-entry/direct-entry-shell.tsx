@@ -14,6 +14,7 @@ import {
   type DirectEntryRow,
 } from "@/lib/direct-entry/ui-model";
 import styles from "./direct-entry-shell.module.css";
+import { DirectEntryLive } from "./direct-entry-live";
 
 const pickerOptions: readonly PickerOption[] = SYNTHETIC_RECRUITERS.map((recruiter) => ({
   id: recruiter.id,
@@ -90,7 +91,7 @@ const originalRows = new Map(INITIAL_DIRECT_ENTRY_ROWS.map((row) => [row.rowId, 
 
 function rowIsDirty(row: DirectEntryRow): boolean {
   const initial = originalRows.get(row.rowId);
-  return initial !== undefined && Object.keys(initial).some((key) =>
+  return initial === undefined || Object.keys(initial).some((key) =>
     initial[key as keyof DirectEntryRow] !== row[key as keyof DirectEntryRow],
   );
 }
@@ -110,7 +111,7 @@ function Field({
   );
 }
 
-export function DirectEntryShell() {
+function DemoDirectEntryShell() {
   const [rows, setRows] = useState<DirectEntryRow[]>(() => [...INITIAL_DIRECT_ENTRY_ROWS]);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [localSaved, setLocalSaved] = useState(false);
@@ -130,6 +131,20 @@ export function DirectEntryShell() {
     setLocalSaved(false);
   }, []);
 
+  const addRow = useCallback(() => {
+    setRows((current) => [...current, {
+      rowId: `demo-${crypto.randomUUID()}`,
+      employeeCode: "hrp-2026-004",
+      firstWorkDate: "2026-10-04",
+      workerLabel: "Nhân sự mẫu 04",
+      project: "Dự án thử nghiệm Bắc",
+      recruiterId: "",
+      laborType: "Thời vụ",
+      workStatus: "Chưa xác nhận",
+    }]);
+    setLocalSaved(false);
+  }, []);
+
   return (
     <main className={styles.page}>
       <div className={styles.banner} role="status">
@@ -143,14 +158,19 @@ export function DirectEntryShell() {
           <h1>Nhập liệu trực tiếp</h1>
           <p>Bản nháp · {rows.length} dòng · chưa kết nối máy chủ</p>
         </div>
-        <button
-          type="button"
-          className={styles.primaryButton}
-          onClick={() => setLocalSaved(true)}
-          aria-label="Lưu nháp cục bộ"
-        >
-          Lưu nháp
-        </button>
+        <div className={styles.liveHeaderActions}>
+          <button type="button" className={styles.secondaryButton} onClick={addRow}>
+            Thêm dòng thử nghiệm
+          </button>
+          <button
+            type="button"
+            className={styles.primaryButton}
+            onClick={() => setLocalSaved(true)}
+            aria-label="Lưu nháp cục bộ"
+          >
+            Lưu nháp
+          </button>
+        </div>
       </header>
 
       <div className={styles.notice} aria-live="polite">
@@ -244,6 +264,7 @@ export function DirectEntryShell() {
                     if (workStatus === "Chưa xác nhận" || workStatus === "Đang làm" || workStatus === "Đã nghỉ") {
                       updateRow(selectedRow.rowId, { workStatus });
                     }
+
                   }}>
                     <option>Chưa xác nhận</option><option>Đang làm</option><option>Đã nghỉ</option>
                   </select>
@@ -259,4 +280,8 @@ export function DirectEntryShell() {
       </Dialog.Root>
     </main>
   );
+}
+
+export function DirectEntryShell({ mode }: { mode: "demo" | "live" }) {
+  return mode === "live" ? <DirectEntryLive /> : <DemoDirectEntryShell />;
 }

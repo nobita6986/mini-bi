@@ -35,6 +35,12 @@
   margin: 24px 0 0;
 }
 
+.liveHeaderActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .header h1 {
   margin: 2px 0 4px;
   font-size: 28px;
@@ -167,6 +173,17 @@
   padding: 3px 8px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.conflictBox {
+  display: grid;
+  gap: 9px;
+  border: 1px solid #b7791f;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #513b14;
+  padding: 12px;
+  font-size: 14px;
 }
 
 .rowCardMeta {
@@ -353,6 +370,15 @@
   }
 
   .header .primaryButton {
+    width: 100%;
+  }
+
+  .liveHeaderActions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .liveHeaderActions > button {
     width: 100%;
   }
 

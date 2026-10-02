@@ -9,7 +9,7 @@ import {
 } from "../contracts/direct-entry-v1.ts";
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
-import type { DirectEntryRepository } from "./write-repository.ts";
+import type { DirectEntryRepository, DraftCatalog } from "./write-repository.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23,6 +23,12 @@ const WORKER_KEYS = new Set([
 type WriteDependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: DirectEntryRepository;
+};
+
+type ProjectedBatchRow = Record<string, unknown> & {
+  project_id: string;
+  first_work_date: string;
+  recruiter_id: string;
 };
 
 function json(body: unknown, status: number): Response {
@@ -53,7 +59,7 @@ function isWorkerDetails(value: unknown): value is WorkerDetails {
   });
 }
 
-async function readBoundedJson(request: Request): Promise<unknown | null> {
+export async function readBoundedJson(request: Request): Promise<unknown | null> {
   const declaredLength = request.headers.get("content-length");
   if (declaredLength !== null && Number(declaredLength) > MAX_BODY_BYTES) return null;
   if (!request.body) return null;
@@ -82,12 +88,12 @@ async function readBoundedJson(request: Request): Promise<unknown | null> {
   }
 }
 
-function projectRows(value: unknown): Array<Record<string, unknown>> | null {
+function projectRows(value: unknown): ProjectedBatchRow[] | null {
   if (!isRecord(value) || Object.keys(value).some((key) => key !== "rows") ||
       !Array.isArray(value.rows) || value.rows.length < 1 || value.rows.length > 100) return null;
 
   const codes: string[] = [];
-  const rows: Array<Record<string, unknown>> = [];
+  const rows: ProjectedBatchRow[] = [];
   for (const item of value.rows) {
     if (!isRecord(item) || Object.keys(item).some((key) => !ROW_KEYS.has(key))) return null;
     const {
@@ -158,7 +164,7 @@ export async function postDirectEntryBatch(
 
   const body = await readBoundedJson(request);
   if (body === null) return error("BODY_INVALID", 400);
-  let rows: Array<Record<string, unknown>> | null;
+  let rows: ProjectedBatchRow[] | null;
   try {
     if (!validateClientBusinessPayload(body).ok) {
       return error("CLIENT_AUTHORITY_FIELD_FORBIDDEN", 400);
@@ -177,6 +183,29 @@ export async function postDirectEntryBatch(
         : error("ACTOR_NOT_AVAILABLE", 403);
     }
     const actor = session.actor.actor;
+    const catalogs = new Map<string, DraftCatalog>();
+    for (const row of rows) {
+      const date = row.first_work_date;
+      let catalog = catalogs.get(date);
+      if (!catalog) {
+        const result = await dependencies.repository.loadInputCatalog({
+          auth_subject: actor.auth_subject,
+          app_user_id: actor.app_user_id,
+          effective_date: date,
+        });
+        if (!result.ok) {
+          if (result.kind === "denied") return error("ACTOR_DENIED", 403);
+          console.error("[direct-entry] batch master catalog unavailable");
+          return error("BATCH_UNAVAILABLE", 500);
+        }
+        catalog = result.data;
+        catalogs.set(date, catalog);
+      }
+      if (!catalog.projects.some(({ project_id }) => project_id === row.project_id) ||
+          !catalog.recruiters.some(({ recruiter_id }) => recruiter_id === row.recruiter_id)) {
+        return error("BATCH_MASTER_INVALID", 400);
+      }
+    }
     const result = await dependencies.repository.createBatch({
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,

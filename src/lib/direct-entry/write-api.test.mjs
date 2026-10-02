@@ -53,10 +53,29 @@ function request(body, headers = {}) {
 
 function dependencies(overrides = {}) {
   const calls = [];
+  const catalogCalls = [];
   return {
     calls,
+    catalogCalls,
     resolveSession: session,
     repository: {
+      async loadInputCatalog(input) {
+        catalogCalls.push(input);
+        return {
+          ok: true,
+          data: {
+            effective_date: validRow.first_work_date,
+            projects: [{ project_id: validRow.project_id, display_name: "Synthetic project" }],
+            recruiters: [{
+              recruiter_id: validRow.recruiter_id,
+              display_name: "Synthetic recruiter",
+              provider_type: "hrp",
+              team_id: "94000000-0000-4000-8000-000000000001",
+              team_display_name: "Synthetic team",
+            }],
+          },
+        };
+      },
       async createBatch(input) {
         calls.push(input);
         return { ok: true, data: batchResult };
@@ -103,6 +122,11 @@ test("valid batch uses trusted actor IDs and returns only the write projection",
     }],
     idempotency_key: "synthetic-idem-01",
   }]);
+  assert.deepEqual(deps.catalogCalls, [{
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    effective_date: validRow.first_work_date,
+  }]);
   assert.deepEqual(body, {
     ok: true,
     submission_id: batchResult.submission_id,
@@ -111,6 +135,36 @@ test("valid batch uses trusted actor IDs and returns only the write projection",
     status: "DRAFT",
   });
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
+test("batch creation requires active project and recruiter from the trusted effective-date catalog", async () => {
+  const invalid = dependencies({
+    async loadInputCatalog() {
+      return {
+        ok: true,
+        data: { effective_date: validRow.first_work_date, projects: [], recruiters: [] },
+      };
+    },
+  });
+  const invalidResponse = await postDirectEntryBatch(
+    request({ rows: [validRow] }), "true", invalid,
+  );
+  assert.equal(invalidResponse.status, 400);
+  assert.equal(invalid.calls.length, 0);
+
+  const unavailable = dependencies({
+    async loadInputCatalog() { return { ok: false, kind: "unavailable" }; },
+  });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = await postDirectEntryBatch(request({ rows: [validRow] }), "true", unavailable);
+    assert.equal(response.status, 500);
+    assert.equal(JSON.stringify(await response.json()).includes("database"), false);
+    assert.equal(unavailable.calls.length, 0);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test("rejects CSRF, malformed JSON type, invalid idempotency key and oversized body", async () => {
@@ -222,7 +276,7 @@ test("read validates UUID before session and keeps the restricted projection", a
   }
 });
 
-test("repository calls only the two RPCs and sanitizes errors", async () => {
+test("repository calls create/read RPCs and sanitizes errors", async () => {
   const rpcCalls = [];
   const repository = createDirectEntryWriteRepository(async (name, args) => {
     rpcCalls.push({ name, args });

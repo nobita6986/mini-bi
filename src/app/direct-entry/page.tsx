@@ -12,5 +12,9 @@ export default function DirectEntryPage() {
     notFound();
   }
 
-  return <DirectEntryShell />;
+  return (
+    <DirectEntryShell
+      mode={process.env.DIRECT_ENTRY_API_ENABLED === "true" ? "live" : "demo"}
+    />
+  );
 }

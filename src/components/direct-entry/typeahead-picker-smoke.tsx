@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   matchTypeaheadIds,
   moveTypeaheadIndex,
@@ -26,27 +26,35 @@ export function RecruiterTypeahead({
   value,
   onChange,
   label = "Người tuyển",
+  disabled = false,
 }: {
   id: string;
   options: readonly PickerOption[];
   value: string;
   onChange: (recruiterId: string) => void;
   label?: string;
+  disabled?: boolean;
 }) {
   const selectedLabel = options.find((option) => option.id === value)?.label ?? "";
   const [query, setQuery] = useState(selectedLabel);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const composing = useRef(false);
+  const editingQuery = useRef(false);
   const listId = `${id}-options`;
   const visibleIds = useMemo(() => matchTypeaheadIds(options, query), [options, query]);
   const activeId = activeIndex < 0 ? undefined : visibleIds[activeIndex];
+
+  useEffect(() => {
+    if (!editingQuery.current) setQuery(selectedLabel);
+  }, [selectedLabel, value]);
 
   const choose = (optionId: string) => {
     const stableId = resolveTypeaheadSelection(options, optionId);
     if (stableId === null) return;
     const option = options.find(({ id: optionKey }) => optionKey === stableId);
     if (!option) return;
+    editingQuery.current = false;
     onChange(stableId);
     setQuery(option.label);
     setOpen(false);
@@ -77,6 +85,7 @@ export function RecruiterTypeahead({
       <label htmlFor={id}>{label}</label>
       <input
         id={id}
+        disabled={disabled}
         role="combobox"
         aria-autocomplete="list"
         aria-controls={listId}
@@ -84,9 +93,11 @@ export function RecruiterTypeahead({
         aria-activedescendant={open && activeId ? `${listId}-${encodeURIComponent(activeId)}` : undefined}
         value={query}
         onChange={(event) => {
+          editingQuery.current = true;
           setQuery(event.target.value);
           setActiveIndex(-1);
           setOpen(true);
+          onChange("");
         }}
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={(event) => {
