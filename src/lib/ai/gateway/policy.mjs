@@ -24,6 +24,8 @@ export function readPolicyConfig(source) {
   }
   const windowMs = isPositiveInt(raw.window_ms) ? raw.window_ms : 60000;
   const maxPayloadBytes = isPositiveInt(raw.max_payload_bytes) ? raw.max_payload_bytes : 256 * 1024;
+  const maxLookbackDays = isPositiveInt(raw.max_lookback_days) ? raw.max_lookback_days : 1500;
+  const maxFactRows = isPositiveInt(raw.max_fact_rows) ? raw.max_fact_rows : 50_000;
   if (raw.provider_timeout_ms < 1000 || raw.provider_timeout_ms > 120000) {
     return { ok: false, code: "AI_POLICY_REQUIRED", message: "provider_timeout_ms ngoài khoảng cho phép" };
   }
@@ -41,8 +43,22 @@ export function readPolicyConfig(source) {
       max_response_bytes: raw.max_response_bytes,
       max_payload_bytes: maxPayloadBytes,
       daily_token_ceiling: raw.daily_token_ceiling,
+      max_lookback_days: maxLookbackDays,
+      max_fact_rows: maxFactRows,
     },
   };
+}
+
+/**
+ * Guard cửa sổ dữ liệu: vượt trần ⇒ AI_ANALYSIS_WINDOW_TOO_LARGE (không tự rút ngắn lịch sử).
+ */
+export function evaluateWindowPolicy({ config, lookback_days }) {
+  const ceiling = isPositiveInt(config?.max_lookback_days) ? config.max_lookback_days : null;
+  if (ceiling === null) return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu trần cửa sổ phân tích" };
+  if (Number.isFinite(lookback_days) && lookback_days > ceiling) {
+    return { ok: false, code: "AI_ANALYSIS_WINDOW_TOO_LARGE", message: "cửa sổ phân tích vượt trần policy" };
+  }
+  return { ok: true };
 }
 
 /**

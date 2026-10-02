@@ -13,7 +13,7 @@ import {
   readProviderConfig,
 } from "./config.mjs";
 import { createSupabaseAuditSink, createSupabaseJobRepository } from "./repository.mjs";
-import { loadFrozenPacket } from "./packet-source.mjs";
+import { EMPTY_MEMBERSHIP_CATALOG, loadFrozenPacket } from "./packet-source.mjs";
 import { SCRIPTED_ADAPTER_VERSION, createScriptedAdapter } from "../provider.mjs";
 import { createDefaultTimeoutSignal } from "../run-one-job.mjs";
 import { getPromptManifest } from "../prompt-registry.mjs";
@@ -33,10 +33,17 @@ export function createServerAiReportGateway() {
   const policy = readGatewayPolicy();
   if (!policy.ok) return policy;
 
+  /**
+   * Identity capability: P1.6 chưa có schema catalog ⇒ runtime KHÔNG có authority cho recruiter/team.
+   * Service sẽ trả AI_IDENTITY_CATALOG_REQUIRED nếu request đòi 2 dimension này (không trả breakdown rỗng giả).
+   */
+  const identityCatalog = { available: false, catalog: EMPTY_MEMBERSHIP_CATALOG };
+
   const service = createAiReportService({
     queue: createSupabaseJobRepository(),
     audit: createSupabaseAuditSink(),
-    packetLoader: loadFrozenPacket,
+    packetLoader: (args) => loadFrozenPacket({ ...args, catalog: identityCatalog.catalog }),
+    identityCatalog,
     manifest,
     policy: { config: policy.config },
     provider: {
@@ -44,6 +51,8 @@ export function createServerAiReportGateway() {
       model_key: provider.model_key,
       config: { scenario: "valid" },
     },
+    // A (R1): gate provider — production/preview không bao giờ dùng scripted; fail trước packet/DB/provider.
+    providerGate: { ok: true, provider_key: provider.provider_key },
     timeout: { create: createDefaultTimeoutSignal },
     clock: { nowMs: () => Date.now() },
   });

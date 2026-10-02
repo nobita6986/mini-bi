@@ -1,11 +1,13 @@
 /**
- * P1.5-W04 — Payload minimization: dựng payload gửi provider bằng WHITELIST.
+ * P1.5-W04-R1 — Payload minimization: dựng payload gửi provider bằng WHITELIST + CLOSURE.
  *
- * - Không spread packet/server object; mọi field được liệt kê tường minh.
- * - Không raw row, không PII, không display/tên thật, không Drive/source id, không ref_map/
- *   server_diagnostics, không stable UUID, không cấu hình/secret, không audit actor, không prompt tự do.
- * - Khi evidence scope.filter.provider_active = 1: KHÔNG gửi project_provider_mix và tắt mọi
- *   provider-composition feature (model không thể kết luận cơ cấu tổng thể).
+ * Nguyên tắc R1:
+ * - Không spread packet/server object; mọi field liệt kê tường minh.
+ * - CLOSURE: mọi subject_ref xuất hiện trong drivers/concentration/mix/evidence phải có trong subject_refs;
+ *   mọi feature số gửi model phải có evidence tương ứng (metric + subject) — nếu không thì field đó = null
+ *   hoặc feature bị prune; không bao giờ gửi số vô căn cứ.
+ * - Budget: prune deterministic theo thứ tự feature; không thể giữ core evidence ⇒ AI_BUDGET_LIMITED.
+ * - Kích thước tính bằng UTF-8 bytes (Buffer.byteLength), không dùng string.length.
  */
 
 import { canonicalJson, canonicalHash } from "../engine-shared.mjs";
@@ -19,6 +21,14 @@ export const PAYLOAD_LIMITS = Object.freeze({
   max_mix_rows: 20,
   max_subject_refs: 400,
   max_sources: 50,
+});
+
+export const DIMENSION_ORDER = Object.freeze(["project", "recruiter", "team", "provider", "employment"]);
+
+/** Lý do comparison deterministic (evidence do W03 phát). */
+export const COMPARISON_REASON_METRICS = Object.freeze({
+  PTD_EQUAL_WINDOW_UNAVAILABLE: "comparison.unavailable.ptd_equal_window_unavailable",
+  COMPARABLE_WINDOW_INCOMPLETE: "comparison.unavailable.comparable_window_incomplete",
 });
 
 /** Key TUYỆT ĐỐI không được xuất hiện trong payload gửi provider. */
@@ -63,6 +73,14 @@ const FORBIDDEN_VALUE_PATTERNS = Object.freeze([
   { code: "PAYLOAD_STABLE_ID_PREFIX", re: /\b(?:rcr|team|alias|pm|tm|aud)_[0-9]{3}\b/ },
 ]);
 
+export function utf8ByteLength(value) {
+  const text = typeof value === "string" ? value : canonicalJson(value);
+  if (typeof Buffer !== "undefined" && typeof Buffer.byteLength === "function") {
+    return Buffer.byteLength(text, "utf8");
+  }
+  return new TextEncoder().encode(text).length;
+}
+
 function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -71,24 +89,59 @@ function nullableNumber(value) {
   return isFiniteNumber(value) ? value : null;
 }
 
+function fail(code, message, path) {
+  return { ok: false, code, message, path };
+}
+
+/**
+ * Resolve lý do comparison — FAIL-CLOSED (R1):
+ * khi totals.comparable = null phải có ĐÚNG MỘT evidence reason được công nhận và khớp period semantics.
+ * Trả { ok:true, reason|null } hoặc { ok:false, code, message }.
+ */
+export function resolveComparisonReason(packet) {
+  if (!packet || typeof packet !== "object" || !packet.totals || !packet.period) {
+    return fail("AI_INPUT_INVALID", "packet thiếu totals/period để xác định comparison", "packet");
+  }
+  if (packet.totals.comparable !== null) return { ok: true, reason: null };
+
+  const present = [];
+  for (const [reason, metric] of Object.entries(COMPARISON_REASON_METRICS)) {
+    const found = (packet.evidence ?? []).filter((entry) => entry.metric === metric);
+    if (found.length > 0) present.push({ reason, count: found.length });
+  }
+  if (present.length === 0) {
+    return fail("AI_INPUT_INVALID", "comparable null nhưng thiếu evidence lý do comparison", "packet.evidence");
+  }
+  if (present.length > 1 || present[0].count > 1) {
+    return fail("AI_INPUT_INVALID", "comparable null nhưng có nhiều evidence lý do comparison xung đột", "packet.evidence");
+  }
+
+  const reason = present[0].reason;
+  const isPeriodToDate = packet.period.status === "period_to_date";
+  const hasComparableWindow = packet.period.comparable !== null && packet.period.comparable !== undefined;
+  if (reason === "PTD_EQUAL_WINDOW_UNAVAILABLE") {
+    if (!isPeriodToDate || hasComparableWindow) {
+      return fail("AI_INPUT_INVALID", "lý do PTD_EQUAL_WINDOW_UNAVAILABLE không khớp period semantics", "packet.period");
+    }
+  } else if (reason === "COMPARABLE_WINDOW_INCOMPLETE") {
+    if (!hasComparableWindow) {
+      return fail("AI_INPUT_INVALID", "lý do COMPARABLE_WINDOW_INCOMPLETE nhưng period.comparable = null", "packet.period");
+    }
+  }
+  return { ok: true, reason };
+}
+
+/** Tương thích: trả reason hoặc null (KHÔNG tự suy diễn fallback). */
+export function comparisonReasonOf(packet) {
+  const resolved = resolveComparisonReason(packet);
+  return resolved.ok ? resolved.reason : null;
+}
+
 function filterActive(packet, dimension) {
   const metric = "scope.filter." + dimension + "_active";
   const found = (packet.evidence ?? []).find((entry) => entry.metric === metric);
   if (!found) return null;
   return isFiniteNumber(found.value) && found.value >= 1 ? 1 : 0;
-}
-
-/** Comparison reason deterministic (khớp evidence comparison.unavailable.* khi có). */
-export function comparisonReasonOf(packet) {
-  if (packet.totals?.comparable !== null) return null;
-  const evidence = packet.evidence ?? [];
-  if (evidence.some((entry) => entry.metric === "comparison.unavailable.ptd_equal_window_unavailable")) {
-    return "PTD_EQUAL_WINDOW_UNAVAILABLE";
-  }
-  if (evidence.some((entry) => entry.metric === "comparison.unavailable.comparable_window_incomplete")) {
-    return "COMPARABLE_WINDOW_INCOMPLETE";
-  }
-  return packet.period?.comparable === null ? "PTD_EQUAL_WINDOW_UNAVAILABLE" : "COMPARABLE_WINDOW_INCOMPLETE";
 }
 
 function buildFilterContext(packet) {
@@ -108,11 +161,158 @@ function buildFilterContext(packet) {
   };
 }
 
-function buildEvidence(packet, limit) {
-  const rows = [];
+function evidenceKey(metric, subjectRef) {
+  return metric + "|" + subjectRef;
+}
+
+/** Index evidence của packet theo (metric, subject). */
+function indexEvidence(packet) {
+  const map = new Map();
   for (const entry of packet.evidence ?? []) {
-    if (rows.length >= limit) break;
-    rows.push({
+    const key = evidenceKey(entry.metric, entry.subject_ref);
+    if (!map.has(key)) map.set(key, entry);
+  }
+  return map;
+}
+
+/** Core evidence: scope-level + stability/data-quality/filter/comparison (không bao giờ prune). */
+function isCoreEvidence(entry) {
+  if (entry.subject_ref === "scope") return true;
+  const metric = entry.metric ?? "";
+  if (metric.startsWith("stability.") || metric.startsWith("data_quality.") || metric.startsWith("scope.filter.")) return true;
+  if (metric.startsWith("comparison.unavailable.")) return true;
+  return false;
+}
+
+/**
+ * Thu feature theo subject và giá trị số CHỈ khi có evidence tương ứng (metric + subject).
+ * Trả { features, requiredEvidence:Set<key>, referencedRefs:Set<string> }.
+ */
+function collectSubjectFeatures(packet, providerFiltered, limits) {
+  const evidenceIndex = indexEvidence(packet);
+  const features = [];
+  const referenced = new Set();
+
+  const numberWithEvidence = (metric, subjectRef, value) => {
+    if (!isFiniteNumber(value)) return null;
+    const entry = evidenceIndex.get(evidenceKey(metric, subjectRef));
+    if (!entry) return null; // không có evidence ⇒ không gửi số này cho model
+    return { value, evidence: entry };
+  };
+
+  for (const dimension of DIMENSION_ORDER) {
+    if (dimension === "team" && packet.team_mapping?.availability !== "available" && packet.team_mapping?.availability !== "partial") {
+      continue;
+    }
+    const entries = [...(packet.drivers?.[dimension] ?? [])].sort(
+      (a, b) => b.current - a.current || (a.subject_ref < b.subject_ref ? -1 : a.subject_ref > b.subject_ref ? 1 : 0)
+    );
+    let kept = 0;
+    const keptEntries = [];
+    const keptEvidence = [];
+    for (const entry of entries) {
+      if (kept >= limits.max_drivers_per_dimension) break;
+      const current = numberWithEvidence("driver." + dimension + ".current", entry.subject_ref, entry.current);
+      if (!current) continue; // thiếu evidence ⇒ feature không được gửi
+      const comparable = packet.totals.comparable === null ? null : numberWithEvidence("driver." + dimension + ".comparable", entry.subject_ref, entry.comparable);
+      const delta = packet.totals.comparable === null ? null : numberWithEvidence("driver." + dimension + ".delta", entry.subject_ref, entry.delta);
+      const contribution = numberWithEvidence("driver." + dimension + ".delta_contribution_share", entry.subject_ref, entry.delta_contribution_share);
+      const share = numberWithEvidence("driver." + dimension + ".share_of_current", entry.subject_ref, entry.share_of_current);
+      keptEntries.push({
+        subject_ref: entry.subject_ref,
+        current: current.value,
+        comparable: comparable === null ? null : comparable.value,
+        delta: delta === null ? null : delta.value,
+        delta_contribution_share: contribution === null ? null : contribution.value,
+        share_of_current: share === null ? null : share.value,
+      });
+      for (const candidate of [current, comparable, delta, contribution, share]) {
+        if (candidate) keptEvidence.push(candidate.evidence);
+      }
+      kept += 1;
+    }
+    if (keptEntries.length > 0) {
+      features.push({ kind: "driver", dimension, subjects: keptEntries.map((entry) => entry.subject_ref), evidence: keptEvidence, entry: { dimension, entries: keptEntries } });
+      for (const entry of keptEntries) referenced.add(entry.subject_ref);
+    }
+  }
+
+  if (!providerFiltered && Array.isArray(packet.project_provider_mix) && packet.project_provider_mix.length > 0) {
+    const rows = [...packet.project_provider_mix]
+      .sort((a, b) => (a.subject_ref < b.subject_ref ? -1 : a.subject_ref > b.subject_ref ? 1 : 0))
+      .slice(0, limits.max_mix_rows);
+    const keptRows = [];
+    const keptEvidence = [];
+    for (const row of rows) {
+      const total = numberWithEvidence("project_mix.total", row.subject_ref, row.project_total);
+      if (!total) continue;
+      const hrp = numberWithEvidence("project_mix.hrp_share", row.subject_ref, row.hrp_share);
+      const vendor = numberWithEvidence("project_mix.vendor_share", row.subject_ref, row.vendor_share);
+      const coverage = numberWithEvidence("project_mix.known_coverage", row.subject_ref, row.known_coverage);
+      keptRows.push({
+        subject_ref: row.subject_ref,
+        project_total: total.value,
+        hrp_count: row.hrp_count,
+        vendor_count: row.vendor_count,
+        unknown_count: row.unknown_count,
+        invalid_count: row.invalid_count,
+        known_total: row.known_total,
+        hrp_share: hrp === null ? null : hrp.value,
+        vendor_share: vendor === null ? null : vendor.value,
+        known_coverage: coverage === null ? null : coverage.value,
+      });
+      for (const candidate of [total, hrp, vendor, coverage]) {
+        if (candidate) keptEvidence.push(candidate.evidence);
+      }
+    }
+    if (keptRows.length > 0) {
+      features.push({ kind: "mix", subjects: keptRows.map((row) => row.subject_ref), evidence: keptEvidence, rows: keptRows });
+      for (const row of keptRows) referenced.add(row.subject_ref);
+    }
+  }
+
+  return { features, referenced, evidenceIndex };
+}
+
+/** Concentration chỉ gửi khi có evidence scope-level (đã là core); top1_ref phải nằm trong subject_refs. */
+function buildConcentration(packet, evidenceIndex, keptRefs) {
+  const out = {};
+  for (const dimension of DIMENSION_ORDER) {
+    const entry = packet.concentration?.[dimension] ?? {};
+    const top1 = evidenceIndex.get(evidenceKey("concentration." + dimension + ".top1_share", "scope"));
+    const top3 = evidenceIndex.get(evidenceKey("concentration." + dimension + ".top3_share", "scope"));
+    const top1Ref = typeof entry.top1_ref === "string" && entry.top1_ref !== "scope" && keptRefs.has(entry.top1_ref) ? entry.top1_ref : null;
+    out[dimension] = {
+      top1_ref: top1 && top1Ref ? top1Ref : null,
+      top1_share: top1 && top1Ref ? nullableNumber(entry.top1_share) : null,
+      top3_share: top3 ? nullableNumber(entry.top3_share) : null,
+      distinct_subjects: isFiniteNumber(entry.distinct_subjects) ? entry.distinct_subjects : 0,
+    };
+    if (top1Ref) keptRefs.add(top1Ref);
+  }
+  return out;
+}
+
+function assemblePayload({ packet, manifest, filterContext, comparisonReason, features, keptRefs, limits, additionalLimit = 0 }) {
+  const coreEvidence = (packet.evidence ?? []).filter(isCoreEvidence);
+  const featureEvidence = features.flatMap((feature) => feature.evidence);
+  /**
+   * Tier 3 — evidence bổ sung: mọi evidence còn lại của packet (đã sort deterministic).
+   * Vẫn bảo đảm closure (subject_ref được thêm vào subject_refs) nhưng KHÔNG dùng để ground feature số
+   * (feature số luôn cần evidence khớp metric+subject ở tier 2) ⇒ không có số vô căn cứ.
+   */
+  const requiredKeys = new Set([...coreEvidence, ...featureEvidence].map((entry) => evidenceKey(entry.metric, entry.subject_ref)));
+  const additionalEvidence = [...(packet.evidence ?? [])]
+    .filter((entry) => !requiredKeys.has(evidenceKey(entry.metric, entry.subject_ref)))
+    .sort((a, b) => (a.metric < b.metric ? -1 : a.metric > b.metric ? 1 : a.subject_ref < b.subject_ref ? -1 : a.subject_ref > b.subject_ref ? 1 : 0))
+    .slice(0, Math.max(0, additionalLimit));
+  const seen = new Set();
+  const evidence = [];
+  for (const entry of [...coreEvidence, ...featureEvidence, ...additionalEvidence]) {
+    const key = evidenceKey(entry.metric, entry.subject_ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    evidence.push({
       evidence_id: entry.evidence_id,
       metric: entry.metric,
       subject_ref: entry.subject_ref,
@@ -121,54 +321,20 @@ function buildEvidence(packet, limit) {
       sufficiency: entry.sufficiency,
       quality: entry.quality,
     });
+    if (entry.subject_ref !== "scope") keptRefs.add(entry.subject_ref);
   }
-  return rows;
-}
 
-function buildDrivers(packet, limit) {
-  const out = [];
-  for (const dimension of ["project", "recruiter", "team", "provider", "employment"]) {
-    const entries = (packet.drivers?.[dimension] ?? []).slice(0, limit).map((entry) => ({
-      subject_ref: entry.subject_ref,
-      current: entry.current,
-      comparable: nullableNumber(entry.comparable),
-      delta: nullableNumber(entry.delta),
-      delta_contribution_share: nullableNumber(entry.delta_contribution_share),
-      share_of_current: nullableNumber(entry.share_of_current),
-    }));
-    if (entries.length > 0) out.push({ dimension, entries });
+  // drivers giữ dạng MẢNG [{ dimension, entries }] (đúng contract ProviderPayload) và chỉ gồm
+  // dimension có entry ⇒ feature thiếu evidence không tồn tại trong payload.
+  const drivers = [];
+  let mix = null;
+  for (const feature of features) {
+    if (feature.kind === "driver") drivers.push(feature.entry);
+    else if (feature.kind === "mix") mix = feature.rows;
   }
-  return out;
-}
 
-function buildMix(packet, limit) {
-  return (packet.project_provider_mix ?? []).slice(0, limit).map((row) => ({
-    subject_ref: row.subject_ref,
-    project_total: row.project_total,
-    hrp_count: row.hrp_count,
-    vendor_count: row.vendor_count,
-    unknown_count: row.unknown_count,
-    invalid_count: row.invalid_count,
-    known_total: row.known_total,
-    hrp_share: nullableNumber(row.hrp_share),
-    vendor_share: nullableNumber(row.vendor_share),
-    known_coverage: nullableNumber(row.known_coverage),
-  }));
-}
-
-/**
- * Dựng payload provider. Trả { ok:true, payload } hoặc { ok:false, code, message, path }.
- * Fail-closed: payload chứa nội dung bị cấm ⇒ KHÔNG gửi provider.
- */
-export function buildProviderPayload(packet, manifest) {
-  if (!packet || typeof packet !== "object") {
-    return { ok: false, code: "AI_INPUT_INVALID", message: "packet thiếu", path: "packet" };
-  }
-  const filterContext = buildFilterContext(packet);
-  const comparisonReason = comparisonReasonOf(packet);
   const providerFiltered = filterContext.provider_active === 1;
-
-  const core = {
+  return {
     payload_version: PAYLOAD_SCHEMA_VERSION,
     prompt_version: manifest.prompt_version,
     packet_contract_version: PACKET_CONTRACT,
@@ -214,26 +380,9 @@ export function buildProviderPayload(packet, manifest) {
       status: row.status,
       reason_code: row.reason_code,
     })),
-    drivers: buildDrivers(packet, PAYLOAD_LIMITS.max_drivers_per_dimension),
-    concentration: Object.fromEntries(
-      ["project", "recruiter", "team", "provider", "employment"].map((dimension) => {
-        const entry = packet.concentration?.[dimension] ?? {};
-        return [
-          dimension,
-          {
-            top1_ref: entry.top1_ref ?? null,
-            top1_share: nullableNumber(entry.top1_share),
-            top3_share: nullableNumber(entry.top3_share),
-            distinct_subjects: isFiniteNumber(entry.distinct_subjects) ? entry.distinct_subjects : 0,
-          },
-        ];
-      })
-    ),
-    /**
-     * Provider-composition chỉ được gửi khi KHÔNG lọc theo provider. Khi provider_active = 1,
-     * gửi mix sẽ cho phép model kết luận cơ cấu tổng thể từ một tập đã bị lọc.
-     */
-    project_provider_mix: providerFiltered ? null : buildMix(packet, PAYLOAD_LIMITS.max_mix_rows),
+    drivers,
+    concentration: {},
+    project_provider_mix: providerFiltered ? null : mix,
     provider_composition_allowed: !providerFiltered,
     team_mapping: {
       availability: packet.team_mapping.availability,
@@ -250,15 +399,15 @@ export function buildProviderPayload(packet, manifest) {
       invalid_count: packet.data_quality.invalid_count,
       unknown_share: nullableNumber(packet.data_quality.unknown_share),
       invalid_share: nullableNumber(packet.data_quality.invalid_share),
-      sources: (packet.data_quality.sources ?? []).slice(0, PAYLOAD_LIMITS.max_sources).map((source) => ({
+      sources: (packet.data_quality.sources ?? []).slice(0, limits.max_sources).map((source) => ({
         source_ref: source.source_ref,
         status: source.status,
         quality: source.quality,
       })),
     },
     filter_context: filterContext,
-    subject_refs: (packet.subjects ?? []).slice(0, PAYLOAD_LIMITS.max_subject_refs).map((subject) => subject.ref),
-    evidence: buildEvidence(packet, PAYLOAD_LIMITS.max_evidence),
+    subject_refs: [...keptRefs].sort(),
+    evidence,
     refs: {
       scope_hash: packet.scope.scope_hash,
       snapshot_hash: packet.snapshot.hash,
@@ -266,21 +415,116 @@ export function buildProviderPayload(packet, manifest) {
       access_scope_hash: packet.scope.access_scope_hash,
     },
   };
+}
 
-  const forbidden = scanForbiddenKeys(core);
-  if (forbidden) return { ok: false, code: "AI_INPUT_INVALID", message: forbidden.message, path: forbidden.path };
-  const prohibited = scanProhibitedContent(core);
-  if (prohibited) return { ok: false, code: "AI_INPUT_INVALID", message: prohibited.message, path: prohibited.path };
-  const secretLike = scanForbiddenValues(core);
-  if (secretLike) return { ok: false, code: "AI_INPUT_INVALID", message: secretLike.message, path: secretLike.path };
+/**
+ * Dựng payload provider với closure + prune deterministic.
+ * @param packet packet đã pass strict validator
+ * @param manifest prompt manifest
+ * @param options { max_payload_bytes }
+ */
+export function buildProviderPayload(packet, manifest, options = {}) {
+  if (!packet || typeof packet !== "object") return fail("AI_INPUT_INVALID", "packet thiếu", "packet");
+  const limits = { ...PAYLOAD_LIMITS, ...(isFiniteNumber(options.max_payload_bytes) ? { max_payload_bytes: options.max_payload_bytes } : {}) };
 
-  const size = canonicalJson(core).length;
-  if (size > PAYLOAD_LIMITS.max_payload_bytes) {
-    return { ok: false, code: "AI_BUDGET_LIMITED", message: "payload vượt trần " + PAYLOAD_LIMITS.max_payload_bytes + " bytes", path: "payload" };
+  const comparison = resolveComparisonReason(packet);
+  if (!comparison.ok) return comparison;
+
+  const filterContext = buildFilterContext(packet);
+  const providerFiltered = filterContext.provider_active === 1;
+  const collected = collectSubjectFeatures(packet, providerFiltered, limits);
+  const evidenceIndex = collected.evidenceIndex;
+
+  const allPacketEvidence = packet.evidence ?? [];
+  if (allPacketEvidence.length === 0) {
+    return fail("AI_INPUT_INVALID", "packet không có evidence nào để phân tích", "packet.evidence");
   }
 
-  const payload = { ...core, payload_hash: canonicalHash(core) };
-  return { ok: true, payload };
+  let features = collected.features;
+  let additionalLimit = allPacketEvidence.length;
+
+  for (;;) {
+    const keptRefs = new Set();
+    const keptRefsForConcentration = new Set();
+    const flatRefs = new Set();
+    for (const feature of features) for (const ref of feature.subjects) flatRefs.add(ref);
+
+    const probeRefs = new Set(flatRefs);
+    const concentration = buildConcentration(packet, evidenceIndex, keptRefsForConcentration);
+
+    const coreRefs = new Set();
+    for (const entry of packet.evidence ?? []) {
+      if (isCoreEvidence(entry) && entry.subject_ref !== "scope") coreRefs.add(entry.subject_ref);
+    }
+    const allRefs = new Set([...probeRefs, ...keptRefsForConcentration, ...coreRefs]);
+    for (const ref of allRefs) keptRefs.add(ref);
+
+    const payloadCore = assemblePayload({
+      packet,
+      manifest,
+      filterContext,
+      comparisonReason: comparison.reason,
+      features,
+      keptRefs,
+      limits,
+      additionalLimit,
+    });
+    payloadCore.concentration = concentration;
+    // subject_refs cuối cùng = hợp của refs từ feature + concentration + evidence core.
+    payloadCore.subject_refs = [...keptRefs].sort();
+
+    const bytes = utf8ByteLength(payloadCore);
+    const fits =
+      payloadCore.evidence.length <= limits.max_evidence &&
+      payloadCore.subject_refs.length <= limits.max_subject_refs &&
+      bytes <= limits.max_payload_bytes;
+
+    if (fits) {
+      const forbidden = scanForbiddenKeys(payloadCore);
+      if (forbidden) return fail("AI_INPUT_INVALID", forbidden.message, forbidden.path);
+      const prohibited = scanProhibitedContent(payloadCore);
+      if (prohibited) return fail("AI_INPUT_INVALID", prohibited.message, prohibited.path);
+      const secretLike = scanForbiddenValues(payloadCore);
+      if (secretLike) return fail("AI_INPUT_INVALID", secretLike.message, secretLike.path);
+
+      // Closure check cuối: không feature mồ côi.
+      const refSet = new Set(payloadCore.subject_refs);
+      for (const dimension of payloadCore.drivers) {
+        for (const entry of dimension.entries) {
+          if (!refSet.has(entry.subject_ref)) {
+            return fail("AI_INPUT_INVALID", "driver subject thiếu trong subject_refs", "drivers." + dimension.dimension);
+          }
+        }
+      }
+      for (const row of payloadCore.project_provider_mix ?? []) {
+        if (!refSet.has(row.subject_ref)) return fail("AI_INPUT_INVALID", "mix subject thiếu trong subject_refs", "project_provider_mix");
+      }
+      for (const dimension of DIMENSION_ORDER) {
+        const top1 = payloadCore.concentration[dimension]?.top1_ref;
+        if (top1 !== null && top1 !== undefined && !refSet.has(top1)) {
+          return fail("AI_INPUT_INVALID", "concentration top1_ref thiếu trong subject_refs", "concentration." + dimension);
+        }
+      }
+      for (const entry of payloadCore.evidence) {
+        if (entry.subject_ref !== "scope" && !refSet.has(entry.subject_ref)) {
+          return fail("AI_INPUT_INVALID", "evidence subject thiếu trong subject_refs", "evidence");
+        }
+      }
+
+      const payload = { ...payloadCore, payload_hash: canonicalHash(payloadCore) };
+      return { ok: true, payload, pruned_features: collected.features.length - features.length };
+    }
+
+    // Prune deterministic: 1) giảm evidence bổ sung (tier 3) trước, 2) mới bỏ subject feature (tier 2).
+    if (additionalLimit > 0) {
+      additionalLimit = Math.max(0, additionalLimit - 1);
+      continue;
+    }
+    if (features.length === 0) {
+      return fail("AI_BUDGET_LIMITED", "payload vượt budget ngay cả khi đã prune hết subject feature", "payload");
+    }
+    features = features.slice(0, features.length - 1);
+  }
 }
 
 /** Quét key bị cấm (đệ quy) — dùng cả cho test. */

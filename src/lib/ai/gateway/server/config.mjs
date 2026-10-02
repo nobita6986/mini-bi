@@ -11,6 +11,7 @@ import "server-only";
 
 import { canonicalHash } from "../../engine-shared.mjs";
 import { checkWorkerToken as checkWorkerTokenPure } from "../http-guards.mjs";
+import { resolveProviderConfig } from "../provider-config.mjs";
 import { DEFAULT_POLICY, REQUIRED_POLICY_KEYS } from "../limits.mjs";
 import { readPolicyConfig } from "../policy.mjs";
 import { DEFAULT_PROMPT_VERSION } from "../prompt-registry.mjs";
@@ -23,7 +24,11 @@ export const AI_WORKER_TOKEN_VAR = "AI_WORKER_TOKEN";
 export const PILOT_ACTOR_REF = "pilot-admin";
 
 function envValue(name) {
-  const value = process.env[name];
+  return envValueIn(process.env, name);
+}
+
+function envValueIn(env, name) {
+  const value = env[name];
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
@@ -42,17 +47,9 @@ export function isProductionRuntime() {
   return process.env.NODE_ENV === "production";
 }
 
-/** Cấu hình provider/model. W04 chỉ cho scripted; live ⇒ AI_PROVIDER_DISABLED. */
-export function readProviderConfig() {
-  const providerKey = envValue("AI_PROVIDER_KEY") ?? "scripted";
-  const modelKey = envValue("AI_MODEL_KEY") ?? "scripted-deterministic-v1";
-  if (providerKey === "live") {
-    return { ok: false, code: "AI_PROVIDER_DISABLED", message: "Live provider chưa được bật (chờ G4A).", provider_key: providerKey };
-  }
-  if (providerKey !== "scripted") {
-    return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider_key không được hỗ trợ.", provider_key: providerKey };
-  }
-  return { ok: true, provider_key: providerKey, model_key: modelKey };
+/** Cấu hình provider: uỷ quyền cho module thuần (testable) — production/preview không bao giờ dùng scripted. */
+export function readProviderConfig(env = process.env) {
+  return resolveProviderConfig(env);
 }
 
 /** Policy: production bắt buộc khai báo; dev dùng mặc định kỹ thuật (không phải ngân sách tiền thật). */

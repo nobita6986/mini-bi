@@ -111,6 +111,14 @@ export function createAiReportService(deps) {
       if (!normalized.ok) return normalized;
       const request = normalized.value;
 
+      /**
+       * A — Provider gate (R1): production/preview không bao giờ được dùng scripted; thiếu live config đã duyệt
+       * ⇒ fail TRƯỚC packet loader/DB enqueue/provider. Test/dev truyền providerGate ok (hoặc inject adapter trực tiếp).
+       */
+      if (deps.providerGate && deps.providerGate.ok !== true) {
+        return fail(deps.providerGate.code ?? "AI_CONFIG_REQUIRED", deps.providerGate.message ?? "provider chưa sẵn sàng");
+      }
+
       // Regenerate: reason + audit bắt buộc (RPC), không đi qua cache.
       if (request.regenerate_of !== null) {
         if (typeof deps.queue.regenerate !== "function") return fail("AI_CONFIG_REQUIRED", "queue không hỗ trợ regenerate");
@@ -127,10 +135,30 @@ export function createAiReportService(deps) {
         };
       }
 
+      /**
+       * G — Identity capability (R1): recruiter/team breakdown chỉ hợp lệ khi runtime CÓ catalog authority
+       * (P1.6). Không được im lặng trả breakdown rỗng như dữ liệu hợp lệ.
+       */
+      const catalogAvailable = deps.identityCatalog?.available === true;
+      const wantsIdentity =
+        request.scope.dimensions.includes("recruiter") ||
+        request.scope.dimensions.includes("team") ||
+        (request.scope.filters.recruiter_keys ?? null) !== null;
+      if (wantsIdentity && !catalogAvailable) {
+        return fail(
+          "AI_IDENTITY_CATALOG_REQUIRED",
+          "runtime chưa có identity catalog authority (P1.6); chỉ phân tích được project/provider/employment"
+        );
+      }
+
       // Policy TRƯỚC khi build packet/DB usage (fail closed sớm).
       const policyContext = typeof deps.queue.policyContext === "function"
         ? await deps.queue.policyContext({ actor_ref, window_seconds: deps.policy.config.window_ms / 1000 })
         : { ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } };
+      // R1: không đọc được policy context ⇒ FAIL CLOSED (không biến lỗi DB thành quota 0).
+      if (!policyContext || policyContext.ok !== true) {
+        return fail("AI_POLICY_REQUIRED", "không đọc được policy context (DB/RPC lỗi) — fail closed");
+      }
       const policyDecision = evaluatePolicy({
         config: deps.policy.config,
         context: {
@@ -146,7 +174,15 @@ export function createAiReportService(deps) {
       });
       if (!policyDecision.ok) return fail(policyDecision.code, policyDecision.message);
 
-      const loaded = await deps.packetLoader({ period: request.period, scope: request.scope, actor_ref });
+      const loaded = await deps.packetLoader({
+        period: request.period,
+        scope: request.scope,
+        actor_ref,
+        limits: {
+          max_lookback_days: deps.policy.config.max_lookback_days,
+          max_fact_rows: deps.policy.config.max_fact_rows,
+        },
+      });
       if (!loaded.ok) return fail(loaded.code ?? "AI_INPUT_INVALID", loaded.message ?? "không dựng được packet");
 
       const packetCheck = validateAnalysisPacket(loaded.packet);
@@ -156,7 +192,10 @@ export function createAiReportService(deps) {
         deps: {
           queue: deps.queue,
           audit: deps.audit,
-          policy: { config: deps.policy.config, contextFor: async () => ({ recent_requests: [], active_jobs: 0, tokens_used_today: 0 }) },
+          policy: {
+            config: deps.policy.config,
+            contextFor: async () => ({ ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } }),
+          },
           identity: identityFor({
             packet: packetCheck.value,
             request,
@@ -226,10 +265,17 @@ export function createAiReportService(deps) {
               const context = typeof deps.queue.policyContext === "function"
                 ? await deps.queue.policyContext({ actor_ref: worker_ref, window_seconds: deps.policy.config.window_ms / 1000 })
                 : { ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } };
+              // R1: worker cũng fail-closed khi không đọc được policy context.
+              if (!context || context.ok !== true) {
+                return { ok: false, code: "AI_POLICY_REQUIRED", message: "không đọc được policy context" };
+              }
               return {
-                recent_requests: context.value.recent_requests,
-                active_jobs: context.value.active_jobs,
-                tokens_used_today: context.value.tokens_used_today,
+                ok: true,
+                value: {
+                  recent_requests: context.value.recent_requests,
+                  active_jobs: context.value.active_jobs,
+                  tokens_used_today: context.value.tokens_used_today,
+                },
               };
             },
           },

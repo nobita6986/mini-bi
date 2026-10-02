@@ -13,6 +13,9 @@ export const DAILY_TOKEN_CEILING = 2_000_000;
 export const RATE_WINDOW_MS = 60_000;
 export const MAX_REQUESTS_PER_WINDOW = 6;
 export const WORKER_BATCH_LIMIT = 3;
+/** Trần cửa sổ phân tích (ngày) và trần số dòng fact — vượt ⇒ fail rõ, KHÔNG rút ngắn lịch sử. */
+export const MAX_ANALYSIS_LOOKBACK_DAYS = 1500;
+export const MAX_FACT_ROWS = 50_000;
 
 export const REQUIRED_POLICY_KEYS = Object.freeze([
   "max_requests_per_window",
@@ -32,4 +35,6 @@ export const DEFAULT_POLICY = Object.freeze({
   max_response_bytes: MAX_RESPONSE_BYTES,
   max_payload_bytes: MAX_PAYLOAD_BYTES,
   daily_token_ceiling: DAILY_TOKEN_CEILING,
+  max_lookback_days: MAX_ANALYSIS_LOOKBACK_DAYS,
+  max_fact_rows: MAX_FACT_ROWS,
 });

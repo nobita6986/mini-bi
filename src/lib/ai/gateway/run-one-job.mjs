@@ -122,14 +122,20 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   };
 
   // 1. Minimize payload (whitelist). Lỗi ở đây là lỗi input/config — không gọi provider.
-  const built = buildProviderPayload(job.packet, deps.manifest);
+  const built = buildProviderPayload(job.packet, deps.manifest, {
+    max_payload_bytes: deps.policy.config?.max_payload_bytes,
+  });
   if (!built.ok) return report(built.code === "AI_BUDGET_LIMITED" ? "AI_BUDGET_LIMITED" : "AI_INPUT_INVALID", built.message);
   const payloadBytes = canonicalJson(built.payload).length;
 
-  // 2. Policy gate cho từng attempt (không gọi provider khi không đạt).
+  // 2. Policy gate cho từng attempt (không gọi provider khi không đạt hoặc không đọc được policy context).
+  const policyContext = await deps.policy.contextFor(job);
+  if (!policyContext || policyContext.ok !== true) {
+    return report("AI_POLICY_REQUIRED", "không đọc được policy context (DB/RPC lỗi) — fail closed");
+  }
   const policyDecision = evaluatePolicy({
     config: deps.policy.config,
-    context: { ...(await deps.policy.contextFor(job)), now_ms: now, attempts: claimed.attempt },
+    context: { ...policyContext.value, now_ms: now, attempts: claimed.attempt },
     payload_bytes: payloadBytes,
   });
   if (!policyDecision.ok) {

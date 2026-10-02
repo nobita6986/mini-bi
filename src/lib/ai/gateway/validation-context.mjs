@@ -33,6 +33,8 @@ export function buildAnalysisContext(packet) {
   };
 }
 
+import { resolveComparisonReason } from "./payload.mjs";
+
 function filterActive(packet, dimension) {
   const metric = "scope.filter." + dimension + "_active";
   const found = (packet.evidence ?? []).find((entry) => entry.metric === metric);
@@ -44,16 +46,9 @@ function filterActive(packet, dimension) {
  */
 export function buildEnforcementFlags(packet) {
   const comparisonAvailable = packet.totals.comparable !== null;
-  const evidence = packet.evidence ?? [];
-  const comparisonReason = comparisonAvailable
-    ? null
-    : evidence.some((entry) => entry.metric === "comparison.unavailable.ptd_equal_window_unavailable")
-      ? "PTD_EQUAL_WINDOW_UNAVAILABLE"
-      : evidence.some((entry) => entry.metric === "comparison.unavailable.comparable_window_incomplete")
-        ? "COMPARABLE_WINDOW_INCOMPLETE"
-        : packet.period.comparable === null
-          ? "PTD_EQUAL_WINDOW_UNAVAILABLE"
-          : "COMPARABLE_WINDOW_INCOMPLETE";
+  // Dùng CHUNG authority với payload builder (R1: không tự suy diễn fallback).
+  const resolved = resolveComparisonReason(packet);
+  const comparisonReason = comparisonAvailable ? null : resolved.ok ? resolved.reason : "COMPARISON_REASON_UNRECOGNIZED";
 
   const sources = packet.data_quality?.sources ?? [];
   const sourceDegraded =

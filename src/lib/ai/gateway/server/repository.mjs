@@ -109,9 +109,15 @@ export function createSupabaseJobRepository() {
       return result.ok ? { ok: true, inserted: result.value.inserted === true } : result;
     },
 
+    /**
+     * Policy context: RPC lỗi ⇒ FAIL-CLOSED (R1). Không bao giờ biến lỗi DB thành quota 0
+     * (quota 0 sẽ cho phép vượt rate/concurrency/token ceiling một cách âm thầm).
+     */
     async policyContext({ actor_ref, window_seconds }) {
       const result = await rpc("ai_report_policy_context", { p_actor_ref: actor_ref, p_window_seconds: window_seconds });
-      if (!result.ok) return { ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } };
+      if (!result.ok) {
+        return { ok: false, code: "AI_POLICY_REQUIRED", message: "không đọc được policy context (DB/RPC lỗi)" };
+      }
       return {
         ok: true,
         value: {

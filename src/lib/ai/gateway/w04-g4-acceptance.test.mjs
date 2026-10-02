@@ -150,7 +150,9 @@ function makeService({ queue, audit, packet, scenario, policy = DEFAULT_POLICY, 
   return { service, clock };
 }
 
-const REQUEST = { period: WEEK41, scope: {} };
+// R1: runtime chưa có identity catalog authority ⇒ request chỉ đòi project/provider/employment.
+const REQUEST = { period: WEEK41, scope: { dimensions: ["project", "provider", "employment"] } };
+const IDENTITY_REQUEST = { period: WEEK41, scope: {} };
 
 async function enqueueAndRun({ packet, scenario, service: providedService, clock: providedClock, queue: providedQueue, attempts = 5 }) {
   const queue = providedQueue ?? createMemoryQueue();
@@ -572,7 +574,7 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
   });
   assert.ok(first.ok);
   const second = await rateService.service.enqueueReport({
-    input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: {} },
+    input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: { dimensions: ["project", "provider", "employment"] } },
     actor_ref: "pilot-admin", access_scope_hash: canonicalHash({ pilot: "pilot-admin" }),
     provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: rateService.clock.nowMs(),
   });
@@ -586,7 +588,7 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
     provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),
   });
   const blocked = await concurrencyService.service.enqueueReport({
-    input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: {} },
+    input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: { dimensions: ["project", "provider", "employment"] } },
     actor_ref: "pilot-admin", access_scope_hash: "h",
     provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),
   });
@@ -601,7 +603,7 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
   });
   await budgetService.service.runWorker({ worker_ref: "w", limit: 1, now_ms: budgetService.clock.nowMs() });
   const budgetBlocked = await budgetService.service.enqueueReport({
-    input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: {} },
+    input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: { dimensions: ["project", "provider", "employment"] } },
     actor_ref: "pilot-admin", access_scope_hash: "h",
     provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: budgetService.clock.nowMs(),
   });
@@ -623,12 +625,52 @@ test("G4-I2: input không hợp lệ (period/scope/focus) bị chặn trước D
   assert.equal(queue.store.jobs.size, 0);
 
   const injection = await service.enqueueReport({
-    input: { period: WEEK41, scope: {}, focus: "{{ system }}" },
+    input: { period: WEEK41, scope: { dimensions: ["project"] }, focus: "{{ system }}" },
     actor_ref: "pilot-admin", access_scope_hash: "h",
     provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: 0,
   });
   assert.equal(injection.ok, false);
   assert.equal(injection.code, "AI_INPUT_INVALID");
+});
+
+test("G4-G3: identity capability — recruiter/team chưa có catalog authority ⇒ AI_IDENTITY_CATALOG_REQUIRED", async () => {
+  const packet = teamFactsPacket();
+  const queue = createMemoryQueue();
+  const { service } = makeService({ queue, audit: createMemoryAudit(), packet, scenario: "valid" });
+  const blocked = await service.enqueueReport({
+    input: IDENTITY_REQUEST,
+    actor_ref: "pilot-admin",
+    access_scope_hash: "h",
+    provider_key: "scripted",
+    model_key: "m",
+    adapter_version: SCRIPTED_ADAPTER_VERSION,
+    now_ms: 0,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, "AI_IDENTITY_CATALOG_REQUIRED");
+  assert.equal(queue.store.jobs.size, 0, "không được enqueue khi thiếu identity capability");
+
+  const recruiterOnly = await service.enqueueReport({
+    input: { period: WEEK41, scope: { dimensions: ["project", "recruiter"] } },
+    actor_ref: "pilot-admin",
+    access_scope_hash: "h",
+    provider_key: "scripted",
+    model_key: "m",
+    adapter_version: SCRIPTED_ADAPTER_VERSION,
+    now_ms: 0,
+  });
+  assert.equal(recruiterOnly.code, "AI_IDENTITY_CATALOG_REQUIRED");
+
+  const recruiterFilter = await service.enqueueReport({
+    input: { period: WEEK41, scope: { dimensions: ["project"], filters: { recruiter_keys: ["rec-bravo"] } } },
+    actor_ref: "pilot-admin",
+    access_scope_hash: "h",
+    provider_key: "scripted",
+    model_key: "m",
+    adapter_version: SCRIPTED_ADAPTER_VERSION,
+    now_ms: 0,
+  });
+  assert.equal(recruiterFilter.code, "AI_IDENTITY_CATALOG_REQUIRED");
 });
 
 test("G4-J: state machine + regenerate cần reason", async () => {

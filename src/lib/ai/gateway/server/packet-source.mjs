@@ -1,24 +1,25 @@
 import "server-only";
 
 /**
- * P1.5-W04 — Nguồn packet cho AI gateway: đọc reporting read-model rồi dựng packet bằng W03.
+ * P1.5-W04-R1 — Nguồn packet cho AI gateway: đọc reporting read-model rồi dựng packet bằng W03.
  *
- * - Tái dùng đúng logic W03 (`buildPacketFromSource`) và W02 (membership catalog) — KHÔNG nhân bản công thức.
- * - Identity catalog: P1.6 chưa có schema production ⇒ truyền catalog RỖNG (không bịa identity).
- *   Hệ quả có chủ đích: team_mapping = unavailable, breakdown recruiter rỗng — đúng trạng thái dữ liệu.
- * - Không đọc PII ứng viên (bảng breakdown không có cột PII).
+ * R1 hardening:
+ * - Cửa sổ đọc dữ liệu tính theo W03 authority (`computeFactWindow`) — KHÔNG tự viết lại period math,
+ *   KHÔNG hard-code lookback, KHÔNG lấy fact sau as_of.
+ * - Pagination an toàn (`loadAllFacts`: page ≤ 1000, exact count, order đúng grain PK) — không silent truncation.
+ * - Chỉ request cột thật sự cần (không display/tên người tuyển).
+ * - lineage_ref theo NỘI DUNG snapshot (`computeLineageRef`).
+ * - Identity catalog do caller truyền; runtime chưa có catalog ⇒ service đã chặn trước đó (AI_IDENTITY_CATALOG_REQUIRED).
  */
 
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 import { computeReporting } from "@/lib/reporting/p1-reporting";
 import { buildPacketFromSource } from "../../packet-builder.mjs";
-import { canonicalHash } from "../../engine-shared.mjs";
+import { computeFactWindow } from "../fact-window.mjs";
+import { FACT_COLUMNS, FACT_ORDER, FACT_PAGE_SIZE, computeLineageRef, loadAllFacts } from "../fact-load.mjs";
 import { accessScopeHashFor } from "./config.mjs";
 
-const FACT_COLUMNS =
-  "source_id, business_date, project_key, project_display, recruiter_key, recruiter_display, provider_type_key, provider_type_display, employment_type_key, employment_type_display, recruited_count";
-
-/** Catalog rỗng: P1.6 sẽ thay bằng schema identity thật. */
+/** Catalog rỗng chỉ dùng khi caller KHÔNG yêu cầu dimension recruiter/team (P1.6 sẽ cấp catalog thật). */
 export const EMPTY_MEMBERSHIP_CATALOG = Object.freeze({
   recruiters: [],
   aliases: [],
@@ -37,44 +38,32 @@ const QUALITY_BY_STATUS = {
   no_run: "unknown",
 };
 
-function addDays(date, days) {
-  const parts = date.split("-").map(Number);
-  const ms = Date.UTC(parts[0], parts[1] - 1, parts[2]) + days * 86400000;
-  const d = new Date(ms);
-  return [String(d.getUTCFullYear()).padStart(4, "0"), String(d.getUTCMonth() + 1).padStart(2, "0"), String(d.getUTCDate()).padStart(2, "0")].join("-");
-}
-
-/** Lookback đủ cho baseline W03 (weekly/monthly/quarterly + day_of_week 52 tuần). */
-const LOOKBACK_DAYS = 400;
-
 /**
- * Dựng packet từ DB. Trả { ok:true, packet, plan } hoặc { ok:false, code, message }.
- * `periodPlan` lấy từ W03 buildPeriodPlan thông qua packet-builder (đã tính window).
+ * Dựng packet từ DB.
+ * @returns {{ ok:true, packet:object, window:object, source_count:number, fact_count:number } | { ok:false, code:string, message:string }}
  */
-export async function loadFrozenPacket({ period, scope, actor_ref }) {
-  const client = createServiceSupabaseClient();
+export async function loadFrozenPacket({ period, scope, actor_ref, limits, catalog }) {
+  const window = computeFactWindow(period, { max_lookback_days: limits?.max_lookback_days });
+  if (!window.ok) return window;
 
-  const periodStart = periodPlanStart(period);
-  if (!periodStart) return { ok: false, code: "AI_INPUT_INVALID", message: "period không hợp lệ" };
-  const from = addDays(periodStart, -LOOKBACK_DAYS);
-  const to = periodPlanEnd(period) ?? periodStart;
+  const client = createServiceSupabaseClient();
 
   const sourcesRes = await client
     .from("data_sources")
-    .select("id, drive_file_id, file_name, active, is_test, last_seen_at, last_successful_sync_at")
+    .select("id, active, is_test, last_seen_at, last_successful_sync_at")
     .eq("active", true)
     .eq("is_test", false);
-  if (sourcesRes.error) return { ok: false, code: "AI_INTERNAL", message: "không đọc được source scope" };
+  if (sourcesRes.error) return { ok: false, code: "AI_FACT_LOAD_FAILED", message: "không đọc được source scope" };
   const sources = sourcesRes.data ?? [];
   if (sources.length === 0) return { ok: false, code: "AI_INPUT_INVALID", message: "không có source trong scope" };
 
   const sourceIds = sources.map((source) => source.id);
   const presenceRes = await client.from("reporting_sources_with_current_facts_v01").select("source_id").in("source_id", sourceIds);
-  if (presenceRes.error) return { ok: false, code: "AI_INTERNAL", message: "không đọc được presence" };
+  if (presenceRes.error) return { ok: false, code: "AI_FACT_LOAD_FAILED", message: "không đọc được presence" };
   const sourcesWithFacts = new Set((presenceRes.data ?? []).map((row) => row.source_id));
 
   const runsRes = await client.from("reporting_latest_sync_runs_v01").select("source_id, status").in("source_id", sourceIds);
-  if (runsRes.error) return { ok: false, code: "AI_INTERNAL", message: "không đọc được latest run" };
+  if (runsRes.error) return { ok: false, code: "AI_FACT_LOAD_FAILED", message: "không đọc được latest run" };
   const latestBySource = new Map((runsRes.data ?? []).map((row) => [row.source_id, row.status]));
 
   // Tái dùng mapping trạng thái nguồn của P1 (một nguồn sự thật duy nhất).
@@ -87,17 +76,27 @@ export async function loadFrozenPacket({ period, scope, actor_ref }) {
     has_current_facts: row.hasCurrentFacts === true,
   }));
 
-  const factsRes = await client
+  // Fact query: filter + order áp MỘT lần; pagination chỉ đổi range ⇒ order/filter giữ trên mọi page.
+  const baseQuery = client
     .from("daily_recruitment_breakdown")
-    .select(FACT_COLUMNS)
+    .select(FACT_COLUMNS, { count: "exact" })
     .in("source_id", sourceIds)
-    .gte("business_date", from)
-    .lte("business_date", to)
-    .order("business_date", { ascending: true })
-    .limit(20000);
-  if (factsRes.error) return { ok: false, code: "AI_INTERNAL", message: "không đọc được facts" };
+    .gte("business_date", window.from)
+    .lte("business_date", window.to);
+  let orderedQuery = baseQuery;
+  for (const column of FACT_ORDER) orderedQuery = orderedQuery.order(column);
 
-  const facts = (factsRes.data ?? []).map((row) => ({
+  const loaded = await loadAllFacts(
+    async ([from, to]) => {
+      const res = await orderedQuery.range(from, to);
+      if (res.error) return { rows: [], count: null, error: { code: res.error.code, message: "fact page lỗi" } };
+      return { rows: res.data ?? [], count: res.count ?? null };
+    },
+    { page_size: FACT_PAGE_SIZE, max_rows: limits?.max_fact_rows }
+  );
+  if (!loaded.ok) return loaded;
+
+  const facts = loaded.rows.map((row) => ({
     business_date: row.business_date,
     project_key: row.project_key,
     recruiter_key: row.recruiter_key,
@@ -107,17 +106,13 @@ export async function loadFrozenPacket({ period, scope, actor_ref }) {
     source_key: row.source_id,
   }));
 
-  const lineageRef = canonicalHash({
-    sources: sourceHealth.map((source) => ({ source_ref: source.source_key, status: source.status, quality: source.quality })),
-    facts: facts.length,
-    window: { from, to },
-  });
+  const lineageRef = computeLineageRef({ window: { from: window.from, to: window.to }, sourceHealth, rows: facts });
 
   const built = buildPacketFromSource({
     request: { period, scope },
     facts,
     source_health: sourceHealth,
-    catalog: EMPTY_MEMBERSHIP_CATALOG,
+    catalog: catalog ?? EMPTY_MEMBERSHIP_CATALOG,
     metadata: {
       generated_at: new Date().toISOString(),
       generated_from: "reporting-read-model",
@@ -126,53 +121,11 @@ export async function loadFrozenPacket({ period, scope, actor_ref }) {
     },
   });
   if (!built.ok) return { ok: false, code: built.code ?? "AI_INPUT_INVALID", message: built.message ?? "không dựng được packet" };
-  return { ok: true, packet: built.packet, source_count: sourceHealth.length, fact_count: facts.length };
-}
-
-// --- period helpers (khớp định nghĩa W03; chỉ để tính khoảng đọc dữ liệu) -----
-
-function toUtcMs(date) {
-  const parts = date.split("-").map(Number);
-  return Date.UTC(parts[0], parts[1] - 1, parts[2]);
-}
-
-function fromUtcMs(ms) {
-  const d = new Date(ms);
-  return [String(d.getUTCFullYear()).padStart(4, "0"), String(d.getUTCMonth() + 1).padStart(2, "0"), String(d.getUTCDate()).padStart(2, "0")].join("-");
-}
-
-function isoWeekStartOf(date) {
-  const ms = toUtcMs(date);
-  const dow = new Date(ms).getUTCDay() || 7;
-  return fromUtcMs(ms - (dow - 1) * 86400000);
-}
-
-export function periodPlanStart(period) {
-  if (period?.type === "week") return isoWeekStartOf(period.as_of_date);
-  if (period?.type === "month") return period.as_of_date.slice(0, 8) + "01";
-  if (period?.type === "quarter") {
-    const year = Number(period.as_of_date.slice(0, 4));
-    const month = Number(period.as_of_date.slice(5, 7));
-    const startMonth = Math.floor((month - 1) / 3) * 3 + 1;
-    return year + "-" + String(startMonth).padStart(2, "0") + "-01";
-  }
-  if (period?.type === "custom") return period.custom_from ?? null;
-  return null;
-}
-
-export function periodPlanEnd(period) {
-  if (period?.type === "week") return fromUtcMs(toUtcMs(isoWeekStartOf(period.as_of_date)) + 6 * 86400000);
-  if (period?.type === "month") {
-    const year = Number(period.as_of_date.slice(0, 4));
-    const month = Number(period.as_of_date.slice(5, 7));
-    return fromUtcMs(Date.UTC(year, month, 0));
-  }
-  if (period?.type === "quarter") {
-    const year = Number(period.as_of_date.slice(0, 4));
-    const month = Number(period.as_of_date.slice(5, 7));
-    const endMonth = Math.floor((month - 1) / 3) * 3 + 3;
-    return fromUtcMs(Date.UTC(year, endMonth, 0));
-  }
-  if (period?.type === "custom") return period.custom_to ?? null;
-  return null;
+  return {
+    ok: true,
+    packet: built.packet,
+    window: { from: window.from, to: window.to, lookback_days: window.lookback_days },
+    source_count: sourceHealth.length,
+    fact_count: facts.length,
+  };
 }
