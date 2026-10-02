@@ -55,13 +55,38 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
   });
   if (!admission.ok) return { ok: false, code: admission.code, message: admission.message };
 
+  /**
+   * W04A (6) — Job mới CHỈ được enqueue khi có provider config ACTIVE + VERIFIED.
+   * Thiếu wiring / thiếu config / config không hợp lệ ⇒ fail-closed TRƯỚC khi tạo job (0 job, 0 provider call).
+   */
+  if (typeof deps.providerConfig?.active !== "function") {
+    return { ok: false, code: "AI_CONFIG_REQUIRED", message: "thiếu provider config wiring — fail closed" };
+  }
+  const activeConfig = await deps.providerConfig.active();
+  if (!activeConfig || activeConfig.ok !== true || !activeConfig.config) {
+    return {
+      ok: false,
+      code: (activeConfig && activeConfig.code) || "AI_CONFIG_REQUIRED",
+      message: "chưa có provider config active + verified",
+    };
+  }
+  const frozenConfig = activeConfig.config;
+  if (!Number.isInteger(frozenConfig.version) || frozenConfig.version < 1 || typeof frozenConfig.config_id !== "string" || frozenConfig.config_id === "") {
+    return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider config active không hợp lệ" };
+  }
+
   const identity = deps.identity.build(request);
   if (!identity.ok) return identity;
 
   const enqueuedRaw = await deps.queue.enqueueOrReuse({
     identity_hash: identity.identity_hash,
     identity_components: identity.components,
-    request,
+    // Đóng băng (config_id, version) vào job — retry/rotate không đổi model/key của job cũ.
+    request: {
+      ...request,
+      provider_config_id: frozenConfig.config_id,
+      provider_config_version: frozenConfig.version,
+    },
     now_ms: now,
   });
   /**
@@ -257,6 +282,34 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   }
 
   /**
+   * W04A (6) — Đối chiếu ĐÚNG provider config đã đóng băng trong job trước khi gọi provider:
+   * thiếu cấu hình, version bị tắt, sai profile/model, hoặc giải mã lỗi ⇒ fail-closed
+   * (provider call = 0, usage = 0, revision = 0). KHÔNG âm thầm dùng config khác.
+   */
+  if (typeof deps.providerConfig?.material !== "function") {
+    return report("AI_CONFIG_REQUIRED", "thiếu provider config wiring — fail closed");
+  }
+  const frozenConfigId = job.provider_config_id;
+  const frozenConfigVersion = job.provider_config_version;
+  if (typeof frozenConfigId !== "string" || frozenConfigId === "" || !Number.isInteger(frozenConfigVersion) || frozenConfigVersion < 1) {
+    return report("AI_CONFIG_REQUIRED", "job thiếu provider config đã đóng băng");
+  }
+  const material = await deps.providerConfig.material(frozenConfigId, frozenConfigVersion);
+  if (!material || material.ok !== true || !material.value) {
+    return report((material && material.code) || "AI_CONFIG_REQUIRED", "không đọc/giải mã được provider config đã đóng băng");
+  }
+  const materialValue = material.value;
+  if (
+    materialValue.config_id !== frozenConfigId ||
+    materialValue.version !== frozenConfigVersion ||
+    materialValue.provider_profile !== job.provider_key ||
+    materialValue.model !== job.model_key ||
+    materialValue.status !== "active"
+  ) {
+    return report("AI_CONFIG_REQUIRED", "provider config đã đóng băng không khớp job");
+  }
+
+  /**
    * F — Fencing TRƯỚC provider call: markStage phải thành công.
    * AI_LEASE_LOST ⇒ dừng ngay (không provider/usage/revision, không ghi fail vì lease đã mất).
    */
@@ -279,6 +332,9 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
         model_key: deps.provider.model_key,
         adapter_version: resolved.adapter.adapter_version,
         timeout_ms: deps.policy.config.provider_timeout_ms,
+        // Credential đã giải mã trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
+        provider_config: { config_id: materialValue.config_id, version: materialValue.version },
+        credential_secret: materialValue.secret,
       },
       timeoutSignal: timeout.signal,
     });

@@ -97,6 +97,22 @@ export function projectClaim(raw) {
     if (!isNonEmptyString(job[field])) return internal("claim thiếu " + field + " đã đóng băng");
   }
   if (!job.packet || typeof job.packet !== "object" || Array.isArray(job.packet)) return internal("claim thiếu packet");
+  /**
+   * W04A (6) — job PHẢI đóng băng provider config: cả hai field cùng có (id non-empty + version integer >= 1)
+   * hoặc cùng không (job cũ trước W04A). Worker fail-closed khi thiếu.
+   */
+  const configId = job.provider_config_id;
+  const configVersion = job.provider_config_version;
+  const hasConfigId = configId !== null && configId !== undefined;
+  const hasConfigVersion = configVersion !== null && configVersion !== undefined;
+  if (hasConfigId !== hasConfigVersion) return internal("claim provider config không đầy đủ");
+  if (hasConfigId && (!isNonEmptyString(configId) || !isInt(configVersion) || configVersion < 1)) {
+    return internal("claim provider config không hợp lệ");
+  }
+  // Job CŨ (trước W04A) có thể không đóng băng config — worker sẽ fail-closed vì thiếu.
+  const frozen = hasConfigId
+    ? { provider_config_id: configId, provider_config_version: configVersion }
+    : { provider_config_id: null, provider_config_version: null };
   return {
     job: {
       job_id: job.job_id,
@@ -109,6 +125,7 @@ export function projectClaim(raw) {
       adapter_version: job.adapter_version,
       prompt_version: job.prompt_version,
       packet: job.packet,
+      ...frozen,
     },
     lease_token: raw.lease_token,
     attempt: raw.attempt,

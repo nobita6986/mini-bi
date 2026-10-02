@@ -11,6 +11,7 @@ import { buildProviderPayload } from "./payload.mjs";
 import { getPromptManifest, PROMPT_MANIFEST_V1 } from "./prompt-registry.mjs";
 import { createScriptedAdapter } from "./provider.mjs";
 import { createMemoryAudit, createMemoryQueue } from "./testing/memory-queue.mjs";
+import { createMemoryProviderConfig } from "./testing/fake-provider-config.mjs";
 import { createAiReportService } from "./service-core.mjs";
 import { DEFAULT_POLICY, MAX_CONCURRENT_JOBS } from "./limits.mjs";
 import { evaluatePolicy } from "./policy.mjs";
@@ -66,7 +67,7 @@ function packetFor(facts) {
 function makeService({ queue, packet, policy = DEFAULT_POLICY, adapterFactory, audit = createMemoryAudit(), provider = { provider_key: "scripted", model_key: "scripted-deterministic-v1", config: { scenario: "valid" } } }) {
   let nowMs = 0;
   const clock = { nowMs: () => nowMs, advance: (ms) => { nowMs += ms; } };
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue,
     audit,
     packetLoader: async () => ({ ok: true, packet }),
@@ -158,7 +159,7 @@ test("R3-A2: claim enforce trần concurrency atomic — job thứ ba không g�
   const queue = createMemoryQueue();
   const packets = { a: packetA, b: packetB };
   let current = "a";
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue,
     audit: createMemoryAudit(),
     packetLoader: async () => ({ ok: true, packet: current === "a" ? packets.a : packets.b }),
@@ -179,7 +180,7 @@ test("R3-A2: claim enforce trần concurrency atomic — job thứ ba không g�
   assert.equal(queue.store.jobs.size, 3);
 
   const barrier = barrierAdapter();
-  const withBarrier = createAiReportService({
+  const withBarrier = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue,
     audit: createMemoryAudit(),
     packetLoader: async () => ({ ok: true, packet: packets.a }),

@@ -197,6 +197,8 @@ export function createAiReportService(deps) {
         deps: {
           queue: deps.queue,
           audit: deps.audit,
+          // W04A (6): enqueue chỉ chạy khi có provider config ACTIVE + VERIFIED (fail-closed).
+          providerConfig: deps.providerConfig,
           policy: {
             config: deps.policy.config,
             contextFor: async () => ({ ok: true, value: { recent_requests: [], queued_jobs: 0, tokens_used_today: 0 } }),
@@ -269,6 +271,8 @@ export function createAiReportService(deps) {
         deps: {
           queue: deps.queue,
           audit: deps.audit,
+          // W04A (6): worker đối chiếu provider config đã đóng băng trước khi gọi provider.
+          providerConfig: deps.providerConfig,
           policy: {
             config: deps.policy.config,
             contextFor: async () => {

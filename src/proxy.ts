@@ -67,5 +67,7 @@ export const config = {
     "/api/ai/reports/:path*",
     "/api/ai/worker/run",
     "/api/ai/worker/:path*",
+    "/api/ai/settings",
+    "/api/ai/settings/:path*",
   ],
 };

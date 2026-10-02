@@ -10,6 +10,7 @@ import { buildPacketFromSource } from "../packet-builder.mjs";
 import { getPromptManifest, PROMPT_MANIFEST_V1 } from "./prompt-registry.mjs";
 import { createScriptedAdapter } from "./provider.mjs";
 import { createMemoryAudit, createMemoryQueue } from "./testing/memory-queue.mjs";
+import { createMemoryProviderConfig } from "./testing/fake-provider-config.mjs";
 import { createAiReportService } from "./service-core.mjs";
 import { DEFAULT_POLICY, MAX_CONCURRENT_JOBS } from "./limits.mjs";
 import { evaluateAdmissionPolicy, evaluateAttemptPolicy } from "./policy.mjs";
@@ -57,7 +58,7 @@ function packetFor() {
 function makeService({ queue, packet, policy = DEFAULT_POLICY, adapterFactory, audit = createMemoryAudit(), provider = { provider_key: "scripted", model_key: "scripted-deterministic-v1", config: { scenario: "valid" } } }) {
   let nowMs = 0;
   const clock = { nowMs: () => nowMs, advance: (ms) => { nowMs += ms; } };
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue,
     audit,
     packetLoader: async () => ({ ok: true, packet }),
@@ -382,7 +383,7 @@ test("R4-C3: worker nhận claim malformed ⇒ error, 0 provider call; policy co
       return { ok: true, value: { recent_requests: [], queued_jobs: "0", inflight_jobs: 0, tokens_used_today: 0 } };
     },
   };
-  const serviceWithBrokenContext = createAiReportService({
+  const serviceWithBrokenContext = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue: policyBroken,
     audit: createMemoryAudit(),
     packetLoader: async () => {

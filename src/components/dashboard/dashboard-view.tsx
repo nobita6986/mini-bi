@@ -12,6 +12,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
+import { AiSettingsPanel } from "./ai-settings-panel";
 import { DashboardFilters } from "./dashboard-filters";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
@@ -47,7 +48,16 @@ function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
   );
 }
 
-export function DashboardView({ report, optionsResult }: { report: ReportingFetchResult; optionsResult: ReportingOptionsResult }) {
+export function DashboardView({
+  report,
+  optionsResult,
+  aiSettingsEnabled = false,
+}: {
+  report: ReportingFetchResult;
+  optionsResult: ReportingOptionsResult;
+  /** W04A — chỉ render panel cấu hình AI khi server đã xác nhận AI_SETTINGS_ENABLED=true. */
+  aiSettingsEnabled?: boolean;
+}) {
   const generatedAt = report.ok ? report.generatedAt : undefined;
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
@@ -66,8 +76,9 @@ export function DashboardView({ report, optionsResult }: { report: ReportingFetc
               ) : null}
             </div>
           </div>
-          <div className="shrink-0">
+          <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
             <ThemeSelector />
+            {aiSettingsEnabled ? <AiSettingsPanel /> : null}
           </div>
         </div>
       </header>

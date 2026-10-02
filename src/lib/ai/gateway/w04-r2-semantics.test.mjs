@@ -11,6 +11,7 @@ import { buildProviderPayload, classifyEvidenceVocabulary, utf8ByteLength, PAYLO
 import { getPromptManifest, PROMPT_MANIFEST_V1 } from "./prompt-registry.mjs";
 import { createScriptedAdapter } from "./provider.mjs";
 import { createMemoryAudit, createMemoryQueue } from "./testing/memory-queue.mjs";
+import { createMemoryProviderConfig } from "./testing/fake-provider-config.mjs";
 import { createAiReportService } from "./service-core.mjs";
 import { DEFAULT_POLICY } from "./limits.mjs";
 
@@ -55,7 +56,7 @@ function w03Packet({ request = { period: WEEK41, scope: DIMS }, facts = richFact
 function makeService({ queue, packet, scenario = "valid", policy = DEFAULT_POLICY, adapterFactory, provider = { provider_key: "scripted", model_key: "scripted-deterministic-v1", config: { scenario } }, clockMs = 0 }) {
   let nowMs = clockMs;
   const clock = { nowMs: () => nowMs, advance: (ms) => { nowMs += ms; } };
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue,
     audit: createMemoryAudit(),
     packetLoader: async () => ({ ok: true, packet }),
@@ -380,7 +381,7 @@ test("R2-C: regenerate chạy SAU policy — DB error/rate/budget đều không 
   const queue = createMemoryQueue();
   const spy = { regenerateCalls: 0, packetLoads: 0 };
   let nowMs = 0;
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue: regenerateQueue(queue, spy),
     audit: createMemoryAudit(),
     packetLoader: async () => {
@@ -545,7 +546,7 @@ test("R2-G: thiếu policyContext wiring ⇒ AI_POLICY_REQUIRED (không fail-ope
   const without = { ...inner };
   delete without.policyContext;
   let packetLoads = 0;
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue: without,
     audit: createMemoryAudit(),
     packetLoader: async () => {

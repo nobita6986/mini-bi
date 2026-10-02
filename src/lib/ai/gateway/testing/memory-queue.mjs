@@ -19,6 +19,12 @@ export function createMemoryQueue(options = {}) {
   const usage = new Map();
   const audit = [];
   const hooks = options.hooks ?? {};
+  /**
+   * W04A — Mặc định cho job "seed" trực tiếp trong test: mô phỏng đúng thứ mà service luôn gửi
+   * (provider config đã đóng băng tại thời điểm enqueue). Truyền `request_defaults: {}` để test
+   * đường fail-closed khi job thiếu provider config.
+   */
+  const requestDefaults = options.request_defaults ?? { provider_config_id: "pilot-provider", provider_config_version: 1 };
   let sequence = 0;
   const uuid = () => {
     sequence += 1;
@@ -56,26 +62,48 @@ export function createMemoryQueue(options = {}) {
       const active = findActive(identity_hash);
       if (active) {
         audit.push({ job_id: active.job_id, event_type: "job_reused", actor_ref: request.actor_ref ?? null, reason: null });
-        return { ok: true, job_id: active.job_id, status: active.status, reused: true, cache_hit: false, revision_id: active.revision_id ?? null };
+        return {
+          ok: true,
+          job_id: active.job_id,
+          status: active.status,
+          reused: true,
+          cache_hit: false,
+          revision_id: active.revision_id ?? null,
+          provider_config_id: active.provider_config_id ?? null,
+          provider_config_version: active.provider_config_version ?? null,
+        };
       }
       const live = findLiveRevision(identity_hash);
       if (live) {
         audit.push({ job_id: live.job_id, event_type: "job_cache_hit", actor_ref: request.actor_ref ?? null, reason: null });
-        return { ok: true, job_id: live.job_id, status: "draft", reused: false, cache_hit: true, revision_id: live.revision_id };
+        return {
+          ok: true,
+          job_id: live.job_id,
+          status: "draft",
+          reused: false,
+          cache_hit: true,
+          revision_id: live.revision_id,
+          provider_config_id: jobs.get(live.job_id)?.provider_config_id ?? null,
+          provider_config_version: jobs.get(live.job_id)?.provider_config_version ?? null,
+        };
       }
       const job_id = uuid();
+      const effectiveRequest = { ...requestDefaults, ...request };
       // Audit authority = DB: enqueue mới ghi job_enqueued (reuse/cache-hit do application ghi).
       audit.push({ job_id, event_type: "job_enqueued", actor_ref: request.actor_ref ?? null, reason: null });
       jobs.set(job_id, {
         job_id,
         identity_hash,
         identity_components,
-        request,
+        request: effectiveRequest,
         // R2 — job ĐÓNG BĂNG provider/model/adapter/prompt (worker phải đối chiếu trước khi gọi provider).
         provider_key: request.provider_key,
         model_key: request.model_key,
         adapter_version: request.adapter_version,
         prompt_version: request.prompt_version,
+        // W04A: đóng băng provider config (id + version) tại thời điểm enqueue.
+        provider_config_id: effectiveRequest.provider_config_id ?? null,
+        provider_config_version: effectiveRequest.provider_config_version ?? null,
         status: "queued",
         attempts: 0,
         max_attempts: request.max_attempts,
@@ -90,7 +118,16 @@ export function createMemoryQueue(options = {}) {
         updated_at: iso(now_ms),
         completed_at: null,
       });
-      return { ok: true, job_id, status: "queued", reused: false, cache_hit: false, revision_id: null };
+      return {
+        ok: true,
+        job_id,
+        status: "queued",
+        reused: false,
+        cache_hit: false,
+        revision_id: null,
+        provider_config_id: jobs.get(job_id).provider_config_id,
+        provider_config_version: jobs.get(job_id).provider_config_version,
+      };
     },
 
     async claim({ worker_ref, lease_seconds = 120, now_ms, max_concurrent_jobs }) {
@@ -155,6 +192,8 @@ export function createMemoryQueue(options = {}) {
           adapter_version: job.adapter_version,
           prompt_version: job.prompt_version,
           packet: job.request.packet,
+          provider_config_id: job.provider_config_id,
+          provider_config_version: job.provider_config_version,
         },
         lease_token: token,
         attempt: job.attempts,

@@ -13,6 +13,7 @@ import { buildPacketFromSource } from "../packet-builder.mjs";
 import { canonicalJson, canonicalHash } from "../engine-shared.mjs";
 import { validateAnalysisPacket } from "../../analytics/contracts/analysis-packet.ts";
 import { createMemoryAudit, createMemoryQueue } from "./testing/memory-queue.mjs";
+import { createMemoryProviderConfig } from "./testing/fake-provider-config.mjs";
 import { buildProviderPayload, scanForbiddenKeys, scanForbiddenValues } from "./payload.mjs";
 import { validateGeneratedAnalysis } from "./output-guard.mjs";
 import { PROMPT_MANIFEST_V1, getPromptManifest } from "./prompt-registry.mjs";
@@ -137,7 +138,7 @@ async function runScripted(packet, scenario) {
 function makeService({ queue, audit, packet, scenario, policy = DEFAULT_POLICY, clockMs = Date.parse("2026-10-12T00:00:00Z") }) {
   let nowMs = clockMs;
   const clock = { nowMs: () => nowMs, advance: (ms) => { nowMs += ms; } };
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig(),
     queue,
     audit,
     packetLoader: async () => ({ ok: true, packet }),

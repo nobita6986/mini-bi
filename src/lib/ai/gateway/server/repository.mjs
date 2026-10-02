@@ -47,6 +47,9 @@ export function createSupabaseJobRepository() {
         p_model_key: request.model_key,
         p_adapter_version: request.adapter_version,
         p_max_attempts: request.max_attempts,
+        // W04A: đóng băng provider config vào job (RPC từ chối nếu config chưa active/verified).
+        p_provider_config_id: request.provider_config_id,
+        p_provider_config_version: request.provider_config_version,
       });
       if (!result.ok) return result;
       // R5: trả raw — consumer (run-one-job) project chặt ⇒ parity với memory queue/test double.

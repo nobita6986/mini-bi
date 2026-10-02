@@ -12,6 +12,8 @@ import {
   readGatewayPolicy,
   readProviderConfig,
 } from "./config.mjs";
+import { createSupabaseProviderConfigStore } from "@/lib/ai-config/server/store.mjs";
+
 import { createSupabaseAuditSink, createSupabaseJobRepository } from "./repository.mjs";
 import { EMPTY_MEMBERSHIP_CATALOG, loadFrozenPacket } from "./packet-source.mjs";
 import { SCRIPTED_ADAPTER_VERSION, createScriptedAdapter } from "../provider.mjs";
@@ -39,8 +41,25 @@ export function createServerAiReportGateway() {
    */
   const identityCatalog = { available: false, catalog: EMPTY_MEMBERSHIP_CATALOG };
 
+  /**
+   * W04A (6) — Cổng provider config cho gateway:
+   * `active` = version ACTIVE + VERIFIED (chặn enqueue), `material` = giải mã credential của ĐÚNG
+   * (config_id, version) đã đóng băng trong job (chặn provider call khi thiếu/sai/không giải mã được).
+   */
+  const providerConfigStore = createSupabaseProviderConfigStore();
+
   const service = createAiReportService({
     queue: createSupabaseJobRepository(),
+    providerConfig: {
+      active: async () => {
+        const active = await providerConfigStore.readActiveProjection();
+        if (!active) {
+          return { ok: false, code: "AI_CONFIG_REQUIRED", message: "chưa có cấu hình provider active + verified" };
+        }
+        return { ok: true, config: active };
+      },
+      material: (configId, version) => providerConfigStore.material(configId, version),
+    },
     audit: createSupabaseAuditSink(),
     packetLoader: (args) => loadFrozenPacket({ ...args, catalog: identityCatalog.catalog }),
     identityCatalog,

@@ -15,6 +15,7 @@ import { computeFactWindow } from "./fact-window.mjs";
 import { FACT_ORDER, computeLineageRef, loadAllFacts } from "./fact-load.mjs";
 import { evaluateWindowPolicy, readPolicyConfig } from "./policy.mjs";
 import { createMemoryAudit, createMemoryQueue } from "./testing/memory-queue.mjs";
+import { createMemoryProviderConfig } from "./testing/fake-provider-config.mjs";
 import { SCRIPTED_ADAPTER_VERSION } from "./provider.mjs";
 import { createAiReportService } from "./service-core.mjs";
 import { DEFAULT_POLICY, MAX_ANALYSIS_LOOKBACK_DAYS } from "./limits.mjs";
@@ -78,7 +79,7 @@ test("R1-A2: service chặn TRƯỚC packet loader/enqueue/provider khi provider
   const queue = createMemoryQueue();
   const audit = createMemoryAudit();
   let packetLoads = 0;
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig({ model: "m" }),
     queue,
     audit,
     packetLoader: async () => {
@@ -108,7 +109,7 @@ test("R1-A2: service chặn TRƯỚC packet loader/enqueue/provider khi provider
   assert.equal(packetLoads, 0, "không được load packet khi provider config sai");
   assert.equal(queue.store.jobs.size, 0, "không được enqueue job");
 
-  const providerDisabled = createAiReportService({
+  const providerDisabled = createAiReportService({ providerConfig: createMemoryProviderConfig({ model: "m" }),
     queue: createMemoryQueue(),
     audit: createMemoryAudit(),
     packetLoader: async () => {
@@ -139,7 +140,7 @@ test("R1-A3: synthetic G4 vẫn chạy khi provider gate ok (explicit scripted)"
   const packet = w03Packet({ facts: baseFacts });
   const queue = createMemoryQueue();
   const audit = createMemoryAudit();
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig({ model: "m" }),
     queue,
     audit,
     packetLoader: async () => ({ ok: true, packet }),
@@ -181,7 +182,7 @@ function failingPolicyQueue(inner) {
 test("R1-B: enqueue fail-closed khi policy context không đọc được (không load packet, không enqueue)", async () => {
   const queue = failingPolicyQueue(createMemoryQueue());
   let packetLoads = 0;
-  const service = createAiReportService({
+  const service = createAiReportService({ providerConfig: createMemoryProviderConfig({ model: "m" }),
     queue,
     audit: createMemoryAudit(),
     packetLoader: async () => {
@@ -214,7 +215,7 @@ test("R1-B2: worker fail-closed khi policy context không đọc được (khôn
   const packet = w03Packet({ facts: baseFacts });
   const inner = createMemoryQueue();
   const audit = createMemoryAudit();
-  const healthy = createAiReportService({
+  const healthy = createAiReportService({ providerConfig: createMemoryProviderConfig({ model: "m" }),
     queue: inner,
     audit,
     packetLoader: async () => ({ ok: true, packet }),
@@ -235,7 +236,7 @@ test("R1-B2: worker fail-closed khi policy context không đọc được (khôn
   });
   assert.ok(enqueued.ok);
 
-  const broken = createAiReportService({
+  const broken = createAiReportService({ providerConfig: createMemoryProviderConfig({ model: "m" }),
     queue: failingPolicyQueue(inner),
     audit,
     packetLoader: async () => ({ ok: true, packet }),
