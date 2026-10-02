@@ -19,7 +19,7 @@ const timestamp = fixture.as_of;
 const resourceRef = "00000000-0000-4000-8000-00000000a001";
 
 test("authorization hardening is versioned", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.1");
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.2");
 });
 
 function repositoryFor(person) {
@@ -597,6 +597,172 @@ test("privileged direct edit, status apply, and payment edit require reason and 
   }
 });
 
+test("entry actions require their bound own/team/all scope kind", async () => {
+  const admin = await actorFor(fixture.admin);
+  const teamGrantedAdmin = {
+    ...admin,
+    scopes: [...admin.scopes, {
+      kind: "team",
+      reference: "team_synthetic_01",
+      valid_from: "2026-01-01",
+      valid_to: null,
+    }],
+  };
+  const mismatchCases = [
+    {
+      actor: teamGrantedAdmin,
+      action: "entry_own",
+      resource: teamResource(),
+    },
+    {
+      actor: admin,
+      action: "entry_own",
+      resource: {
+        ...ownResource(fixture.staff.record.app_user_id),
+        scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },
+      },
+    },
+    {
+      actor: admin,
+      action: "entry_team",
+      resource: ownResource(admin.app_user_id),
+    },
+    {
+      actor: admin,
+      action: "entry_team",
+      resource: {
+        ...teamResource(),
+        scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },
+      },
+    },
+    {
+      actor: admin,
+      action: "entry_admin",
+      resource: ownResource(admin.app_user_id),
+    },
+    {
+      actor: teamGrantedAdmin,
+      action: "entry_admin",
+      resource: teamResource(),
+    },
+  ];
+  for (const input of mismatchCases) {
+    const decision = authorizeDirectEntry({
+      ...input,
+      timestamp,
+      reason_ref: "reason_synthetic_01",
+      expected_version: 1,
+    });
+    assert.equal(decision.allowed, false, input.action);
+    assert.equal(decision.code, "ACTION_SCOPE_MISMATCH", input.action);
+    assert.equal(decision.audit.denial_code, "ACTION_SCOPE_MISMATCH", input.action);
+  }
+
+  const noAllGrant = {
+    ...admin,
+    scopes: admin.scopes.filter((scope) => scope.kind !== "all"),
+  };
+  const noAllDecision = authorizeDirectEntry({
+    actor: noAllGrant,
+    action: "entry_admin",
+    resource: {
+      ...ownResource(fixture.staff.record.app_user_id, 1),
+      scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },
+    },
+    timestamp,
+    reason_ref: "reason_synthetic_01",
+    expected_version: 1,
+  });
+  assert.equal(noAllDecision.code, "SCOPE_DENIED");
+});
+
+test("all grants do not substitute for own or matching team grants", async () => {
+  const admin = await actorFor(fixture.admin);
+  const onlyAllScope = {
+    ...admin,
+    scopes: admin.scopes.filter((scope) => scope.kind === "all"),
+  };
+  assert.equal(authorizeDirectEntry({
+    actor: onlyAllScope,
+    action: "entry_own",
+    resource: ownResource(fixture.staff.record.app_user_id),
+    timestamp,
+    expected_version: 1,
+    reason_ref: "reason_synthetic_01",
+  }).code, "SCOPE_DENIED");
+  assert.equal(authorizeDirectEntry({
+    actor: onlyAllScope,
+    action: "entry_team",
+    resource: teamResource(),
+    timestamp,
+    expected_version: 1,
+    reason_ref: "reason_synthetic_01",
+  }).code, "SCOPE_DENIED");
+});
+
+test("entry action/scope bindings allow exact own, team, and all grants", async () => {
+  const staff = await actorFor(fixture.staff);
+  assert.equal(authorizeDirectEntry({
+    actor: staff,
+    action: "entry_own",
+    resource: ownResource(staff.app_user_id),
+    timestamp,
+  }).allowed, true);
+
+  const leader = await actorFor(fixture.leader);
+  assert.equal(authorizeDirectEntry({
+    actor: leader,
+    action: "entry_team",
+    resource: teamResource(),
+    timestamp,
+  }).allowed, true);
+
+  const admin = await actorFor(fixture.admin);
+  const allDecision = authorizeDirectEntry({
+    actor: admin,
+    action: "entry_admin",
+    resource: {
+      ...ownResource(fixture.staff.record.app_user_id, 2),
+      scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },
+    },
+    timestamp,
+    reason_ref: "reason_synthetic_01",
+    expected_version: 2,
+  });
+  assert.equal(allDecision.allowed, true);
+});
+
+test("missing capability is denied before checking action/scope binding", async () => {
+  const staff = await actorFor(fixture.staff);
+  const decision = authorizeDirectEntry({
+    actor: staff,
+    action: "entry_team",
+    resource: ownResource(staff.app_user_id),
+    timestamp,
+  });
+  assert.equal(decision.code, "CAPABILITY_DENIED");
+  assert.equal(decision.audit.denial_code, "CAPABILITY_DENIED");
+});
+
+test("scope mismatch audit retains only sanitized action and denial metadata", async () => {
+  const admin = await actorFor(fixture.admin);
+  const decision = authorizeDirectEntry({
+    actor: admin,
+    action: "entry_admin",
+    resource: {
+      ...ownResource(fixture.admin.app_user_id),
+      reference: "123456789012",
+    },
+    timestamp,
+  });
+  assert.equal(decision.code, "ACTION_SCOPE_MISMATCH");
+  assert.equal(decision.audit.denial_code, "ACTION_SCOPE_MISMATCH");
+  const audit = JSON.stringify(decision.audit);
+  for (const forbidden of ["123456789012", "account_number", "token", "@"]) {
+    assert.equal(audit.includes(forbidden), false, forbidden);
+  }
+});
+
 test("ordinary users cannot invoke privileged edits and audit contains the policy result", async () => {
   const staff = await actorFor(fixture.staff);
   const staffDecision = authorizeDirectEntry({
@@ -713,7 +879,10 @@ test("audit envelopes contain opaque references and no body, claim, token, or PI
   assert.equal(authorizeDirectEntry({
     actor,
     action: "payment_edit",
-    resource: ownResource(fixture.admin.record.app_user_id, 3),
+    resource: {
+      ...ownResource(fixture.admin.record.app_user_id, 3),
+      scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },
+    },
     timestamp,
     expected_version: 3,
     reason_ref: "123456789012",

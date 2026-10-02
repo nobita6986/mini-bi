@@ -5,7 +5,7 @@ import {
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.1" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.2" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -178,6 +178,11 @@ const VERSION_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "team_master_manage",
   "entry_restore",
 ]);
+const REQUIRED_SCOPE_KIND: Partial<Record<AuthorizationAction, ScopeKind>> = {
+  entry_own: "own",
+  entry_team: "team",
+  entry_admin: "all",
+};
 const FORBIDDEN_CLIENT_FIELDS = new Set([
   "authsubject",
   "appuserid",
@@ -468,11 +473,7 @@ function isAllowedByScope(
     effectiveScope.kind === scope.kind &&
     effectiveScope.reference === scope.reference
   ).length;
-  const matchingAllCount = effectiveScopes.filter((effectiveScope) =>
-    effectiveScope.kind === "all"
-  ).length;
-  if (matchingScopeCount > 1 || matchingAllCount > 1) return false;
-  return matchingScopeCount === 1 || matchingAllCount === 1;
+  return matchingScopeCount === 1;
 }
 
 export function authorizeDirectEntry(input: AuthorizationInput): AuthorizationDecision {
@@ -483,6 +484,10 @@ export function authorizeDirectEntry(input: AuthorizationInput): AuthorizationDe
   if (!isValidTimestamp(input.timestamp)) code = "INVALID_TIMESTAMP";
   else if (!actor || !actor.enabled) code = "UNAUTHENTICATED";
   else if (!actor.capabilities.includes(requiredCapability)) code = "CAPABILITY_DENIED";
+  else if (REQUIRED_SCOPE_KIND[input.action] !== undefined &&
+      input.resource.scope.kind !== REQUIRED_SCOPE_KIND[input.action]) {
+    code = "ACTION_SCOPE_MISMATCH";
+  }
   else if (!isAllowedByScope(actor, input.resource)) code = "SCOPE_DENIED";
   else if (REASON_REQUIRED_ACTIONS.has(input.action) &&
       !isSafeRef(input.reason_ref)) code = "REASON_REQUIRED";
