@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 
 import { buildFeaturePacket, validateReportingFacts } from "./feature-engine.ts";
 import { buildPacketFromSource } from "./packet-builder.mjs";
-import { canonicalJson, sha256Hex, scanForbiddenPacketContent } from "./engine-shared.mjs";
+import { canonicalJson, inclusiveDays, sha256Hex, scanForbiddenPacketContent } from "./engine-shared.mjs";
 import { validateAnalysisPacket } from "../analytics/contracts/analysis-packet.ts";
 
 const IDENT_DIR = new URL("../../../docs/contracts/fixtures/p1.5-identity/", import.meta.url);
@@ -99,7 +99,7 @@ test("W03 hash: sha256 đúng vector chuẩn và canonical JSON ổn định the
 
 test("W03 golden: total tăng, driver tập trung, concentration/contribution đúng số học", () => {
   const facts = [
-    F("2026-09-29", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
+    F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
     F("2026-09-30", "proj-beta", "rec-bravo", "hrp", "chính thức", 2),
     F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 6),
     F("2026-10-07", "proj-beta", "rec-bravo", "hrp", "chính thức", 2),
@@ -151,7 +151,7 @@ test("W03 golden: total tăng, driver tập trung, concentration/contribution đ
 
 test("W03 golden: total giảm nhưng MỘT subject tăng (delta âm tổng, delta dương cục bộ)", () => {
   const facts = [
-    F("2026-09-29", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5),
+    F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5),
     F("2026-09-30", "proj-beta", "rec-bravo", "hrp", "chính thức", 5),
     F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 8),
     F("2026-10-07", "proj-beta", "rec-bravo", "hrp", "chính thức", 0),
@@ -180,7 +180,7 @@ test("W03 golden: total giảm nhưng MỘT subject tăng (delta âm tổng, del
 
 test("W03 golden: comparable = 0 ⇒ delta_pct null, không tuyên bố growth rate", () => {
   const facts = [
-    F("2026-09-29", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
+    F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
     F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 7),
   ];
   const { packet, detail } = ok(build({ facts }), "comparable-zero");
@@ -197,7 +197,7 @@ test("W03 golden: comparable = 0 ⇒ delta_pct null, không tuyên bố growth r
 });
 
 test("W03 golden: current = 0 (không có fact trong kỳ) ⇒ không có growth claim, không chia 0", () => {
-  const facts = [F("2026-09-29", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5)];
+  const facts = [F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5)];
   const { packet } = ok(build({ facts }), "current-zero");
   assert.equal(packet.totals.current, 0);
   assert.equal(packet.totals.comparable, 5);
@@ -233,30 +233,119 @@ test("W03 period: week PTD so cùng số ngày đã trôi qua của tuần trư�
   assert.equal(packet.series.points.reduce((acc, point) => acc + point.value, 0), 6);
 });
 
-test("W03 period: month PTD cắt comparable theo độ dài tháng trước (tháng 2 ngắn hơn)", () => {
-  const facts = [
-    F("2026-02-10", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
-    F("2026-02-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 3),
-    F("2026-03-01", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 1),
-    F("2026-03-30", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 4),
+test("W03-R1 period: month PTD chỉ so khi tháng trước ĐỦ số ngày đã trôi qua (equal window)", () => {
+  // 10/03 so 01/02-10/02: tháng 2 có 28 ngày >= 10 ⇒ equal window hợp lệ.
+  const validFacts = [
+    F("2026-02-01", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
+    F("2026-02-05", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
+    F("2026-02-08", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 1),
+    F("2026-03-03", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
+    F("2026-03-09", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
   ];
-  const { packet } = ok(
-    build({ facts, request: { period: { type: "month", as_of_date: "2026-03-30" } } }),
-    "ptd-month-feb"
+  const valid = ok(
+    build({ facts: validFacts, request: { period: { type: "month", as_of_date: "2026-03-10" } } }),
+    "ptd-month-equal"
+  ).packet;
+  assert.equal(valid.period.period_ref, "month:2026-03");
+  assert.equal(valid.period.status, "period_to_date");
+  assert.equal(valid.period.elapsed_days, 10);
+  assert.equal(valid.period.comparable.period_ref, "month:2026-02");
+  assert.equal(valid.period.comparable.start, "2026-02-01");
+  assert.equal(valid.period.comparable.end, "2026-02-10");
+  assert.equal(valid.period.comparable.elapsed_days, 10);
+  assert.equal(inclusiveDays(valid.period.comparable.start, valid.period.comparable.end), valid.period.comparable.elapsed_days);
+  assert.equal(valid.totals.current, 4);
+  assert.equal(valid.totals.comparable, 3);
+  assert.equal(valid.totals.delta, 1);
+
+  // 30/03 sau tháng 2 có 28 ngày ⇒ KHÔNG được so 30 với 28 ⇒ comparable = null.
+  const invalid = ok(
+    build({ facts: validFacts, request: { period: { type: "month", as_of_date: "2026-03-30" } } }),
+    "ptd-month-null"
   );
-  assert.equal(packet.period.period_ref, "month:2026-03");
+  assert.equal(invalid.packet.period.comparable, null);
+  assert.deepEqual(invalid.packet.totals, { current: 4, comparable: null, delta: null, delta_pct: null });
+  assert.equal(invalid.packet.stability.trend_direction, "unknown");
+  assert.equal(invalid.detail.comparable_reason, "PTD_EQUAL_WINDOW_UNAVAILABLE");
+  assert.equal(invalid.detail.comparison_usable, false);
+  const monthlyKey = invalid.packet.sufficiency.find((row) => row.key === "trend_monthly");
+  assert.equal(monthlyKey.status, "unknown");
+  assert.equal(monthlyKey.reason_code, "PTD_EQUAL_WINDOW_UNAVAILABLE");
+  assert.ok(invalid.packet.evidence.some((e) => e.metric === "comparison.unavailable.ptd_equal_window_unavailable" && e.value === 1));
+  assert.ok(!invalid.packet.evidence.some((e) => e.metric.startsWith("recruited_delta")));
+  for (const entry of Object.values(invalid.packet.drivers).flat()) {
+    assert.equal(entry.comparable, null);
+    assert.equal(entry.delta, null);
+    assert.equal(entry.delta_contribution_share, null);
+  }
+  assert.ok(validateAnalysisPacket(invalid.packet).ok);
+});
+
+test("W03-R1 period: PTD năm nhuận — 29/03 sau 29 ngày tháng 2 hợp lệ, 30/03 thì không", () => {
+  const leapFacts = [
+    F("2028-02-01", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
+    F("2028-02-10", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
+    F("2028-03-05", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 3),
+    F("2028-03-29", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 1),
+  ];
+  const valid = ok(
+    build({ facts: leapFacts, request: { period: { type: "month", as_of_date: "2028-03-29" } } }),
+    "ptd-leap-equal"
+  ).packet;
+  assert.equal(valid.period.elapsed_days, 29);
+  assert.equal(valid.period.comparable.start, "2028-02-01");
+  assert.equal(valid.period.comparable.end, "2028-02-29");
+  assert.equal(valid.period.comparable.elapsed_days, 29);
+  assert.equal(valid.totals.comparable, 2);
+
+  const invalid = ok(
+    build({ facts: leapFacts, request: { period: { type: "month", as_of_date: "2028-03-30" } } }),
+    "ptd-leap-null"
+  ).packet;
+  assert.equal(invalid.period.elapsed_days, 30);
+  assert.equal(invalid.period.comparable, null);
+  assert.deepEqual(invalid.totals, { current: 4, comparable: null, delta: null, delta_pct: null });
+});
+
+test("W03-R1 period: quarter PTD giữ invariant equal window (elapsed == độ dài cửa sổ)", () => {
+  const facts = [
+    F("2026-01-01", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
+    F("2026-02-10", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5),
+    F("2026-04-05", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
+    F("2026-06-20", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 3),
+  ];
+  // 29/06/2026 (Q2, 91 ngày) ⇒ elapsed 90 = đúng độ dài Q1 (90 ngày) ⇒ usable, KHÔNG cắt ngầm.
+  const packet = ok(
+    build({ facts, request: { period: { type: "quarter", as_of_date: "2026-06-29" } } }),
+    "ptd-quarter"
+  ).packet;
+  assert.equal(packet.period.period_ref, "quarter:2026-Q2");
   assert.equal(packet.period.status, "period_to_date");
-  assert.equal(packet.period.elapsed_days, 30);
-  assert.equal(packet.period.comparable.period_ref, "month:2026-02");
-  assert.equal(packet.period.comparable.start, "2026-02-01");
-  assert.equal(packet.period.comparable.end, "2026-02-28");
-  assert.equal(packet.period.comparable.elapsed_days, 30);
-  assert.equal(packet.totals.current, 5);
-  assert.equal(packet.totals.comparable, 5);
+  assert.equal(packet.period.elapsed_days, 90);
+  assert.equal(packet.period.comparable.period_ref, "quarter:2026-Q1");
+  assert.equal(packet.period.comparable.start, "2026-01-01");
+  assert.equal(packet.period.comparable.end, "2026-03-31");
+  assert.equal(packet.period.comparable.elapsed_days, 90);
+  assert.equal(inclusiveDays(packet.period.comparable.start, packet.period.comparable.end), 90);
+
+  // Quét nhiều mốc PTD của mọi quý: invariant equal-window luôn đúng (null hoặc khớp độ dài).
+  for (const asOf of ["2025-02-10", "2025-05-20", "2025-08-31", "2025-11-30", "2026-01-15", "2026-03-15", "2026-06-29", "2026-09-29", "2028-02-29", "2028-05-30"]) {
+    const p = ok(build({ facts, request: { period: { type: "quarter", as_of_date: asOf } } }), "sweep-" + asOf).packet;
+    assert.equal(p.period.status, "period_to_date");
+    if (p.period.comparable === null) continue;
+    assert.equal(p.period.comparable.elapsed_days, p.period.elapsed_days, asOf + " elapsed");
+    assert.equal(
+      inclusiveDays(p.period.comparable.start, p.period.comparable.end),
+      p.period.comparable.elapsed_days,
+      asOf + " window length"
+    );
+  }
 });
 
 test("W03 period: quarter dùng weekly points và period_ref quarter:YYYY-Qn", () => {
   const facts = [
+    // Anchor 01/04 để cửa sổ so sánh Q2 được phủ đầy đủ (comparable coverage fail-closed).
+    F("2026-04-01", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
     F("2026-07-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 3),
     F("2026-08-03", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 4),
     F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5),
@@ -435,20 +524,27 @@ test("W03 data quality: unknown/invalid độc lập, grain vừa unknown vừa 
   ];
   const { packet, detail } = ok(build({ facts }), "dq-sentinel");
   assert.equal(packet.totals.current, 14);
-  // unknown-only = 3 (grain 4 vừa unknown vừa invalid); invalid = 2 + 5 = 7
-  assert.equal(packet.data_quality.unknown_count, 3);
-  assert.equal(packet.data_quality.invalid_count, 7);
-  assert.ok(packet.data_quality.unknown_count + packet.data_quality.invalid_count <= packet.totals.current);
-  assert.equal(packet.data_quality.unknown_share, 3 / 14);
+  // R1: hai chỉ số ĐỘC LẬP — grain vừa unknown vừa invalid tính vào CẢ HAI.
+  assert.equal(packet.data_quality.unknown_count, 8); // 3 + 5
+  assert.equal(packet.data_quality.invalid_count, 7); // 2 + 5
+  assert.ok(
+    packet.data_quality.unknown_count + packet.data_quality.invalid_count > packet.totals.current,
+    "tổng hai chỉ số được phép > totals.current"
+  );
+  assert.ok(packet.data_quality.unknown_count <= packet.totals.current);
+  assert.ok(packet.data_quality.invalid_count <= packet.totals.current);
+  assert.equal(packet.data_quality.unknown_share, 8 / 14);
   assert.equal(packet.data_quality.invalid_share, 7 / 14);
-  // Hai chỉ số độc lập vẫn được phát đầy đủ qua evidence.
-  assert.equal(detail.data_quality.unknown_any_count, 8);
-  assert.equal(detail.data_quality.invalid_any_count, 7);
+  assert.equal(detail.data_quality.unknown_count, 8);
+  assert.equal(detail.data_quality.invalid_count, 7);
   assert.equal(detail.data_quality.overlap_count, 5);
   const metricValue = (metric) => packet.evidence.find((entry) => entry.metric === metric).value;
-  assert.equal(metricValue("data_quality.unknown_any_count"), 8);
+  assert.equal(metricValue("data_quality.unknown_count"), 8);
   assert.equal(metricValue("data_quality.invalid_count"), 7);
   assert.equal(metricValue("data_quality.unknown_invalid_overlap_count"), 5);
+  // Packet vẫn phải qua strict validator (đây là điểm contract 0.1 được clarify ở R1).
+  const validated = validateAnalysisPacket(packet);
+  assert.ok(validated.ok, validated.ok ? "" : validated.code + " " + validated.message);
   assert.ok(detail.data_quality.degraded_reasons.includes("DIMENSION_UNKNOWN_PRESENT"));
   assert.ok(detail.data_quality.degraded_reasons.includes("DIMENSION_INVALID_PRESENT"));
 });
@@ -458,7 +554,7 @@ test("W03 data quality: unknown/invalid độc lập, grain vừa unknown vừa 
 // ---------------------------------------------------------------------------
 
 const teamAvailableFacts = [
-  F("2026-09-29", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 4),
+  F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 4),
   F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 5),
   F("2026-10-07", "proj-beta", "rec-bravo", "hrp", "chính thức", 3),
 ];
@@ -889,6 +985,170 @@ test("W03 fail-closed: vượt trần subject mỗi dimension ⇒ lỗi rõ ràn
   const atLimit = ok(build({ facts: facts.slice(0, 500) }), "đúng trần");
   assert.equal(atLimit.packet.project_provider_mix.length, 500);
   assert.equal(atLimit.packet.totals.current, 500);
+});
+
+// ---------------------------------------------------------------------------
+// R1 — comparable coverage fail-closed + complete week + filter context
+// ---------------------------------------------------------------------------
+
+test("W03-R1 comparable coverage: chỉ usable khi dataStart <= comparable.start", () => {
+  const comparableStartFact = (count) => F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", count);
+  const currentFact = (count) => F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", count);
+
+  // dataStart TRƯỚC cửa sổ so sánh ⇒ usable.
+  const before = ok(build({ facts: [F("2026-09-21", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 1), comparableStartFact(2), currentFact(3)] }), "cov-before");
+  assert.equal(before.packet.totals.comparable, 2);
+  assert.equal(before.detail.comparable_reason, null);
+  assert.equal(before.detail.comparison_usable, true);
+  assert.equal(before.packet.stability.trend_direction, "up");
+
+  // dataStart ĐÚNG comparable.start ⇒ usable (bao phủ đầy đủ).
+  const atStart = ok(build({ facts: [comparableStartFact(2), currentFact(3)] }), "cov-at-start");
+  assert.equal(atStart.packet.totals.comparable, 2);
+  assert.equal(atStart.detail.comparable_reason, null);
+  assert.equal(atStart.detail.comparison_usable, true);
+
+  // dataStart NẰM GIỮA cửa sổ ⇒ fail-closed (không so trên comparator bị phủ một phần).
+  const inside = ok(build({ facts: [F("2026-09-30", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2), currentFact(3)] }), "cov-inside");
+  assert.equal(inside.detail.comparable_reason, "COMPARABLE_WINDOW_INCOMPLETE");
+  assert.equal(inside.detail.comparison_usable, false);
+  assert.deepEqual(inside.packet.totals, { current: 3, comparable: null, delta: null, delta_pct: null });
+  assert.equal(inside.packet.stability.trend_direction, "unknown");
+  for (const entry of Object.values(inside.packet.drivers).flat()) {
+    assert.equal(entry.comparable, null);
+    assert.equal(entry.delta, null);
+    assert.equal(entry.delta_contribution_share, null);
+  }
+  assert.ok(!inside.packet.evidence.some((e) => e.metric === "recruited_total_comparable"));
+  assert.ok(!inside.packet.evidence.some((e) => e.metric.startsWith("recruited_delta")));
+  const comparisonEvidence = inside.packet.evidence.find((e) => e.metric === "comparison.unavailable.comparable_window_incomplete");
+  assert.ok(comparisonEvidence);
+  assert.equal(comparisonEvidence.value, 1);
+  assert.equal(comparisonEvidence.unit, "count");
+  const weeklyKey = inside.packet.sufficiency.find((row) => row.key === "trend_weekly");
+  assert.equal(weeklyKey.status, "unknown");
+  assert.equal(weeklyKey.reason_code, "COMPARABLE_WINDOW_INCOMPLETE");
+  assert.ok(validateAnalysisPacket(inside.packet).ok);
+
+  // Toàn bộ cửa sổ so sánh TRƯỚC dataStart ⇒ cũng null, không biến phần thiếu thành số 0.
+  const whole = ok(build({ facts: [currentFact(3)] }), "cov-after");
+  assert.equal(whole.detail.comparable_reason, "COMPARABLE_WINDOW_INCOMPLETE");
+  assert.equal(whole.packet.totals.comparable, null);
+  assert.ok(whole.packet.evidence.some((e) => e.metric === "comparison.unavailable.comparable_window_incomplete"));
+  assert.ok(validateAnalysisPacket(whole.packet).ok);
+});
+
+test("W03-R1 day_of_week: đếm tuần ISO HOÀN TẤT (không đếm tuần có fact)", () => {
+  const weekStarts = ["2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02"];
+  // Fact đầu tiên rơi vào Thứ Tư 16/09/2026 (W38 bắt đầu 14/09) ⇒ W38 KHÔNG hoàn tất.
+  // W42 (12/10) cố ý KHÔNG có fact ⇒ vẫn là observation hoàn tất hợp lệ.
+  const facts = [F("2026-09-16", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 1)];
+  for (const date of weekStarts) {
+    if (date === "2026-10-12") continue;
+    facts.push(F(date, "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2));
+  }
+  const seven = ok(build({ facts, request: { period: { type: "week", as_of_date: "2026-11-15" } } }), "dow-7");
+  assert.equal(seven.packet.period.period_ref, "week:2026-W46");
+  const dow7 = seven.packet.sufficiency.find((row) => row.key === "day_of_week");
+  assert.equal(dow7.required_points, 8);
+  assert.equal(dow7.actual_points, 7);
+  assert.equal(dow7.status, "not_met");
+
+  // Nếu tuần bắt đầu đúng Thứ Hai (14/09) thì tuần đó hoàn tất ⇒ 8 tuần ⇒ met.
+  const fromMonday = facts.filter((fact) => fact.business_date !== "2026-09-16");
+  fromMonday.push(F("2026-09-14", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 1));
+  const eight = ok(build({ facts: fromMonday, request: { period: { type: "week", as_of_date: "2026-11-15" } } }), "dow-8-from-monday");
+  const dow8 = eight.packet.sufficiency.find((row) => row.key === "day_of_week");
+  assert.equal(dow8.actual_points, 8);
+  assert.equal(dow8.status, "met");
+
+  // Thêm một tuần hoàn tất nữa (W46) ⇒ period W47 đủ 8 tuần hoàn tất.
+  const next = ok(build({ facts, request: { period: { type: "week", as_of_date: "2026-11-22" } } }), "dow-8");
+  assert.equal(next.packet.period.period_ref, "week:2026-W47");
+  const dowNext = next.packet.sufficiency.find((row) => row.key === "day_of_week");
+  assert.equal(dowNext.actual_points, 8);
+  assert.equal(dowNext.status, "met");
+  assert.equal(next.detail.baseline_counts.day_of_week, 8);
+});
+
+test("W03-R1 team: kỳ hiện tại toàn grain count = 0 ⇒ unavailable nhưng KHÔNG bắt redaction", () => {
+  const facts = [
+    F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
+    F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 0),
+  ];
+  const built = ok(build({ facts }), "zero-count-window");
+  assert.equal(built.packet.totals.current, 0);
+  assert.equal(built.packet.team_mapping.availability, "unavailable");
+  assert.equal(built.packet.team_mapping.coverage_ratio, null);
+  assert.equal(built.packet.team_mapping.teams_in_scope, 0);
+  assert.deepEqual(built.packet.drivers.team, []);
+  assert.ok(validateAnalysisPacket(built.packet).ok);
+});
+
+test("W03-R1 filter context: evidence 0/1 theo chiều, không lộ giá trị filter", () => {
+  const facts = [
+    F("2026-09-28", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 2),
+    F("2026-10-06", "proj-alpha", "rec-alpha", "hrp", "thời vụ", 3),
+    F("2026-10-06", "proj-beta", "rec-bravo", "vendor", "chính thức", 4),
+  ];
+  const period = { type: "week", as_of_date: "2026-10-11" };
+  const metric = (packet, name) => packet.evidence.find((entry) => entry.metric === name);
+  const filterMetrics = [
+    "scope.filter.project_active",
+    "scope.filter.recruiter_active",
+    "scope.filter.provider_active",
+    "scope.filter.employment_active",
+  ];
+
+  const none = ok(build({ facts }), "filter-none").packet;
+  for (const name of filterMetrics) {
+    const evidence = metric(none, name);
+    assert.ok(evidence, "thiếu " + name);
+    assert.equal(evidence.value, 0, name);
+    assert.equal(evidence.unit, "count");
+    assert.equal(evidence.subject_ref, "scope");
+  }
+
+  const providerOnly = ok(
+    build({ facts, request: { period, scope: { filters: { provider_type_keys: ["vendor"] } } } }),
+    "filter-provider"
+  ).packet;
+  assert.equal(metric(providerOnly, "scope.filter.provider_active").value, 1);
+  assert.equal(metric(providerOnly, "scope.filter.project_active").value, 0);
+  assert.equal(metric(providerOnly, "scope.filter.recruiter_active").value, 0);
+  assert.equal(metric(providerOnly, "scope.filter.employment_active").value, 0);
+  assert.equal(providerOnly.totals.current, 4);
+  assert.equal(providerOnly.project_provider_mix.reduce((acc, row) => acc + row.project_total, 0), 4);
+  for (const evidence of providerOnly.evidence) assert.equal(typeof evidence.value, "number");
+
+  const recruiterOnly = ok(
+    build({ facts, request: { period, scope: { filters: { recruiter_keys: ["rec-bravo"] } } } }),
+    "filter-recruiter"
+  ).packet;
+  assert.equal(metric(recruiterOnly, "scope.filter.recruiter_active").value, 1);
+  assert.equal(metric(recruiterOnly, "scope.filter.provider_active").value, 0);
+  assert.equal(recruiterOnly.totals.current, 4);
+  assert.ok(!JSON.stringify(recruiterOnly).includes("rec-bravo"), "không lộ recruiter key");
+
+  const projectOnly = ok(
+    build({ facts, request: { period, scope: { filters: { project_keys: ["proj-beta"] } } } }),
+    "filter-project"
+  ).packet;
+  assert.equal(metric(projectOnly, "scope.filter.project_active").value, 1);
+  assert.equal(projectOnly.totals.current, 4);
+  assert.ok(!JSON.stringify(projectOnly).includes("proj-beta"), "không lộ project key");
+
+  const employmentOnly = ok(
+    build({ facts, request: { period, scope: { filters: { employment_type_keys: ["chính thức"] } } } }),
+    "filter-employment"
+  ).packet;
+  assert.equal(metric(employmentOnly, "scope.filter.employment_active").value, 1);
+  assert.equal(employmentOnly.totals.current, 4);
+
+  for (const packet of [none, providerOnly, recruiterOnly, projectOnly, employmentOnly]) {
+    const validated = validateAnalysisPacket(packet);
+    assert.ok(validated.ok, validated.ok ? "" : validated.code + " " + validated.message);
+  }
 });
 
 test("W03 fail-closed: reporting fact validator độc lập với builder", () => {

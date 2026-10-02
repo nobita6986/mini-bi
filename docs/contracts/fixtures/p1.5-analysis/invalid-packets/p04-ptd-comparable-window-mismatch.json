@@ -1,6 +1,6 @@
 {
-  "case_id": "c04",
-  "title": "Period-to-date chỉ so cùng số ngày đã trôi qua",
+  "case_id": "p04",
+  "description": "PTD comparable window length không khớp elapsed_days (R1 clarification)",
   "packet": {
     "contract_version": "analysis-packet/0.1",
     "generated_at": "2026-10-05T00:00:00Z",
@@ -33,7 +33,7 @@
       "comparable": {
         "period_ref": "month:2026-09",
         "start": "2026-09-01",
-        "end": "2026-09-03",
+        "end": "2026-09-30",
         "elapsed_days": 3
       }
     },
@@ -281,111 +281,5 @@
       "reason_code": "TEAM_MAPPING_UNAVAILABLE"
     }
   },
-  "expected": {
-    "packet_valid": true,
-    "insufficient_keys": [],
-    "min_findings": 3,
-    "max_confidence": "high",
-    "allowed_categories": [
-      "trend",
-      "driver"
-    ],
-    "forbidden_claims": [
-      "PROHIBITED_CAUSAL_CLAIM"
-    ],
-    "invariants": [
-      "comparable.elapsed_days = period.elapsed_days khi PTD"
-    ]
-  },
-  "allowed_analysis": {
-    "contract_version": "business-analysis/0.1",
-    "period_ref": "month:2026-10",
-    "report_status": "draft",
-    "executive_analysis": "Ba ngày đầu tháng ghi nhận 6 người, so với 4 người cùng 3 ngày của tháng trước.",
-    "findings": [
-      {
-        "finding_id": "f_01",
-        "category": "trend",
-        "subject_ref": "scope",
-        "headline": "Tiến độ tháng cao hơn cùng kỳ trước",
-        "analysis": "Ba ngày đầu tháng có 6 người so với 4 người cùng số ngày của tháng trước.",
-        "evidence_refs": [
-          "ev_01",
-          "ev_02",
-          "ev_03"
-        ],
-        "confidence": "medium",
-        "limitations": [],
-        "recommended_action": null
-      },
-      {
-        "finding_id": "f_02",
-        "category": "driver",
-        "subject_ref": "project_01",
-        "headline": "Mức tăng đến từ dự án chính",
-        "analysis": "Dự án chính đóng góp toàn bộ mức tăng 2 người của 3 ngày đầu tháng.",
-        "evidence_refs": [
-          "ev_01",
-          "ev_03",
-          "ev_04"
-        ],
-        "confidence": "medium",
-        "limitations": [],
-        "recommended_action": null
-      },
-      {
-        "finding_id": "f_03",
-        "category": "trend",
-        "subject_ref": "scope",
-        "headline": "Tiến độ 3 ngày đầu tháng",
-        "analysis": "Ba ngày đầu tháng ghi nhận 6 người so với 4 người cùng kỳ trước.",
-        "evidence_refs": [
-          "ev_01",
-          "ev_02",
-          "ev_04"
-        ],
-        "confidence": "medium",
-        "limitations": [],
-        "recommended_action": null
-      }
-    ],
-    "overall_limitations": [
-      "Kỳ chưa kết thúc, chỉ so theo số ngày đã trôi qua."
-    ],
-    "executive_evidence_refs": [
-      "ev_01",
-      "ev_02",
-      "ev_03",
-      "ev_04"
-    ]
-  },
-  "forbidden_analysis": {
-    "contract_version": "business-analysis/0.1",
-    "period_ref": "month:2026-10",
-    "report_status": "draft",
-    "executive_analysis": "Tháng này ghi nhận 6 người, thấp hơn nhiều so với tổng 30 người của tháng trước.",
-    "findings": [
-      {
-        "finding_id": "f_01",
-        "category": "trend",
-        "subject_ref": "scope",
-        "headline": "Tháng này thấp hơn tháng trước",
-        "analysis": "Tháng này 6 người so với 30 người của tháng trước.",
-        "evidence_refs": [
-          "ev_01"
-        ],
-        "confidence": "medium",
-        "limitations": [],
-        "recommended_action": null
-      }
-    ],
-    "overall_limitations": [],
-    "executive_evidence_refs": [
-      "ev_01",
-      "ev_02",
-      "ev_03",
-      "ev_04"
-    ]
-  },
-  "forbidden_expected_code": "UNGROUNDED_NUMERIC_CLAIM"
+  "expect_code": "COMPARABLE_WINDOW_LENGTH_MISMATCH"
 }

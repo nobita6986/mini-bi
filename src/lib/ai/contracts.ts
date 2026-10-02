@@ -120,15 +120,15 @@ export interface EngineDataQualityDetail {
   expected_sources: number;
   sources_with_current_facts: number;
   coverage_ratio: number | null;
-  /** Người thuộc grain có ≥1 chiều unknown (độc lập với invalid). */
-  unknown_any_count: number;
-  /** Người thuộc grain có ≥1 chiều invalid (độc lập với unknown). */
-  invalid_any_count: number;
-  /** Người thuộc grain vừa unknown vừa invalid. */
-  overlap_count: number;
-  /** Giá trị đi vào packet (không đếm trùng một grain ở cả hai chỉ số). */
+  /**
+   * Người thuộc grain có ≥1 chiều unknown. ĐỘC LẬP với invalid: grain vừa unknown vừa invalid
+   * được tính vào cả hai chỉ số (unknown_count + invalid_count có thể > totals.current).
+   */
   unknown_count: number;
+  /** Người thuộc grain có ≥1 chiều invalid (độc lập với unknown). */
   invalid_count: number;
+  /** Người thuộc grain vừa unknown vừa invalid (giao của hai nhóm) — có evidence riêng. */
+  overlap_count: number;
   quality: QualityStatus;
   basis_degraded: boolean;
   degraded_reasons: string[];
@@ -137,7 +137,12 @@ export interface EngineDataQualityDetail {
 /** Chi tiết server-side của engine (KHÔNG gửi AI; không chứa key thô/stable id). */
 export interface EngineDetail {
   current: EngineWindowDetail;
+  /** Cửa sổ so sánh theo kế hoạch kỳ (null khi PTD không có equal window). */
   comparable: EngineWindowDetail | null;
+  /** true khi metrics so sánh được phát (cửa sổ đủ điều kiện). */
+  comparison_usable: boolean;
+  /** PTD_EQUAL_WINDOW_UNAVAILABLE | COMPARABLE_WINDOW_INCOMPLETE | null. */
+  comparable_reason: string | null;
   baseline_counts: {
     trend_weekly: number;
     trend_monthly: number;

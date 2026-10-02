@@ -46,6 +46,13 @@ import {
 
 const EPS = 1e-9;
 
+/** Số ngày của khoảng bao gồm cả hai đầu (chỉ gọi sau khi start/end đã là ISO date hợp lệ). */
+function inclusiveDays(start: string, end: string): number {
+  const parts1 = start.split("-").map(Number);
+  const parts2 = end.split("-").map(Number);
+  return Math.round((Date.UTC(parts2[0], parts2[1] - 1, parts2[2]) - Date.UTC(parts1[0], parts1[1] - 1, parts1[2])) / 86400000) + 1;
+}
+
 const isoDate = z.string().regex(ISO_DATE_RE);
 const utcDateTime = z.string().regex(ISO_UTC_DATETIME_RE);
 const hash = z.string().regex(HASH_RE);
@@ -228,11 +235,19 @@ export const analysisPacketSchema = z
     if (packet.period.period_to_date !== (packet.period.status === "period_to_date")) {
       ctx.addIssue({ code: "custom", message: "PERIOD_STATUS_MISMATCH", path: ["period", "status"] });
     }
-    if (packet.period.period_to_date) {
-      if (!packet.period.comparable) {
-        ctx.addIssue({ code: "custom", message: "PTD_COMPARABLE_REQUIRED", path: ["period", "comparable"] });
-      } else if (packet.period.comparable.elapsed_days !== packet.period.elapsed_days) {
+    /**
+     * R1 clarification: PTD được phép `comparable = null` — DUY NHẤT khi equal window không khả dụng
+     * (kỳ lịch liền trước ngắn hơn số ngày đã trôi qua, ví dụ 30/03 so với tháng 2 có 28 ngày).
+     * Khi comparable khác null thì bắt buộc:
+     *   - `comparable.elapsed_days === period.elapsed_days` (cùng số ngày đã trôi qua), và
+     *   - `inclusiveDays(comparable.start, comparable.end) === comparable.elapsed_days` (không cắt ngầm cửa sổ).
+     */
+    if (packet.period.comparable) {
+      if (packet.period.period_to_date && packet.period.comparable.elapsed_days !== packet.period.elapsed_days) {
         ctx.addIssue({ code: "custom", message: "PTD_ELAPSED_MISMATCH", path: ["period", "comparable", "elapsed_days"] });
+      }
+      if (inclusiveDays(packet.period.comparable.start, packet.period.comparable.end) !== packet.period.comparable.elapsed_days) {
+        ctx.addIssue({ code: "custom", message: "COMPARABLE_WINDOW_LENGTH_MISMATCH", path: ["period", "comparable", "end"] });
       }
     }
   });
@@ -411,10 +426,25 @@ export function checkPacketSemantics(packet: AnalysisPacket): ContractValidation
     return fail("PROJECT_MIX_TOTAL_MISMATCH", "sum(project_total)=" + mixTotal + " != totals.current=" + packet.totals.current, "project_provider_mix");
   }
 
-  // 7. Data quality: unknown/invalid không được vượt tổng; share phải khớp count/total.
+  // 7. Data quality: unknown_count và invalid_count là hai chỉ số ĐỘC LẬP (R1) — grain vừa unknown vừa
+  //     invalid được tính vào cả hai, nên TỔNG có thể lớn hơn totals.current. Mỗi chỉ số riêng phải
+  //     <= totals.current và share phải khớp count/total.
   const dq = packet.data_quality;
-  if (dq.unknown_count + dq.invalid_count > packet.totals.current) {
-    return fail("DATA_QUALITY_INVALID", "unknown/invalid vượt tổng", "data_quality");
+  if (dq.unknown_count > packet.totals.current) {
+    return fail("DATA_QUALITY_INVALID", "unknown_count vượt totals.current", "data_quality.unknown_count");
+  }
+  if (dq.invalid_count > packet.totals.current) {
+    return fail("DATA_QUALITY_INVALID", "invalid_count vượt totals.current", "data_quality.invalid_count");
+  }
+  if (packet.totals.current > 0) {
+    if (dq.unknown_share === null || Math.abs(dq.unknown_share - dq.unknown_count / packet.totals.current) > EPS) {
+      return fail("DATA_QUALITY_INVALID", "unknown_share không khớp unknown_count / totals.current", "data_quality.unknown_share");
+    }
+    if (dq.invalid_share === null || Math.abs(dq.invalid_share - dq.invalid_count / packet.totals.current) > EPS) {
+      return fail("DATA_QUALITY_INVALID", "invalid_share không khớp invalid_count / totals.current", "data_quality.invalid_share");
+    }
+  } else if (dq.unknown_share !== null || dq.invalid_share !== null) {
+    return fail("DATA_QUALITY_INVALID", "totals.current = 0 nhưng share khác null", "data_quality.unknown_share");
   }
   if (dq.sources.length !== packet.scope.sources_in_scope) {
     return fail("DATA_QUALITY_INVALID", "số source status không khớp sources_in_scope", "data_quality.sources");

@@ -228,6 +228,9 @@ function packetFromCoverage(coverage) {
   const zero = { top1_ref: null, top1_share: null, top3_share: null, distinct_subjects: 0 };
   const total = coverage.mapped_recruited_count + coverage.unmapped_recruited_count + coverage.ambiguous_recruited_count;
   packet.totals = { current: total, comparable: null, delta: null, delta_pct: null };
+  // R1 clarification: totals.current = 0 ⇒ unknown_share/invalid_share phải null (không chia 0).
+  packet.data_quality.unknown_share = total > 0 ? 0 : null;
+  packet.data_quality.invalid_share = total > 0 ? 0 : null;
   packet.period.comparable = null;
   packet.drivers = { project: [], recruiter: [], team: [], provider: [], employment: [] };
   packet.concentration = { project: { ...zero }, recruiter: { ...zero }, team: { ...zero }, provider: { ...zero }, employment: { ...zero } };

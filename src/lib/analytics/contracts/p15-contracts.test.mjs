@@ -117,6 +117,69 @@ test("valid examples: packet + output mẫu đều PASS", () => {
   assert.ok(av.ok, av.ok ? "" : av.code + " " + av.message);
 });
 
+test("R1 valid: mọi packet mẫu trong valid/ đều PASS (gồm PTD comparable = null)", () => {
+  const files = listJson("valid/");
+  const packets = files.map((f) => readJson("valid/" + f)).filter((x) => x.packet);
+  assert.ok(packets.length >= 2, "cần >= 2 packet mẫu");
+  for (const x of packets) {
+    const res = validateAnalysisPacket(x.packet);
+    assert.ok(res.ok, x.case_id + " phải hợp lệ: " + (res.ok ? "" : res.code + " " + res.message));
+  }
+  const ptd = packets.find((x) => x.packet.period.status === "period_to_date");
+  assert.ok(ptd, "cần một packet PTD mẫu");
+  // PTD + equal window không khả dụng ⇒ comparable null và KHÔNG có claim so sánh.
+  assert.equal(ptd.packet.period.comparable, null);
+  assert.equal(ptd.packet.totals.comparable, null);
+  assert.equal(ptd.packet.totals.delta, null);
+  assert.equal(ptd.packet.totals.delta_pct, null);
+  assert.equal(ptd.packet.stability.trend_direction, "unknown");
+});
+
+test("R1 PTD clarification: comparable null được phép, nhưng cửa sổ comparable phải đúng độ dài elapsed_days", () => {
+  const base = JSON.parse(JSON.stringify(readJson("valid/analysis-packet-ptd-no-comparable.json").packet));
+  // comparable = null ⇒ hợp lệ (đã assert ở test trên).
+  assert.ok(validateAnalysisPacket(base).ok);
+  // Cửa sổ comparable khác null nhưng độ dài thật != elapsed_days ⇒ reject.
+  const mismatch = JSON.parse(JSON.stringify(caseById("c04").packet));
+  mismatch.period.comparable.end = "2026-09-30";
+  assert.equal(validateAnalysisPacket(mismatch).code, "COMPARABLE_WINDOW_LENGTH_MISMATCH");
+  // PTD comparable hợp lệ: elapsed khớp và độ dài cửa sổ khớp.
+  assert.ok(validateAnalysisPacket(caseById("c04").packet).ok);
+  // PTD comparable lệch elapsed ⇒ reject.
+  const elapsedMismatch = JSON.parse(JSON.stringify(caseById("c04").packet));
+  elapsedMismatch.period.comparable.elapsed_days = 2;
+  assert.equal(validateAnalysisPacket(elapsedMismatch).code, "PTD_ELAPSED_MISMATCH");
+});
+
+test("R1 data quality: unknown_count và invalid_count độc lập, mỗi chỉ số <= totals.current", () => {
+  const base = caseById("c01").packet;
+  const mk = (unknown, invalid) => {
+    const p = JSON.parse(JSON.stringify(base));
+    p.data_quality.unknown_count = unknown;
+    p.data_quality.invalid_count = invalid;
+    p.data_quality.unknown_share = unknown / p.totals.current;
+    p.data_quality.invalid_share = invalid / p.totals.current;
+    return p;
+  };
+  // Tổng hai chỉ số vượt totals.current vẫn HỢP LỆ (grain vừa unknown vừa invalid tính cả hai).
+  const overlap = mk(30, 30);
+  const res = validateAnalysisPacket(overlap);
+  assert.ok(res.ok, res.ok ? "" : res.code + " " + res.message);
+  // Từng chỉ số vượt totals.current ⇒ reject (giữ share <= 1 để vượt qua schema, chạm đúng rule ngữ nghĩa).
+  const overUnknown = mk(30, 0);
+  overUnknown.data_quality.unknown_count = 31;
+  overUnknown.data_quality.unknown_share = 1;
+  assert.equal(validateAnalysisPacket(overUnknown).code, "DATA_QUALITY_INVALID");
+  const overInvalid = mk(0, 30);
+  overInvalid.data_quality.invalid_count = 31;
+  overInvalid.data_quality.invalid_share = 1;
+  assert.equal(validateAnalysisPacket(overInvalid).code, "DATA_QUALITY_INVALID");
+  // Share phải khớp count/current.
+  const badShare = mk(10, 5);
+  badShare.data_quality.unknown_share = 0.5;
+  assert.equal(validateAnalysisPacket(badShare).code, "DATA_QUALITY_INVALID");
+});
+
 test("strict: unknown field ở mọi cấp bị reject", () => {
   const c = caseById("c01");
   for (const mutate of [
@@ -589,6 +652,9 @@ test("R2 team: invariants fact-weighted theo recruited_count", () => {
   zeroCurrent.totals = { current: 0, comparable: null, delta: null, delta_pct: null };
   zeroCurrent.project_provider_mix = [];
   zeroCurrent.team_mapping = { availability: "unavailable", mapped_recruited_count: 0, unmapped_recruited_count: 0, ambiguous_recruited_count: 0, coverage_ratio: null, teams_in_scope: 0, reason_code: "TEAM_MAPPING_UNAVAILABLE" };
+  // R1: totals.current = 0 ⇒ unknown_share/invalid_share phải null (không chia 0).
+  zeroCurrent.data_quality.unknown_share = null;
+  zeroCurrent.data_quality.invalid_share = null;
   zeroCurrent.subjects = zeroCurrent.subjects.filter((s) => s.kind !== "team");
   zeroCurrent.drivers.team = [];
   zeroCurrent.evidence = zeroCurrent.evidence.filter((e) => !e.subject_ref.startsWith("team_"));

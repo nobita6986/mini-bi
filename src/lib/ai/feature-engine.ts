@@ -129,7 +129,8 @@ function normalizeKeyList(value: unknown, path: string): ValidationResult<string
     if (!isNonEmptyString(item)) return fail("REQUEST_INVALID_SCOPE_FILTER", "Filter key không hợp lệ.", path + "[" + i + "]");
     if (!out.includes(item)) out.push(item);
   }
-  return { ok: true, value: out.sort() };
+  // Mảng rỗng = KHÔNG lọc (tránh biến filter rỗng thành "lọc sạch dữ liệu").
+  return { ok: true, value: out.length > 0 ? out.sort() : null };
 }
 
 /** Validate + chuẩn hoá analytics request (period + scope). */
@@ -598,15 +599,33 @@ function dimensionAffected(rows: readonly EngineFactRow[], dimension: Dimension)
   return false;
 }
 
-/** Số tuần ISO ĐÃ HOÀN TẤT (trước kỳ hiện tại) có ít nhất một fact. */
-function countWeeksWithFacts(rows: readonly EngineFactRow[], periodStart: string): number {
-  const weeks = new Set<string>();
-  for (const row of rows) {
-    if (row.business_date >= periodStart) continue;
-    const { year, week } = isoWeekOf(row.business_date);
-    weeks.add(year + "-" + week);
+/**
+ * Số tuần ISO HOÀN TẤT trong vùng lịch sử đủ điều kiện (day_of_week sufficiency).
+ *
+ * - Tuần chỉ được tính khi TOÀN BỘ tuần nằm trong [dataStart, periodStart - 1]:
+ *   coverage bắt đầu giữa tuần ⇒ tuần đầu đó KHÔNG phải observation hoàn tất.
+ * - Tuần hoàn tất sau coverage start luôn là observation hợp lệ, kể cả tổng tuyển bằng 0
+ *   (đếm theo cửa sổ tuần, KHÔNG đếm theo fact).
+ * - Trần riêng MAX_DAY_OF_WEEK_WEEKS, KHÔNG bị giới hạn bởi baseline trend 12 tuần.
+ */
+function countCompleteWeeks(dataStart: string | null, periodStart: string): number {
+  if (dataStart === null) return 0;
+  const lastCompleteEnd = addDays(periodStart, -1);
+  const first = isoWeekOf(lastCompleteEnd);
+  let start = isoWeekStart(first.year, first.week);
+  let count = 0;
+  while (count < MAX_DAY_OF_WEEK_WEEKS) {
+    const end = addDays(start, 6);
+    if (end > lastCompleteEnd) {
+      // Tuần chứa periodStart chưa hoàn tất ⇒ bỏ qua (chỉ xảy ra một lần).
+      start = addDays(start, -7);
+      continue;
+    }
+    if (start < dataStart) break;
+    count += 1;
+    start = addDays(start, -7);
   }
-  return Math.min(weeks.size, MAX_DAY_OF_WEEK_WEEKS);
+  return count;
 }
 
 /** Khoảng liền trước có CÙNG độ dài (custom comparison/stability). */
@@ -865,12 +884,11 @@ function buildDataQuality(sourceHealth: readonly SourceHealthInput[], currentRow
     if (flags.unknown && flags.invalid) overlap += row.recruited_count;
   }
   /**
-   * Contract 0.1 yêu cầu unknown_count + invalid_count <= totals.current.
-   * Hai chỉ số được TÍNH ĐỘC LẬP theo từng grain; khi một grain vừa unknown vừa invalid thì
-   * ở cấp packet nó chỉ được tính MỘT LẦN (invalid giữ nguyên, unknown trừ phần giao) để giữ
-   * invariant hợp lệ, còn cả hai số độc lập vẫn được phát ra dưới dạng evidence.
+   * Quyết định T0: unknown_count và invalid_count là hai chỉ số ĐỘC LẬP.
+   * Grain vừa unknown vừa invalid được tính MỘT LẦN vào MỖI chỉ số ⇒ tổng có thể > totals.current;
+   * mỗi chỉ số riêng vẫn phải <= totals.current (validator 0.1 đã được clarify).
    */
-  const unknownCount = unknownAny - overlap;
+  const unknownCount = unknownAny;
   const invalidCount = invalidAny;
 
   const degradedReasons: string[] = [];
@@ -896,8 +914,6 @@ function buildDataQuality(sourceHealth: readonly SourceHealthInput[], currentRow
     expected_sources: expected,
     sources_with_current_facts: withFacts,
     coverage_ratio: coverageRatio,
-    unknown_any_count: unknownAny,
-    invalid_any_count: invalidAny,
     overlap_count: overlap,
     unknown_count: unknownCount,
     invalid_count: invalidCount,
@@ -907,22 +923,33 @@ function buildDataQuality(sourceHealth: readonly SourceHealthInput[], currentRow
   };
 }
 
+/** Key sufficiency gánh việc so sánh theo loại kỳ. */
+function comparisonSufficiencyKey(periodType: string): SufficiencyKey {
+  if (periodType === "month") return "trend_monthly";
+  if (periodType === "quarter") return "trend_quarterly";
+  if (periodType === "custom") return "consistency";
+  return "trend_weekly";
+}
+
 function buildSufficiency(args: {
+  periodType: string;
   weekCount: number;
   monthCount: number;
   quarterCount: number;
-  weeksWithFacts: number;
+  completeWeeks: number;
   stabilityPoints: number;
   quality: QualityStatus;
   degradedReasons: readonly string[];
+  comparableReason: string | null;
 }): SufficiencyRow[] {
   const actual: Record<SufficiencyKey, number> = {
     trend_weekly: args.weekCount,
     trend_monthly: args.monthCount,
     trend_quarterly: args.quarterCount,
-    day_of_week: args.weeksWithFacts,
+    day_of_week: args.completeWeeks,
     consistency: args.stabilityPoints,
   };
+  const comparisonKey = comparisonSufficiencyKey(args.periodType);
   const degraded = args.quality !== "ok";
   const degradedReason = args.degradedReasons.includes("SOURCE_COVERAGE_INCOMPLETE")
     ? "SOURCE_COVERAGE_INCOMPLETE"
@@ -935,6 +962,10 @@ function buildSufficiency(args: {
   return SUFFICIENCY_KEYS.map((key) => {
     const required = BASELINE_REQUIREMENTS[key];
     const actualPoints = actual[key];
+    // Không so sánh được ⇒ key gánh comparison là "unknown" (không bịa "not_met" khi vẫn đủ điểm).
+    if (!degraded && args.comparableReason !== null && key === comparisonKey) {
+      return { key, required_points: required, actual_points: actualPoints, status: "unknown", reason_code: args.comparableReason };
+    }
     const status: SufficiencyStatus = degraded ? "unknown" : actualPoints >= required ? "met" : "not_met";
     const reason = degraded ? degradedReason : actualPoints >= required ? "BASELINE_MET" : "BASELINE_NOT_MET";
     return { key, required_points: required, actual_points: actualPoints, status, reason_code: reason };
@@ -1011,10 +1042,16 @@ function checkTeamCoverage(
     return fail("TEAM_COVERAGE_INCONSISTENT", "coverage_ratio không khớp mapped / totals.current.", "team.current.coverage_ratio");
   }
   const blocked = coverage.availability === "ambiguous" || coverage.availability === "unavailable";
-  if (blocked && currentRows.some((row) => row.team_ref !== null)) {
+  /**
+   * Redaction toàn bộ team_ref chỉ bắt buộc khi availability = "ambiguous" (quy tắc G2 R1).
+   * "unavailable" chỉ nghĩa là KHÔNG có người nào map được team (có thể do mọi grain trong kỳ
+   * có recruited_count = 0) — khi đó engine vẫn không phát team subject/driver, nhưng fact vẫn
+   * có thể resolve được team về mặt lịch sử.
+   */
+  if (coverage.availability === "ambiguous" && currentRows.some((row) => row.team_ref !== null)) {
     return fail(
       "IDENTITY_REDACTION_MISSING",
-      "team mapping bị chặn nhưng fact kỳ hiện tại vẫn còn team_ref (phải redact toàn bộ).",
+      "team mapping ambiguous nhưng fact kỳ hiện tại vẫn còn team_ref (phải redact toàn bộ).",
       "team.current"
     );
   }
@@ -1107,9 +1144,18 @@ function buildEvidenceDrafts(args: {
   breakdown: BreakdownResult;
   dimensions: readonly Dimension[];
   mix: readonly MixRow[];
-  quality: { quality: QualityStatus; coverage_ratio: number | null; expected_sources: number; unknown_count: number; invalid_count: number; unknown_any_count: number; invalid_any_count: number; overlap_count: number };
+  quality: {
+    quality: QualityStatus;
+    coverage_ratio: number | null;
+    expected_sources: number;
+    unknown_count: number;
+    invalid_count: number;
+    overlap_count: number;
+  };
   currentRows: readonly EngineFactRow[];
   sufficiency: readonly SufficiencyRow[];
+  comparableReason: string | null;
+  filters: NormalizedScope["filters"];
 }): EvidenceDraft[] {
   const drafts: EvidenceDraft[] = [];
   const globalQuality = args.quality.quality;
@@ -1269,8 +1315,6 @@ function buildEvidenceDrafts(args: {
   const qualityCounts: { metric: string; formulaKey: keyof typeof FORMULA_REGISTRY; value: number }[] = [
     { metric: "data_quality.unknown_count", formulaKey: "data_quality_unknown_count", value: args.quality.unknown_count },
     { metric: "data_quality.invalid_count", formulaKey: "data_quality_invalid_count", value: args.quality.invalid_count },
-    { metric: "data_quality.unknown_any_count", formulaKey: "data_quality_unknown_any_count", value: args.quality.unknown_any_count },
-    { metric: "data_quality.invalid_any_count", formulaKey: "data_quality_invalid_any_count", value: args.quality.invalid_any_count },
     { metric: "data_quality.unknown_invalid_overlap_count", formulaKey: "data_quality_unknown_invalid_overlap_count", value: args.quality.overlap_count },
   ];
   for (const entry of qualityCounts) {
@@ -1281,6 +1325,54 @@ function buildEvidenceDrafts(args: {
       value: entry.value,
       unit: "people",
       sufficiency: dataQualitySufficiency,
+      quality: globalQuality,
+    });
+  }
+
+  /**
+   * Comparison không dùng được ⇒ phát reason code deterministic (metric mang chính reason).
+   * Khi comparison usable thì KHÔNG phát metric nào (tín hiệu nằm ở totals.comparable != null).
+   */
+  if (args.comparableReason === "PTD_EQUAL_WINDOW_UNAVAILABLE") {
+    drafts.push({
+      metric: "comparison.unavailable.ptd_equal_window_unavailable",
+      formulaKey: "comparison_unavailable_ptd_equal_window",
+      subject_ref: "scope",
+      value: 1,
+      unit: "count",
+      sufficiency: "unknown",
+      quality: globalQuality,
+    });
+  } else if (args.comparableReason === "COMPARABLE_WINDOW_INCOMPLETE") {
+    drafts.push({
+      metric: "comparison.unavailable.comparable_window_incomplete",
+      formulaKey: "comparison_unavailable_incomplete_window",
+      subject_ref: "scope",
+      value: 1,
+      unit: "count",
+      sufficiency: "unknown",
+      quality: globalQuality,
+    });
+  }
+
+  /**
+   * Filter context cho W04: 0/1 theo từng chiều (KHÔNG chứa raw filter value hay key).
+   * project_provider_mix/breakdown được tính trên scope đã filter ⇒ W04 phải diễn đạt có điều kiện.
+   */
+  const filterFlags: [string, string[] | null][] = [
+    ["scope.filter.project_active", args.filters.project_keys],
+    ["scope.filter.recruiter_active", args.filters.recruiter_keys],
+    ["scope.filter.provider_active", args.filters.provider_type_keys],
+    ["scope.filter.employment_active", args.filters.employment_type_keys],
+  ];
+  for (const [metric, list] of filterFlags) {
+    drafts.push({
+      metric,
+      formulaKey: "scope_filter_active",
+      subject_ref: "scope",
+      value: list === null ? 0 : 1,
+      unit: "count",
+      sufficiency: basis,
       quality: globalQuality,
     });
   }
@@ -1394,6 +1486,31 @@ function validatePacketInvariants(
   if (packet.totals.comparable === 0 && packet.totals.delta_pct !== null) {
     return fail("GROWTH_CLAIM_WITHOUT_BASE", "comparable = 0 nhưng delta_pct khác null.", "totals.delta_pct");
   }
+
+  // unknown/invalid độc lập: mỗi chỉ số <= totals.current; share khớp count/current.
+  if (packet.data_quality.unknown_count > packet.totals.current) {
+    return fail("DATA_QUALITY_INVALID", "unknown_count vượt totals.current.", "data_quality.unknown_count");
+  }
+  if (packet.data_quality.invalid_count > packet.totals.current) {
+    return fail("DATA_QUALITY_INVALID", "invalid_count vượt totals.current.", "data_quality.invalid_count");
+  }
+  if (packet.totals.current > 0) {
+    const expectedUnknown = packet.data_quality.unknown_count / packet.totals.current;
+    const expectedInvalid = packet.data_quality.invalid_count / packet.totals.current;
+    if (packet.data_quality.unknown_share === null || Math.abs(packet.data_quality.unknown_share - expectedUnknown) > 1e-9) {
+      return fail("DATA_QUALITY_INVALID", "unknown_share không khớp unknown_count / totals.current.", "data_quality.unknown_share");
+    }
+    if (packet.data_quality.invalid_share === null || Math.abs(packet.data_quality.invalid_share - expectedInvalid) > 1e-9) {
+      return fail("DATA_QUALITY_INVALID", "invalid_share không khớp invalid_count / totals.current.", "data_quality.invalid_share");
+    }
+  } else if (packet.data_quality.unknown_share !== null || packet.data_quality.invalid_share !== null) {
+    return fail("DATA_QUALITY_INVALID", "totals.current = 0 nhưng share khác null.", "data_quality.unknown_share");
+  }
+
+  // So sánh không usable ⇒ không được có trend/delta claim.
+  if (packet.totals.comparable === null && packet.stability.trend_direction !== "unknown") {
+    return fail("COMPARISON_UNAVAILABLE_WITH_TREND", "comparable null nhưng trend_direction khác unknown.", "stability.trend_direction");
+  }
   // Lưu ý: totals.current = 0 vẫn có delta_pct hợp lệ khi comparable > 0 (mức giảm -100%);
   // điều bị cấm là tuyên bố tỷ lệ tăng trưởng khi comparable = 0 (đã chặn ở trên).
 
@@ -1462,7 +1579,17 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
 
   const totalsCurrent = sumCount(currentRows);
   const dataStart = scoped.length > 0 ? scoped.map((row) => row.business_date).sort()[0] : null;
-  const comparableCovered = plan.comparable !== null && dataStart !== null && plan.comparable.end >= dataStart;
+  /**
+   * FAIL-CLOSED: cửa sổ so sánh chỉ usable khi TOÀN BỘ cửa sổ nằm trong vùng lịch sử đủ điều kiện
+   * (dataStart <= comparable.start). Không bao giờ so trên comparator bị phủ một phần.
+   */
+  const comparableCovered = plan.comparable !== null && dataStart !== null && dataStart <= plan.comparable.start;
+  const comparableReason =
+    plan.comparable === null
+      ? plan.comparable_unavailable_reason ?? "PTD_EQUAL_WINDOW_UNAVAILABLE"
+      : comparableCovered
+        ? null
+        : "COMPARABLE_WINDOW_INCOMPLETE";
   const totalsComparable = comparableCovered ? sumCount(comparableRows) : null;
   const totalsDelta = totalsComparable === null ? null : totalsCurrent - totalsComparable;
   const totalsDeltaPct =
@@ -1498,7 +1625,8 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
   breakdown.remainder.team = teamBuilt.remainder;
   breakdown.covered.team = teamBuilt.covered;
   if (teamBuilt.entries.length > MAX_DRIVER_SUBJECTS) return fail("DRIVER_SUBJECT_LIMIT_EXCEEDED", "team vượt " + MAX_DRIVER_SUBJECTS + " subject.", "drivers.team");
-  if (dimensions.includes("team")) {
+  // unavailable/ambiguous ⇒ KHÔNG phát team subject/driver (contract 0.1 invariant), dù dimension được chọn.
+  if (dimensions.includes("team") && !teamBlocked) {
     breakdown.drivers.team = teamBuilt.entries;
     breakdown.concentration.team = teamBuilt.concentration;
   }
@@ -1528,17 +1656,19 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
           : buildCustomBaselines(plan, dataStart);
   const stabilityPoints = buildStabilityPoints(plan, stabilityWindows, scoped, totalsCurrent);
   const stability = buildStability(stabilityPoints, totalsComparable, totalsDelta);
-  const weeksWithFacts = countWeeksWithFacts(scoped, plan.start);
+  const completeWeeks = countCompleteWeeks(dataStart, plan.start);
 
   const quality = buildDataQuality(sourceHealth, currentRows);
   const sufficiency = buildSufficiency({
+    periodType: plan.type,
     weekCount: baselines.weeks.length,
     monthCount: baselines.months.length,
     quarterCount: baselines.quarters.length,
-    weeksWithFacts,
+    completeWeeks,
     stabilityPoints: stabilityPoints.length,
     quality: quality.quality,
     degradedReasons: quality.degraded_reasons,
+    comparableReason,
   });
 
   const scopeHash = canonicalHash({
@@ -1604,6 +1734,8 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
     quality,
     currentRows,
     sufficiency,
+    comparableReason,
+    filters: request.scope.filters,
   });
   const evidence = finalizeEvidence(drafts, {
     periodRef: plan.period_ref,
@@ -1694,22 +1826,22 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
           elapsed_days: plan.comparable.elapsed_days,
         }
       : null,
+    comparison_usable: totalsComparable !== null,
+    comparable_reason: comparableReason,
     baseline_counts: {
       trend_weekly: baselines.weeks.length,
       trend_monthly: baselines.months.length,
       trend_quarterly: baselines.quarters.length,
-      day_of_week: weeksWithFacts,
+      day_of_week: completeWeeks,
       consistency: stabilityPoints.length,
     },
     data_quality: {
       expected_sources: quality.expected_sources,
       sources_with_current_facts: quality.sources_with_current_facts,
       coverage_ratio: quality.coverage_ratio,
-      unknown_any_count: quality.unknown_any_count,
-      invalid_any_count: quality.invalid_any_count,
-      overlap_count: quality.overlap_count,
       unknown_count: quality.unknown_count,
       invalid_count: quality.invalid_count,
+      overlap_count: quality.overlap_count,
       quality: quality.quality,
       basis_degraded: quality.basis_degraded,
       degraded_reasons: quality.degraded_reasons,

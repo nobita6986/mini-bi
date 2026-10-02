@@ -1,0 +1,1177 @@
+{
+  "case_id": "valid-packet-ptd-no-comparable",
+  "description": "PTD 30/03 sau tháng 2 có 28 ngày ⇒ equal window không khả dụng ⇒ comparable = null (R1)",
+  "packet": {
+    "contract_version": "analysis-packet/0.1",
+    "generated_at": "2026-03-31T00:00:00Z",
+    "snapshot": {
+      "hash": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af",
+      "lineage_ref": "1111111111111111111111111111111111111111111111111111111111111111",
+      "generated_from": "reporting-read-model"
+    },
+    "scope": {
+      "scope_hash": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+      "access_scope_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "sources_in_scope": 1,
+      "dimensions": [
+        "project",
+        "recruiter",
+        "team",
+        "provider",
+        "employment"
+      ]
+    },
+    "team_mapping": {
+      "availability": "available",
+      "mapped_recruited_count": 6,
+      "unmapped_recruited_count": 0,
+      "ambiguous_recruited_count": 0,
+      "coverage_ratio": 1,
+      "teams_in_scope": 1,
+      "reason_code": "TEAM_MAPPING_AVAILABLE"
+    },
+    "period": {
+      "period_ref": "month:2026-03",
+      "type": "month",
+      "start": "2026-03-01",
+      "end": "2026-03-31",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "status": "period_to_date",
+      "period_to_date": true,
+      "elapsed_days": 30,
+      "comparable": null
+    },
+    "totals": {
+      "current": 6,
+      "comparable": null,
+      "delta": null,
+      "delta_pct": null
+    },
+    "drivers": {
+      "project": [
+        {
+          "subject_ref": "project_01",
+          "current": 4,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.6666666666666666
+        },
+        {
+          "subject_ref": "project_02",
+          "current": 2,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.3333333333333333
+        }
+      ],
+      "recruiter": [
+        {
+          "subject_ref": "recruiter_01",
+          "current": 4,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.6666666666666666
+        },
+        {
+          "subject_ref": "recruiter_02",
+          "current": 2,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.3333333333333333
+        }
+      ],
+      "team": [
+        {
+          "subject_ref": "team_01",
+          "current": 6,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 1
+        }
+      ],
+      "provider": [
+        {
+          "subject_ref": "provider_hrp",
+          "current": 4,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.6666666666666666
+        },
+        {
+          "subject_ref": "provider_vendor",
+          "current": 2,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.3333333333333333
+        }
+      ],
+      "employment": [
+        {
+          "subject_ref": "employment_seasonal",
+          "current": 4,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.6666666666666666
+        },
+        {
+          "subject_ref": "employment_official",
+          "current": 2,
+          "comparable": null,
+          "delta": null,
+          "delta_contribution_share": null,
+          "share_of_current": 0.3333333333333333
+        }
+      ]
+    },
+    "concentration": {
+      "project": {
+        "top1_ref": "project_01",
+        "top1_share": 0.6666666666666666,
+        "top3_share": 1,
+        "distinct_subjects": 2
+      },
+      "recruiter": {
+        "top1_ref": "recruiter_01",
+        "top1_share": 0.6666666666666666,
+        "top3_share": 1,
+        "distinct_subjects": 2
+      },
+      "team": {
+        "top1_ref": "team_01",
+        "top1_share": 1,
+        "top3_share": 1,
+        "distinct_subjects": 1
+      },
+      "provider": {
+        "top1_ref": "provider_hrp",
+        "top1_share": 0.6666666666666666,
+        "top3_share": 1,
+        "distinct_subjects": 2
+      },
+      "employment": {
+        "top1_ref": "employment_seasonal",
+        "top1_share": 0.6666666666666666,
+        "top3_share": 1,
+        "distinct_subjects": 2
+      }
+    },
+    "stability": {
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0",
+      "period_points": 1,
+      "mean": 3,
+      "stddev": 0,
+      "cv": null,
+      "trend_direction": "unknown",
+      "volatility": "unknown"
+    },
+    "series": {
+      "granularity": "day",
+      "points": [
+        {
+          "period_start": "2026-03-01",
+          "period_end": "2026-03-01",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-02",
+          "period_end": "2026-03-02",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-03",
+          "period_end": "2026-03-03",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-04",
+          "period_end": "2026-03-04",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-05",
+          "period_end": "2026-03-05",
+          "value": 4
+        },
+        {
+          "period_start": "2026-03-06",
+          "period_end": "2026-03-06",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-07",
+          "period_end": "2026-03-07",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-08",
+          "period_end": "2026-03-08",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-09",
+          "period_end": "2026-03-09",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-10",
+          "period_end": "2026-03-10",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-11",
+          "period_end": "2026-03-11",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-12",
+          "period_end": "2026-03-12",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-13",
+          "period_end": "2026-03-13",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-14",
+          "period_end": "2026-03-14",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-15",
+          "period_end": "2026-03-15",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-16",
+          "period_end": "2026-03-16",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-17",
+          "period_end": "2026-03-17",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-18",
+          "period_end": "2026-03-18",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-19",
+          "period_end": "2026-03-19",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-20",
+          "period_end": "2026-03-20",
+          "value": 2
+        },
+        {
+          "period_start": "2026-03-21",
+          "period_end": "2026-03-21",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-22",
+          "period_end": "2026-03-22",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-23",
+          "period_end": "2026-03-23",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-24",
+          "period_end": "2026-03-24",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-25",
+          "period_end": "2026-03-25",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-26",
+          "period_end": "2026-03-26",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-27",
+          "period_end": "2026-03-27",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-28",
+          "period_end": "2026-03-28",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-29",
+          "period_end": "2026-03-29",
+          "value": 0
+        },
+        {
+          "period_start": "2026-03-30",
+          "period_end": "2026-03-30",
+          "value": 0
+        }
+      ]
+    },
+    "data_quality": {
+      "sources": [
+        {
+          "source_ref": "source_01",
+          "status": "covered",
+          "quality": "ok"
+        }
+      ],
+      "coverage_ratio": 1,
+      "unknown_count": 0,
+      "invalid_count": 0,
+      "unknown_share": 0,
+      "invalid_share": 0
+    },
+    "project_provider_mix": [
+      {
+        "subject_ref": "project_01",
+        "project_total": 4,
+        "hrp_count": 4,
+        "vendor_count": 0,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "known_total": 4,
+        "hrp_share": 1,
+        "vendor_share": 0,
+        "known_coverage": 1
+      },
+      {
+        "subject_ref": "project_02",
+        "project_total": 2,
+        "hrp_count": 0,
+        "vendor_count": 2,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "known_total": 2,
+        "hrp_share": 0,
+        "vendor_share": 1,
+        "known_coverage": 1
+      }
+    ],
+    "sufficiency": [
+      {
+        "key": "trend_weekly",
+        "required_points": 4,
+        "actual_points": 4,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_monthly",
+        "required_points": 3,
+        "actual_points": 1,
+        "status": "unknown",
+        "reason_code": "PTD_EQUAL_WINDOW_UNAVAILABLE"
+      },
+      {
+        "key": "trend_quarterly",
+        "required_points": 4,
+        "actual_points": 0,
+        "status": "not_met",
+        "reason_code": "BASELINE_NOT_MET"
+      },
+      {
+        "key": "day_of_week",
+        "required_points": 8,
+        "actual_points": 3,
+        "status": "not_met",
+        "reason_code": "BASELINE_NOT_MET"
+      },
+      {
+        "key": "consistency",
+        "required_points": 4,
+        "actual_points": 1,
+        "status": "not_met",
+        "reason_code": "BASELINE_NOT_MET"
+      }
+    ],
+    "subjects": [
+      {
+        "ref": "scope",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "project_01",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "project_02",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "recruiter_01",
+        "kind": "recruiter",
+        "catalog_key": null
+      },
+      {
+        "ref": "recruiter_02",
+        "kind": "recruiter",
+        "catalog_key": null
+      },
+      {
+        "ref": "team_01",
+        "kind": "team",
+        "catalog_key": null
+      },
+      {
+        "ref": "provider_hrp",
+        "kind": "provider",
+        "catalog_key": "hrp"
+      },
+      {
+        "ref": "provider_vendor",
+        "kind": "provider",
+        "catalog_key": "vendor"
+      },
+      {
+        "ref": "employment_official",
+        "kind": "employment",
+        "catalog_key": "chính thức"
+      },
+      {
+        "ref": "employment_seasonal",
+        "kind": "employment",
+        "catalog_key": "thời vụ"
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "ev_01",
+        "metric": "breakdown_remainder.employment",
+        "formula": "totals.current - sum(dimension subject_current)",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_02",
+        "metric": "breakdown_remainder.project",
+        "formula": "totals.current - sum(dimension subject_current)",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_03",
+        "metric": "breakdown_remainder.provider",
+        "formula": "totals.current - sum(dimension subject_current)",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_04",
+        "metric": "breakdown_remainder.recruiter",
+        "formula": "totals.current - sum(dimension subject_current)",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_05",
+        "metric": "breakdown_remainder.team",
+        "formula": "totals.current - sum(dimension subject_current)",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_06",
+        "metric": "comparison.unavailable.ptd_equal_window_unavailable",
+        "formula": "1 if comparable null because equal window unavailable else 0",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "count",
+        "sufficiency": "unknown",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_07",
+        "metric": "concentration.employment.top1_share",
+        "formula": "max(subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_08",
+        "metric": "concentration.employment.top3_share",
+        "formula": "sum(top3 subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_09",
+        "metric": "concentration.project.top1_share",
+        "formula": "max(subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_10",
+        "metric": "concentration.project.top3_share",
+        "formula": "sum(top3 subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_11",
+        "metric": "concentration.provider.top1_share",
+        "formula": "max(subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_12",
+        "metric": "concentration.provider.top3_share",
+        "formula": "sum(top3 subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_13",
+        "metric": "concentration.recruiter.top1_share",
+        "formula": "max(subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_14",
+        "metric": "concentration.recruiter.top3_share",
+        "formula": "sum(top3 subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_15",
+        "metric": "concentration.team.top1_share",
+        "formula": "max(subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_16",
+        "metric": "concentration.team.top3_share",
+        "formula": "sum(top3 subject_current) / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_17",
+        "metric": "data_quality.invalid_count",
+        "formula": "sum(recruited_count) grain has any invalid dimension",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_18",
+        "metric": "data_quality.source_coverage",
+        "formula": "sources_with_current_facts / expected_sources",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_19",
+        "metric": "data_quality.unknown_count",
+        "formula": "sum(recruited_count) grain has any unknown dimension",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_20",
+        "metric": "data_quality.unknown_invalid_overlap_count",
+        "formula": "sum(recruited_count) grain has both unknown and invalid dimension",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_21",
+        "metric": "driver.employment.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "employment_official",
+        "value": 2,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_22",
+        "metric": "driver.employment.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "employment_seasonal",
+        "value": 4,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_23",
+        "metric": "driver.employment.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "employment_official",
+        "value": 0.3333333333333333,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_24",
+        "metric": "driver.employment.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "employment_seasonal",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_25",
+        "metric": "driver.project.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_01",
+        "value": 4,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_26",
+        "metric": "driver.project.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_02",
+        "value": 2,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_27",
+        "metric": "driver.project.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_01",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_28",
+        "metric": "driver.project.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_02",
+        "value": 0.3333333333333333,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_29",
+        "metric": "driver.provider.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "provider_hrp",
+        "value": 4,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_30",
+        "metric": "driver.provider.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "provider_vendor",
+        "value": 2,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_31",
+        "metric": "driver.provider.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "provider_hrp",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_32",
+        "metric": "driver.provider.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "provider_vendor",
+        "value": 0.3333333333333333,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_33",
+        "metric": "driver.recruiter.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "recruiter_01",
+        "value": 4,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_34",
+        "metric": "driver.recruiter.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "recruiter_02",
+        "value": 2,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_35",
+        "metric": "driver.recruiter.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "recruiter_01",
+        "value": 0.6666666666666666,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_36",
+        "metric": "driver.recruiter.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "recruiter_02",
+        "value": 0.3333333333333333,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_37",
+        "metric": "driver.team.current",
+        "formula": "sum(recruited_count) by subject",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "team_01",
+        "value": 6,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_38",
+        "metric": "driver.team.share_of_current",
+        "formula": "subject_current / totals.current",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "team_01",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_39",
+        "metric": "project_mix.hrp_share",
+        "formula": "hrp_count / known_total",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_01",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_40",
+        "metric": "project_mix.hrp_share",
+        "formula": "hrp_count / known_total",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_02",
+        "value": 0,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_41",
+        "metric": "project_mix.total",
+        "formula": "sum(recruited_count) by project",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_01",
+        "value": 4,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_42",
+        "metric": "project_mix.total",
+        "formula": "sum(recruited_count) by project",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_02",
+        "value": 2,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_43",
+        "metric": "project_mix.vendor_share",
+        "formula": "vendor_count / known_total",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_01",
+        "value": 0,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_44",
+        "metric": "project_mix.vendor_share",
+        "formula": "vendor_count / known_total",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "project_02",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_45",
+        "metric": "recruited_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 6,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_46",
+        "metric": "scope.filter.employment_active",
+        "formula": "1 if scope filter present on dimension else 0",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "count",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_47",
+        "metric": "scope.filter.project_active",
+        "formula": "1 if scope filter present on dimension else 0",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "count",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_48",
+        "metric": "scope.filter.provider_active",
+        "formula": "1 if scope filter present on dimension else 0",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "count",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_49",
+        "metric": "scope.filter.recruiter_active",
+        "formula": "1 if scope filter present on dimension else 0",
+        "formula_version": "v0.1",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "count",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_50",
+        "metric": "stability_mean",
+        "formula": "sum(period_point_values) / period_points",
+        "formula_version": "cv-population-1.0",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 3,
+        "unit": "people",
+        "sufficiency": "not_met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      },
+      {
+        "evidence_id": "ev_51",
+        "metric": "stability_stddev",
+        "formula": "sqrt(sum((x - mean) * (x - mean)) / period_points)",
+        "formula_version": "cv-population-1.0",
+        "period_ref": "month:2026-03",
+        "scope_ref": "cf39a0a21292591d2caa6d8d8cc541a537429f4004f222b394e08f699c50e995",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "not_met",
+        "quality": "ok",
+        "snapshot_ref": "37449b2051219973eeade245e1dca9e05cf74d92fad0c76b334e525d44ebe7af"
+      }
+    ]
+  }
+}

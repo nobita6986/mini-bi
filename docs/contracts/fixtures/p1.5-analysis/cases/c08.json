@@ -133,8 +133,8 @@
       "coverage_ratio": 1,
       "unknown_count": 0,
       "invalid_count": 0,
-      "unknown_share": 0,
-      "invalid_share": 0
+      "unknown_share": null,
+      "invalid_share": null
     },
     "project_provider_mix": [],
     "sufficiency": [

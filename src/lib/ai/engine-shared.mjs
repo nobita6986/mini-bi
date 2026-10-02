@@ -122,18 +122,29 @@ export const FORMULA_REGISTRY = {
     formula: "sources_with_current_facts / expected_sources",
     formula_version: "v0.1",
   },
-  data_quality_unknown_count: { formula: "sum(recruited_count) grain has unknown dimension", formula_version: "v0.1" },
-  data_quality_invalid_count: { formula: "sum(recruited_count) grain has invalid dimension", formula_version: "v0.1" },
-  data_quality_unknown_any_count: {
+  /** unknown/invalid là hai chỉ số ĐỘC LẬP (grain vừa unknown vừa invalid tính vào cả hai). */
+  data_quality_unknown_count: {
     formula: "sum(recruited_count) grain has any unknown dimension",
     formula_version: "v0.1",
   },
-  data_quality_invalid_any_count: {
+  data_quality_invalid_count: {
     formula: "sum(recruited_count) grain has any invalid dimension",
     formula_version: "v0.1",
   },
   data_quality_unknown_invalid_overlap_count: {
     formula: "sum(recruited_count) grain has both unknown and invalid dimension",
+    formula_version: "v0.1",
+  },
+  comparison_unavailable_ptd_equal_window: {
+    formula: "1 if comparable null because equal window unavailable else 0",
+    formula_version: "v0.1",
+  },
+  comparison_unavailable_incomplete_window: {
+    formula: "1 if comparable null because comparison window not fully covered else 0",
+    formula_version: "v0.1",
+  },
+  scope_filter_active: {
+    formula: "1 if scope filter present on dimension else 0",
     formula_version: "v0.1",
   },
   series_point_value: { formula: "sum(recruited_count) by series bucket", formula_version: "v0.1" },
@@ -313,7 +324,13 @@ export function buildPeriodPlan(period) {
   const elapsedDays = inclusiveDays(start, effectiveEnd);
   const status = complete ? "complete" : "period_to_date";
 
+  /**
+   * PTD equal-window: chỉ so khi kỳ liền trước ĐỦ số ngày đã trôi qua.
+   * Kỳ trước ngắn hơn (tháng 2, quý ngắn hơn) ⇒ comparable = null (KHÔNG cắt bớt rồi so
+   * 30/31 ngày với 28/29 ngày) và ghi reason code deterministic.
+   */
   let comparable = null;
+  let comparableUnavailableReason = null;
   if (type === "custom") {
     const prevEnd = addDays(start, -1);
     const prevStart = addDays(prevEnd, -(elapsedDays - 1));
@@ -322,10 +339,9 @@ export function buildPeriodPlan(period) {
     const prev = previousPeriodWindow(type, start);
     if (complete) {
       comparable = { period_ref: prev.period_ref, start: prev.start, end: prev.end, elapsed_days: inclusiveDays(prev.start, prev.end) };
-    } else if (type === "month") {
-      // PTD tháng: tháng trước có thể ngắn hơn (tháng 2) ⇒ cắt theo độ dài tháng trước.
-      const clippedEnd = addDays(prev.start, elapsedDays - 1) > prev.end ? prev.end : addDays(prev.start, elapsedDays - 1);
-      comparable = { period_ref: prev.period_ref, start: prev.start, end: clippedEnd, elapsed_days: elapsedDays };
+    } else if (inclusiveDays(prev.start, prev.end) < elapsedDays) {
+      comparable = null;
+      comparableUnavailableReason = "PTD_EQUAL_WINDOW_UNAVAILABLE";
     } else {
       comparable = {
         period_ref: prev.period_ref,
@@ -346,6 +362,7 @@ export function buildPeriodPlan(period) {
     elapsed_days: elapsedDays,
     effective_end: effectiveEnd,
     comparable,
+    comparable_unavailable_reason: comparableUnavailableReason,
   };
 }
 
