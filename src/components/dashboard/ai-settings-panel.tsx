@@ -200,6 +200,7 @@ export function AiSettingsPanel() {
   const apiUrlRef = useRef<HTMLInputElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const confirmDiscardRef = useRef<HTMLButtonElement>(null);
+  const alertDialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   /** Reset form về ĐÚNG trạng thái server đã tải (nguồn an toàn duy nhất). */
@@ -348,6 +349,14 @@ export function AiSettingsPanel() {
     const onFocusIn = (event: FocusEvent) => {
       const node = event.target as Node | null;
       if (!drawerRef.current || !node) return;
+      if (confirmDiscard) {
+        // R3 (C4): khi alertdialog mở, focus ở BẤT KỲ đâu ngoài alertdialog (kể cả focus programmatic)
+        // đều bị kéo về nút mặc định "Bỏ thay đổi".
+        if (!alertDialogRef.current || !alertDialogRef.current.contains(node)) {
+          confirmDiscardRef.current?.focus();
+        }
+        return;
+      }
       if (drawerRef.current.contains(node)) return;
       const items = focusables();
       if (items.length > 0) items[0].focus();
@@ -531,28 +540,13 @@ export function AiSettingsPanel() {
             tabIndex={-1}
             className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[26rem] sm:rounded-l-2xl sm:p-5"
           >
-            <header className="flex items-start justify-between gap-3">
-              <div>
-                <h2 id="ai-settings-title" className="text-base font-semibold text-foreground">
-                  Cấu hình AI
-                </h2>
-                <p className="mt-1 text-sm text-muted">
-                  Dành cho Owner (pilot): khai báo provider, model và API key cho trợ lý AI.
-                </p>
-              </div>
-              <button ref={closeButtonRef} type="button" onClick={requestClose} disabled={busy} className={secondaryButtonClass}>
-                Đóng
-              </button>
-            </header>
-
-            <p role="status" aria-live="polite" className="rounded-2xl border border-border bg-surface p-3 text-sm text-muted">
-              <span>{statusText}</span>
-              {noticeText ? <span className="mt-1 block font-medium text-foreground">{noticeText}</span> : null}
-              {errorText ? <span className="mt-1 block font-medium text-foreground">{errorText}</span> : null}
-            </p>
-
+            {/*
+              R3 (C) — alertdialog là thành phần DUY NHẤT nằm ngoài vùng `inert` khi mở xác nhận:
+              chỉ "Bỏ thay đổi" và "Ở lại" nhận focus/tương tác.
+            */}
             {confirmDiscard ? (
               <div
+                ref={alertDialogRef}
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="ai-discard-title"
@@ -576,9 +570,33 @@ export function AiSettingsPanel() {
               </div>
             ) : null}
 
-            {/* R2 (D1/D2): khi alertdialog mở, phần nội dung phía sau bị `inert` ⇒ không tương tác và
-                không nằm trong vòng focus (modal thật, không cần dependency mới). */}
-            <div inert={confirmDiscard} aria-hidden={confirmDiscard} className="flex flex-col gap-3">
+
+            {/*
+              R3 (C) — TOÀN BỘ nền drawer nằm trong MỘT vùng inert + aria-hidden:
+              header (gồm nút "Đóng"), status/live region, current-config section, form và mọi action button.
+            */}
+            {/* background-inert-start */}
+            <div inert={confirmDiscard} aria-hidden={confirmDiscard} className="flex flex-col gap-4">
+            <header className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="ai-settings-title" className="text-base font-semibold text-foreground">
+                  Cấu hình AI
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  Dành cho Owner (pilot): khai báo provider, model và API key cho trợ lý AI.
+                </p>
+              </div>
+              <button ref={closeButtonRef} type="button" onClick={requestClose} disabled={busy} className={secondaryButtonClass}>
+                Đóng
+              </button>
+            </header>
+
+            <p role="status" aria-live="polite" className="rounded-2xl border border-border bg-surface p-3 text-sm text-muted">
+              <span>{statusText}</span>
+              {noticeText ? <span className="mt-1 block font-medium text-foreground">{noticeText}</span> : null}
+              {errorText ? <span className="mt-1 block font-medium text-foreground">{errorText}</span> : null}
+            </p>
+
             <section className="rounded-2xl border border-border bg-surface p-3">
               <h3 className="text-sm font-semibold text-foreground">Cấu hình hiện tại</h3>
               {config ? (
@@ -698,6 +716,7 @@ export function AiSettingsPanel() {
               </div>
             </form>
             </div>
+            {/* background-inert-end */}
           </aside>
         </>
       ) : null}

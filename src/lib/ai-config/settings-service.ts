@@ -91,7 +91,12 @@ function safeProjectConfig(config: ProviderConfig): { ok: true; config: ConfigRe
   try {
     return { ok: true, config: projectConfig(config) };
   } catch {
-    return fail("CONFIGURATION");
+    /**
+     * R3 (B) — Config đọc từ store bị malformed ⇒ lỗi HẠ TẦNG, KHÔNG phải "thiếu cấu hình":
+     * dùng AI_INTERNAL (mã CONFIGURATION bị API ánh xạ thành AI_CONFIG_REQUIRED) và thông điệp CỐ ĐỊNH,
+     * đã sanitize — không raw error, không URL, không envelope, không secret.
+     */
+    return { ok: false, code: "AI_INTERNAL", message: "cấu hình provider đọc được không hợp lệ" };
   }
 }
 
@@ -273,6 +278,13 @@ export async function rotateProviderKey(input: {
     // KHÔNG giải mã key cũ: chỉ dùng metadata (URL/model/profile) + secret MỚI.
     next = rotateConfigCommand(current, apiKey, input.keyring, input.now ?? new Date());
   } catch (error) {
+    /**
+     * R3 (B) — Input đã được validate TRƯỚC đó, nên lỗi ở đây nghĩa là config ĐỌC TỪ STORE bị malformed
+     * ⇒ lỗi hạ tầng AI_INTERNAL (không phải input error, không phải "thiếu cấu hình").
+     */
+    if (error instanceof SecurityError && error.code === "INVALID_INPUT") {
+      return { ok: false, code: "AI_INTERNAL", message: "cấu hình provider đọc được không hợp lệ" };
+    }
     return fail(error instanceof SecurityError ? error.code : "INVALID_INPUT");
   }
   const saved = await input.store.saveVersion({

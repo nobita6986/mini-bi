@@ -308,3 +308,55 @@ test("R2-D6: Escape trong confirm = Ở lại; Ở lại phục hồi focus; B�
   const discardBlock = source.slice(source.indexOf("const discardChanges"), source.indexOf("const discardChanges") + 420);
   assert.ok(discardBlock.indexOf('setApiKey("")') < discardBlock.indexOf("performClose()"), "clear API key phải trước khi đóng");
 });
+
+// ---------------------------------------------------------------------------
+// W04A-R3 (C) — alertdialog modal thật: toàn bộ nền drawer nằm trong vùng inert
+// ---------------------------------------------------------------------------
+
+test("R3-C1: nút Đóng + header + status + section + form đều nằm TRONG vùng inert của nền drawer", () => {
+  const start = source.indexOf("{/* background-inert-start */}");
+  const end = source.indexOf("{/* background-inert-end */}");
+  assert.ok(start > 0, "phải có marker bắt đầu vùng nền");
+  assert.ok(end > start, "phải có marker kết thúc vùng nền");
+
+  const background = source.slice(start, end);
+  for (const marker of [
+    "<header",
+    "Đóng",
+    'role="status"',
+    "Cấu hình hiện tại",
+    "<form",
+    "Lưu cấu hình",
+    "Kiểm tra kết nối",
+    "Xoay API key",
+    "Kích hoạt",
+    "Tắt cấu hình",
+  ]) {
+    assert.ok(background.includes(marker), "vùng nền phải chứa: " + marker);
+  }
+  assert.ok(background.includes("inert={confirmDiscard}"), "vùng nền phải inert theo confirmDiscard");
+  assert.ok(background.includes("aria-hidden={confirmDiscard}"), "vùng nền phải aria-hidden theo confirmDiscard");
+  assert.ok(background.indexOf("closeButtonRef") > 0, "nút Đóng phải nằm TRONG vùng nền inert");
+
+  // alertdialog là thành phần DUY NHẤT ngoài vùng nền.
+  const alertIndex = source.indexOf('role="alertdialog"');
+  assert.ok(alertIndex > 0 && alertIndex < start, "alertdialog phải nằm ngoài (trước) vùng nền");
+  assert.equal(background.includes('role="alertdialog"'), false, "alertdialog KHÔNG được nằm trong vùng inert");
+  assert.ok(source.includes("Bỏ thay đổi") && source.includes("Ở lại"), "alertdialog có hai nút hành động");
+});
+
+test("R3-C2: focus programmatic ngoài alertdialog bị kéo về nút mặc định; vòng focus lọc vùng inert", () => {
+  assert.ok(source.includes('!node.closest("[inert]")'), "vòng focus phải loại phần tử trong vùng inert");
+  assert.ok(source.includes("ref={alertDialogRef}"), "alertdialog phải có ref để kiểm containment");
+
+  const focusInBlock = source.slice(source.indexOf("const onFocusIn"), source.indexOf("const onFocusIn") + 800);
+  assert.ok(focusInBlock.includes("if (confirmDiscard)"), "focusin phải xử lý riêng khi alertdialog mở");
+  assert.ok(focusInBlock.includes("alertDialogRef.current.contains(node)"), "phải kiểm node có nằm trong alertdialog");
+  assert.ok(focusInBlock.includes("confirmDiscardRef.current?.focus()"), "focus ngoài alertdialog phải kéo về nút mặc định");
+});
+
+test("R3-C3: Escape = Ở lại và busy chặn dismiss (nhánh quyết định trong handler)", () => {
+  assert.ok(source.includes('decision === "stay"') && source.includes("stayInDrawer()"), "Escape trong confirm phải là Ở lại");
+  assert.ok(source.includes('decision === "blocked"'), "busy phải chặn dismiss");
+  assert.ok(source.includes("if (open && !confirmDiscard)") === false, "không cần nhánh phụ");
+});
