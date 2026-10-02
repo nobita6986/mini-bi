@@ -6,6 +6,12 @@ import test from "node:test";
 
 import { migrationChecksum, runMigrationValidation } from "./lib/migration-validation.mjs";
 
+test("migration checksum is stable across LF and CRLF checkouts", () => {
+  const lf = "create table example (id integer);\nselect 1;\n";
+  const crlf = lf.replace(/\n/g, "\r\n");
+  assert.equal(migrationChecksum(crlf), migrationChecksum(lf));
+});
+
 async function withMigrations(run) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "migration-validation-"));
   try {

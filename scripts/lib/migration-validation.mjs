@@ -3,7 +3,11 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 export function migrationChecksum(text) {
-  return createHash("sha256").update(text, "utf8").digest("hex");
+  // Git may materialize SQL files as CRLF on Windows even though the same
+  // committed migration was applied from an LF checkout. A migration's
+  // identity must not change solely because of the checkout platform.
+  const normalized = text.replace(/\r\n?/g, "\n");
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
 export async function readMigrations(directory) {
