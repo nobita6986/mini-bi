@@ -9,6 +9,7 @@ import { validateAnalyticsRequest } from "../feature-engine.ts";
 import { buildJobIdentity } from "./job-identity.mjs";
 import { enqueueReport, runWorkerBatch } from "./run-one-job.mjs";
 import { evaluateAdmissionPolicy } from "./policy.mjs";
+import { projectRecoverStale } from "./rpc-projection.mjs";
 import { responseCeilingOf } from "./policy.mjs";
 import { LEASE_SECONDS, WORKER_BATCH_LIMIT } from "./limits.mjs";
 
@@ -237,7 +238,6 @@ export function createAiReportService(deps) {
           access_scope_hash,
           recent_requests: policyContext.value.recent_requests,
           queued_jobs: policyContext.value.queued_jobs,
-          attempts: 0,
           tokens_used_today: policyContext.value.tokens_used_today,
         },
         now_ms: now,
@@ -259,9 +259,10 @@ export function createAiReportService(deps) {
       // E (R2): lỗi recoverStale KHÔNG được bỏ qua.
       if (typeof deps.queue.recoverStale === "function") {
         // R3: truyền now_ms để recovery dùng CÙNG đồng hồ với claim (deterministic, không recover nhầm slot đang giữ).
-        const recovered = await deps.queue.recoverStale({ lease_seconds: LEASE_SECONDS, now_ms: now });
-        if (!recovered || recovered.ok !== true) {
-          return fail(recovered?.code ?? "AI_INTERNAL", "không thu hồi được lease hết hạn (DB/RPC lỗi)");
+        // R5: response recoverStale phải project chặt — thiếu/sai kiểu KHÔNG được coi là recovered=0.
+        const recovered = projectRecoverStale(await deps.queue.recoverStale({ lease_seconds: LEASE_SECONDS, now_ms: now }));
+        if (!recovered.ok) {
+          return fail(recovered.code, "không thu hồi được lease hết hạn (DB/RPC lỗi)");
         }
       }
       const results = await runWorkerBatch({

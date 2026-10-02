@@ -10,7 +10,7 @@ import { validateGeneratedAnalysis } from "./output-guard.mjs";
 import { evaluateAdmissionPolicy, evaluateAttemptPolicy } from "./policy.mjs";
 import { resolveProviderAdapter } from "./provider.mjs";
 import { decideAfterFailure } from "./job-state.mjs";
-import { projectClaim } from "./rpc-projection.mjs";
+import { projectClaim, projectComplete, projectEnqueue } from "./rpc-projection.mjs";
 import { LEASE_SECONDS } from "./limits.mjs";
 
 /** Signal timeout mặc định (Node/Next server runtime); test có thể inject bản điều khiển được. */
@@ -58,12 +58,18 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
   const identity = deps.identity.build(request);
   if (!identity.ok) return identity;
 
-  const enqueued = await deps.queue.enqueueOrReuse({
+  const enqueuedRaw = await deps.queue.enqueueOrReuse({
     identity_hash: identity.identity_hash,
     identity_components: identity.components,
     request,
     now_ms: now,
   });
+  /**
+   * R5 (B) — Response enqueue phải qua projection CHẶT ngay tại consumer (không chỉ ở repository):
+   * thất bại thiếu code, thiếu/sai kiểu boolean, vừa reused vừa cache_hit, cache_hit thiếu revision_id,
+   * status lạ ⇒ AI_INTERNAL. KHÔNG fallback thành ok:true/reused:false/cache_hit:false.
+   */
+  const enqueued = projectEnqueue(enqueuedRaw);
   if (!enqueued.ok) return enqueued;
 
   /**
@@ -75,9 +81,9 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
     ok: true,
     job_id: enqueued.job_id,
     status: enqueued.status,
-    reused: enqueued.reused === true,
-    cache_hit: enqueued.cache_hit === true,
-    revision_id: enqueued.revision_id ?? null,
+    reused: enqueued.reused,
+    cache_hit: enqueued.cache_hit,
+    revision_id: enqueued.revision_id,
   };
 }
 
@@ -314,7 +320,7 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   }
 
   // 5. Complete chỉ bằng lease owner/token hiện hành (fencing).
-  const completed = await deps.queue.complete({
+  const completedRaw = await deps.queue.complete({
     job_id: job.job_id,
     lease_token: claimed.lease_token,
     analysis: validated.value,
@@ -322,11 +328,18 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
     now_ms: now,
   });
 
-  if (!completed.ok && completed.code === "AI_LEASE_LOST") {
-    // Worker khác đã chiếm lease (stale) — KHÔNG ghi đè draft/revision hợp lệ.
-    return { kind: "lease_lost", job_id: job.job_id, status: "queued", error_code: null, revision_id: null, attempts: claimed.attempt, next_attempt_at: null };
+  /**
+   * R5 (C) — Project complete tại consumer: `already_completed` phải là boolean thật và `revision_id` bắt buộc;
+   * malformed ⇒ fail-closed (KHÔNG bao giờ coi là `completed`).
+   */
+  const completed = projectComplete(completedRaw);
+  if (!completed.ok) {
+    if (completed.code === "AI_LEASE_LOST") {
+      // Worker khác đã chiếm lease (stale) — KHÔNG ghi đè draft/revision hợp lệ.
+      return { kind: "lease_lost", job_id: job.job_id, status: "queued", error_code: null, revision_id: null, attempts: claimed.attempt, next_attempt_at: null };
+    }
+    return report(completed.code, completed.message);
   }
-  if (!completed.ok) return report(completed.code ?? "AI_INTERNAL", completed.message ?? "complete thất bại");
 
   // B (R3): audit `job_completed` do tầng DB ghi DUY NHẤT MỘT LẦN khi tạo revision;
   // complete idempotent (already_completed) không sinh thêm event.

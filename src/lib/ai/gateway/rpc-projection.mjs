@@ -1,8 +1,18 @@
 /**
- * P1.5-W04-R4 — Projection CHẶT cho response RPC (fail-closed).
+ * P1.5-W04-R4/R5 — Projection CHẶT cho response RPC (fail-closed).
  *
  * RPC trả success nhưng thiếu field / sai kiểu ⇒ KHÔNG được fallback []/0; phải trả lỗi sanitized
  * để caller fail-closed (0 packet load, 0 provider call).
+ *
+ * R5 — ĐÓNG projection:
+ * - claim: CHỈ `null` hoặc `{ok:false, code:"AI_IDLE"}` mới là idle; `undefined`/object rỗng/malformed
+ *   success ⇒ `AI_INTERNAL`.
+ * - claim: `job.attempts` và `attempt` phải là integer >= 1, `attempt === job.attempts`,
+ *   `attempt <= job.max_attempts`; mâu thuẫn ⇒ fail-closed.
+ * - enqueue: `reused`/`cache_hit` bắt buộc boolean; không đồng thời true; `cache_hit` cần `revision_id`;
+ *   `status` phải thuộc tập trạng thái RPC enqueue thực sự trả được.
+ * - complete: `already_completed` bắt buộc boolean thật (không mặc định false) + `revision_id` bắt buộc.
+ * - recoverStale: `recovered` bắt buộc integer >= 0 (không fallback 0).
  */
 
 function isInt(value) {
@@ -16,6 +26,13 @@ function isNonEmptyString(value) {
 function isUuidLike(value) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
+
+function internal(message) {
+  return { ok: false, code: "AI_INTERNAL", message };
+}
+
+/** Trạng thái mà `ai_report_enqueue` thực sự có thể trả (job mới, job đang hoạt động, hoặc draft khi cache hit). */
+export const ENQUEUE_STATUSES = Object.freeze(["requested", "queued", "computing", "ai_generating", "validating", "draft"]);
 
 /**
  * Policy context: bắt buộc recent_requests (mảng số), queued_jobs, inflight_jobs, tokens_used_today (int >= 0).
@@ -46,28 +63,40 @@ export function projectPolicyContext(raw) {
 }
 
 /**
- * Claim response: null (idle) | { ok:false, code } (lỗi/không có slot) | claim đã validate.
- * Kiểm tối thiểu: job, attempt, lease_token và provider/model/adapter/prompt đã đóng băng.
+ * Claim response: `null` | `{ok:false, code:"AI_IDLE"}` (idle) | `{ok:false, code}` (lỗi/không slot) | claim đã validate.
+ *
+ * R5: `undefined`, object rỗng, `ok` không phải boolean, hoặc success thiếu field ⇒ `AI_INTERNAL`.
+ * @returns {null | { ok:false, code:string, message:string }
+ *   | { job:object, lease_token:string, attempt:number }}
  */
 export function projectClaim(raw) {
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw !== "object") return { ok: false, code: "AI_INTERNAL", message: "claim response sai kiểu" };
-  const code = typeof raw.code === "string" ? raw.code : null;
+  // Idle HỢP LỆ chỉ có đúng hai dạng tường minh.
+  if (raw === null) return null;
+  if (typeof raw !== "object") return internal("claim response sai kiểu hoặc rỗng");
+  if (Array.isArray(raw)) return internal("claim response sai kiểu hoặc rỗng");
+  const code = isNonEmptyString(raw.code) ? raw.code : null;
   if (raw.ok === false) {
     if (code === "AI_IDLE") return null;
-    return { ok: false, code: code ?? "AI_INTERNAL", message: "claim thất bại" };
+    if (code === null) return internal("claim thất bại nhưng thiếu code");
+    return { ok: false, code, message: isNonEmptyString(raw.message) ? raw.message : "claim thất bại" };
   }
+  if (raw.ok !== true) return internal("claim response thiếu ok=true/false tường minh");
+
   const job = raw.job;
-  if (!job || typeof job !== "object") return { ok: false, code: "AI_INTERNAL", message: "claim thiếu job" };
-  if (!isNonEmptyString(job.job_id)) return { ok: false, code: "AI_INTERNAL", message: "claim thiếu job_id" };
-  if (!isInt(job.attempts)) return { ok: false, code: "AI_INTERNAL", message: "claim thiếu attempts" };
-  if (!isInt(job.max_attempts) || job.max_attempts < 1) return { ok: false, code: "AI_INTERNAL", message: "claim thiếu max_attempts" };
-  if (!isUuidLike(raw.lease_token)) return { ok: false, code: "AI_INTERNAL", message: "claim thiếu lease_token" };
-  if (!isInt(raw.attempt) || raw.attempt < 1) return { ok: false, code: "AI_INTERNAL", message: "claim thiếu attempt" };
+  if (!job || typeof job !== "object" || Array.isArray(job)) return internal("claim thiếu job");
+  if (!isNonEmptyString(job.job_id)) return internal("claim thiếu job_id");
+  if (!isNonEmptyString(job.status)) return internal("claim thiếu status");
+  if (!isInt(job.attempts) || job.attempts < 1) return internal("claim attempts phải là integer >= 1");
+  if (!isInt(job.max_attempts) || job.max_attempts < 1) return internal("claim thiếu max_attempts");
+  if (!isUuidLike(raw.lease_token)) return internal("claim thiếu lease_token");
+  if (!isInt(raw.attempt) || raw.attempt < 1) return internal("claim attempt phải là integer >= 1");
+  // R5: attempt trong response phải khớp số lần thử của job và không vượt trần.
+  if (raw.attempt !== job.attempts) return internal("claim attempt không khớp job.attempts");
+  if (raw.attempt > job.max_attempts) return internal("claim attempt vượt job.max_attempts");
   for (const field of ["provider_key", "model_key", "adapter_version", "prompt_version"]) {
-    if (!isNonEmptyString(job[field])) return { ok: false, code: "AI_INTERNAL", message: "claim thiếu " + field + " đã đóng băng" };
+    if (!isNonEmptyString(job[field])) return internal("claim thiếu " + field + " đã đóng băng");
   }
-  if (!job.packet || typeof job.packet !== "object") return { ok: false, code: "AI_INTERNAL", message: "claim thiếu packet" };
+  if (!job.packet || typeof job.packet !== "object" || Array.isArray(job.packet)) return internal("claim thiếu packet");
   return {
     job: {
       job_id: job.job_id,
@@ -86,27 +115,67 @@ export function projectClaim(raw) {
   };
 }
 
-/** Enqueue response: bắt buộc job_id/status/reused/cache_hit đúng kiểu. */
+/**
+ * Enqueue response: `job_id` + `status` thuộc tập hợp lệ + `reused`/`cache_hit` boolean tường minh.
+ * `cache_hit=true` bắt buộc có `revision_id` non-empty; `reused` và `cache_hit` không được cùng true.
+ * @returns {{ ok:true, job_id:string, status:string, reused:boolean, cache_hit:boolean, revision_id:string|null }
+ *   | { ok:false, code:"AI_INTERNAL", message:string }}
+ */
 export function projectEnqueue(raw) {
-  if (!raw || typeof raw !== "object") return { ok: false, code: "AI_INTERNAL", message: "enqueue response sai kiểu" };
-  if (!isNonEmptyString(raw.job_id)) return { ok: false, code: "AI_INTERNAL", message: "enqueue thiếu job_id" };
-  if (!isNonEmptyString(raw.status)) return { ok: false, code: "AI_INTERNAL", message: "enqueue thiếu status" };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return internal("enqueue response sai kiểu");
+  // Thất bại đã sanitize ở tầng RPC: giữ nguyên code, thiếu code ⇒ AI_INTERNAL (không suy diễn).
+  if (raw.ok === false) {
+    if (!isNonEmptyString(raw.code)) return internal("enqueue thất bại nhưng thiếu code");
+    return { ok: false, code: raw.code, message: isNonEmptyString(raw.message) ? raw.message : "enqueue thất bại" };
+  }
+  if (!isNonEmptyString(raw.job_id)) return internal("enqueue thiếu job_id");
+  if (!isNonEmptyString(raw.status) || !ENQUEUE_STATUSES.includes(raw.status)) return internal("enqueue status không hợp lệ");
+  if (typeof raw.reused !== "boolean") return internal("enqueue thiếu/sai kiểu reused");
+  if (typeof raw.cache_hit !== "boolean") return internal("enqueue thiếu/sai kiểu cache_hit");
+  if (raw.reused === true && raw.cache_hit === true) return internal("enqueue không thể vừa reused vừa cache_hit");
+  const hasRevision = isNonEmptyString(raw.revision_id);
+  if (raw.revision_id !== null && raw.revision_id !== undefined && !hasRevision) {
+    return internal("enqueue revision_id sai kiểu");
+  }
+  if (raw.cache_hit === true && !hasRevision) return internal("enqueue cache_hit thiếu revision_id");
   return {
     ok: true,
     job_id: raw.job_id,
     status: raw.status,
-    reused: raw.reused === true,
-    cache_hit: raw.cache_hit === true,
-    revision_id: isNonEmptyString(raw.revision_id) ? raw.revision_id : null,
+    reused: raw.reused,
+    cache_hit: raw.cache_hit,
+    revision_id: hasRevision ? raw.revision_id : null,
   };
 }
 
-/** Complete response: bắt buộc revision_id khi tạo revision. */
+/**
+ * Complete response: `revision_id` bắt buộc + `already_completed` phải là boolean thật.
+ * @returns {{ ok:true, revision_id:string, already_completed:boolean } | { ok:false, code:"AI_INTERNAL", message:string }}
+ */
 export function projectComplete(raw) {
-  if (!raw || typeof raw !== "object") return { ok: false, code: "AI_INTERNAL", message: "complete response sai kiểu" };
-  const already = raw.already_completed === true;
-  if (!isNonEmptyString(raw.revision_id)) {
-    return { ok: false, code: "AI_INTERNAL", message: already ? "complete idempotent thiếu revision_id" : "complete thiếu revision_id" };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return internal("complete response sai kiểu");
+  // Thất bại đã sanitize (AI_LEASE_LOST / AI_JOB_NOT_FOUND…): giữ nguyên code cho worker phân loại.
+  if (raw.ok === false) {
+    if (!isNonEmptyString(raw.code)) return internal("complete thất bại nhưng thiếu code");
+    return { ok: false, code: raw.code, message: isNonEmptyString(raw.message) ? raw.message : "complete thất bại" };
   }
-  return { ok: true, revision_id: raw.revision_id, already_completed: already };
+  if (typeof raw.already_completed !== "boolean") return internal("complete thiếu/sai kiểu already_completed");
+  if (!isNonEmptyString(raw.revision_id)) {
+    return internal(raw.already_completed ? "complete idempotent thiếu revision_id" : "complete thiếu revision_id");
+  }
+  return { ok: true, revision_id: raw.revision_id, already_completed: raw.already_completed };
+}
+
+/**
+ * RecoverStale response: `recovered` bắt buộc integer >= 0 (không được fallback 0).
+ * @returns {{ ok:true, recovered:number } | { ok:false, code:string, message:string }}
+ */
+export function projectRecoverStale(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return internal("recoverStale response sai kiểu");
+  if (raw.ok !== true) {
+    const code = isNonEmptyString(raw.code) ? raw.code : "AI_INTERNAL";
+    return { ok: false, code, message: isNonEmptyString(raw.message) ? raw.message : "recoverStale thất bại" };
+  }
+  if (!isInt(raw.recovered)) return internal("recoverStale thiếu/sai kiểu recovered");
+  return { ok: true, recovered: raw.recovered };
 }

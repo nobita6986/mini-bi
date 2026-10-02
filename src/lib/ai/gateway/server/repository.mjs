@@ -9,7 +9,7 @@ import "server-only";
 
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
-import { projectComplete, projectEnqueue, projectPolicyContext } from "../rpc-projection.mjs";
+import { projectPolicyContext } from "../rpc-projection.mjs";
 
 function fail(code, message) {
   return { ok: false, code, message };
@@ -49,8 +49,8 @@ export function createSupabaseJobRepository() {
         p_max_attempts: request.max_attempts,
       });
       if (!result.ok) return result;
-      // R4: response enqueue phải đúng kiểu; thiếu job_id/status ⇒ fail-closed.
-      return projectEnqueue(result.value);
+      // R5: trả raw — consumer (run-one-job) project chặt ⇒ parity với memory queue/test double.
+      return result.value;
     },
 
     async claim({ worker_ref, lease_seconds, max_concurrent_jobs }) {
@@ -85,7 +85,8 @@ export function createSupabaseJobRepository() {
         p_usage: usage,
       });
       if (!result.ok) return result;
-      return projectComplete(result.value);
+      // R5: trả raw — consumer project chặt (already_completed/revision_id).
+      return result.value;
     },
 
     async fail({ job_id, lease_token, error_code, next_status, next_attempt_at, message }) {
@@ -130,7 +131,9 @@ export function createSupabaseJobRepository() {
 
     async recoverStale({ lease_seconds }) {
       const result = await rpc("ai_report_recover_stale", { p_lease_seconds: lease_seconds });
-      return result.ok ? { ok: true, recovered: result.value.recovered ?? 0 } : result;
+      if (!result.ok) return result;
+      // R5: KHÔNG fallback recovered=0 — trả raw để consumer project fail-closed.
+      return result.value;
     },
   };
 }

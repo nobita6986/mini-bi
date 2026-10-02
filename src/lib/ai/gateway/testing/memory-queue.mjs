@@ -47,6 +47,8 @@ export function createMemoryQueue(options = {}) {
     /** Audit trail do queue ghi (mô phỏng RPC ghi audit trong DB). */
 
     async enqueueOrReuse({ identity_hash, identity_components, request, now_ms }) {
+      // R5: mô phỏng RPC trả shape lạ (malformed success) ⇒ projection phải fail-closed.
+      if ("enqueueRaw" in hooks) return hooks.enqueueRaw;
       // R4 (D): audit insert nằm CÙNG transaction với quyết định ⇒ insert lỗi thì RPC fail và KHÔNG tạo job.
       if (hooks.auditInsertError === true) {
         return { ok: false, code: "AI_INTERNAL", message: "audit insert lỗi (mô phỏng) — rollback toàn bộ" };
@@ -92,6 +94,8 @@ export function createMemoryQueue(options = {}) {
     },
 
     async claim({ worker_ref, lease_seconds = 120, now_ms, max_concurrent_jobs }) {
+      // R5: mô phỏng RPC claim trả shape lạ (undefined/object rỗng/attempt sai) ⇒ worker phải error.
+      if ("claimRaw" in hooks) return hooks.claimRaw;
       // R2 (E): lỗi DB/RPC claim phải nổi lên, KHÔNG giả thành idle.
       if (hooks.claimError === true) {
         return { ok: false, code: "AI_INTERNAL", message: "claim RPC lỗi (mô phỏng)" };
@@ -137,7 +141,9 @@ export function createMemoryQueue(options = {}) {
       job.lease_expires_at = iso(now_ms + lease_seconds * 1000);
       job.updated_at = iso(now_ms);
       audit.push({ job_id: job.job_id, event_type: "job_claimed", actor_ref: worker_ref, reason: null });
+      // R5: mirror ĐÚNG shape RPC SQL (luôn có ok:true tường minh) — projection yêu cầu ok boolean.
       return {
+        ok: true,
         job: {
           job_id: job.job_id,
           identity_hash: job.identity_hash,
@@ -174,6 +180,8 @@ export function createMemoryQueue(options = {}) {
     },
 
     async complete({ job_id, lease_token, analysis, usage: usageRow, now_ms }) {
+      // R5: mô phỏng RPC complete trả shape lạ (thiếu/sai already_completed) ⇒ KHÔNG được coi là completed.
+      if ("completeRaw" in hooks) return hooks.completeRaw;
       const job = jobs.get(job_id);
       if (!job) return { ok: false, code: "AI_JOB_NOT_FOUND" };
       if (job.status === "draft" && job.revision_id !== null) {
@@ -321,6 +329,8 @@ export function createMemoryQueue(options = {}) {
     },
 
     async recoverStale({ lease_seconds = 0, now_ms }) {
+      // R5: mô phỏng RPC recoverStale trả shape lạ ⇒ KHÔNG fallback recovered=0.
+      if ("recoverStaleRaw" in hooks) return hooks.recoverStaleRaw;
       if (hooks.recoverStaleError === true) {
         return { ok: false, code: "AI_INTERNAL", message: "recoverStale RPC lỗi (mô phỏng)" };
       }

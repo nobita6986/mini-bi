@@ -323,12 +323,14 @@ test("R4-C2: claim projection kiểm job/attempt/lease_token/provider-model-adap
   assert.equal(projectClaim({ ok: false, code: "AI_IDLE" }), null, "AI_IDLE = idle");
   assert.equal(projectClaim({ ok: false, code: "AI_CONCURRENCY_LIMITED" }).code, "AI_CONCURRENCY_LIMITED");
 
-  const ok = projectClaim({ job: baseJob, lease_token: lease, attempt: 1 });
+  // R5: success PHẢI có ok:true tường minh (parity với RPC SQL) — thiếu ⇒ malformed.
+  const ok = projectClaim({ ok: true, job: baseJob, lease_token: lease, attempt: 1 });
   assert.equal(ok.ok, undefined);
   assert.equal(ok.job.job_id, baseJob.job_id);
   assert.equal(ok.lease_token, lease);
 
   const malformed = [
+    { job: baseJob, lease_token: lease, attempt: 1 },
     { lease_token: lease, attempt: 1 },
     { job: {}, lease_token: lease, attempt: 1 },
     { job: { ...baseJob, attempts: undefined }, lease_token: lease, attempt: 1 },
@@ -348,7 +350,7 @@ test("R4-C2: claim projection kiểm job/attempt/lease_token/provider-model-adap
   }
 
   assert.equal(projectEnqueue({}).code, "AI_INTERNAL");
-  assert.equal(projectEnqueue({ job_id: "j", status: "queued" }).ok, true);
+  assert.equal(projectEnqueue({ job_id: "j", status: "queued", reused: false, cache_hit: false }).ok, true);
   assert.equal(projectComplete({}).code, "AI_INTERNAL");
   assert.equal(projectComplete({ revision_id: "r", already_completed: true }).already_completed, true);
 });
