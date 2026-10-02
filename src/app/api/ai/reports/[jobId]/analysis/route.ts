@@ -1,11 +1,12 @@
 import "server-only";
 
 /**
- * P1.5-W05-S01 — GET /api/ai/reports/[jobId]/analysis
+ * P1.5-W05-S01-R1 — GET /api/ai/reports/[jobId]/analysis
  *
- * Trả TRẠNG THÁI job + NỘI DUNG draft revision (business-analysis/0.1 ĐÃ validate).
- * KHÔNG trả packet, payload provider, prompt nội bộ, raw provider output hay PII.
- * `review_capability`: approve/reject CHƯA khả dụng (blocker W05 — chưa có RPC duyệt revision).
+ * Tra TRANG THAI job + NOI DUNG draft revision (business-analysis/0.1 DA validate).
+ * Hop dong response DONG NHAT: luon co attempts/max_attempts va revision la null hoac object
+ * day du (khong co field analysis/lifecycle_status roi rac o top-level).
+ * KHONG tra packet, payload provider, prompt noi bo, raw provider output hay PII.
  */
 
 import { isAiReportsEnabled } from "@/lib/ai/gateway/server/config.mjs";
@@ -29,32 +30,29 @@ export async function GET(_request: Request, context: { params: Promise<{ jobId:
   const status = result.status ?? {};
   const revision = status.revision ?? null;
 
-  if (!revision || !revision.analysis) {
-    // Chưa hoàn tất hoặc không có draft: chỉ trả trạng thái job (để client poll).
-    return jsonResponse({
-      ok: true,
-      job_id: status.job_id,
-      status: status.status,
-      error_code: status.error_code ?? null,
-      attempts: status.attempts,
-      max_attempts: status.max_attempts,
-      revision_id: status.revision_id ?? null,
-      revision: null,
-      review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
-    });
-  }
-
-  return jsonResponse({
+  const base = {
     ok: true,
     job_id: status.job_id,
     status: status.status,
     error_code: status.error_code ?? null,
-    revision_id: revision.revision_id,
-    revision_number: revision.revision_number,
-    lifecycle_status: revision.lifecycle_status,
-    contract_version: revision.contract_version,
-    created_at: revision.created_at,
-    analysis: revision.analysis,
+    attempts: Number.isInteger(status.attempts) ? status.attempts : 0,
+    max_attempts: Number.isInteger(status.max_attempts) ? status.max_attempts : 0,
     review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+  };
+
+  if (!revision || !revision.analysis) {
+    return jsonResponse({ ...base, revision: null });
+  }
+
+  return jsonResponse({
+    ...base,
+    revision: {
+      revision_id: revision.revision_id,
+      revision_number: revision.revision_number,
+      lifecycle_status: revision.lifecycle_status,
+      contract_version: revision.contract_version,
+      created_at: revision.created_at,
+      analysis: revision.analysis,
+    },
   });
 }

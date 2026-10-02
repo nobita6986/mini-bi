@@ -59,12 +59,13 @@ test("S01-P5: đủ trạng thái empty/loading/error/disabled/config-required/b
 test("S01-P6: double-click không tạo hai job (guard busy + disable)", () => {
   assert.ok(source.includes("if (busy) return;"), "submit phải chặn khi busy");
   assert.ok(source.includes("disabled={busy}"), "nút submit phải disable khi busy");
-  assert.ok(source.includes("request_id ?? result.record.job_id"), "dùng id idempotent trả về");
+  assert.ok(source.includes("record.request_id ?? record.job_id"), "dùng id idempotent trả về");
 });
 
 test("S01-P7: human review — draft phân biệt, regenerate có xác nhận, approve/reject chờ RPC", () => {
-  assert.ok(source.includes("Bản nháp do AI tạo, chưa phải dữ liệu đã duyệt."));
-  assert.ok(source.includes("lifecycleLabel(lifecycle)"));
+  const reportView = readFileSync(new URL("./report-view.ts", import.meta.url), "utf8");
+  assert.ok(reportView.includes("Bản nháp do AI tạo, chưa phải dữ liệu đã duyệt."));
+  assert.ok(reportView.includes("lifecycleLabel(lifecycle)"));
   assert.ok(source.includes("Tạo lại báo cáo"));
   assert.ok(source.includes("Lý do tạo lại"));
   assert.ok(source.includes("Lý do tạo lại cần ít nhất 3 ký tự"));
@@ -74,10 +75,61 @@ test("S01-P7: human review — draft phân biệt, regenerate có xác nhận, a
 });
 
 test("S01-P8: report view hiển thị đủ executive/findings/limitations/evidence/comparison", () => {
+  const reportView = readFileSync(new URL("./report-view.ts", import.meta.url), "utf8");
   for (const marker of ["Tóm tắt điều hành", "executive_analysis", "period_ref", "Minh chứng", "Cảnh báo dữ liệu", "overall_limitations", "Giới hạn:", "Đề xuất:"]) {
-    assert.ok(source.includes(marker), "thiếu " + marker);
+    assert.ok(reportView.includes(marker), "thiếu " + marker);
   }
-  assert.ok(source.includes("groupFindings("));
-  assert.ok(source.includes("findingCategoryLabel("));
-  assert.ok(source.includes("confidenceLabel("));
+  assert.ok(reportView.includes("groupFindings("));
+  assert.ok(reportView.includes("findingCategoryLabel("));
+  assert.ok(reportView.includes("confidenceLabel("));
+});
+
+// ---------------------------------------------------------------------------
+// R1 — capability/polling/date/focus behavior
+// ---------------------------------------------------------------------------
+
+test("S01-R1-P1: capability null ⇒ skeleton loading; không render/submit form trước khi xác nhận capability", () => {
+  assert.ok(source.includes("capability === null ? ("), "phải phân nhánh theo capability null");
+  assert.ok(source.includes("<Skeleton />"), "capability null phải hiện skeleton");
+  const branchIndex = source.indexOf("capability === null ? (");
+  const formIndex = source.indexOf("<form");
+  assert.ok(formIndex > branchIndex, "form chỉ render trong nhánh capability đã xác nhận");
+  assert.ok(source.includes("projectCapabilityResponse("), "capability phải qua projection thuần, không cast raw JSON");
+  assert.ok(!source.includes("as unknown as CapabilityView"), "không dùng type assertion để tin capability");
+});
+
+test("S01-R1-P2: focus trap + restore focus + ngăn focus thoát modal", () => {
+  assert.ok(source.includes("resolveTabTarget({"), "phải dùng helper Tab thuần");
+  assert.ok(source.includes("drawerRef"), "phải có ref drawer");
+  assert.ok(source.includes("tabIndex={-1}"), "drawer phải nhận focus");
+  assert.ok(source.includes('document.addEventListener("focusin"'), "phải kéo focus về khi thoát modal");
+  assert.ok(source.includes("triggerRef.current?.focus()"), "đóng phải trả focus về trigger");
+});
+
+test("S01-R1-P3: polling recursive setTimeout — không setInterval, không chồng request, dừng khi đóng", () => {
+  assert.ok(!/setInterval\(/.test(source), "không dùng setInterval() (dùng recursive setTimeout)");
+  assert.ok(source.includes("setTimeout(loop, POLL_INTERVAL_MS)"), "lịch request kế tiếp chỉ sau khi request trước xong");
+  assert.ok(source.includes("if (pollingRef.current) return;"), "không chồng request nếu response lâu hơn chu kỳ");
+  assert.ok(source.includes("if (!open) stopPolling()"), "đóng drawer phải dừng poll");
+  assert.ok(source.includes("if (!ok) return;"), "poll non-ok phải dừng");
+  assert.ok(source.includes("if (!isActiveJobStatus(status))"), "terminal state phải dừng chắc chắn");
+});
+
+test("S01-R1-P4: history item cập nhật trạng thái theo poll (không mãi 'requested')", () => {
+  assert.ok(
+    source.includes("setHistory((current) => current.map((item) => (item.job_id === id ? { ...item, status: view.status } : item)))"),
+    "poll phải cập nhật status của item history khớp job_id"
+  );
+});
+
+test("S01-R1-P5: as-of mặc định theo Asia/Ho_Chi_Minh, không dùng toISOString().slice(0,10)", () => {
+  assert.ok(source.includes("todayDateIso"), "phải dùng helper timezone");
+  assert.ok(source.includes("useState(() => todayDateIso())"), "asOf mặc định từ helper GMT+7");
+  assert.ok(!source.includes("toISOString().slice(0, 10)"), "không dùng UTC date");
+});
+
+test("S01-R1-P6: applyStatus dùng projection thuần — malformed fail-closed AI_INTERNAL, không render một phần", () => {
+  assert.ok(source.includes("projectUiReportResponse("), "phải project response qua validator thuần");
+  assert.ok(source.includes('setStatusText("Không đọc được dữ liệu báo cáo.")'), "malformed phải báo lỗi");
+  assert.ok(source.includes('status: "failed_internal"'), "malformed phải fail-closed");
 });

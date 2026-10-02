@@ -5,13 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   buildReportRequest,
   codeToMessage,
-  confidenceLabel,
-  findingCategoryLabel,
-  groupFindings,
   isActiveJobStatus,
   isFailedJobStatus,
   jobStatusLabel,
-  lifecycleLabel,
+  projectCapabilityResponse,
+  projectUiReportResponse,
   DIMENSIONS,
   DIMENSION_LABELS,
   PERIOD_TYPES,
@@ -20,14 +18,18 @@ import {
   type Dimension,
   type PeriodType,
 } from "@/lib/ai-report/report-contract";
+import { todayDateIso } from "@/lib/format";
+import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
+import { ReportView } from "./report-view";
 
 const REPORTS_PATH = "/api/ai/reports";
 const CAPABILITY_PATH = "/api/ai/reports/capability";
+const POLL_INTERVAL_MS = 2000;
 
 type JobStatusView = { status: string; error_code: string | null; attempts: number; max_attempts: number };
 type HistoryItem = { job_id: string; status: string };
 type CallResult =
-  | { ok: true; httpStatus: number; code: string; record: Record<string, unknown> }
+  | { ok: true; httpStatus: number; code: string; record: unknown }
   | { ok: false; httpStatus: number; code: string; message: string };
 
 function analysisPath(jobId: string): string {
@@ -49,19 +51,36 @@ async function callJson(path: string, method: "GET" | "POST", body?: Record<stri
   }
   let payload: unknown = null;
   try { payload = await response.json(); } catch { payload = null; }
-  const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  const code = typeof record.code === "string" ? record.code : "AI_INTERNAL";
-  if (!response.ok || record.ok !== true) {
+  if (!response.ok) {
+    const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const code = typeof record.code === "string" ? record.code : "AI_INTERNAL";
     return { ok: false, httpStatus: response.status, code, message: codeToMessage(code).text };
   }
-  return { ok: true, httpStatus: response.status, code, record };
+  return { ok: true, httpStatus: response.status, code: "AI_INTERNAL", record: payload };
 }
 
 const inputClass = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary";
 const primaryButtonClass = "inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90 disabled:opacity-50";
 const secondaryButtonClass = "inline-flex h-9 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface/80 disabled:opacity-50";
 
-function todayIso(): string { return new Date().toISOString().slice(0, 10); }
+function Skeleton() {
+  return (
+    <div aria-hidden className="flex animate-pulse flex-col gap-3">
+      <div className="h-9 rounded-lg bg-muted/40" />
+      <div className="h-24 rounded-2xl bg-muted/40" />
+      <div className="h-40 rounded-2xl bg-muted/40" />
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1 last:border-b-0">
+      <dt className="text-muted">{label}</dt>
+      <dd className="text-right font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
 
 export function AiReportPanel() {
   const [open, setOpen] = useState(false);
@@ -70,7 +89,7 @@ export function AiReportPanel() {
   const [statusText, setStatusText] = useState("");
   const [errorText, setErrorText] = useState("");
   const [periodType, setPeriodType] = useState<PeriodType>("week");
-  const [asOf, setAsOf] = useState(todayIso());
+  const [asOf, setAsOf] = useState(() => todayDateIso());
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [dimensions, setDimensions] = useState<Dimension[]>(["project", "provider", "employment"]);
@@ -85,7 +104,9 @@ export function AiReportPanel() {
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingRef = useRef(false);
 
   const close = useCallback(() => { setOpen(false); triggerRef.current?.focus(); }, []);
   const requestClose = useCallback(() => { if (busy) return; close(); }, [busy, close]);
@@ -94,7 +115,10 @@ export function AiReportPanel() {
     setBusy(true); setErrorText("");
     const result = await callJson(CAPABILITY_PATH, "GET");
     if (result.ok) {
-      setCapability(result.record as unknown as CapabilityView);
+      const projected = projectCapabilityResponse(result.record);
+      if (projected.ok) { setCapability(projected.capability); setBusy(false); return; }
+      setCapability({ ai_enabled: false, config_ready: false, review: { approve: false, reject: false, regenerate: true, reason: projected.code } });
+      setErrorText(projected.message);
     } else {
       setCapability({ ai_enabled: false, config_ready: false, review: { approve: false, reject: false, regenerate: true, reason: result.code } });
       setErrorText(result.message);
@@ -103,32 +127,59 @@ export function AiReportPanel() {
   }, []);
 
   const stopPolling = useCallback(() => {
-    if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
+    pollingRef.current = false;
+    if (pollTimerRef.current !== null) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
   }, []);
 
-  function applyStatus(record: Record<string, unknown>): string {
-    setJobStatus({
-      status: String(record.status ?? ""),
-      error_code: typeof record.error_code === "string" ? record.error_code : null,
-      attempts: Number(record.attempts ?? 0),
-      max_attempts: Number(record.max_attempts ?? 0),
-    });
-    const revision = record.revision as { lifecycle_status?: string; analysis?: AnalysisView } | null;
-    if (revision && revision.analysis) { setAnalysis(revision.analysis); setLifecycle(revision.lifecycle_status ?? "draft"); }
+  /** Áp dụng kết quả poll đã project: trả về status (chuỗi rỗng nếu malformed ⇒ terminal). */
+  const applyUiReport = useCallback((id: string, raw: unknown): string => {
+    const projected = projectUiReportResponse(raw);
+    if (!projected.ok) {
+      setJobStatus((current) => current ?? { status: "failed_internal", error_code: "AI_INTERNAL", attempts: 0, max_attempts: 1 });
+      setErrorText(projected.message);
+      setStatusText("Không đọc được dữ liệu báo cáo.");
+      return "";
+    }
+    const view = projected.view;
+    setJobStatus({ status: view.status, error_code: view.error_code, attempts: view.attempts, max_attempts: view.max_attempts });
+    setHistory((current) => current.map((item) => (item.job_id === id ? { ...item, status: view.status } : item)));
+    if (view.revision) { setAnalysis(view.revision.analysis); setLifecycle(view.revision.lifecycle_status); }
     else { setAnalysis(null); setLifecycle(null); }
-    return String(record.status ?? "");
-  }
+    return view.status;
+  }, []);
 
+  /**
+   * R1 — Polling recursive setTimeout (không setInterval): mỗi request CHỈ bắt đầu sau khi request
+   * trước hoàn tất (không chồng nếu response lâu hơn chu kỳ); terminal state / non-ok ⇒ dừng chắc chắn.
+   */
   const startPolling = useCallback((id: string) => {
     stopPolling();
-    void callJson(analysisPath(id), "GET").then((result) => { if (result.ok) { const status = applyStatus(result.record); if (!isActiveJobStatus(status)) stopPolling(); } });
-    pollRef.current = setInterval(async () => {
+
+    async function loop() {
+      if (pollingRef.current) return;
+      pollingRef.current = true;
+      let status = "";
+      let ok = true;
       const result = await callJson(analysisPath(id), "GET");
-      if (!result.ok) return;
-      const status = applyStatus(result.record);
-      if (!isActiveJobStatus(status)) { stopPolling(); if (result.record.revision) setStatusText("Đã có bản nháp AI."); }
-    }, 2000);
-  }, [stopPolling]);
+      if (result.ok) {
+        status = applyUiReport(id, result.record);
+      } else {
+        ok = false;
+        setErrorText(result.message);
+        setStatusText("Không đọc được trạng thái báo cáo.");
+        setHistory((current) => current.map((item) => (item.job_id === id ? { ...item, status: "failed_internal" } : item)));
+      }
+      pollingRef.current = false;
+      if (!ok) return;
+      if (!isActiveJobStatus(status)) {
+        if (status === "draft") setStatusText("Đã có bản nháp AI.");
+        return;
+      }
+      pollTimerRef.current = setTimeout(loop, POLL_INTERVAL_MS);
+    }
+
+    pollTimerRef.current = setTimeout(loop, 0);
+  }, [stopPolling, applyUiReport]);
 
   useEffect(() => {
     if (!open) return;
@@ -136,12 +187,42 @@ export function AiReportPanel() {
     return () => clearTimeout(timer);
   }, [open, loadCapability]);
 
+  // R1: dừng poll khi đóng drawer.
+  useEffect(() => { if (!open) stopPolling(); }, [open, stopPolling]);
+
+  // R1: focus trap + restore focus + Escape.
   useEffect(() => {
     if (!open) return;
     firstFieldRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); requestClose(); } };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
+    const focusables = () => {
+      const nodes = drawerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
+      return nodes ? Array.from(nodes) : [];
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); requestClose(); return; }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (items.length === 0) { event.preventDefault(); drawerRef.current?.focus(); return; }
+      const active = document.activeElement;
+      const activeIndex = active ? items.indexOf(active as HTMLElement) : -1;
+      const inside = drawerRef.current?.contains(active) ?? false;
+      const target = resolveTabTarget({ total: items.length, activeIndex, shiftKey: event.shiftKey, inside });
+      if (target.prevent && target.index >= 0) { event.preventDefault(); items[target.index].focus(); }
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const node = event.target as Node | null;
+      if (!drawerRef.current || !node) return;
+      if (drawerRef.current.contains(node)) return;
+      const items = focusables();
+      if (items.length > 0) items[0].focus(); else drawerRef.current.focus();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+    };
   }, [open, requestClose]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
@@ -160,7 +241,8 @@ export function AiReportPanel() {
     const result = await callJson(REPORTS_PATH, "POST", body);
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); return; }
-    const id = String(result.record.request_id ?? result.record.job_id ?? "");
+    const record = result.record && typeof result.record === "object" ? (result.record as Record<string, unknown>) : {};
+    const id = String(record.request_id ?? record.job_id ?? "");
     if (id === "") { setErrorText("Server không trả về mã báo cáo."); return; }
     setJobId(id); setAnalysis(null); setLifecycle(null);
     setHistory((current) => [{ job_id: id, status: "requested" }, ...current.filter((item) => item.job_id !== id)]);
@@ -176,7 +258,8 @@ export function AiReportPanel() {
     const result = await callJson(REPORTS_PATH, "POST", { regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); return; }
-    const id = String(result.record.request_id ?? result.record.job_id ?? "");
+    const record = result.record && typeof result.record === "object" ? (result.record as Record<string, unknown>) : {};
+    const id = String(record.request_id ?? record.job_id ?? "");
     setRegenerateOpen(false); setRegenerateReason(""); setJobId(id); setAnalysis(null); setLifecycle(null);
     setHistory((current) => [{ job_id: id, status: "requested" }, ...current]);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
@@ -193,7 +276,7 @@ export function AiReportPanel() {
       {open ? (
         <>
           <div aria-hidden onClick={requestClose} className="fixed inset-0 z-40 bg-black/40" />
-          <aside id="ai-report-drawer" role="dialog" aria-modal="true" aria-labelledby="ai-report-title" className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[32rem] sm:rounded-l-2xl sm:p-5">
+          <aside ref={drawerRef} id="ai-report-drawer" role="dialog" aria-modal="true" aria-labelledby="ai-report-title" tabIndex={-1} className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[32rem] sm:rounded-l-2xl sm:p-5">
             <header className="flex items-start justify-between gap-3">
               <div>
                 <h2 id="ai-report-title" className="text-base font-semibold text-foreground">Báo cáo AI</h2>
@@ -205,7 +288,9 @@ export function AiReportPanel() {
               <span>{statusText}</span>
               {errorText ? <span className="mt-1 block font-medium text-foreground">{errorText}</span> : null}
             </p>
-            {unavailable ? (
+            {capability === null ? (
+              <Skeleton />
+            ) : unavailable ? (
               <p role="alert" className="rounded-2xl border border-border bg-surface p-4 text-sm text-foreground">{unavailable}<span className="mt-1 block text-muted">Dashboard P1 vẫn hoạt động bình thường.</span></p>
             ) : (
               <form onSubmit={(event) => { event.preventDefault(); void handleSubmit(); }} className="flex flex-col gap-3">
@@ -243,66 +328,34 @@ export function AiReportPanel() {
               <section aria-label="Trạng thái báo cáo" className="rounded-2xl border border-border bg-surface p-3">
                 <h3 className="text-sm font-semibold text-foreground">Báo cáo hiện tại</h3>
                 <dl className="mt-2 text-sm">
-                  <div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1"><dt className="text-muted">Trạng thái</dt><dd className="text-right font-medium text-foreground">{jobStatus ? jobStatusLabel(jobStatus.status) : "—"}</dd></div>
-                  {jobStatus && isFailedJobStatus(jobStatus.status) && jobStatus.error_code ? (<div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1"><dt className="text-muted">Lý do</dt><dd className="text-right font-medium text-foreground">{codeToMessage(jobStatus.error_code).text}</dd></div>) : null}
-                  {jobStatus ? (<div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1"><dt className="text-muted">Lần thử</dt><dd className="text-right font-medium text-foreground">{jobStatus.attempts + " / " + jobStatus.max_attempts}</dd></div>) : null}
-                  <div className="flex items-baseline justify-between gap-3 py-1"><dt className="text-muted">Mã</dt><dd className="text-right font-medium text-foreground">{jobId.slice(0, 8)}</dd></div>
+                  <DetailRow label="Trạng thái" value={jobStatus ? jobStatusLabel(jobStatus.status) : "—"} />
+                  {jobStatus && isFailedJobStatus(jobStatus.status) && jobStatus.error_code ? (<DetailRow label="Lý do" value={codeToMessage(jobStatus.error_code).text} />) : null}
+                  {jobStatus ? (<DetailRow label="Lần thử" value={jobStatus.attempts + " / " + jobStatus.max_attempts} />) : null}
+                  <DetailRow label="Mã" value={jobId.slice(0, 8)} />
                 </dl>
               </section>
             ) : null}
+            {analysis ? (<ReportView analysis={analysis} lifecycle={lifecycle} />) : null}
             {analysis ? (
-              <section aria-label="Nội dung báo cáo" className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium text-foreground">{lifecycleLabel(lifecycle)}</span>
-                  {lifecycle === "draft" ? <p className="text-xs text-muted">Bản nháp do AI tạo, chưa phải dữ liệu đã duyệt.</p> : null}
-                </div>
-                <div className="rounded-2xl border border-border bg-surface p-3">
-                  <h4 className="text-sm font-semibold text-foreground">Tóm tắt điều hành</h4>
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{analysis.executive_analysis}</p>
-                  <p className="mt-2 text-xs text-muted">Kỳ so sánh: {analysis.period_ref}</p>
-                </div>
-                {groupFindings(analysis.findings).map((group) => (
-                  <div key={group.key} className="rounded-2xl border border-border bg-surface p-3">
-                    <h4 className="text-sm font-semibold text-foreground">{group.label}</h4>
-                    <ul className="mt-2 space-y-2">
-                      {group.items.map((finding) => (
-                        <li key={finding.finding_id} className="rounded-lg border border-border/60 p-2 text-sm">
-                          <div className="flex items-center justify-between gap-2"><span className="font-medium text-foreground">{finding.headline}</span><span className="text-xs text-muted">{findingCategoryLabel(finding.category)} · {confidenceLabel(finding.confidence)}</span></div>
-                          <p className="mt-1 text-foreground">{finding.analysis}</p>
-                          {finding.recommended_action ? <p className="mt-1 text-muted">Đề xuất: {finding.recommended_action}</p> : null}
-                          {finding.limitations.length > 0 ? <p className="mt-1 text-xs text-muted">Giới hạn: {finding.limitations.join(" · ")}</p> : null}
-                          <p className="mt-1 text-xs text-muted">Minh chứng: {finding.evidence_refs.join(", ")}</p>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-                {analysis.overall_limitations.length > 0 ? (
-                  <div className="rounded-2xl border border-border bg-surface p-3">
-                    <h4 className="text-sm font-semibold text-foreground">Cảnh báo dữ liệu</h4>
-                    <ul className="mt-2 list-disc pl-5 text-sm text-foreground">{analysis.overall_limitations.map((limitation, index) => (<li key={index}>{limitation}</li>))}</ul>
-                  </div>
-                ) : null}
-                <div className="rounded-2xl border border-border bg-surface p-3">
-                  <h4 className="text-sm font-semibold text-foreground">Duyệt báo cáo</h4>
-                  {regenerateOpen ? (
-                    <div className="mt-2 flex flex-col gap-2">
-                      <label htmlFor="ai-report-reason" className="text-sm font-medium text-foreground">Lý do tạo lại</label>
-                      <textarea id="ai-report-reason" value={regenerateReason} onChange={(event) => setRegenerateReason(event.target.value)} rows={2} disabled={busy} className={inputClass} />
-                      <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => void handleRegenerate()} disabled={busy} className={primaryButtonClass}>Xác nhận tạo lại</button>
-                        <button type="button" onClick={() => { setRegenerateOpen(false); setRegenerateReason(""); }} disabled={busy} className={secondaryButtonClass}>Hủy</button>
-                      </div>
+              <section aria-label="Duyệt báo cáo" className="rounded-2xl border border-border bg-surface p-3">
+                <h4 className="text-sm font-semibold text-foreground">Duyệt báo cáo</h4>
+                {regenerateOpen ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <label htmlFor="ai-report-reason" className="text-sm font-medium text-foreground">Lý do tạo lại</label>
+                    <textarea id="ai-report-reason" value={regenerateReason} onChange={(event) => setRegenerateReason(event.target.value)} rows={2} disabled={busy} className={inputClass} />
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => void handleRegenerate()} disabled={busy} className={primaryButtonClass}>Xác nhận tạo lại</button>
+                      <button type="button" onClick={() => { setRegenerateOpen(false); setRegenerateReason(""); }} disabled={busy} className={secondaryButtonClass}>Hủy</button>
                     </div>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button type="button" onClick={() => setRegenerateOpen(true)} disabled={busy} className={secondaryButtonClass}>Tạo lại báo cáo</button>
-                      <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Duyệt</button>
-                      <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Từ chối</button>
-                    </div>
-                  )}
-                  <p className="mt-2 text-xs text-muted">Duyệt/từ chối sẽ được bật khi T0 bổ sung RPC duyệt revision (W05).</p>
-                </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setRegenerateOpen(true)} disabled={busy} className={secondaryButtonClass}>Tạo lại báo cáo</button>
+                    <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Duyệt</button>
+                    <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Từ chối</button>
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted">Duyệt/từ chối sẽ được bật khi T0 bổ sung RPC duyệt revision (W05).</p>
               </section>
             ) : null}
             {history.length > 0 ? (

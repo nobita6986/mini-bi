@@ -13,6 +13,8 @@ import {
   isFailedJobStatus,
   jobStatusLabel,
   lifecycleLabel,
+  projectCapabilityResponse,
+  projectUiReportResponse,
 } from "./report-contract.ts";
 
 test("S01-C1: buildReportRequest — week/custom/focus/scope đúng contract validateAnalyticsRequest", () => {
@@ -83,4 +85,107 @@ test("S01-C5: lifecycle label phân biệt draft/approved/rejected", () => {
   assert.equal(lifecycleLabel("rejected"), "Đã từ chối");
   assert.equal(lifecycleLabel("other"), "—");
   assert.equal(lifecycleLabel(null), "—");
+});
+
+// ---------------------------------------------------------------------------
+// R1 — Strict projection cho response UI
+// ---------------------------------------------------------------------------
+
+const ANALYSIS = {
+  contract_version: "business-analysis/0.1",
+  period_ref: "week:2026-W41",
+  executive_analysis: "Tuyển dụng tuần này tăng nhẹ, chủ yếu ở dự án A.",
+  executive_evidence_refs: ["ev_01"],
+  findings: [
+    { finding_id: "f_01", category: "driver", subject_ref: "project_01", headline: "Dự án A dẫn đầu", analysis: "Dự án A tuyển 5 người, tăng so với tuần trước.", evidence_refs: ["ev_02"], confidence: "medium", limitations: [], recommended_action: "Theo dõi tiếp" },
+  ],
+  overall_limitations: ["Chất lượng dữ liệu chưa đầy đủ ở một nguồn"],
+};
+
+function draftResponse() {
+  return {
+    ok: true,
+    job_id: "11111111-1111-4111-8111-111111111111",
+    status: "draft",
+    error_code: null,
+    attempts: 1,
+    max_attempts: 3,
+    revision: {
+      revision_id: "22222222-2222-4222-8222-222222222222",
+      revision_number: 1,
+      lifecycle_status: "draft",
+      contract_version: "business-analysis/0.1",
+      created_at: "2026-10-02T00:00:00.000Z",
+      analysis: ANALYSIS,
+    },
+    review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+  };
+}
+
+function noDraftResponse() {
+  return {
+    ok: true,
+    job_id: "11111111-1111-4111-8111-111111111111",
+    status: "ai_generating",
+    error_code: null,
+    attempts: 1,
+    max_attempts: 3,
+    revision: null,
+    review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+  };
+}
+
+test("S01-R1-C1: projectUiReportResponse — draft hợp lệ ⇒ view đầy đủ (không cần type assertion)", () => {
+  const result = projectUiReportResponse(draftResponse());
+  assert.equal(result.ok, true);
+  assert.equal(result.view.job_id, "11111111-1111-4111-8111-111111111111");
+  assert.equal(result.view.status, "draft");
+  assert.equal(result.view.revision.lifecycle_status, "draft");
+  assert.equal(result.view.revision.analysis.executive_analysis, ANALYSIS.executive_analysis);
+  assert.equal(result.view.revision.analysis.findings.length, 1);
+  assert.equal(result.view.revision.analysis.overall_limitations.length, 1);
+});
+
+test("S01-R1-C2: projectUiReportResponse — chưa có draft ⇒ revision null, vẫn có attempts/max_attempts", () => {
+  const result = projectUiReportResponse(noDraftResponse());
+  assert.equal(result.ok, true);
+  assert.equal(result.view.revision, null);
+  assert.equal(result.view.status, "ai_generating");
+  assert.equal(result.view.attempts, 1);
+  assert.equal(result.view.max_attempts, 3);
+});
+
+test("S01-R1-C3: projectUiReportResponse — malformed ⇒ AI_INTERNAL (không render dữ liệu một phần)", () => {
+  const goodRevision = draftResponse().revision;
+  const malformed = [
+    ["không phải object", null],
+    ["thiếu ok:true", { job_id: "x", status: "draft" }],
+    ["ok sai kiểu", { ...draftResponse(), ok: "true" }],
+    ["thiếu job_id", { ...draftResponse(), job_id: "" }],
+    ["thiếu attempts", { ...draftResponse(), attempts: undefined }],
+    ["attempts không phải số", { ...draftResponse(), attempts: "1" }],
+    ["revision rỗng object", { ...draftResponse(), revision: {} }],
+    ["revision thiếu analysis", { ...draftResponse(), revision: { revision_id: "r", revision_number: 1, lifecycle_status: "draft", contract_version: "x", created_at: "t" } }],
+    ["analysis thiếu findings", { ...draftResponse(), revision: { ...goodRevision, analysis: { ...ANALYSIS, findings: undefined } } }],
+    ["finding thiếu evidence_refs", { ...draftResponse(), revision: { ...goodRevision, analysis: { ...ANALYSIS, findings: [{ ...ANALYSIS.findings[0], evidence_refs: undefined }] } } }],
+    ["confidence sai", { ...draftResponse(), revision: { ...goodRevision, analysis: { ...ANALYSIS, findings: [{ ...ANALYSIS.findings[0], confidence: "super" }] } } }],
+  ];
+  for (const [label, raw] of malformed) {
+    const result = projectUiReportResponse(raw);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, "AI_INTERNAL", label);
+  }
+});
+
+test("S01-R1-C4: projectCapabilityResponse — hợp lệ + malformed fail-closed", () => {
+  const ok = projectCapabilityResponse({ ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" } });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.capability.ai_enabled, true);
+  assert.equal(ok.capability.review.regenerate, true);
+
+  for (const raw of [null, {}, { ok: true, ai_enabled: "true", config_ready: true }, { ok: true, ai_enabled: true }]) {
+    const result = projectCapabilityResponse(raw);
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, "AI_INTERNAL");
+  }
 });
