@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:p1.6-w01": "node --test src/lib/contracts/direct-entry-v1.test.mjs",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",

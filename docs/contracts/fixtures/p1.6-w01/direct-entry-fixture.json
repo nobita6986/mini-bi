@@ -1,0 +1,77 @@
+{
+  "projects": [
+    { "project_id": "project_synthetic_a", "active": true },
+    { "project_id": "project_synthetic_retired", "active": false }
+  ],
+  "banks": [
+    { "bank_id": "bank_synthetic_a", "active": true }
+  ],
+  "identity_catalog": {
+    "recruiters": [
+      { "recruiter_id": "rcr_synthetic_01", "display": "CongHr1 synthetic", "active": true },
+      { "recruiter_id": "rcr_synthetic_02", "display": "CaoHr2 synthetic", "active": true },
+      { "recruiter_id": "rcr_synthetic_03", "display": "CongVendor synthetic", "active": true },
+      { "recruiter_id": "rcr_synthetic_inactive", "display": "CongInactive synthetic", "active": false }
+    ],
+    "provider_memberships": [
+      { "membership_id": "pm_synthetic_01", "recruiter_id": "rcr_synthetic_01", "provider_type": "hrp", "valid_from": "2026-01-01", "valid_to": "2026-09-01" },
+      { "membership_id": "pm_synthetic_02", "recruiter_id": "rcr_synthetic_02", "provider_type": "hrp", "valid_from": "2026-01-01", "valid_to": null },
+      { "membership_id": "pm_synthetic_03", "recruiter_id": "rcr_synthetic_03", "provider_type": "vendor", "valid_from": "2026-01-01", "valid_to": null },
+      { "membership_id": "pm_synthetic_boundary_next", "recruiter_id": "rcr_synthetic_01", "provider_type": "hrp", "valid_from": "2026-09-01", "valid_to": null }
+    ],
+    "teams": [
+      { "team_id": "team_synthetic_old", "code": "SYN-OLD", "display": "Synthetic old team", "active": true },
+      { "team_id": "team_synthetic_new", "code": "SYN-NEW", "display": "Synthetic new team", "active": true }
+    ],
+    "team_memberships": [
+      { "membership_id": "tm_synthetic_old", "recruiter_id": "rcr_synthetic_01", "team_id": "team_synthetic_old", "valid_from": "2026-01-01", "valid_to": "2026-09-01" },
+      { "membership_id": "tm_synthetic_new", "recruiter_id": "rcr_synthetic_01", "team_id": "team_synthetic_new", "valid_from": "2026-09-01", "valid_to": null },
+      { "membership_id": "tm_synthetic_02", "recruiter_id": "rcr_synthetic_02", "team_id": "team_synthetic_old", "valid_from": "2026-01-01", "valid_to": null },
+      { "membership_id": "tm_synthetic_03", "recruiter_id": "rcr_synthetic_03", "team_id": "team_synthetic_new", "valid_from": "2026-01-01", "valid_to": null }
+    ],
+    "app_user_recruiter_links": [
+      { "app_user_id": "00000000-0000-4000-8000-0000000000d1", "recruiter_id": "rcr_synthetic_01", "verified": true, "valid_from": "2026-01-01", "valid_to": null }
+    ]
+  },
+  "entry": {
+    "entry_id": "00000000-0000-4000-8000-0000000000a1",
+    "candidate_id": "00000000-0000-4000-8000-0000000000b1",
+    "app_user_id": "00000000-0000-4000-8000-0000000000c1",
+    "project_id": "project_synthetic_a",
+    "first_work_date": "2026-10-15",
+    "employee_code": "hrp-2026-000001",
+    "worker": {
+      "display_name": "Synthetic Worker One",
+      "date_of_birth": { "state": "unknown" },
+      "national_id": { "state": "intentionally_blank" },
+      "address": { "state": "omitted" },
+      "phone": { "state": "unknown" }
+    },
+    "recruiter_id": "rcr_synthetic_01",
+    "provider_type": "hrp",
+    "labor_type": "TEMPORARY",
+    "payment": { "state": "omitted" },
+    "documents": [],
+    "employment_events": [
+      {
+        "event_id": "status_synthetic_initial",
+        "status": "UNCONFIRMED",
+        "effective_date": "2026-10-15",
+        "leave_date": null,
+        "leave_reason_text": null,
+        "version": 1,
+        "actor_id": "00000000-0000-4000-8000-0000000000c1",
+        "reason": "synthetic initial state",
+        "supersedes_event_id": null,
+        "applied_at": "2026-10-15T09:00:00.000Z"
+      }
+    ],
+    "version": 1
+  },
+  "submission": {
+    "submission_id": "submission_synthetic_01",
+    "state": "DRAFT",
+    "version": 1
+  },
+  "synthetic_only_note": "All names and identifiers in this fixture are synthetic placeholders."
+}
