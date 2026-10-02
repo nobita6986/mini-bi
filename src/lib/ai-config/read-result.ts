@@ -11,7 +11,7 @@
  * primitive/object thiếu field ⇒ AI_INTERNAL. Row non-null được validate đầy đủ theo ProviderConfig.
  */
 
-import { assertValidConfig, type ProviderConfig } from "./config-contract.ts";
+import { assertValidConfig, isSanitizedHost, type ProviderConfig } from "./config-contract.ts";
 
 export type RpcFail = { ok: false; code: string; message: string };
 
@@ -67,28 +67,55 @@ export type ActiveConfigProjection = {
   sanitized_host: string;
 };
 
-/** Projection active: shape sai ⇒ AI_INTERNAL (không được coi là "không có cấu hình"). */
+const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+/**
+ * R3 (A) — Projection active FAIL-CLOSED: payload phải có ĐỦ và ĐÚNG ĐỊNH DẠNG mọi field.
+ *
+ * Config active bắt buộc ĐÃ verified ⇒ `verified_at` phải là timestamp hợp lệ và KHÁC null.
+ * Thiếu/sai kiểu/sai định dạng bất kỳ field nào ⇒ AI_INTERNAL (KHÔNG phải AI_CONFIG_REQUIRED,
+ * KHÔNG được coi là "chưa có cấu hình", KHÔNG enqueue job).
+ */
 export function projectActiveConfig(value: Record<string, unknown>): { ok: true; config: ActiveConfigProjection | null } | RpcFail {
   if (value.ok !== true) return internalFail("active", "envelope thiếu ok=true tường minh");
-  const projection: ActiveConfigProjection = {
-    config_id: typeof value.config_id === "string" ? value.config_id : "",
-    provider_profile: typeof value.provider_profile === "string" ? value.provider_profile : "",
-    model: typeof value.model === "string" ? value.model : "",
-    version: typeof value.version === "number" ? value.version : Number.NaN,
-    status: "active",
-    verified_at: typeof value.verified_at === "string" ? value.verified_at : null,
-    sanitized_host: typeof value.sanitized_host === "string" ? value.sanitized_host : "",
-  };
-  if (
-    projection.config_id === "" ||
-    projection.provider_profile === "" ||
-    projection.model === "" ||
-    !Number.isSafeInteger(projection.version) ||
-    projection.version < 1
-  ) {
-    return internalFail("active", "trả trường thiếu/sai kiểu");
+
+  const configId = value.config_id;
+  if (typeof configId !== "string" || !SAFE_ID.test(configId)) {
+    return internalFail("active", "thiếu/sai config_id");
   }
-  return { ok: true, config: projection };
+  const providerProfile = value.provider_profile;
+  if (typeof providerProfile !== "string" || !SAFE_ID.test(providerProfile)) {
+    return internalFail("active", "thiếu/sai provider_profile");
+  }
+  const model = value.model;
+  if (typeof model !== "string" || model.trim() === "" || model.trim() !== model || model.length > 256 || /[\u0000-\u001f\u007f]/.test(model)) {
+    return internalFail("active", "thiếu/sai model");
+  }
+  const version = value.version;
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) {
+    return internalFail("active", "thiếu/sai version");
+  }
+  const sanitizedHost = value.sanitized_host;
+  if (typeof sanitizedHost !== "string" || sanitizedHost === "" || !isSanitizedHost(sanitizedHost)) {
+    return internalFail("active", "thiếu/sai sanitized_host");
+  }
+  const verifiedAt = value.verified_at;
+  if (typeof verifiedAt !== "string" || verifiedAt === "" || Number.isNaN(Date.parse(verifiedAt))) {
+    return internalFail("active", "thiếu/sai verified_at của config active");
+  }
+
+  return {
+    ok: true,
+    config: {
+      config_id: configId,
+      provider_profile: providerProfile,
+      model,
+      version,
+      status: "active",
+      verified_at: verifiedAt,
+      sanitized_host: sanitizedHost,
+    },
+  };
 }
 
 /**

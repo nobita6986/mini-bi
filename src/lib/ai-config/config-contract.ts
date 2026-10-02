@@ -69,7 +69,8 @@ export type ConfigAudit = {
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const FINGERPRINT = /^[a-f0-9]{16}$/;
 
-function isSanitizedHost(value: string): boolean {
+/** Host đã làm sạch: `host` hoặc `host:port`, không path/query/credential — một nguồn duy nhất. */
+export function isSanitizedHost(value: string): boolean {
   try {
     const url = new URL(`https://${value}`);
     return url.host === value &&
