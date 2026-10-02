@@ -109,9 +109,32 @@ export function createMemoryConfigStore(options = {}) {
       audit.push({ event_type: "config_disabled", outcome: "success", reason_code: "owner_disabled", actor_ref: actor, version, config_id });
       return { ok: true, config: next };
     },
+    // R2 (C): audit rejection phải trả ĐÚNG kết quả; hỗ trợ mô phỏng insert thất bại.
     async recordRejected({ config_id, version, actor, reason_code }) {
+      if (options.rejectFailure) {
+        return { ok: false, code: options.rejectFailure.code ?? "AI_INTERNAL", message: "không ghi được audit (mô phỏng)" };
+      }
       audit.push({ event_type: "config_mutation_rejected", outcome: "failure", reason_code, actor_ref: actor, version, config_id });
       return { ok: true };
+    },
+    // R2 (A/B): material theo row đã lưu (mirror store-core: disabled ⇒ AI_CONFIG_REQUIRED).
+    async material(_configId, version) {
+      if (options.readFailure) return { ...options.readFailure };
+      const target = versions.get(version);
+      if (!target) return { ok: false, code: "AI_CONFIG_REQUIRED", message: "không tìm thấy provider config" };
+      if (target.status === "disabled") return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider config đã bị tắt" };
+      return {
+        ok: true,
+        value: {
+          config_id: target.config_id,
+          version: target.version,
+          provider_profile: target.provider_profile,
+          model: target.model,
+          status: target.status,
+          verified_at: target.verified_at,
+          secret: options.secret ?? "test-secret",
+        },
+      };
     },
     projectionOf(config) {
       return projectConfig(config);

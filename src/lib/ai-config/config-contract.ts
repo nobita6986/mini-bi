@@ -112,7 +112,10 @@ export function assertValidConfig(configValue: unknown): asserts configValue is 
     /[\u0000-\u001f\u007f]/.test(config.model) ||
     !Number.isSafeInteger(config.version) ||
     config.version < 1 ||
-    config.optimistic_version !== config.version ||
+    // W04A-R2: DB tăng optimistic_version sau mỗi mutation (test/activate/disable) ⇒ bất biến đúng là
+    // "không nhỏ hơn version hiện tại" (OCC vẫn được DB RPC enforce độc lập trên `version`).
+    !Number.isSafeInteger(config.optimistic_version) ||
+    config.optimistic_version < config.version ||
     !CONFIG_STATUSES.includes(config.status) ||
     !(config.verified_at === null || validTimestamp(config.verified_at)) ||
     !validTimestamp(config.updated_at) ||

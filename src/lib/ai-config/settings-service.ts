@@ -30,6 +30,7 @@ import {
 } from "./provider-profiles.ts";
 import { safeOutboundRequest, type PinnedResponse } from "./safe-outbound.ts";
 import type { UrlPolicyOptions } from "./provider-url-policy.ts";
+import type { ActiveConfigProjection, ConfigStore } from "./store-core.ts";
 
 /** Một cấu hình pilot duy nhất (nhiều version). P3 sẽ tách theo tổ chức/RBAC. */
 export const PILOT_CONFIG_ID = "pilot-provider";
@@ -38,9 +39,6 @@ export const MAX_URL_LENGTH = 2_048;
 export const MAX_MODEL_LENGTH = 256;
 export const TEST_TIMEOUT_MS = 5_000;
 export const TEST_MAX_RESPONSE_BYTES = 64 * 1024;
-
-/** Kết quả đọc PHÂN BIỆT: thành công (config có thể null) | từ chối hợp lệ | lỗi hạ tầng/malformed. */
-export type StoreRead<T> = { ok: true; config: T | null } | StoreFail;
 
 export type SettingsStatusResult =
   | { ok: true; config: ConfigReadProjection | null; active: ActiveConfigProjection | null }
@@ -62,48 +60,10 @@ export type SettingsService = {
   disable(body: unknown): Promise<SettingsMutationResult>;
 };
 
-export type StoreOk = { ok: true; config: ProviderConfig };
 export type StoreFail = { ok: false; code: string; message: string };
-export type StoreResult = StoreOk | StoreFail;
+export type StoreResult = { ok: true; config: ProviderConfig } | StoreFail;
 
-export type ActiveConfigProjection = {
-  config_id: string;
-  provider_profile: string;
-  model: string;
-  version: number;
-  status: string;
-  verified_at: string | null;
-  sanitized_host: string;
-};
-
-export type ConfigStore = {
-  /** R1 (C): read trả StoreRead — KHÔNG được biến lỗi DB/malformed thành null ("not configured" giả). */
-  readCurrent(configId: string): Promise<StoreRead<ProviderConfig>>;
-  readVersion(configId: string, version: number): Promise<StoreRead<ProviderConfig>>;
-  /** Projection của config đang active (KHÔNG envelope) — dùng cho panel và enqueue gate. */
-  readActiveProjection(): Promise<StoreRead<ActiveConfigProjection>>;
-  saveVersion(input: {
-    expected_version: number | null;
-    config: ProviderConfig;
-    actor: string;
-    action: "config_created" | "credential_rotated";
-  }): Promise<StoreResult>;
-  recordTest(input: {
-    config_id: string;
-    version: number;
-    success: boolean;
-    actor: string;
-    reason_code: string;
-  }): Promise<StoreResult>;
-  activate(input: { config_id: string; version: number; actor: string }): Promise<StoreResult>;
-  disable(input: { config_id: string; version: number; actor: string }): Promise<StoreResult>;
-  recordRejected(input: {
-    config_id: string;
-    version: number;
-    actor: string;
-    reason_code: string;
-  }): Promise<void>;
-};
+export type { ActiveConfigProjection, ConfigStore, StoreRead } from "./store-core.ts";
 
 export type OutboundSeam = {
   resolve?: (hostname: string) => Promise<readonly string[]>;
@@ -121,6 +81,18 @@ export type OutboundSeam = {
 
 function fail(code: SecurityErrorCode): StoreFail {
   return { ok: false, code, message: new SecurityError(code).message };
+}
+
+/**
+ * R2 (B4) — Projection an toàn: validator throw (config không hợp lệ) ⇒ sanitized AI_INTERNAL,
+ * KHÔNG để exception thoát ra route và KHÔNG trả config giả.
+ */
+function safeProjectConfig(config: ProviderConfig): { ok: true; config: ConfigReadProjection } | StoreFail {
+  try {
+    return { ok: true, config: projectConfig(config) };
+  } catch {
+    return fail("CONFIGURATION");
+  }
 }
 
 function isControlFreeString(value: string): boolean {
@@ -175,11 +147,38 @@ export async function readSettingsStatus(input: {
   ]);
   if (!current.ok) return current;
   if (!active.ok) return active;
+  let projection: ConfigReadProjection | null = null;
+  if (current.config) {
+    const projected = safeProjectConfig(current.config);
+    if (!projected.ok) return projected;
+    projection = projected.config;
+  }
   return {
     ok: true,
-    config: current.config ? projectConfig(current.config) : null,
+    config: projection,
     active: active.config,
   };
+}
+
+/**
+ * R2 (C) — Từ chối do optimistic conflict CHỈ được tuyên bố sau khi audit
+ * `config_mutation_rejected` đã persist THÀNH CÔNG. Audit lỗi ⇒ AI_INTERNAL (không conflict giả,
+ * cũng không success giả) và KHÔNG mutation nào được thực hiện.
+ */
+async function rejectConflict(
+  store: ConfigStore,
+  input: { config_id: string; version: number; actor: string }
+): Promise<StoreFail> {
+  const audited = await store.recordRejected({
+    config_id: input.config_id,
+    version: input.version,
+    actor: input.actor,
+    reason_code: "version_conflict",
+  });
+  if (!audited || audited.ok !== true) {
+    return { ok: false, code: "AI_INTERNAL", message: "không ghi được audit từ chối (DB/RPC lỗi)" };
+  }
+  return fail("VERSION_CONFLICT");
 }
 
 export async function saveProviderConfig(input: {
@@ -197,22 +196,18 @@ export async function saveProviderConfig(input: {
   if (!read.ok) return read;
   const current = read.config;
   if (current && parsed.value.expected_version !== current.version) {
-    await input.store.recordRejected({
+    return rejectConflict(input.store, {
       config_id: current.config_id,
       version: current.version,
       actor: input.actor,
-      reason_code: "version_conflict",
     });
-    return fail("VERSION_CONFLICT");
   }
   if (!current && parsed.value.expected_version !== null) {
-    await input.store.recordRejected({
+    return rejectConflict(input.store, {
       config_id: PILOT_CONFIG_ID,
       version: parsed.value.expected_version,
       actor: input.actor,
-      reason_code: "version_conflict",
     });
-    return fail("VERSION_CONFLICT");
   }
 
   let config: ProviderConfig;
@@ -239,7 +234,8 @@ export async function saveProviderConfig(input: {
     action: "config_created",
   });
   if (!saved.ok) return saved;
-  return { ok: true, config: projectConfig(saved.config) };
+  // R2 (B4): projection an toàn — validator throw ⇒ AI_INTERNAL, không trả config giả.
+  return safeProjectConfig(saved.config);
 }
 
 export async function rotateProviderKey(input: {
@@ -265,13 +261,11 @@ export async function rotateProviderKey(input: {
   const current = read.config;
   if (!current) return fail("NOT_FOUND");
   if (expected !== current.version) {
-    await input.store.recordRejected({
+    return rejectConflict(input.store, {
       config_id: current.config_id,
       version: current.version,
       actor: input.actor,
-      reason_code: "version_conflict",
     });
-    return fail("VERSION_CONFLICT");
   }
 
   let next: ProviderConfig;
@@ -288,7 +282,8 @@ export async function rotateProviderKey(input: {
     action: "credential_rotated",
   });
   if (!saved.ok) return saved;
-  return { ok: true, config: projectConfig(saved.config) };
+  // R2 (B4): projection an toàn — validator throw ⇒ AI_INTERNAL, không trả config giả.
+  return safeProjectConfig(saved.config);
 }
 
 function reasonCodeFor(error: unknown): string {
@@ -389,11 +384,13 @@ export async function testProviderConnection(input: {
     reason_code: reasonCode,
   });
   if (!recorded.ok) return recorded;
+  const projected = safeProjectConfig(recorded.config);
+  if (!projected.ok) return projected;
   return {
     ok: true,
     verified,
     reason_code: reasonCode,
-    config: projectConfig(recorded.config),
+    config: projected.config,
   };
 }
 
@@ -416,7 +413,7 @@ export async function activateProviderConfig(input: {
     actor: input.actor,
   });
   if (!activated.ok) return activated;
-  return { ok: true, config: projectConfig(activated.config) };
+  return safeProjectConfig(activated.config);
 }
 
 export async function disableProviderConfig(input: {
@@ -437,5 +434,5 @@ export async function disableProviderConfig(input: {
     actor: input.actor,
   });
   if (!disabled.ok) return disabled;
-  return { ok: true, config: projectConfig(disabled.config) };
+  return safeProjectConfig(disabled.config);
 }

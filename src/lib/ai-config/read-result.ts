@@ -1,12 +1,17 @@
 /**
- * P1.5-W04A-R1 (C) — Chuẩn hoá kết quả đọc RPC: PHÂN BIỆT ba trạng thái.
+ * P1.5-W04A-R1/R2 (C) — Chuẩn hoá kết quả đọc RPC + validate row: PHÂN BIỆT ba trạng thái.
  *
- *   1. `{ ok:true, ... }`  — đọc thành công (giá trị có thể null = KHÔNG có cấu hình);
- *   2. `{ ok:false, code:<code DB> }` — RPC từ chối hợp lệ (đã sanitize);
- *   3. `{ ok:false, code:"AI_INTERNAL" }` — lỗi DB/transport/malformed response.
+ *   1. `{ ok:true, ... }`  — đọc thành công (giá trị có thể null = KHÔNG có cấu hình, phải TƯỜNG MINH);
+ *   2. `{ ok:false, code:<code DB non-empty> }` — RPC từ chối hợp lệ (đã sanitize);
+ *   3. `{ ok:false, code:"AI_INTERNAL" }` — lỗi DB/transport/malformed (kể cả envelope RPC sai kiểu).
  *
- * Không bao giờ biến (2)/(3) thành null ("not configured" giả) và không trả raw Supabase error.
+ * R2 (A): success CHỈ hợp lệ khi `payload.ok === true` — payload THIẾU `ok`, `ok` sai kiểu
+ * (`null`/`"true"`/`1`), array hoặc malformed ⇒ AI_INTERNAL. Không fallback ngầm cho consumer nào.
+ * R2 (B): `config` phải TƯỜNG MINH `null` mới là "chưa cấu hình"; thiếu property/undefined/array/
+ * primitive/object thiếu field ⇒ AI_INTERNAL. Row non-null được validate đầy đủ theo ProviderConfig.
  */
+
+import { assertValidConfig, type ProviderConfig } from "./config-contract.ts";
 
 export type RpcFail = { ok: false; code: string; message: string };
 
@@ -20,7 +25,10 @@ export function internalFail(name: string, reason: string): RpcFail {
   return { ok: false, code: "AI_INTERNAL", message: "rpc " + name + " " + reason };
 }
 
-/** `client.rpc()` trả { data, error } (hoặc ném) ⇒ chuẩn hoá. */
+/**
+ * `client.rpc()` trả { data, error } (hoặc ném) ⇒ chuẩn hoá.
+ * R2 (A): envelope phải có `ok` boolean TƯỜNG MINH.
+ */
 export function classifyRpcResponse(name: string, response: unknown): { ok: true; value: Record<string, unknown> } | RpcFail {
   if (response === null || response === undefined || typeof response !== "object") {
     return internalFail(name, "trả về không hợp lệ");
@@ -33,8 +41,15 @@ export function classifyRpcResponse(name: string, response: unknown): { ok: true
   }
   const payload = data as Record<string, unknown>;
   if (payload.ok === false) {
-    const code = typeof payload.code === "string" && payload.code !== "" ? payload.code : "AI_INTERNAL";
-    return { ok: false, code, message: sanitizeMessage(payload.message, "rpc " + name + " từ chối") };
+    // Từ chối hợp lệ PHẢI có code non-empty; thiếu/sai kiểu ⇒ KHÔNG phải refusal hợp lệ.
+    if (typeof payload.code !== "string" || payload.code.trim() === "") {
+      return internalFail(name, "từ chối nhưng thiếu code");
+    }
+    return { ok: false, code: payload.code, message: sanitizeMessage(payload.message, "rpc " + name + " từ chối") };
+  }
+  if (payload.ok !== true) {
+    // R2 (A): thiếu ok / ok = null | "true" | 1 | … ⇒ malformed envelope, KHÔNG được coi là success.
+    return internalFail(name, "envelope thiếu ok=true tường minh");
   }
   return { ok: true, value: payload };
 }
@@ -54,7 +69,7 @@ export type ActiveConfigProjection = {
 
 /** Projection active: shape sai ⇒ AI_INTERNAL (không được coi là "không có cấu hình"). */
 export function projectActiveConfig(value: Record<string, unknown>): { ok: true; config: ActiveConfigProjection | null } | RpcFail {
-  if (value.ok !== true) return internalFail("active", "trả shape không hợp lệ");
+  if (value.ok !== true) return internalFail("active", "envelope thiếu ok=true tường minh");
   const projection: ActiveConfigProjection = {
     config_id: typeof value.config_id === "string" ? value.config_id : "",
     provider_profile: typeof value.provider_profile === "string" ? value.provider_profile : "",
@@ -74,4 +89,51 @@ export function projectActiveConfig(value: Record<string, unknown>): { ok: true;
     return internalFail("active", "trả trường thiếu/sai kiểu");
   }
   return { ok: true, config: projection };
+}
+
+/**
+ * R2 (B) — Row config đọc từ DB:
+ * - property `config` PHẢI tồn tại: `null` tường minh = chưa cấu hình (trạng thái hợp lệ);
+ *   thiếu property / `undefined` / array / primitive / object thiếu field ⇒ AI_INTERNAL.
+ * - Row non-null phải validate đầy đủ theo ProviderConfig (field + envelope/AAD bindings).
+ */
+export function validateConfigRow(name: string, value: Record<string, unknown>): { ok: true; config: ProviderConfig | null } | RpcFail {
+  if (!Object.prototype.hasOwnProperty.call(value, "config")) {
+    return internalFail(name, "thiếu property config (không được coi là chưa cấu hình)");
+  }
+  const row = value.config;
+  if (row === null) return { ok: true, config: null };
+  if (row === undefined) return internalFail(name, "config = undefined");
+  if (typeof row !== "object" || Array.isArray(row)) return internalFail(name, "config sai kiểu");
+
+  const config = rowToConfig(row as Record<string, unknown>);
+  if (!config) return internalFail(name, "config sai kiểu");
+  try {
+    assertValidConfig(config);
+  } catch {
+    // Validator throw (SecurityError) ⇒ sanitized AI_INTERNAL, KHÔNG để throw thoát ra route.
+    return internalFail(name, "config không hợp lệ theo ProviderConfig");
+  }
+  return { ok: true, config };
+}
+
+/** Row (jsonb từ Postgres) → domain ProviderConfig (envelope giữ nguyên dạng object). */
+export function rowToConfig(row: unknown): ProviderConfig | null {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const record = row as Record<string, unknown>;
+  if (typeof record.config_id !== "string" || record.config_id === "") return null;
+  return {
+    config_id: record.config_id,
+    provider_profile: record.provider_profile as string,
+    api_base_url: record.api_base_url as string,
+    model: record.model as string,
+    encrypted_secret: record.envelope as ProviderConfig["encrypted_secret"],
+    version: record.version as number,
+    status: record.status as ProviderConfig["status"],
+    verified_at: (record.verified_at ?? null) as string | null,
+    updated_at: record.updated_at as string,
+    sanitized_host: record.sanitized_host as string,
+    key_fingerprint: record.key_fingerprint as string,
+    optimistic_version: record.optimistic_version as number,
+  };
 }

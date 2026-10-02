@@ -229,17 +229,19 @@ test("R1-A1: focus trap thật — Tab/Shift+Tab quay vòng trong drawer, không
   assert.ok(source.includes('event.key !== "Tab"'), "phải xử lý phím Tab");
   assert.ok(source.includes("event.shiftKey"), "phải xử lý Shift+Tab");
   assert.ok(countOccurrences(source, "event.preventDefault()") >= 3, "Tab/Escape phải preventDefault để không thoát nền");
-  assert.ok(source.includes("first.focus()"), "Tab ở phần tử cuối phải quay về phần tử đầu");
-  assert.ok(source.includes("last.focus()"), "Shift+Tab ở phần tử đầu phải quay về phần tử cuối");
+  // R2: đích Tab tính bằng logic thuần đã test riêng (ai-settings-panel-logic.test.mjs).
+  assert.ok(source.includes("resolveTabTarget({"), "phải tính đích Tab bằng logic thuần");
+  assert.ok(source.includes("items[target.index].focus()"), "phải focus theo đích quay vòng");
   assert.ok(source.includes('document.addEventListener("focusin"'), "phải kéo focus về panel nếu nó thoát ra nền");
   assert.ok(source.includes("tabIndex={-1}"), "drawer phải nhận được focus khi không còn phần tử nào focus được");
 });
 
 test("R1-A2: busy chặn MỌI đường dismiss (Escape, overlay, nút Đóng, toggle trigger)", () => {
-  assert.ok(source.includes("if (busy) return;"), "requestClose phải chặn khi busy");
+  // R2: busy được kiểm trong decideDismiss (nhánh "blocked") — logic thuần đã test riêng.
+  assert.ok(source.includes('decision === "blocked"'), "requestClose phải chặn khi busy");
   assert.ok(!source.includes("onClick={closeDrawer}"), "không còn đường đóng trực tiếp bỏ qua guard");
   assert.ok(source.includes("onClick={requestClose}"), "overlay/nút Đóng phải đi qua requestClose");
-  const escapeBlock = source.slice(source.indexOf('event.key === "Escape"'), source.indexOf('event.key === "Escape"') + 160);
+  const escapeBlock = source.slice(source.indexOf('event.key === "Escape"'), source.indexOf('event.key === "Escape"') + 400);
   assert.ok(escapeBlock.includes("requestClose()"), "Escape phải đi qua requestClose (busy ⇒ không đóng)");
   assert.ok(source.includes("if (open) {") && source.includes("requestClose();"), "toggle trigger cũng phải đi qua requestClose");
 });
@@ -252,7 +254,9 @@ test("R1-A3: dirty state theo dõi URL/model/profile/API key và hỏi xác nh�
   assert.ok(source.includes('role="alertdialog"'), "phải có hộp xác nhận bỏ thay đổi");
   assert.ok(source.includes("Bỏ thay đổi chưa lưu?"), "phải hỏi rõ trước khi bỏ thay đổi");
   assert.ok(source.includes("Bỏ thay đổi") && source.includes("Ở lại"), "phải có hai lựa chọn Bỏ thay đổi / Ở lại");
-  assert.ok(source.includes("if (dirty) {") && source.includes("setConfirmDiscard(true)"), "đóng khi dirty phải mở xác nhận");
+  // R2: quyết định dismiss nằm ở logic thuần; dirty ⇒ nhánh "confirm" mở hộp xác nhận.
+  assert.ok(source.includes("decideDismiss({ busy, dirty, confirmDiscard })"), "phải dùng decideDismiss cho mọi đường dismiss");
+  assert.ok(source.includes('decision === "confirm"') && source.includes("setConfirmDiscard(true)"), "đóng khi dirty phải mở xác nhận");
 });
 
 test("R1-A4: xác nhận bỏ ⇒ clear API key NGAY và reset form về server state", () => {
@@ -271,4 +275,36 @@ test("R1-A5: không lưu secret vào bất kỳ persistence nào của browser",
     assert.ok(!source.includes(forbidden), "panel không được dùng " + forbidden);
   }
   assert.equal(countOccurrences(source, "value={apiKey}"), 1, "API key chỉ được render trong input password");
+});
+
+// ---------------------------------------------------------------------------
+// W04A-R2 (D) — alertdialog thực sự modal
+// ---------------------------------------------------------------------------
+
+test("R2-D5: alertdialog xác nhận có semantics modal và khoá nội dung phía sau", () => {
+  assert.ok(source.includes('role="alertdialog"'), "phải dùng role=alertdialog");
+  assert.ok(source.includes('aria-modal="true"'), "alertdialog phải khai báo aria-modal");
+  assert.ok(source.includes("inert={confirmDiscard}"), "nội dung phía sau phải bị inert khi confirm mở");
+  assert.ok(source.includes("aria-hidden={confirmDiscard}"), "nội dung phía sau phải aria-hidden khi confirm mở");
+  assert.ok(
+    source.includes('(node) => node.getAttribute("aria-hidden") !== "true" && !node.closest("[inert]")'),
+    "vòng focus phải loại các phần tử nằm trong vùng inert",
+  );
+  assert.ok(source.includes("confirmDiscardRef.current?.focus()"), "phải chuyển focus vào nút trong alertdialog");
+  assert.ok(source.includes("resolveTabTarget(") && source.includes("decideDismiss("), "phải dùng logic thuần đã test");
+});
+
+test("R2-D6: Escape trong confirm = Ở lại; Ở lại phục hồi focus; Bỏ thay đổi clear key trước khi đóng", () => {
+  const requestCloseBlock = source.slice(source.indexOf("const requestClose = useCallback"), source.indexOf("const discardChanges"));
+  assert.ok(requestCloseBlock.includes('decision === "stay"'), "Escape/overlay khi confirm mở phải đi nhánh stay");
+  assert.ok(requestCloseBlock.indexOf('decision === "blocked"') < requestCloseBlock.indexOf("stayInDrawer()"), "busy phải được kiểm TRƯỚC mọi nhánh đóng");
+  assert.ok(requestCloseBlock.indexOf("stayInDrawer()") < requestCloseBlock.indexOf("performClose()"), "confirm phải chặn trước khi đóng drawer");
+
+  const stayBlock = source.slice(source.indexOf("const stayInDrawer"), source.indexOf("const stayInDrawer") + 260);
+  assert.ok(stayBlock.includes("setConfirmDiscard(false)"), "Ở lại phải đóng confirm");
+  assert.ok(!stayBlock.includes("setOpen(false)"), "Ở lại KHÔNG được đóng drawer");
+  assert.ok(stayBlock.includes("closeButtonRef.current"), "Ở lại phải phục hồi focus hợp lý");
+
+  const discardBlock = source.slice(source.indexOf("const discardChanges"), source.indexOf("const discardChanges") + 420);
+  assert.ok(discardBlock.indexOf('setApiKey("")') < discardBlock.indexOf("performClose()"), "clear API key phải trước khi đóng");
 });

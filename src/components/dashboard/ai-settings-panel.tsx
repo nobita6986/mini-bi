@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { confirmInitialFocusIndex, decideDismiss, resolveTabTarget } from "./ai-settings-panel-logic";
+
 /**
  * Panel/drawer cấu hình provider AI cho Owner (pilot).
  *
@@ -197,6 +199,8 @@ export function AiSettingsPanel() {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const apiUrlRef = useRef<HTMLInputElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
+  const confirmDiscardRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   /** Reset form về ĐÚNG trạng thái server đã tải (nguồn an toàn duy nhất). */
   const resetFormToServerState = useCallback((next: AiConfigView | null) => {
@@ -221,19 +225,34 @@ export function AiSettingsPanel() {
     triggerRef.current?.focus();
   }, []);
 
+  /** R2 (D3–D4) — "Ở lại": đóng confirm, KHÔNG đóng drawer, phục hồi focus hợp lý. */
+  const stayInDrawer = useCallback(() => {
+    setConfirmDiscard(false);
+    const target = closeButtonRef.current ?? apiUrlRef.current ?? drawerRef.current;
+    target?.focus();
+  }, []);
+
   /**
    * MỌI đường dismiss (Escape, overlay, nút Đóng, toggle trigger) đi qua đây:
    * - busy ⇒ KHÔNG đóng panel;
+   * - alertdialog xác nhận đang mở ⇒ "Ở lại" (không đóng drawer);
    * - dirty ⇒ hiện xác nhận bỏ thay đổi trước.
    */
   const requestClose = useCallback(() => {
-    if (busy) return;
-    if (dirty) {
+    // R2 (D): quyết định dismiss nằm ở logic thuần (test được): busy ⇒ chặn, confirm ⇒ "Ở lại",
+    // dirty ⇒ hỏi xác nhận, còn lại ⇒ đóng.
+    const decision = decideDismiss({ busy, dirty, confirmDiscard });
+    if (decision === "blocked") return;
+    if (decision === "stay") {
+      stayInDrawer();
+      return;
+    }
+    if (decision === "confirm") {
       setConfirmDiscard(true);
       return;
     }
     performClose();
-  }, [busy, dirty, performClose]);
+  }, [busy, dirty, confirmDiscard, performClose, stayInDrawer]);
 
   /** Owner xác nhận bỏ: xoá API key NGAY và reset form về server state an toàn rồi mới đóng. */
   const discardChanges = useCallback(() => {
@@ -294,35 +313,35 @@ export function AiSettingsPanel() {
 
     const focusables = () => {
       const nodes = drawerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-      return nodes ? Array.from(nodes).filter((node) => node.getAttribute("aria-hidden") !== "true") : [];
+      return nodes
+        ? Array.from(nodes).filter(
+            // Phần nội dung bị `inert` khi alertdialog mở ⇒ không tính vào vòng focus (modal thật).
+            (node) => node.getAttribute("aria-hidden") !== "true" && !node.closest("[inert]")
+          )
+        : [];
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        // R2 (D3): Escape trong alertdialog = "Ở lại" (đóng confirm), KHÔNG đóng drawer.
         requestClose();
         return;
       }
       if (event.key !== "Tab") return;
       const items = focusables();
-      const inside = drawerRef.current?.contains(document.activeElement as Node | null) ?? false;
       if (items.length === 0) {
         event.preventDefault();
         drawerRef.current?.focus();
         return;
       }
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey) {
-        if (!inside || document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        }
-        return;
-      }
-      if (!inside || document.activeElement === last) {
+      const active = document.activeElement as HTMLElement | null;
+      const activeIndex = active ? items.indexOf(active) : -1;
+      const inside = drawerRef.current?.contains(active) ?? false;
+      const target = resolveTabTarget({ total: items.length, activeIndex, shiftKey: event.shiftKey, inside });
+      if (target.prevent && target.index >= 0) {
         event.preventDefault();
-        first.focus();
+        items[target.index].focus();
       }
     };
 
@@ -341,7 +360,14 @@ export function AiSettingsPanel() {
       document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("focusin", onFocusIn, true);
     };
-  }, [open, requestClose]);
+  }, [open, requestClose, confirmDiscard, stayInDrawer]);
+
+  /** R2 (D1) — alertdialog nhận focus khi mở (nút "Bỏ thay đổi" là hành động mặc định). */
+  useEffect(() => {
+    if (!open || !confirmDiscard) return;
+    // Alertdialog thật sự modal: đưa focus vào hành động chính trong hộp xác nhận.
+    if (confirmInitialFocusIndex(2) === 0) confirmDiscardRef.current?.focus();
+  }, [open, confirmDiscard]);
 
   const applyConfig = useCallback((next: AiConfigView | null) => {
     setConfig(next);
@@ -514,7 +540,7 @@ export function AiSettingsPanel() {
                   Dành cho Owner (pilot): khai báo provider, model và API key cho trợ lý AI.
                 </p>
               </div>
-              <button type="button" onClick={requestClose} disabled={busy} className={secondaryButtonClass}>
+              <button ref={closeButtonRef} type="button" onClick={requestClose} disabled={busy} className={secondaryButtonClass}>
                 Đóng
               </button>
             </header>
@@ -528,6 +554,7 @@ export function AiSettingsPanel() {
             {confirmDiscard ? (
               <div
                 role="alertdialog"
+                aria-modal="true"
                 aria-labelledby="ai-discard-title"
                 aria-describedby="ai-discard-detail"
                 className="rounded-2xl border border-border bg-surface p-3"
@@ -539,16 +566,19 @@ export function AiSettingsPanel() {
                   API key đang nhập sẽ bị xoá khỏi bộ nhớ trình duyệt và form trở về trạng thái đã lưu trên server.
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button type="button" onClick={discardChanges} className={primaryButtonClass}>
+                  <button ref={confirmDiscardRef} type="button" onClick={discardChanges} className={primaryButtonClass}>
                     Bỏ thay đổi
                   </button>
-                  <button type="button" onClick={() => setConfirmDiscard(false)} className={secondaryButtonClass}>
+                  <button type="button" onClick={stayInDrawer} className={secondaryButtonClass}>
                     Ở lại
                   </button>
                 </div>
               </div>
             ) : null}
 
+            {/* R2 (D1/D2): khi alertdialog mở, phần nội dung phía sau bị `inert` ⇒ không tương tác và
+                không nằm trong vòng focus (modal thật, không cần dependency mới). */}
+            <div inert={confirmDiscard} aria-hidden={confirmDiscard} className="flex flex-col gap-3">
             <section className="rounded-2xl border border-border bg-surface p-3">
               <h3 className="text-sm font-semibold text-foreground">Cấu hình hiện tại</h3>
               {config ? (
@@ -667,6 +697,7 @@ export function AiSettingsPanel() {
                 </button>
               </div>
             </form>
+            </div>
           </aside>
         </>
       ) : null}

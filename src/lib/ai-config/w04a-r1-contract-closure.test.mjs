@@ -262,11 +262,17 @@ test("W04A-R1-C4: store — đọc thành công nhưng KHÔNG có cấu hình v�
   const broken = await readSettingsStatus({ store: brokenStore, config_id: PILOT_CONFIG_ID });
   assert.equal(broken.ok, false);
 
-  const source = readFileSync(new URL("./server/store.mjs", import.meta.url), "utf8");
-  assert.equal(source.includes("classifyRpcResponse"), true, "store phải dùng classifier chung");
-  assert.equal(source.includes("catch {\n    return fail"), true, "lỗi transport phải map AI_INTERNAL");
-  for (const forbidden of ["error.message", "error.details", "error.hint", "data.error"]) {
-    assert.equal(source.includes(forbidden), false, "không được lộ raw Supabase error: " + forbidden);
+  // R2: logic store nằm ở store-core.ts (DI) — Supabase thật và test double dùng cùng rule.
+  const core = readFileSync(new URL("./store-core.ts", import.meta.url), "utf8");
+  const wrapper = readFileSync(new URL("./server/store.mjs", import.meta.url), "utf8");
+  assert.equal(core.includes("classifyRpcResponse"), true, "store-core phải dùng classifier chung");
+  assert.equal(core.includes("validateConfigRow"), true, "store-core phải validate row đọc từ DB");
+  assert.equal(core.includes("internalFail"), true, "lỗi transport/malformed phải map AI_INTERNAL");
+  assert.equal(wrapper.includes("createProviderConfigStoreCore"), true, "wrapper Supabase chỉ bơm client/keyring");
+  for (const source of [core, wrapper]) {
+    for (const forbidden of ["error.message", "error.details", "error.hint", "data.error"]) {
+      assert.equal(source.includes(forbidden), false, "không được lộ raw Supabase error: " + forbidden);
+    }
   }
 });
 
