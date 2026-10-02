@@ -12,6 +12,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
+import { AiReportPanel } from "@/components/ai-report/ai-report-panel";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import { DashboardFilters } from "./dashboard-filters";
 import { EmploymentComposition } from "./employment-composition";
@@ -77,6 +78,7 @@ export function DashboardView({
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
+            <AiReportPanel />
             <ThemeSelector />
             {aiSettingsEnabled ? <AiSettingsPanel /> : null}
           </div>
