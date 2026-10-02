@@ -9,10 +9,13 @@ import {
   canEditRows,
   canonicalizeEmployeeCode,
   correctLatestStatusEvent,
+  createSubmission,
   createChangeRequest,
   createDocumentVersion,
   decideChangeRequest,
+  documentCompleteness,
   deriveCurrentStatus,
+  isLegacyEmployeeCode,
   resolveExplicitRecruiterLink,
   searchEligibleRecruiters,
   transitionDocumentUpload,
@@ -22,6 +25,7 @@ import {
   validatePaymentDetails,
   validateRecruiterSelection,
   validateStatusProposal,
+  withdrawChangeRequest,
 } from "./direct-entry-v1.ts";
 
 const fixture = JSON.parse(readFileSync(
@@ -33,6 +37,7 @@ const validationContext = {
   projects: fixture.projects,
   banks: fixture.banks,
   catalog: fixture.identity_catalog,
+  today: "2026-10-02",
 };
 const timestamp = "2026-10-16T08:00:00.000Z";
 const requiredDocument = {
@@ -67,7 +72,7 @@ function changeRequest(items, requestId = "request_synthetic_01") {
 }
 
 test("contract is versioned and fixtures pass the direct-entry validator", () => {
-  assert.equal(DIRECT_ENTRY_CONTRACT_VERSION, "direct-entry/1.0");
+  assert.equal(DIRECT_ENTRY_CONTRACT_VERSION, "direct-entry/1.1");
   assert.equal(validateEntry({ entry, ...validationContext }).ok, true);
   assert.equal(validateEntry({ entry: null, ...validationContext }).issues[0].code, "ENTRY_INVALID");
   assert.equal(entry.employment_events[0].status, "UNCONFIRMED");
@@ -127,7 +132,7 @@ test("inactive, provider-mismatched, and outside-effective-date recruiters are r
     provider_type: "vendor",
     business_date: "2026-10-15",
     catalog: fixture.identity_catalog,
-  })[0].code, "PROVIDER_MEMBERSHIP_NOT_FOUND");
+  })[0].code, "PROVIDER_TYPE_MISMATCH");
   assert.equal(validateRecruiterSelection({
     recruiter_id: "CongHr1 synthetic",
     provider_type: "hrp",
@@ -167,15 +172,71 @@ test("effective membership uses W02 half-open boundary semantics", () => {
   })[0].code, "TEAM_MEMBERSHIP_NOT_FOUND");
 });
 
-test("employee code canonicalizes case, preserves leading zeros, and rejects format/year/duplicates", () => {
-  assert.equal(canonicalizeEmployeeCode("HRP-2026-000001"), "hrp-2026-000001");
-  assert.deepEqual(validateEmployeeCode("HRP-2026-000001", "2026-10-15"), []);
-  assert.deepEqual(validateEmployeeCode("hrp-2026-ABC", "2026-10-15")[0], {
+test("provider and team overlap is ambiguous across every membership type", () => {
+  const catalog = structuredClone(fixture.identity_catalog);
+  catalog.provider_memberships.push({
+    membership_id: "pm_synthetic_overlap",
+    recruiter_id: "rcr_synthetic_01",
+    provider_type: "vendor",
+    valid_from: "2026-08-01",
+    valid_to: null,
+  });
+  assert.equal(validateRecruiterSelection({
+    recruiter_id: "rcr_synthetic_01",
+    provider_type: "hrp",
+    business_date: "2026-08-15",
+    catalog,
+  })[0].code, "PROVIDER_MEMBERSHIP_AMBIGUOUS");
+  catalog.provider_memberships.pop();
+  catalog.provider_memberships.push({
+    membership_id: "pm_synthetic_same_type_overlap",
+    recruiter_id: "rcr_synthetic_01",
+    provider_type: "hrp",
+    valid_from: "2026-08-01",
+    valid_to: null,
+  });
+  assert.equal(validateRecruiterSelection({
+    recruiter_id: "rcr_synthetic_01",
+    provider_type: "hrp",
+    business_date: "2026-08-15",
+    catalog,
+  })[0].code, "PROVIDER_MEMBERSHIP_AMBIGUOUS");
+  catalog.provider_memberships.pop();
+  catalog.team_memberships.push({
+    membership_id: "tm_synthetic_overlap",
+    recruiter_id: "rcr_synthetic_01",
+    team_id: "team_synthetic_new",
+    valid_from: "2026-08-01",
+    valid_to: null,
+  });
+  assert.equal(validateRecruiterSelection({
+    recruiter_id: "rcr_synthetic_01",
+    provider_type: "hrp",
+    business_date: "2026-08-15",
+    catalog,
+  })[0].code, "TEAM_MEMBERSHIP_AMBIGUOUS");
+  assert.equal(validateRecruiterSelection({
+    recruiter_id: "rcr_synthetic_01",
+    provider_type: "vendor",
+    business_date: "2026-10-01",
+    catalog: fixture.identity_catalog,
+  })[0].code, "PROVIDER_TYPE_MISMATCH");
+});
+
+test("employee code requires lowercase six-digit canonical format and quarantines legacy codes", () => {
+  assert.equal(canonicalizeEmployeeCode("hrp-2026-000001"), "hrp-2026-000001");
+  assert.equal(canonicalizeEmployeeCode("HRP-2026-000001"), null);
+  assert.deepEqual(validateEmployeeCode("hrp-2026-000001", "2026-10-01"), []);
+  assert.equal(validateEmployeeCode("hrp-2026-12345", "2026-10-01")[0].code, "EMPLOYEE_CODE_LEGACY_QUARANTINE");
+  assert.equal(validateEmployeeCode("hrp-2026-1234567", "2026-10-01")[0].code, "EMPLOYEE_CODE_LEGACY_QUARANTINE");
+  assert.equal(isLegacyEmployeeCode("hrp-2026-00001"), true);
+  assert.equal(canonicalizeEmployeeCode("hrp-2026-00001"), null);
+  assert.deepEqual(validateEmployeeCode("hrp-2026-ABC", "2026-10-01")[0], {
     code: "EMPLOYEE_CODE_FORMAT",
     path: "employee_code",
   });
-  assert.equal(validateEmployeeCode("hrp-2025-000001", "2026-10-15")[0].code, "EMPLOYEE_CODE_YEAR");
-  assert.equal(validateEmployeeCode("hrp-2026-000001", "2026-10-15", ["HRP-2026-000001"])[0].code,
+  assert.equal(validateEmployeeCode("hrp-2025-000001", "2026-10-01")[0].code, "EMPLOYEE_CODE_YEAR");
+  assert.equal(validateEmployeeCode("hrp-2026-000001", "2026-10-01", ["hrp-2026-000001"])[0].code,
     "EMPLOYEE_CODE_DUPLICATE");
   assert.equal(validateEmployeeCode("hrp-2026-000001", "2026-02-30")[0].code, "EMPLOYEE_CODE_YEAR");
 });
@@ -202,16 +263,44 @@ test("tri-state worker/payment fields distinguish omitted, unknown, and intentio
   }, fixture.banks)[0].code, "PAYMENT_DETAILS_INVALID");
 });
 
-test("submission review can return to draft; submitted rows are locked for ordinary editing", () => {
-  const review = transitionSubmission(fixture.submission, "BEGIN_REVIEW", 1);
+test("submission batch requires unique rows and transitions atomically from review to published", () => {
+  assert.equal(createSubmission({
+    submission_id: "submission_empty",
+    created_by_user_id: entry.app_user_id,
+    entry_ids: [],
+    created_at: timestamp,
+  }), null);
+  assert.equal(createSubmission({
+    submission_id: "submission_duplicate",
+    created_by_user_id: entry.app_user_id,
+    entry_ids: [entry.entry_id, entry.entry_id],
+    created_at: timestamp,
+  }), null);
+  const one = createSubmission({
+    submission_id: "submission_one",
+    created_by_user_id: entry.app_user_id,
+    entry_ids: [entry.entry_id],
+    created_at: timestamp,
+  });
+  const many = createSubmission({
+    submission_id: "submission_many",
+    created_by_user_id: entry.app_user_id,
+    entry_ids: [entry.entry_id, "00000000-0000-4000-8000-0000000000a2"],
+    created_at: timestamp,
+  });
+  assert.equal(one.entry_ids.length, 1);
+  assert.equal(many.entry_ids.length, 2);
+  const review = transitionSubmission(fixture.submission, "BEGIN_REVIEW", 1, timestamp);
   assert.equal(review.state, "REVIEW");
-  const draft = transitionSubmission(review, "RETURN_TO_DRAFT", review.version);
+  const draft = transitionSubmission(review, "RETURN_TO_DRAFT", review.version, timestamp);
   assert.equal(draft.state, "DRAFT");
-  const secondReview = transitionSubmission(draft, "BEGIN_REVIEW", draft.version);
-  const submitted = transitionSubmission(secondReview, "SUBMIT", secondReview.version);
+  const secondReview = transitionSubmission(draft, "BEGIN_REVIEW", draft.version, timestamp);
+  const submitted = transitionSubmission(secondReview, "SUBMIT", secondReview.version, timestamp);
   assert.equal(submitted.state, "SUBMITTED");
+  assert.equal(submitted.submitted_at, timestamp);
   assert.equal(canEditRows(submitted.state), false);
-  assert.equal(transitionSubmission(submitted, "RETURN_TO_DRAFT", submitted.version), null);
+  assert.equal(transitionSubmission(submitted, "RETURN_TO_DRAFT", submitted.version, timestamp), null);
+  assert.equal(transitionSubmission({ ...fixture.submission, entry_ids: [] }, "BEGIN_REVIEW", 1, timestamp), null);
 });
 
 test("pending change request leaves canonical entry untouched; approval applies atomically", () => {
@@ -297,6 +386,42 @@ test("rejected and stale multi-row changes do not mutate any canonical entry", (
     timestamp,
     validation_context: validationContext,
   });
+
+  test("change requests can be withdrawn by their proposer and decisions are attributable", () => {
+    const pending = changeRequest([{
+      target: "ENTRY_FIELD",
+      row_id: entry.entry_id,
+      field: "labor_type",
+      proposed_value: "PERMANENT",
+      expected_version: entry.version,
+    }]);
+    const withdrawn = withdrawChangeRequest({
+      request: pending,
+      actor_id: pending.proposer_id,
+      timestamp,
+    });
+    assert.equal(withdrawn.status, "WITHDRAWN");
+    assert.equal(withdrawn.decided_by, pending.proposer_id);
+    assert.equal(withdrawn.decided_at, timestamp);
+    assert.equal(withdrawChangeRequest({
+      request: pending,
+      actor_id: "different_user",
+      timestamp,
+    }), null);
+    const approved = decideChangeRequest({
+      entries: [entry],
+      request: pending,
+      decision: "APPROVE",
+      reviewer_id: "accounting_synthetic_01",
+      capabilities: ["change_review"],
+      reason: "Decision reason",
+      timestamp,
+      validation_context: validationContext,
+    });
+    assert.equal(approved.request.decided_by, "accounting_synthetic_01");
+    assert.equal(approved.request.decided_at, timestamp);
+    assert.deepEqual(approved.request.items, pending.items);
+  });
   assert.deepEqual(rejected.entries, [entry]);
   assert.equal(rejected.request.status, "REJECTED");
 });
@@ -357,22 +482,45 @@ test("privileged direct edit requires capability/reason and writes revision plus
 });
 
 test("OFF requires a leave date and textarea reason; history derives and corrects current status", () => {
-  assert.equal(validateStatusProposal({
+  const invalidOff = {
     event_id: "status_synthetic_off_bad",
     status: "OFF",
-    effective_date: "2026-11-01",
+    effective_date: "2026-10-02",
     leave_date: null,
     leave_reason_text: "",
-  })[0].code, "OFF_REQUIRES_DATE_AND_REASON");
+  };
+  assert.equal(validateStatusProposal(invalidOff, "2026-10-01", "2026-10-02")[0].code, "OFF_REQUIRES_DATE_AND_REASON");
+  assert.equal(validateStatusProposal({
+    ...invalidOff,
+    leave_date: "2026-10-01",
+    leave_reason_text: "Synthetic reason",
+  }, "2026-10-01", "2026-10-02")[0].code, "OFF_REQUIRES_DATE_AND_REASON");
+  assert.equal(validateStatusProposal({
+    ...invalidOff,
+    effective_date: "2026-09-30",
+  }, "2026-10-01", "2026-10-02")[0].code, "STATUS_EFFECTIVE_DATE_INVALID");
+  assert.equal(validateStatusProposal({
+    ...invalidOff,
+    effective_date: "2026-10-03",
+  }, "2026-10-01", "2026-10-02")[0].code, "STATUS_EFFECTIVE_DATE_INVALID");
+  assert.equal(validateStatusProposal({
+    event_id: "status_synthetic_on_bad",
+    status: "ON",
+    effective_date: "2026-10-02",
+    leave_date: "2026-10-02",
+    leave_reason_text: "Should be null",
+  }, "2026-10-01", "2026-10-02")[0].code, "NON_OFF_LEAVE_FIELDS");
   const onEvents = appendStatusEvent({
     events: entry.employment_events,
     proposal: {
       event_id: "status_synthetic_on",
       status: "ON",
-      effective_date: "2026-10-16",
+      effective_date: "2026-10-02",
       leave_date: null,
       leave_reason_text: null,
     },
+    first_work_date: entry.first_work_date,
+    today: "2026-10-02",
     actor_id: "accounting_synthetic_01",
     reason: "Synthetic confirmation",
     applied_at: timestamp,
@@ -383,10 +531,12 @@ test("OFF requires a leave date and textarea reason; history derives and correct
     proposal: {
       event_id: "status_synthetic_off",
       status: "OFF",
-      effective_date: "2026-11-01",
-      leave_date: "2026-11-01",
+      effective_date: "2026-10-02",
+      leave_date: "2026-10-02",
       leave_reason_text: "Synthetic leave reason",
     },
+    first_work_date: entry.first_work_date,
+    today: "2026-10-02",
     actor_id: "accounting_synthetic_01",
     reason: "Synthetic status change",
     applied_at: timestamp,
@@ -397,10 +547,12 @@ test("OFF requires a leave date and textarea reason; history derives and correct
     proposal: {
       event_id: "status_synthetic_return",
       status: "ON",
-      effective_date: "2026-12-01",
+      effective_date: "2026-10-02",
       leave_date: null,
       leave_reason_text: null,
     },
+    first_work_date: entry.first_work_date,
+    today: "2026-10-02",
     actor_id: "accounting_synthetic_01",
     reason: "Synthetic return to work",
     applied_at: timestamp,
@@ -413,10 +565,12 @@ test("OFF requires a leave date and textarea reason; history derives and correct
     replacement: {
       event_id: "status_synthetic_off_corrected",
       status: "ON",
-      effective_date: "2026-11-01",
+      effective_date: "2026-10-02",
       leave_date: null,
       leave_reason_text: null,
     },
+    first_work_date: entry.first_work_date,
+    today: "2026-10-02",
     actor_id: "admin_synthetic_01",
     reason: "Correct synthetic status entry",
     applied_at: timestamp,
@@ -432,7 +586,7 @@ test("pending employment status request does not change current status before ap
     event: {
       event_id: "status_synthetic_pending_on",
       status: "ON",
-      effective_date: "2026-10-16",
+      effective_date: "2026-10-02",
       leave_date: null,
       leave_reason_text: null,
     },
@@ -460,6 +614,11 @@ test("document retries are idempotent, replacements append versions, and storage
   assert.equal(createDocumentVersion({
     existing: [first],
     ...requiredDocument,
+    document_id: "doc_abcdef0123456789abcdef0123456789",
+  }), first);
+  assert.equal(createDocumentVersion({
+    existing: [first],
+    ...requiredDocument,
     checksum_sha256: "b".repeat(64),
   }), null);
   const readyFirst = readyDocument(first);
@@ -474,6 +633,14 @@ test("document retries are idempotent, replacements append versions, and storage
   assert.equal(readyReplacement.supersedes_version, 1);
   assert.equal(readyReplacement.storage_key.includes("SYNTHETIC-ID-0000"), false);
   assert.equal(readyReplacement.storage_key.includes(entry.candidate_id), true);
+  assert.deepEqual(documentCompleteness([]).CCCD_FRONT, {
+    status: "MISSING",
+    ready_versions: 0,
+  });
+  assert.deepEqual(documentCompleteness([readyFirst]).CCCD_FRONT, {
+    status: "PRESENT",
+    ready_versions: 1,
+  });
 
   const pending = changeRequest([{
     target: "DOCUMENT",

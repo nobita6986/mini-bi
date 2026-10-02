@@ -10,7 +10,7 @@ import type {
   TeamMembership,
 } from "../analytics/identity/contracts.ts";
 
-export const DIRECT_ENTRY_CONTRACT_VERSION = "direct-entry/1.0" as const;
+export const DIRECT_ENTRY_CONTRACT_VERSION = "direct-entry/1.1" as const;
 export const DEFAULT_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const DOCUMENT_MAX_BYTES_HARD_LIMIT = 10 * 1024 * 1024;
 export const DOCUMENT_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png"] as const;
@@ -56,6 +56,7 @@ export type EntryValidationContext = {
   projects: readonly ProjectMaster[];
   banks: readonly BankMaster[];
   catalog: EntryIdentityCatalog;
+  today: string;
 };
 
 export type WorkerDetails = {
@@ -106,6 +107,11 @@ export type DocumentVersion = {
   created_at: string;
   supersedes_version: number | null;
 };
+
+export type DocumentCompleteness = Record<DocumentType, {
+  status: "MISSING" | "PRESENT";
+  ready_versions: number;
+}>;
 
 export type DirectEntry = {
   entry_id: string;
@@ -187,10 +193,12 @@ export type ChangeRequest = {
   request_id: string;
   proposer_id: string;
   reason: string;
-  status: "PENDING" | "APPROVED" | "REJECTED";
+  status: "PENDING" | "APPROVED" | "REJECTED" | "WITHDRAWN";
   items: ChangeItem[];
   created_at: string;
   decision_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
 };
 
 export type Revision = {
@@ -219,8 +227,13 @@ export type AuditEvent = {
 
 export type Submission = {
   submission_id: string;
+  created_by_user_id: string;
+  entry_ids: string[];
   state: "DRAFT" | "REVIEW" | "SUBMITTED";
   version: number;
+  created_at: string;
+  updated_at: string;
+  submitted_at: string | null;
 };
 
 export type StatusProposal = Pick<
@@ -228,7 +241,8 @@ export type StatusProposal = Pick<
   "event_id" | "status" | "effective_date" | "leave_date" | "leave_reason_text"
 >;
 
-const EMPLOYEE_CODE = /^hrp-(\d{4})-(\d{1,18})$/i;
+const EMPLOYEE_CODE = /^hrp-(\d{4})-(\d{6})$/;
+const LEGACY_EMPLOYEE_CODE = /^hrp-\d{4}-\d+$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_OPAQUE_REF = UUID;
 const SAFE_DOCUMENT_ID = /^doc_[a-f0-9]{32}$/;
@@ -269,7 +283,13 @@ function foldSearchKey(value: string): string {
 export function canonicalizeEmployeeCode(value: string): string | null {
   if (typeof value !== "string") return null;
   const match = EMPLOYEE_CODE.exec(value);
-  return match ? `hrp-${match[1]}-${match[2]}` : null;
+  return match ? value : null;
+}
+
+export function isLegacyEmployeeCode(value: string): boolean {
+  return typeof value === "string" &&
+    LEGACY_EMPLOYEE_CODE.test(value) &&
+    !EMPLOYEE_CODE.test(value);
 }
 
 export function validateEmployeeCode(
@@ -278,7 +298,14 @@ export function validateEmployeeCode(
   existingCodes: readonly string[] = [],
 ): ValidationIssue[] {
   const canonical = canonicalizeEmployeeCode(code);
-  if (!canonical) return [{ code: "EMPLOYEE_CODE_FORMAT", path: "employee_code" }];
+  if (!canonical) {
+    return [{
+      code: isLegacyEmployeeCode(code)
+        ? "EMPLOYEE_CODE_LEGACY_QUARANTINE"
+        : "EMPLOYEE_CODE_FORMAT",
+      path: "employee_code",
+    }];
+  }
   if (!isRealCalendarDate(firstWorkDate) || canonical.slice(4, 8) !== firstWorkDate.slice(0, 4)) {
     return [{ code: "EMPLOYEE_CODE_YEAR", path: "employee_code" }];
   }
@@ -317,9 +344,7 @@ export function validateRecruiterSelection(input: {
     return [{ code: "RECRUITER_NOT_ACTIVE", path: "recruiter_id" }];
   }
   const providers = activeMemberships(
-    catalog.provider_memberships.filter((item) =>
-      item.recruiter_id === recruiter_id && item.provider_type === provider_type
-    ),
+    catalog.provider_memberships.filter((item) => item.recruiter_id === recruiter_id),
     business_date,
   );
   if (providers.length !== 1) {
@@ -327,6 +352,9 @@ export function validateRecruiterSelection(input: {
       code: providers.length === 0 ? "PROVIDER_MEMBERSHIP_NOT_FOUND" : "PROVIDER_MEMBERSHIP_AMBIGUOUS",
       path: "provider_type",
     }];
+  }
+  if (providers[0].provider_type !== provider_type) {
+    return [{ code: "PROVIDER_TYPE_MISMATCH", path: "provider_type" }];
   }
   const teams = activeMemberships(
     catalog.team_memberships.filter((item) => item.recruiter_id === recruiter_id),
@@ -432,6 +460,7 @@ export function validateEntry(input: {
   projects: readonly ProjectMaster[];
   banks: readonly BankMaster[];
   catalog: EntryIdentityCatalog;
+  today?: string;
 }): ValidationResult {
   if (!input.entry || typeof input.entry !== "object" || Array.isArray(input.entry)) {
     return { ok: false, issues: [{ code: "ENTRY_INVALID", path: "entry" }] };
@@ -474,6 +503,12 @@ export function validateEntry(input: {
     entry.employment_events[0]?.status !== "UNCONFIRMED"
   ) {
     issues.push({ code: "INITIAL_STATUS_REQUIRED", path: "employment_events" });
+  } else if (input.today !== undefined && !isRealCalendarDate(input.today)) {
+    issues.push({ code: "VALIDATION_DATE_INVALID", path: "today" });
+  } else if (input.today !== undefined) {
+    for (const event of entry.employment_events) {
+      issues.push(...validateStatusProposal(event, entry.first_work_date, input.today));
+    }
   }
   if (!Number.isSafeInteger(entry.version) || entry.version < 1) {
     issues.push({ code: "ROW_VERSION_INVALID", path: "version" });
@@ -500,6 +535,7 @@ function isValidEntryAgainstContext(
       projects: context.projects,
       banks: context.banks,
       catalog: context.catalog,
+      today: context.today,
   }).ok;
 }
 
@@ -507,8 +543,20 @@ export function transitionSubmission(
   submission: Submission,
   action: "BEGIN_REVIEW" | "RETURN_TO_DRAFT" | "SUBMIT",
   expectedVersion: number,
+  timestamp: string,
 ): Submission | null {
-  if (submission.version !== expectedVersion) return null;
+  if (
+    !submission ||
+    submission.version !== expectedVersion ||
+    !Number.isSafeInteger(submission.version) ||
+    submission.version < 1 ||
+    submission.entry_ids.length < 1 ||
+    new Set(submission.entry_ids).size !== submission.entry_ids.length ||
+    !submission.entry_ids.every((id) => SAFE_ID.test(id)) ||
+    !SAFE_ID.test(submission.submission_id) ||
+    !SAFE_ID.test(submission.created_by_user_id) ||
+    !isValidTimestamp(timestamp)
+  ) return null;
   const next = action === "BEGIN_REVIEW" && submission.state === "DRAFT"
     ? "REVIEW"
     : action === "RETURN_TO_DRAFT" && submission.state === "REVIEW"
@@ -516,7 +564,47 @@ export function transitionSubmission(
       : action === "SUBMIT" && submission.state === "REVIEW"
         ? "SUBMITTED"
         : null;
-  return next ? { ...submission, state: next, version: submission.version + 1 } : null;
+  return next
+    ? {
+        ...submission,
+        state: next,
+        version: submission.version + 1,
+        updated_at: timestamp,
+        submitted_at: next === "SUBMITTED" ? timestamp : submission.submitted_at,
+      }
+    : null;
+}
+
+function isValidTimestamp(value: string): boolean {
+  return typeof value === "string" &&
+    isRealCalendarDate(value.slice(0, 10)) &&
+    Number.isFinite(Date.parse(value));
+}
+
+export function createSubmission(input: {
+  submission_id: string;
+  created_by_user_id: string;
+  entry_ids: readonly string[];
+  created_at: string;
+}): Submission | null {
+  if (
+    !SAFE_ID.test(input.submission_id) ||
+    !SAFE_ID.test(input.created_by_user_id) ||
+    input.entry_ids.length < 1 ||
+    !input.entry_ids.every((id) => SAFE_ID.test(id)) ||
+    new Set(input.entry_ids).size !== input.entry_ids.length ||
+    !isValidTimestamp(input.created_at)
+  ) return null;
+  return {
+    submission_id: input.submission_id,
+    created_by_user_id: input.created_by_user_id,
+    entry_ids: [...input.entry_ids],
+    state: "DRAFT",
+    version: 1,
+    created_at: input.created_at,
+    updated_at: input.created_at,
+    submitted_at: null,
+  };
 }
 
 export function canEditRows(state: Submission["state"]): boolean {
@@ -525,6 +613,8 @@ export function canEditRows(state: Submission["state"]): boolean {
 
 export function validateStatusProposal(
   proposal: StatusProposal,
+  firstWorkDate?: string,
+  today?: string,
 ): ValidationIssue[] {
   if (
     !SAFE_ID.test(proposal.event_id) ||
@@ -533,13 +623,23 @@ export function validateStatusProposal(
   ) {
     return [{ code: "STATUS_EVENT_INVALID", path: "employment_events" }];
   }
+  if (
+    (firstWorkDate !== undefined || today !== undefined) &&
+    (!isRealCalendarDate(firstWorkDate ?? "") ||
+      !isRealCalendarDate(today ?? "") ||
+      proposal.effective_date < firstWorkDate! ||
+      proposal.effective_date > today!)
+  ) {
+    return [{ code: "STATUS_EFFECTIVE_DATE_INVALID", path: "employment_events" }];
+  }
   if (proposal.status === "OFF") {
     if (
       !proposal.leave_date ||
       !isRealCalendarDate(proposal.leave_date) ||
       typeof proposal.leave_reason_text !== "string" ||
       proposal.leave_reason_text.trim() === "" ||
-      proposal.leave_reason_text.length > 4000
+      proposal.leave_reason_text.trim().length > 4000 ||
+      proposal.leave_date !== proposal.effective_date
     ) {
       return [{ code: "OFF_REQUIRES_DATE_AND_REASON", path: "employment_events" }];
     }
@@ -570,13 +670,15 @@ const ALLOWED_STATUS_TRANSITIONS: Record<WorkerStatus, readonly WorkerStatus[]> 
 export function appendStatusEvent(input: {
   events: readonly EmploymentStatusEvent[];
   proposal: StatusProposal;
+  first_work_date: string;
+  today: string;
   actor_id: string;
   reason: string;
   applied_at: string;
 }): EmploymentStatusEvent[] | null {
   const { events, proposal } = input;
   if (
-    validateStatusProposal(proposal).length ||
+    validateStatusProposal(proposal, input.first_work_date, input.today).length ||
     !SAFE_ID.test(input.actor_id) ||
     input.reason.trim() === "" ||
     !isRealCalendarDate(input.applied_at.slice(0, 10)) ||
@@ -608,6 +710,8 @@ export function correctLatestStatusEvent(input: {
   events: readonly EmploymentStatusEvent[];
   event_id: string;
   replacement: StatusProposal;
+  first_work_date: string;
+  today: string;
   actor_id: string;
   reason: string;
   applied_at: string;
@@ -619,7 +723,7 @@ export function correctLatestStatusEvent(input: {
   if (
     !latest ||
     latest.event_id !== input.event_id ||
-    validateStatusProposal(input.replacement).length > 0 ||
+    validateStatusProposal(input.replacement, input.first_work_date, input.today).length > 0 ||
     !SAFE_ID.test(input.actor_id) ||
     reason === "" ||
     !isRealCalendarDate(input.applied_at.slice(0, 10)) ||
@@ -679,16 +783,18 @@ export function createDocumentVersion(input: {
     !(DOCUMENT_MIME_TYPES as readonly string[]).includes(input.mime_type)
   ) return null;
 
-  const prior = input.existing.filter((document) => document.document_id === input.document_id);
-  const retry = prior.find((document) => document.idempotency_key === input.idempotency_key);
+  const scope = input.existing.filter((document) =>
+    document.candidate_ref === input.candidate_ref &&
+    document.document_type === input.document_type
+  );
+  const retry = scope.find((document) => document.idempotency_key === input.idempotency_key);
   if (retry) {
-    return retry.checksum_sha256 === input.checksum_sha256 &&
-      retry.document_type === input.document_type
+    return retry.checksum_sha256 === input.checksum_sha256
       ? retry
       : null;
   }
-  const version = Math.max(0, ...prior.map((document) => document.version)) + 1;
-  const superseded = Math.max(0, ...prior.map((document) => document.version)) || null;
+  const version = Math.max(0, ...scope.map((document) => document.version)) + 1;
+  const superseded = Math.max(0, ...scope.map((document) => document.version)) || null;
   return {
     document_id: input.document_id,
     candidate_ref: input.candidate_ref,
@@ -706,6 +812,24 @@ export function createDocumentVersion(input: {
     created_at: input.created_at,
     supersedes_version: superseded,
   };
+}
+
+export function documentCompleteness(
+  documents: readonly DocumentVersion[],
+): DocumentCompleteness {
+  return Object.fromEntries(
+    (["CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"] as const).map((type) => {
+      const readyVersions = documents.filter((document) =>
+        document.document_type === type &&
+        document.upload_status === "READY" &&
+        document.scan_status === "CLEAN"
+      ).length;
+      return [type, {
+        status: readyVersions > 0 ? "PRESENT" : "MISSING",
+        ready_versions: readyVersions,
+      }];
+    }),
+  ) as DocumentCompleteness;
 }
 
 export function transitionDocumentUpload(
@@ -769,13 +893,18 @@ function applyChangeItems(
     } else if (item.target === "DOCUMENT") {
       const doc = item.document;
       if (doc.candidate_ref !== entry.candidate_id) return null;
-      const previous = next.documents.filter((version) => version.document_id === doc.document_id);
+      const previous = next.documents.filter((version) =>
+        version.candidate_ref === doc.candidate_ref &&
+        version.document_type === doc.document_type
+      );
       const expected = Math.max(0, ...previous.map((version) => version.version)) + 1;
       if (doc.version !== expected || doc.upload_status !== "READY" || doc.scan_status !== "CLEAN") {
         return null;
       }
       next.documents = next.documents.map((version) =>
-        version.document_id === doc.document_id && version.upload_status === "READY"
+        version.candidate_ref === doc.candidate_ref &&
+        version.document_type === doc.document_type &&
+        version.upload_status === "READY"
           ? { ...version, upload_status: "SUPERSEDED" }
           : version
       );
@@ -784,6 +913,8 @@ function applyChangeItems(
       const appended = appendStatusEvent({
         events: next.employment_events,
         proposal: item.event,
+        first_work_date: entry.first_work_date,
+        today: timestamp.slice(0, 10),
         actor_id: actorId,
         reason,
         applied_at: timestamp,
@@ -873,6 +1004,28 @@ export function createChangeRequest(input: {
     items: structuredClone(input.items),
     created_at: input.created_at,
     decision_reason: null,
+    decided_by: null,
+    decided_at: null,
+  };
+}
+
+export function withdrawChangeRequest(input: {
+  request: ChangeRequest;
+  actor_id: string;
+  timestamp: string;
+}): ChangeRequest | null {
+  if (
+    input.request.status !== "PENDING" ||
+    input.actor_id !== input.request.proposer_id ||
+    !SAFE_ID.test(input.actor_id) ||
+    !isValidTimestamp(input.timestamp)
+  ) return null;
+  return {
+    ...input.request,
+    status: "WITHDRAWN",
+    decision_reason: "WITHDRAWN_BY_PROPOSER",
+    decided_by: input.actor_id,
+    decided_at: input.timestamp,
   };
 }
 
@@ -908,10 +1061,16 @@ export function decideChangeRequest(input: {
     input.reason.trim() === "" ||
     !isRealCalendarDate(input.timestamp.slice(0, 10))
   ) return null;
+  const decidedRequest = {
+    ...input.request,
+    decided_by: input.reviewer_id,
+    decided_at: input.timestamp,
+    decision_reason: input.reason.trim(),
+  };
   if (input.decision === "REJECT") {
     return {
       entries: input.entries.map(cloneEntry),
-      request: { ...input.request, status: "REJECTED", decision_reason: input.reason.trim() },
+      request: { ...decidedRequest, status: "REJECTED" },
       revisions: [],
       audit: input.request.items.map((item) => ({
         actor_id: input.reviewer_id,
@@ -978,7 +1137,7 @@ export function decideChangeRequest(input: {
   }
   return {
     entries: finalEntries,
-    request: { ...input.request, status: "APPROVED", decision_reason: input.reason.trim() },
+    request: { ...decidedRequest, status: "APPROVED" },
     revisions,
     audit,
   };
