@@ -1,0 +1,395 @@
+{
+  "case_id": "c02",
+  "title": "Tổng giảm nhưng một recruiter vẫn tăng",
+  "packet": {
+    "contract_version": "analysis-packet/0.1",
+    "generated_at": "2026-10-05T00:00:00Z",
+    "snapshot": {
+      "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "lineage_ref": "2222222222222222222222222222222222222222222222222222222222222222",
+      "generated_from": "reporting-read-model"
+    },
+    "scope": {
+      "scope_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "access_scope_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "sources_in_scope": 4,
+      "dimensions": [
+        "project",
+        "recruiter",
+        "team",
+        "provider",
+        "employment"
+      ]
+    },
+    "period": {
+      "period_ref": "period_2026-W40",
+      "type": "week",
+      "start": "2026-09-28",
+      "end": "2026-10-04",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "status": "complete",
+      "period_to_date": false,
+      "elapsed_days": 7,
+      "comparable": {
+        "period_ref": "period_2026-W39",
+        "start": "2026-09-21",
+        "end": "2026-09-27",
+        "elapsed_days": 7
+      }
+    },
+    "totals": {
+      "current": 20,
+      "comparable": 26,
+      "delta": -6,
+      "delta_pct": -0.2308
+    },
+    "drivers": {
+      "project": [],
+      "recruiter": [
+        {
+          "subject_ref": "recruiter_02",
+          "current": 5,
+          "comparable": 2,
+          "delta": 3,
+          "delta_contribution_share": 0.5,
+          "share_of_current": null
+        }
+      ],
+      "team": [],
+      "provider": [
+        {
+          "subject_ref": "provider_vendor",
+          "current": 8,
+          "comparable": 14,
+          "delta": -6,
+          "delta_contribution_share": 1,
+          "share_of_current": null
+        }
+      ],
+      "employment": []
+    },
+    "concentration": {
+      "project": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "recruiter": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "team": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "provider": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "employment": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      }
+    },
+    "stability": {
+      "period_points": 6,
+      "mean": 23,
+      "stddev": 5,
+      "cv": 0.22,
+      "trend_direction": "down",
+      "volatility": "medium"
+    },
+    "series": {
+      "granularity": "week",
+      "points": [
+        {
+          "period_start": "2026-09-21",
+          "period_end": "2026-09-27",
+          "value": 26
+        },
+        {
+          "period_start": "2026-09-28",
+          "period_end": "2026-10-04",
+          "value": 20
+        }
+      ]
+    },
+    "data_quality": {
+      "sources": [
+        {
+          "source_ref": "source_01",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_02",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_03",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_04",
+          "status": "covered",
+          "quality": "ok"
+        }
+      ],
+      "coverage_ratio": 1,
+      "unknown_count": 0,
+      "invalid_count": 0,
+      "unknown_share": 0,
+      "invalid_share": 0
+    },
+    "project_provider_mix": [
+      {
+        "subject_ref": "project_01",
+        "project_total": 20,
+        "hrp_count": 12,
+        "vendor_count": 8,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "known_total": 20,
+        "hrp_share": 0.6,
+        "vendor_share": 0.4,
+        "known_coverage": 1
+      }
+    ],
+    "sufficiency": [
+      {
+        "key": "trend_weekly",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_monthly",
+        "required_points": 3,
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_quarterly",
+        "required_points": 4,
+        "actual_points": 5,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "day_of_week",
+        "required_points": 8,
+        "actual_points": 10,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "consistency",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      }
+    ],
+    "subjects": [
+      {
+        "ref": "scope",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "recruiter_02",
+        "kind": "recruiter",
+        "catalog_key": null
+      },
+      {
+        "ref": "project_01",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "provider_vendor",
+        "kind": "provider",
+        "catalog_key": "vendor"
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "ev_01",
+        "metric": "recruited_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 20,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_02",
+        "metric": "recruited_total_previous",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 26,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_03",
+        "metric": "recruited_delta",
+        "formula": "current - comparable",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": -6,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_04",
+        "metric": "recruiter_delta",
+        "formula": "current - comparable by recruiter",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "recruiter_02",
+        "value": 3,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "expected": {
+    "packet_valid": true,
+    "insufficient_keys": [],
+    "min_findings": 3,
+    "max_confidence": "high",
+    "allowed_categories": [
+      "trend",
+      "driver",
+      "strength"
+    ],
+    "forbidden_claims": [
+      "PROHIBITED_PERFORMANCE_JUDGEMENT"
+    ],
+    "invariants": [
+      "totals.delta = current - comparable"
+    ]
+  },
+  "allowed_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Tổng kỳ này là 20 người, giảm 6 so với kỳ so sánh 26; một recruiter vẫn tăng 3 người.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Tổng giảm so với kỳ so sánh",
+        "analysis": "Tổng kỳ này là 20 người so với 26 người kỳ trước, giảm 6 người.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "strength",
+        "subject_ref": "recruiter_02",
+        "headline": "Một recruiter vẫn tăng trong kỳ giảm",
+        "analysis": "Recruiter này tăng 3 người trong khi tổng scope giảm 6 người.",
+        "evidence_refs": [
+          "ev_03",
+          "ev_04"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_03",
+        "category": "concentration",
+        "subject_ref": "scope",
+        "headline": "Kết quả kỳ này đến từ số ít đóng góp",
+        "analysis": "Tổng chỉ còn 20 người, trong đó một recruiter tăng 3 người bù lại một phần mức giảm 6 người.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_03",
+          "ev_04"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Tổng kỳ này là 20 người, giảm 6 so với kỳ so sánh 26.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Tổng giảm so với kỳ so sánh",
+        "analysis": "Tổng kỳ này là 20 người so với 26 người kỳ trước, giảm 6 người.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "risk",
+        "subject_ref": "recruiter_02",
+        "headline": "Recruiter này năng lực kém",
+        "analysis": "Chỉ đóng góp 5 người nên năng lực kém so với phần còn lại.",
+        "evidence_refs": [
+          "ev_04"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_expected_code": "PROHIBITED_PERFORMANCE_JUDGEMENT"
+}

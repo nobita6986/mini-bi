@@ -1,0 +1,368 @@
+{
+  "case_id": "c04",
+  "title": "Period-to-date chỉ so cùng số ngày đã trôi qua",
+  "packet": {
+    "contract_version": "analysis-packet/0.1",
+    "generated_at": "2026-10-05T00:00:00Z",
+    "snapshot": {
+      "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "lineage_ref": "2222222222222222222222222222222222222222222222222222222222222222",
+      "generated_from": "reporting-read-model"
+    },
+    "scope": {
+      "scope_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "access_scope_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "sources_in_scope": 4,
+      "dimensions": [
+        "project",
+        "recruiter",
+        "team",
+        "provider",
+        "employment"
+      ]
+    },
+    "period": {
+      "period_ref": "period_2026-10-PTD",
+      "type": "month",
+      "start": "2026-10-01",
+      "end": "2026-10-31",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "status": "period_to_date",
+      "period_to_date": true,
+      "elapsed_days": 3,
+      "comparable": {
+        "period_ref": "period_2026-09-PTD3",
+        "start": "2026-09-01",
+        "end": "2026-09-30",
+        "elapsed_days": 3
+      }
+    },
+    "totals": {
+      "current": 6,
+      "comparable": 4,
+      "delta": 2,
+      "delta_pct": 0.5
+    },
+    "drivers": {
+      "project": [
+        {
+          "subject_ref": "project_01",
+          "current": 6,
+          "comparable": 4,
+          "delta": 2,
+          "delta_contribution_share": 1,
+          "share_of_current": null
+        }
+      ],
+      "recruiter": [],
+      "team": [],
+      "provider": [],
+      "employment": []
+    },
+    "concentration": {
+      "project": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "recruiter": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "team": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "provider": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "employment": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      }
+    },
+    "stability": {
+      "period_points": 5,
+      "mean": 4,
+      "stddev": 1,
+      "cv": 0.25,
+      "trend_direction": "up",
+      "volatility": "medium"
+    },
+    "series": {
+      "granularity": "day",
+      "points": [
+        {
+          "period_start": "2026-10-01",
+          "period_end": null,
+          "value": 2
+        },
+        {
+          "period_start": "2026-10-02",
+          "period_end": null,
+          "value": 2
+        },
+        {
+          "period_start": "2026-10-03",
+          "period_end": null,
+          "value": 2
+        }
+      ]
+    },
+    "data_quality": {
+      "sources": [
+        {
+          "source_ref": "source_01",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_02",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_03",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_04",
+          "status": "covered",
+          "quality": "ok"
+        }
+      ],
+      "coverage_ratio": 1,
+      "unknown_count": 0,
+      "invalid_count": 0,
+      "unknown_share": 0,
+      "invalid_share": 0
+    },
+    "project_provider_mix": [
+      {
+        "subject_ref": "project_01",
+        "project_total": 6,
+        "hrp_count": 3,
+        "vendor_count": 3,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "known_total": 6,
+        "hrp_share": 0.5,
+        "vendor_share": 0.5,
+        "known_coverage": 1
+      }
+    ],
+    "sufficiency": [
+      {
+        "key": "trend_weekly",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_monthly",
+        "required_points": 3,
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_quarterly",
+        "required_points": 4,
+        "actual_points": 5,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "day_of_week",
+        "required_points": 8,
+        "actual_points": 10,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "consistency",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      }
+    ],
+    "subjects": [
+      {
+        "ref": "scope",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "project_01",
+        "kind": "project",
+        "catalog_key": null
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "ev_01",
+        "metric": "recruited_total_ptd",
+        "formula": "sum(recruited_count) period-to-date",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-10-PTD",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 6,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_02",
+        "metric": "recruited_total_previous_same_elapsed",
+        "formula": "previous period, same elapsed days",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-10-PTD",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 4,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_03",
+        "metric": "recruited_delta_ptd",
+        "formula": "ptd - previous_same_elapsed",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-10-PTD",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 2,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_04",
+        "metric": "period_elapsed_days",
+        "formula": "count(elapsed business days in period-to-date)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-10-PTD",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 3,
+        "unit": "days",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "expected": {
+    "packet_valid": true,
+    "insufficient_keys": [],
+    "min_findings": 3,
+    "max_confidence": "high",
+    "allowed_categories": [
+      "trend",
+      "driver"
+    ],
+    "forbidden_claims": [
+      "PROHIBITED_CAUSAL_CLAIM"
+    ],
+    "invariants": [
+      "comparable.elapsed_days = period.elapsed_days khi PTD"
+    ]
+  },
+  "allowed_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-10-PTD",
+    "report_status": "draft",
+    "executive_analysis": "Ba ngày đầu tháng ghi nhận 6 người, so với 4 người cùng 3 ngày của tháng trước.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Tiến độ tháng cao hơn cùng kỳ trước",
+        "analysis": "Ba ngày đầu tháng có 6 người so với 4 người cùng số ngày của tháng trước.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "driver",
+        "subject_ref": "project_01",
+        "headline": "Mức tăng đến từ dự án chính",
+        "analysis": "Dự án chính đóng góp toàn bộ mức tăng 2 người của 3 ngày đầu tháng.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_03",
+          "ev_04"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_03",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Tiến độ 3 ngày đầu tháng",
+        "analysis": "Ba ngày đầu tháng ghi nhận 6 người so với 4 người cùng kỳ trước.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_04"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": [
+      "Kỳ chưa kết thúc, chỉ so theo số ngày đã trôi qua."
+    ]
+  },
+  "forbidden_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-10-PTD",
+    "report_status": "draft",
+    "executive_analysis": "Tháng này ghi nhận 6 người, thấp hơn nhiều so với tổng 30 người của tháng trước.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Tháng này thấp hơn tháng trước",
+        "analysis": "Tháng này 6 người so với 30 người của tháng trước.",
+        "evidence_refs": [
+          "ev_01"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_expected_code": "UNGROUNDED_NUMERIC_CLAIM"
+}

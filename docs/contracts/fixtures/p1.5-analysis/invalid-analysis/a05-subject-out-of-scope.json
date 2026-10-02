@@ -1,0 +1,61 @@
+{
+  "case_id": "a05-subject-out-of-scope",
+  "description": "subject ngoài scope",
+  "expect_code": "SUBJECT_OUT_OF_SCOPE",
+  "context_case": "c01",
+  "analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Mức tăng tập trung ở một team.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "team_99",
+        "headline": "Tổng tăng so với kỳ so sánh",
+        "analysis": "Tổng kỳ này là 30 người so với 24 người ở kỳ so sánh, tức tăng 6 người.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "driver",
+        "subject_ref": "team_01",
+        "headline": "Một team đóng góp phần lớn mức tăng",
+        "analysis": "Team này tăng 4 người, chiếm 67% của mức tăng 6 người toàn scope.",
+        "evidence_refs": [
+          "ev_03",
+          "ev_04",
+          "ev_05"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": "Kiểm tra nguyên nhân mức tăng ở team này với dữ liệu vận hành."
+      },
+      {
+        "finding_id": "f_03",
+        "category": "provider_mix",
+        "subject_ref": "project_01",
+        "headline": "Cơ cấu HRP/Vendor cân bằng ở dự án lớn nhất",
+        "analysis": "Dự án này có 12 người và tỷ lệ Vendor là 50%, mẫu đã phân loại đầy đủ.",
+        "evidence_refs": [
+          "ev_06",
+          "ev_07"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": [
+      "Báo cáo chỉ dùng dữ liệu reporting hiện có, không có target hoặc số ngày làm việc."
+    ]
+  }
+}

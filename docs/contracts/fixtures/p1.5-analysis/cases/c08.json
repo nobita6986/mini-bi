@@ -1,0 +1,305 @@
+{
+  "case_id": "c08",
+  "title": "Total và baseline bằng 0",
+  "packet": {
+    "contract_version": "analysis-packet/0.1",
+    "generated_at": "2026-10-05T00:00:00Z",
+    "snapshot": {
+      "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "lineage_ref": "2222222222222222222222222222222222222222222222222222222222222222",
+      "generated_from": "reporting-read-model"
+    },
+    "scope": {
+      "scope_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "access_scope_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "sources_in_scope": 4,
+      "dimensions": [
+        "project",
+        "recruiter",
+        "team",
+        "provider",
+        "employment"
+      ]
+    },
+    "period": {
+      "period_ref": "period_2026-W40",
+      "type": "week",
+      "start": "2026-09-28",
+      "end": "2026-10-04",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "status": "complete",
+      "period_to_date": false,
+      "elapsed_days": 7,
+      "comparable": {
+        "period_ref": "period_2026-W39",
+        "start": "2026-09-21",
+        "end": "2026-09-27",
+        "elapsed_days": 7
+      }
+    },
+    "totals": {
+      "current": 0,
+      "comparable": 0,
+      "delta": 0,
+      "delta_pct": null
+    },
+    "drivers": {
+      "project": [],
+      "recruiter": [],
+      "team": [],
+      "provider": [],
+      "employment": []
+    },
+    "concentration": {
+      "project": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "recruiter": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "team": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "provider": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "employment": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      }
+    },
+    "stability": {
+      "period_points": 6,
+      "mean": 0,
+      "stddev": 0,
+      "cv": null,
+      "trend_direction": "flat",
+      "volatility": "low"
+    },
+    "series": {
+      "granularity": "week",
+      "points": [
+        {
+          "period_start": "2026-09-21",
+          "period_end": "2026-09-27",
+          "value": 0
+        },
+        {
+          "period_start": "2026-09-28",
+          "period_end": "2026-10-04",
+          "value": 0
+        }
+      ]
+    },
+    "data_quality": {
+      "sources": [
+        {
+          "source_ref": "source_01",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_02",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_03",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_04",
+          "status": "covered",
+          "quality": "ok"
+        }
+      ],
+      "coverage_ratio": 1,
+      "unknown_count": 0,
+      "invalid_count": 0,
+      "unknown_share": 0,
+      "invalid_share": 0
+    },
+    "project_provider_mix": [],
+    "sufficiency": [
+      {
+        "key": "trend_weekly",
+        "required_points": 4,
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_monthly",
+        "required_points": 3,
+        "actual_points": 4,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_quarterly",
+        "required_points": 4,
+        "actual_points": 4,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "day_of_week",
+        "required_points": 8,
+        "actual_points": 9,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "consistency",
+        "required_points": 4,
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      }
+    ],
+    "subjects": [
+      {
+        "ref": "scope",
+        "kind": "project",
+        "catalog_key": null
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "ev_01",
+        "metric": "recruited_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_02",
+        "metric": "recruited_total_previous",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 0,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "expected": {
+    "packet_valid": true,
+    "insufficient_keys": [],
+    "min_findings": 3,
+    "max_confidence": "high",
+    "allowed_categories": [
+      "trend",
+      "data_quality"
+    ],
+    "forbidden_claims": [
+      "PROHIBITED_CAUSAL_CLAIM"
+    ],
+    "invariants": [
+      "delta_pct = null khi comparable = 0 (không chia 0)"
+    ]
+  },
+  "allowed_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Kỳ này và kỳ so sánh đều không có người tuyển; không có cơ sở kết luận xu hướng.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Không có dữ liệu tuyển dụng trong kỳ",
+        "analysis": "Cả kỳ này và kỳ so sánh đều ghi nhận 0 người nên không thể kết luận tăng hay giảm.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02"
+        ],
+        "confidence": "medium",
+        "limitations": [
+          "Tổng bằng 0 nên tỷ lệ phần trăm không xác định."
+        ],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "data_quality",
+        "subject_ref": "scope",
+        "headline": "Không có dòng dữ liệu để phân tích driver",
+        "analysis": "Cả hai kỳ đều ghi nhận 0 người nên không có cơ sở phân tích đóng góp.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_03",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Không có thay đổi giữa hai kỳ",
+        "analysis": "Chênh lệch giữa kỳ này và kỳ so sánh là 0 người.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Kỳ này không có người tuyển và kỳ so sánh cũng không có dữ liệu.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Kỳ này giảm 100%",
+        "analysis": "Tổng kỳ này là 0 người, tương đương giảm 100% so với kỳ trước.",
+        "evidence_refs": [
+          "ev_01"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_expected_code": "UNGROUNDED_NUMERIC_CLAIM"
+}

@@ -1,0 +1,395 @@
+{
+  "case_id": "c11",
+  "title": "Project có provider unknown/invalid",
+  "packet": {
+    "contract_version": "analysis-packet/0.1",
+    "generated_at": "2026-10-05T00:00:00Z",
+    "snapshot": {
+      "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "lineage_ref": "2222222222222222222222222222222222222222222222222222222222222222",
+      "generated_from": "reporting-read-model"
+    },
+    "scope": {
+      "scope_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "access_scope_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "sources_in_scope": 2,
+      "dimensions": [
+        "project",
+        "recruiter",
+        "team",
+        "provider",
+        "employment"
+      ]
+    },
+    "period": {
+      "period_ref": "period_2026-W40",
+      "type": "week",
+      "start": "2026-09-28",
+      "end": "2026-10-04",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "status": "complete",
+      "period_to_date": false,
+      "elapsed_days": 7,
+      "comparable": {
+        "period_ref": "period_2026-W39",
+        "start": "2026-09-21",
+        "end": "2026-09-27",
+        "elapsed_days": 7
+      }
+    },
+    "totals": {
+      "current": 20,
+      "comparable": 18,
+      "delta": 2,
+      "delta_pct": 0.1111
+    },
+    "drivers": {
+      "project": [
+        {
+          "subject_ref": "project_03",
+          "current": 20,
+          "comparable": 18,
+          "delta": 2,
+          "delta_contribution_share": 1,
+          "share_of_current": null
+        }
+      ],
+      "recruiter": [],
+      "team": [],
+      "provider": [],
+      "employment": []
+    },
+    "concentration": {
+      "project": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "recruiter": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "team": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "provider": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "employment": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      }
+    },
+    "stability": {
+      "period_points": 0,
+      "mean": null,
+      "stddev": null,
+      "cv": null,
+      "trend_direction": "unknown",
+      "volatility": "unknown"
+    },
+    "series": {
+      "granularity": "day",
+      "points": []
+    },
+    "data_quality": {
+      "sources": [
+        {
+          "source_ref": "source_01",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_02",
+          "status": "covered",
+          "quality": "ok"
+        }
+      ],
+      "coverage_ratio": 1,
+      "unknown_count": 7,
+      "invalid_count": 3,
+      "unknown_share": 0.35,
+      "invalid_share": 0.15
+    },
+    "project_provider_mix": [
+      {
+        "subject_ref": "project_03",
+        "project_total": 20,
+        "hrp_count": 5,
+        "vendor_count": 5,
+        "unknown_count": 7,
+        "invalid_count": 3,
+        "known_total": 10,
+        "hrp_share": 0.5,
+        "vendor_share": 0.5,
+        "known_coverage": 0.5
+      }
+    ],
+    "sufficiency": [
+      {
+        "key": "trend_weekly",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_monthly",
+        "required_points": 3,
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_quarterly",
+        "required_points": 4,
+        "actual_points": 5,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "day_of_week",
+        "required_points": 8,
+        "actual_points": 10,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "consistency",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      }
+    ],
+    "subjects": [
+      {
+        "ref": "scope",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "project_03",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "provider_unknown",
+        "kind": "provider",
+        "catalog_key": "__unknown__"
+      },
+      {
+        "ref": "provider_invalid",
+        "kind": "provider",
+        "catalog_key": "__invalid__"
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "ev_01",
+        "metric": "project_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_03",
+        "value": 20,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_02",
+        "metric": "project_known_coverage",
+        "formula": "known_total / project_total",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_03",
+        "value": 0.5,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_03",
+        "metric": "project_hrp_share",
+        "formula": "hrp_count / known_total",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_03",
+        "value": 0.5,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_04",
+        "metric": "project_unknown_count",
+        "formula": "sum(recruited_count) where provider_type_key = __unknown__",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_03",
+        "value": 7,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_05",
+        "metric": "project_invalid_count",
+        "formula": "sum(recruited_count) where provider_type_key = __invalid__",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_03",
+        "value": 3,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_06",
+        "metric": "project_known_total",
+        "formula": "hrp_count + vendor_count",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_03",
+        "value": 10,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "expected": {
+    "packet_valid": true,
+    "insufficient_keys": [],
+    "min_findings": 3,
+    "max_confidence": "high",
+    "allowed_categories": [
+      "provider_mix",
+      "data_quality"
+    ],
+    "forbidden_claims": [
+      "PROHIBITED_CAUSAL_CLAIM"
+    ],
+    "invariants": [
+      "known_coverage = known_total / project_total",
+      "unknown/invalid không vào vendor_share/hrp_share"
+    ]
+  },
+  "allowed_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Dự án này có 20 người nhưng chỉ một nửa được phân loại HRP/Vendor.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "provider_mix",
+        "subject_ref": "project_03",
+        "headline": "Tỷ lệ HRP/Vendor dựa trên một nửa dữ liệu",
+        "analysis": "Dự án này có 20 người, trong đó 10 người được phân loại HRP/Vendor nên tỷ lệ 50% chỉ dựa trên một nửa dữ liệu.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03",
+          "ev_06"
+        ],
+        "confidence": "medium",
+        "limitations": [
+          "Độ phủ phân loại chỉ 50%."
+        ],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "data_quality",
+        "subject_ref": "project_03",
+        "headline": "Có người chưa phân loại và không hợp lệ",
+        "analysis": "Dự án có 7 người chưa phân loại và 3 người không hợp lệ; hai nhóm này không nằm trong mẫu số tỷ lệ.",
+        "evidence_refs": [
+          "ev_04",
+          "ev_05"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_03",
+        "category": "provider_mix",
+        "subject_ref": "project_03",
+        "headline": "Mẫu số tỷ lệ chỉ gồm 10 người đã phân loại",
+        "analysis": "Dự án có 10 người đã phân loại HRP/Vendor trên tổng 20 người, nên mọi tỷ lệ chỉ phản ánh một nửa dữ liệu.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_06"
+        ],
+        "confidence": "medium",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Dự án này có 20 người nhưng chỉ một nửa được phân loại.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "provider_mix",
+        "subject_ref": "project_03",
+        "headline": "Tỷ lệ HRP là 25%",
+        "analysis": "Dự án có 5 người HRP trên 20 người nên tỷ lệ HRP là 25%.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_03"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "data_quality",
+        "subject_ref": "project_03",
+        "headline": "Có người chưa phân loại và không hợp lệ",
+        "analysis": "Dự án có 7 người chưa phân loại và 3 người không hợp lệ.",
+        "evidence_refs": [
+          "ev_04",
+          "ev_05"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_expected_code": "UNGROUNDED_NUMERIC_CLAIM"
+}

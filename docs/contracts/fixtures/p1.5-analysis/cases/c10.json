@@ -1,0 +1,414 @@
+{
+  "case_id": "c10",
+  "title": "Project có Vendor share cao và volume lớn",
+  "packet": {
+    "contract_version": "analysis-packet/0.1",
+    "generated_at": "2026-10-05T00:00:00Z",
+    "snapshot": {
+      "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+      "lineage_ref": "2222222222222222222222222222222222222222222222222222222222222222",
+      "generated_from": "reporting-read-model"
+    },
+    "scope": {
+      "scope_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "access_scope_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "sources_in_scope": 4,
+      "dimensions": [
+        "project",
+        "recruiter",
+        "team",
+        "provider",
+        "employment"
+      ]
+    },
+    "period": {
+      "period_ref": "period_2026-W40",
+      "type": "week",
+      "start": "2026-09-28",
+      "end": "2026-10-04",
+      "timezone": "Asia/Ho_Chi_Minh",
+      "status": "complete",
+      "period_to_date": false,
+      "elapsed_days": 7,
+      "comparable": {
+        "period_ref": "period_2026-W39",
+        "start": "2026-09-21",
+        "end": "2026-09-27",
+        "elapsed_days": 7
+      }
+    },
+    "totals": {
+      "current": 120,
+      "comparable": 90,
+      "delta": 30,
+      "delta_pct": 0.3333
+    },
+    "drivers": {
+      "project": [
+        {
+          "subject_ref": "project_02",
+          "current": 120,
+          "comparable": 90,
+          "delta": 30,
+          "delta_contribution_share": 1,
+          "share_of_current": null
+        }
+      ],
+      "recruiter": [],
+      "team": [],
+      "provider": [
+        {
+          "subject_ref": "provider_vendor",
+          "current": 110,
+          "comparable": 70,
+          "delta": 40,
+          "delta_contribution_share": 1,
+          "share_of_current": null
+        }
+      ],
+      "employment": []
+    },
+    "concentration": {
+      "project": {
+        "top1_ref": "project_02",
+        "top1_share": 1,
+        "top3_share": 1,
+        "distinct_subjects": 1
+      },
+      "recruiter": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "team": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      },
+      "provider": {
+        "top1_ref": "provider_vendor",
+        "top1_share": 0.9167,
+        "top3_share": 1,
+        "distinct_subjects": 2
+      },
+      "employment": {
+        "top1_ref": null,
+        "top1_share": null,
+        "top3_share": null,
+        "distinct_subjects": 0
+      }
+    },
+    "stability": {
+      "period_points": 10,
+      "mean": 105,
+      "stddev": 22,
+      "cv": 0.21,
+      "trend_direction": "up",
+      "volatility": "medium"
+    },
+    "series": {
+      "granularity": "day",
+      "points": []
+    },
+    "data_quality": {
+      "sources": [
+        {
+          "source_ref": "source_01",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_02",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_03",
+          "status": "covered",
+          "quality": "ok"
+        },
+        {
+          "source_ref": "source_04",
+          "status": "covered",
+          "quality": "ok"
+        }
+      ],
+      "coverage_ratio": 1,
+      "unknown_count": 0,
+      "invalid_count": 0,
+      "unknown_share": 0,
+      "invalid_share": 0
+    },
+    "project_provider_mix": [
+      {
+        "subject_ref": "project_02",
+        "project_total": 120,
+        "hrp_count": 10,
+        "vendor_count": 110,
+        "unknown_count": 0,
+        "invalid_count": 0,
+        "known_total": 120,
+        "hrp_share": 0.0833,
+        "vendor_share": 0.9167,
+        "known_coverage": 1
+      }
+    ],
+    "sufficiency": [
+      {
+        "key": "trend_weekly",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_monthly",
+        "required_points": 3,
+        "actual_points": 6,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "trend_quarterly",
+        "required_points": 4,
+        "actual_points": 5,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "day_of_week",
+        "required_points": 8,
+        "actual_points": 10,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      },
+      {
+        "key": "consistency",
+        "required_points": 4,
+        "actual_points": 8,
+        "status": "met",
+        "reason_code": "BASELINE_MET"
+      }
+    ],
+    "subjects": [
+      {
+        "ref": "scope",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "project_02",
+        "kind": "project",
+        "catalog_key": null
+      },
+      {
+        "ref": "provider_vendor",
+        "kind": "provider",
+        "catalog_key": "vendor"
+      }
+    ],
+    "evidence": [
+      {
+        "evidence_id": "ev_01",
+        "metric": "project_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_02",
+        "value": 120,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_02",
+        "metric": "project_vendor_share",
+        "formula": "vendor_count / known_total",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_02",
+        "value": 0.9167,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_03",
+        "metric": "project_known_coverage",
+        "formula": "known_total / project_total",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_02",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_04",
+        "metric": "recruited_total",
+        "formula": "sum(recruited_count)",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "scope",
+        "value": 120,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_05",
+        "metric": "project_share_of_total",
+        "formula": "project_total / recruited_total",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_02",
+        "value": 1,
+        "unit": "ratio",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "evidence_id": "ev_06",
+        "metric": "project_vendor_count",
+        "formula": "sum(recruited_count) where provider_type_key = vendor",
+        "formula_version": "v0.1",
+        "period_ref": "period_2026-W40",
+        "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
+        "subject_ref": "project_02",
+        "value": 110,
+        "unit": "people",
+        "sufficiency": "met",
+        "quality": "ok",
+        "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "expected": {
+    "packet_valid": true,
+    "insufficient_keys": [],
+    "min_findings": 3,
+    "max_confidence": "high",
+    "allowed_categories": [
+      "provider_mix",
+      "concentration",
+      "risk",
+      "driver"
+    ],
+    "forbidden_claims": [
+      "PROHIBITED_CAUSAL_CLAIM"
+    ],
+    "invariants": [
+      "vendor_share dùng known_total làm mẫu số",
+      "sum(project_total) = totals.current"
+    ]
+  },
+  "allowed_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Một dự án chiếm toàn bộ 120 người của kỳ và có 110 người đến từ Vendor.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "concentration",
+        "subject_ref": "project_02",
+        "headline": "Kết quả tập trung vào một dự án",
+        "analysis": "Dự án này chiếm toàn bộ 120 người của kỳ, tức 100% tổng.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_04",
+          "ev_05"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "provider_mix",
+        "subject_ref": "project_02",
+        "headline": "Tỷ lệ Vendor cao trên mẫu lớn",
+        "analysis": "Dự án này có 120 người và 110 người thuộc Vendor, tỷ lệ Vendor xấp xỉ 92% trên mẫu đã phân loại đầy đủ.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03",
+          "ev_06"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_03",
+        "category": "risk",
+        "subject_ref": "project_02",
+        "headline": "Rủi ro phụ thuộc Vendor có bằng chứng",
+        "analysis": "Với 120 người và tỷ lệ Vendor xấp xỉ 92%, mức phụ thuộc Vendor của dự án này là đáng chú ý.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03",
+          "ev_06"
+        ],
+        "confidence": "medium",
+        "limitations": [
+          "Chưa có dữ liệu hợp đồng hoặc điều khoản Vendor để đánh giá mức độ rủi ro."
+        ],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Dự án này chiếm toàn bộ kết quả của kỳ và phụ thuộc Vendor.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "concentration",
+        "subject_ref": "project_02",
+        "headline": "Kết quả tập trung vào một dự án",
+        "analysis": "Dự án này chiếm toàn bộ 120 người của kỳ, tức 100% tổng.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_04",
+          "ev_05"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "risk",
+        "subject_ref": "project_02",
+        "headline": "Rủi ro phụ thuộc Vendor",
+        "analysis": "Dự án này phụ thuộc Vendor vì con số 92% là quá cao.",
+        "evidence_refs": [
+          "ev_02"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": []
+  },
+  "forbidden_expected_code": "RISK_WITHOUT_LIMITATIONS"
+}

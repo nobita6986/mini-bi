@@ -1,0 +1,34 @@
+{
+  "case_id": "a14-high-confidence-insufficient",
+  "description": "confidence high khi baseline chưa đạt",
+  "expect_code": "HIGH_CONFIDENCE_WITHOUT_SUFFICIENCY",
+  "context_case": "c03",
+  "analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "period_2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Chỉ có 2 kỳ hoàn tất nên chưa đủ baseline; mọi nhận định chỉ ở mức tham khảo.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "trend",
+        "subject_ref": "scope",
+        "headline": "Kỳ này cao hơn kỳ trước nhưng thiếu baseline",
+        "analysis": "Tổng kỳ này là 9 người so với 7 người kỳ trước, chênh 2 người; chỉ có 2 kỳ nên chưa kết luận xu hướng.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03"
+        ],
+        "confidence": "high",
+        "limitations": [
+          "Chỉ có 2 kỳ hoàn tất, dưới baseline 4 tuần."
+        ],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": [
+      "Chưa đủ baseline tuần để kết luận xu hướng ổn định."
+    ]
+  }
+}
