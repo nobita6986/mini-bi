@@ -1,133 +1,162 @@
-# P3-W01-S02 — Inventory Delta Refresh after P1.6 G3/I02
+# P3-W01-S02-R1 — Access Inventory Consistency Fix
 
 **Branch:** `feature/p3-w01-access-inventory`
-**Base:** `origin/main @ 45ca016` + delta from `origin/feature/p1.6-integration @ 51511dd`
-**Author:** T2-A (Access Surface) — read-only.
-**Tier:** FT0 — read-only delta refresh; no runtime / schema / RPC / migration edits.
+**Base:** `d1f15b0` (S02 on top of `origin/main @ 45ca016`)
+**Author:** T1C (Library & Access Auditor) — read-only.
+**Tier:** FT0 docs-only — chỉ sửa inventory/handoff, không runtime / schema / migration / deploy.
 
 ---
 
-## Scope (this delta refresh, S02)
+## Scope (this R1 consistency fix)
 
-Builds on S01 (`docs/security/p3-access-surfaces.md @ 7782e54`):
+Builds on S02 (`docs/security/p3-access-surfaces.md @ d1f15b0`). Những chỗ sai / lệch / stale đã được sửa để inventory phản ánh đúng trạng thái hiện tại trên cả bốn ref:
 
-1. **§3.5 P1.6 DB boundary** — replaced 9 "planned migration/table/RPC" rows with the 25 + 1 + 17 actually-deployed artifacts from `p1.6-integration @ 51511dd`:
-   - 25 tables in the W03 `v_table` array (force RLS + revoke all 4 roles).
-   - 1 supporting table (`direct_entry_rpc_idempotency`) + 1 view (`direct_entry_current_documents`).
-   - 17 `SECURITY DEFINER` application RPCs granted EXECUTE to `service_role`.
-   - Status: `COVERED_DEV_FAST_TRACK` (DEV only; not PROD).
-2. **§7 capability semantics** — split three capabilities that S01 was conflating:
-   - `change_review` — direct-entry change request; **proposer ≠ reviewer** enforced by `direct_entry_approve_change_request` / `direct_entry_reject_change_request`.
-   - `entry_privileged_edit` — direct single-step edit by admin / kế toán; **no second party** but reason + expected version + revision + audit mandatory.
-   - `ai.report.review` — AI report approval; **its own capability**, not mapped to `change_review` and not auto-denied by direct-entry's self-approval rule.
-3. **§11 GAP / PENDING refresh** — closed the S01 items that W03 closed; split the remaining `PENDING_P1.6` into §11.3 (closed by W03) and §11.4 (route/UI/worker/cutover — still open). Added §11.5 with a separate `decision:ai-self-approval` and §11.6 with backlog reconciliation (26 sources, 2 fixtures, recruited total 30).
-4. **No source, no schema, no migration, no RPC, no API route, no proxy change.**
-
-## Out of scope (explicit, unchanged from S01)
-
-- No G1 PASS declaration.
-- No decision on role / history / audit policy (those need T0 input per §11.5).
-- No merge of `feature/app-nav-01a` or `feature/p1.6-integration` (separate worktree).
-- No DB apply / deploy.
-- No full test / build run.
-- No full policy matrix in this task — the brief explicitly defers it.
-
-## Deferred tests (FT0 boundary, run later)
-
-| # | Deferred | When |
+| Ref | SHA | Vai trò trong R1 |
 |---|---|---|
-| 1 | Cross-reference test linking every API route in `src/app/api/**` to an inventory ID. | G2. |
-| 2 | Migration drift test against `supabase/migrations/*.sql` (now 22 files after W03 + forward correction). | G2. |
-| 3 | API↔capability matrix test — assert each `api:NNN` and `p1.6:NNN` has a row in §11. | G2. |
-| 4 | Auto-check that DB-side `COVERED_DEV_FAST_TRACK` does not silently mask the route-side `PENDING_P1.6` status (a script that pairs each `db:f:p1.6:NNN` with its expected `p1.6:NNN`). | G2. |
-| 5 | Browser / mobile matrix on any new UI. | n/a — no UI added. |
-| 6 | W03 DEV 95-check acceptance re-run. | Reuse `bbfdea9` evidence; do not repeat. |
-| 7 | Aggregate `pnpm test` (including P1.5 main/server). | Run at next integration checkpoint / J01. |
+| `origin/main` | `45ca016` | runtime hiện tại (unchanged) |
+| `origin/feature/p1.6-integration` | `27c6845` | W01–W03 contracts + W03 DB foundation applied on DEV + I02 + **W04-S01** (pin React 19 grid + smoke compile + typeahead; **DB / auth boundary unchanged**) |
+| `origin/feature/p1.5-g5-dev01` | `287514f` | **G5-DEV01** apply review/history migration + DEV acceptance (14/14); **chưa provider-live / production enabled** |
+| `origin/feature/app-nav-01a` | `7bd2ba8` | navigation registry (unchanged) |
 
-## Quality gates run (FT0)
+### 1. Chuẩn hóa summary P1.6
+
+Mọi câu tóm tắt P1.6 nay đọc đúng:
+- **26 tables** = **25 foundation / core tables** (`v_table` array trong `20261002170000_p1_6_direct_entry_foundation.sql`) **+ 1 supporting idempotency table** (`direct_entry_rpc_idempotency`).
+- **1 security-invoker view** (`direct_entry_current_documents`).
+- **17 application RPCs** (`SECURITY DEFINER`, EXECUTE-only to `service_role`).
+- **Applied + accepted trên DEV** (95-check G3 manifest). **Chưa PROD.**
+
+### 2. Loại bỏ stale wording
+
+| Stale | Replaced by |
+|---|---|
+| "Migrate P1.6 chưa apply" | "Migrate P1.6 đã apply DEV; W04-S01 chỉ thêm smoke compile grid + typeahead" |
+| "Route/UI side unstarted" (chung cho mọi W04+) | "W04-S01 đã hoàn tất dependency + smoke (compile grid + typeahead). Production page / API / persistence vẫn pending. W04-S02 = fixture UI route. W04-S03 = nối server / RPC." |
+| "Tất cả P1.6 DB: T1A" | "Tất cả P1.6: T1B" |
+| (implied) "P3 = T2 (this task)" | "P3 = T1C (this task)" |
+| "26 P1.6 sources / 25 tables + 1 view + 17 RPC" (mâu thuẫn ngầm) | đã chuẩn hóa về "26 tables" (25 + 1 idempotency) — section §3.5.1 đổi tên thành "foundation / core tables" để không lẫn với supporting table |
+
+### 3. Owner map
+
+| Phase | Owner (R1) | Source ref |
+|---|---|---|
+| P0/P1 (foundation + reporting) | T1B | unchanged |
+| P1.5 (AI gateway) | T1A | unchanged; bổ sung G5-DEV01 evidence |
+| P1.6 (direct entry) | **T1B** | §11.4 pending rows + §7 owner note + Appendix B |
+| P3 (RBAC) / inventory / audit | **T1C** (this task) | header + Appendix B |
+| Ops (n8n) | T1B (T2 in earlier docs) | Appendix B |
+
+> **Lưu ý.** Phase-owner assignments chỉ mang tính traceability, không phải authority decision. P3 G1 có thể revise.
+
+### 4. P1.6 evidence ref nâng cấp
+
+- `origin/feature/p1.6-integration @ 27c6845` (delta sau 51511dd = W04-S01 chỉ smoke UI/typeahead/dependency; không migration mới; DB / auth boundary unchanged).
+- W04-S01 cụ thể:
+  - `package.json` + `pnpm-lock.yaml` — pin React 19 grid (`react-data-grid@7.0.0-beta.61`).
+  - `src/components/direct-entry/grid-smoke.tsx` (32 dòng) — compile smoke.
+  - `src/lib/direct-entry/typeahead.ts` (39 dòng) + `src/components/direct-entry/typeahead-picker-smoke.tsx` (109 dòng) + `src/lib/direct-entry/typeahead.test.mjs` (45 dòng) — focused stable-ID typeahead.
+  - `docs/handoffs/p1.6-w04-s01.md` (93 dòng) — native picker decision for S02.
+  - **Không có `src/app/api/direct-entry/*` route; không có production page; không có migration.**
+
+### 5. P1.5-G5 DEV evidence (NEW trong R1)
+
+- `feature/p1.5-g5-dev01 @ 287514f`:
+  - Apply `supabase/migrations/20261001180000_p1_5_ai_report_review_history.sql` lên Supabase DEV (1 áp dụng mới).
+  - Post-apply dry-run: **22 applied, 0 pending, 0 checksum mismatch**.
+  - DEV acceptance harness `scripts/g5-dev01-acceptance.mjs`: **14/14 pass**.
+  - Cleanup namespace `g5dev01-*`: 0 leftover, append-only trigger phục hồi, reporting baseline không đổi, không đụng W03 direct-entry.
+  - Handoff `docs/handoffs/p1.5-g5-dev01.md` (50 dòng).
+- **4 service-role-only RPC mới** (`20261001180000_p1_5_ai_report_review_history.sql`):
+  - `db:f:p1.5-G5:001` `ai_report_review_capability()` — R, returns capability required to approve/reject a draft revision.
+  - `db:f:p1.5-G5:002` `ai_report_approve_revision(uuid, integer, text)` — W, capability check + OCC on `(job_id, expected_revision_number)` + actor/cursor isolation + idempotent.
+  - `db:f:p1.5-G5:003` `ai_report_reject_revision(uuid, integer, text, text)` — W, capability check + OCC + reject reason (non-empty) + audit rollback on conflict.
+  - `db:f:p1.5-G5:004` `ai_report_history(text, text, integer)` — R, keyset pagination (`actor_ref` cursor + `before` timestamp) + sanitized history projection.
+- **`ai_report_revisions` append-only fix** (db:t:007 — was `RW`, now `R (insert only via RPC)`):
+  - Trước G5-DEV01: grant `select, insert, update` to `service_role`.
+  - Sau G5-DEV01: grant `select, insert` to `service_role`; **`revoke update on table public.ai_report_revisions from service_role`**.
+  - Mọi UPDATE phải đi qua `ai_report_approve_revision` / `ai_report_reject_revision` (OCC + actor/cursor isolation + idempotent).
+  - Đây là **append-only trigger phục hồi**, không phải provider-live / production enabled change.
+- **`PILOT_ACTOR_REF` vẫn chưa được thay bằng actor_ref từ session.** G5-DEV01 chỉ apply migration đã có từ trước.
+
+### 6. Capability split (giữ nguyên, không tự quyết AI self-approval)
+
+| Capability | Còn / mở / đóng |
+|---|---|
+| `change_review` (db:f:p1.6:013/014) | closed by W03 — proposer ≠ reviewer enforced. **Không thay đổi trong R1.** |
+| `entry_privileged_edit` (db:f:p1.6:015) | DB side COVERED_DEV_FAST_TRACK. Route /admin/privileged-edit (p1.6:015) vẫn PENDING_P1.6. **Không thay đổi trong R1.** |
+| `ai.report.review` (api:006) | `decision:ai-self-approval` **vẫn `PENDING_DECISION`**. G5-DEV01 cung cấp OCC + actor/cursor isolation nhưng route `api:006` chưa enforce proposer ≠ reviewer. P3 / T0 phải quyết ở G1. |
+
+> **R1 không tự quyết.** Tất cả 3 capability giữ semantic riêng; không collapse. `decision:ai-self-approval` vẫn pending.
+
+### 7. Contradictions đã loại bỏ
+
+| # | Contradiction (S02) | Fix (R1) |
+|---|---|---|
+| 1 | "P1.6 migration chưa apply" (trong §3.5 trailing note) | "P1.6 đã apply DEV; W04-S01 chỉ smoke" |
+| 2 | "Route/UI side unstarted" (bao gồm smoke work) | "W04-S01 đã hoàn tất dependency + smoke; production page/API/persistence vẫn pending; W04-S02/S03 phase tiếp" |
+| 3 | "Tất cả P1.6 DB: T1A" | "Tất cả P1.6: T1B" |
+| 4 | "P3 inventory = T2" | "P3 inventory = T1C" |
+| 5 | "26 tables = 25 + 1" (gây hiểu nhầm "25 là tất cả") | Section đổi tên "P1.6 W03 foundation / core tables (25)" + supporting table tách rõ ở §3.5.2 |
+| 6 | `ai_report_revisions` được grant UPDATE (S02) | R1 sửa thành "R (insert only via RPC) — append-only since G5-DEV01", + 4 RPC mới, + `decision:ai-self-approval` cross-ref |
+| 7 | Refs thiếu W04-S01 + G5-DEV01 evidence | Header + Appendix A + §11.7 đã thêm 27c6845, 287514f, scripts/g5-dev01-acceptance.mjs, docs/handoffs/p1.5-g5-dev01.md, docs/handoffs/p1.6-w04-s01.md |
+
+## Quality gates run (FT0 docs-only)
 
 | Check | Result |
 |---|---|
-| `pnpm docs:check` (script:check-doc-examples) | pass — 0 JSON examples in inventory; intentional (no source code in this commit). |
-| `pnpm secrets:check` | pass — scanned 366 files (1 new file vs S01's 365); no secret found. |
-| `git diff --check` | clean (CRLF default on Windows; LF→CRLF warning, no whitespace error). |
+| `pnpm docs:check` | pass — 0 JSON examples in inventory; intentional (no source code in this commit). |
+| `pnpm secrets:check` | pass — scanned 366 files; no secret found. |
+| `git diff --check` | clean (CRLF default on Windows; LF→CRLF warning only, no whitespace error). |
 | `pnpm tsc --noEmit` | not run (no source change). |
 | `pnpm test` | not run (no source change). |
 | `pnpm build` | not run (no source change). |
 | `pnpm lint` | not run (no source change). |
-| W03 G3 95-check | not re-run (recorded at checkpoint `bbfdea9`; FT0 brief allows reuse). |
-| I02 FT1 gates | not re-run (recorded in `docs/handoffs/p1.6-i02.md`; FT0 brief allows reuse). |
 
-## ID inventory after S02 (additions vs S01)
+## ID inventory after R1 (additions vs S02)
 
-| Namespace | New IDs in S02 | Notes |
+| Namespace | New IDs in R1 | Notes |
 |---|---|---|
-| `db:t:p1.6:NNN` | 26 | 25 W03 tables + 1 idempotency table. |
-| `db:v:p1.6:NNN` | 1 | `direct_entry_current_documents`. |
-| `db:f:p1.6:NNN` | 17 | 17 application RPCs. |
-| `p1.6:NNN` | +1 (now 15) | Added p1.6:015 = `POST /admin/privileged-edit` (entry_privileged_edit, single-step, no second party). |
-| `pending:p1.6:*` | split into 11.3 (closed) + 11.4 (still open: route/UI/worker/cutover) | The original 3 pending items are now classified. |
-| `decision:NNN` | decision:ai-self-approval (new) + decision:004 closed by W03 | — |
+| `db:f:p1.5-G5:NNN` | 4 | review_capability + approve_revision + reject_revision + history. |
+| `db:t:007` (revision) | n/a — already existed; **grants updated** in §3.4. |
+| `db:f:p1.5-G5:*` cross-ref | referenced in §11.7 | AI self-approval note now ties to OCC + actor/cursor isolation. |
+| §11.4 owners | T1A → **T1B** | route/UI/worker/cutover. |
+| §7 owner note | T1A → **T1B** | "Tất cả P1.6". |
+| Appendix B P3 row | T2 → **T1C** | "this task". |
+| Header "Auditor" | T2-A → **T1C** | Library & Access Auditor. |
+| Header "this task" | T2 → **T1C** | task này. |
 
-Total: ~120 IDs across 12 namespaces (vs ~80 in S01). The growth is the P1.6 DB-side detail from W03.
-
-## Capability semantics — three-way split (P1.6 W03 + AI)
-
-| Capability | Surface | Self-review required? | Reason / version / audit? | Status |
-|---|---|---|---|---|
-| `change_review` | `direct_entry_approve_change_request` (db:f:p1.6:013), `direct_entry_reject_change_request` (db:f:p1.6:014) | **YES — proposer ≠ reviewer** | YES (reason, expected request+item versions, request/entry revisions, audit) | COVERED_DEV_FAST_TRACK (DB) |
-| `entry_privileged_edit` | `direct_entry_privileged_edit` (db:f:p1.6:015), and SUBMITTED branch of `direct_entry_update_payment` and `direct_entry_create_document_metadata` | **NO second party** | YES (reason, expected version, revision, audit) | COVERED_DEV_FAST_TRACK (DB) |
-| `ai.report.review` | `POST /api/ai/reports/[jobId]/review` (api:006) | **DECISION SEPARATE** — `decision:ai-self-approval` | YES (existing CSRF + sanitize) | GAP — single `PILOT_ACTOR_REF`; route layer needs capability check |
-
-> **Do not conflate.** `change_review` ≠ `entry_privileged_edit` ≠ `ai.report.review`. P3 must keep all three in the capability matrix and not collapse them.
-
-## Backlog reconciliation (from §11.6)
-
-| Metric | Pre-test | Post-cleanup | Implication |
-|---|---|---|---|
-| `data_sources` count | 26 | 26 | 2 fixture + 24 real; P2-W01 phải phân loại active/inactive/legacy. |
-| `recruited_total` | 30 | 30 | Khớp `daily_recruitment_breakdown`; fixture excluded. |
-| W03 user/entry count | 0 | 0 | W03 fixture namespace dùng synthetic IDs. |
-| 95-check G3 status | — | all pass | `cleanupVerified=true`, `baselineUnchanged=true`. |
-
-**P2-W01 ownership:** classify 26 data sources. **P3 ownership:** do not regress `recruited_total` while the capability layer goes in.
+Total inventory rows: ~124 (vs ~120 in S02, ~80 in S01).
 
 ## Checkpoint (what's left for P3 G1)
 
-1. **T0 decisions** for §11.5 (PENDING_DECISION):
+Không thay đổi so với S02, ngoại trừ các cross-ref mới:
+
+1. **T0 decisions** (§11.5) — vẫn cần:
    - `decision:001` — pilot Basic Auth vs cookie session cutover.
    - `decision:002` — cookie provider (auth contract W02 locks `@supabase/ssr`).
-   - `decision:003` — n8n system identity in capability matrix.
-   - `decision:ai-self-approval` — **new**: AI report self-approval; route-layer enforcement if forbidden (do not reuse `change_review`).
+   - `decision:003` — n8n system identity trong capability matrix.
+   - **`decision:ai-self-approval`** — R1 vẫn `PENDING_DECISION`. G5-DEV01 cung cấp OCC + actor/cursor isolation ở tầng DB; route `api:006` chưa enforce proposer ≠ reviewer. P3 / T0 quyết ở G1.
    - `decision:005` — audit retention window.
    - `decision:006` — middleware vs RPC enforcement.
-2. **T1A inputs** for §11.4 (still-P1.6 route/UI/worker/cutover):
-   - `pending:p1.6:route:001` — first direct-entry API routes.
-   - `pending:p1.6:ui:001` — direct-entry UI.
-   - `pending:p1.6:worker:001` — document uploader worker.
-   - `pending:p1.6:cutover:001` — cookie session per W02.
-3. **P3 implementation** (next P3 W01 tasks):
-   - Centralize `PILOT_ACTOR_REF` → real `actor_ref` (gap:001).
-   - Per-source filter on `/pipeline-check` (gap:002).
-   - Per-row scope on AI report APIs (gap:003).
-   - AI review capability + actor ≠ proposer (gap:004 + `decision:ai-self-approval`).
-   - Read-only role replacement of service-role for page reads (gap:006).
-   - App Nav capability filter (gap:007).
-4. **P2-W01** classify 26 data sources (no P3 ownership, but cited in §11.6).
+2. **T1B inputs** (§11.4) — vẫn `PENDING_P1.6`:
+   - W04-S02 — fixture UI route.
+   - W04-S03 — server / RPC nối tiếp.
+   - Document uploader worker (`direct_entry_append_document_event`).
+   - Cookie session per W02 cutover.
+3. **P3 implementation** (gap:001–007) — unchanged.
 
 ## Git state
 
 - Branch: `feature/p3-w01-access-inventory` (tracking `origin/main`).
-- One additional commit on top of S01 (`7782e54`). Local total: 2 commits ahead of `origin/main`.
-- No merge to main. No deploy.
+- Local total: 3 commits ahead of `origin/main` (S01 + S02 + S02-R1).
+- No merge to main. No deploy. No runtime / schema / migration change.
 
 ## Status
 
-**IMPLEMENTED_FAST_TRACK** — delta refresh reflects P1.6 G3/I02 correctly:
-- DB side: 25 tables + 1 view + 17 RPC → `COVERED_DEV_FAST_TRACK`.
-- Route/UI/worker/cutover: still `PENDING_P1.6` (W04+).
-- Capability split: `change_review` ≠ `entry_privileged_edit` ≠ `ai.report.review`.
-- AI self-approval: separate `decision:ai-self-approval`, **not** inferred from direct-entry rule.
-- Backlog reconciliation: 26 sources, 2 fixtures, recruited total 30 → P2-W01 owns the classification.
-
-No G1 PASS; no policy matrix; no auth implementation. P3 G1 still needs T0 decisions in §11.5.
+**READY_FOR_T0_LIBRARY_AND_ACCESS_BASELINE** — inventory đã nhất quán:
+- P1.6 summary chuẩn (26 + 1 + 17, DEV only).
+- W04-S01 = smoke; production page/API/persistence pending W04-S02/S03.
+- P1.5 = T1A, P1.6 = T1B, P3 = T1C.
+- G5-DEV01 evidence: 4 RPC mới + `ai_report_revisions` append-only + 14/14 acceptance.
+- Capability split: `change_review` ≠ `entry_privileged_edit` ≠ `ai.report.review`; AI self-approval vẫn `PENDING_DECISION`.
+- Không runtime / schema / migration / deploy.
