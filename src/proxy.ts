@@ -63,5 +63,9 @@ export const config = {
     "/pipeline-check/:path*",
     "/api/reporting",
     "/api/reporting/:path*",
+    "/api/ai/reports",
+    "/api/ai/reports/:path*",
+    "/api/ai/worker/run",
+    "/api/ai/worker/:path*",
   ],
 };
