@@ -1,0 +1,137 @@
+{
+  "as_of": "2026-10-02T08:00:00.000Z",
+  "staff": {
+    "auth_subject": "00000000-0000-4000-8000-000000001001",
+    "record": {
+      "auth_subject": "00000000-0000-4000-8000-000000001001",
+      "app_user_id": "00000000-0000-4000-8000-000000000001",
+      "enabled": true,
+      "capabilities": [
+        "entry_create",
+        "entry_own",
+        "submission_create",
+        "change_request_create"
+      ],
+      "recruiter_links": [],
+      "teams": [],
+      "team_scope_grants": [],
+      "all_scope_grants": []
+    }
+  },
+  "leader": {
+    "auth_subject": "00000000-0000-4000-8000-000000001002",
+    "record": {
+      "auth_subject": "00000000-0000-4000-8000-000000001002",
+      "app_user_id": "00000000-0000-4000-8000-000000000002",
+      "enabled": true,
+      "capabilities": [
+        "entry_team",
+        "change_review"
+      ],
+      "recruiter_links": [
+        {
+          "app_user_id": "00000000-0000-4000-8000-000000000002",
+          "recruiter_id": "rcr_synthetic_01",
+          "verified": true,
+          "valid_from": "2026-01-01",
+          "valid_to": null
+        }
+      ],
+      "teams": [
+        {
+          "team_id": "team_synthetic_01",
+          "code": "T01",
+          "display": "Synthetic team 01",
+          "active": true
+        }
+      ],
+      "team_scope_grants": [
+        {
+          "team_id": "team_synthetic_01",
+          "valid_from": "2026-09-01",
+          "valid_to": "2026-10-03"
+        }
+      ],
+      "all_scope_grants": []
+    }
+  },
+  "accounting": {
+    "auth_subject": "00000000-0000-4000-8000-000000001003",
+    "record": {
+      "auth_subject": "00000000-0000-4000-8000-000000001003",
+      "app_user_id": "00000000-0000-4000-8000-000000000003",
+      "enabled": true,
+      "capabilities": [
+        "change_review",
+        "entry_privileged_edit",
+        "employment_status.apply",
+        "payment_view",
+        "payment_edit"
+      ],
+      "recruiter_links": [],
+      "teams": [],
+      "team_scope_grants": [],
+      "all_scope_grants": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null
+        }
+      ]
+    }
+  },
+  "admin": {
+    "auth_subject": "00000000-0000-4000-8000-000000001004",
+    "record": {
+      "auth_subject": "00000000-0000-4000-8000-000000001004",
+      "app_user_id": "00000000-0000-4000-8000-000000000004",
+      "enabled": true,
+      "capabilities": [
+        "entry_create",
+        "entry_own",
+        "entry_team",
+        "entry_admin",
+        "submission_create",
+        "change_request_create",
+        "change_review",
+        "entry_privileged_edit",
+        "employment_status.request",
+        "employment_status.review",
+        "employment_status.apply",
+        "document_upload",
+        "document_view",
+        "payment_view",
+        "payment_edit",
+        "recruiter_master_manage",
+        "team_master_manage",
+        "pii_view",
+        "pii_export",
+        "audit_view",
+        "entry_restore"
+      ],
+      "recruiter_links": [],
+      "teams": [],
+      "team_scope_grants": [],
+      "all_scope_grants": [
+        {
+          "valid_from": "2026-01-01",
+          "valid_to": null
+        }
+      ]
+    }
+  },
+  "disabled": {
+    "auth_subject": "00000000-0000-4000-8000-000000001005",
+    "record": {
+      "auth_subject": "00000000-0000-4000-8000-000000001005",
+      "app_user_id": "00000000-0000-4000-8000-000000000005",
+      "enabled": false,
+      "capabilities": [
+        "entry_admin"
+      ],
+      "recruiter_links": [],
+      "teams": [],
+      "team_scope_grants": [],
+      "all_scope_grants": []
+    }
+  }
+}

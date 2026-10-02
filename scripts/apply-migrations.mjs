@@ -27,8 +27,6 @@ function checksum(text) {
 }
 
 async function main() {
-  const { databaseUrl, projectRef, usesPooler } = await loadSupabaseConfig();
-
   const entries = (await readdir(MIGRATIONS_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
@@ -37,6 +35,16 @@ async function main() {
     throw new Error(`Không tìm thấy file .sql trong ${MIGRATIONS_DIR}`);
   }
 
+  if (dryRun) {
+    for (const name of entries) {
+      await readFile(path.join(MIGRATIONS_DIR, name), "utf8");
+      console.log(`DRY-RUN ${name} (database not contacted; applied status unchecked)`);
+    }
+    console.log(`\nDRY-RUN: ${entries.length} migration(s) listed; no database access or writes.`);
+    return;
+  }
+
+  const { databaseUrl, projectRef, usesPooler } = await loadSupabaseConfig();
   const client = new pg.Client({ connectionString: databaseUrl, ssl: buildSslOptions() });
   await client.connect();
   console.log(`Kết nối DB thành công (project ref: ${projectRef.slice(0, 4)}***, pooler: ${usesPooler ? "có" : "không"})`);
@@ -69,11 +77,6 @@ async function main() {
       }
       console.log(`SKIP    ${name} (đã áp dụng)`);
       skippedCount += 1;
-      continue;
-    }
-
-    if (dryRun) {
-      console.log(`DRY-RUN ${name} (sẽ áp dụng)`);
       continue;
     }
 
