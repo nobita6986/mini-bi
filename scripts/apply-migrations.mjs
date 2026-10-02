@@ -7,41 +7,43 @@
  * - Idempotent: file đã áp dụng sẽ bị bỏ qua; checksum lệch => dừng và báo lỗi.
  *
  * Dùng:
- *   node scripts/apply-migrations.mjs [--dry-run]
+ *   node scripts/apply-migrations.mjs [--dry-run | --offline]
  *   SUPABASE_CONFIG_FILE=<path> node scripts/apply-migrations.mjs
  */
-import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import pg from "pg";
 
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
+import { migrationChecksum, runMigrationValidation } from "./lib/migration-validation.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
 const MIGRATIONS_DIR = path.join(process.cwd(), "supabase", "migrations");
 const dryRun = process.argv.includes("--dry-run");
-
-function checksum(text) {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
+const offline = process.argv.includes("--offline");
 
 async function main() {
+  if (offline || dryRun) {
+    const result = await runMigrationValidation({
+      mode: offline ? "offline" : "dry-run",
+      directory: MIGRATIONS_DIR,
+      loadConfig: loadSupabaseConfig,
+      createClient: (databaseUrl) =>
+        new pg.Client({ connectionString: databaseUrl, ssl: buildSslOptions() }),
+    });
+    if (result.mismatches.length > 0) {
+      throw new Error(`Migration checksum mismatch: ${result.mismatches.join(", ")}`);
+    }
+    return;
+  }
+
   const entries = (await readdir(MIGRATIONS_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
 
   if (entries.length === 0) {
     throw new Error(`Không tìm thấy file .sql trong ${MIGRATIONS_DIR}`);
-  }
-
-  if (dryRun) {
-    for (const name of entries) {
-      await readFile(path.join(MIGRATIONS_DIR, name), "utf8");
-      console.log(`DRY-RUN ${name} (database not contacted; applied status unchecked)`);
-    }
-    console.log(`\nDRY-RUN: ${entries.length} migration(s) listed; no database access or writes.`);
-    return;
   }
 
   const { databaseUrl, projectRef, usesPooler } = await loadSupabaseConfig();
@@ -65,7 +67,7 @@ async function main() {
 
   for (const name of entries) {
     const sql = await readFile(path.join(MIGRATIONS_DIR, name), "utf8");
-    const sum = checksum(sql);
+    const sum = migrationChecksum(sql);
     const previous = appliedMap.get(name);
 
     if (previous !== undefined) {
