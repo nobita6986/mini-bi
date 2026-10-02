@@ -791,7 +791,7 @@ function buildBreakdowns(args: {
   dimensions: readonly Dimension[];
   projectRefs: Map<string, string>;
   totalsCurrent: number;
-}): BreakdownResult {
+}): ValidationResult<BreakdownResult> {
   const result = emptyBreakdown();
   // Tính MỌI dimension để remainder luôn reconcile totals.current, kể cả dimension bị scope loại.
   for (const dimension of DIMENSIONS) {
@@ -804,14 +804,17 @@ function buildBreakdowns(args: {
       args.projectRefs,
       args.totalsCurrent
     );
+    if (built.entries.length > MAX_DRIVER_SUBJECTS) {
+      return fail("DRIVER_SUBJECT_LIMIT_EXCEEDED", dimension + " vượt " + MAX_DRIVER_SUBJECTS + " subject.", "drivers." + dimension);
+    }
     if (args.dimensions.includes(dimension)) {
-      result.drivers[dimension] = built.entries.slice(0, MAX_DRIVER_SUBJECTS);
+      result.drivers[dimension] = built.entries;
       result.concentration[dimension] = built.concentration;
     }
     result.remainder[dimension] = built.remainder;
     result.covered[dimension] = built.covered;
   }
-  return result;
+  return { ok: true, value: result };
 }
 
 function buildTeamDrivers(args: {
@@ -1471,7 +1474,7 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
   const teamBlocked = team.current.availability === "ambiguous" || team.current.availability === "unavailable";
   const projectRefs = buildRefMap("project", scoped.map((row) => row.project_key));
 
-  const breakdown = buildBreakdowns({
+  const breakdownResult = buildBreakdowns({
     currentRows,
     comparableRows,
     comparableReady: totalsComparable !== null,
@@ -1479,6 +1482,8 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
     projectRefs,
     totalsCurrent,
   });
+  if (!breakdownResult.ok) return breakdownResult;
+  const breakdown = breakdownResult.value;
 
   const comparableTeamReady =
     totalsComparable !== null && team.comparable !== null && team.comparable.availability === "available";
@@ -1492,8 +1497,9 @@ export function buildFeaturePacket(input: FeatureEngineInput): EngineResult {
   });
   breakdown.remainder.team = teamBuilt.remainder;
   breakdown.covered.team = teamBuilt.covered;
+  if (teamBuilt.entries.length > MAX_DRIVER_SUBJECTS) return fail("DRIVER_SUBJECT_LIMIT_EXCEEDED", "team vượt " + MAX_DRIVER_SUBJECTS + " subject.", "drivers.team");
   if (dimensions.includes("team")) {
-    breakdown.drivers.team = teamBuilt.entries.slice(0, MAX_DRIVER_SUBJECTS);
+    breakdown.drivers.team = teamBuilt.entries;
     breakdown.concentration.team = teamBuilt.concentration;
   }
 

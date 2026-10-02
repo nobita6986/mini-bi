@@ -83,7 +83,8 @@ export const MAX_BASELINE_MONTHS = 12;
 export const MAX_BASELINE_QUARTERS = 12;
 export const MAX_STABILITY_POINTS = 12;
 export const MAX_DAY_OF_WEEK_WEEKS = 52;
-export const MAX_DRIVER_SUBJECTS = 200;
+/** Trần subject mỗi dimension = trần của contract 0.1; vượt ⇒ fail-closed (không cắt âm thầm). */
+export const MAX_DRIVER_SUBJECTS = 500;
 export const MAX_EVIDENCE_RECORDS = 500;
 
 /**

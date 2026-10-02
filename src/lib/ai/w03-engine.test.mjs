@@ -879,6 +879,18 @@ test("W03 fail-closed: engine input hỏng (team coverage lệch) ⇒ TEAM_COVER
   expectFail(buildFeaturePacket(invalid), "TEAM_COVERAGE_INCONSISTENT", "classification lệch");
 });
 
+test("W03 fail-closed: vượt trần subject mỗi dimension ⇒ lỗi rõ ràng, không cắt âm thầm", () => {
+  const facts = [];
+  for (let i = 0; i < 501; i++) {
+    facts.push(F("2026-10-06", "proj-" + String(i).padStart(3, "0"), "rec-alpha", "hrp", "thời vụ", 1));
+  }
+  expectFail(build({ facts }), "DRIVER_SUBJECT_LIMIT_EXCEEDED", "trần project");
+  // 500 subject vẫn hợp lệ (đúng trần contract).
+  const atLimit = ok(build({ facts: facts.slice(0, 500) }), "đúng trần");
+  assert.equal(atLimit.packet.project_provider_mix.length, 500);
+  assert.equal(atLimit.packet.totals.current, 500);
+});
+
 test("W03 fail-closed: reporting fact validator độc lập với builder", () => {
   const mapped = { ...F("2026-10-06", "p", "rec-alpha", "hrp", "thời vụ", 1), source_ref: "source_01" };
   delete mapped.source_key;
