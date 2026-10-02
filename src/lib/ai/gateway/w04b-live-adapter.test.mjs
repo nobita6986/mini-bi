@@ -1,5 +1,5 @@
 /**
- * P1.5-W04B-S01 — FT0: live provider adapter (OpenAI-compatible) + security fail-closed.
+ * P1.5-W04B-S02A — FT0: live provider adapter (canonical profile + usage truthfulness) + security fail-closed.
  *
  * - Unit: createLiveAdapter với MOCK transport (không gọi mạng/provider thật).
  * - Integration: run-one-job + live adapter (mock outbound) qua createAiReportService.
@@ -9,9 +9,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 
-import { createLiveAdapter, LIVE_ADAPTER_VERSION } from "./live-adapter.mjs";
+import { createLiveAdapter, LIVE_ADAPTER_VERSION, LIVE_PROVIDER_PROFILE } from "./live-adapter.mjs";
 import { buildScriptedAnalysis, resolveProviderAdapter } from "./provider.mjs";
 import { buildProviderPayload } from "./payload.mjs";
+import { buildConnectionProbe } from "../../ai-config/provider-profiles.ts";
 import { getPromptManifest, PROMPT_MANIFEST_V1 } from "./prompt-registry.mjs";
 import { buildPacketFromSource } from "../packet-builder.mjs";
 import { createMemoryAudit, createMemoryQueue } from "./testing/memory-queue.mjs";
@@ -21,6 +22,7 @@ import { DEFAULT_POLICY } from "./limits.mjs";
 
 const PROMPT = getPromptManifest(PROMPT_MANIFEST_V1.prompt_version);
 const SECRET = "sk-test-secret-1234567890";
+const API_BASE = "https://api.example.test/v1";
 
 function analysisJson() {
   return JSON.stringify({
@@ -34,12 +36,12 @@ function analysisJson() {
   });
 }
 
-function envelope(content) {
+function envelope(content, usage = { prompt_tokens: 120, completion_tokens: 80, total_tokens: 200 }) {
   return JSON.stringify({
     id: "chatcmpl-1",
     object: "chat.completion",
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
-    usage: { prompt_tokens: 120, completion_tokens: 80, total_tokens: 200 },
+    usage,
   });
 }
 
@@ -62,7 +64,7 @@ function reqFor(adapter, overrides = {}) {
       model_key: "gpt-4o-mini",
       adapter_version: adapter.adapter_version,
       timeout_ms: 5000,
-      provider_config: { config_id: "pilot-provider", version: 1, provider_profile: "openai-compatible", api_base_url: "https://api.example.test/v1", sanitized_host: "api.example.test" },
+      provider_config: { config_id: "pilot-provider", version: 1, provider_profile: LIVE_PROVIDER_PROFILE, api_base_url: API_BASE, sanitized_host: "api.example.test" },
       credential_secret: SECRET,
     },
     timeoutSignal: undefined,
@@ -88,45 +90,46 @@ test("W04B-U1: resolveProviderAdapter — live cần outbound wiring; thiếu �
   assert.equal(scripted.ok, true);
 });
 
-test("W04B-U2: response hợp lệ ⇒ ok:true + structured + usage từ envelope", async () => {
+test("W04B-U2: response hợp lệ ⇒ ok:true + structured + usage nguyên vẹn từ provider", async () => {
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(envelope(analysisJson())) }));
   const adapter = createLiveAdapter({ outbound, url_policy: { environment: "production", allowedHosts: ["api.example.test"] } });
   const result = await adapter.generateStructured(reqFor(adapter));
   assert.equal(result.ok, true);
   assert.equal(typeof result.raw_text, "string");
   assert.ok(result.structured && result.structured.contract_version === "business-analysis/0.1");
-  assert.equal(result.usage.input_tokens, 120);
-  assert.equal(result.usage.output_tokens, 80);
+  assert.equal(result.usage.input_tokens, 120, "input_tokens giữ đúng số provider trả");
+  assert.equal(result.usage.output_tokens, 80, "output_tokens giữ đúng số provider trả");
   assert.equal(result.model_key, "gpt-4o-mini");
-  // Authorization đúng header, URL đúng path chat/completions.
+  // Canonical profile: path chat/completions + auth Bearer (từ provider-profiles, không hard-code trong adapter).
   assert.equal(outbound.calls[0].url, "https://api.example.test/v1/chat/completions");
   assert.equal(outbound.calls[0].opts.headers.authorization, "Bearer " + SECRET);
+  assert.equal(outbound.calls[0].opts.headers["content-type"], "application/json");
   assert.equal(outbound.calls[0].opts.maxRedirects, 0);
 });
 
-test("W04B-U3: content không phải JSON hợp lệ ⇒ ok:true structured:null (downstream AI_PROVIDER_MALFORMED)", async () => {
+test("W04B-U3: content không phải JSON hợp lệ ⇒ AI_PROVIDER_MALFORMED", async () => {
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(envelope("không phải JSON")) }));
   const adapter = createLiveAdapter({ outbound });
   const result = await adapter.generateStructured(reqFor(adapter));
-  assert.equal(result.ok, true);
-  assert.equal(result.structured, null);
-  assert.equal(typeof result.raw_text, "string");
+  assert.equal(result.ok, false);
+  assert.equal(result.error_code, "AI_PROVIDER_MALFORMED");
+  assert.equal(result.retryable, false);
 });
 
-test("W04B-U4: envelope malformed / thiếu choices[0].message.content ⇒ structured:null", async () => {
+test("W04B-U4: envelope malformed / thiếu choices[0].message.content ⇒ AI_PROVIDER_MALFORMED", async () => {
   const cases = [
-    ["body không phải JSON", "not-json-at-all"],
-    ["thiếu choices", JSON.stringify({ id: "x", usage: {} })],
-    ["choices rỗng", JSON.stringify({ choices: [], usage: {} })],
-    ["message không phải object", JSON.stringify({ choices: [{ message: "x" }] })],
-    ["content không phải chuỗi", JSON.stringify({ choices: [{ message: { content: 42 } }] })],
+    ["body không phải JSON", "this is not json at all"],
+    ["thiếu choices", JSON.stringify({ id: "x", usage: { prompt_tokens: 1, completion_tokens: 1 } })],
+    ["choices rỗng", JSON.stringify({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } })],
+    ["message không phải object", JSON.stringify({ choices: [{ message: "x" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })],
+    ["content không phải chuỗi", JSON.stringify({ choices: [{ message: { content: 42 } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })],
   ];
   for (const [label, body] of cases) {
     const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(body) }));
     const adapter = createLiveAdapter({ outbound });
     const result = await adapter.generateStructured(reqFor(adapter));
-    assert.equal(result.ok, true, label);
-    assert.equal(result.structured, null, label);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.error_code, "AI_PROVIDER_MALFORMED", label);
   }
 });
 
@@ -186,7 +189,7 @@ test("W04B-U8: thiếu api_base_url/secret/model ⇒ AI_CONFIG_REQUIRED (không 
   assert.equal(outbound.calls.length, 0, "không gọi outbound khi thiếu config");
 });
 
-test("W04B-U9: không rò secret/prompt đầy đủ trong kết quả; adapter không console.log", async () => {
+test("W04B-U9: không rò secret/prompt đầy đủ; adapter không raw fetch/console.log/hard-code path/auth/heuristic", async () => {
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(envelope(analysisJson())) }));
   const adapter = createLiveAdapter({ outbound });
   const result = await adapter.generateStructured(reqFor(adapter));
@@ -198,6 +201,52 @@ test("W04B-U9: không rò secret/prompt đầy đủ trong kết quả; adapter 
   assert.ok(!source.includes("console.log"), "adapter không được console.log");
   assert.ok(!source.includes("fetch("), "adapter không được raw fetch");
   assert.ok(!source.includes("https.request"), "adapter không được gọi https trực tiếp");
+  assert.ok(!source.includes("chat/completions"), "adapter không hard-code path chat/completions");
+  assert.ok(!source.includes("Bearer"), "adapter không hard-code auth scheme Bearer");
+  assert.ok(!source.includes("estimateTokens"), "adapter không có heuristic ước lượng token");
+  assert.ok(!source.includes("text.length"), "adapter không ước lượng token theo text.length");
+});
+
+test("W04B-U10: canonical profile — probe và generation cùng endpoint/header", async () => {
+  const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(envelope(analysisJson())) }));
+  const adapter = createLiveAdapter({ outbound, url_policy: { environment: "production", allowedHosts: ["api.example.test"] } });
+  await adapter.generateStructured(reqFor(adapter));
+
+  const probe = buildConnectionProbe({ api_base_url: API_BASE, model: "gpt-4o-mini", secret: SECRET, provider_profile: LIVE_PROVIDER_PROFILE });
+  const gen = outbound.calls[0];
+  assert.equal(gen.url, probe.url, "generation và probe phải cùng endpoint");
+  assert.deepEqual(gen.opts.headers, probe.headers, "generation và probe phải cùng header/auth authority");
+});
+
+test("W04B-U11: usage thiếu/malformed ⇒ AI_PROVIDER_MALFORMED (không usage giả)", async () => {
+  const content = analysisJson();
+  const bad = [
+    ["thiếu usage", JSON.stringify({ id: "x", choices: [{ message: { content } }] })],
+    ["thiếu prompt_tokens", JSON.stringify({ choices: [{ message: { content } }], usage: { completion_tokens: 80 } })],
+    ["thiếu completion_tokens", JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 120 } })],
+    ["prompt_tokens âm", JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: -1, completion_tokens: 80 } })],
+    ["completion_tokens không integer", JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 120, completion_tokens: 1.5 } })],
+    ["usage không phải object", JSON.stringify({ choices: [{ message: { content } }], usage: 42 })],
+  ];
+  for (const [label, body] of bad) {
+    const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(body) }));
+    const adapter = createLiveAdapter({ outbound });
+    const result = await adapter.generateStructured(reqFor(adapter));
+    assert.equal(result.ok, false, label);
+    assert.equal(result.error_code, "AI_PROVIDER_MALFORMED", label);
+    assert.ok(!("usage" in result), label + " không được có usage giả");
+  }
+});
+
+test("W04B-U12: unknown provider_profile ⇒ fail closed trước outbound (0 outbound)", async () => {
+  const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }));
+  const adapter = createLiveAdapter({ outbound });
+  const r = await adapter.generateStructured(reqFor(adapter, {
+    modelConfig: { ...reqFor(adapter).modelConfig, provider_config: { ...reqFor(adapter).modelConfig.provider_config, provider_profile: "anthropic" } },
+  }));
+  assert.equal(r.ok, false);
+  assert.equal(r.error_code, "AI_CONFIG_REQUIRED");
+  assert.equal(outbound.calls.length, 0, "unknown profile phải 0 outbound");
 });
 
 // ---------------------------------------------------------------------------
@@ -226,8 +275,9 @@ function packetFor() {
 
 function liveService({ packet, outbound, providerConfig }) {
   const adapter = createLiveAdapter({ outbound, url_policy: { environment: "production", allowedHosts: ["api.example.test"] } });
+  const queue = createMemoryQueue();
   const service = createAiReportService({
-    queue: createMemoryQueue(),
+    queue,
     audit: createMemoryAudit(),
     providerConfig,
     packetLoader: async () => ({ ok: true, packet }),
@@ -240,7 +290,7 @@ function liveService({ packet, outbound, providerConfig }) {
     timeout: { create: () => ({ signal: undefined, cancel: () => {} }) },
     clock: { nowMs: () => 0 },
   });
-  return service;
+  return { service, queue };
 }
 
 const liveEnqueueArgs = () => ({
@@ -256,9 +306,9 @@ const liveEnqueueArgs = () => ({
 test("W04B-I1: live adapter hợp lệ ⇒ completed + revision + usage đúng provider/model", async () => {
   const packet = packetFor();
   const validAnalysis = buildScriptedAnalysis(buildProviderPayload(packet, PROMPT).payload);
-  const providerConfig = createMemoryProviderConfig({ provider_profile: "openai-compatible", model: "gpt-4o-mini" });
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(envelope(JSON.stringify(validAnalysis))) }));
-  const service = liveService({ packet, outbound, providerConfig });
+  const { service } = liveService({ packet, outbound, providerConfig });
 
   const enqueued = await service.enqueueReport(liveEnqueueArgs());
   assert.equal(enqueued.ok, true);
@@ -266,18 +316,15 @@ test("W04B-I1: live adapter hợp lệ ⇒ completed + revision + usage đúng p
   assert.equal(run.ok, true);
   assert.equal(run.results[0].kind, "completed", JSON.stringify(run.results[0]));
   assert.ok(outbound.calls.length >= 1, "đã gọi provider");
-
-  // Material được đọc đúng (config_id, version) đã đóng băng.
-  assert.ok(providerConfig.calls.material.length >= 1);
   assert.equal(providerConfig.calls.material[0].config_id, "pilot-provider");
   assert.equal(providerConfig.calls.material[0].version, 1);
 });
 
 test("W04B-I2: provider lỗi transient ⇒ retry_scheduled, 0 revision, usage ghi call_outcome", async () => {
   const packet = packetFor();
-  const providerConfig = createMemoryProviderConfig({ provider_profile: "openai-compatible", model: "gpt-4o-mini" });
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
   const outbound = mockOutbound(async () => ({ statusCode: 500, headers: {}, body: Buffer.from("{}") }));
-  const service = liveService({ packet, outbound, providerConfig });
+  const { service } = liveService({ packet, outbound, providerConfig });
 
   const enqueued = await service.enqueueReport(liveEnqueueArgs());
   assert.equal(enqueued.ok, true);
@@ -290,7 +337,7 @@ test("W04B-I3: config không active/verified ⇒ enqueue AI_CONFIG_REQUIRED, 0 j
   const packet = packetFor();
   const providerConfig = createMemoryProviderConfig({ active: null });
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }));
-  const service = liveService({ packet, outbound, providerConfig });
+  const { service } = liveService({ packet, outbound, providerConfig });
   const result = await service.enqueueReport(liveEnqueueArgs());
   assert.equal(result.ok, false);
   assert.equal(result.code, "AI_CONFIG_REQUIRED");
@@ -298,9 +345,9 @@ test("W04B-I3: config không active/verified ⇒ enqueue AI_CONFIG_REQUIRED, 0 j
 
 test("W04B-I4: decrypt/config mismatch ⇒ fail-closed, 0 provider/usage/revision", async () => {
   const packet = packetFor();
-  const providerConfig = createMemoryProviderConfig({ provider_profile: "openai-compatible", model: "gpt-4o-mini", materialFailure: { code: "AI_DECRYPT_FAILED" } });
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini", materialFailure: { code: "AI_DECRYPT_FAILED" } });
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }));
-  const service = liveService({ packet, outbound, providerConfig });
+  const { service } = liveService({ packet, outbound, providerConfig });
 
   const enqueued = await service.enqueueReport(liveEnqueueArgs());
   assert.equal(enqueued.ok, true);
@@ -308,4 +355,27 @@ test("W04B-I4: decrypt/config mismatch ⇒ fail-closed, 0 provider/usage/revisio
   assert.notEqual(run.results[0].kind, "completed");
   assert.equal(run.results[0].error_code, "AI_DECRYPT_FAILED");
   assert.equal(outbound.calls.length, 0, "0 provider call khi decrypt lỗi");
+});
+
+test("W04B-I5: usage thiếu ⇒ AI_PROVIDER_MALFORMED, không revision, không usage giả", async () => {
+  const packet = packetFor();
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
+  // Envelope thiếu usage hoàn toàn.
+  const badBody = JSON.stringify({ id: "x", choices: [{ message: { content: analysisJson() } }] });
+  const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(badBody) }));
+  const { service, queue } = liveService({ packet, outbound, providerConfig });
+
+  const enqueued = await service.enqueueReport(liveEnqueueArgs());
+  assert.equal(enqueued.ok, true);
+  const run = await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
+  assert.equal(run.results[0].kind, "failed", JSON.stringify(run.results[0]));
+  assert.equal(run.results[0].status, "failed_validation");
+  assert.equal(run.results[0].revision_id, null);
+  assert.equal(queue.store.revisions.size, 0, "không revision");
+
+  const usageRows = [...queue.store.usage.values()];
+  assert.equal(usageRows.length, 1, "ghi đúng một usage logical");
+  assert.equal(usageRows[0].call_outcome, "AI_PROVIDER_MALFORMED");
+  assert.equal(usageRows[0].input_tokens, null, "không usage giả input");
+  assert.equal(usageRows[0].output_tokens, null, "không usage giả output");
 });

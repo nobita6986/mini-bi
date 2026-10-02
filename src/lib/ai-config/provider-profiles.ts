@@ -59,6 +59,21 @@ export function joinProviderPath(apiBaseUrl: string, relativePath: string): stri
 }
 
 /**
+ * Dựng header xác thực DUY NHẤT cho cả probe lẫn generation (một authority duy nhất).
+ * Secret phải là chuỗi 1..16384 ký tự; KHÔNG log; client không bao giờ gửi header.
+ */
+export function buildProviderHeaders(profile: ProviderProfile, secret: string): Record<string, string> {
+  if (typeof secret !== "string" || secret.length === 0 || secret.length > 16_384) {
+    throw new SecurityError("INVALID_INPUT");
+  }
+  return {
+    "content-type": "application/json",
+    accept: "application/json",
+    [profile.auth_header]: profile.auth_scheme + " " + secret,
+  };
+}
+
+/**
  * Dựng request kiểm tra kết nối: header xác thực CHỈ ở đây (server), body bounded.
  * Trả về object thuần để test không cần mạng.
  */
@@ -69,17 +84,10 @@ export function buildConnectionProbe(input: {
   provider_profile: string;
 }): { url: string; method: "POST"; headers: Record<string, string>; body: string } {
   const profile = getProviderProfile(input.provider_profile);
-  if (typeof input.secret !== "string" || input.secret.length === 0 || input.secret.length > 16_384) {
-    throw new SecurityError("INVALID_INPUT");
-  }
   return {
     url: joinProviderPath(input.api_base_url, profile.path),
     method: profile.method,
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json",
-      [profile.auth_header]: profile.auth_scheme + " " + input.secret,
-    },
+    headers: buildProviderHeaders(profile, input.secret),
     body: profile.probe_body(input.model),
   };
 }

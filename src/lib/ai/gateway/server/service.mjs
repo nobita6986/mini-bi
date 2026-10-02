@@ -13,8 +13,10 @@ import {
   readProviderConfig,
 } from "./config.mjs";
 import { createSupabaseProviderConfigStore } from "@/lib/ai-config/server/store.mjs";
+import { urlPolicyFromEnv } from "@/lib/ai-config/server/settings.mjs";
 
 import { createSupabaseAuditSink, createSupabaseJobRepository } from "./repository.mjs";
+import { createLiveAdapterFactory } from "./live-wiring.mjs";
 import { EMPTY_MEMBERSHIP_CATALOG, loadFrozenPacket } from "./packet-source.mjs";
 import { SCRIPTED_ADAPTER_VERSION, createScriptedAdapter } from "../provider.mjs";
 import { createDefaultTimeoutSignal } from "../run-one-job.mjs";
@@ -48,6 +50,17 @@ export function createServerAiReportGateway() {
    */
   const providerConfigStore = createSupabaseProviderConfigStore();
 
+  /**
+   * W04B-S02A — adapterFactory: live ⇒ createLiveAdapter(safeOutboundRequest + url_policy đã validate).
+   * Production fail-closed: resolveProviderConfig vẫn chặn live ở env gate (chưa bật); adapter chỉ resolve
+   * khi outbound + url_policy + profile hợp lệ (kiểm ở createLiveAdapter/resolveProviderAdapter).
+   */
+  const adapterFactory = createLiveAdapterFactory({
+    url_policy: urlPolicyFromEnv(process.env),
+    max_response_bytes: policy.config.max_response_bytes,
+    max_request_bytes: policy.config.max_payload_bytes,
+  });
+
   const service = createAiReportService({
     queue: createSupabaseJobRepository(),
     providerConfig: {
@@ -72,6 +85,8 @@ export function createServerAiReportGateway() {
     },
     // A (R1): gate provider — production/preview không bao giờ dùng scripted; fail trước packet/DB/provider.
     providerGate: { ok: true, provider_key: provider.provider_key },
+    // W04B-S02A: resolve adapter qua composition root (live ⇒ safe-outbound; scripted ⇒ deterministic).
+    adapterFactory,
     timeout: { create: createDefaultTimeoutSignal },
     clock: { nowMs: () => Date.now() },
   });
