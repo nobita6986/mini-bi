@@ -72,7 +72,11 @@ test("S01-P7: human review — draft phân biệt, regenerate có xác nhận, a
   assert.ok(source.includes("Lý do tạo lại cần ít nhất 3 ký tự"));
   assert.ok(source.includes("Duyệt"));
   assert.ok(source.includes("Từ chối"));
-  assert.ok(source.includes("chờ RPC duyệt revision (W05)"), "approve/reject phải nêu rõ chờ RPC");
+  // S02: approve/reject được bật theo capability + lifecycle draft; reject có lý do; có xác nhận.
+  assert.ok(source.includes("canApprove") && source.includes("canReject"), "approve/reject phải gate theo capability + lifecycle");
+  assert.ok(source.includes("setReviewOpen(\"approve\")") && source.includes("setReviewOpen(\"reject\")"), "phải có modal xác nhận");
+  assert.ok(source.includes("Lý do từ chối"), "reject phải có textarea lý do");
+  assert.ok(source.includes("submitReview"), "phải có submitReview");
 });
 
 test("S01-P8: report view hiển thị đủ executive/findings/limitations/evidence/comparison", () => {
@@ -119,11 +123,11 @@ test("S01-R1-P3: polling recursive setTimeout — không setInterval, không ch�
   assert.ok(source.includes("if (!open) getController().stopPolling()"), "đóng drawer phải dừng poll");
 });
 
-test("S01-R1-P4: history item cập nhật trạng thái theo poll (không mãi 'requested')", () => {
-  assert.ok(
-    source.includes('(item.job_id === id ? { ...item, status: view.status } : item)'),
-    "poll phải cập nhật status của item history khớp job_id"
-  );
+test("S01-R1-P4: durable history từ server (không còn session-only)", () => {
+  assert.ok(source.includes('"/api/ai/reports/history"'), "phải gọi history server");
+  assert.ok(source.includes("loadHistory("), "phải có loadHistory");
+  assert.ok(source.includes("historyHasMore"), "phải có load-more");
+  assert.ok(!source.includes("setHistory((cur) => [{ job_id"), "session history không còn là nguồn chính");
 });
 
 test("S01-R1-P5: as-of mặc định theo Asia/Ho_Chi_Minh, không dùng toISOString().slice(0,10)", () => {
@@ -148,7 +152,7 @@ test("S01-R2-P1: fallback capability lỗi đặt regenerate=false; UI chỉ ena
   const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
   assert.ok(controller.includes("regenerate: false"), "fallback capability lỗi phải regenerate=false");
   assert.ok(source.includes("capability?.review.regenerate === true"), "nút Tạo lại phải gate theo review.regenerate");
-  assert.ok(source.includes("Tạo lại chưa khả dụng"), "phải có title/lời giải thích khi regenerate=false");
+  assert.ok(source.includes("disabled={busy || !(capability?.review.regenerate === true)}"), "nút Tạo lại phải disable khi regenerate=false");
 });
 
 test("S01-R2-P2: initial focus — mở modal focus drawer ngay (kể cả capability loading)", () => {

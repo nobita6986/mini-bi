@@ -256,7 +256,8 @@ function isUuid(value: unknown): value is string {
 
 function parseAnalysis(raw: unknown): AnalysisView | null {
   if (!isRecord(raw)) return null;
-  if (typeof raw.contract_version !== "string" || raw.contract_version === "") return null;
+  // R2 hardening: contract_version BÊN TRONG phải khớp business-analysis/0.1.
+  if (raw.contract_version !== ANALYSIS_CONTRACT_VERSION) return null;
   if (typeof raw.period_ref !== "string") return null;
   if (typeof raw.executive_analysis !== "string") return null;
   const executiveRefs = raw.executive_evidence_refs;
@@ -366,15 +367,22 @@ export type UiEnqueueView = {
 export function projectEnqueueResponse(raw: unknown): { ok: true; view: UiEnqueueView } | { ok: false; code: "AI_INTERNAL"; message: string } {
   const fail = { ok: false as const, code: "AI_INTERNAL" as const, message: "Phản hồi tạo báo cáo không hợp lệ." };
   if (!isRecord(raw) || raw.ok !== true) return fail;
-  const jobId = raw.job_id ?? raw.request_id;
+  const jobId = raw.job_id;
+  const requestId = raw.request_id;
   if (!isUuid(jobId)) return fail;
+  if (requestId !== null && requestId !== undefined) {
+    if (!isUuid(requestId)) return fail;
+    if (requestId !== jobId) return fail; // job_id và request_id cùng có nhưng khác nhau ⇒ malformed
+  }
   if (typeof raw.status !== "string" || !(JOB_STATUSES as readonly string[]).includes(raw.status)) return fail;
   if (typeof raw.reused !== "boolean" || typeof raw.cache_hit !== "boolean") return fail;
+  if (raw.reused === true && raw.cache_hit === true) return fail; // không thể vừa reused vừa cache_hit
+  if (raw.cache_hit === true && !isUuid(raw.revision_id)) return fail; // cache_hit bắt buộc có revision_id
   return {
     ok: true,
     view: {
       job_id: jobId,
-      request_id: isUuid(raw.request_id) ? raw.request_id : jobId,
+      request_id: requestId ?? jobId,
       status: raw.status,
       reused: raw.reused,
       cache_hit: raw.cache_hit,

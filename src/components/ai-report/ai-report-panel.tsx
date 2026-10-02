@@ -7,6 +7,7 @@ import {
   codeToMessage,
   isFailedJobStatus,
   jobStatusLabel,
+  lifecycleLabel,
   DIMENSIONS,
   DIMENSION_LABELS,
   PERIOD_TYPES,
@@ -21,9 +22,10 @@ import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic
 import { ReportView } from "./report-view";
 
 const POLL_INTERVAL_MS = 2000;
+const HISTORY_PATH = "/api/ai/reports/history";
 
 type JobStatusView = { status: string; error_code: string | null; attempts: number; max_attempts: number };
-type HistoryItem = { job_id: string; status: string };
+type HistoryItem = { job_id: string; status: string; lifecycle_status: string | null; created_at: string; revision_number: number | null };
 
 async function fetchJson(path: string, options: { method: "GET" | "POST"; body?: Record<string, unknown>; signal?: AbortSignal }): Promise<FetchResult> {
   let response: Response;
@@ -88,9 +90,16 @@ export function AiReportPanel() {
   const [jobStatus, setJobStatus] = useState<JobStatusView | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisView | null>(null);
   const [lifecycle, setLifecycle] = useState<string | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [revisionNumber, setRevisionNumber] = useState<number | null>(null);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [regenerateOpen, setRegenerateOpen] = useState(false);
   const [regenerateReason, setRegenerateReason] = useState("");
+  const [reviewOpen, setReviewOpen] = useState<null | "approve" | "reject">(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
@@ -108,15 +117,18 @@ export function AiReportPanel() {
             if (err) {
               setErrorText(err);
               setStatusText("Không đọc được trạng thái báo cáo.");
-              if (id) setHistory((cur) => cur.map((item) => (item.job_id === id ? { ...item, status: "failed_internal" } : item)));
               setJobStatus((cur) => cur ?? { status: "failed_internal", error_code: "AI_INTERNAL", attempts: 0, max_attempts: 1 });
               return;
             }
             if (view) {
               setJobStatus({ status: view.status, error_code: view.error_code, attempts: view.attempts, max_attempts: view.max_attempts });
-              setHistory((cur) => cur.map((item) => (item.job_id === id ? { ...item, status: view.status } : item)));
-              if (view.revision) { setAnalysis(view.revision.analysis); setLifecycle(view.revision.lifecycle_status); }
-              else { setAnalysis(null); setLifecycle(null); }
+              if (view.revision) {
+                setAnalysis(view.revision.analysis);
+                setLifecycle(view.revision.lifecycle_status);
+                setRevisionNumber(view.revision.revision_number);
+              } else {
+                setAnalysis(null); setLifecycle(null); setRevisionNumber(null);
+              }
             }
           },
         },
@@ -134,11 +146,33 @@ export function AiReportPanel() {
     setBusy(false);
   }, []);
 
+  const loadHistory = useCallback(async (cursor: string | null) => {
+    setHistoryLoading(true); setHistoryError("");
+    const qs = cursor ? "?cursor=" + encodeURIComponent(cursor) + "&page_size=20" : "?page_size=20";
+    const result = await fetchJson(HISTORY_PATH + qs, { method: "GET" });
+    setHistoryLoading(false);
+    if (!result.ok) { setHistoryError(result.message); return; }
+    const record = result.record as Record<string, unknown>;
+    const items = Array.isArray(record.items) ? (record.items as HistoryItem[]) : [];
+    const next = typeof record.next_cursor === "string" ? record.next_cursor : null;
+    const hasMore = record.has_more === true;
+    setHistoryItems((cur) => (cursor ? [...cur, ...items] : items));
+    setHistoryCursor(next);
+    setHistoryHasMore(hasMore);
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(() => { void loadCapability(); }, 0);
     return () => clearTimeout(timer);
   }, [open, loadCapability]);
+
+  useEffect(() => {
+    if (open && capability !== null) {
+      const timer = setTimeout(() => { void loadHistory(null); }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [open, capability, loadHistory]);
 
   useEffect(() => { if (!open) getController().stopPolling(); }, [open]);
   useEffect(() => () => getController().stopPolling(), []);
@@ -197,9 +231,9 @@ export function AiReportPanel() {
     const result = await getController().enqueue(body);
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); return; }
-    setJobId(result.jobId); setAnalysis(null); setLifecycle(null);
-    setHistory((cur) => [{ job_id: result.jobId, status: "requested" }, ...cur.filter((item) => item.job_id !== result.jobId)]);
+    setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null);
     setStatusText("Đã gửi yêu cầu. Đang theo dõi trạng thái…");
+    void loadHistory(null);
   }
 
   async function handleRegenerate() {
@@ -211,17 +245,41 @@ export function AiReportPanel() {
     const result = await getController().enqueue({ regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); return; }
-    setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null);
-    setHistory((cur) => [{ job_id: result.jobId, status: "requested" }, ...cur]);
+    setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
+    void loadHistory(null);
+  }
+
+  async function submitReview() {
+    if (busy || !jobId || !revisionNumber || reviewOpen === null) return;
+    if (reviewOpen === "reject" && (rejectReason.trim().length < 3)) { setErrorText("Lý do từ chối cần ít nhất 3 ký tự."); return; }
+    setBusy(true); setErrorText("");
+    const body = { decision: reviewOpen, expected_revision_number: revisionNumber, reason: reviewOpen === "reject" ? rejectReason.trim() : undefined };
+    const result = await fetchJson("/api/ai/reports/" + encodeURIComponent(jobId) + "/review", { method: "POST", body });
+    setBusy(false);
+    if (!result.ok) {
+      setErrorText(result.message);
+      setStatusText(result.code === "AI_VERSION_CONFLICT" || result.code === "AI_REVIEW_CONFLICT" ? "Quyết định không áp dụng được, đang tải lại…" : "Duyệt báo cáo thất bại.");
+      setReviewOpen(null);
+      if (result.code === "AI_VERSION_CONFLICT" || result.code === "AI_REVIEW_CONFLICT") { getController().startPolling(jobId); void loadHistory(null); }
+      return;
+    }
+    const record = result.record as Record<string, unknown>;
+    const newLifecycle = typeof record.lifecycle_status === "string" ? record.lifecycle_status : reviewOpen === "approve" ? "approved" : "rejected";
+    setLifecycle(newLifecycle);
+    setReviewOpen(null); setRejectReason("");
+    setStatusText(newLifecycle === "approved" ? "Đã duyệt báo cáo." : "Đã từ chối báo cáo.");
+    void loadHistory(null);
   }
 
   function openHistoryItem(id: string) {
-    setJobId(id); setAnalysis(null); setLifecycle(null); setStatusText("Đang tải lại báo cáo…");
+    setJobId(id); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setStatusText("Đang tải lại báo cáo…");
     getController().startPolling(id);
   }
 
   const unavailable = capability === null ? null : !capability.ai_enabled ? "Báo cáo AI đang tắt." : !capability.config_ready ? "Chưa có cấu hình provider AI hoạt động (AI unavailable)." : null;
+  const canApprove = capability?.review.approve === true && lifecycle === "draft";
+  const canReject = capability?.review.reject === true && lifecycle === "draft";
 
   return (
     <div className="relative">
@@ -292,6 +350,27 @@ export function AiReportPanel() {
             {analysis ? (
               <section aria-label="Duyệt báo cáo" className="rounded-2xl border border-border bg-surface p-3">
                 <h4 className="text-sm font-semibold text-foreground">Duyệt báo cáo</h4>
+                {reviewOpen ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <p className="text-sm text-foreground">{reviewOpen === "approve" ? "Duyệt bản nháp này?" : "Từ chối bản nháp này?"}</p>
+                    {reviewOpen === "reject" ? (
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="ai-review-reason" className="text-sm font-medium text-foreground">Lý do từ chối</label>
+                        <textarea id="ai-review-reason" value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} rows={2} disabled={busy} className={inputClass} />
+                      </div>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => void submitReview()} disabled={busy} className={primaryButtonClass}>Xác nhận</button>
+                      <button type="button" onClick={() => { setReviewOpen(null); setRejectReason(""); }} disabled={busy} className={secondaryButtonClass}>Hủy</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setReviewOpen("approve")} disabled={busy || !canApprove} className={primaryButtonClass}>Duyệt</button>
+                    <button type="button" onClick={() => setReviewOpen("reject")} disabled={busy || !canReject} className={secondaryButtonClass}>Từ chối</button>
+                    <button type="button" onClick={() => setRegenerateOpen(true)} disabled={busy || !(capability?.review.regenerate === true)} className={secondaryButtonClass}>Tạo lại báo cáo</button>
+                  </div>
+                )}
                 {regenerateOpen ? (
                   <div className="mt-2 flex flex-col gap-2">
                     <label htmlFor="ai-report-reason" className="text-sm font-medium text-foreground">Lý do tạo lại</label>
@@ -301,27 +380,25 @@ export function AiReportPanel() {
                       <button type="button" onClick={() => { setRegenerateOpen(false); setRegenerateReason(""); }} disabled={busy} className={secondaryButtonClass}>Hủy</button>
                     </div>
                   </div>
-                ) : (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => setRegenerateOpen(true)} disabled={busy || !(capability?.review.regenerate === true)} title={capability?.review.regenerate === true ? undefined : "Tạo lại chưa khả dụng"} className={secondaryButtonClass}>Tạo lại báo cáo</button>
-                    <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Duyệt</button>
-                    <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Từ chối</button>
-                  </div>
-                )}
-                <p className="mt-2 text-xs text-muted">Duyệt/từ chối sẽ được bật khi T0 bổ sung RPC duyệt revision (W05).</p>
+                ) : null}
+                {!canApprove && !canReject && lifecycle !== "draft" ? <p className="mt-2 text-xs text-muted">Báo cáo này đã {lifecycleLabel(lifecycle)}.</p> : null}
+                {lifecycle === "draft" && !(canApprove || canReject) ? <p className="mt-2 text-xs text-muted">Duyệt/từ chối sẽ khả dụng khi migration review được áp dụng.</p> : null}
               </section>
             ) : null}
-            {history.length > 0 ? (
-              <section aria-label="Lịch sử báo cáo" className="rounded-2xl border border-border bg-surface p-3">
-                <h3 className="text-sm font-semibold text-foreground">Lịch sử (phiên này)</h3>
+            <section aria-label="Lịch sử báo cáo" className="rounded-2xl border border-border bg-surface p-3">
+              <h3 className="text-sm font-semibold text-foreground">Lịch sử</h3>
+              {historyLoading && historyItems.length === 0 ? (<p className="mt-2 text-sm text-muted">Đang tải lịch sử…</p>) : null}
+              {historyError ? <p className="mt-2 text-sm text-foreground">{historyError}</p> : null}
+              {!historyLoading && !historyError && historyItems.length === 0 ? (<p className="mt-2 text-sm text-muted">Chưa có báo cáo nào.</p>) : null}
+              {historyItems.length > 0 ? (
                 <ul className="mt-2 space-y-1 text-sm">
-                  {history.map((item) => (
-                    <li key={item.job_id}><button type="button" onClick={() => openHistoryItem(item.job_id)} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-foreground hover:bg-surface/80"><span className="font-mono text-xs">{item.job_id.slice(0, 8)}</span><span className="text-muted">{jobStatusLabel(item.status)}</span></button></li>
+                  {historyItems.map((item) => (
+                    <li key={item.job_id}><button type="button" onClick={() => openHistoryItem(item.job_id)} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-foreground hover:bg-surface/80"><span className="font-mono text-xs">{item.job_id.slice(0, 8)}</span><span className="text-muted">{jobStatusLabel(item.status)}{item.lifecycle_status ? " · " + lifecycleLabel(item.lifecycle_status) : ""}</span></button></li>
                   ))}
                 </ul>
-                <p className="mt-1 text-xs text-muted">Lịch sử bền vững qua phiên cần RPC danh sách (chờ T0).</p>
-              </section>
-            ) : null}
+              ) : null}
+              {historyHasMore ? (<button type="button" onClick={() => void loadHistory(historyCursor)} disabled={historyLoading} className={secondaryButtonClass}>Tải thêm</button>) : null}
+            </section>
           </aside>
         </>
       ) : null}

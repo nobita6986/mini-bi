@@ -253,3 +253,31 @@ test("S01-R2-C3: projectEnqueueResponse — UUID/status/boolean bắt buộc, ma
     assert.equal(result.code, "AI_INTERNAL", label);
   }
 });
+
+// ---------------------------------------------------------------------------
+// S02 — Hardening projectEnqueueResponse + inner analysis contract
+// ---------------------------------------------------------------------------
+
+test("S02-C4: projectEnqueueResponse — job_id/request_id khác nhau, reused&&cache_hit, cache_hit thiếu revision bị từ chối", () => {
+  const base = { ok: true, job_id: "11111111-1111-4111-8111-111111111111", status: "requested", reused: false, cache_hit: false, revision_id: null };
+  assert.equal(projectEnqueueResponse(base).ok, true);
+
+  const bad = [
+    ["job_id khác request_id", { ...base, request_id: "22222222-2222-4222-8222-222222222222" }],
+    ["reused && cache_hit", { ...base, reused: true, cache_hit: true, revision_id: "33333333-3333-4333-8333-333333333333" }],
+    ["cache_hit thiếu revision_id", { ...base, cache_hit: true, revision_id: null }],
+    ["cache_hit revision_id không UUID", { ...base, cache_hit: true, revision_id: "x" }],
+  ];
+  for (const [label, raw] of bad) {
+    const result = projectEnqueueResponse(raw);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, "AI_INTERNAL", label);
+  }
+});
+
+test("S02-C5: analysis.contract_version bên trong phải khớp business-analysis/0.1", () => {
+  const good = draftResponse();
+  assert.equal(projectUiReportResponse(good).ok, true);
+  const wrongInner = { ...good, revision: { ...good.revision, analysis: { ...good.revision.analysis, contract_version: "business-analysis/9.9" } } };
+  assert.equal(projectUiReportResponse(wrongInner).ok, false);
+});
