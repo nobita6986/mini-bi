@@ -175,6 +175,10 @@ test("client-supplied actor, role, capability, and scope fields are rejected", (
   for (const payload of [
     { app_user_id: fixture.admin.record.app_user_id },
     { auth_subject: fixture.admin.auth_subject },
+    { actor: { auth_subject: fixture.admin.auth_subject } },
+    { rows: [{ worker: [{ created_by_user_id: fixture.admin.record.app_user_id }] }] },
+    { rows: [{ team_id: "94000000-0000-4000-8000-000000000001" }] },
+    { rows: [{ provider_type: "vendor" }] },
     { role: "admin" },
     { capabilities: ["entry_admin"] },
     { scope: { kind: "all", reference: "all" } },
