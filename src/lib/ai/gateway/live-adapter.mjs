@@ -1,39 +1,24 @@
 /**
- * P1.5-W04B-S01 — Live provider adapter (OpenAI-compatible), THUẦN + dependency injection.
+ * P1.5-W04B-S02A — Live provider adapter, THUẦN + dependency injection.
  *
  * - Gọi provider QUA outbound boundary được inject (production = safe-outbound; test = mock transport).
- * - KHÔNG dùng raw fetch ở đây; KHÔNG import server-only; KHÔNG log API key/prompt đầy đủ/raw response.
- * - Strict projection envelope OpenAI; lỗi provider được sanitize thành mã gateway ĐÓNG.
+ * - KHÔNG dùng raw fetch; KHÔNG import server-only; KHÔNG log API key/prompt đầy đủ/raw response.
+ * - CANONICAL PROFILE: path/auth header/scheme lấy từ getProviderProfile() + joinProviderPath() +
+ *   buildProviderHeaders() (provider-profiles.ts) — KHÔNG hard-code endpoint/auth ở đây.
+ * - USAGE TRUTHFULNESS: successful response BẮT BUỘC có integer prompt_tokens/completion_tokens >= 0;
+ *   thiếu/malformed ⇒ AI_PROVIDER_MALFORMED (không revision, không usage giả, không heuristic).
  * - Redirect/DNS/private-IP/rebinding protections do safe-outbound đảm nhiệm (adapter KHÔNG bypass).
  */
 
 import { canonicalJson } from "../engine-shared.mjs";
 import { MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES } from "./limits.mjs";
+import { buildProviderHeaders, getProviderProfile, joinProviderPath } from "../../ai-config/provider-profiles.ts";
 
 export const LIVE_ADAPTER_VERSION = "live-adapter/0.1";
+/** Profile live duy nhất được hỗ trợ hiện tại (authority thực sự là provider-profiles.ts). */
 export const LIVE_PROVIDER_PROFILE = "openai-compatible";
 
-const OPENAI_PATH = "chat/completions";
 const PROVIDER_VERSION = "live-openai-compatible/0.1";
-
-function estimateTokens(text) {
-  return Math.max(1, Math.ceil((typeof text === "string" ? text.length : 0) / 4));
-}
-
-/** Nối path vào base URL đã chuẩn hoá mà KHÔNG nuốt path sẵn có (vd: /v1). Trả null nếu sai origin. */
-function joinChatCompletionsPath(apiBaseUrl) {
-  try {
-    const base = new URL(apiBaseUrl);
-    if (base.protocol !== "https:" && base.protocol !== "http:") return null;
-    if (base.search !== "" || base.hash !== "") return null;
-    if (!base.pathname.endsWith("/")) base.pathname = base.pathname + "/";
-    const joined = new URL(OPENAI_PATH, base);
-    if (joined.origin !== base.origin) return null;
-    return joined.href;
-  } catch {
-    return null;
-  }
-}
 
 /** Strict projection: lấy content của choices[0].message.content (chuỗi), ngược lại null. */
 function extractContent(envelope) {
@@ -48,15 +33,15 @@ function extractContent(envelope) {
   return typeof content === "string" ? content : null;
 }
 
-/** Strict projection usage; thiếu/sai kiểu ⇒ ước lượng (không bao giờ âm/null giả). */
-function extractUsage(envelope, bodyText, payloadText) {
+/** Strict usage: BẮT BUỘC integer prompt_tokens/completion_tokens >= 0; thiếu/malformed ⇒ null. */
+function extractUsageStrict(envelope) {
   const usage = envelope && typeof envelope === "object" && !Array.isArray(envelope) ? envelope.usage : null;
-  const promptTokens = usage && Number.isInteger(usage.prompt_tokens) && usage.prompt_tokens >= 0 ? usage.prompt_tokens : null;
-  const completionTokens = usage && Number.isInteger(usage.completion_tokens) && usage.completion_tokens >= 0 ? usage.completion_tokens : null;
-  return {
-    input_tokens: promptTokens ?? estimateTokens(payloadText),
-    output_tokens: completionTokens ?? estimateTokens(bodyText),
-  };
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  const promptTokens = usage.prompt_tokens;
+  const completionTokens = usage.completion_tokens;
+  if (!Number.isInteger(promptTokens) || promptTokens < 0) return null;
+  if (!Number.isInteger(completionTokens) || completionTokens < 0) return null;
+  return { input_tokens: promptTokens, output_tokens: completionTokens };
 }
 
 /** Mã hoá lỗi provider (HTTP) thành mã gateway ĐÓNG. */
@@ -121,15 +106,22 @@ export function createLiveAdapter(options = {}) {
       const providerConfig = modelConfig.provider_config ?? {};
       const apiBaseUrl = providerConfig.api_base_url;
       const secret = modelConfig.credential_secret;
-      const profile = providerConfig.provider_profile;
+      const profileId = providerConfig.provider_profile;
       if (typeof apiBaseUrl !== "string" || apiBaseUrl === "" || typeof secret !== "string" || secret === "") {
         return fail("AI_CONFIG_REQUIRED", false, "live:config");
       }
-      if (profile !== LIVE_PROVIDER_PROFILE) return fail("AI_CONFIG_REQUIRED", false, "live:profile");
       if (modelKey === "") return fail("AI_CONFIG_REQUIRED", false, "live:model");
 
-      const url = joinChatCompletionsPath(apiBaseUrl);
-      if (url === null) return fail("AI_PROVIDER_PERMANENT", false, "live:url");
+      // Canonical profile authority: profile không được hỗ trợ ⇒ fail closed TRƯỚC outbound.
+      let url;
+      let headers;
+      try {
+        const profile = getProviderProfile(profileId);
+        url = joinProviderPath(apiBaseUrl, profile.path);
+        headers = buildProviderHeaders(profile, secret);
+      } catch {
+        return fail("AI_CONFIG_REQUIRED", false, "live:profile");
+      }
 
       const bodyObj = {
         model: modelKey,
@@ -146,12 +138,6 @@ export function createLiveAdapter(options = {}) {
       if (bodyBytes > maxRequestBytes) {
         return fail("AI_PROVIDER_PERMANENT", false, "live:request-too-large");
       }
-
-      const headers = {
-        "content-type": "application/json",
-        accept: "application/json",
-        authorization: "Bearer " + secret,
-      };
 
       let response;
       try {
@@ -184,23 +170,23 @@ export function createLiveAdapter(options = {}) {
         return fail(mapped.code, mapped.retryable, "live:http_" + response.statusCode);
       }
 
-      // Strict projection envelope OpenAI (malformed ⇒ structured:null ⇒ downstream AI_PROVIDER_MALFORMED).
+      // Strict projection: envelope/content/usage/content-json malformed ⇒ AI_PROVIDER_MALFORMED (không revision, không usage giả).
       let envelope = null;
       try {
         envelope = JSON.parse(bodyText);
       } catch {
-        envelope = null;
+        return fail("AI_PROVIDER_MALFORMED", false, "live:envelope");
       }
       const content = extractContent(envelope);
-      const usage = extractUsage(envelope, content === null ? bodyText : content, bodyStr);
-      if (content === null) {
-        return { ok: true, raw_text: bodyText, structured: null, usage, latency_ms: latencyMs(), provider_version: PROVIDER_VERSION, model_key: modelKey };
-      }
+      if (content === null) return fail("AI_PROVIDER_MALFORMED", false, "live:content");
+      const usage = extractUsageStrict(envelope);
+      if (usage === null) return fail("AI_PROVIDER_MALFORMED", false, "live:usage");
+
       let structured = null;
       try {
         structured = JSON.parse(content);
       } catch {
-        structured = null;
+        return fail("AI_PROVIDER_MALFORMED", false, "live:content-json");
       }
       return { ok: true, raw_text: content, structured, usage, latency_ms: latencyMs(), provider_version: PROVIDER_VERSION, model_key: modelKey };
     },
