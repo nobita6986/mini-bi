@@ -8,8 +8,7 @@
         "recruiter_id": "rcr_003",
         "reporting_key": "rec-bravo",
         "valid_from": "2026-10-01",
-        "valid_to": null,
-        "active": true
+        "valid_to": null
       }
     ]
   },
@@ -38,9 +37,7 @@
     "recruiter_refs": [
       "recruiter_01"
     ],
-    "team_refs": [
-      "team_01"
-    ],
+    "team_refs": [],
     "classification_counts": {
       "mapped": 1,
       "unmapped": 0,
@@ -50,5 +47,5 @@
       "RECRUITER_ALIAS_AMBIGUOUS"
     ]
   },
-  "note": "Có ambiguous > 0 ⇒ availability = ambiguous và KHÔNG phát team subject nào (teams_in_scope = 0)."
+  "note": "R1: có ambiguous > 0 ⇒ availability = ambiguous: redact TOÀN BỘ team ref (mọi fact team_ref = null, ref_map.teams rỗng, teams_in_scope = 0); recruiter ref vẫn giữ."
 }

@@ -1,0 +1,45 @@
+{
+  "case_id": "c16",
+  "title": "Team inactive vẫn map fact lịch sử",
+  "catalog_extends": {
+    "team_memberships": [
+      {
+        "membership_id": "tm_101",
+        "recruiter_id": "rcr_008",
+        "team_id": "team_004",
+        "valid_from": "2026-01-01",
+        "valid_to": null
+      }
+    ]
+  },
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-golf",
+      "provider_type_key": "vendor",
+      "recruited_count": 4
+    }
+  ],
+  "expected": {
+    "availability": "available",
+    "mapped_recruited_count": 4,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 1,
+    "teams_in_scope": 1,
+    "reason_code": "TEAM_MAPPING_AVAILABLE",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [
+      "team_01"
+    ],
+    "classification_counts": {
+      "mapped": 1,
+      "unmapped": 0,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": []
+  },
+  "note": "R1: team_004 có active = false (chỉ là hiệu lực hiện tại/UI). Fact lịch sử vẫn map được sang team đó vì resolve chỉ dựa trên interval [valid_from, valid_to)."
+}

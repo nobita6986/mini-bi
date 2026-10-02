@@ -11,11 +11,16 @@
 
 import {
   IDENTITY_REASON,
+  PROVIDER_FACT_KEYS,
   QUALITY_REASON_CODES,
   SENTINEL_KEYS,
   TEAM_MAPPING_REASON,
   compareStable,
   formatOpaqueRef,
+  isNonEmptyId,
+  isNonNegativeInteger,
+  isRealCalendarDate,
+  isValidInterval,
   isWithinInterval,
   normalizeReportingKey,
   resolvedFactSortKey,
@@ -23,9 +28,12 @@ import {
 import type {
   IdentityClassification,
   IdentityFactInput,
-  IdentityProjection,
+  IdentityProjectionResult,
   IdentityQualityIssue,
   IdentityRefMap,
+  IdentityValidationCode,
+  IdentityValidationFailure,
+  IdentityValidationResult,
   MembershipCatalog,
   ProjectedIdentityFact,
   ProviderMembership,
@@ -36,6 +44,158 @@ import type {
   TeamCoverage,
   TeamMembership,
 } from "./contracts";
+
+const PROVIDER_MEMBERSHIP_TYPES = ["hrp", "vendor"];
+const AUDIT_ENTITIES = ["recruiter", "team", "recruiter_alias", "provider_membership", "team_membership"];
+
+function fail(code: IdentityValidationCode, message: string, path: string): IdentityValidationFailure {
+  return { ok: false, code, message, path };
+}
+
+/**
+ * Validate catalog TRƯỚC khi resolve (fail-closed).
+ *
+ * Overlap alias/team membership KHÔNG bị sửa hay ưu tiên ở đây: resolver vẫn phân loại
+ * `ambiguous`. Hàm này chỉ chặn input KHÔNG THỂ resolve đúng.
+ */
+export function validateMembershipCatalog(catalog: MembershipCatalog): IdentityValidationResult {
+  if (!catalog || typeof catalog !== "object") return fail("CATALOG_NOT_OBJECT", "Catalog không phải object.", "catalog");
+  const lists = [
+    catalog.recruiters,
+    catalog.aliases,
+    catalog.teams,
+    catalog.provider_memberships,
+    catalog.team_memberships,
+    catalog.audit,
+  ];
+  if (lists.some((list) => !Array.isArray(list))) {
+    return fail("CATALOG_NOT_OBJECT", "Catalog thiếu mảng bắt buộc.", "catalog");
+  }
+
+  const recruiterIds = new Set<string>();
+  for (let i = 0; i < catalog.recruiters.length; i++) {
+    const row = catalog.recruiters[i];
+    const path = `recruiters[${i}]`;
+    if (!isNonEmptyId(row?.recruiter_id)) return fail("CATALOG_ID_EMPTY", "recruiter_id rỗng.", path + ".recruiter_id");
+    if (recruiterIds.has(row.recruiter_id)) {
+      return fail("CATALOG_ID_DUPLICATE", "recruiter_id trùng: " + row.recruiter_id + ".", path + ".recruiter_id");
+    }
+    recruiterIds.add(row.recruiter_id);
+    if (typeof row.active !== "boolean") return fail("CATALOG_INVALID_FLAG", "recruiter.active phải là boolean.", path + ".active");
+  }
+
+  const teamIds = new Set<string>();
+  for (let i = 0; i < catalog.teams.length; i++) {
+    const row = catalog.teams[i];
+    const path = `teams[${i}]`;
+    if (!isNonEmptyId(row?.team_id)) return fail("CATALOG_ID_EMPTY", "team_id rỗng.", path + ".team_id");
+    if (teamIds.has(row.team_id)) return fail("CATALOG_ID_DUPLICATE", "team_id trùng: " + row.team_id + ".", path + ".team_id");
+    teamIds.add(row.team_id);
+    if (typeof row.active !== "boolean") return fail("CATALOG_INVALID_FLAG", "team.active phải là boolean.", path + ".active");
+  }
+
+  const aliasIds = new Set<string>();
+  for (let i = 0; i < catalog.aliases.length; i++) {
+    const row = catalog.aliases[i];
+    const path = `aliases[${i}]`;
+    if (!isNonEmptyId(row?.alias_id)) return fail("CATALOG_ID_EMPTY", "alias_id rỗng.", path + ".alias_id");
+    if (aliasIds.has(row.alias_id)) return fail("CATALOG_ID_DUPLICATE", "alias_id trùng: " + row.alias_id + ".", path + ".alias_id");
+    aliasIds.add(row.alias_id);
+    if (!recruiterIds.has(row.recruiter_id)) {
+      return fail("CATALOG_DANGLING_RECRUITER", "alias trỏ recruiter không tồn tại: " + row.recruiter_id + ".", path + ".recruiter_id");
+    }
+    const normalized = normalizeReportingKey(row.reporting_key);
+    if (normalized === null || normalized !== row.reporting_key) {
+      return fail(
+        "CATALOG_INVALID_REPORTING_KEY",
+        "reporting_key phải đã normalize (trim/lowercase) và không rỗng.",
+        path + ".reporting_key"
+      );
+    }
+    if (SENTINEL_KEYS.includes(row.reporting_key)) {
+      return fail("CATALOG_INVALID_REPORTING_KEY", "reporting_key không được là sentinel key.", path + ".reporting_key");
+    }
+    if (!isValidInterval(row.valid_from, row.valid_to)) {
+      return fail("CATALOG_INVALID_INTERVAL", "alias cần valid_from hợp lệ và valid_to > valid_from (hoặc null).", path + ".valid_to");
+    }
+  }
+
+  const providerIds = new Set<string>();
+  for (let i = 0; i < catalog.provider_memberships.length; i++) {
+    const row = catalog.provider_memberships[i];
+    const path = `provider_memberships[${i}]`;
+    if (!isNonEmptyId(row?.membership_id)) return fail("CATALOG_ID_EMPTY", "membership_id rỗng.", path + ".membership_id");
+    if (providerIds.has(row.membership_id)) {
+      return fail("CATALOG_ID_DUPLICATE", "membership_id trùng: " + row.membership_id + ".", path + ".membership_id");
+    }
+    providerIds.add(row.membership_id);
+    if (!recruiterIds.has(row.recruiter_id)) {
+      return fail("CATALOG_DANGLING_RECRUITER", "provider membership trỏ recruiter không tồn tại: " + row.recruiter_id + ".", path + ".recruiter_id");
+    }
+    if (!PROVIDER_MEMBERSHIP_TYPES.includes(row.provider_type)) {
+      return fail("CATALOG_INVALID_PROVIDER_TYPE", "provider_type không hợp lệ: " + String(row.provider_type) + ".", path + ".provider_type");
+    }
+    if (!isValidInterval(row.valid_from, row.valid_to)) {
+      return fail("CATALOG_INVALID_INTERVAL", "provider membership cần valid_from hợp lệ và valid_to > valid_from (hoặc null).", path + ".valid_to");
+    }
+  }
+
+  const teamMembershipIds = new Set<string>();
+  for (let i = 0; i < catalog.team_memberships.length; i++) {
+    const row = catalog.team_memberships[i];
+    const path = `team_memberships[${i}]`;
+    if (!isNonEmptyId(row?.membership_id)) return fail("CATALOG_ID_EMPTY", "membership_id rỗng.", path + ".membership_id");
+    if (teamMembershipIds.has(row.membership_id)) {
+      return fail("CATALOG_ID_DUPLICATE", "membership_id trùng: " + row.membership_id + ".", path + ".membership_id");
+    }
+    teamMembershipIds.add(row.membership_id);
+    if (!recruiterIds.has(row.recruiter_id)) {
+      return fail("CATALOG_DANGLING_RECRUITER", "team membership trỏ recruiter không tồn tại: " + row.recruiter_id + ".", path + ".recruiter_id");
+    }
+    if (!teamIds.has(row.team_id)) {
+      return fail("CATALOG_DANGLING_TEAM", "team membership trỏ team không tồn tại: " + row.team_id + ".", path + ".team_id");
+    }
+    if (!isValidInterval(row.valid_from, row.valid_to)) {
+      return fail("CATALOG_INVALID_INTERVAL", "team membership cần valid_from hợp lệ và valid_to > valid_from (hoặc null).", path + ".valid_to");
+    }
+  }
+
+  const changeIds = new Set<string>();
+  for (let i = 0; i < catalog.audit.length; i++) {
+    const row = catalog.audit[i];
+    const path = `audit[${i}]`;
+    if (!isNonEmptyId(row?.change_id)) return fail("CATALOG_INVALID_AUDIT", "change_id rỗng.", path + ".change_id");
+    if (changeIds.has(row.change_id)) return fail("CATALOG_INVALID_AUDIT", "change_id trùng: " + row.change_id + ".", path + ".change_id");
+    changeIds.add(row.change_id);
+    if (!AUDIT_ENTITIES.includes(row.entity)) return fail("CATALOG_INVALID_AUDIT", "entity không hợp lệ: " + String(row.entity) + ".", path + ".entity");
+    if (!isNonEmptyId(row.ref)) return fail("CATALOG_INVALID_AUDIT", "ref rỗng.", path + ".ref");
+    if (!isNonEmptyId(row.after_revision_ref)) return fail("CATALOG_INVALID_AUDIT", "after_revision_ref rỗng.", path + ".after_revision_ref");
+    if (!isNonEmptyId(row.actor_ref)) return fail("CATALOG_INVALID_AUDIT", "actor_ref rỗng.", path + ".actor_ref");
+    if (!isRealCalendarDate(row.effective_date)) return fail("CATALOG_INVALID_DATE", "effective_date không phải ngày hợp lệ.", path + ".effective_date");
+  }
+
+  return { ok: true };
+}
+
+/** Validate fact input (fail-closed). Sentinel key vẫn hợp lệ — đó là dữ liệu, không phải lỗi contract. */
+export function validateIdentityFacts(facts: readonly IdentityFactInput[]): IdentityValidationResult {
+  if (!Array.isArray(facts)) return fail("FACT_INVALID_DATE", "facts phải là mảng.", "facts");
+  for (let i = 0; i < facts.length; i++) {
+    const row = facts[i];
+    const path = `facts[${i}]`;
+    if (!isRealCalendarDate(row?.business_date)) return fail("FACT_INVALID_DATE", "business_date không phải ngày hợp lệ.", path + ".business_date");
+    if (!isNonNegativeInteger(row.recruited_count)) {
+      return fail("FACT_INVALID_COUNT", "recruited_count phải là integer >= 0.", path + ".recruited_count");
+    }
+    if (typeof row.provider_type_key !== "string" || !PROVIDER_FACT_KEYS.includes(row.provider_type_key)) {
+      return fail("FACT_INVALID_PROVIDER_KEY", "provider_type_key không thuộc catalog đã khóa: " + String(row.provider_type_key) + ".", path + ".provider_type_key");
+    }
+    if (typeof row.recruiter_key !== "string") {
+      return fail("FACT_INVALID_RECRUITER_KEY", "recruiter_key phải là string.", path + ".recruiter_key");
+    }
+  }
+  return { ok: true };
+}
 
 function groupBy<T, K>(rows: readonly T[], keyOf: (row: T) => K | null): Map<K, T[]> {
   const map = new Map<K, T[]>();
@@ -59,15 +219,18 @@ function groupBy<T, K>(rows: readonly T[], keyOf: (row: T) => K | null): Map<K, 
  *
  * Provider membership chỉ tạo quality issue (PROVIDER_MISMATCH / *_NOT_FOUND / *_AMBIGUOUS);
  * provider fact KHÔNG bao giờ bị overwrite và không đổi classification.
+ *
+ * Lịch sử là BẤT BIẾN: alias được lọc DUY NHẤT theo interval [valid_from, valid_to).
+ * Không có cờ `active` nào tham gia resolve, nên đóng/mở hiệu lực hiện tại không viết lại
+ * quá khứ. Recruiter/team inactive vẫn map được fact lịch sử.
+ *
+ * Precondition: catalog/facts đã hợp lệ. Dùng `projectIdentity` để có fail-closed.
  */
 export function resolveIdentityFacts(
   catalog: MembershipCatalog,
   facts: readonly IdentityFactInput[]
 ): ResolvedIdentityFact[] {
-  const aliasByKey = groupBy<RecruiterAlias, string>(
-    catalog.aliases.filter((a) => a.active),
-    (a) => a.reporting_key
-  );
+  const aliasByKey = groupBy<RecruiterAlias, string>(catalog.aliases, (a) => a.reporting_key);
   const teamsByRecruiter = groupBy<TeamMembership, string>(catalog.team_memberships, (m) => m.recruiter_id);
   const providersByRecruiter = groupBy<ProviderMembership, string>(catalog.provider_memberships, (m) => m.recruiter_id);
 
@@ -163,12 +326,20 @@ function resolveOne(
 /**
  * Opaque ref deterministic TRONG cùng frozen packet: sort theo stable id (không theo
  * thứ tự DB/input) rồi đánh số 01, 02, ...
+ *
+ * `blockTeams`: khi team mapping ambiguous, KHÔNG cấp team ref nào ⇒ phía packet
+ * không thể dựng team subject/driver từ dữ liệu mơ hồ.
  */
-export function buildIdentityRefMap(resolved: readonly ResolvedIdentityFact[]): IdentityRefMap {
+export function buildIdentityRefMap(
+  resolved: readonly ResolvedIdentityFact[],
+  options: { blockTeams?: boolean } = {}
+): IdentityRefMap {
   const recruiterIds = [...new Set(resolved.map((r) => r.recruiter_id).filter((x): x is string => x !== null))].sort(
     compareStable
   );
-  const teamIds = [...new Set(resolved.map((r) => r.team_id).filter((x): x is string => x !== null))].sort(compareStable);
+  const teamIds = options.blockTeams
+    ? []
+    : [...new Set(resolved.map((r) => r.team_id).filter((x): x is string => x !== null))].sort(compareStable);
   return {
     recruiters: recruiterIds.map((id, i) => ({ ref: formatOpaqueRef("recruiter", i + 1), stable_id: id })),
     teams: teamIds.map((id, i) => ({ ref: formatOpaqueRef("team", i + 1), stable_id: id })),
@@ -230,36 +401,60 @@ export function buildIdentityQualityIssues(resolved: readonly ResolvedIdentityFa
 }
 
 /**
- * Projection đầy đủ: resolve -> coverage -> opaque refs.
- * `facts` (packet-facing) chỉ chứa opaque ref; `ref_map` giữ stable id cho server/UI.
+ * Projection đầy đủ: validate -> resolve -> coverage -> opaque refs.
+ *
+ * FAIL-CLOSED: input không hợp lệ trả lỗi rõ ràng (`ok: false` + code + path), KHÔNG bao giờ
+ * trả projection "thành công" hay tổng 0 giả.
+ *
+ * REDACTION: khi team mapping `ambiguous`, MỌI packet-facing `team_ref` bị đặt null và
+ * `ref_map.teams` rỗng — kể cả những fact riêng lẻ trước đó resolve được team.
+ * Recruiter ref vẫn giữ nếu recruiter identity không mơ hồ.
+ * Stable team id chỉ còn trong `server_diagnostics` (ops-only, không packet-facing).
  */
-export function projectIdentity(catalog: MembershipCatalog, facts: readonly IdentityFactInput[]): IdentityProjection {
+export function projectIdentity(
+  catalog: MembershipCatalog,
+  facts: readonly IdentityFactInput[]
+): IdentityProjectionResult {
+  const catalogCheck = validateMembershipCatalog(catalog);
+  if (!catalogCheck.ok) return catalogCheck;
+  const factCheck = validateIdentityFacts(facts);
+  if (!factCheck.ok) return factCheck;
+
   const resolved = resolveIdentityFacts(catalog, facts);
-  const refMap = buildIdentityRefMap(resolved);
+  const coverage = buildTeamCoverage(resolved);
+  const ambiguousBlocked = coverage.availability === "ambiguous";
+  const refMap = buildIdentityRefMap(resolved, { blockTeams: ambiguousBlocked });
   const recruiterRef = new Map(refMap.recruiters.map((e) => [e.stable_id, e.ref]));
   const teamRef = new Map(refMap.teams.map((e) => [e.stable_id, e.ref]));
 
   const projected: ProjectedIdentityFact[] = resolved.map((row) => ({
     business_date: row.business_date,
     recruiter_ref: row.recruiter_id === null ? null : recruiterRef.get(row.recruiter_id) ?? null,
-    team_ref: row.team_id === null ? null : teamRef.get(row.team_id) ?? null,
+    team_ref: ambiguousBlocked || row.team_id === null ? null : teamRef.get(row.team_id) ?? null,
     provider_type_key: row.provider_type_key,
     recruited_count: row.recruited_count,
     classification: row.classification,
   }));
 
-  const coverage = buildTeamCoverage(resolved);
+  const observedTeamIds = [
+    ...new Set(resolved.map((row) => row.team_id).filter((id): id is string => id !== null)),
+  ].sort(compareStable);
 
   return {
-    facts: projected,
-    team_mapping: coverage,
-    ref_map: refMap,
-    quality_issues: buildIdentityQualityIssues(resolved),
-    totals: {
-      recruited_total: coverage.mapped_recruited_count + coverage.unmapped_recruited_count + coverage.ambiguous_recruited_count,
-      mapped_recruited_count: coverage.mapped_recruited_count,
-      unmapped_recruited_count: coverage.unmapped_recruited_count,
-      ambiguous_recruited_count: coverage.ambiguous_recruited_count,
+    ok: true,
+    projection: {
+      facts: projected,
+      team_mapping: coverage,
+      ref_map: refMap,
+      server_diagnostics: { ambiguous_blocked: ambiguousBlocked, observed_team_ids: observedTeamIds },
+      quality_issues: buildIdentityQualityIssues(resolved),
+      totals: {
+        recruited_total:
+          coverage.mapped_recruited_count + coverage.unmapped_recruited_count + coverage.ambiguous_recruited_count,
+        mapped_recruited_count: coverage.mapped_recruited_count,
+        unmapped_recruited_count: coverage.unmapped_recruited_count,
+        ambiguous_recruited_count: coverage.ambiguous_recruited_count,
+      },
     },
   };
 }

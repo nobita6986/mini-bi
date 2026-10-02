@@ -73,64 +73,56 @@
       "recruiter_id": "rcr_001",
       "reporting_key": "rec-alpha",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     },
     {
       "alias_id": "alias_002",
       "recruiter_id": "rcr_002",
       "reporting_key": "rec-bravo",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     },
     {
       "alias_id": "alias_003",
       "recruiter_id": "rcr_003",
       "reporting_key": "rec-charlie",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     },
     {
       "alias_id": "alias_004",
       "recruiter_id": "rcr_004",
       "reporting_key": "rec-delta",
       "valid_from": "2026-01-01",
-      "valid_to": "2026-06-30",
-      "active": true
+      "valid_to": "2026-06-30"
     },
     {
       "alias_id": "alias_005",
       "recruiter_id": "rcr_005",
       "reporting_key": "rec-alpha-2",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     },
     {
       "alias_id": "alias_006",
       "recruiter_id": "rcr_006",
       "reporting_key": "rec-echo",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     },
     {
       "alias_id": "alias_007",
       "recruiter_id": "rcr_007",
       "reporting_key": "rec-foxtrot",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     },
     {
       "alias_id": "alias_008",
       "recruiter_id": "rcr_008",
       "reporting_key": "rec-golf",
       "valid_from": "2026-01-01",
-      "valid_to": null,
-      "active": true
+      "valid_to": null
     }
   ],
   "provider_memberships": [

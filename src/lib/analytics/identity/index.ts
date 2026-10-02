@@ -11,4 +11,6 @@ export {
   projectIdentity,
   resolveIdentityFacts,
   resolveRefForDisplay,
+  validateIdentityFacts,
+  validateMembershipCatalog,
 } from "./projection";

@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
 
-import { projectIdentity, resolveIdentityFacts, buildTeamCoverage, resolveRefForDisplay } from "./projection.ts";
+import {
+  buildTeamCoverage,
+  projectIdentity,
+  resolveIdentityFacts,
+  resolveRefForDisplay,
+  validateIdentityFacts,
+  validateMembershipCatalog,
+} from "./projection.ts";
 import { validateAnalysisPacket } from "../contracts/analysis-packet.ts";
 import { isWithinInterval, normalizeReportingKey } from "./identity-shared.mjs";
 
@@ -22,13 +29,43 @@ function catalogFor(c) {
   }
   return catalog;
 }
-const projectCase = (c) => projectIdentity(catalogFor(c), c.facts);
+const projectCase = (c) => unwrap(projectIdentity(catalogFor(c), c.facts), c.case_id);
 const F = (date, key, provider, count) => ({ business_date: date, recruiter_key: key, provider_type_key: provider, recruited_count: count });
 
-test("W02 golden: 15 case và mỗi case khớp expected đã ghi", () => {
+/** Fail-closed: projection chỉ hợp lệ khi input hợp lệ; nếu không phải là lỗi test. */
+function unwrap(result, label) {
+  assert.ok(result.ok, label + " input phải hợp lệ: " + (result.ok ? "" : result.code + " " + result.message + " @" + result.path));
+  return result.projection;
+}
+
+/** Catalog nền + mutation (deep clone) để test fail-closed. */
+function mutated(mutate) {
+  const catalog = JSON.parse(JSON.stringify(baseCatalog));
+  mutate(catalog);
+  return catalog;
+}
+
+function expectCatalogFailure(catalog, code, path) {
+  const res = projectIdentity(catalog, [F("2026-10-15", "rec-alpha", "vendor", 1)]);
+  assert.equal(res.ok, false, code + " phải fail-closed");
+  assert.equal(res.code, code);
+  assert.equal(res.path, path);
+  // Không bao giờ trả projection "thành công" hay tổng 0 giả.
+  assert.equal(res.projection, undefined);
+}
+
+function expectFactsFailure(facts, code, path) {
+  const res = projectIdentity(catalogFor(caseById("c01")), facts);
+  assert.equal(res.ok, false, code + " phải fail-closed");
+  assert.equal(res.code, code);
+  assert.equal(res.path, path);
+  assert.equal(res.projection, undefined);
+}
+
+test("W02 golden: 15 case gốc + c16 (R1) và mỗi case khớp expected đã ghi", () => {
   const cases = loadCases();
-  assert.equal(cases.length, 15);
-  assert.deepEqual(cases.map((c) => c.case_id), ["c01","c02","c03","c04","c05","c06","c07","c08","c09","c10","c11","c12","c13","c14","c15"]);
+  assert.equal(cases.length, 16);
+  assert.deepEqual(cases.map((c) => c.case_id), ["c01","c02","c03","c04","c05","c06","c07","c08","c09","c10","c11","c12","c13","c14","c15","c16"]);
   for (const c of cases) {
     assert.ok(c.title, c.case_id + " title");
     assert.ok(Array.isArray(c.facts), c.case_id + " facts");
@@ -116,7 +153,7 @@ test("W02 coverage: SUM recruited_count, không đếm row; available/partial ph
 test("W02 refs: opaque ref deterministic và KHÔNG phụ thuộc thứ tự input", () => {
   const c01 = caseById("c01");
   const forward = projectCase(c01);
-  const reversed = projectIdentity(catalogFor(c01), [...c01.facts].reverse());
+  const reversed = unwrap(projectIdentity(catalogFor(c01), [...c01.facts].reverse()), "c01-reversed");
   assert.deepEqual(reversed, forward);
   assert.deepEqual(forward.ref_map.recruiters.map((r) => r.ref), ["recruiter_01", "recruiter_02"]);
   assert.deepEqual(forward.ref_map.recruiters.map((r) => r.stable_id), ["rcr_001", "rcr_002"]);
@@ -156,7 +193,7 @@ test("W02 alias: resolve bằng exact normalized key, không dùng display", () 
   assert.equal(normalizeReportingKey("  "), null);
   const catalog = catalogFor(caseById("c01"));
   // key khác casing/whitespace vẫn resolve cùng recruiter
-  const proj = projectIdentity(catalog, [F("2026-10-15", "  REC-ALPHA ", "vendor", 5)]);
+  const proj = unwrap(projectIdentity(catalog, [F("2026-10-15", "  REC-ALPHA ", "vendor", 5)]), "normalized-key");
   assert.equal(proj.facts[0].classification, "mapped");
   // display KHÔNG bao giờ là identity: hai recruiter cùng display vẫn khác ref
   const c09 = projectCase(caseById("c09"));
@@ -171,7 +208,10 @@ test("W02 retired membership: không viết lại fact quá khứ", () => {
 
 test("W02 sentinel/unknown recruiter không tự gán team", () => {
   const catalog = catalogFor(caseById("c01"));
-  const proj = projectIdentity(catalog, [F("2026-10-15", "__unknown__", "__unknown__", 3), F("2026-10-15", "__invalid__", "__invalid__", 2)]);
+  const proj = unwrap(
+    projectIdentity(catalog, [F("2026-10-15", "__unknown__", "__unknown__", 3), F("2026-10-15", "__invalid__", "__invalid__", 2)]),
+    "sentinel"
+  );
   for (const f of proj.facts) {
     assert.equal(f.classification, "unmapped");
     assert.equal(f.recruiter_ref, null);
@@ -225,7 +265,7 @@ test("W02 tương thích: team_mapping sai (do projection cũ) vẫn bị valida
 test("W02 resolveRefForDisplay: chỉ resolve server-side, không nằm trong packet", () => {
   const c01 = caseById("c01");
   const catalog = catalogFor(c01);
-  const proj = projectIdentity(catalog, c01.facts);
+  const proj = unwrap(projectIdentity(catalog, c01.facts), "c01");
   const resolved = resolveRefForDisplay(proj.ref_map, catalog, "recruiter_01");
   assert.ok(resolved);
   assert.equal(resolved.stable_id, "rcr_001");
@@ -239,4 +279,148 @@ test("W02 coverage: buildTeamCoverage là hàm thuần, không phụ thuộc inp
   const a = buildTeamCoverage(resolveIdentityFacts(catalog, c11.facts));
   const b = buildTeamCoverage(resolveIdentityFacts(catalog, [...c11.facts].reverse()));
   assert.deepEqual(a, b);
+});
+
+test("R1 redaction: availability ambiguous ⇒ mọi packet-facing team_ref = null, ref_map.teams rỗng", () => {
+  const c12 = projectCase(caseById("c12"));
+  assert.equal(c12.team_mapping.availability, "ambiguous");
+  assert.equal(c12.team_mapping.teams_in_scope, 0);
+  assert.equal(c12.facts.length, 2);
+  // Có fact riêng lẻ resolve được team_001 nhưng VẪN bị redact.
+  assert.ok(c12.facts.some((f) => f.classification === "mapped"), "c12 phải có fact mapped riêng lẻ");
+  assert.ok(c12.facts.every((f) => f.team_ref === null), "mọi fact phải có team_ref = null");
+  assert.deepEqual(c12.ref_map.teams, []);
+  // Recruiter ref vẫn giữ khi recruiter identity không mơ hồ.
+  assert.deepEqual(c12.ref_map.recruiters.map((r) => r.ref), ["recruiter_01"]);
+  assert.equal(c12.facts.find((f) => f.classification === "mapped").recruiter_ref, "recruiter_01");
+  // Stable team id chỉ còn ở ops-only diagnostics.
+  assert.equal(c12.server_diagnostics.ambiguous_blocked, true);
+  assert.deepEqual(c12.server_diagnostics.observed_team_ids, ["team_002"]);
+  const packetFacing = JSON.stringify({ facts: c12.facts, team_mapping: c12.team_mapping, ref_map: c12.ref_map });
+  assert.ok(!/team_[0-9]/.test(packetFacing), "không được lộ team ref");
+  assert.ok(!packetFacing.includes("team_002"), "không được lộ stable team id");
+});
+
+test("R1 redaction: không dựng được team subject/driver từ projection mơ hồ", () => {
+  const proj = projectCase(caseById("c12"));
+  const packet = packetFromCoverage(proj.team_mapping);
+  assert.deepEqual(packet.subjects.map((s) => s.kind), ["project"]);
+  assert.deepEqual(packet.drivers.team, []);
+  assert.equal(packet.concentration.team.distinct_subjects, 0);
+  const res = validateAnalysisPacket(packet);
+  assert.ok(res.ok, res.ok ? "" : res.code + " " + res.message);
+  // Bất biến toàn cục: mọi case ambiguous đều không phát team ref nào.
+  for (const c of loadCases()) {
+    const p = projectCase(c);
+    if (p.team_mapping.availability !== "ambiguous") continue;
+    assert.deepEqual(p.ref_map.teams, [], c.case_id + " ref_map.teams");
+    assert.ok(p.facts.every((f) => f.team_ref === null), c.case_id + " team_ref");
+    assert.equal(p.server_diagnostics.ambiguous_blocked, true, c.case_id + " ambiguous_blocked");
+  }
+});
+
+test("R1 redaction: case không ambiguous KHÔNG bị redact (không nới rộng quá mức)", () => {
+  const c01 = projectCase(caseById("c01"));
+  assert.equal(c01.team_mapping.availability, "available");
+  assert.equal(c01.server_diagnostics.ambiguous_blocked, false);
+  assert.ok(c01.facts.every((f) => f.team_ref !== null));
+  assert.ok(c01.ref_map.teams.length > 0);
+});
+
+test("R1 alias: bỏ cờ active — hiệu lực chỉ theo interval [valid_from, valid_to)", () => {
+  for (const row of baseCatalog.aliases) {
+    assert.ok(!("active" in row), "alias " + row.alias_id + " không được có active");
+    assert.ok(row.valid_from, "alias valid_from");
+  }
+  for (const c of loadCases()) {
+    for (const row of c.catalog_extends?.aliases ?? []) {
+      assert.ok(!("active" in row), c.case_id + " alias extend không được có active");
+    }
+  }
+  // Alias đóng interval tại 2026-06-30: fact trước đó vẫn map, đúng boundary thì không.
+  const c15 = projectCase(caseById("c15"));
+  assert.deepEqual(c15.facts.map((f) => [f.business_date, f.classification]), [["2026-06-29", "mapped"], ["2026-06-30", "unmapped"]]);
+  assert.equal(c15.facts[0].team_ref, "team_01");
+  assert.equal(c15.facts[1].team_ref, null);
+  // Đóng interval KHÔNG viết lại lịch sử: thêm bản ghi mới cùng key sau đó không đổi fact cũ.
+  const catalog = catalogFor(caseById("c15"));
+  const reopened = JSON.parse(JSON.stringify(catalog));
+  reopened.aliases.push({ alias_id: "alias_900", recruiter_id: "rcr_005", reporting_key: "rec-delta", valid_from: "2026-07-01", valid_to: null });
+  assert.deepEqual(unwrap(projectIdentity(reopened, [F("2026-06-29", "rec-delta", "hrp", 1)]), "alias-reopen").facts[0], c15.facts[0]);
+});
+
+test("R1 hiệu lực hiện tại không chi phối lịch sử: recruiter/team inactive vẫn map fact cũ", () => {
+  assert.equal(baseCatalog.recruiters.find((r) => r.recruiter_id === "rcr_004").active, false);
+  const c15 = projectCase(caseById("c15"));
+  assert.equal(c15.facts[0].classification, "mapped");
+  assert.equal(c15.facts[0].recruiter_ref, "recruiter_01");
+  assert.equal(baseCatalog.teams.find((t) => t.team_id === "team_004").active, false);
+  const c16 = projectCase(caseById("c16"));
+  assert.equal(c16.facts[0].classification, "mapped");
+  assert.equal(c16.facts[0].team_ref, "team_01");
+  assert.equal(c16.team_mapping.teams_in_scope, 1);
+});
+
+test("R1 fail-closed: catalog sai ⇒ lỗi rõ ràng, không trả projection/tổng 0", () => {
+  assert.deepEqual(validateMembershipCatalog(baseCatalog), { ok: true });
+  expectCatalogFailure(mutated((c) => { c.aliases[0].alias_id = "  "; }), "CATALOG_ID_EMPTY", "aliases[0].alias_id");
+  expectCatalogFailure(mutated((c) => { c.recruiters[1].recruiter_id = "rcr_001"; }), "CATALOG_ID_DUPLICATE", "recruiters[1].recruiter_id");
+  expectCatalogFailure(mutated((c) => { c.teams[1].team_id = "team_001"; }), "CATALOG_ID_DUPLICATE", "teams[1].team_id");
+  expectCatalogFailure(mutated((c) => { c.aliases[0].recruiter_id = "rcr_999"; }), "CATALOG_DANGLING_RECRUITER", "aliases[0].recruiter_id");
+  expectCatalogFailure(mutated((c) => { c.team_memberships[0].team_id = "team_999"; }), "CATALOG_DANGLING_TEAM", "team_memberships[0].team_id");
+  expectCatalogFailure(mutated((c) => { c.provider_memberships[0].recruiter_id = "rcr_999"; }), "CATALOG_DANGLING_RECRUITER", "provider_memberships[0].recruiter_id");
+  expectCatalogFailure(mutated((c) => { c.team_memberships[0].membership_id = "tm_001"; c.team_memberships[0].recruiter_id = "rcr_009"; }), "CATALOG_DANGLING_RECRUITER", "team_memberships[0].recruiter_id");
+  expectCatalogFailure(mutated((c) => { c.aliases[0].valid_from = "2026-02-30"; }), "CATALOG_INVALID_INTERVAL", "aliases[0].valid_to");
+  expectCatalogFailure(mutated((c) => { c.aliases[0].valid_to = "2026-01-01"; }), "CATALOG_INVALID_INTERVAL", "aliases[0].valid_to");
+  expectCatalogFailure(mutated((c) => { c.team_memberships[0].valid_to = "2025-12-31"; }), "CATALOG_INVALID_INTERVAL", "team_memberships[0].valid_to");
+  expectCatalogFailure(mutated((c) => { c.provider_memberships[0].valid_from = "not-a-date"; }), "CATALOG_INVALID_INTERVAL", "provider_memberships[0].valid_to");
+  expectCatalogFailure(mutated((c) => { c.aliases[0].reporting_key = "  Rec-Alpha  "; }), "CATALOG_INVALID_REPORTING_KEY", "aliases[0].reporting_key");
+  expectCatalogFailure(mutated((c) => { c.aliases[0].reporting_key = "__unknown__"; }), "CATALOG_INVALID_REPORTING_KEY", "aliases[0].reporting_key");
+  expectCatalogFailure(mutated((c) => { c.provider_memberships[0].provider_type = "freelancer"; }), "CATALOG_INVALID_PROVIDER_TYPE", "provider_memberships[0].provider_type");
+  expectCatalogFailure(mutated((c) => { c.recruiters[0].active = "yes"; }), "CATALOG_INVALID_FLAG", "recruiters[0].active");
+  expectCatalogFailure(mutated((c) => { c.audit[0].entity = "widget"; }), "CATALOG_INVALID_AUDIT", "audit[0].entity");
+  expectCatalogFailure(mutated((c) => { c.audit[1].change_id = "aud_001"; }), "CATALOG_INVALID_AUDIT", "audit[1].change_id");
+  expectCatalogFailure(mutated((c) => { c.audit[0].effective_date = "2026-13-01"; }), "CATALOG_INVALID_DATE", "audit[0].effective_date");
+  expectCatalogFailure({}, "CATALOG_NOT_OBJECT", "catalog");
+  assert.deepEqual(validateIdentityFacts([]), { ok: true });
+  expectFactsFailure(null, "FACT_INVALID_DATE", "facts");
+});
+
+test("R1 fail-closed: fact sai ⇒ lỗi rõ ràng; sentinel key vẫn là dữ liệu hợp lệ", () => {
+  const formatter = (row) => validateIdentityFacts([row]);
+  assert.deepEqual(formatter(F("2026-10-15", "rec-alpha", "vendor", 3)), { ok: true });
+  assert.deepEqual(formatter(F("2026-10-15", "__unknown__", "__invalid__", 0)), { ok: true });
+  assert.equal(formatter(F("2026-02-30", "rec-alpha", "vendor", 3)).code, "FACT_INVALID_DATE");
+  assert.equal(formatter(F("15/10/2026", "rec-alpha", "vendor", 3)).code, "FACT_INVALID_DATE");
+  assert.equal(formatter(F("2026-10-15", "rec-alpha", "vendor", -1)).code, "FACT_INVALID_COUNT");
+  assert.equal(formatter(F("2026-10-15", "rec-alpha", "vendor", 1.5)).code, "FACT_INVALID_COUNT");
+  assert.equal(formatter(F("2026-10-15", "rec-alpha", "vendor", "3")).code, "FACT_INVALID_COUNT");
+  assert.equal(formatter(F("2026-10-15", "rec-alpha", "freelancer", 3)).code, "FACT_INVALID_PROVIDER_KEY");
+  assert.equal(formatter(F("2026-10-15", "rec-alpha", "__bogus__", 3)).code, "FACT_INVALID_PROVIDER_KEY");
+  assert.equal(formatter(F("2026-10-15", null, "vendor", 3)).code, "FACT_INVALID_RECRUITER_KEY");
+  expectFactsFailure([F("2026-10-15", "rec-alpha", "vendor", -1)], "FACT_INVALID_COUNT", "facts[0].recruited_count");
+  expectFactsFailure([F("2026-10-15", "rec-alpha", "vendor", 1), F("bad", "rec-alpha", "vendor", 1)], "FACT_INVALID_DATE", "facts[1].business_date");
+});
+
+test("R1 overlap KHÔNG bị sửa âm thầm: shape hợp lệ nhưng vẫn ambiguous", () => {
+  const c04 = caseById("c04");
+  assert.deepEqual(validateMembershipCatalog(catalogFor(c04)), { ok: true });
+  assert.equal(projectCase(c04).facts[0].classification, "ambiguous");
+  const c05 = caseById("c05");
+  assert.deepEqual(validateMembershipCatalog(catalogFor(c05)), { ok: true });
+  assert.equal(projectCase(c05).facts[0].classification, "ambiguous");
+  assert.equal(projectCase(c05).team_mapping.availability, "ambiguous");
+  assert.deepEqual(projectCase(c05).ref_map.teams, []);
+  assert.deepEqual(resolveIdentityFacts(catalogFor(c05), c05.facts)[0].reason_codes.includes("TEAM_MEMBERSHIP_AMBIGUOUS"), true);
+});
+
+test("R1 server_diagnostics: ops-only, không lộ display/PII và tách khỏi packet-facing", () => {
+  for (const c of loadCases()) {
+    const proj = projectCase(c);
+    const diag = JSON.stringify(proj.server_diagnostics);
+    assert.ok(!diag.includes("Recruiter "), c.case_id + " display");
+    assert.ok(!/@/.test(diag), c.case_id + " email-like");
+    assert.deepEqual(Object.keys(proj.server_diagnostics).sort(), ["ambiguous_blocked", "observed_team_ids"]);
+    for (const id of proj.server_diagnostics.observed_team_ids) assert.match(id, /^team_[0-9]{3}$/);
+  }
 });

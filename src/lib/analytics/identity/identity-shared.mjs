@@ -70,6 +70,32 @@ export function isIsoDate(value) {
   return typeof value === "string" && ISO_DATE_RE.test(value);
 }
 
+/** Ngày lịch thật (loại 2026-02-30). */
+export function isRealCalendarDate(value) {
+  if (!isIsoDate(value)) return false;
+  const parts = value.split("-").map(Number);
+  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  return dt.getUTCFullYear() === parts[0] && dt.getUTCMonth() === parts[1] - 1 && dt.getUTCDate() === parts[2];
+}
+
+/** Id không rỗng. */
+export function isNonEmptyId(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/** Integer >= 0 (recruited_count). */
+export function isNonNegativeInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/** Interval hợp lệ: valid_from là ngày thật; valid_to null hoặc ngày thật > valid_from. */
+export function isValidInterval(validFrom, validTo) {
+  if (!isRealCalendarDate(validFrom)) return false;
+  if (validTo === null || validTo === undefined) return true;
+  if (!isRealCalendarDate(validTo)) return false;
+  return validTo > validFrom;
+}
+
 /** Chuẩn hóa reporting key: NFC -> trim -> gộp khoảng trắng -> lowercase (mirror DB). */
 export function normalizeReportingKey(value) {
   if (typeof value !== "string") return null;
