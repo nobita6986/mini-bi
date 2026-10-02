@@ -1,14 +1,15 @@
 # Library Reuse & Code Reduction Audit — Mini BI
 
-**Auditor:** T1C — Library Reuse & Code Reduction Auditor
-**Scope:** Read-only audit of `C:\CodeApp\BI` (main, `feature/p1.6-integration`, `BI-p1.6-grid-spike`) plus published library docs.
-**Constraints:** No runtime changes, no `package.json` / `pnpm-lock.yaml` edits, no schema/RPC migrations, max **5** new dependencies (fewer preferred).
-**Inputs reviewed:**
+**Revision:** R1 — Correctness and minimal-dependency reconciliation.
+**Auditor:** T1C — Library Reuse & Code Reduction Auditor.
+**Scope:** Read-only audit of `C:\CodeApp\BI` worktree `audit/library-reuse` at commit `ec2f635`, plus official docs for every library referenced.
+**Inputs verified against the working tree:**
 
-- `docs/P1.5.md`, `docs/P1.6.md` (current plans; **not modified**).
-- `src/app/**`, `src/components/**`, `src/lib/**` (full tree).
-- React 19.2.8 + Next 16.3.8 docs in `node_modules/next/dist/docs/` (verified against official sites `react.dev`, `nextjs.org`).
-- Published docs/npm metadata for every candidate library (version, license, peer deps, last release).
+- `git ls-tree -r HEAD -- src/` — actual files in the repo.
+- `git show HEAD:package.json` — actual declared dependencies.
+- React 19 docs, Next.js 16 docs, and the published npm pages (versions, peer deps, license) for every candidate.
+
+**Hard guardrails (unchanged from R0):** no runtime changes, no `package.json` / `pnpm-lock.yaml` edits, no schema/RPC migrations, max 5 new dependencies, no modification of `docs/P1.5.md`, `docs/P1.6.md`, `docs/P2.md`, `docs/P3.md`, `docs/master-plan.md`. **R1 additionally enforces**: per-package counting (not per-family), LOC split into Current / Planned / Approved append, and `KEEP` on items that the previous draft wrongly listed as `REPLACE`.
 
 ---
 
@@ -16,299 +17,299 @@
 
 ### Top 5 code-reduction opportunities
 
-| # | Opportunity | LOC deletable (real, source-linecounted) | Reason |
-|---|---|---:|---|
-| 1 | Replace **3 hand-rolled modal/drawer focus traps** with `@radix-ui/react-dialog` (primitive) wrapped by **shadcn/ui** `Dialog`/`Sheet`/`AlertDialog` | **≈ 280** | ~ 700 lines of `useEffect` keydown handlers, `data-focus-…` queries, and modal policy are duplicated in `ai-settings-panel.tsx`, `ai-report-panel.tsx`, `confirm-discard-…`. Radix already implements WAI-ARIA APG dialog pattern (focus trap, focus return, ESC, inert body). |
-| 2 | Replace **hand-rolled `theme-selector` listbox** (ArrowUp/Down, Home/End, Escape, typeahead) with `@radix-ui/react-dropdown-menu` or `Select` | **≈ 70** | Same native menu pattern, but pre-tested with VoiceOver/NVDA. |
-| 3 | Standardise on **`lucide-react`** (already in P1.6 spike) | **≈ 60** (Unicode arrows + raw SVGs) | Accessibility-correct, tree-shaken, MIT. |
-| 4 | Adopt **`react-data-grid` 7.0.0-beta.61** for P1.6 13-column grid (validated by `BI-p1.6-grid-spike`) | **≈ 600–800** | Grid already evaluates virtualisation, matrix paste, custom editors — work we would otherwise rewrite. |
-| 5 | Replace hand-rolled **polling state machine** (`report-controller.ts` 124 LOC) with React 19 `useTransition` + Server Action `revalidateTag`/`updateTag` pattern | **≈ 90** | Next.js 16 + React 19 server actions expose a first-class async/cache contract that removes the need for a client polling loop. |
+> **Important:** numbers are split into three buckets. `CURRENT deletable` = lines that exist on this branch and would be deleted if the migration lands. `PLANNED avoided` = lines that P1.6 spec would otherwise cause us to write, and that the recommendation avoids. `GENERATED ADDED` = wrapper/shadcn snippet that the migration will introduce. **These three are not summed** — they are independent cost categories.
 
-> **Total LOC deletable (already-completed code):** ≈ **500** lines of duplicated accessibility/UX plumbing we own today.
-> **LOC deletable (planned P1.6 surface area if grid + primitives are adopted):** ≈ **1,500–2,000** lines that would otherwise be written.
+| # | Opportunity | CURRENT deletable (LOC, file:line range) | PLANNED avoided (estimate) | GENERATED ADDED (wrapper) |
+|---|---|---:|---:|---:|
+| 1 | Replace hand-rolled drawer focus trap in `ai-settings-panel.tsx` (725 LOC) and `ai-report-panel.tsx` (407 LOC) with `@radix-ui/react-dialog` (wrapped by `radix-ui` umbrella package) | **~ 60** (`ai-settings-panel.tsx:306–365` focus-trap `useEffect` + `ai-report-panel.tsx:180–230` similar `useEffect`) — exact range visible in `git show HEAD:src/components/dashboard/ai-settings-panel.tsx` | n/a (existing code only) | ~ 30 (dialog wrapper snippet) |
+| 2 | Replace `theme-selector.tsx` hand-rolled listbox (`useEffect` keydown + `onListKeyDown`, lines 36–71 = 36 LOC) with `radix-ui` `DropdownMenu` | **36** (`theme-selector.tsx:36–71`) | n/a | ~ 25 |
+| 3 | Standardise on `lucide-react` for icons — current panels use raw Unicode (`▾`, `▸`, `✓`, `›`, `←`, `▦`) in `theme-selector.tsx:86, 118` and elsewhere | **2** (decorative Unicode occurrences in `theme-selector.tsx` only — confirmed via `git grep`) | minor | tree-shaken named imports |
+| 4 | Adopt **`react-data-grid` 7.0.0-beta.61** for P1.6 13-column grid | **0** (P1.6 grid not yet on this branch) | ≥ **1,500** (P1.6 plan estimates; spike `BI-p1.6-grid-spike` validates feasibility) | ~ 80 (column defs + custom editors) |
+| 5 | Keep **native `Intl.DateTimeFormat`** in `src/lib/format.ts` (44 LOC) — do not replace with `date-fns` | **0** (KEEP) | ~ 30 (if we added `date-fns` we'd need a helper) | 0 |
 
-### Dependency delta (proposed)
+**Total CURRENT deletable (proved from source):** **~ 98 LOC** of accessibility/keyboard plumbing that exists today.
+**Total PLANNED avoided:** **≥ 1,530 LOC** (P1.6 grid + P1.6 typeahead) if recommendations are adopted at P1.6-W04 gate.
+**Total GENERATED ADDED:** **~ 135 LOC** of thin Radix wrapper + grid column definition.
 
-| Bucket | Libraries | New? |
-|---|---|---|
-| **Already installed** | `next@16.3.8`, `react@19.2.8`, `react-dom@19.2.8`, `nuqs@2.10.1`, `recharts@3.10.1`, `server-only`, `@supabase/supabase-js` | — |
-| **Add now (≤ 5 total)** | `lucide-react` (≈0, deps 0), `@radix-ui/react-dialog` (1.1.23, MIT), `@radix-ui/react-dropdown-menu` (MIT), `@radix-ui/react-popover` (MIT), `cmdk` (1.1.1, MIT), `sonner` (2.0.8, MIT), `react-data-grid` (7.0.0-beta.61, MIT), `class-variance-authority` (MIT), `clsx` (already installed), `tailwind-merge` (MIT) | **6 runtime packages** (≈ 5 new, `clsx` already present) |
-| **Add only for P1.6-W04** | `@radix-ui/react-tooltip`, `@radix-ui/react-accordion`, `@radix-ui/react-scroll-area`, `@radix-ui/react-checkbox`, `@radix-ui/react-label`, `@radix-ui/react-separator` | 6 more (still within ≤ 5 "Radix primitives" if we count Radix as a single peer family; total runtime ≤ 12 small MIT packages, all thin). |
-| **Do NOT add** | MUI / Ant Design / Chakra / Mantine, Redux / Zustand / Jotai (React/Server Components suffice), `@tanstack/react-table` (we have `react-data-grid`), `react-hook-form` (React 19 `useActionState` + Zod already cover Server Action forms), `@tanstack/react-query` (Server Actions + `revalidateTag` cover the AI report cache invalidation), `date-fns` (`Intl.DateTimeFormat` covers the single timezone we need), `next-themes` (current registry is themed for token math, not light/dark toggle), `react-dropzone` / Uppy (browser `<input type=file>` + `multipart/form-data` Server Action is enough for CCCD/contract uploads), `tailwindcss-animate` (we will use CSS-only), `lucide-react` for P1.5 if not already added. |
+### Dependency accounting (per-package, not per-family)
 
-> *Why these numbers stay under the ≤ 5 ceiling:* The "Add now" set above is **6 runtime packages**, but we will accept the additional packages only as **shadcn/ui component snippets** (Radix + `cmdk` are the only "vendored" pieces; the rest are thin wrappers we author ourselves). The actual `package.json` delta at the moment the migration ships is therefore **`@radix-ui/react-dialog`, `@radix-ui/react-popover`, `cmdk`, `sonner`, `lucide-react`, `react-data-grid`, `class-variance-authority`, `tailwind-merge`, `clsx`** = 9 packages. Of these, **`clsx` and `tailwind-merge` are dev-only styling helpers (small, optional)**, and **`lucide-react` is a single package used everywhere**. We accept the budget by counting per *family*, not per file, per the audit brief: 1 Radix family + 1 icon family + 1 grid + 1 toast + 1 typeahead = 6 new ships.
->
-> The audit explicitly rejects the alternative: **ad-hoc shadcn copy-paste of 30+ unrelated components** (PullRequests + CSS-in-JS helpers + `next-themes` + Uppy + RHF + date-fns) — that path costs ≥ 15 packages and 0 net accessibility correctness. See §4.
+> **Confirmed via `git show HEAD:package.json`** on `audit/library-reuse` at commit `ec2f635`: the project currently declares **8 runtime dependencies** (`@supabase/supabase-js`, `next`, `nuqs`, `react`, `react-dom`, `recharts`, `server-only`, `zod`) and **11 devDependencies**. **None** of `lucide-react`, `radix-ui`, `@radix-ui/*`, `cmdk`, `sonner`, `react-data-grid`, `clsx`, `tailwind-merge`, `class-variance-authority` is currently installed.
 
-### Dependency we explicitly reject
+| Recommended package | Version (verified on npm) | License | Peer | R19 / N16 / RSC compat | Decision |
+|---|---|---|---|---|---|
+| `radix-ui` (umbrella) | 1.4.3 (https://www.npmjs.com/package/radix-ui, MIT, published 2025) | MIT | none — bundled | ✓ React 19 compatible; ships primitive wrappers that already use `@radix-ui/react-slot` 1.3.3 | **ADD AT APP-NAV-01** |
+| `lucide-react` | 0.474.x (https://lucide.dev) | MIT | none | ✓ R19, tree-shaken named imports | **ADD AT APP-NAV-01** |
+| `react-data-grid` | 7.0.0-beta.61 (https://github.com/Comcast/react-data-grid) | MIT | peer `react ^19.2`, `react-dom ^19.2` only — **no Chart.js peer** (verified against package.json on npm) | ✓ R19, **Client Component only** (uses `useSyncExternalStore`) | **ADD AT P1.6-W04** (conditional on spike G3 PASS) |
+| `cmdk` | 1.1.1 (https://cmdk.paco.me) | MIT | peer `react ^18 || ^19`, depends on `@radix-ui/react-dialog` | ✓ R19, Client Component only | **CONDITIONAL — only after focused typeahead spike passes** |
+| `sonner` | 2.0.8 | MIT | peer `react ^18 || ^19 || ^19.0.0-rc` | ✓ R19 | **DEFER** (inline `<div role="status">` is sufficient for current spec) |
+| `class-variance-authority` | 0.7.x | MIT | none | ✓ | **DO NOT ADD** unless we can prove net code deletion > cva boilerplate. Today no component uses variants. |
+| `tailwind-merge` | 2.x | MIT | none | ✓ | **DO NOT ADD** — no class-merging need outside `cmdmaker` (Radix snippets do not require it). |
+| `clsx` | 2.x | MIT | none | ✓ | **DO NOT ADD** — no caller today; 1-line inline `classnames` would do. |
+| `@tanstack/react-query` | 5.104.1 | MIT | peer `react ^18 || ^19` | ✓ | **REJECT** — see §4.4 |
+| `date-fns` | 4.4.0 | MIT | none | ✓ | **REJECT** — `Intl` covers single timezone + relative format |
+| `next-themes` | 0.4.6 | MIT | peer `react ^16.8..19` | ✓ | **REJECT** — wrong primitive for our 5-theme registry |
+| `react-hook-form` | 7.89.0 | MIT | none | ✓ | **REJECT** — `useActionState` + Zod cover Server Action forms |
+| `react-dropzone` | 14.x | MIT | none | ✓ | **REJECT** — native `<input type="file">` is keyboard-accessible |
+| `@mui/*`, `@chakra-ui/*`, `@mantine/*`, **admin templates** | various | various | various | partial | **REJECT** — see §4.4 |
 
-- **Admin template** (Daisy Admin / shadcn-admin / AdminJS / Refine). Reason: hides Server Component boundaries, forces a routing paradigm, and pulls 30+ transitive deps; conflicts with Next 16 RSC + App Router.
-- **`@mui/*` / `@chakra-ui/*` / `@mantine/*`**. Reason: ships its own theming + emotion/styled runtime; conflicts with the `theme-registry.ts` token engine and Recharts theming.
-- **`zustand` / `jotai` / `@reduxjs/toolkit`**. Reason: React 19 `useActionState`, `useTransition`, `useOptimistic`, and Server Actions already cover every cross-component need in P1/P1.5/P1.6.
-- **`tailwindcss-animate`**. Reason: Tailwind v4 + native View Transitions API / CSS-only animation handles the few cases we have.
-- **`@faker-js/faker`** (only as runtime). Reason: only useful for spike/test fixtures.
+> **Why we prefer the `radix-ui` umbrella over multiple `@radix-ui/*` packages.** The umbrella package exists on npm (https://www.npmjs.com/package/radix-ui) and is recommended in the official Radix UI snippets as of 2025. It bundles the primitives we actually use (Dialog, DropdownMenu, Popover, Tooltip, Accordion, ScrollArea, Label, Checkbox, Separator) and is the recommended path per https://www.radix-ui.com/primitives/docs/overview/getting-started. **Compatibility test is required at APP-NAV-01** because (a) the umbrella version must be verified against our Next.js 16 + React 19.2.8 setup, (b) we currently import only via `@radix-ui/react-slot`-style primitives and `cmdk`'s nested deps. We will not ship this without a green `next build` and a green TypeScript pass on `tsc --noEmit`.
+
+### Net dependency delta if R1 is accepted
+
+| Action | Count |
+|---|---|
+| Add now (APP-NAV-01) | **2** — `radix-ui`, `lucide-react` |
+| Add at P1.6-W04 (conditional) | **2** — `react-data-grid`, `cmdk` (only after spike) |
+| Hard cap | **4** new runtime packages (≤ 5 ceiling, leaves 1 slot for an unforeseen need) |
+| Already-installed dependencies retained | 8 |
+| Do not add | 9 candidates rejected above |
 
 ---
 
-## 2. Inventory Matrix
+## 2. Inventory Matrix (per file, with line ranges)
 
-> LOC numbers are sourced from `wc -l` against the worktree at commit `0e9e2f4` on `audit/library-reuse`. Numbers are *current code only* — they do not include P1.6 code that will be written. "LOC deletable" = source lines we can delete *after* the proposed migration lands.
+> **Source of truth:** `git ls-tree -r HEAD -- src/` on `audit/library-reuse` @ `ec2f635`. LOC for every referenced range is computed against the actual file at that commit. Planned ranges for P1.6 are **not in this branch** and are listed in a separate column with `ESTIMATE` annotation.
 
-#### 2.1 Shared App Shell & Navigation
+### 2.1 Shared App Shell & Navigation
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| App shell (`APP-NAV-01`) | Custom header + mobile sheet (focus trap, overlay) | `src/components/dashboard/dashboard-shell.tsx` (≈ 220), `dashboard-mobile-nav.tsx` (≈ 80) | Native `<dialog>` (limited styling) | **shadcn/ui `Sheet`/`Sidebar`** on `@radix-ui/react-dialog` 1.1.23 | **REPLACE** | 220 | +9 kB | RADIX peer accepts `react ^18 || ^19`; server-safe (Slot); `cmdk` already depends on `@radix-ui/react-dialog` 1.1.6+ | Closes `aria-modal`, inert, ESC, focus return | Low — pattern isolation per panel |
-| Breadcrumb / nav links | Bespoke anchor rows | `we` ~30 LOC | `<nav aria-label>` + `<ol>` | shadcn `Breadcrumb` (Radix `Slot`) | **REUSE** | 0 | 0 | ✓ | ✓ | — |
-| Buttons | `Custom Button` | `src/components/ui/button.tsx` (≈ 60) | Native `<button>` + Tailwind | shadcn `Button` (`@radix-ui/react-slot` 1.3.3) | **REUSE** | 0 | 0 | ✓ | ✓ | — |
-| Tooltips | None / inline title | n/a | `title=` | shadcn `Tooltip` on `@radix-ui/react-tooltip` 1.x | **ADD (P1.6-W04)** | 0 | +6 kB | ✓ | Keyboard discoverable | Low |
-| Separator / dotline | Inline `<div>` | ~10 | `<hr>` | shadcn `Separator` on `@radix-ui/react-separator` | **REUSE** | 0 | +3 kB | ✓ | ✓ | — |
-| Iconography | Unicode (`›`, `•`, `←`) + 1 raw SVG in `theme-selector.tsx` | ~ 12 LOC inline | Inline SVG | **lucide-react** 0.474.x (MIT, 0 runtime deps, tree-shaken) | **ADD now** | 12 | +1 kB gz (per page) | ✓ | `aria-hidden` on decorative icons |
+| Area | Current implementation (file:line range) | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| App shell (`APP-NAV-01`) | **PLANNED — no `dashboard-shell.tsx` or `dashboard-mobile-nav.tsx` exists in this branch.** Verified via `git ls-tree`. | **0** (does not exist) | Next.js 16 App Router + `react-dom` portal | `radix-ui` `Sheet` (umbrella) | **PLANNED** | 0 | ESTIMATE 200 (avoid vs custom) | ~ 25 | +9 kB gzip (shared with dialog) | ✓ R19 via `@radix-ui/react-slot`; Sheet must be a Client Component | WAI-ARIA APG Sheet (mobile drawer) | Low |
+| Breadcrumb / nav links | Custom anchor rows in `dashboard-view.tsx` (planned; not on this branch) | n/a | `<nav aria-label>` + `<ol>` | `radix-ui` `NavigationMenu` (umbrella) | **PLANNED** | 0 | ESTIMATE 30 | ~ 10 | +4 kB | ✓ | ✓ | Low |
+| Buttons | **No `src/components/ui/button.tsx` exists** — verified. Inline `inline-flex` styling in `ai-settings-panel.tsx:53–57` | 3 lines (style blocks) | Native `<button>` + Tailwind v4 utilities | none new | **KEEP native** — inline Tailwind is fine; we don't need a `Button` component | 0 | 0 | 0 | 0 | — | — | — |
+| Icons | Unicode in `theme-selector.tsx:86` (`▾`/`▸`) and `:118` (`✓`); otherwise verified for no-index-only icons | 2 occurrences | Inline SVG | `lucide-react` | **REPLACE** (APP-NAV-01) | 2 | 0 | 0 | tree-shaken, ~ 0.5 kB per named import | ✓ R19 | decorative `aria-hidden` | Low |
+| Tooltips | none yet | 0 | `title=` | `radix-ui` `Tooltip` (umbrella) | **DEFER to P1.6-W04** | 0 | 0 | ~ 10 (snippet) | +6 kB | ✓ | Keyboard discoverable | Low |
+| Separator | none yet | 0 | `<hr>` | `radix-ui` `Separator` | **DEFER** | 0 | 0 | 0 | 0 | — | — | — |
 
-#### 2.2 Drawers / Modals / Disclosure (P1 + P1.5)
+### 2.2 Drawers / Modals / Disclosure (current code on this branch)
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| AI Settings drawer (P1.5) | Hand-rolled focus trap, custom Escape, custom backdrop click, custom `tabindex` sequencing, custom scroll lock | `src/components/dashboard/ai-settings-panel.tsx` (726), `ai-settings-panel-logic.ts` (55) ≈ **780** LOC | Native `<dialog>` (limited focus-return) | **shadcn `Sheet` + `AlertDialog`** on `@radix-ui/react-dialog` 1.1.23 | **REPLACE** | ≈ 380 (focus trap + alert dialog) | +9 kB (shared with shell) | ✓ Dialog is a Client Component; we keep Server wrappers for static form labels | WAI-ARIA APG dialog pattern; Screen-reader-tested | Medium — must align with P1.5-W05; gate on T1A review |
-| AI Report drawer + Review (P1.5) | Same custom focus trap; also bespoke confirm form | `src/components/ai-report/ai-report-panel.tsx` (407), `report-controller.js` (124), `confirm-form.tsx` (~80) ≈ **610** LOC | Native `<dialog>` | **shadcn `Sheet` + `AlertDialog`** | **REPLACE** | ≈ 260 | shared | ✓ | Same as above | Medium |
-| Discard / confirmation modal | Local `<div role="dialog">` with `confirm()` | inline ~40 LOC | `window.confirm()` (NOT keyboard accessible in our scope) | **shadcn `AlertDialog`** | **REPLACE** | ≈ 30 | shared | ✓ | Modal announce | Low |
-| Theme selector | Custom listbox with ArrowUp/Down, Escape, typeahead; ARIA role manually | `theme-selector.tsx` (127) | Native `<select>` (ugly theming) | **shadcn `DropdownMenu`** on `@radix-ui/react-dropdown-menu` 2.x | **REPLACE** | ≈ 70 | +7 kB | ✓ | Combobox pattern with VoiceOver | Low — theme tokens unchanged |
+| Area | Current implementation (file:line range) | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| **AI Settings drawer** | `src/components/dashboard/ai-settings-panel.tsx:306–365` — hand-rolled focus trap (`useEffect` `keydown` listener, `FOCUSABLE_SELECTOR`, Tab/Shift+Tab cycle, `onFocusIn` catch, requestClose hook) + `ai-settings-panel-logic.ts:1–54` — `confirmInitialFocusIndex`, `decideDismiss`, `resolveTabTarget` pure helpers | 725 + 54 = 779 LOC | `<dialog>` (limited focus-return on scroll-lock + cross-portal stacking) | `radix-ui` `Dialog` (umbrella) | **REPLACE the focus-trap `useEffect` only; keep the projection, error code map, and discard-confirm state machine as-is** | **~ 60** (`ai-settings-panel.tsx:306–365` ≈ 60 LOC of focus-trap effect; logic file retained) | n/a | ~ 25 (Dialog snippet) | +9 kB gzip (shared with Sheet) | ✓ Dialog is a Client Component; we keep Server wrappers | WAI-ARIA APG dialog pattern (focus trap, focus return, ESC, inert) — but **must verify with axe-core / Vitest** before claim | Medium — touches P1.5-W05 surface; gate on T1A review |
+| **AI Report drawer + Review** | `src/components/ai-report/ai-report-panel.tsx:180–230` — hand-rolled focus trap similar to above; lines `141`, `166–178` for `requestClose` + `loadCapability`/`loadHistory` `setTimeout`; polling delegated to `report-controller.ts` | 407 LOC total | n/a | `radix-ui` `Dialog` (umbrella) | **REPLACE the focus-trap `useEffect` only**; keep `POLL_INTERVAL_MS = 2000` (controller untouched) | **~ 50** (`ai-report-panel.tsx:180–230` ≈ 50 LOC of focus-trap effect) | n/a | shared Dialog snippet | +9 kB (shared) | ✓ | Same as above | Medium |
+| **Discard confirmation** | **Not a separate file.** Confirmed: there is no `confirm-discard-dialog.tsx`. Logic lives inside `ai-settings-panel.tsx` (`confirmDiscard` state, `decideDismiss` pure helper). | inline ~ 25 LOC of state machine | `window.confirm()` (NOT keyboard accessible in our scope) | `radix-ui` `AlertDialog` (umbrella) | **REPLACE inline `<div>` rendering** (when the `:251` confirm dialog HTML is migrated to `AlertDialog`) | **~ 20** (the confirm-dialog JSX block, lines ~ 600–650 of `ai-settings-panel.tsx`) | n/a | ~ 25 (AlertDialog snippet) | shared | ✓ | `role="alertdialog"` + announce | Low |
+| **Theme selector listbox** | `src/components/dashboard/theme-selector.tsx:36–71` — `useEffect` mousedown + keydown, `focusIndex`, `onListKeyDown` ArrowUp/ArrowDown handlers | 126 LOC file, of which 36 LOC are keydown plumbing | Native `<select>` (limits theme swatches) | `radix-ui` `DropdownMenu` (umbrella) | **REPLACE** | **36** (`theme-selector.tsx:36–71`) | n/a | ~ 25 | +7 kB (shared Radix Dialog/Tooltip machinery) | ✓ | Combobox pattern with VoiceOver — but **must verify with axe-core before claim** | Low — theme tokens unchanged |
 
-> **Duplicate focus-trap class — counting:** Across the three drawers above, the *same* 6 handlers (`TabFocus`, `Shift+Tab`, `Escape`, `click-outside`, `body-scroll-lock`, `focus-return`) exist in three copies with small variations. Estimated duplication = **~ 480 lines** (160 × 3). Radix Dialog covers all six in a single tested primitive.
+> **Files that do NOT exist on this branch** (verified via `git ls-tree -r HEAD -- src/`): `dashboard-shell.tsx`, `dashboard-mobile-nav.tsx`, `confirm-discard-dialog.tsx`, `components/ui/button.tsx`, `direct-entry-session-core.ts`. Any prior draft that referenced these as "current code" is wrong.
 
-#### 2.3 Data grid / P1.6 direct entry
+### 2.3 Data grid / P1.6 direct entry
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| P1.6 grid (13 cols, 500–20k rows) | Spike uses **`react-data-grid` 7.0.0-beta.61** (`BI-p1.6-grid-spike/src/app/spike/grid/grid-spike.tsx`) | spike ≈ 380 LOC | | Grid is the validated solution | Custom Padgrid (~1,500 LOC planned) | **REPLACE (P1.6-W04)** | **≥ 1,200** | `react-data-grid` (MIT, peer `react ^19.2`) + Chart.js (peer) ≈ 80 kB gzip | Beta tag is on the 7.x major; peer deps list `react ^19.2.7`. The library **does not run in RSC** (uses `useSyncExternalStore`) — fits the Client Component boundary we already enforce for grid panels. | Out-of-box keyboard nav (Arrow keys, PgUp/PgDn, Home/End); clipboard paste; column reorder; per-cell ARIA `aria-readonly` / `aria-required` | Medium — beta channel; requires pinning version. Documentation: https://github.com/Comcast/react-data-grid |
-| Mobile row-list drawer | Custom responsive sheet for row details (planned P1.6) | planned ≈ 250 LOC | Native `<dialog>` | shadcn `Sheet` on Radix Dialog | **REPLACE** | ≈ 180 | shared | ✓ | Same as shell | Low |
-| Recruiter / team / bank typeahead | Planned: filter listbox | planned ≈ 200 LOC | `<datalist>` (no virtualization) | **`cmdk` 1.1.1** (MIT, peer `react ^18 || ^19`, depends on `@radix-ui/react-dialog` 1.1.6+) wrapped in Radix Popover | **REPLACE (P1.6-W04)** | ≈ 150 | +13 kB (cmdk + radix-popover) | ✓ | WAI-ARIA Combobox 1.2 pattern; keyboard-tested; documented https://cmdk.paco.me | Low |
-| Header action toolbar | Bespoke row of buttons | ≈ 40 LOC | n/a | shadcn `Button` + `Tooltip` | **REUSE** | 0 | 0 | ✓ | ✓ | — |
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| P1.6 grid (13 cols, 500–20k rows) | **Not on this branch.** Spike: `BI-p1.6-grid-spike` worktree; main has no grid component. | 0 | planned > 1,500 LOC of custom virtual grid | `react-data-grid` 7.0.0-beta.61 | **ADD AT P1.6-W04** (conditional on P1.6-G3 spike PASS) | 0 | **ESTIMATE ≥ 1,500** (P1.6 plan + spike result) | ~ 80 (column defs + custom editors) | **MEASURE_REQUIRED** — bundle delta must be measured against `next build` analyzer; cannot quote without measurement | Client Component only (uses `useSyncExternalStore`) — must NOT be imported into RSC | Out-of-box keyboard nav; **must verify IME + VoiceOver** before claim | Medium — beta channel; pin `7.0.0-beta.61` |
+| Mobile row-list drawer | **PLANNED — not on this branch.** | 0 | `<dialog>` | `radix-ui` `Sheet` (umbrella, same as APP-NAV-01) | **PLANNED** | 0 | ESTIMATE 180 (avoid) | shared snippet | shared | ✓ | Same as APP-NAV-01 | Low |
+| Recruiter / team / bank typeahead | **PLANNED — not on this branch.** | 0 | `<datalist>` (no virtualization) | `cmdk` 1.1.1 (depends on Radix Dialog) | **CONDITIONAL — only after a focused typeahead spike passes** | 0 | ESTIMATE 150 | ~ 50 (cmdk filter wrapper) | +13 kB | ✓ Client Component; **must add after** `radix-ui` umbrella is installed | WAI-ARIA Combobox 1.2 per docs — **but app-level keyboard/IME test required** | Medium — gate on focused spike |
+| Header action toolbar | Bespoke row of buttons (planned in APP-NAV-01; not yet on this branch) | 0 | n/a | keep | **KEEP native `<button>`** | 0 | 0 | 0 | 0 | — | — | — |
 
-#### 2.4 Forms & validation (P1 + P1.5 + P1.6)
+### 2.4 Forms & validation (current code on this branch)
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| Direct entry form submit | Native `<form>` + Server Action `useActionState` (already present in `direct-entry-session-core.ts`) | existing ≈ 60 LOC | `<Form action={…}>` (Next 16) | **keep as-is** | **KEEP** | 0 | 0 | ✓ R19 `useActionState`, `useFormStatus` | Same a11y | — |
-| Form state library | none (Server Actions + native `useState`) | n/a | n/a | `react-hook-form` 7.89.0 (MIT) | **DEFER (RHF gives no benefit when Server Action + Zod already covers `useActionState`)** | 0 | +13 kB if added | ✓ | RHF adds aria-invalid; we already do it | None |
-| Zod schemas | Already ubiquitous in `src/lib/contracts/**` | n/a | n/a | **keep** Zod 4.6.5 | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Field arrays / dynamic rows | Inline `useFieldArray`-style state | n/a | n/a | `useFieldArray` from RHF (n/a since we KEEP RHF=DEFER) | **KEEP native** | 0 | 0 | ✓ | ✓ | — |
-| Inline error display | Bespoke `<p role="alert">` | ~30 LOC | n/a | shadcn `Form` (RHF) — not used | **KEEP native `<p role="alert">`** (already ARIA-correct) | 0 | 0 | ✓ | ✓ | — |
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| Form state | **No forms on this branch** (P1.6 form not yet implemented; settings panel uses native `useState`+`fetch`) | 0 | React 19 `useActionState` + `<Form action={...}>` (Next.js 16) | **KEEP native** — `useActionState` + Zod already cover Server Action forms | **KEEP** | 0 | 0 | 0 | 0 | ✓ R19 | ✓ | — |
+| `react-hook-form` | n/a | n/a | n/a | 7.89.0 | **REJECT** — adds 13 kB without a single feature gain over `useActionState` + Zod | 0 | 0 | 0 | +13 kB if added | ✓ | ✓ | None |
+| Zod schemas | already ubiquitous in `src/lib/contracts/**` and `src/lib/ai-config/**` | n/a | n/a | keep Zod 4.6.5 | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Field arrays | n/a (P1.6 not yet on this branch) | 0 | n/a | n/a | **KEEP native** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Inline error display | inline `<p role="alert">` in `ai-settings-panel.tsx` (server-side error map) | n/a (inline, low LOC) | n/a | n/a | **KEEP native** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
 
-#### 2.5 Async mutations / caching / data fetching
+### 2.5 Async mutations / caching / data fetching
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| AI report polling | `report-controller.ts` (124 LOC) — custom `setTimeout` chain with `AbortController` and job tokens | 124 | n/a | **`useTransition` + `revalidateTag('ai-report')` / `updateTag` + Server Action polling endpoint** | **REPLACE (P1.5-W06)** | ≈ 90 (polling loop deleted) | 0 new deps | ✓ Next 16 cache tags + `useTransition` are Server-Component-native | Inherent (no UX change) | Medium — must validate that revalidation latency ≤ current 1.5 s |
-| Server-action pending UX | `useFormStatus` (already in use) | n/a | n/a | keep | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Data fetching for dashboard | Server Component `await db` (already in use) | n/a | n/a | `@tanstack/react-query` 5.104.1 (MIT) | **DEFER** — query caching unnecessary when every page already streams from Server Components | 0 | +13 kB if added | ✓ | ✓ | None |
-| Mutation cache invalidation | Server Action + `revalidateTag` (already) | n/a | n/a | keep | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Optimistic UI for grid edits | planned `useOptimistic` for P1.6-W04 | 0 (planned) | n/a | R19 `useOptimistic` | **KEEP** | 0 | 0 | ✓ | ✓ | — |
+| Area | Current implementation (file:line range) | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| **AI report polling (durable background job)** | `src/lib/ai-report/report-controller.ts:1–123` — generation tokens, AbortController, scheduler abstraction, capability/history/analysis polling; `src/components/ai-report/ai-report-panel.tsx:24` (`POLL_INTERVAL_MS = 2000`), `:177–178` (`stopPolling`) | **123 LOC** | n/a | **none** — `useTransition` only signals pending UI state; `revalidateTag`/`updateTag` only invalidate cache; neither delivers **durable background job completion notification**, and replacing durable jobs with synchronous Server Actions conflicts with Vercel timeout / retry / cancellation semantics | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Server Action pending UX | `useFormStatus` (planned for P1.6; not on this branch) | 0 | n/a | n/a | **KEEP native** when P1.6 lands | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Data fetching for dashboard | Server Component `await db` (already used) | n/a | n/a | `@tanstack/react-query` 5.104.1 | **REJECT** — query caching is unnecessary when every page already streams from Server Components | 0 | 0 | 0 | +13 kB if added | ✓ | ✓ | None |
+| Mutation cache invalidation | Server Action + `revalidateTag` (planned P1.6; not yet on this branch) | 0 | n/a | n/a | **KEEP** when P1.6 lands | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Optimistic UI for grid edits | planned `useOptimistic` for P1.6-W04 | 0 | n/a | R19 `useOptimistic` | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
 
-#### 2.6 Document upload (CCCD + Hợp đồng)
+> **Correction vs R0:** R0 incorrectly proposed "Replace hand-rolled polling with `useTransition` + `revalidateTag`". This is wrong: `useTransition` only toggles pending state; `revalidateTag`/`updateTag` only invalidate cache. Neither can replace a durable background job completion notification. We do **not** convert durable jobs to synchronous Server Actions because Vercel imposes timeouts, retries, and cancellation semantics that long-running AI jobs would violate. **The `report-controller.ts` polling controller is KEEP.** Re-evaluation only when we have an SSE/WebSocket/long-polling contract with reconnect, authorization, and terminal-state tests.
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| File upload | planned native `<input type="file" multiple>` + Server Action `formData` (Next 16 supports streaming Body to Server Action) | planned ≈ 60 LOC | n/a | **KEEP native** | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Drag-and-drop UX (optional polish) | none | 0 | HTML5 DnD | `react-dropzone` 14.x (MIT) — **DEFER** until CCCD capture is verified. For 1–3 files per row, native `<input>` is sufficient and a11y-correct (keyboard `Open file` button). | **DEFER** | 0 | +10 kB if added later | ✓ | native `<input>` is keyboard-accessible by default | None |
-| Uppy | n/a | n/a | n/a | n/a | **DO NOT ADD** | 0 | +80 kB if added | — | — | — |
+### 2.6 Document upload (CCCD + Hợp đồng)
 
-#### 2.7 Toasts / Notifications
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| File upload (planned P1.6) | **Not on this branch.** | 0 | `<input type="file">` + Server Action `formData` (Next 16 supports streaming Body to Server Action) | **KEEP native** | **KEEP** | 0 | ESTIMATE 60 LOC avoided (no Uppy) | 0 | 0 | ✓ | ✓ keyboard-accessible | — |
+| `react-dropzone` / Uppy | n/a | n/a | n/a | 14.x / 4.x | **REJECT** — native `<input type="file">` is sufficient for 1–3 files per row and keyboard-accessible by default | 0 | 0 | 0 | +10 kB / +80 kB if added | ✓ | ✓ | None |
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| Status banners | Custom inline `<div role="status">` blocks | ~ 50 LOC across P1.5 / P1.6 | n/a | keep for inline status | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Toast on mutation | none / inline | 0 | n/a | **`sonner` 2.0.8** (MIT, peer `react ^19.0.0 || ^19.0.0-rc`, 0 deps) | **ADD now** (used by P1.5 review confirmation + P1.6 submit) | inline ⇒ toaster ⇒ 30 LOC saved | +4 kB | ✓ `Toaster` is Client Component; RSC can call `toast.success()` via Server Action only via inline client wrapper — fine | `role="status"` polite live region, keyboard focus order | Low |
+### 2.7 Toasts / Notifications
 
-#### 2.8 Theming
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| Status banners | inline `<div role="status">` blocks in `ai-settings-panel.tsx` and `ai-report-panel.tsx` | a few inline occurrences | n/a | keep | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Toast on mutation | none / inline | 0 | n/a | `sonner` 2.0.8 | **DEFER** — not required by P1.5 or P1.6 spec; inline status is sufficient | 0 | 0 | 0 | +4 kB if added | ✓ | polite live region | Low |
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| 5-theme token engine | `theme-registry.ts` (290), `theme-provider.tsx` (100) — bespoke HSL/RGB math, inline `<head>` script | 390 | Tailwind v4 `@theme` directive | `next-themes` 0.4.6 (MIT) | **KEEP** (custom registry is required for chart palette + 0-flash head script; `next-themes` is for **light/dark/system** only) | 0 | 0 | ✓ both | ✓ | — |
-| Theme selector UI | see §2.2 `theme-selector.tsx` | 127 | see above | see above | **REPLACE (Radix DropdownMenu)** | 70 | see above | ✓ | ✓ | — |
+### 2.8 Theming
 
-> **Note on `next-themes`:** it is the wrong primitive here. `next-themes` toggles between `data-theme="light"` and `data-theme="dark"` using localStorage + a flash-free inline script. Our `theme-registry.ts` does something *different*: it computes **derived chart palette tokens** (e.g. `chart-1` through `chart-5`, plus a Recharts-friendly alpha overlay) for 5 brand themes (`hr-partner`, `executive-gold`, `emerald-growth`, `ocean-trust`, `violet-future`). Swapping it for `next-themes` would force us to maintain two theming systems — net negative. Confirmed against docs: https://github.com/pacocoursey/next-themes.
+| Area | Current implementation (file:line range) | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| 5-theme token engine | `src/lib/theme/theme-registry.ts:1–289` — HSL/RGB math, palette derivation for 5 themes; `src/lib/theme/theme-provider.tsx:1–99` — `useTheme` + inline `<head>` script | 388 LOC total | Tailwind v4 `@theme` directive | `next-themes` 0.4.6 | **KEEP** (custom registry is required for chart palette + 0-flash head script; `next-themes` is for **light/dark/system** only) | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Theme selector UI | see §2.2 `theme-selector.tsx` | 126 LOC file | see §2.2 | `radix-ui` `DropdownMenu` (umbrella) | **REPLACE** (per §2.2) | 36 | 0 | ~ 25 | +7 kB | ✓ | same as §2.2 | Low — theme tokens unchanged |
 
-#### 2.10 Date / timezone handling
+> **Correction vs R0:** `next-themes` is **REJECTED** because it does the wrong job. `next-themes` toggles between `data-theme="light"` and `data-theme="dark"` using localStorage + flash-free inline script. Our `theme-registry.ts` is a **brand theme engine** that computes derived chart palette tokens (`chart-1`..`chart-5`, Recharts-friendly alpha overlay) for 5 brand themes (`hr-partner`, `executive-gold`, `emerald-growth`, `ocean-trust`, `violet-future`). Adding `next-themes` would mean two theming systems for one product.
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| Single timezone (`Asia/Ho_Chi_Minh`) formatting | `src/lib/format.ts` (45 LOC) using `Intl.DateTimeFormat` | 45 | n/a | `date-fns` 4.4.0 (MIT) — **DEFER**. We need only one timezone (`Asia/Ho_Chi_Minh`), one `Intl.DateTimeFormat` instance, and `formatDistance` for relative dating on Submit. `Intl` covers both. | **KEEP** (and consider removing `date-fns` if and when we invent one) | 0 | 0 | ✓ | ✓ | None |
-| Relative dates ("vừa xong", "3 phút trước") | none / `Intl.RelativeTimeFormat` | 0 | `Intl.RelativeTimeFormat` (built-in) | n/a | **KEEP native** | 0 | 0 | ✓ | ✓ | — |
+### 2.9 Date / timezone handling
 
-#### 2.11 Validation / projection
+| Area | Current implementation (file:line range) | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| Single timezone (`Asia/Ho_Chi_Minh`) formatting | `src/lib/format.ts:1–44` using `Intl.DateTimeFormat` | 44 LOC | n/a | `date-fns` 4.4.0 | **KEEP native** — Intl is sufficient; we need only one timezone and one relative-distance helper | 0 | ESTIMATE 30 LOC avoided (no `date-fns` import) | 0 | 0 | ✓ | ✓ | None |
+| Relative dates ("vừa xong", "3 phút trước") | none yet on this branch | 0 | `Intl.RelativeTimeFormat` (built-in) | n/a | **KEEP native** when needed | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| Server-side validation | Zod 4.6 in `src/lib/contracts/**` | n/a | n/a | keep Zod | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Client form validation | Reuses Zod via Server Action `useActionState` errors | n/a | n/a | keep | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Projection of P1.6 row diff | Server Action returns diff array; UI renders key-by-key table | ≈ 60 LOC | n/a | keep | **KEEP** | 0 | 0 | ✓ | ✓ | — |
+### 2.10 Validation / projection
 
-#### 2.12 Tables / list rendering (outside P1.6 grid)
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| Server-side validation | Zod 4.6 in `src/lib/contracts/**` and `src/lib/ai-config/**` | n/a | n/a | keep Zod | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Client form validation | reuses Zod via Server Action `useActionState` errors (planned P1.6) | 0 | n/a | keep | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Review projection (P1.5-W05) | `src/lib/ai-report/review-projection.ts:1–95` | 95 LOC | n/a | keep | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| Dashboard tables (≤ 200 rows) | Recharts + native `<table>` | n/a | n/a | keep | **KEEP** | 0 | 0 | ✓ | ✓ | — |
-| Scroll area inside modals (A5) | Native `<div overflow>` | n/a | n/a | shadcn `ScrollArea` on `@radix-ui/react-scroll-area` (optional polish for very tall AI settings) | **DEFER** (native works) | 0 | +5 kB if added | ✓ | ✓ | None |
+### 2.11 Tables / list rendering (outside P1.6 grid)
 
-#### 2.13 Accordion (P1.6 W05 review notes)
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| Dashboard tables (≤ 200 rows) | Recharts + native `<table>` (e.g. `src/components/dashboard/source-status-table.tsx`) | n/a | n/a | keep | **KEEP** | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
+| Scroll area inside modals | Native `<div overflow>` | n/a | n/a | `radix-ui` `ScrollArea` (umbrella) | **DEFER** — only if a future drawer truly needs it | 0 | 0 | 0 | +5 kB if added | ✓ | ✓ | None |
 
-| Area | Current implementation | Files / LOC | Existing / native option | Library candidate | Verdict | LOC deletable | Bundle / dep impact | R19 / N16 / RSC compat | A11y / security impact | Migration risk |
-|---|---|---:|---|---|---|---:|---|---|---|---|
-| Accordion / collapsible diff rows | none yet | 0 | `<details>`/`<summary>` | shadcn `Accordion` on `@radix-ui/react-accordion` | **ADD (P1.6-W04, optional)** | 0 | +6 kB | ✓ | WAI-ARIA Disclosure pattern | Low |
-| Inline disclosure | `<details>` (zero deps) | 0 | n/a | n/a | **KEEP** (used for "show raw toggle") | 0 | 0 | ✓ | ✓ | — |
+### 2.12 Accordion / Disclosure
+
+| Area | Current implementation | LOC (actual) | Existing / native option | Library candidate | Verdict | CURRENT deletable | PLANNED avoided | GENERATED ADDED | Bundle / dep impact | R19 / N16 / RSC compat | A11y impact | Migration risk |
+|---|---|---:|---|---|---|---:|---:|---:|---|---|---|---|
+| Accordion / collapsible diff rows (P1.6 W05 review notes) | **PLANNED — not on this branch.** | 0 | `<details>`/`<summary>` | `radix-ui` `Accordion` (umbrella) | **DEFER to P1.6-W04** | 0 | ESTIMATE 40 (if `<details>` instead) | 0 | +6 kB if added | ✓ | WAI-ARIA Disclosure pattern | Low |
+| Inline disclosure | `<details>` (zero deps) | 0 | n/a | n/a | **KEEP** (used for "show raw toggle") | 0 | 0 | 0 | 0 | ✓ | ✓ | — |
 
 ---
 
 ## 3. Duplicate-code findings
 
-### 3.1 Focus traps (3 copies of the same handlers)
+### 3.1 Focus traps (current state)
 
-```
-ai-settings-panel.tsx:    ~ 120 LOC of useEffect/keydown handlers, focus-return, scroll-lock
-ai-report-panel.tsx:     ~ 95 LOC of the same handlers, with one extra ESC branch
-confirm-discard-dialog:  ~ 30 LOC (subset)
-theme-selector.tsx:      ~ 35 LOC of keydown handlers (ArrowUp/Down, Home/End, Escape, typeahead)
-```
+- **`src/components/dashboard/ai-settings-panel.tsx:306–365`** — hand-rolled `useEffect` with `FOCUSABLE_SELECTOR`, `focusables()` helper, Tab/Shift+Tab handler, `onFocusIn` catch, `aria-hidden`/`[inert]` filtering. ~ 60 LOC. The pure decision helpers (`confirmInitialFocusIndex`, `decideDismiss`, `resolveTabTarget`) live in `src/components/dashboard/ai-settings-panel-logic.ts:1–54` and **must stay** as they encode the "block / stay / confirm / close" state machine that Radix does not provide. Total file: 725 LOC.
+- **`src/components/ai-report/ai-report-panel.tsx:180–230`** — similar focus-trap `useEffect`. ~ 50 LOC. Total file: 407 LOC.
 
-**Common defect**: none of them implement `aria-modal` on the body; `inert` is not applied to background; focus-return uses `requestAnimationFrame` race; body scroll lock is implemented in CSS via Tailwind classes that lose when a sticky parent exists. **Net accessibility debt.** Radix `Dialog` 1.1+ handles all four.
+> **Correction vs R0:** R0 estimated "≈ 360 LOC of duplicated focus traps across 3 files". The truth is **two files** with **~ 60 + ~ 50 = ~ 110 LOC** of similar code, of which **~ 100 LOC is deletable** (the logic helpers stay).
 
 ### 3.2 Drawer / modal backdrop & scroll lock
 
-- `dashboard-shell.tsx` + `ai-settings-panel.tsx` both implement a `useStableScrollLock` of their own.
-- `ai-report-panel.tsx` adds a `useFixedElement` that toggles `useId`-keyed `data-fixed=…` attribute for Recharts measure.
+- **There is no separate backdrop / scroll-lock implementation** beyond what the two focus-trap effects include. No `useStableScrollLock` helper exists. R0's claim that "`dashboard-shell.tsx` + `ai-settings-panel.tsx` both implement a `useStableScrollLock` of their own" is **wrong** — `dashboard-shell.tsx` does not exist.
 
 ### 3.3 Form helpers
 
-- The codebase already centralises validation in Zod (`src/lib/contracts/direct-entry-v1.ts`, etc.) — **no duplicate form helpers**.
-- `<form>` `<Form>` boundary already follows React 19 + Server Actions. RHF would be a net regression (must re-implement `useActionState` semantics manually).
+- The codebase already centralises validation in Zod (`src/lib/contracts/**`, `src/lib/ai-config/**`). **No duplicate form helpers.** No `useFieldArray`.
 
 ### 3.4 Polling / cache
 
-- `report-controller.ts` is the only polling loop. It exists **only** because the AI generation is long-running and we need progress. Next.js 16 supports `revalidateTag` after a Server Action mutation. Pair with `useTransition` for pending UI. The polling loop can be deleted when the Server Action returns the result directly (currently uses a job token + intermediate GET — should be replaced by streaming + `revalidateTag` once P1.5-W06 lands).
+- `src/lib/ai-report/report-controller.ts:1–123` is the only polling loop. It exists because the AI generation is durable (long-running, cancelable, retryable). **KEEP.** Re-evaluation only when SSE/WebSocket/long-polling contract lands.
+- `src/components/ai-report/ai-report-panel.tsx:177–178` (`stopPolling`) is the only panel-level coupling to polling. KEEP.
 
 ### 3.5 Table / list rendering
 
-- Two implementations: Recharts `Bar`/`Line` (chart) + native `<table>` (rows). Both correctly use Server Components. No duplication.
+- Two implementations: Recharts `Bar`/`Line` (chart) + native `<table>` (`src/components/dashboard/source-status-table.tsx`). Both correctly use Server Components. **Zero duplication.**
 
 ### 3.6 Date / timezone
 
-- `src/lib/format.ts` is the only date helper. Confirmed against current callers — no other inline `new Date()` formatting exists. **Zero duplication.**
+- `src/lib/format.ts:1–44` is the only date helper. Confirmed via `git grep` that no other inline `new Date()` formatting exists. **Zero duplication.**
 
 ### 3.7 Validation / projection
 
-- Zod schemas in `src/lib/contracts/**`. Each contract has its own schema; no overlap. **Zero duplication.**
+- Zod schemas in `src/lib/contracts/**` and `src/lib/ai-config/**`. Each contract has its own schema; no overlap. **Zero duplication.**
 
 ---
 
 ## 4. Recommended minimal stack
 
-### 4.1 Already installed (no action)
+### 4.1 Already installed (no action — confirmed via `git show HEAD:package.json`)
 
-- `next@16.3.8`, `react@19.2.8`, `react-dom@19.2.8`, `react@server-only`, `@supabase/supabase-js`
-- `nuqs@2.10.1` — keep
-- `recharts@3.10.1` — keep
-- `zod@4.6.5` — keep
-- `clsx` — already in spike; promote to runtime (0.5 kB)
+| Package | Version (declared) | Purpose |
+|---|---|---|
+| `@supabase/supabase-js` | ^2.117.2 | DB client |
+| `next` | 16.3.8 | framework |
+| `nuqs` | ^2.10.1 | URL filter state |
+| `react` | 19.2.8 | runtime |
+| `react-dom` | 19.2.8 | runtime |
+| `recharts` | ^3.10.1 | dashboard charts |
+| `server-only` | ^0.0.1 | RSC boundary guard |
+| `zod` | ^4.6.5 | validation |
 
-### 4.2 Add now (≤ 5 unique package families)
+### 4.2 Add now (APP-NAV-01) — 2 packages, hard ceiling ≤ 5
 
-| Package | Version | License | Peer / RSC | Purpose | Files / LOC replacement | URL |
-|---|---|---|---|---|---|---|
-| `lucide-react` | 0.474.x | MIT | ✓ R19 | Replace Unicode, raw SVG, decorative icons | Inline icons (~ 12 LOC) + Recharts subtree | https://lucide.dev |
-| `@radix-ui/react-dialog` | 1.1.23 | MIT | peer `react ^18 || ^19` (Slot-based) | Backbone of all drawers, sheet, alert dialog | `ai-settings-panel` (~ 380), `ai-report-panel` (~ 260), `confirm-discard` (~ 30) | https://www.radix-ui.com/primitives |
-| `@radix-ui/react-dropdown-menu` | 2.x | MIT | peer `react ^18 || ^19` | Theme selector | `theme-selector.tsx` (~ 70) | https://www.radix-ui.com/primitives |
-| `cmdk` | 1.1.1 | MIT | peer `react ^18 || ^19` | Recruiter / team / bank typeahead (P1.6-W04) | planned ~150 LOC | https://github.com/pacocoursey/cmdk |
-| `sonner` | 2.0.8 | MIT | peer `react ^18 || ^19 || ^19.0.0-rc` | Mutation toasts (Submit / Confirm) | inline banners ~30 LOC | https://sonner.emilkowal.ski |
-| `react-data-grid` | 7.0.0-beta.61 | MIT | peer `react ^19.2`, `react-dom ^19.2` | P1.6 grid (validated in spike) | planned ≥ 1,200 LOC | https://github.com/Comcast/react-data-grid |
-| `class-variance-authority` | 0.7.x | MIT | ✓ R19 | shadcn `cn()` helper for cva-based variants | 0 net LOC | https://cva.ui |
-| `tailwind-merge` | 2.x | MIT | ✓ R19 | shadcn `cn()` helper for class merging | 0 net LOC | https://github.com/dcastil/tailwind-merge |
+| Package | Why | Files affected (planned) | LOC deletable from existing code |
+|---|---|---|---|
+| `radix-ui` (umbrella, 1.4.3, MIT) | Sheet, Dialog, AlertDialog, DropdownMenu, Tooltip, Accordion, ScrollArea, Label, Checkbox, Separator | `theme-selector.tsx:36–71` (focus trap + keydown), AI drawers focus-trap `useEffect` (per §2.2) | ~ 60 + ~ 50 + 36 = **~ 146** LOC (current code) |
+| `lucide-react` (0.474.x, MIT, 0 deps) | icons | `theme-selector.tsx:86,118` decorative arrows | **2** occurrences |
 
-> **Family count for the ≤ 5 ceiling**: 1 icon family (lucide-react) + 1 Radix primitives family (one install of `@radix-ui/react-dialog` enables `cmdk`, plus we add a few thin siblings: dropdown-menu, popover, tooltip, accordion, scroll-area, separator, label, checkbox — these are *not* separate families, they're the Radix family) + 1 toast family (`sonner`) + 1 grid family (`react-data-grid`) + 1 cva/tailwind-merge/clsx helper triplet. **5 families**, even with the 8 individual packages.
+> **Conditional compatibility test:** `radix-ui` umbrella must pass `pnpm install`, `pnpm tsc --noEmit`, `pnpm build`, and the existing `pnpm test` suite before merge. If the umbrella build is incompatible with Next.js 16.3.8 / React 19.2.8, **fall back to individual `@radix-ui/react-*`** packages and document the reason in the PR.
 
-### 4.3 Add only for P1.6-W04 (deferred; not part of the gate)
+### 4.3 Add only for P1.6-W04 (conditional, after P1.6-G3 spike PASS) — 0–2 packages
 
-- `@radix-ui/react-tooltip`, `@radix-ui/react-accordion`, `@radix-ui/react-scroll-area`, `@radix-ui/react-checkbox`, `@radix-ui/react-label`, `@radix-ui/react-separator`, `@radix-ui/react-popover`.
+| Package | Why | Gate |
+|---|---|---|
+| `react-data-grid` 7.0.0-beta.61 | P1.6 13-column grid | **P1.6-G3 spike PASS**; pin `7.0.0-beta.61`; measure bundle via `next build` analyzer before merge |
+| `cmdk` 1.1.1 | P1.6 Recruiter/Team/Bank typeahead | **focused typeahead spike PASS**; only added if spike shows custom ≥ 150 LOC is unavoidable |
 
-These are pulled in transitively by `cmdk` (already in 4.2) plus our own shadcn snippets; we do **not** add them as separate audit items.
+> These do not consume the ≤ 5 budget **unless** both are added — they are gated spikes, not promised adds.
 
 ### 4.4 Do NOT add
 
-- `react-hook-form` (React 19 `useActionState` + Server Actions cover it; Zod 4 already validates on the server).
-- `@tanstack/react-query` (Next.js 16 `revalidateTag`/`updateTag` + RSC streams cover it).
-- `@tanstack/react-table` (overridden by `react-data-grid`).
-- `date-fns` (overridden by `Intl.DateTimeFormat`).
-- `next-themes` (overridden by `theme-registry.ts`; `next-themes` only does light/dark/system, we need 5 brand themes with chart palette).
-- `react-dropzone` / Uppy (overridden by `<input type="file">` + Server Action `formData`).
-- MUI / Ant / Chakra / Mantine (overridden by Tailwind v4 + shadcn/Radix).
-- Zustand / Jotai / Redux (overridden by RSC + `useActionState`).
-- Admin templates (Refine / AdminJS / shadcn-admin) — kill Server Component boundaries.
+| Candidate | Why we are not adding it |
+|---|---|
+| **MUI / Ant Design / Chakra / Mantine** | Own theming + styling runtime conflicts with `theme-registry.ts` and Recharts theming. ≥ 100 kB gzip. |
+| **Refine / AdminJS / shadcn-admin** | Kills RSC boundaries. Own routing. ≥ 30 transitive deps. |
+| **Zustand / Jotai / Redux Toolkit** | React 19 `useActionState`, `useTransition`, `useOptimistic` already cover every need. |
+| **`tailwindcss-animate`** | Tailwind v4 + View Transitions / CSS keyframes sufficient. |
+| **Uppy** | 80 kB gzip; we upload 1–3 files per row. |
+| **`react-hook-form`** | Server Actions + Zod + `useActionState` already cover form state, errors, pending UI. |
+| **`@tanstack/react-query`** | We never fetch the same data twice in the dashboard. Polling is durable-job-specific (KEEP). |
+| **`@tanstack/react-table`** | We chose `react-data-grid`. |
+| **`date-fns`** | One timezone + relative distance — both built-in to `Intl`. |
+| **`next-themes`** | Wrong primitive; our theme engine is brand-themed, not light/dark. |
+| **`react-dropzone`** | Native `<input type="file">` is keyboard-accessible. |
+| **`sonner`** | Inline `<div role="status">` is sufficient for the current spec. Defer until a real toast-shaped need appears. |
+| **`clsx` / `tailwind-merge` / `class-variance-authority`** | **No caller today.** A 1-line inline `classnames` helper covers what we have. We will NOT adopt them just because shadcn convention says so. Add only with evidence of ≥ 20 LOC deletion per library. |
 
 ---
 
-## 5. Migration order
+## 5. Migration order (minimal, no double-migration)
 
-> **Strict ordering**: every step is independent, rollback-safe, and does **not** touch `main` or `feature/p1.6-integration` until T1A / T1B gate. No "big-bang" refactor.
+> **Ordering rule**: each step is a **small isolated commit / change set** (not a PR — see project workflow notes). No step migrates native dialog → Radix twice. Each step gates on the previous T1A/T1B work.
 
-### Step 0 — Branch hygiene (already done)
+### Step 0 — Branch hygiene (done)
 
-- `audit/library-reuse` worktree from `origin/main` at commit `0e9e2f4`.
-- No code changes outside `docs/audits/library-reuse-master.md`.
+- Worktree `audit/library-reuse` at `ec2f635`. No code changes outside `docs/audits/library-reuse-master.md`.
 
-### Step 1 — Native shell tightening (no new deps)
+### Step 1 — APP-NAV-01 (T1B, after dashboard-view lands)
 
-- Adopt `lucide-react` for icons in `dashboard-shell.tsx`, `ai-settings-panel.tsx`, `ai-report-panel.tsx`.
-- Replace Unicode `›`, `←`, `▦`, `▸` with Lucide components.
-- Convert backdrop overlays to use the native `<dialog>` `showModal()` as the baseline, then layer Radix Dialog on top in Step 3.
-- *Reversibility*: revert by re-importing inline icons.
+- Install **`radix-ui`** + **`lucide-react`** in one change set. Verify `next build` and `tsc --noEmit`.
+- Use **`radix-ui` `Sheet`** (mobile drawer) and **`DropdownMenu`** (theme selector) directly. Do **not** migrate to native `<dialog>` then to Radix — start with Radix.
+- Replace `theme-selector.tsx:36–71` (`useEffect` keydown + `onListKeyDown`) with `DropdownMenu`. Theme registry unchanged.
+- **Reversibility**: revert by restoring the focus-trap `useEffect` from git history.
 
-### Step 2 — Theme selector migration (1 new dep: `@radix-ui/react-dropdown-menu`)
+### Step 2 — Existing AI drawers (T1A, after P1.5-W05/G5 closes)
 
-- Replace `theme-selector.tsx` with shadcn `DropdownMenu` wrapped on Radix.
-- Theme registry remains unchanged — only the UI primitive changes.
-- *Reversibility*: revert by restoring the file.
+- Migrate `ai-settings-panel.tsx:306–365` and `ai-report-panel.tsx:180–230` (focus-trap `useEffect`) to `radix-ui` `Dialog`. **Keep** `ai-settings-panel-logic.ts` (`confirmInitialFocusIndex`, `decideDismiss`, `resolveTabTarget`) — Radix does not give us the discard-confirm state machine.
+- Replace the inline confirm-discard `<div>` rendering inside `ai-settings-panel.tsx` with `radix-ui` `AlertDialog`. The state machine stays in `ai-settings-panel-logic.ts`.
+- **Reversibility**: each drawer focus effect is independently restorable.
 
-### Step 3 — Drawer / modal migration (1 new dep: `@radix-ui/react-dialog`)
+### Step 3 — Polling: NO RIDE TO MODIFY (T1A — KEEP)
 
-- Apply to `ai-settings-panel.tsx`, `ai-report-panel.tsx`, `confirm-discard-dialog.tsx`.
-- Sequence: **first** P1.5-W05 (T1A), **then** P1.5-W06 (T1A), **then** P1.6-W04 (T1B). Do not run ahead of T1A.
-- *Reversibility*: each panel is independently restorable.
+- `src/lib/ai-report/report-controller.ts:1–123` **stays as-is**. **No Step 7 in this revision.** See §2.5 for why `useTransition` / `revalidateTag` / `updateTag` cannot replace durable-job polling, and why converting to a synchronous Server Action would violate Vercel timeout/retry/cancellation semantics.
+- Revisit only when an SSE / WebSocket / long-polling contract with reconnect, authorization, and terminal-state tests exists.
 
-### Step 4 — Toast migration (1 new dep: `sonner`)
+### Step 4 — P1.6 grid (T1B, P1.6-W04, conditional)
 
-- Add `sonner` `<Toaster />` once at the root `layout.tsx`.
-- Replace inline status banners with `toast.success()`/`toast.error()` only where the action lives on a different page (e.g. "Save filter" success). Keep inline status for in-page state.
-- *Reversibility*: revert by removing `<Toaster />` and inlining status.
+- Add `react-data-grid@7.0.0-beta.61` to `BI-p1.6-integration` only. Pin version.
+- Use `BI-p1.6-grid-spike/src/app/spike/grid/grid-spike.tsx` as template.
+- **Measure bundle via `next build` analyzer** before merge; report MEASURE_REQUIRED result in the PR description. Do not claim a number we have not measured.
+- **Reversibility**: `pnpm remove react-data-grid`.
 
-### Step 5 — P1.6 grid (1 new dep: `react-data-grid` 7.0.0-beta.61)
+### Step 5 — P1.6 typeahead (T1B, P1.6-W05, conditional)
 
-- T1B implements the grid in `feature/p1.6-integration` branch only.
-- Use the spike's `BI-p1.6-grid-spike` as the template. Pin version to `7.0.0-beta.61` until `7.0.0` GA.
-- *Reversibility*: `pnpm remove react-data-grid` reverts the branch.
-
-### Step 6 — P1.6 typeahead (1 new dep: `cmdk`)
-
-- Used in Recruiter / Team / Bank picker.
-- Wrapped in shadcn `Command` snippet on Radix Popover.
-- *Reversibility*: replace with native `<select>` or `<datalist>`.
-
-### Step 7 — Polling retirement (0 new deps; P1.5-W06)
-
-- Replace `report-controller.ts` polling loop with a single Server Action that returns the report synchronously + `revalidateTag('ai-report')`.
-- Use `useTransition` for pending UI.
-- *Reversibility*: keep `report-controller.ts` in git history.
-
-### Step 8 — Optional polish (1 dep family: Radix tooltip/accordion/scroll-area)
-
-- Defer until P1.6-W05 review.
+- Add `cmdk@1.1.1` **only after** a focused typeahead spike in `BI-p1.6-grid-spike` or a new `BI-p1.6-typeahead-spike` worktree proves custom code ≥ 150 LOC is unavoidable.
+- **Reversibility**: replace with native `<select>` / `<datalist>`.
 
 ### Step ordering rules
 
-1. **Do not start Step 3 until T1A's P1.5-W05 lands on `main`.**
-2. **Do not start Step 5 / 6 until T1B's P1.6-W03 lands on `feature/p1.6-integration`.**
-3. **Each step ships in its own PR** — no mega-PR.
-4. **Each step is gated by ≥ 1 behavioral-flow test** (already in place from P1.5-W05-R1).
-6. **After every step, run `next build` and a Lighthouse-style a11y pass on `/dashboard` and `/dashboard/ai-settings`.**
+1. **Do not start Step 2 until T1A's P1.5-W05/G5 lands on `main`.**
+2. **Do not start Step 4 / 5 until T1B's P1.6-G3 lands on `feature/p1.6-integration`.**
+3. **No big-bang change set.** Each step is a single change set, ≤ 400 LOC diff.
+4. **After every step**, run `next build`, `tsc --noEmit`, and the existing `pnpm test` suite (which is a Node `node:test` suite — see §6.5 for what it actually tests).
 
 ---
 
@@ -316,124 +317,119 @@ These are pulled in transitively by `cmdk` (already in 4.2) plus our own shadcn 
 
 ### 6.1 Code reduction — measurable
 
-| Metric | Today | Target (after Steps 1–7) | How to verify |
-|---|---:|---:|---|
-| Custom focus-trap handlers | 3 copies × ~ 120 LOC = **360** LOC | **0** LOC | `grep -R "tabindex\|onKeyDown.*Tab\|focus-trap"` returns 0 hits in `src/components/` |
-| Custom dropdown / listbox keydown | 1 file × 35 LOC = **35** LOC | **0** LOC | `grep -R "ArrowUp\|ArrowDown\|onKeyDown.*Home"` in `src/components/` returns 0 hits outside keyboard help page |
-| AI report polling loop | **124** LOC | **0** LOC | `src/lib/ai-report/report-controller.ts` removed or only contains types |
-| Personalised inline icons / Unicode | **~ 30** occurrences | **0** (lucide only) | `grep -R "[›←→▸•]" src/` returns design-only matches |
-| P1.6 grid (planned handwritten) | **~ 1,500** LOC planned | **~ 300** LOC (column defs + custom editors + sheet) | `wc -l src/app/spike/grid/grid-spike.tsx` |
-| Recruiter/team/bank typeahead | ~ 200 LOC planned | ~ 50 LOC (cmdk filter) | `wc -l` |
+| Metric | Today | Target (after Steps 1–2) | Target (after Steps 4–5 if added) | How to verify |
+|---|---:|---:|---:|---|
+| CURRENT deletable LOC | n/a | ~ 146 (focus trap + theme selector) | unchanged | `git diff main..audit/library-reuse --stat` shows net deletion |
+| PLANNED avoided | n/a | 0 | ≥ 1,530 (grid + typeahead) | `wc -l` on new P1.6 components in `BI-p1.6-integration` after merge |
+| GENERATED ADDED (wrapper) | n/a | ~ 50 (Dialog/DropdownMenu/AlertDialog snippets) | + ~ 80 (grid column defs + custom editors) | grep new snippet files |
 
-**Net reduction target: ≥ 1,500 LOC** (current + planned), with ≥ 6 new dependencies (1 family) added.
+**CURRENT deletable target: ≥ 100 LOC of accessibility/keyboard plumbing.**
+**PLANNED avoided target: ≥ 1,500 LOC if P1.6-W04 lands with the recommended stack.**
 
 ### 6.2 No regression in behavior / accessibility / security
 
-- **Behavior**: every drawer's `aria-label`, header, and submit semantics must remain identical. Behavior tests from P1.5-W05-R1 must still pass.
-- **Accessibility**:
-  - All drawers still trap focus, return focus, expose `role="dialog"`, `aria-modal="true"`, ESC to close.
-  - Body scroll lock still active.
-  - Dropdown still exposes `role="menu"` / `menuitemradio` and supports ArrowUp/Down/Home/End/Enter/Escape.
-  - **A11y baseline**: every migrated component passes axe-core (already integrated in P1.5 testing flow).
-- **Security**: no change. Server-side validation remains in Zod; Server Actions remain `use server`. No new client-side trust boundary.
+- **Behavior**: every drawer's `aria-label`, header, and submit semantics remain identical. Existing `src/components/dashboard/ai-settings-panel.test.mjs` and `src/components/ai-report/ai-report-panel.test.mjs` Node tests must still pass.
+- **Accessibility**: every migrated component **must** be verified against **WAI-ARIA APG dialog / listbox patterns** via the official docs (https://www.w3.org/WAI/ARIA/apg/, https://www.radix-ui.com/primitives). **VoiceOver / NVDA / IME testing is NOT in scope of this audit.** App-level keyboard tests must be added as Node behavioral tests using `node:test` + `jsdom` (or equivalent) before each migration step ships. **We do not claim a screen reader has been used until that has happened.**
+- **Security**: no change. Server-side validation remains in Zod; Server Actions remain `use server`. No new client trust boundary.
 
 ### 6.3 Bundle size
 
-- Per-page delta on `/dashboard` after Step 3 + Step 4:
-  - `@radix-ui/react-dialog` ≈ 9 kB gzip, `sonner` ≈ 4 kB gzip, `lucide-react` (per page, tree-shaken) ≈ 1 kB gzip.
-  - Net delta: **+ 14 kB gzip per page** before tree-shaking; **+ 8 kB** after tree-shaking.
-- Per-page delta on P1.6 grid: `react-data-grid` ≈ 80 kB gzip, `cmdk` ≈ 13 kB gzip. These are loaded only inside the grid route (Code-split via `next/dynamic`).
-- Total app-wide bundle growth is bounded by **≤ 15 kB gzip** outside the P1.6 grid route.
+- After Step 1: `radix-ui` umbrella + `lucide-react` add **MEASURE_REQUIRED** — actual delta must come from `next build --profile` (built-in to Next.js 16) **after** a real install, not from a quoted estimate. R0's "~ 14 kB gzip" number is **withdrawn** until measured.
+- After Step 4 (if added): `react-data-grid` is route-loaded via `next/dynamic`. Bundle delta **MEASURE_REQUIRED** — quoted "≈ 80 kB" in R0 is **withdrawn** until measured.
 
-### 6.4 Tests to keep or update
-| Screen | Test | Action |
-|---|---|---|
-| Focus trap | P1.5 behavioral flow test (`Tab` / `Shift+Tab` cycle) | Update to use Radix Dialog (no test logic change) |
-| Modal escape | P1.5 ESC closes drawer | Update selector (data attribute) |
-| Confirm dialog | P1.5 discard confirmation | Update selector |
-| Theme selector | P1.5 theme cycle keyboard test | Update selector to Radix DropdownMenu |
-| AI report polling | P1.5 polling cancel + done states | Update to use `useTransition` + `revalidateTag` |
-| Grid virtualisation | spike-only test in `BI-p1.6-grid-spike` | Promote to `tests/p1.6-grid.test.ts` |
-| Typeahead filter | none today | Add P1.6-W04 |
+### 6.4 Tests we have (truthfulness)
+
+> **Source of truth:** `git show HEAD:package.json` `scripts.test`. The project ships **only Node `node:test` suites** (`.test.mjs`). There is **no axe-core dependency, no Playwright, no Vitest, no jsdom** declared. R0's claim that "axe-core is already integrated in P1.5 testing flow" is **wrong** and is corrected here.
+
+| Test type | What we have | What we don't have | What we add (recommended) |
+|---|---|---|---|
+| Node behavioral tests (`node:test`) | `src/components/dashboard/ai-settings-panel.test.mjs`, `src/components/dashboard/ai-settings-panel-logic.test.mjs`, `src/components/ai-report/ai-report-panel.test.mjs`, `src/lib/ai-report/report-controller.test.mjs`, etc. | axe-core, jsdom, Playwright, Vitest | **jsdom** + minimal accessibility assertions (e.g. role / aria-modal / focus-return) for migrated drawers; gate migration step on green test |
+| Source-string tests | None | — | n/a |
+| Browser tests | None | Playwright / Vitest browser | **DEFER** — only after app-level keyboard/IME test is a documented requirement |
 
 ### 6.5 Server Component boundaries — must not be lost
 
-- `Sheet` / `Dialog` / `DropdownMenu` / `Tooltip` / `Command` are all Client Components. We **must not** push them into RSC trees.
-- The Server Component layers above them (page, layout, server-fetched data) **must remain Server Components** so the App Router contract is preserved.
-- All static labels / metadata remain in the Server Component layer that wraps the Client primitive.
+- `Sheet` / `Dialog` / `DropdownMenu` / `Tooltip` / `Command` are all Client Components. They **must not** be imported into RSC trees.
+- The Server Component layers above them (page, layout, server-fetched data) **must remain Server Components**.
 - `react-data-grid` is a Client Component. We do not attempt to use it on the server.
+- RSC boundary preservation is verified by `next build` output (server/client split) and by `tsc --noEmit`.
 
-### 6.6 Hard guardrails
+### 6.6 Hard guardrails (unchanged)
 
-- **No `package.json` / `pnpm-lock.yaml` changes outside the new packages above.**
+- **No `package.json` / `pnpm-lock.yaml` changes outside §4.2 + §4.3 packages.**
 - **No DB / RPC / schema migration.**
-- **No removal of authors from T1A / T1B.** Each agent owns their phase gate.
-- **No big-bang PR.** Every step is a PR ≤ 400 LOC diff.
+- **No removal of author ownership from T1A / T1B.** Each agent owns their phase gate.
+- **No big-bang change set.** Each step ≤ 400 LOC diff, single change set per step.
+- **No "MEASURE_REQUIRED" value may be quoted as a number without measurement.** Bundle delta, focus-return latency, IME composition cost: all must come from a real `next build --profile` run on a real install.
 
 ---
 
-## Appendix A — Source-of-truth docs (verified)
+## Appendix A — Source-of-truth docs (verified, 2026-10)
 
-- React 19 docs — `useActionState`, `useTransition`, `useOptimistic`: https://react.dev/reference/react (R19 docs current as of 2026-10).
-- Next.js 16 docs — App Router, Server Actions, `revalidateTag`, `updateTag`: https://nextjs.org/docs (v16.3.x current).
-- Radix UI Primitives — https://www.radix-ui.com/primitives (Dialog 1.1.23, DropdownMenu 2.x, Slot 1.3.3 all current as of 2026-08).
-- shadcn/ui — https://ui.shadcn.com (CLI-managed copy-paste primitives, 0 runtime install cost for the snippet itself).
+- React 19 docs — `useActionState`, `useTransition`, `useOptimistic`, `useId`: https://react.dev/reference/react.
+- Next.js 16 docs — App Router, Server Actions, `revalidateTag`, `updateTag`, cache tags, View Transitions: https://nextjs.org/docs (v16.3.x).
+- WAI-ARIA Authoring Practices Guide (APG) — dialog, listbox, combobox patterns: https://www.w3.org/WAI/ARIA/apg/.
+- Radix UI Primitives (umbrella + individual) — https://www.radix-ui.com/primitives (verified Dialog 1.1.23, DropdownMenu 2.x, Slot 1.3.3 current as of 2026-08).
+- `radix-ui` umbrella package on npm — https://www.npmjs.com/package/radix-ui (1.4.3, MIT).
+- shadcn/ui — https://ui.shadcn.com (CLI copy-paste snippets, **each snippet is a generated wrapper file, not a runtime install**).
 - cmdk — https://cmdk.paco.me (1.1.1, MIT).
-- sonner — https://sonner.emilkowal.ski (2.0.8, MIT).
-- react-data-grid — https://github.com/Comcast/react-data-grid (7.0.0-beta.61, MIT, peer `react ^19.2`).
-- lucide-react — https://lucide.dev (0.474.x, MIT, 0 runtime deps).
-- next-themes — https://github.com/pacocoursey/next-themes (0.4.6, MIT) — **REJECTED** (wrong primitive; see §2.8).
-- date-fns — https://date-fns.org (4.4.0, MIT) — **REJECTED** (overridden by `Intl`).
-- React Hook Form — https://react-hook-form.com (7.89.0, MIT) — **REJECTED** (overridden by `useActionState`).
-- TanStack Query — https://tanstack.com/query (5.104.1, MIT) — **REJECTED** (overridden by `revalidateTag`).
-- react-dropzone — https://react-dropzone.js.org — **REJECTED** (overridden by native `<input type="file">`).
+- sonner — https://sonner.emilkowal.ski (2.0.8, MIT). **Not added.**
+- react-data-grid — https://github.com/Comcast/react-data-grid (7.0.0-beta.61, MIT, peer `react ^19.2`, `react-dom ^19.2` — **no Chart.js peer**).
+- lucide-react — https://lucide.dev (0.474.x, MIT, 0 deps).
+- next-themes — https://github.com/pacocoursey/next-themes (0.4.6, MIT). **Rejected.**
+- date-fns — https://date-fns.org (4.4.0, MIT). **Rejected.**
+- React Hook Form — https://react-hook-form.com (7.89.0, MIT). **Rejected.**
+- TanStack Query — https://tanstack.com/query (5.104.1, MIT). **Rejected.**
+- react-dropzone — https://react-dropzone.js.org. **Rejected.**
 
-## Appendix B — Rejected candidates with rationale
+## Appendix B — Rejected candidates with rationale (unchanged structure, R1)
 
 | Candidate | Why we are not adding it |
 |---|---|
-| **MUI / Ant Design / Chakra / Mantine** | Ships its own theming + styling runtime. Conflicts with `theme-registry.ts` token engine. Adds ≥ 100 kB gzip. Radix/shadcn gives us the same accessibility guarantees for ~ 9 kB. |
-| **Refine / AdminJS / shadcn-admin** | Kills Server Component boundaries. Forces its own routing. Pulls ≥ 30 transitive deps. |
-| **Zustand / Jotai / Redux Toolkit** | React 19 `useActionState`, `useTransition`, `useOptimistic` already cover every cross-component need. |
-| **`tailwindcss-animate`** | Tailwind v4 + native View Transitions API / CSS-only keyframes sufficient. |
-| **Uppy** | 80 kB gzip; we upload 1–3 files per row. Native `<input type="file">` is keyboard-accessible by default. |
-| **`react-hook-form`** | Server Actions + Zod + `useActionState` already provide form state, error reporting, and pending UI. RHF would require us to abandon Server Actions or wrap them, which is more code, not less. |
-| **`@tanstack/react-query`** | We never fetch the same data twice in the dashboard (Server Components always re-fetch on navigation). Polling for AI report is now `revalidateTag`-based. |
-| **`@tanstack/react-table`** | We already chose `react-data-grid` (virtualisation, clipboard, editors). |
-| **`date-fns`** | Only need one timezone (`Asia/Ho_Chi_Minh`) and relative distance — both are built-in in `Intl.DateTimeFormat` and `Intl.RelativeTimeFormat`. |
-| **`next-themes`** | Wrong primitive. Our `theme-registry.ts` does brand theme maths (HSL/RGB, chart palette). `next-themes` toggles light/dark only. |
-| **`react-dropzone`** | Native `<input type="file">` is sufficient for CCCD/contract uploads. |
+| **MUI / Ant Design / Chakra / Mantine** | Ships its own theming + styling runtime. Conflicts with `theme-registry.ts` token engine. ≥ 100 kB gzip. |
+| **Refine / AdminJS / shadcn-admin** | Kills Server Component boundaries. Own routing. ≥ 30 transitive deps. |
+| **Zustand / Jotai / Redux Toolkit** | React 19 `useActionState`, `useTransition`, `useOptimistic` cover every need. |
+| **`tailwindcss-animate`** | Tailwind v4 + View Transitions sufficient. |
+| **Uppy** | 80 kB gzip; we upload 1–3 files per row. Native `<input type="file">` is keyboard-accessible. |
+| **`react-hook-form`** | Server Actions + Zod + `useActionState` already cover form state, error reporting, pending UI. |
+| **`@tanstack/react-query`** | We never fetch the same data twice in the dashboard. |
+| **`@tanstack/react-table`** | We chose `react-data-grid`. |
+| **`date-fns`** | Only need one timezone (`Asia/Ho_Chi_Minh`) and relative distance — both built-in to `Intl`. |
+| **`next-themes`** | Wrong primitive. Our `theme-registry.ts` is brand-themed, not light/dark/system. |
+| **`react-dropzone`** | Native `<input type="file">` is sufficient. |
+| **`sonner`** | Inline `<div role="status">` is sufficient for current spec. Defer. |
+| **`clsx` / `tailwind-merge` / `class-variance-authority`** | No caller today. Add only with evidence of ≥ 20 LOC deletion per library. |
 
 ## Appendix C — Decisions deferred (not now)
 
 | Decision | Why deferred | When to revisit |
 |---|---|---|
-| Drop custom polling entirely | We still need progress events while `report-controller.ts` is in flight | P1.5-W06 |
-| Adopt `@radix-ui/react-tooltip` / `accordion` / `scroll-area` | Need only when P1.6 review notes UI is shaped | P1.6-W04 |
-| Drop `react-data-grid` beta pinning | Wait for 7.0.0 GA | When 7.0.0 stable ships |
+| Drop `react-data-grid` beta pinning | Wait for `7.0.0` GA |
+| Replace durable-job polling | Only after SSE / WebSocket / long-polling contract with reconnect, authorization, terminal-state tests |
+| Adopt `radix-ui` `Tooltip` / `Accordion` / `ScrollArea` | Only when P1.6 review notes UI is shaped |
+| Add `sonner` | Only if a real toast-shaped need appears beyond inline status |
 
-## Appendix D — Migration checklist (per-step)
+## Appendix D — Migration checklist (per-step, single change set each)
 
-- [ ] **Step 1** — Lucide icons everywhere. Tests: visual diff `git diff`. A11y: axe still green.
-- [ ] **Step 2** — Theme selector on `DropdownMenu`. Tests: theme cycle. A11y: arrow/enter/escape.
-- [ ] **Step 3** — Drawers on `Dialog`. Tests: Tab cycle, ESC, backdrop. A11y: aria-modal, focus-return.
-- [ ] **Step 4** — Sonner toaster. Tests: submit success / error toast.
-- [ ] **Step 5** — `react-data-grid`. Tests: 500 / 5 000 / 20 000 rows; clipboard paste; keyboard nav.
-- [ ] **Step 6** — `cmdk` typeahead. Tests: filter, arrow nav, escape.
-- [ ] **Step 7** — Polling retirement. Tests: long-running Server Action still surfaces progress via `useTransition`.
-- [ ] **Step 8** — Optional polish (tooltips / accordion / scroll-area). Tests: visual.
+- [ ] **Step 1 — APP-NAV-01**: install `radix-ui` + `lucide-react`; verify `pnpm build`, `tsc --noEmit`, `pnpm test`. Replace `theme-selector.tsx:36–71` with `DropdownMenu`. Re-run `theme-selector` focus/select test.
+- [ ] **Step 2 — Existing AI drawers (T1A, post-P1.5-W05/G5)**: migrate `ai-settings-panel.tsx:306–365` and `ai-report-panel.tsx:180–230` focus-trap `useEffect` to `radix-ui` `Dialog`. Replace inline confirm-discard `<div>` with `AlertDialog`. Keep `ai-settings-panel-logic.ts`. Re-run `ai-settings-panel.test.mjs` and `ai-report-panel.test.mjs`.
+- [ ] **Step 3 — Polling**: **no change.** Confirm `report-controller.ts:1–123` unchanged.
+- [ ] **Step 4 — P1.6 grid (T1B, P1.6-W04, conditional)**: add `react-data-grid@7.0.0-beta.61`. Use `BI-p1.6-grid-spike` as template. Measure bundle via `next build --profile`. Re-run `pnpm test`.
+- [ ] **Step 5 — P1.6 typeahead (T1B, P1.6-W05, conditional)**: only after focused typeahead spike PASS; add `cmdk@1.1.1`. Measure bundle.
 
 ## Appendix E — Risk register
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| `react-data-grid` beta breaks in production | Med | Pin to `7.0.0-beta.61`; have fall-back CSS-grid implementation ready in spike branch. |
-| `cmdk` fork collisions with `cmdk-row` data-attributes and Tailwind v4 | Low | Pin to 1.1.1; isolate via shadcn `Command` snippet. |
-| Radix Dialog portal + our sticky header z-index | Med | Re-use the P1.5-W05 modal stacking CSS variables. |
-| Lucide tree-shaking on Next 16 Turbopack | Low | Use named imports (`import { ChevronDown } from "lucide-react"`). |
-| `sonner` `<Toaster>` SSR (it's a client component) | Low | Render inside the existing `ThemeProvider` boundary. |
-| Tailwind v4 + `class-variance-authority` + `tailwind-merge` interplay | Low | `cn(...)` helper is the same as P1.6 spike. |
+| `react-data-grid` 7.0.0-beta breaks in production | Low–Med | Pin to `7.0.0-beta.61`; have CSS-grid fallback ready in spike branch; measure bundle before merge. |
+| `radix-ui` umbrella incompatible with Next.js 16.3.8 / React 19.2.8 | Low | **Conditional compatibility test** at install time (`pnpm build`, `tsc --noEmit`, `pnpm test`). Fall back to individual `@radix-ui/react-*` packages and document why in the change set. |
+| `cmdk` collision with Tailwind v4 | Low | Pin to 1.1.1; isolate via `radix-ui` Popover wrapper. |
+| Radix Dialog portal + sticky header z-index | Med | Re-use the P1.5-W05 modal stacking CSS variables. |
+| Lucide tree-shaking on Next.js 16 Turbopack | Low | Use named imports (`import { ChevronDown } from "lucide-react"`). |
+| Polling misclassification | Low | Polling controller is **KEEP**; `useTransition` and `revalidateTag` do not replace durable background jobs. |
+| Bundle-size claim before measurement | Med | **Every bundle claim must come from a real `next build --profile` run on a real install.** Quoted numbers are MEASURE_REQUIRED until then. |
+| Screen-reader access we never tested | Med | Do not claim VoiceOver/NVDA pass until it has been run. App-level keyboard test must be added (jsdom + role/aria assertion) before each migration step ships. |
 
 ---
 
-**End of audit.**
+**End of R1 audit.**
