@@ -5,7 +5,7 @@ import {
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.0" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.1" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -115,7 +115,7 @@ export type ResourceScope = {
 export type TrustedResourceContext = {
   reference: string;
   scope: ResourceScope;
-  owner_user_id: string | null;
+  created_by_user_id: string | null;
   current_version: number | null;
 };
 
@@ -157,24 +157,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SAFE_REF = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[a-z][a-z0-9]*_[a-z0-9][a-z0-9._:-]{0,100})$/i;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
-const MUTATION_ACTIONS = new Set<AuthorizationAction>([
-  "entry_create",
-  "entry_own",
-  "entry_team",
-  "entry_admin",
-  "submission_create",
-  "change_request_create",
-  "change_review",
-  "entry_privileged_edit",
-  "employment_status.request",
-  "employment_status.review",
-  "employment_status.apply",
-  "document_upload",
-  "payment_edit",
-  "recruiter_master_manage",
-  "team_master_manage",
-  "entry_restore",
-]);
 const REASON_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "entry_admin",
   "change_review",
@@ -201,10 +183,9 @@ const FORBIDDEN_CLIENT_FIELDS = new Set([
   "appuserid",
   "actorid",
   "createdbyuserid",
+  "owneruserid",
   "role",
   "roles",
-  "enabled",
-  "disabled",
   "capability",
   "capabilities",
   "scope",
@@ -258,6 +239,31 @@ function isTeamScopeGrant(value: unknown): value is TeamScopeGrant {
 
 function isAllScopeGrant(value: unknown): value is AllScopeGrant {
   return isRecord(value) && isValidInterval(value.valid_from, value.valid_to);
+}
+
+function hasOverlappingTeamScopeGrants(grants: readonly TeamScopeGrant[]): boolean {
+  const byTeam = new Map<string, TeamScopeGrant[]>();
+  for (const grant of grants) {
+    const group = byTeam.get(grant.team_id) ?? [];
+    group.push(grant);
+    byTeam.set(grant.team_id, group);
+  }
+
+  for (const teamGrants of byTeam.values()) {
+    teamGrants.sort((a, b) => a.valid_from.localeCompare(b.valid_from));
+    let furthestEnd: string | null | undefined;
+    for (const grant of teamGrants) {
+      if (furthestEnd === undefined) {
+        furthestEnd = grant.valid_to;
+        continue;
+      }
+      if (furthestEnd === null || grant.valid_from < furthestEnd) return true;
+      if (grant.valid_to === null || grant.valid_to > furthestEnd) {
+        furthestEnd = grant.valid_to;
+      }
+    }
+  }
+  return false;
 }
 
 function effectiveRecruiterSuggestion(
@@ -330,6 +336,9 @@ async function resolveActorInternal(input: {
     return { ok: false, reason: "ACTOR_REPOSITORY_INVALID" };
   }
   if (!record.enabled) return { ok: false, reason: "ACTOR_DISABLED" };
+  if (hasOverlappingTeamScopeGrants(record.team_scope_grants as TeamScopeGrant[])) {
+    return { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" };
+  }
 
   const appUserId = record.app_user_id as string;
   const date = input.at.slice(0, 10);
@@ -348,13 +357,6 @@ async function resolveActorInternal(input: {
     valid_from: "0001-01-01",
     valid_to: null,
   }];
-  const effectiveTeamGrants = (record.team_scope_grants as TeamScopeGrant[]).filter((grant) =>
-    isEffectiveAt(grant.valid_from, grant.valid_to, date)
-  );
-  if (new Set(effectiveTeamGrants.map((grant) => grant.team_id)).size !==
-      effectiveTeamGrants.length) {
-    return { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" };
-  }
   for (const grant of record.team_scope_grants as TeamScopeGrant[]) {
     const team = (record.teams as TeamIdentity[]).find((item) =>
       item.team_id === grant.team_id
@@ -450,21 +452,27 @@ function isAllowedByScope(
     return false;
   }
   if (scope.kind === "own" &&
-      scope.reference !== resource.owner_user_id) {
+      scope.reference !== resource.created_by_user_id) {
     return false;
   }
   if (scope.kind === "team" && !isSafeRef(scope.reference)) return false;
 
-  return actor.scopes.some((effectiveScope) =>
+  const effectiveScopes = actor.scopes.filter((effectiveScope) =>
     isEffectiveAt(
       effectiveScope.valid_from,
       effectiveScope.valid_to,
       scope.effective_date,
-    ) &&
-    (effectiveScope.kind === "all" ||
-      (effectiveScope.kind === scope.kind &&
-        effectiveScope.reference === scope.reference))
+    )
   );
+  const matchingScopeCount = effectiveScopes.filter((effectiveScope) =>
+    effectiveScope.kind === scope.kind &&
+    effectiveScope.reference === scope.reference
+  ).length;
+  const matchingAllCount = effectiveScopes.filter((effectiveScope) =>
+    effectiveScope.kind === "all"
+  ).length;
+  if (matchingScopeCount > 1 || matchingAllCount > 1) return false;
+  return matchingScopeCount === 1 || matchingAllCount === 1;
 }
 
 export function authorizeDirectEntry(input: AuthorizationInput): AuthorizationDecision {
@@ -476,28 +484,19 @@ export function authorizeDirectEntry(input: AuthorizationInput): AuthorizationDe
   else if (!actor || !actor.enabled) code = "UNAUTHENTICATED";
   else if (!actor.capabilities.includes(requiredCapability)) code = "CAPABILITY_DENIED";
   else if (!isAllowedByScope(actor, input.resource)) code = "SCOPE_DENIED";
-  else if (actor.capabilities.includes("entry_admin") &&
-      MUTATION_ACTIONS.has(input.action) &&
-      !isSafeRef(input.reason_ref)) code = "REASON_REQUIRED";
   else if (REASON_REQUIRED_ACTIONS.has(input.action) &&
       !isSafeRef(input.reason_ref)) code = "REASON_REQUIRED";
-  else if (actor?.capabilities.includes("entry_admin") &&
-      MUTATION_ACTIONS.has(input.action) &&
-      (!Number.isSafeInteger(input.expected_version) ||
-        input.expected_version! < 0)) code = "EXPECTED_VERSION_REQUIRED";
-  else if (VERSION_REQUIRED_ACTIONS.has(input.action) &&
-      (!Number.isSafeInteger(input.expected_version) ||
-        input.expected_version! < 0)) code = "EXPECTED_VERSION_REQUIRED";
-  else if (input.resource.current_version !== null &&
-      (!Number.isSafeInteger(input.resource.current_version) ||
-        input.resource.current_version < 0)) code = "RESOURCE_VERSION_INVALID";
-  else if (input.resource.current_version === null &&
-      input.expected_version !== undefined &&
-      input.expected_version !== 0) code = "VERSION_CONFLICT";
-  else if (input.resource.current_version !== null &&
-      (!Number.isSafeInteger(input.expected_version) ||
-        input.expected_version !== input.resource.current_version)) {
-    code = "VERSION_CONFLICT";
+  else if (VERSION_REQUIRED_ACTIONS.has(input.action)) {
+    if (input.expected_version === undefined) {
+      code = "EXPECTED_VERSION_REQUIRED";
+    } else if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 0) {
+      code = "EXPECTED_VERSION_INVALID";
+    } else if (!Number.isSafeInteger(input.resource.current_version) ||
+        input.resource.current_version! < 0) {
+      code = "RESOURCE_VERSION_INVALID";
+    } else if (input.expected_version !== input.resource.current_version) {
+      code = "VERSION_CONFLICT";
+    }
   }
 
   const allowed = code === "ALLOW";
