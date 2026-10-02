@@ -1,14 +1,21 @@
 # P3 Access Surface Inventory — Mini BI
 
-**Revision:** S01 (snapshot pre-G1).
+**Revision:** S02 (delta refresh after P1.6 G3/I02).
 **Auditor:** T2-A (Access Surface) — read-only.
 **Base:** `origin/main @ 45ca016`.
 **Inputs verified against three refs:**
 - `origin/main @ 45ca016` (current production-shaped runtime)
-- `origin/feature/p1.6-integration @ 3d47f82` (P1.6 contracts W01/W02/W03, no new schema yet)
+- `origin/feature/p1.6-integration @ 51511dd` (P1.6 W01–W03 contracts + W03 DB foundation applied on DEV; I02 = consolidated integration checkpoint)
 - `origin/feature/app-nav-01a @ 7bd2ba8` (navigation registry; planned entry `direct-entry` already registered, no runtime)
 
-**Hard guardrails (unchanged):** no runtime/schema/RPC edits, no migrations applied, no proxy / auth change. **Tài liệu này chỉ rà — không phải G1 PASS, không phải design decision, không thay thế audit của T1A.** Những phát hiện dạng GAP / PENDING_P1.6 / PENDING_DECISION cần được T0 đưa vào decision matrix riêng cho G1.
+**P1.6 W03 + forward correction (read-only evidence, not re-applied here):**
+- `supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql` — applied on Supabase DEV (immutable).
+- `supabase/migrations/20261003170000_p1_6_w03_submission_noop_guard.sql` — forward correction, applied on Supabase DEV (immutable).
+- DEV acceptance: `pnpm run test:p1.6-w03-g3-dev` → 95 checks pass (`scripts/p1.6-w03-g3-dev-manifest.json`); `cleanupVerified=true`, `baselineUnchanged=true`.
+- PGlite local: `pnpm run test:p1.6-w03` → 19/19 (does not substitute for full Supabase DEV acceptance).
+- I02 integration FT1: `pnpm install --frozen-lockfile`, `pnpm run test:p1.6-w01` (19/19), `pnpm run test:p1.6-w02` (25/25), `pnpm run test:p1.6-w03` (19/19), APP-NAV (30/30), `pnpm typecheck`, `pnpm build`, `pnpm docs:check`, `pnpm secrets:check` (549 files), `git diff --check` — all PASS. **W03 DEV 95-check not rerun for I02** (recorded evidence at checkpoint `bbfdea9`).
+
+**Hard guardrails (unchanged from S01):** no runtime/schema/RPC edits, no migrations applied, no proxy / auth change. **Tài liệu này chỉ rà — không phải G1 PASS, không phải design decision, không thay thế audit của T1A.** Những phát hiện dạng GAP / PENDING_P1.6 / PENDING_DECISION cần được T0 đưa vào decision matrix riêng cho G1.
 
 ---
 
@@ -144,21 +151,95 @@ App Router `route.ts` trong `src/app/api/**`. Tất cả 12 route dưới đây 
 
 > **Migrate P1.6 chưa apply.** `p1.6-integration` chưa có migration mới so với `main`. Tất cả surface P1.6 hiện là `PENDING_P1.6`.
 
-### 3.5 P1.6 dự kiến (chưa có migration)
+### 3.5 P1.6 foundation (W03 + forward correction) — applied DEV only
 
-| ID | Surface | Status | Owner |
-|---|---|---|---|
-| db:t:P1.6-001 | `public.direct_entry` (planned) | PENDING_P1.6 | T1A |
-| db:t:P1.6-002 | `public.direct_entry_documents` (planned) | PENDING_P1.6 | T1A |
-| db:t:P1.6-003 | `public.direct_entry_employment_status_events` (planned) | PENDING_P1.6 | T1A |
-| db:t:P1.6-004 | `public.app_user_recruiter_links` (planned W02) | PENDING_P1.6 | T1A |
-| db:t:P1.6-005 | `public.team_scopes` (planned W02) | PENDING_P1.6 | T1A |
-| db:t:P1.6-006 | `public.change_requests` (planned W05) | PENDING_P1.6 | T1A |
-| db:f:P1.6-001 | `public.approve_change_request` RPC | PENDING_P1.6 | T1A |
-| db:f:P1.6-002 | `public.reject_change_request` RPC | PENDING_P1.6 | T1A |
-| db:f:P1.6-003 | `public.withdraw_change_request` RPC | PENDING_P1.6 | T1A |
+**Migration files (immutable, applied on Supabase DEV, see `docs/handoffs/p1.6-w03.md`):**
+- `supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql` — foundation.
+- `supabase/migrations/20261003170000_p1_6_w03_submission_noop_guard.sql` — forward correction.
 
-> **P3 boundary.** Tất cả tables/RPC mới của P1.6 phải có **explicit policies** (không chỉ deny-by-default) theo auth contract `p1.6-auth-capabilities-v1.md` section "Capability vocabulary and scope". Policy: deny-by-default + revoke + **CAPABILITY_MATRIX** mapping `actor.capability → action → scope` tại RPC.
+**Registry state (DEV, post-apply):** 21 applied migrations, 0 pending, 0 checksum mismatches.
+**DEV acceptance:** `pnpm run test:p1.6-w03-g3-dev` → 95 checks pass (`scripts/p1.6-w03-g3-dev-manifest.json`); `cleanupVerified=true`, `baselineUnchanged=true`. **Local PGlite tests only** (`pnpm run test:p1.6-w03`, 19/19) — they do not substitute for full Supabase DEV acceptance.
+
+**Boundary contract (locked by T0):** RPC-only writes. Browser roles receive no table DML. All new tables enable + **force** RLS; table privileges are revoked from `PUBLIC, anon, authenticated, service_role`. Runtime writes and restricted reads go through `SECURITY DEFINER` RPCs. The only role granted `EXECUTE` on the application RPCs is `service_role`. Internal helpers and trigger functions are not executable by application roles. `service_role` has no direct table privileges.
+
+**Self-review denial (W03):** `direct_entry_approve_change_request` and `direct_entry_reject_change_request` enforce `change_review` capability + each item scope + **proposer cannot review own request** (separate check inside `direct_entry_decide_change_request`).
+
+**Current-document view (W03):** `public.direct_entry_current_documents` is `security_invoker=true`. It resolves the latest append-only upload event, filters to `READY+CLEAN`, then chooses the highest valid version per `(candidate, document_type)`. A pending or rejected replacement therefore leaves the previous ready/clean version current.
+
+#### 3.5.1 P1.6 W03 tables (25) — RLS forced, table DML revoked
+
+All 25 tables in the `v_table` array (per `20261002170000_p1_6_direct_entry_foundation.sql`): `direct_entry_app_users`, `recruiters`, `teams`, `recruiter_aliases`, `recruiter_provider_memberships`, `recruiter_team_memberships`, `direct_entry_app_user_recruiter_links`, `direct_entry_capability_grants`, `direct_entry_scope_grants`, `direct_entry_projects`, `direct_entry_banks`, `direct_entry_submissions`, `direct_entry_candidates`, `direct_entries`, `direct_entry_payments`, `direct_entry_employment_status_events`, `direct_entry_document_versions`, `direct_entry_document_events`, `direct_entry_restricted_reasons`, `direct_entry_revisions`, `direct_entry_submission_revisions`, `direct_entry_change_request_revisions`, `direct_entry_change_requests`, `direct_entry_change_request_items`, `direct_entry_audit_events`. (`direct_entry_rpc_idempotency` is the 26th table — see 3.5.2 — and is part of the same revocation/force-RLS block.)
+
+| ID | Table | Group | R/W | RLS | Policies | service_role | Status |
+|---|---|---|---|---|---|---|---|
+| db:t:p1.6:001 | `public.recruiters` | shared identity (P1.5-W02) | RW | enabled + forced | none (deny by default; only RPC writes) | revoke all + EXECUTE only via `direct_entry_*` | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:002 | `public.teams` | shared identity (P1.5-W02) | RW | enabled + forced | none | revoke all + EXECUTE only via `direct_entry_*` | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:003 | `public.recruiter_aliases` | shared identity | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:004 | `public.recruiter_provider_memberships` | shared identity | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:005 | `public.recruiter_team_memberships` | shared identity | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:006 | `public.direct_entry_app_users` | app-user / actor | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:007 | `public.direct_entry_app_user_recruiter_links` | app-user / recruiter link | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:008 | `public.direct_entry_capability_grants` | auth (capability) | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:009 | `public.direct_entry_scope_grants` | auth (scope) | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:010 | `public.direct_entry_projects` | master (project) | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:011 | `public.direct_entry_banks` | master (bank) | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:012 | `public.direct_entry_submissions` | submission | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:013 | `public.direct_entry_candidates` | candidate | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:014 | `public.direct_entries` | entry (row) | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:015 | `public.direct_entry_payments` | payment | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:016 | `public.direct_entry_employment_status_events` | status (append-only) | RW (insert only via RPC) | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:017 | `public.direct_entry_document_versions` | document | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:018 | `public.direct_entry_document_events` | document (append-only) | RW (insert only via RPC) | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:019 | `public.direct_entry_restricted_reasons` | restricted reason (audit envelope) | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:020 | `public.direct_entry_revisions` | entry revision (immutable) | R (insert only via RPC) | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:021 | `public.direct_entry_submission_revisions` | submission revision (immutable) | R (insert only via RPC) | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:022 | `public.direct_entry_change_request_revisions` | change-request revision (immutable) | R (insert only via RPC) | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:023 | `public.direct_entry_change_requests` | change request | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:024 | `public.direct_entry_change_request_items` | change-request item | RW | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+| db:t:p1.6:025 | `public.direct_entry_audit_events` | sanitized audit | R (insert only via RPC) | enabled + forced | none | revoke all + EXECUTE only | COVERED_DEV_FAST_TRACK |
+
+#### 3.5.2 P1.6 W03 supporting table + view
+
+| ID | Surface | R/W | RLS | Notes | Status |
+|---|---|---|---|---|---|
+| db:t:p1.6:026 | `public.direct_entry_rpc_idempotency` | RW (write/read via `direct_entry_idempotency_begin`/`finish`) | enabled + forced | holds canonical payload hash + result for each `(actor, action, key)`; rejection on key reuse with different input | COVERED_DEV_FAST_TRACK |
+| db:v:p1.6:001 | `public.direct_entry_current_documents` (`security_invoker=true`) | R | inherits | latest READY+CLEAN per `(candidate, document_type)`; pending/rejected replacement leaves prior version current | COVERED_DEV_FAST_TRACK |
+
+#### 3.5.3 P1.6 W03 RPC — 17 application RPCs granted EXECUTE to `service_role`
+
+All 17 are `SECURITY DEFINER`, pin `search_path`, validate capability/scope + actor + expected version, and run mutations + revisions + audit + idempotency in a single transaction. Internal helpers and trigger functions are not executable by any application role.
+
+| ID | RPC | Capability / scope (W03) | Self-review? | Status |
+|---|---|---|---|---|
+| db:f:p1.6:001 | `direct_entry_create_batch` | `entry_create` + `submission_create`, own scope | n/a | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:002 | `direct_entry_create_draft_row` | `entry_create`, owner and own scope | n/a | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:003 | `direct_entry_update_draft_row` | exact own/team/all `entry_*` capability/scope | n/a | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:004 | `direct_entry_delete_draft_row` | exact own/team/all `entry_*` capability/scope | n/a (soft-delete, last active row protected) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:005 | `direct_entry_transition_submission` | `submission_create`, creator/own scope | n/a | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:006 | `direct_entry_update_payment` | DRAFT: exact `entry_own/team/admin` scope; SUBMITTED: `payment_edit` + effective resource scope | n/a (DRAFT) / second party via change request (SUBMITTED) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:007 | `direct_entry_apply_employment_status` | `employment_status.apply` + effective resource scope | n/a | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:008 | `direct_entry_correct_latest_status` | `employment_status.apply` + effective resource scope | n/a (correction supersedes only the latest event) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:009 | `direct_entry_create_document_metadata` | DRAFT: `document_upload` + exact `entry_*` scope; SUBMITTED: `document_upload` + `entry_privileged_edit` + effective scope | SUBMITTED: single-step (privileged) — not second-party | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:010 | `direct_entry_append_document_event` | `service_role` EXECUTE only (backend uploader / n8n / worker) | n/a (system identity, not human) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:011 | `direct_entry_create_change_request` | `change_request_create` + each entry scope | n/a (proposer; reviewer handled in decide) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:012 | `direct_entry_withdraw_change_request` | proposer with `change_request_create` | n/a (proposer withdraws own) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:013 | `direct_entry_approve_change_request` | `change_review` + each entry scope; **proposer cannot review own request** | **YES, second-party enforced** | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:014 | `direct_entry_reject_change_request` | `change_review` + each entry scope; **proposer cannot review own request** | **YES, second-party enforced** | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:015 | `direct_entry_privileged_edit` | `entry_privileged_edit` + effective resource scope (admin / kế toán direct edit) | **NO second-party required**, but: reason + expected version + revision + audit + idempotency are mandatory | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:016 | `direct_entry_read_projection` | exact `entry_*` scope + optional PII / payment / document capability gates | n/a (read) | COVERED_DEV_FAST_TRACK |
+| db:f:p1.6:017 | `direct_entry_read_audit` | `audit_view` + effective resource scope | n/a (read) | COVERED_DEV_FAST_TRACK |
+
+> **Read redaction in `direct_entry_read_projection`.** Worker details, payment values, document metadata are redacted unless the caller separately holds `pii_view` / `payment_view` / `document_view`. This is the only read-side leakage surface, and P3 must keep this gate in any future read layer.
+
+#### 3.5.4 P1.6 surface still open at W03
+
+These are NOT in W03. They remain `PENDING_P1.6` and are deferred to W04/W05/W06/J01:
+- 5 P1.6 table + 3 RPC placeholders from §3.5 of S01 have been replaced; nothing in this group remains.
+- **API routes for direct entry** (no `src/app/api/direct-entry/*` route handlers in `p1.6-integration`; W04 work).
+- **UI components for direct entry** (no page; W04/W05 work).
+- **Document upload worker** (the uploader calls `direct_entry_append_document_event`; not implemented in W03; W04 deferred).
+- **Cutover / dual-write orchestration** (rollout from P1.5-W02 identity to P1.6 app-user mapping).
+- **Migration from pilot Basic Auth to cookie session per W02** (P3 G1 territory; auth contract already locks `@supabase/ssr`).
 
 ---
 
@@ -214,28 +295,46 @@ Nhóm 12 API + 7 server repos. Tóm tắt ở §2 + §4. Thêm 2 cờ môi trư�
 
 ## 7. P1.6 direct-entry mutation/read/document boundaries
 
-Trên `p1.6-integration` chưa có route handler / server repo trên module level; chỉ có contract:
-- `docs/contracts/p1.6-direct-entry-v1.md` — business contract.
-- `docs/contracts/p1.6-auth-capabilities-v1.md` — auth + capability vocab.
+DB boundary (W03 + forward correction) → **COVERED_DEV_FAST_TRACK** (see §3.5). Route/UI/document worker/cutover → still **PENDING_P1.6** (W04–W06/J01). The split is deliberate: P3 G1 must not collapse "DB boundary exists" into "P1.6 product is shipped".
+
+### 7.1 Capability split (P1.6 W03, locked at the RPC level)
+
+Per `docs/contracts/p1.6-auth-capabilities-v1.md` and the W03 RPC matrix (see §3.5.3):
+
+| Capability | Used by | Self-review required? | Reason/version/audit? | Idempotency? | Semantics |
+|---|---|---|---|---|---|
+| `change_review` | `direct_entry_approve_change_request` (db:f:p1.6:013) and `direct_entry_reject_change_request` (db:f:p1.6:014) | **YES — second-party enforced.** Proposer cannot review own change request. | YES (mandatory reason, expected request+item versions, request/entry revisions, audit) | YES (payload hash per request) | Staff submits a change, a leader/admin (different actor) reviews. The proposer ≠ reviewer check is a separate constraint inside `direct_entry_decide_change_request`. |
+| `entry_privileged_edit` | `direct_entry_privileged_edit` (db:f:p1.6:015), and also the SUBMITTED branch of `direct_entry_update_payment` and `direct_entry_create_document_metadata` (when DRAFT requires `entry_*` scope; when SUBMITTED it requires both `document_upload` + `entry_privileged_edit` and `payment_edit` for payment). | **NO second-party required.** Direct single-step edit by admin / kế toán. | YES (mandatory reason, expected version, revision, audit) | YES (payload hash) | "Trusted actor" path: the privileged actor is the audit anchor. A privileged edit on a SUBMITTED row is logged with actor + reason + version delta. |
+| `ai.report.review` | `POST /api/ai/reports/[jobId]/review` (api:006) | **DECISION SEPARATE — see §11 PENDING_DECISION `decision:ai-self-approval`.** | n/a (AI review is not a P1.6 capability) | n/a | AI report approval is its **own capability**, not `change_review`. It is also **not** `entry_privileged_edit`. Conflating AI review with direct-entry review would over-broaden both vocabularies. |
+
+> **What `change_review` is not.** It is not a generic "approve anything" capability. It is bound to a change-request resource and to the per-item entry scope. The proposer-≠-reviewer check is a hard constraint; an attempt by the proposer to approve their own request returns a self-review denial (verified by 95-check G3 manifest).
+>
+> **What `entry_privileged_edit` is not.** It is not a substitute for `change_review`. A leader may hold `change_review` but not `entry_privileged_edit`; an admin holds both. P3 must not collapse them when designing the matrix.
+
+### 7.2 P1.6 route / UI / worker / document surfaces
+
+DB is covered. The following surfaces are still PENDING_P1.6. They are NOT migrated to `COVERED_*` despite W03's success, because the W03 acceptance is a **DB-boundary** acceptance, not a route/UI acceptance.
 
 | ID | Surface | R/W | Current gate | Actor | P3 capability dự kiến | Bypass risk | Status |
 |---|---|---|---|---|---|---|---|
-| p1.6:001 | `POST /direct-entry` (planned) | W | chưa có | chưa có | `entry_own` / `entry_team` / `entry_admin` + scope | HIGH (P3 phải thiết kế đầu tiên) | PENDING_P1.6 |
-| p1.6:002 | `GET /direct-entry` (planned) | R | chưa có | chưa có | `entry.view` + scope | MED-HIGH | PENDING_P1.6 |
-| p1.6:003 | `POST /direct-entry/[id]/submit` (planned) | W | chưa có | chưa có | `entry.submit` + `own` scope | HIGH | PENDING_P1.6 |
-| p1.6:004 | `POST /direct-entry/[id]/withdraw` (planned) | W | chưa có | chưa có | `entry.withdraw` + `own` scope (proposer only) | MED | PENDING_P1.6 |
-| p1.6:005 | `POST /direct-entry/[id]/correct` (planned W06) | W | chưa có | chưa có | `entry_correct` + scope `own` | HIGH | PENDING_P1.6 |
-| p1.6:006 | `POST /change-requests/[id]/approve` (planned W05) | W | chưa có | chưa có | `change_review` + scope `team` hoặc `all` (cần reviewer, không phải proposer) | HIGH — cần second-party enforcement | PENDING_P1.6 |
-| p1.6:007 | `POST /change-requests/[id]/reject` (planned W05) | W | chưa có | chưa có | `change_review` + scope `team` hoặc `all` | HIGH | PENDING_P1.6 |
-| p1.6:008 | `POST /employment-status/[id]/apply` (planned W05) | W | chưa có | chưa có | `employment_status.apply` + scope + `expected_version` | HIGH | PENDING_P1.6 |
-| p1.6:009 | `GET /documents/[id]` (planned) | R | chưa có | chưa có | `document_view` + scope (CCCD/PII) | HIGH — PII / bank account | PENDING_P1.6 |
-| p1.6:010 | `POST /documents/upload` (planned) | W | chưa có | chưa có | `document_upload` + scope + idempotency | HIGH | PENDING_P1.6 |
-| p1.6:011 | `GET /pii/[candidateId]` (planned) | R | chưa có | chưa có | `pii_view` + scope (`own` only for self, `team`/`all` cho leader/admin) | HIGH — PII | PENDING_P1.6 |
-| p1.6:012 | `GET /pii/export` (planned) | R | chưa có | chưa có | `pii_export` + scope (chỉ admin) | HIGH | PENDING_P1.6 |
-| p1.6:013 | `GET /audit` (planned) | R | chưa có | chưa có | `audit_view` + scope | MED | PENDING_P1.6 |
-| p1.6:014 | `POST /payments/[id]/edit` (planned W05) | W | chưa có | chưa có | `payment_edit` + scope + `expected_version` + `reason_ref` | HIGH | PENDING_P1.6 |
+| p1.6:001 | `POST /direct-entry` (planned W04) | W | n/a | n/a | `entry_create` + scope | HIGH | PENDING_P1.6 |
+| p1.6:002 | `GET /direct-entry` (planned W04) | R | n/a | n/a | `entry.view` + scope | MED-HIGH | PENDING_P1.6 |
+| p1.6:003 | `POST /direct-entry/[id]/submit` (planned W04) | W | n/a | n/a | `submission_create` + `own` scope | HIGH | PENDING_P1.6 |
+| p1.6:004 | `POST /direct-entry/[id]/withdraw` (planned W04) | W | n/a | n/a | `entry.withdraw` + `own` scope (proposer only) | MED | PENDING_P1.6 |
+| p1.6:005 | `POST /direct-entry/[id]/correct` (planned W06) | W | n/a | n/a | `entry_correct` + scope `own` | HIGH | PENDING_P1.6 |
+| p1.6:006 | `POST /change-requests/[id]/approve` (planned W05; backed by `direct_entry_approve_change_request` db:f:p1.6:013) | W | DB boundary ✅; route layer n/a | resolver (W02) | `change_review` + each item scope; **proposer ≠ reviewer** | HIGH — second-party enforcement exists in RPC; route must not allow the proposer to submit a self-review | PENDING_P1.6 (route) / COVERED_DEV_FAST_TRACK (DB) |
+| p1.6:007 | `POST /change-requests/[id]/reject` (planned W05; backed by `direct_entry_reject_change_request` db:f:p1.6:014) | W | DB boundary ✅; route layer n/a | resolver (W02) | `change_review` + each item scope; **proposer ≠ reviewer** | HIGH | PENDING_P1.6 (route) / COVERED_DEV_FAST_TRACK (DB) |
+| p1.6:008 | `POST /employment-status/[id]/apply` (planned W05; backed by `direct_entry_apply_employment_status` db:f:p1.6:007) | W | DB boundary ✅; route layer n/a | resolver (W02) | `employment_status.apply` + scope + `expected_version` | HIGH | PENDING_P1.6 (route) / COVERED_DEV_FAST_TRACK (DB) |
+| p1.6:009 | `GET /documents/[id]` (planned) | R | n/a | n/a | `document_view` + scope (CCCD/PII) | HIGH — PII / bank account | PENDING_P1.6 |
+| p1.6:010 | `POST /documents/upload` (planned; backed by `direct_entry_create_document_metadata` db:f:p1.6:009 + worker calls `direct_entry_append_document_event` db:f:p1.6:010) | W | DB boundary ✅; route + worker n/a | resolver (W02) | `document_upload` + scope + idempotency | HIGH | PENDING_P1.6 (route + worker) / COVERED_DEV_FAST_TRACK (DB) |
+| p1.6:011 | `GET /pii/[candidateId]` (planned) | R | n/a | n/a | `pii_view` + scope (`own` only for self, `team`/`all` cho leader/admin) | HIGH — PII | PENDING_P1.6 |
+| p1.6:012 | `GET /pii/export` (planned) | R | n/a | n/a | `pii_export` + scope (chỉ admin) | HIGH | PENDING_P1.6 |
+| p1.6:013 | `GET /audit` (planned; backed by `direct_entry_read_audit` db:f:p1.6:017) | R | DB boundary ✅; route n/a | resolver (W02) | `audit_view` + scope | MED | PENDING_P1.6 (route) / COVERED_DEV_FAST_TRACK (DB) |
+| p1.6:014 | `POST /payments/[id]/edit` (planned W05; backed by `direct_entry_update_payment` db:f:p1.6:006) | W | DB boundary ✅; route layer n/a | resolver (W02) | `payment_edit` (SUBMITTED) or `entry_*` (DRAFT) + scope + `expected_version` + `reason_ref` | HIGH | PENDING_P1.6 (route) / COVERED_DEV_FAST_TRACK (DB) |
+| p1.6:015 | `POST /admin/privileged-edit` (planned; backed by `direct_entry_privileged_edit` db:f:p1.6:015) | W | DB boundary ✅; route layer n/a | resolver (W02) | `entry_privileged_edit` + effective resource scope; **single-step, no second party**; mandatory reason + expected version + revision + audit | HIGH | PENDING_P1.6 (route) / COVERED_DEV_FAST_TRACK (DB) |
 
-> **Owner.** Tất cả P1.6: T1A. **Capability vocab** đã lock ở `docs/contracts/p1.6-auth-capabilities-v1.md` (staff / leader / admin baseline). P3 chỉ implement, không redefine.
+> **Owner.** Tất cả P1.6 DB: T1A. **DB side** for W03 is in W03 handoff `P1.6-G3_DEV_PASS_FAST_TRACK`. **Route/UI side** is unstarted.
+> **P3 G1 implication.** Even though DB is covered, P3 cannot mark direct-entry as `COVERED` until at least one route handler exists. The route handler is where the actor is resolved (W02 cookie session) and where the actor_ref is passed to the RPC. The current P1.6 RPC expects `p_actor` parameter — it does not call `auth.getUser()` itself.
 
 ---
 
@@ -291,25 +390,47 @@ Lấy từ `origin/feature/app-nav-01a:src/lib/navigation/registry.ts`. Hiện 2
 
 ## 11. GAP / PENDING tổng hợp (P3 decision input)
 
-### GAP — gate hiện tại chưa đủ cho production RBAC
+### 11.1 Status transitions from S01 → S02
+
+| S01 status | Affected IDs | S02 status | Why |
+|---|---|---|---|
+| `PENDING_P1.6` (db:t:P1.6-001..006, db:f:P1.6-001..003 — §3.5 of S01) | db:t:p1.6:001..025, db:t:p1.6:026, db:v:p1.6:001, db:f:p1.6:001..017 | `COVERED_DEV_FAST_TRACK` | W03 foundation + forward correction applied on Supabase DEV; 95-check G3 acceptance passed; 17 RPCs granted `service_role`; 25 tables force RLS + table DML revoked. |
+| `PENDING_P1.6` (route/UI p1.6:001..014) | p1.6:001..015 | split per row: DB side `COVERED_DEV_FAST_TRACK`, route/UI/worker side `PENDING_P1.6` | W03 acceptance is DB-only; routes do not yet exist in `p1.6-integration`. |
+| `decision:004` (`change_review` self-approve policy) | — | **closed by W03**: `direct_entry_approve_change_request` and `direct_entry_reject_change_request` enforce proposer ≠ reviewer | W03 RPC matrix locks second-party enforcement for direct-entry. |
+| `decision:005` (audit retention window) | — | still `PENDING_DECISION` | not in scope of W03; W05+/J01 territory. |
+| `decision:001` (pilot Basic Auth vs cookie session) | — | still `PENDING_DECISION` | gate remains the same; W03 doesn't touch it. |
+| `decision:002` (cookie provider) | — | still `PENDING_DECISION`; auth contract W02 still locks `@supabase/ssr` | — |
+| `decision:006` (Direct-URL enforcement layer) | — | still `PENDING_DECISION` | W03 RPC layer is in; middleware is still on the table. |
+| `decision:003` (n8n system identity in capability matrix) | — | still `PENDING_DECISION` | see §9: n8n remains `service_role` only. |
+
+### 11.2 GAP — gate hiện tại chưa đủ cho production RBAC
 
 | ID | Mô tả | Resolution path |
 |---|---|---|
 | gap:001 | Tất cả `PILOT_ACTOR_REF = "pilot-admin"` hard-coded trong AI APIs (`api:002`–`api:012`) | Thay bằng `actor_ref` từ session/SSR cookie. Centralize trong `src/lib/auth/actor.ts`. |
 | gap:002 | `/pipeline-check` không có per-source/per-team filter (`op:001`/`op:003`) | Thêm capability `ops.view_pipeline` + filter theo scope `all`/`team`. |
 | gap:003 | `api:005` analysis projection không scope per-row (của actor) | `ai.report.analysis.view` + scope check `own`/`team`/`all` |
-| gap:004 | `api:006` review (approve/reject) cho phép self-review (cùng `pilot-admin`) | `change_review` capability + second-party enforcement |
+| gap:004 | `api:006` review (approve/reject) cho phép self-review (cùng `pilot-admin`) | `ai.report.review` capability + actor ≠ proposer enforcement. **Note:** W03 already enforces proposer ≠ reviewer for direct-entry change requests (`db:f:p1.6:013/014`). The AI review path is a separate decision; do not reuse `change_review` and do not infer self-review from direct-entry. See `decision:ai-self-approval` in §11.5. |
 | gap:005 | Dead rule `/api/reporting/*` trong matcher (`gate:002`) | Sau khi P3 định route plan, xác nhận matcher hoặc loại bỏ |
 | gap:006 | Server repos dùng `service_role` cho read (không cần) | Tách `read-only` role (`createPublicSupabaseClient` + `auth.getUser()`) cho page reads; service_role chỉ cho writes |
 | gap:007 | App Nav registry `capability = "any"` không filter thật (`page:layout:001/002`) | P3 lọc `CURRENT_NAV_ENTRIES` theo `actor.capability` trước khi render |
 
-### PENDING_P1.6 — cần thiết kế trước khi P3 có thể gắn capability
+### 11.3 PENDING_P1.6 — đã đóng bởi W03
+
+| ID | Mô tả | S02 |
+|---|---|---|
+| pending:p1.6:001 | 14 P1.6 API routes implementation | **route layer** vẫn `PENDING_P1.6`. **DB side** đã cover 17 RPC + 25 tables + 1 view. |
+| pending:p1.6:002 | 5 P1.6 tables + 3 RPC migration | **closed by W03**: 25 tables + 1 view + 17 RPC now `COVERED_DEV_FAST_TRACK` |
+| pending:p1.6:003 | Restricted reason store (audit envelope) chưa có | **closed by W03**: `direct_entry_restricted_reasons` (db:t:p1.6:019) is part of the 25-table block, with RLS forced and table DML revoked; accessed only via `direct_entry_reason` (internal) and indirectly through the 17 RPCs. |
+
+### 11.4 PENDING_P1.6 — route/UI/document worker/cutover thực sự chưa làm
 
 | ID | Mô tả | Owner | Resolution path |
 |---|---|---|---|
-| pending:p1.6:001 | 14 P1.6 route API chưa code | T1A | Code theo capability vocab trong `p1.6-auth-capabilities-v1.md` |
-| pending:p1.6:002 | 5 P1.6 tables + 3 RPC chưa migration | T1A | Migration phải có explicit policies (không chỉ deny-by-default) |
-| pending:p1.6:003 | Restricted reason store (audit envelope) chưa có | T1A | W03 phải cung cấp storage + audit persistence |
+| pending:p1.6:route:001 | `src/app/api/direct-entry/*` route handlers (15 surfaces listed in §7.2) | T1A | W04 — first route is `POST /direct-entry` (entry create) and `GET /direct-entry` (list). The RPC side is ready. |
+| pending:p1.6:ui:001 | Direct-entry UI (page, grid, drawer) | T1A | W04 desktop/tablet grid; W06 mobile row-list + drawer. The page is registered as `planned` in `app-nav-01a:src/lib/navigation/registry.ts` but is not yet routed. |
+| pending:p1.6:worker:001 | Document uploader worker (calls `direct_entry_append_document_event` db:f:p1.6:010) | T1A | W04; must be a server-only / n8n / worker boundary; never a client call. |
+| pending:p1.6:cutover:001 | Cookie session per W02 (`@supabase/ssr` + `auth.getUser()`) replacing the actor-resolution path that P1.6 RPC currently relies on (caller passes `p_actor`) | T1A + T2 (P3) | T0 must decide on the cutover order vs the pilot Basic Auth gate (`decision:001`). |
 
 ### PENDING_DECISION — cần T0 quyết trước khi P3 bắt đầu
 
@@ -318,33 +439,68 @@ Lấy từ `origin/feature/app-nav-01a:src/lib/navigation/registry.ts`. Hiện 2
 | decision:001 | Có giữ `pilot-access` Basic Auth song song với cookie session P3 không? Hay thay hoàn toàn? | Pilot đang chạy; cần kế hoạch cutover để không break prod | gate:001 có còn `COVERED` không? |
 | decision:002 | Cookie session P3 dùng `@supabase/ssr` (per auth contract W02) hay provider khác (Auth0/Clerk)? | Implementation khác nhau tùy provider; contract W02 đã lock `@supabase/ssr` | P3 implementation timeline |
 | decision:003 | n8n system identity có cần gate riêng (vd. capability `system.workflow`) không? | Audit log đang ghi `service_role`; nếu thêm capability-aware audit, n8n sẽ fail | n8n identity trong capability matrix |
-| decision:004 | `review` capability `change_review` cho phép self-approve hay cấm? | Auth contract không định rõ (chỉ nói second-party); nếu cấm tuyệt đối, P3 cần proposer ≠ reviewer check | api:006 behavior |
+| decision:ai-self-approval | AI report approval (api:006) có cho phép self-approval (actor enqueues + same actor approves) không? | W03 đã đóng self-approval cho direct-entry `change_review` (proposer ≠ reviewer ở `direct_entry_approve_change_request` / `direct_entry_reject_change_request`). AI review là capability **riêng** `ai.report.review`; nó không dùng `change_review` và không có ràng buộc proposer ≠ reviewer ngầm. Nếu T0 muốn cùng semantic, P3 phải enforce ở route layer (`POST /api/ai/reports/[jobId]/review`) — không dùng `direct_entry_approve_change_request` và không bị suy diễn từ direct-entry rule. | api:006 behavior; nếu self-approval bị cấm, route cần check `actor_ref(job.actor_ref) ≠ actor_ref(reviewer)`. |
 | decision:005 | Audit retention window (bao lâu)? | Hiện không định; P3 RBAC cần để hiển thị "audit_view" | UI audit |
-| decision:006 | Direct-URL enforcement ở layer nào: middleware hay RPC policy? | Auth contract nói RPC + RLS; middleware hiện chỉ Basic Auth. P3 có thể thêm capability check ở middleware | gate:001 + new layer |
+| decision:006 | Direct-URL enforcement ở layer nào: middleware hay RPC policy? | W03 RPC đã có policy. Middleware hiện chỉ Basic Auth. P3 có thể thêm capability check ở middleware | gate:001 + new layer |
+
+### 11.6 Backlog reconciliation (từ W03/I02 evidence)
+
+Tổng kết số liệu G3 acceptance từ `scripts/p1.6-w03-g3-dev-manifest.json` (sanitized baseline) — phải được P2-W01 phân loại, không phải xem là regression W03:
+
+| Metric | Pre-test | Post-cleanup | Note |
+|---|---|---|---|
+| `data_sources` count | 26 | 26 | 2 fixture sources (`is_test=true`), 24 real sources. |
+| `recruited_total` (read-model `sum(recruited_count)`) | 30 | 30 | Fixture 2 sources bị loại khỏi read-model. |
+| `daily_recruitment_breakdown` rows | 30 | 30 | Khớp `recruited_total`. |
+| W03 user/entry count (post-cleanup) | 0 | 0 | W03 fixture namespace dùng synthetic IDs. |
+| W03 document versions / change requests (post-cleanup) | 0 | 0 | Same. |
+
+**Implication for P2-W01 / J01 backlog:**
+- 26 `data_sources` phải được phân loại `active / inactive / legacy` — đây là backlog của P2-W01, không phải regression do W03.
+- 2 fixture sources (theo hợp đồng `is_test=true`) vẫn còn trong `data_sources` nhưng bị loại khỏi read-model. P2-W01 phải quyết định: giữ để test fixture, hay archive / soft-delete.
+- `recruited_total = 30` không thay đổi qua W03. **Nó không chứng minh được** số liệu trước W03 — evidence chỉ chứng minh `post-apply pre-test = post-cleanup`. Đây là tuyên bố trung thực của W03 handoff và P2-W01 phải tôn trọng nó khi xây dashboard.
+- Tất cả 95 G3 check, baseline `cleanupVerified=true`, `baselineUnchanged=true`. Manifest file `scripts/p1.6-w03-g3-dev-manifest.json` đã được sanitize — không chứa connection data / credentials / tokens / PII / document payload.
+
+### 11.7 P1.5 AI review self-approval — non-conflation note
+
+`api:006` (`POST /api/ai/reports/[jobId]/review`) currently has the same actor enqueue + actor review path (`PILOT_ACTOR_REF = "pilot-admin"`). W03 closes the analogous question for direct-entry but does NOT close it for AI review — those are different capabilities (`change_review` vs `ai.report.review`).
+
+The S01 GAP `gap:004` ("self-review allowed because single `pilot-admin`") is still open for AI. P3 must:
+1. Pick a separate `ai.report.review` capability (not `change_review`).
+2. If T0 decides self-approval is forbidden for AI, add an `actor_ref(job.actor_ref) ≠ actor_ref(reviewer)` check at the route layer.
+3. Not extend the direct-entry self-review denial to AI — they are different vocabularies.
+
+Status of this: `PENDING_DECISION` (`decision:ai-self-approval` above).
 
 ---
 
 ## 12. Stop-condition check
 
 - ✅ Inventory bao phủ mọi surface hiện có trên `origin/main`.
-- ✅ Cross-reference với `origin/feature/p1.6-integration` (no new tables/RPC yet, chỉ contracts).
-- ✅ Cross-reference với `origin/feature/app-nav-01a` (registry đã liệt kê).
+- ✅ Cross-reference với `origin/feature/p1.6-integration @ 51511dd` (W01–W03 + I02; W03 DB foundation applied on DEV).
+- ✅ Cross-reference với `origin/feature/app-nav-01a @ 7bd2ba8` (registry đã liệt kê).
 - ✅ Migrations, RPC, grants, n8n workflows, server repos, API routes, page gates, env flags, App Nav entries đều có ID.
-- ✅ §11 GAP / PENDING_P1.6 / PENDING_DECISION có danh sách đầy đủ.
+- ✅ §11 GAP / PENDING_P1.6 / PENDING_DECISION có danh sách đầy đủ, bao gồm cả §11.3 (PENDING_P1.6 đã đóng) + §11.4 (route/UI/worker/cutover thực sự chưa làm) + §11.5 (PENDING_DECISION) + §11.6 (backlog reconciliation) + §11.7 (AI non-conflation note).
+- ✅ P1.6 capability split: `change_review` ≠ `entry_privileged_edit` ≠ `ai.report.review` (mỗi cái có semantic riêng, self-approval rules riêng).
+- ✅ DB side P1.6 chuyển sang `COVERED_DEV_FAST_TRACK` (25 tables + 1 view + 17 RPC).
+- ✅ DB side KHÔNG đồng nghĩa với "P1.6 PASS" — route/UI/document worker/cutover vẫn `PENDING_P1.6`.
 
 ---
 
 ## Appendix A — Source-of-truth refs
 
 - `origin/main @ 45ca016` — current runtime.
-- `origin/feature/p1.6-integration @ 3d47f82` — P1.6 W01/W02/W03 contracts.
+- `origin/feature/p1.6-integration @ 51511dd` — P1.6 W01–W03 contracts + W03 DB foundation applied on DEV; I02 = consolidated integration checkpoint.
 - `origin/feature/app-nav-01a @ 7bd2ba8` — navigation registry.
 - `src/proxy.ts` — pilot Basic Auth gate.
 - `src/lib/auth/pilot-access.ts` — gate logic thuần.
 - `src/lib/supabase/server.ts` — service-role + public client.
-- `supabase/migrations/*.sql` (20 files) — RLS + grants + RPC.
+- `supabase/migrations/*.sql` (22 files on `p1.6-integration`: 20 base + `20261002170000_p1_6_direct_entry_foundation.sql` + `20261003170000_p1_6_w03_submission_noop_guard.sql`).
 - `docs/contracts/p1.6-auth-capabilities-v1.md` — capability vocab (P1.6 W02).
 - `docs/contracts/p1.6-direct-entry-v1.md` — direct-entry business contract (P1.6 W01).
+- `docs/handoffs/p1.6-w03.md` — W03 DB boundary + 95-check G3 acceptance manifest ref.
+- `docs/handoffs/p1.6-i02.md` — I02 integration checkpoint.
+- `scripts/p1.6-w03-g3-dev-acceptance.mjs` + `scripts/p1.6-w03-g3-dev-manifest.json` — DEV harness + sanitized manifest.
 - `automation/n8n/README.md` + `automation/n8n/docs/p0-t2-wf01-runbook.md` — n8n boundaries.
 - `docs/spikes/p1.5-w04a-security.md` — AI outbound SSRF hardening.
 
@@ -355,7 +511,7 @@ Lấy từ `origin/feature/app-nav-01a:src/lib/navigation/registry.ts`. Hiện 2
 | P0 (foundation) | T1B | db:t:001–005, db:v:001–003, db:f:001–012, repo:001–003 |
 | P1 (reporting) | T1B | page:002, page:003, op:001–003 |
 | P1.5 (AI gateway) | T1A | db:t:006–011, db:f:013–024, api:001–012, api:013 (worker), repo:004–009 |
-| P1.6 (direct entry) | T1A | pending:p1.6:001–003 |
+| P1.6 (direct entry) | T1A | **DB side COVERED_DEV_FAST_TRACK**: db:t:p1.6:001–026, db:v:p1.6:001, db:f:p1.6:001–017. **Route/UI/worker side PENDING_P1.6**: p1.6:001–015, pending:p1.6:route:001, pending:p1.6:ui:001, pending:p1.6:worker:001, pending:p1.6:cutover:001. |
 | P2 (finance/payment) | TBD | planned (P3 sẽ inventory khi phase design) |
 | P3 (RBAC) | T2 (this task) | gate:001–003, gap:001–007, decision:001–006 |
 | Ops (n8n) | T2 | n8n:001–004 |
