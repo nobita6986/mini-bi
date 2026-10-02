@@ -1,0 +1,44 @@
+{
+  "case_id": "c04",
+  "title": "Hai alias overlap cùng key",
+  "catalog_extends": {
+    "aliases": [
+      {
+        "alias_id": "alias_101",
+        "recruiter_id": "rcr_003",
+        "reporting_key": "rec-bravo",
+        "valid_from": "2026-10-01",
+        "valid_to": null,
+        "active": true
+      }
+    ]
+  },
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-bravo",
+      "provider_type_key": "hrp",
+      "recruited_count": 3
+    }
+  ],
+  "expected": {
+    "availability": "ambiguous",
+    "mapped_recruited_count": 0,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 3,
+    "coverage_ratio": 0,
+    "teams_in_scope": 0,
+    "reason_code": "TEAM_MAPPING_AMBIGUOUS",
+    "recruiter_refs": [],
+    "team_refs": [],
+    "classification_counts": {
+      "mapped": 0,
+      "unmapped": 0,
+      "ambiguous": 1
+    },
+    "quality_issue_codes": [
+      "RECRUITER_ALIAS_AMBIGUOUS"
+    ]
+  },
+  "note": "Không âm thầm chọn một alias khi overlap."
+}

@@ -1,0 +1,37 @@
+{
+  "case_id": "c08",
+  "title": "Provider mismatch với fact",
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-bravo",
+      "provider_type_key": "vendor",
+      "recruited_count": 4
+    }
+  ],
+  "expected": {
+    "availability": "available",
+    "mapped_recruited_count": 4,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 1,
+    "teams_in_scope": 1,
+    "reason_code": "TEAM_MAPPING_AVAILABLE",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [
+      "team_01"
+    ],
+    "classification_counts": {
+      "mapped": 1,
+      "unmapped": 0,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": [
+      "PROVIDER_MISMATCH"
+    ],
+    "provider_fact_preserved": true
+  },
+  "note": "Fact nói vendor nhưng membership là hrp ⇒ quality issue riêng, KHÔNG overwrite fact, classification không đổi."
+}

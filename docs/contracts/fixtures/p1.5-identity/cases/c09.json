@@ -1,0 +1,41 @@
+{
+  "case_id": "c09",
+  "title": "Hai recruiter cùng display nhưng khác stable ID",
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-alpha",
+      "provider_type_key": "vendor",
+      "recruited_count": 5
+    },
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-alpha-2",
+      "provider_type_key": "hrp",
+      "recruited_count": 4
+    }
+  ],
+  "expected": {
+    "availability": "available",
+    "mapped_recruited_count": 9,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 1,
+    "teams_in_scope": 1,
+    "reason_code": "TEAM_MAPPING_AVAILABLE",
+    "recruiter_refs": [
+      "recruiter_01",
+      "recruiter_02"
+    ],
+    "team_refs": [
+      "team_01"
+    ],
+    "classification_counts": {
+      "mapped": 2,
+      "unmapped": 0,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": []
+  },
+  "note": "Display không bao giờ là identity; hai recruiter khác stable id vẫn tách biệt."
+}

@@ -1,0 +1,34 @@
+{
+  "case_id": "c10",
+  "title": "Một grain recruited_count > 1 (coverage dùng SUM)",
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-alpha",
+      "provider_type_key": "vendor",
+      "recruited_count": 7
+    }
+  ],
+  "expected": {
+    "availability": "available",
+    "mapped_recruited_count": 7,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 1,
+    "teams_in_scope": 1,
+    "reason_code": "TEAM_MAPPING_AVAILABLE",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [
+      "team_01"
+    ],
+    "classification_counts": {
+      "mapped": 1,
+      "unmapped": 0,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": []
+  },
+  "note": "Một dòng grain với recruited_count = 7 ⇒ coverage = 7 người, không phải 1 dòng."
+}

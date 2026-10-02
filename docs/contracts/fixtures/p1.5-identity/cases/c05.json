@@ -1,0 +1,45 @@
+{
+  "case_id": "c05",
+  "title": "Hai team membership overlap",
+  "catalog_extends": {
+    "team_memberships": [
+      {
+        "membership_id": "tm_101",
+        "recruiter_id": "rcr_002",
+        "team_id": "team_003",
+        "valid_from": "2026-10-01",
+        "valid_to": null
+      }
+    ]
+  },
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-bravo",
+      "provider_type_key": "hrp",
+      "recruited_count": 3
+    }
+  ],
+  "expected": {
+    "availability": "ambiguous",
+    "mapped_recruited_count": 0,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 3,
+    "coverage_ratio": 0,
+    "teams_in_scope": 0,
+    "reason_code": "TEAM_MAPPING_AMBIGUOUS",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [],
+    "classification_counts": {
+      "mapped": 0,
+      "unmapped": 0,
+      "ambiguous": 1
+    },
+    "quality_issue_codes": [
+      "TEAM_MEMBERSHIP_AMBIGUOUS"
+    ]
+  },
+  "note": "Recruiter thuộc hai team cùng lúc ⇒ ambiguous, không đoán team."
+}

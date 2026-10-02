@@ -1,0 +1,41 @@
+{
+  "case_id": "c06",
+  "title": "Transfer team đúng boundary valid_to/valid_from",
+  "facts": [
+    {
+      "business_date": "2026-08-31",
+      "recruiter_key": "rec-alpha",
+      "provider_type_key": "vendor",
+      "recruited_count": 2
+    },
+    {
+      "business_date": "2026-09-01",
+      "recruiter_key": "rec-alpha",
+      "provider_type_key": "vendor",
+      "recruited_count": 3
+    }
+  ],
+  "expected": {
+    "availability": "available",
+    "mapped_recruited_count": 5,
+    "unmapped_recruited_count": 0,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 1,
+    "teams_in_scope": 2,
+    "reason_code": "TEAM_MAPPING_AVAILABLE",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [
+      "team_01",
+      "team_02"
+    ],
+    "classification_counts": {
+      "mapped": 2,
+      "unmapped": 0,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": []
+  },
+  "note": "Interval nửa mở: 2026-08-31 thuộc team cũ, 2026-09-01 thuộc team mới."
+}

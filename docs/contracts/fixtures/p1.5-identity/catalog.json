@@ -1,0 +1,297 @@
+{
+  "recruiters": [
+    {
+      "recruiter_id": "rcr_001",
+      "display": "Recruiter Alpha",
+      "active": true
+    },
+    {
+      "recruiter_id": "rcr_002",
+      "display": "Recruiter Bravo",
+      "active": true
+    },
+    {
+      "recruiter_id": "rcr_003",
+      "display": "Recruiter Charlie",
+      "active": true
+    },
+    {
+      "recruiter_id": "rcr_004",
+      "display": "Recruiter Delta",
+      "active": false
+    },
+    {
+      "recruiter_id": "rcr_005",
+      "display": "Recruiter Alpha",
+      "active": true
+    },
+    {
+      "recruiter_id": "rcr_006",
+      "display": "Recruiter Echo",
+      "active": true
+    },
+    {
+      "recruiter_id": "rcr_007",
+      "display": "Recruiter Foxtrot",
+      "active": true
+    },
+    {
+      "recruiter_id": "rcr_008",
+      "display": "Recruiter Golf",
+      "active": true
+    }
+  ],
+  "teams": [
+    {
+      "team_id": "team_001",
+      "code": "TEAM-A",
+      "display": "Team Alpha",
+      "active": true
+    },
+    {
+      "team_id": "team_002",
+      "code": "TEAM-B",
+      "display": "Team Bravo",
+      "active": true
+    },
+    {
+      "team_id": "team_003",
+      "code": "TEAM-C",
+      "display": "Team Charlie",
+      "active": true
+    },
+    {
+      "team_id": "team_004",
+      "code": "TEAM-D",
+      "display": "Team Delta",
+      "active": false
+    }
+  ],
+  "aliases": [
+    {
+      "alias_id": "alias_001",
+      "recruiter_id": "rcr_001",
+      "reporting_key": "rec-alpha",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    },
+    {
+      "alias_id": "alias_002",
+      "recruiter_id": "rcr_002",
+      "reporting_key": "rec-bravo",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    },
+    {
+      "alias_id": "alias_003",
+      "recruiter_id": "rcr_003",
+      "reporting_key": "rec-charlie",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    },
+    {
+      "alias_id": "alias_004",
+      "recruiter_id": "rcr_004",
+      "reporting_key": "rec-delta",
+      "valid_from": "2026-01-01",
+      "valid_to": "2026-06-30",
+      "active": true
+    },
+    {
+      "alias_id": "alias_005",
+      "recruiter_id": "rcr_005",
+      "reporting_key": "rec-alpha-2",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    },
+    {
+      "alias_id": "alias_006",
+      "recruiter_id": "rcr_006",
+      "reporting_key": "rec-echo",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    },
+    {
+      "alias_id": "alias_007",
+      "recruiter_id": "rcr_007",
+      "reporting_key": "rec-foxtrot",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    },
+    {
+      "alias_id": "alias_008",
+      "recruiter_id": "rcr_008",
+      "reporting_key": "rec-golf",
+      "valid_from": "2026-01-01",
+      "valid_to": null,
+      "active": true
+    }
+  ],
+  "provider_memberships": [
+    {
+      "membership_id": "pm_001",
+      "recruiter_id": "rcr_001",
+      "provider_type": "hrp",
+      "valid_from": "2026-01-01",
+      "valid_to": "2026-07-01"
+    },
+    {
+      "membership_id": "pm_002",
+      "recruiter_id": "rcr_001",
+      "provider_type": "vendor",
+      "valid_from": "2026-07-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_003",
+      "recruiter_id": "rcr_002",
+      "provider_type": "hrp",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_004",
+      "recruiter_id": "rcr_003",
+      "provider_type": "vendor",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_005",
+      "recruiter_id": "rcr_004",
+      "provider_type": "hrp",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_006",
+      "recruiter_id": "rcr_005",
+      "provider_type": "hrp",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_007",
+      "recruiter_id": "rcr_006",
+      "provider_type": "vendor",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_008",
+      "recruiter_id": "rcr_007",
+      "provider_type": "hrp",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "pm_009",
+      "recruiter_id": "rcr_008",
+      "provider_type": "vendor",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    }
+  ],
+  "team_memberships": [
+    {
+      "membership_id": "tm_001",
+      "recruiter_id": "rcr_001",
+      "team_id": "team_001",
+      "valid_from": "2026-01-01",
+      "valid_to": "2026-09-01"
+    },
+    {
+      "membership_id": "tm_002",
+      "recruiter_id": "rcr_001",
+      "team_id": "team_002",
+      "valid_from": "2026-09-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "tm_003",
+      "recruiter_id": "rcr_002",
+      "team_id": "team_001",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "tm_004",
+      "recruiter_id": "rcr_003",
+      "team_id": "team_002",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "tm_005",
+      "recruiter_id": "rcr_004",
+      "team_id": "team_003",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "tm_006",
+      "recruiter_id": "rcr_005",
+      "team_id": "team_002",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "tm_007",
+      "recruiter_id": "rcr_006",
+      "team_id": "team_003",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    },
+    {
+      "membership_id": "tm_008",
+      "recruiter_id": "rcr_007",
+      "team_id": "team_001",
+      "valid_from": "2026-01-01",
+      "valid_to": null
+    }
+  ],
+  "audit": [
+    {
+      "change_id": "aud_001",
+      "version": 1,
+      "entity": "recruiter_alias",
+      "ref": "alias_002",
+      "before_revision_ref": null,
+      "after_revision_ref": "rev_alias_002_v1",
+      "actor_ref": "actor_op_01",
+      "reason": "initial import",
+      "effective_date": "2026-01-01",
+      "recorded_at": "2026-01-01T00:00:00Z"
+    },
+    {
+      "change_id": "aud_002",
+      "version": 2,
+      "entity": "team_membership",
+      "ref": "tm_002",
+      "before_revision_ref": "rev_tm_001_v1",
+      "after_revision_ref": "rev_tm_002_v1",
+      "actor_ref": "actor_op_02",
+      "reason": "team transfer",
+      "effective_date": "2026-09-01",
+      "recorded_at": "2026-08-20T00:00:00Z"
+    },
+    {
+      "change_id": "aud_003",
+      "version": 3,
+      "entity": "provider_membership",
+      "ref": "pm_002",
+      "before_revision_ref": "rev_pm_001_v1",
+      "after_revision_ref": "rev_pm_002_v1",
+      "actor_ref": "actor_op_01",
+      "reason": "provider change",
+      "effective_date": "2026-07-01",
+      "recorded_at": "2026-06-25T00:00:00Z"
+    }
+  ]
+}

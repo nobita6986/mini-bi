@@ -1,0 +1,42 @@
+{
+  "case_id": "c11",
+  "title": "mapped + unmapped ⇒ partial",
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-alpha",
+      "provider_type_key": "vendor",
+      "recruited_count": 5
+    },
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-unknown-key",
+      "provider_type_key": "hrp",
+      "recruited_count": 2
+    }
+  ],
+  "expected": {
+    "availability": "partial",
+    "mapped_recruited_count": 5,
+    "unmapped_recruited_count": 2,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 0.7142857142857143,
+    "teams_in_scope": 1,
+    "reason_code": "TEAM_MAPPING_PARTIAL",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [
+      "team_01"
+    ],
+    "classification_counts": {
+      "mapped": 1,
+      "unmapped": 1,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": [
+      "RECRUITER_ALIAS_NOT_FOUND"
+    ]
+  },
+  "note": "Coverage fact-weighted = 5/7."
+}

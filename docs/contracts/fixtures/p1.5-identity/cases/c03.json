@@ -1,0 +1,34 @@
+{
+  "case_id": "c03",
+  "title": "Recruiter không có team membership",
+  "facts": [
+    {
+      "business_date": "2026-10-15",
+      "recruiter_key": "rec-golf",
+      "provider_type_key": "vendor",
+      "recruited_count": 6
+    }
+  ],
+  "expected": {
+    "availability": "unavailable",
+    "mapped_recruited_count": 0,
+    "unmapped_recruited_count": 6,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 0,
+    "teams_in_scope": 0,
+    "reason_code": "TEAM_MAPPING_UNAVAILABLE",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [],
+    "classification_counts": {
+      "mapped": 0,
+      "unmapped": 1,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": [
+      "TEAM_MEMBERSHIP_NOT_FOUND"
+    ]
+  },
+  "note": "Alias resolve được nhưng không có team membership ⇒ unmapped."
+}

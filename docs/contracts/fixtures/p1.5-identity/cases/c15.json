@@ -1,0 +1,42 @@
+{
+  "case_id": "c15",
+  "title": "Membership retired không viết lại fact quá khứ",
+  "facts": [
+    {
+      "business_date": "2026-06-29",
+      "recruiter_key": "rec-delta",
+      "provider_type_key": "hrp",
+      "recruited_count": 1
+    },
+    {
+      "business_date": "2026-06-30",
+      "recruiter_key": "rec-delta",
+      "provider_type_key": "hrp",
+      "recruited_count": 1
+    }
+  ],
+  "expected": {
+    "availability": "partial",
+    "mapped_recruited_count": 1,
+    "unmapped_recruited_count": 1,
+    "ambiguous_recruited_count": 0,
+    "coverage_ratio": 0.5,
+    "teams_in_scope": 1,
+    "reason_code": "TEAM_MAPPING_PARTIAL",
+    "recruiter_refs": [
+      "recruiter_01"
+    ],
+    "team_refs": [
+      "team_01"
+    ],
+    "classification_counts": {
+      "mapped": 1,
+      "unmapped": 1,
+      "ambiguous": 0
+    },
+    "quality_issue_codes": [
+      "RECRUITER_ALIAS_NOT_FOUND"
+    ]
+  },
+  "note": "Alias rcr_004 hết hiệu lực tại 2026-06-30 (exclusive): fact 2026-06-29 vẫn map team cũ, fact 2026-06-30 unmapped."
+}
