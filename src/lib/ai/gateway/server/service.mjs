@@ -51,9 +51,10 @@ export function createServerAiReportGateway() {
   const providerConfigStore = createSupabaseProviderConfigStore();
 
   /**
-   * W04B-S02A — adapterFactory: live ⇒ createLiveAdapter(safeOutboundRequest + url_policy đã validate).
-   * Production fail-closed: resolveProviderConfig vẫn chặn live ở env gate (chưa bật); adapter chỉ resolve
-   * khi outbound + url_policy + profile hợp lệ (kiểm ở createLiveAdapter/resolveProviderAdapter).
+   * W04B-S02A/I02 — adapterFactory: live ⇒ createLiveAdapter(safeOutboundRequest + url_policy đã validate).
+   * Fail-closed: resolveProviderConfig chỉ chọn live khi AI_PROVIDER_KEY=live + allowlist hợp lệ; adapter chỉ
+   * resolve khi outbound + url_policy + profile hợp lệ; frozen config active+verified + model/version khớp
+   * được kiểm ở run-one-job. Thiếu bất kỳ điều kiện nào ⇒ fail closed trước outbound.
    */
   const adapterFactory = createLiveAdapterFactory({
     url_policy: urlPolicyFromEnv(process.env),
