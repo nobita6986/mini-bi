@@ -71,10 +71,11 @@ test("theme selector được render trong header", () => {
   assert.ok(sel.includes("aria-checked"), "radiogroup uses aria-checked");
 });
 
-test("filter bar is sticky and the advanced disclosure is accessible", () => {
+test("filter bar is non-sticky on mobile, sticky from md, and the advanced disclosure is accessible", () => {
   const src = readFileSync(filtersPath, "utf8");
-  assert.ok(src.includes("sticky top-2 z-20"), "sticky bar with controlled z-index");
-  assert.ok(src.includes("backdrop-blur"), "backdrop blur while scrolled under");
+  assert.ok(src.includes("md:sticky md:top-2 md:z-20"), "sticky behavior starts at the md breakpoint");
+  assert.ok(!src.includes('className="sticky '), "mobile must keep the filter bar in normal document flow");
+  assert.ok(src.includes("md:backdrop-blur"), "backdrop blur only applies with desktop sticky behavior");
   assert.ok(src.includes("aria-expanded={advancedOpen}"), "disclosure must expose expanded state");
   assert.ok(src.includes('aria-controls="advanced-filters"'), "disclosure must point at the panel");
   assert.ok(src.includes('id="advanced-filters"'), "panel id must match aria-controls");

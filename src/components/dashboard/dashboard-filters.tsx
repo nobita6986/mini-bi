@@ -51,7 +51,7 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
 
   return (
     <>
-      <section aria-label="Bộ lọc báo cáo" className="sticky top-2 z-20 rounded-2xl border border-border bg-surface/90 p-3.5 shadow-sm backdrop-blur">
+      <section aria-label="Bộ lọc báo cáo" className="rounded-2xl border border-border bg-surface/90 p-3.5 shadow-sm md:sticky md:top-2 md:z-20 md:backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-foreground">Bộ lọc</h2>
