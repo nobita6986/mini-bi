@@ -185,7 +185,8 @@ test("R2-A3: prune loại NGUYÊN cụm feature+evidence+ref, không làm sai fe
   for (const dimension of full.payload.drivers) {
     for (const entry of dimension.entries) if (!keptDriverSubjects.has(entry.subject_ref)) prunedSubjects.push(entry.subject_ref);
   }
-  assert.ok(prunedSubjects.length > 0, "phải có subject bị prune");
+  const mixDropped = (tight.payload.project_provider_mix ?? []).length < (full.payload.project_provider_mix ?? []).length;
+  assert.ok(prunedSubjects.length > 0 || mixDropped, "phải có feature bị prune (driver hoặc mix)");
   for (const ref of prunedSubjects) {
     assert.ok(!refs.has(ref), "subject bị prune không được còn trong subject_refs: " + ref);
     for (const entry of tight.payload.evidence) {
@@ -196,6 +197,21 @@ test("R2-A3: prune loại NGUYÊN cụm feature+evidence+ref, không làm sai fe
       assert.notEqual(tight.payload.concentration[dimension].top1_ref, ref, "top1_ref không được trỏ subject bị prune");
     }
   }
+  if (mixDropped) {
+    // Mix bị prune ⇒ không còn row lẫn evidence mix rơi rớt, và subject của row bị bỏ không còn trong refs.
+    const droppedRows = (full.payload.project_provider_mix ?? []).filter(
+      (row) => !(tight.payload.project_provider_mix ?? []).some((kept) => kept.subject_ref === row.subject_ref)
+    );
+    for (const row of droppedRows) {
+      assert.ok(
+        !tight.payload.evidence.some((evidence) => evidence.metric.startsWith("project_mix.") && evidence.subject_ref === row.subject_ref),
+        "evidence mix của row bị prune không được còn lại"
+      );
+      const keptElsewhere = tight.payload.drivers.some((dimension) => dimension.entries.some((entry) => entry.subject_ref === row.subject_ref));
+      if (!keptElsewhere) assert.ok(!refs.has(row.subject_ref), "ref của row mix bị prune không được còn trong subject_refs");
+    }
+  }
+
   // Feature còn lại vẫn khớp packet (không bị "sai" do prune).
   for (const dimension of tight.payload.drivers) {
     for (const entry of dimension.entries) {

@@ -8,7 +8,10 @@ export const MAX_PAYLOAD_BYTES = 256 * 1024;
 export const PROVIDER_TIMEOUT_MS = 30000;
 export const LEASE_SECONDS = 120;
 export const MAX_ATTEMPTS = 3;
+/** Trần SLOT provider đang chạy — enforce ATOMIC tại DB claim (R3), không enforce ở application. */
 export const MAX_CONCURRENT_JOBS = 2;
+/** Trần ĐỘ SÂU hàng đợi (job chờ) — policy layer dùng để chặn queue phình vô hạn. */
+export const MAX_QUEUE_DEPTH = 50;
 export const DAILY_TOKEN_CEILING = 2_000_000;
 export const RATE_WINDOW_MS = 60_000;
 export const MAX_REQUESTS_PER_WINDOW = 6;
@@ -30,6 +33,7 @@ export const DEFAULT_POLICY = Object.freeze({
   window_ms: RATE_WINDOW_MS,
   max_requests_per_window: MAX_REQUESTS_PER_WINDOW,
   max_concurrent_jobs: MAX_CONCURRENT_JOBS,
+  max_queue_depth: MAX_QUEUE_DEPTH,
   max_attempts: MAX_ATTEMPTS,
   provider_timeout_ms: PROVIDER_TIMEOUT_MS,
   max_response_bytes: MAX_RESPONSE_BYTES,

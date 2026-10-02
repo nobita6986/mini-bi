@@ -26,6 +26,7 @@ export function readPolicyConfig(source) {
   const maxPayloadBytes = isPositiveInt(raw.max_payload_bytes) ? raw.max_payload_bytes : 256 * 1024;
   const maxLookbackDays = isPositiveInt(raw.max_lookback_days) ? raw.max_lookback_days : 1500;
   const maxFactRows = isPositiveInt(raw.max_fact_rows) ? raw.max_fact_rows : 50_000;
+  const maxQueueDepth = isPositiveInt(raw.max_queue_depth) ? raw.max_queue_depth : 50;
   if (raw.provider_timeout_ms < 1000 || raw.provider_timeout_ms > 120000) {
     return { ok: false, code: "AI_POLICY_REQUIRED", message: "provider_timeout_ms ngoài khoảng cho phép" };
   }
@@ -45,6 +46,7 @@ export function readPolicyConfig(source) {
       daily_token_ceiling: raw.daily_token_ceiling,
       max_lookback_days: maxLookbackDays,
       max_fact_rows: maxFactRows,
+      max_queue_depth: maxQueueDepth,
     },
   };
 }
@@ -84,11 +86,22 @@ export function evaluatePolicy({ config, context, payload_bytes = 0 }) {
     return { ok: false, code: "AI_RATE_LIMITED", message: "vượt giới hạn request trong cửa sổ" };
   }
 
-  if (!Number.isInteger(context.active_jobs) || context.active_jobs < 0) {
-    return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu số job đang chạy" };
+  /**
+   * R3 — Concurrency của PROVIDER được enforce ATOMIC tại DB claim (ai_report_claim + advisory lock).
+   * Policy layer KHÔNG chặn theo job đang chạy (nếu không job vừa claim sẽ tự chặn chính nó và
+   * nhiều job queued sẽ làm livelock toàn queue). Ở đây chỉ còn trần ĐỘ SÂU HÀNG ĐỢI.
+   */
+  const queuedJobs = Number.isInteger(context.queued_jobs)
+    ? context.queued_jobs
+    : Number.isInteger(context.active_jobs)
+      ? context.active_jobs
+      : null;
+  if (queuedJobs === null || queuedJobs < 0) {
+    return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu số job trong hàng đợi" };
   }
-  if (context.active_jobs >= config.max_concurrent_jobs) {
-    return { ok: false, code: "AI_CONCURRENCY_LIMITED", message: "vượt giới hạn job đồng thời" };
+  const queueCeiling = isPositiveInt(config.max_queue_depth) ? config.max_queue_depth : null;
+  if (queueCeiling !== null && queuedJobs >= queueCeiling) {
+    return { ok: false, code: "AI_CONCURRENCY_LIMITED", message: "hàng đợi đã đầy" };
   }
 
   // `attempts` là số lần ĐÃ claim (bao gồm lần hiện tại) ⇒ chỉ chặn khi VƯỢT trần.

@@ -102,11 +102,13 @@ test("W04 policy: đọc policy fail-closed + đánh giá rate/concurrency/budge
   assert.equal(readPolicyConfig({ ...complete, max_attempts: 9 }).ok, false);
   for (const key of REQUIRED_POLICY_KEYS) assert.ok(key in parsed.config, key);
 
-  const base = { now_ms: 1000, actor_ref: "a", access_scope_hash: "h", recent_requests: [], active_jobs: 0, attempts: 0, tokens_used_today: 0 };
+  const base = { now_ms: 1000, actor_ref: "a", access_scope_hash: "h", recent_requests: [], queued_jobs: 0, attempts: 0, tokens_used_today: 0 };
   assert.equal(evaluatePolicy({ config: parsed.config, context: base }).ok, true);
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, recent_requests: [900, 950] } }).code, "AI_RATE_LIMITED");
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, recent_requests: [10] } }).ok, true);
-  assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, active_jobs: 1 } }).code, "AI_CONCURRENCY_LIMITED");
+  // R3: concurrency provider KHÔNG còn chặn ở application; policy chỉ chặn khi HÀNG ĐỢI đầy.
+  assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, queued_jobs: parsed.config.max_queue_depth } }).code, "AI_CONCURRENCY_LIMITED");
+  assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, queued_jobs: 3 } }).ok, true);
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, tokens_used_today: 1000 } }).code, "AI_BUDGET_LIMITED");
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, attempts: 4 } }).code, "AI_BUDGET_LIMITED");
   assert.equal(evaluatePolicy({ config: parsed.config, context: base, payload_bytes: DEFAULT_POLICY.max_payload_bytes + 1 }).code, "AI_BUDGET_LIMITED");

@@ -518,7 +518,13 @@ test("G4-H: mất response sau commit ⇒ không duplicate revision/usage", asyn
   const { service, clock } = makeService({ queue, audit, packet, scenario: "valid" });
   const first = await enqueueAndRun({ packet, scenario: "valid", service, clock, queue, attempts: 1 });
   assert.equal(queue.store.revisions.size, 1, "commit đã xảy ra trong DB");
-  assert.ok(first.runs[0].kind === "retry_scheduled" || first.runs[0].kind === "failed");
+  // R3: complete đã commit nhưng response mất ⇒ worker KHÔNG được báo thành công; fail() bị từ chối
+  // vì job đã ở trạng thái draft ⇒ kết quả trung thực là lease_lost (không retry/failed giả).
+  assert.ok(
+    ["retry_scheduled", "failed", "lease_lost"].includes(first.runs[0].kind),
+    "kind=" + first.runs[0].kind
+  );
+  assert.equal([...queue.store.jobs.values()][0].status, "draft");
 
   // Lần chạy sau: complete idempotent trả lại revision cũ, KHÔNG tạo revision mới.
   const again = await service.runWorker({ worker_ref: "w2", limit: 1, now_ms: clock.nowMs() });
@@ -581,8 +587,9 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
   assert.equal(second.ok, false);
   assert.equal(second.code, "AI_RATE_LIMITED");
 
+  // R3: application KHÔNG chặn theo job đang chạy (concurrency enforce ở DB claim) — policy chỉ còn trần hàng đợi.
   const concurrencyQueue = createMemoryQueue();
-  const concurrencyService = makeService({ queue: concurrencyQueue, audit: createMemoryAudit(), packet, scenario: "valid", policy: { ...DEFAULT_POLICY, max_concurrent_jobs: 1 } });
+  const concurrencyService = makeService({ queue: concurrencyQueue, audit: createMemoryAudit(), packet, scenario: "valid", policy: { ...DEFAULT_POLICY, max_queue_depth: 1 } });
   await concurrencyService.service.enqueueReport({
     input: REQUEST, actor_ref: "pilot-admin", access_scope_hash: "h",
     provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),

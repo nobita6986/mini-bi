@@ -58,13 +58,21 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
   });
   if (!enqueued.ok) return enqueued;
 
-  await deps.audit.append({
-    job_id: enqueued.job_id,
-    event_type: enqueued.reused ? "job_reused" : enqueued.cache_hit ? "job_cache_hit" : "job_enqueued",
-    actor_ref: request.actor_ref,
-    reason: request.reason ?? null,
-    now_ms: now,
-  });
+  /**
+   * B (R3) — Audit authority DUY NHẤT cho từng event:
+   * - DB (RPC): job_enqueued · job_claimed · job_stage · job_completed · job_failed · job_regenerated
+   * - Application: job_reused · job_cache_hit (đúng MỘT lần cho mỗi request reuse/cache-hit)
+   * ⇒ không còn hai nguồn cùng ghi một event, và complete idempotent không sinh event thừa.
+   */
+  if (enqueued.reused === true || enqueued.cache_hit === true) {
+    await deps.audit.append({
+      job_id: enqueued.job_id,
+      event_type: enqueued.reused ? "job_reused" : "job_cache_hit",
+      actor_ref: request.actor_ref,
+      reason: request.reason ?? null,
+      now_ms: now,
+    });
+  }
 
   return {
     ok: true,
@@ -81,12 +89,30 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
  */
 export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEASE_SECONDS }) {
   const now = Number.isFinite(now_ms) ? now_ms : deps.clock.nowMs();
-  const claimed = await deps.queue.claim({ worker_ref, lease_seconds, now_ms: now });
+  const claimed = await deps.queue.claim({
+    worker_ref,
+    lease_seconds,
+    now_ms: now,
+    // R3: DB claim là authority cho trần concurrency provider.
+    max_concurrent_jobs: deps.policy.config?.max_concurrent_jobs,
+  });
   // E — chỉ AI_IDLE mới là idle; lỗi DB/RPC phải nổi lên thành worker error (không giả thành "không có việc").
   if (claimed === null) {
     return { kind: "idle", job_id: null, status: null, error_code: null, revision_id: null, attempts: null, next_attempt_at: null };
   }
   if (claimed.ok === false) {
+    // Hết slot provider KHÔNG phải lỗi hạ tầng: job vẫn nằm trong queue và sẽ được claim sau.
+    if (claimed.code === "AI_CONCURRENCY_LIMITED") {
+      return {
+        kind: "deferred",
+        job_id: null,
+        status: null,
+        error_code: "AI_CONCURRENCY_LIMITED",
+        revision_id: null,
+        attempts: null,
+        next_attempt_at: null,
+      };
+    }
     return {
       kind: "error",
       job_id: claimed.job_id ?? null,
@@ -107,7 +133,11 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
       now_ms: now,
       seed: job.job_id,
     });
-    await deps.queue.fail({
+    /**
+     * B (R3) — Truthfulness: chỉ báo retry_scheduled/failed khi DB THỰC SỰ đã cập nhật trạng thái.
+     * Audit `job_failed` do tầng DB (RPC) ghi — application KHÔNG ghi trùng.
+     */
+    const failed = await deps.queue.fail({
       job_id: job.job_id,
       lease_token: claimed.lease_token,
       error_code: errorCode,
@@ -116,13 +146,28 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
       message,
       now_ms: now,
     });
-    await deps.audit.append({
-      job_id: job.job_id,
-      event_type: "job_failed",
-      actor_ref: worker_ref,
-      reason: errorCode,
-      now_ms: now,
-    });
+    if (!failed || failed.ok !== true) {
+      if (failed && failed.code === "AI_LEASE_LOST") {
+        return {
+          kind: "lease_lost",
+          job_id: job.job_id,
+          status: null,
+          error_code: null,
+          revision_id: null,
+          attempts: claimed.attempt,
+          next_attempt_at: null,
+        };
+      }
+      return {
+        kind: "error",
+        job_id: job.job_id,
+        status: null,
+        error_code: failed?.code ?? "AI_INTERNAL",
+        revision_id: null,
+        attempts: claimed.attempt,
+        next_attempt_at: null,
+      };
+    }
     return {
       kind: decision.next_status === "queued" ? "retry_scheduled" : "failed",
       job_id: job.job_id,
@@ -276,14 +321,8 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   }
   if (!completed.ok) return report(completed.code ?? "AI_INTERNAL", completed.message ?? "complete thất bại");
 
-  await deps.audit.append({
-    job_id: job.job_id,
-    event_type: completed.already_completed ? "job_completed_idempotent" : "job_completed",
-    actor_ref: worker_ref,
-    reason: null,
-    now_ms: now,
-  });
-
+  // B (R3): audit `job_completed` do tầng DB ghi DUY NHẤT MỘT LẦN khi tạo revision;
+  // complete idempotent (already_completed) không sinh thêm event.
   return {
     kind: "completed",
     job_id: job.job_id,
@@ -301,7 +340,8 @@ export async function runWorkerBatch({ deps, worker_ref, now_ms, limit = 1 }) {
   for (let i = 0; i < limit; i++) {
     const result = await runOneJob({ deps, worker_ref, now_ms });
     results.push(result);
-    if (result.kind === "idle") break;
+    // Hết slot provider ⇒ dừng batch (không thử job khác khi không còn slot).
+    if (result.kind === "idle" || result.kind === "deferred") break;
   }
   return results;
 }

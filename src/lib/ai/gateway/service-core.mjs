@@ -136,7 +136,7 @@ export function createAiReportService(deps) {
           actor_ref,
           access_scope_hash,
           recent_requests: policyContext.value.recent_requests,
-          active_jobs: policyContext.value.active_jobs,
+          queued_jobs: policyContext.value.queued_jobs,
           attempts: 0,
           tokens_used_today: policyContext.value.tokens_used_today,
         },
@@ -199,7 +199,7 @@ export function createAiReportService(deps) {
           audit: deps.audit,
           policy: {
             config: deps.policy.config,
-            contextFor: async () => ({ ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } }),
+            contextFor: async () => ({ ok: true, value: { recent_requests: [], queued_jobs: 0, tokens_used_today: 0 } }),
           },
           identity: identityFor({
             packet: packetCheck.value,
@@ -237,7 +237,7 @@ export function createAiReportService(deps) {
           actor_ref,
           access_scope_hash,
           recent_requests: policyContext.value.recent_requests,
-          active_jobs: policyContext.value.active_jobs,
+          queued_jobs: policyContext.value.queued_jobs,
           attempts: 0,
           tokens_used_today: policyContext.value.tokens_used_today,
         },
@@ -259,7 +259,8 @@ export function createAiReportService(deps) {
       const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, WORKER_BATCH_LIMIT) : 1;
       // E (R2): lỗi recoverStale KHÔNG được bỏ qua.
       if (typeof deps.queue.recoverStale === "function") {
-        const recovered = await deps.queue.recoverStale({ lease_seconds: LEASE_SECONDS });
+        // R3: truyền now_ms để recovery dùng CÙNG đồng hồ với claim (deterministic, không recover nhầm slot đang giữ).
+        const recovered = await deps.queue.recoverStale({ lease_seconds: LEASE_SECONDS, now_ms: now });
         if (!recovered || recovered.ok !== true) {
           return fail(recovered?.code ?? "AI_INTERNAL", "không thu hồi được lease hết hạn (DB/RPC lỗi)");
         }
@@ -284,7 +285,8 @@ export function createAiReportService(deps) {
                 ok: true,
                 value: {
                   recent_requests: context.value.recent_requests,
-                  active_jobs: context.value.active_jobs,
+                  queued_jobs: context.value.queued_jobs,
+                  inflight_jobs: context.value.inflight_jobs,
                   tokens_used_today: context.value.tokens_used_today,
                 },
               };

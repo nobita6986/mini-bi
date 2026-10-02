@@ -8,6 +8,11 @@
 
 import { isActiveStatus } from "../job-state.mjs";
 
+/** Actor cho audit stage: ưu tiên worker đang giữ lease. */
+function workerRefFor(job) {
+  return job.lease_owner ?? "worker";
+}
+
 export function createMemoryQueue(options = {}) {
   const jobs = new Map();
   const revisions = new Map();
@@ -51,6 +56,8 @@ export function createMemoryQueue(options = {}) {
         return { ok: true, job_id: live.job_id, status: "draft", reused: false, cache_hit: true, revision_id: live.revision_id };
       }
       const job_id = uuid();
+      // Audit authority = DB: enqueue mới ghi job_enqueued (reuse/cache-hit do application ghi).
+      audit.push({ job_id, event_type: "job_enqueued", actor_ref: request.actor_ref ?? null, reason: null });
       jobs.set(job_id, {
         job_id,
         identity_hash,
@@ -78,7 +85,7 @@ export function createMemoryQueue(options = {}) {
       return { ok: true, job_id, status: "queued", reused: false, cache_hit: false, revision_id: null };
     },
 
-    async claim({ worker_ref, lease_seconds = 120, now_ms }) {
+    async claim({ worker_ref, lease_seconds = 120, now_ms, max_concurrent_jobs }) {
       // R2 (E): lỗi DB/RPC claim phải nổi lên, KHÔNG giả thành idle.
       if (hooks.claimError === true) {
         return { ok: false, code: "AI_INTERNAL", message: "claim RPC lỗi (mô phỏng)" };
@@ -86,7 +93,8 @@ export function createMemoryQueue(options = {}) {
       let recovered = 0;
       for (const job of jobs.values()) {
         if (!["computing", "ai_generating", "validating"].includes(job.status)) continue;
-        if (job.lease_expires_at !== null && Date.parse(job.lease_expires_at) > now_ms) continue;
+        // Mirror SQL claim: chỉ thu hồi khi lease ĐÃ hết hạn (lease_expires_at < now).
+        if (job.lease_expires_at !== null && Date.parse(job.lease_expires_at) >= now_ms) continue;
         job.status = "queued";
         job.lease_owner = null;
         job.lease_token = null;
@@ -96,6 +104,18 @@ export function createMemoryQueue(options = {}) {
         recovered += 1;
       }
       if (hooks.claimRecovered !== undefined) hooks.claimRecovered(recovered);
+
+      // R3 — Concurrency authority: chỉ tính job ĐANG giữ slot provider (lease còn hiệu lực).
+      const ceiling = Number.isInteger(max_concurrent_jobs) ? max_concurrent_jobs : null;
+      const inflight = [...jobs.values()].filter(
+        (job) =>
+          ["computing", "ai_generating", "validating"].includes(job.status) &&
+          job.lease_expires_at !== null &&
+          Date.parse(job.lease_expires_at) > now_ms
+      ).length;
+      if (ceiling !== null && inflight >= ceiling) {
+        return { ok: false, code: "AI_CONCURRENCY_LIMITED", message: "không còn slot provider", inflight };
+      }
 
       const candidates = [...jobs.values()]
         .filter((job) => ["requested", "queued"].includes(job.status))
@@ -110,6 +130,7 @@ export function createMemoryQueue(options = {}) {
       job.lease_token = token;
       job.lease_expires_at = iso(now_ms + lease_seconds * 1000);
       job.updated_at = iso(now_ms);
+      audit.push({ job_id: job.job_id, event_type: "job_claimed", actor_ref: worker_ref, reason: null });
       return {
         job: {
           job_id: job.job_id,
@@ -142,6 +163,7 @@ export function createMemoryQueue(options = {}) {
       if (!["computing", "ai_generating", "validating"].includes(job.status)) return { ok: false, code: "AI_LEASE_LOST" };
       job.status = status;
       job.updated_at = iso(now_ms);
+      audit.push({ job_id: job.job_id, event_type: "job_stage", actor_ref: workerRefFor(job), reason: status });
       return { ok: true };
     },
 
@@ -181,6 +203,8 @@ export function createMemoryQueue(options = {}) {
       job.error_code = null;
       job.completed_at = iso(now_ms);
       job.updated_at = iso(now_ms);
+      // Audit authority = tầng DB (RPC). Memory queue mô phỏng ĐÚNG chuỗi event để test parity.
+      audit.push({ job_id, event_type: "job_completed", actor_ref: job.lease_owner ?? "worker", reason: null });
 
       if (hooks.completeAfterCommit === true) {
         // Mô phỏng: DB đã commit nhưng response bị mất.
@@ -190,6 +214,9 @@ export function createMemoryQueue(options = {}) {
     },
 
     async fail({ job_id, lease_token, error_code, next_status, next_attempt_at, message, now_ms }) {
+      // R3 (B): mô phỏng lỗi DB/RPC hoặc lease đã mất ở bước ghi trạng thái thất bại.
+      if (hooks.failError === true) return { ok: false, code: "AI_INTERNAL", message: "fail RPC lỗi (mô phỏng)" };
+      if (hooks.failLeaseLost === true) return { ok: false, code: "AI_LEASE_LOST" };
       const job = jobs.get(job_id);
       if (!job) return { ok: false, code: "AI_JOB_NOT_FOUND" };
       if (job.status === "draft") return { ok: false, code: "AI_LEASE_LOST" };
@@ -202,6 +229,7 @@ export function createMemoryQueue(options = {}) {
       job.lease_expires_at = null;
       job.next_attempt_at = next_status === "queued" ? (next_attempt_at ?? iso(now_ms)) : null;
       job.updated_at = iso(now_ms);
+      audit.push({ job_id, event_type: "job_failed", actor_ref: job.lease_owner ?? "worker", reason: error_code });
       return { ok: true, status: next_status };
     },
 
@@ -217,14 +245,22 @@ export function createMemoryQueue(options = {}) {
       const recent = [...jobs.values()]
         .filter((job) => job.request?.actor_ref === actor_ref)
         .map((job) => Date.parse(job.created_at));
-      const active = [...jobs.values()].filter((job) => isActiveStatus(job.status)).length;
       let tokens = 0;
       for (const row of usage.values()) tokens += (row.input_tokens ?? 0) + (row.output_tokens ?? 0);
+      const queued = [...jobs.values()].filter((job) => ["requested", "queued"].includes(job.status)).length;
+      const inflight = [...jobs.values()].filter(
+        (job) =>
+          ["computing", "ai_generating", "validating"].includes(job.status) &&
+          job.lease_expires_at !== null &&
+          Date.parse(job.lease_expires_at) > nowMs
+      ).length;
       return {
         ok: true,
         value: {
           recent_requests: recent.filter((timestamp) => nowMs - timestamp < windowMs),
-          active_jobs: active,
+          queued_jobs: queued,
+          inflight_jobs: inflight,
+          active_jobs: queued + inflight,
           tokens_used_today: tokens,
         },
       };
@@ -286,7 +322,9 @@ export function createMemoryQueue(options = {}) {
       const now = Number.isFinite(now_ms) ? now_ms : Date.parse(new Date().toISOString());
       for (const job of jobs.values()) {
         if (!["computing", "ai_generating", "validating"].includes(job.status)) continue;
-        if (job.lease_expires_at !== null && Date.parse(job.lease_expires_at) - lease_seconds * 1000 > now) continue;
+        // Mirror SQL recover_stale: chỉ thu hồi khi lease đã hết hạn QUÁ ngưỡng grace (lease_seconds).
+        const staleThreshold = now - lease_seconds * 1000;
+        if (job.lease_expires_at !== null && Date.parse(job.lease_expires_at) >= staleThreshold) continue;
         job.status = "queued";
         job.lease_token = null;
         job.lease_expires_at = null;

@@ -1401,6 +1401,36 @@ function buildEvidenceDrafts(args: {
       sufficiency: basis,
       quality: globalQuality,
     });
+    // R3 — evidence canonical cho MỌI numeric business field của mix (count + coverage) để feature
+    // gửi provider luôn có grounding khớp metric + subject + value + unit.
+    for (const [metric, formulaKey, value] of [
+      ["project_mix.hrp_count", "project_hrp_count", row.hrp_count],
+      ["project_mix.vendor_count", "project_vendor_count", row.vendor_count],
+      ["project_mix.unknown_count", "project_unknown_count", row.unknown_count],
+      ["project_mix.invalid_count", "project_invalid_count", row.invalid_count],
+      ["project_mix.known_total", "project_known_total", row.known_total],
+    ] as [string, keyof typeof FORMULA_REGISTRY, number][]) {
+      drafts.push({
+        metric,
+        formulaKey,
+        subject_ref: row.subject_ref,
+        value,
+        unit: "people",
+        sufficiency: basis,
+        quality: globalQuality,
+      });
+    }
+    if (row.known_coverage !== null) {
+      drafts.push({
+        metric: "project_mix.known_coverage",
+        formulaKey: "project_known_coverage",
+        subject_ref: row.subject_ref,
+        value: row.known_coverage,
+        unit: "ratio",
+        sufficiency: basis,
+        quality: globalQuality,
+      });
+    }
     if (row.hrp_share !== null) {
       drafts.push({
         metric: "project_mix.hrp_share",

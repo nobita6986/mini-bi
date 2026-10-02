@@ -231,16 +231,26 @@ function collectSubjectFeatures(packet, providerFiltered, limits) {
     return null;
   };
 
-  const numberWithEvidence = (metric, subjectRef, value) => {
+  /**
+   * C (R3) — Grounding CHẶT: evidence phải khớp metric + subject_ref + value + unit.
+   * Nếu không khớp (kể cả khi có evidence cùng metric/subject nhưng value/unit lệch) ⇒ KHÔNG gửi số đó.
+   */
+  const numberWithEvidence = (metric, subjectRef, value, unit) => {
     if (!isFiniteNumber(value)) return null;
-    const entry =
-      evidenceIndex.get(evidenceKey(metric, subjectRef)) ??
+    const candidates = [
+      evidenceIndex.get(evidenceKey(metric, subjectRef)),
       (() => {
         const alias = aliasFor(metric);
         return alias === null ? undefined : evidenceIndex.get(evidenceKey(alias, subjectRef));
-      })();
-    if (!entry) return null; // không có evidence (kể cả alias) ⇒ không gửi số này cho model
-    return { value, evidence: entry };
+      })(),
+    ];
+    for (const entry of candidates) {
+      if (!entry) continue;
+      if (entry.value !== value) continue;
+      if (typeof unit === "string" && entry.unit !== unit) continue;
+      return { value, evidence: entry };
+    }
+    return null;
   };
 
   for (const dimension of DIMENSION_ORDER) {
@@ -255,12 +265,12 @@ function collectSubjectFeatures(packet, providerFiltered, limits) {
     const keptEvidence = [];
     for (const entry of entries) {
       if (kept >= limits.max_drivers_per_dimension) break;
-      const current = numberWithEvidence("driver." + dimension + ".current", entry.subject_ref, entry.current);
+      const current = numberWithEvidence("driver." + dimension + ".current", entry.subject_ref, entry.current, "people");
       if (!current) continue; // thiếu evidence ⇒ feature không được gửi
-      const comparable = packet.totals.comparable === null ? null : numberWithEvidence("driver." + dimension + ".comparable", entry.subject_ref, entry.comparable);
-      const delta = packet.totals.comparable === null ? null : numberWithEvidence("driver." + dimension + ".delta", entry.subject_ref, entry.delta);
-      const contribution = numberWithEvidence("driver." + dimension + ".delta_contribution_share", entry.subject_ref, entry.delta_contribution_share);
-      const share = numberWithEvidence("driver." + dimension + ".share_of_current", entry.subject_ref, entry.share_of_current);
+      const comparable = packet.totals.comparable === null ? null : numberWithEvidence("driver." + dimension + ".comparable", entry.subject_ref, entry.comparable, "people");
+      const delta = packet.totals.comparable === null ? null : numberWithEvidence("driver." + dimension + ".delta", entry.subject_ref, entry.delta, "people");
+      const contribution = numberWithEvidence("driver." + dimension + ".delta_contribution_share", entry.subject_ref, entry.delta_contribution_share, "ratio");
+      const share = numberWithEvidence("driver." + dimension + ".share_of_current", entry.subject_ref, entry.share_of_current, "ratio");
       keptEntries.push({
         subject_ref: entry.subject_ref,
         current: current.value,
@@ -287,24 +297,30 @@ function collectSubjectFeatures(packet, providerFiltered, limits) {
     const keptRows = [];
     const keptEvidence = [];
     for (const row of rows) {
-      const total = numberWithEvidence("project_mix.total", row.subject_ref, row.project_total);
-      if (!total) continue;
-      const hrp = numberWithEvidence("project_mix.hrp_share", row.subject_ref, row.hrp_share);
-      const vendor = numberWithEvidence("project_mix.vendor_share", row.subject_ref, row.vendor_share);
-      const coverage = numberWithEvidence("project_mix.known_coverage", row.subject_ref, row.known_coverage);
+      const total = numberWithEvidence("project_mix.total", row.subject_ref, row.project_total, "people");
+      const hrpCount = numberWithEvidence("project_mix.hrp_count", row.subject_ref, row.hrp_count, "people");
+      const vendorCount = numberWithEvidence("project_mix.vendor_count", row.subject_ref, row.vendor_count, "people");
+      const unknownCount = numberWithEvidence("project_mix.unknown_count", row.subject_ref, row.unknown_count, "people");
+      const invalidCount = numberWithEvidence("project_mix.invalid_count", row.subject_ref, row.invalid_count, "people");
+      const knownTotal = numberWithEvidence("project_mix.known_total", row.subject_ref, row.known_total, "people");
+      // Row chỉ được gửi khi TOÀN BỘ count có evidence khớp ⇒ mix row luôn tự nhất quán (total = hrp+vendor+unknown+invalid).
+      if (!total || !hrpCount || !vendorCount || !unknownCount || !invalidCount || !knownTotal) continue;
+      const hrp = numberWithEvidence("project_mix.hrp_share", row.subject_ref, row.hrp_share, "ratio");
+      const vendor = numberWithEvidence("project_mix.vendor_share", row.subject_ref, row.vendor_share, "ratio");
+      const coverage = numberWithEvidence("project_mix.known_coverage", row.subject_ref, row.known_coverage, "ratio");
       keptRows.push({
         subject_ref: row.subject_ref,
         project_total: total.value,
-        hrp_count: row.hrp_count,
-        vendor_count: row.vendor_count,
-        unknown_count: row.unknown_count,
-        invalid_count: row.invalid_count,
-        known_total: row.known_total,
+        hrp_count: hrpCount.value,
+        vendor_count: vendorCount.value,
+        unknown_count: unknownCount.value,
+        invalid_count: invalidCount.value,
+        known_total: knownTotal.value,
         hrp_share: hrp === null ? null : hrp.value,
         vendor_share: vendor === null ? null : vendor.value,
         known_coverage: coverage === null ? null : coverage.value,
       });
-      for (const candidate of [total, hrp, vendor, coverage]) {
+      for (const candidate of [total, hrpCount, vendorCount, unknownCount, invalidCount, knownTotal, hrp, vendor, coverage]) {
         if (candidate) keptEvidence.push(candidate.evidence);
       }
     }

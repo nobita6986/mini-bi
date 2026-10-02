@@ -57,11 +57,19 @@ export function createSupabaseJobRepository() {
       };
     },
 
-    async claim({ worker_ref, lease_seconds }) {
-      const result = await rpc("ai_report_claim", { p_worker: worker_ref, p_lease_seconds: lease_seconds });
+    async claim({ worker_ref, lease_seconds, max_concurrent_jobs }) {
+      // R3: trần concurrency provider được enforce TRONG RPC (atomic, advisory lock).
+      const result = await rpc("ai_report_claim", {
+        p_worker: worker_ref,
+        p_lease_seconds: lease_seconds,
+        p_max_concurrent_jobs: Number.isInteger(max_concurrent_jobs) ? max_concurrent_jobs : null,
+      });
       // R2 (E): CHỈ AI_IDLE mới là idle; mọi lỗi DB/RPC khác phải nổi lên thành worker error.
       if (!result.ok) {
         if (result.code === "AI_IDLE") return null;
+        if (result.code === "AI_CONCURRENCY_LIMITED") {
+          return { ok: false, code: "AI_CONCURRENCY_LIMITED", message: "không còn slot provider" };
+        }
         return { ok: false, code: result.code ?? "AI_INTERNAL", message: result.message ?? "claim thất bại" };
       }
       const job = result.value.job;
@@ -131,6 +139,9 @@ export function createSupabaseJobRepository() {
         ok: true,
         value: {
           recent_requests: Array.isArray(result.value.recent_requests) ? result.value.recent_requests : [],
+          // R3: tách queue depth khỏi slot đang chạy (chỉ queue depth dùng cho policy).
+          queued_jobs: Number.isInteger(result.value.queued_jobs) ? result.value.queued_jobs : 0,
+          inflight_jobs: Number.isInteger(result.value.inflight_jobs) ? result.value.inflight_jobs : 0,
           active_jobs: Number.isInteger(result.value.active_jobs) ? result.value.active_jobs : 0,
           tokens_used_today: Number.isFinite(result.value.tokens_used_today) ? result.value.tokens_used_today : 0,
         },
