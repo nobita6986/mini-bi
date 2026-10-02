@@ -38,15 +38,15 @@ export type SafeOutboundOptions = {
   body?: Buffer | string;
   timeoutMs?: number;
   maxResponseBytes?: number;
+  maxRequestBytes?: number;
   maxRedirects?: number;
-  followRedirects?: boolean;
 };
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-const SENSITIVE_HEADER = /authorization|cookie|token|secret|api[-_]?key|credential/i;
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const MAX_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 
 async function resolveAll(hostname: string): Promise<readonly string[]> {
   const records = await lookup(hostname, { all: true, verbatim: true });
@@ -112,12 +112,6 @@ function safeHeaders(input: Readonly<Record<string, string>>): Record<string, st
     headers[name] = value;
   }
   return headers;
-}
-
-function stripSensitiveHeaders(headers: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(headers).filter(([name]) => !SENSITIVE_HEADER.test(name)),
-  );
 }
 
 export function collectResponse(
@@ -187,14 +181,32 @@ export async function safeOutboundRequest(
 ): Promise<PinnedResponse> {
   const timeoutMs = options.timeoutMs ?? 5_000;
   const maxResponseBytes = options.maxResponseBytes ?? 256 * 1024;
+  const maxRequestBytes = options.maxRequestBytes ?? 256 * 1024;
   const maxRedirects = options.maxRedirects ?? 3;
+  if (
+    options.body !== undefined &&
+    typeof options.body !== "string" &&
+    !Buffer.isBuffer(options.body)
+  ) {
+    throw new SecurityError("INVALID_INPUT");
+  }
+  const requestBytes = options.body === undefined
+    ? 0
+    : Buffer.isBuffer(options.body)
+      ? options.body.length
+      : Buffer.byteLength(options.body, "utf8");
   if (
     !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS ||
     !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 ||
     maxResponseBytes > MAX_RESPONSE_BYTES ||
+    !Number.isSafeInteger(maxRequestBytes) || maxRequestBytes < 0 ||
+    maxRequestBytes > MAX_REQUEST_BYTES ||
     !Number.isSafeInteger(maxRedirects) || maxRedirects < 0 || maxRedirects > 5
   ) {
     throw new SecurityError("INVALID_INPUT");
+  }
+  if (requestBytes > maxRequestBytes) {
+    throw new SecurityError("REQUEST_TOO_LARGE");
   }
 
   const controller = new AbortController();
@@ -262,9 +274,6 @@ export async function safeOutboundRequest(
       }
       const location = responseHeader(response, "location");
       if (!REDIRECT_STATUSES.has(response.statusCode) || !location) return response;
-      if (options.followRedirects !== true) {
-        throw new SecurityError("REDIRECT_REJECTED");
-      }
       if (redirects >= maxRedirects) throw new SecurityError("REDIRECT_REJECTED");
 
       let nextUrl: string;
@@ -273,10 +282,10 @@ export async function safeOutboundRequest(
       } catch {
         throw new SecurityError("REDIRECT_REJECTED");
       }
-      const nextValidated = validateProviderUrl(nextUrl, options.url_policy);
-      if (nextValidated.url.origin !== validated.url.origin) {
-        headers = stripSensitiveHeaders(headers);
+      if (new URL(nextUrl).origin !== validated.url.origin) {
+        throw new SecurityError("REDIRECT_REJECTED");
       }
+      const nextValidated = validateProviderUrl(nextUrl, options.url_policy);
       if (
         response.statusCode === 303 ||
         ((response.statusCode === 301 || response.statusCode === 302) && method === "POST")

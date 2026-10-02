@@ -8,17 +8,19 @@ import {
 } from "node:crypto";
 import { SecurityError } from "./errors.ts";
 
-export const ENVELOPE_VERSION = 1 as const;
+export const ENVELOPE_VERSION = 2 as const;
 export const ENVELOPE_ALGORITHM = "aes-256-gcm" as const;
 
 export type SecretContext = {
   config_id: string;
   provider_profile: string;
   config_version: number;
+  api_base_url: string;
+  model: string;
 };
 
 export type SecretEnvelope = SecretContext & {
-  envelope_version: 1;
+  envelope_version: 2;
   algorithm: "aes-256-gcm";
   key_id: string;
   iv: string;
@@ -69,11 +71,37 @@ function requireKeyring(keyring: Keyring): Buffer {
 }
 
 function encodeAad(context: SecretContext): Buffer {
+  let normalizedUrl: string;
+  try {
+    const url = new URL(context.api_base_url);
+    normalizedUrl = url.href;
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== ""
+    ) {
+      throw new Error();
+    }
+  } catch {
+    throw new SecurityError("INVALID_INPUT");
+  }
   if (
+    typeof context.config_id !== "string" ||
     !ID_PATTERN.test(context.config_id) ||
+    typeof context.provider_profile !== "string" ||
     !ID_PATTERN.test(context.provider_profile) ||
     !Number.isSafeInteger(context.config_version) ||
-    context.config_version < 1
+    context.config_version < 1 ||
+    normalizedUrl !== context.api_base_url ||
+    context.api_base_url.includes("?") ||
+    context.api_base_url.includes("#") ||
+    typeof context.model !== "string" ||
+    context.model.length === 0 ||
+    context.model.length > 256 ||
+    context.model !== context.model.trim().normalize("NFC") ||
+    /[\u0000-\u001f\u007f]/.test(context.model)
   ) {
     throw new SecurityError("INVALID_INPUT");
   }
@@ -83,6 +111,8 @@ function encodeAad(context: SecretContext): Buffer {
     context.config_id,
     context.provider_profile,
     context.config_version,
+    normalizedUrl,
+    context.model,
   ]));
 }
 
@@ -135,6 +165,8 @@ function isEnvelope(value: unknown): value is SecretEnvelope {
     typeof envelope.provider_profile === "string" &&
     typeof envelope.config_version === "number" &&
     Number.isSafeInteger(envelope.config_version) && envelope.config_version > 0 &&
+    typeof envelope.api_base_url === "string" &&
+    typeof envelope.model === "string" &&
     typeof envelope.iv === "string" &&
     typeof envelope.ciphertext === "string" &&
     typeof envelope.authentication_tag === "string" &&
@@ -152,7 +184,9 @@ export function decryptSecret(
   if (
     envelope.config_id !== expectedContext.config_id ||
     envelope.provider_profile !== expectedContext.provider_profile ||
-    envelope.config_version !== expectedContext.config_version
+    envelope.config_version !== expectedContext.config_version ||
+    envelope.api_base_url !== expectedContext.api_base_url ||
+    envelope.model !== expectedContext.model
   ) {
     throw new SecurityError("DECRYPT_FAILED");
   }

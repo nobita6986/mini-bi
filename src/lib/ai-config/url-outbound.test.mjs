@@ -204,71 +204,106 @@ test("HTTPS uses original hostname for SNI/certificate verification and Host hea
   assert.equal(typeof options.lookup, "function");
 });
 
-test("DNS rebinding between redirects is re-resolved and blocked before second connection", async () => {
-  let resolutionCount = 0;
-  let connectionCount = 0;
-  await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
-    url_policy: policy,
-    followRedirects: true,
-    resolve: async () => {
-      resolutionCount += 1;
-      return resolutionCount === 1 ? [publicV4] : ["10.0.0.8"];
-    },
-    request: async () => {
-      connectionCount += 1;
-      return result(302, { location: "https://second.provider.example/next" });
-    },
-  }), { code: "DNS_REJECTED" });
-  assert.equal(resolutionCount, 2);
-  assert.equal(connectionCount, 1);
+test("private/metadata DNS rebinding between same-origin redirects is blocked", async () => {
+  for (const blockedAddress of ["10.0.0.8", "169.254.169.254"]) {
+    let resolutionCount = 0;
+    let connectionCount = 0;
+    await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
+      url_policy: policy,
+      resolve: async () => {
+        resolutionCount += 1;
+        return resolutionCount === 1 ? [publicV4] : [blockedAddress];
+      },
+      request: async () => {
+        connectionCount += 1;
+        return result(302, { location: "/next" });
+      },
+    }), { code: "DNS_REJECTED" });
+    assert.equal(resolutionCount, 2);
+    assert.equal(connectionCount, 1);
+  }
 });
 
-test("same-origin redirects preserve auth; cross-origin redirects strip all sensitive headers", async () => {
-  const requests = [];
-  const response = await safeOutboundRequest("https://api.provider.example/start", {
-    url_policy: policy,
-    resolve: async () => [publicV4],
-    request: async (input) => {
-      requests.push(input);
-      if (requests.length === 1) return result(302, { location: "/same" });
-      if (requests.length === 2) return result(307, { location: "https://second.provider.example/end" });
-      return result(200);
-    },
-    followRedirects: true,
-    headers: {
-      Authorization: "synthetic bearer",
-      "x-api-key": "synthetic header",
-      "content-type": "application/json",
-    },
-    body: "{}",
-  });
-  assert.equal(response.statusCode, 200);
-  assert.equal(requests.length, 3);
-  assert.equal(requests[1].headers.Authorization, "synthetic bearer");
-  assert.equal(requests[2].headers.Authorization, undefined);
-  assert.equal(requests[2].headers["x-api-key"], undefined);
-  assert.equal(requests[2].headers["content-type"], undefined);
-  assert.equal(requests[2].method, "GET");
-  assert.equal(requests[2].url.hostname, "second.provider.example");
+test("all cross-origin redirects reject before a second transport call", async () => {
+  for (const statusCode of [301, 302, 303, 307, 308]) {
+    let calls = 0;
+    await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
+      url_policy: policy,
+      resolve: async () => [publicV4],
+      request: async () => {
+        calls += 1;
+        return result(statusCode, { location: "https://second.provider.example/end" });
+      },
+      headers: { Authorization: "synthetic bearer" },
+      body: "synthetic payload",
+    }), { code: "REDIRECT_REJECTED" });
+    assert.equal(calls, 1, `status ${statusCode}`);
+  }
+});
+
+test("same-origin 307/308 preserve method and body", async () => {
+  for (const statusCode of [307, 308]) {
+    const requests = [];
+    await safeOutboundRequest("https://api.provider.example/start", {
+      url_policy: policy,
+      resolve: async () => [publicV4],
+      request: async (input) => {
+        requests.push(input);
+        return requests.length === 1
+          ? result(statusCode, { location: "/continued" })
+          : result(200);
+      },
+      headers: { "content-type": "application/json" },
+      body: "synthetic payload",
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].method, "POST");
+    assert.equal(requests[1].body, "synthetic payload");
+    assert.equal(requests[1].headers["content-type"], "application/json");
+  }
+});
+
+test("same-origin 301/302/303 retain POST-to-GET semantics", async () => {
+  for (const statusCode of [301, 302, 303]) {
+    const requests = [];
+    await safeOutboundRequest("https://api.provider.example/start", {
+      url_policy: policy,
+      resolve: async () => [publicV4],
+      request: async (input) => {
+        requests.push(input);
+        return requests.length === 1
+          ? result(statusCode, { location: "/read" })
+          : result(200);
+      },
+      headers: {
+        "content-type": "application/json",
+        Authorization: "synthetic bearer",
+      },
+      body: "synthetic payload",
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].method, "GET");
+    assert.equal(requests[1].body, undefined);
+    assert.equal(requests[1].headers["content-type"], undefined);
+    assert.equal(requests[1].headers.Authorization, "synthetic bearer");
+  }
 });
 
 test("redirects to blocked targets, loops, and excessive chains fail closed", async () => {
   let calls = 0;
   await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
     url_policy: policy,
-    followRedirects: true,
     resolve: async () => [publicV4],
     request: async () => {
       calls += 1;
       return result(302, { location: "http://127.0.0.1/private" });
     },
-  }), { code: "URL_REJECTED" });
+  }), { code: "REDIRECT_REJECTED" });
   assert.equal(calls, 1);
 
   calls = 0;
   await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
     url_policy: policy,
-    followRedirects: true,
     resolve: async () => [publicV4],
     request: async ({ url }) => {
       calls += 1;
@@ -281,7 +316,6 @@ test("redirects to blocked targets, loops, and excessive chains fail closed", as
   calls = 0;
   await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
     url_policy: policy,
-    followRedirects: true,
     resolve: async () => [publicV4],
     request: async ({ url }) => {
       calls += 1;
@@ -292,17 +326,62 @@ test("redirects to blocked targets, loops, and excessive chains fail closed", as
   assert.equal(calls, 2);
 });
 
-test("redirects are not followed implicitly", async () => {
+test("same-origin redirects are followed by default", async () => {
   let calls = 0;
-  await assert.rejects(safeOutboundRequest("https://api.provider.example/start", {
+  const response = await safeOutboundRequest("https://api.provider.example/start", {
     url_policy: policy,
     resolve: async () => [publicV4],
-    request: async () => {
+    request: async ({ url }) => {
       calls += 1;
-      return result(302, { location: "https://second.provider.example/" });
+      return calls === 1
+        ? result(302, { location: "/same" })
+        : result(200, {}, url.pathname);
     },
-  }), { code: "REDIRECT_REJECTED" });
-  assert.equal(calls, 1);
+  });
+  assert.equal(response.body.toString(), "/same");
+  assert.equal(calls, 2);
+});
+
+test("request body byte ceiling is enforced before DNS and transport", async () => {
+  let resolutions = 0;
+  let requests = 0;
+  const common = {
+    url_policy: policy,
+    resolve: async () => {
+      resolutions += 1;
+      return [publicV4];
+    },
+    request: async () => {
+      requests += 1;
+      return result();
+    },
+  };
+
+  await assert.rejects(safeOutboundRequest("https://api.provider.example/", {
+    ...common,
+    body: "é".repeat(131_073),
+  }), { code: "REQUEST_TOO_LARGE" });
+  await assert.rejects(safeOutboundRequest("https://api.provider.example/", {
+    ...common,
+    body: Buffer.alloc(5),
+    maxRequestBytes: 4,
+  }), { code: "REQUEST_TOO_LARGE" });
+  await assert.rejects(safeOutboundRequest("https://api.provider.example/", {
+    ...common,
+    body: "",
+    maxRequestBytes: 2 * 1024 * 1024 + 1,
+  }), { code: "INVALID_INPUT" });
+  assert.equal(resolutions, 0);
+  assert.equal(requests, 0);
+
+  const empty = await safeOutboundRequest("https://api.provider.example/", {
+    ...common,
+    body: "",
+    maxRequestBytes: 0,
+  });
+  assert.equal(empty.statusCode, 200);
+  assert.equal(resolutions, 1);
+  assert.equal(requests, 1);
 });
 
 test("timeout, oversized response, and malformed caller headers return sanitized errors", async () => {

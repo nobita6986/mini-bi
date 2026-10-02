@@ -107,7 +107,6 @@ export function assertValidConfig(configValue: unknown): asserts configValue is 
     !isSanitizedHost(config.sanitized_host) ||
     !FINGERPRINT.test(config.key_fingerprint) ||
     !envelope ||
-    envelope.envelope_version !== 1 ||
     envelope.algorithm !== "aes-256-gcm" ||
     !SAFE_ID.test(envelope.key_id) ||
     typeof envelope.iv !== "string" ||
@@ -116,7 +115,11 @@ export function assertValidConfig(configValue: unknown): asserts configValue is 
     !validTimestamp(envelope.created_at) ||
     envelope.config_id !== config.config_id ||
     envelope.provider_profile !== config.provider_profile ||
-    envelope.config_version !== config.version
+    envelope.config_version !== config.version ||
+    envelope.envelope_version !== 2 ||
+    envelope.api_base_url !== config.api_base_url ||
+    envelope.model !== config.model ||
+    config.model !== config.model.trim().normalize("NFC")
   ) {
     throw new SecurityError("INVALID_INPUT");
   }
@@ -157,6 +160,8 @@ export function createConfigCommand(input: {
     config_id: input.config_id,
     provider_profile: input.provider_profile,
     config_version: 1,
+    api_base_url: validatedUrl.url.href,
+    model,
   };
   const config: ProviderConfig = {
     config_id: input.config_id,
@@ -190,6 +195,8 @@ export function rotateConfigCommand(
       config_id: previous.config_id,
       provider_profile: previous.provider_profile,
       config_version: version,
+      api_base_url: previous.api_base_url,
+      model: previous.model,
     }, keyring, now),
     version,
     status: "draft",

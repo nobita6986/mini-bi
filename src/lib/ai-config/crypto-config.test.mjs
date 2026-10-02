@@ -28,6 +28,8 @@ const context = {
   config_id: "pilot-config",
   provider_profile: "provider-one",
   config_version: 1,
+  api_base_url: "https://api.provider.example/v1",
+  model: "model-synthetic",
 };
 const now = new Date("2026-10-02T00:00:00.000Z");
 
@@ -55,7 +57,7 @@ test("AES-GCM encrypt/decrypt uses fresh nonces and binds identity/version as AA
   assert.notEqual(one.ciphertext, two.ciphertext);
   assert.notEqual(one.iv, two.iv);
   assert.equal(decryptSecret(one, context, keys), "synthetic secret alpha");
-  assert.equal(one.envelope_version, 1);
+  assert.equal(one.envelope_version, 2);
   assert.equal(one.algorithm, "aes-256-gcm");
   assert.equal(one.created_at, now.toISOString());
 });
@@ -83,9 +85,20 @@ test("wrong key, unknown key id, malformed and tampered envelope fail closed", (
   assert.throws(() => decryptSecret(envelope, { ...context, config_version: 2 }, keys), {
     code: "DECRYPT_FAILED",
   });
+  assert.throws(() => decryptSecret(envelope, { ...context, config_id: "other-config" }, keys), {
+    code: "DECRYPT_FAILED",
+  });
   assert.throws(() => decryptSecret(envelope, { ...context, provider_profile: "other-provider" }, keys), {
     code: "DECRYPT_FAILED",
   });
+  assert.throws(() => decryptSecret(envelope, {
+    ...context,
+    api_base_url: "https://api.provider.example/v2",
+  }, keys), { code: "DECRYPT_FAILED" });
+  assert.throws(() => decryptSecret(envelope, {
+    ...context,
+    model: "other-model",
+  }, keys), { code: "DECRYPT_FAILED" });
   assert.throws(() => decryptSecret({
     ...envelope,
     provider_profile: "other-provider",
@@ -93,6 +106,14 @@ test("wrong key, unknown key id, malformed and tampered envelope fail closed", (
   assert.throws(() => decryptSecret({
     ...envelope,
     config_version: 2,
+  }, context, keys), { code: "DECRYPT_FAILED" });
+  assert.throws(() => decryptSecret({
+    ...envelope,
+    api_base_url: "https://api.provider.example/v2",
+  }, context, keys), { code: "DECRYPT_FAILED" });
+  assert.throws(() => decryptSecret({
+    ...envelope,
+    model: "other-model",
   }, context, keys), { code: "DECRYPT_FAILED" });
   assert.throws(() => decryptSecret({ ...envelope, envelope_version: 99 }, context, keys), {
     code: "ENVELOPE_INVALID",
@@ -114,6 +135,9 @@ test("environment key loading is server-only and strict; injected old keyring de
   }, activeRing, now);
   assert.equal(decryptSecret(oldEnvelope, context, activeRing), "synthetic secret gamma");
   assert.equal(rotated.key_id, "new-kid");
+  assert.notEqual(rotated.iv, oldEnvelope.iv);
+  assert.equal(rotated.api_base_url, context.api_base_url);
+  assert.equal(rotated.model, context.model);
   assert.notEqual(rotated.ciphertext, oldEnvelope.ciphertext);
   assert.throws(() => keyringFromEnvironment({ AI_CONFIG_MASTER_KEY: "not-a-key" }), {
     code: "CONFIGURATION",
@@ -142,7 +166,7 @@ test("config commands create versioned ciphertext; read projection is secret-saf
   assert.equal(Object.hasOwn(projection, "encrypted_secret"), false);
   assert.equal(Object.hasOwn(projection, "api_base_url"), false);
   assert.deepEqual(projectConfig(config), projection);
-  for (const forbidden of ["synthetic secret delta", config.encrypted_secret.ciphertext, config.encrypted_secret.iv, config.encrypted_secret.authentication_tag]) {
+  for (const forbidden of ["synthetic secret delta", config.api_base_url, config.encrypted_secret.ciphertext, config.encrypted_secret.iv, config.encrypted_secret.authentication_tag]) {
     assert.equal(JSON.stringify(projection).includes(forbidden), false);
   }
   assert.equal(fingerprintSecret("synthetic secret delta", keys), config.key_fingerprint);
@@ -153,8 +177,16 @@ test("config commands create versioned ciphertext; read projection is secret-saf
   assert.equal(config.encrypted_secret.config_version, 1);
   assert.equal(changed.version, 2);
   assert.equal(changed.encrypted_secret.config_version, 2);
+  assert.notEqual(changed.encrypted_secret.iv, config.encrypted_secret.iv);
   assert.equal(changed.status, "draft");
   assert.equal(changed.key_fingerprint, fingerprintSecret("synthetic secret epsilon", keys));
+  assert.equal(decryptSecret(changed.encrypted_secret, {
+    config_id: changed.config_id,
+    provider_profile: changed.provider_profile,
+    config_version: changed.version,
+    api_base_url: changed.api_base_url,
+    model: changed.model,
+  }, keys), "synthetic secret epsilon");
 });
 
 test("failed candidate verification preserves the active config; activation and disable retain versions", () => {

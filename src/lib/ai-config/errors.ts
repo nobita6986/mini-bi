@@ -8,6 +8,7 @@ export type SecurityErrorCode =
   | "OUTBOUND_FAILED"
   | "TIMEOUT"
   | "RESPONSE_TOO_LARGE"
+  | "REQUEST_TOO_LARGE"
   | "REDIRECT_REJECTED";
 
 const messages: Record<SecurityErrorCode, string> = {
@@ -20,6 +21,7 @@ const messages: Record<SecurityErrorCode, string> = {
   OUTBOUND_FAILED: "Yêu cầu tới provider thất bại.",
   TIMEOUT: "Yêu cầu provider vượt quá thời gian cho phép.",
   RESPONSE_TOO_LARGE: "Provider response vượt quá giới hạn.",
+  REQUEST_TOO_LARGE: "Provider request vượt quá giới hạn.",
   REDIRECT_REJECTED: "Provider redirect bị từ chối theo chính sách.",
 };
 
