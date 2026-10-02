@@ -27,9 +27,10 @@ test("S01-P2: panel không nhận/giữ secret, PII, provider URL đầy đủ h
 });
 
 test("S01-P3: chỉ gọi server boundary đã có — không gọi provider/config trực tiếp", () => {
-  assert.ok(source.includes('"/api/ai/reports/capability"'));
-  assert.ok(source.includes('"/api/ai/reports"'));
-  assert.ok(source.includes('"/analysis"'));
+  const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
+  assert.ok(controller.includes('"/api/ai/reports/capability"'));
+  assert.ok(controller.includes('"/api/ai/reports"'));
+  assert.ok(controller.includes('"/analysis"'));
   assert.ok(source.includes('credentials: "same-origin"'));
   assert.ok(source.includes('cache: "no-store"'));
 });
@@ -59,7 +60,7 @@ test("S01-P5: đủ trạng thái empty/loading/error/disabled/config-required/b
 test("S01-P6: double-click không tạo hai job (guard busy + disable)", () => {
   assert.ok(source.includes("if (busy) return;"), "submit phải chặn khi busy");
   assert.ok(source.includes("disabled={busy}"), "nút submit phải disable khi busy");
-  assert.ok(source.includes("record.request_id ?? record.job_id"), "dùng id idempotent trả về");
+  assert.ok(source.includes("getController().enqueue("), "submit qua controller (projection enqueue)");
 });
 
 test("S01-P7: human review — draft phân biệt, regenerate có xác nhận, approve/reject chờ RPC", () => {
@@ -94,7 +95,9 @@ test("S01-R1-P1: capability null ⇒ skeleton loading; không render/submit form
   const branchIndex = source.indexOf("capability === null ? (");
   const formIndex = source.indexOf("<form");
   assert.ok(formIndex > branchIndex, "form chỉ render trong nhánh capability đã xác nhận");
-  assert.ok(source.includes("projectCapabilityResponse("), "capability phải qua projection thuần, không cast raw JSON");
+  // R2: projection capability nằm ở controller thuần (panel gọi loadCapability).
+  const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
+  assert.ok(controller.includes("projectCapabilityResponse("), "capability phải qua projection thuần");
   assert.ok(!source.includes("as unknown as CapabilityView"), "không dùng type assertion để tin capability");
 });
 
@@ -107,17 +110,18 @@ test("S01-R1-P2: focus trap + restore focus + ngăn focus thoát modal", () => {
 });
 
 test("S01-R1-P3: polling recursive setTimeout — không setInterval, không chồng request, dừng khi đóng", () => {
-  assert.ok(!/setInterval\(/.test(source), "không dùng setInterval() (dùng recursive setTimeout)");
-  assert.ok(source.includes("setTimeout(loop, POLL_INTERVAL_MS)"), "lịch request kế tiếp chỉ sau khi request trước xong");
-  assert.ok(source.includes("if (pollingRef.current) return;"), "không chồng request nếu response lâu hơn chu kỳ");
-  assert.ok(source.includes("if (!open) stopPolling()"), "đóng drawer phải dừng poll");
-  assert.ok(source.includes("if (!ok) return;"), "poll non-ok phải dừng");
-  assert.ok(source.includes("if (!isActiveJobStatus(status))"), "terminal state phải dừng chắc chắn");
+  const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
+  assert.ok(!/setInterval\(/.test(controller), "không dùng setInterval() (dùng recursive setTimeout)");
+  assert.ok(controller.includes("schedule.set(() => { void loop(); }, intervalMs)"), "lịch request kế tiếp chỉ sau khi request trước xong");
+  assert.ok(controller.includes("if (gen !== generation) return;"), "stale response bị bỏ theo generation");
+  assert.ok(controller.includes("controller.signal.aborted"), "request đang bay bị abort");
+  assert.ok(controller.includes("activeController.abort()"), "stopPolling abort request đang bay");
+  assert.ok(source.includes("if (!open) getController().stopPolling()"), "đóng drawer phải dừng poll");
 });
 
 test("S01-R1-P4: history item cập nhật trạng thái theo poll (không mãi 'requested')", () => {
   assert.ok(
-    source.includes("setHistory((current) => current.map((item) => (item.job_id === id ? { ...item, status: view.status } : item)))"),
+    source.includes('(item.job_id === id ? { ...item, status: view.status } : item)'),
     "poll phải cập nhật status của item history khớp job_id"
   );
 });
@@ -128,8 +132,27 @@ test("S01-R1-P5: as-of mặc định theo Asia/Ho_Chi_Minh, không dùng toISOSt
   assert.ok(!source.includes("toISOString().slice(0, 10)"), "không dùng UTC date");
 });
 
-test("S01-R1-P6: applyStatus dùng projection thuần — malformed fail-closed AI_INTERNAL, không render một phần", () => {
-  assert.ok(source.includes("projectUiReportResponse("), "phải project response qua validator thuần");
-  assert.ok(source.includes('setStatusText("Không đọc được dữ liệu báo cáo.")'), "malformed phải báo lỗi");
+test("S01-R1-P6: projection thuần fail-closed AI_INTERNAL, không render một phần", () => {
+  const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
+  assert.ok(controller.includes("projectUiReportResponse("), "controller phải project response qua validator thuần");
+  assert.ok(controller.includes("projectEnqueueResponse("), "controller phải project enqueue response");
+  assert.ok(source.includes('setStatusText("Không đọc được trạng thái báo cáo.")'), "malformed phải báo lỗi");
   assert.ok(source.includes('status: "failed_internal"'), "malformed phải fail-closed");
+});
+
+// ---------------------------------------------------------------------------
+// R2 — capability strict + regenerate gate
+// ---------------------------------------------------------------------------
+
+test("S01-R2-P1: fallback capability lỗi đặt regenerate=false; UI chỉ enable Tạo lại khi review.regenerate===true", () => {
+  const controller = readFileSync(new URL("../../lib/ai-report/report-controller.ts", import.meta.url), "utf8");
+  assert.ok(controller.includes("regenerate: false"), "fallback capability lỗi phải regenerate=false");
+  assert.ok(source.includes("capability?.review.regenerate === true"), "nút Tạo lại phải gate theo review.regenerate");
+  assert.ok(source.includes("Tạo lại chưa khả dụng"), "phải có title/lời giải thích khi regenerate=false");
+});
+
+test("S01-R2-P2: initial focus — mở modal focus drawer ngay (kể cả capability loading)", () => {
+  assert.ok(source.includes("drawerRef.current?.focus()"), "mở modal phải focus drawer ngay");
+  assert.ok(source.includes("document.activeElement === drawerRef.current"), "chỉ chuyển focus vào control đầu khi focus vẫn ở drawer");
+  assert.ok(source.includes("firstFieldRef.current?.focus()"), "sau capability ready focus control đầu tiên");
 });

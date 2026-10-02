@@ -15,6 +15,7 @@ import {
   lifecycleLabel,
   projectCapabilityResponse,
   projectUiReportResponse,
+  projectEnqueueResponse,
 } from "./report-contract.ts";
 
 test("S01-C1: buildReportRequest — week/custom/focus/scope đúng contract validateAnalyticsRequest", () => {
@@ -187,5 +188,68 @@ test("S01-R1-C4: projectCapabilityResponse — hợp lệ + malformed fail-close
     const result = projectCapabilityResponse(raw);
     assert.equal(result.ok, false, JSON.stringify(raw));
     assert.equal(result.code, "AI_INTERNAL");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// R2 — Strengthen projection: UUID/status/lifecycle/contract/created_at + capability review strict
+// ---------------------------------------------------------------------------
+
+test("S01-R2-C1: projectUiReportResponse — UUID/status/lifecycle/contract/created_at sai đều AI_INTERNAL", () => {
+  const goodRevision = draftResponse().revision;
+  const cases = [
+    ["job_id không phải UUID", { ...draftResponse(), job_id: "not-a-uuid" }],
+    ["status ngoài tập", { ...draftResponse(), status: "weird" }],
+    ["revision_id không phải UUID", { ...draftResponse(), revision: { ...goodRevision, revision_id: "r" } }],
+    ["lifecycle_status ngoài tập", { ...draftResponse(), revision: { ...goodRevision, lifecycle_status: "published" } }],
+    ["contract_version sai", { ...draftResponse(), revision: { ...goodRevision, contract_version: "business-analysis/9.9" } }],
+    ["created_at không parse", { ...draftResponse(), revision: { ...goodRevision, created_at: "hôm qua" } }],
+  ];
+  for (const [label, raw] of cases) {
+    const result = projectUiReportResponse(raw);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, "AI_INTERNAL", label);
+  }
+  // Hợp lệ vẫn pass.
+  assert.equal(projectUiReportResponse(draftResponse()).ok, true);
+});
+
+test("S01-R2-C2: projectCapabilityResponse — review phải là object với 3 boolean thật + reason non-empty", () => {
+  const ok = projectCapabilityResponse({ ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: false, reason: "review_rpc_pending" } });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.capability.review.regenerate, false, "regenerate=false phải giữ nguyên, không fallback true");
+
+  const bad = [
+    ["thiếu review", { ok: true, ai_enabled: true, config_ready: true }],
+    ["review không phải object", { ok: true, ai_enabled: true, config_ready: true, review: "yes" }],
+    ["regenerate không boolean", { ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: 1, reason: "x" } }],
+    ["approve thiếu", { ok: true, ai_enabled: true, config_ready: true, review: { reject: false, regenerate: true, reason: "x" } }],
+    ["reason rỗng", { ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: "" } }],
+    ["reason sai kiểu", { ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: 7 } }],
+  ];
+  for (const [label, raw] of bad) {
+    const result = projectCapabilityResponse(raw);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, "AI_INTERNAL", label);
+  }
+});
+
+test("S01-R2-C3: projectEnqueueResponse — UUID/status/boolean bắt buộc, malformed ⇒ AI_INTERNAL", () => {
+  const good = { ok: true, request_id: "11111111-1111-4111-8111-111111111111", job_id: "11111111-1111-4111-8111-111111111111", status: "requested", reused: false, cache_hit: false, revision_id: null };
+  const ok = projectEnqueueResponse(good);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.view.job_id, "11111111-1111-4111-8111-111111111111");
+  assert.equal(ok.view.reused, false);
+
+  const bad = [
+    ["job_id không UUID", { ok: true, job_id: "x", status: "requested", reused: false, cache_hit: false }],
+    ["status sai", { ok: true, job_id: "11111111-1111-4111-8111-111111111111", status: "bogus", reused: false, cache_hit: false }],
+    ["thiếu reused", { ok: true, job_id: "11111111-1111-4111-8111-111111111111", status: "requested", cache_hit: false }],
+    ["cache_hit sai kiểu", { ok: true, job_id: "11111111-1111-4111-8111-111111111111", status: "requested", reused: false, cache_hit: "false" }],
+  ];
+  for (const [label, raw] of bad) {
+    const result = projectEnqueueResponse(raw);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, "AI_INTERNAL", label);
   }
 });

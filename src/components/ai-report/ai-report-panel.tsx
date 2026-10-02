@@ -5,11 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   buildReportRequest,
   codeToMessage,
-  isActiveJobStatus,
   isFailedJobStatus,
   jobStatusLabel,
-  projectCapabilityResponse,
-  projectUiReportResponse,
   DIMENSIONS,
   DIMENSION_LABELS,
   PERIOD_TYPES,
@@ -18,33 +15,26 @@ import {
   type Dimension,
   type PeriodType,
 } from "@/lib/ai-report/report-contract";
+import { createReportController, type FetchResult } from "@/lib/ai-report/report-controller";
 import { todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
 import { ReportView } from "./report-view";
 
-const REPORTS_PATH = "/api/ai/reports";
-const CAPABILITY_PATH = "/api/ai/reports/capability";
 const POLL_INTERVAL_MS = 2000;
 
 type JobStatusView = { status: string; error_code: string | null; attempts: number; max_attempts: number };
 type HistoryItem = { job_id: string; status: string };
-type CallResult =
-  | { ok: true; httpStatus: number; code: string; record: unknown }
-  | { ok: false; httpStatus: number; code: string; message: string };
 
-function analysisPath(jobId: string): string {
-  return REPORTS_PATH + "/" + encodeURIComponent(jobId) + "/analysis";
-}
-
-async function callJson(path: string, method: "GET" | "POST", body?: Record<string, unknown>): Promise<CallResult> {
+async function fetchJson(path: string, options: { method: "GET" | "POST"; body?: Record<string, unknown>; signal?: AbortSignal }): Promise<FetchResult> {
   let response: Response;
   try {
     response = await fetch(path, {
-      method,
+      method: options.method,
       credentials: "same-origin",
       cache: "no-store",
-      headers: body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
+      signal: options.signal,
+      headers: options.body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
+      body: options.body ? JSON.stringify(options.body) : undefined,
     });
   } catch {
     return { ok: false, httpStatus: 0, code: "AI_INTERNAL", message: "Không kết nối được tới server." };
@@ -105,81 +95,44 @@ export function AiReportPanel() {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollingRef = useRef(false);
+  const controllerRef = useRef<ReturnType<typeof createReportController> | null>(null);
+
+  function getController() {
+    if (!controllerRef.current) {
+      controllerRef.current = createReportController({
+        fetchJson,
+        interval_ms: POLL_INTERVAL_MS,
+        events: {
+          onCapability: (cap, err) => { setCapability(cap); setErrorText(err ?? ""); },
+          onJob: (id, view, err) => {
+            if (err) {
+              setErrorText(err);
+              setStatusText("Không đọc được trạng thái báo cáo.");
+              if (id) setHistory((cur) => cur.map((item) => (item.job_id === id ? { ...item, status: "failed_internal" } : item)));
+              setJobStatus((cur) => cur ?? { status: "failed_internal", error_code: "AI_INTERNAL", attempts: 0, max_attempts: 1 });
+              return;
+            }
+            if (view) {
+              setJobStatus({ status: view.status, error_code: view.error_code, attempts: view.attempts, max_attempts: view.max_attempts });
+              setHistory((cur) => cur.map((item) => (item.job_id === id ? { ...item, status: view.status } : item)));
+              if (view.revision) { setAnalysis(view.revision.analysis); setLifecycle(view.revision.lifecycle_status); }
+              else { setAnalysis(null); setLifecycle(null); }
+            }
+          },
+        },
+      });
+    }
+    return controllerRef.current;
+  }
 
   const close = useCallback(() => { setOpen(false); triggerRef.current?.focus(); }, []);
   const requestClose = useCallback(() => { if (busy) return; close(); }, [busy, close]);
 
   const loadCapability = useCallback(async () => {
     setBusy(true); setErrorText("");
-    const result = await callJson(CAPABILITY_PATH, "GET");
-    if (result.ok) {
-      const projected = projectCapabilityResponse(result.record);
-      if (projected.ok) { setCapability(projected.capability); setBusy(false); return; }
-      setCapability({ ai_enabled: false, config_ready: false, review: { approve: false, reject: false, regenerate: true, reason: projected.code } });
-      setErrorText(projected.message);
-    } else {
-      setCapability({ ai_enabled: false, config_ready: false, review: { approve: false, reject: false, regenerate: true, reason: result.code } });
-      setErrorText(result.message);
-    }
+    await getController().loadCapability();
     setBusy(false);
   }, []);
-
-  const stopPolling = useCallback(() => {
-    pollingRef.current = false;
-    if (pollTimerRef.current !== null) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
-  }, []);
-
-  /** Áp dụng kết quả poll đã project: trả về status (chuỗi rỗng nếu malformed ⇒ terminal). */
-  const applyUiReport = useCallback((id: string, raw: unknown): string => {
-    const projected = projectUiReportResponse(raw);
-    if (!projected.ok) {
-      setJobStatus((current) => current ?? { status: "failed_internal", error_code: "AI_INTERNAL", attempts: 0, max_attempts: 1 });
-      setErrorText(projected.message);
-      setStatusText("Không đọc được dữ liệu báo cáo.");
-      return "";
-    }
-    const view = projected.view;
-    setJobStatus({ status: view.status, error_code: view.error_code, attempts: view.attempts, max_attempts: view.max_attempts });
-    setHistory((current) => current.map((item) => (item.job_id === id ? { ...item, status: view.status } : item)));
-    if (view.revision) { setAnalysis(view.revision.analysis); setLifecycle(view.revision.lifecycle_status); }
-    else { setAnalysis(null); setLifecycle(null); }
-    return view.status;
-  }, []);
-
-  /**
-   * R1 — Polling recursive setTimeout (không setInterval): mỗi request CHỈ bắt đầu sau khi request
-   * trước hoàn tất (không chồng nếu response lâu hơn chu kỳ); terminal state / non-ok ⇒ dừng chắc chắn.
-   */
-  const startPolling = useCallback((id: string) => {
-    stopPolling();
-
-    async function loop() {
-      if (pollingRef.current) return;
-      pollingRef.current = true;
-      let status = "";
-      let ok = true;
-      const result = await callJson(analysisPath(id), "GET");
-      if (result.ok) {
-        status = applyUiReport(id, result.record);
-      } else {
-        ok = false;
-        setErrorText(result.message);
-        setStatusText("Không đọc được trạng thái báo cáo.");
-        setHistory((current) => current.map((item) => (item.job_id === id ? { ...item, status: "failed_internal" } : item)));
-      }
-      pollingRef.current = false;
-      if (!ok) return;
-      if (!isActiveJobStatus(status)) {
-        if (status === "draft") setStatusText("Đã có bản nháp AI.");
-        return;
-      }
-      pollTimerRef.current = setTimeout(loop, POLL_INTERVAL_MS);
-    }
-
-    pollTimerRef.current = setTimeout(loop, 0);
-  }, [stopPolling, applyUiReport]);
 
   useEffect(() => {
     if (!open) return;
@@ -187,14 +140,13 @@ export function AiReportPanel() {
     return () => clearTimeout(timer);
   }, [open, loadCapability]);
 
-  // R1: dừng poll khi đóng drawer.
-  useEffect(() => { if (!open) stopPolling(); }, [open, stopPolling]);
+  useEffect(() => { if (!open) getController().stopPolling(); }, [open]);
+  useEffect(() => () => getController().stopPolling(), []);
 
-  // R1: focus trap + restore focus + Escape.
   useEffect(() => {
     if (!open) return;
-    firstFieldRef.current?.focus();
-    const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
+    drawerRef.current?.focus();
+    const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=-1])";
     const focusables = () => {
       const nodes = drawerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
       return nodes ? Array.from(nodes) : [];
@@ -225,7 +177,11 @@ export function AiReportPanel() {
     };
   }, [open, requestClose]);
 
-  useEffect(() => () => stopPolling(), [stopPolling]);
+  useEffect(() => {
+    if (open && capability !== null && document.activeElement === drawerRef.current) {
+      firstFieldRef.current?.focus();
+    }
+  }, [open, capability]);
 
   function toggleDimension(dimension: Dimension) {
     setDimensions((current) => (current.includes(dimension) ? current.filter((item) => item !== dimension) : [...current, dimension]));
@@ -238,35 +194,32 @@ export function AiReportPanel() {
     if (dimensions.length === 0) { setErrorText("Chọn ít nhất một chiều phân tích."); return; }
     setBusy(true); setErrorText(""); setStatusText("Đang gửi yêu cầu tạo báo cáo AI…");
     const body = buildReportRequest({ period_type: periodType, as_of_date: asOf.trim(), custom_from: customFrom.trim() || undefined, custom_to: customTo.trim() || undefined, dimensions, focus: focus.trim() || undefined });
-    const result = await callJson(REPORTS_PATH, "POST", body);
+    const result = await getController().enqueue(body);
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); return; }
-    const record = result.record && typeof result.record === "object" ? (result.record as Record<string, unknown>) : {};
-    const id = String(record.request_id ?? record.job_id ?? "");
-    if (id === "") { setErrorText("Server không trả về mã báo cáo."); return; }
-    setJobId(id); setAnalysis(null); setLifecycle(null);
-    setHistory((current) => [{ job_id: id, status: "requested" }, ...current.filter((item) => item.job_id !== id)]);
+    setJobId(result.jobId); setAnalysis(null); setLifecycle(null);
+    setHistory((cur) => [{ job_id: result.jobId, status: "requested" }, ...cur.filter((item) => item.job_id !== result.jobId)]);
     setStatusText("Đã gửi yêu cầu. Đang theo dõi trạng thái…");
-    startPolling(id);
   }
 
   async function handleRegenerate() {
     if (busy || !jobId) return;
+    if (!(capability?.review.regenerate === true)) { setErrorText("Tạo lại báo cáo chưa khả dụng."); return; }
     if (regenerateReason.trim().length < 3) { setErrorText("Lý do tạo lại cần ít nhất 3 ký tự."); return; }
     setBusy(true); setErrorText(""); setStatusText("Đang tạo lại báo cáo AI…");
     const period = periodType === "custom" ? { type: periodType, as_of_date: asOf.trim(), custom_from: customFrom.trim(), custom_to: customTo.trim() } : { type: periodType, as_of_date: asOf.trim() };
-    const result = await callJson(REPORTS_PATH, "POST", { regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
+    const result = await getController().enqueue({ regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); return; }
-    const record = result.record && typeof result.record === "object" ? (result.record as Record<string, unknown>) : {};
-    const id = String(record.request_id ?? record.job_id ?? "");
-    setRegenerateOpen(false); setRegenerateReason(""); setJobId(id); setAnalysis(null); setLifecycle(null);
-    setHistory((current) => [{ job_id: id, status: "requested" }, ...current]);
+    setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null);
+    setHistory((cur) => [{ job_id: result.jobId, status: "requested" }, ...cur]);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
-    startPolling(id);
   }
 
-  function openHistoryItem(id: string) { setJobId(id); setAnalysis(null); setLifecycle(null); setStatusText("Đang tải lại báo cáo…"); startPolling(id); }
+  function openHistoryItem(id: string) {
+    setJobId(id); setAnalysis(null); setLifecycle(null); setStatusText("Đang tải lại báo cáo…");
+    getController().startPolling(id);
+  }
 
   const unavailable = capability === null ? null : !capability.ai_enabled ? "Báo cáo AI đang tắt." : !capability.config_ready ? "Chưa có cấu hình provider AI hoạt động (AI unavailable)." : null;
 
@@ -350,7 +303,7 @@ export function AiReportPanel() {
                   </div>
                 ) : (
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => setRegenerateOpen(true)} disabled={busy} className={secondaryButtonClass}>Tạo lại báo cáo</button>
+                    <button type="button" onClick={() => setRegenerateOpen(true)} disabled={busy || !(capability?.review.regenerate === true)} title={capability?.review.regenerate === true ? undefined : "Tạo lại chưa khả dụng"} className={secondaryButtonClass}>Tạo lại báo cáo</button>
                     <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Duyệt</button>
                     <button type="button" disabled title="Chưa khả dụng — chờ RPC duyệt revision (W05)" className={secondaryButtonClass}>Từ chối</button>
                   </div>

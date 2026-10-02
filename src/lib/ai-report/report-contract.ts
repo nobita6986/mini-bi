@@ -236,6 +236,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Toàn bộ trạng thái job mà RPC có thể trả (R2: status phải thuộc tập cho phép). */
+export const JOB_STATUSES = [
+  ...ACTIVE_JOB_STATUSES,
+  ...FAILED_JOB_STATUSES,
+  "draft",
+] as const;
+
+export const LIFECYCLE_STATUSES = ["draft", "approved", "rejected"] as const;
+
+/** Contract business-analysis mà revision phải khai báo (R2). */
+export const ANALYSIS_CONTRACT_VERSION = "business-analysis/0.1";
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID_RE.test(value);
+}
+
 function parseAnalysis(raw: unknown): AnalysisView | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.contract_version !== "string" || raw.contract_version === "") return null;
@@ -284,8 +302,8 @@ export function projectUiReportResponse(raw: unknown): UiReportResult {
   if (!isRecord(raw) || raw.ok !== true) return fail;
   const jobId = raw.job_id;
   const status = raw.status;
-  if (typeof jobId !== "string" || jobId === "") return fail;
-  if (typeof status !== "string" || status === "") return fail;
+  if (!isUuid(jobId)) return fail;
+  if (typeof status !== "string" || !(JOB_STATUSES as readonly string[]).includes(status)) return fail;
   const errorCode = raw.error_code;
   if (errorCode !== null && errorCode !== undefined && typeof errorCode !== "string") return fail;
   if (typeof raw.attempts !== "number" || !Number.isSafeInteger(raw.attempts) || raw.attempts < 0) return fail;
@@ -306,11 +324,11 @@ export function projectUiReportResponse(raw: unknown): UiReportResult {
     };
   }
   if (!isRecord(revisionRaw)) return fail;
-  if (typeof revisionRaw.revision_id !== "string" || revisionRaw.revision_id === "") return fail;
+  if (!isUuid(revisionRaw.revision_id)) return fail;
   if (typeof revisionRaw.revision_number !== "number" || !Number.isSafeInteger(revisionRaw.revision_number) || revisionRaw.revision_number < 1) return fail;
-  if (typeof revisionRaw.lifecycle_status !== "string" || revisionRaw.lifecycle_status === "") return fail;
-  if (typeof revisionRaw.contract_version !== "string" || revisionRaw.contract_version === "") return fail;
-  if (typeof revisionRaw.created_at !== "string" || revisionRaw.created_at === "") return fail;
+  if (typeof revisionRaw.lifecycle_status !== "string" || !(LIFECYCLE_STATUSES as readonly string[]).includes(revisionRaw.lifecycle_status)) return fail;
+  if (revisionRaw.contract_version !== ANALYSIS_CONTRACT_VERSION) return fail;
+  if (typeof revisionRaw.created_at !== "string" || revisionRaw.created_at === "" || Number.isNaN(Date.parse(revisionRaw.created_at))) return fail;
   const analysis = parseAnalysis(revisionRaw.analysis);
   if (!analysis) return fail;
   return {
@@ -333,6 +351,37 @@ export function projectUiReportResponse(raw: unknown): UiReportResult {
   };
 }
 
+export type UiEnqueueView = {
+  job_id: string;
+  request_id: string;
+  status: string;
+  reused: boolean;
+  cache_hit: boolean;
+};
+
+/**
+ * R2 (5) — Projection hẹp cho POST /api/ai/reports. Malformed ⇒ AI_INTERNAL,
+ * caller KHÔNG được bắt đầu polling.
+ */
+export function projectEnqueueResponse(raw: unknown): { ok: true; view: UiEnqueueView } | { ok: false; code: "AI_INTERNAL"; message: string } {
+  const fail = { ok: false as const, code: "AI_INTERNAL" as const, message: "Phản hồi tạo báo cáo không hợp lệ." };
+  if (!isRecord(raw) || raw.ok !== true) return fail;
+  const jobId = raw.job_id ?? raw.request_id;
+  if (!isUuid(jobId)) return fail;
+  if (typeof raw.status !== "string" || !(JOB_STATUSES as readonly string[]).includes(raw.status)) return fail;
+  if (typeof raw.reused !== "boolean" || typeof raw.cache_hit !== "boolean") return fail;
+  return {
+    ok: true,
+    view: {
+      job_id: jobId,
+      request_id: isUuid(raw.request_id) ? raw.request_id : jobId,
+      status: raw.status,
+      reused: raw.reused,
+      cache_hit: raw.cache_hit,
+    },
+  };
+}
+
 /** Validate response GET /api/ai/reports/capability. Malformed ⇒ fail-closed. */
 export function projectCapabilityResponse(raw: unknown): { ok: true; capability: CapabilityView } | { ok: false; code: "AI_INTERNAL"; message: string } {
   const fail = { ok: false as const, code: "AI_INTERNAL" as const, message: "Dữ liệu capability từ server không hợp lệ." };
@@ -340,12 +389,14 @@ export function projectCapabilityResponse(raw: unknown): { ok: true; capability:
   const aiEnabled = raw.ai_enabled;
   const configReady = raw.config_ready;
   if (typeof aiEnabled !== "boolean" || typeof configReady !== "boolean") return fail;
+  // R2 (3): review PHẢI là object với 3 boolean thật + reason non-empty; thiếu/sai ⇒ AI_INTERNAL,
+  // KHÔNG fallback regenerate=true.
   const review = raw.review;
-  const reviewView = {
-    approve: isRecord(review) && review.approve === true,
-    reject: isRecord(review) && review.reject === true,
-    regenerate: isRecord(review) ? review.regenerate !== false : true,
-    reason: isRecord(review) && typeof review.reason === "string" ? review.reason : "review_rpc_pending",
+  if (!isRecord(review)) return fail;
+  if (typeof review.approve !== "boolean" || typeof review.reject !== "boolean" || typeof review.regenerate !== "boolean") return fail;
+  if (typeof review.reason !== "string" || review.reason === "") return fail;
+  return {
+    ok: true,
+    capability: { ai_enabled: aiEnabled, config_ready: configReady, review: { approve: review.approve, reject: review.reject, regenerate: review.regenerate, reason: review.reason } },
   };
-  return { ok: true, capability: { ai_enabled: aiEnabled, config_ready: configReady, review: reviewView } };
 }
