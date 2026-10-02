@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:ai-config-spike": "node --conditions=react-server --test src/lib/ai-config/crypto-config.test.mjs src/lib/ai-config/url-outbound.test.mjs",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",
