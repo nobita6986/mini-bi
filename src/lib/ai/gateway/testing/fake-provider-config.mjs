@@ -25,6 +25,8 @@ export function createMemoryProviderConfig(options = {}) {
       model: stored.model ?? defaultModel,
       status: stored.status ?? "active",
       secret: stored.secret ?? "test-secret",
+      api_base_url: stored.api_base_url ?? "https://api.example.test/v1",
+      sanitized_host: stored.sanitized_host ?? "api.example.test",
     };
   }
 
@@ -79,6 +81,8 @@ export function createMemoryProviderConfig(options = {}) {
           status: material.status,
           verified_at: "2026-10-01T00:00:00.000Z",
           secret: material.secret,
+          api_base_url: material.api_base_url,
+          sanitized_host: material.sanitized_host,
         },
       };
     },
