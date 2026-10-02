@@ -8,7 +8,7 @@
 import { buildProviderPayload, utf8ByteLength } from "./payload.mjs";
 import { validateGeneratedAnalysis } from "./output-guard.mjs";
 import { evaluateAdmissionPolicy, evaluateAttemptPolicy } from "./policy.mjs";
-import { resolveProviderAdapter } from "./provider.mjs";
+import { resolveProviderAdapter, LIVE_PROVIDER_PROFILE } from "./provider.mjs";
 import { decideAfterFailure } from "./job-state.mjs";
 import { projectClaim, projectComplete, projectEnqueue } from "./rpc-projection.mjs";
 import { LEASE_SECONDS } from "./limits.mjs";
@@ -302,7 +302,8 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   if (
     materialValue.config_id !== frozenConfigId ||
     materialValue.version !== frozenConfigVersion ||
-    materialValue.provider_profile !== job.provider_key ||
+    // provider_profile là profile auth ĐÓNG (openai-compatible) cho live, khác namespace với provider_key.
+    materialValue.provider_profile !== (job.provider_key === "live" ? LIVE_PROVIDER_PROFILE : job.provider_key) ||
     materialValue.model !== job.model_key ||
     materialValue.status !== "active"
   ) {
@@ -332,8 +333,14 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
         model_key: deps.provider.model_key,
         adapter_version: resolved.adapter.adapter_version,
         timeout_ms: deps.policy.config.provider_timeout_ms,
-        // Credential đã giải mã trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
-        provider_config: { config_id: materialValue.config_id, version: materialValue.version },
+        // Credential + API URL đã giải mã/đọc trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
+        provider_config: {
+          config_id: materialValue.config_id,
+          version: materialValue.version,
+          api_base_url: materialValue.api_base_url,
+          sanitized_host: materialValue.sanitized_host,
+          provider_profile: materialValue.provider_profile,
+        },
         credential_secret: materialValue.secret,
       },
       timeoutSignal: timeout.signal,

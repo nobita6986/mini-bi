@@ -24,7 +24,7 @@ import {
   readPolicyConfig,
   responseCeilingOf,
 } from "./policy.mjs";
-import { createLiveTransport, createScriptedAdapter, resolveProviderAdapter } from "./provider.mjs";
+import { createLiveAdapter, createScriptedAdapter, resolveProviderAdapter } from "./provider.mjs";
 import { computeBackoffMs, computeBackoffMs as backoff, decideAfterFailure, canTransition, classifyFailure } from "./job-state.mjs";
 import { buildJobIdentity, describeIdentity, normalizeIdentityInput } from "./job-identity.mjs";
 import { checkSameOriginRequest, checkWorkerToken, sanitizeMessage, timingSafeEqualString } from "./http-guards.mjs";
@@ -195,7 +195,7 @@ test("W04 identity: chuẩn hoá deterministic và đổi mọi thành phần �
   assert.ok(describeIdentity(normalizeIdentityInput(base)).includes("scripted/m1"));
 });
 
-test("W04 provider: chỉ scripted được phép; live bị TẮT và không có outbound", async () => {
+test("W04 provider: scripted deterministic; live cần outbound wiring, thiếu ⇒ fail-closed", async () => {
   const scripted = resolveProviderAdapter({ provider_key: "scripted", config: {} });
   assert.equal(scripted.ok, true);
   const live = resolveProviderAdapter({ provider_key: "live", config: {} });
@@ -203,13 +203,14 @@ test("W04 provider: chỉ scripted được phép; live bị TẮT và không c�
   assert.equal(live.code, "AI_PROVIDER_DISABLED");
   assert.equal(resolveProviderAdapter({ provider_key: "openai" }).code, "AI_CONFIG_REQUIRED");
 
-  const transport = createLiveTransport({ allowed_hosts: ["api.example.com"] });
-  assert.equal(transport.isUrlAllowed("https://api.example.com/v1"), true);
-  assert.equal(transport.isUrlAllowed("http://api.example.com/v1"), false);
-  assert.equal(transport.isUrlAllowed("https://evil.example.org/v1"), false);
-  const result = await transport.generateStructured();
-  assert.equal(result.ok, false);
-  assert.equal(result.error_code, "AI_PROVIDER_DISABLED");
+  // W04B-S01: live adapter cần outbound wiring; không wiring ⇒ fail-closed, không bao giờ raw fetch.
+  const wired = resolveProviderAdapter({ provider_key: "live", config: { outbound: async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }) } });
+  assert.equal(wired.ok, true);
+  assert.equal(wired.adapter.adapter_version, "live-adapter/0.1");
+  assert.equal(wired.adapter.provider_key, "live");
+  const bare = createLiveAdapter({ outbound: async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }) });
+  assert.equal(bare.provider_key, "live");
+  assert.equal(bare.adapter_version, "live-adapter/0.1");
 
   const adapter = createScriptedAdapter({ scenario: "valid" });
   const packet = casePacket("c01");

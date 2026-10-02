@@ -1,16 +1,19 @@
 /**
- * P1.5-W04 — Provider-neutral adapter + scripted provider (deterministic) + live stub (TẮT).
+ * P1.5-W04/W04B — Provider-neutral adapter + scripted provider (deterministic) + live adapter (OpenAI-compatible).
  *
- * - KHÔNG hard-code API key/URL/model; KHÔNG đọc NEXT_PUBLIC_*; KHÔNG outbound trong W04.
- * - Live provider/transport vẫn DISABLED chờ G4A (T0 duyệt provider/model/allowlist/ngân sách).
+ * - KHÔNG hard-code API key/URL/model; KHÔNG đọc NEXT_PUBLIC_*.
+ * - Live adapter (live-adapter.mjs) gọi provider QUA outbound boundary được inject (production = safe-outbound);
+ *   thiếu outbound wiring ⇒ fail-closed AI_PROVIDER_DISABLED. W04B-S01 chỉ local + mock transport.
  * - Không tools/function-calling/browsing/SQL/agent loop: chỉ structured JSON output.
  */
 
 import { canonicalJson, canonicalHash } from "../engine-shared.mjs";
 import { MAX_RESPONSE_BYTES } from "./limits.mjs";
+import { createLiveAdapter } from "./live-adapter.mjs";
 
 export const SCRIPTED_ADAPTER_VERSION = "scripted-adapter/1.0";
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.1";
+export { createLiveAdapter };
+export { LIVE_ADAPTER_VERSION, LIVE_PROVIDER_PROFILE } from "./live-adapter.mjs";
 
 export const PROVIDER_KEYS = Object.freeze(["scripted", "live"]);
 
@@ -345,45 +348,20 @@ export function createScriptedAdapter(options = {}) {
 }
 
 /**
- * Transport interface cho provider THẬT (W04A). W04 KHÔNG thực hiện outbound:
- * mọi lời gọi trả AI_PROVIDER_DISABLED cho tới khi G4A duyệt provider/model/allowlist/ngân sách.
+ * Chọn adapter theo provider_key.
+ * - scripted: deterministic (test/development; bị chặn ở production bởi provider-config).
+ * - live: adapter gọi provider QUA outbound boundary đã inject (production = safe-outbound).
+ *   Thiếu outbound wiring ⇒ fail-closed AI_PROVIDER_DISABLED (không bao giờ raw fetch).
  */
-export function createLiveTransport(config) {
-  const allowedHosts = Array.isArray(config?.allowed_hosts) ? config.allowed_hosts : [];
-  return {
-    provider_key: "live",
-    adapter_version: LIVE_ADAPTER_VERSION,
-    /** Pure: chỉ cho phép host trong allowlist đã duyệt (testable, không gọi mạng). */
-    isUrlAllowed(url) {
-      if (typeof url !== "string") return false;
-      try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "https:") return false;
-        return allowedHosts.includes(parsed.host);
-      } catch {
-        return false;
-      }
-    },
-    async generateStructured() {
-      return {
-        ok: false,
-        error_code: "AI_PROVIDER_DISABLED",
-        retryable: false,
-        latency_ms: 0,
-        provider_version: LIVE_ADAPTER_VERSION,
-        detail_ref: "live-provider-disabled-pending-g4a",
-      };
-    },
-  };
-}
-
-/** Chọn adapter theo provider_key. Live ⇒ disabled (fail-closed). */
 export function resolveProviderAdapter({ provider_key, config }) {
   if (provider_key === "scripted") {
     return { ok: true, adapter: createScriptedAdapter({ scenario: config?.scenario ?? "valid" }) };
   }
   if (provider_key === "live") {
-    return { ok: false, code: "AI_PROVIDER_DISABLED", message: "Live provider chưa được bật (chờ G4A)." };
+    if (typeof config?.outbound !== "function") {
+      return { ok: false, code: "AI_PROVIDER_DISABLED", message: "live provider cần outbound wiring (server-only)" };
+    }
+    return { ok: true, adapter: createLiveAdapter(config) };
   }
   return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider_key không được hỗ trợ: " + String(provider_key) };
 }
