@@ -12,6 +12,7 @@
     "test:p1.6-w01": "node --test src/lib/contracts/direct-entry-v1.test.mjs",
     "test:p1.6-w02": "node --test src/lib/auth/direct-entry-v2.test.mjs",
     "test:p1.6-w03": "node --test scripts/p1.6-w03-db.test.mjs",
+    "test:p1.6-w03-g3-dev": "node scripts/p1.6-w03-g3-dev-acceptance.mjs",
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",
     "docs:check": "node scripts/check-doc-examples.mjs",

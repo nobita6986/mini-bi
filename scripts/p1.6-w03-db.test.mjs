@@ -5,6 +5,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const migrationPath = new URL("../supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql", import.meta.url);
+const correctiveMigrationPath = new URL("../supabase/migrations/20261003170000_p1_6_w03_submission_noop_guard.sql", import.meta.url);
 
 function syntheticWorker(displayName) {
   const optional = { state: "unknown" };
@@ -27,6 +28,7 @@ async function createDatabase() {
     create table auth.users (id uuid primary key);
   `);
   await db.exec(await readFile(migrationPath, "utf8"));
+  await db.exec(await readFile(correctiveMigrationPath, "utf8"));
   return db;
 }
 
@@ -112,6 +114,40 @@ async function seedSubmission(db) {
     commit;
   `);
 }
+
+test("submission lifecycle rejects a DRAFT-to-DRAFT no-op without partial writes", async () => {
+  const db = await createDatabase();
+  try {
+    await seedSubmission(db);
+    await db.exec("set role service_role");
+    await assert.rejects(db.query(
+      `select public.direct_entry_transition_submission(
+        '10000000-0000-4000-8000-000000000001',
+        '20000000-0000-4000-8000-000000000001',
+        '50000000-0000-4000-8000-000000000001',1,'DRAFT',
+        'submission_noop_deny_synthetic')`,
+    ), /submission transition cannot be a no-op/i);
+    await db.exec("reset role");
+    const state = await db.query(`
+      select s.state, s.version,
+        (select count(*) from public.direct_entry_submission_revisions r
+          where r.submission_id=s.submission_id) as revisions,
+        (select count(*) from public.direct_entry_audit_events a
+          where a.resource_ref=s.submission_id::text) as audits,
+        (select count(*) from public.direct_entry_rpc_idempotency i
+          where i.idempotency_key='submission_noop_deny_synthetic') as idempotency
+      from public.direct_entry_submissions s
+      where s.submission_id='50000000-0000-4000-8000-000000000001'
+    `);
+    assert.equal(state.rows[0].state, "DRAFT");
+    assert.equal(state.rows[0].version, 1);
+    assert.equal(Number(state.rows[0].revisions), 0);
+    assert.equal(Number(state.rows[0].audits), 0);
+    assert.equal(Number(state.rows[0].idempotency), 0);
+  } finally {
+    await db.close();
+  }
+});
 
 test("migration enforces deny-by-default RLS and RPC-only grants", async () => {
   const db = await createDatabase();
