@@ -4,7 +4,7 @@ import type { HistoryResult, ReviewResult } from "@/lib/ai-report/review-project
 
 import { createServerAiReviewService } from "./review.mjs";
 
-export type ReviewCapability = { approve: boolean; reject: boolean; regenerate: boolean };
+export type ReviewCapability = { approve: boolean; reject: boolean; regenerate: boolean; reason: string };
 
 export type ReviewService = {
   capability(): Promise<ReviewCapability>;

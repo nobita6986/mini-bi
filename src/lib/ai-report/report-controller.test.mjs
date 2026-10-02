@@ -14,7 +14,7 @@ const JOB_B = "22222222-2222-4222-8222-222222222222";
 const REV = "33333333-3333-4333-8333-333333333333";
 
 function capabilityResponse() {
-  return { ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" } };
+  return { ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: "review_rpc_ready" } };
 }
 
 function enqueueResponse(jobId) {
@@ -22,7 +22,7 @@ function enqueueResponse(jobId) {
 }
 
 function activeResponse(jobId) {
-  return { ok: true, job_id: jobId, status: "ai_generating", error_code: null, attempts: 1, max_attempts: 3, revision: null, review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" } };
+  return { ok: true, job_id: jobId, status: "ai_generating", error_code: null, attempts: 1, max_attempts: 3, revision: null, review_capability: { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" } };
 }
 
 function draftResponse(jobId) {
@@ -50,7 +50,7 @@ function draftResponse(jobId) {
         overall_limitations: ["Chất lượng dữ liệu chưa đầy đủ ở một nguồn"],
       },
     },
-    review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+    review_capability: { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" },
   };
 }
 

@@ -11,6 +11,7 @@ import "server-only";
 
 import { isAiReportsEnabled } from "@/lib/ai/gateway/server/config.mjs";
 import { errorResponse, jsonResponse } from "@/lib/ai/gateway/server/http.mjs";
+import { createServerAiReviewService } from "@/lib/ai/gateway/server/review.mjs";
 import { createServerAiReportGateway } from "@/lib/ai/gateway/server/service.mjs";
 
 export const runtime = "nodejs";
@@ -30,6 +31,14 @@ export async function GET(_request: Request, context: { params: Promise<{ jobId:
   const status = result.status ?? {};
   const revision = status.revision ?? null;
 
+  // S02-R1: capability phản ánh trạng thái RPC thực tế (server-verified), KHÔNG quảng cáo regenerate=true tĩnh.
+  let reviewCapability = { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" };
+  try {
+    reviewCapability = await createServerAiReviewService().capability();
+  } catch {
+    reviewCapability = { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" };
+  }
+
   const base = {
     ok: true,
     job_id: status.job_id,
@@ -37,7 +46,7 @@ export async function GET(_request: Request, context: { params: Promise<{ jobId:
     error_code: status.error_code ?? null,
     attempts: Number.isInteger(status.attempts) ? status.attempts : 0,
     max_attempts: Number.isInteger(status.max_attempts) ? status.max_attempts : 0,
-    review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+    review_capability: reviewCapability,
   };
 
   if (!revision || !revision.analysis) {

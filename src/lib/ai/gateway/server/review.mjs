@@ -8,7 +8,7 @@ import "server-only";
 
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
-import { projectHistoryResponse, projectReviewResponse } from "@/lib/ai-report/review-projection";
+import { projectHistoryResponse, projectReviewCapability, projectReviewResponse, REVIEW_RPC_UNAVAILABLE } from "@/lib/ai-report/review-projection";
 
 function fail(code, message) {
   return { ok: false, code, message };
@@ -40,18 +40,13 @@ async function rpc(name, params) {
 
 export function createServerAiReviewService() {
   return {
-    /** Fail-closed: RPC chưa tồn tại (migration chưa apply) ⇒ approve/reject = false. */
+    /** Fail-closed: RPC chưa tồn tại/lỗi/malformed ⇒ approve/reject/regenerate đều false, reason truth. */
     async capability() {
       const result = await rpc("ai_report_review_capability", {});
       if (!result.ok) {
-        return { approve: false, reject: false, regenerate: true };
+        return { approve: false, reject: false, regenerate: false, reason: REVIEW_RPC_UNAVAILABLE };
       }
-      const value = result.value;
-      return {
-        approve: value.approve === true,
-        reject: value.reject === true,
-        regenerate: value.regenerate !== false,
-      };
+      return projectReviewCapability(result.value);
     },
 
     async approve({ job_id, expected_revision_number, actor_ref }) {

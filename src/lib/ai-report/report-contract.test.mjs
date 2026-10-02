@@ -119,7 +119,7 @@ function draftResponse() {
       created_at: "2026-10-02T00:00:00.000Z",
       analysis: ANALYSIS,
     },
-    review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+    review_capability: { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" },
   };
 }
 
@@ -132,7 +132,7 @@ function noDraftResponse() {
     attempts: 1,
     max_attempts: 3,
     revision: null,
-    review_capability: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" },
+    review_capability: { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" },
   };
 }
 
@@ -179,7 +179,7 @@ test("S01-R1-C3: projectUiReportResponse — malformed ⇒ AI_INTERNAL (không r
 });
 
 test("S01-R1-C4: projectCapabilityResponse — hợp lệ + malformed fail-closed", () => {
-  const ok = projectCapabilityResponse({ ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: "review_rpc_pending" } });
+  const ok = projectCapabilityResponse({ ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: true, reason: "review_rpc_ready" } });
   assert.equal(ok.ok, true);
   assert.equal(ok.capability.ai_enabled, true);
   assert.equal(ok.capability.review.regenerate, true);
@@ -215,7 +215,7 @@ test("S01-R2-C1: projectUiReportResponse — UUID/status/lifecycle/contract/crea
 });
 
 test("S01-R2-C2: projectCapabilityResponse — review phải là object với 3 boolean thật + reason non-empty", () => {
-  const ok = projectCapabilityResponse({ ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: false, reason: "review_rpc_pending" } });
+  const ok = projectCapabilityResponse({ ok: true, ai_enabled: true, config_ready: true, review: { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" } });
   assert.equal(ok.ok, true);
   assert.equal(ok.capability.review.regenerate, false, "regenerate=false phải giữ nguyên, không fallback true");
 

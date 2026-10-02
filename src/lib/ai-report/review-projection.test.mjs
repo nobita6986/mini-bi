@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { projectHistoryResponse, projectReviewRequest, projectReviewResponse } from "./review-projection.ts";
+import { projectHistoryResponse, projectReviewCapability, projectReviewRequest, projectReviewResponse, REVIEW_RPC_READY, REVIEW_RPC_UNAVAILABLE } from "./review-projection.ts";
 
 test("S02-P1: projectReviewResponse — approve/reject hợp lệ + malformed fail-closed", () => {
   const ok = projectReviewResponse({ ok: true, revision_id: "11111111-1111-4111-8111-111111111111", lifecycle_status: "approved", idempotent: false });
@@ -78,5 +78,25 @@ test("S02-P3: projectHistoryResponse — projection + malformed fail-closed", ()
     const result = projectHistoryResponse(raw);
     assert.equal(result.ok, false, JSON.stringify(raw));
     assert.equal(result.code, "AI_INTERNAL");
+  }
+});
+
+test("S02-P4: projectReviewCapability — strict boolean + fail-closed all false khi malformed", () => {
+  const ready = projectReviewCapability({ ok: true, approve: true, reject: true, regenerate: true });
+  assert.deepEqual(ready, { approve: true, reject: true, regenerate: true, reason: REVIEW_RPC_READY });
+
+  // Thiếu/sai kiểu bất kỳ boolean nào ⇒ fail-closed cả ba false + reason unavailable.
+  const bad = [
+    [null],
+    [{ ok: true }],
+    [{ ok: true, approve: true, reject: true }],
+    [{ ok: true, approve: true, reject: true, regenerate: "true" }],
+    [{ ok: true, approve: 1, reject: true, regenerate: true }],
+    [{ ok: true, approve: true, reject: false, regenerate: null }],
+    [{ ok: false, approve: true, reject: true, regenerate: true }],
+  ];
+  for (const raw of bad) {
+    const result = projectReviewCapability(raw);
+    assert.deepEqual(result, { approve: false, reject: false, regenerate: false, reason: REVIEW_RPC_UNAVAILABLE }, JSON.stringify(raw));
   }
 });

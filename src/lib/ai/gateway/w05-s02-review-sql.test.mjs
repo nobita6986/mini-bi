@@ -162,7 +162,13 @@ test("S02-S8: grants/RLS/search_path/append-only", async () => {
   );
   for (const f of funcs.rows) {
     assert.equal(f.prosecdef, true, f.proname);
-    assert.ok(f.sp.includes("search_path=public, pg_temp"), f.proname);
+    // R1: search_path phải RỖNG (không public, không pg_temp). PostgreSQL lưu giá trị rỗng dạng search_path="".
+    const sp = String(f.sp).trim();
+    assert.ok(sp.startsWith("search_path="), f.proname + " thiếu search_path: " + sp);
+    assert.ok(!sp.includes("public"), f.proname + " search_path còn public: " + sp);
+    assert.ok(!sp.includes("pg_temp"), f.proname + " search_path còn pg_temp: " + sp);
+    const value = sp.slice("search_path=".length);
+    assert.ok(value === "" || value === '""', f.proname + " search_path không rỗng: " + sp);
   }
   for (const [fn, sig] of [
     ["ai_report_approve_revision", "uuid, integer, text"],
@@ -251,6 +257,86 @@ test("S02-S11: approve revision malformed bị từ chối", async () => {
 test("S02-S12: capability RPC", async () => {
   const res = await db.query("select public.ai_report_review_capability() as r", []);
   assert.deepEqual(res.rows[0].r, { ok: true, approve: true, reject: true, regenerate: true });
+});
+
+test("S02-S13: actor isolation — actor B biết UUID job A nhưng không approve/reject được, DB state không đổi", async () => {
+  const a = await seedJob("actor-a", "2026-10-01T00:00:00Z");
+  const ap = await db.query("select public.ai_report_approve_revision($1, 1, 'actor-b') as r", [a.jobId]);
+  assert.equal(ap.rows[0].r.ok, false);
+  assert.equal(ap.rows[0].r.code, "AI_JOB_NOT_FOUND");
+  const rj = await db.query("select public.ai_report_reject_revision($1, 1, 'actor-b', 'Lý do hợp lệ') as r", [a.jobId]);
+  assert.equal(rj.rows[0].r.ok, false);
+  assert.equal(rj.rows[0].r.code, "AI_JOB_NOT_FOUND");
+
+  const rev = await db.query("select lifecycle_status, approved_by_ref, rejected_by_ref from public.ai_report_revisions where revision_id = $1", [a.revisionId]);
+  assert.equal(rev.rows[0].lifecycle_status, "draft");
+  assert.equal(rev.rows[0].approved_by_ref, null);
+  assert.equal(rev.rows[0].rejected_by_ref, null);
+  const audit = await db.query("select count(*)::int as n from public.ai_report_audit_events where job_id = $1 and event_type in ('revision_approved','revision_rejected')", [a.jobId]);
+  assert.equal(audit.rows[0].n, 0);
+});
+
+test("S02-S14: actor isolation — job không tồn tại và job actor khác trả cùng AI_JOB_NOT_FOUND", async () => {
+  const a = await seedJob("actor-a", "2026-10-01T00:00:00Z");
+  const otherActor = await db.query("select public.ai_report_approve_revision($1, 1, 'actor-b') as r", [a.jobId]);
+  const ghost = await db.query("select public.ai_report_approve_revision('00000000-0000-0000-0000-000000000000', 1, 'actor-b') as r", []);
+  assert.equal(otherActor.rows[0].r.code, "AI_JOB_NOT_FOUND");
+  assert.equal(ghost.rows[0].r.code, "AI_JOB_NOT_FOUND");
+  assert.equal(otherActor.rows[0].r.message, ghost.rows[0].r.message, "không tiết lộ khác biệt existence/owner");
+});
+
+test("S02-S15: cursor isolation — cursor actor khác / không tồn tại trả cùng AI_INPUT_INVALID, không lộ item actor khác", async () => {
+  await seedJob("actor-a", "2026-10-01T00:00:00Z");
+  await seedJob("actor-a", "2026-10-02T00:00:00Z");
+  const b = await seedJob("actor-b", "2026-10-03T00:00:00Z");
+
+  const cross = await db.query("select public.ai_report_history('actor-a', $1, 20) as r", [b.jobId]);
+  assert.equal(cross.rows[0].r.code, "AI_INPUT_INVALID");
+  const ghost = await db.query("select public.ai_report_history('actor-a', '00000000-0000-0000-0000-000000000000', 20) as r", []);
+  assert.equal(ghost.rows[0].r.code, "AI_INPUT_INVALID");
+  assert.equal(cross.rows[0].r.message, ghost.rows[0].r.message, "cursor actor khác / không tồn tại phải giống nhau");
+
+  const page = await db.query("select public.ai_report_history('actor-a', null, 50) as r", []);
+  for (const item of page.rows[0].r.items) {
+    assert.notEqual(item.job_id, b.jobId, "không được lộ job actor khác");
+  }
+});
+
+test("S02-S16: equal created_at — phân trang keyset deterministic theo (created_at, job_id)", async () => {
+  const ids = [
+    "aaaaaaaa-0000-4000-8000-000000000001",
+    "aaaaaaaa-0000-4000-8000-000000000002",
+    "aaaaaaaa-0000-4000-8000-000000000003",
+  ];
+  for (const id of ids) {
+    await seedJob("actor-eq", "2026-10-01T00:00:00Z", { job_id: id });
+  }
+  const seen = [];
+  let cursor = null;
+  for (let i = 0; i < 5; i++) {
+    const page = await db.query("select public.ai_report_history('actor-eq', $1, 1) as r", [cursor]);
+    const r = page.rows[0].r;
+    assert.equal(r.ok, true);
+    if (r.items.length === 0) break;
+    seen.push(r.items[0].job_id);
+    if (!r.has_more) break;
+    cursor = r.next_cursor;
+  }
+  assert.deepEqual(seen, ["aaaaaaaa-0000-4000-8000-000000000003", "aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000001"]);
+});
+
+test("S02-S17: source — không còn catch fallback regenerate=true / global cursor subquery / search_path public,pg_temp", () => {
+  const capRoute = readFileSync(new URL("../../../app/api/ai/reports/capability/route.ts", import.meta.url), "utf8");
+  const analysisRoute = readFileSync(new URL("../../../app/api/ai/reports/[jobId]/analysis/route.ts", import.meta.url), "utf8");
+  const reviewSvc = readFileSync(new URL("server/review.mjs", import.meta.url), "utf8");
+  const mig = MIG("20261001180000_p1_5_ai_report_review_history.sql");
+
+  assert.ok(!capRoute.includes("regenerate: true"), "capability route không được fallback regenerate=true");
+  assert.ok(!reviewSvc.includes("regenerate: true"), "review service không được fallback regenerate=true");
+  assert.ok(!analysisRoute.includes("regenerate: true"), "analysis route không được quảng cáo regenerate=true tĩnh");
+  assert.ok(!analysisRoute.includes("review_rpc_pending"), "analysis route không còn reason pending tĩnh");
+  assert.ok(!mig.includes("set search_path = public, pg_temp"), "migration review không được search_path public,pg_temp");
+  assert.ok(!mig.includes("(select created_at from public.ai_report_jobs where job_id = v_cursor)"), "history không được subquery global lấy created_at");
 });
 
 before(async () => {

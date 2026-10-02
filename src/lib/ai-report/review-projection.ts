@@ -93,3 +93,23 @@ export function projectHistoryResponse(raw: unknown): HistoryResult {
   if (typeof raw.has_more !== "boolean") return fail;
   return { ok: true, items, next_cursor: nextCursor ?? null, has_more: raw.has_more };
 }
+
+// ---------------------------------------------------------------------------
+// S02-R1 — Capability projection (strict boolean; fail-closed all-false khi malformed)
+// ---------------------------------------------------------------------------
+
+export const REVIEW_RPC_READY = "review_rpc_ready";
+export const REVIEW_RPC_UNAVAILABLE = "review_rpc_unavailable";
+
+export type ReviewCapability = { approve: boolean; reject: boolean; regenerate: boolean; reason: string };
+
+/** Project kết quả RPC ai_report_review_capability. Thiếu/sai kiểu bất kỳ boolean nào ⇒ fail-closed all false. */
+export function projectReviewCapability(raw: unknown): ReviewCapability {
+  const fail = (): ReviewCapability => ({ approve: false, reject: false, regenerate: false, reason: REVIEW_RPC_UNAVAILABLE });
+  if (!isRecord(raw) || raw.ok !== true) return fail();
+  const approve = raw.approve;
+  const reject = raw.reject;
+  const regenerate = raw.regenerate;
+  if (typeof approve !== "boolean" || typeof reject !== "boolean" || typeof regenerate !== "boolean") return fail();
+  return { approve, reject, regenerate, reason: REVIEW_RPC_READY };
+}

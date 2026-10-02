@@ -29,17 +29,17 @@ export async function GET() {
     configReady = false;
   }
 
-  let review = { approve: false, reject: false, regenerate: true };
+  let review = { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" };
   try {
     review = await createServerAiReviewService().capability();
   } catch {
-    review = { approve: false, reject: false, regenerate: true };
+    review = { approve: false, reject: false, regenerate: false, reason: "review_rpc_unavailable" };
   }
 
   return jsonResponse({
     ok: true,
     ai_enabled: aiEnabled,
     config_ready: configReady,
-    review: { approve: review.approve, reject: review.reject, regenerate: review.regenerate, reason: "review_rpc_ready" },
+    review: { approve: review.approve, reject: review.reject, regenerate: review.regenerate, reason: review.reason },
   });
 }
