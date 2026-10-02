@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-W40",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -31,7 +31,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "period_2026-W39",
+        "period_ref": "week:2026-W39",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -95,9 +95,11 @@
       "period_points": 2,
       "mean": 8,
       "stddev": 1,
-      "cv": 0.125,
+      "cv": null,
       "trend_direction": "up",
-      "volatility": "unknown"
+      "volatility": "unknown",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "week",
@@ -212,7 +214,7 @@
         "metric": "recruited_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 9,
@@ -226,7 +228,7 @@
         "metric": "recruited_total_previous",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 7,
@@ -240,7 +242,7 @@
         "metric": "recruited_delta",
         "formula": "current - comparable",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 2,
@@ -249,7 +251,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "unavailable",
+      "coverage_ratio": null,
+      "mapped_subjects": 0,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -276,7 +285,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Chỉ có 2 kỳ hoàn tất nên chưa đủ baseline; mọi nhận định chỉ ở mức tham khảo.",
     "findings": [
@@ -300,11 +309,16 @@
     ],
     "overall_limitations": [
       "Chưa đủ baseline tuần để kết luận xu hướng ổn định."
+    ],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03"
     ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Chỉ có 2 kỳ hoàn tất nhưng xu hướng tăng đã rõ ràng.",
     "findings": [
@@ -324,7 +338,12 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03"
+    ]
   },
   "forbidden_expected_code": "HIGH_CONFIDENCE_WITHOUT_SUFFICIENCY"
 }

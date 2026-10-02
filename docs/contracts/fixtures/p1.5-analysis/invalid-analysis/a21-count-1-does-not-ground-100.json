@@ -1,0 +1,32 @@
+{
+  "case_id": "a21-count-1-does-not-ground-100",
+  "description": "Evidence 1 people không ground claim 100 người",
+  "expect_code": "UNGROUNDED_NUMERIC_CLAIM",
+  "context_case": "c09",
+  "analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "week:2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Một dự án chỉ có một người và toàn bộ thuộc Vendor; mẫu quá nhỏ để kết luận.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "provider_mix",
+        "subject_ref": "project_01",
+        "headline": "Dự án có 100 người trong kỳ",
+        "analysis": "Dự án này ghi nhận 100 người nên quy mô đáng kể.",
+        "evidence_refs": [
+          "ev_01"
+        ],
+        "confidence": "low",
+        "limitations": [],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02"
+    ]
+  }
+}

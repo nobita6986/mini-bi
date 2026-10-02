@@ -1,0 +1,71 @@
+{
+  "case_id": "a22-ratio-near-match",
+  "description": "Percent claim lệch khỏi representation deterministic",
+  "expect_code": "UNGROUNDED_NUMERIC_CLAIM",
+  "context_case": "c10",
+  "analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "week:2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Một dự án chiếm toàn bộ 120 người của kỳ và có 110 người đến từ Vendor.",
+    "findings": [
+      {
+        "finding_id": "f_01",
+        "category": "concentration",
+        "subject_ref": "project_02",
+        "headline": "Tỷ lệ Vendor xấp xỉ 96%",
+        "analysis": "Dự án có 120 người và tỷ lệ Vendor ghi nhận 96% trên tổng đã phân loại.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_02",
+        "category": "provider_mix",
+        "subject_ref": "project_02",
+        "headline": "Tỷ lệ Vendor cao trên mẫu lớn",
+        "analysis": "Dự án này có 120 người và 110 người thuộc Vendor, tỷ lệ Vendor xấp xỉ 92% trên mẫu đã phân loại đầy đủ.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03",
+          "ev_06"
+        ],
+        "confidence": "high",
+        "limitations": [],
+        "recommended_action": null
+      },
+      {
+        "finding_id": "f_03",
+        "category": "risk",
+        "subject_ref": "project_02",
+        "headline": "Rủi ro phụ thuộc Vendor có bằng chứng",
+        "analysis": "Với 120 người và tỷ lệ Vendor xấp xỉ 92%, mức phụ thuộc Vendor của dự án này là đáng chú ý.",
+        "evidence_refs": [
+          "ev_01",
+          "ev_02",
+          "ev_03",
+          "ev_06"
+        ],
+        "confidence": "medium",
+        "limitations": [
+          "Chưa có dữ liệu hợp đồng hoặc điều khoản Vendor để đánh giá mức độ rủi ro."
+        ],
+        "recommended_action": null
+      }
+    ],
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06"
+    ]
+  }
+}

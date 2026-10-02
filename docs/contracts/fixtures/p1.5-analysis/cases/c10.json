@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-W40",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -31,7 +31,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "period_2026-W39",
+        "period_ref": "week:2026-W39",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -104,9 +104,11 @@
       "period_points": 10,
       "mean": 105,
       "stddev": 22,
-      "cv": 0.21,
+      "cv": 0.209523809524,
       "trend_direction": "up",
-      "volatility": "medium"
+      "volatility": "low",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "day",
@@ -215,7 +217,7 @@
         "metric": "project_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_02",
         "value": 120,
@@ -229,7 +231,7 @@
         "metric": "project_vendor_share",
         "formula": "vendor_count / known_total",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_02",
         "value": 0.9167,
@@ -243,7 +245,7 @@
         "metric": "project_known_coverage",
         "formula": "known_total / project_total",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_02",
         "value": 1,
@@ -257,7 +259,7 @@
         "metric": "recruited_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 120,
@@ -271,7 +273,7 @@
         "metric": "project_share_of_total",
         "formula": "project_total / recruited_total",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_02",
         "value": 1,
@@ -285,7 +287,7 @@
         "metric": "project_vendor_count",
         "formula": "sum(recruited_count) where provider_type_key = vendor",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_02",
         "value": 110,
@@ -294,7 +296,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "unavailable",
+      "coverage_ratio": null,
+      "mapped_subjects": 0,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -317,7 +326,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Một dự án chiếm toàn bộ 120 người của kỳ và có 110 người đến từ Vendor.",
     "findings": [
@@ -371,11 +380,19 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06"
+    ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Dự án này chiếm toàn bộ kết quả của kỳ và phụ thuộc Vendor.",
     "findings": [
@@ -408,7 +425,15 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06"
+    ]
   },
   "forbidden_expected_code": "RISK_WITHOUT_LIMITATIONS"
 }

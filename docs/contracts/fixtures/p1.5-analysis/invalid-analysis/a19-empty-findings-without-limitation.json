@@ -1,0 +1,25 @@
+{
+  "case_id": "a19-empty-findings-without-limitation",
+  "description": "findings rỗng nhưng executive không nêu giới hạn",
+  "expect_code": "EMPTY_FINDINGS_WITHOUT_LIMITATION",
+  "context_case": "c01",
+  "analysis": {
+    "contract_version": "business-analysis/0.1",
+    "period_ref": "week:2026-W40",
+    "report_status": "draft",
+    "executive_analysis": "Kỳ này ghi nhận 30 người so với 24 người kỳ trước và không có thay đổi đáng chú ý.",
+    "findings": [],
+    "overall_limitations": [
+      "Báo cáo không có finding nào trong kỳ này."
+    ],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06",
+      "ev_07"
+    ]
+  }
+}

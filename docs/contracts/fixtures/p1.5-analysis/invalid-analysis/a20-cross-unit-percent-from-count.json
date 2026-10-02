@@ -1,11 +1,11 @@
 {
-  "case_id": "a02-period-ref-mismatch",
-  "description": "period_ref khác packet",
-  "expect_code": "PERIOD_REF_MISMATCH",
+  "case_id": "a20-cross-unit-percent-from-count",
+  "description": "Claim % chỉ có evidence people",
+  "expect_code": "UNGROUNDED_NUMERIC_CLAIM",
   "context_case": "c01",
   "analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "week:2026-W39",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Mức tăng tập trung ở một team.",
     "findings": [
@@ -13,12 +13,10 @@
         "finding_id": "f_01",
         "category": "trend",
         "subject_ref": "scope",
-        "headline": "Tổng tăng so với kỳ so sánh",
-        "analysis": "Tổng kỳ này là 30 người so với 24 người ở kỳ so sánh, tức tăng 6 người.",
+        "headline": "Tổng kỳ này đạt 30 người",
+        "analysis": "Tổng kỳ này là 30 người, tương đương 50% kế hoạch đề ra.",
         "evidence_refs": [
-          "ev_01",
-          "ev_02",
-          "ev_03"
+          "ev_01"
         ],
         "confidence": "high",
         "limitations": [],

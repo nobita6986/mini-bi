@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-W40",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -31,7 +31,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "period_2026-W39",
+        "period_ref": "week:2026-W39",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -95,9 +95,11 @@
       "period_points": 6,
       "mean": 19,
       "stddev": 2,
-      "cv": 0.105,
+      "cv": 0.105263157895,
       "trend_direction": "down",
-      "volatility": "low"
+      "volatility": "low",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "day",
@@ -201,7 +203,7 @@
         "metric": "recruited_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 18,
@@ -215,7 +217,7 @@
         "metric": "recruited_total_previous",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 20,
@@ -229,7 +231,7 @@
         "metric": "recruited_delta",
         "formula": "current - comparable",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": -2,
@@ -243,7 +245,7 @@
         "metric": "source_status_partial_count",
         "formula": "count(sources where status = incomplete)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 1,
@@ -257,7 +259,7 @@
         "metric": "source_status_failed_count",
         "formula": "count(sources where status = stale_snapshot)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 1,
@@ -271,7 +273,7 @@
         "metric": "sources_in_scope_count",
         "formula": "count(sources in reporting scope)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 4,
@@ -285,7 +287,7 @@
         "metric": "sources_not_fully_covered_count",
         "formula": "count(sources where status != covered)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 2,
@@ -294,7 +296,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "unavailable",
+      "coverage_ratio": null,
+      "mapped_subjects": 0,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -315,7 +324,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Tổng kỳ này là 18 người so với 20 kỳ trước; hai nguồn chưa ở trạng thái đầy đủ nên độ tin cậy bị giới hạn.",
     "findings": [
@@ -371,13 +380,22 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06",
+      "ev_07"
+    ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
-    "executive_analysis": "Tổng kỳ này là 18 người so với 20 kỳ trước; số liệu hoàn toàn đáng tin cậy.",
+    "executive_analysis": "Tổng kỳ này là 18 người so với 20 kỳ trước; hai nguồn chưa ở trạng thái đầy đủ nên độ tin cậy bị giới hạn.",
     "findings": [
       {
         "finding_id": "f_01",
@@ -390,26 +408,39 @@
           "ev_02",
           "ev_03"
         ],
-        "confidence": "high",
-        "limitations": [],
+        "confidence": "medium",
+        "limitations": [
+          "Một nguồn partial và một nguồn dùng snapshot cũ."
+        ],
         "recommended_action": null
       },
       {
-        "finding_id": "f_02",
-        "category": "data_quality",
+        "finding_id": "f_03",
+        "category": "risk",
         "subject_ref": "scope",
-        "headline": "Hai nguồn chưa đầy đủ trong kỳ",
-        "analysis": "Có 1 nguồn partial và 1 nguồn dùng snapshot cũ.",
+        "headline": "Độ tin cậy số liệu bị giới hạn",
+        "analysis": "Với 2 nguồn chưa đầy đủ trên 4 nguồn, kết luận xu hướng cần thận trọng.",
         "evidence_refs": [
           "ev_04",
-          "ev_05"
+          "ev_05",
+          "ev_06",
+          "ev_07"
         ],
-        "confidence": "high",
+        "confidence": "medium",
         "limitations": [],
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06",
+      "ev_07"
+    ]
   },
-  "forbidden_expected_code": "FINDINGS_BELOW_MINIMUM"
+  "forbidden_expected_code": "RISK_WITHOUT_LIMITATIONS"
 }

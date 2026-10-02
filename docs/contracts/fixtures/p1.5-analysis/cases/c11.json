@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-W40",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -31,7 +31,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "period_2026-W39",
+        "period_ref": "week:2026-W39",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -97,7 +97,9 @@
       "stddev": null,
       "cv": null,
       "trend_direction": "unknown",
-      "volatility": "unknown"
+      "volatility": "unknown",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "day",
@@ -201,7 +203,7 @@
         "metric": "project_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_03",
         "value": 20,
@@ -215,7 +217,7 @@
         "metric": "project_known_coverage",
         "formula": "known_total / project_total",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_03",
         "value": 0.5,
@@ -229,7 +231,7 @@
         "metric": "project_hrp_share",
         "formula": "hrp_count / known_total",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_03",
         "value": 0.5,
@@ -243,7 +245,7 @@
         "metric": "project_unknown_count",
         "formula": "sum(recruited_count) where provider_type_key = __unknown__",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_03",
         "value": 7,
@@ -257,7 +259,7 @@
         "metric": "project_invalid_count",
         "formula": "sum(recruited_count) where provider_type_key = __invalid__",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_03",
         "value": 3,
@@ -271,7 +273,7 @@
         "metric": "project_known_total",
         "formula": "hrp_count + vendor_count",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_03",
         "value": 10,
@@ -280,7 +282,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "unavailable",
+      "coverage_ratio": null,
+      "mapped_subjects": 0,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -301,7 +310,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Dự án này có 20 người nhưng chỉ một nửa được phân loại HRP/Vendor.",
     "findings": [
@@ -352,11 +361,19 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06"
+    ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Dự án này có 20 người nhưng chỉ một nửa được phân loại.",
     "findings": [
@@ -389,7 +406,15 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06"
+    ]
   },
   "forbidden_expected_code": "UNGROUNDED_NUMERIC_CLAIM"
 }

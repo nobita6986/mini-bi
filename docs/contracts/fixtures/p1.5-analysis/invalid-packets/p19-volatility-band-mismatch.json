@@ -1,7 +1,7 @@
 {
-  "case_id": "p01-unknown-field",
-  "description": "Field lạ ngoài contract ở cấp packet",
-  "expect_code": "UNKNOWN_FIELD",
+  "case_id": "p19-volatility-band-mismatch",
+  "description": "volatility sai band của cv",
+  "expect_code": "VOLATILITY_BAND_MISMATCH",
   "context_case": "c01",
   "packet": {
     "contract_version": "analysis-packet/0.1",
@@ -125,7 +125,7 @@
       "stddev": 4,
       "cv": 0.133333333333,
       "trend_direction": "up",
-      "volatility": "low",
+      "volatility": "high",
       "formula": "population_stddev / mean",
       "formula_version": "cv-population/1.0"
     },
@@ -389,7 +389,6 @@
       "mapped_subjects": 2,
       "unmapped_subjects": 0,
       "reason_code": "TEAM_MAPPING_AVAILABLE"
-    },
-    "extra_field": "x"
+    }
   }
 }

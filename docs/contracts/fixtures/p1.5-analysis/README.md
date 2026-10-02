@@ -7,16 +7,17 @@ tên file/Drive ID hay secret. Fixture chỉ dùng để test strict schema + lu
 
 | Thư mục | Nội dung |
 |---|---|
-| `cases/` | 12 golden case. Mỗi file: `{ case_id, title, packet, expected, allowed_analysis, forbidden_analysis, forbidden_expected_code }` |
-| `invalid-packets/` | 14 packet sai. Mỗi file: `{ case_id, description, expect_code, context_case, packet }` |
-| `invalid-analysis/` | 14 output sai. Mỗi file: `{ case_id, description, expect_code, context_case, analysis }` |
+| `cases/` | **12** golden case. Mỗi file: `{ case_id, title, packet, expected, allowed_analysis, forbidden_analysis, forbidden_expected_code }` |
+| `invalid-packets/` | **22** packet sai. Mỗi file: `{ case_id, description, expect_code, context_case, packet }` |
+| `invalid-analysis/` | **22** output sai. Mỗi file: `{ case_id, description, expect_code, context_case, analysis }` |
 | `valid/` | 1 packet hợp lệ + 1 output hợp lệ (positive path) |
 
 ## Cách test dùng fixture
 
 1. `validateAnalysisPacket(case.packet)` phải `ok`.
-2. Context cho output dựng từ packet đã validate: `{ periodRef, evidenceIds, subjectRefs, evidence, insufficientKeys }`.
-   `insufficientKeys` = các sufficiency key có `status = "not_met"` (phải khớp `expected.insufficient_keys`).
+2. Context cho output dựng từ packet đã validate: `{ periodRef, evidenceIds, subjectRefs, evidence, insufficientKeys, teamAvailability }`.
+   `insufficientKeys` = các sufficiency key có `status = "not_met"` (phải khớp `expected.insufficient_keys`);
+   `teamAvailability` = `packet.team_mapping.availability`.
 3. `validateBusinessAnalysis(case.allowed_analysis, context)` phải `ok` — đây là “finding được phép”.
 4. `validateBusinessAnalysis(case.forbidden_analysis, context)` phải fail đúng `forbidden_expected_code` — “finding bị cấm”.
 5. Với `invalid-*/`: validator phải trả đúng `expect_code`.
@@ -37,6 +38,18 @@ tên file/Drive ID hay secret. Fixture chỉ dùng để test strict schema + lu
 | c10 | Vendor share cao, volume lớn | Cho phép risk **kèm** limitation; cấm risk không limitation |
 | c11 | Project có provider unknown/invalid | Share chỉ trên known_total; cấm tính unknown vào HRP/Vendor |
 | c12 | Nhãn dimension giống prompt injection | Packet chỉ chứa opaque ref; cấm nội dung injection trong packet/report |
+
+## R1 hardening (đã áp dụng trong fixture)
+
+- `period_ref` chuyển sang `week:YYYY-Www` / `month:YYYY-MM` / `quarter:YYYY-Qn` / `custom:YYYY-MM-DD/YYYY-MM-DD`
+  (format `period_*` cũ đã bỏ); mọi evidence `period_ref` khớp kỳ hiện tại.
+- `stability` có `formula` + `formula_version` (`cv-population/1.0`) và `cv/volatility` được tính lại theo band đã khóa.
+- `team_mapping` được thêm vào mọi packet (c01/c02 `available` với coverage 1; các case còn lại `unavailable`).
+- `executive_evidence_refs` được thêm vào mọi output (allowed + forbidden).
+- `findings = []` hợp lệ khi có limitation; **không** còn ngưỡng tối thiểu 3 finding.
+- 8 invalid packet mới: period type/range mismatch, comparable khác loại kỳ, stability/volatility sai, team mapping sai.
+- 8 invalid analysis mới: thiếu ref executive, ref executive treo, số executive/limitation không ground,
+  findings rỗng không limitation, cross-unit %, count 1 ground “100 người”, percent lệch representation.
 
 ## Invariants toán học được test
 

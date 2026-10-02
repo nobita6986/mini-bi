@@ -1,13 +1,13 @@
 {
-  "case_id": "a02-period-ref-mismatch",
-  "description": "period_ref khác packet",
-  "expect_code": "PERIOD_REF_MISMATCH",
+  "case_id": "a17-ungrounded-executive",
+  "description": "Số trong executive_analysis không ground",
+  "expect_code": "UNGROUNDED_NUMERIC_CLAIM",
   "context_case": "c01",
   "analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "week:2026-W39",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
-    "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Mức tăng tập trung ở một team.",
+    "executive_analysis": "Kỳ này ghi nhận 999 người, tăng mạnh so với kỳ so sánh trước đó.",
     "findings": [
       {
         "finding_id": "f_01",

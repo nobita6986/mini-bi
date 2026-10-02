@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-10-PTD",
+      "period_ref": "month:2026-10",
       "type": "month",
       "start": "2026-10-01",
       "end": "2026-10-31",
@@ -31,7 +31,7 @@
       "period_to_date": true,
       "elapsed_days": 3,
       "comparable": {
-        "period_ref": "period_2026-09-PTD3",
+        "period_ref": "month:2026-09",
         "start": "2026-09-01",
         "end": "2026-09-30",
         "elapsed_days": 3
@@ -97,7 +97,9 @@
       "stddev": 1,
       "cv": 0.25,
       "trend_direction": "up",
-      "volatility": "medium"
+      "volatility": "medium",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "day",
@@ -217,7 +219,7 @@
         "metric": "recruited_total_ptd",
         "formula": "sum(recruited_count) period-to-date",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-10-PTD",
+        "period_ref": "month:2026-10",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 6,
@@ -231,7 +233,7 @@
         "metric": "recruited_total_previous_same_elapsed",
         "formula": "previous period, same elapsed days",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-10-PTD",
+        "period_ref": "month:2026-10",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 4,
@@ -245,7 +247,7 @@
         "metric": "recruited_delta_ptd",
         "formula": "ptd - previous_same_elapsed",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-10-PTD",
+        "period_ref": "month:2026-10",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 2,
@@ -259,7 +261,7 @@
         "metric": "period_elapsed_days",
         "formula": "count(elapsed business days in period-to-date)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-10-PTD",
+        "period_ref": "month:2026-10",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 3,
@@ -268,7 +270,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "unavailable",
+      "coverage_ratio": null,
+      "mapped_subjects": 0,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -288,7 +297,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-10-PTD",
+    "period_ref": "month:2026-10",
     "report_status": "draft",
     "executive_analysis": "Ba ngày đầu tháng ghi nhận 6 người, so với 4 người cùng 3 ngày của tháng trước.",
     "findings": [
@@ -340,11 +349,17 @@
     ],
     "overall_limitations": [
       "Kỳ chưa kết thúc, chỉ so theo số ngày đã trôi qua."
+    ],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04"
     ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-10-PTD",
+    "period_ref": "month:2026-10",
     "report_status": "draft",
     "executive_analysis": "Tháng này ghi nhận 6 người, thấp hơn nhiều so với tổng 30 người của tháng trước.",
     "findings": [
@@ -362,7 +377,13 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04"
+    ]
   },
   "forbidden_expected_code": "UNGROUNDED_NUMERIC_CLAIM"
 }

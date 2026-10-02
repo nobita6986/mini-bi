@@ -19,19 +19,28 @@ import {
   ISO_UTC_DATETIME_RE,
   METRIC_KEY_RE,
   PERIOD_REF_RE,
+  PERIOD_REF_RE_BY_TYPE,
   PERIOD_STATUS,
   PERIOD_TYPES,
   QUALITY_STATUS,
   SOURCE_REF_RE,
   SOURCE_STATUSES,
+  STABILITY_FORMULA,
+  STABILITY_FORMULA_VERSION,
+  STABILITY_MIN_POINTS,
   SUBJECT_REF_RE,
   SUFFICIENCY_KEYS,
   SUFFICIENCY_REQUIREMENTS,
   SUFFICIENCY_STATUS,
+  TEAM_AVAILABILITY,
+  TEAM_SUBJECT_REF_RE,
   TIMEZONE,
   TREND_DIRECTIONS,
   UNITS,
   VOLATILITY_LEVELS,
+  VOLATILITY_LOW_MAX,
+  VOLATILITY_MEDIUM_MAX,
+  customRefRange,
   scanProhibitedContent,
 } from "./shared.mjs";
 
@@ -111,6 +120,13 @@ export const analysisPacketSchema = z
       sources_in_scope: z.number().int().min(0),
       dimensions: z.array(z.enum(DIMENSIONS)).min(1),
     }),
+    team_mapping: z.strictObject({
+      availability: z.enum(TEAM_AVAILABILITY),
+      coverage_ratio: unitLike.nullable(),
+      mapped_subjects: z.number().int().min(0),
+      unmapped_subjects: z.number().int().min(0),
+      reason_code: z.string().regex(/^[A-Z][A-Z0-9_]{2,40}$/),
+    }),
     period: z.strictObject({
       period_ref: periodRef,
       type: z.enum(PERIOD_TYPES),
@@ -143,6 +159,8 @@ export const analysisPacketSchema = z
       employment: concentrationEntrySchema,
     }),
     stability: z.strictObject({
+      formula: z.literal(STABILITY_FORMULA),
+      formula_version: z.literal(STABILITY_FORMULA_VERSION),
       period_points: z.number().int().min(0).max(400),
       mean: z.number().finite().nullable(),
       stddev: z.number().finite().nullable(),
@@ -236,6 +254,64 @@ function firstIssue(error: z.ZodError): ContractValidationError {
 /** Kiểm tra ngữ nghĩa chéo (sau khi schema hợp lệ). Trả về lỗi đầu tiên hoặc null. */
 export function checkPacketSemantics(packet: AnalysisPacket): ContractValidationError | null {
   const fail = (code: string, message: string, path?: string): ContractValidationError => ({ ok: false, code, message, path });
+
+  // 0. Period ref (R1): prefix bắt buộc khớp period.type; custom phải khớp đúng start/end.
+  const refRe = PERIOD_REF_RE_BY_TYPE[packet.period.type];
+  if (!refRe.test(packet.period.period_ref)) {
+    return fail("PERIOD_REF_TYPE_MISMATCH", "period_ref không khớp period.type=" + packet.period.type, "period.period_ref");
+  }
+  if (packet.period.type === "custom") {
+    const range = customRefRange(packet.period.period_ref);
+    if (!range || range.start !== packet.period.start || range.end !== packet.period.end) {
+      return fail("PERIOD_REF_RANGE_MISMATCH", "custom period_ref không khớp period.start/period.end", "period.period_ref");
+    }
+  }
+  if (packet.period.comparable) {
+    if (!refRe.test(packet.period.comparable.period_ref)) {
+      return fail("COMPARABLE_PERIOD_TYPE_MISMATCH", "comparable.period_ref khác loại kỳ với kỳ hiện tại", "period.comparable.period_ref");
+    }
+    if (packet.period.type === "custom") {
+      const cRange = customRefRange(packet.period.comparable.period_ref);
+      if (!cRange || cRange.start !== packet.period.comparable.start || cRange.end !== packet.period.comparable.end) {
+        return fail("COMPARABLE_PERIOD_TYPE_MISMATCH", "custom comparable.period_ref không khớp start/end", "period.comparable.period_ref");
+      }
+    }
+  }
+
+  // 0b. Stability (R1): cv = population stddev / mean; band đã khóa; thiếu điểm hoặc mean<=0 => unknown.
+  const st = packet.stability;
+  if (st.period_points < STABILITY_MIN_POINTS || st.mean === null || st.mean <= 0) {
+    if (st.cv !== null || st.volatility !== "unknown") {
+      return fail("STABILITY_INCONSISTENT", "period_points<4 hoặc mean<=0 nhưng cv/volatility không phải null/unknown", "stability");
+    }
+  } else if (st.cv === null || st.stddev === null || st.stddev < 0) {
+    return fail("STABILITY_INCONSISTENT", "thiếu cv/stddev dù đủ điểm và mean>0", "stability");
+  } else {
+    const expectedCv = st.stddev / st.mean;
+    if (Math.abs(st.cv - expectedCv) > 1e-9) {
+      return fail("STABILITY_INCONSISTENT", "cv không khớp stddev/mean", "stability");
+    }
+    const band = st.cv < VOLATILITY_LOW_MAX ? "low" : st.cv < VOLATILITY_MEDIUM_MAX ? "medium" : "high";
+    if (st.volatility !== band) {
+      return fail("VOLATILITY_BAND_MISMATCH", "volatility không khớp band của cv", "stability.volatility");
+    }
+  }
+
+  // 0c. Team mapping (R1): optional, không suy team từ recruiter/source/project.
+  const tm = packet.team_mapping;
+  const teamSubjectCount = packet.subjects.filter((s) => TEAM_SUBJECT_REF_RE.test(s.ref)).length;
+  if (tm.mapped_subjects !== teamSubjectCount) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "mapped_subjects không khớp số team subject trong scope", "team_mapping");
+  }
+  if ((tm.availability === "unavailable" || tm.availability === "ambiguous") && (teamSubjectCount > 0 || packet.drivers.team.length > 0)) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "team " + tm.availability + " nhưng vẫn có team subject/driver", "team_mapping");
+  }
+  if (tm.availability === "available" && tm.coverage_ratio !== 1) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "team available phải có coverage_ratio = 1", "team_mapping");
+  }
+  if (tm.availability === "partial" && (tm.coverage_ratio === null || tm.coverage_ratio <= 0 || tm.coverage_ratio >= 1)) {
+    return fail("TEAM_MAPPING_INCONSISTENT", "team partial phải có coverage_ratio trong (0,1)", "team_mapping");
+  }
 
   // 1. Evidence: id duy nhất, snapshot khớp packet, subject tồn tại.
   const evidenceIds = new Set<string>();

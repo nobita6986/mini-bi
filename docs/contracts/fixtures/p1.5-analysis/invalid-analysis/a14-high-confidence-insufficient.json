@@ -5,7 +5,7 @@
   "context_case": "c03",
   "analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Chỉ có 2 kỳ hoàn tất nên chưa đủ baseline; mọi nhận định chỉ ở mức tham khảo.",
     "findings": [
@@ -29,6 +29,11 @@
     ],
     "overall_limitations": [
       "Chưa đủ baseline tuần để kết luận xu hướng ổn định."
+    ],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03"
     ]
   }
 }

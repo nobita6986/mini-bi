@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-W40",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -31,7 +31,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "period_2026-W39",
+        "period_ref": "week:2026-W39",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -104,9 +104,11 @@
       "period_points": 6,
       "mean": 23,
       "stddev": 5,
-      "cv": 0.22,
+      "cv": 0.217391304348,
       "trend_direction": "down",
-      "volatility": "medium"
+      "volatility": "low",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "week",
@@ -231,7 +233,7 @@
         "metric": "recruited_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 20,
@@ -245,7 +247,7 @@
         "metric": "recruited_total_previous",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 26,
@@ -259,7 +261,7 @@
         "metric": "recruited_delta",
         "formula": "current - comparable",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": -6,
@@ -273,7 +275,7 @@
         "metric": "recruiter_delta",
         "formula": "current - comparable by recruiter",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "recruiter_02",
         "value": 3,
@@ -282,7 +284,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "unavailable",
+      "coverage_ratio": null,
+      "mapped_subjects": 0,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_UNAVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -303,7 +312,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Tổng kỳ này là 20 người, giảm 6 so với kỳ so sánh 26; một recruiter vẫn tăng 3 người.",
     "findings": [
@@ -352,11 +361,17 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04"
+    ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Tổng kỳ này là 20 người, giảm 6 so với kỳ so sánh 26.",
     "findings": [
@@ -389,7 +404,13 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04"
+    ]
   },
   "forbidden_expected_code": "PROHIBITED_PERFORMANCE_JUDGEMENT"
 }

@@ -5,7 +5,7 @@
   "context_case": "c01",
   "analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Mức tăng tập trung ở một team.",
     "findings": [
@@ -71,6 +71,15 @@
     ],
     "overall_limitations": [
       "Báo cáo chỉ dùng dữ liệu reporting hiện có, không có target hoặc số ngày làm việc."
+    ],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06",
+      "ev_07"
     ]
   }
 }

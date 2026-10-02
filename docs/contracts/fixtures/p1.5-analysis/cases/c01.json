@@ -22,7 +22,7 @@
       ]
     },
     "period": {
-      "period_ref": "period_2026-W40",
+      "period_ref": "week:2026-W40",
       "type": "week",
       "start": "2026-09-28",
       "end": "2026-10-04",
@@ -31,7 +31,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "period_2026-W39",
+        "period_ref": "week:2026-W39",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -121,9 +121,11 @@
       "period_points": 8,
       "mean": 30,
       "stddev": 4,
-      "cv": 0.13,
+      "cv": 0.133333333333,
       "trend_direction": "up",
-      "volatility": "low"
+      "volatility": "low",
+      "formula": "population_stddev / mean",
+      "formula_version": "cv-population/1.0"
     },
     "series": {
       "granularity": "week",
@@ -285,7 +287,7 @@
         "metric": "recruited_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 30,
@@ -299,7 +301,7 @@
         "metric": "recruited_total_previous",
         "formula": "sum(recruited_count) previous comparable period",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 24,
@@ -313,7 +315,7 @@
         "metric": "recruited_delta",
         "formula": "current - comparable",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "scope",
         "value": 6,
@@ -327,7 +329,7 @@
         "metric": "team_delta",
         "formula": "current - comparable by team",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "team_01",
         "value": 4,
@@ -341,7 +343,7 @@
         "metric": "team_delta_share",
         "formula": "team_delta / total_delta",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "team_01",
         "value": 0.667,
@@ -355,7 +357,7 @@
         "metric": "project_vendor_share",
         "formula": "vendor_count / known_total",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_01",
         "value": 0.5,
@@ -369,7 +371,7 @@
         "metric": "project_total",
         "formula": "sum(recruited_count)",
         "formula_version": "v0.1",
-        "period_ref": "period_2026-W40",
+        "period_ref": "week:2026-W40",
         "scope_ref": "3333333333333333333333333333333333333333333333333333333333333333",
         "subject_ref": "project_01",
         "value": 12,
@@ -378,7 +380,14 @@
         "quality": "ok",
         "snapshot_ref": "1111111111111111111111111111111111111111111111111111111111111111"
       }
-    ]
+    ],
+    "team_mapping": {
+      "availability": "available",
+      "coverage_ratio": 1,
+      "mapped_subjects": 2,
+      "unmapped_subjects": 0,
+      "reason_code": "TEAM_MAPPING_AVAILABLE"
+    }
   },
   "expected": {
     "packet_valid": true,
@@ -404,7 +413,7 @@
   },
   "allowed_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Mức tăng tập trung ở một team.",
     "findings": [
@@ -455,11 +464,20 @@
     ],
     "overall_limitations": [
       "Báo cáo chỉ dùng dữ liệu reporting hiện có, không có target hoặc số ngày làm việc."
+    ],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06",
+      "ev_07"
     ]
   },
   "forbidden_analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "period_2026-W40",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Team còn lại làm việc kém hiệu quả.",
     "findings": [
@@ -507,7 +525,16 @@
         "recommended_action": null
       }
     ],
-    "overall_limitations": []
+    "overall_limitations": [],
+    "executive_evidence_refs": [
+      "ev_01",
+      "ev_02",
+      "ev_03",
+      "ev_04",
+      "ev_05",
+      "ev_06",
+      "ev_07"
+    ]
   },
   "forbidden_expected_code": "PROHIBITED_PERFORMANCE_JUDGEMENT"
 }

@@ -1,7 +1,7 @@
 {
-  "case_id": "p01-unknown-field",
-  "description": "Field lạ ngoài contract ở cấp packet",
-  "expect_code": "UNKNOWN_FIELD",
+  "case_id": "p17-comparable-period-type-mismatch",
+  "description": "comparable.period_ref khác loại kỳ",
+  "expect_code": "COMPARABLE_PERIOD_TYPE_MISMATCH",
   "context_case": "c01",
   "packet": {
     "contract_version": "analysis-packet/0.1",
@@ -33,7 +33,7 @@
       "period_to_date": false,
       "elapsed_days": 7,
       "comparable": {
-        "period_ref": "week:2026-W39",
+        "period_ref": "month:2026-09",
         "start": "2026-09-21",
         "end": "2026-09-27",
         "elapsed_days": 7
@@ -389,7 +389,6 @@
       "mapped_subjects": 2,
       "unmapped_subjects": 0,
       "reason_code": "TEAM_MAPPING_AVAILABLE"
-    },
-    "extra_field": "x"
+    }
   }
 }

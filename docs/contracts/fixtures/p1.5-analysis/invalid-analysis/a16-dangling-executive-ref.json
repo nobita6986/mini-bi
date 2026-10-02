@@ -1,11 +1,11 @@
 {
-  "case_id": "a02-period-ref-mismatch",
-  "description": "period_ref khác packet",
-  "expect_code": "PERIOD_REF_MISMATCH",
+  "case_id": "a16-dangling-executive-ref",
+  "description": "executive_evidence_refs trỏ evidence không tồn tại",
+  "expect_code": "DANGLING_EVIDENCE_REF",
   "context_case": "c01",
   "analysis": {
     "contract_version": "business-analysis/0.1",
-    "period_ref": "week:2026-W39",
+    "period_ref": "week:2026-W40",
     "report_status": "draft",
     "executive_analysis": "Kỳ này ghi nhận 30 người, tăng 6 so với kỳ so sánh 24. Mức tăng tập trung ở một team.",
     "findings": [
@@ -58,13 +58,7 @@
       "Báo cáo chỉ dùng dữ liệu reporting hiện có, không có target hoặc số ngày làm việc."
     ],
     "executive_evidence_refs": [
-      "ev_01",
-      "ev_02",
-      "ev_03",
-      "ev_04",
-      "ev_05",
-      "ev_06",
-      "ev_07"
+      "ev_99"
     ]
   }
 }

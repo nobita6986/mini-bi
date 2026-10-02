@@ -19,6 +19,7 @@ function contextFromPacket(packet) {
     subjectRefs: packet.subjects.map((s) => s.ref),
     evidence: packet.evidence.map((e) => ({ evidence_id: e.evidence_id, value: e.value, unit: e.unit })),
     insufficientKeys: packet.sufficiency.filter((s) => s.status === "not_met").map((s) => s.key),
+    teamAvailability: packet.team_mapping.availability,
   };
 }
 function contextForCase(id) {
@@ -172,11 +173,282 @@ test("golden case không chứa PII/secret/tên thật; subject ref là opaque",
     const all = JSON.stringify(c);
     assert.ok(!/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.test(all), c.case_id + " email");
     assert.ok(!/sk-[A-Za-z0-9]{16,}/.test(all), c.case_id + " api key");
-    assert.ok(!/(?:\+84|0)\d{9,10}\b/.test(all), c.case_id + " phone");
+    assert.ok(!/(?:\+84|\b0)\d{9,10}\b/.test(all), c.case_id + " phone");
     const refs = c.packet.subjects.map((s) => s.ref);
     assert.ok(refs.includes("scope"));
     assert.ok(refs.every((r) => /^(scope|(project|recruiter|team)_[0-9]{2,}|provider_(hrp|vendor|unknown|invalid)|employment_(seasonal|official|unknown|invalid))$/.test(r)), "opaque ref " + c.case_id);
   }
   const invalid = listJson("invalid-analysis/").map((f) => JSON.stringify(readJson("invalid-analysis/" + f))).join("");
   assert.ok(/sk-[A-Za-z0-9]{16,}/.test(invalid), "invalid fixtures phải có case secret để test rejection");
+});
+
+// ---------------------------------------------------------------------------
+// R1 — period_ref
+// ---------------------------------------------------------------------------
+
+test("R1 period_ref: mọi loại kỳ hợp lệ khi prefix khớp type", () => {
+  const valid = [
+    ["week", "week:2026-W01", ["2026-01-01", "2026-01-07"]],
+    ["week", "week:2026-W53", ["2026-12-01", "2026-12-07"]],
+    ["month", "month:2026-01", ["2026-01-01", "2026-01-31"]],
+    ["month", "month:2026-12", ["2026-12-01", "2026-12-31"]],
+    ["quarter", "quarter:2026-Q1", ["2026-01-01", "2026-03-31"]],
+    ["quarter", "quarter:2026-Q4", ["2026-10-01", "2026-12-31"]],
+    ["custom", "custom:2026-09-01/2026-09-30", ["2026-09-01", "2026-09-30"]],
+  ];
+  for (const [type, ref, [start, end]] of valid) {
+    const packet = JSON.parse(JSON.stringify(caseById("c01").packet));
+    packet.period.type = type;
+    packet.period.period_ref = ref;
+    packet.period.start = start;
+    packet.period.end = end;
+    packet.period.comparable = null;
+    packet.totals.comparable = null;
+    packet.totals.delta = null;
+    packet.totals.delta_pct = null;
+    for (const e of packet.evidence) e.period_ref = ref;
+    const res = validateAnalysisPacket(packet);
+    assert.ok(res.ok, ref + " phải hợp lệ: " + (res.ok ? "" : res.code + " " + res.message));
+  }
+});
+
+test("R1 period_ref: sai range/format bị reject", () => {
+  const bad = [
+    ["week", "week:2026-W00"],
+    ["week", "week:2026-W54"],
+    ["week", "week:2026-W1"],
+    ["month", "month:2026-00"],
+    ["month", "month:2026-13"],
+    ["quarter", "quarter:2026-Q5"],
+    ["custom", "custom:2026-09-01"],
+  ];
+  for (const [type, ref] of bad) {
+    const packet = JSON.parse(JSON.stringify(caseById("c01").packet));
+    packet.period.type = type;
+    packet.period.period_ref = ref;
+    assert.equal(validateAnalysisPacket(packet).ok, false, ref + " phải bị reject");
+  }
+});
+
+test("R1 period_ref: type mismatch, custom range mismatch, comparable khác loại kỳ", () => {
+  const base = caseById("c01").packet;
+  const mk = () => JSON.parse(JSON.stringify(base));
+
+  const a = mk();
+  a.period.period_ref = "month:2026-10";
+  assert.equal(validateAnalysisPacket(a).code, "PERIOD_REF_TYPE_MISMATCH");
+
+  const b = mk();
+  b.period.type = "custom";
+  b.period.period_ref = "custom:2026-09-01/2026-09-30";
+  b.period.comparable = null;
+  b.totals.comparable = null;
+  b.totals.delta = null;
+  b.totals.delta_pct = null;
+  assert.equal(validateAnalysisPacket(b).code, "PERIOD_REF_RANGE_MISMATCH");
+
+  const c = mk();
+  c.period.comparable.period_ref = "month:2026-09";
+  assert.equal(validateAnalysisPacket(c).code, "COMPARABLE_PERIOD_TYPE_MISMATCH");
+});
+
+// ---------------------------------------------------------------------------
+// R1 — findings 0..7 (không ép AI bịa finding)
+// ---------------------------------------------------------------------------
+
+test("R1 findings: 0 finding hợp lệ khi có limitation + executive nêu giới hạn", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.findings = [];
+  a.overall_limitations = ["Chưa đủ dữ liệu để kết luận xu hướng trong kỳ này."];
+  a.executive_analysis = "Kỳ này ghi nhận 30 người so với 24 người kỳ trước; chưa đủ dữ liệu để kết luận xu hướng nên báo cáo không đưa ra finding nào.";
+  const res = validateBusinessAnalysis(a, ctx);
+  assert.ok(res.ok, res.ok ? "" : res.code + " " + res.message);
+});
+
+test("R1 findings: 0 finding nhưng thiếu limitation bị reject", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.findings = [];
+  a.overall_limitations = [];
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "EMPTY_FINDINGS_WITHOUT_LIMITATION");
+});
+
+test("R1 findings: không còn tối thiểu 3 finding khi baseline đạt", () => {
+  const ctx = contextForCase("c01");
+  assert.deepEqual(ctx.insufficientKeys, []);
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.findings = [a.findings[0]];
+  const res = validateBusinessAnalysis(a, ctx);
+  assert.ok(res.ok, "1 finding phải hợp lệ khi baseline đạt: " + (res.ok ? "" : res.code));
+});
+
+test("R1 findings: 8 finding vẫn bị reject bởi schema", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  const f = a.findings[0];
+  for (let i = 4; i <= 9; i++) { const n = JSON.parse(JSON.stringify(f)); n.finding_id = "f_0" + i; a.findings.push(n); }
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "SCHEMA_INVALID");
+});
+
+// ---------------------------------------------------------------------------
+// R1 — unit-aware grounding
+// ---------------------------------------------------------------------------
+
+test("R1 grounding: count 1 KHÔNG ground claim 100 người", () => {
+  const ctx = contextForCase("c09");
+  const a = JSON.parse(JSON.stringify(caseById("c09").allowed_analysis));
+  a.findings = [a.findings[0]];
+  a.findings[0].evidence_refs = ["ev_01"];
+  a.findings[0].category = "provider_mix";
+  a.findings[0].headline = "Dự án có 100 người trong kỳ";
+  a.findings[0].analysis = "Dự án này ghi nhận 100 người nên quy mô là đáng kể trong kỳ.";
+  a.findings[0].limitations = [];
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+test("R1 grounding: khoảng cách gần (±1) bị reject — không còn dung sai", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.findings = [a.findings[0]];
+  a.findings[0].analysis = "Tổng kỳ này là 31 người so với 24 người kỳ trước.";
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+test("R1 grounding: percent/ratio dùng representation deterministic", () => {
+  const ctx = contextForCase("c10");
+  const base = caseById("c10").allowed_analysis;
+  const mk = (text) => {
+    const a = JSON.parse(JSON.stringify(base));
+    a.findings = [a.findings[1]];
+    a.findings[0].evidence_refs = ["ev_01", "ev_02"];
+    a.findings[0].analysis = text;
+    return a;
+  };
+  // ratio 0.9167 -> 91.67 / 91.7 / 92 đều hợp lệ
+  for (const ok of ["Dự án có 120 người và tỷ lệ Vendor là 92%.", "Dự án có 120 người và tỷ lệ Vendor là 91.7%.", "Dự án có 120 người và tỷ lệ Vendor là 91.67%."]) {
+    const res = validateBusinessAnalysis(mk(ok), ctx);
+    assert.ok(res.ok, ok + " phải hợp lệ: " + (res.ok ? "" : res.code));
+  }
+  // 96% không nằm trong tập representation
+  assert.equal(validateBusinessAnalysis(mk("Dự án có 120 người và tỷ lệ Vendor là 96%."), ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+test("R1 grounding: cross-unit bị reject (people không ground claim %)", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.findings = [a.findings[0]];
+  a.findings[0].evidence_refs = ["ev_01"];
+  a.findings[0].headline = "Tổng kỳ này đạt 30 người";
+  a.findings[0].analysis = "Tổng kỳ này là 30 người, tương đương 50% kế hoạch đề ra.";
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+test("R1 grounding: ratio không tự ground claim số người", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.findings = [a.findings[0]];
+  a.findings[0].evidence_refs = ["ev_05"];
+  a.findings[0].headline = "Team này đóng góp 60 người";
+  a.findings[0].analysis = "Team này đóng góp 60 người trong kỳ phân tích hiện tại.";
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+// ---------------------------------------------------------------------------
+// R1 — executive grounding
+// ---------------------------------------------------------------------------
+
+test("R1 executive: ref phải tồn tại và mọi claim số phải ground", () => {
+  const ctx = contextForCase("c01");
+  const base = caseById("c01").allowed_analysis;
+  const mk = (mutate) => { const a = JSON.parse(JSON.stringify(base)); mutate(a); return a; };
+  assert.equal(validateBusinessAnalysis(mk((a) => { a.executive_evidence_refs = ["ev_99"]; }), ctx).code, "DANGLING_EVIDENCE_REF");
+  assert.equal(validateBusinessAnalysis(mk((a) => { a.executive_analysis = "Kỳ này ghi nhận 999 người, tăng mạnh so với kỳ so sánh."; }), ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+  assert.equal(validateBusinessAnalysis(mk((a) => { a.overall_limitations = ["Chỉ có 99 kỳ hoàn tất nên chưa đủ baseline."]; }), ctx).code, "UNGROUNDED_NUMERIC_CLAIM");
+});
+
+test("R1 executive: limitation không chứa số luôn hợp lệ", () => {
+  const ctx = contextForCase("c01");
+  const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis));
+  a.overall_limitations = ["Chưa có target nên không so sánh được năng lực."];
+  const res = validateBusinessAnalysis(a, ctx);
+  assert.ok(res.ok, res.ok ? "" : res.code + " " + res.message);
+});
+
+// ---------------------------------------------------------------------------
+// R1 — volatility
+// ---------------------------------------------------------------------------
+
+test("R1 volatility: boundary 0.25 = medium, 0.50 = high", () => {
+  const mk = (cv, volatility) => {
+    const p = JSON.parse(JSON.stringify(caseById("c01").packet));
+    p.stability.mean = 100;
+    p.stability.stddev = cv * 100;
+    p.stability.cv = cv;
+    p.stability.volatility = volatility;
+    p.stability.period_points = 8;
+    return p;
+  };
+  assert.ok(validateAnalysisPacket(mk(0.2499, "low")).ok);
+  assert.ok(validateAnalysisPacket(mk(0.25, "medium")).ok);
+  assert.ok(validateAnalysisPacket(mk(0.4999, "medium")).ok);
+  assert.ok(validateAnalysisPacket(mk(0.5, "high")).ok);
+  assert.equal(validateAnalysisPacket(mk(0.25, "low")).code, "VOLATILITY_BAND_MISMATCH");
+  assert.equal(validateAnalysisPacket(mk(0.5, "medium")).code, "VOLATILITY_BAND_MISMATCH");
+});
+
+test("R1 volatility: thiếu 4 điểm hoặc mean <= 0 => cv null + volatility unknown", () => {
+  const mk = (mutate) => { const p = JSON.parse(JSON.stringify(caseById("c01").packet)); mutate(p); return p; };
+  const shortPoints = mk((p) => { p.stability.period_points = 3; });
+  assert.equal(validateAnalysisPacket(shortPoints).code, "STABILITY_INCONSISTENT");
+  const fixed = mk((p) => { p.stability.period_points = 3; p.stability.cv = null; p.stability.volatility = "unknown"; });
+  assert.ok(validateAnalysisPacket(fixed).ok);
+  const zeroMean = mk((p) => { p.stability.mean = 0; p.stability.stddev = 0; p.stability.cv = null; p.stability.volatility = "unknown"; });
+  assert.ok(validateAnalysisPacket(zeroMean).ok);
+  const zeroMeanBad = mk((p) => { p.stability.mean = 0; p.stability.stddev = 0; p.stability.cv = 0; p.stability.volatility = "low"; });
+  assert.equal(validateAnalysisPacket(zeroMeanBad).code, "STABILITY_INCONSISTENT");
+});
+
+// ---------------------------------------------------------------------------
+// R1 — team optional
+// ---------------------------------------------------------------------------
+
+test("R1 team: unavailable/ambiguous phải rỗng team subject + driver", () => {
+  const base = caseById("c01").packet;
+  const mk = () => JSON.parse(JSON.stringify(base));
+  const unavailable = mk();
+  unavailable.team_mapping = { availability: "unavailable", coverage_ratio: null, mapped_subjects: 0, unmapped_subjects: 0, reason_code: "TEAM_MAPPING_UNAVAILABLE" };
+  unavailable.subjects = unavailable.subjects.filter((s) => s.kind !== "team");
+  unavailable.drivers.team = [];
+  unavailable.evidence = unavailable.evidence.filter((e) => e.subject_ref !== "team_01" && e.subject_ref !== "team_02");
+  assert.ok(validateAnalysisPacket(unavailable).ok, "team unavailable rỗng phải hợp lệ");
+
+  const incomplete = mk();
+  incomplete.team_mapping = { availability: "ambiguous", coverage_ratio: null, mapped_subjects: 0, unmapped_subjects: 0, reason_code: "TEAM_MAPPING_AMBIGUOUS" };
+  assert.equal(validateAnalysisPacket(incomplete).code, "TEAM_MAPPING_INCONSISTENT");
+});
+
+test("R1 team: partial yêu cầu coverage trong (0,1) và finding team phải có limitation, không high", () => {
+  const packet = JSON.parse(JSON.stringify(caseById("c01").packet));
+  packet.team_mapping = { availability: "partial", coverage_ratio: 0.5, mapped_subjects: 2, unmapped_subjects: 1, reason_code: "TEAM_MAPPING_PARTIAL" };
+  const pv = validateAnalysisPacket(packet);
+  assert.ok(pv.ok, pv.ok ? "" : pv.code + " " + pv.message);
+  const ctx = contextFromPacket(pv.value);
+  assert.equal(ctx.teamAvailability, "partial");
+
+  const mk = (mutate) => { const a = JSON.parse(JSON.stringify(caseById("c01").allowed_analysis)); a.findings = [a.findings[1]]; a.findings[0].subject_ref = "team_01"; mutate(a.findings[0]); return a; };
+  assert.equal(validateBusinessAnalysis(mk((f) => { f.confidence = "high"; f.limitations = ["Coverage team chỉ 50%."]; }), ctx).code, "TEAM_FINDING_WITHOUT_COVERAGE_LIMITATION");
+  assert.equal(validateBusinessAnalysis(mk((f) => { f.confidence = "medium"; f.limitations = []; }), ctx).code, "TEAM_FINDING_WITHOUT_COVERAGE_LIMITATION");
+  const okRes = validateBusinessAnalysis(mk((f) => { f.confidence = "medium"; f.limitations = ["Coverage team chỉ 50% nên chỉ mang tính tham khảo."]; }), ctx);
+  assert.ok(okRes.ok, okRes.ok ? "" : okRes.code + " " + okRes.message);
+});
+
+test("R1 team: mapping unavailable thì finding team bị chặn bởi SUBJECT_OUT_OF_SCOPE", () => {
+  const ctx = contextForCase("c07");
+  assert.equal(ctx.teamAvailability, "unavailable");
+  const a = JSON.parse(JSON.stringify(caseById("c07").allowed_analysis));
+  const teamFinding = JSON.parse(JSON.stringify(a.findings[0]));
+  teamFinding.subject_ref = "team_01";
+  a.findings = [teamFinding];
+  assert.equal(validateBusinessAnalysis(a, ctx).code, "SUBJECT_OUT_OF_SCOPE");
 });

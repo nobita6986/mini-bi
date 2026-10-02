@@ -1,9 +1,10 @@
 /**
- * P1.5-W01 — Contract `business-analysis/0.1`.
+ * P1.5-W01 (+R1) — Contract `business-analysis/0.1`.
  *
  * Strict output của AI Business Analyst (report_status luôn `draft` trong 0.1).
  * Validator KHÔNG gọi AI: nó kiểm tra output so với context của packet
- * (evidence tồn tại, subject thuộc scope, confidence gate, claim số phải ground được).
+ * (evidence tồn tại, subject thuộc scope, confidence gate, team coverage,
+ * và **unit-aware** numeric grounding cho cả executive_analysis lẫn findings).
  *
  * Module thuần: không đọc DB, không gọi mạng, không chứa secret.
  */
@@ -16,15 +17,16 @@ import {
   EVIDENCE_ID_RE,
   FINDING_CATEGORIES,
   FINDING_ID_RE,
+  LIMITATION_PHRASES,
   MAX_FINDINGS,
   MAX_RECOMMENDED_ACTIONS,
-  MIN_FINDINGS_WHEN_SUFFICIENT,
   PERIOD_REF_RE,
   SCOPE_SUBJECT_REF,
   SUBJECT_REF_RE,
+  TEAM_SUBJECT_REF_RE,
   extractNumericTokens,
-  groundableNumberSet,
-  isGroundedNumber,
+  isGroundedToken,
+  mergeGroundingSets,
   scanProhibitedContent,
 } from "./shared.mjs";
 
@@ -45,7 +47,8 @@ export const businessAnalysisSchema = z.strictObject({
   period_ref: z.string().regex(PERIOD_REF_RE),
   report_status: z.literal("draft"),
   executive_analysis: z.string().min(40).max(3000),
-  findings: z.array(findingSchema).min(1).max(MAX_FINDINGS),
+  executive_evidence_refs: z.array(z.string().regex(EVIDENCE_ID_RE)).min(1).max(12),
+  findings: z.array(findingSchema).max(MAX_FINDINGS),
   overall_limitations: z.array(z.string().min(3).max(300)).max(10),
 });
 
@@ -56,6 +59,12 @@ export type BusinessFindingCategory = z.infer<typeof findingSchema>["category"];
 export type ContractValidationError = { ok: false; code: string; message: string; path?: string };
 export type ContractValidationResult<T> = { ok: true; value: T } | ContractValidationError;
 
+export interface EvidenceLite {
+  evidence_id: string;
+  value: number;
+  unit: string;
+}
+
 /** Context lấy từ packet đã validate — truyền vào thay vì import chéo module. */
 export interface BusinessAnalysisContext {
   periodRef: string;
@@ -63,10 +72,12 @@ export interface BusinessAnalysisContext {
   evidenceIds: string[];
   /** Subject ref thuộc scope (KHÔNG gồm "scope"). */
   subjectRefs: string[];
-  /** Evidence kèm value/unit để đối chiếu claim số. */
-  evidence: { evidence_id: string; value: number; unit: string }[];
+  /** Evidence kèm value/unit để đối chiếu claim số (unit-aware). */
+  evidence: EvidenceLite[];
   /** Sufficiency key CHƯA đạt baseline. Rỗng = baseline đạt. */
   insufficientKeys: string[];
+  /** Team mapping availability từ packet (`available` | `partial` | `unavailable` | `ambiguous`). */
+  teamAvailability: string;
 }
 
 function firstIssue(error: z.ZodError): ContractValidationError {
@@ -79,9 +90,24 @@ function firstIssue(error: z.ZodError): ContractValidationError {
 }
 
 /**
- * Validate output analysis (1) nội dung bị cấm, (2) strict schema,
- * (3) ràng buộc chéo với packet: evidence tồn tại, subject trong scope,
- * confidence gate theo sufficiency, claim số phải ground được.
+ * Claim số phải đối chiếu được evidence được trích dẫn (unit-aware, không dung sai).
+ * Trả lỗi đầu tiên hoặc null.
+ */
+function checkGrounding(text: string, evidenceList: EvidenceLite[], at: string): ContractValidationError | null {
+  const tokens = extractNumericTokens(text);
+  if (tokens.length === 0) return null;
+  const sets = mergeGroundingSets(evidenceList);
+  for (const token of tokens) {
+    if (!isGroundedToken(token, sets)) {
+      return { ok: false, code: "UNGROUNDED_NUMERIC_CLAIM", message: "số " + token + " không khớp evidence được trích dẫn (unit-aware)", path: at };
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate output analysis:
+ * (1) nội dung bị cấm, (2) strict schema, (3) ràng buộc chéo với packet.
  */
 export function validateBusinessAnalysis(
   input: unknown,
@@ -103,6 +129,30 @@ export function validateBusinessAnalysis(
   const evidenceIds = new Set(context.evidenceIds);
   const subjectRefs = new Set(context.subjectRefs);
   const evidenceById = new Map(context.evidence.map((e) => [e.evidence_id, e]));
+
+  // Executive grounding: ref tồn tại + mọi claim số (executive + overall_limitations) phải ground.
+  const execEvidence: EvidenceLite[] = [];
+  for (const ref of report.executive_evidence_refs) {
+    if (!evidenceIds.has(ref)) return fail("DANGLING_EVIDENCE_REF", "executive_evidence_refs không tồn tại: " + ref, "executive_evidence_refs");
+    const ev = evidenceById.get(ref);
+    if (ev) execEvidence.push(ev);
+  }
+  const execGrounding = checkGrounding(report.executive_analysis, execEvidence, "executive_analysis");
+  if (execGrounding) return execGrounding;
+  for (let i = 0; i < report.overall_limitations.length; i++) {
+    const g = checkGrounding(report.overall_limitations[i], execEvidence, "overall_limitations[" + i + "]");
+    if (g) return g;
+  }
+
+  // Không ép AI bịa finding: findings = [] hợp lệ nếu nêu rõ trạng thái giới hạn dữ liệu.
+  if (report.findings.length === 0) {
+    if (report.overall_limitations.length === 0) {
+      return fail("EMPTY_FINDINGS_WITHOUT_LIMITATION", "findings rỗng thì overall_limitations phải có ít nhất một phần tử", "overall_limitations");
+    }
+    if (!LIMITATION_PHRASES.some((re) => re.test(report.executive_analysis))) {
+      return fail("EMPTY_FINDINGS_WITHOUT_LIMITATION", "findings rỗng thì executive_analysis phải nêu trạng thái giới hạn dữ liệu", "executive_analysis");
+    }
+  }
 
   const findingIds = new Set<string>();
   let recommendedActions = 0;
@@ -126,6 +176,16 @@ export function validateBusinessAnalysis(
       return fail("RISK_WITHOUT_LIMITATIONS", "finding risk phải nêu limitation (sample size/coverage/concentration)", at);
     }
 
+    // Team chỉ optional: mapping partial thì finding team phải có limitation và không high confidence.
+    if (TEAM_SUBJECT_REF_RE.test(finding.subject_ref) && context.teamAvailability !== "available") {
+      if (finding.limitations.length === 0) {
+        return fail("TEAM_FINDING_WITHOUT_COVERAGE_LIMITATION", "team mapping " + context.teamAvailability + " nên finding team phải nêu limitation coverage", at);
+      }
+      if (finding.confidence === "high") {
+        return fail("TEAM_FINDING_WITHOUT_COVERAGE_LIMITATION", "team mapping " + context.teamAvailability + " nên finding team không được confidence high", at);
+      }
+    }
+
     if (context.insufficientKeys.length > 0 && finding.confidence === "high") {
       return fail("HIGH_CONFIDENCE_WITHOUT_SUFFICIENCY", "confidence high khi baseline chưa đạt (" + context.insufficientKeys.join(",") + ")", at);
     }
@@ -137,26 +197,9 @@ export function validateBusinessAnalysis(
       }
     }
 
-    // Claim số phải đối chiếu được evidence được trích dẫn.
-    const ground = [];
-    for (const ref of finding.evidence_refs) {
-      const ev = evidenceById.get(ref);
-      if (ev) ground.push(...groundableNumberSet(ev));
-    }
-    const text = [finding.headline, finding.analysis, finding.recommended_action ?? ""].join(" ");
-    for (const token of extractNumericTokens(text)) {
-      const norm = token.replace("%", "").replace(",", ".");
-      if (/^(?:19|20)\d{2}$/.test(norm)) continue; // năm trong câu chữ
-      const num = Number(norm);
-      if (!Number.isFinite(num)) continue;
-      if (!isGroundedNumber(num, ground)) {
-        return fail("UNGROUNDED_NUMERIC_CLAIM", "số " + token + " không khớp evidence được trích dẫn", at);
-      }
-    }
-  }
-
-  if (context.insufficientKeys.length === 0 && report.findings.length < MIN_FINDINGS_WHEN_SUFFICIENT) {
-    return fail("FINDINGS_BELOW_MINIMUM", "baseline đạt nhưng chỉ có " + report.findings.length + " finding (tối thiểu " + MIN_FINDINGS_WHEN_SUFFICIENT + ")", "findings");
+    const ground = finding.evidence_refs.map((ref) => evidenceById.get(ref)).filter((e) => e !== undefined);
+    const g = checkGrounding([finding.headline, finding.analysis, finding.recommended_action ?? ""].join(" "), ground, at);
+    if (g) return g;
   }
 
   return { ok: true, value: report };

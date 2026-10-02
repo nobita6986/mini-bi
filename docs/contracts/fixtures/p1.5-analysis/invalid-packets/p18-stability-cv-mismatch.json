@@ -1,7 +1,7 @@
 {
-  "case_id": "p01-unknown-field",
-  "description": "Field lạ ngoài contract ở cấp packet",
-  "expect_code": "UNKNOWN_FIELD",
+  "case_id": "p18-stability-cv-mismatch",
+  "description": "cv không khớp stddev/mean",
+  "expect_code": "STABILITY_INCONSISTENT",
   "context_case": "c01",
   "packet": {
     "contract_version": "analysis-packet/0.1",
@@ -123,7 +123,7 @@
       "period_points": 8,
       "mean": 30,
       "stddev": 4,
-      "cv": 0.133333333333,
+      "cv": 0.9,
       "trend_direction": "up",
       "volatility": "low",
       "formula": "population_stddev / mean",
@@ -389,7 +389,6 @@
       "mapped_subjects": 2,
       "unmapped_subjects": 0,
       "reason_code": "TEAM_MAPPING_AVAILABLE"
-    },
-    "extra_field": "x"
+    }
   }
 }
