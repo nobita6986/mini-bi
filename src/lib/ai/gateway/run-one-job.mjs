@@ -5,8 +5,7 @@
  * `after()` của Next.js (nếu dùng ở route) chỉ là fast-path, KHÔNG phải durability guarantee.
  */
 
-import { canonicalJson } from "../engine-shared.mjs";
-import { buildProviderPayload } from "./payload.mjs";
+import { buildProviderPayload, utf8ByteLength } from "./payload.mjs";
 import { validateGeneratedAnalysis } from "./output-guard.mjs";
 import { evaluatePolicy } from "./policy.mjs";
 import { resolveProviderAdapter } from "./provider.mjs";
@@ -83,7 +82,21 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
 export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEASE_SECONDS }) {
   const now = Number.isFinite(now_ms) ? now_ms : deps.clock.nowMs();
   const claimed = await deps.queue.claim({ worker_ref, lease_seconds, now_ms: now });
-  if (!claimed) return { kind: "idle", job_id: null, status: null, error_code: null, revision_id: null, attempts: null, next_attempt_at: null };
+  // E — chỉ AI_IDLE mới là idle; lỗi DB/RPC phải nổi lên thành worker error (không giả thành "không có việc").
+  if (claimed === null) {
+    return { kind: "idle", job_id: null, status: null, error_code: null, revision_id: null, attempts: null, next_attempt_at: null };
+  }
+  if (claimed.ok === false) {
+    return {
+      kind: "error",
+      job_id: claimed.job_id ?? null,
+      status: null,
+      error_code: claimed.code ?? "AI_INTERNAL",
+      revision_id: null,
+      attempts: null,
+      next_attempt_at: null,
+    };
+  }
 
   const job = claimed.job;
   const report = async (errorCode, message) => {
@@ -125,8 +138,14 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   const built = buildProviderPayload(job.packet, deps.manifest, {
     max_payload_bytes: deps.policy.config?.max_payload_bytes,
   });
-  if (!built.ok) return report(built.code === "AI_BUDGET_LIMITED" ? "AI_BUDGET_LIMITED" : "AI_INPUT_INVALID", built.message);
-  const payloadBytes = canonicalJson(built.payload).length;
+  if (!built.ok) {
+    return report(
+      built.code === "AI_BUDGET_LIMITED" ? "AI_BUDGET_LIMITED" : built.code === "AI_INPUT_INVALID" ? "AI_INPUT_INVALID" : "AI_INTERNAL",
+      built.message
+    );
+  }
+  // B — kích thước đo bằng UTF-8 bytes trên payload CUỐI (đã gồm payload_hash).
+  const payloadBytes = utf8ByteLength(built.payload);
 
   // 2. Policy gate cho từng attempt (không gọi provider khi không đạt hoặc không đọc được policy context).
   const policyContext = await deps.policy.contextFor(job);
@@ -159,11 +178,37 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
     };
   }
 
-  // 3. Adapter (scripted trong W04; live ⇒ AI_PROVIDER_DISABLED).
-  const resolved = resolveProviderAdapter({ provider_key: deps.provider.provider_key, config: deps.provider.config });
-  if (!resolved.ok) return report(resolved.code, resolved.message);
+  /**
+   * D — Job đã ĐÓNG BĂNG provider/model/adapter/prompt. Worker phải đối chiếu trước khi gọi provider;
+   * mismatch ⇒ dừng (không gọi provider, không usage/revision). W04A sẽ bổ sung provider_config_id/version.
+   */
+  if (job.provider_key !== deps.provider.provider_key || job.model_key !== deps.provider.model_key) {
+    return report("AI_CONFIG_REQUIRED", "provider/model của job không khớp cấu hình hiện tại");
+  }
+  if (job.prompt_version !== deps.manifest.prompt_version) {
+    return report("AI_CONFIG_REQUIRED", "prompt version của job không khớp manifest hiện tại");
+  }
 
-  await deps.queue.markStage({ job_id: job.job_id, lease_token: claimed.lease_token, status: "ai_generating", now_ms: now });
+  // 3. Adapter (scripted trong W04; live ⇒ AI_PROVIDER_DISABLED).
+  // DI seam cho test: mặc định resolve từ registry (chỉ scripted), test có thể inject adapter đếm call.
+  const resolveAdapter = typeof deps.adapterFactory === "function" ? deps.adapterFactory : resolveProviderAdapter;
+  const resolved = resolveAdapter({ provider_key: deps.provider.provider_key, config: deps.provider.config });
+  if (!resolved.ok) return report(resolved.code, resolved.message);
+  if (job.adapter_version !== resolved.adapter.adapter_version) {
+    return report("AI_PROVIDER_DISABLED", "adapter version của job không khớp adapter hiện tại");
+  }
+
+  /**
+   * F — Fencing TRƯỚC provider call: markStage phải thành công.
+   * AI_LEASE_LOST ⇒ dừng ngay (không provider/usage/revision, không ghi fail vì lease đã mất).
+   */
+  const stage = await deps.queue.markStage({ job_id: job.job_id, lease_token: claimed.lease_token, status: "ai_generating", now_ms: now });
+  if (!stage || stage.ok !== true) {
+    if (stage && stage.code === "AI_LEASE_LOST") {
+      return { kind: "lease_lost", job_id: job.job_id, status: null, error_code: null, revision_id: null, attempts: claimed.attempt, next_attempt_at: null };
+    }
+    return report("AI_INTERNAL", "không chuyển được job sang ai_generating (queue transition thất bại)");
+  }
 
   const timeout = deps.timeout.create(deps.policy.config.provider_timeout_ms);
   let providerResult;
@@ -186,8 +231,9 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   const usageBase = {
     job_id: job.job_id,
     logical_call_id: job.job_id + ":" + claimed.attempt,
-    provider_key: deps.provider.provider_key,
-    model_key: deps.provider.model_key,
+    // Usage ghi ĐÚNG provider/model đã đóng băng trong job (không lấy cấu hình runtime).
+    provider_key: job.provider_key,
+    model_key: job.model_key,
     provider_version: providerResult.provider_version,
     latency_ms: providerResult.latency_ms,
     input_tokens: providerResult.ok ? providerResult.usage.input_tokens : null,

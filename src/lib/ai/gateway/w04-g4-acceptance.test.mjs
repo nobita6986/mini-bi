@@ -570,13 +570,13 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
   const rateService = makeService({ queue: rateQueue, audit: rateAudit, packet, scenario: "valid", policy: { ...DEFAULT_POLICY, max_requests_per_window: 1 } });
   const first = await rateService.service.enqueueReport({
     input: REQUEST, actor_ref: "pilot-admin", access_scope_hash: canonicalHash({ pilot: "pilot-admin" }),
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: rateService.clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: rateService.clock.nowMs(),
   });
   assert.ok(first.ok);
   const second = await rateService.service.enqueueReport({
     input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: { dimensions: ["project", "provider", "employment"] } },
     actor_ref: "pilot-admin", access_scope_hash: canonicalHash({ pilot: "pilot-admin" }),
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: rateService.clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: rateService.clock.nowMs(),
   });
   assert.equal(second.ok, false);
   assert.equal(second.code, "AI_RATE_LIMITED");
@@ -585,12 +585,12 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
   const concurrencyService = makeService({ queue: concurrencyQueue, audit: createMemoryAudit(), packet, scenario: "valid", policy: { ...DEFAULT_POLICY, max_concurrent_jobs: 1 } });
   await concurrencyService.service.enqueueReport({
     input: REQUEST, actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),
   });
   const blocked = await concurrencyService.service.enqueueReport({
     input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: { dimensions: ["project", "provider", "employment"] } },
     actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: concurrencyService.clock.nowMs(),
   });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.code, "AI_CONCURRENCY_LIMITED");
@@ -599,13 +599,13 @@ test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — kh�
   const budgetService = makeService({ queue: budgetQueue, audit: createMemoryAudit(), packet, scenario: "valid", policy: { ...DEFAULT_POLICY, daily_token_ceiling: 1 } });
   await budgetService.service.enqueueReport({
     input: REQUEST, actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: budgetService.clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: budgetService.clock.nowMs(),
   });
   await budgetService.service.runWorker({ worker_ref: "w", limit: 1, now_ms: budgetService.clock.nowMs() });
   const budgetBlocked = await budgetService.service.enqueueReport({
     input: { period: { type: "month", as_of_date: "2026-10-11" }, scope: { dimensions: ["project", "provider", "employment"] } },
     actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: budgetService.clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: budgetService.clock.nowMs(),
   });
   assert.equal(budgetBlocked.ok, false);
   assert.equal(budgetBlocked.code, "AI_BUDGET_LIMITED");
@@ -618,7 +618,7 @@ test("G4-I2: input không hợp lệ (period/scope/focus) bị chặn trước D
   const bad = await service.enqueueReport({
     input: { period: { type: "day", as_of_date: "2026-10-11" } },
     actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: 0,
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: 0,
   });
   assert.equal(bad.ok, false);
   assert.equal(bad.code, "AI_INPUT_INVALID");
@@ -627,7 +627,7 @@ test("G4-I2: input không hợp lệ (period/scope/focus) bị chặn trước D
   const injection = await service.enqueueReport({
     input: { period: WEEK41, scope: { dimensions: ["project"] }, focus: "{{ system }}" },
     actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: 0,
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: 0,
   });
   assert.equal(injection.ok, false);
   assert.equal(injection.code, "AI_INPUT_INVALID");
@@ -642,7 +642,7 @@ test("G4-G3: identity capability — recruiter/team chưa có catalog authority 
     actor_ref: "pilot-admin",
     access_scope_hash: "h",
     provider_key: "scripted",
-    model_key: "m",
+    model_key: "scripted-deterministic-v1",
     adapter_version: SCRIPTED_ADAPTER_VERSION,
     now_ms: 0,
   });
@@ -655,7 +655,7 @@ test("G4-G3: identity capability — recruiter/team chưa có catalog authority 
     actor_ref: "pilot-admin",
     access_scope_hash: "h",
     provider_key: "scripted",
-    model_key: "m",
+    model_key: "scripted-deterministic-v1",
     adapter_version: SCRIPTED_ADAPTER_VERSION,
     now_ms: 0,
   });
@@ -666,7 +666,7 @@ test("G4-G3: identity capability — recruiter/team chưa có catalog authority 
     actor_ref: "pilot-admin",
     access_scope_hash: "h",
     provider_key: "scripted",
-    model_key: "m",
+    model_key: "scripted-deterministic-v1",
     adapter_version: SCRIPTED_ADAPTER_VERSION,
     now_ms: 0,
   });
@@ -689,7 +689,7 @@ test("G4-J: state machine + regenerate cần reason", async () => {
   const noReason = await service.enqueueReport({
     input: { period: WEEK41, scope: {}, regenerate_of: jobId, reason: "" },
     actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: clock.nowMs(),
   });
   assert.equal(noReason.ok, false);
   assert.equal(noReason.code, "AI_INPUT_INVALID");
@@ -697,7 +697,7 @@ test("G4-J: state machine + regenerate cần reason", async () => {
   const regenerated = await service.enqueueReport({
     input: { period: WEEK41, scope: {}, regenerate_of: jobId, reason: "Dữ liệu nguồn đã cập nhật" },
     actor_ref: "pilot-admin", access_scope_hash: "h",
-    provider_key: "scripted", model_key: "m", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: clock.nowMs(),
+    provider_key: "scripted", model_key: "scripted-deterministic-v1", adapter_version: SCRIPTED_ADAPTER_VERSION, now_ms: clock.nowMs(),
   });
   assert.ok(regenerated.ok, regenerated.ok ? "" : regenerated.code);
   assert.notEqual(regenerated.job_id, jobId);

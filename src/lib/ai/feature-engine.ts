@@ -1264,6 +1264,17 @@ function buildEvidenceDrafts(args: {
         sufficiency: basis,
         quality: dimensionQuality,
       });
+      if (entry.comparable !== null) {
+        drafts.push({
+          metric: "driver." + dimension + ".comparable",
+          formulaKey: "driver_comparable",
+          subject_ref: entry.subject_ref,
+          value: entry.comparable,
+          unit: "people",
+          sufficiency: compare,
+          quality: dimensionQuality,
+        });
+      }
       if (entry.delta !== null) {
         drafts.push({
           metric: "driver." + dimension + ".delta",

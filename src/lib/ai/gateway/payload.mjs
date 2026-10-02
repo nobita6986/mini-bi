@@ -25,6 +25,37 @@ export const PAYLOAD_LIMITS = Object.freeze({
 
 export const DIMENSION_ORDER = Object.freeze(["project", "recruiter", "team", "provider", "employment"]);
 
+/**
+ * R2 — Mapping RÕ RÀNG cho vocabulary legacy của fixture G1 (12 golden packet).
+ * Key = metric legacy, value = metric canonical tương ứng. Chỉ dùng khi metric canonical
+ * KHÔNG có trong packet ⇒ legacy evidence vẫn ground được feature, không bịa số.
+ */
+export const LEGACY_METRIC_MAP = Object.freeze({
+  recruited_total_previous: "recruited_total_comparable",
+  team_delta: "driver.team.delta",
+  team_delta_share: "driver.team.delta_contribution_share",
+  project_total: "project_mix.total",
+  project_vendor_share: "project_mix.vendor_share",
+});
+
+/** Metric legacy (theo vocabulary fixture G1). */
+export const LEGACY_METRIC_KEYS = Object.freeze(Object.keys(LEGACY_METRIC_MAP));
+
+/** Phân loại vocabulary evidence của packet (canonical vs legacy) — dùng cho test/handoff. */
+export function classifyEvidenceVocabulary(packet) {
+  const canonical = [];
+  const legacy = [];
+  const canonicalValues = new Set(Object.values(LEGACY_METRIC_MAP));
+  for (const entry of packet?.evidence ?? []) {
+    const metric = entry.metric ?? "";
+    if (LEGACY_METRIC_KEYS.includes(metric)) legacy.push(metric);
+    else if (canonicalValues.has(metric) || metric.startsWith("driver.") || metric.startsWith("data_quality.") || metric.startsWith("scope.filter.") || metric.startsWith("concentration.") || metric.startsWith("stability.") || metric.startsWith("comparison.") || metric.startsWith("breakdown_remainder.")) {
+      canonical.push(metric);
+    } else canonical.push(metric);
+  }
+  return { canonical: [...new Set(canonical)].sort(), legacy: [...new Set(legacy)].sort() };
+}
+
 /** Lý do comparison deterministic (evidence do W03 phát). */
 export const COMPARISON_REASON_METRICS = Object.freeze({
   PTD_EQUAL_WINDOW_UNAVAILABLE: "comparison.unavailable.ptd_equal_window_unavailable",
@@ -193,10 +224,22 @@ function collectSubjectFeatures(packet, providerFiltered, limits) {
   const features = [];
   const referenced = new Set();
 
+  const aliasFor = (metric) => {
+    for (const [legacyMetric, canonicalMetric] of Object.entries(LEGACY_METRIC_MAP)) {
+      if (canonicalMetric === metric) return legacyMetric;
+    }
+    return null;
+  };
+
   const numberWithEvidence = (metric, subjectRef, value) => {
     if (!isFiniteNumber(value)) return null;
-    const entry = evidenceIndex.get(evidenceKey(metric, subjectRef));
-    if (!entry) return null; // không có evidence ⇒ không gửi số này cho model
+    const entry =
+      evidenceIndex.get(evidenceKey(metric, subjectRef)) ??
+      (() => {
+        const alias = aliasFor(metric);
+        return alias === null ? undefined : evidenceIndex.get(evidenceKey(alias, subjectRef));
+      })();
+    if (!entry) return null; // không có evidence (kể cả alias) ⇒ không gửi số này cho model
     return { value, evidence: entry };
   };
 
@@ -274,21 +317,28 @@ function collectSubjectFeatures(packet, providerFiltered, limits) {
   return { features, referenced, evidenceIndex };
 }
 
-/** Concentration chỉ gửi khi có evidence scope-level (đã là core); top1_ref phải nằm trong subject_refs. */
-function buildConcentration(packet, evidenceIndex, keptRefs) {
+/**
+ * Concentration (R2): giữ NGUYÊN semantics của packet khi subject tương ứng còn trong feature set.
+ * - top1_ref/top1_share giữ khi ref còn trong featureRefs VÀ evidence scope-level tồn tại;
+ * - chỉ null khi subject đã bị prune (hoặc evidence thiếu);
+ * - top3_share giữ khi có evidence (là chỉ số scope-level, không phụ thuộc subject cụ thể);
+ * - không tạo subject_ref mồ côi (top1_ref luôn nằm trong featureRefs).
+ */
+function buildConcentration(packet, evidenceIndex, featureRefs) {
   const out = {};
   for (const dimension of DIMENSION_ORDER) {
     const entry = packet.concentration?.[dimension] ?? {};
     const top1 = evidenceIndex.get(evidenceKey("concentration." + dimension + ".top1_share", "scope"));
     const top3 = evidenceIndex.get(evidenceKey("concentration." + dimension + ".top3_share", "scope"));
-    const top1Ref = typeof entry.top1_ref === "string" && entry.top1_ref !== "scope" && keptRefs.has(entry.top1_ref) ? entry.top1_ref : null;
+    const candidateRef = typeof entry.top1_ref === "string" && entry.top1_ref !== "scope" ? entry.top1_ref : null;
+    const top1Ref = candidateRef !== null && featureRefs.has(candidateRef) ? candidateRef : null;
+    const keepShare = top1 !== undefined && top1Ref !== null;
     out[dimension] = {
-      top1_ref: top1 && top1Ref ? top1Ref : null,
-      top1_share: top1 && top1Ref ? nullableNumber(entry.top1_share) : null,
+      top1_ref: keepShare ? top1Ref : null,
+      top1_share: keepShare ? nullableNumber(entry.top1_share) : null,
       top3_share: top3 ? nullableNumber(entry.top3_share) : null,
       distinct_subjects: isFiniteNumber(entry.distinct_subjects) ? entry.distinct_subjects : 0,
     };
-    if (top1Ref) keptRefs.add(top1Ref);
   }
   return out;
 }
@@ -433,7 +483,6 @@ export function buildProviderPayload(packet, manifest, options = {}) {
   const filterContext = buildFilterContext(packet);
   const providerFiltered = filterContext.provider_active === 1;
   const collected = collectSubjectFeatures(packet, providerFiltered, limits);
-  const evidenceIndex = collected.evidenceIndex;
 
   const allPacketEvidence = packet.evidence ?? [];
   if (allPacketEvidence.length === 0) {
@@ -444,20 +493,20 @@ export function buildProviderPayload(packet, manifest, options = {}) {
   let additionalLimit = allPacketEvidence.length;
 
   for (;;) {
-    const keptRefs = new Set();
-    const keptRefsForConcentration = new Set();
-    const flatRefs = new Set();
-    for (const feature of features) for (const ref of feature.subjects) flatRefs.add(ref);
-
-    const probeRefs = new Set(flatRefs);
-    const concentration = buildConcentration(packet, evidenceIndex, keptRefsForConcentration);
+    // Refs của feature CÒN LẠI (dùng cho closure + concentration semantics).
+    const featureRefs = new Set();
+    for (const feature of features) for (const ref of feature.subjects) featureRefs.add(ref);
+    const concentration = buildConcentration(packet, collected.evidenceIndex, featureRefs);
 
     const coreRefs = new Set();
-    for (const entry of packet.evidence ?? []) {
+    for (const entry of allPacketEvidence) {
       if (isCoreEvidence(entry) && entry.subject_ref !== "scope") coreRefs.add(entry.subject_ref);
     }
-    const allRefs = new Set([...probeRefs, ...keptRefsForConcentration, ...coreRefs]);
-    for (const ref of allRefs) keptRefs.add(ref);
+    const keptRefs = new Set([...featureRefs, ...coreRefs]);
+    for (const dimension of DIMENSION_ORDER) {
+      const top1 = concentration[dimension]?.top1_ref;
+      if (typeof top1 === "string" && top1 !== "scope") keptRefs.add(top1);
+    }
 
     const payloadCore = assemblePayload({
       packet,
@@ -470,49 +519,49 @@ export function buildProviderPayload(packet, manifest, options = {}) {
       additionalLimit,
     });
     payloadCore.concentration = concentration;
-    // subject_refs cuối cùng = hợp của refs từ feature + concentration + evidence core.
     payloadCore.subject_refs = [...keptRefs].sort();
 
-    const bytes = utf8ByteLength(payloadCore);
+    // R2: hash nằm TRONG payload cuối ⇒ đo UTF-8 byte trên payload cuối (gồm payload_hash).
+    const finalized = { ...payloadCore, payload_hash: canonicalHash(payloadCore) };
+    const bytes = utf8ByteLength(finalized);
     const fits =
-      payloadCore.evidence.length <= limits.max_evidence &&
-      payloadCore.subject_refs.length <= limits.max_subject_refs &&
+      finalized.evidence.length <= limits.max_evidence &&
+      finalized.subject_refs.length <= limits.max_subject_refs &&
       bytes <= limits.max_payload_bytes;
 
     if (fits) {
-      const forbidden = scanForbiddenKeys(payloadCore);
+      const forbidden = scanForbiddenKeys(finalized);
       if (forbidden) return fail("AI_INPUT_INVALID", forbidden.message, forbidden.path);
-      const prohibited = scanProhibitedContent(payloadCore);
+      const prohibited = scanProhibitedContent(finalized);
       if (prohibited) return fail("AI_INPUT_INVALID", prohibited.message, prohibited.path);
-      const secretLike = scanForbiddenValues(payloadCore);
+      const secretLike = scanForbiddenValues(finalized);
       if (secretLike) return fail("AI_INPUT_INVALID", secretLike.message, secretLike.path);
 
-      // Closure check cuối: không feature mồ côi.
-      const refSet = new Set(payloadCore.subject_refs);
-      for (const dimension of payloadCore.drivers) {
+      // Closure check cuối: không feature/evidence/concentration ref mồ côi.
+      const refSet = new Set(finalized.subject_refs);
+      for (const dimension of finalized.drivers) {
         for (const entry of dimension.entries) {
           if (!refSet.has(entry.subject_ref)) {
             return fail("AI_INPUT_INVALID", "driver subject thiếu trong subject_refs", "drivers." + dimension.dimension);
           }
         }
       }
-      for (const row of payloadCore.project_provider_mix ?? []) {
+      for (const row of finalized.project_provider_mix ?? []) {
         if (!refSet.has(row.subject_ref)) return fail("AI_INPUT_INVALID", "mix subject thiếu trong subject_refs", "project_provider_mix");
       }
       for (const dimension of DIMENSION_ORDER) {
-        const top1 = payloadCore.concentration[dimension]?.top1_ref;
+        const top1 = finalized.concentration[dimension]?.top1_ref;
         if (top1 !== null && top1 !== undefined && !refSet.has(top1)) {
           return fail("AI_INPUT_INVALID", "concentration top1_ref thiếu trong subject_refs", "concentration." + dimension);
         }
       }
-      for (const entry of payloadCore.evidence) {
+      for (const entry of finalized.evidence) {
         if (entry.subject_ref !== "scope" && !refSet.has(entry.subject_ref)) {
           return fail("AI_INPUT_INVALID", "evidence subject thiếu trong subject_refs", "evidence");
         }
       }
 
-      const payload = { ...payloadCore, payload_hash: canonicalHash(payloadCore) };
-      return { ok: true, payload, pruned_features: collected.features.length - features.length };
+      return { ok: true, payload: finalized, payload_bytes: bytes, pruned_features: collected.features.length - features.length };
     }
 
     // Prune deterministic: 1) giảm evidence bổ sung (tier 3) trước, 2) mới bỏ subject feature (tier 2).

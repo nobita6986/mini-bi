@@ -56,6 +56,11 @@ export function createMemoryQueue(options = {}) {
         identity_hash,
         identity_components,
         request,
+        // R2 — job ĐÓNG BĂNG provider/model/adapter/prompt (worker phải đối chiếu trước khi gọi provider).
+        provider_key: request.provider_key,
+        model_key: request.model_key,
+        adapter_version: request.adapter_version,
+        prompt_version: request.prompt_version,
         status: "queued",
         attempts: 0,
         max_attempts: request.max_attempts,
@@ -74,6 +79,10 @@ export function createMemoryQueue(options = {}) {
     },
 
     async claim({ worker_ref, lease_seconds = 120, now_ms }) {
+      // R2 (E): lỗi DB/RPC claim phải nổi lên, KHÔNG giả thành idle.
+      if (hooks.claimError === true) {
+        return { ok: false, code: "AI_INTERNAL", message: "claim RPC lỗi (mô phỏng)" };
+      }
       let recovered = 0;
       for (const job of jobs.values()) {
         if (!["computing", "ai_generating", "validating"].includes(job.status)) continue;
@@ -108,6 +117,10 @@ export function createMemoryQueue(options = {}) {
           status: job.status,
           attempts: job.attempts,
           max_attempts: job.max_attempts,
+          provider_key: job.provider_key,
+          model_key: job.model_key,
+          adapter_version: job.adapter_version,
+          prompt_version: job.prompt_version,
           packet: job.request.packet,
         },
         lease_token: token,
@@ -116,6 +129,13 @@ export function createMemoryQueue(options = {}) {
     },
 
     async markStage({ job_id, lease_token, status, now_ms }) {
+      // R2 (F): mô phỏng lỗi DB ở bước fencing.
+      if (hooks.markStageError === true) {
+        return { ok: false, code: "AI_INTERNAL", message: "markStage RPC lỗi (mô phỏng)" };
+      }
+      if (hooks.markStageLeaseLost === true) {
+        return { ok: false, code: "AI_LEASE_LOST" };
+      }
       const job = jobs.get(job_id);
       if (!job) return { ok: false, code: "AI_JOB_NOT_FOUND" };
       if (job.lease_token !== lease_token) return { ok: false, code: "AI_LEASE_LOST" };
@@ -235,6 +255,13 @@ export function createMemoryQueue(options = {}) {
         return { ok: false, code: "AI_INPUT_INVALID", message: "regenerate cần reason" };
       }
       if (isActiveStatus(source.status)) return { ok: false, code: "AI_INPUT_INVALID", message: "job đang chạy" };
+      // Mô phỏng partial unique index `ai_report_jobs_identity_active_uidx`: không tạo job regenerate
+      // thứ hai khi identity đã có job đang hoạt động (double-click/concurrent).
+      for (const candidate of jobs.values()) {
+        if (candidate.identity_hash === source.identity_hash && isActiveStatus(candidate.status)) {
+          return { ok: false, code: "AI_INTERNAL", message: "identity đang có job hoạt động" };
+        }
+      }
       const newId = uuid();
       jobs.set(newId, {
         ...source,
@@ -252,6 +279,9 @@ export function createMemoryQueue(options = {}) {
     },
 
     async recoverStale({ lease_seconds = 0, now_ms }) {
+      if (hooks.recoverStaleError === true) {
+        return { ok: false, code: "AI_INTERNAL", message: "recoverStale RPC lỗi (mô phỏng)" };
+      }
       let recovered = 0;
       const now = Number.isFinite(now_ms) ? now_ms : Date.parse(new Date().toISOString());
       for (const job of jobs.values()) {

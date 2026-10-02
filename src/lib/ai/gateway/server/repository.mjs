@@ -59,9 +59,13 @@ export function createSupabaseJobRepository() {
 
     async claim({ worker_ref, lease_seconds }) {
       const result = await rpc("ai_report_claim", { p_worker: worker_ref, p_lease_seconds: lease_seconds });
-      if (!result.ok) return result.code === "AI_IDLE" ? null : null;
+      // R2 (E): CHỈ AI_IDLE mới là idle; mọi lỗi DB/RPC khác phải nổi lên thành worker error.
+      if (!result.ok) {
+        if (result.code === "AI_IDLE") return null;
+        return { ok: false, code: result.code ?? "AI_INTERNAL", message: result.message ?? "claim thất bại" };
+      }
       const job = result.value.job;
-      if (!job) return null;
+      if (!job) return { ok: false, code: "AI_INTERNAL", message: "claim trả job rỗng" };
       return {
         job: {
           job_id: job.job_id,
@@ -69,6 +73,11 @@ export function createSupabaseJobRepository() {
           status: job.status,
           attempts: job.attempts,
           max_attempts: job.max_attempts,
+          // R2 (D): field đã đóng băng trong row — worker phải đối chiếu trước khi gọi provider.
+          provider_key: job.provider_key,
+          model_key: job.model_key,
+          adapter_version: job.adapter_version,
+          prompt_version: job.prompt_version,
           packet: job.packet,
         },
         lease_token: result.value.lease_token,

@@ -119,7 +119,35 @@ export function createAiReportService(deps) {
         return fail(deps.providerGate.code ?? "AI_CONFIG_REQUIRED", deps.providerGate.message ?? "provider chưa sẵn sàng");
       }
 
-      // Regenerate: reason + audit bắt buộc (RPC), không đi qua cache.
+      // Policy TRƯỚC khi build packet/DB usage (fail closed sớm).
+      // G (R2): policyContext là BẮT BUỘC — thiếu wiring cũng là AI_POLICY_REQUIRED (không có fallback quota 0).
+      if (typeof deps.queue.policyContext !== "function") {
+        return fail("AI_POLICY_REQUIRED", "thiếu policyContext wiring — fail closed");
+      }
+      const policyContext = await deps.queue.policyContext({ actor_ref, window_seconds: deps.policy.config.window_ms / 1000 });
+      // R1: không đọc được policy context ⇒ FAIL CLOSED (không biến lỗi DB thành quota 0).
+      if (!policyContext || policyContext.ok !== true) {
+        return fail("AI_POLICY_REQUIRED", "không đọc được policy context (DB/RPC lỗi) — fail closed");
+      }
+      const policyDecision = evaluatePolicy({
+        config: deps.policy.config,
+        context: {
+          now_ms: now,
+          actor_ref,
+          access_scope_hash,
+          recent_requests: policyContext.value.recent_requests,
+          active_jobs: policyContext.value.active_jobs,
+          attempts: 0,
+          tokens_used_today: policyContext.value.tokens_used_today,
+        },
+        payload_bytes: 0,
+      });
+      if (!policyDecision.ok) return fail(policyDecision.code, policyDecision.message);
+
+      /**
+       * C (R2) — Regenerate chạy SAU policy: provider gate → policyContext → rate/concurrency/token/budget → regenerate.
+       * Dùng frozen packet (KHÔNG reload packet); reason/audit vẫn bắt buộc ở tầng RPC.
+       */
       if (request.regenerate_of !== null) {
         if (typeof deps.queue.regenerate !== "function") return fail("AI_CONFIG_REQUIRED", "queue không hỗ trợ regenerate");
         const regenerated = await deps.queue.regenerate({ job_id: request.regenerate_of, actor_ref, reason: request.reason });
@@ -150,29 +178,6 @@ export function createAiReportService(deps) {
           "runtime chưa có identity catalog authority (P1.6); chỉ phân tích được project/provider/employment"
         );
       }
-
-      // Policy TRƯỚC khi build packet/DB usage (fail closed sớm).
-      const policyContext = typeof deps.queue.policyContext === "function"
-        ? await deps.queue.policyContext({ actor_ref, window_seconds: deps.policy.config.window_ms / 1000 })
-        : { ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } };
-      // R1: không đọc được policy context ⇒ FAIL CLOSED (không biến lỗi DB thành quota 0).
-      if (!policyContext || policyContext.ok !== true) {
-        return fail("AI_POLICY_REQUIRED", "không đọc được policy context (DB/RPC lỗi) — fail closed");
-      }
-      const policyDecision = evaluatePolicy({
-        config: deps.policy.config,
-        context: {
-          now_ms: now,
-          actor_ref,
-          access_scope_hash,
-          recent_requests: policyContext.value.recent_requests,
-          active_jobs: policyContext.value.active_jobs,
-          attempts: 0,
-          tokens_used_today: policyContext.value.tokens_used_today,
-        },
-        payload_bytes: 0,
-      });
-      if (!policyDecision.ok) return fail(policyDecision.code, policyDecision.message);
 
       const loaded = await deps.packetLoader({
         period: request.period,
@@ -252,8 +257,12 @@ export function createAiReportService(deps) {
     async runWorker({ worker_ref, limit, now_ms }) {
       const now = Number.isFinite(now_ms) ? now_ms : clock.nowMs();
       const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, WORKER_BATCH_LIMIT) : 1;
+      // E (R2): lỗi recoverStale KHÔNG được bỏ qua.
       if (typeof deps.queue.recoverStale === "function") {
-        await deps.queue.recoverStale({ lease_seconds: LEASE_SECONDS });
+        const recovered = await deps.queue.recoverStale({ lease_seconds: LEASE_SECONDS });
+        if (!recovered || recovered.ok !== true) {
+          return fail(recovered?.code ?? "AI_INTERNAL", "không thu hồi được lease hết hạn (DB/RPC lỗi)");
+        }
       }
       const results = await runWorkerBatch({
         deps: {
@@ -262,9 +271,11 @@ export function createAiReportService(deps) {
           policy: {
             config: deps.policy.config,
             contextFor: async () => {
-              const context = typeof deps.queue.policyContext === "function"
-                ? await deps.queue.policyContext({ actor_ref: worker_ref, window_seconds: deps.policy.config.window_ms / 1000 })
-                : { ok: true, value: { recent_requests: [], active_jobs: 0, tokens_used_today: 0 } };
+              // G (R2): thiếu policyContext ⇒ AI_POLICY_REQUIRED (không có fallback quota 0).
+              if (typeof deps.queue.policyContext !== "function") {
+                return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu policyContext wiring" };
+              }
+              const context = await deps.queue.policyContext({ actor_ref: worker_ref, window_seconds: deps.policy.config.window_ms / 1000 });
               // R1: worker cũng fail-closed khi không đọc được policy context.
               if (!context || context.ok !== true) {
                 return { ok: false, code: "AI_POLICY_REQUIRED", message: "không đọc được policy context" };
@@ -283,11 +294,22 @@ export function createAiReportService(deps) {
           manifest: deps.manifest,
           timeout: deps.timeout,
           clock,
+          // R2 (D): giữ DI seam để test inject adapter đếm call; runtime không truyền ⇒ dùng registry.
+          adapterFactory: deps.adapterFactory,
         },
         worker_ref,
         now_ms: now,
         limit: bounded,
       });
+      // E (R2): lỗi hạ tầng queue (claim/recover) phải nổi lên, không trả về như lần chạy khỏe mạnh.
+      const infrastructureError = results.find((row) => row.kind === "error");
+      if (infrastructureError) {
+        return {
+          ok: false,
+          code: infrastructureError.error_code ?? "AI_INTERNAL",
+          message: "worker dừng do lỗi hạ tầng queue (DB/RPC)",
+        };
+      }
       return { ok: true, results };
     },
   };
