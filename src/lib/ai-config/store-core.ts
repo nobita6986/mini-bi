@@ -44,6 +44,9 @@ export type MaterialResult =
         status: string;
         verified_at: string | null;
         secret: string;
+        /** W04B-S01: adapter live cần API URL đã đóng băng (đã chuẩn hoá khi save) + host đã sanitize. */
+        api_base_url: string;
+        sanitized_host: string;
       };
     }
   | StoreFail;
@@ -259,6 +262,8 @@ export function createProviderConfigStoreCore(options: {
             status: row.status,
             verified_at: row.verified_at,
             secret,
+            api_base_url: row.api_base_url,
+            sanitized_host: row.sanitized_host,
           },
         };
       } catch (error) {
