@@ -8,7 +8,7 @@ import { validateAnalysisPacket } from "../../analytics/contracts/analysis-packe
 import { validateAnalyticsRequest } from "../feature-engine.ts";
 import { buildJobIdentity } from "./job-identity.mjs";
 import { enqueueReport, runWorkerBatch } from "./run-one-job.mjs";
-import { evaluatePolicy } from "./policy.mjs";
+import { evaluateAdmissionPolicy } from "./policy.mjs";
 import { responseCeilingOf } from "./policy.mjs";
 import { LEASE_SECONDS, WORKER_BATCH_LIMIT } from "./limits.mjs";
 
@@ -129,7 +129,8 @@ export function createAiReportService(deps) {
       if (!policyContext || policyContext.ok !== true) {
         return fail("AI_POLICY_REQUIRED", "không đọc được policy context (DB/RPC lỗi) — fail closed");
       }
-      const policyDecision = evaluatePolicy({
+      // R4 (A): đây là ADMISSION stage (nhận job mới) — KHÔNG kiểm attempts/payload (thuộc attempt policy ở worker).
+      const policyDecision = evaluateAdmissionPolicy({
         config: deps.policy.config,
         context: {
           now_ms: now,
@@ -137,10 +138,8 @@ export function createAiReportService(deps) {
           access_scope_hash,
           recent_requests: policyContext.value.recent_requests,
           queued_jobs: policyContext.value.queued_jobs,
-          attempts: 0,
           tokens_used_today: policyContext.value.tokens_used_today,
         },
-        payload_bytes: 0,
       });
       if (!policyDecision.ok) return fail(policyDecision.code, policyDecision.message);
 

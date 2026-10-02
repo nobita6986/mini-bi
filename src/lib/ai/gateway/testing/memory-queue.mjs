@@ -47,12 +47,18 @@ export function createMemoryQueue(options = {}) {
     /** Audit trail do queue ghi (mô phỏng RPC ghi audit trong DB). */
 
     async enqueueOrReuse({ identity_hash, identity_components, request, now_ms }) {
+      // R4 (D): audit insert nằm CÙNG transaction với quyết định ⇒ insert lỗi thì RPC fail và KHÔNG tạo job.
+      if (hooks.auditInsertError === true) {
+        return { ok: false, code: "AI_INTERNAL", message: "audit insert lỗi (mô phỏng) — rollback toàn bộ" };
+      }
       const active = findActive(identity_hash);
       if (active) {
+        audit.push({ job_id: active.job_id, event_type: "job_reused", actor_ref: request.actor_ref ?? null, reason: null });
         return { ok: true, job_id: active.job_id, status: active.status, reused: true, cache_hit: false, revision_id: active.revision_id ?? null };
       }
       const live = findLiveRevision(identity_hash);
       if (live) {
+        audit.push({ job_id: live.job_id, event_type: "job_cache_hit", actor_ref: request.actor_ref ?? null, reason: null });
         return { ok: true, job_id: live.job_id, status: "draft", reused: false, cache_hit: true, revision_id: live.revision_id };
       }
       const job_id = uuid();

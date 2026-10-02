@@ -315,16 +315,18 @@ test("R3-B: mỗi lifecycle có đúng số audit event (DB authority + applicat
   assert.ok(reusedAgain.ok);
   assert.equal(reusedAgain.reused, true);
   assert.equal(reusedAgain.job_id, second.job_id);
+  // R4: job_reused do DB ghi (cùng transaction với quyết định) — application KHÔNG ghi nữa.
   assert.equal(auditCounts(queue, "job_reused", undefined, audit), 1, "job_reused đúng một lần");
-  assert.equal(audit.events.filter((row) => row.event_type === "job_reused").length, 1, "application là authority của job_reused");
-  assert.equal(queue.store.audit.filter((event) => event.event_type === "job_reused").length, 0, "DB không ghi job_reused");
+  assert.equal(queue.store.audit.filter((event) => event.event_type === "job_reused").length, 1, "DB là authority của job_reused");
+  assert.equal(audit.events.filter((row) => row.event_type === "job_reused").length, 0, "application không ghi job_reused");
   assert.equal(count("job_enqueued", second.job_id), 1, "không ghi thêm job_enqueued khi reuse");
 
   // Hoàn tất job thứ hai rồi enqueue lại ⇒ CACHE HIT đúng một lần
   await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
   const cached = await service.enqueueReport(secondIdentity);
   assert.equal(cached.cache_hit, true);
-  assert.equal(audit.events.filter((row) => row.event_type === "job_cache_hit").length, 1);
+  assert.equal(queue.store.audit.filter((row) => row.event_type === "job_cache_hit").length, 1, "DB ghi job_cache_hit đúng một lần");
+  assert.equal(audit.events.filter((row) => row.event_type === "job_cache_hit").length, 0, "application không ghi job_cache_hit");
   assert.equal(count("job_completed"), 2, "mỗi revision đúng một job_completed");
   assert.equal(queue.store.revisions.size, 2, "không duplicate revision");
 
@@ -332,30 +334,43 @@ test("R3-B: mỗi lifecycle có đúng số audit event (DB authority + applicat
   for (const event of DB_EVENTS) {
     assert.equal(audit.events.filter((row) => row.event_type === event).length, 0, "application không được ghi " + event);
   }
+  // R4: application KHÔNG còn event nào thuộc DB (kể cả reused/cache_hit).
   for (const event of APP_EVENTS) {
-    assert.equal(queue.store.audit.filter((row) => row.event_type === event).length, 0, "DB không được ghi " + event);
+    assert.equal(audit.events.filter((row) => row.event_type === event).length, 0, "application không được ghi " + event);
   }
 });
 
-test("R3-B2: memory queue phát ĐÚNG bộ event mà RPC SQL ghi (một authority cho mỗi event)", () => {
-  const migrationSql = ["20261001160000_p1_5_ai_report_gateway.sql", "20261001160200_p1_5_ai_report_claim_concurrency.sql"]
+test("R3-B2/R4: DB là authority DUY NHẤT cho mọi lifecycle event; application không append event nào", () => {
+  const migrationSql = [
+    "20261001160000_p1_5_ai_report_gateway.sql",
+    "20261001160200_p1_5_ai_report_claim_concurrency.sql",
+    "20261001160300_p1_5_ai_report_enqueue_audit_authority.sql",
+  ]
     .map((name) => readFileSync(new URL(name, MIGRATIONS_DIR), "utf8"))
     .join("\n");
   const dbEvents = new Set(
-    [...migrationSql.matchAll(/'job_(?:enqueued|claimed|stage|completed|failed|regenerated)'/g)].map((match) => match[0].replace(/'/g, ""))
+    [...migrationSql.matchAll(/'job_(?:enqueued|reused|cache_hit|claimed|stage|completed|failed|regenerated)'/g)].map((match) =>
+      match[0].replace(/'/g, "")
+    )
   );
-  assert.deepEqual([...dbEvents].sort(), ["job_claimed", "job_completed", "job_enqueued", "job_failed", "job_regenerated", "job_stage"]);
+  assert.deepEqual([...dbEvents].sort(), [
+    "job_cache_hit",
+    "job_claimed",
+    "job_completed",
+    "job_enqueued",
+    "job_failed",
+    "job_regenerated",
+    "job_reused",
+    "job_stage",
+  ]);
 
-  // Application chỉ được ghi 2 event tầng request (không nằm trong tập DB ở trên).
-  const appEvents = ["job_reused", "job_cache_hit"];
-  for (const event of appEvents) assert.ok(!dbEvents.has(event), event + " không được ghi ở cả DB và application");
   const serviceCore = readFileSync(new URL("./service-core.mjs", import.meta.url), "utf8");
   const runOneJob = readFileSync(new URL("./run-one-job.mjs", import.meta.url), "utf8");
-  for (const event of ["job_enqueued", "job_completed", "job_failed", "job_stage", "job_claimed"]) {
+  for (const event of dbEvents) {
     assert.ok(!serviceCore.includes('"' + event + '"'), "service-core không được ghi " + event);
     assert.ok(!runOneJob.includes('event_type: "' + event + '"'), "run-one-job không được ghi " + event);
   }
-  assert.ok(runOneJob.includes('"job_reused"') && runOneJob.includes('"job_cache_hit"'));
+  assert.ok(!runOneJob.includes("deps.audit.append"), "application không còn append lifecycle event");
 });
 
 test("R3-B3: queue.fail() không cập nhật được ⇒ worker báo lease_lost/infrastructure, không báo retry giả", async () => {

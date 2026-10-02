@@ -7,9 +7,10 @@
 
 import { buildProviderPayload, utf8ByteLength } from "./payload.mjs";
 import { validateGeneratedAnalysis } from "./output-guard.mjs";
-import { evaluatePolicy } from "./policy.mjs";
+import { evaluateAdmissionPolicy, evaluateAttemptPolicy } from "./policy.mjs";
 import { resolveProviderAdapter } from "./provider.mjs";
 import { decideAfterFailure } from "./job-state.mjs";
+import { projectClaim } from "./rpc-projection.mjs";
 import { LEASE_SECONDS } from "./limits.mjs";
 
 /** Signal timeout mặc định (Node/Next server runtime); test có thể inject bản điều khiển được. */
@@ -34,18 +35,25 @@ function parseStructured(result) {
 }
 
 /**
- * Enqueue-or-reuse (idempotent) + policy gate.
+ * Enqueue-or-reuse (idempotent) + ADMISSION policy gate (rate · queue-depth · token budget).
+ * Không kiểm attempts/payload ở đây — đó là policy của worker sau claim.
  * deps: { queue, policy, identity, manifest, provider, model, audit, clock, context }
  */
 export async function enqueueReport({ deps, request, context, now_ms }) {
   const now = Number.isFinite(now_ms) ? now_ms : deps.clock.nowMs();
 
-  const policyDecision = evaluatePolicy({
+  const admission = evaluateAdmissionPolicy({
     config: deps.policy.config,
-    context: context ?? { now_ms: now, actor_ref: request.actor_ref, access_scope_hash: request.access_scope_hash, recent_requests: [], active_jobs: 0, attempts: 0, tokens_used_today: 0 },
-    payload_bytes: 0,
+    context: context ?? {
+      now_ms: now,
+      actor_ref: request.actor_ref,
+      access_scope_hash: request.access_scope_hash,
+      recent_requests: [],
+      queued_jobs: 0,
+      tokens_used_today: 0,
+    },
   });
-  if (!policyDecision.ok) return { ok: false, code: policyDecision.code, message: policyDecision.message };
+  if (!admission.ok) return { ok: false, code: admission.code, message: admission.message };
 
   const identity = deps.identity.build(request);
   if (!identity.ok) return identity;
@@ -59,21 +67,10 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
   if (!enqueued.ok) return enqueued;
 
   /**
-   * B (R3) — Audit authority DUY NHẤT cho từng event:
-   * - DB (RPC): job_enqueued · job_claimed · job_stage · job_completed · job_failed · job_regenerated
-   * - Application: job_reused · job_cache_hit (đúng MỘT lần cho mỗi request reuse/cache-hit)
-   * ⇒ không còn hai nguồn cùng ghi một event, và complete idempotent không sinh event thừa.
+   * D (R4) — Audit authority DUY NHẤT nằm ở DB (`ai_report_enqueue` ghi job_enqueued / job_reused /
+   * job_cache_hit trong CÙNG transaction với quyết định) ⇒ application KHÔNG tự append lifecycle event,
+   * và không thể trả success nếu insert audit thất bại.
    */
-  if (enqueued.reused === true || enqueued.cache_hit === true) {
-    await deps.audit.append({
-      job_id: enqueued.job_id,
-      event_type: enqueued.reused ? "job_reused" : "job_cache_hit",
-      actor_ref: request.actor_ref,
-      reason: request.reason ?? null,
-      now_ms: now,
-    });
-  }
-
   return {
     ok: true,
     job_id: enqueued.job_id,
@@ -89,13 +86,19 @@ export async function enqueueReport({ deps, request, context, now_ms }) {
  */
 export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEASE_SECONDS }) {
   const now = Number.isFinite(now_ms) ? now_ms : deps.clock.nowMs();
-  const claimed = await deps.queue.claim({
-    worker_ref,
-    lease_seconds,
-    now_ms: now,
-    // R3: DB claim là authority cho trần concurrency provider.
-    max_concurrent_jobs: deps.policy.config?.max_concurrent_jobs,
-  });
+  /**
+   * C (R4) — Claim response được project/validate TẠI ĐÂY (không phụ thuộc implementation queue):
+   * thiếu job/attempt/lease_token/provider-model-adapter-prompt ⇒ worker error, không gọi provider.
+   */
+  const claimed = projectClaim(
+    await deps.queue.claim({
+      worker_ref,
+      lease_seconds,
+      now_ms: now,
+      // R3: DB claim là authority cho trần concurrency provider.
+      max_concurrent_jobs: deps.policy.config?.max_concurrent_jobs,
+    })
+  );
   // E — chỉ AI_IDLE mới là idle; lỗi DB/RPC phải nổi lên thành worker error (không giả thành "không có việc").
   if (claimed === null) {
     return { kind: "idle", job_id: null, status: null, error_code: null, revision_id: null, attempts: null, next_attempt_at: null };
@@ -125,24 +128,19 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   }
 
   const job = claimed.job;
-  const report = async (errorCode, message) => {
-    const decision = decideAfterFailure({
-      error_code: errorCode,
-      attempts: claimed.attempt,
-      max_attempts: job.max_attempts,
-      now_ms: now,
-      seed: job.job_id,
-    });
-    /**
-     * B (R3) — Truthfulness: chỉ báo retry_scheduled/failed khi DB THỰC SỰ đã cập nhật trạng thái.
-     * Audit `job_failed` do tầng DB (RPC) ghi — application KHÔNG ghi trùng.
-     */
+  /**
+   * B (R4) — MỌI nhánh thất bại đi qua ĐÚNG MỘT writer có kiểm tra kết quả `queue.fail()`:
+   * - fail() trả AI_LEASE_LOST ⇒ lease_lost (không báo retry/failed giả)
+   * - fail() lỗi DB/RPC ⇒ infrastructure error
+   * - chỉ khi DB đã cập nhật thành công mới trả retry_scheduled/failed
+   */
+  const failWith = async ({ error_code, message, next_status, next_attempt_at }) => {
     const failed = await deps.queue.fail({
       job_id: job.job_id,
       lease_token: claimed.lease_token,
-      error_code: errorCode,
-      next_status: decision.next_status,
-      next_attempt_at: decision.next_attempt_at,
+      error_code,
+      next_status,
+      next_attempt_at,
       message,
       now_ms: now,
     });
@@ -162,21 +160,37 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
         kind: "error",
         job_id: job.job_id,
         status: null,
-        error_code: failed?.code ?? "AI_INTERNAL",
+        error_code: (failed && failed.code) || "AI_INTERNAL",
         revision_id: null,
         attempts: claimed.attempt,
         next_attempt_at: null,
       };
     }
     return {
-      kind: decision.next_status === "queued" ? "retry_scheduled" : "failed",
+      kind: next_status === "queued" ? "retry_scheduled" : "failed",
       job_id: job.job_id,
-      status: decision.next_status,
-      error_code: errorCode,
+      status: next_status,
+      error_code,
       revision_id: null,
       attempts: claimed.attempt,
-      next_attempt_at: decision.next_attempt_at,
+      next_attempt_at: next_attempt_at ?? null,
     };
+  };
+
+  const report = async (errorCode, message) => {
+    const decision = decideAfterFailure({
+      error_code: errorCode,
+      attempts: claimed.attempt,
+      max_attempts: job.max_attempts,
+      now_ms: now,
+      seed: job.job_id,
+    });
+    return failWith({
+      error_code: errorCode,
+      message,
+      next_status: decision.next_status,
+      next_attempt_at: decision.next_attempt_at,
+    });
   };
 
   // 1. Minimize payload (whitelist). Lỗi ở đây là lỗi input/config — không gọi provider.
@@ -197,30 +211,23 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   if (!policyContext || policyContext.ok !== true) {
     return report("AI_POLICY_REQUIRED", "không đọc được policy context (DB/RPC lỗi) — fail closed");
   }
-  const policyDecision = evaluatePolicy({
+  /**
+   * A (R4) — WORKER/ATTEMPT policy: chỉ attempts + token budget + payload ceiling + provider config.
+   * KHÔNG kiểm queue-depth ở đây (queue đầy không được làm worker tự requeue).
+   */
+  const policyDecision = evaluateAttemptPolicy({
     config: deps.policy.config,
     context: { ...policyContext.value, now_ms: now, attempts: claimed.attempt },
     payload_bytes: payloadBytes,
   });
   if (!policyDecision.ok) {
-    await deps.queue.fail({
-      job_id: job.job_id,
-      lease_token: claimed.lease_token,
+    const retryablePolicy = policyDecision.code === "AI_RATE_LIMITED" || policyDecision.code === "AI_CONCURRENCY_LIMITED";
+    return failWith({
       error_code: policyDecision.code,
-      next_status: policyDecision.code === "AI_RATE_LIMITED" || policyDecision.code === "AI_CONCURRENCY_LIMITED" ? "queued" : "failed_budget",
-      next_attempt_at: policyDecision.code === "AI_RATE_LIMITED" || policyDecision.code === "AI_CONCURRENCY_LIMITED" ? new Date(now + 60000).toISOString() : null,
       message: policyDecision.message,
-      now_ms: now,
+      next_status: retryablePolicy ? "queued" : "failed_budget",
+      next_attempt_at: retryablePolicy ? new Date(now + 60000).toISOString() : null,
     });
-    return {
-      kind: "retry_scheduled",
-      job_id: job.job_id,
-      status: policyDecision.code === "AI_RATE_LIMITED" || policyDecision.code === "AI_CONCURRENCY_LIMITED" ? "queued" : "failed_budget",
-      error_code: policyDecision.code,
-      revision_id: null,
-      attempts: claimed.attempt,
-      next_attempt_at: null,
-    };
   }
 
   /**

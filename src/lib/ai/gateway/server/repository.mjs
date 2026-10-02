@@ -9,6 +9,8 @@ import "server-only";
 
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
+import { projectComplete, projectEnqueue, projectPolicyContext } from "../rpc-projection.mjs";
+
 function fail(code, message) {
   return { ok: false, code, message };
 }
@@ -47,14 +49,8 @@ export function createSupabaseJobRepository() {
         p_max_attempts: request.max_attempts,
       });
       if (!result.ok) return result;
-      return {
-        ok: true,
-        job_id: result.value.job_id,
-        status: result.value.status,
-        reused: result.value.reused === true,
-        cache_hit: result.value.cache_hit === true,
-        revision_id: result.value.revision_id ?? null,
-      };
+      // R4: response enqueue phải đúng kiểu; thiếu job_id/status ⇒ fail-closed.
+      return projectEnqueue(result.value);
     },
 
     async claim({ worker_ref, lease_seconds, max_concurrent_jobs }) {
@@ -72,25 +68,8 @@ export function createSupabaseJobRepository() {
         }
         return { ok: false, code: result.code ?? "AI_INTERNAL", message: result.message ?? "claim thất bại" };
       }
-      const job = result.value.job;
-      if (!job) return { ok: false, code: "AI_INTERNAL", message: "claim trả job rỗng" };
-      return {
-        job: {
-          job_id: job.job_id,
-          identity_hash: job.identity_hash,
-          status: job.status,
-          attempts: job.attempts,
-          max_attempts: job.max_attempts,
-          // R2 (D): field đã đóng băng trong row — worker phải đối chiếu trước khi gọi provider.
-          provider_key: job.provider_key,
-          model_key: job.model_key,
-          adapter_version: job.adapter_version,
-          prompt_version: job.prompt_version,
-          packet: job.packet,
-        },
-        lease_token: result.value.lease_token,
-        attempt: result.value.attempt,
-      };
+      // R4: worker tự validate claim shape (projectClaim) ⇒ parity giữa DB thật và test double.
+      return result.value;
     },
 
     async markStage({ job_id, lease_token, status }) {
@@ -106,7 +85,7 @@ export function createSupabaseJobRepository() {
         p_usage: usage,
       });
       if (!result.ok) return result;
-      return { ok: true, revision_id: result.value.revision_id, already_completed: result.value.already_completed === true };
+      return projectComplete(result.value);
     },
 
     async fail({ job_id, lease_token, error_code, next_status, next_attempt_at, message }) {
@@ -135,17 +114,8 @@ export function createSupabaseJobRepository() {
       if (!result.ok) {
         return { ok: false, code: "AI_POLICY_REQUIRED", message: "không đọc được policy context (DB/RPC lỗi)" };
       }
-      return {
-        ok: true,
-        value: {
-          recent_requests: Array.isArray(result.value.recent_requests) ? result.value.recent_requests : [],
-          // R3: tách queue depth khỏi slot đang chạy (chỉ queue depth dùng cho policy).
-          queued_jobs: Number.isInteger(result.value.queued_jobs) ? result.value.queued_jobs : 0,
-          inflight_jobs: Number.isInteger(result.value.inflight_jobs) ? result.value.inflight_jobs : 0,
-          active_jobs: Number.isInteger(result.value.active_jobs) ? result.value.active_jobs : 0,
-          tokens_used_today: Number.isFinite(result.value.tokens_used_today) ? result.value.tokens_used_today : 0,
-        },
-      };
+      // R4 (C): KHÔNG fallback []/0 — response malformed ⇒ AI_POLICY_REQUIRED (fail closed).
+      return projectPolicyContext(result.value);
     },
 
     async status(job_id) {

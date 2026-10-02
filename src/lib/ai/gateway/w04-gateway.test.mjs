@@ -16,8 +16,14 @@ import {
   listPromptVersions,
 } from "./prompt-registry.mjs";
 import { PAYLOAD_LIMITS, buildProviderPayload, comparisonReasonOf, scanForbiddenKeys } from "./payload.mjs";
-import { DEFAULT_POLICY, MAX_RESPONSE_BYTES, REQUIRED_POLICY_KEYS } from "./limits.mjs";
-import { evaluatePolicy, readPolicyConfig, responseCeilingOf } from "./policy.mjs";
+import { MAX_RESPONSE_BYTES, REQUIRED_POLICY_KEYS } from "./limits.mjs";
+import {
+  evaluateAdmissionPolicy,
+  evaluateAttemptPolicy,
+  evaluatePolicy,
+  readPolicyConfig,
+  responseCeilingOf,
+} from "./policy.mjs";
 import { createLiveTransport, createScriptedAdapter, resolveProviderAdapter } from "./provider.mjs";
 import { computeBackoffMs, computeBackoffMs as backoff, decideAfterFailure, canTransition, classifyFailure } from "./job-state.mjs";
 import { buildJobIdentity, describeIdentity, normalizeIdentityInput } from "./job-identity.mjs";
@@ -110,9 +116,18 @@ test("W04 policy: đọc policy fail-closed + đánh giá rate/concurrency/budge
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, queued_jobs: parsed.config.max_queue_depth } }).code, "AI_CONCURRENCY_LIMITED");
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, queued_jobs: 3 } }).ok, true);
   assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, tokens_used_today: 1000 } }).code, "AI_BUDGET_LIMITED");
-  assert.equal(evaluatePolicy({ config: parsed.config, context: { ...base, attempts: 4 } }).code, "AI_BUDGET_LIMITED");
-  assert.equal(evaluatePolicy({ config: parsed.config, context: base, payload_bytes: DEFAULT_POLICY.max_payload_bytes + 1 }).code, "AI_BUDGET_LIMITED");
+  // R4: tách stage — `attempts` thuộc ATTEMPT policy (worker), admission KHÔNG chặn theo attempts.
+  assert.equal(evaluateAdmissionPolicy({ config: parsed.config, context: { ...base, attempts: 99 } }).ok, true);
+  assert.equal(evaluateAttemptPolicy({ config: parsed.config, context: { ...base, attempts: 4 } }).code, "AI_BUDGET_LIMITED");
+  // R4: payload/attempt thuộc WORKER/ATTEMPT policy; admission không kiểm 2 thứ này.
+  assert.equal(
+    evaluateAttemptPolicy({ config: parsed.config, context: { ...base, attempts: 1 }, payload_bytes: parsed.config.max_payload_bytes + 1 }).code,
+    "AI_BUDGET_LIMITED"
+  );
+  assert.equal(evaluateAttemptPolicy({ config: parsed.config, context: { ...base, attempts: parsed.config.max_attempts + 1 } }).code, "AI_BUDGET_LIMITED");
+  assert.equal(evaluateAdmissionPolicy({ config: parsed.config, context: { ...base, queued_jobs: parsed.config.max_queue_depth - 1 } }).ok, true);
   assert.equal(evaluatePolicy({ config: null, context: base }).code, "AI_POLICY_REQUIRED");
+  assert.equal(evaluateAttemptPolicy({ config: null, context: base }).code, "AI_POLICY_REQUIRED");
 });
 
 test("W04 job state: transition hợp lệ, taxonomy lỗi và backoff bounded deterministic", () => {

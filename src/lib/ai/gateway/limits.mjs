@@ -10,7 +10,11 @@ export const LEASE_SECONDS = 120;
 export const MAX_ATTEMPTS = 3;
 /** Trần SLOT provider đang chạy — enforce ATOMIC tại DB claim (R3), không enforce ở application. */
 export const MAX_CONCURRENT_JOBS = 2;
-/** Trần ĐỘ SÂU hàng đợi (job chờ) — policy layer dùng để chặn queue phình vô hạn. */
+/**
+ * Trần ĐỘ SÂU hàng đợi (job chờ) — **SOFT ceiling** ở tầng admission (application).
+ * - Chỉ chặn NHẬN job mới khi hàng đợi đã đầy; KHÔNG enforced trong DB và KHÔNG dùng ở worker.
+ * - Hàng đợi vượt trần (do admission đồng thời hoặc ops hạ trần) vẫn phải DRAIN bình thường.
+ */
 export const MAX_QUEUE_DEPTH = 50;
 export const DAILY_TOKEN_CEILING = 2_000_000;
 export const RATE_WINDOW_MS = 60_000;

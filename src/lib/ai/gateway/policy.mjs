@@ -64,10 +64,18 @@ export function evaluateWindowPolicy({ config, lookback_days }) {
 }
 
 /**
- * Đánh giá policy. Trả { ok:true } hoặc { ok:false, code, message }.
- * Thứ tự kiểm tra deterministic: config → rate → concurrency → attempts → budget → payload size.
+ * R4 — TÁCH POLICY THEO LIFECYCLE.
+ *
+ * ADMISSION (enqueue/regenerate): config → rate limit → trần HÀNG ĐỢI (soft) → trần token.
+ * ATTEMPT (worker, sau claim): config → attempts → trần token → trần payload.
+ * Provider concurrency KHÔNG nằm ở đây — do `ai_report_claim` enforce atomic.
  */
 export function evaluatePolicy({ config, context, payload_bytes = 0 }) {
+  return evaluateAdmissionPolicy({ config, context, payload_bytes });
+}
+
+/** Admission policy: enqueue/regenerate. */
+export function evaluateAdmissionPolicy({ config, context }) {
   if (!config || typeof config !== "object") {
     return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu policy config" };
   }
@@ -104,19 +112,36 @@ export function evaluatePolicy({ config, context, payload_bytes = 0 }) {
     return { ok: false, code: "AI_CONCURRENCY_LIMITED", message: "hàng đợi đã đầy" };
   }
 
-  // `attempts` là số lần ĐÃ claim (bao gồm lần hiện tại) ⇒ chỉ chặn khi VƯỢT trần.
-  if (Number.isInteger(context.attempts) && context.attempts > config.max_attempts) {
-    return { ok: false, code: "AI_BUDGET_LIMITED", message: "vượt số lần thử tối đa" };
-  }
+  // R4: `attempts` KHÔNG thuộc admission — đây là policy của WORKER sau claim.
 
   if (Number.isFinite(context.tokens_used_today) && context.tokens_used_today >= config.daily_token_ceiling) {
     return { ok: false, code: "AI_BUDGET_LIMITED", message: "vượt trần token trong ngày" };
   }
 
+  return { ok: true };
+}
+
+/** Attempt policy: chạy sau claim. KHÔNG kiểm queue-depth (không tự chặn bởi chính queue đang chờ). */
+export function evaluateAttemptPolicy({ config, context, payload_bytes = 0 }) {
+  if (!config || typeof config !== "object") {
+    return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu policy config" };
+  }
+  const missing = REQUIRED_POLICY_KEYS.filter((key) => !isPositiveInt(config[key]));
+  if (missing.length > 0) {
+    return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu policy: " + missing.join(", ") };
+  }
+  if (!context || typeof context !== "object") {
+    return { ok: false, code: "AI_POLICY_REQUIRED", message: "thiếu policy context" };
+  }
+  if (Number.isInteger(context.attempts) && context.attempts > config.max_attempts) {
+    return { ok: false, code: "AI_BUDGET_LIMITED", message: "vượt số lần thử tối đa" };
+  }
+  if (Number.isFinite(context.tokens_used_today) && context.tokens_used_today >= config.daily_token_ceiling) {
+    return { ok: false, code: "AI_BUDGET_LIMITED", message: "vượt trần token trong ngày" };
+  }
   if (payload_bytes > config.max_payload_bytes) {
     return { ok: false, code: "AI_BUDGET_LIMITED", message: "payload vượt trần cho phép" };
   }
-
   return { ok: true };
 }
 
