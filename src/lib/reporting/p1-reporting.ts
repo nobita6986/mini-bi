@@ -69,6 +69,25 @@ export interface ReportingCoverage {
   coverageRatio: number | null;
 }
 
+/**
+ * Breakdown chéo project × provider_type (P1-T1-W04-R7).
+ * Mọi phép tính dùng recruited_count; unknown/invalid KHÔNG nhập vào hrp/vendor
+ * và KHÔNG nằm trong mẫu số của share.
+ */
+export interface ProjectProviderMix {
+  projectKey: string;
+  projectDisplay: string;
+  projectTotal: number;
+  hrpCount: number;
+  vendorCount: number;
+  unknownCount: number;
+  invalidCount: number;
+  knownTotal: number;
+  hrpShare: number | null;
+  vendorShare: number | null;
+  knownCoverage: number | null;
+}
+
 export interface ReportingData {
   applied: ReportingFilters;
   recruitedTotal: number;
@@ -77,6 +96,8 @@ export interface ReportingData {
   byRecruiter: Record<string, ReportingBucket>;
   byProvider: Record<string, ReportingBucket>;
   byEmployment: Record<string, ReportingBucket>;
+  /** Breakdown chéo project × provider, tính từ CHÍNH tập facts đã filter. */
+  projectProviderMix: ProjectProviderMix[];
   coverage: ReportingCoverage;
   sources: ReportingSourceStatusRow[];
   /** Extent của RESULT sau mọi filter (min/max business_date của facts đã lọc). */
@@ -196,6 +217,76 @@ function groupByDimension(
   return out;
 }
 
+function isProjectSentinel(key: string): boolean {
+  return key === "__unknown__" || key === "__invalid__";
+}
+
+/**
+ * Sort hiển thị: project sentinel xuống cuối; vendor_share giảm dần (share null xuống cuối);
+ * known_total giảm dần; cuối cùng projectDisplay theo localeCompare("vi").
+ */
+function compareProjectMix(a: ProjectProviderMix, b: ProjectProviderMix): number {
+  const as = isProjectSentinel(a.projectKey);
+  const bs = isProjectSentinel(b.projectKey);
+  if (as !== bs) return as ? 1 : -1;
+  const av = a.vendorShare;
+  const bv = b.vendorShare;
+  if (av === null && bv !== null) return 1;
+  if (av !== null && bv === null) return -1;
+  if (av !== null && bv !== null && av !== bv) return bv - av;
+  if (a.knownTotal !== b.knownTotal) return b.knownTotal - a.knownTotal;
+  return a.projectDisplay.localeCompare(b.projectDisplay, "vi");
+}
+
+/**
+ * Breakdown chéo project × provider_type (P1-T1-W04-R7).
+ *
+ * - Group theo project_KEY; display chọn bằng selectDisplay (dùng chung quy tắc breakdown).
+ * - projectTotal = hrp + vendor + unknown + invalid (key provider ngoài danh mục tính vào invalid).
+ * - knownTotal = hrp + vendor; hrpShare/vendorShare = count / knownTotal (null khi knownTotal = 0).
+ * - knownCoverage = knownTotal / projectTotal (null khi projectTotal = 0).
+ * - Tổng projectTotal của mọi dự án = tổng recruited_count của rows đầu vào.
+ */
+export function buildProjectProviderMix(rows: ReportingFact[]): ProjectProviderMix[] {
+  const groups = new Map<
+    string,
+    { displays: Map<string, number>; hrp: number; vendor: number; unknown: number; invalid: number; total: number }
+  >();
+  for (const row of rows) {
+    let g = groups.get(row.project_key);
+    if (!g) {
+      g = { displays: new Map(), hrp: 0, vendor: 0, unknown: 0, invalid: 0, total: 0 };
+      groups.set(row.project_key, g);
+    }
+    g.displays.set(row.project_display, (g.displays.get(row.project_display) ?? 0) + row.recruited_count);
+    g.total += row.recruited_count;
+    if (row.provider_type_key === "hrp") g.hrp += row.recruited_count;
+    else if (row.provider_type_key === "vendor") g.vendor += row.recruited_count;
+    else if (row.provider_type_key === "__unknown__") g.unknown += row.recruited_count;
+    else g.invalid += row.recruited_count;
+  }
+
+  const out: ProjectProviderMix[] = [];
+  for (const [key, g] of groups) {
+    const knownTotal = g.hrp + g.vendor;
+    out.push({
+      projectKey: key,
+      projectDisplay: selectDisplay(key, g.displays),
+      projectTotal: g.total,
+      hrpCount: g.hrp,
+      vendorCount: g.vendor,
+      unknownCount: g.unknown,
+      invalidCount: g.invalid,
+      knownTotal,
+      hrpShare: knownTotal > 0 ? g.hrp / knownTotal : null,
+      vendorShare: knownTotal > 0 ? g.vendor / knownTotal : null,
+      knownCoverage: g.total > 0 ? knownTotal / g.total : null,
+    });
+  }
+  out.sort(compareProjectMix);
+  return out;
+}
+
 function sourceStatus(
   s: ReportingSource,
   hasCurrentFacts: boolean
@@ -283,6 +374,7 @@ export function computeReporting(
     byRecruiter: groupByDimension(rows, "recruiter_key", "recruiter_display"),
     byProvider: groupByDimension(rows, "provider_type_key", "provider_type_display"),
     byEmployment: groupByDimension(rows, "employment_type_key", "employment_type_display"),
+    projectProviderMix: buildProjectProviderMix(rows),
     coverage: { expected: visible.length, succeeded, partial, failed, neverSucceeded, coverageRatio },
     sources: sourceRows,
     dateExtent: { min: minDate, max: maxDate },

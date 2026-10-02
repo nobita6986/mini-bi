@@ -8,7 +8,7 @@
 
 import type { ColorSlot, ChartSlot } from "../theme/theme-registry";
 
-import type { ReportingBucket, ReportingSourceStatusRow } from "./p1-reporting";
+import type { ProjectProviderMix, ReportingBucket, ReportingSourceStatusRow } from "./p1-reporting";
 
 export const CHART_SLOT_COUNT = 8; // mirror theme-registry (Node-test isolation)
 
@@ -182,6 +182,85 @@ export interface StatusSegment {
  * Segmented bar trạng thái nguồn: succeeded/partial/failed/running/no-run.
  * Tổng count = số nguồn đang xét (mỗi nguồn rơi đúng một bucket).
  */
+// ---------------------------------------------------------------------------
+// P1-T1-W04-R7 — view-model cho card "Tỷ lệ HRP/Vendor theo dự án"
+// ---------------------------------------------------------------------------
+
+/** Số dự án hiển thị mặc định trên biểu đồ (phần còn lại nằm trong "Xem chi tiết tất cả"). */
+export const PROJECT_MIX_TOP = 10;
+
+export interface ProjectMixSegment {
+  slot: ColorSlot;
+  label: string;
+  value: number;
+  /** % của projectTotal (4 segment cộng lại = 100 khi projectTotal > 0). */
+  percent: number;
+}
+
+export interface ProjectMixRow {
+  key: string;
+  display: string;
+  projectTotal: number;
+  knownTotal: number;
+  hrpCount: number;
+  vendorCount: number;
+  unknownCount: number;
+  invalidCount: number;
+  unclassified: number;
+  hrpShare: number | null;
+  vendorShare: number | null;
+  knownCoverage: number | null;
+  isSentinel: boolean;
+  segments: ProjectMixSegment[];
+}
+
+/** Đảm bảo HRP và Vendor không trùng slot (hai phần chính phải phân biệt được). */
+function distinctChartSlots(a: ColorSlot, b: ColorSlot): [ColorSlot, ColorSlot] {
+  if (a !== b || !isChartSlot(a)) return [a, b];
+  return [a, chartSlotForIndex((chartSlotIndex(a) + 1) % CHART_SLOT_COUNT)];
+}
+
+/**
+ * Map ProjectProviderMix (read-model) -> row hiển thị: slot màu theo theme + % của projectTotal.
+ * Không đổi giá trị/tổng; chỉ thêm màu và tỷ lệ phần trăm để render.
+ */
+export function buildProjectMixRows(mix: ProjectProviderMix[]): ProjectMixRow[] {
+  const hrpBase = stableColorForKey("hrp");
+  const vendorBase = stableColorForKey("vendor");
+  const [hrpSlot, vendorSlot] = distinctChartSlots(hrpBase, vendorBase);
+  return mix.map((m) => ({
+    key: m.projectKey,
+    display: m.projectDisplay,
+    projectTotal: m.projectTotal,
+    knownTotal: m.knownTotal,
+    hrpCount: m.hrpCount,
+    vendorCount: m.vendorCount,
+    unknownCount: m.unknownCount,
+    invalidCount: m.invalidCount,
+    unclassified: m.unknownCount + m.invalidCount,
+    hrpShare: m.hrpShare,
+    vendorShare: m.vendorShare,
+    knownCoverage: m.knownCoverage,
+    isSentinel: m.projectKey === "__unknown__" || m.projectKey === "__invalid__",
+    segments: [
+      { slot: hrpSlot, label: "HRP", value: m.hrpCount, percent: percentageOfTotal(m.hrpCount, m.projectTotal) },
+      { slot: vendorSlot, label: "Vendor", value: m.vendorCount, percent: percentageOfTotal(m.vendorCount, m.projectTotal) },
+      { slot: UNKNOWN_SLOT, label: "Không xác định", value: m.unknownCount, percent: percentageOfTotal(m.unknownCount, m.projectTotal) },
+      { slot: INVALID_SLOT, label: "Không hợp lệ", value: m.invalidCount, percent: percentageOfTotal(m.invalidCount, m.projectTotal) },
+    ],
+  }));
+}
+
+/**
+ * Nhận xét toán học (không phải ngưỡng nghiệp vụ): bên nào chiếm > 50% trong phần đã phân loại.
+ */
+export function mixMajorityLabel(row: ProjectMixRow): string {
+  if (row.knownTotal === 0) return "Không đủ dữ liệu phân loại";
+  if (row.vendorShare !== null && row.vendorShare > 0.5) return "Vendor chiếm đa số";
+  if (row.hrpShare !== null && row.hrpShare > 0.5) return "HRP chiếm đa số";
+  return "Chia đều";
+}
+
 export function buildSourceStatusSegments(sources: ReportingSourceStatusRow[]): StatusSegment[] {
   const count = (statuses: ReportingSourceStatusRow["status"][]) =>
     sources.filter((s) => statuses.includes(s.status)).length;

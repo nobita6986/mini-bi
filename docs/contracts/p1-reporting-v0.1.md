@@ -72,6 +72,34 @@ Status:
 
 Source `partial` lần đầu có valid facts: facts vẫn được tính, `contributes=true`, `everSucceeded=false` (coverage_ratio chưa tính source đó là từng succeeded), `status=incomplete`.
 
+### 2.7. Breakdown chéo project × provider_type (clarification W04-R7)
+
+Dashboard bổ sung chỉ số **“Tỷ lệ HRP/Vendor theo dự án”**, tính **trực tiếp từ cùng tập facts đã filter** (không query riêng, không migration/view mới, không đổi workflow n8n). Với mỗi `project_key`:
+
+| Field | Công thức |
+|---|---|
+| `projectTotal` | `sum(recruited_count)` của toàn bộ provider trong dự án |
+| `hrpCount` / `vendorCount` | `sum(recruited_count)` khi `provider_type_key = 'hrp'` / `'vendor'` |
+| `unknownCount` / `invalidCount` | `sum(recruited_count)` khi `provider_type_key = '__unknown__'` / `'__invalid__'` |
+| `knownTotal` | `hrpCount + vendorCount` |
+| `hrpShare` / `vendorShare` | `hrpCount / knownTotal` · `vendorCount / knownTotal` (null khi `knownTotal = 0`) |
+| `knownCoverage` | `knownTotal / projectTotal` (null khi `projectTotal = 0`) |
+
+Quy tắc bắt buộc:
+
+1. Mọi phép tính dùng `recruited_count` — **không** đếm số dòng grain.
+2. `__unknown__` / `__invalid__` **không** được nhập vào `hrpCount`/`vendorCount` và **không** nằm trong mẫu số của share.
+3. `projectTotal = hrpCount + vendorCount + unknownCount + invalidCount` (provider key ngoài danh mục tính vào `invalidCount` — nhánh phòng thủ; DB CHECK đã giới hạn 4 giá trị).
+4. Tổng `projectTotal` của mọi dự án = `recruited_total` trong cùng filter/scope.
+5. `knownTotal = 0` ⇒ `hrpShare = vendorShare = null`; UI hiển thị “Không đủ dữ liệu phân loại”, **không** hiển thị 0% gây hiểu nhầm.
+6. `knownTotal > 0` ⇒ `hrpShare + vendorShare = 1`.
+7. Group identity = `project_key`; display chọn theo đúng quy tắc §2.3 (`selectDisplay`).
+8. Sort hiển thị: project sentinel (`__unknown__`/`__invalid__`) xuống cuối; `vendor_share` giảm dần (share null xuống cuối); `known_total` giảm dần; cuối cùng `projectDisplay` theo `localeCompare("vi")`.
+9. “Vendor chiếm đa số” chỉ là **kết luận toán học** khi `vendor_share > 0.5` — không đặt ngưỡng rủi ro/phụ thuộc tùy ý.
+10. Tuân thủ toàn bộ filter §6 (AND). Khi filter `provider` đang bật, UI phải nói rõ cơ cấu đang phản ánh bộ lọc đó và **không** âm thầm bỏ qua filter.
+
+Đây là **additive clarification** cho reporting layer; **không** đổi ingestion contract `daily-recruitment-breakdown/0.2`, không đổi version `p1-reporting/0.1` và không ảnh hưởng metric/breakdown hiện có.
+
 ## 3. Source scope
 
 Reporting scope (nguồn BoD P1): `data_sources.active = true AND data_sources.is_test = false`.

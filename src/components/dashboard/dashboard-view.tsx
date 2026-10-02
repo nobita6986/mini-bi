@@ -16,6 +16,7 @@ import { DashboardFilters } from "./dashboard-filters";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
+import { ProjectProviderMixCard } from "./project-provider-mix";
 import { ProviderDonut } from "./provider-donut";
 import { RecruiterBarChart } from "./recruiter-bar-chart";
 import { SourceStatusBar } from "./source-status-bar";
@@ -203,6 +204,13 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
             <Card className="p-4 lg:col-span-5">
               <CardHeader title="Theo HRP/Vendor" />
               <ProviderDonut segments={buildCategorySegments(data.byProvider)} title="Biểu đồ HRP/Vendor" />
+            </Card>
+            <Card className="p-4 lg:col-span-12">
+              <CardHeader
+                title="Tỷ lệ HRP/Vendor theo dự án"
+                description="Tỷ trọng Vendor/HRP trong phần đã phân loại của từng dự án; “Không xác định” và “Không hợp lệ” không nằm trong mẫu số."
+              />
+              <ProjectProviderMixCard mix={data.projectProviderMix} providerFilterActive={Boolean(data.applied.provider)} />
             </Card>
             <Card className="p-4 lg:col-span-7">
               <CardHeader title="Theo người tuyển" description="Top 10 người tuyển theo số người tuyển." />

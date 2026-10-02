@@ -12,7 +12,7 @@
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",
     "docs:check": "node scripts/check-doc-examples.mjs",
-    "test": "node --test src/lib/reporting/pipeline-check.test.mjs src/lib/reporting/pipeline-check-guard.test.mjs src/lib/reporting/p1-reporting.test.mjs src/lib/reporting/p1-reporting-pagination.test.mjs src/lib/reporting/p1-dashboard.test.mjs src/lib/reporting/p1-chart-data.test.mjs src/lib/reporting/p1-date-presets.test.mjs src/lib/auth/pilot-access.test.mjs src/components/dashboard/dashboard-brand.test.mjs src/lib/theme/theme-registry.test.mjs"
+    "test": "node --test src/lib/reporting/pipeline-check.test.mjs src/lib/reporting/pipeline-check-guard.test.mjs src/lib/reporting/p1-reporting.test.mjs src/lib/reporting/p1-reporting-pagination.test.mjs src/lib/reporting/p1-dashboard.test.mjs src/lib/reporting/p1-chart-data.test.mjs src/lib/reporting/p1-date-presets.test.mjs src/lib/auth/pilot-access.test.mjs src/components/dashboard/dashboard-brand.test.mjs src/lib/theme/theme-registry.test.mjs src/lib/reporting/p1-project-provider-mix.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
