@@ -14,7 +14,7 @@ import { canonicalJson } from "../engine-shared.mjs";
 import { MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES } from "./limits.mjs";
 import { buildProviderHeaders, getProviderProfile, joinProviderPath } from "../../ai-config/provider-profiles.ts";
 
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.6";
+export const LIVE_ADAPTER_VERSION = "live-adapter/0.7";
 /** Profile live duy nhất được hỗ trợ hiện tại (authority thực sự là provider-profiles.ts). */
 export const LIVE_PROVIDER_PROFILE = "openai-compatible";
 

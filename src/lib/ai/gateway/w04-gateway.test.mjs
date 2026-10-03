@@ -235,11 +235,11 @@ test("W04 provider: scripted deterministic; live cần outbound wiring, thiếu 
   // W04B-S01: live adapter cần outbound wiring; không wiring ⇒ fail-closed, không bao giờ raw fetch.
   const wired = resolveProviderAdapter({ provider_key: "live", config: { outbound: async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }) } });
   assert.equal(wired.ok, true);
-  assert.equal(wired.adapter.adapter_version, "live-adapter/0.6");
+  assert.equal(wired.adapter.adapter_version, "live-adapter/0.7");
   assert.equal(wired.adapter.provider_key, "live");
   const bare = createLiveAdapter({ outbound: async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }) });
   assert.equal(bare.provider_key, "live");
-  assert.equal(bare.adapter_version, "live-adapter/0.6");
+  assert.equal(bare.adapter_version, "live-adapter/0.7");
 
   const adapter = createScriptedAdapter({ scenario: "valid" });
   const packet = casePacket("c01");
