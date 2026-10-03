@@ -30,6 +30,7 @@ export type SubmissionListProps = {
   blockedSubmissionIds: ReadonlySet<string>;
   onLoadMore: () => void;
   onTransition: (input: { submission: SubmissionReadItem; action: SubmissionAction }) => void;
+  onRequestChange: (submission: SubmissionReadItem) => void;
 };
 
 type PendingConfirm = { submission: SubmissionReadItem; action: SubmissionAction };
@@ -43,6 +44,7 @@ export function DirectEntrySubmissionList({
   blockedSubmissionIds,
   onLoadMore,
   onTransition,
+  onRequestChange,
 }: SubmissionListProps) {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
@@ -130,12 +132,10 @@ export function DirectEntrySubmissionList({
                 {terminal && (
                   <button
                     type="button"
-                    className={styles.secondaryButton}
-                    disabled
-                    aria-disabled="true"
-                    title="Sẽ mở ở bước yêu cầu thay đổi"
+                    className={styles.primaryButton}
+                    onClick={() => onRequestChange(submission)}
                   >
-                    Tạo yêu cầu thay đổi (sắp có)
+                    Yêu cầu thay đổi
                   </button>
                 )}
               </div>

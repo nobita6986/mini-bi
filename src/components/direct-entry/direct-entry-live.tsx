@@ -8,6 +8,8 @@ import "react-data-grid/lib/styles.css";
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
 import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
+import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
+import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
 import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
@@ -42,6 +44,12 @@ import {
   type SubmissionAction,
   type TransitionIntentKeyState,
 } from "@/lib/direct-entry/submission-lifecycle";
+import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
+import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
+import {
+  projectChangeRequestListPage,
+  type ChangeRequestListItem,
+} from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectSubmissionListPage,
   type SubmissionReadItem,
@@ -51,6 +59,9 @@ import type { DraftCatalog, OwnDraft } from "@/lib/direct-entry/write-repository
 import styles from "./direct-entry-shell.module.css";
 
 const SUBMISSION_PAGE_SIZE = 50;
+const CHANGE_REQUEST_PAGE_SIZE = 50;
+const CHANGE_REQUEST_LIST_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;
+const CHANGE_REQUEST_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const SUBMISSION_LIST_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
 const SUBMISSION_TRANSITION_KEYS = ["submission_id", "state", "version"] as const;
 
@@ -261,6 +272,16 @@ export function DirectEntryLive() {
   const cursorRef = useRef<string | null>(null);
   const intentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const lifecycleStatusRef = useRef<HTMLParagraphElement | null>(null);
+  const [changeRequests, setChangeRequests] = useState<ChangeRequestListItem[]>([]);
+  const [changeRequestListState, setChangeRequestListState] =
+    useState<"loading" | "ready" | "error">("loading");
+  const [changeRequestListMessage, setChangeRequestListMessage] = useState("");
+  const [changeRequestHasMore, setChangeRequestHasMore] = useState(false);
+  const [busyChangeRequestId, setBusyChangeRequestId] = useState<string | null>(null);
+  const [changeRequestNotice, setChangeRequestNotice] = useState("");
+  const [proposerSubmission, setProposerSubmission] = useState<SubmissionReadItem | null>(null);
+  const changeRequestCursorRef = useRef<string | null>(null);
+  const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
   const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
 
@@ -442,6 +463,117 @@ export function DirectEntryLive() {
     }
   }, [loadSubmissions, reloadDrafts]);
 
+  const loadChangeRequests = useCallback(async (mode: "replace" | "append") => {
+    setChangeRequestListState("loading");
+    try {
+      const params = new URLSearchParams({ page_size: String(CHANGE_REQUEST_PAGE_SIZE) });
+      if (mode === "append" && changeRequestCursorRef.current) {
+        params.set("cursor", changeRequestCursorRef.current);
+      }
+      const response = await fetch("/api/direct-entry/change-requests?" + params.toString(), {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const body = await readJson(response);
+      const page = projectChangeRequestListPage(
+        projectionSlice(body, CHANGE_REQUEST_LIST_KEYS),
+        { page_size: CHANGE_REQUEST_PAGE_SIZE },
+      );
+      if (!response.ok || !page) throw new Error("CHANGE_REQUESTS_UNAVAILABLE");
+      setChangeRequests((current) => {
+        if (mode === "replace") return page.requests;
+        const seen = new Set(current.map((item) => item.request_id));
+        return [...current, ...page.requests.filter((item) => !seen.has(item.request_id))];
+      });
+      changeRequestCursorRef.current = page.next_cursor;
+      setChangeRequestHasMore(page.has_more);
+      setChangeRequestListState("ready");
+      setChangeRequestListMessage("");
+    } catch (cause) {
+      setChangeRequestListState("error");
+      setChangeRequestListMessage(
+        cause instanceof Error ? cause.message : "CHANGE_REQUESTS_UNAVAILABLE",
+      );
+    }
+  }, []);
+
+  const withdrawChangeRequest = useCallback(async (request: ChangeRequestListItem) => {
+    const intent = "change_request_withdraw:" + request.request_id + ":" + request.version;
+    const resolved = resolveIntentKey(
+      changeRequestIntentKeys.current.get(request.request_id) ?? EMPTY_INTENT_KEY,
+      intent,
+      () => crypto.randomUUID(),
+    );
+    changeRequestIntentKeys.current.set(request.request_id, resolved.state);
+    setBusyChangeRequestId(request.request_id);
+    try {
+      const response = await fetch(
+        "/api/direct-entry/change-requests/" + encodeURIComponent(request.request_id) + "/withdraw",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": resolved.key,
+          },
+          body: JSON.stringify({
+            expected_version: request.version,
+            idempotency_key: resolved.key,
+          }),
+        },
+      );
+      const body = await readJson(response);
+      if (response.ok) {
+        const updated = projectChangeRequestStateResult(
+          projectionSlice(body, CHANGE_REQUEST_RESULT_KEYS),
+          { request_id: request.request_id, expected_version: request.version, state: "WITHDRAWN" },
+        );
+        if (!updated) {
+          setChangeRequestNotice(changeRequestErrorMessage(500));
+          return;
+        }
+        changeRequestIntentKeys.current.set(
+          request.request_id,
+          clearIntentKey(resolved.state, intent),
+        );
+        setChangeRequestNotice("Đã rút yêu cầu " + shortRef(updated.request_id) + ".");
+        await loadChangeRequests("replace");
+        return;
+      }
+      const status = response.status;
+      if (status === 409) {
+        changeRequestIntentKeys.current.set(
+          request.request_id,
+          clearIntentKey(resolved.state, intent),
+        );
+        setChangeRequestNotice(changeRequestErrorMessage(409));
+        await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
+        return;
+      }
+      if (status >= 500) {
+        setChangeRequestNotice(changeRequestErrorMessage(status));
+        return;
+      }
+      changeRequestIntentKeys.current.set(
+        request.request_id,
+        clearIntentKey(resolved.state, intent),
+      );
+      setChangeRequestNotice(changeRequestErrorMessage(status));
+      if (status === 401 || status === 403) {
+        await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
+      }
+    } catch {
+      setChangeRequestNotice(changeRequestErrorMessage(0));
+    } finally {
+      setBusyChangeRequestId(null);
+    }
+  }, [loadChangeRequests, loadSubmissions]);
+
+  const reloadAfterChangeRequestMutation = useCallback(async (message: string) => {
+    setChangeRequestNotice(message);
+    await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
+  }, [loadChangeRequests, loadSubmissions]);
+
   const blockedSubmissionIds = useMemo(() => {
     const blocked = new Set<string>();
     for (const submission of submissions) {
@@ -482,6 +614,7 @@ export function DirectEntryLive() {
         }
         setCapabilities(session.actor.capabilities);
         void loadSubmissions("replace");
+        void loadChangeRequests("replace");
         const [draftResponse, catalog] = await Promise.all([
           fetch("/api/direct-entry/drafts", { cache: "no-store", credentials: "same-origin" }),
           ensureCatalog(today),
@@ -507,7 +640,7 @@ export function DirectEntryLive() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [ensureCatalog, loadSubmissions, today]);
+  }, [ensureCatalog, loadChangeRequests, loadSubmissions, today]);
 
   useEffect(() => {
     for (const row of rows) {
@@ -930,6 +1063,10 @@ export function DirectEntryLive() {
         {lifecycleMessage}
       </p>
 
+      <p className={styles.lifecycleStatus} aria-live="polite" data-testid="change-request-status">
+        {changeRequestNotice}
+      </p>
+
       <div className={styles.notice} aria-live="polite">
         {loadState === "loading" && "Đang tải quyền, danh mục và bản nháp…"}
         {loadState === "error" && `Không tải được Direct Entry (${loadMessage}). Không dùng dữ liệu mẫu khi chế độ máy chủ đang bật.`}
@@ -953,6 +1090,35 @@ export function DirectEntryLive() {
             blockedSubmissionIds={blockedSubmissionIds}
             onLoadMore={() => void loadSubmissions("append")}
             onTransition={(input) => void runTransition(input)}
+            onRequestChange={(submission) => setProposerSubmission(submission)}
+          />
+          <DirectEntryChangeRequestList
+            state={changeRequestListState}
+            message={changeRequestListMessage}
+            requests={changeRequests}
+            hasMore={changeRequestHasMore}
+            busyRequestId={busyChangeRequestId}
+            onLoadMore={() => void loadChangeRequests("append")}
+            onWithdraw={(request) => void withdrawChangeRequest(request)}
+          />
+          <DirectEntryChangeRequestProposer
+            open={proposerSubmission !== null}
+            onOpenChange={(next) => { if (!next) setProposerSubmission(null); }}
+            submission={proposerSubmission}
+            catalogFor={catalogFor}
+            ensureCatalog={ensureCatalog}
+            onCreated={(created) => {
+              void reloadAfterChangeRequestMutation(
+                "Đã tạo yêu cầu thay đổi " + shortRef(created.request_id) + " cho " +
+                  created.items + " dòng.",
+              );
+            }}
+            onConflict={() => {
+              void reloadAfterChangeRequestMutation(changeRequestErrorMessage(409));
+            }}
+            onUnauthorized={() => {
+              void reloadAfterChangeRequestMutation(changeRequestErrorMessage(401));
+            }}
           />
           <section className={styles.gridSection} aria-label="Bảng bản nháp Direct Entry">
             <p className={styles.gridHint}>Dự án, recruiter, HRP/Vendor và team đến từ danh mục theo ngày hiệu lực.</p>

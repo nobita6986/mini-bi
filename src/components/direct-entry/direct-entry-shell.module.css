@@ -682,3 +682,62 @@
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
+/* P1.6-W04-S04C-S03B1 - khu "Yêu cầu thay đổi" (proposer ENTRY_FIELD). */
+
+.proposerEntry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background) 40%, var(--surface));
+  padding: 12px;
+}
+
+.proposerChoice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.proposerChoice input {
+  width: 20px;
+  height: 20px;
+}
+
+.proposerFields {
+  display: grid;
+  gap: 10px;
+}
+
+.proposerSummary {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+.proposerSummary ul,
+.proposerConfirmList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.proposerConfirmList {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.submissionActions button,
+.proposerEntry input[type="checkbox"] {
+  min-height: 44px;
+}
+
+.drawer .primaryButton,
+.drawer .secondaryButton {
+  min-height: 44px;
+}
