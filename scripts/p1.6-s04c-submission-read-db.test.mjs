@@ -18,10 +18,11 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 32 migrations and read RPC ACLs", async () => {
-  assert.equal(migrations.migrationNames.length, 32);
-  assert.equal(migrations.migrationNames[migrations.migrationNames.length - 1],
-    "20261005020000_p1_6_w04_s04c_submission_reads.sql");
+test("from-scratch apply 33 migrations and read RPC ACLs", async () => {
+  assert.equal(migrations.migrationNames.length, 33);
+  assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
+  assert.deepEqual(migrations.migrationNames, [...migrations.migrationNames].sort(),
+    "migration phai duoc ap theo thu tu ten file");
   for (const signature of [LIST_RPC, READ_RPC]) {
     const { rows } = await db.query(
       "select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as config," +

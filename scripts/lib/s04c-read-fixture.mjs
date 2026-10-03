@@ -103,8 +103,8 @@ export function transitionInput(actor, submissionId, expectedVersion, targetStat
   };
 }
 
-export async function seedChangeRequestFixture(db) {
-  await db.exec("begin");
+export async function seedChangeRequestFixture(db, { manageTransaction = true } = {}) {
+  if (manageTransaction) await db.query("begin");
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
     [TEAM_A, "s02b_team_a", "S02B team A"]);
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
@@ -166,7 +166,7 @@ export async function seedChangeRequestFixture(db) {
   await db.query(toReview.sql, toReview.values);
   const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", "b");
   await db.query(toSubmitted.sql, toSubmitted.values);
-  await db.exec("commit");
+  if (manageTransaction) await db.query("commit");
 
   return { entryA, entryB, submissionId };
 }

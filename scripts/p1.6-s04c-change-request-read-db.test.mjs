@@ -25,8 +25,10 @@ const fixture = await seedChangeRequestFixture(db);
 const requests = await seedChangeRequests(db, fixture);
 
 test("from-scratch migration apply covers the new read migration and its ACLs", async () => {
-  assert.equal(migrations.migrationNames.length, 32);
+  assert.equal(migrations.migrationNames.length, 33);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
+  assert.ok(migrations.migrationNames.includes(
+    "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
   for (const signature of [LIST_RPC, READ_RPC]) {
     const { rows } = await db.query(
       "select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as config," +

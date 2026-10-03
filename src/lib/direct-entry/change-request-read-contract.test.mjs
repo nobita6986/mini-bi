@@ -153,6 +153,17 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
   });
   assert.deepEqual(projectChangeRequestDetail(payment, { request_id: requestId }), payment);
 
+  // Presence-only marker cua worker_details (server redact khi thieu pii_view) van la record hop le.
+  const presenceOnly = detailBody({
+    items: [{
+      entry_id: entryA,
+      target_kind: "ENTRY_FIELD",
+      expected_version: 2,
+      proposal: { worker_details: { present: true } },
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(presenceOnly, { request_id: requestId }), presenceOnly);
+
   const badProposal = {
     entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
     proposal: { labor_type: "PERMANENT", unknown_field: 1 },
@@ -186,6 +197,24 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     detailBody({ reason: "S02B reason" }),
     detailBody({ proposer_user_id: entryA }),
     detailBody({ reviewer_user_id: entryA }),
+    // S03B3-R1: raw sensitive key trong proposal phai bi reject (fail-closed o boundary).
+    detailBody({ items: [{
+      entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
+      proposal: { labor_type: "PERMANENT", idempotency_key: "s03b3r1" },
+    }] }),
+    detailBody({ items: [{
+      entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
+      proposal: { worker_details: { present: true, storage_key: "p1.6/synthetic" } },
+    }] }),
+    detailBody({ items: [{
+      entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
+      proposal: { worker_details: { checksum_sha256: "a".repeat(64) } },
+    }] }),
+    // PAYMENT da bi mask o server: gia tri khong con la account number hop le => fail-closed.
+    detailBody({ items: [{
+      entry_id: entryA, target_kind: "PAYMENT", expected_version: 1,
+      proposal: { state: "provided", account_number: "••••6789" },
+    }] }),
   ];
   for (const [index, payload] of rejected.entries()) {
     assert.equal(projectChangeRequestDetail(payload, { request_id: requestId }), null, String(index));
