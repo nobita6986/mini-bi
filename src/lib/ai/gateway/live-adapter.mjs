@@ -14,11 +14,11 @@ import { canonicalJson } from "../engine-shared.mjs";
 import { MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES } from "./limits.mjs";
 import { buildProviderHeaders, getProviderProfile, joinProviderPath } from "../../ai-config/provider-profiles.ts";
 
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.4";
+export const LIVE_ADAPTER_VERSION = "live-adapter/0.5";
 /** Profile live duy nhất được hỗ trợ hiện tại (authority thực sự là provider-profiles.ts). */
 export const LIVE_PROVIDER_PROFILE = "openai-compatible";
 
-const PROVIDER_VERSION = "live-openai-compatible/0.4";
+const PROVIDER_VERSION = "live-openai-compatible/0.5";
 
 /**
  * DeepSeek JSON mode chỉ bảo đảm JSON hợp lệ, không bảo đảm đúng business-analysis contract.
@@ -65,6 +65,49 @@ function buildRepairGuide(feedback) {
     "Tạo lại TOÀN BỘ JSON từ payload, không chép lại cấu trúc sai và không thêm văn bản ngoài JSON.",
     numericRule,
   ].filter(Boolean).join("\n");
+}
+
+function normalizedStringArray(value, max) {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return values.filter((entry) => typeof entry === "string").slice(0, max);
+}
+
+/**
+ * Provider JSON mode đôi khi trả scalar thay cho array hoặc refs rỗng/dangling.
+ * Chỉ sửa HÌNH DẠNG deterministic bằng evidence có thật trong payload; strict output guard vẫn
+ * kiểm tra schema, scope, grounding, PII và prohibited content sau bước này.
+ */
+function normalizeStructuredAnalysis(input, payload) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const clone = structuredClone(input);
+  const evidence = Array.isArray(payload?.evidence)
+    ? payload.evidence.filter((entry) => entry && typeof entry === "object" && typeof entry.evidence_id === "string")
+    : [];
+  const allowed = new Set(evidence.map((entry) => entry.evidence_id));
+  const scopeRefs = evidence.filter((entry) => entry.subject_ref === "scope").map((entry) => entry.evidence_id);
+  const allRefs = evidence.map((entry) => entry.evidence_id);
+  const normalizeRefs = (value, preferred = []) => {
+    const refs = [...new Set(normalizedStringArray(value, 12).filter((entry) => allowed.has(entry)))];
+    if (refs.length > 0) return refs;
+    return (preferred.length > 0 ? preferred : allRefs).slice(0, 3);
+  };
+
+  clone.executive_evidence_refs = normalizeRefs(clone.executive_evidence_refs, scopeRefs);
+  clone.overall_limitations = normalizedStringArray(clone.overall_limitations, 10);
+  if (Array.isArray(clone.findings)) {
+    clone.findings = clone.findings.slice(0, 7).map((finding) => {
+      if (!finding || typeof finding !== "object" || Array.isArray(finding)) return finding;
+      const subjectRefs = evidence
+        .filter((entry) => entry.subject_ref === finding.subject_ref)
+        .map((entry) => entry.evidence_id);
+      return {
+        ...finding,
+        evidence_refs: normalizeRefs(finding.evidence_refs, subjectRefs.length > 0 ? subjectRefs : scopeRefs),
+        limitations: normalizedStringArray(finding.limitations, 8),
+      };
+    });
+  }
+  return clone;
 }
 
 /** Strict projection: lấy content của choices[0].message.content (chuỗi), ngược lại null. */
@@ -243,7 +286,7 @@ export function createLiveAdapter(options = {}) {
 
       let structured = null;
       try {
-        structured = JSON.parse(content);
+        structured = normalizeStructuredAnalysis(JSON.parse(content), request.payload);
       } catch {
         return fail("AI_PROVIDER_MALFORMED", false, "live:content-json");
       }

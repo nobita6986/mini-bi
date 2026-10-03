@@ -267,6 +267,40 @@ test("W04B-U12: unknown provider_profile ⇒ fail closed trước outbound (0 ou
   assert.equal(outbound.calls.length, 0, "unknown profile phải 0 outbound");
 });
 
+test("W04B-U13: normalize array shape và chỉ giữ evidence refs có thật trong payload", async () => {
+  const malformedShape = {
+    contract_version: "business-analysis/0.1",
+    period_ref: "week:2026-W41",
+    report_status: "draft",
+    executive_analysis: "Dữ liệu hiện tại cần được tiếp tục theo dõi và đối chiếu vận hành.",
+    executive_evidence_refs: "ev_01",
+    findings: [{
+      finding_id: "f_01",
+      category: "driver",
+      subject_ref: "project_01",
+      headline: "Dấu hiệu cần tiếp tục theo dõi",
+      analysis: "Sản lượng có khác biệt trong phạm vi dữ liệu hiện có.",
+      evidence_refs: ["ev_dangling"],
+      confidence: "low",
+      limitations: "Chưa đủ dữ liệu so sánh.",
+      recommended_action: null,
+    }],
+    overall_limitations: "Chưa đủ dữ liệu so sánh.",
+  };
+  const outbound = mockOutbound(async () => ({
+    statusCode: 200,
+    headers: {},
+    body: Buffer.from(envelope(JSON.stringify(malformedShape))),
+  }));
+  const adapter = createLiveAdapter({ outbound });
+  const result = await adapter.generateStructured(reqFor(adapter));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.structured.executive_evidence_refs, ["ev_01"]);
+  assert.deepEqual(result.structured.overall_limitations, ["Chưa đủ dữ liệu so sánh."]);
+  assert.deepEqual(result.structured.findings[0].evidence_refs, ["ev_01"]);
+  assert.deepEqual(result.structured.findings[0].limitations, ["Chưa đủ dữ liệu so sánh."]);
+});
+
 // ---------------------------------------------------------------------------
 // Integration — run-one-job + live adapter (mock outbound)
 // ---------------------------------------------------------------------------
@@ -429,4 +463,25 @@ test("W04B-I6: live validation failure được repair đúng một lần rồi 
   assert.ok(usageRows.some((row) => row.call_outcome === "validation_failed"));
   assert.ok(usageRows.some((row) => row.logical_call_id.endsWith(":repair1")));
   assert.equal(queue.store.revisions.size, 1, "chỉ tạo một revision sau repair hợp lệ");
+});
+
+test("W04B-I7: scalar array fields được canonicalize trước strict validation", async () => {
+  const packet = packetFor();
+  const validAnalysis = buildScriptedAnalysis(buildProviderPayload(packet, PROMPT).payload);
+  validAnalysis.executive_evidence_refs = validAnalysis.executive_evidence_refs[0];
+  validAnalysis.overall_limitations = validAnalysis.overall_limitations[0];
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
+  const outbound = mockOutbound(async () => ({
+    statusCode: 200,
+    headers: {},
+    body: Buffer.from(envelope(JSON.stringify(validAnalysis))),
+  }));
+  const { service, queue } = liveService({ packet, outbound, providerConfig });
+
+  const enqueued = await service.enqueueReport(liveEnqueueArgs());
+  assert.equal(enqueued.ok, true);
+  const run = await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
+  assert.equal(run.results[0].kind, "completed", JSON.stringify(run.results[0]));
+  assert.equal(outbound.calls.length, 1, "canonical shape pass không cần repair call");
+  assert.equal(queue.store.revisions.size, 1);
 });
