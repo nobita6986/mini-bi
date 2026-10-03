@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Download } from "lucide-react";
 
 import {
   buildReportRequest,
@@ -19,6 +20,11 @@ import {
   type ReportPeriodView,
 } from "@/lib/ai-report/report-contract";
 import { createReportController, type FetchResult } from "@/lib/ai-report/report-controller";
+import {
+  buildReportExportHtml,
+  reportExportFileName,
+  type ReportExportData,
+} from "@/lib/ai-report/report-export";
 import { formatTimestamp, todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
 import { ReportView } from "./report-view";
@@ -93,6 +99,8 @@ export function AiReportPanel() {
   const [analysis, setAnalysis] = useState<AnalysisView | null>(null);
   const [lifecycle, setLifecycle] = useState<string | null>(null);
   const [revisionNumber, setRevisionNumber] = useState<number | null>(null);
+  const [revisionCreatedAt, setRevisionCreatedAt] = useState<string | null>(null);
+  const [exportData, setExportData] = useState<ReportExportData | null>(null);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyHasMore, setHistoryHasMore] = useState(false);
@@ -128,8 +136,10 @@ export function AiReportPanel() {
                 setAnalysis(view.revision.analysis);
                 setLifecycle(view.revision.lifecycle_status);
                 setRevisionNumber(view.revision.revision_number);
+                setRevisionCreatedAt(view.revision.created_at);
+                setExportData(view.revision.export_data);
               } else {
-                setAnalysis(null); setLifecycle(null); setRevisionNumber(null);
+                setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
               }
             }
           },
@@ -233,7 +243,7 @@ export function AiReportPanel() {
     const result = await getController().enqueue(body);
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); return; }
-    setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null);
+    setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu. Đang theo dõi trạng thái…");
     void loadHistory(null);
   }
@@ -247,7 +257,7 @@ export function AiReportPanel() {
     const result = await getController().enqueue({ regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
     setBusy(false);
     if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); return; }
-    setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null);
+    setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
     void loadHistory(null);
   }
@@ -275,7 +285,7 @@ export function AiReportPanel() {
   }
 
   function openHistoryItem(id: string) {
-    setJobId(id); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setStatusText("Đang tải lại báo cáo…");
+    setJobId(id); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null); setStatusText("Đang tải lại báo cáo…");
     getController().startPolling(id);
   }
 
@@ -283,6 +293,26 @@ export function AiReportPanel() {
   const canApprove = capability?.review.approve === true && lifecycle === "draft";
   const canReject = capability?.review.reject === true && lifecycle === "draft";
   const currentHistoryItem = jobId ? historyItems.find((item) => item.job_id === jobId) ?? null : null;
+
+  function handleExport() {
+    if (!analysis || !exportData || !jobId || !revisionCreatedAt) return;
+    const title = currentHistoryItem ? reportTitleForPeriod(currentHistoryItem.period) : `Báo cáo AI ${analysis.period_ref}`;
+    const html = buildReportExportHtml({
+      title,
+      reportCode: jobId.slice(0, 8),
+      lifecycleLabel: lifecycleLabel(lifecycle),
+      revisionCreatedAt,
+      analysis,
+      exportData,
+    });
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = reportExportFileName(title, revisionCreatedAt);
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    setStatusText("Đã xuất báo cáo HTML kèm biểu đồ. Có thể mở ngoại tuyến hoặc in thành PDF.");
+  }
 
   return (
     <div className="relative">
@@ -352,6 +382,21 @@ export function AiReportPanel() {
               </section>
             ) : null}
             {analysis ? (<ReportView analysis={analysis} lifecycle={lifecycle} />) : null}
+            {analysis ? (
+              <section aria-label="Xuất báo cáo" className="rounded-2xl border border-border bg-surface p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Xuất báo cáo</h4>
+                    <p className="mt-1 text-xs text-muted">Tải file HTML tự chứa gồm nội dung AI và biểu đồ của đúng snapshot báo cáo; file có thể mở ngoại tuyến hoặc in thành PDF.</p>
+                  </div>
+                  <button type="button" onClick={handleExport} disabled={!exportData || !revisionCreatedAt} title={exportData ? "Xuất báo cáo HTML" : "Dữ liệu biểu đồ xuất chưa khả dụng"} className={secondaryButtonClass + " shrink-0 gap-2"}>
+                    <Download aria-hidden="true" size={16} />
+                    Xuất HTML
+                  </button>
+                </div>
+                {!exportData ? <p className="mt-2 text-xs text-muted">Biểu đồ xuất chưa khả dụng cho báo cáo này. Hãy tải lại báo cáo sau khi bản cập nhật được triển khai.</p> : null}
+              </section>
+            ) : null}
             {analysis ? (
               <section aria-label="Duyệt báo cáo" className="rounded-2xl border border-border bg-surface p-3">
                 <h4 className="text-sm font-semibold text-foreground">Duyệt báo cáo</h4>

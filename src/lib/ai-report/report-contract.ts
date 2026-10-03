@@ -5,6 +5,8 @@
  * Chỉ map trạng thái/mã lỗi thành nhãn tiếng Việt an toàn; KHÔNG chứa secret/PII.
  */
 
+import { projectReportExportData, type ReportExportData } from "./report-export.ts";
+
 export const PERIOD_TYPES = ["week", "month", "quarter", "custom"] as const;
 export type PeriodType = (typeof PERIOD_TYPES)[number];
 
@@ -281,6 +283,7 @@ export type UiRevisionView = {
   contract_version: string;
   created_at: string;
   analysis: AnalysisView;
+  export_data: ReportExportData | null;
 };
 
 export type UiReportView = {
@@ -394,6 +397,10 @@ export function projectUiReportResponse(raw: unknown): UiReportResult {
   if (typeof revisionRaw.created_at !== "string" || revisionRaw.created_at === "" || Number.isNaN(Date.parse(revisionRaw.created_at))) return fail;
   const analysis = parseAnalysis(revisionRaw.analysis);
   if (!analysis) return fail;
+  const exportData = revisionRaw.export_data === null || revisionRaw.export_data === undefined
+    ? null
+    : projectReportExportData(revisionRaw.export_data);
+  if (revisionRaw.export_data !== null && revisionRaw.export_data !== undefined && !exportData) return fail;
   return {
     ok: true,
     view: {
@@ -409,6 +416,7 @@ export function projectUiReportResponse(raw: unknown): UiReportResult {
         contract_version: revisionRaw.contract_version,
         created_at: revisionRaw.created_at,
         analysis,
+        export_data: exportData,
       },
     },
   };
