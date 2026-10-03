@@ -31,4 +31,6 @@ test("payment editor keeps secrets out of browser storage and masks reveal contr
   assert.match(editor, /Giữ bản local/);
   assert.match(live, /selectedRow\.state !== "saving" && selectedRow\.state !== "conflict"/);
   assert.match(live, /key=\{`\$\{selectedRow\.rowId\}:\$\{selectedRow\.entryId \?\? "new"\}`\}/);
+  assert.match(live, /canEdit=\{capabilities\.includes\("entry_own"\)/);
+  assert.match(live, /canView=\{capabilities\.includes\("payment_view"\)\}/);
 });

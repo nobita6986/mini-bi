@@ -6,7 +6,7 @@ import { patchDraftPayment } from "./payment-api.ts";
 const actor = {
   auth_subject: "91000000-0000-4000-8000-000000000001",
   app_user_id: "92000000-0000-4000-8000-000000000001",
-  capabilities: ["entry_own", "payment_edit"],
+  capabilities: ["entry_own"],
   ok: true,
 };
 const entryId = "a2000000-0000-4000-8000-000000000001";
@@ -201,16 +201,12 @@ test("unknown/inactive bank, invalid versions, and missing reason fail closed", 
   }
 });
 
-test("missing payment_edit capability and out-of-scope entries are denied", async () => {
-  const noCapability = dependencies();
-  noCapability.resolveSession = async () => ({
-    actor: { ok: true, actor: { ...actor, capabilities: ["entry_own"] } },
-    response_headers: {},
-  });
+test("entry_own can update draft payment without payment_edit; database scope remains authoritative", async () => {
+  const ownDraft = dependencies();
   assert.equal((await patchDraftPayment(
-    request(validBody()), entryId, "true", noCapability,
-  )).status, 403);
-  assert.equal(noCapability.reads.length, 0);
+    request(validBody()), entryId, "true", ownDraft,
+  )).status, 200);
+  assert.equal(ownDraft.calls.length, 1);
 
   const outOfScope = dependencies({
     async readEntry() { return { ok: false, kind: "denied" }; },

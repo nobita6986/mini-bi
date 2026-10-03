@@ -316,7 +316,7 @@ async function main() {
             and p.proname like 'direct_entry_%'
             and has_function_privilege('service_role', p.oid, 'execute')) as rpc_count
     `);
-    assert.deepEqual(inventory[0], { migration_count: 25, rpc_count: 20 });
+    assert.deepEqual(inventory[0], { migration_count: 26, rpc_count: 20 });
 
     const repository = createDirectEntryWriteRepository(rpcAdapter(client));
     const actorA = actor(fixture.authSubjectA, fixture.appUserA);

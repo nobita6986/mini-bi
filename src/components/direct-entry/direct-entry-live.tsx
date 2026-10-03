@@ -839,7 +839,7 @@ export function DirectEntryLive() {
                   entryVersion={selectedRow.entryVersion}
                   rowId={selectedRow.rowId}
                   banks={catalogFor(selectedRow.firstWorkDate)?.banks ?? []}
-                  canEdit={capabilities.includes("payment_edit") &&
+                  canEdit={capabilities.includes("entry_own") &&
                     selectedRow.state !== "saving" && selectedRow.state !== "conflict"}
                   canView={capabilities.includes("payment_view")}
                   onEntryVersionChange={onPaymentEntryVersionChange}

@@ -98,7 +98,6 @@ export async function patchDraftPayment(
         : fail("ACTOR_NOT_AVAILABLE", 403);
     }
     const actor = session.actor.actor;
-    if (!actor.capabilities.includes("payment_edit")) return fail("PAYMENT_DENIED", 403);
     const trustedActor = {
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,

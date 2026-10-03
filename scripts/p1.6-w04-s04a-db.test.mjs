@@ -10,6 +10,7 @@ const migrations = [
   "20261003180000_p1_6_w04_s03a_actor_context.sql",
   "20261003200000_p1_6_w04_s03cd_catalog_drafts.sql",
   "20261003210000_p1_6_w04_s04a_payment_projection.sql",
+  "20261003220000_p1_6_w04_s04a_r1_payment_draft_authority.sql",
 ];
 const ids = {
   subjectA: "91200000-0000-4000-8000-000000000001",
@@ -77,9 +78,7 @@ async function seed(db) {
       ('${ids.userA}', 'entry_create', '2020-01-01'),
       ('${ids.userA}', 'submission_create', '2020-01-01'),
       ('${ids.userA}', 'entry_own', '2020-01-01'),
-      ('${ids.userA}', 'payment_edit', '2020-01-01'),
-      ('${ids.userB}', 'entry_own', '2020-01-01'),
-      ('${ids.userB}', 'payment_edit', '2020-01-01');
+      ('${ids.userB}', 'entry_own', '2020-01-01');
     insert into public.direct_entry_scope_grants
       (app_user_id, scope_kind, valid_from) values
       ('${ids.userA}', 'own', '2020-01-01'),
@@ -240,7 +239,23 @@ test("S04A payment catalog, projection masking, RPC boundary, OCC and audit", as
     assert.equal(evidence.rows[0].audit_count, 4);
     assert.equal(evidence.rows[0].revision_count, 5);
     assert.equal(evidence.rows[0].idempotency_count, 4);
+    assert.ok(evidence.rows[0].audit_rows.every((row) => row.capability === "entry_own"));
     assert.equal(JSON.stringify(evidence.rows[0].audit_rows).includes("000012340056"), false);
+
+    await rpc(db, "reviewed", `select public.direct_entry_transition_submission(
+      $1::uuid, $2::uuid, $3::uuid, $4::integer, $5::text, $6::text
+    ) as reviewed`, [
+      ids.subjectA, ids.userA, created.submission_id, 1, "REVIEW", "s04a-review",
+    ]);
+    await rpc(db, "submitted", `select public.direct_entry_transition_submission(
+      $1::uuid, $2::uuid, $3::uuid, $4::integer, $5::text, $6::text
+    ) as submitted`, [
+      ids.subjectA, ids.userA, created.submission_id, 2, "SUBMITTED", "s04a-submit",
+    ]);
+    await assert.rejects(
+      callUpdate(5, 4, "unknown", null, null, null, "s04a-submitted-without-payment-edit"),
+      (error) => error.code === "42501",
+    );
 
     const acl = await db.query(`
       select

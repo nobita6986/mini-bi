@@ -66,10 +66,10 @@ function actor(authSubject, appUserId, capabilities) {
 }
 
 const ownerActor = actor(fixture.authSubject, fixture.appUserId, [
-  "entry_create", "submission_create", "entry_own", "payment_edit",
+  "entry_create", "submission_create", "entry_own",
 ]);
 const otherActor = actor(fixture.otherAuthSubject, fixture.otherAppUserId, [
-  "entry_own", "payment_edit",
+  "entry_own",
 ]);
 
 async function reportingBaseline(client) {
@@ -181,9 +181,7 @@ async function seed(client) {
        ($1, 'entry_create', '2020-01-01'),
        ($1, 'submission_create', '2020-01-01'),
        ($1, 'entry_own', '2020-01-01'),
-       ($1, 'payment_edit', '2020-01-01'),
-       ($2, 'entry_own', '2020-01-01'),
-       ($2, 'payment_edit', '2020-01-01')`,
+       ($2, 'entry_own', '2020-01-01')`,
     [fixture.appUserId, fixture.otherAppUserId],
   );
   await client.query(
@@ -325,7 +323,7 @@ async function main() {
             and p.proname like 'direct_entry_%'
             and has_function_privilege('service_role', p.oid, 'execute')) as rpc_count
     `);
-    assert.deepEqual(inventory[0], { migration_count: 25, rpc_count: 20 });
+    assert.deepEqual(inventory[0], { migration_count: 26, rpc_count: 20 });
 
     const repository = createDirectEntryWriteRepository(rpcAdapter(client));
     const ownerDependencies = dependencies(repository);
@@ -468,6 +466,10 @@ async function main() {
     assert.equal(evidence[0].payment_audit_count, 4);
     assert.equal(evidence[0].entry_revision_count, 5);
     assert.equal(evidence[0].idempotency_count, 4);
+    assert.deepEqual(
+      [...new Set(evidence[0].payment_audit.map(({ capability }) => capability))],
+      ["entry_own"],
+    );
     assert.equal(JSON.stringify(evidence[0].payment_audit).includes(syntheticAccountNumber), false);
     assert.equal(JSON.stringify(evidence[0].payment_audit).includes("Synthetic S04A Account Holder"), false);
 
