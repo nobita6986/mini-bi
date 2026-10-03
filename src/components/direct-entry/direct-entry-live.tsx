@@ -6,6 +6,7 @@ import { DataGrid, renderTextEditor, type Column, type RenderEditCellProps } fro
 import "react-data-grid/lib/styles.css";
 
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
+import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
 import {
@@ -47,7 +48,8 @@ function hcmDate(): string {
 function parseCatalog(value: unknown, expectedDate: string): DraftCatalog | null {
   if (!isRecord(value) || value.ok !== true || !isRecord(value.catalog) ||
       value.catalog.effective_date !== expectedDate ||
-      !Array.isArray(value.catalog.projects) || !Array.isArray(value.catalog.recruiters)) return null;
+      !Array.isArray(value.catalog.projects) || !Array.isArray(value.catalog.recruiters) ||
+      !Array.isArray(value.catalog.banks)) return null;
   if (!value.catalog.projects.every((project) => isRecord(project) &&
       typeof project.project_id === "string" && typeof project.display_name === "string") ||
       !value.catalog.recruiters.every((recruiter) => isRecord(recruiter) &&
@@ -56,6 +58,8 @@ function parseCatalog(value: unknown, expectedDate: string): DraftCatalog | null
         typeof recruiter.team_id === "string" && typeof recruiter.team_display_name === "string")) {
     return null;
   }
+  if (!value.catalog.banks.every((bank) => isRecord(bank) &&
+      typeof bank.bank_id === "string" && typeof bank.display_name === "string")) return null;
   return value.catalog as DraftCatalog;
 }
 
@@ -204,6 +208,7 @@ export function DirectEntryLive() {
   const [catalogErrors, setCatalogErrors] = useState<Record<string, string>>({});
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadMessage, setLoadMessage] = useState("");
+  const [capabilities, setCapabilities] = useState<string[]>([]);
   const inFlight = useRef(new Set<string>());
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
   const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
@@ -247,6 +252,14 @@ export function DirectEntryLive() {
     return load;
   }, []);
 
+  const onPaymentEntryVersionChange = useCallback((rowId: string, entryVersion: number) => {
+    const next = rowsRef.current.map((row) =>
+      row.rowId === rowId ? { ...row, entryVersion } : row,
+    );
+    rowsRef.current = next;
+    setRows(next);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -263,6 +276,11 @@ export function DirectEntryLive() {
             : "SESSION_UNAVAILABLE";
           throw new Error(code);
         }
+        if (!isRecord(session.actor) || !Array.isArray(session.actor.capabilities) ||
+            !session.actor.capabilities.every((capability) => typeof capability === "string")) {
+          throw new Error("SESSION_UNAVAILABLE");
+        }
+        setCapabilities(session.actor.capabilities);
         const [draftResponse, catalog] = await Promise.all([
           fetch("/api/direct-entry/drafts", { cache: "no-store", credentials: "same-origin" }),
           ensureCatalog(today),
@@ -618,6 +636,23 @@ export function DirectEntryLive() {
         width: 170,
         renderCell: ({ row }) => stateText(row.state),
       },
+      {
+        key: "paymentEditor",
+        name: "Thông tin thanh toán",
+        width: 180,
+        renderCell: ({ row }) => (
+          <button
+            type="button"
+            className={styles.gridEditButton}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedRowId(row.rowId);
+            }}
+          >
+            Mở bản nháp
+          </button>
+        ),
+      },
     ];
   }, [catalogFor]);
 
@@ -798,6 +833,17 @@ export function DirectEntryLive() {
                     <option value="PERMANENT">Toàn thời gian</option>
                   </select>
                 </Field>
+                <DirectEntryPaymentEditor
+                  key={`${selectedRow.rowId}:${selectedRow.entryId ?? "new"}`}
+                  entryId={selectedRow.entryId}
+                  entryVersion={selectedRow.entryVersion}
+                  rowId={selectedRow.rowId}
+                  banks={catalogFor(selectedRow.firstWorkDate)?.banks ?? []}
+                  canEdit={capabilities.includes("payment_edit") &&
+                    selectedRow.state !== "saving" && selectedRow.state !== "conflict"}
+                  canView={capabilities.includes("payment_view")}
+                  onEntryVersionChange={onPaymentEntryVersionChange}
+                />
                 {selectedRow.message && <p role="alert">{selectedRow.message}</p>}
                 {selectedRow.state === "conflict" && (
                   <div className={styles.conflictBox} role="alert">

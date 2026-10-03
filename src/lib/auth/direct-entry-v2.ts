@@ -185,9 +185,12 @@ const REQUIRED_SCOPE_KIND: Partial<Record<AuthorizationAction, ScopeKind>> = {
 };
 const FORBIDDEN_CLIENT_FIELDS = new Set([
   "authsubject",
+  "appuser",
   "appuserid",
   "actorid",
+  "createdby",
   "createdbyuserid",
+  "owner",
   "owneruserid",
   "actor",
   "role",
@@ -197,7 +200,9 @@ const FORBIDDEN_CLIENT_FIELDS = new Set([
   "scope",
   "scopes",
   "scopekind",
+  "team",
   "teamid",
+  "provider",
   "providertype",
   "effectivescope",
   "effectivescopes",

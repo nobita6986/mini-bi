@@ -73,6 +73,7 @@ function dependencies(overrides = {}) {
               team_id: "94000000-0000-4000-8000-000000000001",
               team_display_name: "Synthetic team",
             }],
+            banks: [],
           },
         };
       },
@@ -142,7 +143,7 @@ test("batch creation requires active project and recruiter from the trusted effe
     async loadInputCatalog() {
       return {
         ok: true,
-        data: { effective_date: validRow.first_work_date, projects: [], recruiters: [] },
+        data: { effective_date: validRow.first_work_date, projects: [], recruiters: [], banks: [] },
       };
     },
   });

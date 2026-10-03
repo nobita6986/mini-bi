@@ -17,6 +17,7 @@ const session = async () => ({ actor: { ok: true, actor }, response_headers: {} 
 const catalog = {
   effective_date: "2026-10-15",
   projects: [{ project_id: "project_synthetic_01", display_name: "Synthetic project" }],
+  banks: [{ bank_id: "bank_synthetic", display_name: "Synthetic Bank" }],
   recruiters: [{
     recruiter_id: "93100000-0000-4000-8000-000000000001",
     display_name: "Synthetic recruiter",

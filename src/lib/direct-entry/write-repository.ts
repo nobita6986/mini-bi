@@ -2,6 +2,10 @@ import "server-only";
 
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
+import {
+  projectPaymentUpdateResult,
+  type PaymentInput,
+} from "./payment-contract.ts";
 
 type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
   data: unknown;
@@ -27,6 +31,7 @@ export type DraftCatalog = {
     team_id: string;
     team_display_name: string;
   }>;
+  banks: Array<{ bank_id: string; display_name: string }>;
 };
 
 export type OwnDraft = {
@@ -64,6 +69,18 @@ export type DirectEntryRepository = {
     patch: Record<string, unknown>;
     idempotency_key: string;
   }): Promise<OperationResult<{ entry_id: string; version: number; submission_version: number }>>;
+  updatePayment(input: ActorRef & {
+    entry_id: string;
+    expected_entry_version: number;
+    expected_payment_version: number;
+    payment: PaymentInput;
+    reason: string;
+    idempotency_key: string;
+  }): Promise<OperationResult<{
+    entry_id: string;
+    entry_version: number;
+    payment_version: number;
+  }>>;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -81,9 +98,10 @@ function isPositiveVersion(value: unknown): value is number {
 }
 
 export function projectDraftCatalog(value: unknown, expectedDate?: string): DraftCatalog | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["effective_date", "projects", "recruiters"]) ||
+  if (!isRecord(value) ||
+      !hasExactKeys(value, ["effective_date", "projects", "recruiters", "banks"]) ||
       typeof value.effective_date !== "string" || !Array.isArray(value.projects) ||
-      !Array.isArray(value.recruiters)) return null;
+      !Array.isArray(value.recruiters) || !Array.isArray(value.banks)) return null;
   const projects: DraftCatalog["projects"] = [];
   for (const project of value.projects) {
     if (!isRecord(project) || !hasExactKeys(project, ["project_id", "display_name"]) ||
@@ -108,14 +126,25 @@ export function projectDraftCatalog(value: unknown, expectedDate?: string): Draf
       team_display_name: recruiter.team_display_name,
     });
   }
+  const banks: DraftCatalog["banks"] = [];
+  for (const bank of value.banks) {
+    if (!isRecord(bank) || !hasExactKeys(bank, ["bank_id", "display_name"]) ||
+        typeof bank.bank_id !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(bank.bank_id) ||
+        typeof bank.display_name !== "string" ||
+        bank.display_name.trim().length === 0 || bank.display_name.length > 256) return null;
+    banks.push({ bank_id: bank.bank_id, display_name: bank.display_name });
+  }
   if (!isRealCalendarDate(value.effective_date) ||
       (expectedDate !== undefined && value.effective_date !== expectedDate) ||
       new Set(projects.map(({ project_id }) => project_id)).size !== projects.length ||
-      new Set(recruiters.map(({ recruiter_id }) => recruiter_id)).size !== recruiters.length) return null;
+      new Set(recruiters.map(({ recruiter_id }) => recruiter_id)).size !== recruiters.length ||
+      new Set(banks.map(({ bank_id }) => bank_id)).size !== banks.length) return null;
   return {
     effective_date: value.effective_date,
     projects,
     recruiters,
+    banks,
   };
 }
 
@@ -199,7 +228,7 @@ function serviceRoleRpc(): Rpc {
 
 function classify(
   error: { code?: string; message?: string },
-  operation: "create" | "read" | "catalog" | "list" | "update",
+  operation: "create" | "read" | "catalog" | "list" | "update" | "payment",
 ) {
   if (operation === "create") {
     if (error.code === "23505") return "conflict";
@@ -217,6 +246,7 @@ function classify(
     if (error.code === "40001" || error.code === "23505") return "conflict";
     if (error.code === "42501") return "denied";
     if (error.code === "P0002") return "not-found";
+    if (operation === "payment" && error.code === "23514") return "invalid";
     if (error.code === "22023") {
       return error.message === "idempotency key reused with different input"
         ? "conflict"
@@ -310,6 +340,28 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
           : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] update draft RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async updatePayment(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_update_payment", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_entry_id: input.entry_id,
+          p_expected_entry_version: input.expected_entry_version,
+          p_expected_payment_version: input.expected_payment_version,
+          p_payment: input.payment,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+        });
+        if (error) return { ok: false, kind: classify(error, "payment") };
+        const projection = projectPaymentUpdateResult(data, input.entry_id);
+        return projection
+          ? { ok: true, data: projection }
+          : { ok: false, kind: "unavailable" };
+      } catch {
+        console.error("[direct-entry] payment update RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

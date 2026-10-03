@@ -10,6 +10,7 @@ import {
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import type { DirectEntryRepository, DraftCatalog } from "./write-repository.ts";
+import { projectPaymentProjection } from "./payment-contract.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -238,16 +239,13 @@ const ENTRY_KEYS = new Set([
   "version", "scope_kind", "payment", "employment_status", "documents",
 ]);
 const WORKER_PROJECTION_KEYS = new Set(WORKER_KEYS);
-const PAYMENT_KEYS = new Set([
-  "state", "account_number", "bank_id", "account_holder_name", "version",
-]);
 const STATUS_KEYS = new Set(["status", "effective_date", "version"]);
 const DOCUMENT_KEYS = new Set([
   "document_id", "document_type", "version", "size_bytes", "mime_type",
   "upload_status", "scan_status",
 ]);
 
-function projectEntry(value: unknown): Record<string, unknown> | null {
+export function projectEntry(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value) || Object.keys(value).some((key) => !ENTRY_KEYS.has(key)) ||
       !ENTRY_UUID.test(String(value.entry_id)) || !ENTRY_UUID.test(String(value.submission_id)) ||
       typeof value.project_id !== "string" || typeof value.first_work_date !== "string" ||
@@ -262,7 +260,7 @@ function projectEntry(value: unknown): Record<string, unknown> | null {
       (value.labor_type !== "TEMPORARY" && value.labor_type !== "PERMANENT") ||
       typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
       (value.scope_kind !== "own" && value.scope_kind !== "team" && value.scope_kind !== "all") ||
-      (value.payment !== null && !isRecord(value.payment)) ||
+      (value.payment !== null && !projectPaymentProjection(value.payment)) ||
       !isRecord(value.employment_status) ||
       !Array.isArray(value.documents)) return null;
   const worker = value.worker_details as Record<string, unknown>;
@@ -278,13 +276,6 @@ function projectEntry(value: unknown): Record<string, unknown> | null {
           (provided && typeof field.value !== "string");
       })) {
     return null;
-  }
-  if (value.payment !== null) {
-    const payment = value.payment as Record<string, unknown>;
-    if (Object.keys(payment).some((key) => !PAYMENT_KEYS.has(key)) ||
-        typeof payment.state !== "string" ||
-        Object.values(payment).some((field) => field !== null &&
-          typeof field !== "string" && typeof field !== "number")) return null;
   }
   const status = value.employment_status as Record<string, unknown>;
   if (Object.keys(status).some((key) => !STATUS_KEYS.has(key)) ||
