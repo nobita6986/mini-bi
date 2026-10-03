@@ -75,6 +75,27 @@ test("valid single and multi entry create requests pass with exact vocabulary", 
   }
 });
 
+test("DOCUMENT create and mixed DOCUMENT create fail closed as a whole", () => {
+  const documentItem = item({
+    target_kind: "DOCUMENT",
+    proposal: {
+      document_type: "EMPLOYMENT_CONTRACT",
+      idempotency_key: "document-synthetic-key",
+      checksum_sha256: "a".repeat(64),
+      size_bytes: 2048,
+      mime_type: "application/pdf",
+    },
+  });
+  for (const items of [[documentItem], [item(), documentItem]]) {
+    assert.deepEqual(projectChangeRequestCreate(createBody({ items })), {
+      ok: false,
+      code: "DOCUMENT_CHANGE_REQUEST_UNSUPPORTED",
+    });
+  }
+  assert.equal(projectChangeRequestItem(documentItem)?.target_kind, "DOCUMENT",
+    "item projection remains available for historical/read compatibility");
+});
+
 test("empty, oversized and duplicate items fail closed", () => {
   assert.equal(projectChangeRequestCreate(createBody({ items: [] })).ok, false);
   assert.equal(projectChangeRequestCreate(createBody({ items: {} })).ok, false);

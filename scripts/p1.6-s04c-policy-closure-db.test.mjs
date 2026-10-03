@@ -66,7 +66,7 @@ function assertNoSensitive(label, value) {
 }
 
 test("from-scratch apply covers the policy closure migration and its ACLs", async () => {
-  assert.equal(migrations.migrationNames.length, 33);
+  assert.equal(migrations.migrationNames.length, 34);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(
@@ -187,16 +187,6 @@ test("WORK_STATUS requires employment_status.apply", async () => {
   assert.equal((await entryRow(db, entries.status.entry_id)).version, 1);
 });
 
-test("DOCUMENT requires document_view and document_upload", async () => {
-  const withoutView = await decide(db, POLICY_ACTORS.entryOnly, requests.document,
-    "approve", 1, "S03B3R1 denied document view", "s03b3r1_doc_view");
-  assert.equal(withoutView.error.code, "42501");
-  const withoutUpload = await decide(db, POLICY_ACTORS.documentView, requests.document,
-    "approve", 1, "S03B3R1 denied document upload", "s03b3r1_doc_upload");
-  assert.equal(withoutUpload.error.code, "42501");
-  assert.equal((await entryRow(db, entries.document.entry_id)).version, 1);
-});
-
 test("mixed request thieu dung mot capability thi khong item nao duoc ap dung", async () => {
   const revisionsBefore = await revisionCount(db, entries.nonPiiApprove.entry_id);
   const paymentRevisionsBefore = await revisionCount(db, entries.payment.entry_id);
@@ -238,9 +228,6 @@ test("reviewer du capability thi quyet dinh thanh cong cho tung target kind", as
     "approve", 1, "S03B3R1 status approved", "s03b3r1_status_approved");
   assert.equal(status.error, null, json(status.error));
 
-  const document = await decide(db, POLICY_ACTORS.documentFull, requests.document,
-    "approve", 1, "S03B3R1 document approved", "s03b3r1_document_approved");
-  assert.equal(document.error, null, json(document.error));
 });
 
 test("OCC va idempotency khong hoi quy", async () => {
@@ -260,7 +247,7 @@ test("OCC va idempotency khong hoi quy", async () => {
 });
 
 test("audit event chi ghi field name, khong ghi gia tri nhay cam", async () => {
-  for (const requestId of [requests.payment, requests.status, requests.document, requests.pii]) {
+  for (const requestId of [requests.payment, requests.status, requests.pii]) {
     const audits = await auditRows(db, requestId);
     assert.equal(audits.length >= 1, true, requestId);
     for (const row of audits) {
@@ -271,7 +258,7 @@ test("audit event chi ghi field name, khong ghi gia tri nhay cam", async () => {
 });
 
 test("revision snapshot moi duoc redact co dinh luc ghi", async () => {
-  for (const name of ["payment", "status", "document", "pii"]) {
+  for (const name of ["payment", "status", "pii"]) {
     const { rows } = await db.query(
       "select before_snapshot, after_snapshot from public.direct_entry_revisions" +
       " where entry_id = $1 order by version desc limit 1",
@@ -319,15 +306,17 @@ test("read projection tra FULL / MASKED / PRESENCE_ONLY / OMIT theo capability",
     status: "OFF", effective_date: seeded.proposals.workStatus.effective_date,
   });
 
-  const fullDocument = await readDetail(db, POLICY_ACTORS.documentFull, requests.document);
-  assert.deepEqual(fullDocument.data.items[0].proposal,
+  const historicalDocument = await db.query(
+    "select public.direct_entry_change_request_proposal_projection(" +
+    "'DOCUMENT', $1::jsonb, false, false, true) as full," +
+    " public.direct_entry_change_request_proposal_projection(" +
+    "'DOCUMENT', $1::jsonb, false, false, false) as limited",
+    [JSON.stringify({ document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048,
+      mime_type: "application/pdf", checksum_sha256: "a".repeat(64) })],
+  );
+  assert.deepEqual(historicalDocument.rows[0].full,
     { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048, mime_type: "application/pdf" });
-  // document_view duoc cap => size_bytes/mime_type duoc tra; thieu document_view thi OMIT.
-  const viewOnlyDocument = await readDetail(db, POLICY_ACTORS.documentView, requests.document);
-  assert.deepEqual(viewOnlyDocument.data.items[0].proposal,
-    { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048, mime_type: "application/pdf" });
-  const noDocumentView = await readDetail(db, POLICY_ACTORS.entryOnly, requests.document);
-  assert.deepEqual(noDocumentView.data.items[0].proposal,
+  assert.deepEqual(historicalDocument.rows[0].limited,
     { document_type: "EMPLOYMENT_CONTRACT" });
 
   const fullPii = await readDetail(db, POLICY_ACTORS.piiView, requests.pii);
@@ -340,8 +329,7 @@ test("read projection tra FULL / MASKED / PRESENCE_ONLY / OMIT theo capability",
   assert.deepEqual(Object.keys(nonPii.data.items[0]).sort(),
     ["entry_id", "expected_version", "proposal", "target_kind"]);
 
-  for (const detail of [fullPayment, maskedPayment, status, fullDocument, viewOnlyDocument,
-    noDocumentView, fullPii, presencePii, nonPii]) {
+  for (const detail of [fullPayment, maskedPayment, status, fullPii, presencePii, nonPii]) {
     const text = json(detail.data);
     for (const forbidden of ["checksum_sha256", "idempotency_key", "storage_key",
       "leave_reason", "reason_id", "auth_subject", "created_by_user_id", "bucket"]) {

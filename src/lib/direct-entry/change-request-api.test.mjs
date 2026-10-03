@@ -163,6 +163,35 @@ test("valid create uses only the server actor and returns the exact projection",
   });
 });
 
+test("DOCUMENT and mixed DOCUMENT create return sanitized 400 before session/repository", async () => {
+  const documentItem = {
+    entry_id: entryB,
+    target_kind: "DOCUMENT",
+    expected_version: 1,
+    proposal: {
+      document_type: "EMPLOYMENT_CONTRACT",
+      idempotency_key: "document-synthetic-key",
+      checksum_sha256: "a".repeat(64),
+      size_bytes: 2048,
+      mime_type: "application/pdf",
+    },
+  };
+  for (const items of [[documentItem], [
+    { entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1, proposal: { labor_type: "PERMANENT" } },
+    documentItem,
+  ]]) {
+    const deps = dependencies();
+    const response = await createChangeRequest(request(createBody({ items })), "true", deps);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "DOCUMENT_CHANGE_REQUEST_UNSUPPORTED",
+    });
+    assert.equal(deps.sessionCount(), 0);
+    assert.equal(deps.calls.length, 0);
+  }
+});
+
 test("withdraw and decision dispatch to the matching repository method only", async () => {
   const withdrawDeps = dependencies();
   const withdrawn = await withdrawChangeRequest(

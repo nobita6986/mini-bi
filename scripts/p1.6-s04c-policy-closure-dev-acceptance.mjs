@@ -91,7 +91,7 @@ async function attempt(client, run) {
   } catch (error) {
     await client.query("rollback to savepoint " + savepoint);
     await client.query("release savepoint " + savepoint);
-    return { data: null, error: { code: error.code, message: error.message } };
+    return { data: null, error: { code: error.code, constraint: error.constraint, message: error.message } };
   }
 }
 
@@ -211,7 +211,42 @@ async function runAcceptance(client, reportingBefore) {
   const seeded = await seedPolicyFixture(client, namespace, { manageTransaction: false });
   const requests = seeded.requests;
   const entries = seeded.entries;
-  pass("seed fixture synthetic: actor/entry/change request cho 4 target kind (khong PII that)");
+  pass("seed fixture synthetic: actor/entry/change request trong scope (khong PII that)");
+
+  const scopeCounts = async () => {
+    const { rows } = await client.query(
+      "select" +
+      " (select count(*)::int from public.direct_entry_change_requests) as requests," +
+      " (select count(*)::int from public.direct_entry_change_request_items) as items," +
+      " (select count(*)::int from public.direct_entry_change_request_revisions) as request_revisions," +
+      " (select count(*)::int from public.direct_entry_revisions) as revisions," +
+      " (select count(*)::int from public.direct_entry_audit_events) as audits," +
+      " (select count(*)::int from public.direct_entry_rpc_idempotency) as idempotency");
+    return rows[0];
+  };
+  const scopeBefore = await scopeCounts();
+  const documentCreate = await attempt(client, () => client.query(
+    "select public.direct_entry_create_change_request($1::uuid,$2::uuid,$3::jsonb,$4::text,$5::text)",
+    [ACTORS.proposer.auth_subject, ACTORS.proposer.app_user_id,
+      JSON.stringify([{
+        entry_id: entries.document.entry_id,
+        target_kind: "DOCUMENT",
+        expected_version: entries.document.version,
+        proposal: {
+          document_type: "EMPLOYMENT_CONTRACT",
+          idempotency_key: "synthetic_document_idempotency",
+          checksum_sha256: "a".repeat(64),
+          size_bytes: 2048,
+          mime_type: "application/pdf",
+        },
+      }]),
+      "S04C synthetic scope-lock rejection", key("document_scope_lock")]));
+  assert.equal(documentCreate.error?.code, "23514", json(documentCreate.error));
+  assert.equal(documentCreate.error?.constraint,
+    "direct_entry_change_request_items_document_scope_lock");
+  assert.deepEqual(await scopeCounts(), scopeBefore,
+    "DOCUMENT rejection must not leave request/item/revision/audit/idempotency writes");
+  pass("DOCUMENT RPC create bi CHECK tu choi, khong phat sinh request/item/revision/audit/idempotency");
 
   // 1. Negative policy matrix: thieu capability thi 42501 va khong co mutation nao.
   const revisionsBefore = await revisionCount(client, entries.pii.entry_id);
@@ -221,8 +256,6 @@ async function runAcceptance(client, reportingBefore) {
     ["PAYMENT thieu payment_view", POLICY_ACTORS.entryOnly, requests.payment, "approve"],
     ["PAYMENT thieu payment_edit", POLICY_ACTORS.paymentView, requests.payment, "approve"],
     ["WORK_STATUS thieu employment_status.apply", POLICY_ACTORS.entryOnly, requests.status, "approve"],
-    ["DOCUMENT thieu document_view", POLICY_ACTORS.entryOnly, requests.document, "approve"],
-    ["DOCUMENT thieu document_upload", POLICY_ACTORS.documentView, requests.document, "approve"],
     ["mixed thieu dung mot capability", POLICY_ACTORS.paymentView, requests.mixed, "approve"],
   ];
   for (const [label, actor, requestId, decision] of negative) {
@@ -239,7 +272,7 @@ async function runAcceptance(client, reportingBefore) {
   assert.equal((await entryRow(client, entries.nonPiiApprove.entry_id)).employee_code,
     seeded.codes.nonPiiApprove, "mixed request khong duoc ap dung mot phan");
   assert.equal(await revisionCount(client, entries.pii.entry_id), revisionsBefore);
-  pass("policy matrix tu choi 8 truong hop + guard o tang apply (khong partial apply)");
+  pass("policy matrix tu choi 6 truong hop + guard o tang apply (khong partial apply)");
 
   // 2. Self-review van bi cam.
   const selfReview = await attempt(client, () => decideRpc(client, ACTORS.proposer, requests.occ,
@@ -269,13 +302,12 @@ async function runAcceptance(client, reportingBefore) {
     ["ENTRY_FIELD.worker_details", POLICY_ACTORS.piiView, requests.pii],
     ["PAYMENT", POLICY_ACTORS.paymentFull, requests.payment],
     ["WORK_STATUS", POLICY_ACTORS.allCapabilities, requests.status],
-    ["DOCUMENT", POLICY_ACTORS.documentFull, requests.document],
   ]) {
     const decided = await decideRpc(client, actor, requestId, "approve", 1,
       "S03B3R1 DEV approve " + label, key("approve_kind"));
     assert.equal(decided.state, "APPROVED", label);
   }
-  pass("reviewer du capability duyet duoc 4 target kind");
+  pass("reviewer du capability duyet duoc ca ba target kind duoc ho tro");
 
   // 5. Read projection FULL / MASKED / PRESENCE_ONLY / OMIT.
   const fullPayment = await readRequest(client, POLICY_ACTORS.paymentFull, requests.payment);
@@ -293,18 +325,21 @@ async function runAcceptance(client, reportingBefore) {
   assert.equal(fullPii.items[0].proposal.worker_details.display_name, "Synthetic worker");
   const presencePii = await readRequest(client, POLICY_ACTORS.entryOnly, requests.pii);
   assert.deepEqual(presencePii.items[0].proposal, { worker_details: { present: true } });
-  const documentDetail = await readRequest(client, POLICY_ACTORS.documentFull, requests.document);
-  assert.deepEqual(Object.keys(documentDetail.items[0].proposal).sort(),
-    ["document_type", "mime_type", "size_bytes"]);
-  const documentWithoutView = await readRequest(client, POLICY_ACTORS.entryOnly,
-    requests.document);
-  assert.deepEqual(documentWithoutView.items[0].proposal,
+  const historicalDocument = await client.query(
+    "select public.direct_entry_change_request_proposal_projection(" +
+    "'DOCUMENT', $1::jsonb, false, false, true) as full," +
+    " public.direct_entry_change_request_proposal_projection(" +
+    "'DOCUMENT', $1::jsonb, false, false, false) as limited",
+    [JSON.stringify({ document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048,
+      mime_type: "application/pdf", checksum_sha256: "a".repeat(64) })]);
+  assert.deepEqual(historicalDocument.rows[0].full,
+    { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048, mime_type: "application/pdf" });
+  assert.deepEqual(historicalDocument.rows[0].limited,
     { document_type: "EMPLOYMENT_CONTRACT" });
   const statusDetail = await readRequest(client, ACTORS.proposer, requests.status);
   assert.deepEqual(statusDetail.items[0].proposal,
     { status: "OFF", effective_date: seeded.proposals.workStatus.effective_date });
-  for (const detail of [fullPayment, masked, fullPii, presencePii, documentDetail,
-    documentWithoutView, statusDetail]) {
+  for (const detail of [fullPayment, masked, fullPii, presencePii, statusDetail]) {
     const text = json(detail);
     for (const forbidden of ["checksum_sha256", "idempotency_key", "storage_key",
       "leave_reason", "reason_id", "auth_subject"]) {
@@ -314,7 +349,7 @@ async function runAcceptance(client, reportingBefore) {
   pass("read projection tra FULL/MASKED/PRESENCE_ONLY/OMIT dung matrix, khong co key cam");
 
   // 6. Audit + revision redaction.
-  for (const requestId of [requests.payment, requests.status, requests.document, requests.pii]) {
+  for (const requestId of [requests.payment, requests.status, requests.pii]) {
     const audits = await auditRows(client, requestId);
     assert.equal(audits.length >= 1, true, requestId);
     for (const row of audits) {
@@ -325,7 +360,7 @@ async function runAcceptance(client, reportingBefore) {
       }
     }
   }
-  for (const name of ["payment", "status", "document", "pii"]) {
+  for (const name of ["payment", "status", "pii"]) {
     const { rows } = await client.query(
       "select before_snapshot, after_snapshot from public.direct_entry_revisions" +
       " where entry_id = $1 order by version desc limit 1", [entries[name].entry_id]);

@@ -200,7 +200,6 @@ export async function seedPolicyRequests(db, seeded, suffix) {
     ["pii", entries.pii, "ENTRY_FIELD", { worker_details: worker("Synthetic worker") }],
     ["payment", entries.payment, "PAYMENT", PAYMENT_PROPOSAL],
     ["status", entries.status, "WORK_STATUS", workStatusProposal],
-    ["document", entries.document, "DOCUMENT", DOCUMENT_PROPOSAL],
     ["occ", entries.occ, "ENTRY_FIELD", { labor_type: "PERMANENT" }],
   ];
   const requests = {};

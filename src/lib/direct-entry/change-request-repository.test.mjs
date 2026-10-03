@@ -115,6 +115,13 @@ test("database denial codes are classified consistently with the S01A boundary",
   }
 });
 
+test("DOCUMENT-scope CHECK violations classify as sanitized invalid input", () => {
+  assert.equal(classifyChangeRequestError({
+    code: "23514",
+    message: "direct_entry_change_request_items_document_scope_lock",
+  }), "invalid");
+});
+
 test("malformed or mismatched RPC payloads fail closed", async () => {
   const createPayloads = [
     null,

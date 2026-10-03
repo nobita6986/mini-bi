@@ -210,6 +210,7 @@ export type ChangeRequestDecisionInput = {
 export type ChangeRequestProjection<T> =
   | { ok: true; value: T }
   | { ok: false; code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN"; field: string }
+  | { ok: false; code: "DOCUMENT_CHANGE_REQUEST_UNSUPPORTED" }
   | { ok: false; code: "CHANGE_REQUEST_INVALID" };
 
 const INVALID = { ok: false, code: "CHANGE_REQUEST_INVALID" } as const;
@@ -323,6 +324,9 @@ export function projectChangeRequestCreate(
   if (!hasExactKeys(value, CREATE_REQUEST_KEYS)) return INVALID;
   if (!Array.isArray(value.items) || value.items.length < 1 ||
       value.items.length > CHANGE_REQUEST_MAX_ITEMS) return INVALID;
+  if (value.items.some((item) => isRecord(item) && item.target_kind === "DOCUMENT")) {
+    return { ok: false, code: "DOCUMENT_CHANGE_REQUEST_UNSUPPORTED" };
+  }
   const items: ChangeRequestItem[] = [];
   const seen = new Set<string>();
   for (const raw of value.items) {
