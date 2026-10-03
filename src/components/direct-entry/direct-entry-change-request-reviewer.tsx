@@ -30,6 +30,7 @@ import {
   decisionIntentSignature,
   LABOR_TYPE_LABELS,
   REVIEW_DECISION_LABELS,
+  REVIEW_TARGET_KIND_LABELS,
   reviewerErrorMessage,
   reviewDecisionMessage,
   reviewDecisionState,
@@ -42,6 +43,10 @@ import {
   projectChangeRequestDetail,
   type ChangeRequestListItem,
 } from "@/lib/direct-entry/change-request-read-contract";
+import {
+  projectEntrySensitiveContext,
+  type EntrySensitiveContext,
+} from "@/lib/direct-entry/change-request-read-projection";
 import {
   clearIntentKey,
   EMPTY_INTENT_KEY,
@@ -96,6 +101,7 @@ export function DirectEntryChangeRequestReviewer({
   const lastRequestId = useRef<string | null>(null);
   // Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger; ghi lai nut da mo dialog.
   const openerRef = useRef<HTMLElement | null>(null);
+  const catalogDates = useRef<Set<string>>(new Set());
 
   const formatField = useCallback(
     (entry: ProposerEntryProjection, field: string, value: string): string | null => {
@@ -108,6 +114,16 @@ export function DirectEntryChangeRequestReviewer({
     [catalogFor],
   );
 
+  // Bank id -> nhan catalog cho moi ngay hieu luc da tai; khong giai duoc thi fail-closed.
+  const bankLabelFromCatalog = useCallback((bankId: string): string | null => {
+    for (const date of catalogDates.current) {
+      const catalog = catalogFor(date);
+      const found = catalog?.banks.find((bank) => bank.bank_id === bankId);
+      if (found) return found.display_name;
+    }
+    return null;
+  }, [catalogFor]);
+
   useEffect(() => {
     if (!request) return undefined;
     const requestId = request.request_id;
@@ -117,7 +133,10 @@ export function DirectEntryChangeRequestReviewer({
     lastRequestId.current = requestId;
     let cancelled = false;
     async function load() {
-      setLoadState("loading");
+      if (isNewRequest) {
+        setLoadState("loading");
+        setModel(null);
+      }
       setLoadMessage("");
       if (isNewRequest) {
         setStatusMessage("");
@@ -146,6 +165,7 @@ export function DirectEntryChangeRequestReviewer({
           return;
         }
         const entries = new Map<string, ProposerEntryProjection>();
+        const contexts = new Map<string, EntrySensitiveContext>();
         const dates = new Set<string>();
         for (const item of detail.items) {
           const response = await fetch(
@@ -157,11 +177,18 @@ export function DirectEntryChangeRequestReviewer({
           const entry = slice ? projectProposerEntry(slice.entry) : null;
           if (!response.ok || !entry || entry.entry_id !== item.entry_id) continue;
           entries.set(entry.entry_id, entry);
+          // Ngu canh nhay cam (worker_details/payment/employment_status) strict-project rieng;
+          // server da redact theo capability nen field khong duoc phep coi nhu KHONG CO.
+          const context = slice ? projectEntrySensitiveContext(slice.entry) : null;
+          if (context) contexts.set(entry.entry_id, context);
           dates.add(entry.first_work_date);
         }
         await Promise.all([...dates].map((date) => ensureCatalog(date).catch(() => null)));
         if (cancelled) return;
-        setModel(buildReviewerViewModel({ detail, entries, format: formatField }));
+        catalogDates.current = dates;
+        setModel(buildReviewerViewModel({
+          detail, entries, format: formatField, contexts, bankLabel: bankLabelFromCatalog,
+        }));
         setLoadState("ready");
       } catch (cause) {
         if (cancelled) return;
@@ -172,7 +199,7 @@ export function DirectEntryChangeRequestReviewer({
     }
     void load();
     return () => { cancelled = true; };
-  }, [ensureCatalog, formatField, reloadToken, request]);
+  }, [bankLabelFromCatalog, ensureCatalog, formatField, reloadToken, request]);
 
   // Nut quyet dinh van duoc render khi dang gui (disabled + "Dang gui…"), chi an khi request
   // khong con o trang thai cho quyet dinh.
@@ -258,7 +285,7 @@ export function DirectEntryChangeRequestReviewer({
   }, [model, onConflict, onDecided, reason, request]);
 
   const entryCount = useMemo(
-    () => (model?.kind === "reviewable" || model?.kind === "stale" ? model.entries.length : 0),
+    () => (model && "items" in model ? model.items.length : 0),
     [model],
   );
 
@@ -310,11 +337,26 @@ export function DirectEntryChangeRequestReviewer({
                 </p>
               )}
 
-              {(model?.kind === "reviewable" || model?.kind === "stale") && (
+              {model?.kind === "readonly" && (
+                <p role="status" className={styles.submissionBlocked} data-testid="reviewer-readonly">
+                  {model.message}
+                </p>
+              )}
+
+              {(model?.kind === "reviewable" || model?.kind === "stale" ||
+                model?.kind === "readonly") && (
                 <>
-                  {model.entries.map((entry) => (
+                  {model.items.map((entry) => (
                     <div key={entry.entry_id} className={styles.proposerEntry}>
                       <strong>{entry.entry_code}</strong>
+                      <p className={styles.submissionHint} data-testid="reviewer-item-kind">
+                        {REVIEW_TARGET_KIND_LABELS[entry.targetKind] ?? entry.targetKind}
+                      </p>
+                      {entry.message !== null && (
+                        <p className={styles.submissionHint} data-testid="reviewer-item-message">
+                          {entry.message}
+                        </p>
+                      )}
                       {entry.rows.length === 0 ? (
                         <p className={styles.submissionHint}>
                           Không còn thay đổi so với dữ liệu hiện tại.

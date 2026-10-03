@@ -153,6 +153,30 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
   });
   assert.deepEqual(projectChangeRequestDetail(payment, { request_id: requestId }), payment);
 
+  // S03B4A: response doc da lam sach van qua duoc projection (masked/presence-only/omit).
+  const masked = detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "PAYMENT", expected_version: 1,
+      proposal: { state: "provided", account_number: "••••6789" },
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(masked, { request_id: requestId }), masked);
+  const workStatus = detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,
+      proposal: { status: "ON", effective_date: "2026-10-01" },
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(workStatus, { request_id: requestId }), workStatus);
+  const document = detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "DOCUMENT", expected_version: 1,
+      proposal: { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048,
+        mime_type: "application/pdf" },
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(document, { request_id: requestId }), document);
+
   // Presence-only marker cua worker_details (server redact khi thieu pii_view) van la record hop le.
   const presenceOnly = detailBody({
     items: [{
@@ -210,10 +234,18 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
       entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
       proposal: { worker_details: { checksum_sha256: "a".repeat(64) } },
     }] }),
-    // PAYMENT da bi mask o server: gia tri khong con la account number hop le => fail-closed.
+    // S03B4A: proposal doc da lam sach co vocabulary rieng; raw sensitive key van bi tu choi.
     detailBody({ items: [{
-      entry_id: entryA, target_kind: "PAYMENT", expected_version: 1,
-      proposal: { state: "provided", account_number: "••••6789" },
+      entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,
+      proposal: { status: "OFF", effective_date: "2026-10-01", leave_reason: "raw" },
+    }] }),
+    detailBody({ items: [{
+      entry_id: entryA, target_kind: "DOCUMENT", expected_version: 1,
+      proposal: { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 0 },
+    }] }),
+    detailBody({ items: [{
+      entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
+      proposal: { worker_details: { present: true, extra: 1 } },
     }] }),
   ];
   for (const [index, payload] of rejected.entries()) {

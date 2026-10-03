@@ -11,6 +11,7 @@ const list = source("./direct-entry-change-request-list.tsx");
 const submissionList = source("./direct-entry-submission-list.tsx");
 const live = source("./direct-entry-live.tsx");
 const helper = source("../../lib/direct-entry/change-request-proposer.ts");
+const builder = source("../../lib/direct-entry/change-request-proposal-builders.ts");
 
 const TABLE_ACCESS = /\.from\s*\(/;
 const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id)\s*:/;
@@ -34,12 +35,21 @@ test("S03B1 list/proposer never fetch the change-request detail endpoint", () =>
   assert.doesNotMatch(list, /\.proposal|proposal\./);
 });
 
-test("proposer only sends ENTRY_FIELD with the five non-PII fields", () => {
-  assert.match(proposer, /target_kind === "ENTRY_FIELD"|ENTRY_FIELD/);
-  for (const forbidden of ["worker_details", "account_number", "bank_id", "employment_status",
-    "document_type", "checksum_sha256", "mime_type"]) {
-    assert.doesNotMatch(proposer + helper, new RegExp(forbidden), forbidden);
+test("proposer chi gui cac target kind duoc phep, ENTRY_FIELD giu dung 5 field non-PII", () => {
+  // S03B4A: proposer ho tro them worker_details/PAYMENT/WORK_STATUS nhung moi item van di qua
+  // validator cua create contract; DOCUMENT khong duoc chon (chua co staging boundary).
+  assert.match(proposer, /const PROPOSER_KINDS: readonly ProposerTargetKind\[\] =\n  \["ENTRY_FIELD", "WORKER", "PAYMENT", "WORK_STATUS"\]/);
+  assert.match(proposer, /<option value="DOCUMENT" disabled>\{DOCUMENT_STAGING_MESSAGE\}<\/option>/);
+  assert.match(proposer, /buildChangeRequestItem\(\{/);
+  assert.match(proposer, /buildWorkerDetailsProposal\(/);
+  assert.match(proposer, /buildPaymentProposal\(/);
+  assert.match(proposer, /buildWorkStatusProposal\(/);
+  // idempotency_key la field HOP LE cua body create (khong phai du lieu proposal tra ve).
+  for (const forbidden of ["checksum_sha256", "storage_key", "bucket", "signed_url",
+    "localStorage", "sessionStorage"]) {
+    assert.doesNotMatch(proposer + builder, new RegExp(forbidden), forbidden);
   }
+  assert.doesNotMatch(proposer, /dangerouslySetInnerHTML|JSON\.parse|<pre|<code/);
   assert.match(helper, /PROPOSER_FIELD_ORDER = \[/);
   const order = helper.slice(helper.indexOf("PROPOSER_FIELD_ORDER"),
     helper.indexOf("] as const", helper.indexOf("PROPOSER_FIELD_ORDER")));
@@ -66,7 +76,8 @@ test("create and withdraw requests carry exact URL, body and idempotency header"
 });
 
 test("idempotency intent covers payload, 409 does not retry, 5xx keeps the key", () => {
-  assert.match(proposer, /const signature = JSON\.stringify\(\{ items: buildResult\.items, reason: normalized \}\)/);
+  assert.match(proposer,
+    /const signature = JSON\.stringify\(\{ items: itemsToSend, reason: normalized \}\)/);
   assert.match(proposer, /resolveIntentKey\(/);
   assert.match(proposer, /clearIntentKey\(resolved\.state, intent\)/);
   const submitBody = proposer.slice(proposer.indexOf("const submit = useCallback"));

@@ -8,6 +8,7 @@ function source(relative) {
 
 const reviewer = source("./direct-entry-change-request-reviewer.tsx");
 const helper = source("../../lib/direct-entry/change-request-reviewer.ts");
+const projection = source("../../lib/direct-entry/change-request-read-projection.ts");
 const list = source("./direct-entry-change-request-list.tsx");
 const live = source("./direct-entry-live.tsx");
 
@@ -28,10 +29,15 @@ test("detail duoc strict-project va map ngay sang view model an toan", () => {
   assert.match(reviewer, /projectChangeRequestDetail\(/);
   assert.match(reviewer, /projectionSlice\(detailBody, DETAIL_KEYS\)/);
   assert.match(reviewer, /projectProposerEntry\(slice\.entry\)/);
-  assert.match(reviewer, /buildReviewerViewModel\(\{ detail, entries, format: formatField \}\)/);
+  assert.match(reviewer, /buildReviewerViewModel\(\{/);
+  assert.match(reviewer, /contexts, bankLabel: bankLabelFromCatalog/);
+  assert.match(reviewer, /projectEntrySensitiveContext\(slice\.entry\)/);
   assert.match(helper, /export function buildReviewerViewModel\(/);
-  assert.match(helper, /isSupportedEntryFieldProposal\(item\.proposal\)/);
-  assert.match(helper, /item\.target_kind !== "ENTRY_FIELD"/);
+  assert.match(helper, /item\.target_kind === "ENTRY_FIELD"/);
+  assert.match(helper, /projectWorkerDetails\(workerValue\)/);
+  assert.match(helper, /projectPaymentReadProposal\(item\.proposal\)/);
+  assert.match(helper, /projectWorkStatusReadProposal\(item\.proposal\)/);
+  assert.match(helper, /projectDocumentReadProposal\(item\.proposal\)/);
   assert.match(reviewer, /unsupportedReviewerViewModel\(requestId, "PROPOSAL"\)/);
 });
 
@@ -48,14 +54,26 @@ test("de xuat khong ho tro chi hien nhan chung va khong co hanh dong quyet dinh"
   assert.doesNotMatch(reviewer.slice(0, reviewer.indexOf("{canDecide && (")), /REVIEW_DECISION_LABELS\.approve/);
 });
 
-test("before/after chi gom 5 field non-PII, khong raw JSON va khong PII", () => {
-  for (const forbidden of ["worker_details", "account_number", "bank_id", "employment_status",
-    "document_type", "checksum_sha256", "mime_type", "national_id", "date_of_birth",
-    "payment", "documents"]) {
-    assert.doesNotMatch(reviewer + helper, new RegExp(forbidden), forbidden);
+test("before/after chi qua projector strict, khong raw JSON va khong key cam", () => {
+  // S03B4A: reviewer duoc phep doc worker_details/payment/employment_status NHUNG chi qua
+  // projector strict trong change-request-read-projection; khong bao gio render raw JSON.
+  // Key cam cua RESPONSE DOC khong duoc xuat hien o UI/projection. Rieng helper co mot cho dung
+  // hop le: body quyet dinh gui len server (idempotency_key) — khong phai proposal tra ve.
+  for (const forbidden of ["checksum_sha256", "idempotency_key", "storage_key", "bucket",
+    "storage_url", "signed_url", "public_url", "localStorage", "sessionStorage"]) {
+    assert.doesNotMatch(reviewer + projection, new RegExp(forbidden), forbidden);
   }
+  for (const forbidden of ["checksum_sha256", "storage_key", "bucket", "signed_url"]) {
+    assert.doesNotMatch(helper, new RegExp(forbidden), forbidden);
+  }
+  assert.doesNotMatch(reviewer + helper + projection, /localStorage|sessionStorage/);
   assert.doesNotMatch(reviewer, /dangerouslySetInnerHTML|JSON\.parse|<pre|<code/);
   assert.match(helper, /for \(const field of PROPOSER_FIELD_ORDER\)/);
+  assert.match(projection, /export function projectWorkerDetails\(/);
+  assert.match(projection, /export function projectPaymentReadProposal\(/);
+  assert.match(projection, /export function projectWorkStatusReadProposal\(/);
+  assert.match(projection, /export function projectDocumentReadProposal\(/);
+  assert.match(projection, /export function projectEntrySensitiveContext\(/);
   assert.match(reviewer, /<table className=\{styles\.reviewerTable\}>/);
   assert.match(reviewer, /<th scope="row">\{row\.label\}<\/th>/);
   assert.match(reviewer, /catalogProjectLabel\(catalog, value\)/);
