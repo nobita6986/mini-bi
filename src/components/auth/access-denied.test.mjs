@@ -27,9 +27,13 @@ test("S02B: access denied UX chung, link an toan, khong raw reason", () => {
   assert.doesNotMatch(denied, /app_user_id|capabilit|scope|reason|code/);
 });
 
-test("S02B: direct-entry flag off hien access denied, khong notFound", () => {
+test("S02B-R1: flag off notFound, route gate redirect/account-unavailable/access-denied", () => {
+  assert.match(page, /notFound\(\)/);
+  assert.match(page, /redirect\(\"\/login\?next=\/direct-entry\"\)/);
+  assert.match(page, /<AccountUnavailable \/>/);
   assert.match(page, /<AccessDenied \/>/);
-  assert.doesNotMatch(page, /notFound\(\)/);
+  assert.match(page, /\[\"entry_own\", \"entry_team\", \"entry_admin\"\]/);
+  assert.match(page, /getDirectEntryActor\(createDirectEntryActorRepository\(\)\)/);
 });
 
 test("S02B: thong bao tam thoi dung dung chu ky", () => {
