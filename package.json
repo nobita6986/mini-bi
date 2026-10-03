@@ -36,6 +36,7 @@
     "test:p1.6-w04-s04c-s02c": "node --conditions=react-server --test src/app/api/direct-entry/submission-read-routes.test.mjs src/lib/direct-entry/submission-read-contract.test.mjs src/lib/direct-entry/submission-read-api.test.mjs src/lib/direct-entry/submission-read-repository.test.mjs scripts/p1.6-s04c-submission-read-db.test.mjs",
     "test:p1.6-w04-s04c-s03a": "node --test src/lib/direct-entry/submission-lifecycle.test.mjs src/components/direct-entry/direct-entry-submission-list.test.mjs",
     "test:p1.6-w04-s04c-s03b1": "node --test src/lib/direct-entry/change-request-proposer.test.mjs src/components/direct-entry/direct-entry-change-request.test.mjs",
+    "test:p1.6-w04-s04c-s03b2": "node --test src/lib/direct-entry/change-request-reviewer.test.mjs src/components/direct-entry/direct-entry-change-request-reviewer.test.mjs",
     "test:p1.6-w04-s04c-i02-local": "node --conditions=react-server scripts/p1.6-s04c-submission-read-local-acceptance.mjs",
     "test:p1.6-w04-s04c-i02-dev": "node --conditions=react-server scripts/p1.6-s04c-submission-read-dev-acceptance.mjs",
     "test:p1.6-w04-s04c-i01-local": "node --conditions=react-server scripts/p1.6-s04c-change-request-read-local-acceptance.mjs",
