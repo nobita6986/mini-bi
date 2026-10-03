@@ -54,15 +54,18 @@ function mapHttpError(statusCode) {
 /** Mã hoá lỗi outbound (SecurityError / AbortError) thành mã gateway ĐÓNG. */
 function mapOutboundError(error) {
   const code = error && typeof error.code === "string" ? error.code : null;
-  if (code === "TIMEOUT") return { code: "AI_PROVIDER_TIMEOUT", retryable: true };
-  if (code === "RESPONSE_TOO_LARGE") return { code: "AI_PROVIDER_OVERSIZED", retryable: false };
+  const detail = code && /^(TIMEOUT|RESPONSE_TOO_LARGE|DNS_REJECTED|URL_REJECTED|REDIRECT_REJECTED|REQUEST_TOO_LARGE|INVALID_INPUT|OUTBOUND_FAILED)$/.test(code)
+    ? "live:outbound_" + code.toLowerCase()
+    : "live:outbound";
+  if (code === "TIMEOUT") return { code: "AI_PROVIDER_TIMEOUT", retryable: true, detail };
+  if (code === "RESPONSE_TOO_LARGE") return { code: "AI_PROVIDER_OVERSIZED", retryable: false, detail };
   if (code === "DNS_REJECTED" || code === "URL_REJECTED" || code === "REDIRECT_REJECTED" || code === "REQUEST_TOO_LARGE" || code === "INVALID_INPUT") {
-    return { code: "AI_PROVIDER_PERMANENT", retryable: false };
+    return { code: "AI_PROVIDER_PERMANENT", retryable: false, detail };
   }
   if (error && typeof error.name === "string" && error.name === "AbortError") {
-    return { code: "AI_PROVIDER_TIMEOUT", retryable: true };
+    return { code: "AI_PROVIDER_TIMEOUT", retryable: true, detail: "live:outbound_abort" };
   }
-  return { code: "AI_PROVIDER_TRANSIENT", retryable: true };
+  return { code: "AI_PROVIDER_TRANSIENT", retryable: true, detail };
 }
 
 /**
@@ -161,7 +164,7 @@ export function createLiveAdapter(options = {}) {
         });
       } catch (error) {
         const mapped = mapOutboundError(error);
-        return fail(mapped.code, mapped.retryable, "live:outbound");
+        return fail(mapped.code, mapped.retryable, mapped.detail);
       }
 
       if (!response || !Number.isInteger(response.statusCode) || !Buffer.isBuffer(response.body)) {

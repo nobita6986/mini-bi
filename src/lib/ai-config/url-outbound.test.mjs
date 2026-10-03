@@ -204,6 +204,25 @@ test("HTTPS uses original hostname for SNI/certificate verification and Host hea
   assert.equal(typeof options.lookup, "function");
 });
 
+test("gateway policy timeout 60s được outbound chấp nhận thay vì INVALID_INPUT", async () => {
+  let calls = 0;
+  const response = await safeOutboundRequest("https://api.provider.example/chat/completions", {
+    url_policy: policy,
+    timeoutMs: 60_000,
+    resolve: async () => [publicV4],
+    request: async () => {
+      calls += 1;
+      return result(200, {}, "{}");
+    },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls, 1);
+  await assert.rejects(safeOutboundRequest("https://api.provider.example/", {
+    url_policy: policy,
+    timeoutMs: 120_001,
+  }), { code: "INVALID_INPUT" });
+});
+
 test("private/metadata DNS rebinding between same-origin redirects is blocked", async () => {
   for (const blockedAddress of ["10.0.0.8", "169.254.169.254"]) {
     let resolutionCount = 0;
