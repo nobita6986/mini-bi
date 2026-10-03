@@ -19,7 +19,7 @@ import { activeProviderConfigForGateway } from "./active-config-bridge.mjs";
 import { createSupabaseAuditSink, createSupabaseJobRepository } from "./repository.mjs";
 import { createLiveAdapterFactory } from "./live-wiring.mjs";
 import { EMPTY_MEMBERSHIP_CATALOG, loadFrozenPacket } from "./packet-source.mjs";
-import { SCRIPTED_ADAPTER_VERSION, createScriptedAdapter } from "../provider.mjs";
+import { adapterVersionForProvider, createScriptedAdapter } from "../provider.mjs";
 import { createDefaultTimeoutSignal } from "../run-one-job.mjs";
 import { getPromptManifest } from "../prompt-registry.mjs";
 import { createAiReportService } from "../service-core.mjs";
@@ -34,6 +34,11 @@ export function createServerAiReportGateway() {
 
   const provider = readProviderConfig();
   if (!provider.ok) return provider;
+
+  const adapterVersion = adapterVersionForProvider(provider.provider_key);
+  if (!adapterVersion) {
+    return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider không được hỗ trợ" };
+  }
 
   const policy = readGatewayPolicy();
   if (!policy.ok) return policy;
@@ -94,7 +99,7 @@ export function createServerAiReportGateway() {
     access_scope_hash: accessScopeHashFor(PILOT_ACTOR_REF),
     provider_key: provider.provider_key,
     model_key: provider.model_key,
-    adapter_version: SCRIPTED_ADAPTER_VERSION,
+    adapter_version: adapterVersion,
     prompt_version: manifest.prompt_version,
   };
 }

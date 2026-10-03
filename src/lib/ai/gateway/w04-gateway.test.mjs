@@ -26,7 +26,14 @@ import {
   readPolicyConfig,
   responseCeilingOf,
 } from "./policy.mjs";
-import { createLiveAdapter, createScriptedAdapter, resolveProviderAdapter } from "./provider.mjs";
+import {
+  LIVE_ADAPTER_VERSION,
+  SCRIPTED_ADAPTER_VERSION,
+  adapterVersionForProvider,
+  createLiveAdapter,
+  createScriptedAdapter,
+  resolveProviderAdapter,
+} from "./provider.mjs";
 import { computeBackoffMs, computeBackoffMs as backoff, decideAfterFailure, canTransition, classifyFailure } from "./job-state.mjs";
 import { buildJobIdentity, describeIdentity, normalizeIdentityInput } from "./job-identity.mjs";
 import { checkSameOriginRequest, checkWorkerToken, sanitizeMessage, timingSafeEqualString } from "./http-guards.mjs";
@@ -214,6 +221,10 @@ test("W04 identity: chuẩn hoá deterministic và đổi mọi thành phần �
 });
 
 test("W04 provider: scripted deterministic; live cần outbound wiring, thiếu ⇒ fail-closed", async () => {
+  assert.equal(adapterVersionForProvider("scripted"), SCRIPTED_ADAPTER_VERSION);
+  assert.equal(adapterVersionForProvider("live"), LIVE_ADAPTER_VERSION);
+  assert.equal(adapterVersionForProvider("unknown"), null);
+
   const scripted = resolveProviderAdapter({ provider_key: "scripted", config: {} });
   assert.equal(scripted.ok, true);
   const live = resolveProviderAdapter({ provider_key: "live", config: {} });
@@ -364,6 +375,7 @@ test("W04 routes/proxy: route AI nằm sau pilot gate và không lộ dữ liệ
   const enqueue = readFileSync(new URL("../../../app/api/ai/reports/route.ts", import.meta.url), "utf8");
   assert.ok(enqueue.includes("isAiReportsEnabled()"));
   assert.ok(enqueue.includes("checkSameOriginRequest"));
+  assert.ok(enqueue.includes('worker_ref: "inline-after", limit: 2'));
   assert.ok(enqueue.includes("no-store") === false, "header no-store nằm trong helper jsonResponse");
   assert.ok(enqueue.includes("readJsonBody"));
   const worker = readFileSync(new URL("../../../app/api/ai/worker/run/route.ts", import.meta.url), "utf8");

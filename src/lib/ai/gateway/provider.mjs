@@ -9,13 +9,24 @@
 
 import { canonicalJson, canonicalHash } from "../engine-shared.mjs";
 import { MAX_RESPONSE_BYTES } from "./limits.mjs";
-import { createLiveAdapter } from "./live-adapter.mjs";
+import {
+  LIVE_ADAPTER_VERSION,
+  LIVE_PROVIDER_PROFILE,
+  createLiveAdapter,
+} from "./live-adapter.mjs";
 
 export const SCRIPTED_ADAPTER_VERSION = "scripted-adapter/1.0";
 export { createLiveAdapter };
-export { LIVE_ADAPTER_VERSION, LIVE_PROVIDER_PROFILE } from "./live-adapter.mjs";
+export { LIVE_ADAPTER_VERSION, LIVE_PROVIDER_PROFILE };
 
 export const PROVIDER_KEYS = Object.freeze(["scripted", "live"]);
+
+/** Adapter version authority used when freezing a generation job. */
+export function adapterVersionForProvider(providerKey) {
+  if (providerKey === "live") return LIVE_ADAPTER_VERSION;
+  if (providerKey === "scripted") return SCRIPTED_ADAPTER_VERSION;
+  return null;
+}
 
 /** ID scenario của scripted provider (dùng cho acceptance G4). */
 export const SCRIPTED_SCENARIOS = Object.freeze([
