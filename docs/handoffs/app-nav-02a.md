@@ -1,9 +1,9 @@
 # Handoff — APP-NAV-02A — Product Navigation Preparation for P1.6-I04
 
-> Status: **APP-NAV-02A_READY_FOR_P1.6_I04_INTEGRATION**  
-> Worktree: `C:\CodeApp\BI-app-nav-02a`  
-> Branch: `feature/app-nav-02a`  
-> Base: `702240ded473a8c5f64ef355f459192d924998df` (P1.6-W04-S04B-S02B1)  
+> Status: **APP-NAV-02A_READY_FOR_P1.6_I04_INTEGRATION**
+> Worktree: `C:\CodeApp\BI-app-nav-02a`
+> Branch: `feature/app-nav-02a`
+> Base: `702240ded473a8c5f64ef355f459192d924998df` (P1.6-W04-S04B-S02B1)
 > Scope: Navbar preparation only. Không triển khai login/RBAC, không merge
 > integration/main, không deploy.
 

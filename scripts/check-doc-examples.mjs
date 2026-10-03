@@ -42,7 +42,8 @@ let failureCount = 0;
 
 async function main() {
   for (const doc of DOCS) {
-    const content = await readFile(path.join(process.cwd(), doc), "utf8");
+    const content = (await readFile(path.join(process.cwd(), doc), "utf8"))
+      .replace(/\r\n?/g, "\n");
     const fence = /\`\`\`json\n([\s\S]*?)\`\`\`/g;
     let match;
     let index = 0;
