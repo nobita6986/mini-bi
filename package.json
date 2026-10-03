@@ -29,7 +29,7 @@
     "test:p1.6-w04-s03cd-dev": "node --conditions=react-server scripts/p1.6-w04-s03cd-dev-acceptance.mjs",
     "test:p1.6-w04-s04a": "node --conditions=react-server --test src/app/api/direct-entry/payment-route.test.mjs src/lib/direct-entry/payment-contract.test.mjs src/lib/direct-entry/payment-api.test.mjs src/lib/direct-entry/payment-repository.test.mjs src/lib/direct-entry/payment-ui.test.mjs src/lib/auth/direct-entry-v2.test.mjs scripts/p1.6-w04-s04a-db.test.mjs",
     "test:p1.6-w04-s04b-s01": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/document-upload-contract.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs",
-    "test:p1.6-w04-s04b-s02a-dev": "node --conditions=react-server scripts/p1.6-w04-s04b-s02a-dev-acceptance.mjs",
+    "test:p1.6-w04-s04b-r2b1-acceptance": "node --conditions=react-server scripts/p1.6-w04-s04b-r2b1-acceptance.mjs",
     "test:p1.6-w04-s04b-r2a": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/r2-document-storage.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs src/lib/direct-entry/r2-migration.test.mjs",
     "test:p1.6-w04-s04a-dev": "node --conditions=react-server scripts/p1.6-w04-s04a-dev-acceptance.mjs"
   },
