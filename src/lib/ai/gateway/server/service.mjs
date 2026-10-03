@@ -15,6 +15,7 @@ import {
 import { createSupabaseProviderConfigStore } from "@/lib/ai-config/server/store.mjs";
 import { urlPolicyFromEnv } from "@/lib/ai-config/server/settings.mjs";
 
+import { activeProviderConfigForGateway } from "./active-config-bridge.mjs";
 import { createSupabaseAuditSink, createSupabaseJobRepository } from "./repository.mjs";
 import { createLiveAdapterFactory } from "./live-wiring.mjs";
 import { EMPTY_MEMBERSHIP_CATALOG, loadFrozenPacket } from "./packet-source.mjs";
@@ -65,13 +66,7 @@ export function createServerAiReportGateway() {
   const service = createAiReportService({
     queue: createSupabaseJobRepository(),
     providerConfig: {
-      active: async () => {
-        const active = await providerConfigStore.readActiveProjection();
-        if (!active) {
-          return { ok: false, code: "AI_CONFIG_REQUIRED", message: "chưa có cấu hình provider active + verified" };
-        }
-        return { ok: true, config: active };
-      },
+      active: async () => activeProviderConfigForGateway(await providerConfigStore.readActiveProjection()),
       material: (configId, version) => providerConfigStore.material(configId, version),
     },
     audit: createSupabaseAuditSink(),

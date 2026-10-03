@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { safeOutboundRequest } from "../../../ai-config/safe-outbound.ts";
+import { activeProviderConfigForGateway } from "./active-config-bridge.mjs";
 import { createLiveAdapterFactory } from "./live-wiring.mjs";
 import { getPromptManifest, PROMPT_MANIFEST_V1 } from "../prompt-registry.mjs";
 
@@ -109,4 +110,26 @@ test("W04B-W4: allowlist rỗng ⇒ reject TRƯỚC network (0 resolve, 0 reques
   assert.equal(result.error_code, "AI_PROVIDER_PERMANENT");
   assert.equal(resolveCalls, 0, "0 DNS resolve khi allowlist rỗng");
   assert.equal(requestCalls, 0, "0 network request khi allowlist rỗng");
+});
+
+test("W04B-W5: active config bridge unwrap đúng StoreRead envelope cho enqueue", () => {
+  const projection = {
+    config_id: "pilot-provider",
+    version: 1,
+    provider_profile: "openai-compatible",
+    model: "deepseek-flash",
+    status: "active",
+    verified_at: "2026-10-03T03:37:09.000Z",
+  };
+  const result = activeProviderConfigForGateway({ ok: true, config: projection });
+  assert.deepEqual(result, { ok: true, config: projection });
+  assert.equal(result.config.config_id, "pilot-provider");
+  assert.equal(result.config.version, 1);
+  assert.equal(result.config.ok, undefined, "config không được chứa envelope lồng thêm một lớp");
+});
+
+test("W04B-W6: active config bridge fail-closed khi thiếu config hoặc store lỗi", () => {
+  assert.equal(activeProviderConfigForGateway({ ok: true, config: null }).code, "AI_CONFIG_REQUIRED");
+  assert.equal(activeProviderConfigForGateway({ ok: false, code: "AI_INTERNAL", message: "raw" }).code, "AI_INTERNAL");
+  assert.equal(activeProviderConfigForGateway(undefined).code, "AI_INTERNAL");
 });
