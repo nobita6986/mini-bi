@@ -49,7 +49,7 @@ export function ReportView({ analysis, lifecycle }: { analysis: AnalysisView; li
       { className: card },
       h("h4", { className: h4 }, "Tóm tắt điều hành"),
       h("p", { className: "mt-1 whitespace-pre-wrap text-sm text-foreground" }, analysis.executive_analysis),
-      h("p", { className: "mt-2 text-xs text-muted" }, "Kỳ so sánh: " + analysis.period_ref)
+      h("p", { className: "mt-2 text-xs text-muted" }, "Kỳ báo cáo: " + analysis.period_ref)
     ),
     ...groupFindings(analysis.findings).map((group) =>
       h(
