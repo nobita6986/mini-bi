@@ -13,6 +13,13 @@ import {
   type ChangeRequestState,
   type ChangeRequestTargetKind,
 } from "./change-request-contract.ts";
+import {
+  isPresenceOnlyWorkerDetails,
+  projectDocumentReadProposal,
+  projectPaymentReadProposal,
+  projectWorkStatusReadProposal,
+  projectWorkerDetails,
+} from "./change-request-read-projection.ts";
 
 export const LIST_DEFAULT_PAGE_SIZE = 20;
 export const LIST_MAX_PAGE_SIZE = 50;
@@ -213,6 +220,66 @@ function findSensitiveProposalKey(value: unknown, depth = 0): string | null {
   return null;
 }
 
+/**
+ * P1.6-W04-S04C-S03B4A: vocabulary proposal cua RESPONSE DOC (da lam sach o server), khac
+ * vocabulary mutation. Vi du PAYMENT co the chi con state + account_number masked; WORK_STATUS
+ * khong con leave_reason; DOCUMENT khong con idempotency_key/checksum_sha256.
+ */
+export const READ_PROPOSAL_KEYS: Readonly<Record<ChangeRequestTargetKind, readonly string[]>> =
+  Object.freeze({
+    ENTRY_FIELD: [
+      "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
+      "worker_details",
+    ],
+    PAYMENT: ["state", "account_number", "bank_id", "account_holder_name"],
+    WORK_STATUS: ["status", "effective_date"],
+    DOCUMENT: ["document_type", "size_bytes", "mime_type"],
+  });
+
+const ENTRY_FIELD_NON_PII_KEYS = [
+  "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
+] as const;
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+/**
+ * Strict-project proposal da lam sach theo tung target kind. Tra null khi key la, sai kieu,
+ * raw sensitive key, hoac hinh dang khong duoc ho tro (khong fallback ve {}).
+ * Gia tri tra ve la ban da validate nguyen ven (khong tu them/bot field).
+ */
+export function projectReadProposal(
+  kind: ChangeRequestTargetKind,
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const allowed: readonly string[] | undefined = READ_PROPOSAL_KEYS[kind];
+  if (!allowed || !hasOnlyKeys(value, allowed) || Object.keys(value).length < 1) return null;
+  if (kind === "ENTRY_FIELD") {
+    const nonPii: Record<string, unknown> = {};
+    for (const key of ENTRY_FIELD_NON_PII_KEYS) {
+      if (key in value) nonPii[key] = value[key];
+    }
+    if (Object.keys(nonPii).length > 0 && !projectChangeRequestProposal("ENTRY_FIELD", nonPii)) {
+      return null;
+    }
+    if ("worker_details" in value) {
+      const workerDetails = value.worker_details;
+      const full = projectWorkerDetails(workerDetails);
+      if (!full && !isPresenceOnlyWorkerDetails(workerDetails)) return null;
+    }
+    return { ...value };
+  }
+  if (kind === "PAYMENT") {
+    return projectPaymentReadProposal(value) ? { ...value } : null;
+  }
+  if (kind === "WORK_STATUS") {
+    return projectWorkStatusReadProposal(value) ? { ...value } : null;
+  }
+  return projectDocumentReadProposal(value) ? { ...value } : null;
+}
+
 export type ChangeRequestDetailItem = {
   entry_id: string;
   target_kind: ChangeRequestTargetKind;
@@ -237,7 +304,7 @@ function projectDetailItem(value: unknown): ChangeRequestDetailItem | null {
   if (!isPositiveVersion(value.expected_version)) return null;
   const kind = value.target_kind as ChangeRequestTargetKind;
   if (findSensitiveProposalKey(value.proposal) !== null) return null;
-  const proposal = projectChangeRequestProposal(kind, value.proposal);
+  const proposal = projectReadProposal(kind, value.proposal);
   if (!proposal) return null;
   return {
     entry_id: value.entry_id,

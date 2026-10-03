@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  PAYMENT_MASKED_MESSAGE,
   buildDecisionRequest,
   buildReviewerEntryRows,
   buildReviewerViewModel,
@@ -18,6 +19,11 @@ import {
   unsupportedReviewerViewModel,
 } from "./change-request-reviewer.ts";
 import { projectProposerEntry } from "./change-request-proposer.ts";
+import {
+  DOCUMENT_STAGING_MESSAGE,
+  LEAVE_REASON_HIDDEN_MESSAGE,
+  PRESENCE_ONLY_MESSAGE,
+} from "./change-request-read-projection.ts";
 
 const REQUEST_ID = "d1000000-0000-4000-8000-00000000000a";
 const ENTRY_A = "c1000000-0000-4000-8000-00000000000a";
@@ -96,6 +102,31 @@ function entriesOf(...entries) {
   return new Map(entries.filter(Boolean).map((entry) => [entry.entry_id, entry]));
 }
 
+function workerDetails(overrides = {}) {
+  return {
+    display_name: "Nguyen Van Synthetic",
+    date_of_birth: { state: "unknown" },
+    national_id: { state: "unknown" },
+    address: { state: "unknown" },
+    phone: { state: "unknown" },
+    ...overrides,
+  };
+}
+
+function context(overrides = {}) {
+  return {
+    workerDetails: null,
+    workerPresenceOnly: false,
+    payment: null,
+    employmentStatus: { status: "UNCONFIRMED", effective_date: "2026-10-01" },
+    ...overrides,
+  };
+}
+
+function contextsOf(entryId, value) {
+  return new Map([[entryId, value]]);
+}
+
 const CATALOGS = { "2026-10-15": catalog() };
 
 function build(overrides = {}) {
@@ -103,15 +134,18 @@ function build(overrides = {}) {
     detail: detail(overrides.detail),
     entries: overrides.entries ?? entriesOf(entryProjection(ENTRY_A)),
     format: overrides.format ?? formatWith(overrides.catalogs ?? CATALOGS),
+    contexts: overrides.contexts ?? new Map(),
+    bankLabel: overrides.bankLabel ??
+      ((bankId) => (bankId === "s02c_bank" ? "Ngân hàng Synthetic" : null)),
   });
 }
 
 test("chi PENDING + can_decide=true + can_withdraw=false moi duoc quyet dinh", () => {
   const reviewable = build();
   assert.equal(reviewable.kind, "reviewable");
-  assert.equal(reviewable.entries.length, 1);
-  assert.equal(reviewable.entries[0].rows.length, 1);
-  assert.deepEqual(reviewable.entries[0].rows[0], {
+  assert.equal(reviewable.items.length, 1);
+  assert.equal(reviewable.items[0].rows.length, 1);
+  assert.deepEqual(reviewable.items[0].rows[0], {
     field: "employee_code",
     label: "Mã người lao động",
     before: "hrp-2026-600001",
@@ -152,11 +186,11 @@ test("de xuat chi gom 5 field non-PII, chi hien field thuc su thay doi", () => {
     },
   });
   assert.equal(model.kind, "reviewable");
-  assert.deepEqual(model.entries[0].rows.map((row) => row.field),
+  assert.deepEqual(model.items[0].rows.map((row) => row.field),
     ["employee_code", "project_id", "recruiter_id", "labor_type"]);
-  assert.equal(model.entries[0].rows.some((row) => row.field === "first_work_date"), false,
+  assert.equal(model.items[0].rows.some((row) => row.field === "first_work_date"), false,
     "first_work_date khong doi nen khong hien");
-  for (const row of model.entries[0].rows) {
+  for (const row of model.items[0].rows) {
     assert.equal(typeof row.label, "string");
     assert.equal(typeof row.before, "string");
     assert.equal(typeof row.after, "string");
@@ -170,7 +204,7 @@ test("catalog doi ID thanh nhan hien thi, khong hien UUID lam noi dung chinh", (
       recruiter_id: RECRUITER_MOI } })] },
   });
   assert.equal(model.kind, "reviewable");
-  const rows = model.entries[0].rows;
+  const rows = model.items[0].rows;
   assert.deepEqual(rows.map((row) => [row.field, row.before, row.after]), [
     ["project_id", "Dự án Synthetic", "Dự án Mới"],
     ["recruiter_id", "Synthetic recruiter", "Recruiter Mới"],
@@ -196,14 +230,14 @@ test("catalog khong giai duoc thi fail-closed, khong co quyet dinh", () => {
 test("phien ban entry lech expected_version thi chi hien du lieu da thay doi", () => {
   const model = build({ entries: entriesOf(entryProjection(ENTRY_A, { version: 5 })) });
   assert.equal(model.kind, "stale");
-  assert.equal(model.entries.length, 1);
-  assert.equal(model.entries[0].rows.length, 1);
+  assert.equal(model.items.length, 1);
+  assert.equal(model.items[0].rows.length, 1);
   assert.match(STALE_REVIEW_MESSAGE, /Dữ liệu đã thay đổi/);
   const noDiff = build({
     detail: { items: [detailItem({ proposal: { employee_code: "hrp-2026-600001" } })] },
   });
   assert.equal(noDiff.kind, "stale");
-  assert.deepEqual(noDiff.entries[0].rows, []);
+  assert.deepEqual(noDiff.items[0].rows, []);
 });
 
 test("request nhieu entry la all-or-nothing: mot item khong dat thi toan bo la generic", () => {
@@ -215,7 +249,7 @@ test("request nhieu entry la all-or-nothing: mot item khong dat thi toan bo la g
     entries: entriesOf(safe, second),
   });
   assert.equal(good.kind, "reviewable");
-  assert.equal(good.entries.length, 2);
+  assert.equal(good.items.length, 2);
 
   const mixed = build({
     detail: { items: [detailItem(), detailItem({ entry_id: ENTRY_B, target_kind: "PAYMENT",
@@ -223,8 +257,8 @@ test("request nhieu entry la all-or-nothing: mot item khong dat thi toan bo la g
     entries: entriesOf(safe, second),
   });
   assert.equal(mixed.kind, "unsupported");
-  assert.equal(mixed.reason, "TARGET_KIND");
-  assert.equal("entries" in mixed, false, "khong xu ly mot phan request nhieu entry");
+  assert.equal(mixed.reason, "PAYMENT");
+  assert.equal("items" in mixed, false, "khong xu ly mot phan request nhieu entry");
 
   const unknownField = build({
     detail: { items: [detailItem({ proposal: { employee_code: "hrp-2026-600009",
@@ -328,4 +362,104 @@ test("trang thai ket qua va thong bao deu bam theo intent, khong lo ma ky thuat"
   const generic = reviewerErrorMessage(0);
   assert.equal(/CHANGE_REQUEST_|RPC|SQL|pg_/.test(generic), false, generic);
   assert.equal(/CHANGE_REQUEST_/.test(reviewerErrorMessage(409)), false);
+});
+
+test("worker_details FULL hien before/after theo nhan field, khong lo raw JSON", () => {
+  const model = build({
+    detail: { items: [detailItem({ proposal: { worker_details: workerDetails({
+      phone: { state: "provided", value: "0900000000" } }) } })] },
+    contexts: contextsOf(ENTRY_A, context({ workerDetails: workerDetails() })),
+  });
+  assert.equal(model.kind, "reviewable");
+  assert.equal(model.items[0].decidable, true);
+  assert.deepEqual(model.items[0].rows.map((row) => row.field), ["phone"]);
+  assert.equal(model.items[0].rows[0].after, "0900000000");
+  assert.equal(model.items[0].message, null);
+});
+
+test("worker_details presence-only: mot nhan chung, khong quyet dinh, khong lo gia tri", () => {
+  const model = build({
+    detail: { items: [detailItem({ proposal: { worker_details: { present: true } } })] },
+  });
+  assert.equal(model.kind, "readonly");
+  assert.equal(model.items[0].decidable, false);
+  assert.equal(model.items[0].message, PRESENCE_ONLY_MESSAGE);
+  assert.deepEqual(model.items[0].rows, []);
+  assert.equal(JSON.stringify(model).includes("display_name"), false);
+});
+
+test("PAYMENT full duoc quyet dinh, masked chi read-only, bank phai giai duoc", () => {
+  const full = build({
+    detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {
+      state: "provided", account_number: "000123", bank_id: "s02c_bank",
+      account_holder_name: "NGUYEN VAN SYNTHETIC" } })] },
+  });
+  assert.equal(full.kind, "reviewable");
+  assert.equal(full.items[0].decidable, true);
+  assert.equal(full.items[0].rows.some((row) => row.after === "Ngân hàng Synthetic"), true);
+
+  const masked = build({
+    detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {
+      state: "provided", account_number: "••••6789" } })] },
+  });
+  assert.equal(masked.kind, "readonly");
+  assert.equal(masked.items[0].decidable, false);
+  assert.equal(masked.items[0].message, PAYMENT_MASKED_MESSAGE);
+  const text = JSON.stringify(masked.items[0].rows);
+  assert.equal(text.includes("000123"), false);
+
+  const unknownBank = build({
+    detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {
+      state: "provided", account_number: "000123", bank_id: "bank_khong_co",
+      account_holder_name: "NGUYEN VAN SYNTHETIC" } })] },
+  });
+  assert.equal(unknownBank.kind, "unsupported");
+  assert.equal(unknownBank.reason, "CATALOG");
+});
+
+test("WORK_STATUS hien nhan trang thai + ngay hieu luc va ghi ro ly do bi an", () => {
+  const model = build({
+    detail: { items: [detailItem({ target_kind: "WORK_STATUS", proposal: {
+      status: "OFF", effective_date: "2026-10-05" } })] },
+    contexts: contextsOf(ENTRY_A, context()),
+  });
+  assert.equal(model.kind, "reviewable");
+  assert.deepEqual(model.items[0].rows.map((row) => row.field),
+    ["status", "effective_date", "leave_reason"]);
+  assert.equal(model.items[0].rows[2].after, LEAVE_REASON_HIDDEN_MESSAGE);
+  assert.equal(model.items[0].rows[0].before, "Chưa xác nhận");
+  assert.equal(model.items[0].rows[0].after, "Đã nghỉ");
+
+  const stale = build({
+    detail: { items: [detailItem({ target_kind: "WORK_STATUS", proposal: {
+      status: "ON", effective_date: "2026-10-05" } })] },
+    entries: entriesOf(entryProjection(ENTRY_A, { version: 9 })),
+    contexts: contextsOf(ENTRY_A, context()),
+  });
+  assert.equal(stale.kind, "stale");
+});
+
+test("DOCUMENT chi read-only, mixed co DOCUMENT thi toan request khong co quyet dinh", () => {
+  const document = build({
+    detail: { items: [detailItem({ target_kind: "DOCUMENT", proposal: {
+      document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048,
+      mime_type: "application/pdf" } })] },
+  });
+  assert.equal(document.kind, "readonly");
+  assert.equal(document.items[0].decidable, false);
+  assert.equal(document.items[0].message, DOCUMENT_STAGING_MESSAGE);
+  assert.equal(document.items[0].rows[0].after, "Hợp đồng lao động");
+  const text = JSON.stringify(document);
+  assert.equal(text.includes("checksum"), false);
+  assert.equal(text.includes("idempotency"), false);
+  assert.equal(text.includes("storage"), false);
+
+  const mixed = build({
+    detail: { items: [detailItem(), detailItem({ target_kind: "DOCUMENT", proposal: {
+      document_type: "CCCD_FRONT" } })] },
+  });
+  assert.equal(mixed.kind, "readonly");
+  assert.equal(mixed.items.length, 2);
+  assert.equal(mixed.items.filter((item) => !item.decidable).length, 1);
+  assert.equal("can_decide" in mixed, false);
 });

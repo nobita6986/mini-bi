@@ -55,8 +55,16 @@ export const PROPOSAL_KEYS: Readonly<Record<ChangeRequestTargetKind, readonly st
 
 const PROPOSAL_VOCABULARY: readonly string[] = Object.freeze([...new Set(Object.values(PROPOSAL_KEYS).flat())]);
 
+/** Key nghiep vu ben trong worker_details (OptionalValue dung state/value). */
+const WORKER_DETAILS_KEYS: readonly string[] = Object.freeze([
+  "display_name", "date_of_birth", "national_id", "address", "phone", "state", "value",
+]);
+
 const LABOR_TYPES = ["TEMPORARY", "PERMANENT"] as const;
 const WORKER_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
+
+/** S03B4A: vocabulary trang thai lam viec dung chung cho read projection (khong doi validator). */
+export const WORK_STATUS_VALUES = WORKER_STATUSES;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
@@ -152,15 +160,23 @@ export function isChangeRequestDecision(value: unknown): value is ChangeRequestD
  *   nen bo qua buoc kiem authority cho chinh key do nhung VAN quet sau vao value cua no.
  * - findCoreForbiddenField duoc goi tren mot wrapper chi chua key (value = null) de chi kiem
  *   TEN truong, khong de no tu quet sau (tranh bao nham `state` hop le cua proposal PAYMENT).
+ * - S03B4A: gia tri worker_details dung OptionalValue ({ state, value }) nen khi quet sau vao
+ *   worker_details phai mien cac key nghiep vu cua no; hinh dang van duoc validator + DB check
+ *   constraint kiem rieng (server la authority).
  */
 export function findForbiddenChangeRequestField(
   value: unknown,
   envelopeKeys: readonly string[] = [],
 ): { field: string } | null {
-  const scan = (current: unknown, path: string, exemptKeys: readonly string[]): { field: string } | null => {
+  const scan = (
+    current: unknown,
+    path: string,
+    exemptKeys: readonly string[],
+    insideWorkerDetails: boolean,
+  ): { field: string } | null => {
     if (Array.isArray(current)) {
       for (let index = 0; index < current.length; index += 1) {
-        const nested = scan(current[index], path + "[" + index + "]", []);
+        const nested = scan(current[index], path + "[" + index + "]", [], insideWorkerDetails);
         if (nested) return nested;
       }
       return null;
@@ -169,18 +185,22 @@ export function findForbiddenChangeRequestField(
     for (const [key, child] of Object.entries(current)) {
       const normalized = key.replace(/[-_]/g, "").toLowerCase();
       const childPath = path === "" ? key : path + "." + key;
-      if (!exemptKeys.includes(key)) {
+      // Key nghiep vu cua worker_details (ke ca OptionalValue state/value o moi do sau) khong phai
+      // truong authority; hinh dang van duoc validator + DB check constraint kiem rieng.
+      const workerKey = insideWorkerDetails && WORKER_DETAILS_KEYS.includes(key);
+      if (!exemptKeys.includes(key) && !workerKey) {
         if (CHANGE_REQUEST_EXTRA_FORBIDDEN.has(normalized)) return { field: childPath };
         const core = findCoreForbiddenField({ [key]: null }, path);
         if (core) return core;
       }
       const childExempt = key === "proposal" ? PROPOSAL_VOCABULARY : [];
-      const nested = scan(child, childPath, childExempt);
+      const nested = scan(child, childPath, childExempt,
+        insideWorkerDetails || key === "worker_details");
       if (nested) return nested;
     }
     return null;
   };
-  return scan(value, "", envelopeKeys);
+  return scan(value, "", envelopeKeys, false);
 }
 export type ChangeRequestItem = {
   entry_id: string;

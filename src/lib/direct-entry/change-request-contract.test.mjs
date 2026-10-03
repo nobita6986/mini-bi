@@ -305,3 +305,25 @@ test("result projections are exact and never invent fields", () => {
   assert.equal(isChangeRequestState("PENDING"), true);
   assert.equal(isChangeRequestState("pending"), false);
 });
+test("S03B4A: worker_details OptionalValue duoc chap nhan, authority long ben trong van bi chan", () => {
+  const workerDetails = {
+    display_name: "Nguyen Van Synthetic",
+    date_of_birth: { state: "provided", value: "1990-01-02" },
+    national_id: { state: "unknown" },
+    address: { state: "intentionally_blank" },
+    phone: { state: "provided", value: "0900000000" },
+  };
+  const accepted = projectChangeRequestCreate(createBody({
+    items: [{ entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
+      proposal: { worker_details: workerDetails } }],
+  }));
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.deepEqual(accepted.value.items[0].proposal, { worker_details: workerDetails });
+
+  const injected = projectChangeRequestCreate(createBody({
+    items: [{ entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
+      proposal: { worker_details: { ...workerDetails, actor_id: "x" } } }],
+  }));
+  assert.equal(injected.ok, false);
+  assert.equal(injected.code, "CLIENT_AUTHORITY_FIELD_FORBIDDEN");
+});
