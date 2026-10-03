@@ -123,13 +123,20 @@ export function createLiveAdapter(options = {}) {
         return fail("AI_CONFIG_REQUIRED", false, "live:profile");
       }
 
+      const systemInstruction = [
+        request.promptManifest?.system_instruction ?? "",
+        request.promptManifest?.developer_instruction ?? "",
+      ].filter(Boolean).join("\n\n");
       const bodyObj = {
         model: modelKey,
         messages: [
-          { role: "system", content: request.promptManifest?.system_instruction ?? "" },
-          { role: "system", content: request.promptManifest?.developer_instruction ?? "" },
+          { role: "system", content: systemInstruction },
           { role: "user", content: canonicalJson(request.payload) },
         ],
+        // DeepSeek hiện mặc định thinking mode; báo cáo cần JSON thuần, deterministic.
+        thinking: { type: "disabled" },
+        response_format: { type: "json_object" },
+        max_tokens: 8192,
         temperature: 0,
         stream: false,
       };

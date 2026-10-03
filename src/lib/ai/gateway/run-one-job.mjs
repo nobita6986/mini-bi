@@ -366,7 +366,10 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   if (!providerResult.ok) {
     // Usage vẫn được ghi (logical) nhưng KHÔNG tạo revision.
     await deps.queue.recordUsage({ ...usageBase, cache_hit: false });
-    return report(providerResult.error_code, "provider trả lỗi " + providerResult.error_code);
+    const safeDetail = typeof providerResult.detail_ref === "string" && /^live:[a-z0-9_-]+$/i.test(providerResult.detail_ref)
+      ? " (" + providerResult.detail_ref + ")"
+      : "";
+    return report(providerResult.error_code, "provider trả lỗi " + providerResult.error_code + safeDetail);
   }
 
   const parsed = parseStructured(providerResult);

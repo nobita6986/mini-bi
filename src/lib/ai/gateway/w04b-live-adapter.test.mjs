@@ -105,6 +105,14 @@ test("W04B-U2: response hợp lệ ⇒ ok:true + structured + usage nguyên vẹ
   assert.equal(outbound.calls[0].opts.headers.authorization, "Bearer " + SECRET);
   assert.equal(outbound.calls[0].opts.headers["content-type"], "application/json");
   assert.equal(outbound.calls[0].opts.maxRedirects, 0);
+  const requestBody = JSON.parse(outbound.calls[0].opts.body);
+  assert.equal(requestBody.messages.filter((message) => message.role === "system").length, 1);
+  assert.ok(requestBody.messages[0].content.includes(PROMPT.system_instruction));
+  assert.ok(requestBody.messages[0].content.includes(PROMPT.developer_instruction));
+  assert.deepEqual(requestBody.thinking, { type: "disabled" });
+  assert.deepEqual(requestBody.response_format, { type: "json_object" });
+  assert.equal(requestBody.max_tokens, 8192);
+  assert.equal(requestBody.stream, false);
 });
 
 test("W04B-U3: content không phải JSON hợp lệ ⇒ AI_PROVIDER_MALFORMED", async () => {
