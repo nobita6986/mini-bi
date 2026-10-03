@@ -15,24 +15,42 @@ type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
 
 type ActorRef = { auth_subject: string; app_user_id: string };
 
-type OperationResult<T = unknown> =
+export type OperationResult<T = unknown> =
   | { ok: true; data: T }
   | {
       ok: false;
       kind: "conflict" | "denied" | "invalid" | "not-found" | "too-large" | "unavailable";
     };
 
-export type DocumentReservation = {
+export type DocumentLifecycle = {
+  upload_status: "QUEUED" | "UPLOADING" | "QUARANTINED" | "SCANNING" | "READY" | "FAILED" | "SUPERSEDED";
+  scan_status: "PENDING" | "CLEAN" | "REJECTED" | "NOT_REQUIRED";
+  validation_status: "PENDING" | "VALIDATED" | "REJECTED";
+};
+
+export type DocumentReservation = DocumentLifecycle & {
   document_id: string;
   version: number;
   entry_version: number;
-  event_sequence: number;
-  attempts: number;
-  attempt: number;
-  upload_status: "QUEUED" | "UPLOADING" | "QUARANTINED" | "SCANNING" | "READY" | "FAILED" | "SUPERSEDED";
-  scan_status: "PENDING" | "CLEAN" | "REJECTED";
   reused: boolean;
   storage_key: string;
+};
+
+export type DocumentContext = DocumentLifecycle & {
+  document_id: string;
+  document_type: DocumentType;
+  version: number;
+  entry_version: number;
+  size_bytes: number;
+  mime_type: "application/pdf" | "image/jpeg" | "image/png";
+  storage_key: string;
+};
+
+export type DocumentFinalization = DocumentLifecycle & {
+  document_id: string;
+  version: number;
+  entry_version: number;
+  reused: boolean;
 };
 
 export type DraftCatalog = {
@@ -100,33 +118,25 @@ export type DirectEntryRepository = {
     expected_entry_version: number;
     document_type: DocumentType;
     idempotency_key: string;
-    checksum_sha256: string;
     size_bytes: number;
     mime_type: string;
     reason: string | null;
   }): Promise<OperationResult<DocumentReservation>>;
-  applyDocumentWorkerCallback(input: {
-    callback_id: string;
+  getDocumentContext(input: ActorRef & {
+    entry_id: string;
     document_id: string;
-    document_version: number;
-    event_sequence: number;
-    attempt: number;
-    storage_object_ref: string;
-    checksum_sha256: string;
-    size_bytes: number;
-    mime_type: string;
-    upload_outcome: "success" | "transient_failure";
-    scan_outcome: "pending" | "clean" | "infected" | "suspicious";
-  }): Promise<OperationResult<{
+    purpose: "finalize" | "download";
+  }): Promise<OperationResult<DocumentContext>>;
+  finalizeDocument(input: ActorRef & {
+    entry_id: string;
     document_id: string;
-    document_version: number;
-    entry_version: number;
-    event_sequence: number;
-    attempts: number;
-    upload_status: "QUARANTINED" | "READY" | "FAILED";
-    scan_status: "PENDING" | "CLEAN" | "REJECTED";
-    reused: boolean;
-  }>>;
+    expected_entry_version: number;
+    idempotency_key: string;
+    outcome: "validated" | "rejected";
+    checksum_sha256: string | null;
+    size_bytes: number | null;
+    mime_type: string | null;
+  }): Promise<OperationResult<DocumentFinalization>>;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -143,46 +153,97 @@ function isPositiveVersion(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function isNonnegativeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const UPLOAD_STATUSES: readonly DocumentLifecycle["upload_status"][] = [
+  "QUEUED", "UPLOADING", "QUARANTINED", "SCANNING", "READY", "FAILED", "SUPERSEDED",
+];
+const SCAN_STATUSES: readonly DocumentLifecycle["scan_status"][] = [
+  "PENDING", "CLEAN", "REJECTED", "NOT_REQUIRED",
+];
+const VALIDATION_STATUSES: readonly DocumentLifecycle["validation_status"][] = [
+  "PENDING", "VALIDATED", "REJECTED",
+];
+const DOCUMENT_TYPES: readonly DocumentType[] = ["CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"];
+const DOCUMENT_MIMES: readonly DocumentContext["mime_type"][] = [
+  "application/pdf", "image/jpeg", "image/png",
+];
+const STORAGE_KEY_PATTERN = new RegExp(
+  "^p1\\.6/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/" +
+    "(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT)/[1-9]\\d*/" +
+    "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+  "i",
+);
+
+function projectLifecycle(value: Record<string, unknown>): DocumentLifecycle | null {
+  const upload = UPLOAD_STATUSES.find((status) => status === value.upload_status);
+  const scan = SCAN_STATUSES.find((status) => status === value.scan_status);
+  const validation = VALIDATION_STATUSES.find((status) => status === value.validation_status);
+  return upload && scan && validation
+    ? { upload_status: upload, scan_status: scan, validation_status: validation }
+    : null;
 }
 
 function projectDocumentReservation(value: unknown): DocumentReservation | null {
-  const statuses: readonly DocumentReservation["upload_status"][] = [
-    "QUEUED", "UPLOADING", "QUARANTINED", "SCANNING", "READY", "FAILED", "SUPERSEDED",
-  ];
-  const scans: readonly DocumentReservation["scan_status"][] = ["PENDING", "CLEAN", "REJECTED"];
-  const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-  const uuid = new RegExp(`^${uuidPattern}$`, "i");
-  const storageKeyPattern = new RegExp(
-    `^p1\\.6/${uuidPattern}/(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT)/[1-9]\\d*/${uuidPattern}$`,
-    "i",
-  );
   if (!isRecord(value) || !hasExactKeys(value, [
-    "document_id", "version", "entry_version", "event_sequence", "attempts", "attempt",
-    "upload_status", "scan_status", "reused", "storage_key",
-  ]) || typeof value.document_id !== "string" || !uuid.test(value.document_id) ||
+    "document_id", "version", "entry_version", "upload_status", "scan_status",
+    "validation_status", "reused", "storage_key",
+  ]) || typeof value.document_id !== "string" || !UUID.test(value.document_id) ||
       !isPositiveVersion(value.version) || !isPositiveVersion(value.entry_version) ||
-      !isPositiveVersion(value.event_sequence) || !isNonnegativeInteger(value.attempts) ||
-      !isPositiveVersion(value.attempt) ||
-      typeof value.upload_status !== "string" ||
-      !statuses.some((status) => status === value.upload_status) ||
-      typeof value.scan_status !== "string" ||
-      !scans.some((status) => status === value.scan_status) ||
       typeof value.reused !== "boolean" || typeof value.storage_key !== "string" ||
-      !storageKeyPattern.test(value.storage_key)) return null;
-  return {
-    document_id: value.document_id,
-    version: value.version,
-    entry_version: value.entry_version,
-    event_sequence: value.event_sequence,
-    attempts: value.attempts,
-    attempt: value.attempt,
-    upload_status: statuses.find((status) => status === value.upload_status)!,
-    scan_status: scans.find((status) => status === value.scan_status)!,
-    reused: value.reused,
-    storage_key: value.storage_key,
-  };
+      !STORAGE_KEY_PATTERN.test(value.storage_key)) return null;
+  const lifecycle = projectLifecycle(value);
+  return lifecycle
+    ? {
+      ...lifecycle,
+      document_id: value.document_id,
+      version: value.version,
+      entry_version: value.entry_version,
+      reused: value.reused,
+      storage_key: value.storage_key,
+    }
+    : null;
+}
+
+function projectDocumentContext(value: unknown, documentId: string): DocumentContext | null {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "document_id", "document_type", "version", "storage_key", "size_bytes", "mime_type",
+    "upload_status", "scan_status", "validation_status", "entry_version",
+  ]) || value.document_id !== documentId ||
+      !isPositiveVersion(value.version) || !isPositiveVersion(value.entry_version) ||
+      !isPositiveVersion(value.size_bytes) || typeof value.storage_key !== "string" ||
+      !STORAGE_KEY_PATTERN.test(value.storage_key)) return null;
+  const type = DOCUMENT_TYPES.find((candidate) => candidate === value.document_type);
+  const mime = DOCUMENT_MIMES.find((candidate) => candidate === value.mime_type);
+  const lifecycle = projectLifecycle(value);
+  return type && mime && lifecycle
+    ? {
+      ...lifecycle,
+      document_id: documentId,
+      document_type: type,
+      version: value.version,
+      entry_version: value.entry_version,
+      size_bytes: value.size_bytes,
+      mime_type: mime,
+      storage_key: value.storage_key,
+    }
+    : null;
+}
+
+function projectDocumentFinalization(value: unknown, documentId: string): DocumentFinalization | null {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "document_id", "version", "entry_version", "upload_status", "scan_status",
+    "validation_status", "reused",
+  ]) || value.document_id !== documentId || !isPositiveVersion(value.version) ||
+      !isPositiveVersion(value.entry_version) || typeof value.reused !== "boolean") return null;
+  const lifecycle = projectLifecycle(value);
+  return lifecycle
+    ? {
+      ...lifecycle,
+      document_id: documentId,
+      version: value.version,
+      entry_version: value.entry_version,
+      reused: value.reused,
+    }
+    : null;
 }
 
 export function projectDraftCatalog(value: unknown, expectedDate?: string): DraftCatalog | null {
@@ -455,14 +516,13 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
     },
     async reserveDocumentUpload(input) {
       try {
-        const { data, error } = await callRpc("direct_entry_reserve_document_upload", {
+        const { data, error } = await callRpc("direct_entry_reserve_document_direct_upload", {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_entry_id: input.entry_id,
           p_expected_entry_version: input.expected_entry_version,
           p_document_type: input.document_type,
           p_idempotency_key: input.idempotency_key,
-          p_checksum_sha256: input.checksum_sha256,
           p_size_bytes: input.size_bytes,
           p_mime_type: input.mime_type,
           p_reason: input.reason,
@@ -477,49 +537,46 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
         return { ok: false, kind: "unavailable" };
       }
     },
-    async applyDocumentWorkerCallback(input) {
+    async getDocumentContext(input) {
       try {
-        const { data, error } = await callRpc("direct_entry_apply_document_worker_callback", {
-          p_callback_id: input.callback_id,
+        const { data, error } = await callRpc("direct_entry_document_direct_context", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_entry_id: input.entry_id,
           p_document_id: input.document_id,
-          p_document_version: input.document_version,
-          p_event_sequence: input.event_sequence,
-          p_attempt: input.attempt,
-          p_storage_object_ref: input.storage_object_ref,
+          p_purpose: input.purpose,
+        });
+        if (error) return { ok: false, kind: classify(error, "document") };
+        const projection = projectDocumentContext(data, input.document_id);
+        return projection
+          ? { ok: true, data: projection }
+          : { ok: false, kind: "unavailable" };
+      } catch {
+        console.error("[direct-entry] document context RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async finalizeDocument(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_finalize_document_direct_upload", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_entry_id: input.entry_id,
+          p_document_id: input.document_id,
+          p_expected_entry_version: input.expected_entry_version,
+          p_idempotency_key: input.idempotency_key,
+          p_outcome: input.outcome,
           p_checksum_sha256: input.checksum_sha256,
           p_size_bytes: input.size_bytes,
           p_mime_type: input.mime_type,
-          p_upload_outcome: input.upload_outcome,
-          p_scan_outcome: input.scan_outcome,
         });
         if (error) return { ok: false, kind: classify(error, "document") };
-        if (!isRecord(data) || !hasExactKeys(data, [
-          "document_id", "document_version", "entry_version", "event_sequence",
-          "attempts", "upload_status", "scan_status", "reused",
-        ]) || typeof data.document_id !== "string" || !UUID.test(data.document_id) ||
-            !isPositiveVersion(data.document_version) || !isPositiveVersion(data.entry_version) ||
-            !isPositiveVersion(data.event_sequence) || !isPositiveVersion(data.attempts) ||
-            (data.upload_status !== "QUARANTINED" && data.upload_status !== "READY" &&
-              data.upload_status !== "FAILED") ||
-            (data.scan_status !== "PENDING" && data.scan_status !== "CLEAN" &&
-              data.scan_status !== "REJECTED") || typeof data.reused !== "boolean") {
-          return { ok: false, kind: "unavailable" };
-        }
-        return {
-          ok: true,
-          data: {
-            document_id: data.document_id,
-            document_version: data.document_version,
-            entry_version: data.entry_version,
-            event_sequence: data.event_sequence,
-            attempts: data.attempts,
-            upload_status: data.upload_status,
-            scan_status: data.scan_status,
-            reused: data.reused,
-          },
-        };
+        const projection = projectDocumentFinalization(data, input.document_id);
+        return projection
+          ? { ok: true, data: projection }
+          : { ok: false, kind: "unavailable" };
       } catch {
-        console.error("[direct-entry] document worker callback RPC failed");
+        console.error("[direct-entry] document finalize RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

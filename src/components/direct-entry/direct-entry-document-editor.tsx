@@ -12,6 +12,7 @@ type DocumentSummary = {
   mime_type: string;
   upload_status: string;
   scan_status: string;
+  validation_status: string;
 };
 
 type Props = {
@@ -44,12 +45,14 @@ function statusLabel(status: string): string {
     QUEUED: "Đang chờ xử lý",
     UPLOADING: "Đang tải lên",
     QUARANTINED: "Đang cách ly",
-    SCANNING: "Đang quét",
+    SCANNING: "Đang xử lý",
     READY: "Sẵn sàng",
     FAILED: "Tải lên thất bại",
     SUPERSEDED: "Đã thay thế",
-    PENDING: "Chờ quét",
-    CLEAN: "Đã quét an toàn",
+    PENDING: "Chờ kiểm tra",
+    CLEAN: "Đã kiểm tra",
+    NOT_REQUIRED: "Không yêu cầu quét",
+    VALIDATED: "Đã kiểm tra định dạng",
     REJECTED: "Bị từ chối",
   };
   return labels[status] ?? "Không xác định";
@@ -66,7 +69,8 @@ function parseDocuments(value: unknown): { documents: DocumentSummary[]; entryVe
         typeof document.version !== "number" || !Number.isSafeInteger(document.version) ||
         typeof document.size_bytes !== "number" || !Number.isSafeInteger(document.size_bytes) ||
         typeof document.mime_type !== "string" || typeof document.upload_status !== "string" ||
-        typeof document.scan_status !== "string") return null;
+        typeof document.scan_status !== "string" ||
+        typeof document.validation_status !== "string") return null;
     const documentType = DOCUMENT_TYPES.find(({ value: type }) => type === document.document_type);
     if (!documentType) return null;
     documents.push({
@@ -77,6 +81,7 @@ function parseDocuments(value: unknown): { documents: DocumentSummary[]; entryVe
       mime_type: document.mime_type,
       upload_status: document.upload_status,
       scan_status: document.scan_status,
+      validation_status: document.validation_status,
     });
   }
   return { documents, entryVersion: value.entry.version };
@@ -108,6 +113,8 @@ function friendlyError(code: string): string {
     DOCUMENT_SIZE_INVALID: "Tệp phải lớn hơn 0 và không vượt quá 10 MiB.",
     DOCUMENT_MIME_INVALID: "Chỉ chấp nhận JPEG, PNG hoặc PDF.",
     DOCUMENT_CONTENT_INVALID: "Nội dung tệp không khớp với định dạng đã chọn.",
+    DOCUMENT_UPLOAD_MISSING: "Chưa nhận được tệp trên kho lưu trữ. Hãy thử lại.",
+    DOCUMENT_FINALIZE_UNAVAILABLE: "Chưa hoàn tất ghi nhận tài liệu. Hãy thử lại.",
   };
   return errors[code] ?? "Không thể tải tài liệu. Hãy thử lại.";
 }
@@ -189,46 +196,78 @@ export function DirectEntryDocumentEditor({
       };
     }
     const pending = pendingKey.current;
-    const form = new FormData();
-    form.set("file", file);
-    form.set("document_type", pending.documentType);
-    form.set("expected_entry_version", String(pending.expectedEntryVersion));
     setState("uploading");
     setMessage("");
-    try {
-      const response = await fetch(
-        `/api/direct-entry/entries/${encodeURIComponent(entryId)}/documents`,
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Idempotency-Key": pending.key },
-          body: form,
-        },
-      );
+    const base = `/api/direct-entry/entries/${encodeURIComponent(entryId)}/documents`;
+    const post = async (url: string, key: string, body: unknown) => {
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Idempotency-Key": key, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       let payload: unknown = null;
       try {
         payload = await response.json();
       } catch {
         payload = null;
       }
-      if (isRecord(payload) && typeof payload.entry_version === "number") {
-        onEntryVersionChange(rowId, payload.entry_version);
-      }
-      if (response.status === 409) {
+      return { response, payload };
+    };
+    try {
+      const reserved = await post(base, pending.key, {
+        document_type: pending.documentType,
+        expected_entry_version: pending.expectedEntryVersion,
+        size_bytes: file.size,
+        mime_type: file.type,
+      });
+      if (reserved.response.status === 409) {
         setState("conflict");
         setMessage(friendlyError("DOCUMENT_VERSION_CONFLICT"));
         return;
       }
-      if (!response.ok || !isRecord(payload) || payload.ok !== true) {
-        const code = isRecord(payload) && typeof payload.code === "string"
-          ? payload.code
+      if (!reserved.response.ok || !isRecord(reserved.payload) || reserved.payload.ok !== true ||
+          typeof reserved.payload.document_id !== "string" ||
+          typeof reserved.payload.entry_version !== "number") {
+        const code = isRecord(reserved.payload) && typeof reserved.payload.code === "string"
+          ? reserved.payload.code
           : "DOCUMENT_UPLOAD_FAILED";
         throw new Error(code);
       }
+      const documentId = reserved.payload.document_id;
+      let nextVersion = reserved.payload.entry_version;
+      const upload = reserved.payload.upload;
+      if (isRecord(upload) && upload.method === "PUT" && typeof upload.url === "string" &&
+          isRecord(upload.headers)) {
+        const headers: Record<string, string> = {};
+        for (const [name, value] of Object.entries(upload.headers)) {
+          if (typeof value === "string") headers[name] = value;
+        }
+        const put = await fetch(upload.url, { method: "PUT", headers, body: file });
+        if (!put.ok) throw new Error("DOCUMENT_STORAGE_UNAVAILABLE");
+      }
+      const finalized = await post(
+        `${base}/${encodeURIComponent(documentId)}/finalize`,
+        `${pending.key}:finalize`,
+        { expected_entry_version: nextVersion },
+      );
+      if (finalized.response.status === 409) {
+        setState("conflict");
+        setMessage(friendlyError(isRecord(finalized.payload) && typeof finalized.payload.code === "string"
+          ? finalized.payload.code
+          : "DOCUMENT_VERSION_CONFLICT"));
+        return;
+      }
+      if (!finalized.response.ok || !isRecord(finalized.payload) || finalized.payload.ok !== true) {
+        const code = isRecord(finalized.payload) && typeof finalized.payload.code === "string"
+          ? finalized.payload.code
+          : "DOCUMENT_UPLOAD_FAILED";
+        throw new Error(code);
+      }
+      if (typeof finalized.payload.entry_version === "number") nextVersion = finalized.payload.entry_version;
+      onEntryVersionChange(rowId, nextVersion);
       setState("queued");
-      setMessage(payload.callback_pending === true
-        ? "Đã tiếp nhận tệp; trạng thái lưu trữ và quét đang chờ worker xác nhận."
-        : "Phiên bản tài liệu đã được ghi nhận.");
+      setMessage("Đã kiểm tra định dạng và ghi nhận phiên bản tài liệu.");
       await loadDocuments();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "DOCUMENT_UPLOAD_FAILED";
@@ -258,14 +297,26 @@ export function DirectEntryDocumentEditor({
               {DOCUMENT_TYPES.map(({ value, label }) => {
                 const versionsForType = versions(value);
                 const complete = versionsForType.some((document) =>
-                  document.upload_status === "READY" && document.scan_status === "CLEAN");
+                  document.upload_status === "READY" && document.validation_status === "VALIDATED" &&
+                  (document.scan_status === "NOT_REQUIRED" || document.scan_status === "CLEAN"));
                 return (
                   <li key={value}>
                     <strong>{label}:</strong> {complete ? "Đã hoàn tất" : "Chưa hoàn tất"}
                     {versionsForType.map((document) => (
                       <span className={styles.documentVersion} key={document.document_id}>
                         Phiên bản {document.version} · {formatSize(document.size_bytes)} ·{" "}
-                        {statusLabel(document.upload_status)} / {statusLabel(document.scan_status)}
+                        {statusLabel(document.upload_status)} / {statusLabel(document.validation_status)}
+                        {document.upload_status === "READY" && document.validation_status === "VALIDATED" && (
+                          <>
+                            {" · "}
+                            <a
+                              href={`/api/direct-entry/entries/${encodeURIComponent(entryId)}/documents/${encodeURIComponent(document.document_id)}/download`}
+                              download
+                            >
+                              Tải xuống
+                            </a>
+                          </>
+                        )}
                       </span>
                     ))}
                   </li>

@@ -1,162 +1,39 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
-import type { DocumentType } from "../contracts/direct-entry-v1.ts";
-import {
-  DOCUMENT_MAX_BYTES,
-  DOCUMENT_MULTIPART_OVERHEAD_BYTES,
-  checkDocumentFile,
-  isDocumentType,
-} from "./document-upload-contract.ts";
-import type {
-  DocumentStorageAdapter,
-  DocumentUploadRequest,
-} from "./document-storage-adapter.ts";
-import type { DirectEntryRepository } from "./write-repository.ts";
+import { DOCUMENT_MIME_TYPES, type DocumentType } from "../contracts/direct-entry-v1.ts";
+import { DOCUMENT_MAX_BYTES, isDocumentType } from "./document-upload-contract.ts";
+import type { DocumentObjectStorage } from "./r2-document-storage.ts";
+import type { DirectEntryRepository, OperationResult } from "./write-repository.ts";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_MULTIPART_BYTES = DOCUMENT_MAX_BYTES + DOCUMENT_MULTIPART_OVERHEAD_BYTES;
-const FORM_KEYS = new Set(["file", "document_type", "expected_entry_version", "reason"]);
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RESERVE_KEYS = new Set(["document_type", "expected_entry_version", "size_bytes", "mime_type", "reason"]);
 
-type Dependencies = {
+export type DocumentApiDependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: DirectEntryRepository;
-  storage: DocumentStorageAdapter;
+  storage: DocumentObjectStorage;
 };
 
-function json(body: unknown, status: number): Response {
-  return Response.json(body, {
-    status,
-    headers: { "Cache-Control": "private, no-store" },
-  });
+export function json(body: unknown, status: number, headers: Record<string, string> = {}): Response {
+  return Response.json(body, { status, headers: { "Cache-Control": "private, no-store", ...headers } });
 }
 
-function fail(code: string, status: number, details?: Record<string, unknown>): Response {
-  return json({ ok: false, code, ...details }, status);
+export function fail(code: string, status: number): Response {
+  return json({ ok: false, code }, status);
 }
 
-async function readBoundedBody(request: Request): Promise<Uint8Array<ArrayBuffer> | null> {
-  const declared = request.headers.get("content-length");
-  if (declared !== null &&
-      (!/^\d+$/.test(declared) || Number(declared) > MAX_MULTIPART_BYTES)) return null;
-  if (!request.body) return null;
-
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_MULTIPART_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-    const bodyBuffer = new ArrayBuffer(size);
-    const body = new Uint8Array(bodyBuffer);
-    let offset = 0;
-    for (const chunk of chunks) {
-      body.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return body;
-  } catch {
-    return null;
-  } finally {
-    reader.releaseLock();
-  }
+export function mapFailure(kind: Exclude<OperationResult<unknown>, { ok: true }>["kind"]): Response {
+  if (kind === "conflict") return fail("DOCUMENT_VERSION_CONFLICT", 409);
+  if (kind === "denied" || kind === "not-found") return fail("ENTRY_NOT_FOUND", 404);
+  if (kind === "invalid") return fail("DOCUMENT_REQUEST_INVALID", 400);
+  console.error("[direct-entry] document operation unavailable");
+  return fail("DOCUMENT_UNAVAILABLE", 500);
 }
 
-async function parseMultipart(request: Request): Promise<FormData | null> {
-  const body = await readBoundedBody(request);
-  if (!body) return null;
-  try {
-    const headers = new Headers(request.headers);
-    headers.set("content-length", String(body.byteLength));
-    return await new Request(request.url, {
-      method: "POST",
-      headers,
-      body: body.buffer,
-    }).formData();
-  } catch {
-    return null;
-  }
-}
-
-type ParsedMultipart =
-  | {
-      ok: true;
-      document_type: DocumentType;
-      expected_entry_version: number;
-      reason: string | null;
-      file: File;
-    }
-  | { ok: false; code: string };
-
-function parseAuthorityValue(value: FormDataEntryValue): unknown {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return value;
-  }
-}
-
-function parseMultipartFields(form: FormData): ParsedMultipart {
-  const fields = new Map<string, FormDataEntryValue>();
-  for (const [key, value] of form.entries()) {
-    if (fields.has(key)) return { ok: false, code: "DOCUMENT_REQUEST_INVALID" };
-    fields.set(key, value);
-  }
-  const authorityCheck = validateClientBusinessPayload(Object.fromEntries(
-    [...fields]
-      .filter(([key]) => key !== "file")
-      .map(([key, value]) => [key, parseAuthorityValue(value)]),
-  ));
-  if (!authorityCheck.ok) {
-    return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" };
-  }
-  if ([...fields.keys()].some((key) => !FORM_KEYS.has(key))) {
-    return { ok: false, code: "DOCUMENT_REQUEST_INVALID" };
-  }
-
-  const type = fields.get("document_type");
-  const version = fields.get("expected_entry_version");
-  const reasonValue = fields.get("reason");
-  const file = fields.get("file");
-  if (file === undefined) return { ok: false, code: "DOCUMENT_FILE_REQUIRED" };
-  if (!(file instanceof File)) return { ok: false, code: "DOCUMENT_FILE_REQUIRED" };
-  if (!isDocumentType(type)) return { ok: false, code: "DOCUMENT_TYPE_INVALID" };
-  if (typeof version !== "string" || !/^[1-9]\d{0,8}$/.test(version) ||
-      !Number.isSafeInteger(Number(version))) {
-    return { ok: false, code: "DOCUMENT_REQUEST_INVALID" };
-  }
-  if (reasonValue !== undefined && (typeof reasonValue !== "string" ||
-      reasonValue.trim().length < 1 || reasonValue.length > 4000)) {
-    return { ok: false, code: "DOCUMENT_REQUEST_INVALID" };
-  }
-  return {
-    ok: true,
-    document_type: type,
-    expected_entry_version: Number(version),
-    reason: typeof reasonValue === "string" ? reasonValue : null,
-    file,
-  };
-}
-
-export async function uploadDirectEntryDocument(
-  request: Request,
-  entryId: string,
-  flag: string | undefined,
-  dependencies: Dependencies,
-): Promise<Response> {
-  if (flag !== "true") return fail("NOT_FOUND", 404);
+export function validateMutationRequest(request: Request, entryId: string): Response | null {
   if (!UUID.test(entryId)) return fail("ENTRY_ID_INVALID", 400);
   const origin = checkSameOriginRequest({
     origin: request.headers.get("origin"),
@@ -165,168 +42,146 @@ export async function uploadDirectEntryDocument(
   });
   if (!origin.ok) return fail("CSRF_REJECTED", 403);
   const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
-  if (!contentType.startsWith("multipart/form-data;")) {
-    return fail("CONTENT_TYPE_INVALID", 400);
-  }
-  const idempotencyKey = request.headers.get("idempotency-key");
-  if (idempotencyKey === null || idempotencyKey.trim() === "" ||
-      idempotencyKey.length > 128) return fail("IDEMPOTENCY_KEY_INVALID", 400);
+  if (!contentType.startsWith("application/json")) return fail("CONTENT_TYPE_INVALID", 400);
+  return null;
+}
 
-  const form = await parseMultipart(request);
-  if (!form) return fail("MULTIPART_INVALID", 400);
-  const parsed = parseMultipartFields(form);
-  if (!parsed.ok) return fail(parsed.code, 400);
-  if (parsed.file.size > DOCUMENT_MAX_BYTES || parsed.file.size < 1) {
-    return fail("DOCUMENT_SIZE_INVALID", 400);
-  }
-  let bytes: Uint8Array;
+export function readIdempotencyKey(request: Request): string | null {
+  const key = request.headers.get("idempotency-key");
+  return key === null || key.trim() === "" || key.length > 128 ? null : key;
+}
+
+export async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > 4096)) return null;
   try {
-    bytes = new Uint8Array(await parsed.file.arrayBuffer());
+    const text = await request.text();
+    if (text.length > 4096) return null;
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
   } catch {
-    return fail("DOCUMENT_FILE_REQUIRED", 400);
+    return null;
   }
-  if (bytes.byteLength !== parsed.file.size) {
-    return fail("DOCUMENT_CONTENT_INVALID", 400);
-  }
-  const fileCheck = checkDocumentFile({
-    document_type: parsed.document_type,
-    mime_type: parsed.file.type,
-    size_bytes: parsed.file.size,
-    bytes,
-  });
-  if (!fileCheck.ok) return fail(fileCheck.code, 400);
+}
 
-  const checksum = createHash("sha256").update(bytes).digest("hex");
-  try {
-    const session = await dependencies.resolveSession();
-    if (!session.actor.ok) {
-      return session.actor.reason === "UNAUTHENTICATED"
+export function isEntryVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+export async function resolveActor(
+  dependencies: DocumentApiDependencies,
+  capability: "document_upload" | "document_view",
+): Promise<{ ok: true; auth_subject: string; app_user_id: string } | { ok: false; response: Response }> {
+  const session = await dependencies.resolveSession();
+  if (!session.actor.ok) {
+    return {
+      ok: false,
+      response: session.actor.reason === "UNAUTHENTICATED"
         ? fail("UNAUTHENTICATED", 401)
-        : fail("ACTOR_NOT_AVAILABLE", 403);
-    }
-    const actor = session.actor.actor;
-    if (!actor.capabilities.includes("document_upload")) return fail("DOCUMENT_DENIED", 403);
-    if (!dependencies.storage.available()) {
-      return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
-    }
-    const trustedActor = {
-      auth_subject: actor.auth_subject,
-      app_user_id: actor.app_user_id,
+        : fail("ACTOR_NOT_AVAILABLE", 403),
     };
+  }
+  const actor = session.actor.actor;
+  if (!actor.capabilities.includes(capability)) return { ok: false, response: fail("DOCUMENT_DENIED", 403) };
+  return { ok: true, auth_subject: actor.auth_subject, app_user_id: actor.app_user_id };
+}
+
+type ReserveBody = {
+  document_type: DocumentType;
+  expected_entry_version: number;
+  size_bytes: number;
+  mime_type: (typeof DOCUMENT_MIME_TYPES)[number];
+  reason: string | null;
+};
+
+function parseReserveBody(body: Record<string, unknown>): ReserveBody | { code: string } {
+  if (!validateClientBusinessPayload(body).ok) return { code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" };
+  if (Object.keys(body).some((key) => !RESERVE_KEYS.has(key))) return { code: "DOCUMENT_REQUEST_INVALID" };
+  if (!isDocumentType(body.document_type)) return { code: "DOCUMENT_TYPE_INVALID" };
+  if (!isEntryVersion(body.expected_entry_version)) return { code: "DOCUMENT_REQUEST_INVALID" };
+  const size = body.size_bytes;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > DOCUMENT_MAX_BYTES) {
+    return { code: "DOCUMENT_SIZE_INVALID" };
+  }
+  const mime = DOCUMENT_MIME_TYPES.find((candidate) => candidate === body.mime_type);
+  if (!mime) return { code: "DOCUMENT_MIME_INVALID" };
+  const reason = body.reason;
+  if (reason !== undefined && reason !== null &&
+      (typeof reason !== "string" || reason.trim().length < 1 || reason.length > 4000)) {
+    return { code: "DOCUMENT_REQUEST_INVALID" };
+  }
+  return {
+    document_type: body.document_type,
+    expected_entry_version: body.expected_entry_version,
+    size_bytes: size,
+    mime_type: mime,
+    reason: typeof reason === "string" ? reason : null,
+  };
+}
+
+export async function reserveDirectEntryDocument(
+  request: Request,
+  entryId: string,
+  flag: string | undefined,
+  dependencies: DocumentApiDependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  const invalid = validateMutationRequest(request, entryId);
+  if (invalid) return invalid;
+  const idempotencyKey = readIdempotencyKey(request);
+  if (!idempotencyKey) return fail("IDEMPOTENCY_KEY_INVALID", 400);
+  const body = await readJsonBody(request);
+  if (!body) return fail("DOCUMENT_REQUEST_INVALID", 400);
+  const parsed = parseReserveBody(body);
+  if ("code" in parsed) return fail(parsed.code, 400);
+
+  try {
+    const actor = await resolveActor(dependencies, "document_upload");
+    if (!actor.ok) return actor.response;
+    if (!dependencies.storage.available()) return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
 
     const reservation = await dependencies.repository.reserveDocumentUpload({
-      ...trustedActor,
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
       entry_id: entryId,
-      expected_entry_version: parsed.expected_entry_version,
-      document_type: parsed.document_type,
       idempotency_key: idempotencyKey,
-      checksum_sha256: checksum,
-      size_bytes: parsed.file.size,
-      mime_type: parsed.file.type,
-      reason: parsed.reason,
+      ...parsed,
     });
-    if (!reservation.ok) {
-      if (reservation.kind === "conflict") return fail("DOCUMENT_VERSION_CONFLICT", 409);
-      if (reservation.kind === "denied" || reservation.kind === "not-found") {
-        return fail("ENTRY_NOT_FOUND", 404);
-      }
-      if (reservation.kind === "invalid") return fail("DOCUMENT_REQUEST_INVALID", 400);
-      console.error("[direct-entry] document reservation unavailable");
-      return fail("DOCUMENT_UNAVAILABLE", 500);
-    }
-
-    if (reservation.data.upload_status === "READY" &&
-        reservation.data.scan_status === "CLEAN") {
+    if (!reservation.ok) return mapFailure(reservation.kind);
+    const document = reservation.data;
+    if (document.upload_status !== "QUEUED") {
       return json({
         ok: true,
-        document_id: reservation.data.document_id,
-        version: reservation.data.version,
-        entry_version: reservation.data.entry_version,
-        upload_status: reservation.data.upload_status,
-        scan_status: reservation.data.scan_status,
-        reused: reservation.data.reused,
+        document_id: document.document_id,
+        version: document.version,
+        entry_version: document.entry_version,
+        upload_status: document.upload_status,
+        scan_status: document.scan_status,
+        validation_status: document.validation_status,
+        reused: document.reused,
+        upload: null,
       }, 200);
     }
-    if (reservation.data.upload_status === "FAILED" && reservation.data.attempts >= 3) {
-      return fail("DOCUMENT_RETRY_LIMIT", 409, {
-        document_id: reservation.data.document_id,
-        version: reservation.data.version,
-        entry_version: reservation.data.entry_version,
-      });
-    }
-    if (reservation.data.upload_status !== "QUEUED" &&
-        reservation.data.upload_status !== "FAILED") {
-      return json({
-        ok: true,
-        document_id: reservation.data.document_id,
-        version: reservation.data.version,
-        entry_version: reservation.data.entry_version,
-        upload_status: reservation.data.upload_status,
-        scan_status: reservation.data.scan_status,
-        reused: reservation.data.reused,
-        callback_pending: true,
-      }, 202);
-    }
-
-    const upload: DocumentUploadRequest = {
-      entry_id: entryId,
-      document_id: reservation.data.document_id,
-      document_type: parsed.document_type,
-      version: reservation.data.version,
-      event_sequence: reservation.data.event_sequence,
-      attempt: reservation.data.attempt,
-      storage_key: reservation.data.storage_key,
-      checksum_sha256: checksum,
-      size_bytes: parsed.file.size,
-      mime_type: parsed.file.type,
-      bytes,
-      idempotency_key: idempotencyKey,
-    };
-    let stored: Awaited<ReturnType<DocumentStorageAdapter["upload"]>>;
-    try {
-      stored = await dependencies.storage.upload(upload);
-    } catch {
-      console.error("[direct-entry] document storage unavailable");
-      return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503, {
-        document_id: reservation.data.document_id,
-        version: reservation.data.version,
-        entry_version: reservation.data.entry_version,
-        reused: reservation.data.reused,
-      });
-    }
-    if (!stored || stored.kind === "unavailable") {
-      return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503, {
-        document_id: reservation.data.document_id,
-        version: reservation.data.version,
-        entry_version: reservation.data.entry_version,
-        reused: reservation.data.reused,
-      });
-    }
-    if (stored.document_id !== reservation.data.document_id ||
-        stored.version !== reservation.data.version ||
-        stored.storage_key !== reservation.data.storage_key ||
-        typeof stored.checksum_sha256 !== "string" || stored.checksum_sha256 !== checksum ||
-        typeof stored.object_version !== "string" || stored.object_version.length < 1) {
-      console.error("[direct-entry] document storage acknowledgement invalid");
-      return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503, {
-        document_id: reservation.data.document_id,
-        version: reservation.data.version,
-        entry_version: reservation.data.entry_version,
-        reused: reservation.data.reused,
-      });
-    }
+    const upload = await dependencies.storage.createUploadUrl({
+      storage_key: document.storage_key,
+      mime_type: parsed.mime_type,
+      size_bytes: parsed.size_bytes,
+    });
     return json({
       ok: true,
-      document_id: reservation.data.document_id,
-      version: reservation.data.version,
-      entry_version: reservation.data.entry_version,
-      upload_status: reservation.data.upload_status,
-      scan_status: reservation.data.scan_status,
-      reused: reservation.data.reused,
-      callback_pending: true,
-    }, 202);
+      document_id: document.document_id,
+      version: document.version,
+      entry_version: document.entry_version,
+      upload_status: document.upload_status,
+      scan_status: document.scan_status,
+      validation_status: document.validation_status,
+      reused: document.reused,
+      upload: { method: "PUT", url: upload.url, headers: upload.headers, expires_at: upload.expires_at },
+    }, document.reused ? 200 : 201);
   } catch {
-    console.error("[direct-entry] document upload request failed");
-    return fail("DOCUMENT_UNAVAILABLE", 500);
+    console.error("[direct-entry] document reservation failed");
+    return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
   }
 }

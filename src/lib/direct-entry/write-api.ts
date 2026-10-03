@@ -242,7 +242,7 @@ const WORKER_PROJECTION_KEYS = new Set(WORKER_KEYS);
 const STATUS_KEYS = new Set(["status", "effective_date", "version"]);
 const DOCUMENT_KEYS = new Set([
   "document_id", "document_type", "version", "size_bytes", "mime_type",
-  "upload_status", "scan_status",
+  "upload_status", "scan_status", "validation_status", "created_at", "updated_at",
 ]);
 
 export function projectEntry(value: unknown): Record<string, unknown> | null {
