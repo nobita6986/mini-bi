@@ -1,5 +1,5 @@
 /**
- * App Shell — Server Component bọc quanh Dashboard / Pipeline Check.
+ * App Shell — Server Component bọc quanh Dashboard / Direct Entry.
  *
  * Cấu trúc:
  * - Header: logo "HR Partner" + ThemeSelector hiện có + trigger Sheet cho mobile.

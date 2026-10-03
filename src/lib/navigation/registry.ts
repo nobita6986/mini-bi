@@ -9,14 +9,13 @@
  * Không phải authorization: `capability` chỉ là metadata, không thay thế RBAC.
  * P3 sẽ thay thế `capability` bằng check thật từ session/role.
  *
- * Hiện tại chỉ render 2 entry (Dashboard, Pipeline Check).
- * Planned entries (P1.6 direct entry, P2 finance/payment) đã đăng ký
- * nhưng status = 'planned' và sẽ không render.
+ * Hiện tại chỉ render 2 entry (Dashboard, Direct Entry).
+ * Pipeline Check (Google Sheets → n8n) đã được dự án loại bỏ và không còn
+ * là product feature; route cũ vẫn được redirect server-side về /dashboard.
  */
 
 import type { ComponentType, SVGProps } from "react";
 import {
-  Activity,
   ClipboardList,
   LayoutDashboard,
   type LucideIcon,
@@ -28,8 +27,25 @@ export type NavStatus = "current" | "planned";
 /**
  * Capability metadata cho P3. Hiện tại CHỈ là khai báo tĩnh;
  * filter thật sẽ do P3 thực hiện từ session. Chưa filter ở App Shell.
+ *
+ * - "any": mọi phiên đều có thể thấy.
+ * - "owner" | "finance" | "hrp": token kế thừa từ W04 navigation
+ *   (giữ tương thích ngược cho entry dự định mở rộng về sau).
+ * - "entry_own" | "entry_team" | "entry_admin": token lấy từ capability set
+ *   của Direct Entry (src/lib/contracts/direct-entry-v1.ts). Direct Entry
+ *   có thể được truy cập bởi bất kỳ trong ba actor trên, nên metadata
+ *   được biểu diễn bằng MỘT trong các token này (chọn token đại diện
+ *   cho actor có quyền rộng nhất — admin). App Shell hiện chưa filter;
+ *   P3 sẽ dùng session thật để quyết định render/ẩn.
  */
-export type NavCapability = "any" | "owner" | "finance" | "hrp";
+export type NavCapability =
+  | "any"
+  | "owner"
+  | "finance"
+  | "hrp"
+  | "entry_own"
+  | "entry_team"
+  | "entry_admin";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -54,7 +70,11 @@ export type NavEntry = {
   icon: NavIcon;
   /** Vòng đời. 'planned' KHÔNG render ở App Shell. */
   status: NavStatus;
-  /** Capability metadata cho P3 (chưa filter thật). */
+  /**
+   * Capability metadata cho P3 (chưa filter thật).
+   * - "any" → ai cũng có.
+   * - token khác → metadata-only; P3 sẽ đối chiếu session.
+   */
   capability: NavCapability;
   /** Visibility cho desktop + mobile. */
   visibility: NavVisibility;
@@ -74,7 +94,7 @@ export type NavEntry = {
 export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
   {
     id: "dashboard",
-    label: "Tổng quan tuyển dụng",
+    label: "Tổng quan",
     path: "/dashboard",
     description: "Báo cáo tổng quan theo dự án, người tuyển, HRP/Vendor.",
     icon: LayoutDashboard,
@@ -83,24 +103,16 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     visibility: { desktop: true, mobile: true },
   },
   {
-    id: "pipeline-check",
-    label: "Pipeline check",
-    path: "/pipeline-check",
-    description: "Trạng thái đường dẫn dữ liệu Google Sheets → n8n → Supabase.",
-    icon: Activity,
-    status: "current",
-    capability: "any",
-    visibility: { desktop: true, mobile: true },
-  },
-  // === PLANNED — không render cho đến khi chuyển sang 'current' ===
-  {
     id: "direct-entry",
-    label: "Nhập liệu trực tiếp",
+    label: "Nhập liệu",
     path: "/direct-entry",
-    description: "Form nhập liệu cho HRP (planned P1.6).",
+    description:
+      "Nhập liệu trực tiếp cho HRP: hồ sơ, thanh toán, tài liệu. " +
+      "Metadata cho biết actor có một trong các quyền entry_own | entry_team | entry_admin; " +
+      "P3 sẽ lọc theo session thật.",
     icon: ClipboardList,
-    status: "planned",
-    capability: "hrp",
+    status: "current",
+    capability: "entry_admin",
     visibility: { desktop: true, mobile: true },
   },
 ];

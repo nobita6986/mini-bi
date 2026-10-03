@@ -113,3 +113,33 @@ test("desktop-nav.tsx: ẩn trên mobile (md:flex)", () => {
 test("desktop-nav.tsx: link active có aria-current='page'", () => {
   assert.ok(desktopNavSource.includes('aria-current'), "phải set aria-current cho active link");
 });
+
+test("desktop-nav.tsx: lấy entries từ registry, không hard-code nhãn Dashboard/Direct Entry", () => {
+  assert.ok(desktopNavSource.includes("entriesForViewport"));
+  assert.ok(desktopNavSource.includes('from "@/lib/navigation/registry"'));
+  // Không hard-code label cũ (Pipeline Check) hay mới trong component.
+  assert.ok(!desktopNavSource.includes("Pipeline check"));
+  assert.ok(!desktopNavSource.includes("Nhập liệu trực tiếp"));
+});
+
+test("mobile-nav.tsx: lấy entries từ registry, không hard-code nhãn", () => {
+  assert.ok(mobileNavSource.includes("entriesForViewport"));
+  assert.ok(mobileNavSource.includes('from "@/lib/navigation/registry"'));
+  assert.ok(!mobileNavSource.includes("Pipeline check"));
+  assert.ok(!mobileNavSource.includes("Nhập liệu trực tiếp"));
+});
+
+test("desktop-nav.tsx & mobile-nav.tsx: KHÔNG có chuỗi 'Google Sheets' hay 'n8n'", () => {
+  assert.ok(!/Google Sheets/i.test(desktopNavSource), "desktop-nav không nhắc Google Sheets");
+  assert.ok(!/\bn8n\b/i.test(desktopNavSource), "desktop-nav không nhắc n8n");
+  assert.ok(!/Google Sheets/i.test(mobileNavSource), "mobile-nav không nhắc Google Sheets");
+  assert.ok(!/\bn8n\b/i.test(mobileNavSource), "mobile-nav không nhắc n8n");
+});
+
+test("desktop-nav.tsx & mobile-nav.tsx: KHÔNG có client-side role/filter giả (Admin/Kế toán/Leader)", () => {
+  // Bảo đảm App Shell không hard-code UI role (đó là việc của P3 RBAC thật).
+  for (const src of [desktopNavSource, mobileNavSource]) {
+    assert.ok(!/role\s*===?\s*["']admin["']/i.test(src), "không hard-code role admin");
+    assert.ok(!/Admin|Kế toáni|Leader/i.test(src), "không hard-code UI role label");
+  }
+});
