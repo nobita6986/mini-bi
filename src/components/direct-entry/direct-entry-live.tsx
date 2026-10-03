@@ -8,6 +8,7 @@ import "react-data-grid/lib/styles.css";
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
 import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
+import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
 import {
@@ -28,11 +29,50 @@ import {
   type LiveDraftRow,
   type PendingDraftWrite,
 } from "@/lib/direct-entry/live-controller";
+import {
+  clearIntentKey,
+  confirmBlockReason,
+  dropSubmissionRows,
+  EMPTY_INTENT_KEY,
+  isRowEditable,
+  mergeReloadedDrafts,
+  resolveIntentKey,
+  shortRef,
+  transitionErrorMessage,
+  type SubmissionAction,
+  type TransitionIntentKeyState,
+} from "@/lib/direct-entry/submission-lifecycle";
+import {
+  projectSubmissionListPage,
+  type SubmissionReadItem,
+} from "@/lib/direct-entry/submission-read-contract";
+import { projectSubmissionTransitionResult } from "@/lib/direct-entry/submission-transition-contract";
 import type { DraftCatalog, OwnDraft } from "@/lib/direct-entry/write-repository";
 import styles from "./direct-entry-shell.module.css";
 
+const SUBMISSION_PAGE_SIZE = 50;
+const SUBMISSION_LIST_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
+const SUBMISSION_TRANSITION_KEYS = ["submission_id", "state", "version"] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Lay dung cac truong projection tu envelope { ok: true, ... } cua API.
+ * Thieu truong hoac ok khac true => null (fail-closed, khong fallback).
+ */
+function projectionSlice(
+  body: unknown,
+  keys: readonly string[],
+): Record<string, unknown> | null {
+  if (!isRecord(body) || body.ok !== true) return null;
+  const slice: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (!(key in body)) return null;
+    slice[key] = body[key];
+  }
+  return slice;
 }
 
 function hcmDate(): string {
@@ -211,6 +251,16 @@ export function DirectEntryLive() {
   const [loadMessage, setLoadMessage] = useState("");
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const inFlight = useRef(new Set<string>());
+  const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
+  const submissionsRef = useRef<SubmissionReadItem[]>([]);
+  const [submissionListState, setSubmissionListState] = useState<"loading" | "ready" | "error">("loading");
+  const [submissionListMessage, setSubmissionListMessage] = useState("");
+  const [submissionHasMore, setSubmissionHasMore] = useState(false);
+  const [busySubmissionId, setBusySubmissionId] = useState<string | null>(null);
+  const [lifecycleMessage, setLifecycleMessage] = useState("");
+  const cursorRef = useRef<string | null>(null);
+  const intentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const lifecycleStatusRef = useRef<HTMLParagraphElement | null>(null);
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
   const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
 
@@ -253,6 +303,155 @@ export function DirectEntryLive() {
     return load;
   }, []);
 
+  useEffect(() => {
+    submissionsRef.current = submissions;
+  }, [submissions]);
+
+  const loadSubmissions = useCallback(async (mode: "replace" | "append") => {
+    setSubmissionListState("loading");
+    try {
+      const params = new URLSearchParams({ page_size: String(SUBMISSION_PAGE_SIZE) });
+      if (mode === "append" && cursorRef.current) params.set("cursor", cursorRef.current);
+      const response = await fetch("/api/direct-entry/submissions?" + params.toString(), {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const body = await readJson(response);
+      const page = projectSubmissionListPage(
+        projectionSlice(body, SUBMISSION_LIST_KEYS),
+        { page_size: SUBMISSION_PAGE_SIZE },
+      );
+      if (!response.ok || !page) throw new Error("SUBMISSIONS_UNAVAILABLE");
+      setSubmissions((current) => {
+        if (mode === "replace") return page.items;
+        const seen = new Set(current.map((item) => item.submission_id));
+        return [...current, ...page.items.filter((item) => !seen.has(item.submission_id))];
+      });
+      cursorRef.current = page.next_cursor;
+      setSubmissionHasMore(page.has_more);
+      setSubmissionListState("ready");
+      setSubmissionListMessage("");
+    } catch (cause) {
+      setSubmissionListState("error");
+      setSubmissionListMessage(cause instanceof Error ? cause.message : "SUBMISSIONS_UNAVAILABLE");
+    }
+  }, []);
+
+  const reloadDrafts = useCallback(async () => {
+    const response = await fetch("/api/direct-entry/drafts", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const payload = parseOwnDrafts(await readJson(response));
+    if (!response.ok || !payload) throw new Error("DRAFTS_UNAVAILABLE");
+    const serverRows = payload.map(draftRowFromProjection);
+    setRows((current) => mergeReloadedDrafts(current, serverRows));
+  }, []);
+
+  const runTransition = useCallback(async (input: {
+    submission: SubmissionReadItem;
+    action: SubmissionAction;
+  }) => {
+    const { submission, action } = input;
+    const submissionId = submission.submission_id;
+    const intent = submissionId + ":" + action.target_state;
+    const resolved = resolveIntentKey(
+      intentKeys.current.get(submissionId) ?? EMPTY_INTENT_KEY,
+      intent,
+      () => crypto.randomUUID(),
+    );
+    intentKeys.current.set(submissionId, resolved.state);
+    setBusySubmissionId(submissionId);
+    try {
+      const response = await fetch(
+        "/api/direct-entry/submissions/" + encodeURIComponent(submissionId) + "/transition",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": resolved.key,
+          },
+          body: JSON.stringify({
+            expected_version: submission.version,
+            target_state: action.target_state,
+            idempotency_key: resolved.key,
+          }),
+        },
+      );
+      const body = await readJson(response);
+      if (response.status === 409) {
+        intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
+        setLifecycleMessage(transitionErrorMessage(409));
+        await loadSubmissions("replace");
+        return;
+      }
+      if (response.ok) {
+        const updated = projectSubmissionTransitionResult(
+          projectionSlice(body, SUBMISSION_TRANSITION_KEYS),
+          { submission_id: submissionId, expected_version: submission.version },
+        );
+        if (!updated) {
+          // 2xx nhung projection khong doc duoc: ket qua khong xac dinh => giu key de thu lai.
+          setLifecycleMessage(transitionErrorMessage(500));
+          return;
+        }
+        intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
+        setSubmissions((current) => current.map((item) =>
+          item.submission_id === updated.submission_id
+            ? { ...item, state: updated.state, version: updated.version }
+            : item,
+        ));
+        if (updated.state === "REVIEW") {
+          setRows((current) => dropSubmissionRows(current, updated.submission_id));
+          setLifecycleMessage(
+            "Đã gửi duyệt đợt " + shortRef(updated.submission_id) +
+              ". Dòng thuộc đợt này tạm khóa chỉnh sửa cho tới khi được trả về bản nháp.",
+          );
+        } else if (updated.state === "DRAFT") {
+          await reloadDrafts();
+          setLifecycleMessage(
+            "Đã trả đợt " + shortRef(updated.submission_id) + " về bản nháp và tải lại bản nháp máy chủ.",
+          );
+        } else {
+          setLifecycleMessage(
+            "Đã gửi chính thức đợt " + shortRef(updated.submission_id) +
+              ". Đợt ở trạng thái cuối; thay đổi sau đó phải đi qua yêu cầu thay đổi.",
+          );
+        }
+        await loadSubmissions("replace");
+        lifecycleStatusRef.current?.focus();
+        return;
+      }
+      const status = response.status;
+      if (status >= 500) {
+        // Loi phia may chu: giu idempotency key de nut thu lai dung cung intent.
+        setLifecycleMessage(transitionErrorMessage(status));
+        return;
+      }
+      intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
+      setLifecycleMessage(transitionErrorMessage(status));
+      if (status === 401 || status === 403 || status === 404) {
+        await loadSubmissions("replace");
+      }
+    } catch {
+      // Network uncertainty: giu key de lan thu lai cua CUNG intent khong tao tac dong thu hai.
+      setLifecycleMessage(transitionErrorMessage(0));
+    } finally {
+      setBusySubmissionId(null);
+    }
+  }, [loadSubmissions, reloadDrafts]);
+
+  const blockedSubmissionIds = useMemo(() => {
+    const blocked = new Set<string>();
+    for (const submission of submissions) {
+      if (confirmBlockReason(rows, submission.submission_id) !== null) {
+        blocked.add(submission.submission_id);
+      }
+    }
+    return blocked;
+  }, [rows, submissions]);
+
   const onPaymentEntryVersionChange = useCallback((rowId: string, entryVersion: number) => {
     const next = rowsRef.current.map((row) =>
       row.rowId === rowId ? { ...row, entryVersion } : row,
@@ -282,6 +481,7 @@ export function DirectEntryLive() {
           throw new Error("SESSION_UNAVAILABLE");
         }
         setCapabilities(session.actor.capabilities);
+        void loadSubmissions("replace");
         const [draftResponse, catalog] = await Promise.all([
           fetch("/api/direct-entry/drafts", { cache: "no-store", credentials: "same-origin" }),
           ensureCatalog(today),
@@ -307,7 +507,7 @@ export function DirectEntryLive() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [ensureCatalog, today]);
+  }, [ensureCatalog, loadSubmissions, today]);
 
   useEffect(() => {
     for (const row of rows) {
@@ -383,6 +583,13 @@ export function DirectEntryLive() {
     const current = rowsRef.current.find((row) => row.rowId === rowId);
     if (!current || current.state === "saving" || current.state === "conflict" ||
         inFlight.current.has(rowId)) return;
+    if (current.entryId && !isRowEditable(current, submissionsRef.current)) {
+      setRows((existing) => existing.map((row) => row.rowId === rowId
+        ? { ...row, state: "error", message:
+          "Đợt này không còn ở bản nháp nên không lưu trực tiếp được. Hãy tải lại danh sách." }
+        : row));
+      return;
+    }
     const catalog = catalogCache.current.get(current.firstWorkDate);
     if (!catalog) {
       setCatalogErrors((errors) => ({
@@ -538,6 +745,8 @@ export function DirectEntryLive() {
   }, []);
 
   const columns = useMemo<readonly Column<LiveDraftRow>[]>(() => {
+    const editableRow = (row: LiveDraftRow) =>
+      row.state !== "saving" && row.state !== "conflict" && isRowEditable(row, submissions);
     const textColumn = (
       key: keyof LiveDraftRow,
       name: string,
@@ -546,7 +755,7 @@ export function DirectEntryLive() {
       key: String(key),
       name,
       width,
-      editable: (row) => row.state !== "saving" && row.state !== "conflict",
+      editable: editableRow,
       renderEditCell: renderTextEditor,
     });
     return [
@@ -555,7 +764,7 @@ export function DirectEntryLive() {
         key: "firstWorkDate",
         name: "Ngày đầu tiên đi làm",
         width: 170,
-        editable: (row) => row.state !== "saving" && row.state !== "conflict",
+        editable: editableRow,
         renderEditCell: DateEditor,
       },
       textColumn("workerName", "Họ tên", 180),
@@ -563,7 +772,7 @@ export function DirectEntryLive() {
         key: "projectId",
         name: "Dự án",
         width: 200,
-        editable: (row) => row.state !== "saving" && row.state !== "conflict",
+        editable: editableRow,
         renderCell: ({ row }) => displayProject(row, catalogFor(row.firstWorkDate)) || "Chọn dự án",
         renderEditCell: (props) => (
           <select
@@ -586,7 +795,7 @@ export function DirectEntryLive() {
         key: "recruiterId",
         name: "Người tuyển",
         width: 220,
-        editable: (row) => row.state !== "saving" && row.state !== "conflict",
+        editable: editableRow,
         renderCell: ({ row }) => displayRecruiter(row, catalogFor(row.firstWorkDate)) || "Chọn người tuyển",
         renderEditCell: (props) => (
           <LiveRecruiterEditor {...props} catalog={catalogFor(props.row.firstWorkDate)} />
@@ -612,7 +821,7 @@ export function DirectEntryLive() {
         key: "laborType",
         name: "Loại hình",
         width: 150,
-        editable: (row) => row.state !== "saving" && row.state !== "conflict",
+        editable: editableRow,
         renderCell: ({ row }) => row.laborType === "TEMPORARY" ? "Thời vụ" : "Toàn thời gian",
         renderEditCell: (props) => (
           <select
@@ -655,7 +864,7 @@ export function DirectEntryLive() {
         ),
       },
     ];
-  }, [catalogFor]);
+  }, [catalogFor, submissions]);
 
   const onRowsChange = useCallback((updated: LiveDraftRow[]) => {
     setRows((current) => updated.map((next) => {
@@ -671,6 +880,7 @@ export function DirectEntryLive() {
     if (isRealCalendarDate(firstWorkDate)) void ensureCatalog(firstWorkDate).catch(() => {});
   }, [ensureCatalog, updateRow]);
 
+  const selectedRowLocked = selectedRow !== null && !isRowEditable(selectedRow, submissions);
   const currentOptions = selectedRow ? optionsFor(catalogFor(selectedRow.firstWorkDate)) : [];
   const currentRecruiter = selectedRow
     ? catalogFor(selectedRow.firstWorkDate)?.recruiters.find(
@@ -711,6 +921,15 @@ export function DirectEntryLive() {
         </div>
       </header>
 
+      <p
+        className={styles.lifecycleStatus}
+        aria-live="polite"
+        tabIndex={-1}
+        ref={lifecycleStatusRef}
+      >
+        {lifecycleMessage}
+      </p>
+
       <div className={styles.notice} aria-live="polite">
         {loadState === "loading" && "Đang tải quyền, danh mục và bản nháp…"}
         {loadState === "error" && `Không tải được Direct Entry (${loadMessage}). Không dùng dữ liệu mẫu khi chế độ máy chủ đang bật.`}
@@ -725,6 +944,16 @@ export function DirectEntryLive() {
 
       {loadState === "ready" && (
         <>
+          <DirectEntrySubmissionList
+            state={submissionListState}
+            message={submissionListMessage}
+            submissions={submissions}
+            hasMore={submissionHasMore}
+            busySubmissionId={busySubmissionId}
+            blockedSubmissionIds={blockedSubmissionIds}
+            onLoadMore={() => void loadSubmissions("append")}
+            onTransition={(input) => void runTransition(input)}
+          />
           <section className={styles.gridSection} aria-label="Bảng bản nháp Direct Entry">
             <p className={styles.gridHint}>Dự án, recruiter, HRP/Vendor và team đến từ danh mục theo ngày hiệu lực.</p>
             <div className={styles.gridViewport}>
@@ -781,26 +1010,32 @@ export function DirectEntryLive() {
               <Dialog.Description id="direct-entry-live-description" className={styles.drawerDescription}>
                 Trạng thái: {stateText(selectedRow.state)}. Người tuyển, provider và team được xác định theo ngày làm.
               </Dialog.Description>
+              {selectedRowLocked && (
+                <p className={styles.drawerLockNotice} role="status">
+                  Đợt này không ở bản nháp nên chỉ xem được. Thay đổi sau khi gửi duyệt hoặc gửi chính thức
+                  phải đi qua yêu cầu thay đổi.
+                </p>
+              )}
               <div className={styles.drawerFields}>
                 <Field label="Mã người lao động">
                   <input aria-label="Mã người lao động" value={selectedRow.employeeCode}
-                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict"}
+                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => updateRow(selectedRow.rowId, { employeeCode: event.target.value })} />
                 </Field>
                 <Field label="Ngày đầu tiên đi làm">
                   <input aria-label="Ngày đầu tiên đi làm" type="date" value={selectedRow.firstWorkDate}
-                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict"}
+                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => updateDate(selectedRow.rowId, event.target.value)} />
                 </Field>
                 <Field label="Họ tên người lao động">
                   <input aria-label="Họ tên người lao động" value={selectedRow.workerName}
-                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict"}
+                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => updateRow(selectedRow.rowId, { workerName: event.target.value })} />
                 </Field>
                 <Field label="Dự án">
                   <select aria-label="Dự án" value={selectedRow.projectId}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" ||
-                      !catalogFor(selectedRow.firstWorkDate)}
+                      selectedRowLocked || !catalogFor(selectedRow.firstWorkDate)}
                     onChange={(event) => updateRow(selectedRow.rowId, { projectId: event.target.value })}>
                     <option value="">Chọn dự án</option>
                     {catalogFor(selectedRow.firstWorkDate)?.projects.map((project) =>
@@ -813,7 +1048,7 @@ export function DirectEntryLive() {
                     id={`live-mobile-recruiter-${selectedRow.rowId}`}
                     options={currentOptions}
                     value={selectedRow.recruiterId}
-                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict"}
+                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(recruiterId) => updateRow(selectedRow.rowId, { recruiterId })}
                   />
                 </div>
@@ -823,7 +1058,7 @@ export function DirectEntryLive() {
                 </p>
                 <Field label="Loại hình lao động">
                   <select aria-label="Loại hình lao động" value={selectedRow.laborType}
-                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict"}
+                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       if (value === "TEMPORARY" || value === "PERMANENT") {
@@ -841,7 +1076,8 @@ export function DirectEntryLive() {
                   rowId={selectedRow.rowId}
                   banks={catalogFor(selectedRow.firstWorkDate)?.banks ?? []}
                   canEdit={capabilities.includes("entry_own") &&
-                    selectedRow.state !== "saving" && selectedRow.state !== "conflict"}
+                    selectedRow.state !== "saving" && selectedRow.state !== "conflict" &&
+                    !selectedRowLocked}
                   canView={capabilities.includes("payment_view")}
                   onEntryVersionChange={onPaymentEntryVersionChange}
                 />
@@ -852,7 +1088,8 @@ export function DirectEntryLive() {
                   rowId={selectedRow.rowId}
                   canEdit={capabilities.includes("entry_own") &&
                     capabilities.includes("document_upload") &&
-                    selectedRow.state !== "saving" && selectedRow.state !== "conflict"}
+                    selectedRow.state !== "saving" && selectedRow.state !== "conflict" &&
+                    !selectedRowLocked}
                   canView={capabilities.includes("document_view")}
                   onEntryVersionChange={onPaymentEntryVersionChange}
                 />
