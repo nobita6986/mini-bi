@@ -57,7 +57,13 @@ function mockOutbound(handler) {
 
 function reqFor(adapter, overrides = {}) {
   return {
-    payload: { payload_version: "provider-payload/0.1", period: { period_ref: "week:2026-W41" }, totals: { current: 5 } },
+    payload: {
+      payload_version: "provider-payload/0.1",
+      period: { period_ref: "week:2026-W41" },
+      totals: { current: 5 },
+      subject_refs: ["project_01", "provider_hrp"],
+      evidence: [{ evidence_id: "ev_01" }],
+    },
     promptManifest: PROMPT,
     modelConfig: {
       provider_key: "live",
@@ -109,6 +115,9 @@ test("W04B-U2: response hợp lệ ⇒ ok:true + structured + usage nguyên vẹ
   assert.equal(requestBody.messages.filter((message) => message.role === "system").length, 1);
   assert.ok(requestBody.messages[0].content.includes(PROMPT.system_instruction));
   assert.ok(requestBody.messages[0].content.includes(PROMPT.developer_instruction));
+  assert.ok(requestBody.messages[0].content.includes("subject_ref PHẢI"));
+  assert.ok(requestBody.messages[0].content.includes("project_01"));
+  assert.ok(requestBody.messages[0].content.includes("ev_01"));
   assert.deepEqual(requestBody.thinking, { type: "disabled" });
   assert.deepEqual(requestBody.response_format, { type: "json_object" });
   assert.equal(requestBody.max_tokens, 8192);

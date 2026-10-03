@@ -14,11 +14,38 @@ import { canonicalJson } from "../engine-shared.mjs";
 import { MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES } from "./limits.mjs";
 import { buildProviderHeaders, getProviderProfile, joinProviderPath } from "../../ai-config/provider-profiles.ts";
 
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.1";
+export const LIVE_ADAPTER_VERSION = "live-adapter/0.2";
 /** Profile live duy nhất được hỗ trợ hiện tại (authority thực sự là provider-profiles.ts). */
 export const LIVE_PROVIDER_PROFILE = "openai-compatible";
 
-const PROVIDER_VERSION = "live-openai-compatible/0.1";
+const PROVIDER_VERSION = "live-openai-compatible/0.2";
+
+/**
+ * DeepSeek JSON mode chỉ bảo đảm JSON hợp lệ, không bảo đảm đúng business-analysis contract.
+ * Gửi thêm contract guide động bằng opaque refs đã có trong payload để model copy chính xác;
+ * validator phía server vẫn là authority cuối và tiếp tục fail-closed.
+ */
+function buildOutputContractGuide(payload) {
+  const subjectRefs = Array.isArray(payload?.subject_refs)
+    ? payload.subject_refs.filter((value) => typeof value === "string")
+    : [];
+  const evidenceRefs = Array.isArray(payload?.evidence)
+    ? payload.evidence
+        .map((entry) => entry?.evidence_id)
+        .filter((value) => typeof value === "string")
+    : [];
+  const periodRef = typeof payload?.period?.period_ref === "string" ? payload.period.period_ref : "";
+
+  return [
+    "Ràng buộc output bắt buộc (server sẽ từ chối nếu sai):",
+    "contract_version phải là 'business-analysis/0.1'; period_ref phải là " + canonicalJson(periodRef) + "; report_status phải là 'draft'.",
+    "Mỗi finding phải có đúng các field: finding_id, category, subject_ref, headline, analysis, evidence_refs, confidence, limitations, recommended_action.",
+    "finding_id dùng f_01..f_07; category chỉ thuộc trend|driver|strength|risk|concentration|provider_mix|time_pattern|data_quality; confidence chỉ low|medium|high; recommended_action là string hoặc null.",
+    "subject_ref PHẢI là 'scope' hoặc copy nguyên văn một giá trị trong danh sách này, tuyệt đối không dùng tên dimension/label khác: " + canonicalJson(subjectRefs) + ".",
+    "Mỗi evidence_refs và executive_evidence_refs chỉ được copy nguyên văn từ danh sách này: " + canonicalJson(evidenceRefs) + ".",
+    "Không thêm field ngoài contract. Nếu không tạo được finding hợp lệ, trả findings=[] và nêu giới hạn dữ liệu trong executive_analysis cùng overall_limitations.",
+  ].join("\n");
+}
 
 /** Strict projection: lấy content của choices[0].message.content (chuỗi), ngược lại null. */
 function extractContent(envelope) {
@@ -129,6 +156,7 @@ export function createLiveAdapter(options = {}) {
       const systemInstruction = [
         request.promptManifest?.system_instruction ?? "",
         request.promptManifest?.developer_instruction ?? "",
+        buildOutputContractGuide(request.payload),
       ].filter(Boolean).join("\n\n");
       const bodyObj = {
         model: modelKey,
