@@ -351,7 +351,9 @@ Thứ tự nhỏ nhất để có thể cutover mà không break pilot. Mỗi sl
 | `radix-ui` / `shadcn-style` | Dialog / Drawer / Tabs / Navigation (W04-S02 đã dùng) | (đã có trong `package.json`) |
 | `lucide-react` | Icon | (đã có trong `package.json`) |
 | `react-data-grid` | Direct Entry grid (W04-S01 pin) | `7.0.0-beta.61` (W04-S01 pin) |
-| `zod` | Payload validation (đã có ở W02) | (đã có trong `package.json`) |
+| `zod` | Payload validation (đã có từ P0 era, `zod ^4.6.5` trong `package.json`) | (đã có trong `package.json`; **không phải** "đã có ở W02") |
+
+> **Zod scope ghi chú.** Zod hiện dùng ở `src/lib/env.ts`, `src/lib/contracts/daily-recruitment-breakdown.ts`, `src/lib/analytics/contracts/business-analysis.ts`, `src/lib/analytics/contracts/analysis-packet.ts`. Direct Entry W01/W02 dùng **custom validators** (`validateClientBusinessPayload`, `validateEmployeeCode`, `validateWorkerDetails` trong `src/lib/contracts/direct-entry-v1.ts` + `src/lib/auth/direct-entry-v2.ts`) — **không** import zod. Không đề xuất rewrite chỉ để đồng nhất.
 
 ### 5.2. Không thêm khi chưa cần
 
@@ -512,7 +514,7 @@ Source: `docs/handoffs/p1.6-w04-s03b.md` (commit `38c9b7e` trên `feature/p1.6-i
 | Total API routes in scope | 13 (AI/ops) + 6 (P1.6 route committed on `p1.6-integration`) + 9 (P1.6 `DB_ONLY`) = 28 (counting `api:001`–`api:013` + `p1.6:016` + `p1.6:017` + `p1.6:route:W04-S03B:001/002` + `p1.6:route:W04-S03CD:001/002/003` + `p1.6:003`–`p1.6:015` `DB_ONLY`); final count reconciled when cutover merge | inventory §2 + §7.2; inventory S03 §3.2 + §7.2 |
 | n8n workflows in scope | 1 (`P0-T2-WF01`) | inventory §9 |
 | P1.5 prompt 1.1 evidence (NEW in S03) | `feature/p1.5-live-integration @ 8d0d074` (P1.5-I03): 126/126 gateway tests pass; team comparison + anomaly + monitoring limitations; DEFAULT_PROMPT_VERSION=1.1; frozen job mismatch fail-closed | `docs/handoffs/p1.5-i03.md` |
-| P1.5 live adapter evidence (NEW in S03) | `feature/p1.5-live-integration @ f7e41dd` (P1.5-I02): live provider integrated; conditional env gate `AI_PROVIDER_KEY=live` + `AI_PROVIDER_ALLOWED_HOSTS` không rỗng ⇒ live; ngược lại `AI_CONFIG_REQUIRED` fail-closed; scripted vẫn cấm production/preview; **Owner checkpoint** cần nhập API URL/model/key để enable | `docs/handoffs/p1.5-i02.md` |
+| P1.5 live adapter evidence (NEW in S03) | `feature/p1.5-live-integration @ f7e41dd` (P1.5-I02): live provider integrated; conditional env gate `AI_PROVIDER_KEY=live` + `AI_PROVIDER_ALLOWED_HOSTS` không rỗng ⇒ live; ngược lại `AI_CONFIG_REQUIRED` fail-closed; scripted vẫn cấm production/preview; checkpoint: **Owner** nhập `URL` / `model` / `API key` qua UI (`api:007`) **và** **Operator** cấu hình `AI_PROVIDER_ALLOWED_HOSTS` ở server env (outbound guard) để enable | `docs/handoffs/p1.5-i02.md` |
 
 > **Note.** Inventory (`docs/security/p3-access-surfaces.md` S03) là source-of-truth cho ID và count. Cutover plan tham chiếu theo. `decision:ai-self-approval` (`api:006`) vẫn `PENDING_DECISION`; live adapter fail-closed gate đã integrated nhưng T0 self-approval decision chưa chốt. `ai.report.review` **không** map sang `change_review`.
 
@@ -579,7 +581,7 @@ Sau khi P1.5/P1.6 integration ổn định, có thể chia 3 agent:
 - [x] §4 go-live slice 7 bước (login → actor → guard → nav → audit → admin → Basic Auth retirement).
 - [x] §5 library policy (chỉ dùng `@supabase/ssr` + Radix/shadcn-style + Lucide; không thêm framework).
 - [x] §6 AI self-approval: 2 option + recommendation, **không tự quyết**.
-- [x] §7 evidence: W04-S03A 17→18 RPC + W04-S03B 18 RPC + W04-S03CD 18→20 RPC (2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`; `direct_entry_update_draft_row` replace forward-only, không tính mới). Migration count 24/0/0 (post S03CD). 6 surface route committed on `feature/p1.6-integration @ 2d5e9fc`. P1.5 prompt 1.1 (I03) + live adapter fail-closed env gate (I02) integrated, live provider disabled cho tới khi Owner config hoàn chỉnh. **Errata cố định:** Zod đã có sẵn (`zod ^4.6.5`, P0 era) — Direct Entry dùng custom validators, không đề xuất rewrite; `direct_entry_resolve_actor_context` không tự ghi audit — session audit là future P3 slice; `PILOT_ACTOR_REF = "pilot-admin"` chỉ áp dụng P1.5 AI report path, không gộp với Direct Entry S03A+ (Supabase cookie + `auth.getUser()`).
+- [x] §7 evidence: W04-S03A 17→18 RPC + W04-S03B 18 RPC + W04-S03CD 18→20 RPC (2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`; `direct_entry_update_draft_row` replace forward-only, không tính mới). Migration count 24/0/0 (post S03CD). 6 surface route committed on `feature/p1.6-integration @ 2d5e9fc`. P1.5 prompt 1.1 (I03) + live adapter fail-closed env gate (I02) integrated, live provider disabled cho tới khi **Owner** nhập `URL` / `model` / `API key` qua UI **và** **Operator** cấu hình `AI_PROVIDER_ALLOWED_HOSTS` ở server env. **Errata cố định:** Zod đã có sẵn (`zod ^4.6.5`, P0 era) — Direct Entry dùng custom validators, không đề xuất rewrite; `direct_entry_resolve_actor_context` không tự ghi audit — session audit là future P3 slice; `PILOT_ACTOR_REF = "pilot-admin"` chỉ áp dụng P1.5 AI report path, không gộp với Direct Entry S03A+ (Supabase cookie + `auth.getUser()`).
 - [x] §8 migrations / runtime owner.
 - [x] §9 PENDING_DECISION list (không tự đóng).
 - [x] §10 status `READY_FOR_P3_IMPLEMENTATION_SPLIT`.
