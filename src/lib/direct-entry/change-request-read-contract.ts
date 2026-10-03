@@ -186,6 +186,33 @@ export function projectChangeRequestListPage(
   };
 }
 
+/**
+ * P1.6-W04-S04C-S03B3-R1: key khong bao gio duoc xuat hien trong proposal cua response doc.
+ * Server da redact (direct_entry_change_request_proposal_projection); day la lop fail-closed thu
+ * hai o boundary: neu mot regression tra raw key thi projection tra null thay vi render ra UI.
+ */
+export const READ_SENSITIVE_PROPOSAL_KEYS = [
+  "idempotency_key", "checksum_sha256", "storage_key", "storage_url",
+  "signed_url", "public_url", "bucket",
+] as const;
+
+function findSensitiveProposalKey(value: unknown, depth = 0): string | null {
+  if (depth > 4 || value === null || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findSensitiveProposalKey(item, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if ((READ_SENSITIVE_PROPOSAL_KEYS as readonly string[]).includes(key)) return key;
+    const found = findSensitiveProposalKey(child, depth + 1);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
 export type ChangeRequestDetailItem = {
   entry_id: string;
   target_kind: ChangeRequestTargetKind;
@@ -209,6 +236,7 @@ function projectDetailItem(value: unknown): ChangeRequestDetailItem | null {
   if (typeof value.target_kind !== "string") return null;
   if (!isPositiveVersion(value.expected_version)) return null;
   const kind = value.target_kind as ChangeRequestTargetKind;
+  if (findSensitiveProposalKey(value.proposal) !== null) return null;
   const proposal = projectChangeRequestProposal(kind, value.proposal);
   if (!proposal) return null;
   return {
