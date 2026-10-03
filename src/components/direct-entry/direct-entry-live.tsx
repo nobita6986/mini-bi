@@ -10,6 +10,7 @@ import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry
 import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
 import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
+import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
@@ -280,6 +281,7 @@ export function DirectEntryLive() {
   const [busyChangeRequestId, setBusyChangeRequestId] = useState<string | null>(null);
   const [changeRequestNotice, setChangeRequestNotice] = useState("");
   const [proposerSubmission, setProposerSubmission] = useState<SubmissionReadItem | null>(null);
+  const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const changeRequestCursorRef = useRef<string | null>(null);
   const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
@@ -1100,6 +1102,15 @@ export function DirectEntryLive() {
             busyRequestId={busyChangeRequestId}
             onLoadMore={() => void loadChangeRequests("append")}
             onWithdraw={(request) => void withdrawChangeRequest(request)}
+            onReview={(request) => setReviewRequest(request)}
+          />
+          <DirectEntryChangeRequestReviewer
+            request={reviewRequest}
+            onOpenChange={(next) => { if (!next) setReviewRequest(null); }}
+            catalogFor={catalogFor}
+            ensureCatalog={ensureCatalog}
+            onDecided={(message) => { void reloadAfterChangeRequestMutation(message); }}
+            onConflict={(message) => { void reloadAfterChangeRequestMutation(message); }}
           />
           <DirectEntryChangeRequestProposer
             open={proposerSubmission !== null}

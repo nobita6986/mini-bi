@@ -741,3 +741,35 @@
 .drawer .secondaryButton {
   min-height: 44px;
 }
+/* P1.6-W04-S04C-S03B2: bang so sanh before -> after trong dialog reviewer. */
+.reviewerTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.reviewerTable caption {
+  text-align: left;
+  padding-bottom: 6px;
+}
+
+.reviewerTable th,
+.reviewerTable td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.reviewerTable thead th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .reviewerTable th,
+  .reviewerTable td {
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+}

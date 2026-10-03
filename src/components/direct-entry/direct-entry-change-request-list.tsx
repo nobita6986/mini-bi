@@ -4,8 +4,9 @@
  * P1.6-W04-S04C-S03B1 - Khu "Yêu cầu thay đổi": danh sach change request cua actor.
  *
  * Chi dung projection tu projectChangeRequestListPage (entry_ids, item_count, state, version,
- * created_at, co rut duoc hay khong). KHONG goi change-request detail endpoint, KHONG render
- * raw proposal/JSON. Co duoc duyet hay khong KHONG tao nut approve/reject trong S03B1 (reviewer UI defer).
+ * created_at, co rut duoc hay khong, co duyet duoc hay khong). Danh sach KHONG goi change-request
+ * detail endpoint va KHONG render raw proposal/JSON: chi mo dialog reviewer khi nguoi dung bam
+ * "Xem xet" (S03B2). can_decide chi la display hint; quyen that do server quyet dinh.
  */
 import { useState } from "react";
 import { AlertDialog } from "radix-ui";
@@ -27,7 +28,15 @@ export type ChangeRequestListProps = {
   busyRequestId: string | null;
   onLoadMore: () => void;
   onWithdraw: (request: ChangeRequestListItem) => void;
+  onReview: (request: ChangeRequestListItem) => void;
 };
+
+/** Chi PENDING + can_decide (server-derived) moi hien nut "Xem xet". */
+function canReviewChangeRequest(
+  request: Pick<ChangeRequestListItem, "state" | "can_decide">,
+): boolean {
+  return request.state === "PENDING" && request.can_decide === true;
+}
 
 export function DirectEntryChangeRequestList({
   state,
@@ -37,6 +46,7 @@ export function DirectEntryChangeRequestList({
   busyRequestId,
   onLoadMore,
   onWithdraw,
+  onReview,
 }: ChangeRequestListProps) {
   const [pendingWithdraw, setPendingWithdraw] = useState<ChangeRequestListItem | null>(null);
 
@@ -48,8 +58,8 @@ export function DirectEntryChangeRequestList({
             Yêu cầu thay đổi
           </h2>
           <p className={styles.submissionHint}>
-            Yêu cầu thay đổi áp dụng cho đợt đã gửi chính thức. Chỉ người đề xuất rút được khi yêu cầu
-            còn chờ duyệt; duyệt hoặc từ chối sẽ do bước sau triển khai.
+            Yêu cầu thay đổi áp dụng cho đợt đã gửi chính thức. Người đề xuất rút được yêu cầu khi
+            còn chờ duyệt; người có quyền duyệt mở “Xem xét” để đối chiếu và quyết định.
           </p>
         </div>
         {hasMore && (
@@ -99,9 +109,19 @@ export function DirectEntryChangeRequestList({
                     {busy ? "Đang rút…" : "Rút yêu cầu"}
                   </button>
                 )}
-                {!canWithdrawChangeRequest(request) && request.state === "PENDING" && (
+                {canReviewChangeRequest(request) && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => onReview(request)}
+                  >
+                    Xem xét
+                  </button>
+                )}
+                {!canWithdrawChangeRequest(request) && !canReviewChangeRequest(request) &&
+                  request.state === "PENDING" && (
                   <span className={styles.submissionHint}>
-                    Chỉ người đề xuất rút được yêu cầu này.
+                    Chỉ người đề xuất rút được và người có quyền mới duyệt được yêu cầu này.
                   </span>
                 )}
               </div>
