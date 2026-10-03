@@ -65,6 +65,7 @@ test("S02-P3: projectHistoryResponse — projection + malformed fail-closed", ()
   const ok = projectHistoryResponse({ ok: true, items: [item], next_cursor: "33333333-3333-4333-8333-333333333333", has_more: true });
   assert.equal(ok.ok, true);
   assert.equal(ok.items.length, 1);
+  assert.deepEqual(ok.items[0].period, { type: "week", as_of_date: "2026-10-11", custom_from: null, custom_to: null });
   assert.equal(ok.has_more, true);
 
   const bad = [
@@ -72,6 +73,8 @@ test("S02-P3: projectHistoryResponse — projection + malformed fail-closed", ()
     [{ ok: true, items: [{ ...item, job_id: "bad" }], next_cursor: null, has_more: false }],
     [{ ok: true, items: [{ ...item, status: "weird" }], next_cursor: null, has_more: false }],
     [{ ok: true, items: [{ ...item, dimensions: "x" }], next_cursor: null, has_more: false }],
+    [{ ok: true, items: [{ ...item, period: null }], next_cursor: null, has_more: false }],
+    [{ ok: true, items: [{ ...item, period: { type: "week", as_of_date: "2026-02-30" } }], next_cursor: null, has_more: false }],
     [{ ok: true, items: [item], next_cursor: null }],
   ];
   for (const raw of bad) {

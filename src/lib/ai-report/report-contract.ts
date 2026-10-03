@@ -8,6 +8,68 @@
 export const PERIOD_TYPES = ["week", "month", "quarter", "custom"] as const;
 export type PeriodType = (typeof PERIOD_TYPES)[number];
 
+export type ReportPeriodView = {
+  type: PeriodType;
+  as_of_date: string;
+  custom_from: string | null;
+  custom_to: string | null;
+};
+
+const ISO_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isValidIsoDate(value: unknown): value is string {
+  if (typeof value !== "string" || !ISO_DATE_ONLY_RE.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/** Projection hẹp cho period trong history; malformed thì caller phải fail-closed. */
+export function projectReportPeriod(raw: unknown): ReportPeriodView | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  if (!(PERIOD_TYPES as readonly unknown[]).includes(value.type) || !isValidIsoDate(value.as_of_date)) return null;
+  if (value.type === "custom") {
+    if (!isValidIsoDate(value.custom_from) || !isValidIsoDate(value.custom_to)) return null;
+    if (value.custom_from > value.custom_to || value.custom_to > value.as_of_date) return null;
+    return { type: "custom", as_of_date: value.as_of_date, custom_from: value.custom_from, custom_to: value.custom_to };
+  }
+  if (value.custom_from !== undefined && value.custom_from !== null) return null;
+  if (value.custom_to !== undefined && value.custom_to !== null) return null;
+  return { type: value.type as PeriodType, as_of_date: value.as_of_date, custom_from: null, custom_to: null };
+}
+
+function isoFromUtc(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function periodStart(period: ReportPeriodView): string {
+  if (period.type === "custom") return period.custom_from ?? period.as_of_date;
+  const [year, month, day] = period.as_of_date.split("-").map(Number);
+  if (period.type === "month") return `${year}-${String(month).padStart(2, "0")}-01`;
+  if (period.type === "quarter") {
+    const quarterMonth = Math.floor((month - 1) / 3) * 3 + 1;
+    return `${year}-${String(quarterMonth).padStart(2, "0")}-01`;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const daysFromMonday = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - daysFromMonday);
+  return isoFromUtc(date);
+}
+
+function displayIsoDate(value: string): string {
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+/** Tên đọc được cho current/history; mã job chỉ còn là định danh phụ. */
+export function reportTitleForPeriod(period: ReportPeriodView): string {
+  const kind = period.type === "week" ? "tuần" : period.type === "month" ? "tháng" : period.type === "quarter" ? "quý" : "kỳ tùy chỉnh";
+  const start = periodStart(period);
+  const end = period.type === "custom" ? (period.custom_to ?? period.as_of_date) : period.as_of_date;
+  return `Báo cáo AI ${kind} từ ${displayIsoDate(start)} đến ${displayIsoDate(end)}`;
+}
+
 export const DIMENSIONS = ["project", "recruiter", "team", "provider", "employment"] as const;
 export type Dimension = (typeof DIMENSIONS)[number];
 

@@ -14,11 +14,11 @@ import { canonicalJson } from "../engine-shared.mjs";
 import { MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES } from "./limits.mjs";
 import { buildProviderHeaders, getProviderProfile, joinProviderPath } from "../../ai-config/provider-profiles.ts";
 
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.5";
+export const LIVE_ADAPTER_VERSION = "live-adapter/0.6";
 /** Profile live duy nhất được hỗ trợ hiện tại (authority thực sự là provider-profiles.ts). */
 export const LIVE_PROVIDER_PROFILE = "openai-compatible";
 
-const PROVIDER_VERSION = "live-openai-compatible/0.5";
+const PROVIDER_VERSION = "live-openai-compatible/0.6";
 
 /**
  * DeepSeek JSON mode chỉ bảo đảm JSON hợp lệ, không bảo đảm đúng business-analysis contract.
@@ -47,24 +47,6 @@ function buildOutputContractGuide(payload) {
     "Mỗi evidence_refs và executive_evidence_refs chỉ được copy nguyên văn từ danh sách này: " + canonicalJson(evidenceRefs) + ".",
     "Không thêm field ngoài contract. Nếu không tạo được finding hợp lệ, trả findings=[] và nêu giới hạn dữ liệu trong executive_analysis cùng overall_limitations.",
   ].join("\n");
-}
-
-function buildRepairGuide(feedback) {
-  if (!feedback || typeof feedback !== "object" || Array.isArray(feedback)) return "";
-  const code = typeof feedback.code === "string" && /^[A-Z][A-Z0-9_]{2,60}$/.test(feedback.code)
-    ? feedback.code
-    : "AI_VALIDATION_FAILED";
-  const path = typeof feedback.path === "string" && /^[a-zA-Z0-9_.\[\]-]{1,120}$/.test(feedback.path)
-    ? feedback.path
-    : "analysis";
-  const numericRule = code === "UNGROUNDED_NUMERIC_CLAIM"
-    ? "Trong các field văn xuôi (executive_analysis, headline, analysis, limitations, recommended_action), không viết chữ số 0-9, phần trăm hoặc ngày; mô tả định tính và dùng evidence_refs để dẫn chứng."
-    : "";
-  return [
-    "REPAIR DUY NHẤT: response trước bị server từ chối với " + code + " tại " + path + ".",
-    "Tạo lại TOÀN BỘ JSON từ payload, không chép lại cấu trúc sai và không thêm văn bản ngoài JSON.",
-    numericRule,
-  ].filter(Boolean).join("\n");
 }
 
 function normalizedStringArray(value, max) {
@@ -177,6 +159,7 @@ export function createLiveAdapter(options = {}) {
   return {
     provider_key: "live",
     adapter_version: LIVE_ADAPTER_VERSION,
+    output_fallback: "deterministic",
 
     async generateStructured(request) {
       const startedAt = Date.now();
@@ -220,7 +203,6 @@ export function createLiveAdapter(options = {}) {
         request.promptManifest?.system_instruction ?? "",
         request.promptManifest?.developer_instruction ?? "",
         buildOutputContractGuide(request.payload),
-        buildRepairGuide(request.repairFeedback),
       ].filter(Boolean).join("\n\n");
       const bodyObj = {
         model: modelKey,
@@ -288,7 +270,9 @@ export function createLiveAdapter(options = {}) {
       try {
         structured = normalizeStructuredAnalysis(JSON.parse(content), request.payload);
       } catch {
-        return fail("AI_PROVIDER_MALFORMED", false, "live:content-json");
+        // Transport/envelope/usage đều hợp lệ. Nội dung model không phải JSON contract sẽ được
+        // worker thay bằng bản phân tích deterministic; không gọi provider lần hai chỉ để sửa format.
+        structured = null;
       }
       return { ok: true, raw_text: content, structured, usage, latency_ms: latencyMs(), provider_version: PROVIDER_VERSION, model_key: modelKey };
     },

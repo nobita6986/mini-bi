@@ -125,13 +125,14 @@ test("W04B-U2: response hợp lệ ⇒ ok:true + structured + usage nguyên vẹ
   assert.equal(requestBody.stream, false);
 });
 
-test("W04B-U3: content không phải JSON hợp lệ ⇒ AI_PROVIDER_MALFORMED", async () => {
+test("W04B-U3: content không phải JSON contract vẫn giữ usage để worker fallback deterministic", async () => {
   const outbound = mockOutbound(async () => ({ statusCode: 200, headers: {}, body: Buffer.from(envelope("không phải JSON")) }));
   const adapter = createLiveAdapter({ outbound });
   const result = await adapter.generateStructured(reqFor(adapter));
-  assert.equal(result.ok, false);
-  assert.equal(result.error_code, "AI_PROVIDER_MALFORMED");
-  assert.equal(result.retryable, false);
+  assert.equal(result.ok, true);
+  assert.equal(result.structured, null);
+  assert.equal(result.raw_text, "không phải JSON");
+  assert.deepEqual(result.usage, { input_tokens: 120, output_tokens: 80 });
 });
 
 test("W04B-U4: envelope malformed / thiếu choices[0].message.content ⇒ AI_PROVIDER_MALFORMED", async () => {
@@ -432,17 +433,17 @@ test("W04B-I5: usage thiếu ⇒ AI_PROVIDER_MALFORMED, không revision, không 
   assert.equal(usageRows[0].output_tokens, null, "không usage giả output");
 });
 
-test("W04B-I6: live validation failure được repair đúng một lần rồi complete", async () => {
+test("W04B-I6: live validation failure dùng fallback deterministic, không gọi provider lần hai", async () => {
   const packet = packetFor();
   const payload = buildProviderPayload(packet, PROMPT).payload;
   const validAnalysis = buildScriptedAnalysis(payload);
   const invalidAnalysis = JSON.parse(JSON.stringify(validAnalysis));
   invalidAnalysis.executive_analysis += " Giá trị không có evidence là 999 người.";
   const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
-  const outbound = mockOutbound(async (_url, _opts, call) => ({
+  const outbound = mockOutbound(async () => ({
     statusCode: 200,
     headers: {},
-    body: Buffer.from(envelope(JSON.stringify(call === 1 ? invalidAnalysis : validAnalysis))),
+    body: Buffer.from(envelope(JSON.stringify(invalidAnalysis))),
   }));
   const { service, queue } = liveService({ packet, outbound, providerConfig });
 
@@ -450,19 +451,14 @@ test("W04B-I6: live validation failure được repair đúng một lần rồi 
   assert.equal(enqueued.ok, true);
   const run = await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
   assert.equal(run.results[0].kind, "completed", JSON.stringify(run.results[0]));
-  assert.equal(outbound.calls.length, 2, "chỉ một initial + một repair call");
-  const repairBody = JSON.parse(outbound.calls[1].opts.body);
-  const repairSystem = repairBody.messages[0].content;
-  assert.ok(repairSystem.includes("REPAIR DUY NHẤT"));
-  assert.ok(repairSystem.includes("UNGROUNDED_NUMERIC_CLAIM"));
-  assert.ok(repairSystem.includes("executive_analysis"));
-  assert.ok(!repairSystem.includes("999 người"), "không gửi raw output lỗi vào repair prompt");
+  assert.equal(outbound.calls.length, 1, "format/grounding lỗi không được đốt thêm provider call");
 
   const usageRows = [...queue.store.usage.values()];
-  assert.equal(usageRows.length, 2, "usage initial và repair được ghi riêng, không mất token");
-  assert.ok(usageRows.some((row) => row.call_outcome === "validation_failed"));
-  assert.ok(usageRows.some((row) => row.logical_call_id.endsWith(":repair1")));
-  assert.equal(queue.store.revisions.size, 1, "chỉ tạo một revision sau repair hợp lệ");
+  assert.equal(usageRows.length, 1, "usage provider thật vẫn được lưu đúng một lần");
+  assert.equal(usageRows[0].call_outcome, "ok_fallback_validation");
+  assert.equal(queue.store.revisions.size, 1, "fallback chỉ tạo một revision");
+  const revision = [...queue.store.revisions.values()][0];
+  assert.ok(revision.analysis.overall_limitations.some((text) => text.includes("deterministic")));
 });
 
 test("W04B-I7: scalar array fields được canonicalize trước strict validation", async () => {
@@ -483,5 +479,24 @@ test("W04B-I7: scalar array fields được canonicalize trước strict validat
   const run = await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
   assert.equal(run.results[0].kind, "completed", JSON.stringify(run.results[0]));
   assert.equal(outbound.calls.length, 1, "canonical shape pass không cần repair call");
+  assert.equal(queue.store.revisions.size, 1);
+});
+
+test("W04B-I8: prose không phải JSON vẫn hoàn tất bằng fallback provider-neutral", async () => {
+  const packet = packetFor();
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
+  const outbound = mockOutbound(async () => ({
+    statusCode: 200,
+    headers: {},
+    body: Buffer.from(envelope("Nhận xét tự do của một provider khác, không có JSON contract.")),
+  }));
+  const { service, queue } = liveService({ packet, outbound, providerConfig });
+
+  const enqueued = await service.enqueueReport(liveEnqueueArgs());
+  assert.equal(enqueued.ok, true);
+  const run = await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
+  assert.equal(run.results[0].kind, "completed", JSON.stringify(run.results[0]));
+  assert.equal(outbound.calls.length, 1);
+  assert.equal([...queue.store.usage.values()][0].call_outcome, "ok_fallback_format");
   assert.equal(queue.store.revisions.size, 1);
 });

@@ -96,7 +96,6 @@ export interface AiProviderRequest {
   modelConfig: { provider_key: string; model_key: string; adapter_version: string; timeout_ms: number };
   timeoutSignal?: AbortSignal;
   /** Một repair call tối đa sau khi strict validator từ chối output đầu tiên. */
-  repairFeedback?: { code: string; path: string };
 }
 
 export interface AiProviderUsage {

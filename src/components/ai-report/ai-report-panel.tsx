@@ -8,6 +8,7 @@ import {
   isFailedJobStatus,
   jobStatusLabel,
   lifecycleLabel,
+  reportTitleForPeriod,
   DIMENSIONS,
   DIMENSION_LABELS,
   PERIOD_TYPES,
@@ -15,6 +16,7 @@ import {
   type CapabilityView,
   type Dimension,
   type PeriodType,
+  type ReportPeriodView,
 } from "@/lib/ai-report/report-contract";
 import { createReportController, type FetchResult } from "@/lib/ai-report/report-controller";
 import { formatTimestamp, todayDateIso } from "@/lib/format";
@@ -25,7 +27,7 @@ const POLL_INTERVAL_MS = 2000;
 const HISTORY_PATH = "/api/ai/reports/history";
 
 type JobStatusView = { status: string; error_code: string | null; attempts: number; max_attempts: number };
-type HistoryItem = { job_id: string; status: string; lifecycle_status: string | null; created_at: string; revision_number: number | null };
+type HistoryItem = { job_id: string; status: string; lifecycle_status: string | null; created_at: string; revision_number: number | null; period: ReportPeriodView };
 
 async function fetchJson(path: string, options: { method: "GET" | "POST"; body?: Record<string, unknown>; signal?: AbortSignal }): Promise<FetchResult> {
   let response: Response;
@@ -340,6 +342,7 @@ export function AiReportPanel() {
               <section aria-label="Trạng thái báo cáo" className="rounded-2xl border border-border bg-surface p-3">
                 <h3 className="text-sm font-semibold text-foreground">Báo cáo hiện tại</h3>
                 <dl className="mt-2 text-sm">
+                  <DetailRow label="Tên báo cáo" value={currentHistoryItem ? reportTitleForPeriod(currentHistoryItem.period) : "Báo cáo AI"} />
                   <DetailRow label="Trạng thái" value={jobStatus ? jobStatusLabel(jobStatus.status) : "—"} />
                   {jobStatus && isFailedJobStatus(jobStatus.status) && jobStatus.error_code ? (<DetailRow label="Lý do" value={codeToMessage(jobStatus.error_code).text} />) : null}
                   {jobStatus ? (<DetailRow label="Lần thử" value={jobStatus.attempts + " / " + jobStatus.max_attempts} />) : null}
@@ -395,7 +398,7 @@ export function AiReportPanel() {
               {historyItems.length > 0 ? (
                 <ul className="mt-2 space-y-1 text-sm">
                   {historyItems.map((item) => (
-                    <li key={item.job_id}><button type="button" onClick={() => openHistoryItem(item.job_id)} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-foreground hover:bg-surface/80"><span className="font-mono text-xs">{item.job_id.slice(0, 8)}</span><span className="text-right text-muted"><span className="block">{jobStatusLabel(item.status)}{item.lifecycle_status ? " · " + lifecycleLabel(item.lifecycle_status) : ""}</span><span className="block text-xs">{formatTimestamp(item.created_at)}</span></span></button></li>
+                    <li key={item.job_id}><button type="button" onClick={() => openHistoryItem(item.job_id)} className="flex w-full items-start justify-between gap-3 rounded-lg px-2 py-2 text-left text-foreground hover:bg-surface/80"><span className="min-w-0"><span className="block font-medium">{reportTitleForPeriod(item.period)}</span><span className="mt-0.5 block font-mono text-xs text-muted">Mã {item.job_id.slice(0, 8)}</span></span><span className="shrink-0 text-right text-muted"><span className="block">{jobStatusLabel(item.status)}{item.lifecycle_status ? " · " + lifecycleLabel(item.lifecycle_status) : ""}</span><span className="block text-xs">{formatTimestamp(item.created_at)}</span></span></button></li>
                   ))}
                 </ul>
               ) : null}

@@ -128,6 +128,9 @@ test("S01-R1-P4: durable history từ server (không còn session-only)", () => 
   assert.ok(source.includes("loadHistory("), "phải có loadHistory");
   assert.ok(source.includes("historyHasMore"), "phải có load-more");
   assert.ok(source.includes('label="Tạo lúc"'), "trạng thái hiện tại phải hiển thị thời gian tạo");
+  assert.ok(source.includes('label="Tên báo cáo"'), "trạng thái hiện tại phải hiển thị tên báo cáo");
+  assert.ok(source.includes("reportTitleForPeriod(item.period)"), "history phải hiển thị tên kỳ/ngày, không chỉ mã job");
+  assert.ok(source.includes('Mã {item.job_id.slice(0, 8)}'), "mã job chỉ là định danh phụ");
   assert.ok(source.includes("formatTimestamp(item.created_at)"), "mỗi dòng lịch sử phải hiển thị thời gian tạo GMT+7");
   assert.ok(!source.includes("setHistory((cur) => [{ job_id"), "session history không còn là nguồn chính");
 });

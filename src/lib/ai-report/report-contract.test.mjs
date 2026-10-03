@@ -16,7 +16,28 @@ import {
   projectCapabilityResponse,
   projectUiReportResponse,
   projectEnqueueResponse,
+  projectReportPeriod,
+  reportTitleForPeriod,
 } from "./report-contract.ts";
+
+test("S01-C0: tên báo cáo theo kỳ hiển thị khoảng ngày thay cho chỉ mã job", () => {
+  const week = projectReportPeriod({ type: "week", as_of_date: "2026-10-03" });
+  const month = projectReportPeriod({ type: "month", as_of_date: "2026-10-03" });
+  const quarter = projectReportPeriod({ type: "quarter", as_of_date: "2026-10-03" });
+  const custom = projectReportPeriod({ type: "custom", as_of_date: "2026-10-03", custom_from: "2026-09-10", custom_to: "2026-09-30" });
+  assert.equal(reportTitleForPeriod(week), "Báo cáo AI tuần từ 28/09/2026 đến 03/10/2026");
+  assert.equal(reportTitleForPeriod(month), "Báo cáo AI tháng từ 01/10/2026 đến 03/10/2026");
+  assert.equal(reportTitleForPeriod(quarter), "Báo cáo AI quý từ 01/10/2026 đến 03/10/2026");
+  assert.equal(reportTitleForPeriod(custom), "Báo cáo AI kỳ tùy chỉnh từ 10/09/2026 đến 30/09/2026");
+
+  for (const raw of [
+    null,
+    { type: "year", as_of_date: "2026-10-03" },
+    { type: "week", as_of_date: "2026-02-30" },
+    { type: "week", as_of_date: "2026-10-03", custom_from: "2026-10-01" },
+    { type: "custom", as_of_date: "2026-10-03", custom_from: "2026-10-04", custom_to: "2026-10-05" },
+  ]) assert.equal(projectReportPeriod(raw), null, JSON.stringify(raw));
+});
 
 test("S01-C1: buildReportRequest — week/custom/focus/scope đúng contract validateAnalyticsRequest", () => {
   const week = buildReportRequest({

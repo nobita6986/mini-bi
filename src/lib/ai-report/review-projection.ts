@@ -3,6 +3,8 @@
  * Thuan, dung chung cho server route va test; malformed => AI_INTERNAL.
  */
 
+import { projectReportPeriod, type ReportPeriodView } from "./report-contract.ts";
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUuid(value: unknown): value is string { return typeof value === "string" && UUID_RE.test(value); }
@@ -52,8 +54,23 @@ export function projectReviewRequest(raw: unknown): ReviewRequest {
   return { ok: true, decision, expected_revision_number: expected, reason: null };
 }
 
+export type HistoryItemView = {
+  job_id: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  provider_key: string;
+  model_key: string;
+  revision_id: string | null;
+  revision_number: number | null;
+  lifecycle_status: "draft" | "approved" | "rejected" | null;
+  period: ReportPeriodView;
+  dimensions: string[];
+  focus: string | null;
+};
+
 export type HistoryResult =
-  | { ok: true; items: unknown[]; next_cursor: string | null; has_more: boolean }
+  | { ok: true; items: HistoryItemView[]; next_cursor: string | null; has_more: boolean }
   | { ok: false; code: string; message: string };
 
 export function projectHistoryResponse(raw: unknown): HistoryResult {
@@ -70,7 +87,13 @@ export function projectHistoryResponse(raw: unknown): HistoryResult {
     if (typeof item.provider_key !== "string" || typeof item.model_key !== "string") return fail;
     if (item.revision_id !== null && !isUuid(item.revision_id)) return fail;
     if (item.revision_number !== null && (typeof item.revision_number !== "number" || item.revision_number < 1)) return fail;
-    if (item.lifecycle_status !== null && !["draft", "approved", "rejected"].includes(String(item.lifecycle_status))) return fail;
+    let lifecycleStatus: HistoryItemView["lifecycle_status"] = null;
+    if (item.lifecycle_status !== null) {
+      if (item.lifecycle_status !== "draft" && item.lifecycle_status !== "approved" && item.lifecycle_status !== "rejected") return fail;
+      lifecycleStatus = item.lifecycle_status;
+    }
+    const period = projectReportPeriod(item.period);
+    if (period === null) return fail;
     if (!Array.isArray(item.dimensions) || !item.dimensions.every((d: unknown) => typeof d === "string")) return fail;
     if (item.focus !== null && typeof item.focus !== "string") return fail;
     items.push({
@@ -82,8 +105,8 @@ export function projectHistoryResponse(raw: unknown): HistoryResult {
       model_key: item.model_key,
       revision_id: item.revision_id,
       revision_number: item.revision_number,
-      lifecycle_status: item.lifecycle_status,
-      period: item.period,
+      lifecycle_status: lifecycleStatus,
+      period,
       dimensions: item.dimensions,
       focus: item.focus,
     });
