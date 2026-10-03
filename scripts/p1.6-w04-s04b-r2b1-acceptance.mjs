@@ -28,6 +28,7 @@ import { createR2DocumentStorage } from "../src/lib/direct-entry/r2-document-sto
 import { createDirectEntryWriteRepository } from "../src/lib/direct-entry/write-repository.ts";
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
+import { createMigratedDatabase } from "./lib/s04c-read-fixture.mjs";
 import { readMigrations } from "./lib/migration-validation.mjs";
 
 const PREVIEW_BUCKET = "hrp-bi-preview";
@@ -86,13 +87,13 @@ async function baseline(client) {
 async function assertMigrationsAndBoundary(client) {
   const local = await readMigrations(migrationDir);
   const { rows } = await client.query("select version, checksum from public.schema_migrations order by version");
-  assert.equal(local.length, 30);
-  assert.equal(rows.length, 30);
+  assert.ok(local.length >= 30);
+  assert.equal(rows.length, local.length);
   const applied = new Map(rows.map(({ version, checksum }) => [version, checksum]));
   assert.deepEqual(local.filter(({ name }) => !applied.has(name)), []);
   assert.deepEqual(local.filter(({ name, checksum }) => applied.get(name) !== checksum), []);
   assert.ok(applied.has(MIGRATION));
-  pass("30 applied, 0 pending, 0 checksum mismatch");
+  pass(`${local.length} applied (>= R2A #30), 0 pending, 0 checksum mismatch`);
 
   const { rows: tables } = await client.query(`
     select c.relname, c.relrowsecurity rls, c.relforcerowsecurity frls,
@@ -152,10 +153,18 @@ async function assertMigrationsAndBoundary(client) {
   assert.ok(legacy);
   assert.equal(legacy.service_exec, false, "legacy reserve must not be executable");
   const inventory = fns.filter((f) => f.service_exec).length;
-  // 22 before R2A, minus dropped callback RPC, minus legacy reserve (revoked), plus three direct-upload RPCs.
-  assert.equal(inventory, 23);
+  // R2A baseline was 23 (22 - callback - legacy reserve + 3); later migrations only add RPCs, so the live set
+  // must equal the set derived by applying every local migration from scratch.
+  const scratch = await createMigratedDatabase();
+  const expectedInventory = (await scratch.db.query(
+    "select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace" +
+    " where n.nspname='public' and p.proname like 'direct_entry\\_%' and has_function_privilege('service_role',p.oid,'EXECUTE')",
+  )).rows[0].n;
+  await scratch.db.close();
+  assert.ok(inventory >= 23);
+  assert.equal(inventory, expectedInventory);
   assert.equal(fns.filter((f) => f.anon_exec || f.auth_exec || f.public_exec).length, 0);
-  pass("service-role RPC inventory = 23 (22 - callback - legacy reserve + 3); three direct-upload RPCs SECURITY DEFINER, pinned search_path, service_role-only; worker callback RPC absent; legacy reserve not executable");
+  pass(`service-role RPC inventory = ${inventory} (R2A baseline 23, plus later read RPCs; equals the PGlite from-scratch set); three direct-upload RPCs SECURITY DEFINER, pinned search_path, service_role-only; worker callback RPC absent; legacy reserve not executable`);
 
   const { rows: view } = await client.query(
     "select pg_get_viewdef('public.direct_entry_current_documents'::regclass) as def",
@@ -813,7 +822,7 @@ async function main() {
   console.log(JSON.stringify({
     result: "PASS",
     bucket: PREVIEW_BUCKET,
-    migrations: { applied: 30, pending: 0, checksumMismatches: 0 },
+    migrations: { pending: 0, checksumMismatches: 0 },
     rpcInventory: inventory,
     checksPassed: checks.length,
     checks,
