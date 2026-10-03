@@ -2,14 +2,14 @@
 
 | Thuộc tính | Giá trị |
 |---|---|
-| Phiên bản | 1.0 — 03/10/2026 |
+| Phiên bản | 1.1 — 03/10/2026 (S04 refresh sau P1.6 W04-S04A + R1 + P1.6-I03 + P1.5 live provider Phase B + report export HTML) |
 | Branch | `feature/p3-w01-access-inventory` |
-| Base | `6cbdc68622d263121f50d46f8a2dac63e2139322` |
-| Inputs verified | `origin/feature/p1.6-integration @ 2d5e9fc` (W04-S01..S03CD committed; S03CD = `2d5e9fc`), `origin/feature/p1.5-g5-dev01 @ 287514f` (G5-DEV01), `origin/feature/p1.5-live-integration @ 8d0d074` (P1.5-I03 prompt 1.1) + `@ f7e41dd` (P1.5-I02 live adapter fail-closed env gate), `origin/feature/app-nav-01a @ 7bd2ba8` |
-| Tài liệu đi kèm | `docs/security/p3-access-surfaces.md` (S03), `docs/contracts/p1.6-auth-capabilities-v1.md`, `docs/handoffs/p1.6-w04-s03a.md`, `docs/handoffs/p1.6-w04-s03b.md`, `docs/handoffs/p1.6-w04-s03cd.md`, `docs/handoffs/p1.5-i02.md`, `docs/handoffs/p1.5-i03.md` |
+| Base | `13719069979a717bb0375e3031e92b161dffba8d` |
+| Inputs verified | `origin/main @ 2045472` (current production runtime; AI provider enabled trên Vercel Production runtime bởi Phase B env apply tại deployment `dpl_GnSkjrS5FANe73rVooc6enS9K6iQ`; prompt 1.1 integrated via `524d0c1`; review/history migration applied to DEV via `9977600`; report export HTML attached to analysis projection; **production project = cùng Supabase instance với DEV**), `origin/feature/p1.6-integration @ 73b19a6` (P1.6-I03 production main integration; merge commit `40263bb`; branch HEAD advanced từ `d780471` (W04-S04A-R1) trong khi task chạy; 26 migrations applied DEV; 20 service-role EXECUTE-only RPCs; 7 route files / 7 methods committed on feature branch bao gồm W04-S04A-R1 payment PATCH), `origin/feature/p1.5-live-integration @ 4392a4b` (P1.5-W04B-S02B Phase B production live reporting), `origin/feature/p1.5-g5-dev01 @ 9977600` (P1.5-G5-DEV01), `origin/feature/p1.5-live-integration @ 524d0c1` (P1.5-I03 prompt 1.1) + `@ f7e41dd` (P1.5-I02 live adapter fail-closed env gate), `origin/feature/app-nav-01a @ 7bd2ba8` |
+| Tài liệu đi kèm | `docs/security/p3-access-surfaces.md` (S04), `docs/contracts/p1.6-auth-capabilities-v1.md`, `docs/handoffs/p1.6-w04-s03a.md`, `docs/handoffs/p1.6-w04-s03b.md`, `docs/handoffs/p1.6-w04-s03cd.md`, `docs/handoffs/p1.6-w04-s04a.md`, `docs/handoffs/p1.6-w04-s04a-r1.md`, `docs/handoffs/p1.6-i03.md`, `docs/handoffs/p1.5-i02.md`, `docs/handoffs/p1.5-i03.md`, `docs/handoffs/p1.5-w04b-s02b.md`, `docs/handoffs/p3-w01-s04.md` |
 | Mode | FT0 — DOCS-ONLY (không runtime, không schema, không migration, không deploy, không bắt đầu P3 implementation) |
 | Owner | T1C (Library & Access Auditor) — read-only / design baseline |
-| Trạng thái | `READY_FOR_P3_IMPLEMENTATION_SPLIT` |
+| Trạng thái | `READY_FOR_P3_ACCESS_BASELINE_REFRESH_S04` |
 
 Tài liệu này **khóa** kiến trúc cutover P3 đủ để ba agent P3 (sau khi P1.5/P1.6 integration ổn định) có thể chia việc mà không đụng contract. Nó không tự mở policy, không sửa inventory, không dự đoán số liệu S03C/S03D. Mọi ma trận dưới đây neo vào ID đã có trong `docs/security/p3-access-surfaces.md` (S02-R1) — không sinh ID mới.
 
@@ -24,8 +24,8 @@ Cutover plan này hoàn thành khi:
 3. Go-live slice gồm 7 bước có thứ tự: login/logout → actor bootstrap → page/API guard → nav filtering → audit → admin/bootstrap → Basic Auth retirement. Mỗi bước có owner + flag env + reversible check.
 4. AI self-approval vẫn `PENDING_DECISION` với 2 option + recommendation; **không tự sửa policy/runtime**.
 5. Library policy: chỉ dùng `@supabase/ssr` hiện có + Radix/shadcn-style + Lucide; **không thêm** auth framework, state library, form library, hay tự code focus trap/dialog/menu.
-6. Evidence P1.6 W04-S03A (Direct Entry RPC 17→18, route `GET /api/direct-entry/session`) + W04-S03B (route layer dùng 2 RPC có sẵn, không tăng count) + W04-S03CD (Direct Entry RPC 18→20, 2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`; `direct_entry_update_draft_row` replace forward-only, không tính mới; 3 route mới: `GET catalog`, `GET drafts`, `PATCH entries/[id]`) **đã committed trên `feature/p1.6-integration @ 2d5e9fc`**. Migration count 24/0/0 (post S03CD).
-7. W04-S03C / S03D **đã commit** dưới dạng S03CD (`2d5e9fc`) — inventory S03 đã cập nhật. Còn moving target: S04A payment (T1B sau base S03CD), không đưa vào current inventory.
+6. Evidence P1.6 W04-S03A (Direct Entry RPC 17→18, route `GET /api/direct-entry/session`) + W04-S03B (route layer dùng 2 RPC có sẵn, không tăng count) + W04-S03CD (Direct Entry RPC 18→20, 2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`; `direct_entry_update_draft_row` replace forward-only, không tính mới; 3 route mới: `GET catalog`, `GET drafts`, `PATCH entries/[id]`) + **W04-S04A** (payment projection extension forward-only; active-bank catalog; masked projection khi actor thiếu `payment_view`) + **W04-S04A-R1** (payment draft authority forward-only; DRAFT = `entry_own|entry_team|entry_admin`; SUBMITTED retain `payment_edit`) **đã committed trên `feature/p1.6-integration @ 73b19a6`** (merge commit `40263bb` tích hợp `origin/main @ 2045472`). Migration count 26/0/0 (post S04A-R1; P1.6-I03 §Quality gates confirms). Direct Entry RPC count giữ 20 (S04A + R1 chỉ replace forward-only); route count 6 → 7 (thêm `PATCH /api/direct-entry/entries/[entryId]/payment`).
+7. **P1.6 vẫn chỉ trên `feature/p1.6-integration`; `origin/main` vẫn ở `2045472`; chưa merge `main`, chưa production enabled.** Submit/review/change request/document upload/audit viewer vẫn pending (W04-S03D → W05 → W06).
 
 ---
 
@@ -38,7 +38,7 @@ Cutover plan này hoàn thành khi:
 | **L1 — Network / proxy** | Coarse authentication & feature gate | Next.js 16 middleware `src/proxy.ts` + Basic Auth (`evaluatePilotAccess` + `isPilotProtectedPath`) | Edge runtime, không có DB | Pilot gate. **Cutover cuối** mới thay / bỏ. |
 | **L2 — Route handler / Server Component** | Session + capability check exact | `@supabase/ssr` `createServerClient` + `auth.getUser()` + `getDirectEntryActor` (P1.6 W02) + `resolveActor()` | Route Handler / Server Action / RSC | Hiện (P1.6 S03A+): `auth.getUser()` + `direct_entry_resolve_actor_context` cho Direct Entry. **P1.5 AI report path vẫn `PILOT_ACTOR_REF = "pilot-admin"` cứng** — đây là 2 boundary khác nhau, không gộp. **Cutover AI**: thay bằng `auth.getUser()` → `app_user_id` từ resolver. |
 | **L3 — Server repository** | Service-role gọi RPC narrow | `createDirectEntryActorRepository` (P1.6 W02) + `createServiceSupabaseClient` (chỉ RPCs đã liệt kê) | Server-only | Hiện: gọi thẳng RPC với `p_actor` từ resolved actor. **Cutover AI**: truyền `p_actor` từ resolved actor thay cho `PILOT_ACTOR_REF`. |
-| **L4 — Database (PostgreSQL)** | Authority cuối (scope, version, idempotency, OCC) | RLS forced + table DML revoked (`public, anon, authenticated, service_role`) + `SECURITY DEFINER` RPCs | DB role `service_role` only (EXECUTE) | Hiện: đã khóa cho 17 P1.6 RPC + S03A 1 RPC + S03CD 2 RPC = 20 RPC + 4 G5 RPC. **Cutover**: không mở. |
+| **L4 — Database (PostgreSQL)** | Authority cuối (scope, version, idempotency, OCC) | RLS forced + table DML revoked (`public, anon, authenticated, service_role`) + `SECURITY DEFINER` RPCs | DB role `service_role` only (EXECUTE) | Hiện: đã khóa cho 17 P1.6 RPC + S03A 1 RPC + S03CD 2 RPC = 20 RPC + 4 G5 RPC. **S04A + R1 chỉ `create or replace` forward-only, không thêm RPC mới** (xem §7 evidence). **Cutover**: không mở. |
 
 > **Nguyên tắc vàng.** Client gửi kèm `actor_id`, `role`, `capability`, `scope`, `created_by_user_id`, `owner_user_id` đều bị **reject** ở route handler (theo W02 adapter rule). DB không bao giờ tin client authority fields — audit envelope (actor/app_user/resource/scope/timestamp/outcome/code) đã sanitize sẵn.
 
@@ -75,7 +75,7 @@ Source: `docs/contracts/p1.6-auth-capabilities-v1.md` (locked ở W02-R2). Mỗi
 | `cap:document_upload` | `document_upload` | effective resource scope | n/a | YES (`expected_version`) | `direct_entry_create_document_metadata` |
 | `cap:document_view` | `document_view` | effective resource scope (PII redaction) | n/a | n/a | `direct_entry_read_projection` (PII redaction) |
 | `cap:payment_view` | `payment_view` | effective resource scope | n/a | n/a | `direct_entry_read_projection` (payment redaction) |
-| `cap:payment_edit` | `payment_edit` | effective resource scope | n/a (DRAFT = `entry_*`; SUBMITTED = single-step privileged) | YES (`expected_version`, `reason_ref`) | `direct_entry_update_payment` (SUBMITTED branch) |
+| `cap:payment_edit` | `payment_edit` | effective resource scope | n/a (DRAFT = `entry_own\|entry_team\|entry_admin` per W04-S04A-R1 forward-only authority; SUBMITTED = single-step privileged) | YES (`expected_version`, `reason_ref`) | `direct_entry_update_payment` (SUBMITTED branch — DRAFT branch uses `entry_*` capability + `payment_view` for masked projection) |
 | `cap:recruiter_master_manage` | `recruiter_master_manage` | `all` | n/a | YES (reason + version) | planned (master) |
 | `cap:team_master_manage` | `team_master_manage` | `all` | n/a | YES | planned (master) |
 | `cap:pii_view` | `pii_view` | effective resource scope | n/a | n/a | read redaction gate |
@@ -125,7 +125,7 @@ Mỗi row là **neo về ID trong inventory** (§2 / §4 / §7 inventory). Mỗi
 | `page:002` | `/dashboard` | R | Authenticated | `report.view` (BoD=`all`, Staff=`own`, Leader=`team`) | `own`/`team`/`all` | `auth.getUser()` + `resolveActor()` + capability map in route segment | `service_role` RPC read với scope predicate; **không** direct table | `direct_entry_read_audit` (admin/leader) hoặc scoped read (BoD) | 401 unauth, 403 capability, 404 not-found (không leak existence) | T1B (route) + T1C (P3 guard) |
 | `page:003` | `/pipeline-check` | R | Authenticated | `ops.view_pipeline` | `all`/`team` (chưa per-source filter — gap:002) | gate `gate:001` + flag `PIPELINE_CHECK_ENABLED` + `auth.getUser()` + capability check (slice 3) | service-role read + scoped WHERE (slice 3) | `ops_view_pipeline` audit (slice 5) | 401/403/404 + env-404 disabled | T1B |
 | `page:004` | `/dashboard/loading` | R | Authenticated (inherit) | inherits from `page:002` | inherits | inherits | inherits | inherits | inherits | T0 |
-| `page:005` | `/direct-entry` (P1.6 W04-S02 fixture shell) | RW | Authenticated | `entry_create` / `entry_own` / `entry_team` / `entry_admin` per actor + per row | `own`/`team`/`all` | `auth.getUser()` + `getDirectEntryActor` + capability per RPC call (slice 3); flag `DIRECT_ENTRY_UI_ENABLED` đã có ở S02; demo mode (khi `DIRECT_ENTRY_API_ENABLED !== "true"`) render fixture, không gọi `/api/direct-entry/*`; live mode không fallback fixture | 20 service-role RPC (P1.6 W03 17 + W04-S03A 1 + W04-S03CD 2) — mọi actor argument từ resolved actor, không từ client | `direct_entry_audit_events` + UI `pending` state | 401/403 + RPC deny codes (`CAPABILITY_DENIED`, `ACTION_SCOPE_MISMATCH`, `EXPECTED_VERSION_MISMATCH`, `SELF_REVIEW_DENIED`, `IDEMPOTENCY_KEY_MISMATCH`, `RESTRICTED_REASON_REQUIRED`, `DRAFT_CONFLICT`, `DRAFT_LIMIT_EXCEEDED`) | T1B (route, UI) + T1C (P3 capability check) |
+| `page:005` | `/direct-entry` (P1.6 W04-S02 fixture shell) | RW | Authenticated | `entry_create` / `entry_own` / `entry_team` / `entry_admin` per actor + per row; **`payment_edit` cho SUBMITTED payment theo S04A-R1 authority**; `change_review` cho change-request approve/reject (second-party enforced) | `own`/`team`/`all` | `auth.getUser()` + `getDirectEntryActor` + capability per RPC call (slice 3); flag `DIRECT_ENTRY_UI_ENABLED` đã có ở S02; demo mode (khi `DIRECT_ENTRY_API_ENABLED !== "true"`) render fixture, không gọi `/api/direct-entry/*`; live mode không fallback fixture. **W04-S04A + R1** commit payment drawer UI cùng payment PATCH route (`p1.6:route:W04-S04A:001`); masked projection khi actor thiếu `payment_view` | 20 service-role RPC (P1.6 W03 17 + W04-S03A 1 + W04-S03CD 2; S04A + R1 replace forward-only 3 RPC đã có) — mọi actor argument từ resolved actor, không từ client | `direct_entry_audit_events` + UI `pending` state | 401/403 + RPC deny codes (`CAPABILITY_DENIED`, `ACTION_SCOPE_MISMATCH`, `EXPECTED_VERSION_MISMATCH`, `SELF_REVIEW_DENIED`, `IDEMPOTENCY_KEY_MISMATCH`, `RESTRICTED_REASON_REQUIRED`, `DRAFT_CONFLICT`, `DRAFT_LIMIT_EXCEEDED`) | T1B (route, UI) + T1C (P3 capability check) |
 
 > **Layout wrappers (`page:layout:001`/`002` từ inventory).** Không cần capability riêng — chỉ kế thừa từ matcher của proxy + flag env. P3 chỉ đồng bộ matcher ↔ route khi thêm surface mới.
 
@@ -167,6 +167,7 @@ Mỗi row là **neo về ID trong inventory** (§2 / §4 / §7 inventory). Mỗi
 | `p1.6:route:W04-S03CD:001` | `GET /api/direct-entry/catalog` (W04-S03CD committed) | R | Authenticated | `entry_create` / `entry_own` | n/a | `DIRECT_ENTRY_API_ENABLED` + `auth.getUser()` + `getDirectEntryActor` + capability + `p_effective_date` (required) | `direct_entry_input_catalog` (db:f:p1.6:W04-S03CD:001) | `direct_entry_audit_events` (none — read) | 401/403/404 + `22023` if missing effective date | T1B |
 | `p1.6:route:W04-S03CD:002` | `GET /api/direct-entry/drafts` (W04-S03CD committed) | R | Authenticated | exact `entry_own` + actor ownership | own | `DIRECT_ENTRY_API_ENABLED` + `auth.getUser()` + `getDirectEntryActor` + capability; list ceiling 500; vượt ⇒ `413 DRAFT_LIMIT_EXCEEDED` | `direct_entry_list_own_drafts` (db:f:p1.6:W04-S03CD:002) | `direct_entry_audit_events` (none — read) | 401/403/404/413 | T1B |
 | `p1.6:route:W04-S03CD:003` | `PATCH /api/direct-entry/entries/[entryId]` (W04-S03CD committed; new method) | W | Authenticated | exact `entry_*` scope + `expected_version` | per row | `DIRECT_ENTRY_API_ENABLED` + CSRF + body cap + `Idempotency-Key` + `auth.getUser()` + `getDirectEntryActor` + capability + `expected_version`; stale ⇒ `409 DRAFT_CONFLICT`; live controller 6-state machine + `markDraftConflict` + `applyServerCopy`/`keepLocalCopy` — không silent merge/retry | `direct_entry_update_draft_row` (db:f:p1.6:003) — replace forward-only | `direct_entry_audit_events` | 401/403/404/409/413 + RPC deny | T1B |
+| `p1.6:route:W04-S04A:001` | `PATCH /api/direct-entry/entries/[entryId]/payment` (**W04-S04A + R1**, committed on `feature/p1.6-integration @ 73b19a6`; new method) | W | Authenticated | DRAFT: `entry_own` / `entry_team` / `entry_admin` (theo effective own/team/all scope); SUBMITTED: `payment_edit` + effective resource scope; projection masking = `payment_view` capability | per row | `DIRECT_ENTRY_API_ENABLED` + CSRF + JSON + `Idempotency-Key` + `auth.getUser()` + `getDirectEntryActor` + `expected_version` + reason_code + bank_code (active-bank catalog) + `payment_version`. Authorize bằng `direct_entry_assert_payment_document_access(..., 'payment_edit')` suy ra `v_scope` (`own|team|all`); `v_audit_capability = case when v_submission_state = 'DRAFT' then case v_scope when 'own' then 'entry_own' when 'team' then 'entry_team' else 'entry_admin' end else 'payment_edit' end`. Masked projection: actor thiếu `payment_view` ⇒ masked account number + version only; copy/cut/context-menu bị block trên masked-entry inputs; UI không persist payment values | `direct_entry_update_payment` (db:f:p1.6:006) — replaced forward-only by `20261003220000_p1_6_w04_s04a_r1_payment_draft_authority.sql`; `direct_entry_read_projection` (db:f:p1.6:016) — extended với payment fields by `20261003210000_p1_6_w04_s04a_payment_projection.sql` | `direct_entry_audit_events` | 401/403/404/413 + RPC deny | T1B |
 
 ### 3.3. Tables / Views / RPC — không đổi (inventory đã cover)
 
@@ -184,6 +185,8 @@ Mỗi row là **neo về ID trong inventory** (§2 / §4 / §7 inventory). Mỗi
 | W04-S03A actor-context RPC | `db:f:p1.6:W04-S03A:001` (`direct_entry_resolve_actor_context`) | T1B | NEW RPC của W04-S03A (route `p1.6:016`). **Direct Entry RPC count: 17 → 18** (xem §7 evidence). |
 | W04-S03CD catalog + own-drafts RPC | `db:f:p1.6:W04-S03CD:001` (`direct_entry_input_catalog`) + `db:f:p1.6:W04-S03CD:002` (`direct_entry_list_own_drafts`) | T1B | NEW RPC của W04-S03CD (routes `p1.6:route:W04-S03CD:001/002`). **Direct Entry RPC count: 18 → 20**. `direct_entry_update_draft_row` (db:f:p1.6:003) replaced forward-only, signature `(uuid, uuid, uuid, integer, jsonb, text)` unchanged, **không tính mới**. |
 | W04-S03B RPCs | (none new) | T1B | W04-S03B **không thêm migration**. Chỉ dùng 2 RPC có sẵn: `direct_entry_create_batch` + `direct_entry_read_projection`. RPC count giữ 18. |
+| W04-S04A payment projection RPCs | (none new) | T1B | W04-S04A chỉ `create or replace function public.direct_entry_input_catalog(...)` (extend với active bank catalog) + `create or replace function public.direct_entry_read_projection(...)` (extend với payment fields + masked projection); RPC count **vẫn 20**. Forward-only replacement, **không tính mới**. |
+| W04-S04A-R1 payment draft authority RPC | (none new) | T1B | W04-S04A-R1 chỉ `create or replace function public.direct_entry_update_payment(...)` align DRAFT audit capability với effective own/team/all scope; SUBMITTED retain `payment_edit`. RPC count **vẫn 20**. Forward-only replacement, **không tính mới**. |
 
 ### 3.4. Server-only repositories (`repo:*` từ inventory §4)
 
@@ -221,7 +224,7 @@ Mỗi row là **neo về ID trong inventory** (§2 / §4 / §7 inventory). Mỗi
 |---|---|---|
 | `dashboard` | `/dashboard` | `report.view` + scope (`own`/`team`/`all` per actor) |
 | `pipeline-check` | `/pipeline-check` | `ops.view_pipeline` + scope (`all` chỉ BoD / `team` chỉ leader) |
-| `direct-entry` (planned) | `/direct-entry` | `entry_create` / `entry_own` / `entry_team` / `entry_admin` per actor |
+| `direct-entry` (planned) | `/direct-entry` | `entry_create` / `entry_own` / `entry_team` / `entry_admin` per actor + scope; **`payment_edit` cho SUBMITTED payment (W04-S04A-R1)**; `change_review` cho change-request approve/reject (second-party enforced) |
 
 > **Slice 4:** App Shell filter `CURRENT_NAV_ENTRIES` ở server-side theo `actor.capability`. Direct URL vẫn phải fail ở route handler (`page:002`, `page:003`, `page:005`).
 
@@ -496,27 +499,96 @@ Source: `docs/handoffs/p1.6-w04-s03b.md` (commit `38c9b7e` trên `feature/p1.6-i
 | Impact on inventory | **RPC count 20** (W03 17 + S03A 1 + S03CD 2). 3 route mới đã liệt kê ở ma trận §3.2 với ID `p1.6:route:W04-S03CD:001/002/003`. Catalog: `db:f:p1.6:W04-S03CD:001`; Own-drafts: `db:f:p1.6:W04-S03CD:002`. |
 | Impact on this plan | Slice 2 (actor resolve) + slice 3 (capability guard) đã cover các route mới. Slice 5 (audit) có thêm 4 event. |
 
-### 7.4. Số liệu summary hợp lệ cho tài liệu này
+### 7.4. W04-S04A — Payment projection + active-bank catalog
 
-| Metric | Value (verified) | Source |
+Source: `docs/handoffs/p1.6-w04-s04a.md` (commit trên `feature/p1.6-integration`; exact SHA recorded in handoff).
+
+| Field | Value |
+|---|---|
+| Status | `P1.6-W04-S04A_PAYMENT_PROJECTION_DEV_PASS_FAST_TRACK` |
+| Migration | `20261003210000_p1_6_w04_s04a_payment_projection.sql` — applied on DEV (post-apply: 26 applied, 0 pending, 0 checksum mismatch; P1.6-I03 §Quality gates confirms 26/0/0). **Không thêm table, không thêm RPC** (file head: "S04A extends existing RPC projections; it adds no tables or RPC inventory."). |
+| **RPC count delta** | **0** — Direct Entry service-role RPC count giữ **20**. `direct_entry_input_catalog` + `direct_entry_read_projection` replaced forward-only. |
+| Payment projection extension | `direct_entry_read_projection` thêm payment fields; masked projection khi actor thiếu `payment_view`; copy/cut/context-menu bị block trên masked-entry inputs; UI không persist payment values trong browser storage. |
+| Active-bank catalog | `direct_entry_input_catalog` extend với active bank tại `p_effective_date`. |
+| Tests | W04-S04A synthetic DEV acceptance: **19/19 PASS** (active-bank catalog, all 4 payment states `omitted|unknown|intentionally_blank|provided`, version 0→1, updates, identical replay, changed-payload + stale-version conflicts, inactive bank rejection, out-of-scope denial, restricted projection masking). |
+| Impact on inventory | **RPC count vẫn 20**. Payment projection extended forward-only; masked projection capability = `payment_view`. |
+| Impact on this plan | Slice 3 đã có guard cho payment projection theo capability `payment_view`. |
+
+### 7.5. W04-S04A-R1 — Payment draft authority
+
+Source: `docs/handoffs/p1.6-w04-s04a-r1.md` (commit trên `feature/p1.6-integration`; exact SHA recorded in handoff).
+
+| Field | Value |
+|---|---|
+| Status | `P1.6-W04-S04A-R1_PAYMENT_DRAFT_AUTHORITY_DEV_PASS_FAST_TRACK` |
+| Migration | `20261003220000_p1_6_w04_s04a_r1_payment_draft_authority.sql` — applied on DEV (post-apply: 26 applied, 0 pending, 0 checksum mismatch; P1.6-I03 §Quality gates confirms 26/0/0). Forward-only correction sau S04A. |
+| **RPC count delta** | **0** — Direct Entry service-role RPC count giữ **20**. `direct_entry_update_payment` (db:f:p1.6:006) replaced forward-only; signature unchanged. |
+| DRAFT authority rule | `direct_entry_update_payment` authorize qua `direct_entry_assert_payment_document_access(p_auth_subject, p_app_user_id, v_entry.created_by_user_id, v_entry.team_id, v_entry.first_work_date, v_entry.submission_id, 'payment_edit')` để suy ra `v_scope` (`own|team|all`); `v_audit_capability = case when v_submission_state = 'DRAFT' then case v_scope when 'own' then 'entry_own' when 'team' then 'entry_team' else 'entry_admin' end else 'payment_edit' end`. |
+| SUBMITTED authority rule | Vẫn qua existing `payment_edit` check; retain audit capability `'payment_edit'`. |
+| Masked projection | `payment_view` capability governs unmasked account view (independent of write path). |
+| Tests | R1 PGlite SQL test (synthetic submission to `SUBMITTED`, no-`payment_edit` write denied) PASS. DEV acceptance actor + fixture grants no longer include `payment_edit`; draft payment updates vẫn pass + audit capability = `entry_own`. **W04-S04A + R1 = 40 tests pass**. |
+| Impact on inventory | **RPC count vẫn 20**. Audit capability matrix mở rộng: DRAFT payment writes ⇒ `entry_own|entry_team|entry_admin` theo scope; SUBMITTED ⇒ `payment_edit`. Xem §2.3 capability table + §3.2 API table (row `p1.6:route:W04-S04A:001`). |
+| Impact on this plan | Slice 3 guard cho `p1.6:route:W04-S04A:001` đã bao gồm 2 nhánh capability (DRAFT theo scope; SUBMITTED = `payment_edit`). |
+
+### 7.6. P1.6-I03 — Production main integration
+
+Source: `docs/handoffs/p1.6-i03.md` (commit `73b19a6` on `feature/p1.6-integration`; merge commit `40263bb`).
+
+| Field | Value |
+|---|---|
+| Status | `P1.6-I03_PRODUCTION_MAIN_INTEGRATION_COMMITTED` |
+| Merge base | `origin/main @ 2045472` (current production runtime; AI provider enabled trên Vercel Production bởi Phase B env apply tại deployment `dpl_GnSkjrS5FANe73rVooc6enS9K6iQ`) → `feature/p1.6-integration @ 73b19a6` qua merge commit `40263bb`. |
+| Branch HEAD advanced | Từ `d780471` (W04-S04A-R1) trong khi task S04 chạy — recorded per task brief. W04-S04A-R1 payment commits preserved. |
+| Conflict resolution | `package.json` + `pnpm-lock.yaml` (giữ P1.6 client stack + grid pin + main AI/export scripts); không có semantic conflict ở capability/RPC layer. |
+| Tests | 459 main/report tests + 82 AI server + 4 HTML report export + 30 App Shell/navigation tests pass; `pnpm typecheck`/`lint`/`build`/`docs:check`/`secrets:check`/`git diff --check` all PASS. |
+| Direct Entry status | **Vẫn chỉ trên `feature/p1.6-integration`; `origin/main` vẫn ở `2045472`; chưa merge `main`, chưa production enabled.** |
+| Impact on inventory | Migration count 26/0/0 (P1.6-I03 confirms); RPC count 20 (unchanged từ S03CD); route count 7 committed on feature branch. Xem inventory S04 §1 P1.6 evidence block + §13 delta. |
+| Impact on this plan | §2 architecture baseline + §3 matrix giữ locked; W04-S04A + R1 evidence đã integrate. Production cutover timing vẫn T0-owned (`decision:001` + `decision:008`). |
+
+### 7.7. P1.5-W04B-S02B — Production live reporting Phase B
+
+Source: `docs/handoffs/p1.5-w04b-s02b.md` (commit `4392a4b` trên `feature/p1.5-live-integration`).
+
+| Field | Value |
+|---|---|
+| Status | `P1.5-W04B-S02B_PHASE_B_PRODUCTION_LIVE_APPLIED` |
+| Source base | `origin/main @ 837d84a` (clean; **KHÔNG** deploy feature branch). |
+| Vercel Production env apply | `AI_PROVIDER_KEY=live`, `AI_MODEL_KEY=deepseek-flash`, `AI_REPORTS_ENABLED=true`, `AI_PROMPT_VERSION=business-analysis-prompt/1.1`, `AI_INLINE_WORKER_ENABLED=false`, `AI_WORKER_TOKEN` (Secret, random base64url 32 byte), `AI_POLICY_*` bảo thủ. |
+| Deployment | `dpl_GnSkjrS5FANe73rVooc6enS9K6iQ`; alias `bi.hrpartner.vn` (giữ nguyên). |
+| Sanitized config | `config_id=pilot-provider`, `version=1`, `profile=openai-compatible`, `model=deepseek-flash`, `host=api.deepseek.com`, `status=active`, `verified=yes`. |
+| Production project | **Cùng Supabase project với DEV** (theo sanitized config "Production dùng CÙNG Supabase project với DEV — đã so khớp"). |
+| Status runtime | `WAITING_FOR_OWNER_LIVE_RUN` — Phase C = Owner bấm "Tạo báo cáo" đúng một lần ⇒ J01 closure. |
+| Config source tension | `origin/main @ 2045472` `src/lib/ai/gateway/server/config.mjs` vẫn comment cũ "Live provider luôn bị chặn cho tới G4A ⇒ AI_PROVIDER_DISABLED" từ `f05991f` (`P1.5-W04-R1`); comment này lỗi thời vs runtime Phase B. **Sẽ update khi merge `feature/p1.5-live-integration` → main** (T1A scope, không thuộc task docs-only này). |
+| Impact on inventory | §6 P1.5 evidence block đã refresh; AI provider production **không** còn "disabled" như S03 nói; §1 P1.5 evidence block + §11.1.1 + §13 delta. |
+| Impact on this plan | §6 AI self-approval vẫn `PENDING_DECISION`; live provider Phase B đã chạy nhưng decision về self-approval semantic vẫn cần T0. |
+
+### 7.8. Số liệu summary hợp lệ cho tài liệu này (refreshed S04)
+
+| Metric | Value (verified S04) | Source |
 |---|---:|---|
 | Direct Entry RPC count (W03) | 17 | `docs/security/p3-access-surfaces.md` §3.5.3 |
 | Direct Entry RPC count (W04-S03A) | 18 | `docs/handoffs/p1.6-w04-s03a.md` (DEV RPC inventory verified) |
 | Direct Entry RPC count (W04-S03B) | 18 (no change) | `docs/handoffs/p1.6-w04-s03b.md` |
 | Direct Entry RPC count (W04-S03CD) | **20** (2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`; `direct_entry_update_draft_row` replace forward-only, không tính mới) | `docs/handoffs/p1.6-w04-s03cd.md` + `supabase/migrations/20261003200000_p1_6_w04_s03cd_catalog_drafts.sql` line 319/321/325 |
-| Direct Entry migration count (DEV post-S03CD) | 24 (post-apply dry-run 24/0/0) | `docs/handoffs/p1.6-w04-s03cd.md` §DEV and migration evidence |
+| Direct Entry RPC count (W04-S04A) | **20** (không đổi — S04A replace forward-only `direct_entry_input_catalog` + `direct_entry_read_projection`) | `docs/handoffs/p1.6-w04-s04a.md` + `supabase/migrations/20261003210000_p1_6_w04_s04a_payment_projection.sql` |
+| Direct Entry RPC count (W04-S04A-R1) | **20** (không đổi — R1 replace forward-only `direct_entry_update_payment`) | `docs/handoffs/p1.6-w04-s04a-r1.md` + `supabase/migrations/20261003220000_p1_6_w04_s04a_r1_payment_draft_authority.sql` |
+| Direct Entry migration count (DEV post-S04A-R1) | **26** (post-apply dry-run 26/0/0; P1.6-I03 §Quality gates confirms) | `docs/handoffs/p1.6-w04-s04a-r1.md` + `docs/handoffs/p1.6-i03.md` |
 | Direct Entry tables | 26 (25 foundation/core + 1 idempotency) | inventory §3.5.1 + §3.5.2 |
 | Direct Entry views | 1 (`direct_entry_current_documents`, `security_invoker=true`) | inventory §3.5.2 |
+| Direct Entry route files / methods committed on `feature/p1.6-integration @ 73b19a6` | **7 files / 7 methods** (session, create batch, entries GET, catalog, drafts, entries PATCH, **payment PATCH (W04-S04A-R1)**) | inventory §7.2 |
 | AI gateway RPC count | 12 + 4 G5 = 16 (`db:f:013`–`db:f:024` + `db:f:p1.5-G5:001`–`004`) | inventory §3.4 + §3.4.1 |
 | Foundation tables | 5 (`db:t:001`–`db:t:005`) | inventory §3.1 |
 | Reporting views | 3 (`db:v:001`–`db:v:003`) | inventory §3.2 |
 | Total page routes in scope | 5 (`page:001`–`page:005`) | inventory §1 |
-| Total API routes in scope | 13 (AI/ops) + 6 (P1.6 route committed on `p1.6-integration`) + 9 (P1.6 `DB_ONLY`) = 28 (counting `api:001`–`api:013` + `p1.6:016` + `p1.6:017` + `p1.6:route:W04-S03B:001/002` + `p1.6:route:W04-S03CD:001/002/003` + `p1.6:003`–`p1.6:015` `DB_ONLY`); final count reconciled when cutover merge | inventory §2 + §7.2; inventory S03 §3.2 + §7.2 |
+| Total API routes in scope | 13 (AI/ops) + 7 (P1.6 route committed on `p1.6-integration`) + 8 (P1.6 `DB_ONLY`) = 28 (counting `api:001`–`api:013` + `p1.6:016` + `p1.6:017` + `p1.6:route:W04-S03B:001/002` + `p1.6:route:W04-S03CD:001/002/003` + `p1.6:route:W04-S04A:001` + `p1.6:003`–`p1.6:015` `DB_ONLY`); final count reconciled when cutover merge | inventory §2 + §7.2; inventory S04 §3.2 + §7.2 |
 | n8n workflows in scope | 1 (`P0-T2-WF01`) | inventory §9 |
-| P1.5 prompt 1.1 evidence (NEW in S03) | `feature/p1.5-live-integration @ 8d0d074` (P1.5-I03): 126/126 gateway tests pass; team comparison + anomaly + monitoring limitations; DEFAULT_PROMPT_VERSION=1.1; frozen job mismatch fail-closed | `docs/handoffs/p1.5-i03.md` |
-| P1.5 live adapter evidence (NEW in S03) | `feature/p1.5-live-integration @ f7e41dd` (P1.5-I02): live provider integrated; conditional env gate `AI_PROVIDER_KEY=live` + `AI_PROVIDER_ALLOWED_HOSTS` không rỗng ⇒ live; ngược lại `AI_CONFIG_REQUIRED` fail-closed; scripted vẫn cấm production/preview; checkpoint: **Owner** nhập `URL` / `model` / `API key` qua UI (`api:007`) **và** **Operator** cấu hình `AI_PROVIDER_ALLOWED_HOSTS` ở server env (outbound guard) để enable | `docs/handoffs/p1.5-i02.md` |
+| P1.5 prompt 1.1 evidence | `feature/p1.5-live-integration @ 524d0c1` (P1.5-I03, ancestor của `origin/main @ 2045472`): 126/126 gateway tests pass; team comparison + anomaly + monitoring limitations; DEFAULT_PROMPT_VERSION=1.1; frozen job mismatch fail-closed | `docs/handoffs/p1.5-i03.md` |
+| P1.5 live adapter evidence | `feature/p1.5-live-integration @ f7e41dd` (P1.5-I02): live provider integrated; conditional env gate `AI_PROVIDER_KEY=live` + `AI_PROVIDER_ALLOWED_HOSTS` không rỗng ⇒ live; ngược lại `AI_CONFIG_REQUIRED` fail-closed; scripted vẫn cấm production/preview; checkpoint: **Owner** nhập `URL` / `model` / `API key` qua UI (`api:007`) **và** **Operator** cấu hình `AI_PROVIDER_ALLOWED_HOSTS` ở server env (outbound guard) để enable | `docs/handoffs/p1.5-i02.md` |
+| **P1.5-W04B-S02B Phase B production live evidence (NEW S04)** | `feature/p1.5-live-integration @ 4392a4b`: AI provider **đã LIVE trên Vercel Production runtime** deployment `dpl_GnSkjrS5FANe73rVooc6enS9K6iQ` (`AI_PROVIDER_KEY=live`, `AI_MODEL_KEY=deepseek-flash`, `AI_REPORTS_ENABLED=true`, `AI_PROMPT_VERSION=business-analysis-prompt/1.1`); config source vẫn trên feature branch (chưa merge `main`); status `WAITING_FOR_OWNER_LIVE_RUN` cho Phase C one-report smoke | `docs/handoffs/p1.5-w04b-s02b.md` |
+| **P1.5 report export HTML on main (NEW S04)** | `origin/main @ 2045472`: `report-export-server.ts` (104 LOC) + `report-export.ts` (191 LOC) + `report-export.test.mjs` (4 pass) + UI download HTML. **Không tạo route mới**; chỉ extend `api:005` analysis projection với `export_data` aggregate. | `git show 2045472 -- src/app/api/ai/reports/[jobId]/analysis/route.ts` |
+| **P1.6-I03 integration evidence (NEW S04)** | `feature/p1.6-integration @ 73b19a6` qua merge `40263bb` của `origin/main @ 2045472`; conflict resolution ở `package.json` + `pnpm-lock.yaml`; 459 main/report tests + 82 AI server + 4 HTML report export + 30 App Shell/navigation tests pass; `pnpm typecheck`/`lint`/`build`/`docs:check`/`secrets:check`/`git diff --check` all PASS; **Direct Entry vẫn chỉ trên `feature/p1.6-integration`; `origin/main` vẫn ở `2045472`** | `docs/handoffs/p1.6-i03.md` |
 
-> **Note.** Inventory (`docs/security/p3-access-surfaces.md` S03) là source-of-truth cho ID và count. Cutover plan tham chiếu theo. `decision:ai-self-approval` (`api:006`) vẫn `PENDING_DECISION`; live adapter fail-closed gate đã integrated nhưng T0 self-approval decision chưa chốt. `ai.report.review` **không** map sang `change_review`.
+> **Note.** Inventory (`docs/security/p3-access-surfaces.md` S04) là source-of-truth cho ID và count. Cutover plan tham chiếu theo. `decision:ai-self-approval` (`api:006`) vẫn `PENDING_DECISION`; live provider Phase B đã apply nhưng T0 self-approval decision chưa chốt. `ai.report.review` **không** map sang `change_review`. **Errata (S03, refreshed S04):** Zod đã có sẵn (`zod ^4.6.5`, P0 era) — Direct Entry dùng custom validators, không đề xuất rewrite; `direct_entry_resolve_actor_context` không tự ghi audit — session audit là future P3 slice; `PILOT_ACTOR_REF = "pilot-admin"` chỉ áp dụng P1.5 AI report path, không gộp với Direct Entry S03A+ (Supabase cookie + `auth.getUser()`); W04-S04A-R1 payment route cũng dùng Supabase cookie + `auth.getUser()` (không qua `PILOT_ACTOR_REF`).
 
 ---
 
@@ -525,10 +597,10 @@ Source: `docs/handoffs/p1.6-w04-s03b.md` (commit `38c9b7e` trên `feature/p1.6-i
 | Layer | Owner | Boundary | Cutover responsibility |
 |---|---|---|---|
 | P1.5 schema + RPC | **T1A** | `db:t:006`–`db:t:011`, `db:f:013`–`db:f:024`, `db:f:p1.5-G5:001`–`db:f:p1.5-G5:004` | Slice 3+5+6: caller thay `PILOT_ACTOR_REF`; G5 OCC đã verify. |
-| P1.6 schema + RPC | **T1B** | `db:t:p1.6:001`–`db:t:p1.6:026`, `db:v:p1.6:001`, `db:f:p1.6:001`–`db:f:p1.6:017`, `db:f:p1.6:W04-S03A:001`, `db:f:p1.6:W04-S03CD:001`–`db:f:p1.6:W04-S03CD:002` | Slice 2+3: route resolve actor + capability; S03CD added 2 RPCs + 3 route handlers committed on `feature/p1.6-integration @ 2d5e9fc`; OCC + catalog + own-drafts all `COVERED_DEV_FAST_TRACK`. |
+| P1.6 schema + RPC | **T1B** | `db:t:p1.6:001`–`db:t:p1.6:026`, `db:v:p1.6:001`, `db:f:p1.6:001`–`db:f:p1.6:017`, `db:f:p1.6:W04-S03A:001`, `db:f:p1.6:W04-S03CD:001`–`db:f:p1.6:W04-S03CD:002` | Slice 2+3: route resolve actor + capability; S03CD added 2 RPCs + 3 route handlers committed on `feature/p1.6-integration @ 2d5e9fc`; **W04-S04A + R1** thêm 1 route + replace forward-only 3 RPC đã có (`direct_entry_input_catalog`, `direct_entry_read_projection`, `direct_entry_update_payment`) trên `feature/p1.6-integration @ 73b19a6`; OCC + catalog + own-drafts + payment authority (DRAFT = entry_own|team|admin; SUBMITTED = payment_edit) all `COVERED_DEV_FAST_TRACK`. |
 | P0 schema + RPC | **T1B** | `db:t:001`–`db:t:005`, `db:v:001`–`db:v:003`, `db:f:001`–`db:f:012` | Slice 3: server repo thêm scope predicate; không mở schema. |
 | AI gateway route + server repo | **T1A** | `api:001`–`api:012`, `api:013` (worker), `repo:004`–`repo:009` | Slice 3+5+6: actor từ session + audit + admin capability. |
-| Direct Entry route + server repo | **T1B** | `p1.6:003`–`p1.6:015` (`DB_ONLY`); `p1.6:016` (`GET /api/direct-entry/session`), `p1.6:017` (`GET /direct-entry` UI shell), `p1.6:route:W04-S03B:001` (`POST /api/direct-entry/batches`), `p1.6:route:W04-S03B:002` (`GET /api/direct-entry/entries/[entryId]`), `p1.6:route:W04-S03CD:001/002/003` (`GET /api/direct-entry/catalog`, `GET /api/direct-entry/drafts`, `PATCH /api/direct-entry/entries/[entryId]`); `repo:001`–`repo:003` | Slice 3: actor + capability + per-row scope. Routes committed on `feature/p1.6-integration @ 2d5e9fc` chưa merge `main`. |
+| Direct Entry route + server repo | **T1B** | `p1.6:003`–`p1.6:015` (`DB_ONLY`); `p1.6:016` (`GET /api/direct-entry/session`), `p1.6:017` (`GET /direct-entry` UI shell), `p1.6:route:W04-S03B:001` (`POST /api/direct-entry/batches`), `p1.6:route:W04-S03B:002` (`GET /api/direct-entry/entries/[entryId]`), `p1.6:route:W04-S03CD:001/002/003` (`GET /api/direct-entry/catalog`, `GET /api/direct-entry/drafts`, `PATCH /api/direct-entry/entries/[entryId]`), **`p1.6:route:W04-S04A:001` (`PATCH /api/direct-entry/entries/[entryId]/payment` — W04-S04A + R1)**; `repo:001`–`repo:003` | Slice 3: actor + capability + per-row scope (bao gồm DRAFT payment theo `entry_own|team|entry_admin`; SUBMITTED = `payment_edit`; masked projection = `payment_view`). 7 routes committed on `feature/p1.6-integration @ 73b19a6` chưa merge `main`. |
 | App Shell / nav | **T1B** + T1C | `src/lib/navigation/registry.ts` | Slice 4: filter server-side theo `actor.capability`. |
 | Proxy / Basic Auth | **T1B** | `src/proxy.ts`, `src/lib/auth/pilot-access.ts` | Slice 1+7: giữ Basic Auth đến slice 7. |
 | n8n system identity | **T1B** (T2 in older docs) | `n8n:001`–`n8n:004`, `automation/n8n/docs/p0-t2-wf01-runbook.md` | **Không thuộc human RBAC.** `decision:003` vẫn pending. |
@@ -546,7 +618,7 @@ Source: `docs/handoffs/p1.6-w04-s03b.md` (commit `38c9b7e` trên `feature/p1.6-i
 | `decision:005` | Audit retention window bao lâu? | T0 | Slice 5 retention. |
 | `decision:006` | Direct-URL enforcement ở middleware hay RPC policy? | T0 | Slice 3 + slice 4 boundary. |
 | `decision:ai-self-approval` | Self-approval cho AI report có được phép không? | T0 | §6 — 2 option + recommendation. |
-| `decision:W04-S03C-D` | RPC count + route count cuối khi W04-S03C/S03D commit. | T1C (refresh task) | §7.3 — moving target. |
+| `decision:008` | Cutover P1.6 7-route (refreshed S04: thêm payment PATCH) đã commit trên `feature/p1.6-integration @ 73b19a6` → `main`: sequence và production enablement timing | T0 | merge order + cutover slice 7 (7 routes thay 6; payment drawer UI cùng W04-S04A-R1). |
 
 ---
 
@@ -554,13 +626,15 @@ Source: `docs/handoffs/p1.6-w04-s03b.md` (commit `38c9b7e` trên `feature/p1.6-i
 
 | Field | Value |
 |---|---|
-| Status | `READY_FOR_P3_IMPLEMENTATION_SPLIT` |
+| Status | `READY_FOR_P3_ACCESS_BASELINE_REFRESH_S04` |
 | Branch | `feature/p3-w01-access-inventory` |
-| Base | `6cbdc68622d263121f50d46f8a2dac63e2139322` |
-| Companion doc | `docs/handoffs/p3-w02-s01.md` |
-| Companion inventory | `docs/security/p3-access-surfaces.md` (S02-R1) |
+| Base | `13719069979a717bb0375e3031e92b161dffba8d` |
+| Companion doc | `docs/handoffs/p3-w02-s01.md`, `docs/handoffs/p3-w01-s04.md` (this task) |
+| Companion inventory | `docs/security/p3-access-surfaces.md` (S04) |
 | Companion contracts | `docs/contracts/p1.6-auth-capabilities-v1.md`, `docs/contracts/p1.6-direct-entry-v1.md` |
-| Companion W04-S03 evidence | `docs/handoffs/p1.6-w04-s03a.md`, `docs/handoffs/p1.6-w04-s03b.md` |
+| Companion W04-S03 evidence | `docs/handoffs/p1.6-w04-s03a.md`, `docs/handoffs/p1.6-w04-s03b.md`, `docs/handoffs/p1.6-w04-s03cd.md` |
+| Companion W04-S04A evidence | `docs/handoffs/p1.6-w04-s04a.md`, `docs/handoffs/p1.6-w04-s04a-r1.md`, `docs/handoffs/p1.6-i03.md` (P1.6-I03 integration) |
+| Companion P1.5 evidence | `docs/handoffs/p1.5-i02.md`, `docs/handoffs/p1.5-i03.md`, `docs/handoffs/p1.5-w04b-s02b.md` (Phase B production live), `docs/handoffs/p1.5-g5-dev01.md` |
 | Forbidden | No runtime / schema / migration / deploy / merge / P3 implementation start. |
 
 ### 10.1. Boundary cho 3 agent P3 sau cutover
@@ -573,18 +647,18 @@ Sau khi P1.5/P1.6 integration ổn định, có thể chia 3 agent:
 | **P3B — Capability + Guard** | 3+4 | Page / API guard theo ma trận §3.1 + §3.2; App Nav filter server-side; thay `PILOT_ACTOR_REF` ở server repos. Phụ thuộc P3A cung cấp resolved actor. |
 | **P3C — Audit + Admin + Cutover** | 5+6+7 | Audit envelope enforcement; admin/bootstrap user; Basic Auth retirement. Phụ thuộc P3B cung cấp capability decision. |
 
-### 10.2. Checkpoint tại task này
+### 10.2. Checkpoint tại task này (S04)
 
 - [x] §1 mục tiêu + DoD của cutover plan (không phải của P3 implementation).
 - [x] §2 architecture baseline (4 lớp + identity + capability vocab).
-- [x] §3 ma trận surface (page + API + RPC + repo + gate + nav + env), neo về ID inventory, không sinh ID mới.
+- [x] §3 ma trận surface (page + API + RPC + repo + gate + nav + env), neo về ID inventory, không sinh ID mới; thêm row `p1.6:route:W04-S04A:001` cho payment PATCH (S04A + R1).
 - [x] §4 go-live slice 7 bước (login → actor → guard → nav → audit → admin → Basic Auth retirement).
-- [x] §5 library policy (chỉ dùng `@supabase/ssr` + Radix/shadcn-style + Lucide; không thêm framework).
+- [x] §5 library policy (chỉ dùng `@supabase/ssr` + Radix/shadcn-style + Lucide; không thêm framework; Zod đã có sẵn từ P0, Direct Entry dùng custom validators, không đề xuất rewrite).
 - [x] §6 AI self-approval: 2 option + recommendation, **không tự quyết**.
-- [x] §7 evidence: W04-S03A 17→18 RPC + W04-S03B 18 RPC + W04-S03CD 18→20 RPC (2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`; `direct_entry_update_draft_row` replace forward-only, không tính mới). Migration count 24/0/0 (post S03CD). 6 surface route committed on `feature/p1.6-integration @ 2d5e9fc`. P1.5 prompt 1.1 (I03) + live adapter fail-closed env gate (I02) integrated, live provider disabled cho tới khi **Owner** nhập `URL` / `model` / `API key` qua UI **và** **Operator** cấu hình `AI_PROVIDER_ALLOWED_HOSTS` ở server env. **Errata cố định:** Zod đã có sẵn (`zod ^4.6.5`, P0 era) — Direct Entry dùng custom validators, không đề xuất rewrite; `direct_entry_resolve_actor_context` không tự ghi audit — session audit là future P3 slice; `PILOT_ACTOR_REF = "pilot-admin"` chỉ áp dụng P1.5 AI report path, không gộp với Direct Entry S03A+ (Supabase cookie + `auth.getUser()`).
-- [x] §8 migrations / runtime owner.
-- [x] §9 PENDING_DECISION list (không tự đóng).
-- [x] §10 status `READY_FOR_P3_IMPLEMENTATION_SPLIT`.
+- [x] §7 evidence refreshed: §7.1 W04-S03A 17→18 RPC; §7.2 W04-S03B 18 RPC; §7.3 W04-S03CD 18→20 RPC (2 mới: `direct_entry_input_catalog` + `direct_entry_list_own_drafts`); §7.4 W04-S04A payment projection extension (RPC count 20; không thêm); §7.5 W04-S04A-R1 payment draft authority (DRAFT = `entry_own|team|entry_admin`; SUBMITTED retain `payment_edit`); §7.6 P1.6-I03 production main integration (merge `40263bb` tại `73b19a6`); §7.7 P1.5-W04B-S02B Phase B production live reporting (`AI_PROVIDER_KEY=live` trên Vercel Production runtime deployment `dpl_GnSkjrS5FANe73rVooc6enS9K6iQ`; status `WAITING_FOR_OWNER_LIVE_RUN`); §7.8 Số liệu summary: migration count **26/0/0**, RPC count **20**, route files **7** / methods **7** committed on `feature/p1.6-integration @ 73b19a6` (bao gồm payment PATCH); **P1.6 vẫn chỉ trên `feature/p1.6-integration`; `origin/main` vẫn ở `2045472`; chưa merge `main`, chưa production enabled.** P1.5 prompt 1.1 (I03) + live adapter fail-closed env gate (I02) integrated, **AI provider production đã LIVE trên Vercel Production runtime** (Phase B); config source vẫn trên `feature/p1.5-live-integration @ 4392a4b` (chưa merge `main`). **Report export HTML on main** (no new endpoint, projection thêm aggregate `export_data`). **Errata cố định (S03, refreshed S04):** Zod đã có sẵn (`zod ^4.6.5`, P0 era) — Direct Entry dùng custom validators, không đề xuất rewrite; `direct_entry_resolve_actor_context` không tự ghi audit — session audit là future P3 slice; `PILOT_ACTOR_REF = "pilot-admin"` chỉ áp dụng P1.5 AI report path, không gộp với Direct Entry S03A+ (Supabase cookie + `auth.getUser()`); W04-S04A-R1 payment route cũng dùng Supabase cookie + `auth.getUser()`.
+- [x] §8 migrations / runtime owner refreshed (S04A-R1 payment authority + W04-S04A route + P1.5 Phase B + P1.6-I03).
+- [x] §9 PENDING_DECISION list (không tự đóng; `decision:ai-self-approval` + `decision:008` refresh cho 7 routes).
+- [x] §10 status `READY_FOR_P3_ACCESS_BASELINE_REFRESH_S04`.
 
 ### 10.3. Quality gates
 
