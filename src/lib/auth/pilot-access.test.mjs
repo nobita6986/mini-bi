@@ -124,8 +124,15 @@ test("12. không có secret trong decision (object lỗi/response)", () => {
   assert.equal(PILOT_AUTH_REALM, "Mini BI Pilot");
 });
 
-test("13. matcher bao phủ dashboard, pipeline-check, api/reporting và Direct Entry", () => {
+test("13. matcher bao phủ login, auth API, dashboard và Direct Entry", () => {
   for (const p of [
+    "/login",
+    "/login/reset",
+    "/api/auth",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/session",
+    "/api/auth/other/path",
     "/dashboard",
     "/dashboard/a",
     "/dashboard/a/b/c",
@@ -151,6 +158,8 @@ test("14. route ngoài matcher (như '/') không bị gate", () => {
     "/",
     "/about",
     "/api/other",
+    "/loginx",
+    "/api/authx",
     "/dashboardx",
     "/pipeline-checkfoo",
     "/direct-entryx",

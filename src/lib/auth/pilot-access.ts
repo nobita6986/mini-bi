@@ -26,16 +26,20 @@ export interface PilotAccessInput {
 }
 
 const PROTECTED_EXACT = [
+  "/login",
   "/dashboard",
   "/pipeline-check",
   "/api/reporting",
+  "/api/auth",
   "/direct-entry",
   "/api/direct-entry",
 ];
 const PROTECTED_PREFIXES = [
+  "/login/",
   "/dashboard/",
   "/pipeline-check/",
   "/api/reporting/",
+  "/api/auth/",
   "/api/ai/",
   "/direct-entry/",
   "/api/direct-entry/",

@@ -6,6 +6,10 @@ const source = readFileSync(new URL("./proxy.ts", import.meta.url), "utf8");
 
 test("proxy matcher applies the pilot gate to both Direct Entry page and API path families", () => {
   for (const matcher of [
+    '"/login"',
+    '"/login/:path*"',
+    '"/api/auth"',
+    '"/api/auth/:path*"',
     '"/direct-entry"',
     '"/direct-entry/:path*"',
     '"/api/direct-entry"',
@@ -13,6 +17,17 @@ test("proxy matcher applies the pilot gate to both Direct Entry page and API pat
   ]) {
     assert.ok(source.includes(matcher), `missing proxy matcher ${matcher}`);
   }
+});
+
+test("Basic Auth matcher covers auth routes before handlers can run", () => {
+  const pathGuard = source.indexOf("if (!isPilotProtectedPath(request.nextUrl.pathname))");
+  const accessDecision = source.indexOf("evaluatePilotAccess({");
+  const allowBranch = source.indexOf('if (decision.kind === "allow")');
+  for (const matcher of ['"/login"', '"/login/:path*"', '"/api/auth"', '"/api/auth/:path*"']) {
+    assert.ok(source.includes(matcher), `missing proxy matcher ${matcher}`);
+  }
+  assert.ok(pathGuard >= 0 && accessDecision > pathGuard);
+  assert.ok(allowBranch > accessDecision);
 });
 
 test("Direct Entry proxy decision rejects before request proceeds to route handlers", () => {

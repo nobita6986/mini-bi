@@ -57,12 +57,16 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/login",
+    "/login/:path*",
     "/dashboard",
     "/dashboard/:path*",
     "/pipeline-check",
     "/pipeline-check/:path*",
     "/api/reporting",
     "/api/reporting/:path*",
+    "/api/auth",
+    "/api/auth/:path*",
     "/api/ai/reports",
     "/api/ai/reports/:path*",
     "/api/ai/worker/run",
