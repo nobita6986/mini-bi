@@ -14,11 +14,11 @@ import { canonicalJson } from "../engine-shared.mjs";
 import { MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES } from "./limits.mjs";
 import { buildProviderHeaders, getProviderProfile, joinProviderPath } from "../../ai-config/provider-profiles.ts";
 
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.2";
+export const LIVE_ADAPTER_VERSION = "live-adapter/0.3";
 /** Profile live duy nhất được hỗ trợ hiện tại (authority thực sự là provider-profiles.ts). */
 export const LIVE_PROVIDER_PROFILE = "openai-compatible";
 
-const PROVIDER_VERSION = "live-openai-compatible/0.2";
+const PROVIDER_VERSION = "live-openai-compatible/0.3";
 
 /**
  * DeepSeek JSON mode chỉ bảo đảm JSON hợp lệ, không bảo đảm đúng business-analysis contract.
@@ -39,7 +39,9 @@ function buildOutputContractGuide(payload) {
   return [
     "Ràng buộc output bắt buộc (server sẽ từ chối nếu sai):",
     "contract_version phải là 'business-analysis/0.1'; period_ref phải là " + canonicalJson(periodRef) + "; report_status phải là 'draft'.",
+    "Top-level phải có đúng kiểu: executive_analysis=string; executive_evidence_refs=array of strings; findings=array; overall_limitations=array of strings. Không field nào trong ba mảng được trả thành string, object hoặc null.",
     "Mỗi finding phải có đúng các field: finding_id, category, subject_ref, headline, analysis, evidence_refs, confidence, limitations, recommended_action.",
+    "Kiểu từng finding: finding_id/category/subject_ref/headline/analysis/confidence là string; evidence_refs là array of strings có ít nhất 1 phần tử; limitations là array of strings (có thể rỗng trừ finding risk); recommended_action là string hoặc null.",
     "finding_id dùng f_01..f_07; category chỉ thuộc trend|driver|strength|risk|concentration|provider_mix|time_pattern|data_quality; confidence chỉ low|medium|high; recommended_action là string hoặc null.",
     "subject_ref PHẢI là 'scope' hoặc copy nguyên văn một giá trị trong danh sách này, tuyệt đối không dùng tên dimension/label khác: " + canonicalJson(subjectRefs) + ".",
     "Mỗi evidence_refs và executive_evidence_refs chỉ được copy nguyên văn từ danh sách này: " + canonicalJson(evidenceRefs) + ".",

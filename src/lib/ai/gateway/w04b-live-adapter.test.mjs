@@ -118,6 +118,7 @@ test("W04B-U2: response hợp lệ ⇒ ok:true + structured + usage nguyên vẹ
   assert.ok(requestBody.messages[0].content.includes("subject_ref PHẢI"));
   assert.ok(requestBody.messages[0].content.includes("project_01"));
   assert.ok(requestBody.messages[0].content.includes("ev_01"));
+  assert.ok(requestBody.messages[0].content.includes("limitations là array of strings"));
   assert.deepEqual(requestBody.thinking, { type: "disabled" });
   assert.deepEqual(requestBody.response_format, { type: "json_object" });
   assert.equal(requestBody.max_tokens, 8192);

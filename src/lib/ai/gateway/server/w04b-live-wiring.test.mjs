@@ -43,7 +43,7 @@ function reqFor() {
     modelConfig: {
       provider_key: "live",
       model_key: "gpt-4o-mini",
-      adapter_version: "live-adapter/0.2",
+      adapter_version: "live-adapter/0.3",
       timeout_ms: 2000,
       provider_config: { config_id: "pilot-provider", version: 1, provider_profile: "openai-compatible", api_base_url: "https://api.example.test/v1", sanitized_host: "api.example.test" },
       credential_secret: SECRET,
@@ -62,7 +62,7 @@ test("W04B-W1: wiring resolves live adapter qua mock outbound + canonical profil
   const resolved = factory({ provider_key: "live", config: {} });
   assert.equal(resolved.ok, true);
   assert.equal(resolved.adapter.provider_key, "live");
-  assert.equal(resolved.adapter.adapter_version, "live-adapter/0.2");
+  assert.equal(resolved.adapter.adapter_version, "live-adapter/0.3");
 
   const result = await resolved.adapter.generateStructured(reqFor());
   assert.equal(result.ok, true);
