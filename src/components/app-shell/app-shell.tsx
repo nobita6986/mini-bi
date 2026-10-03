@@ -24,6 +24,7 @@ import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 
 import { DesktopNav } from "./desktop-nav";
 import { MobileNav } from "./mobile-nav";
+import { UserSessionControl } from "./user-session-control";
 
 /**
  * Props:
@@ -64,6 +65,9 @@ export async function AppShell({ children, currentPath }: { children: ReactNode;
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {/* Session control — login/logout UX (route/RPC van la authority) */}
+          <UserSessionControl />
 
           {/* Theme selector — giữ nguyên như W05 R1 */}
           <ThemeSelector />
