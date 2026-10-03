@@ -30,8 +30,8 @@ test("error-code mapping is sanitized and never echoes raw codes", () => {
   assert.equal(authUiErrorMessage("AUTH_REQUEST_INVALID"), "Thông tin đăng nhập chưa hợp lệ.");
   assert.equal(authUiErrorMessage("AUTH_INVALID_CREDENTIALS"), "Email hoặc mật khẩu không đúng.");
   assert.equal(authUiErrorMessage("ACCOUNT_NOT_AVAILABLE"), "Tài khoản chưa được cấp quyền sử dụng hệ thống.");
-  assert.equal(authUiErrorMessage("AUTH_UNAVAILABLE"), "Dịch vụ đăng nhập tạm thời không khả dụng, vui lòng thử lại.");
-  assert.equal(authUiErrorMessage("CSRF_REJECTED"), "Phiên hoặc yêu cầu không hợp lệ. Vui lòng tải lại trang.");
+  assert.equal(authUiErrorMessage("AUTH_UNAVAILABLE"), "Hệ thống xác thực tạm thời không khả dụng.");
   assert.equal(authUiErrorMessage("UNKNOWN_CODE"), authUiErrorMessage("AUTH_UNAVAILABLE"));
+  assert.equal(authUiErrorMessage("CSRF_REJECTED"), "Phiên hoặc yêu cầu không hợp lệ. Vui lòng tải lại trang.");
   assert.equal(authUiErrorMessage("CSRF_REJECTED").includes("CSRF_REJECTED"), false);
 });

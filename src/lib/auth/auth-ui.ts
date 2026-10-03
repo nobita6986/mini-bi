@@ -15,9 +15,12 @@ export const AUTH_UI_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.f
   AUTH_REQUEST_INVALID: "Thông tin đăng nhập chưa hợp lệ.",
   AUTH_INVALID_CREDENTIALS: "Email hoặc mật khẩu không đúng.",
   ACCOUNT_NOT_AVAILABLE: "Tài khoản chưa được cấp quyền sử dụng hệ thống.",
-  AUTH_UNAVAILABLE: "Dịch vụ đăng nhập tạm thời không khả dụng, vui lòng thử lại.",
+  AUTH_UNAVAILABLE: "Hệ thống xác thực tạm thời không khả dụng.",
   CSRF_REJECTED: "Phiên hoặc yêu cầu không hợp lệ. Vui lòng tải lại trang.",
 });
+
+/** P3-W03-S02B: auth hop le nhung thieu capability cho resource. */
+export const ACCESS_DENIED_MESSAGE = "Bạn không có quyền truy cập chức năng này.";
 
 export function authUiErrorMessage(code: string): string {
   return AUTH_UI_ERROR_MESSAGES[code] ?? AUTH_UI_ERROR_MESSAGES.AUTH_UNAVAILABLE;

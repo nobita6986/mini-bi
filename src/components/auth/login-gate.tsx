@@ -15,6 +15,7 @@ export function LoginGate() {
   const destination = resolveSafeAuthDestination(searchParams.get("next"));
   const [state, setState] = useState<"loading" | "form" | "unavailable" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
+  const [busy, setBusy] = useState(false);
 
   const check = useCallback(() => {
     let cancelled = false;
@@ -40,11 +41,27 @@ export function LoginGate() {
   if (state === "loading") {
     return <p aria-live="polite" className="text-sm text-muted-foreground">Đang kiểm tra phiên đăng nhập…</p>;
   }
+  async function logout() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+    } catch {
+      // 204 khong can phan hoi; noi dung session da bi server xoa khi tra ACCOUNT_NOT_AVAILABLE.
+    } finally {
+      setBusy(false);
+      router.replace("/login");
+      router.refresh();
+    }
+  }
+
   if (state === "unavailable") {
     return (
-      <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-        {authUiErrorMessage("ACCOUNT_NOT_AVAILABLE")}
-      </p>
+      <div role="alert" className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p>{authUiErrorMessage("ACCOUNT_NOT_AVAILABLE")}</p>
+        <button type="button" onClick={() => void logout()} disabled={busy} aria-busy={busy}
+          className="h-11 rounded-md border border-input px-3 text-sm">Đăng xuất</button>
+      </div>
     );
   }
   if (state === "error") {
