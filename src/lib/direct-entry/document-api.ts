@@ -247,12 +247,34 @@ export async function uploadDirectEntryDocument(
         reused: reservation.data.reused,
       }, 200);
     }
+    if (reservation.data.upload_status === "FAILED" && reservation.data.attempts >= 3) {
+      return fail("DOCUMENT_RETRY_LIMIT", 409, {
+        document_id: reservation.data.document_id,
+        version: reservation.data.version,
+        entry_version: reservation.data.entry_version,
+      });
+    }
+    if (reservation.data.upload_status !== "QUEUED" &&
+        reservation.data.upload_status !== "FAILED") {
+      return json({
+        ok: true,
+        document_id: reservation.data.document_id,
+        version: reservation.data.version,
+        entry_version: reservation.data.entry_version,
+        upload_status: reservation.data.upload_status,
+        scan_status: reservation.data.scan_status,
+        reused: reservation.data.reused,
+        callback_pending: true,
+      }, 202);
+    }
 
     const upload: DocumentUploadRequest = {
       entry_id: entryId,
       document_id: reservation.data.document_id,
       document_type: parsed.document_type,
       version: reservation.data.version,
+      event_sequence: reservation.data.event_sequence,
+      attempt: reservation.data.attempt,
       storage_key: reservation.data.storage_key,
       checksum_sha256: checksum,
       size_bytes: parsed.file.size,

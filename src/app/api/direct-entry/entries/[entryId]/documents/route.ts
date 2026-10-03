@@ -3,7 +3,7 @@ import "server-only";
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
 import { uploadDirectEntryDocument } from "@/lib/direct-entry/document-api";
-import { unavailableDocumentStorageAdapter } from "@/lib/direct-entry/document-storage-adapter";
+import { createDocumentWorkerAdapter } from "@/lib/direct-entry/document-worker-adapter";
 import { createDirectEntryWriteRepository } from "@/lib/direct-entry/write-repository";
 
 export const runtime = "nodejs";
@@ -23,6 +23,6 @@ export async function POST(
   return uploadDirectEntryDocument(request, entryId, "true", {
     resolveSession: () => getDirectEntryActor(createDirectEntryActorRepository()),
     repository: createDirectEntryWriteRepository(),
-    storage: unavailableDocumentStorageAdapter,
+    storage: createDocumentWorkerAdapter(),
   });
 }

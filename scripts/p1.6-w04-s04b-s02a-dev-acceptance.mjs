@@ -51,8 +51,8 @@ async function assertMigrations(client) {
   const { rows } = await client.query(
     "select version, checksum from public.schema_migrations order by version",
   );
-  assert.equal(local.length, 28);
-  assert.equal(rows.length, 28);
+  assert.equal(local.length, 29);
+  assert.equal(rows.length, 29);
   const applied = new Map(rows.map(({ version, checksum }) => [version, checksum]));
   const pending = local.filter(({ name }) => !applied.has(name)).map(({ name }) => name);
   const mismatch = local.filter(({ name, checksum }) =>
@@ -61,7 +61,7 @@ async function assertMigrations(client) {
   assert.deepEqual(pending, []);
   assert.deepEqual(mismatch, []);
   assert.ok(applied.has(migrationName));
-  pass("28 local/DEV migration records; 0 pending and 0 checksum mismatch");
+  pass("29 local/DEV migration records; 0 pending and 0 checksum mismatch");
 }
 
 async function assertDatabaseBoundary(client) {
@@ -127,7 +127,7 @@ async function assertDatabaseBoundary(client) {
   assert.equal(reservation[0].anon_exec, false);
   assert.equal(reservation[0].auth_exec, false);
   assert.equal(reservation[0].service_exec, true);
-  assert.equal(reservation[0].rpc_count, 21);
+  assert.equal(reservation[0].rpc_count, 22);
 
   const { rows: eventRpc } = await client.query(`
     select has_function_privilege('anon',
@@ -138,7 +138,7 @@ async function assertDatabaseBoundary(client) {
       'public.direct_entry_append_document_event(uuid,integer,text,text,integer,text)', 'EXECUTE') service_role
   `);
   assert.deepEqual(eventRpc[0], { anon: false, authenticated: false, service_role: true });
-  pass("21 RPCs; reservation/event RPC ACL, SECURITY DEFINER, safe search_path, and table RLS/ACL verified");
+  pass("22 RPCs; reservation/event RPC ACL, SECURITY DEFINER, safe search_path, and table RLS/ACL verified");
   return reservation[0].rpc_count;
 }
 
@@ -810,10 +810,10 @@ async function main() {
     console.log(JSON.stringify({
       result: "PASS",
       environment: "DEV",
-      migrationCount: 28,
+      migrationCount: 29,
       pendingMigrations: 0,
       checksumMismatches: 0,
-      rpcInventory: { before: 20, after: rpcCount },
+      rpcInventory: { beforeS04B: 20, afterS02A: 21, current: rpcCount },
       checksPassed: checks.length,
       checks,
       reportingBaseline: reportingBefore,

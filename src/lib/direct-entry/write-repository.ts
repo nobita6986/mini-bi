@@ -26,6 +26,9 @@ export type DocumentReservation = {
   document_id: string;
   version: number;
   entry_version: number;
+  event_sequence: number;
+  attempts: number;
+  attempt: number;
   upload_status: "QUEUED" | "UPLOADING" | "QUARANTINED" | "SCANNING" | "READY" | "FAILED" | "SUPERSEDED";
   scan_status: "PENDING" | "CLEAN" | "REJECTED";
   reused: boolean;
@@ -102,6 +105,28 @@ export type DirectEntryRepository = {
     mime_type: string;
     reason: string | null;
   }): Promise<OperationResult<DocumentReservation>>;
+  applyDocumentWorkerCallback(input: {
+    callback_id: string;
+    document_id: string;
+    document_version: number;
+    event_sequence: number;
+    attempt: number;
+    storage_object_ref: string;
+    checksum_sha256: string;
+    size_bytes: number;
+    mime_type: string;
+    upload_outcome: "success" | "transient_failure";
+    scan_outcome: "pending" | "clean" | "infected" | "suspicious";
+  }): Promise<OperationResult<{
+    document_id: string;
+    document_version: number;
+    entry_version: number;
+    event_sequence: number;
+    attempts: number;
+    upload_status: "QUARANTINED" | "READY" | "FAILED";
+    scan_status: "PENDING" | "CLEAN" | "REJECTED";
+    reused: boolean;
+  }>>;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -118,6 +143,10 @@ function isPositiveVersion(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function isNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function projectDocumentReservation(value: unknown): DocumentReservation | null {
   const statuses: readonly DocumentReservation["upload_status"][] = [
     "QUEUED", "UPLOADING", "QUARANTINED", "SCANNING", "READY", "FAILED", "SUPERSEDED",
@@ -130,9 +159,12 @@ function projectDocumentReservation(value: unknown): DocumentReservation | null 
     "i",
   );
   if (!isRecord(value) || !hasExactKeys(value, [
-    "document_id", "version", "entry_version", "upload_status", "scan_status", "reused", "storage_key",
+    "document_id", "version", "entry_version", "event_sequence", "attempts", "attempt",
+    "upload_status", "scan_status", "reused", "storage_key",
   ]) || typeof value.document_id !== "string" || !uuid.test(value.document_id) ||
       !isPositiveVersion(value.version) || !isPositiveVersion(value.entry_version) ||
+      !isPositiveVersion(value.event_sequence) || !isNonnegativeInteger(value.attempts) ||
+      !isPositiveVersion(value.attempt) ||
       typeof value.upload_status !== "string" ||
       !statuses.some((status) => status === value.upload_status) ||
       typeof value.scan_status !== "string" ||
@@ -143,6 +175,9 @@ function projectDocumentReservation(value: unknown): DocumentReservation | null 
     document_id: value.document_id,
     version: value.version,
     entry_version: value.entry_version,
+    event_sequence: value.event_sequence,
+    attempts: value.attempts,
+    attempt: value.attempt,
     upload_status: statuses.find((status) => status === value.upload_status)!,
     scan_status: scans.find((status) => status === value.scan_status)!,
     reused: value.reused,
@@ -439,6 +474,52 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
           : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] document reservation RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async applyDocumentWorkerCallback(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_apply_document_worker_callback", {
+          p_callback_id: input.callback_id,
+          p_document_id: input.document_id,
+          p_document_version: input.document_version,
+          p_event_sequence: input.event_sequence,
+          p_attempt: input.attempt,
+          p_storage_object_ref: input.storage_object_ref,
+          p_checksum_sha256: input.checksum_sha256,
+          p_size_bytes: input.size_bytes,
+          p_mime_type: input.mime_type,
+          p_upload_outcome: input.upload_outcome,
+          p_scan_outcome: input.scan_outcome,
+        });
+        if (error) return { ok: false, kind: classify(error, "document") };
+        if (!isRecord(data) || !hasExactKeys(data, [
+          "document_id", "document_version", "entry_version", "event_sequence",
+          "attempts", "upload_status", "scan_status", "reused",
+        ]) || typeof data.document_id !== "string" || !UUID.test(data.document_id) ||
+            !isPositiveVersion(data.document_version) || !isPositiveVersion(data.entry_version) ||
+            !isPositiveVersion(data.event_sequence) || !isPositiveVersion(data.attempts) ||
+            (data.upload_status !== "QUARANTINED" && data.upload_status !== "READY" &&
+              data.upload_status !== "FAILED") ||
+            (data.scan_status !== "PENDING" && data.scan_status !== "CLEAN" &&
+              data.scan_status !== "REJECTED") || typeof data.reused !== "boolean") {
+          return { ok: false, kind: "unavailable" };
+        }
+        return {
+          ok: true,
+          data: {
+            document_id: data.document_id,
+            document_version: data.document_version,
+            entry_version: data.entry_version,
+            event_sequence: data.event_sequence,
+            attempts: data.attempts,
+            upload_status: data.upload_status,
+            scan_status: data.scan_status,
+            reused: data.reused,
+          },
+        };
+      } catch {
+        console.error("[direct-entry] document worker callback RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

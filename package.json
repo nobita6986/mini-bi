@@ -28,8 +28,10 @@
     "test:p1.6-w04-s03cd": "node --conditions=react-server --test src/app/api/direct-entry/s03cd-routes.test.mjs src/lib/direct-entry/draft-api.test.mjs src/lib/direct-entry/live-controller.test.mjs scripts/p1.6-w04-s03cd-db.test.mjs",
     "test:p1.6-w04-s03cd-dev": "node --conditions=react-server scripts/p1.6-w04-s03cd-dev-acceptance.mjs",
     "test:p1.6-w04-s04a": "node --conditions=react-server --test src/app/api/direct-entry/payment-route.test.mjs src/lib/direct-entry/payment-contract.test.mjs src/lib/direct-entry/payment-api.test.mjs src/lib/direct-entry/payment-repository.test.mjs src/lib/direct-entry/payment-ui.test.mjs src/lib/auth/direct-entry-v2.test.mjs scripts/p1.6-w04-s04a-db.test.mjs",
-    "test:p1.6-w04-s04b-s01": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/document-upload-contract.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs",
+    "test:p1.6-w04-s04b-s01": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/document-upload-contract.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs src/lib/direct-entry/document-worker-adapter.test.mjs src/lib/direct-entry/document-worker-callback-api.test.mjs",
     "test:p1.6-w04-s04b-s02a-dev": "node --conditions=react-server scripts/p1.6-w04-s04b-s02a-dev-acceptance.mjs",
+    "test:p1.6-w04-s04b-s02b1": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/document-worker-adapter.test.mjs src/lib/direct-entry/document-worker-callback-api.test.mjs src/lib/direct-entry/document-repository.test.mjs",
+    "test:p1.6-w04-s04b-s02b1-dev": "node --conditions=react-server scripts/p1.6-w04-s04b-s02b1-dev-acceptance.mjs",
     "test:p1.6-w04-s04a-dev": "node --conditions=react-server scripts/p1.6-w04-s04a-dev-acceptance.mjs"
   },
   "dependencies": {

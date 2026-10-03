@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { uploadDirectEntryDocument } from "./document-api.ts";
+import { createDocumentWorkerAdapter } from "./document-worker-adapter.ts";
 
 const entryId = "a2000000-0000-4000-8000-000000000001";
 const documentId = "b2000000-0000-4000-8000-000000000001";
@@ -83,6 +84,9 @@ function dependencies(overrides = {}) {
             document_id: documentId,
             version: 1,
             entry_version: 2,
+            event_sequence: 3,
+            attempts: 0,
+            attempt: 1,
             upload_status: "QUEUED",
             scan_status: "PENDING",
             reused: false,
@@ -257,6 +261,9 @@ test("same-key retry uses the same document reservation and storage key", async 
             document_id: documentId,
             version: 1,
             entry_version: 2,
+            event_sequence: 3,
+            attempts: 0,
+            attempt: 1,
             upload_status: "QUEUED",
             scan_status: "PENDING",
             reused: reservations.length > 1,
@@ -303,6 +310,9 @@ test("same key with a changed file payload maps to conflict without a second upl
               document_id: documentId,
               version: 1,
               entry_version: 2,
+              event_sequence: 3,
+              attempts: 0,
+              attempt: 1,
               upload_status: "QUEUED",
               scan_status: "PENDING",
               reused: false,
@@ -357,6 +367,17 @@ test("authority denial and sanitized RPC failure do not expose raw errors or fil
           return false;
         },
       },
+    });
+
+    test("missing worker environment configuration fails before reservation and outbound", async () => {
+      const deps = dependencies({
+        storage: createDocumentWorkerAdapter({}),
+      });
+      const response = await uploadDirectEntryDocument(request(), entryId, "true", deps);
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).code, "DOCUMENT_STORAGE_UNAVAILABLE");
+      assert.equal(deps.reservations.length, 0);
+      assert.equal(deps.uploads.length, 0);
     });
     const response = await uploadDirectEntryDocument(request(), entryId, "true", deps);
     assert.equal(response.status, 503);

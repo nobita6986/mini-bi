@@ -7,6 +7,8 @@ export type DocumentUploadRequest = {
   document_id: string;
   document_type: DocumentType;
   version: number;
+  event_sequence: number;
+  attempt: number;
   storage_key: string;
   checksum_sha256: string;
   size_bytes: number;

@@ -48,7 +48,7 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 // request hợp lệ trước network (ví dụ policy 60s nhưng outbound chỉ nhận 30s).
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 
 async function resolveAll(hostname: string): Promise<readonly string[]> {
   const records = await lookup(hostname, { all: true, verbatim: true });
