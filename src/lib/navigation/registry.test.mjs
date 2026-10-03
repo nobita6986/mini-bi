@@ -13,25 +13,98 @@ import { test } from "node:test";
 const mod = await import("./registry.ts");
 const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } = mod;
 
-test("registry không rỗng và chứa tối thiểu 2 entry 'current' cho Dashboard và Pipeline Check", () => {
-  assert.ok(NAV_ENTRIES.length >= 2, "registry phải có ít nhất 2 entry");
-  const currentIds = CURRENT_NAV_ENTRIES.map((e) => e.id);
-  assert.ok(currentIds.includes("dashboard"), "registry phải có 'dashboard' ở trạng thái current");
-  assert.ok(currentIds.includes("pipeline-check"), "registry phải có 'pipeline-check' ở trạng thái current");
+test("CURRENT_NAV_ENTRIES chỉ có Dashboard + Direct Entry (App-NAV-02A)", () => {
+  assert.equal(CURRENT_NAV_ENTRIES.length, 2, "phải có đúng 2 entries current");
+  const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
+  assert.deepEqual(ids, ["dashboard", "direct-entry"], `got ids: ${ids.join(",")}`);
 });
 
-test("mỗi entry có id ổn định, label, path, icon, status, capability, visibility", () => {
+test("Dashboard label là 'Tổng quan' và path '/dashboard'", () => {
+  const dashboard = CURRENT_NAV_ENTRIES.find((e) => e.id === "dashboard");
+  assert.ok(dashboard);
+  assert.equal(dashboard?.label, "Tổng quan");
+  assert.equal(dashboard?.path, "/dashboard");
+});
+
+test("Direct Entry status current, desktop + mobile visible", () => {
+  const direct = CURRENT_NAV_ENTRIES.find((e) => e.id === "direct-entry");
+  assert.ok(direct);
+  assert.equal(direct?.status, "current");
+  assert.equal(direct?.visibility.desktop, true);
+  assert.equal(direct?.visibility.mobile, true);
+  assert.equal(direct?.path, "/direct-entry");
+});
+
+test("Pipeline Check đã bị loại khỏi CURRENT_NAV_ENTRIES và toàn bộ NAV_ENTRIES", () => {
+  const all = NAV_ENTRIES.map((e) => e.id);
+  assert.ok(!all.includes("pipeline-check"), "NAV_ENTRIES không còn 'pipeline-check'");
+  const currentIds = CURRENT_NAV_ENTRIES.map((e) => e.id);
+  assert.ok(
+    !currentIds.includes("pipeline-check"),
+    "CURRENT_NAV_ENTRIES không còn 'pipeline-check'"
+  );
+});
+
+test("entry 'planned' KHÔNG còn tồn tại trong registry sau App-NAV-02A", () => {
+  // Sau App-NAV-02A: cả Dashboard và Direct Entry đều 'current'; planned reserve đã bỏ.
+  // Khi P2/P3 cần entry mới sẽ thêm vào NAV_ENTRIES với status thực tế.
+  const planned = NAV_ENTRIES.filter((e) => e.status === "planned");
+  assert.equal(planned.length, 0, "registry không còn entry 'planned'");
+});
+
+test("Desktop viewport không có Pipeline Check", () => {
+  const desktop = entriesForViewport("desktop");
+  assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
+  assert.ok(desktop.some((e) => e.id === "dashboard"));
+  assert.ok(desktop.some((e) => e.id === "direct-entry"));
+});
+
+test("Mobile viewport không có Pipeline Check", () => {
+  const mobile = entriesForViewport("mobile");
+  assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
+  assert.ok(mobile.some((e) => e.id === "dashboard"));
+  assert.ok(mobile.some((e) => e.id === "direct-entry"));
+});
+
+test("Direct Entry capability metadata biểu diễn 'một trong entry_own | entry_team | entry_admin'", () => {
+  // Capability lưu dưới dạng string union; Direct Entry chọn token rộng nhất
+  // (entry_admin) để biểu diễn "một trong ba". App Shell chưa filter;
+  // P3 sẽ đối chiếu session thật với cả ba token.
+  const direct = CURRENT_NAV_ENTRIES.find((e) => e.id === "direct-entry");
+  assert.ok(direct);
+  assert.ok(
+    ["entry_own", "entry_team", "entry_admin"].includes(direct?.capability ?? ""),
+    `capability phải là một trong entry_own | entry_team | entry_admin, got '${direct?.capability}'`
+  );
+});
+
+test("registry: mỗi entry có id ổn định, label, path, icon, status, capability, visibility", () => {
   for (const entry of NAV_ENTRIES) {
     assert.ok(entry.id.length > 0, `entry phải có id hợp lệ (got '${entry.id}')`);
     assert.ok(entry.label.length > 0, `entry '${entry.id}' phải có label`);
     assert.ok(entry.path.startsWith("/"), `entry '${entry.id}' path phải bắt đầu bằng '/'`);
-    assert.ok(typeof entry.icon === "function" || typeof entry.icon === "object", `entry '${entry.id}' phải có icon component (function hoặc forwardRef object)`);
+    assert.ok(
+      typeof entry.icon === "function" || typeof entry.icon === "object",
+      `entry '${entry.id}' phải có icon component`
+    );
     assert.ok(
       entry.status === "current" || entry.status === "planned",
       `entry '${entry.id}' status không hợp lệ: ${entry.status}`
     );
     assert.ok(typeof entry.description === "string" && entry.description.length > 0);
     assert.ok(typeof entry.capability === "string");
+    assert.ok(
+      [
+        "any",
+        "owner",
+        "finance",
+        "hrp",
+        "entry_own",
+        "entry_team",
+        "entry_admin",
+      ].includes(entry.capability),
+      `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
+    );
     assert.ok(typeof entry.visibility.desktop === "boolean");
     assert.ok(typeof entry.visibility.mobile === "boolean");
   }
@@ -69,10 +142,22 @@ test("entriesForViewport('mobile') trả về entry có visibility.mobile = true
   }
 });
 
-test("findEntryByPath trả về entry khớp path", () => {
+test("findEntryByPath('/dashboard') trả về dashboard entry", () => {
   const entry = findEntryByPath("/dashboard");
   assert.ok(entry);
   assert.equal(entry?.id, "dashboard");
+});
+
+test("findEntryByPath('/direct-entry') trả về direct-entry entry", () => {
+  const entry = findEntryByPath("/direct-entry");
+  assert.ok(entry);
+  assert.equal(entry?.id, "direct-entry");
+});
+
+test("findEntryByPath('/pipeline-check') trả về undefined (đã retired khỏi navbar)", () => {
+  // Pipeline Check redirect ở page-level, không còn trong registry.
+  const entry = findEntryByPath("/pipeline-check");
+  assert.equal(entry, undefined);
 });
 
 test("findEntryByPath trả về undefined cho path không đăng ký (vd. landing '/')", () => {
@@ -80,11 +165,16 @@ test("findEntryByPath trả về undefined cho path không đăng ký (vd. landi
   assert.equal(entry, undefined);
 });
 
-test("entry 'planned' tồn tại trong registry nhưng KHÔNG có trong CURRENT_NAV_ENTRIES", () => {
-  const planned = NAV_ENTRIES.filter((e) => e.status === "planned");
-  assert.ok(planned.length >= 1, "registry nên có entry 'planned' để P1.6/P2/P3 mở rộng");
-  const plannedIds = new Set(planned.map((e) => e.id));
-  for (const current of CURRENT_NAV_ENTRIES) {
-    assert.ok(!plannedIds.has(current.id), `entry '${current.id}' là 'planned' không được nằm trong CURRENT_NAV_ENTRIES`);
+test("registry: KHÔNG có chuỗi 'Google Sheets' hay 'n8n' trong description của entry current", () => {
+  // Bảo đảm navbar hiện hành không còn nhắc tới Google Sheets → n8n.
+  for (const entry of CURRENT_NAV_ENTRIES) {
+    assert.ok(
+      !/Google Sheets/i.test(entry.description),
+      `entry '${entry.id}' description còn chứa 'Google Sheets'`
+    );
+    assert.ok(
+      !/\bn8n\b/i.test(entry.description),
+      `entry '${entry.id}' description còn chứa 'n8n'`
+    );
   }
 });
