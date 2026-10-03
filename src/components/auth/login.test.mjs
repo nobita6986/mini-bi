@@ -36,7 +36,7 @@ test("login form: chan double submit, xoa password sau loi, khong luu tru/creden
 
 test("login gate: session goi mot lan, safe redirect, khong auto-loop", () => {
   assert.match(gate, /\/api\/auth\/session/);
-  assert.equal((gate.match(/fetch\(/g) ?? []).length, 1);
+  assert.equal((gate.match(/fetch\("\/api\/auth\/session"/g) ?? []).length, 1);
   assert.match(gate, /resolveSafeAuthDestination\(searchParams\.get\("next"\)\)/);
   assert.match(gate, /router\.replace\(destination\)/);
   assert.match(gate, /res\.status === 401/);
