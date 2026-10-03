@@ -16,7 +16,7 @@ const TABLE_ACCESS = /\.from\s*\(/;
 const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id)\s*:/;
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 
-test("S03B1 UI never fetches the change-request detail endpoint and never renders proposals", () => {
+test("S03B1 list/proposer never fetch the change-request detail endpoint", () => {
   const changeRequestFetches = live.split("\n").filter((line) =>
     line.includes("/api/direct-entry/change-requests"));
   assert.equal(changeRequestFetches.length > 0, true);
@@ -25,9 +25,10 @@ test("S03B1 UI never fetches the change-request detail endpoint and never render
     const isWithdraw = line.includes("/withdraw");
     assert.equal(isList || isWithdraw, true, line.trim());
   }
-  // Detail endpoint se la GET /api/direct-entry/change-requests/{id} khong co /withdraw.
-  assert.doesNotMatch(live, /fetch\(\s*"\/api\/direct-entry\/change-requests\/" \+ encodeURIComponent\(requestId\)/);
+  // Detail endpoint chi duoc goi tu dialog reviewer (S03B2) khi nguoi dung mo "Xem xet";
+  // danh sach va proposer khong duoc tai truoc chi tiet.
   assert.doesNotMatch(proposer + list, /change-requests\/" \+ encodeURIComponent\(/);
+  assert.doesNotMatch(proposer + list, /projectChangeRequestDetail/);
   assert.doesNotMatch(proposer + list, /proposal\s*}/);
   assert.doesNotMatch(proposer + list, /dangerouslySetInnerHTML|JSON\.stringify\(.*proposal/);
   assert.doesNotMatch(list, /\.proposal|proposal\./);
@@ -87,8 +88,10 @@ test("withdraw action is gated by the server flag and never creates review butto
   assert.match(list, /canWithdrawChangeRequest\(request\) && \(/);
   assert.match(list, /Rút yêu cầu/);
   assert.doesNotMatch(list, /onApprove|onReject|onDecide|Duyệt yêu cầu|Từ chối yêu cầu/);
-  assert.doesNotMatch(live + list, /can_decide/);
   assert.doesNotMatch(list, /method: "POST"/);
+  // S03B2: can_decide chi mo CTA "Xem xet", khong bao gio mo nut rut.
+  assert.match(list, /request\.state === "PENDING" && request\.can_decide === true/);
+  assert.match(list, /onReview\(request\)/);
   assert.match(helper, /state === "PENDING" && item\.can_withdraw === true/);
 });
 
