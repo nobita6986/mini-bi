@@ -523,3 +523,162 @@
     flex: 1 1 auto;
   }
 }
+/* P1.6-W04-S04C-S03A - khu "Đợt nhập liệu" (submission lifecycle). */
+
+.submissionSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 16px;
+}
+
+.submissionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.submissionTitle {
+  margin: 0;
+  font-size: 18px;
+}
+
+.submissionHint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.submissionBlocked {
+  margin: 0;
+  border: 1px solid #d8a33e;
+  border-radius: 10px;
+  background: #fff8e8;
+  color: #513b14;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.lifecycleStatus:empty {
+  display: none;
+}
+
+.lifecycleStatus {
+  margin: 16px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.drawerLockNotice {
+  margin: 0 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background) 44%, var(--surface));
+  color: var(--muted);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.submissionList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.submissionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background) 40%, var(--surface));
+  padding: 12px 14px;
+}
+
+.submissionCardTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.submissionRef {
+  color: var(--muted);
+  font-family: var(--font-geist-mono, ui-monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.submissionMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin: 0;
+}
+
+.submissionMeta dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.submissionMeta dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.submissionTerminalNote {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.submissionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.submissionActions > button {
+  min-height: 38px;
+}
+
+.confirmDialog {
+  position: fixed;
+  z-index: 70;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(92vw, 460px);
+  max-height: 90dvh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 22px;
+  box-shadow: 0 18px 48px rgb(15 23 42 / 24%);
+}
+
+.confirmDialog .drawerActions {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
