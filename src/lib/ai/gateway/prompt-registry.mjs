@@ -32,6 +32,29 @@ export const PROMPT_RULES = Object.freeze([
   { rule_id: "R13_NO_ATTRIBUTION_FOR_UNKNOWN", text: "Không quy unknown/invalid cho cá nhân hoặc team." },
 ]);
 
+/**
+ * Prompt 1.1 mở rộng phân tích team và dấu hiệu bất thường nhưng không nới lỏng guard 1.0.
+ * Giữ manifest 1.0 trong registry để job đã đóng băng vẫn có thể được kiểm chứng/replay.
+ */
+export const PROMPT_RULES_V1_1 = Object.freeze([
+  ...PROMPT_RULES,
+  {
+    rule_id: "R14_TEAM_COMPARISON",
+    text:
+      "Khi team mapping và comparison khả dụng, so sánh các team bằng current/comparable/delta/share có evidence; gọi đây là khác biệt về sản lượng trong phạm vi dữ liệu, không phải xếp hạng năng lực.",
+  },
+  {
+    rule_id: "R15_ANOMALY_EVIDENCE",
+    text:
+      "Chỉ nêu dấu hiệu bất thường cần kiểm tra khi stability/volatility, delta, concentration hoặc data-quality evidence hỗ trợ; không tự đặt ngưỡng, không suy nguyên nhân và không gọi một điểm đơn lẻ là xu hướng.",
+  },
+  {
+    rule_id: "R16_MONITORING_LIMIT",
+    text:
+      "Nếu thiếu số kỳ tối thiểu, comparison không khả dụng hoặc team mapping chưa đầy đủ, phải nêu limitation và đề xuất tiếp tục theo dõi/kiểm tra dữ liệu thay vì kết luận bất thường.",
+  },
+]);
+
 export const SYSTEM_INSTRUCTION = [
   "Bạn là chuyên viên phân tích dữ liệu tuyển dụng nội bộ.",
   "Bạn CHỈ được đọc payload JSON được cấp và CHỈ được dùng evidence có trong payload.",
@@ -49,8 +72,26 @@ export const DEVELOPER_INSTRUCTION = [
   "Nếu comparison_available = false, executive_analysis phải nêu chưa đủ điều kiện so sánh.",
 ].join(" ");
 
+export const SYSTEM_INSTRUCTION_V1_1 = [
+  SYSTEM_INSTRUCTION,
+  "Ưu tiên phân tích sự khác biệt giữa các team khi payload có team mapping hợp lệ và có evidence so sánh.",
+  "Theo dõi dấu hiệu bất thường qua stability, volatility, biến động kỳ đối chiếu, mức tập trung và chất lượng dữ liệu; chỉ mô tả dấu hiệu có bằng chứng, không khẳng định nguyên nhân.",
+].join(" ");
+
+export const DEVELOPER_INSTRUCTION_V1_1 = [
+  DEVELOPER_INSTRUCTION,
+  "Khi có ít nhất hai team và team mapping available: tạo finding cấp scope hoặc team để so sánh current, comparable, delta và share bằng evidence_refs của các team liên quan; không gọi team mạnh/yếu hoặc hiệu quả/kém hiệu quả.",
+  "Khi team mapping partial: chỉ phân tích phần đã map, confidence không high và limitation phải nêu coverage; khi unavailable/ambiguous: không tạo finding team.",
+  "Chỉ dùng category risk hoặc time_pattern cho dấu hiệu bất thường khi có evidence stability/volatility, delta, concentration hoặc data_quality tương ứng. Dùng cụm 'dấu hiệu cần kiểm tra/theo dõi', không dùng 'nguyên nhân là'.",
+  "Một kỳ tăng/giảm đơn lẻ không đủ gọi là xu hướng dài hạn. Nếu sufficiency chưa đạt, comparison_available=false hoặc stability.volatility='unknown', phải nêu chưa đủ dữ liệu và không kết luận bất thường.",
+  "Recommended action chỉ được đề xuất kiểm tra dữ liệu, đối chiếu vận hành hoặc tiếp tục theo dõi; không được đề xuất quyết định nhân sự.",
+].join(" ");
+
 function buildManifest(core) {
-  const manifest = { ...core, rules: PROMPT_RULES.map((rule) => ({ ...rule })) };
+  const selectedRules = core.rules ?? PROMPT_RULES;
+  const withoutRules = { ...core };
+  delete withoutRules.rules;
+  const manifest = { ...withoutRules, rules: selectedRules.map((rule) => ({ ...rule })) };
   return Object.freeze({ ...manifest, manifest_hash: canonicalHash(manifest) });
 }
 
@@ -64,9 +105,23 @@ export const PROMPT_MANIFEST_V1 = buildManifest({
   developer_instruction: DEVELOPER_INSTRUCTION,
 });
 
-const MANIFESTS = Object.freeze({ [PROMPT_MANIFEST_V1.prompt_version]: PROMPT_MANIFEST_V1 });
+export const PROMPT_MANIFEST_V1_1 = buildManifest({
+  prompt_version: "business-analysis-prompt/1.1",
+  compatible_packet_contract: PACKET_CONTRACT,
+  compatible_output_contract: OUTPUT_CONTRACT,
+  payload_schema_version: PAYLOAD_SCHEMA_VERSION,
+  role: "internal-recruitment-data-analyst",
+  system_instruction: SYSTEM_INSTRUCTION_V1_1,
+  developer_instruction: DEVELOPER_INSTRUCTION_V1_1,
+  rules: PROMPT_RULES_V1_1,
+});
 
-export const DEFAULT_PROMPT_VERSION = PROMPT_MANIFEST_V1.prompt_version;
+const MANIFESTS = Object.freeze({
+  [PROMPT_MANIFEST_V1.prompt_version]: PROMPT_MANIFEST_V1,
+  [PROMPT_MANIFEST_V1_1.prompt_version]: PROMPT_MANIFEST_V1_1,
+});
+
+export const DEFAULT_PROMPT_VERSION = PROMPT_MANIFEST_V1_1.prompt_version;
 
 /** Lấy manifest theo version; version lạ ⇒ null (fail-closed ở caller). */
 export function getPromptManifest(promptVersion) {

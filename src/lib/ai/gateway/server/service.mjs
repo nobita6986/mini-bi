@@ -13,10 +13,13 @@ import {
   readProviderConfig,
 } from "./config.mjs";
 import { createSupabaseProviderConfigStore } from "@/lib/ai-config/server/store.mjs";
+import { urlPolicyFromEnv } from "@/lib/ai-config/server/settings.mjs";
 
+import { activeProviderConfigForGateway } from "./active-config-bridge.mjs";
 import { createSupabaseAuditSink, createSupabaseJobRepository } from "./repository.mjs";
+import { createLiveAdapterFactory } from "./live-wiring.mjs";
 import { EMPTY_MEMBERSHIP_CATALOG, loadFrozenPacket } from "./packet-source.mjs";
-import { SCRIPTED_ADAPTER_VERSION, createScriptedAdapter } from "../provider.mjs";
+import { adapterVersionForProvider, createScriptedAdapter } from "../provider.mjs";
 import { createDefaultTimeoutSignal } from "../run-one-job.mjs";
 import { getPromptManifest } from "../prompt-registry.mjs";
 import { createAiReportService } from "../service-core.mjs";
@@ -31,6 +34,11 @@ export function createServerAiReportGateway() {
 
   const provider = readProviderConfig();
   if (!provider.ok) return provider;
+
+  const adapterVersion = adapterVersionForProvider(provider.provider_key);
+  if (!adapterVersion) {
+    return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider không được hỗ trợ" };
+  }
 
   const policy = readGatewayPolicy();
   if (!policy.ok) return policy;
@@ -48,16 +56,22 @@ export function createServerAiReportGateway() {
    */
   const providerConfigStore = createSupabaseProviderConfigStore();
 
+  /**
+   * W04B-S02A/I02 — adapterFactory: live ⇒ createLiveAdapter(safeOutboundRequest + url_policy đã validate).
+   * Fail-closed: resolveProviderConfig chỉ chọn live khi AI_PROVIDER_KEY=live + allowlist hợp lệ; adapter chỉ
+   * resolve khi outbound + url_policy + profile hợp lệ; frozen config active+verified + model/version khớp
+   * được kiểm ở run-one-job. Thiếu bất kỳ điều kiện nào ⇒ fail closed trước outbound.
+   */
+  const adapterFactory = createLiveAdapterFactory({
+    url_policy: urlPolicyFromEnv(process.env),
+    max_response_bytes: policy.config.max_response_bytes,
+    max_request_bytes: policy.config.max_payload_bytes,
+  });
+
   const service = createAiReportService({
     queue: createSupabaseJobRepository(),
     providerConfig: {
-      active: async () => {
-        const active = await providerConfigStore.readActiveProjection();
-        if (!active) {
-          return { ok: false, code: "AI_CONFIG_REQUIRED", message: "chưa có cấu hình provider active + verified" };
-        }
-        return { ok: true, config: active };
-      },
+      active: async () => activeProviderConfigForGateway(await providerConfigStore.readActiveProjection()),
       material: (configId, version) => providerConfigStore.material(configId, version),
     },
     audit: createSupabaseAuditSink(),
@@ -72,6 +86,8 @@ export function createServerAiReportGateway() {
     },
     // A (R1): gate provider — production/preview không bao giờ dùng scripted; fail trước packet/DB/provider.
     providerGate: { ok: true, provider_key: provider.provider_key },
+    // W04B-S02A: resolve adapter qua composition root (live ⇒ safe-outbound; scripted ⇒ deterministic).
+    adapterFactory,
     timeout: { create: createDefaultTimeoutSignal },
     clock: { nowMs: () => Date.now() },
   });
@@ -83,7 +99,7 @@ export function createServerAiReportGateway() {
     access_scope_hash: accessScopeHashFor(PILOT_ACTOR_REF),
     provider_key: provider.provider_key,
     model_key: provider.model_key,
-    adapter_version: SCRIPTED_ADAPTER_VERSION,
+    adapter_version: adapterVersion,
     prompt_version: manifest.prompt_version,
   };
 }

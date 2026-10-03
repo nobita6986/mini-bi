@@ -13,6 +13,7 @@ import { isAiReportsEnabled } from "@/lib/ai/gateway/server/config.mjs";
 import { errorResponse, jsonResponse } from "@/lib/ai/gateway/server/http.mjs";
 import { createServerAiReviewService } from "@/lib/ai/gateway/server/review.mjs";
 import { createServerAiReportGateway } from "@/lib/ai/gateway/server/service.mjs";
+import { loadReportExportData } from "@/lib/ai-report/report-export-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +54,10 @@ export async function GET(_request: Request, context: { params: Promise<{ jobId:
     return jsonResponse({ ...base, revision: null });
   }
 
+  // Projection biểu đồ được dựng từ packet đóng băng của chính job và actor.
+  // Lỗi projection không làm mất nội dung báo cáo; client chỉ khóa nút xuất.
+  const exportData = await loadReportExportData(jobId, gateway.actor_ref);
+
   return jsonResponse({
     ...base,
     revision: {
@@ -62,6 +67,7 @@ export async function GET(_request: Request, context: { params: Promise<{ jobId:
       contract_version: revision.contract_version,
       created_at: revision.created_at,
       analysis: revision.analysis,
+      export_data: exportData,
     },
   });
 }

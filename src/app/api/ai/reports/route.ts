@@ -55,7 +55,9 @@ export async function POST(request: Request) {
   if (!result.ok) return errorResponse(result.code, result.message);
 
   /**
-   * Fast-path tuỳ chọn: đẩy MỘT bước worker sau khi response xong.
+   * Fast-path tuỳ chọn: xử lý tuần tự tối đa hai job sau khi response xong.
+   * Giới hạn nhỏ này cho phép queue tự dọn một job cũ bị lỗi cấu hình trước job vừa tạo,
+   * trong khi provider concurrency vẫn do DB/policy giữ ở mức một.
    * `after()` KHÔNG phải durability guarantee — job vẫn nằm trong DB queue và scheduler/ops
    * gọi /api/ai/worker/run để xử lý tiếp. Mặc định TẮT.
    */
@@ -63,7 +65,7 @@ export async function POST(request: Request) {
     after(async () => {
       const inline = createServerAiReportGateway();
       if (!inline.ok) return;
-      await inline.service.runWorker({ worker_ref: "inline-after", limit: 1 });
+      await inline.service.runWorker({ worker_ref: "inline-after", limit: 2 });
     });
   }
 

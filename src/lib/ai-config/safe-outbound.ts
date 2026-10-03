@@ -44,7 +44,9 @@ export type SafeOutboundOptions = {
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-const MAX_TIMEOUT_MS = 30_000;
+// Phải khớp trần provider_timeout_ms của gateway policy; lệch trần sẽ chặn
+// request hợp lệ trước network (ví dụ policy 60s nhưng outbound chỉ nhận 30s).
+const MAX_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 

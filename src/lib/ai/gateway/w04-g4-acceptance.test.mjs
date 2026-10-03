@@ -325,6 +325,7 @@ test("G4-D: source degraded ⇒ bắt buộc limitation dữ liệu; unknown/inv
   const withoutLimitation = JSON.parse(JSON.stringify(guard.value));
   withoutLimitation.overall_limitations = ["Báo cáo chỉ dùng dữ liệu reporting hiện có."];
   for (const finding of withoutLimitation.findings) finding.limitations = [];
+  withoutLimitation.findings = withoutLimitation.findings.filter((finding) => finding.category !== "data_quality");
   const blocked = validateGeneratedAnalysis(withoutLimitation, degraded);
   assert.equal(blocked.ok, false);
   assert.equal(blocked.code, "DATA_QUALITY_LIMITATION_REQUIRED");

@@ -8,7 +8,7 @@
 import { buildProviderPayload, utf8ByteLength } from "./payload.mjs";
 import { validateGeneratedAnalysis } from "./output-guard.mjs";
 import { evaluateAdmissionPolicy, evaluateAttemptPolicy } from "./policy.mjs";
-import { resolveProviderAdapter } from "./provider.mjs";
+import { buildScriptedAnalysis, resolveProviderAdapter, LIVE_PROVIDER_PROFILE } from "./provider.mjs";
 import { decideAfterFailure } from "./job-state.mjs";
 import { projectClaim, projectComplete, projectEnqueue } from "./rpc-projection.mjs";
 import { LEASE_SECONDS } from "./limits.mjs";
@@ -32,6 +32,22 @@ function parseStructured(result) {
   } catch {
     return { ok: false, code: "AI_PROVIDER_MALFORMED", message: "output không parse được JSON" };
   }
+}
+
+const PROVIDER_FALLBACK_LIMITATION =
+  "Nội dung do nhà cung cấp AI trả về chưa đạt chuẩn kiểm tra; bản nháp này dùng phân tích deterministic từ dữ liệu đã đối chiếu.";
+
+/**
+ * Provider chỉ là nguồn narrative. Contract cuối do server sở hữu: nếu narrative sai JSON/schema/
+ * grounding, dựng fallback deterministic từ chính payload đã whitelist thay vì phụ thuộc một model cụ thể.
+ */
+function buildValidatedProviderFallback(payload, packet) {
+  const fallback = buildScriptedAnalysis(payload);
+  fallback.overall_limitations = [
+    ...(Array.isArray(fallback.overall_limitations) ? fallback.overall_limitations : []),
+    PROVIDER_FALLBACK_LIMITATION,
+  ].slice(0, 10);
+  return validateGeneratedAnalysis(fallback, packet);
 }
 
 /**
@@ -302,7 +318,8 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
   if (
     materialValue.config_id !== frozenConfigId ||
     materialValue.version !== frozenConfigVersion ||
-    materialValue.provider_profile !== job.provider_key ||
+    // provider_profile là profile auth ĐÓNG (openai-compatible) cho live, khác namespace với provider_key.
+    materialValue.provider_profile !== (job.provider_key === "live" ? LIVE_PROVIDER_PROFILE : job.provider_key) ||
     materialValue.model !== job.model_key ||
     materialValue.status !== "active"
   ) {
@@ -321,30 +338,37 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
     return report("AI_INTERNAL", "không chuyển được job sang ai_generating (queue transition thất bại)");
   }
 
-  const timeout = deps.timeout.create(deps.policy.config.provider_timeout_ms);
-  let providerResult;
-  try {
-    providerResult = await resolved.adapter.generateStructured({
-      payload: built.payload,
-      promptManifest: deps.manifest,
-      modelConfig: {
-        provider_key: deps.provider.provider_key,
-        model_key: deps.provider.model_key,
-        adapter_version: resolved.adapter.adapter_version,
-        timeout_ms: deps.policy.config.provider_timeout_ms,
-        // Credential đã giải mã trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
-        provider_config: { config_id: materialValue.config_id, version: materialValue.version },
-        credential_secret: materialValue.secret,
-      },
-      timeoutSignal: timeout.signal,
-    });
-  } finally {
-    timeout.cancel();
-  }
+  const generate = async () => {
+    const timeout = deps.timeout.create(deps.policy.config.provider_timeout_ms);
+    try {
+      return await resolved.adapter.generateStructured({
+        payload: built.payload,
+        promptManifest: deps.manifest,
+        modelConfig: {
+          provider_key: deps.provider.provider_key,
+          model_key: deps.provider.model_key,
+          adapter_version: resolved.adapter.adapter_version,
+          timeout_ms: deps.policy.config.provider_timeout_ms,
+          // Credential + API URL đã giải mã/đọc trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
+          provider_config: {
+            config_id: materialValue.config_id,
+            version: materialValue.version,
+            api_base_url: materialValue.api_base_url,
+            sanitized_host: materialValue.sanitized_host,
+            provider_profile: materialValue.provider_profile,
+          },
+          credential_secret: materialValue.secret,
+        },
+        timeoutSignal: timeout.signal,
+      });
+    } finally {
+      timeout.cancel();
+    }
+  };
 
-  const usageBase = {
+  const usageFor = (providerResult, repairIndex) => ({
     job_id: job.job_id,
-    logical_call_id: job.job_id + ":" + claimed.attempt,
+    logical_call_id: job.job_id + ":" + claimed.attempt + (repairIndex === 0 ? "" : ":repair" + repairIndex),
     // Usage ghi ĐÚNG provider/model đã đóng băng trong job (không lấy cấu hình runtime).
     provider_key: job.provider_key,
     model_key: job.model_key,
@@ -354,25 +378,39 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
     output_tokens: providerResult.ok ? providerResult.usage.output_tokens : null,
     call_outcome: providerResult.ok ? "ok" : providerResult.error_code,
     retry_count: claimed.attempt - 1,
-  };
+  });
+
+  // Một provider call duy nhất. Khác biệt format/schema/grounding được hấp thụ bởi fallback
+  // deterministic chung ở server; retry chỉ dành cho lỗi transport/provider thật sự.
+  const providerResult = await generate();
+  const currentUsage = usageFor(providerResult, 0);
 
   if (!providerResult.ok) {
-    // Usage vẫn được ghi (logical) nhưng KHÔNG tạo revision.
-    await deps.queue.recordUsage({ ...usageBase, cache_hit: false });
-    return report(providerResult.error_code, "provider trả lỗi " + providerResult.error_code);
+    await deps.queue.recordUsage({ ...currentUsage, cache_hit: false });
+    const safeDetail = typeof providerResult.detail_ref === "string" && /^live:[a-z0-9_-]+$/i.test(providerResult.detail_ref)
+      ? " (" + providerResult.detail_ref + ")"
+      : "";
+    return report(providerResult.error_code, "provider trả lỗi " + providerResult.error_code + safeDetail);
   }
 
   const parsed = parseStructured(providerResult);
-  if (!parsed.ok) {
-    await deps.queue.recordUsage({ ...usageBase, call_outcome: parsed.code });
-    return report(parsed.code, parsed.message);
-  }
-
-  // 4. Validate + grounding (+ enforcement W04).
-  const validated = validateGeneratedAnalysis(parsed.value, job.packet);
+  let validated = parsed.ok ? validateGeneratedAnalysis(parsed.value, job.packet) : parsed;
+  let usageBase = currentUsage;
   if (!validated.ok) {
-    await deps.queue.recordUsage({ ...usageBase, call_outcome: "validation_failed" });
-    return report("AI_VALIDATION_FAILED", validated.code + " @ " + (validated.path ?? "analysis"));
+    if (resolved.adapter.output_fallback !== "deterministic") {
+      await deps.queue.recordUsage({ ...currentUsage, call_outcome: parsed.ok ? "validation_failed" : parsed.code, cache_hit: false });
+      return report(parsed.ok ? "AI_VALIDATION_FAILED" : parsed.code, parsed.ok ? validated.code + " @ " + (validated.path ?? "analysis") : parsed.message);
+    }
+    const fallback = buildValidatedProviderFallback(built.payload, job.packet);
+    if (!fallback.ok) {
+      await deps.queue.recordUsage({ ...currentUsage, call_outcome: "fallback_validation_failed", cache_hit: false });
+      return report("AI_VALIDATION_FAILED", fallback.code + " @ " + (fallback.path ?? "analysis"));
+    }
+    validated = fallback;
+    usageBase = {
+      ...currentUsage,
+      call_outcome: parsed.ok ? "ok_fallback_validation" : "ok_fallback_format",
+    };
   }
 
   // 5. Complete chỉ bằng lease owner/token hiện hành (fencing).

@@ -1,18 +1,32 @@
 /**
- * P1.5-W04 — Provider-neutral adapter + scripted provider (deterministic) + live stub (TẮT).
+ * P1.5-W04/W04B — Provider-neutral adapter + scripted provider (deterministic) + live adapter (OpenAI-compatible).
  *
- * - KHÔNG hard-code API key/URL/model; KHÔNG đọc NEXT_PUBLIC_*; KHÔNG outbound trong W04.
- * - Live provider/transport vẫn DISABLED chờ G4A (T0 duyệt provider/model/allowlist/ngân sách).
+ * - KHÔNG hard-code API key/URL/model; KHÔNG đọc NEXT_PUBLIC_*.
+ * - Live adapter (live-adapter.mjs) gọi provider QUA outbound boundary được inject (production = safe-outbound);
+ *   thiếu outbound wiring ⇒ fail-closed AI_PROVIDER_DISABLED. W04B-S01 chỉ local + mock transport.
  * - Không tools/function-calling/browsing/SQL/agent loop: chỉ structured JSON output.
  */
 
 import { canonicalJson, canonicalHash } from "../engine-shared.mjs";
 import { MAX_RESPONSE_BYTES } from "./limits.mjs";
+import {
+  LIVE_ADAPTER_VERSION,
+  LIVE_PROVIDER_PROFILE,
+  createLiveAdapter,
+} from "./live-adapter.mjs";
 
 export const SCRIPTED_ADAPTER_VERSION = "scripted-adapter/1.0";
-export const LIVE_ADAPTER_VERSION = "live-adapter/0.1";
+export { createLiveAdapter };
+export { LIVE_ADAPTER_VERSION, LIVE_PROVIDER_PROFILE };
 
 export const PROVIDER_KEYS = Object.freeze(["scripted", "live"]);
+
+/** Adapter version authority used when freezing a generation job. */
+export function adapterVersionForProvider(providerKey) {
+  if (providerKey === "live") return LIVE_ADAPTER_VERSION;
+  if (providerKey === "scripted") return SCRIPTED_ADAPTER_VERSION;
+  return null;
+}
 
 /** ID scenario của scripted provider (dùng cho acceptance G4). */
 export const SCRIPTED_SCENARIOS = Object.freeze([
@@ -98,7 +112,19 @@ function confidenceFor(payload, { teamSubject = false } = {}) {
 
 export const COMPARISON_LIMITATION_TEXT =
   "Chưa đủ dữ liệu để so sánh với kỳ trước" +
-  " (equal window của kỳ so sánh không khả dụng hoặc cửa sổ so sánh chưa được phủ đầy đủ).";
+  " (equal window của kỳ so sánh không khả dụng hoặc cửa sổ so sánh chưa được phủ đầy đủ)";
+
+function driverDimension(payload, dimension) {
+  return (payload.drivers ?? []).find((entry) => entry.dimension === dimension) ?? null;
+}
+
+function driverEntry(payload, dimension, subjectRef) {
+  return driverDimension(payload, dimension)?.entries?.find((entry) => entry.subject_ref === subjectRef) ?? null;
+}
+
+function percent(value) {
+  return Math.round(value * 100);
+}
 
 /**
  * Output "analyst tốt" deterministic dựng TỪ payload (chỉ dùng số/evidence có thật, đúng subject).
@@ -107,6 +133,10 @@ export const COMPARISON_LIMITATION_TEXT =
 export function buildScriptedAnalysis(payload) {
   const findings = [];
   const execRefs = [];
+  const addFinding = (finding) => {
+    if (findings.length >= 7) return;
+    findings.push({ finding_id: "f_" + String(findings.length + 1).padStart(2, "0"), ...finding });
+  };
   const comparisonAvailable = payload.period.comparison_available === true;
   // Tìm evidence theo VALUE/UNIT trước (grounding chắc chắn), rồi mới theo tên metric
   // (golden G1 dùng `recruited_total_previous`, engine W03 dùng `recruited_total_comparable`).
@@ -117,9 +147,9 @@ export function buildScriptedAnalysis(payload) {
     evidenceByMetric(payload, "recruited_total_comparable") ??
     evidenceByMetric(payload, "recruited_total_previous");
   const delta = evidenceForValue(payload, payload.totals.delta, "people") ?? evidenceByMetric(payload, "recruited_delta");
-  const degraded =
-    (payload.data_quality.unknown_count ?? 0) > 0 ||
-    (payload.data_quality.invalid_count ?? 0) > 0 ||
+  const classificationDegraded =
+    (payload.data_quality.unknown_count ?? 0) > 0 || (payload.data_quality.invalid_count ?? 0) > 0;
+  const sourceCoverageDegraded =
     (payload.data_quality.coverage_ratio !== null && payload.data_quality.coverage_ratio < 1) ||
     (payload.data_quality.sources ?? []).some((source) => source.status !== "covered" || source.quality !== "ok");
 
@@ -141,8 +171,7 @@ export function buildScriptedAnalysis(payload) {
       "Kỳ này ghi nhận " + total.value + " người so với " + comparable.value + " người ở kỳ so sánh, " +
       (delta.value >= 0 ? "tăng " : "giảm ") + Math.abs(delta.value) + " người.";
     execRefs.push(total.evidence_id, comparable.evidence_id, delta.evidence_id);
-    findings.push({
-      finding_id: "f_01",
+    addFinding({
       category: "trend",
       subject_ref: "scope",
       headline: "Tổng thay đổi so với kỳ so sánh",
@@ -163,8 +192,7 @@ export function buildScriptedAnalysis(payload) {
     const deltaEvidence = driver.deltaEvidence ?? evidenceFor(payload, "driver." + driver.dimension + ".delta", driver.entry.subject_ref) ?? delta;
     const shareEvidence = evidenceFor(payload, "driver." + driver.dimension + ".delta_contribution_share", driver.entry.subject_ref);
     if (deltaEvidence) {
-      findings.push({
-        finding_id: "f_02",
+      addFinding({
         category: "driver",
         subject_ref: driver.entry.subject_ref,
         headline: "Một subject đóng góp phần lớn thay đổi",
@@ -184,16 +212,47 @@ export function buildScriptedAnalysis(payload) {
     }
   }
 
-  if (!comparisonAvailable) {
-    const shareEvidence = evidenceByMetric(payload, "concentration.project.top1_share");
-    if (shareEvidence && shareEvidence.value !== null) {
-      findings.push({
-        finding_id: "f_02",
-        category: "concentration",
+  const projectConcentration = payload.concentration?.project;
+  const top1ShareEvidence = evidenceByMetric(payload, "concentration.project.top1_share");
+  const top3ShareEvidence = evidenceByMetric(payload, "concentration.project.top3_share");
+  const topProjectEvidence = projectConcentration?.top1_ref
+    ? evidenceFor(payload, "driver.project.current", projectConcentration.top1_ref)
+    : null;
+  if (top1ShareEvidence && top3ShareEvidence) {
+    const concentrationRefs = [top1ShareEvidence.evidence_id, top3ShareEvidence.evidence_id];
+    if (topProjectEvidence) concentrationRefs.unshift(topProjectEvidence.evidence_id);
+    addFinding({
+      category: "concentration",
+      subject_ref: "scope",
+      headline: "Kết quả tập trung đáng kể ở nhóm dự án dẫn đầu",
+      analysis:
+        (topProjectEvidence ? "Dự án dẫn đầu ghi nhận " + topProjectEvidence.value + " người, " : "Dự án dẫn đầu ") +
+        "chiếm " + percent(top1ShareEvidence.value) + "%; ba dự án dẫn đầu chiếm " +
+        percent(top3ShareEvidence.value) + "% trong kỳ hiện tại.",
+      evidence_refs: concentrationRefs,
+      confidence: confidenceFor(payload),
+      limitations: [],
+      recommended_action: "Theo dõi năng lực đáp ứng của nhóm dự án dẫn đầu và chuẩn bị phương án phân bổ nguồn lực dự phòng.",
+    });
+  }
+
+  if (payload.provider_composition_allowed === true) {
+    const hrpEntry = driverEntry(payload, "provider", "provider_hrp");
+    const vendorEntry = driverEntry(payload, "provider", "provider_vendor");
+    const hrpCurrent = hrpEntry ? evidenceFor(payload, "driver.provider.current", hrpEntry.subject_ref) : null;
+    const vendorCurrent = vendorEntry ? evidenceFor(payload, "driver.provider.current", vendorEntry.subject_ref) : null;
+    const hrpShare = hrpEntry ? evidenceFor(payload, "driver.provider.share_of_current", hrpEntry.subject_ref) : null;
+    const vendorShare = vendorEntry ? evidenceFor(payload, "driver.provider.share_of_current", vendorEntry.subject_ref) : null;
+    if (hrpCurrent && vendorCurrent && hrpShare && vendorShare) {
+      const scopeQualifier = payload.filter_context.conditional_scope === true ? " trong phạm vi đang lọc" : "";
+      addFinding({
+        category: "provider_mix",
         subject_ref: "scope",
-        headline: "Mức tập trung hiện tại của dự án lớn nhất",
-        analysis: "Dự án lớn nhất chiếm " + Math.round(shareEvidence.value * 100) + "% trong kỳ hiện tại.",
-        evidence_refs: [total.evidence_id, shareEvidence.evidence_id],
+        headline: "Nguồn tuyển" + scopeQualifier + " đang cân bằng giữa HRP và Vendor",
+        analysis:
+          "HRP ghi nhận " + hrpCurrent.value + " người, Vendor ghi nhận " + vendorCurrent.value +
+          " người; tỷ trọng tương ứng là " + percent(hrpShare.value) + "% và " + percent(vendorShare.value) + "%.",
+        evidence_refs: [hrpCurrent.evidence_id, vendorCurrent.evidence_id, hrpShare.evidence_id, vendorShare.evidence_id],
         confidence: confidenceFor(payload),
         limitations: [],
         recommended_action: null,
@@ -202,35 +261,116 @@ export function buildScriptedAnalysis(payload) {
   }
 
   if (payload.provider_composition_allowed === true && Array.isArray(payload.project_provider_mix) && payload.project_provider_mix.length > 0) {
-    for (const row of payload.project_provider_mix) {
-      const totalEvidence = evidenceFor(payload, "project_mix.total", row.subject_ref);
-      const shareEvidence = evidenceFor(payload, "project_mix.vendor_share", row.subject_ref);
-      if (!totalEvidence || !shareEvidence) continue;
-      findings.push({
-        finding_id: "f_03",
+    const groundedMix = payload.project_provider_mix
+      .map((row) => ({
+        row,
+        totalEvidence: evidenceFor(payload, "project_mix.total", row.subject_ref),
+        vendorEvidence: evidenceFor(payload, "project_mix.vendor_count", row.subject_ref),
+        shareEvidence: evidenceFor(payload, "project_mix.vendor_share", row.subject_ref),
+      }))
+      .filter((item) => item.totalEvidence && item.vendorEvidence && item.shareEvidence);
+    groundedMix.sort(
+      (a, b) =>
+        b.row.vendor_count - a.row.vendor_count ||
+        (b.row.vendor_share ?? -1) - (a.row.vendor_share ?? -1) ||
+        b.row.project_total - a.row.project_total
+    );
+
+    const materialDependency = groundedMix[0];
+    if (materialDependency) {
+      addFinding({
         category: "provider_mix",
-        subject_ref: row.subject_ref,
-        headline: "Cơ cấu HRP/Vendor của dự án lớn nhất",
-        analysis: "Dự án này có " + totalEvidence.value + " người và tỷ lệ Vendor là " + Math.round(shareEvidence.value * 100) + "%.",
-        evidence_refs: [totalEvidence.evidence_id, shareEvidence.evidence_id],
+        subject_ref: materialDependency.row.subject_ref,
+        headline: "Một dự án có mức phụ thuộc Vendor đáng chú ý",
+        analysis:
+          "Dự án này có " + materialDependency.totalEvidence.value + " người, trong đó " +
+          materialDependency.vendorEvidence.value + " người đến từ Vendor; tỷ lệ Vendor là " +
+          percent(materialDependency.shareEvidence.value) + "%.",
+        evidence_refs: [
+          materialDependency.totalEvidence.evidence_id,
+          materialDependency.vendorEvidence.evidence_id,
+          materialDependency.shareEvidence.evidence_id,
+        ],
         confidence: confidenceFor(payload),
         limitations: [],
-        recommended_action: null,
+        recommended_action: "Rà soát phương án bổ sung nguồn HRP hoặc nguồn dự phòng cho dự án này.",
       });
-      break;
+
+      if (!comparisonAvailable) {
+        const fullDependency = groundedMix.find(
+          (item) => item.row.subject_ref !== materialDependency.row.subject_ref && item.row.vendor_share === 1
+        );
+        if (fullDependency) {
+          addFinding({
+            category: "provider_mix",
+            subject_ref: fullDependency.row.subject_ref,
+            headline: "Một dự án hiện phụ thuộc hoàn toàn vào Vendor",
+            analysis:
+              "Dự án này có " + fullDependency.totalEvidence.value + " người và toàn bộ " +
+              fullDependency.vendorEvidence.value + " người đều đến từ Vendor, tương ứng " +
+              percent(fullDependency.shareEvidence.value) + "%.",
+            evidence_refs: [
+              fullDependency.totalEvidence.evidence_id,
+              fullDependency.vendorEvidence.evidence_id,
+              fullDependency.shareEvidence.evidence_id,
+            ],
+            confidence: "low",
+            limitations: ["Quy mô hiện tại của dự án này còn giới hạn nên cần tiếp tục theo dõi."],
+            recommended_action: null,
+          });
+        }
+      }
     }
+  }
+
+  const officialEntry = driverEntry(payload, "employment", "employment_official");
+  const seasonalEntry = driverEntry(payload, "employment", "employment_seasonal");
+  const officialCurrent = officialEntry ? evidenceFor(payload, "driver.employment.current", officialEntry.subject_ref) : null;
+  const seasonalCurrent = seasonalEntry ? evidenceFor(payload, "driver.employment.current", seasonalEntry.subject_ref) : null;
+  const officialShare = officialEntry ? evidenceFor(payload, "driver.employment.share_of_current", officialEntry.subject_ref) : null;
+  const seasonalShare = seasonalEntry ? evidenceFor(payload, "driver.employment.share_of_current", seasonalEntry.subject_ref) : null;
+  if (officialCurrent && seasonalCurrent && officialShare && seasonalShare) {
+    addFinding({
+      category: "concentration",
+      subject_ref: "scope",
+      headline: "Cơ cấu loại hình lao động đang cân bằng",
+      analysis:
+        "Lao động chính thức ghi nhận " + officialCurrent.value + " người và lao động thời vụ ghi nhận " +
+        seasonalCurrent.value + " người; mỗi nhóm chiếm " + percent(officialShare.value) + "% và " +
+        percent(seasonalShare.value) + "%.",
+      evidence_refs: [officialCurrent.evidence_id, seasonalCurrent.evidence_id, officialShare.evidence_id, seasonalShare.evidence_id],
+      confidence: confidenceFor(payload),
+      limitations: [],
+      recommended_action: null,
+    });
+  }
+
+  const coverageEvidence = evidenceByMetric(payload, "data_quality.source_coverage");
+  if (sourceCoverageDegraded && coverageEvidence) {
+    addFinding({
+      category: "data_quality",
+      subject_ref: "scope",
+      headline: "Độ phủ nguồn khai báo cần được rà soát",
+      analysis:
+        "Tỷ lệ nguồn ở trạng thái covered hiện là " + percent(coverageEvidence.value) +
+        "%; cần xác nhận lại nguồn nào đang active, inactive hoặc legacy trước khi dùng chỉ số này để đánh giá hiệu quả.",
+      evidence_refs: [coverageEvidence.evidence_id],
+      confidence: "low",
+      limitations: ["Đây là tỷ lệ trên danh mục nguồn khai báo, không phải tỷ lệ thiếu bản ghi tuyển dụng."],
+      recommended_action: "Đối soát danh mục nguồn và phân loại active, inactive, legacy để cải thiện độ tin cậy của báo cáo.",
+    });
   }
 
   const limitations = ["Báo cáo chỉ dùng dữ liệu reporting hiện có, không có target hoặc số ngày làm việc."];
   if (!comparisonAvailable) limitations.push(COMPARISON_LIMITATION_TEXT + ".");
-  if (degraded) {
-    const unknownEvidence = evidenceByMetric(payload, "data_quality.unknown_count");
-    limitations.push(
-      "Chất lượng dữ liệu chưa đầy đủ" +
-        (unknownEvidence ? " (có " + unknownEvidence.value + " người chưa xác định phân loại)" : "") +
-        " nên kết luận chỉ mang tính tham khảo."
-    );
-    if (unknownEvidence) execRefs.push(unknownEvidence.evidence_id);
+  if (classificationDegraded) {
+    limitations.push("Chất lượng dữ liệu còn bản ghi chưa xác định hoặc không hợp lệ nên kết luận chỉ mang tính tham khảo.");
+  }
+  if (sourceCoverageDegraded) {
+    limitations.push("Chất lượng dữ liệu theo nguồn chưa đầy đủ; cần rà soát danh mục nguồn active, inactive và legacy.");
+  }
+  if (payload.team_mapping?.availability !== "available") {
+    limitations.push("Chưa có mapping team đầy đủ nên báo cáo chưa thể so sánh kết quả giữa các team.");
   }
   if (payload.filter_context.conditional_scope === true) {
     limitations.push("Số liệu được tính trong phạm vi đang lọc, không phải toàn bộ dữ liệu.");
@@ -345,45 +485,20 @@ export function createScriptedAdapter(options = {}) {
 }
 
 /**
- * Transport interface cho provider THẬT (W04A). W04 KHÔNG thực hiện outbound:
- * mọi lời gọi trả AI_PROVIDER_DISABLED cho tới khi G4A duyệt provider/model/allowlist/ngân sách.
+ * Chọn adapter theo provider_key.
+ * - scripted: deterministic (test/development; bị chặn ở production bởi provider-config).
+ * - live: adapter gọi provider QUA outbound boundary đã inject (production = safe-outbound).
+ *   Thiếu outbound wiring ⇒ fail-closed AI_PROVIDER_DISABLED (không bao giờ raw fetch).
  */
-export function createLiveTransport(config) {
-  const allowedHosts = Array.isArray(config?.allowed_hosts) ? config.allowed_hosts : [];
-  return {
-    provider_key: "live",
-    adapter_version: LIVE_ADAPTER_VERSION,
-    /** Pure: chỉ cho phép host trong allowlist đã duyệt (testable, không gọi mạng). */
-    isUrlAllowed(url) {
-      if (typeof url !== "string") return false;
-      try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "https:") return false;
-        return allowedHosts.includes(parsed.host);
-      } catch {
-        return false;
-      }
-    },
-    async generateStructured() {
-      return {
-        ok: false,
-        error_code: "AI_PROVIDER_DISABLED",
-        retryable: false,
-        latency_ms: 0,
-        provider_version: LIVE_ADAPTER_VERSION,
-        detail_ref: "live-provider-disabled-pending-g4a",
-      };
-    },
-  };
-}
-
-/** Chọn adapter theo provider_key. Live ⇒ disabled (fail-closed). */
 export function resolveProviderAdapter({ provider_key, config }) {
   if (provider_key === "scripted") {
     return { ok: true, adapter: createScriptedAdapter({ scenario: config?.scenario ?? "valid" }) };
   }
   if (provider_key === "live") {
-    return { ok: false, code: "AI_PROVIDER_DISABLED", message: "Live provider chưa được bật (chờ G4A)." };
+    if (typeof config?.outbound !== "function") {
+      return { ok: false, code: "AI_PROVIDER_DISABLED", message: "live provider cần outbound wiring (server-only)" };
+    }
+    return { ok: true, adapter: createLiveAdapter(config) };
   }
   return { ok: false, code: "AI_CONFIG_REQUIRED", message: "provider_key không được hỗ trợ: " + String(provider_key) };
 }

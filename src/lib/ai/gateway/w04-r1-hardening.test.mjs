@@ -63,7 +63,13 @@ test("R1-A: production/preview KHÔNG bao giờ dùng scripted; thiếu live con
   const prod = { NODE_ENV: "production", AI_REPORTS_ENABLED: "true" };
   assert.equal(readProviderConfig(prod).code, "AI_CONFIG_REQUIRED");
   assert.equal(readProviderConfig({ ...prod, AI_PROVIDER_KEY: "scripted" }).code, "AI_PROVIDER_DISABLED");
-  assert.equal(readProviderConfig({ ...prod, AI_PROVIDER_KEY: "live" }).code, "AI_PROVIDER_DISABLED");
+  // I02: live CHỈ được chọn khi có allowlist hợp lệ + không rỗng; thiếu/sai ⇒ AI_CONFIG_REQUIRED (không mở mặc định).
+  assert.equal(readProviderConfig({ ...prod, AI_PROVIDER_KEY: "live" }).code, "AI_CONFIG_REQUIRED");
+  assert.equal(readProviderConfig({ ...prod, AI_PROVIDER_KEY: "live", AI_PROVIDER_ALLOWED_HOSTS: "" }).code, "AI_CONFIG_REQUIRED");
+  assert.equal(readProviderConfig({ ...prod, AI_PROVIDER_KEY: "live", AI_PROVIDER_ALLOWED_HOSTS: "https://bad.example/path" }).code, "AI_CONFIG_REQUIRED");
+  const liveOk = readProviderConfig({ ...prod, AI_PROVIDER_KEY: "live", AI_PROVIDER_ALLOWED_HOSTS: "api.example.com" });
+  assert.equal(liveOk.ok, true);
+  assert.equal(liveOk.provider_key, "live");
   assert.equal(readProviderConfig({ NODE_ENV: "production", VERCEL_ENV: "preview", AI_PROVIDER_KEY: "scripted" }).code, "AI_PROVIDER_DISABLED");
   assert.equal(readProviderConfig({ NODE_ENV: "production", AI_PROVIDER_KEY: "khac" }).code, "AI_CONFIG_REQUIRED");
   // Không mặc định scripted khi thiếu key ở production.
