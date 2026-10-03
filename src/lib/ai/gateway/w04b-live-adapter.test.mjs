@@ -397,3 +397,36 @@ test("W04B-I5: usage thiếu ⇒ AI_PROVIDER_MALFORMED, không revision, không 
   assert.equal(usageRows[0].input_tokens, null, "không usage giả input");
   assert.equal(usageRows[0].output_tokens, null, "không usage giả output");
 });
+
+test("W04B-I6: live validation failure được repair đúng một lần rồi complete", async () => {
+  const packet = packetFor();
+  const payload = buildProviderPayload(packet, PROMPT).payload;
+  const validAnalysis = buildScriptedAnalysis(payload);
+  const invalidAnalysis = JSON.parse(JSON.stringify(validAnalysis));
+  invalidAnalysis.executive_analysis += " Giá trị không có evidence là 999 người.";
+  const providerConfig = createMemoryProviderConfig({ provider_profile: LIVE_PROVIDER_PROFILE, model: "gpt-4o-mini" });
+  const outbound = mockOutbound(async (_url, _opts, call) => ({
+    statusCode: 200,
+    headers: {},
+    body: Buffer.from(envelope(JSON.stringify(call === 1 ? invalidAnalysis : validAnalysis))),
+  }));
+  const { service, queue } = liveService({ packet, outbound, providerConfig });
+
+  const enqueued = await service.enqueueReport(liveEnqueueArgs());
+  assert.equal(enqueued.ok, true);
+  const run = await service.runWorker({ worker_ref: "w", limit: 1, now_ms: 0 });
+  assert.equal(run.results[0].kind, "completed", JSON.stringify(run.results[0]));
+  assert.equal(outbound.calls.length, 2, "chỉ một initial + một repair call");
+  const repairBody = JSON.parse(outbound.calls[1].opts.body);
+  const repairSystem = repairBody.messages[0].content;
+  assert.ok(repairSystem.includes("REPAIR DUY NHẤT"));
+  assert.ok(repairSystem.includes("UNGROUNDED_NUMERIC_CLAIM"));
+  assert.ok(repairSystem.includes("executive_analysis"));
+  assert.ok(!repairSystem.includes("999 người"), "không gửi raw output lỗi vào repair prompt");
+
+  const usageRows = [...queue.store.usage.values()];
+  assert.equal(usageRows.length, 2, "usage initial và repair được ghi riêng, không mất token");
+  assert.ok(usageRows.some((row) => row.call_outcome === "validation_failed"));
+  assert.ok(usageRows.some((row) => row.logical_call_id.endsWith(":repair1")));
+  assert.equal(queue.store.revisions.size, 1, "chỉ tạo một revision sau repair hợp lệ");
+});

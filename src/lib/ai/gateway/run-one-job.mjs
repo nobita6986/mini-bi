@@ -322,36 +322,38 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
     return report("AI_INTERNAL", "không chuyển được job sang ai_generating (queue transition thất bại)");
   }
 
-  const timeout = deps.timeout.create(deps.policy.config.provider_timeout_ms);
-  let providerResult;
-  try {
-    providerResult = await resolved.adapter.generateStructured({
-      payload: built.payload,
-      promptManifest: deps.manifest,
-      modelConfig: {
-        provider_key: deps.provider.provider_key,
-        model_key: deps.provider.model_key,
-        adapter_version: resolved.adapter.adapter_version,
-        timeout_ms: deps.policy.config.provider_timeout_ms,
-        // Credential + API URL đã giải mã/đọc trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
-        provider_config: {
-          config_id: materialValue.config_id,
-          version: materialValue.version,
-          api_base_url: materialValue.api_base_url,
-          sanitized_host: materialValue.sanitized_host,
-          provider_profile: materialValue.provider_profile,
+  const generate = async (repairFeedback) => {
+    const timeout = deps.timeout.create(deps.policy.config.provider_timeout_ms);
+    try {
+      return await resolved.adapter.generateStructured({
+        payload: built.payload,
+        promptManifest: deps.manifest,
+        modelConfig: {
+          provider_key: deps.provider.provider_key,
+          model_key: deps.provider.model_key,
+          adapter_version: resolved.adapter.adapter_version,
+          timeout_ms: deps.policy.config.provider_timeout_ms,
+          // Credential + API URL đã giải mã/đọc trong bộ nhớ server cho ĐÚNG version đã đóng băng (không log, không trả client).
+          provider_config: {
+            config_id: materialValue.config_id,
+            version: materialValue.version,
+            api_base_url: materialValue.api_base_url,
+            sanitized_host: materialValue.sanitized_host,
+            provider_profile: materialValue.provider_profile,
+          },
+          credential_secret: materialValue.secret,
         },
-        credential_secret: materialValue.secret,
-      },
-      timeoutSignal: timeout.signal,
-    });
-  } finally {
-    timeout.cancel();
-  }
+        timeoutSignal: timeout.signal,
+        repairFeedback,
+      });
+    } finally {
+      timeout.cancel();
+    }
+  };
 
-  const usageBase = {
+  const usageFor = (providerResult, repairIndex) => ({
     job_id: job.job_id,
-    logical_call_id: job.job_id + ":" + claimed.attempt,
+    logical_call_id: job.job_id + ":" + claimed.attempt + (repairIndex === 0 ? "" : ":repair" + repairIndex),
     // Usage ghi ĐÚNG provider/model đã đóng băng trong job (không lấy cấu hình runtime).
     provider_key: job.provider_key,
     model_key: job.model_key,
@@ -361,28 +363,48 @@ export async function runOneJob({ deps, worker_ref, now_ms, lease_seconds = LEAS
     output_tokens: providerResult.ok ? providerResult.usage.output_tokens : null,
     call_outcome: providerResult.ok ? "ok" : providerResult.error_code,
     retry_count: claimed.attempt - 1,
-  };
+  });
 
-  if (!providerResult.ok) {
-    // Usage vẫn được ghi (logical) nhưng KHÔNG tạo revision.
-    await deps.queue.recordUsage({ ...usageBase, cache_hit: false });
-    const safeDetail = typeof providerResult.detail_ref === "string" && /^live:[a-z0-9_-]+$/i.test(providerResult.detail_ref)
-      ? " (" + providerResult.detail_ref + ")"
-      : "";
-    return report(providerResult.error_code, "provider trả lỗi " + providerResult.error_code + safeDetail);
+  // Live output bị strict validator từ chối được repair đúng MỘT lần. Không gửi raw output/error text,
+  // chỉ gửi code + path đã sanitize; scripted adapter giữ nguyên một provider call.
+  const maxGenerationCalls = job.provider_key === "live" ? 2 : 1;
+  let repairFeedback;
+  let validated = null;
+  let usageBase = null;
+  for (let repairIndex = 0; repairIndex < maxGenerationCalls; repairIndex++) {
+    const providerResult = await generate(repairFeedback);
+    const currentUsage = usageFor(providerResult, repairIndex);
+
+    if (!providerResult.ok) {
+      await deps.queue.recordUsage({ ...currentUsage, cache_hit: false });
+      const safeDetail = typeof providerResult.detail_ref === "string" && /^live:[a-z0-9_-]+$/i.test(providerResult.detail_ref)
+        ? " (" + providerResult.detail_ref + ")"
+        : "";
+      return report(providerResult.error_code, "provider trả lỗi " + providerResult.error_code + safeDetail);
+    }
+
+    const parsed = parseStructured(providerResult);
+    if (!parsed.ok) {
+      await deps.queue.recordUsage({ ...currentUsage, call_outcome: parsed.code });
+      return report(parsed.code, parsed.message);
+    }
+
+    const candidate = validateGeneratedAnalysis(parsed.value, job.packet);
+    if (candidate.ok) {
+      validated = candidate;
+      usageBase = currentUsage;
+      break;
+    }
+
+    await deps.queue.recordUsage({ ...currentUsage, call_outcome: "validation_failed", cache_hit: false });
+    if (repairIndex + 1 >= maxGenerationCalls) {
+      return report("AI_VALIDATION_FAILED", candidate.code + " @ " + (candidate.path ?? "analysis"));
+    }
+    repairFeedback = { code: candidate.code, path: candidate.path ?? "analysis" };
   }
 
-  const parsed = parseStructured(providerResult);
-  if (!parsed.ok) {
-    await deps.queue.recordUsage({ ...usageBase, call_outcome: parsed.code });
-    return report(parsed.code, parsed.message);
-  }
-
-  // 4. Validate + grounding (+ enforcement W04).
-  const validated = validateGeneratedAnalysis(parsed.value, job.packet);
-  if (!validated.ok) {
-    await deps.queue.recordUsage({ ...usageBase, call_outcome: "validation_failed" });
-    return report("AI_VALIDATION_FAILED", validated.code + " @ " + (validated.path ?? "analysis"));
+  if (!validated || !usageBase) {
+    return report("AI_INTERNAL", "không có kết quả provider hợp lệ sau bounded repair");
   }
 
   // 5. Complete chỉ bằng lease owner/token hiện hành (fencing).
