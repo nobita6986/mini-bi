@@ -11,3 +11,8 @@
 *.png binary
 *.jpg binary
 *.jpeg binary
+
+# Preserve existing CRLF blobs without renormalizing unrelated R2 files or applied migration #30.
+src/lib/direct-entry/document-r2-contract.ts -text
+src/lib/direct-entry/r2-document-storage.ts -text
+supabase/migrations/20261005000000_p1_6_w04_s04b_r2a_direct_upload.sql -text
