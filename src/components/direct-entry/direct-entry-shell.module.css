@@ -292,6 +292,58 @@
   padding: 14px;
 }
 
+.documentSection {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background) 44%, var(--surface));
+  padding: 14px;
+}
+
+.documentTitle {
+  margin: 0;
+  font-size: 17px;
+}
+
+.documentList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.documentVersion {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.documentControls {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.documentStatus,
+.documentError {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.documentStatus {
+  color: var(--muted);
+}
+
+.documentError {
+  color: var(--destructive, #b42318);
+}
+
 .paymentTitle {
   margin: 0;
   font-size: 17px;

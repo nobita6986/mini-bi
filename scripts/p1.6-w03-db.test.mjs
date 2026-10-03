@@ -6,6 +6,10 @@ import { PGlite } from "@electric-sql/pglite";
 
 const migrationPath = new URL("../supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql", import.meta.url);
 const correctiveMigrationPath = new URL("../supabase/migrations/20261003170000_p1_6_w03_submission_noop_guard.sql", import.meta.url);
+const documentReservationMigrationPath = new URL(
+  "../supabase/migrations/20261003230000_p1_6_w04_s04b_document_reservation_adapter.sql",
+  import.meta.url,
+);
 
 function syntheticWorker(displayName) {
   const optional = { state: "unknown" };
@@ -29,6 +33,7 @@ async function createDatabase() {
   `);
   await db.exec(await readFile(migrationPath, "utf8"));
   await db.exec(await readFile(correctiveMigrationPath, "utf8"));
+  await db.exec(await readFile(documentReservationMigrationPath, "utf8"));
   return db;
 }
 
@@ -216,6 +221,7 @@ test("migration enforces deny-by-default RLS and RPC-only grants", async () => {
       "direct_entry_read_audit",
       "direct_entry_read_projection",
       "direct_entry_reject_change_request",
+      "direct_entry_reserve_document_upload",
       "direct_entry_transition_submission",
       "direct_entry_update_draft_row",
       "direct_entry_update_payment",
@@ -1460,6 +1466,118 @@ test("employment status accepts a valid backdated transition but not dates befor
         'status_after_today_synthetic')`,
       [actor, user, entry, today],
     ), /current or backdated to latest status/i);
+  } finally {
+    await db.close();
+  }
+});
+
+test("trusted document reservation returns the opaque storage key and replays idempotently", async () => {
+  const db = await createDatabase();
+  try {
+    await seedSubmission(db);
+    await db.exec("set role service_role");
+    const args = [
+      "10000000-0000-4000-8000-000000000001",
+      "20000000-0000-4000-8000-000000000001",
+      "70000000-0000-4000-8000-000000000001",
+      1,
+      "CCCD_FRONT",
+      "s04b_s01_reservation_synthetic",
+      "a".repeat(64),
+      512,
+      "image/png",
+      null,
+    ];
+    const { rows: first } = await db.query(
+      `select public.direct_entry_reserve_document_upload(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+      ) as result`,
+      args,
+    );
+    assert.equal(first[0].result.upload_status, "QUEUED");
+    assert.equal(first[0].result.scan_status, "PENDING");
+    assert.equal(first[0].result.version, 1);
+    assert.equal(first[0].result.entry_version, 2);
+    assert.match(first[0].result.storage_key,
+      /^p1\.6\/60000000-0000-4000-8000-000000000001\/CCCD_FRONT\/1\/[0-9a-f-]{36}$/i);
+
+    const { rows: replay } = await db.query(
+      `select public.direct_entry_reserve_document_upload(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+      ) as result`,
+      args,
+    );
+    assert.equal(replay[0].result.reused, true);
+    assert.equal(replay[0].result.document_id, first[0].result.document_id);
+    assert.equal(replay[0].result.storage_key, first[0].result.storage_key);
+    assert.equal(replay[0].result.entry_version, 2);
+
+    const staleArgs = [...args];
+    staleArgs[5] = "s04b_s01_stale_version_synthetic";
+    await assert.rejects(db.query(
+      `select public.direct_entry_reserve_document_upload(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+      )`,
+      staleArgs,
+    ), /entry version conflict/i);
+    await assert.rejects(db.query(
+      `select public.direct_entry_reserve_document_upload(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+      )`,
+      [...args.slice(0, 6), "b".repeat(64), ...args.slice(7)],
+    ), /idempotency key reused with different input/i);
+    await db.exec("reset role");
+
+    const { rows: stored } = await db.query(`
+      select e.version,
+        (select count(*) from public.direct_entry_document_versions d
+          where d.candidate_id=e.candidate_id) as documents,
+        (select count(*) from public.direct_entry_document_events v
+          join public.direct_entry_document_versions d using (document_id)
+          where d.candidate_id=e.candidate_id) as document_events,
+        (select count(*) from public.direct_entry_revisions r
+          where r.entry_id=e.entry_id) as revisions,
+        (select count(*) from public.direct_entry_audit_events a
+          where a.resource_ref=e.entry_id::text and a.action='document_metadata_create') as audits
+      from public.direct_entries e
+      where e.entry_id='70000000-0000-4000-8000-000000000001'
+    `);
+    assert.equal(stored[0].version, 2);
+    assert.equal(stored[0].documents, 1);
+    assert.equal(stored[0].document_events, 1);
+    assert.equal(stored[0].revisions, 1);
+    assert.equal(stored[0].audits, 1);
+    const { rows: audit } = await db.query(`
+      select a.changed_fields, r.reason_text
+        from public.direct_entry_audit_events a
+        join public.direct_entry_restricted_reasons r using (reason_id)
+       where a.resource_ref='70000000-0000-4000-8000-000000000001'
+         and a.action='document_metadata_create'
+    `);
+    assert.deepEqual(audit[0].changed_fields, ["document_metadata"]);
+    assert.equal(audit[0].reason_text.includes("filename"), false);
+    assert.equal(audit[0].reason_text.includes("CCCD"), false);
+
+    const { rows: acl } = await db.query(`
+      select has_function_privilege(
+        'service_role',
+        'public.direct_entry_reserve_document_upload(uuid,uuid,uuid,integer,text,text,text,bigint,text,text)',
+        'EXECUTE'
+      ) as service,
+      has_function_privilege(
+        'anon',
+        'public.direct_entry_reserve_document_upload(uuid,uuid,uuid,integer,text,text,text,bigint,text,text)',
+        'EXECUTE'
+      ) as anon,
+      has_function_privilege(
+        'authenticated',
+        'public.direct_entry_reserve_document_upload(uuid,uuid,uuid,integer,text,text,text,bigint,text,text)',
+        'EXECUTE'
+      ) as authenticated
+    `);
+    assert.equal(acl[0].service, true);
+    assert.equal(acl[0].anon, false);
+    assert.equal(acl[0].authenticated, false);
   } finally {
     await db.close();
   }

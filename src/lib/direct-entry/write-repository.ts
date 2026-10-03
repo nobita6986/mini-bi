@@ -6,6 +6,7 @@ import {
   projectPaymentUpdateResult,
   type PaymentInput,
 } from "./payment-contract.ts";
+import type { DocumentType } from "../contracts/direct-entry-v1.ts";
 
 type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
   data: unknown;
@@ -20,6 +21,16 @@ type OperationResult<T = unknown> =
       ok: false;
       kind: "conflict" | "denied" | "invalid" | "not-found" | "too-large" | "unavailable";
     };
+
+export type DocumentReservation = {
+  document_id: string;
+  version: number;
+  entry_version: number;
+  upload_status: "QUEUED" | "UPLOADING" | "QUARANTINED" | "SCANNING" | "READY" | "FAILED" | "SUPERSEDED";
+  scan_status: "PENDING" | "CLEAN" | "REJECTED";
+  reused: boolean;
+  storage_key: string;
+};
 
 export type DraftCatalog = {
   effective_date: string;
@@ -81,6 +92,16 @@ export type DirectEntryRepository = {
     entry_version: number;
     payment_version: number;
   }>>;
+  reserveDocumentUpload(input: ActorRef & {
+    entry_id: string;
+    expected_entry_version: number;
+    document_type: DocumentType;
+    idempotency_key: string;
+    checksum_sha256: string;
+    size_bytes: number;
+    mime_type: string;
+    reason: string | null;
+  }): Promise<OperationResult<DocumentReservation>>;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -95,6 +116,38 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 
 function isPositiveVersion(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function projectDocumentReservation(value: unknown): DocumentReservation | null {
+  const statuses: readonly DocumentReservation["upload_status"][] = [
+    "QUEUED", "UPLOADING", "QUARANTINED", "SCANNING", "READY", "FAILED", "SUPERSEDED",
+  ];
+  const scans: readonly DocumentReservation["scan_status"][] = ["PENDING", "CLEAN", "REJECTED"];
+  const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+  const uuid = new RegExp(`^${uuidPattern}$`, "i");
+  const storageKeyPattern = new RegExp(
+    `^p1\\.6/${uuidPattern}/(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT)/[1-9]\\d*/${uuidPattern}$`,
+    "i",
+  );
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "document_id", "version", "entry_version", "upload_status", "scan_status", "reused", "storage_key",
+  ]) || typeof value.document_id !== "string" || !uuid.test(value.document_id) ||
+      !isPositiveVersion(value.version) || !isPositiveVersion(value.entry_version) ||
+      typeof value.upload_status !== "string" ||
+      !statuses.some((status) => status === value.upload_status) ||
+      typeof value.scan_status !== "string" ||
+      !scans.some((status) => status === value.scan_status) ||
+      typeof value.reused !== "boolean" || typeof value.storage_key !== "string" ||
+      !storageKeyPattern.test(value.storage_key)) return null;
+  return {
+    document_id: value.document_id,
+    version: value.version,
+    entry_version: value.entry_version,
+    upload_status: statuses.find((status) => status === value.upload_status)!,
+    scan_status: scans.find((status) => status === value.scan_status)!,
+    reused: value.reused,
+    storage_key: value.storage_key,
+  };
 }
 
 export function projectDraftCatalog(value: unknown, expectedDate?: string): DraftCatalog | null {
@@ -228,7 +281,7 @@ function serviceRoleRpc(): Rpc {
 
 function classify(
   error: { code?: string; message?: string },
-  operation: "create" | "read" | "catalog" | "list" | "update" | "payment",
+  operation: "create" | "read" | "catalog" | "list" | "update" | "payment" | "document",
 ) {
   if (operation === "create") {
     if (error.code === "23505") return "conflict";
@@ -246,7 +299,7 @@ function classify(
     if (error.code === "40001" || error.code === "23505") return "conflict";
     if (error.code === "42501") return "denied";
     if (error.code === "P0002") return "not-found";
-    if (operation === "payment" && error.code === "23514") return "invalid";
+    if ((operation === "payment" || operation === "document") && error.code === "23514") return "invalid";
     if (error.code === "22023") {
       return error.message === "idempotency key reused with different input"
         ? "conflict"
@@ -362,6 +415,30 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
           : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] payment update RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async reserveDocumentUpload(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_reserve_document_upload", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_entry_id: input.entry_id,
+          p_expected_entry_version: input.expected_entry_version,
+          p_document_type: input.document_type,
+          p_idempotency_key: input.idempotency_key,
+          p_checksum_sha256: input.checksum_sha256,
+          p_size_bytes: input.size_bytes,
+          p_mime_type: input.mime_type,
+          p_reason: input.reason,
+        });
+        if (error) return { ok: false, kind: classify(error, "document") };
+        const projection = projectDocumentReservation(data);
+        return projection
+          ? { ok: true, data: projection }
+          : { ok: false, kind: "unavailable" };
+      } catch {
+        console.error("[direct-entry] document reservation RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

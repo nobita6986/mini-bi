@@ -7,6 +7,7 @@ import "react-data-grid/lib/styles.css";
 
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
+import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
 import {
@@ -842,6 +843,17 @@ export function DirectEntryLive() {
                   canEdit={capabilities.includes("entry_own") &&
                     selectedRow.state !== "saving" && selectedRow.state !== "conflict"}
                   canView={capabilities.includes("payment_view")}
+                  onEntryVersionChange={onPaymentEntryVersionChange}
+                />
+                <DirectEntryDocumentEditor
+                  key={`documents-${selectedRow.rowId}:${selectedRow.entryId ?? "new"}`}
+                  entryId={selectedRow.entryId}
+                  entryVersion={selectedRow.entryVersion}
+                  rowId={selectedRow.rowId}
+                  canEdit={capabilities.includes("entry_own") &&
+                    capabilities.includes("document_upload") &&
+                    selectedRow.state !== "saving" && selectedRow.state !== "conflict"}
+                  canView={capabilities.includes("document_view")}
                   onEntryVersionChange={onPaymentEntryVersionChange}
                 />
                 {selectedRow.message && <p role="alert">{selectedRow.message}</p>}
