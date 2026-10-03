@@ -21,8 +21,12 @@ type Props = {
   rowId: string;
   canEdit: boolean;
   canView: boolean;
+  /** S03B4B-R2C: entry SUBMITTED bat buoc co ly do truoc khi reserve. */
+  requireReason?: boolean;
   onEntryVersionChange(rowId: string, version: number): void;
 };
+
+const REASON_MAX_LENGTH = 4000;
 
 const DOCUMENT_TYPES: readonly { value: DocumentType; label: string }[] = [
   { value: "CCCD_FRONT", label: "CCCD mặt trước" },
@@ -125,6 +129,7 @@ export function DirectEntryDocumentEditor({
   rowId,
   canEdit,
   canView,
+  requireReason,
   onEntryVersionChange,
 }: Props) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
@@ -133,9 +138,11 @@ export function DirectEntryDocumentEditor({
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<"idle" | "uploading" | "queued" | "error" | "conflict">("idle");
   const [message, setMessage] = useState("");
+  const [reason, setReason] = useState("");
   const pendingKey = useRef<{
     file: File;
     documentType: DocumentType;
+    reason: string;
     key: string;
     expectedEntryVersion: number;
   } | null>(null);
@@ -186,11 +193,20 @@ export function DirectEntryDocumentEditor({
     if (!entryId || !entryVersion || !file || !canEdit ||
         file.size < 1 || file.size > MAX_BYTES || !MIME_TYPES.has(file.type) ||
         state === "uploading") return;
+    const trimmedReason = requireReason ? reason.trim() : null;
+    if (requireReason && (trimmedReason === null || trimmedReason.length < 1 ||
+        trimmedReason.length > REASON_MAX_LENGTH)) {
+      setState("error");
+      setMessage("Lý do thay thế tài liệu là bắt buộc và tối đa 4000 ký tự.");
+      return;
+    }
     if (!pendingKey.current || pendingKey.current.file !== file ||
-        pendingKey.current.documentType !== documentType) {
+        pendingKey.current.documentType !== documentType ||
+        (requireReason && pendingKey.current.reason !== trimmedReason)) {
       pendingKey.current = {
         file,
         documentType,
+        reason: trimmedReason ?? "",
         key: crypto.randomUUID(),
         expectedEntryVersion: entryVersion,
       };
@@ -220,6 +236,7 @@ export function DirectEntryDocumentEditor({
         expected_entry_version: pending.expectedEntryVersion,
         size_bytes: file.size,
         mime_type: file.type,
+        ...(requireReason && pending.reason ? { reason: pending.reason } : {}),
       });
       if (reserved.response.status === 409) {
         setState("conflict");
@@ -324,6 +341,19 @@ export function DirectEntryDocumentEditor({
               })}
             </ul>}
       <div className={styles.documentControls}>
+        {requireReason && (
+          <label className={styles.field}>
+            <span>Lý do thay thế tài liệu</span>
+            <textarea
+              aria-label="Lý do thay thế tài liệu"
+              rows={3}
+              maxLength={REASON_MAX_LENGTH}
+              disabled={!canEdit || state === "uploading"}
+              value={reason}
+              onChange={(event) => { setReason(event.target.value); pendingKey.current = null; }}
+            />
+          </label>
+        )}
         <label className={styles.field}>
           <span>Loại tài liệu</span>
           <select

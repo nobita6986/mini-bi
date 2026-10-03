@@ -11,6 +11,7 @@ import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entr
 import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
+import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
 import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
@@ -282,6 +283,8 @@ export function DirectEntryLive() {
   const [changeRequestNotice, setChangeRequestNotice] = useState("");
   const [proposerSubmission, setProposerSubmission] = useState<SubmissionReadItem | null>(null);
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
+  const [manageDocumentsSubmission, setManageDocumentsSubmission] =
+    useState<SubmissionReadItem | null>(null);
   const changeRequestCursorRef = useRef<string | null>(null);
   const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
@@ -1093,6 +1096,13 @@ export function DirectEntryLive() {
             onLoadMore={() => void loadSubmissions("append")}
             onTransition={(input) => void runTransition(input)}
             onRequestChange={(submission) => setProposerSubmission(submission)}
+            onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
+          />
+          <DirectEntrySubmittedDocumentManager
+            submission={manageDocumentsSubmission}
+            onOpenChange={(next) => { if (!next) setManageDocumentsSubmission(null); }}
+            canUpload={capabilities.includes("document_upload")}
+            canView={capabilities.includes("document_view")}
           />
           <DirectEntryChangeRequestList
             state={changeRequestListState}
