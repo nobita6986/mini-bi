@@ -9,6 +9,8 @@
 | Worktree | `C:/CodeApp/BI-p3-access-denied` |
 | Trạng thái | `P3-W03-S02B_ACCESS_DENIED_UX_IMPLEMENTED_FAST_TRACK` (browser acceptance chưa chạy) |
 
+> **SUPERSEDED bởi S02B-R1** (commit sau): semantic boundary đã sửa — khi `DIRECT_ENTRY_UI_ENABLED != "true"` dùng lại `notFound()` (feature-disabled fail-closed), không dùng "Bạn không có quyền" cho feature chưa bật. Khi flag on, route gate server-side: unauthenticated → redirect `/login?next=/direct-entry`; actor missing/disabled → `<AccountUnavailable />`; thiếu mọi capability `entry_own|entry_team|entry_admin` → `<AccessDenied />`; còn lại render Direct Entry.
+
 ## Đã làm (UX closure; authorization authority không đổi)
 - `src/lib/auth/auth-ui.ts`: đổi `AUTH_UNAVAILABLE` → "Hệ thống xác thực tạm thời không khả dụng."; thêm `ACCESS_DENIED_MESSAGE = "Bạn không có quyền truy cập chức năng này."`.
 - `src/components/auth/login-gate.tsx`: trạng thái 403 (`ACCOUNT_NOT_AVAILABLE`) hiện thông báo chung + nút **Đăng xuất** (POST logout → `/login` + refresh); không phân biệt mapping missing/disabled, không lộ UUID/capability.
