@@ -25,8 +25,21 @@ export interface PilotAccessInput {
   authorizationHeader: string | null | undefined;
 }
 
-const PROTECTED_EXACT = ["/dashboard", "/pipeline-check", "/api/reporting"];
-const PROTECTED_PREFIXES = ["/dashboard/", "/pipeline-check/", "/api/reporting/", "/api/ai/"];
+const PROTECTED_EXACT = [
+  "/dashboard",
+  "/pipeline-check",
+  "/api/reporting",
+  "/direct-entry",
+  "/api/direct-entry",
+];
+const PROTECTED_PREFIXES = [
+  "/dashboard/",
+  "/pipeline-check/",
+  "/api/reporting/",
+  "/api/ai/",
+  "/direct-entry/",
+  "/api/direct-entry/",
+];
 
 /** Các route cần Basic Auth (khớp matcher của proxy). */
 export function isPilotProtectedPath(pathname: string): boolean {

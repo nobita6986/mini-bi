@@ -41,6 +41,15 @@ test("app-shell.tsx: có header cấu trúc đúng và re-export ThemeSelector",
   // aria-label 'Điều hướng chính' nằm ở DesktopNav/MobileNav (đã test riêng bên dưới).
 });
 
+test("app-shell lọc nav theo feature flag tại request-time Server Component boundary", () => {
+  assert.match(appShellSource, /await connection\(\)/);
+  assert.match(appShellSource, /isDirectEntryUiEnabled\(process\.env\.DIRECT_ENTRY_UI_ENABLED\)/);
+  assert.match(appShellSource, /entriesForViewport\("desktop", directEntryEnabled\)/);
+  assert.match(appShellSource, /entriesForViewport\("mobile", directEntryEnabled\)/);
+  assert.match(appShellSource, /<DesktopNav activePath=\{currentPath\} items=\{desktopItems\}/);
+  assert.match(appShellSource, /items=\{mobileItems\.map\(/);
+});
+
 test("app-shell.tsx: re-export ThemeSelector hiện có (không phá W05 R1)", () => {
   assert.ok(
     appShellSource.includes("ThemeSelector"),
@@ -114,17 +123,20 @@ test("desktop-nav.tsx: link active có aria-current='page'", () => {
   assert.ok(desktopNavSource.includes('aria-current'), "phải set aria-current cho active link");
 });
 
-test("desktop-nav.tsx: lấy entries từ registry, không hard-code nhãn Dashboard/Direct Entry", () => {
-  assert.ok(desktopNavSource.includes("entriesForViewport"));
+test("desktop-nav nhận các entry đã filter từ AppShell, không tự quyết định visibility", () => {
+  assert.ok(desktopNavSource.includes("items: ReadonlyArray<NavEntry>"));
+  assert.ok(!desktopNavSource.includes("entriesForViewport"));
   assert.ok(desktopNavSource.includes('from "@/lib/navigation/registry"'));
   // Không hard-code label cũ (Pipeline Check) hay mới trong component.
   assert.ok(!desktopNavSource.includes("Pipeline check"));
   assert.ok(!desktopNavSource.includes("Nhập liệu trực tiếp"));
 });
 
-test("mobile-nav.tsx: lấy entries từ registry, không hard-code nhãn", () => {
-  assert.ok(mobileNavSource.includes("entriesForViewport"));
-  assert.ok(mobileNavSource.includes('from "@/lib/navigation/registry"'));
+test("mobile-nav chỉ nhận danh sách server-filtered và không đọc env/registry", () => {
+  assert.ok(mobileNavSource.includes("items: ReadonlyArray<MobileNavItem>"));
+  assert.ok(!mobileNavSource.includes("entriesForViewport"));
+  assert.ok(!mobileNavSource.includes("process.env"));
+  assert.ok(!mobileNavSource.includes('from "@/lib/navigation/registry"'));
   assert.ok(!mobileNavSource.includes("Pipeline check"));
   assert.ok(!mobileNavSource.includes("Nhập liệu trực tiếp"));
 });

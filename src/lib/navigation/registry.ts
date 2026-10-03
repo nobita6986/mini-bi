@@ -122,9 +122,14 @@ export const CURRENT_NAV_ENTRIES: ReadonlyArray<NavEntry> = NAV_ENTRIES.filter(
   (e) => e.status === "current"
 );
 
-/** Lọc theo viewport. Dùng ở App Shell để tách desktop sidebar / mobile sheet. */
-export function entriesForViewport(viewport: "desktop" | "mobile"): ReadonlyArray<NavEntry> {
-  return CURRENT_NAV_ENTRIES.filter((e) => e.visibility[viewport]);
+/** Lọc theo viewport và cờ hiển thị server-side của Direct Entry. */
+export function entriesForViewport(
+  viewport: "desktop" | "mobile",
+  directEntryEnabled: boolean,
+): ReadonlyArray<NavEntry> {
+  return CURRENT_NAV_ENTRIES.filter((entry) =>
+    entry.visibility[viewport] && (entry.id !== "direct-entry" || directEntryEnabled)
+  );
 }
 
 /**

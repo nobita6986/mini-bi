@@ -12,6 +12,7 @@ import { test } from "node:test";
 // Để chạy độc lập (không qua scripts.test:main), dùng `node --experimental-strip-types`.
 const mod = await import("./registry.ts");
 const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } = mod;
+const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chỉ có Dashboard + Direct Entry (App-NAV-02A)", () => {
   assert.equal(CURRENT_NAV_ENTRIES.length, 2, "phải có đúng 2 entries current");
@@ -52,18 +53,29 @@ test("entry 'planned' KHÔNG còn tồn tại trong registry sau App-NAV-02A", (
   assert.equal(planned.length, 0, "registry không còn entry 'planned'");
 });
 
-test("Desktop viewport không có Pipeline Check", () => {
-  const desktop = entriesForViewport("desktop");
+test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
+  const desktop = entriesForViewport("desktop", true);
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard"]);
 });
 
-test("Mobile viewport không có Pipeline Check", () => {
-  const mobile = entriesForViewport("mobile");
+test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
+  const mobile = entriesForViewport("mobile", true);
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard"]);
+});
+
+test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
+  assert.equal(isDirectEntryUiEnabled("true"), true);
+  for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
+    assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard"]);
+  }
 });
 
 test("Direct Entry capability metadata biểu diễn 'một trong entry_own | entry_team | entry_admin'", () => {
@@ -127,7 +139,7 @@ test("CURRENT_NAV_ENTRIES chỉ chứa status = 'current'", () => {
 });
 
 test("entriesForViewport('desktop') trả về entry có visibility.desktop = true", () => {
-  const desktop = entriesForViewport("desktop");
+  const desktop = entriesForViewport("desktop", true);
   assert.ok(desktop.length > 0, "phải có ít nhất 1 entry cho desktop");
   for (const entry of desktop) {
     assert.equal(entry.visibility.desktop, true);
@@ -135,7 +147,7 @@ test("entriesForViewport('desktop') trả về entry có visibility.desktop = tr
 });
 
 test("entriesForViewport('mobile') trả về entry có visibility.mobile = true", () => {
-  const mobile = entriesForViewport("mobile");
+  const mobile = entriesForViewport("mobile", true);
   assert.ok(mobile.length > 0, "phải có ít nhất 1 entry cho mobile");
   for (const entry of mobile) {
     assert.equal(entry.visibility.mobile, true);

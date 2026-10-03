@@ -124,7 +124,7 @@ test("12. không có secret trong decision (object lỗi/response)", () => {
   assert.equal(PILOT_AUTH_REALM, "Mini BI Pilot");
 });
 
-test("13. matcher bao phủ dashboard, pipeline-check, api/reporting", () => {
+test("13. matcher bao phủ dashboard, pipeline-check, api/reporting và Direct Entry", () => {
   for (const p of [
     "/dashboard",
     "/dashboard/a",
@@ -133,13 +133,29 @@ test("13. matcher bao phủ dashboard, pipeline-check, api/reporting", () => {
     "/pipeline-check/x",
     "/api/reporting",
     "/api/reporting/x/y",
+    "/direct-entry",
+    "/direct-entry/",
+    "/direct-entry/submissions/123",
+    "/api/direct-entry",
+    "/api/direct-entry/",
+    "/api/direct-entry/session",
+    "/api/direct-entry/entries/123",
+    "/api/direct-entry/change-requests",
   ]) {
     assert.equal(isPilotProtectedPath(p), true, p);
   }
 });
 
 test("14. route ngoài matcher (như '/') không bị gate", () => {
-  for (const p of ["/", "/about", "/api/other", "/dashboardx", "/pipeline-checkfoo"]) {
+  for (const p of [
+    "/",
+    "/about",
+    "/api/other",
+    "/dashboardx",
+    "/pipeline-checkfoo",
+    "/direct-entryx",
+    "/api/direct-entryx",
+  ]) {
     assert.equal(isPilotProtectedPath(p), false, p);
   }
 });

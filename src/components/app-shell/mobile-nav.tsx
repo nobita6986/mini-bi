@@ -15,21 +15,31 @@
  * - ESC đóng: Dialog Root xử lý (đã kiểm thử bằng cách đặt `onOpenChange`).
  * - Focus trap + focus return: Dialog.Root lo.
  *
- * Server-render: bị khoá bởi `'use client'`, nhưng `entriesForViewport` được
- * import thuần từ registry, có thể prerender HTML ban đầu (rỗng portal).
+ * Danh sách nav được lọc tại AppShell Server Component và truyền qua props.
  */
 
 import { useState } from "react";
 import Link from "next/link";
 import { Dialog } from "radix-ui";
-import { Menu, X } from "lucide-react";
+import { ClipboardList, LayoutDashboard, Menu, X } from "lucide-react";
 
-import { entriesForViewport } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
 
-export function MobileNav({ activePath }: { activePath: string }) {
+type MobileNavItem = { id: string; label: string; path: string };
+
+const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
+  dashboard: LayoutDashboard,
+  "direct-entry": ClipboardList,
+} as const;
+
+export function MobileNav({
+  activePath,
+  items,
+}: {
+  activePath: string;
+  items: ReadonlyArray<MobileNavItem>;
+}) {
   const [open, setOpen] = useState(false);
-  const items = entriesForViewport("mobile");
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -85,7 +95,8 @@ export function MobileNav({ activePath }: { activePath: string }) {
 
           <nav aria-label="Điều hướng chính (di động)" className="flex flex-col gap-1">
             {items.map((entry) => {
-              const Icon = entry.icon;
+              const Icon = NAV_ICONS[entry.id];
+              if (!Icon) throw new Error(`Missing mobile navigation icon for "${entry.id}"`);
               const isActive = activePath === entry.path || activePath.startsWith(entry.path + "/");
               return (
                 <Link

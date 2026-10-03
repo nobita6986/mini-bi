@@ -3,17 +3,22 @@
  * Hiển thị navigation bar ngang (compact) trong header.
  * Ẩn trên mobile (md breakpoint) — mobile dùng Sheet ở MobileNav.
  *
- * Render theo `entriesForViewport('desktop')` từ registry.
+ * Nhận danh sách đã được lọc tại AppShell.
  * Không tự filter path; active state dựa vào `activePath` prop.
  */
 
 import Link from "next/link";
 
-import { entriesForViewport } from "@/lib/navigation/registry";
+import type { NavEntry } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
 
-export function DesktopNav({ activePath }: { activePath: string }) {
-  const items = entriesForViewport("desktop");
+export function DesktopNav({
+  activePath,
+  items,
+}: {
+  activePath: string;
+  items: ReadonlyArray<NavEntry>;
+}) {
   return (
     <nav aria-label="Điều hướng chính" className="ml-2 hidden items-center gap-1 md:flex">
       {items.map((entry) => {

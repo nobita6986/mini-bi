@@ -69,5 +69,9 @@ export const config = {
     "/api/ai/worker/:path*",
     "/api/ai/settings",
     "/api/ai/settings/:path*",
+    "/direct-entry",
+    "/direct-entry/:path*",
+    "/api/direct-entry",
+    "/api/direct-entry/:path*",
   ],
 };

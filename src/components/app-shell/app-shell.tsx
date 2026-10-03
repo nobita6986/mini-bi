@@ -16,9 +16,11 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { connection } from "next/server";
 
 import { ThemeSelector } from "@/components/dashboard/theme-selector";
-import { findEntryByPath } from "@/lib/navigation/registry";
+import { entriesForViewport, findEntryByPath } from "@/lib/navigation/registry";
+import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 
 import { DesktopNav } from "./desktop-nav";
 import { MobileNav } from "./mobile-nav";
@@ -29,14 +31,21 @@ import { MobileNav } from "./mobile-nav";
  * - currentPath: đường dẫn hiện tại (từ page). Dùng để highlight active link.
  *   Tính từ server, không dùng hook client.
  */
-export function AppShell({ children, currentPath }: { children: ReactNode; currentPath: string }) {
+export async function AppShell({ children, currentPath }: { children: ReactNode; currentPath: string }) {
+  await connection();
+  const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
+  const desktopItems = entriesForViewport("desktop", directEntryEnabled);
+  const mobileItems = entriesForViewport("mobile", directEntryEnabled);
   const activeEntry = findEntryByPath(currentPath);
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">
           {/* Mobile: hamburger trigger */}
-          <MobileNav activePath={currentPath} />
+          <MobileNav
+            activePath={currentPath}
+            items={mobileItems.map(({ id, label, path }) => ({ id, label, path }))}
+          />
 
           {/* Logo HR Partner */}
           <Link
@@ -51,7 +60,7 @@ export function AppShell({ children, currentPath }: { children: ReactNode; curre
           </Link>
 
           {/* Desktop nav — ẩn trên mobile */}
-          <DesktopNav activePath={currentPath} />
+          <DesktopNav activePath={currentPath} items={desktopItems} />
 
           {/* Spacer */}
           <div className="flex-1" />
