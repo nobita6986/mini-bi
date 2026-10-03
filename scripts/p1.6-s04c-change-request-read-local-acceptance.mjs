@@ -28,8 +28,8 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 
-assert.equal(migrations.migrationNames.length, 30);
-pass("from-scratch apply 30 migration local trong PGlite (khong dung shared DB)");
+assert.equal(migrations.migrationNames.length, 31);
+pass("from-scratch apply 31 migration local trong PGlite (khong dung shared DB)");
 
 const fixture = await seedChangeRequestFixture(db);
 const requests = await seedChangeRequests(db, fixture);

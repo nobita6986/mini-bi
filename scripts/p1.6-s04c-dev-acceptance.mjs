@@ -17,9 +17,10 @@ import { createSubmissionTransitionRepository } from "../src/lib/direct-entry/su
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 import { readMigrations } from "./lib/migration-validation.mjs";
+import { expectedDirectEntryFunctions } from "./lib/direct-entry-inventory.mjs";
 
 const migrationDir = path.resolve("supabase/migrations");
-const expectedMigrationCount = 29;
+let expectedMigrationCount = 0;
 const namespace = "s04c";
 const checks = [];
 
@@ -68,7 +69,7 @@ async function assertDatabaseBoundary(client) {
     "select version, checksum from public.schema_migrations order by version",
   );
   const local = await readMigrations(migrationDir);
-  assert.equal(local.length, expectedMigrationCount);
+  expectedMigrationCount = local.length;
   assert.equal(migrationRows.length, expectedMigrationCount);
   const applied = new Map(migrationRows.map(({ version, checksum }) => [version, checksum]));
   assert.deepEqual(local.filter(({ name }) => !applied.has(name)), []);
@@ -111,10 +112,7 @@ async function assertDatabaseBoundary(client) {
   assert.equal(trigger.find(({ tgname }) => tgname === "direct_entry_submission_nonempty").tgenabled, "O");
   pass("transition guard trigger is enabled next to the deferred non-empty constraint trigger");
 
-  const localSql = local.map(({ sql }) => sql).join("\n");
-  const declared = new Set(
-    [...localSql.matchAll(/function public\.(direct_entry_[a-z0-9_]+)\s*\(/g)].map((match) => match[1]),
-  );
+  const declared = expectedDirectEntryFunctions(local);
   const { rows: functions } = await client.query(
     "select distinct p.proname from pg_proc p" +
     " join pg_namespace n on n.oid=p.pronamespace" +

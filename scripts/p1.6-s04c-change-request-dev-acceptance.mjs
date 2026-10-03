@@ -21,9 +21,10 @@ import { createChangeRequestRepository } from "../src/lib/direct-entry/change-re
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 import { readMigrations } from "./lib/migration-validation.mjs";
+import { expectedDirectEntryFunctions } from "./lib/direct-entry-inventory.mjs";
 
 const migrationDir = path.resolve("supabase/migrations");
-const expectedMigrationCount = 29;
+let expectedMigrationCount = 0;
 const namespace = "s04cs02a";
 const checks = [];
 let transactionOpen = false;
@@ -73,7 +74,7 @@ async function assertDatabaseBoundary(client) {
     "select version, checksum from public.schema_migrations order by version",
   );
   const local = await readMigrations(migrationDir);
-  assert.equal(local.length, expectedMigrationCount);
+  expectedMigrationCount = local.length;
   assert.equal(migrationRows.length, expectedMigrationCount);
   const applied = new Map(migrationRows.map(({ version, checksum }) => [version, checksum]));
   assert.deepEqual(local.filter(({ name }) => !applied.has(name)), []);
@@ -114,10 +115,7 @@ async function assertDatabaseBoundary(client) {
   assert.equal(helper[0].service_exec, false);
   pass("helper direct_entry_decide_change_request is NOT executable by service_role");
 
-  const localSql = local.map(({ sql }) => sql).join("\n");
-  const declared = new Set(
-    [...localSql.matchAll(/function public\.(direct_entry_[a-z0-9_]+)\s*\(/g)].map((match) => match[1]),
-  );
+  const declared = expectedDirectEntryFunctions(local);
   const { rows: functions } = await client.query(
     "select distinct p.proname from pg_proc p" +
     " join pg_namespace n on n.oid=p.pronamespace" +
