@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import * as AlertDialog from "radix-ui/alert-dialog";
+import * as Dialog from "radix-ui/dialog";
+import * as Select from "radix-ui/select";
+import { Check, ChevronDown, Eye, EyeOff, KeyRound, RefreshCw } from "lucide-react";
 
-import { confirmInitialFocusIndex, decideDismiss, resolveTabTarget } from "./ai-settings-panel-logic";
+import { decideDismiss, flowStepOf, type FlowState } from "./ai-settings-panel-logic";
 
 /**
- * Panel/drawer cấu hình provider AI cho Owner (pilot).
+ * P1.5-W04A-S04 — Panel cấu hình provider AI cho Owner (pilot), Radix Dialog/Sheet + AlertDialog.
  *
- * Client-only: chỉ gọi 5 endpoint /api/ai/settings* bằng fetch same-origin.
- * State của panel CHỈ giữ bản projection đã sanitize do server trả về
- * (provider_profile, sanitized_host, model, key_fingerprint, version, status, mốc thời gian).
- * API key thô chỉ sống trong state nhập liệu và bị xoá ngay sau khi Lưu/Xoay thành công.
+ * - Overlay/focus/Escape/focus-return do Radix quản lý (không còn focus trap thủ công).
+ * - API key thô chỉ sống trong state nhập liệu, bị xoá sau Lưu/Xoay/Bỏ/Đóng thành công.
+ * - Luồng Owner-ready: Lưu → Kiểm tra kết nối → Kích hoạt.
  */
 
 const SETTINGS_PATH = "/api/ai/settings";
@@ -20,11 +23,9 @@ const ACTIVATE_PATH = "/api/ai/settings/activate";
 const DISABLE_PATH = "/api/ai/settings/disable";
 
 const DEFAULT_PROVIDER_PROFILE = "openai-compatible";
-
 const VERSION_CONFLICT_CODE = "AI_VERSION_CONFLICT";
 const VERSION_CONFLICT_NOTICE = "Cấu hình đã thay đổi ở phiên khác, đang tải lại…";
 
-/** Thông điệp ĐÓNG theo mã lỗi của server (không echo nội dung thô từ provider). */
 const ERROR_TEXT: Record<string, string> = {
   AI_VERSION_CONFLICT: VERSION_CONFLICT_NOTICE,
   AI_CONFIG_REQUIRED: "Chưa có cấu hình AI, hãy lưu cấu hình trước.",
@@ -37,9 +38,8 @@ const ERROR_TEXT: Record<string, string> = {
   AI_INTERNAL: "Lỗi hệ thống phía server, vui lòng thử lại.",
 };
 
-/** Nhãn tiếng Việt cho vòng đời cấu hình. */
 const STATUS_TEXT: Record<string, string> = {
-  draft: "Bản nháp",
+  draft: "Đã lưu, chưa kiểm tra",
   test_failed: "Kiểm tra kết nối thất bại",
   verified: "Đã xác minh kết nối",
   active: "Đang hoạt động",
@@ -49,12 +49,15 @@ const STATUS_TEXT: Record<string, string> = {
 
 const inputClass =
   "h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
-
+const inputErrorClass = " border-red-500 dark:border-red-600";
 const secondaryButtonClass =
-  "inline-flex h-11 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
-
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
 const primaryButtonClass =
-  "inline-flex h-11 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
+const dangerButtonClass =
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-red-500 bg-surface px-3 text-sm font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
+
+type ProviderProfileOption = { id: string; label: string };
 
 type AiConfigView = {
   config_id: string;
@@ -71,24 +74,20 @@ type AiConfigView = {
 };
 
 type CallResult =
-  | { ok: true; config: AiConfigView | null; status: string | null; verified: boolean | null }
+  | { ok: true; config: AiConfigView | null; active: boolean | null; profiles: ProviderProfileOption[] }
   | { ok: false; httpStatus: number; code: string; message: string };
-
-type SuccessPayload = { config: AiConfigView | null; status: string | null; verified: boolean | null };
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
-
 function asTextOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
-
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Chỉ nhận các field đã sanitize; mọi field lạ (kể cả secret) bị bỏ tại biên này. */
+/** Chỉ nhận field đã sanitize; field lạ (kể cả secret) bị bỏ tại biên này. */
 function toConfigView(raw: unknown): AiConfigView | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
@@ -109,22 +108,25 @@ function toConfigView(raw: unknown): AiConfigView | null {
   };
 }
 
-/** Rút gọn vân tay khoá: 8 ký tự đầu + dấu ba chấm. */
 function shortFingerprint(value: string): string {
-  if (value.length === 0) return "—";
-  return value.slice(0, 8) + "…";
+  return value.length === 0 ? "—" : value.slice(0, 8) + "…";
 }
-
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value.slice(0, 40);
   return parsed.toLocaleString("vi-VN");
 }
-
 function statusLabel(status: string): string {
-  if (status.length === 0) return "—";
-  return STATUS_TEXT[status] ?? status;
+  return status.length === 0 ? "—" : STATUS_TEXT[status] ?? status;
+}
+function isHttpsUrl(value: string): boolean {
+  if (value.length === 0) return true;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function failureText(code: string, serverMessage: string | null): string {
@@ -143,9 +145,7 @@ async function callJson(path: string, method: string, body?: Record<string, unkn
       body: hasBody ? JSON.stringify(body) : undefined,
       credentials: "same-origin",
       cache: "no-store",
-      headers: hasBody
-        ? { accept: "application/json", "content-type": "application/json" }
-        : { accept: "application/json" },
+      headers: hasBody ? { accept: "application/json", "content-type": "application/json" } : { accept: "application/json" },
     });
     httpStatus = response.status;
     let payload: unknown = null;
@@ -160,118 +160,163 @@ async function callJson(path: string, method: string, body?: Record<string, unkn
       const serverMessage = typeof record.message === "string" ? record.message : null;
       return { ok: false, httpStatus, code, message: failureText(code, serverMessage) };
     }
+    const profilesRaw = Array.isArray(record.provider_profiles) ? record.provider_profiles : [];
+    const profiles = profilesRaw
+      .map((p) => (p && typeof p === "object" ? { id: asText((p as Record<string, unknown>).id), label: asText((p as Record<string, unknown>).label) } : null))
+      .filter((p): p is ProviderProfileOption => p !== null && p.id.length > 0);
+    const activeRaw = record.active;
+    const activeId = activeRaw && typeof activeRaw === "object" ? asText((activeRaw as Record<string, unknown>).config_id) : "";
     return {
       ok: true,
       config: toConfigView(record.config),
-      status: typeof record.status === "string" ? record.status : null,
-      // Một số phiên bản route trả "verified" dạng boolean thay cho status.
-      verified: typeof record.verified === "boolean" ? record.verified : null,
+      active: activeId.length > 0 ? activeId === (toConfigView(record.config)?.config_id ?? "") : null,
+      profiles,
     };
   } catch {
     return { ok: false, httpStatus, code: "AI_INTERNAL", message: "Không kết nối được tới server." };
   }
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+type BadgeTone = "success" | "warning" | "muted" | "error";
+const BADGE_CLASSES: Record<BadgeTone, string> = {
+  success: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+  warning: "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200",
+  muted: "border-border bg-muted/40 text-muted",
+  error: "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-200",
+};
+
+function Badge({ tone, children }: { tone: BadgeTone; children: string }) {
+  return <span className={"inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium " + BADGE_CLASSES[tone]}>{children}</span>;
+}
+
+function badgeToneFor(status: string, active: boolean | null): { tone: BadgeTone; text: string } {
+  if (active === true && status === "active") return { tone: "success", text: "Đã kích hoạt" };
+  if (status === "active") return { tone: "success", text: statusLabel(status) };
+  if (status === "verified") return { tone: "success", text: "Đã xác minh" };
+  if (status === "draft") return { tone: "warning", text: "Đã lưu, chưa kiểm tra" };
+  if (status === "disabled") return { tone: "muted", text: "Đã tắt" };
+  if (status === "test_failed") return { tone: "error", text: "Kiểm tra thất bại" };
+  if (status === "rotation_required") return { tone: "warning", text: "Cần xoay khoá" };
+  return { tone: "muted", text: statusLabel(status) };
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1 last:border-b-0">
+    <div className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1.5 last:border-b-0">
       <dt className="text-muted">{label}</dt>
-      <dd className="text-right font-medium text-foreground">{value}</dd>
+      <dd className="text-right font-medium text-foreground">{children}</dd>
     </div>
+  );
+}
+
+const STEP_LABELS = ["Lưu cấu hình", "Kiểm tra kết nối", "Kích hoạt"];
+
+function StepIndicator({ flow }: { flow: FlowState }) {
+  return (
+    <ol className="flex items-center gap-1 text-xs text-muted" aria-label="Luồng cấu hình">
+      {STEP_LABELS.map((label, index) => {
+        const stepNumber = index + 1;
+        const done = flow.doneStep >= stepNumber;
+        const current = flow.currentStep === stepNumber;
+        return (
+          <li key={label} className="flex items-center gap-1">
+            <span
+              className={
+                "inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold " +
+                (done ? "border-emerald-500 bg-emerald-500 text-white" : current ? "border-primary bg-primary text-on-primary" : "border-border text-muted")
+              }
+            >
+              {done ? <Check className="h-3.5 w-3.5" /> : stepNumber}
+            </span>
+            <span className={current ? "font-medium text-foreground" : ""}>{label}</span>
+            {stepNumber < STEP_LABELS.length ? <span className="mx-1 text-muted">›</span> : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
 export function AiSettingsPanel() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [config, setConfig] = useState<AiConfigView | null>(null);
+  const [active, setActive] = useState<boolean | null>(null);
+  const [profiles, setProfiles] = useState<ProviderProfileOption[]>([]);
   const [statusText, setStatusText] = useState("");
-  const [noticeText, setNoticeText] = useState("");
   const [errorText, setErrorText] = useState("");
 
   const [apiUrl, setApiUrl] = useState("");
   const [model, setModel] = useState("");
   const [providerProfile, setProviderProfile] = useState(DEFAULT_PROVIDER_PROFILE);
   const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [rotateOpen, setRotateOpen] = useState(false);
 
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [confirmDisable, setConfirmDisable] = useState(false);
 
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const apiUrlRef = useRef<HTMLInputElement>(null);
-  const drawerRef = useRef<HTMLElement>(null);
-  const confirmDiscardRef = useRef<HTMLButtonElement>(null);
-  const alertDialogRef = useRef<HTMLDivElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [urlTouched, setUrlTouched] = useState(false);
 
-  /** Reset form về ĐÚNG trạng thái server đã tải (nguồn an toàn duy nhất). */
   const resetFormToServerState = useCallback((next: AiConfigView | null) => {
     setProviderProfile(next?.provider_profile || DEFAULT_PROVIDER_PROFILE);
     setModel(next?.model ?? "");
     setApiUrl("");
     setApiKey("");
+    setShowKey(false);
+    setUrlTouched(false);
   }, []);
 
-  /**
-   * R1 (A) — dirty state theo dõi URL/model/profile/API key: đóng khi dirty phải hỏi xác nhận.
-   */
   const dirty =
     apiKey.length > 0 ||
     apiUrl.trim().length > 0 ||
     model.trim() !== (config?.model ?? "") ||
     (providerProfile.trim() || DEFAULT_PROVIDER_PROFILE) !== (config?.provider_profile || DEFAULT_PROVIDER_PROFILE);
 
+  const urlValid = isHttpsUrl(apiUrl.trim());
+  const canSave = !busy && apiUrl.trim().length > 0 && urlValid && model.trim().length > 0 && apiKey.length > 0;
+  const canTest = !busy && config !== null && config.status !== "active";
+  const canActivate = !busy && config !== null && (config.status === "verified" || config.status === "active") && active !== true;
+  const canRotate = !busy && config !== null && apiKey.length > 0;
+  const canDisable = !busy && config !== null && config.status === "active";
+
+  const flow = flowStepOf(config?.status ?? null);
+
   const performClose = useCallback(() => {
     setConfirmDiscard(false);
     setOpen(false);
-    triggerRef.current?.focus();
   }, []);
 
-  /** R2 (D3–D4) — "Ở lại": đóng confirm, KHÔNG đóng drawer, phục hồi focus hợp lý. */
-  const stayInDrawer = useCallback(() => {
-    setConfirmDiscard(false);
-    const target = closeButtonRef.current ?? apiUrlRef.current ?? drawerRef.current;
-    target?.focus();
-  }, []);
-
-  /**
-   * MỌI đường dismiss (Escape, overlay, nút Đóng, toggle trigger) đi qua đây:
-   * - busy ⇒ KHÔNG đóng panel;
-   * - alertdialog xác nhận đang mở ⇒ "Ở lại" (không đóng drawer);
-   * - dirty ⇒ hiện xác nhận bỏ thay đổi trước.
-   */
   const requestClose = useCallback(() => {
-    // R2 (D): quyết định dismiss nằm ở logic thuần (test được): busy ⇒ chặn, confirm ⇒ "Ở lại",
-    // dirty ⇒ hỏi xác nhận, còn lại ⇒ đóng.
     const decision = decideDismiss({ busy, dirty, confirmDiscard });
-    if (decision === "blocked") return;
-    if (decision === "stay") {
-      stayInDrawer();
-      return;
-    }
+    if (decision === "blocked" || decision === "stay") return;
     if (decision === "confirm") {
       setConfirmDiscard(true);
       return;
     }
     performClose();
-  }, [busy, dirty, confirmDiscard, performClose, stayInDrawer]);
+  }, [busy, confirmDiscard, dirty, performClose]);
 
-  /** Owner xác nhận bỏ: xoá API key NGAY và reset form về server state an toàn rồi mới đóng. */
   const discardChanges = useCallback(() => {
     setApiKey("");
     resetFormToServerState(config);
     setErrorText("");
-    setNoticeText("");
     setStatusText("Đã bỏ thay đổi chưa lưu.");
+    setConfirmDiscard(false);
     performClose();
   }, [config, performClose, resetFormToServerState]);
 
   const loadSettings = useCallback(async () => {
-    setBusy(true);
+    setLoading(true);
     setErrorText("");
     setStatusText("Đang tải cấu hình AI…");
     const result = await callJson(SETTINGS_PATH, "GET");
+    setLoading(false);
     if (result.ok) {
       setConfig(result.config);
+      setActive(result.active);
+      setProfiles(result.profiles);
       if (result.config) {
         setProviderProfile(result.config.provider_profile || DEFAULT_PROVIDER_PROFILE);
         setModel(result.config.model);
@@ -284,126 +329,38 @@ export function AiSettingsPanel() {
       setErrorText(result.message);
       setStatusText("Không tải được cấu hình AI.");
     }
-    setBusy(false);
   }, []);
 
   useEffect(() => {
     if (!open) return;
-    // Hoãn một nhịp: KHÔNG setState đồng bộ trong effect (tránh cascading render),
-    // và panel chỉ gọi API khi Owner mở — không tự gọi provider lúc render.
     const timer = setTimeout(() => {
       void loadSettings();
     }, 0);
     return () => clearTimeout(timer);
   }, [open, loadSettings]);
 
-  useEffect(() => {
-    if (!open) return;
-    const target = apiUrlRef.current ?? drawerRef.current;
-    target?.focus();
-  }, [open]);
-
-  /**
-   * R1 (A) — Focus trap THẬT cho drawer aria-modal: Tab/Shift+Tab quay vòng trong panel,
-   * focus không thoát ra nền; Escape chỉ đóng khi không busy.
-   */
-  useEffect(() => {
-    if (!open) return;
-    const FOCUSABLE_SELECTOR =
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-    const focusables = () => {
-      const nodes = drawerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-      return nodes
-        ? Array.from(nodes).filter(
-            // Phần nội dung bị `inert` khi alertdialog mở ⇒ không tính vào vòng focus (modal thật).
-            (node) => node.getAttribute("aria-hidden") !== "true" && !node.closest("[inert]")
-          )
-        : [];
-    };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        // R2 (D3): Escape trong alertdialog = "Ở lại" (đóng confirm), KHÔNG đóng drawer.
-        requestClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusables();
-      if (items.length === 0) {
-        event.preventDefault();
-        drawerRef.current?.focus();
-        return;
-      }
-      const active = document.activeElement as HTMLElement | null;
-      const activeIndex = active ? items.indexOf(active) : -1;
-      const inside = drawerRef.current?.contains(active) ?? false;
-      const target = resolveTabTarget({ total: items.length, activeIndex, shiftKey: event.shiftKey, inside });
-      if (target.prevent && target.index >= 0) {
-        event.preventDefault();
-        items[target.index].focus();
-      }
-    };
-
-    const onFocusIn = (event: FocusEvent) => {
-      const node = event.target as Node | null;
-      if (!drawerRef.current || !node) return;
-      if (confirmDiscard) {
-        // R3 (C4): khi alertdialog mở, focus ở BẤT KỲ đâu ngoài alertdialog (kể cả focus programmatic)
-        // đều bị kéo về nút mặc định "Bỏ thay đổi".
-        if (!alertDialogRef.current || !alertDialogRef.current.contains(node)) {
-          confirmDiscardRef.current?.focus();
-        }
-        return;
-      }
-      if (drawerRef.current.contains(node)) return;
-      const items = focusables();
-      if (items.length > 0) items[0].focus();
-      else drawerRef.current.focus();
-    };
-
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("focusin", onFocusIn, true);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("focusin", onFocusIn, true);
-    };
-  }, [open, requestClose, confirmDiscard, stayInDrawer]);
-
-  /** R2 (D1) — alertdialog nhận focus khi mở (nút "Bỏ thay đổi" là hành động mặc định). */
-  useEffect(() => {
-    if (!open || !confirmDiscard) return;
-    // Alertdialog thật sự modal: đưa focus vào hành động chính trong hộp xác nhận.
-    if (confirmInitialFocusIndex(2) === 0) confirmDiscardRef.current?.focus();
-  }, [open, confirmDiscard]);
-
-  const applyConfig = useCallback((next: AiConfigView | null) => {
-    setConfig(next);
-    setConfirmDiscard(false);
-    // Sau mutation thành công: form trở về server state và API key đã được xoá.
-    resetFormToServerState(next);
-  }, [resetFormToServerState]);
+  const applyConfig = useCallback(
+    (next: AiConfigView | null) => {
+      setConfig(next);
+      setConfirmDiscard(false);
+      resetFormToServerState(next);
+    },
+    [resetFormToServerState],
+  );
 
   const runRequest = useCallback(
-    async (
-      path: string,
-      body: Record<string, unknown> | undefined,
-      pendingText: string,
-      onSuccess: (payload: SuccessPayload) => void,
-    ) => {
+    async (path: string, body: Record<string, unknown> | undefined, pendingText: string, onSuccess: (payload: { config: AiConfigView | null }) => void) => {
       setBusy(true);
       setErrorText("");
-      setNoticeText("");
       setStatusText(pendingText);
       const result = await callJson(path, "POST", body);
       setBusy(false);
       if (result.ok) {
-        onSuccess({ config: result.config, status: result.status, verified: result.verified });
+        onSuccess({ config: result.config });
         return;
       }
       if (result.httpStatus === 409 || result.code === VERSION_CONFLICT_CODE) {
-        setNoticeText(VERSION_CONFLICT_NOTICE);
+        setStatusText(VERSION_CONFLICT_NOTICE);
         await loadSettings();
         return;
       }
@@ -414,34 +371,22 @@ export function AiSettingsPanel() {
   );
 
   function handleSave() {
-    if (busy) return;
-    const url = apiUrl.trim();
-    const modelName = model.trim();
-    if (url.length === 0 || modelName.length === 0 || apiKey.length === 0) {
-      setStatusText("Thiếu dữ liệu bắt buộc.");
-      setErrorText("Vui lòng nhập API URL, model và API key trước khi lưu.");
-      return;
-    }
+    if (!canSave) return;
     void runRequest(
       SETTINGS_PATH,
-      {
-        provider_profile: providerProfile.trim() || DEFAULT_PROVIDER_PROFILE,
-        api_url: url,
-        model: modelName,
-        api_key: apiKey,
-        expected_version: config?.version ?? null,
-      },
+      { provider_profile: providerProfile.trim() || DEFAULT_PROVIDER_PROFILE, api_url: apiUrl.trim(), model: model.trim(), api_key: apiKey, expected_version: config?.version ?? null },
       "Đang lưu cấu hình AI…",
       (payload) => {
         setApiKey("");
+        setShowKey(false);
         applyConfig(payload.config);
-        setStatusText("Đã lưu cấu hình AI.");
+        setStatusText("Đã lưu cấu hình AI. Bước tiếp theo: Kiểm tra kết nối.");
       },
     );
   }
 
   function handleTest() {
-    if (busy) return;
+    if (!canTest) return;
     const body: Record<string, unknown> = {};
     if (config) {
       body.config_id = config.config_id;
@@ -449,32 +394,21 @@ export function AiSettingsPanel() {
     }
     void runRequest(TEST_PATH, body, "Đang kiểm tra kết nối tới provider…", (payload) => {
       applyConfig(payload.config);
-      const verified = payload.status === "verified" || payload.verified === true;
-      setStatusText(
-        verified
-          ? "Kết nối provider đã được xác minh."
-          : "Kiểm tra kết nối thất bại, cấu hình chưa được xác minh.",
-      );
+      const verified = payload.config?.status === "verified";
+      setStatusText(verified ? "Kết nối provider đã được xác minh." : "Kiểm tra kết nối thất bại, cấu hình chưa được xác minh.");
     });
   }
 
   function handleRotate() {
-    if (busy || !config) return;
-    if (apiKey.length === 0) {
-      setStatusText("Thiếu API key mới.");
-      setErrorText("Vui lòng nhập API key mới trước khi xoay khoá.");
-      return;
-    }
+    if (!canRotate || !config) return;
     void runRequest(
       ROTATE_PATH,
-      {
-        config_id: config.config_id,
-        api_key: apiKey,
-        expected_version: config?.version ?? null,
-      },
+      { config_id: config.config_id, api_key: apiKey, expected_version: config?.version ?? null },
       "Đang xoay API key…",
       (payload) => {
         setApiKey("");
+        setShowKey(false);
+        setRotateOpen(false);
         applyConfig(payload.config);
         setStatusText("Đã xoay API key, cần kiểm tra kết nối lại.");
       },
@@ -482,244 +416,317 @@ export function AiSettingsPanel() {
   }
 
   function handleActivate() {
-    if (busy || !config) return;
-    void runRequest(
-      ACTIVATE_PATH,
-      { config_id: config.config_id, version: config.version },
-      "Đang kích hoạt cấu hình AI…",
-      (payload) => {
-        applyConfig(payload.config);
-        setStatusText("Đã kích hoạt cấu hình AI.");
-      },
-    );
+    if (!canActivate || !config) return;
+    void runRequest(ACTIVATE_PATH, { config_id: config.config_id, version: config.version }, "Đang kích hoạt cấu hình AI…", (payload) => {
+      applyConfig(payload.config);
+      setStatusText("Đã kích hoạt cấu hình AI.");
+    });
   }
 
   function handleDisable() {
-    if (busy || !config) return;
-    void runRequest(
-      DISABLE_PATH,
-      { config_id: config.config_id, version: config.version },
-      "Đang tắt cấu hình AI…",
-      (payload) => {
-        applyConfig(payload.config);
-        setStatusText("Đã tắt cấu hình AI.");
-      },
-    );
+    if (!canDisable || !config) return;
+    setConfirmDisable(false);
+    void runRequest(DISABLE_PATH, { config_id: config.config_id, version: config.version }, "Đang tắt cấu hình AI…", (payload) => {
+      applyConfig(payload.config);
+      setStatusText("Đã tắt cấu hình AI. Báo cáo AI sẽ fail-closed.");
+    });
   }
 
+  const summaryBadge = config ? badgeToneFor(config.status, active) : { tone: "muted" as BadgeTone, text: "Chưa lưu" };
+
   return (
-    <div className="relative">
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls="ai-settings-drawer"
-        onClick={() => {
-          if (open) {
-            requestClose();
-            return;
-          }
-          setOpen(true);
+    <>
+      <Dialog.Root
+        open={open}
+        onOpenChange={(next) => {
+          if (next) setOpen(true);
+          else requestClose();
         }}
-        className={secondaryButtonClass}
       >
-        Cấu hình AI
-      </button>
-
-      {open ? (
-        <>
-          <div aria-hidden onClick={requestClose} className="fixed inset-0 z-40 bg-black/40" />
-
-          <aside
-            ref={drawerRef}
-            id="ai-settings-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ai-settings-title"
-            tabIndex={-1}
-            className="fixed inset-0 z-50 flex flex-col gap-4 overflow-y-auto border border-border bg-surface p-4 text-foreground shadow-xl sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[26rem] sm:rounded-l-2xl sm:p-5"
+        <Dialog.Trigger asChild>
+          <button type="button" className={secondaryButtonClass}>
+            Cấu hình AI
+          </button>
+        </Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 motion-safe:data-[state=open]:animate-in" />
+          <Dialog.Content
+            aria-describedby="ai-settings-desc"
+            className="fixed inset-0 z-50 flex flex-col bg-surface text-foreground shadow-xl outline-none sm:inset-y-0 sm:right-0 sm:left-auto sm:w-[30rem] sm:border-l sm:border-border"
           >
-            {/*
-              R3 (C) — alertdialog là thành phần DUY NHẤT nằm ngoài vùng `inert` khi mở xác nhận:
-              chỉ "Bỏ thay đổi" và "Ở lại" nhận focus/tương tác.
-            */}
-            {confirmDiscard ? (
-              <div
-                ref={alertDialogRef}
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby="ai-discard-title"
-                aria-describedby="ai-discard-detail"
-                className="rounded-2xl border border-border bg-surface p-3"
-              >
-                <p id="ai-discard-title" className="text-sm font-semibold text-foreground">
-                  Bỏ thay đổi chưa lưu?
-                </p>
-                <p id="ai-discard-detail" className="mt-1 text-xs text-muted">
-                  API key đang nhập sẽ bị xoá khỏi bộ nhớ trình duyệt và form trở về trạng thái đã lưu trên server.
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button ref={confirmDiscardRef} type="button" onClick={discardChanges} className={primaryButtonClass}>
-                    Bỏ thay đổi
-                  </button>
-                  <button type="button" onClick={stayInDrawer} className={secondaryButtonClass}>
-                    Ở lại
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-
-            {/*
-              R3 (C) — TOÀN BỘ nền drawer nằm trong MỘT vùng inert + aria-hidden:
-              header (gồm nút "Đóng"), status/live region, current-config section, form và mọi action button.
-            */}
-            {/* background-inert-start */}
-            <div inert={confirmDiscard} aria-hidden={confirmDiscard} className="flex flex-col gap-4">
-            <header className="flex items-start justify-between gap-3">
+            <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
               <div>
-                <h2 id="ai-settings-title" className="text-base font-semibold text-foreground">
-                  Cấu hình AI
-                </h2>
-                <p className="mt-1 text-sm text-muted">
-                  Dành cho Owner (pilot): khai báo provider, model và API key cho trợ lý AI.
-                </p>
+                <Dialog.Title className="text-base font-semibold text-foreground">Cấu hình AI</Dialog.Title>
+                <Dialog.Description id="ai-settings-desc" className="mt-0.5 text-sm text-muted">
+                  Khai báo provider, model và API key cho trợ lý AI.
+                </Dialog.Description>
               </div>
-              <button ref={closeButtonRef} type="button" onClick={requestClose} disabled={busy} className={secondaryButtonClass}>
-                Đóng
-              </button>
+              <Dialog.Close asChild>
+                <button type="button" disabled={busy} className={secondaryButtonClass} aria-label="Đóng">
+                  Đóng
+                </button>
+              </Dialog.Close>
             </header>
 
-            <p role="status" aria-live="polite" className="rounded-2xl border border-border bg-surface p-3 text-sm text-muted">
-              <span>{statusText}</span>
-              {noticeText ? <span className="mt-1 block font-medium text-foreground">{noticeText}</span> : null}
-              {errorText ? <span className="mt-1 block font-medium text-foreground">{errorText}</span> : null}
-            </p>
-
-            <section className="rounded-2xl border border-border bg-surface p-3">
-              <h3 className="text-sm font-semibold text-foreground">Cấu hình hiện tại</h3>
-              {config ? (
-                <dl className="mt-2 text-sm">
-                  <DetailRow label="Provider profile" value={config.provider_profile || "—"} />
-                  <DetailRow label="Host đã làm sạch" value={config.sanitized_host || "—"} />
-                  <DetailRow label="Model" value={config.model || "—"} />
-                  <DetailRow label="Vân tay khoá" value={shortFingerprint(config.key_fingerprint)} />
-                  <DetailRow label="Phiên bản" value={String(config.version)} />
-                  <DetailRow label="Trạng thái" value={statusLabel(config.status)} />
-                  <DetailRow label="Xác minh lúc" value={formatTimestamp(config.verified_at)} />
-                  <DetailRow label="Kiểm tra gần nhất" value={formatTimestamp(config.last_tested_at)} />
-                  <DetailRow label="Cập nhật lúc" value={formatTimestamp(config.updated_at)} />
-                </dl>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              {loading ? (
+                <div className="flex flex-col gap-3">
+                  <div className="h-20 animate-pulse rounded-2xl bg-muted/40" />
+                  <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+                  <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+                </div>
               ) : (
-                <p className="mt-2 text-sm text-muted">Chưa có cấu hình AI nào được lưu.</p>
+                <div className="flex flex-col gap-4">
+                  <StepIndicator flow={flow} />
+
+                  <p role="status" aria-live="polite" className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted">
+                    {statusText}
+                  </p>
+
+                  {errorText ? (
+                    <p role="alert" className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                      {errorText}
+                    </p>
+                  ) : null}
+
+                  <section className="rounded-2xl border border-border bg-surface p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">Cấu hình hiện tại</h3>
+                      <Badge tone={summaryBadge.tone}>{summaryBadge.text}</Badge>
+                    </div>
+                    {config ? (
+                      <dl className="mt-2 text-sm">
+                        <DetailRow label="Provider profile">{config.provider_profile || "—"}</DetailRow>
+                        <DetailRow label="Host">{config.sanitized_host || "—"}</DetailRow>
+                        <DetailRow label="Model">{config.model || "—"}</DetailRow>
+                        <DetailRow label="Vân tay khoá">{shortFingerprint(config.key_fingerprint)}</DetailRow>
+                        <DetailRow label="Phiên bản">{String(config.version)}</DetailRow>
+                        <DetailRow label="Trạng thái">{statusLabel(config.status)}</DetailRow>
+                        <DetailRow label="Xác minh lúc">{formatTimestamp(config.verified_at)}</DetailRow>
+                        <DetailRow label="Kiểm tra gần nhất">{formatTimestamp(config.last_tested_at)}</DetailRow>
+                        <DetailRow label="Cập nhật lúc">{formatTimestamp(config.updated_at)}</DetailRow>
+                      </dl>
+                    ) : (
+                      <p className="mt-2 text-sm text-muted">Chưa có cấu hình AI nào được lưu.</p>
+                    )}
+                  </section>
+
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      handleSave();
+                    }}
+                    className="flex flex-col gap-3"
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="ai-provider-profile" className="text-sm font-medium text-foreground">
+                        Provider profile
+                      </label>
+                      <Select.Root value={providerProfile} onValueChange={setProviderProfile} disabled={busy}>
+                        <Select.Trigger id="ai-provider-profile" className={inputClass + " flex items-center justify-between data-[placeholder]:text-muted"} aria-label="Provider profile">
+                          <Select.Value placeholder="Chọn provider" />
+                          <Select.Icon>
+                            <ChevronDown className="h-4 w-4 text-muted" />
+                          </Select.Icon>
+                        </Select.Trigger>
+                        <Select.Portal>
+                          <Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface p-1 text-sm text-foreground shadow-xl">
+                            <Select.Viewport>
+                              {(profiles.length > 0 ? profiles : [{ id: DEFAULT_PROVIDER_PROFILE, label: "OpenAI-compatible" }]).map((profile) => (
+                                <Select.Item key={profile.id} value={profile.id} className="flex cursor-pointer select-none items-center justify-between rounded-md px-3 py-2 outline-none data-[highlighted]:bg-muted/15">
+                                  <Select.ItemText>{profile.label}</Select.ItemText>
+                                  <Select.ItemIndicator>
+                                    <Check className="h-4 w-4" />
+                                  </Select.ItemIndicator>
+                                </Select.Item>
+                              ))}
+                            </Select.Viewport>
+                          </Select.Content>
+                        </Select.Portal>
+                      </Select.Root>
+                      <p className="text-xs text-muted">Giao thức OpenAI-compatible (server chỉ hỗ trợ profile này).</p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="ai-api-url" className="text-sm font-medium text-foreground">
+                        API URL
+                      </label>
+                      <input
+                        id="ai-api-url"
+                        name="api_url"
+                        type="url"
+                        inputMode="url"
+                        placeholder="https://api.provider.example/v1"
+                        value={apiUrl}
+                        onChange={(event) => {
+                          setApiUrl(event.target.value);
+                          setUrlTouched(true);
+                        }}
+                        disabled={busy}
+                        aria-describedby="ai-api-url-hint"
+                        aria-invalid={urlTouched && !urlValid}
+                        className={inputClass + (urlTouched && !urlValid ? inputErrorClass : "")}
+                      />
+                      <p id="ai-api-url-hint" className="text-xs text-muted">
+                        Bắt buộc HTTPS. Server chỉ trả về host đã làm sạch, hãy nhập lại URL khi lưu thay đổi.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="ai-model" className="text-sm font-medium text-foreground">
+                        Model
+                      </label>
+                      <input
+                        id="ai-model"
+                        name="model"
+                        type="text"
+                        value={model}
+                        onChange={(event) => {
+                          setModel(event.target.value);
+                        }}
+                        disabled={busy}
+                        className={inputClass}
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="ai-api-key" className="text-sm font-medium text-foreground">
+                        API key
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="ai-api-key"
+                          name="api_key"
+                          type={showKey ? "text" : "password"}
+                          autoComplete="new-password"
+                          spellCheck={false}
+                          data-1p-ignore
+                          aria-describedby="ai-api-key-hint"
+                          value={apiKey}
+                          onChange={(event) => {
+                            setApiKey(event.target.value);
+                          }}
+                          disabled={busy}
+                          className={inputClass + " pr-11"}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowKey((prev) => !prev)}
+                          disabled={busy}
+                          aria-label={showKey ? "Ẩn API key" : "Hiện API key"}
+                          className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted hover:text-foreground"
+                        >
+                          {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <p id="ai-api-key-hint" className="text-xs text-muted">
+                        API key được mã hóa phía máy chủ và không hiển thị lại sau khi lưu.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button type="submit" disabled={!canSave} className={primaryButtonClass}>
+                        Lưu cấu hình
+                      </button>
+                      <button type="button" disabled={!canTest} onClick={handleTest} className={secondaryButtonClass}>
+                        Kiểm tra kết nối
+                      </button>
+                      <button type="button" disabled={!canActivate} onClick={handleActivate} className={secondaryButtonClass}>
+                        Kích hoạt
+                      </button>
+                      <button type="button" disabled={!canDisable} onClick={() => setConfirmDisable(true)} className={dangerButtonClass}>
+                        Tắt cấu hình
+                      </button>
+                    </div>
+                  </form>
+
+                  <section className="rounded-2xl border border-border bg-surface p-4">
+                    <button type="button" onClick={() => setRotateOpen((prev) => !prev)} aria-expanded={rotateOpen} className="flex min-h-11 w-full items-center justify-between gap-2 text-sm font-medium text-foreground">
+                      <span className="inline-flex items-center gap-2">
+                        <KeyRound className="h-4 w-4 text-muted" />
+                        Xoay API key
+                      </span>
+                      <ChevronDown className={"h-4 w-4 text-muted transition-transform " + (rotateOpen ? "rotate-180" : "")} />
+                    </button>
+                    {rotateOpen ? (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        <label htmlFor="ai-rotate-key" className="text-sm font-medium text-foreground">
+                          API key mới
+                        </label>
+                        <input
+                          id="ai-rotate-key"
+                          name="rotate_key"
+                          type={showKey ? "text" : "password"}
+                          autoComplete="new-password"
+                          spellCheck={false}
+                          data-1p-ignore
+                          value={apiKey}
+                          onChange={(event) => setApiKey(event.target.value)}
+                          disabled={busy}
+                          className={inputClass}
+                        />
+                        <p className="text-xs text-muted">Phiên bản mới sẽ cần kiểm tra kết nối lại trước khi kích hoạt.</p>
+                        <button type="button" disabled={!canRotate} onClick={handleRotate} className={secondaryButtonClass}>
+                          <RefreshCw className="h-4 w-4" />
+                          Xoay khoá
+                        </button>
+                      </div>
+                    ) : null}
+                  </section>
+                </div>
               )}
-            </section>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                handleSave();
-              }}
-              className="flex flex-col gap-3"
-            >
-              <div className="flex flex-col gap-1">
-                <label htmlFor="ai-provider-profile" className="text-sm font-medium text-foreground">
-                  Provider profile
-                </label>
-                <input
-                  id="ai-provider-profile"
-                  name="provider_profile"
-                  type="text"
-                  value={providerProfile}
-                  onChange={(event) => setProviderProfile(event.target.value)}
-                  disabled={busy}
-                  className={inputClass}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label htmlFor="ai-api-url" className="text-sm font-medium text-foreground">
-                  API URL
-                </label>
-                <input
-                  id="ai-api-url"
-                  name="api_url"
-                  ref={apiUrlRef}
-                  type="url"
-                  inputMode="url"
-                  placeholder="https://api.provider.example/v1"
-                  value={apiUrl}
-                  onChange={(event) => setApiUrl(event.target.value)}
-                  disabled={busy}
-                  aria-describedby="ai-api-url-hint"
-                  className={inputClass}
-                />
-                <p id="ai-api-url-hint" className="text-xs text-muted">
-                  Server chỉ trả về host đã làm sạch, nên hãy nhập lại API URL khi lưu thay đổi.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label htmlFor="ai-model" className="text-sm font-medium text-foreground">
-                  Model
-                </label>
-                <input
-                  id="ai-model"
-                  name="model"
-                  type="text"
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                  disabled={busy}
-                  className={inputClass}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label htmlFor="ai-api-key" className="text-sm font-medium text-foreground">
-                  API key
-                </label>
-                <input
-                  id="ai-api-key"
-                  name="api_key"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  data-1p-ignore
-                  aria-describedby="ai-api-key-hint"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  disabled={busy}
-                  className={inputClass}
-                />
-                <p id="ai-api-key-hint" className="text-xs text-muted">
-                  Khoá chỉ được mã hoá ở server, không hiển thị lại
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <button type="submit" disabled={busy} className={primaryButtonClass}>
-                  Lưu cấu hình
+      <AlertDialog.Root open={confirmDiscard} onOpenChange={setConfirmDiscard}>
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/40" />
+          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[70] w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-surface p-5 text-foreground shadow-xl outline-none">
+            <AlertDialog.Title className="text-sm font-semibold text-foreground">Bỏ thay đổi chưa lưu?</AlertDialog.Title>
+            <AlertDialog.Description className="mt-1 text-xs text-muted">
+              API key đang nhập sẽ bị xoá khỏi bộ nhớ trình duyệt và form trở về trạng thái đã lưu trên server.
+            </AlertDialog.Description>
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <AlertDialog.Cancel asChild>
+                <button type="button" className={secondaryButtonClass}>
+                  Ở lại
                 </button>
-                <button type="button" disabled={busy} onClick={handleTest} className={secondaryButtonClass}>
-                  Kiểm tra kết nối
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button type="button" onClick={discardChanges} className={primaryButtonClass}>
+                  Bỏ thay đổi
                 </button>
-                <button type="button" disabled={busy || !config} onClick={handleRotate} className={secondaryButtonClass}>
-                  Xoay API key
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+
+      <AlertDialog.Root open={confirmDisable} onOpenChange={setConfirmDisable}>
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/40" />
+          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[70] w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-surface p-5 text-foreground shadow-xl outline-none">
+            <AlertDialog.Title className="text-sm font-semibold text-foreground">Tắt cấu hình AI?</AlertDialog.Title>
+            <AlertDialog.Description className="mt-1 text-xs text-muted">
+              Báo cáo AI sẽ fail-closed (không thể tạo báo cáo mới). Lịch sử và bản nháp đã lưu vẫn được giữ nguyên.
+            </AlertDialog.Description>
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <AlertDialog.Cancel asChild>
+                <button type="button" className={secondaryButtonClass}>
+                  Giữ hoạt động
                 </button>
-                <button type="button" disabled={busy || !config} onClick={handleActivate} className={secondaryButtonClass}>
-                  Kích hoạt
-                </button>
-                <button type="button" disabled={busy || !config} onClick={handleDisable} className={secondaryButtonClass}>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button type="button" onClick={handleDisable} className={dangerButtonClass}>
                   Tắt cấu hình
                 </button>
-              </div>
-            </form>
+              </AlertDialog.Action>
             </div>
-            {/* background-inert-end */}
-          </aside>
-        </>
-      ) : null}
-    </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+    </>
   );
 }

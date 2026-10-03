@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { confirmInitialFocusIndex, decideDismiss, resolveTabTarget } from "./ai-settings-panel-logic.ts";
+import { confirmInitialFocusIndex, decideDismiss, flowStepOf, resolveTabTarget } from "./ai-settings-panel-logic.ts";
 
 test("R2-D1: busy chặn MỌI đường dismiss (kể cả khi dirty hoặc alertdialog đang mở)", () => {
   assert.equal(decideDismiss({ busy: true, dirty: false, confirmDiscard: false }), "blocked");
@@ -42,4 +42,15 @@ test("R2-D3: Tab/Shift+Tab quay vòng trong vòng focus, không thoát ra nền"
 test("R2-D4: alertdialog nhận focus vào hành động chính khi mở", () => {
   assert.equal(confirmInitialFocusIndex(2), 0);
   assert.equal(confirmInitialFocusIndex(0), -1);
+});
+
+test("S04-L1: flowStepOf ánh xạ vòng đời sang luồng 3 bước", () => {
+  assert.deepEqual(flowStepOf(null), { currentStep: 1, doneStep: 0 });
+  assert.deepEqual(flowStepOf("draft"), { currentStep: 2, doneStep: 1 });
+  assert.deepEqual(flowStepOf("test_failed"), { currentStep: 2, doneStep: 1 });
+  assert.deepEqual(flowStepOf("rotation_required"), { currentStep: 2, doneStep: 1 });
+  assert.deepEqual(flowStepOf("verified"), { currentStep: 3, doneStep: 2 });
+  assert.deepEqual(flowStepOf("active"), { currentStep: 3, doneStep: 3 });
+  assert.deepEqual(flowStepOf("disabled"), { currentStep: 0, doneStep: 0 });
+  assert.deepEqual(flowStepOf("unknown"), { currentStep: 1, doneStep: 0 });
 });
