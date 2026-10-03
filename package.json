@@ -42,7 +42,9 @@
     "test:p1.6-w04-s04c-i01-local": "node --conditions=react-server scripts/p1.6-s04c-change-request-read-local-acceptance.mjs",
     "test:p1.6-w04-s04c-i01-dev": "node --conditions=react-server scripts/p1.6-s04c-server-boundaries-dev-acceptance.mjs",
     "test:p1.6-w04-s04b-r2a": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/r2-document-storage.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs src/lib/direct-entry/r2-migration.test.mjs",
-    "test:p1.6-w04-s04a-dev": "node --conditions=react-server scripts/p1.6-w04-s04a-dev-acceptance.mjs"
+    "test:p1.6-w04-s04a-dev": "node --conditions=react-server scripts/p1.6-w04-s04a-dev-acceptance.mjs",
+    "test:p1.6-w04-s04c-s03b3-r1": "node --test scripts/p1.6-s04c-policy-closure-db.test.mjs",
+    "test:p1.6-w04-s04c-s03b3-r1-dev": "node scripts/p1.6-s04c-policy-closure-dev-acceptance.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
