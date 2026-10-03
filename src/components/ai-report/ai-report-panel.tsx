@@ -17,7 +17,7 @@ import {
   type PeriodType,
 } from "@/lib/ai-report/report-contract";
 import { createReportController, type FetchResult } from "@/lib/ai-report/report-controller";
-import { todayDateIso } from "@/lib/format";
+import { formatTimestamp, todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
 import { ReportView } from "./report-view";
 
@@ -280,6 +280,7 @@ export function AiReportPanel() {
   const unavailable = capability === null ? null : !capability.ai_enabled ? "Báo cáo AI đang tắt." : !capability.config_ready ? "Chưa có cấu hình provider AI hoạt động (AI unavailable)." : null;
   const canApprove = capability?.review.approve === true && lifecycle === "draft";
   const canReject = capability?.review.reject === true && lifecycle === "draft";
+  const currentHistoryItem = jobId ? historyItems.find((item) => item.job_id === jobId) ?? null : null;
 
   return (
     <div className="relative">
@@ -342,6 +343,7 @@ export function AiReportPanel() {
                   <DetailRow label="Trạng thái" value={jobStatus ? jobStatusLabel(jobStatus.status) : "—"} />
                   {jobStatus && isFailedJobStatus(jobStatus.status) && jobStatus.error_code ? (<DetailRow label="Lý do" value={codeToMessage(jobStatus.error_code).text} />) : null}
                   {jobStatus ? (<DetailRow label="Lần thử" value={jobStatus.attempts + " / " + jobStatus.max_attempts} />) : null}
+                  <DetailRow label="Tạo lúc" value={formatTimestamp(currentHistoryItem?.created_at)} />
                   <DetailRow label="Mã" value={jobId.slice(0, 8)} />
                 </dl>
               </section>
@@ -393,7 +395,7 @@ export function AiReportPanel() {
               {historyItems.length > 0 ? (
                 <ul className="mt-2 space-y-1 text-sm">
                   {historyItems.map((item) => (
-                    <li key={item.job_id}><button type="button" onClick={() => openHistoryItem(item.job_id)} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-foreground hover:bg-surface/80"><span className="font-mono text-xs">{item.job_id.slice(0, 8)}</span><span className="text-muted">{jobStatusLabel(item.status)}{item.lifecycle_status ? " · " + lifecycleLabel(item.lifecycle_status) : ""}</span></button></li>
+                    <li key={item.job_id}><button type="button" onClick={() => openHistoryItem(item.job_id)} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-foreground hover:bg-surface/80"><span className="font-mono text-xs">{item.job_id.slice(0, 8)}</span><span className="text-right text-muted"><span className="block">{jobStatusLabel(item.status)}{item.lifecycle_status ? " · " + lifecycleLabel(item.lifecycle_status) : ""}</span><span className="block text-xs">{formatTimestamp(item.created_at)}</span></span></button></li>
                   ))}
                 </ul>
               ) : null}

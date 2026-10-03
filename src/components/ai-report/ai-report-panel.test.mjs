@@ -127,6 +127,8 @@ test("S01-R1-P4: durable history từ server (không còn session-only)", () => 
   assert.ok(source.includes('"/api/ai/reports/history"'), "phải gọi history server");
   assert.ok(source.includes("loadHistory("), "phải có loadHistory");
   assert.ok(source.includes("historyHasMore"), "phải có load-more");
+  assert.ok(source.includes('label="Tạo lúc"'), "trạng thái hiện tại phải hiển thị thời gian tạo");
+  assert.ok(source.includes("formatTimestamp(item.created_at)"), "mỗi dòng lịch sử phải hiển thị thời gian tạo GMT+7");
   assert.ok(!source.includes("setHistory((cur) => [{ job_id"), "session history không còn là nguồn chính");
 });
 
