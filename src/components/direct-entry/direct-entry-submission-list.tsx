@@ -31,6 +31,7 @@ export type SubmissionListProps = {
   onLoadMore: () => void;
   onTransition: (input: { submission: SubmissionReadItem; action: SubmissionAction }) => void;
   onRequestChange: (submission: SubmissionReadItem) => void;
+  onManageDocuments: (submission: SubmissionReadItem) => void;
 };
 
 type PendingConfirm = { submission: SubmissionReadItem; action: SubmissionAction };
@@ -45,6 +46,7 @@ export function DirectEntrySubmissionList({
   onLoadMore,
   onTransition,
   onRequestChange,
+  onManageDocuments,
 }: SubmissionListProps) {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
@@ -130,13 +132,22 @@ export function DirectEntrySubmissionList({
                   <span className={styles.submissionHint}>Đợt này hiện không có thao tác nào.</span>
                 )}
                 {terminal && (
-                  <button
-                    type="button"
-                    className={styles.primaryButton}
-                    onClick={() => onRequestChange(submission)}
-                  >
-                    Yêu cầu thay đổi
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className={styles.primaryButton}
+                      onClick={() => onRequestChange(submission)}
+                    >
+                      Yêu cầu thay đổi
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      onClick={() => onManageDocuments(submission)}
+                    >
+                      Quản lý tài liệu
+                    </button>
+                  </>
                 )}
               </div>
             </li>
