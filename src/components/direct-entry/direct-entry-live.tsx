@@ -15,6 +15,7 @@ import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/d
 import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryExcelPasteDialog, type PasteSubmitResult } from "@/components/direct-entry/direct-entry-excel-paste-dialog";
 import { DirectEntryCccdManager } from "@/components/direct-entry/direct-entry-cccd-manager";
+import { DirectEntryWorkerProfilePasteDialog } from "@/components/direct-entry/direct-entry-worker-profile-paste-dialog";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
 import {
@@ -309,6 +310,7 @@ export function DirectEntryLive() {
   const changeRequestCursorRef = useRef<string | null>(null);
   const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [profilePasteOpen, setProfilePasteOpen] = useState(false);
   const pasteBatchKey = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const [cccdCache, setCccdCache] = useState<CccdStatusCache>(EMPTY_CCCD_STATUS_CACHE);
   const [cccdRowId, setCccdRowId] = useState<string | null>(null);
@@ -611,6 +613,19 @@ export function DirectEntryLive() {
       .filter((row) => row.entryId === null || isUnsavedRowState(row.state))
       .map((row) => row.employeeCode)
       .filter((code) => code.trim() !== ""),
+    [rows],
+  );
+
+  /**
+   * Danh tinh cua cac dong CHUA LUU de phat hien trung khi dan ho so day du.
+   * national_id/phone cua dong da luu chua co trong projection hien hanh (cho T1B), nen chi gui
+   * duoc employee_code — khong tu bia them du lieu.
+   */
+  const existingProfileIdentities = useMemo(
+    () => rows
+      .filter((row) => row.entryId === null || isUnsavedRowState(row.state))
+      .map((row) => ({ employeeCode: row.employeeCode }))
+      .filter((identity) => identity.employeeCode.trim() !== ""),
     [rows],
   );
 
@@ -1212,6 +1227,24 @@ export function DirectEntryLive() {
             catalogFor={catalogFor}
             existingEmployeeCodes={unsavedEmployeeCodes}
             onSubmit={submitPasteGroup}
+          />
+          <DirectEntryWorkerProfilePasteDialog
+            open={profilePasteOpen}
+            onOpenChange={setProfilePasteOpen}
+            trigger={
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                data-testid="profile-paste-open"
+                disabled={loadState !== "ready"}
+              >
+                Dán hồ sơ từ Excel
+              </button>
+            }
+            referenceDate={today}
+            ensureCatalog={ensureCatalog}
+            catalogFor={catalogFor}
+            existing={existingProfileIdentities}
           />
           <button type="button" className={styles.secondaryButton} onClick={addRow} disabled={loadState !== "ready"}>
             Thêm dòng
