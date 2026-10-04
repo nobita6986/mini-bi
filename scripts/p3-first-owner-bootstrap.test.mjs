@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 import { CAPABILITIES } from "../src/lib/auth/direct-entry-v2.ts";
+import { readMigrations } from "./lib/migration-validation.mjs";
 import { runBootstrap } from "./p3-first-owner-bootstrap.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
@@ -78,6 +79,7 @@ test("check-only validates target without mutating mapping, grants, scopes, or a
   const result = await run(db);
 
   assert.equal(result.outcome, "READY_TO_APPLY");
+  assert.equal(result.migrationCount, (await readMigrations(MIGRATION_DIR)).length);
   assert.equal(result.authUserMatches, 1);
   assert.equal(result.appUserMappings, 0);
   assert.equal(result.bootstrapAuditEventsWritten, 0);

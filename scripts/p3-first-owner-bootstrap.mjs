@@ -4,11 +4,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { CAPABILITIES, resolveActor } from "../src/lib/auth/direct-entry-v2.ts";
+import { readMigrations } from "./lib/migration-validation.mjs";
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
 const LOCK_KEY = "p3-first-owner-bootstrap-s02a";
 const EMAIL_SCHEMA = z.email().max(254);
+const MIGRATION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../supabase/migrations");
 const AUTH_TABLES = [
   "direct_entry_app_users",
   "direct_entry_capability_grants",
@@ -286,6 +288,7 @@ export async function runBootstrap({ client, email, apply = false, capabilities 
       new Set(capabilities).size !== 21) {
     fail("BOOTSTRAP_INPUT_INVALID");
   }
+  const migrationCount = (await readMigrations(MIGRATION_DIR)).length;
 
   let transactionOpen = false;
   try {
@@ -388,7 +391,7 @@ export async function runBootstrap({ client, email, apply = false, capabilities 
       bootstrapAuditEventsWritten: 0,
       reportingBaselineUnchanged: true,
       securityBoundaryUnchanged: true,
-      migrationCount: 34,
+      migrationCount,
     };
   } catch (error) {
     if (transactionOpen) {
