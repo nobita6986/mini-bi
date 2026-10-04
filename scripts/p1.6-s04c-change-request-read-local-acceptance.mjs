@@ -28,7 +28,7 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 
-assert.equal(migrations.migrationNames.length, 37);
+assert.equal(migrations.migrationNames.length, 38);
 pass("from-scratch apply 36 migration local trong PGlite (khong dung shared DB)");
 
 const fixture = await seedChangeRequestFixture(db);

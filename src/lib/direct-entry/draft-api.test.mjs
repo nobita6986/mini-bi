@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { getInputCatalog, getOwnDrafts, patchDraftEntry } from "./draft-api.ts";
 import {
+  DRAFT_LIST_PROJECTION_VERSION,
   createDirectEntryWriteRepository,
   projectDraftCatalog,
   projectDraftUpdate,
@@ -45,6 +46,22 @@ const draft = {
   employment_status: "UNCONFIRMED",
   created_at: "2026-10-03T00:00:00.000Z",
   updated_at: "2026-10-03T00:00:00.000Z",
+  profile: {
+    contract_version: "worker-profile/1.0",
+    worker_details: {
+      display_name: { state: "provided", value: "Synthetic Worker" },
+      gender: { state: "omitted" },
+      date_of_birth: { state: "omitted" },
+      national_id: { state: "omitted" },
+      national_id_issued_at: { state: "omitted" },
+      national_id_issued_place: { state: "omitted" },
+      address: { state: "omitted" },
+      phone: { state: "omitted" },
+    },
+    general_note: { state: "omitted" },
+    employment: null,
+    payment: null,
+  },
 };
 const patch = {
   project_id: "project_synthetic_01",
@@ -107,10 +124,36 @@ test("repository projections strictly reject malformed and unexpected fields", (
     ...catalog,
     recruiters: [{ ...catalog.recruiters[0], auth_subject: actor.auth_subject }],
   }), null);
-  assert.deepEqual(projectOwnDrafts({ drafts: [draft] }), [draft]);
-  assert.equal(projectOwnDrafts({ drafts: [draft, draft] }), null);
-  assert.equal(projectOwnDrafts({ drafts: [{ ...draft, payment: { account_number: "x" } }] }), null);
-  assert.equal(projectOwnDrafts({ drafts: new Array(501).fill(draft) }), null);
+  const projection = { projection_version: DRAFT_LIST_PROJECTION_VERSION, drafts: [draft] };
+  assert.deepEqual(projectOwnDrafts(projection), [draft]);
+  assert.equal(projectOwnDrafts({ drafts: [draft] }), null);
+  assert.equal(projectOwnDrafts({ ...projection, drafts: [draft, draft] }), null);
+  assert.equal(projectOwnDrafts({
+    ...projection,
+    drafts: [{ ...draft, profile: { ...draft.profile, payment: { account_number: "x" } } }],
+  }), null);
+  assert.equal(projectOwnDrafts({
+    ...projection,
+    drafts: [{ ...draft, profile: { ...draft.profile, worker_details: {
+      ...draft.profile.worker_details,
+      national_id: { state: "provided", value: "synthetic", leaked: true },
+    } } }],
+  }), null);
+  const redactedDraft = {
+    ...draft,
+    worker_display_name: "",
+    profile: { ...draft.profile, worker_details: {
+      ...draft.profile.worker_details,
+      display_name: { state: "redacted", present: true },
+    } },
+  };
+  assert.deepEqual(projectOwnDrafts({
+    ...projection, drafts: [redactedDraft],
+  }), [redactedDraft]);
+  assert.equal(projectOwnDrafts({
+    ...projection, drafts: [{ ...redactedDraft, worker_display_name: "Synthetic Worker" }],
+  }), null);
+  assert.equal(projectOwnDrafts(new Array(501).fill(draft)), null);
   assert.deepEqual(projectDraftUpdate({
     entry_id: draft.entry_id,
     version: 2,
@@ -124,7 +167,10 @@ test("repository projections strictly reject malformed and unexpected fields", (
     const repository = createDirectEntryWriteRepository(async (name, args) => {
       calls.push({ name, args });
       if (name === "direct_entry_input_catalog") return { data: catalog, error: null };
-      if (name === "direct_entry_list_own_drafts") return { data: { drafts: [draft] }, error: null };
+      if (name === "direct_entry_list_own_drafts") return {
+        data: { projection_version: DRAFT_LIST_PROJECTION_VERSION, drafts: [draft] },
+        error: null,
+      };
       return {
         data: { entry_id: draft.entry_id, version: 2, submission_version: 2 },
         error: null,
@@ -198,6 +244,7 @@ test("catalog and own draft routes only forward trusted actor IDs and return pri
 
   const draftsResponse = await getOwnDrafts("true", dependencies);
   assert.equal(draftsResponse.status, 200);
+  assert.equal((await draftsResponse.clone().json()).projection_version, DRAFT_LIST_PROJECTION_VERSION);
   assert.deepEqual(dependencies.calls[1], { operation: "drafts", input: actor });
   assert.equal(draftsResponse.headers.get("cache-control"), "private, no-store");
 

@@ -171,10 +171,10 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("37 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("38 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  assert.equal(names.length, 37);
+  assert.equal(names.length, 38);
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +
