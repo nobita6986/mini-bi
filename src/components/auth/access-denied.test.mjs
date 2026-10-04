@@ -9,6 +9,7 @@ function source(relative) {
 const denied = source("./access-denied.tsx");
 const gate = source("./login-gate.tsx");
 const page = source("../../app/direct-entry/page.tsx");
+const temporary = source("./temporary-unavailable.tsx");
 const helper = source("../../lib/auth/auth-ui.ts");
 
 test("S02B: account unavailable co hanh dong dang xuat, khong lo uuid/capability", () => {
@@ -34,6 +35,19 @@ test("S02B-R1: flag off notFound, route gate redirect/account-unavailable/access
   assert.match(page, /<AccessDenied \/>/);
   assert.match(page, /\[\"entry_own\", \"entry_team\", \"entry_admin\"\]/);
   assert.match(page, /getDirectEntryActor\(createDirectEntryActorRepository\(\)\)/);
+});
+
+test("S02B-R2: infra failure tach khoi mapping missing/disabled, retry thu cong", () => {
+  assert.match(page, /catch \{\s*return <TemporaryUnavailable \/>;/);
+  assert.match(page, /actor\.reason === "ACTOR_MAPPING_MISSING" \|\| actor\.reason === "ACTOR_DISABLED"/);
+  assert.match(page, /return <TemporaryUnavailable \/>;/);
+  assert.match(temporary, /authUiErrorMessage\("AUTH_UNAVAILABLE"\)/);
+  assert.match(temporary, /router\.refresh\(\)/);
+  assert.match(temporary, /href="\/dashboard"/);
+  assert.match(temporary, /role="alert"/);
+  assert.match(temporary, /h-11/);
+  assert.doesNotMatch(temporary, /setTimeout|setInterval|app_user_id|auth_subject/);
+  assert.doesNotMatch(page, /AUTH_UNAVAILABLE/);
 });
 
 test("S02B: thong bao tam thoi dung dung chu ky", () => {
