@@ -26,7 +26,7 @@ import {
 } from "./lib/s04c-submission-read-fixture.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
-const EXPECTED_SERVICE_RPC_COUNT = 27;
+const EXPECTED_SERVICE_RPC_COUNT = 29;
 const READ_RPCS = [
   "public.direct_entry_list_own_submissions(uuid,uuid,integer,text,text)",
   "public.direct_entry_read_own_submission(uuid,uuid,uuid)",
@@ -74,7 +74,7 @@ async function assertBoundary(client) {
     assert.ok(live.includes(signature.replace("public.", "").replace(/\(.*/, "") + "(" +
       (await client.query("select pg_get_function_identity_arguments($1::regprocedure) as a", [signature])).rows[0].a + ")"));
   }
-  pass("service_role-executable Direct Entry RPCs = " + live.length + " (25 + 2) and equal the PGlite from-scratch set");
+  pass("service_role-executable Direct Entry RPCs = " + live.length + " (27 + 2) and equal the PGlite from-scratch set");
 
   const { rows: names } = await client.query(
     "select distinct p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace" +
