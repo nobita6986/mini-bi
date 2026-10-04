@@ -85,10 +85,10 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   await db.close();
 });
 
-test("38-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
+test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
-  assert.equal(migrationNames.length, 38);
-  assert.equal(migrationNames.at(-5), scopeMigration);
+  assert.equal(migrationNames.length, 39);
+  assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
   const parent = await createChangeRequest(db, ACTORS.proposer,
@@ -130,6 +130,6 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   const actual = new Set(rows.map((row) => row.proname));
   assert.deepEqual(actual, expected);
   const serviceRpcs = rows.filter((row) => row.service_exec).length;
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [68, 30, 38]);
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [69, 31, 38]);
   await db.close();
 });

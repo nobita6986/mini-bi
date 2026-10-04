@@ -17,6 +17,7 @@
 import {
   FULL_PROFILE_MAX_BODY_BYTES,
   FULL_PROFILE_MAX_ROWS,
+  SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
   WORKER_PROFILE_CONTRACT_VERSION,
 } from "./full-profile-contract.ts";
 import type { WorkerProfileOptional } from "./worker-profile-paste.ts";
@@ -80,6 +81,15 @@ export type FullProfileRequestRow = {
 export type FullProfileRequestBody = {
   contract_version: typeof WORKER_PROFILE_CONTRACT_VERSION;
   rows: readonly FullProfileRequestRow[];
+};
+
+export type ServerGeneratedFullProfileRequestRow = Omit<FullProfileRequestRow, "employee_code"> & {
+  provider_type: "hrp" | "vendor";
+};
+
+export type ServerGeneratedFullProfileRequestBody = {
+  contract_version: typeof SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION;
+  rows: readonly ServerGeneratedFullProfileRequestRow[];
 };
 
 function optionalText<T extends string>(value: WorkerProfileOptional<T>):
@@ -212,6 +222,22 @@ export function buildFullProfileRequestBody(
   return { contract_version: WORKER_PROFILE_CONTRACT_VERSION, rows: projected };
 }
 
+export function buildServerGeneratedFullProfileRequestBody(
+  rows: readonly WorkerProfilePreviewRow[],
+): ServerGeneratedFullProfileRequestBody | null {
+  const projected: ServerGeneratedFullProfileRequestRow[] = [];
+  for (const row of rows) {
+    const built = buildFullProfileRow(row);
+    const providerType = row.resolved.provider_type;
+    if (built === null || (providerType !== "hrp" && providerType !== "vendor")) return null;
+    const { employee_code: _employeeCode, ...withoutCode } = built;
+    void _employeeCode;
+    projected.push({ ...withoutCode, provider_type: providerType });
+  }
+  if (projected.length < 1 || projected.length > FULL_PROFILE_MAX_ROWS) return null;
+  return { contract_version: SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION, rows: projected };
+}
+
 /* ------------------------------------------------------------------ blockers */
 
 export type FullProfileBlockerCode =
@@ -231,7 +257,7 @@ export type FullProfileBlockerCode =
  * employment_status.apply khi co initial_status.
  */
 export function fullProfileRequiredCapabilities(
-  rows: readonly FullProfileRequestRow[],
+  rows: readonly (FullProfileRequestRow | ServerGeneratedFullProfileRequestRow)[],
 ): string[] {
   const required = ["entry_create", "submission_create"];
   if (rows.some((row) => row.payment !== null)) required.push("payment_view", "payment_edit");
@@ -295,6 +321,7 @@ export type FullProfileSaved = {
   version: number;
   /** entry_ids theo DUNG thu tu rows gui len (server cam ket thu tu). */
   entryIds: readonly string[];
+  employeeCodes?: readonly string[];
 };
 
 export type FullProfileResult =
@@ -323,9 +350,13 @@ function codeOf(body: unknown, fallback: string): string {
 export function projectFullProfileSuccess(
   body: unknown,
   expectedRows: number,
+  expectedYears?: readonly string[],
 ): FullProfileSaved | null {
   if (!isRecord(body) || body.ok !== true) return null;
-  if (Object.keys(body).sort().join(",") !== SUCCESS_KEYS.join(",")) return null;
+  const expectedKeys = expectedYears
+    ? [...SUCCESS_KEYS, "employee_codes"].sort()
+    : SUCCESS_KEYS;
+  if (Object.keys(body).sort().join(",") !== expectedKeys.join(",")) return null;
   if (typeof body.submission_id !== "string" || !UUID.test(body.submission_id)) return null;
   if (body.state !== "DRAFT") return null;
   if (typeof body.version !== "number" || !Number.isSafeInteger(body.version) ||
@@ -333,11 +364,22 @@ export function projectFullProfileSuccess(
   if (!Array.isArray(body.entry_ids) || body.entry_ids.length !== expectedRows) return null;
   if (!body.entry_ids.every((id) => typeof id === "string" && UUID.test(id))) return null;
   if (new Set(body.entry_ids).size !== body.entry_ids.length) return null;
+  let employeeCodes: string[] | undefined;
+  if (expectedYears) {
+    if (!Array.isArray(body.employee_codes) || body.employee_codes.length !== expectedRows ||
+        !body.employee_codes.every((code, index) =>
+          typeof code === "string" &&
+          /^hrp-\d{4}-\d{6}$/.test(code) &&
+          code.slice(4, 8) === expectedYears[index]) ||
+        new Set(body.employee_codes).size !== body.employee_codes.length) return null;
+    employeeCodes = body.employee_codes as string[];
+  }
   return {
     kind: "saved",
     submissionId: body.submission_id,
     version: body.version,
     entryIds: body.entry_ids as string[],
+    ...(employeeCodes ? { employeeCodes } : {}),
   };
 }
 
@@ -345,12 +387,13 @@ export function classifyFullProfileResponse(
   status: number,
   body: unknown,
   expectedRows: number,
+  expectedYears?: readonly string[],
 ): FullProfileResult {
   if (status === 409) return { kind: "conflict", code: codeOf(body, "IDEMPOTENCY_CONFLICT") };
   if (status >= 500) return { kind: "retry", code: codeOf(body, "BATCH_UNAVAILABLE") };
   if (status >= 200 && status < 300) {
     // 2xx nhung projection khong doc duoc: ket qua khong xac dinh => thu lai cung key.
-    return projectFullProfileSuccess(body, expectedRows) ??
+    return projectFullProfileSuccess(body, expectedRows, expectedYears) ??
       { kind: "retry", code: "FULL_PROFILE_PROJECTION_INVALID" };
   }
   return { kind: "rejected", code: codeOf(body, "BATCH_INVALID") };
@@ -360,7 +403,7 @@ export type FullProfileFetch = (url: string, init: RequestInit) => Promise<Respo
 
 /** Dung DUNG MOT request cho ca batch. */
 export async function postFullProfileBatch(input: {
-  rows: readonly FullProfileRequestRow[];
+  rows: readonly FullProfileRequestRow[] | readonly ServerGeneratedFullProfileRequestRow[];
   idempotencyKey: string;
   fetchImpl: FullProfileFetch;
 }): Promise<FullProfileResult> {
@@ -370,10 +413,11 @@ export async function postFullProfileBatch(input: {
   if (!UUID.test(input.idempotencyKey)) {
     return { kind: "rejected", code: "IDEMPOTENCY_KEY_INVALID" };
   }
-  const body = JSON.stringify({
-    contract_version: WORKER_PROFILE_CONTRACT_VERSION,
-    rows: input.rows,
-  } satisfies FullProfileRequestBody);
+  const generated = input.rows.length > 0 && "provider_type" in input.rows[0]!;
+  const contractVersion = generated
+    ? SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
+    : WORKER_PROFILE_CONTRACT_VERSION;
+  const body = JSON.stringify({ contract_version: contractVersion, rows: input.rows });
   if (new TextEncoder().encode(body).byteLength > FULL_PROFILE_MAX_BODY_BYTES) {
     return { kind: "rejected", code: "BODY_TOO_LARGE" };
   }
@@ -400,7 +444,10 @@ export async function postFullProfileBatch(input: {
   } catch {
     payload = null;
   }
-  return classifyFullProfileResponse(response.status, payload, input.rows.length);
+  const expectedYears = generated
+    ? input.rows.map((row) => row.first_work_date.slice(0, 4))
+    : undefined;
+  return classifyFullProfileResponse(response.status, payload, input.rows.length, expectedYears);
 }
 
 /* ------------------------------------------------------------------ intent */
@@ -411,11 +458,14 @@ export async function postFullProfileBatch(input: {
  * o dang doc duoc, va khong bao gio duoc persist.
  */
 export async function fullProfileIntentDigest(
-  rows: readonly FullProfileRequestRow[],
+  rows: readonly FullProfileRequestRow[] | readonly ServerGeneratedFullProfileRequestRow[],
 ): Promise<string | null> {
   try {
+    const contractVersion = rows.length > 0 && "provider_type" in rows[0]!
+      ? SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION
+      : WORKER_PROFILE_CONTRACT_VERSION;
     const bytes = new TextEncoder().encode(JSON.stringify({
-      contract_version: WORKER_PROFILE_CONTRACT_VERSION,
+      contract_version: contractVersion,
       rows,
     }));
     const digest = await crypto.subtle.digest("SHA-256", bytes);

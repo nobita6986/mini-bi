@@ -17,6 +17,7 @@ const SAFE_INVALID_CODES = new Set([
   "BANK_NOT_ACTIVE",
   "BATCH_INVALID",
   "EMPLOYEE_CODE_DUPLICATE",
+  "EMPLOYEE_CODE_SEQUENCE_EXHAUSTED",
   "EMPLOYEE_CODE_LEGACY_QUARANTINE",
   "EMPLOYEE_CODE_YEAR",
   "GENERAL_NOTE_TOO_LONG",
@@ -67,7 +68,10 @@ export function createFullProfileRepository(rpc?: Rpc) {
     }): Promise<FullProfileRepositoryResult> {
       try {
         resolvedRpc ??= serviceRoleRpc();
-        const { data, error } = await resolvedRpc("direct_entry_create_full_profile_batch", {
+        const rpcName = input.payload.contract_version === "worker-profile/1.1"
+          ? "direct_entry_create_full_profile_batch_v2"
+          : "direct_entry_create_full_profile_batch";
+        const { data, error } = await resolvedRpc(rpcName, {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_contract_version: input.payload.contract_version,

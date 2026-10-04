@@ -14,7 +14,11 @@ import {
 
 const REFERENCE_DATE = "2026-10-16";
 const PROJECT = { id: "11111111-1111-4111-8111-111111111111", label: "Dự án Giả Bắc" };
-const RECRUITER = { id: "22222222-2222-4222-8222-222222222222", label: "Tuyển Dụng Giả 1" };
+const RECRUITER = {
+  id: "22222222-2222-4222-8222-222222222222",
+  label: "Tuyển Dụng Giả 1",
+  provider_type: "hrp",
+};
 
 const catalogFor = () => ({ projects: [PROJECT], recruiters: [RECRUITER] });
 
@@ -43,7 +47,7 @@ test("dong trong khong duoc validate va khong tao issue nao", () => {
 
 test("regression: chi cot pasteMode write moi vao payload, dung thu tu vat ly", () => {
   const headers = SPREADSHEET_WRITE_COLUMNS.map((column) => column.contractField?.canonicalHeader);
-  assert.equal(SPREADSHEET_WRITE_COLUMNS.length, 20, "20 truong persisted");
+  assert.equal(SPREADSHEET_WRITE_COLUMNS.length, 19, "employee code is server-generated");
   assert.equal(headers.includes(undefined), false);
   assert.equal(SPREADSHEET_WRITE_COLUMNS.some((column) => column.pasteMode !== "write"), false);
   // Thu tu vat ly phai khop registry (STT dung truoc Dự án, va STT khong phai cot write).
@@ -56,7 +60,6 @@ test("serialize giu nguyen so 0 dau, Unicode va o trong noi bo", () => {
   model = withRow(model, 4, {
     project_id: PROJECT.label,
     first_work_date: REFERENCE_DATE,
-    employee_code: "hrp-2026-000101",
     display_name: "Nguyễn Văn Giả A",
     recruiter_id: RECRUITER.label,
     labor_type: "Thời vụ",
@@ -71,7 +74,7 @@ test("serialize giu nguyen so 0 dau, Unicode va o trong noi bo", () => {
   const cells = dataLine.split("\t");
   assert.equal(cells[0], PROJECT.label);
   assert.equal(cells[1], REFERENCE_DATE);
-  assert.equal(cells[2], "hrp-2026-000101");
+  assert.equal(cells[2], "");
   assert.equal(cells[3], "Nguyễn Văn Giả A");
   assert.ok(cells.includes("099006000001"), "CCCD giu so 0 dau");
   assert.ok(cells.includes("0001234567890"), "STK giu so 0 dau");
@@ -83,7 +86,6 @@ test("dong hop le duoc resolve catalog va khong co issue", () => {
   model = withRow(model, 0, {
     project_id: PROJECT.label,
     first_work_date: REFERENCE_DATE,
-    employee_code: "hrp-2026-000101",
     display_name: "Nguyễn Văn Giả A",
     recruiter_id: RECRUITER.label,
     labor_type: "Thời vụ",
@@ -104,7 +106,6 @@ test("issue duoc gan dung clientRowId va column key, khong lo gia tri PII", () =
   model = withRow(model, 0, {
     project_id: PROJECT.label,
     first_work_date: REFERENCE_DATE,
-    employee_code: "hrp-2026-000101",
     display_name: "Nguyễn Văn Giả A",
     recruiter_id: RECRUITER.label,
     labor_type: "Thời vụ",
@@ -112,7 +113,6 @@ test("issue duoc gan dung clientRowId va column key, khong lo gia tri PII", () =
   model = withRow(model, 3, {
     project_id: PROJECT.label,
     first_work_date: REFERENCE_DATE,
-    employee_code: "hrp-2026-000104",
     display_name: "Nguyễn Văn Giả D",
     recruiter_id: RECRUITER.label,
     labor_type: "Thời vụ",
@@ -133,13 +133,12 @@ test("issue duoc gan dung clientRowId va column key, khong lo gia tri PII", () =
   assert.equal(spreadsheetCellIssuesFor(validation, rowIdAt(model, 0), "national_id").length, 0);
 });
 
-test("duplicate employee_code trong cung mot lan nhap bi phat hien", () => {
+test("employee code is omitted from client-side validation because server assigns it", () => {
   let model = createSpreadsheetRowModel();
   for (const index of [0, 1]) {
     model = withRow(model, index, {
       project_id: PROJECT.label,
       first_work_date: REFERENCE_DATE,
-      employee_code: "hrp-2026-000101",
       display_name: "Nguyễn Văn Giả " + index,
       recruiter_id: RECRUITER.label,
       labor_type: "Thời vụ",
@@ -148,8 +147,10 @@ test("duplicate employee_code trong cung mot lan nhap bi phat hien", () => {
   const validation = buildSpreadsheetValidation({
     rows: model.rows, referenceDate: REFERENCE_DATE, catalogFor,
   });
-  assert.ok(validation.errorCount >= 1);
-  assert.equal(validation.canSave, false);
+  assert.equal(validation.errorCount, 0);
+  assert.equal(validation.canSave, true);
+  assert.equal(validation.rows[0]?.employeeCode, "");
+  assert.equal(validation.rows[1]?.employeeCode, "");
 });
 
 test("catalog missing duoc bao tai dung cot va chan save", () => {
@@ -157,7 +158,6 @@ test("catalog missing duoc bao tai dung cot va chan save", () => {
   model = withRow(model, 0, {
     project_id: "Dự án Không Tồn Tại",
     first_work_date: REFERENCE_DATE,
-    employee_code: "hrp-2026-000101",
     display_name: "Nguyễn Văn Giả A",
     recruiter_id: RECRUITER.label,
     labor_type: "Thời vụ",

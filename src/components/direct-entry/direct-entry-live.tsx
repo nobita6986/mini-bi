@@ -51,6 +51,11 @@ import {
   buildPasteBatchPayload,
   type PastePreviewRow,
 } from "@/lib/direct-entry/excel-paste-import";
+import { parseWorkerProfilePaste } from "@/lib/direct-entry/worker-profile-paste";
+import {
+  createWorkerProfileTemplate,
+  workerProfileXlsxToTsv,
+} from "@/lib/direct-entry/worker-profile-xlsx";
 import {
   assignPasteEntryIds,
   beginPasteGroup,
@@ -103,11 +108,12 @@ import {
   duplicateSpreadsheetRow,
   ensureSpreadsheetRowCount,
   spreadsheetRowIsBlank,
+  selectNonEmptySpreadsheetRows,
   updateSpreadsheetRowCells,
   type SpreadsheetRowModel,
 } from "@/lib/direct-entry/spreadsheet-row-model";
 import {
-  buildFullProfileRequestBody,
+  buildServerGeneratedFullProfileRequestBody,
   fullProfileErrorMessage,
   fullProfileIntentDigest,
   postFullProfileBatch,
@@ -1032,6 +1038,8 @@ export function DirectEntryLive() {
   const [stagedRejection, setStagedRejection] = useState("");
   const [stagedBusy, setStagedBusy] = useState(false);
   const [stagedCanUndo, setStagedCanUndo] = useState(false);
+  const [xlsxMessage, setXlsxMessage] = useState("");
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
   const stagedIntent = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const stagedUndo = useRef<ClipboardUndoSnapshot | null>(null);
   const stagedInFlight = useRef(false);
@@ -1041,7 +1049,11 @@ export function DirectEntryLive() {
     if (!catalog) return null;
     return {
       projects: catalog.projects.map((project) => ({ id: project.project_id, label: project.display_name })),
-      recruiters: catalog.recruiters.map((recruiter) => ({ id: recruiter.recruiter_id, label: recruiter.display_name })),
+      recruiters: catalog.recruiters.map((recruiter) => ({
+        id: recruiter.recruiter_id,
+        label: recruiter.display_name,
+        provider_type: recruiter.provider_type,
+      })),
     };
   }, [catalogs]);
 
@@ -1049,7 +1061,11 @@ export function DirectEntryLive() {
     const catalog = catalogs[today];
     return {
       projects: (catalog?.projects ?? []).map((project) => ({ id: project.project_id, label: project.display_name })),
-      recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({ id: recruiter.recruiter_id, label: recruiter.display_name })),
+      recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({
+        id: recruiter.recruiter_id,
+        label: recruiter.display_name,
+        provider_type: recruiter.provider_type,
+      })),
     };
   }, [catalogs, today]);
 
@@ -1113,14 +1129,18 @@ export function DirectEntryLive() {
         saveStatus: stateText(row.state),
       };
     });
-    const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => ({
+    const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => {
+      const recruiter = catalogs[row.cells.first_work_date ?? ""]?.recruiters.find(
+        (option) => option.display_name === row.cells.recruiter_id,
+      );
+      return ({
       clientRowId: row.clientRowId,
       persisted: false,
       clientStaged: true,
       locked: false,
       cccdStatus: "Chưa lưu",
       canManageCccd: false,
-      displayValues: {},
+      displayValues: { provider_hint: recruiter?.provider_type.toUpperCase() ?? "" },
       cells: row.cells,
       editableFields: SPREADSHEET_WRITABLE_FIELD_KEYS,
       employeeCode: row.cells.employee_code ?? "",
@@ -1128,9 +1148,9 @@ export function DirectEntryLive() {
       projectLabel: row.cells.project_id ?? "",
       recruiterLabel: row.cells.recruiter_id ?? "",
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
-    }));
+    }); });
     return [...persisted, ...staged];
-  }, [catalogFor, cccdCache, rows, stagedModel, submissions]);
+  }, [catalogFor, catalogs, cccdCache, rows, stagedModel, submissions]);
 
   const onSpreadsheetCellsChange = useCallback((
     clientRowId: string,
@@ -1204,6 +1224,91 @@ export function DirectEntryLive() {
     setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
   }, [rows.length, stagedModel]);
 
+  const onXlsxFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    const imported = await workerProfileXlsxToTsv(file);
+    if (!imported.ok) {
+      setXlsxMessage(imported.code === "XLSX_TOO_LARGE"
+        ? "Tệp vượt giới hạn 4 MB."
+        : imported.code === "XLSX_ROW_LIMIT"
+          ? "Mỗi lần nhập tối đa 100 dòng dữ liệu."
+          : imported.code === "XLSX_CELL_UNSUPPORTED"
+            ? "Tệp có ô công thức, định dạng hoặc mã định danh không hỗ trợ."
+            : "Không đọc được tệp .xlsx. Hãy dùng mẫu Direct Entry.");
+      return;
+    }
+    const parsed = parseWorkerProfilePaste({
+      text: imported.text,
+      referenceDate: today,
+      employeeCodeMode: "server-generated",
+    });
+    if (parsed.rows.length === 0) {
+      setXlsxMessage("Tệp thiếu header hoặc không có dòng dữ liệu hợp lệ.");
+      return;
+    }
+    try {
+      setStagedModel((current) => {
+        if (selectNonEmptySpreadsheetRows(current).length + parsed.rows.length > 100) {
+          throw new RangeError("row limit");
+        }
+        let next = ensureSpreadsheetRowCount(current, current.rows.length + parsed.rows.length);
+        const start = current.rows.length;
+        parsed.rows.forEach((row, index) => {
+          const target = next.rows[start + index];
+          if (!target) return;
+          const value = (field: { state: string; value?: string }) =>
+            field.state === "provided" ? field.value ?? "" : "";
+          next = updateSpreadsheetRowCells(next, target.clientRowId, {
+            project_id: row.project_label,
+            first_work_date: row.first_work_date,
+            display_name: row.display_name,
+            recruiter_id: row.recruiter_label,
+            labor_type: row.labor_type === "PERMANENT" ? "Toàn thời gian" : "Thời vụ",
+            gender: value(row.worker.gender),
+            date_of_birth: value(row.worker.date_of_birth),
+            national_id: value(row.worker.national_id),
+            national_id_issued_at: value(row.worker.national_id_issued_at),
+            national_id_issued_place: value(row.worker.national_id_issued_place),
+            address: value(row.worker.address),
+            phone: value(row.worker.phone),
+            initial_status: value(row.employment.initial_status),
+            leave_date: value(row.employment.leave_date),
+            leave_reason_text: value(row.employment.leave_reason_text),
+            general_note: value(row.general_note),
+            account_number: value(row.payment.account_number),
+            bank_name: value(row.payment.bank_name),
+            account_holder_name: value(row.payment.account_holder_name),
+          });
+        });
+        return next;
+      });
+    } catch {
+      setXlsxMessage("Đã đạt giới hạn 100 dòng; chưa nhập tệp.");
+      return;
+    }
+    setStagedCanUndo(false);
+    setStagedNotice("");
+    setStagedRejection("");
+    setXlsxMessage(`Đã nhập ${imported.rowCount} dòng vào bảng. Kiểm tra lỗi trước khi lưu.`);
+  }, [today]);
+
+  const downloadXlsxTemplate = useCallback(async () => {
+    try {
+      const bytes = await createWorkerProfileTemplate();
+      const url = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer]));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "direct-entry-template.xlsx";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setXlsxMessage("Đã tải mẫu .xlsx.");
+    } catch {
+      setXlsxMessage("Không tạo được mẫu .xlsx trên trình duyệt này.");
+    }
+  }, []);
+
   const onStagedUndo = useCallback(() => {
     const snapshot = stagedUndo.current;
     if (snapshot === null) return;
@@ -1241,6 +1346,20 @@ export function DirectEntryLive() {
     });
   }, []);
 
+  const onMobileStagedChange = useCallback((
+    clientRowId: string,
+    field: string,
+    value: string,
+  ) => {
+    setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
+      [field]: value,
+      ...(field === "first_work_date" ? { recruiter_id: "" } : {}),
+    }));
+    if (field === "first_work_date" && isRealCalendarDate(value)) {
+      void ensureCatalog(value).catch(() => undefined);
+    }
+  }, [ensureCatalog]);
+
   /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
   const onStagedSave = useCallback(async () => {
     if (stagedInFlight.current) return;
@@ -1249,7 +1368,7 @@ export function DirectEntryLive() {
       setStagedMessage("Chưa có dòng hợp lệ để lưu.");
       return;
     }
-    const body = buildFullProfileRequestBody(preview.rows);
+    const body = buildServerGeneratedFullProfileRequestBody(preview.rows);
     if (body === null) {
       setStagedMessage(fullProfileErrorMessage("BATCH_INVALID"));
       return;
@@ -1327,6 +1446,24 @@ export function DirectEntryLive() {
           <p>Bản nháp của bạn · {rows.length} dòng</p>
         </div>
         <div className={styles.liveHeaderActions}>
+          <input
+            ref={xlsxInputRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={(event) => void onXlsxFile(event)}
+            hidden
+            aria-label="Chọn tệp workbook .xlsx"
+          />
+          <button type="button" className={styles.secondaryButton}
+            onClick={() => xlsxInputRef.current?.click()}>
+            Nhập workbook .xlsx
+          </button>
+          <button type="button" className={styles.secondaryButton}
+            onClick={() => void downloadXlsxTemplate()}>
+            Tải mẫu .xlsx
+          </button>
+          <details className={styles.legacyImportTools}>
+            <summary>Công cụ nhập bổ sung</summary>
           <DirectEntryExcelPasteDialog
             open={pasteOpen}
             onOpenChange={setPasteOpen}
@@ -1384,6 +1521,7 @@ export function DirectEntryLive() {
               void reloadDrafts().catch(() => undefined);
             }}
           />
+          </details>
           <button type="button" className={styles.secondaryButton} onClick={addRow} disabled={loadState !== "ready"}>
             Thêm dòng
           </button>
@@ -1409,6 +1547,9 @@ export function DirectEntryLive() {
 
       <p className={styles.lifecycleStatus} aria-live="polite" data-testid="profile-paste-status">
         {profilePasteNotice}
+      </p>
+      <p className={styles.lifecycleStatus} role="status" aria-live="polite">
+        {xlsxMessage}
       </p>
 
       <p className={styles.lifecycleStatus} aria-live="polite" data-testid="change-request-status">
@@ -1553,6 +1694,93 @@ export function DirectEntryLive() {
                   </button>
                 </li>
               ))}
+            </ul>
+            <h2>Bản ghi đang nhập</h2>
+            {stagedValidation.rows.length === 0 && <p>Chưa có dòng đang nhập.</p>}
+            <ul className={styles.mobileStagedList}>
+              {stagedValidation.rows.map((validationRow) => {
+                const stagedRow = stagedModel.rows.find(
+                  (candidate) => candidate.clientRowId === validationRow.clientRowId,
+                );
+                if (!stagedRow) return null;
+                const cells = stagedRow.cells;
+                const catalog = catalogs[cells.first_work_date ?? ""];
+                return (
+                  <li key={stagedRow.clientRowId}>
+                    <details className={styles.mobileStagedCard}>
+                      <summary>
+                        {cells.display_name || "Dòng chưa có tên"}
+                        {" · "}{validationRow.errorCount} lỗi
+                      </summary>
+                      <div className={styles.drawerFields}>
+                        <Field label="Mã NLĐ">
+                          <output>Máy chủ sẽ cấp mã khi lưu</output>
+                        </Field>
+                        <Field label="Ngày đầu tiên đi làm">
+                          <input type="date" value={cells.first_work_date ?? ""}
+                            onChange={(event) => onMobileStagedChange(
+                              stagedRow.clientRowId, "first_work_date", event.currentTarget.value,
+                            )} />
+                        </Field>
+                        <Field label="Dự án">
+                          <select value={cells.project_id ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "project_id", event.currentTarget.value)}>
+                            <option value="">Chọn dự án</option>
+                            {(catalog?.projects ?? []).map((project) =>
+                              <option key={project.project_id} value={project.display_name}>
+                                {project.display_name}
+                              </option>)}
+                          </select>
+                        </Field>
+                        <Field label="Họ và tên">
+                          <input value={cells.display_name ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "display_name", event.currentTarget.value)} />
+                        </Field>
+                        <Field label="Người tuyển">
+                          <select value={cells.recruiter_id ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "recruiter_id", event.currentTarget.value)}>
+                            <option value="">Chọn người tuyển</option>
+                            <optgroup label="HRP">
+                              {(catalog?.recruiters ?? []).filter(({ provider_type }) => provider_type === "hrp")
+                                .map((recruiter) => <option key={recruiter.recruiter_id}
+                                  value={recruiter.display_name}>{recruiter.display_name}</option>)}
+                            </optgroup>
+                            <optgroup label="Vendor">
+                              {(catalog?.recruiters ?? []).filter(({ provider_type }) => provider_type === "vendor")
+                                .map((recruiter) => <option key={recruiter.recruiter_id}
+                                  value={recruiter.display_name}>{recruiter.display_name}</option>)}
+                            </optgroup>
+                          </select>
+                        </Field>
+                        <Field label="Loại hình lao động">
+                          <select value={cells.labor_type ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "labor_type", event.currentTarget.value)}>
+                            <option value="">Chọn loại hình</option>
+                            <option value="Thời vụ">Thời vụ</option>
+                            <option value="Toàn thời gian">Toàn thời gian</option>
+                          </select>
+                        </Field>
+                        <Field label="Số điện thoại">
+                          <input value={cells.phone ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "phone", event.currentTarget.value)} />
+                        </Field>
+                        <Field label="CMT/CCCD">
+                          <input value={cells.national_id ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "national_id", event.currentTarget.value)} />
+                        </Field>
+                        <Field label="STK">
+                          <input value={cells.account_number ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "account_number", event.currentTarget.value)} />
+                        </Field>
+                        <Field label="Tên ngân hàng">
+                          <input value={cells.bank_name ?? ""} onChange={(event) =>
+                            onMobileStagedChange(stagedRow.clientRowId, "bank_name", event.currentTarget.value)} />
+                        </Field>
+                      </div>
+                    </details>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         </>

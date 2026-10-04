@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   FULL_PROFILE_MAX_ROWS,
+  SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
   WORKER_PROFILE_CONTRACT_VERSION,
   parseFullProfilePayload,
 } from "./full-profile-contract.ts";
@@ -38,6 +39,29 @@ test("worker-profile/1.0 projects a minimal header-import row to the server DTO"
   assert.deepEqual(parsed.payload.rows[0].general_note, { state: "omitted" });
   assert.equal("age_years" in parsed.payload.rows[0], false);
   assert.equal("candidate_code" in parsed.payload.rows[0], false);
+});
+
+test("worker-profile/1.1 accepts provider assertion and omits client employee-code authority", () => {
+  const { employee_code: _employeeCode, ...inputRow } = baseRow;
+  void _employeeCode;
+  assert.equal("employee_code" in inputRow, false);
+  const parsed = parseFullProfilePayload({
+    contract_version: SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
+    rows: [{ ...inputRow, provider_type: "vendor" }],
+  });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.payload.contract_version, "worker-profile/1.1");
+  assert.equal(parsed.payload.rows[0].provider_type, "vendor");
+  assert.equal("employee_code" in parsed.payload.rows[0], false);
+  assert.equal(parseFullProfilePayload({
+    contract_version: "worker-profile/1.1",
+    rows: [{ ...inputRow, provider_type: "free-text" }],
+  }).ok, false);
+  assert.equal(parseFullProfilePayload({
+    contract_version: "worker-profile/1.1",
+    rows: [{ ...inputRow, provider_type: "hrp", employee_code: baseRow.employee_code }],
+  }).ok, false);
 });
 
 test("preserves leading-zero identifier strings and accepts D11/D15 vocabulary", () => {

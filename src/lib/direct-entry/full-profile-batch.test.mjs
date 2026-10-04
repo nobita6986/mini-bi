@@ -7,6 +7,7 @@ import {
   buildAccountMetadata,
   buildFullProfileRequestBody,
   buildFullProfileRow,
+  buildServerGeneratedFullProfileRequestBody,
   classifyFullProfileResponse,
   fullProfileErrorMessage,
   fullProfileIntentDigest,
@@ -26,7 +27,11 @@ import {
 const REFERENCE_DATE = "2026-10-16";
 const PROJECT = { id: "11111111-1111-4111-8111-111111111111", label: "Dự án Giả Bắc" };
 const PROJECT_2 = { id: "11111111-1111-4111-8111-111111111112", label: "Dự án Giả Nam" };
-const RECRUITER = { id: "22222222-2222-4222-8222-222222222222", label: "Tuyển Dụng Giả 1" };
+const RECRUITER = {
+  id: "22222222-2222-4222-8222-222222222222",
+  label: "Tuyển Dụng Giả 1",
+  provider_type: "hrp",
+};
 const BANK = { id: "33333333-3333-4333-8333-333333333333", label: "Ngân hàng Giả" };
 const NAME = "Nguyễn Văn Giả A";
 const NID = "012345678901";
@@ -67,7 +72,7 @@ function preview(text, options = {}) {
   const source = { projects, recruiters };
   const resolver = createPasteCatalogResolver(() => source);
   return buildWorkerProfilePreview({ text, referenceDate: REFERENCE_DATE, resolver,
-    existing: options.existing });
+    existing: options.existing, employeeCodeMode: options.employeeCodeMode });
 }
 
 const ALL_CAPS = ["entry_create", "submission_create", "payment_view", "payment_edit",
@@ -117,6 +122,18 @@ test("ho so toi thieu: request row dung key set, khong label/derived/authority",
   for (const forbidden of [PROJECT.label, RECRUITER.label]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
+});
+
+test("server-generated request uses recruiter provider assertion and never sends employee code", () => {
+  const p = preview(tsv([row("invalid-client-code", "2026-10-15")]), {
+    employeeCodeMode: "server-generated",
+  });
+  assert.equal(p.canProceed, true);
+  const body = buildServerGeneratedFullProfileRequestBody(p.rows);
+  assert.equal(body.contract_version, "worker-profile/1.1");
+  assert.equal(body.rows[0].provider_type, "hrp");
+  assert.equal("employee_code" in body.rows[0], false);
+  assert.equal(JSON.stringify(body).includes("invalid-client-code"), false);
 });
 
 test("ho so day du: map worker/payment/employment dung contract", () => {
@@ -439,6 +456,36 @@ test("request: dung mot POST, dung endpoint/header/body, khong truong authority"
   assert.deepEqual(Object.keys(sent.rows[0]).sort(), ["display_name", "employee_code",
     "employment", "first_work_date", "general_note", "labor_type", "payment", "project_id",
     "recruiter_id", "worker"]);
+});
+
+test("worker-profile/1.1 sends recruiter assertion and accepts only matching server codes", async () => {
+  const p = preview(tsv([row("ignored-client-code", "2026-10-15")]), {
+    employeeCodeMode: "server-generated",
+  });
+  const body = buildServerGeneratedFullProfileRequestBody(p.rows);
+  assert.ok(body);
+  const calls = [];
+  const result = await postFullProfileBatch({
+    rows: body.rows,
+    idempotencyKey: "55555555-5555-4555-8555-555555555556",
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, status: 201, json: async () => ({
+        ok: true, submission_id: SUBMISSION, state: "DRAFT", version: 1,
+        entry_ids: [ENTRY_A], employee_codes: ["hrp-2026-000001"],
+      }) };
+    },
+  });
+  const sent = JSON.parse(calls[0].init.body);
+  assert.equal(sent.contract_version, "worker-profile/1.1");
+  assert.equal(sent.rows[0].provider_type, "hrp");
+  assert.equal("employee_code" in sent.rows[0], false);
+  assert.equal(result.kind, "saved");
+  assert.deepEqual(result.employeeCodes, ["hrp-2026-000001"]);
+  assert.equal(classifyFullProfileResponse(201, {
+    ok: true, submission_id: SUBMISSION, state: "DRAFT", version: 1,
+    entry_ids: [ENTRY_A], employee_codes: ["hrp-2025-000001"],
+  }, 1, ["2026"]).kind, "retry");
 });
 
 test("intent fingerprint: chi la hash, khong chua PII", async () => {

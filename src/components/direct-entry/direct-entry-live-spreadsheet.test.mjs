@@ -77,7 +77,7 @@ test("validation chay tren staged rows va map issue ve dung o", () => {
 });
 
 test("save dung full-profile batch, mot request, co chan double submit", () => {
-  assert.match(saveHandler, /buildFullProfileRequestBody\(/);
+  assert.match(saveHandler, /buildServerGeneratedFullProfileRequestBody\(/);
   assert.match(saveHandler, /postFullProfileBatch\(\{/);
   assert.equal(/\/api\/direct-entry/.test(saveHandler), false, "khong tu goi URL moi");
   assert.match(saveHandler, /if \(stagedInFlight\.current\) return;/);
@@ -150,6 +150,18 @@ test("persisted actions reopen the existing drawer; mobile, CCCD, payment and do
     "DirectEntryDocumentEditor", "onManageDocuments=", "onEntryVersionChange="]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
+});
+
+test("XLSX import/template and mobile staged editor stay on the spreadsheet workflow", () => {
+  assert.match(live, /workerProfileXlsxToTsv\(file\)/);
+  assert.match(live, /createWorkerProfileTemplate\(\)/);
+  assert.match(live, /Nhập workbook \.xlsx/);
+  assert.match(live, /Tải mẫu \.xlsx/);
+  assert.match(live, /employeeCodeMode: "server-generated"/);
+  assert.match(live, /className=\{styles\.mobileStagedList\}/);
+  assert.match(live, /Máy chủ sẽ cấp mã khi lưu/);
+  assert.match(live, /<optgroup label="HRP">/);
+  assert.match(live, /<optgroup label="Vendor">/);
 });
 
 test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () => {

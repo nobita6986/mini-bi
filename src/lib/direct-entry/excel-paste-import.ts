@@ -25,7 +25,11 @@ export const PASTE_COLUMN_HEADINGS: readonly string[] = Object.freeze([
   "Loại hình lao động",
 ]);
 
-export type PasteCatalogOption = { id: string; label: string };
+export type PasteCatalogOption = {
+  id: string;
+  label: string;
+  provider_type?: "hrp" | "vendor";
+};
 
 export type PasteCatalog = {
   projects: readonly PasteCatalogOption[];

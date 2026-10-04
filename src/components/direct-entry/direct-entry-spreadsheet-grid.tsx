@@ -67,7 +67,7 @@ export type SpreadsheetGridRow = {
 
 export type SpreadsheetCatalogOptions = {
   projects: readonly { id: string; label: string }[];
-  recruiters: readonly { id: string; label: string }[];
+  recruiters: readonly { id: string; label: string; provider_type?: "hrp" | "vendor" }[];
 };
 
 export type SpreadsheetPasteRejection =
@@ -129,13 +129,30 @@ function SelectCellEditor(
   props: RenderEditCellProps<SpreadsheetGridRow> & { columnKey: string; catalogs: SpreadsheetCatalogOptions | undefined },
 ) {
   const options = spreadsheetSelectOptions(props.columnKey, props.catalogs) ?? [];
+  const value = props.row.cells[props.columnKey] ?? "";
+  const change = (nextValue: string) => props.onRowChange(
+    { ...props.row, cells: { ...props.row.cells, [props.columnKey]: nextValue } }, true);
+  if (props.columnKey === "recruiter_id" && props.catalogs) {
+    const recruiters = props.catalogs.recruiters;
+    return (
+      <select aria-label="Người tuyển" autoFocus value={value}
+        onChange={(event) => change(event.currentTarget.value)}>
+        <option value="">—</option>
+        {(["hrp", "vendor"] as const).map((provider) => (
+          <optgroup key={provider} label={provider === "hrp" ? "HRP" : "Vendor"}>
+            {recruiters.filter((option) => option.provider_type === provider)
+              .map((option) => <option key={option.id} value={option.label}>{option.label}</option>)}
+          </optgroup>
+        ))}
+      </select>
+    );
+  }
   return (
     <select
       aria-label={props.columnKey}
       autoFocus
-      value={props.row.cells[props.columnKey] ?? ""}
-      onChange={(event) => props.onRowChange(
-        { ...props.row, cells: { ...props.row.cells, [props.columnKey]: event.currentTarget.value } }, true)}
+      value={value}
+      onChange={(event) => change(event.currentTarget.value)}
     >
       {options.map((option) => <option key={option} value={option}>{option === "" ? "—" : option}</option>)}
     </select>

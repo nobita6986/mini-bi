@@ -21,6 +21,7 @@ import {
 test("initializes 30 client-only blank rows with stable unique IDs and canonical writable fields", () => {
   const model = createSpreadsheetRowModel();
   const expectedKeys = WORKER_PROFILE_FIELDS.filter((field) => field.persisted)
+    .filter((field) => field.key !== "employee_code")
     .map((field) => field.key);
 
   assert.equal(model.rows.length, SPREADSHEET_INITIAL_ROW_COUNT);
@@ -41,10 +42,10 @@ test("partial user data makes a row non-empty while whitespace-only cells stay b
   assert.equal(selectNonEmptySpreadsheetRows(whitespace).length, 0);
 
   const edited = updateSpreadsheetRowCells(whitespace, firstId, {
-    employee_code: "hrp-2026-000001",
+    address: "Synthetic Address",
   });
   assert.equal(edited.rows[0].clientRowId, firstId);
-  assert.equal(edited.rows[0].cells.employee_code, "hrp-2026-000001");
+  assert.equal(edited.rows[0].cells.address, "Synthetic Address");
   assert.equal(edited.rows[0].cells.display_name, "   ");
   assert.equal(selectNonEmptySpreadsheetRows(edited).length, 1);
   assert.throws(
@@ -72,7 +73,7 @@ test("replenishes ten trailing blanks and refuses a 101st data row", () => {
     const row = model.rows[index];
     assert.ok(row);
     model = updateSpreadsheetRowCells(model, row.clientRowId, {
-      employee_code: `hrp-2026-${String(index + 1).padStart(6, "0")}`,
+      display_name: `Synthetic Worker ${index + 1}`,
     });
   }
 
@@ -91,7 +92,6 @@ test("clear, delete and duplicate keep identities stable and never recycle IDs",
   let model = createSpreadsheetRowModel();
   const sourceId = model.rows[0].clientRowId;
   model = updateSpreadsheetRowCells(model, sourceId, {
-    employee_code: "hrp-2026-000001",
     display_name: "Nguyễn Văn A",
   });
 

@@ -232,11 +232,14 @@ function buildRow(
   columnIndex: ReadonlyMap<string, number>,
   sourceRow: number,
   referenceDate: string,
+  employeeCodeMode: "required" | "server-generated",
 ): { row: WorkerProfileRow; issues: WorkerProfileIssue[] } {
   const context: RowContext = { cells, columnIndex, issues: [], sourceRow };
 
   // --- required ---
-  const employeeCodeRaw = requiredText(context, "employee_code");
+  const employeeCodeRaw = employeeCodeMode === "required"
+    ? requiredText(context, "employee_code")
+    : rawCell(context, "employee_code") ?? "";
   const projectLabel = requiredText(context, "project_id");
   const recruiterLabel = requiredText(context, "recruiter_id");
   const displayName = requiredText(context, "display_name");
@@ -252,10 +255,10 @@ function buildRow(
     fail(context, "PASTE_DATE_INVALID", "first_work_date");
   }
 
-  if (employeeCodeRaw !== "" && !isFormulaLikeCell(employeeCodeRaw) &&
+  if (employeeCodeMode === "required" && employeeCodeRaw !== "" && !isFormulaLikeCell(employeeCodeRaw) &&
       !EMPLOYEE_CODE.test(employeeCodeRaw)) {
     fail(context, "PASTE_EMPLOYEE_CODE_FORMAT", "employee_code");
-  } else if (employeeCodeRaw !== "" && !isFormulaLikeCell(employeeCodeRaw) &&
+  } else if (employeeCodeMode === "required" && employeeCodeRaw !== "" && !isFormulaLikeCell(employeeCodeRaw) &&
       normalizedStart !== null &&
       employeeCodeRaw.slice(4, 8) !== normalizedStart.slice(0, 4)) {
     fail(context, "PASTE_EMPLOYEE_CODE_YEAR", "employee_code");
@@ -468,6 +471,7 @@ export function toWorkerProfileWriteModel(row: WorkerProfileRow): WorkerProfileW
 export function parseWorkerProfilePaste(input: {
   text: string;
   referenceDate: string;
+  employeeCodeMode?: "required" | "server-generated";
 }): WorkerProfileParseResult {
   const issues: WorkerProfileIssue[] = [];
   const lines = splitPasteLines(input.text);
@@ -504,7 +508,13 @@ export function parseWorkerProfilePaste(input: {
         continue;
       }
     }
-    const built = buildRow(cells, columnIndex, index + 1, input.referenceDate);
+    const built = buildRow(
+      cells,
+      columnIndex,
+      index + 1,
+      input.referenceDate,
+      input.employeeCodeMode ?? "required",
+    );
     rows.push(built.row);
     issues.push(...built.issues);
   }

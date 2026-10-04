@@ -2,6 +2,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
 
 export const WORKER_PROFILE_CONTRACT_VERSION = "worker-profile/1.0" as const;
+export const SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION = "worker-profile/1.1" as const;
 export const FULL_PROFILE_MAX_ROWS = 100;
 export const FULL_PROFILE_MAX_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -11,6 +12,10 @@ const DIGITS = /^\d+$/;
 const ROOT_KEYS = new Set(["contract_version", "rows"]);
 const ROW_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
+  "display_name", "worker", "general_note", "payment", "employment",
+]);
+const SERVER_GENERATED_ROW_KEYS = new Set([
+  "project_id", "first_work_date", "provider_type", "recruiter_id", "labor_type",
   "display_name", "worker", "general_note", "payment", "employment",
 ]);
 const WORKER_KEYS = new Set([
@@ -60,10 +65,19 @@ export type FullProfileRpcRow = {
   };
 };
 
-export type FullProfilePayload = {
-  contract_version: typeof WORKER_PROFILE_CONTRACT_VERSION;
-  rows: FullProfileRpcRow[];
+export type ServerGeneratedFullProfileRpcRow = Omit<FullProfileRpcRow, "employee_code"> & {
+  provider_type: "hrp" | "vendor";
 };
+
+export type FullProfilePayload =
+  | {
+    contract_version: typeof WORKER_PROFILE_CONTRACT_VERSION;
+    rows: FullProfileRpcRow[];
+  }
+  | {
+    contract_version: typeof SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION;
+    rows: ServerGeneratedFullProfileRpcRow[];
+  };
 
 export type ContractIssue = {
   code: string;
@@ -82,11 +96,11 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: ReadonlySet<string>):
   return Object.keys(value).every((key) => keys.has(key));
 }
 
-function hasForbiddenKey(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasForbiddenKey);
+function hasForbiddenKey(value: unknown, allowedRootKeys: ReadonlySet<string> = new Set()): boolean {
+  if (Array.isArray(value)) return value.some((item) => hasForbiddenKey(item));
   if (!isRecord(value)) return false;
   return Object.entries(value).some(([key, item]) =>
-    FORBIDDEN_KEYS.has(key) || hasForbiddenKey(item)
+    (FORBIDDEN_KEYS.has(key) && !allowedRootKeys.has(key)) || hasForbiddenKey(item)
   );
 }
 
@@ -272,7 +286,8 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       issues: [{ code: hasForbiddenKey(value) ? "CLIENT_AUTHORITY_FIELD_FORBIDDEN" : "BATCH_INVALID", path: "body" }],
     };
   }
-  if (value.contract_version !== WORKER_PROFILE_CONTRACT_VERSION) {
+  const generatedCodes = value.contract_version === SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION;
+  if (value.contract_version !== WORKER_PROFILE_CONTRACT_VERSION && !generatedCodes) {
     return { ok: false, issues: [{ code: "CONTRACT_VERSION_UNSUPPORTED", path: "contract_version" }] };
   }
   if (!Array.isArray(value.rows) || value.rows.length < 1 ||
@@ -282,12 +297,14 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
 
   const issues: ContractIssue[] = [];
   const seenCodes = new Set<string>();
-  const rows: FullProfileRpcRow[] = [];
+  const rows: (FullProfileRpcRow | ServerGeneratedFullProfileRpcRow)[] = [];
   value.rows.forEach((item, index) => {
     const path = `rows[${index}]`;
-    if (!isRecord(item) || !hasOnlyKeys(item, ROW_KEYS)) {
+    const rowKeys = generatedCodes ? SERVER_GENERATED_ROW_KEYS : ROW_KEYS;
+    if (!isRecord(item) || !hasOnlyKeys(item, rowKeys)) {
       issues.push({
-        code: hasForbiddenKey(item) ? "CLIENT_AUTHORITY_FIELD_FORBIDDEN" : "BATCH_INVALID",
+        code: hasForbiddenKey(item, generatedCodes ? new Set(["provider_type"]) : undefined)
+          ? "CLIENT_AUTHORITY_FIELD_FORBIDDEN" : "BATCH_INVALID",
         path,
       });
       return;
@@ -295,24 +312,29 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
     const {
       project_id, first_work_date, employee_code, recruiter_id, labor_type, display_name,
     } = item;
+    const provider_type = item.provider_type;
     if (typeof project_id !== "string" || !CATALOG_ID.test(project_id) ||
         typeof recruiter_id !== "string" || !UUID.test(recruiter_id) ||
         typeof first_work_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(first_work_date) ||
         !isRealCalendarDate(first_work_date) ||
-        typeof employee_code !== "string" || typeof display_name !== "string" ||
+        (!generatedCodes && typeof employee_code !== "string") ||
+        (generatedCodes && provider_type !== "hrp" && provider_type !== "vendor") ||
+        typeof display_name !== "string" ||
         display_name.trim().length < 1 || display_name.length > 256 ||
         (labor_type !== "TEMPORARY" && labor_type !== "PERMANENT")) {
       issues.push({ code: "BATCH_INVALID", path });
       return;
     }
-    const employeeCodeIssue = validateEmployeeCode(employee_code, first_work_date)[0];
-    if (employeeCodeIssue) {
-      issues.push({ code: employeeCodeIssue.code, path: `${path}.employee_code` });
+    if (!generatedCodes) {
+      const employeeCodeIssue = validateEmployeeCode(employee_code as string, first_work_date)[0];
+      if (employeeCodeIssue) {
+        issues.push({ code: employeeCodeIssue.code, path: `${path}.employee_code` });
+      }
+      if (seenCodes.has(employee_code as string)) {
+        issues.push({ code: "EMPLOYEE_CODE_DUPLICATE", path: `${path}.employee_code` });
+      }
+      seenCodes.add(employee_code as string);
     }
-    if (seenCodes.has(employee_code)) {
-      issues.push({ code: "EMPLOYEE_CODE_DUPLICATE", path: `${path}.employee_code` });
-    }
-    seenCodes.add(employee_code);
 
     const worker = normalizeWorker(item.worker, `${path}.worker`, issues);
     const generalNote = optionalText(item.general_note, `${path}.general_note`, 4000);
@@ -327,12 +349,11 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
     }
     const payment = normalizePayment(item.payment, `${path}.payment`, issues);
     const employment = normalizeEmployment(item.employment, `${path}.employment`, issues);
-    rows.push({
+    const normalizedRow = {
       project_id,
       first_work_date,
-      employee_code,
       recruiter_id,
-      labor_type,
+      labor_type: labor_type as "TEMPORARY" | "PERMANENT",
       display_name,
       worker_details: worker ?? {
         gender: { state: "omitted" },
@@ -346,15 +367,26 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       general_note: generalNote.value,
       payment,
       employment,
-    });
+    };
+    rows.push(generatedCodes
+      ? { ...normalizedRow, provider_type: provider_type as "hrp" | "vendor" }
+      : { ...normalizedRow, employee_code: employee_code as string });
   });
 
   if (issues.length > 0) return { ok: false, issues };
-  return {
-    ok: true,
-    payload: {
-      contract_version: WORKER_PROFILE_CONTRACT_VERSION,
-      rows,
-    },
-  };
+  return generatedCodes
+    ? {
+      ok: true,
+      payload: {
+        contract_version: SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
+        rows: rows as ServerGeneratedFullProfileRpcRow[],
+      },
+    }
+    : {
+      ok: true,
+      payload: {
+        contract_version: WORKER_PROFILE_CONTRACT_VERSION,
+        rows: rows as FullProfileRpcRow[],
+      },
+    };
 }

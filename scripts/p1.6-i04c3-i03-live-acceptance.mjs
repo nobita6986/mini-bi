@@ -40,6 +40,7 @@ const TABLES = [
   "public.direct_entry_submission_revisions",
   "public.direct_entry_audit_events",
   "public.direct_entry_rpc_idempotency",
+  "public.direct_entry_employee_code_counters",
   "public.direct_entry_document_versions",
   "public.direct_entry_document_events",
 ];
@@ -119,7 +120,7 @@ async function tableSecurityState(client) {
 
 async function verifySchema(client, migrations) {
   const migration = migrations.find(({ name }) => name === MIGRATION);
-  check(migrations.length === 37 && migration, "37 local migrations including #37");
+  check(migrations.length === 39 && migration, "39 local migrations including #37");
   check(!/\b(?:update|delete)\s+public\.direct_entry_payments\b|\binsert\s+into\s+public\.direct_entry_banks\b/i
     .test(migration.sql),
   "migration #37 does not rewrite existing payments or seed the bank catalog");
@@ -127,7 +128,7 @@ async function verifySchema(client, migrations) {
   const { rows: applied } = await client.query(
     "select version, checksum from public.schema_migrations order by version",
   );
-  check(applied.length === migrations.length, "migration ledger has 37 rows");
+  check(applied.length === migrations.length, "migration ledger matches all 39 local migrations");
   const checksums = new Map(applied.map(({ version, checksum }) => [version, checksum]));
   check(migrations.every(({ name, checksum }) => checksums.get(name) === checksum),
     "all applied checksums match source");
@@ -137,7 +138,7 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    check(fromScratch.migrationNames.length === 37, "PGlite applied all 37 migrations");
+    check(fromScratch.migrationNames.length === 39, "PGlite applied all 39 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();
@@ -161,14 +162,14 @@ async function verifySchema(client, migrations) {
     const expectedInternalCount = expectedFunctions.length - expectedServiceCount;
     check(new Set(serviceNames).size === expectedServiceCount &&
       liveFunctions.filter(({ service_exec }) => service_exec).length === expectedServiceCount,
-    "exactly 30 service-role boundary functions");
+    "exactly 31 service-role boundary functions");
     check(liveFunctions.filter(({ service_exec }) => !service_exec).length === expectedInternalCount &&
       liveFunctions.filter(({ service_exec, anon_exec, auth_exec, public_exec }) =>
         !service_exec && (anon_exec || auth_exec || public_exec)).length === 0,
-    "37 internal functions are not executable by runtime roles or PUBLIC");
-    check(sourceNames.length === 67 && expectedServiceCount === 30 &&
-      expectedInternalCount === 37,
-    "derived inventory is 67 total / 30 service-role / 37 internal");
+    "38 internal functions are not executable by runtime roles or PUBLIC");
+    check(sourceNames.length === 69 && expectedServiceCount === 31 &&
+      expectedInternalCount === 38,
+    "derived inventory is 69 total / 31 service-role / 38 internal");
     inventory = {
       total: sourceNames.length,
       serviceRole: expectedServiceCount,
@@ -176,6 +177,7 @@ async function verifySchema(client, migrations) {
     };
     const requiredDefiners = new Set([
       "direct_entry_create_full_profile_batch",
+      "direct_entry_create_full_profile_batch_v2",
       "direct_entry_read_projection",
     ]);
     check([...requiredDefiners].every((name) => {
