@@ -98,8 +98,30 @@ test("rejects duplicate codes and enforces the 100-row contract bound", () => {
   ))).ok, false);
 });
 
-test("payment requires an explicit state, all three values, and a catalog bank ID", () => {
+test("account metadata supports partial text fields without requiring a bank catalog", () => {
   const valid = parseFullProfilePayload(payload([{
+    ...baseRow,
+    payment: {
+      state: "provided",
+      account_number: "\u00a000001234\u3000",
+      bank_name: "\ufeff Ngân hàng Á Châu \u202f",
+    },
+  }]));
+  assert.equal(valid.ok, true);
+  if (valid.ok) assert.deepEqual(valid.payload.rows[0].payment, {
+    state: "provided",
+    account_number: "00001234",
+    bank_name: "Ngân hàng Á Châu",
+  });
+  for (const field of ["account_number", "bank_name", "account_holder_name"]) {
+    const partial = parseFullProfilePayload(payload([{
+      ...baseRow,
+      payment: { state: "provided", [field]: `  ${field}  ` },
+    }]));
+    assert.equal(partial.ok, true, field);
+    if (partial.ok) assert.equal(partial.payload.rows[0].payment?.state, "provided");
+  }
+  const legacy = parseFullProfilePayload(payload([{
     ...baseRow,
     payment: {
       state: "provided",
@@ -108,19 +130,29 @@ test("payment requires an explicit state, all three values, and a catalog bank I
       account_holder_name: "Synthetic Holder",
     },
   }]));
-  assert.equal(valid.ok, true);
+  assert.equal(legacy.ok, true);
+});
+
+test("empty account metadata normalizes to omitted; unknown keys still fail closed", () => {
+  for (const state of ["provided", "omitted"]) {
+    const empty = parseFullProfilePayload(payload([{
+      ...baseRow,
+      payment: { state, account_number: " \t", bank_name: null, account_holder_name: "" },
+    }]));
+    assert.equal(empty.ok, true, state);
+    if (empty.ok) assert.deepEqual(empty.payload.rows[0].payment, { state: "omitted" });
+  }
   assert.equal(parseFullProfilePayload(payload([{
     ...baseRow,
-    payment: { account_number: "00001234", bank_id: "synthetic-bank-01" },
+    payment: { state: "provided", bank_name: "Synthetic Bank", unknown: true },
   }])).ok, false);
   assert.equal(parseFullProfilePayload(payload([{
     ...baseRow,
-    payment: {
-      state: "provided",
-      account_number: "00001234",
-      bank_label: "Synthetic Bank",
-      account_holder_name: "Synthetic Holder",
-    },
+    payment: { state: "provided", bank_name: 5 },
+  }])).ok, false);
+  assert.equal(parseFullProfilePayload(payload([{
+    ...baseRow,
+    payment: { state: "provided", bank_id: "not-in-catalog" },
   }])).ok, false);
 });
 
