@@ -364,15 +364,15 @@ test("W04 migration 2: audit append-only ở tầng quyền (revoke update/delet
   assert.ok(sql.includes("ROLLBACK"));
 });
 
-test("W04 routes/proxy: route AI nằm sau pilot gate và không lộ dữ liệu trong URL", () => {
-  const proxy = readFileSync(new URL("../../../proxy.ts", import.meta.url), "utf8");
-  assert.ok(proxy.includes('"/api/ai/reports"'));
-  assert.ok(proxy.includes('"/api/ai/reports/:path*"'));
-  assert.ok(proxy.includes('"/api/ai/worker/run"'));
-  const pilot = readFileSync(new URL("../../auth/pilot-access.ts", import.meta.url), "utf8");
-  assert.ok(pilot.includes('"/api/ai/"'));
+test("W04 routes: route AI nằm sau Supabase session guard và không lộ dữ liệu trong URL", () => {
+  // P1.7-H04: Pilot Basic Auth đã bị loại bỏ. Route AI giờ phải tự guard bằng session.
+  assert.throws(() => readFileSync(new URL("../../../proxy.ts", import.meta.url), "utf8"),
+    "proxy Pilot Basic Auth phải bị xóa");
+  assert.throws(() => readFileSync(new URL("../../auth/pilot-access.ts", import.meta.url), "utf8"),
+    "pilot-access phải bị xóa");
 
   const enqueue = readFileSync(new URL("../../../app/api/ai/reports/route.ts", import.meta.url), "utf8");
+  assert.ok(enqueue.includes("guardApiSession()"), "route AI phải qua session guard");
   assert.ok(enqueue.includes("isAiReportsEnabled()"));
   assert.ok(enqueue.includes("checkSameOriginRequest"));
   assert.ok(enqueue.includes('worker_ref: "inline-after", limit: 2'));
