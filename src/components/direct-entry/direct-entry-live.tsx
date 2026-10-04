@@ -80,7 +80,44 @@ import {
 } from "@/lib/direct-entry/submission-read-contract";
 import { projectSubmissionTransitionResult } from "@/lib/direct-entry/submission-transition-contract";
 import type { DraftCatalog, OwnDraft } from "@/lib/direct-entry/write-repository";
+import {
+  DirectEntrySpreadsheetGrid,
+  type SpreadsheetGridRow,
+  type SpreadsheetPasteRejection,
+  type SpreadsheetPasteRequest,
+} from "@/components/direct-entry/direct-entry-spreadsheet-grid";
+import { buildSpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
+import {
+  captureClipboardUndoSnapshot,
+  restoreClipboardUndoSnapshot,
+  type ClipboardUndoSnapshot,
+} from "@/lib/direct-entry/direct-entry-grid-clipboard";
+import {
+  SPREADSHEET_WRITABLE_FIELD_KEYS,
+  clearSpreadsheetRow,
+  createSpreadsheetRowModel,
+  deleteSpreadsheetRow,
+  duplicateSpreadsheetRow,
+  ensureSpreadsheetRowCount,
+  spreadsheetRowIsBlank,
+  updateSpreadsheetRowCells,
+  type SpreadsheetRowModel,
+} from "@/lib/direct-entry/spreadsheet-row-model";
+import {
+  buildFullProfileRequestBody,
+  fullProfileErrorMessage,
+  fullProfileIntentDigest,
+  postFullProfileBatch,
+} from "@/lib/direct-entry/full-profile-batch";
 import styles from "./direct-entry-shell.module.css";
+
+/** Message tu choi paste, da duoc viet san; khong chua gia tri nguoi dung. */
+const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
+  CLIPBOARD_ROW_OVERFLOW: "Vùng dán vượt quá 100 dòng dữ liệu nên đã bị từ chối toàn bộ.",
+  CLIPBOARD_COLUMN_OVERFLOW: "Vùng dán vượt quá cột cuối của bảng nên đã bị từ chối toàn bộ.",
+  CLIPBOARD_ANCHOR_INVALID: "Chưa xác định được ô neo để dán.",
+  CLIPBOARD_EMPTY: "Clipboard không có dữ liệu văn bản.",
+};
 
 const SUBMISSION_PAGE_SIZE = 50;
 const CHANGE_REQUEST_PAGE_SIZE = 50;
@@ -905,7 +942,7 @@ export function DirectEntryLive() {
 
   /**
    * Mot nhom dan tu Excel di bang DUNG MOT request toi POST /api/direct-entry/batches.
-   * Khong optimistic-save: chi khi server xac nhan thi nhom moi duoc them vao bang.
+   * Khong luu truoc: chi khi server xac nhan thi nhom moi duoc them vao bang.
    */
   const submitPasteGroup = useCallback(async (
     previewRows: readonly PastePreviewRow[],
@@ -1023,6 +1060,237 @@ export function DirectEntryLive() {
     }));
     setSelectedRowId(null);
   }, []);
+
+  /* ------------------------------------------------------- P1.7-W02 spreadsheet */
+  // Row staging client-only: khong tron clientRowId voi entry_id va khong tao server draft.
+  const [stagedModel, setStagedModel] = useState<SpreadsheetRowModel>(() => createSpreadsheetRowModel());
+  const [stagedNotice, setStagedNotice] = useState("");
+  const [stagedMessage, setStagedMessage] = useState("");
+  const [stagedRejection, setStagedRejection] = useState("");
+  const [stagedBusy, setStagedBusy] = useState(false);
+  const [stagedCanUndo, setStagedCanUndo] = useState(false);
+  const stagedIntent = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
+  const stagedUndo = useRef<ClipboardUndoSnapshot | null>(null);
+  const stagedInFlight = useRef(false);
+
+  const stagedCatalogSource = useCallback((date: string) => {
+    const catalog = catalogs[date];
+    if (!catalog) return null;
+    return {
+      projects: catalog.projects.map((project) => ({ id: project.project_id, label: project.display_name })),
+      recruiters: catalog.recruiters.map((recruiter) => ({ id: recruiter.recruiter_id, label: recruiter.display_name })),
+    };
+  }, [catalogs]);
+
+  const stagedCatalogOptions = useMemo(() => {
+    const catalog = catalogs[today];
+    return {
+      projects: (catalog?.projects ?? []).map((project) => ({ id: project.project_id, label: project.display_name })),
+      recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({ id: recruiter.recruiter_id, label: recruiter.display_name })),
+    };
+  }, [catalogs, today]);
+
+  // Validation tai cho: chi chay tren staged rows KHONG trong, va tai dung pipeline P1.6.
+  const stagedValidation = useMemo(() => buildSpreadsheetValidation({
+    rows: stagedModel.rows,
+    referenceDate: today,
+    catalogFor: stagedCatalogSource,
+    existing: rows.map((row) => ({ employeeCode: row.employeeCode })),
+  }), [rows, stagedCatalogSource, stagedModel, today]);
+
+  useEffect(() => {
+    for (const date of stagedValidation.catalogDates) void ensureCatalog(date).catch(() => undefined);
+  }, [ensureCatalog, stagedValidation]);
+
+  const spreadsheetRows = useMemo<readonly SpreadsheetGridRow[]>(() => {
+    const persisted: SpreadsheetGridRow[] = rows.map((row) => {
+      const editable = row.state !== "saving" && row.state !== "conflict" &&
+        isRowEditable(row, submissions);
+      // Chi 6 field da co safe mutation path duoc sua; field full-profile khac read-only (W03).
+      return {
+        clientRowId: row.rowId,
+        persisted: true,
+        locked: !editable,
+        cells: {
+          employee_code: row.employeeCode,
+          first_work_date: row.firstWorkDate,
+          display_name: row.workerName,
+          project_id: row.projectId,
+          recruiter_id: row.recruiterId,
+          labor_type: row.laborType === "TEMPORARY" ? "Thời vụ" : "Toàn thời gian",
+        },
+        editableFields: editable
+          ? ["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"]
+          : [],
+        employeeCode: row.employeeCode,
+        displayName: row.workerName,
+        projectLabel: displayProject(row, catalogFor(row.firstWorkDate)),
+        recruiterLabel: displayRecruiter(row, catalogFor(row.firstWorkDate)),
+        saveStatus: stateText(row.state),
+      };
+    });
+    const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => ({
+      clientRowId: row.clientRowId,
+      persisted: false,
+      locked: false,
+      cells: row.cells,
+      editableFields: SPREADSHEET_WRITABLE_FIELD_KEYS,
+      employeeCode: row.cells.employee_code ?? "",
+      displayName: row.cells.display_name ?? "",
+      projectLabel: row.cells.project_id ?? "",
+      recruiterLabel: row.cells.recruiter_id ?? "",
+      saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
+    }));
+    return [...persisted, ...staged];
+  }, [catalogFor, rows, stagedModel, submissions]);
+
+  const onSpreadsheetCellsChange = useCallback((
+    clientRowId: string,
+    patch: Readonly<Record<string, string>>,
+  ) => {
+    const persistedRow = rows.find((row) => row.rowId === clientRowId);
+    if (persistedRow) {
+      const draftPatch: Partial<EditableDraftFields> = {};
+      if (patch.employee_code !== undefined) draftPatch.employeeCode = patch.employee_code;
+      if (patch.first_work_date !== undefined) draftPatch.firstWorkDate = patch.first_work_date;
+      if (patch.display_name !== undefined) draftPatch.workerName = patch.display_name;
+      if (patch.project_id !== undefined) draftPatch.projectId = patch.project_id;
+      if (patch.recruiter_id !== undefined) draftPatch.recruiterId = patch.recruiter_id;
+      if (patch.labor_type !== undefined) {
+        draftPatch.laborType = patch.labor_type === "Toàn thời gian" ? "PERMANENT" : "TEMPORARY";
+      }
+      if (Object.keys(draftPatch).length === 0) return;
+      setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
+      if (draftPatch.firstWorkDate && isRealCalendarDate(draftPatch.firstWorkDate)) {
+        void ensureCatalog(draftPatch.firstWorkDate).catch(() => undefined);
+      }
+      return;
+    }
+    setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, patch));
+  }, [ensureCatalog, rows]);
+
+  const onStagedPasteRejected = useCallback((reason: SpreadsheetPasteRejection) => {
+    setStagedRejection(PASTE_REJECTION_MESSAGES[reason]);
+    setStagedMessage("");
+  }, []);
+
+  /** Paste chi doi React state: khong fetch, khong storage, khong log gia tri. */
+  const onStagedPaste = useCallback((request: SpreadsheetPasteRequest) => {
+    const snapshot = captureClipboardUndoSnapshot({
+      mapping: request.mapping,
+      currentRowCount: stagedModel.rows.length,
+      readCell: (rowIndex, columnKey) => stagedModel.rows[rowIndex]?.cells[columnKey],
+    });
+    const maxRowIndex = request.mapping.cells.reduce(
+      (maximum, cell) => Math.max(maximum, cell.rowIndex), 0);
+    let next = ensureSpreadsheetRowCount(stagedModel, maxRowIndex + 1);
+    const patches = new Map<number, Record<string, string>>();
+    for (const cell of request.mapping.writeCells) {
+      const bucket = patches.get(cell.rowIndex) ?? {};
+      bucket[cell.columnKey] = cell.value;
+      patches.set(cell.rowIndex, bucket);
+    }
+    for (const [rowIndex, patch] of patches) {
+      const target = next.rows[rowIndex];
+      if (target) next = updateSpreadsheetRowCells(next, target.clientRowId, patch);
+    }
+    stagedUndo.current = snapshot;
+    setStagedCanUndo(true);
+    setStagedModel(next);
+    setStagedRejection("");
+    setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
+  }, [stagedModel]);
+
+  const onStagedUndo = useCallback(() => {
+    const snapshot = stagedUndo.current;
+    if (snapshot === null) return;
+    setStagedModel((current) => ({
+      ...current,
+      rows: restoreClipboardUndoSnapshot({
+        rows: current.rows,
+        snapshot,
+        writeCell: (cells, rowIndex, columnKey, value) => cells.map((row, index) =>
+          index === rowIndex
+            ? { ...row, cells: { ...row.cells, [columnKey]: value ?? "" } }
+            : row),
+      }),
+    }));
+    stagedUndo.current = null;
+    setStagedCanUndo(false);
+    setStagedNotice("");
+    setStagedRejection("");
+  }, []);
+
+  const onStagedClear = useCallback((clientRowId: string) => {
+    setStagedModel((current) => clearSpreadsheetRow(current, clientRowId));
+  }, []);
+  const onStagedDelete = useCallback((clientRowId: string) => {
+    setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
+  }, []);
+  const onStagedDuplicate = useCallback((clientRowId: string) => {
+    setStagedModel((current) => {
+      try {
+        return duplicateSpreadsheetRow(current, clientRowId);
+      } catch {
+        setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu cho một lần lưu.");
+        return current;
+      }
+    });
+  }, []);
+
+  /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
+  const onStagedSave = useCallback(async () => {
+    if (stagedInFlight.current) return;
+    const preview = stagedValidation.preview;
+    if (preview === null || !stagedValidation.canSave) {
+      setStagedMessage("Chưa có dòng hợp lệ để lưu.");
+      return;
+    }
+    const body = buildFullProfileRequestBody(preview.rows);
+    if (body === null) {
+      setStagedMessage(fullProfileErrorMessage("BATCH_INVALID"));
+      return;
+    }
+    const digest = await fullProfileIntentDigest(body.rows);
+    if (digest === null) {
+      setStagedMessage("Không tạo được dấu vết yêu cầu; hãy thử lại.");
+      return;
+    }
+    const intent = "full_profile_batch:" + digest;
+    const resolved = resolveIntentKey(stagedIntent.current, intent, () => crypto.randomUUID());
+    stagedIntent.current = resolved.state;
+    stagedInFlight.current = true;
+    setStagedBusy(true);
+    setStagedMessage("");
+    try {
+      const result = await postFullProfileBatch({
+        rows: body.rows,
+        idempotencyKey: resolved.key,
+        fetchImpl: fetch,
+      });
+      if (result.kind === "saved") {
+        stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
+        stagedUndo.current = null;
+        setStagedCanUndo(false);
+        setStagedNotice("");
+        setStagedRejection("");
+        // Chi clear staged rows sau khi server xac nhan bang projection hop le.
+        setStagedModel(createSpreadsheetRowModel());
+        setStagedMessage("Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.");
+        await reloadDrafts();
+        return;
+      }
+      if (result.kind === "retry") {
+        setStagedMessage(fullProfileErrorMessage(result.code));
+        return;
+      }
+      stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
+      setStagedMessage(fullProfileErrorMessage(result.code));
+    } finally {
+      stagedInFlight.current = false;
+      setStagedBusy(false);
+    }
+  }, [reloadDrafts, stagedValidation]);
 
   const columns = useMemo<readonly Column<LiveDraftRow>[]>(() => {
     const editableRow = (row: LiveDraftRow) =>
@@ -1369,6 +1637,51 @@ export function DirectEntryLive() {
               void reloadAfterChangeRequestMutation(changeRequestErrorMessage(401));
             }}
           />
+          <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
+            <p className={styles.gridHint}>
+              Nhập trực tiếp vào từng ô hoặc dán một vùng từ Excel vào ô đang chọn. Dán chỉ thay đổi
+              dữ liệu trên trang; chưa có yêu cầu nào gửi lên máy chủ cho tới khi bấm lưu.
+            </p>
+            {stagedRejection !== "" && (
+              <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
+            )}
+            {stagedValidation.firstError !== null && (
+              <button type="button" data-testid="spreadsheet-first-error"
+                onClick={() => {
+                  const index = stagedValidation.rowOrder.indexOf(
+                    stagedValidation.firstError?.clientRowId ?? "");
+                  setStagedMessage(
+                    "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
+                    (stagedValidation.firstError?.columnKey ?? "") + ".");
+                }}>
+                Đi tới lỗi đầu tiên
+              </button>
+            )}
+            <DirectEntrySpreadsheetGrid
+              rows={spreadsheetRows}
+              validation={stagedValidation}
+              catalogOptions={stagedCatalogOptions}
+              onCellsChange={onSpreadsheetCellsChange}
+              onPasteApplied={onStagedPaste}
+              onPasteRejected={onStagedPasteRejected}
+              onClearRow={onStagedClear}
+              onDeleteRow={onStagedDelete}
+              onDuplicateRow={onStagedDuplicate}
+              onManageDocuments={(clientRowId) => {
+                const persistedRow = rows.find((row) => row.rowId === clientRowId);
+                if (persistedRow) setCccdRowId(persistedRow.rowId);
+              }}
+              onSave={() => void onStagedSave()}
+              saveLabel={"Lưu các dòng đã nhập (" + stagedValidation.rowOrder.length + ")"}
+              saveDisabled={!stagedValidation.canSave}
+              saveBusy={stagedBusy}
+              notice={stagedNotice}
+              canUndo={stagedCanUndo}
+              onUndo={onStagedUndo}
+              saveMessage={stagedMessage}
+            />
+          </section>
+
           <section className={styles.gridSection} aria-label="Bảng bản nháp Direct Entry">
             <p className={styles.gridHint}>Dự án, recruiter, HRP/Vendor và team đến từ danh mục theo ngày hiệu lực.</p>
             <div className={styles.gridViewport}>
