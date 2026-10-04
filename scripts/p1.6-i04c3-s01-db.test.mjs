@@ -12,7 +12,16 @@ const IDS = {
   user: "92600000-0000-4000-8000-000000000001",
   readAuth: "91600000-0000-4000-8000-000000000002",
   readUser: "92600000-0000-4000-8000-000000000002",
+  teamAuth: "91600000-0000-4000-8000-000000000003",
+  teamUser: "92600000-0000-4000-8000-000000000003",
+  paymentAuth: "91600000-0000-4000-8000-000000000004",
+  paymentUser: "92600000-0000-4000-8000-000000000004",
+  outsideAuth: "91600000-0000-4000-8000-000000000005",
+  outsideUser: "92600000-0000-4000-8000-000000000005",
+  disabledAuth: "91600000-0000-4000-8000-000000000006",
+  disabledUser: "92600000-0000-4000-8000-000000000006",
   team: "94600000-0000-4000-8000-000000000001",
+  outsideTeam: "94600000-0000-4000-8000-000000000002",
   recruiter: "93600000-0000-4000-8000-000000000001",
   inactiveRecruiter: "93600000-0000-4000-8000-000000000002",
   noTeamRecruiter: "93600000-0000-4000-8000-000000000003",
@@ -31,17 +40,24 @@ async function database() {
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 37, "PGlite must apply migrations #1-#37");
+  assert.equal(migrations.length, 38, "PGlite must apply all 38 migrations");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   await db.exec(`
-    insert into auth.users(id) values ('${IDS.auth}'), ('${IDS.readAuth}');
+    insert into auth.users(id) values
+      ('${IDS.auth}'), ('${IDS.readAuth}'), ('${IDS.teamAuth}'), ('${IDS.paymentAuth}'),
+      ('${IDS.outsideAuth}'), ('${IDS.disabledAuth}');
     insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled) values
       ('${IDS.user}', '${IDS.auth}', true),
-      ('${IDS.readUser}', '${IDS.readAuth}', true);
+      ('${IDS.readUser}', '${IDS.readAuth}', true),
+      ('${IDS.teamUser}', '${IDS.teamAuth}', true),
+      ('${IDS.paymentUser}', '${IDS.paymentAuth}', true),
+      ('${IDS.outsideUser}', '${IDS.outsideAuth}', true),
+      ('${IDS.disabledUser}', '${IDS.disabledAuth}', false);
     insert into public.teams(team_id, code, display_name)
-      values ('${IDS.team}', 'I04C3-SYNTH', 'Synthetic I04C3 Team');
+      values ('${IDS.team}', 'I04C3-SYNTH', 'Synthetic I04C3 Team'),
+             ('${IDS.outsideTeam}', 'I04C3-OUTSIDE', 'Synthetic outside team');
     insert into public.recruiters(recruiter_id, display_name, active)
       values ('${IDS.recruiter}', 'Synthetic I04C3 Recruiter', true),
              ('${IDS.inactiveRecruiter}', 'Synthetic Inactive Recruiter', false),
@@ -68,11 +84,20 @@ async function database() {
       ('${IDS.user}', 'employment_status.apply', '2020-01-01'),
       ('${IDS.user}', 'payment_view', '2020-01-01'),
       ('${IDS.user}', 'payment_edit', '2020-01-01'),
-      ('${IDS.readUser}', 'entry_admin', '2020-01-01');
+      ('${IDS.user}', 'pii_view', '2020-01-01'),
+      ('${IDS.readUser}', 'entry_admin', '2020-01-01'),
+      ('${IDS.teamUser}', 'entry_team', '2020-01-01'),
+      ('${IDS.teamUser}', 'employment_status.apply', '2020-01-01'),
+      ('${IDS.paymentUser}', 'entry_admin', '2020-01-01'),
+      ('${IDS.paymentUser}', 'payment_view', '2020-01-01'),
+      ('${IDS.outsideUser}', 'entry_team', '2020-01-01');
     insert into public.direct_entry_scope_grants
-      (app_user_id, scope_kind, valid_from) values
-      ('${IDS.user}', 'own', '2020-01-01'),
-      ('${IDS.readUser}', 'all', '2020-01-01');
+      (app_user_id, scope_kind, team_id, valid_from) values
+      ('${IDS.user}', 'own', null, '2020-01-01'),
+      ('${IDS.readUser}', 'all', null, '2020-01-01'),
+      ('${IDS.teamUser}', 'team', '${IDS.team}', '2020-01-01'),
+      ('${IDS.paymentUser}', 'all', null, '2020-01-01'),
+      ('${IDS.outsideUser}', 'team', '${IDS.outsideTeam}', '2020-01-01');
   `);
   return db;
 }
@@ -83,6 +108,21 @@ async function rpc(db, rows, key) {
     const result = await db.query(RPC, [
       IDS.auth, IDS.user, CONTRACT, JSON.stringify(rows), key,
     ]);
+    await db.exec("commit;");
+    return result.rows[0].result;
+  } catch (error) {
+    await db.exec("rollback;");
+    throw error;
+  }
+}
+
+async function listDrafts(db, authSubject, appUserId) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const result = await db.query(
+      "select public.direct_entry_list_own_drafts($1::uuid,$2::uuid) as result",
+      [authSubject, appUserId],
+    );
     await db.exec("commit;");
     return result.rows[0].result;
   } catch (error) {
@@ -165,6 +205,27 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
       "select has_function_privilege('anon', " +
       "'public.direct_entry_create_full_profile_batch(uuid, uuid, text, jsonb, text)', 'EXECUTE') as allowed",
     ).then((result) => result.rows[0].allowed), false);
+    const listBoundary = await db.query(`
+      select p.prosecdef, p.proconfig,
+        has_function_privilege('service_role',
+          'public.direct_entry_list_own_drafts(uuid,uuid)', 'EXECUTE') as service_exec,
+        has_function_privilege('anon',
+          'public.direct_entry_list_own_drafts(uuid,uuid)', 'EXECUTE') as anon_exec,
+        has_function_privilege('authenticated',
+          'public.direct_entry_list_own_drafts(uuid,uuid)', 'EXECUTE') as auth_exec,
+        has_function_privilege('service_role',
+          'public.direct_entry_draft_profile_field(jsonb,boolean)', 'EXECUTE') as helper_service_exec
+      from pg_proc p
+      where p.oid = 'public.direct_entry_list_own_drafts(uuid,uuid)'::regprocedure
+    `);
+    assert.deepEqual(listBoundary.rows[0], {
+      prosecdef: true,
+      proconfig: ["search_path=pg_catalog, public"],
+      service_exec: true,
+      anon_exec: false,
+      auth_exec: false,
+      helper_service_exec: false,
+    });
     for (const signature of [
       "public.direct_entry_valid_worker_details(jsonb)",
       "public.direct_entry_entry_snapshot(uuid)",
@@ -230,6 +291,7 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
         state: "provided",
         account_number: "000012345678",
         bank_id: IDS.bank,
+        bank_name: "Synthetic Bank Name",
         account_holder_name: "Synthetic Account Holder",
       },
     });
@@ -288,6 +350,87 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
     assert.equal(await count(db, "direct_entry_revisions"), before.revisions + 2);
     assert.equal(await count(db, "direct_entry_audit_events"), before.events + 3);
     assert.equal(await count(db, "direct_entry_rpc_idempotency"), before.idempotency + 1);
+
+    const ownerList = await listDrafts(db, IDS.auth, IDS.user);
+    assert.equal(ownerList.projection_version, "direct-entry-draft-list/1");
+    assert.equal(ownerList.drafts.length, 2);
+    const ownerFirst = ownerList.drafts.find(({ employee_code }) => employee_code === "hrp-2020-000001");
+    const ownerOff = ownerList.drafts.find(({ employee_code }) => employee_code === "hrp-2020-000002");
+    assert.ok(ownerFirst && ownerOff);
+    assert.equal(ownerFirst.profile.contract_version, "worker-profile/1.0");
+    assert.deepEqual(ownerFirst.profile.worker_details.national_id,
+      { state: "provided", value: "001234567890" });
+    assert.deepEqual(ownerFirst.profile.general_note,
+      { state: "provided", value: "Synthetic private note" });
+    assert.deepEqual(ownerFirst.profile.payment.account_number,
+      { state: "provided", value: "000012345678" });
+    assert.deepEqual(ownerFirst.profile.payment.bank_name,
+      { state: "provided", value: "Synthetic Bank Name" });
+    assert.deepEqual(ownerOff.profile.employment.leave_reason_text,
+      { state: "provided", value: "Synthetic historical departure" });
+    assert.equal(Object.hasOwn(ownerFirst, "scope_kind"), false);
+
+    const teamList = await listDrafts(db, IDS.teamAuth, IDS.teamUser);
+    assert.equal(teamList.drafts.length, 2);
+    const teamFirst = teamList.drafts.find(({ employee_code }) => employee_code === "hrp-2020-000001");
+    const teamOff = teamList.drafts.find(({ employee_code }) => employee_code === "hrp-2020-000002");
+    assert.ok(teamFirst && teamOff);
+    const teamListJson = JSON.stringify(teamList);
+    for (const secret of [
+      "Synthetic Worker", "Synthetic private note", "Synthetic Account Holder",
+      "Synthetic Bank Name", "001234567890", "000012345678", "Synthetic Address 1",
+      "Synthetic historical departure",
+    ]) assert.equal(teamListJson.includes(secret), false, secret);
+    assert.equal(teamFirst.worker_display_name, "");
+    assert.deepEqual(teamFirst.profile.worker_details.display_name,
+      { state: "redacted", present: true });
+    assert.deepEqual(teamFirst.profile.general_note,
+      { state: "redacted", present: true });
+    assert.equal(teamFirst.profile.employment.status, "UNCONFIRMED");
+    assert.deepEqual(teamFirst.profile.employment.leave_date, { state: "omitted" });
+    assert.deepEqual(teamOff.profile.employment.leave_reason_text,
+      { state: "redacted", present: true });
+    assert.deepEqual(teamFirst.profile.payment.account_number,
+      { state: "masked", value: "••••••••5678" });
+    assert.deepEqual(teamFirst.profile.payment.bank_name,
+      { state: "redacted", present: true });
+    assert.equal(teamListJson.includes("storage_key"), false);
+    assert.equal(teamListJson.includes("checksum"), false);
+    assert.equal(teamListJson.includes("bucket"), false);
+    assert.equal(teamListJson.includes("signed_url"), false);
+    assert.equal(teamListJson.includes("idempotency_key"), false);
+
+    const paymentOnlyList = await listDrafts(db, IDS.paymentAuth, IDS.paymentUser);
+    const paymentFirst = paymentOnlyList.drafts.find(({ employee_code }) =>
+      employee_code === "hrp-2020-000001"
+    );
+    assert.ok(paymentFirst);
+    assert.equal(paymentFirst.worker_display_name, "");
+    assert.deepEqual(paymentFirst.profile.payment.account_number,
+      { state: "provided", value: "000012345678" });
+    assert.deepEqual(paymentFirst.profile.worker_details.national_id,
+      { state: "redacted", present: true });
+    const paymentOff = paymentOnlyList.drafts.find(({ employee_code }) =>
+      employee_code === "hrp-2020-000002"
+    );
+    assert.ok(paymentOff);
+    assert.deepEqual(paymentOff.profile.employment.leave_reason_text, { state: "omitted" });
+    const adminList = await listDrafts(db, IDS.readAuth, IDS.readUser);
+    assert.equal(adminList.drafts.length, 2);
+    assert.deepEqual(adminList.drafts.map(({ entry_id }) => entry_id),
+      [...adminList.drafts].sort((a, b) =>
+        a.created_at.localeCompare(b.created_at) || a.entry_id.localeCompare(b.entry_id)
+      ).map(({ entry_id }) => entry_id));
+    assert.deepEqual((await listDrafts(db, IDS.outsideAuth, IDS.outsideUser)).drafts, []);
+    await assert.rejects(
+      listDrafts(db, IDS.disabledAuth, IDS.disabledUser),
+      (error) => error.code === "42501",
+    );
+    await assert.rejects(
+      listDrafts(db, "91600000-0000-4000-8000-000000000099",
+        "92600000-0000-4000-8000-000000000099"),
+      (error) => error.code === "42501",
+    );
 
     const read = await db.query(
       "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as projection",

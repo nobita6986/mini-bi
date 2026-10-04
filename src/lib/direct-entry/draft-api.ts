@@ -9,7 +9,11 @@ import {
   validateWorkerDetails,
   type WorkerDetails,
 } from "../contracts/direct-entry-v1.ts";
-import type { DirectEntryRepository, DraftCatalog } from "./write-repository.ts";
+import {
+  DRAFT_LIST_PROJECTION_VERSION,
+  type DirectEntryRepository,
+  type DraftCatalog,
+} from "./write-repository.ts";
 import { readBoundedJson } from "./write-api.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -143,7 +147,11 @@ export async function getOwnDrafts(
       console.error("[direct-entry] own drafts unavailable");
       return fail("DRAFTS_UNAVAILABLE", 500);
     }
-    return respond({ ok: true, drafts: result.data }, 200);
+    return respond({
+      ok: true,
+      projection_version: DRAFT_LIST_PROJECTION_VERSION,
+      drafts: result.data,
+    }, 200);
   } catch {
     console.error("[direct-entry] own drafts request failed");
     return fail("DRAFTS_UNAVAILABLE", 500);
