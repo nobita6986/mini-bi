@@ -52,12 +52,12 @@ test("payment repository calls only the existing update RPC and strictly project
   }]);
 });
 
-test("account metadata replacement reuses the existing payment RPC unchanged", async () => {
+test("explicit account metadata operations reuse the existing payment RPC unchanged", async () => {
   const calls = [];
   const metadata = {
-    account_number: null,
-    bank_name: "Synthetic Bank",
-    account_holder_name: "Synthetic Holder",
+    account_number: { op: "keep" },
+    bank_name: { op: "set", value: "Synthetic Bank" },
+    account_holder_name: { op: "clear" },
   };
   const repository = createDirectEntryWriteRepository(async (name, args) => {
     calls.push({ name, args });

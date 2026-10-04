@@ -30,6 +30,12 @@ declare
   v_revision_id uuid;
   v_payment_version integer;
   v_is_account_metadata boolean;
+  v_account_number_op text;
+  v_bank_name_op text;
+  v_account_holder_name_op text;
+  v_account_number_value text;
+  v_bank_name_value text;
+  v_account_holder_name_value text;
   v_payment_state text;
   v_account_number text;
   v_bank_id text;
@@ -55,31 +61,73 @@ begin
   end if;
 
   if v_is_account_metadata then
-    if jsonb_typeof(p_payment->'account_number') not in ('string','null')
-       or jsonb_typeof(p_payment->'bank_name') not in ('string','null')
-       or jsonb_typeof(p_payment->'account_holder_name') not in ('string','null') then
+    if jsonb_typeof(p_payment->'account_number') is distinct from 'object'
+       or jsonb_typeof(p_payment->'bank_name') is distinct from 'object'
+       or jsonb_typeof(p_payment->'account_holder_name') is distinct from 'object' then
       raise exception 'invalid account metadata' using errcode = '22023';
     end if;
-    v_account_number := nullif(btrim(p_payment->>'account_number', v_trim_chars), '');
-    v_bank_name := nullif(btrim(p_payment->>'bank_name', v_trim_chars), '');
-    v_account_holder_name := nullif(
-      btrim(p_payment->>'account_holder_name', v_trim_chars), ''
-    );
-    if (v_account_number is not null and (length(v_account_number) not between 1 and 64
-          or v_account_number ~ '[[:cntrl:]]'))
-       or (v_bank_name is not null and (length(v_bank_name) not between 1 and 256
-          or v_bank_name ~ '[[:cntrl:]]'))
-       or (v_account_holder_name is not null and
-          (length(v_account_holder_name) not between 1 and 256
-            or v_account_holder_name ~ '[[:cntrl:]]')) then
+    v_account_number_op := p_payment->'account_number'->>'op';
+    v_bank_name_op := p_payment->'bank_name'->>'op';
+    v_account_holder_name_op := p_payment->'account_holder_name'->>'op';
+    if v_account_number_op is null
+       or v_bank_name_op is null
+       or v_account_holder_name_op is null
+       or v_account_number_op not in ('keep','set','clear')
+       or v_bank_name_op not in ('keep','set','clear')
+       or v_account_holder_name_op not in ('keep','set','clear')
+       or not ((p_payment->'account_number') ? 'op')
+       or not ((p_payment->'bank_name') ? 'op')
+       or not ((p_payment->'account_holder_name') ? 'op')
+       or (v_account_number_op in ('keep','clear')
+         and ((p_payment->'account_number') - 'op'::text) <> '{}'::jsonb)
+       or (v_bank_name_op in ('keep','clear')
+         and ((p_payment->'bank_name') - 'op'::text) <> '{}'::jsonb)
+       or (v_account_holder_name_op in ('keep','clear')
+         and ((p_payment->'account_holder_name') - 'op'::text) <> '{}'::jsonb)
+       or (v_account_number_op = 'set'
+         and (((p_payment->'account_number') - array['op','value']::text[]) <> '{}'::jsonb
+           or not ((p_payment->'account_number') ? 'value')
+           or jsonb_typeof(p_payment->'account_number'->'value') is distinct from 'string'))
+       or (v_bank_name_op = 'set'
+         and (((p_payment->'bank_name') - array['op','value']::text[]) <> '{}'::jsonb
+           or not ((p_payment->'bank_name') ? 'value')
+           or jsonb_typeof(p_payment->'bank_name'->'value') is distinct from 'string'))
+       or (v_account_holder_name_op = 'set'
+         and (((p_payment->'account_holder_name') - array['op','value']::text[]) <> '{}'::jsonb
+           or not ((p_payment->'account_holder_name') ? 'value')
+           or jsonb_typeof(p_payment->'account_holder_name'->'value')
+             is distinct from 'string')) then
       raise exception 'invalid account metadata' using errcode = '22023';
     end if;
-    v_payment_state := case
-      when v_account_number is null and v_bank_name is null
-        and v_account_holder_name is null then 'omitted'
-      else 'provided'
-    end;
-    v_bank_id := null;
+    if v_account_number_op = 'keep' and v_bank_name_op = 'keep'
+       and v_account_holder_name_op = 'keep' then
+      raise exception 'account metadata update has no changes' using errcode = '22023';
+    end if;
+    if v_account_number_op = 'set' then
+      v_account_number_value := btrim(
+        p_payment->'account_number'->>'value', v_trim_chars
+      );
+      if length(v_account_number_value) not between 1 and 64
+         or v_account_number_value !~ '^[0-9]+$' then
+        raise exception 'invalid account metadata' using errcode = '22023';
+      end if;
+    end if;
+    if v_bank_name_op = 'set' then
+      v_bank_name_value := btrim(p_payment->'bank_name'->>'value', v_trim_chars);
+      if length(v_bank_name_value) not between 1 and 256
+         or v_bank_name_value ~ '[[:cntrl:]]' then
+        raise exception 'invalid account metadata' using errcode = '22023';
+      end if;
+    end if;
+    if v_account_holder_name_op = 'set' then
+      v_account_holder_name_value := btrim(
+        p_payment->'account_holder_name'->>'value', v_trim_chars
+      );
+      if length(v_account_holder_name_value) not between 1 and 256
+         or v_account_holder_name_value ~ '[[:cntrl:]]' then
+        raise exception 'invalid account metadata' using errcode = '22023';
+      end if;
+    end if;
   else
     v_payment_state := p_payment->>'state';
     v_account_number := p_payment->>'account_number';
@@ -133,6 +181,32 @@ begin
       raise exception 'payment version conflict' using errcode = '40001';
     end if;
     v_payment_version := 1;
+  end if;
+  if v_is_account_metadata then
+    v_account_number := case v_account_number_op
+      when 'keep' then v_payment.account_number
+      when 'set' then v_account_number_value
+      else null
+    end;
+    v_bank_name := case v_bank_name_op
+      when 'keep' then v_payment.bank_name
+      when 'set' then v_bank_name_value
+      else null
+    end;
+    v_account_holder_name := case v_account_holder_name_op
+      when 'keep' then v_payment.account_holder_name
+      when 'set' then v_account_holder_name_value
+      else null
+    end;
+    v_bank_id := case
+      when v_bank_name_op = 'keep' then v_payment.bank_id
+      else null
+    end;
+    v_payment_state := case
+      when v_account_number is null and v_bank_name is null
+        and v_account_holder_name is null then 'omitted'
+      else 'provided'
+    end;
   end if;
   v_before := public.direct_entry_entry_snapshot(p_entry_id);
   v_reason_id := public.direct_entry_reason(p_app_user_id, p_reason);

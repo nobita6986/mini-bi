@@ -171,6 +171,12 @@ export async function patchDraftPayment(
       }
     }
 
+    if (parsed.usesAccountMetadata) {
+      if (Object.values(parsed.payment).every((field) => field.op === "keep")) {
+        return fail("PAYMENT_INVALID", 400);
+      }
+    }
+
     const result = await dependencies.repository.updatePayment({
       ...trustedActor,
       entry_id: entryId,

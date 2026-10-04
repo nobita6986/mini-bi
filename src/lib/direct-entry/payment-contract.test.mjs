@@ -44,41 +44,39 @@ test("provided account stays a string including leading zeroes and requires ever
   }
 });
 
-test("account metadata is a complete replacement with independently optional text fields", () => {
+test("account metadata is explicit keep/set/clear and rejects ambiguous nulls", () => {
   assert.deepEqual(projectAccountMetadataInput({
-    account_number: null,
-    bank_name: null,
-    account_holder_name: null,
+    account_number: { op: "keep" },
+    bank_name: { op: "set", value: " Ngân hàng Á Châu " },
+    account_holder_name: { op: "clear" },
   }), {
-    account_number: null,
-    bank_name: null,
-    account_holder_name: null,
+    account_number: { op: "keep" },
+    bank_name: { op: "set", value: "Ngân hàng Á Châu" },
+    account_holder_name: { op: "clear" },
   });
   assert.deepEqual(projectAccountMetadataInput({
-    account_number: " 00001234 ",
-    bank_name: " Ngân hàng Á Châu ",
-    account_holder_name: null,
+    account_number: { op: "set", value: " 00001234 " },
+    bank_name: { op: "keep" },
+    account_holder_name: { op: "set", value: "Synthetic Holder" },
   }), {
-    account_number: "00001234",
-    bank_name: "Ngân hàng Á Châu",
-    account_holder_name: null,
-  });
-  assert.deepEqual(projectAccountMetadataInput({
-    account_number: null,
-    bank_name: null,
-    account_holder_name: "Synthetic Holder",
-  }), {
-    account_number: null,
-    bank_name: null,
-    account_holder_name: "Synthetic Holder",
+    account_number: { op: "set", value: "00001234" },
+    bank_name: { op: "keep" },
+    account_holder_name: { op: "set", value: "Synthetic Holder" },
   });
   for (const invalid of [
-    { account_number: null, bank_name: null },
-    { account_number: 1234, bank_name: null, account_holder_name: null },
-    { account_number: "1".repeat(65), bank_name: null, account_holder_name: null },
-    { account_number: null, bank_name: "x".repeat(257), account_holder_name: null },
-    { account_number: null, bank_name: null, account_holder_name: "bad\nname" },
-    { account_number: null, bank_name: null, account_holder_name: null, bank_id: "legacy" },
+    { account_number: { op: "set" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "clear", value: "123" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "keep", value: "123" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "set", value: "12 34" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "set", value: "••••0056" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "set", value: "****0056" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "set", value: "   " }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "set", value: "1".repeat(65) }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "keep" }, bank_name: { op: "set", value: "x".repeat(257) }, account_holder_name: { op: "keep" } },
+    { account_number: { op: "keep" }, bank_name: { op: "keep" }, account_holder_name: { op: "set", value: "bad\nname" } },
+    { account_number: { op: "keep" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" }, bank_id: "legacy" },
+    { account_number: { op: "keep" }, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
+    { account_number: null, bank_name: { op: "keep" }, account_holder_name: { op: "keep" } },
   ]) assert.equal(projectAccountMetadataInput(invalid), null);
 });
 

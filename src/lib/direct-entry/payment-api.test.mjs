@@ -63,9 +63,9 @@ function validMetadataBody(overrides = {}) {
     expected_entry_version: 1,
     expected_payment_version: 0,
     account_metadata: {
-      account_number: "000012340056",
-      bank_name: "Synthetic Bank",
-      account_holder_name: "Synthetic Account Holder",
+      account_number: { op: "set", value: "000012340056" },
+      bank_name: { op: "set", value: "Synthetic Bank" },
+      account_holder_name: { op: "set", value: "Synthetic Account Holder" },
     },
     reason: "Synthetic metadata correction",
     ...overrides,
@@ -176,38 +176,39 @@ test("valid update uses only trusted actor IDs and preserves the account string"
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
-test("full-replacement account metadata skips catalog lookup and permits explicit clear", async () => {
+test("explicit account metadata operations skip catalog lookup and permit field clears", async () => {
   const deps = dependencies();
   const response = await patchDraftPayment(
     request(validMetadataBody({
       account_metadata: {
-        account_number: " 000012340056 ",
-        bank_name: " Ngân hàng Á Châu ",
-        account_holder_name: null,
+        account_number: { op: "set", value: " 000012340056 " },
+        bank_name: { op: "set", value: " Ngân hàng Á Châu " },
+        account_holder_name: { op: "clear" },
       },
     })), entryId, "true", deps,
   );
   assert.equal(response.status, 200);
+  assert.doesNotMatch(JSON.stringify(await response.json()), /000012340056|Ngân hàng Á Châu/);
   assert.equal(deps.catalogs.length, 0);
   assert.deepEqual(deps.calls[0].payment, {
-    account_number: "000012340056",
-    bank_name: "Ngân hàng Á Châu",
-    account_holder_name: null,
+    account_number: { op: "set", value: "000012340056" },
+    bank_name: { op: "set", value: "Ngân hàng Á Châu" },
+    account_holder_name: { op: "clear" },
   });
 
   const clear = dependencies();
   const clearResponse = await patchDraftPayment(request(validMetadataBody({
     account_metadata: {
-      account_number: null,
-      bank_name: null,
-      account_holder_name: null,
+      account_number: { op: "clear" },
+      bank_name: { op: "clear" },
+      account_holder_name: { op: "clear" },
     },
   })), entryId, "true", clear);
   assert.equal(clearResponse.status, 200);
   assert.deepEqual(clear.calls[0].payment, {
-    account_number: null,
-    bank_name: null,
-    account_holder_name: null,
+    account_number: { op: "clear" },
+    bank_name: { op: "clear" },
+    account_holder_name: { op: "clear" },
   });
   assert.equal(clear.catalogs.length, 0);
 });
@@ -226,17 +227,22 @@ test("unknown/inactive bank, invalid versions, and missing reason fail closed", 
   assert.equal(invalidBank.calls.length, 0);
 
   for (const body of [
-    validMetadataBody({ account_metadata: { account_number: null, bank_name: null } }),
+    validMetadataBody({ account_metadata: { account_number: { op: "keep" }, bank_name: { op: "keep" } } }),
     validMetadataBody({ account_metadata: {
-      account_number: null,
-      bank_name: null,
+      account_number: "000012340056",
+      bank_name: "Synthetic Bank",
       account_holder_name: null,
+    } }),
+    validMetadataBody({ account_metadata: {
+      account_number: { op: "keep" },
+      bank_name: { op: "keep" },
+      account_holder_name: { op: "keep" },
       bank_id: "legacy",
     } }),
     validMetadataBody({ account_metadata: {
-      account_number: "1".repeat(65),
-      bank_name: null,
-      account_holder_name: null,
+      account_number: { op: "set", value: "1".repeat(65) },
+      bank_name: { op: "keep" },
+      account_holder_name: { op: "keep" },
     } }),
     { ...validMetadataBody(), payment },
     validBody({ expected_entry_version: 0 }),

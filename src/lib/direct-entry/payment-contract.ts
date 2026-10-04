@@ -14,10 +14,15 @@ export type PaymentInput = {
   account_holder_name: string | null;
 };
 
+export type AccountMetadataOperation =
+  | { op: "keep" }
+  | { op: "clear" }
+  | { op: "set"; value: string };
+
 export type AccountMetadataInput = {
-  account_number: string | null;
-  bank_name: string | null;
-  account_holder_name: string | null;
+  account_number: AccountMetadataOperation;
+  bank_name: AccountMetadataOperation;
+  account_holder_name: AccountMetadataOperation;
 };
 
 export type PaymentProjection = PaymentInput & {
@@ -31,6 +36,7 @@ const FULL_KEYS = [
   "state", "account_number", "bank_id", "bank_name", "account_holder_name", "version",
 ];
 const MASKED_KEYS = ["state", "account_number", "version"];
+const ACCOUNT_NUMBER_PATTERN = /^[0-9]+$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -43,6 +49,46 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 
 function isPaymentState(value: unknown): value is PaymentState {
   return typeof value === "string" && PAYMENT_STATES.includes(value as PaymentState);
+}
+
+function normalizeAccountNumber(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 64 || !ACCOUNT_NUMBER_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+function normalizeText(value: string, maxLength: number): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) return null;
+  if (/^[\s\S]*[\u0000-\u001f\u007f-\u009f][\s\S]*$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function projectMetadataField(
+  key: "account_number" | "bank_name" | "account_holder_name",
+  value: unknown,
+): AccountMetadataOperation | null {
+  if (!isRecord(value) || !("op" in value) || typeof value.op !== "string") return null;
+  const op = value.op;
+  if (op === "keep") {
+    if (Object.keys(value).length !== 1) return null;
+    return { op: "keep" };
+  }
+  if (op === "clear") {
+    if (Object.keys(value).length !== 1) return null;
+    return { op: "clear" };
+  }
+  if (op !== "set" || Object.keys(value).length !== 2 || !("value" in value)) return null;
+  const candidate = value.value;
+  if (typeof candidate !== "string") return null;
+  if (key === "account_number") {
+    const normalized = normalizeAccountNumber(candidate);
+    if (normalized === null) return null;
+    return { op: "set", value: normalized };
+  }
+  const normalized = normalizeText(candidate, key === "bank_name" ? 256 : 256);
+  if (normalized === null) return null;
+  return { op: "set", value: normalized };
 }
 
 export function projectPaymentInput(
@@ -85,11 +131,12 @@ function projectOptionalText(value: unknown, maxLength: number): string | null |
 export function projectAccountMetadataInput(value: unknown): AccountMetadataInput | null {
   if (!isRecord(value) ||
       !exactKeys(value, ["account_number", "bank_name", "account_holder_name"])) return null;
-  const account_number = projectOptionalText(value.account_number, 64);
-  const bank_name = projectOptionalText(value.bank_name, 256);
-  const account_holder_name = projectOptionalText(value.account_holder_name, 256);
-  if (account_number === undefined || bank_name === undefined ||
-      account_holder_name === undefined) return null;
+  const account_number = projectMetadataField("account_number", value.account_number);
+  const bank_name = projectMetadataField("bank_name", value.bank_name);
+  const account_holder_name = projectMetadataField("account_holder_name", value.account_holder_name);
+  if (account_number === null || bank_name === null || account_holder_name === null) return null;
+  const operations = [account_number, bank_name, account_holder_name];
+  if (operations.every(({ op }) => op === "keep")) return null;
   return { account_number, bank_name, account_holder_name };
 }
 
