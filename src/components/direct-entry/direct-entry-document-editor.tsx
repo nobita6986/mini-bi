@@ -2,18 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DocumentType } from "@/lib/contracts/direct-entry-v1";
+import {
+  fetchEntryDetail,
+  type DocumentDetailSummary,
+} from "@/lib/direct-entry/document-detail-projection";
 import styles from "./direct-entry-shell.module.css";
-
-type DocumentSummary = {
-  document_id: string;
-  document_type: DocumentType;
-  version: number;
-  size_bytes: number;
-  mime_type: string;
-  upload_status: string;
-  scan_status: string;
-  validation_status: string;
-};
 
 type Props = {
   entryId: string | null;
@@ -62,53 +55,8 @@ function statusLabel(status: string): string {
   return labels[status] ?? "Không xác định";
 }
 
-function parseDocuments(value: unknown): { documents: DocumentSummary[]; entryVersion: number } | null {
-  if (!isRecord(value) || value.ok !== true || !isRecord(value.entry) ||
-      !Array.isArray(value.entry.documents) ||
-      typeof value.entry.version !== "number" || !Number.isSafeInteger(value.entry.version)) return null;
-  const documents: DocumentSummary[] = [];
-  for (const document of value.entry.documents) {
-    if (!isRecord(document) || typeof document.document_id !== "string" ||
-        !DOCUMENT_TYPES.some(({ value: type }) => type === document.document_type) ||
-        typeof document.version !== "number" || !Number.isSafeInteger(document.version) ||
-        typeof document.size_bytes !== "number" || !Number.isSafeInteger(document.size_bytes) ||
-        typeof document.mime_type !== "string" || typeof document.upload_status !== "string" ||
-        typeof document.scan_status !== "string" ||
-        typeof document.validation_status !== "string") return null;
-    const documentType = DOCUMENT_TYPES.find(({ value: type }) => type === document.document_type);
-    if (!documentType) return null;
-    documents.push({
-      document_id: document.document_id,
-      document_type: documentType.value,
-      version: document.version,
-      size_bytes: document.size_bytes,
-      mime_type: document.mime_type,
-      upload_status: document.upload_status,
-      scan_status: document.scan_status,
-      validation_status: document.validation_status,
-    });
-  }
-  return { documents, entryVersion: value.entry.version };
-}
-
-async function fetchDocuments(entryId: string) {
-  try {
-    const response = await fetch(`/api/direct-entry/entries/${encodeURIComponent(entryId)}`, {
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    let payload: unknown = null;
-    try {
-      payload = await response.json();
-    } catch {
-      payload = null;
-    }
-    return response.ok ? parseDocuments(payload) : null;
-  } catch {
-    return null;
-  }
-}
-
+// I04C3-R2: projection chi tiet entry duoc extract ra document-detail-projection.ts
+// de dung chung voi cot/dialog CCCD (strict allow-list, fail-closed).
 function friendlyError(code: string): string {
   const errors: Record<string, string> = {
     DOCUMENT_STORAGE_UNAVAILABLE: "Kho lưu trữ chưa sẵn sàng. Tệp vẫn ở trên thiết bị; bạn có thể thử lại.",
@@ -132,7 +80,7 @@ export function DirectEntryDocumentEditor({
   requireReason,
   onEntryVersionChange,
 }: Props) {
-  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [documents, setDocuments] = useState<DocumentDetailSummary[]>([]);
   const [loadError, setLoadError] = useState(false);
   const [documentType, setDocumentType] = useState<DocumentType>("CCCD_FRONT");
   const [file, setFile] = useState<File | null>(null);
@@ -149,7 +97,7 @@ export function DirectEntryDocumentEditor({
 
   const loadDocuments = useCallback(async () => {
     if (!entryId || !canView) return;
-    const parsed = await fetchDocuments(entryId);
+    const parsed = await fetchEntryDetail(entryId, fetch);
     if (!parsed) {
       setLoadError(true);
       return;
@@ -162,7 +110,7 @@ export function DirectEntryDocumentEditor({
   useEffect(() => {
     if (!entryId || !canView) return;
     let cancelled = false;
-    void fetchDocuments(entryId).then((parsed) => {
+    void fetchEntryDetail(entryId, fetch).then((parsed) => {
       if (cancelled) return;
       if (!parsed) {
         setLoadError(true);

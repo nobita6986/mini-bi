@@ -33,9 +33,18 @@ export type ExcelPasteParseResult =
   | { ok: true; rows: ExcelPasteParsedRow[] }
   | { ok: false; errors: ExcelPasteRowError[] };
 
+/**
+ * Loi chi tiet cho preview: `column` la so thu tu cot 1..6 trong khoi dan,
+ * null khi loi o muc ca dong. `parseExcelPaste` giu nguyen shape cu (chi line/message).
+ */
+export type ExcelPasteReportError = { line: number; column: number | null; message: string };
+
+/** Ket qua day du: dong hop le VA loi cua tung dong (khong dung lai buoc preview). */
+export type ExcelPasteReport = { rows: ExcelPasteParsedRow[]; errors: ExcelPasteReportError[] };
+
 const HEADER_TOKENS = [
   ["ma nld", "employee code", "employee_code", "manv"],
-  ["ngay dau tien di lam", "first work date", "first_work_date", "ngaybd"],
+  ["ngay dau tien di lam", "ngay bat dau lam viec", "first work date", "first_work_date", "ngaybd"],
   ["ho ten", "display name", "display_name", "hoten", "ten nld"],
   ["du an", "project", "project_id"],
   ["nguoi tuyen", "recruiter", "recruiter_id"],
@@ -81,10 +90,24 @@ function splitLines(text: string): string[] {
   return text.replace(/\r\n/g, "\n").split("\n");
 }
 
-export function parseExcelPaste(text: string): ExcelPasteParseResult {
+/** Cac chi so cot 1..6 cua khoi dan (dung cho preview va thong bao loi). */
+export const EXCEL_PASTE_COLUMN_CODES = {
+  employeeCode: 1,
+  firstWorkDate: 2,
+  workerName: 3,
+  project: 4,
+  recruiter: 5,
+  laborType: 6,
+} as const;
+
+/**
+ * Parse day du: tra ve ca dong hop le lan loi tung dong de UI hien preview mot lan.
+ * Khong nem loi, khong evaluate formula, khong goi API.
+ */
+export function parseExcelPasteReport(text: string): ExcelPasteReport {
   const lines = splitLines(text);
-  const errors = [];
-  const rows = [];
+  const errors: ExcelPasteReportError[] = [];
+  const rows: ExcelPasteParsedRow[] = [];
   let lineNumber = 0;
   let headerSkipped = false;
   for (const raw of lines) {
@@ -94,12 +117,12 @@ export function parseExcelPaste(text: string): ExcelPasteParseResult {
     if (!headerSkipped && isHeaderRow(cells)) { headerSkipped = true; continue; }
     headerSkipped = true;
     if (cells.length !== EXCEL_PASTE_COLUMN_COUNT) {
-      errors.push({ line: lineNumber,
+      errors.push({ line: lineNumber, column: null,
         message: "Dòng phải có đúng 6 cột (mã NLĐ, ngày, họ tên, dự án, người tuyển, loại hình)." });
       continue;
     }
     if (rows.length >= EXCEL_PASTE_MAX_ROWS) {
-      errors.push({ line: lineNumber, message: "Mỗi lần dán tối đa 100 dòng." });
+      errors.push({ line: lineNumber, column: null, message: "Mỗi lần dán tối đa 100 dòng." });
       continue;
     }
     const [employeeCode, firstWorkDate, displayName, project, recruiter, laborType] = cells;
@@ -107,16 +130,17 @@ export function parseExcelPaste(text: string): ExcelPasteParseResult {
     const normalizedDate = normalizeDate(firstWorkDate);
     const normalizedLabor = normalizeLaborType(laborType);
     if (normalizedCode === "") {
-      errors.push({ line: lineNumber, message: "Mã NLĐ không được để trống." });
+      errors.push({ line: lineNumber, column: EXCEL_PASTE_COLUMN_CODES.employeeCode,
+        message: "Mã NLĐ không được để trống." });
       continue;
     }
     if (normalizedDate === null) {
-      errors.push({ line: lineNumber,
+      errors.push({ line: lineNumber, column: EXCEL_PASTE_COLUMN_CODES.firstWorkDate,
         message: "Ngày đầu tiên đi làm phải là yyyy-mm-dd hoặc dd/mm/yyyy hợp lệ." });
       continue;
     }
     if (normalizedLabor === null) {
-      errors.push({ line: lineNumber,
+      errors.push({ line: lineNumber, column: EXCEL_PASTE_COLUMN_CODES.laborType,
         message: "Loại hình lao động phải là Thời vụ/TEMPORARY hoặc Toàn thời gian/PERMANENT." });
       continue;
     }
@@ -130,17 +154,25 @@ export function parseExcelPaste(text: string): ExcelPasteParseResult {
       labor_type: normalizedLabor,
     });
   }
-  const seen = new Map();
+  const seen = new Map<string, number>();
   for (const row of rows) {
     const previous = seen.get(row.employee_code);
     if (previous !== undefined) {
-      errors.push({ line: row.line, message: "Mã NLĐ trùng với dòng " + previous + "." });
+      errors.push({ line: row.line, column: EXCEL_PASTE_COLUMN_CODES.employeeCode,
+        message: "Mã NLĐ trùng với dòng " + previous + "." });
     } else {
       seen.set(row.employee_code, row.line);
     }
   }
   if (rows.length === 0 && errors.length === 0) {
-    errors.push({ line: 0, message: "Chưa có dòng dữ liệu nào để dán." });
+    errors.push({ line: 0, column: null, message: "Chưa có dòng dữ liệu nào để dán." });
   }
-  return errors.length > 0 ? { ok: false, errors } : { ok: true, rows };
+  return { rows, errors };
+}
+
+export function parseExcelPaste(text: string): ExcelPasteParseResult {
+  const report = parseExcelPasteReport(text);
+  return report.errors.length > 0
+    ? { ok: false, errors: report.errors.map(({ line, message }) => ({ line, message })) }
+    : { ok: true, rows: report.rows };
 }
