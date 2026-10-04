@@ -1,10 +1,15 @@
 /**
- * P1.6-I04C3 (addendum) - Pure helper cho cap CCCD hai mat cua mot dong nhap lieu.
+ * P1.6-I04C3 (addendum) R1 - Pure helper cho cap CCCD hai mat cua mot dong nhap lieu.
  *
- * Khong I/O, khong goi API: module nay chi tinh trang thai 0/2..2/2, validate file va dung ke
- * hoach upload (thu tu reserve/finalize tuan tu, PUT song song). Idempotency key chi gom
- * entry_id + mat + chu ky noi dung, KHONG chua ho ten / ma NLĐ / so CCCD hay bat ky PII nao.
+ * Khong I/O. Constants MIME/10 MiB duoc IMPORT tu contract hien huu (khong nhan ban).
+ * Idempotency: intent fingerprint = entryId + entryVersion + documentType + sha256; API key la UUID
+ * ngau nhien duoc luu theo fingerprint (dung resolveIntentKey cua submission-lifecycle).
+ * Fingerprint/key KHONG chua ho ten, ma NLĐ, so CCCD, filename hay duong dan.
  */
+import {
+  DOCUMENT_MAX_BYTES_HARD_LIMIT,
+  DOCUMENT_MIME_TYPES,
+} from "../contracts/direct-entry-v1.ts";
 
 export const CCCD_DOCUMENT_TYPES = ["CCCD_FRONT", "CCCD_BACK"] as const;
 export type CccdDocumentType = (typeof CCCD_DOCUMENT_TYPES)[number];
@@ -14,22 +19,26 @@ export const CCCD_SLOT_LABELS: Readonly<Record<CccdDocumentType, string>> = Obje
   CCCD_BACK: "CCCD mặt sau",
 });
 
-/** Cung gioi han voi document editor hien huu (khong tu dat rule moi). */
-export const CCCD_MAX_BYTES = 10 * 1024 * 1024;
-export const CCCD_MIME_TYPES = ["image/jpeg", "image/png", "application/pdf"] as const;
+export const CCCD_MAX_BYTES = DOCUMENT_MAX_BYTES_HARD_LIMIT;
+export const CCCD_MIME_TYPES = DOCUMENT_MIME_TYPES;
+
+/** Nhan cot trang thai khi chua co server projection an toan (fail-closed). */
+export const CCCD_STATUS_UNKNOWN_LABEL = "Chưa tải trạng thái";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 export type CccdDocumentSummary = {
   document_type: string;
   upload_status: string;
   validation_status: string;
-  scan_status?: string;
+  scan_status: string;
 };
 
 function isComplete(document: CccdDocumentSummary): boolean {
   return document.upload_status === "READY" &&
     document.validation_status === "VALIDATED" &&
-    (document.scan_status === undefined || document.scan_status === "NOT_REQUIRED" ||
-      document.scan_status === "CLEAN");
+    (document.scan_status === "CLEAN" || document.scan_status === "NOT_REQUIRED");
 }
 
 export function cccdSlotComplete(documents: readonly CccdDocumentSummary[]):
@@ -42,49 +51,66 @@ export function cccdSlotComplete(documents: readonly CccdDocumentSummary[]):
   return result;
 }
 
-/** Nhan cot "Ho so CCCD": 0/2, 1/2 hoac 2/2. */
-export function cccdProgressLabel(documents: readonly CccdDocumentSummary[]): string {
-  const complete = cccdSlotComplete(documents);
+function progressFrom(complete: Readonly<Record<CccdDocumentType, boolean>>): string {
   const done = CCCD_DOCUMENT_TYPES.filter((type) => complete[type]).length;
   return String(done) + "/2";
+}
+
+/** Nhan cot "Ho so CCCD" tu document summary (0/2, 1/2, 2/2). */
+export function cccdProgressLabel(documents: readonly CccdDocumentSummary[]): string {
+  return progressFrom(cccdSlotComplete(documents));
+}
+
+/** Nhan cot tu server projection de xuat (cccd_front_ready/cccd_back_ready). */
+export function cccdProgressFromFlags(flags: {
+  cccd_front_ready: boolean;
+  cccd_back_ready: boolean;
+}): string {
+  return progressFrom({ CCCD_FRONT: flags.cccd_front_ready, CCCD_BACK: flags.cccd_back_ready });
 }
 
 export type CccdUploadFile = {
   documentType: CccdDocumentType;
   sizeBytes: number;
   mimeType: string;
-  /** Chu ky noi dung (vd hash) do tang UI tinh; KHONG chua PII. */
-  contentSignature: string;
+  /** Lowercase SHA-256 hex (64 ky tu) do UI tinh bang Web Crypto tu bytes. */
+  sha256: string;
 };
 
 export type CccdPlanError = { documentType: CccdDocumentType | null; message: string };
 
 export type CccdUploadPlan =
-  | { ok: true; order: readonly CccdDocumentType[]; intentKeys: Readonly<Record<CccdDocumentType, string>> }
+  | { ok: true; order: readonly CccdDocumentType[];
+      fingerprints: Readonly<Record<CccdDocumentType, string>> }
   | { ok: false; errors: CccdPlanError[] };
 
-/** Key idempotency: chi entry_id + mat + chu ky noi dung (khong PII). */
-export function cccdIntentKey(input: {
+/** Intent fingerprint: entryId + entryVersion + mat + sha256 (khong PII). */
+export function cccdIntentFingerprint(input: {
   entryId: string;
+  entryVersion: number;
   documentType: CccdDocumentType;
-  contentSignature: string;
+  sha256: string;
 }): string {
-  return "cccd:" + input.entryId + ":" + input.documentType + ":" + input.contentSignature;
+  return "cccd:" + input.entryId + ":" + String(input.entryVersion) + ":" +
+    input.documentType + ":" + input.sha256;
+}
+
+export function isCccdSha256(value: string): boolean {
+  return SHA256_HEX.test(value);
 }
 
 /**
- * Dung ke hoach upload cho dung hai mat trong mot luot:
- * - phai co du va duy nhat moi mat mot file;
- * - validate size/mime theo gioi han hien huu;
- * - thu tu reserve/finalize tuan tu CCCD_FRONT -> CCCD_BACK (PUT co the song song).
+ * Ke hoach upload 1 hoac 2 mat trong mot luot:
+ * - it nhat mot slot, khong trung slot;
+ * - validate UUID entry, entry version, size/mime/sha256;
+ * - thu tu FRONT truoc BACK (reserve/finalize tuan tu; PUT co the song song).
  */
 export function buildCccdUploadPlan(input: {
   entryId: string;
   entryVersion: number;
   files: readonly CccdUploadFile[];
 }): CccdUploadPlan {
-  const errors: CccdPlanError[] = [];
-  if (!input.entryId) {
+  if (!UUID.test(input.entryId)) {
     return { ok: false, errors: [{ documentType: null,
       message: "Dòng chưa được lưu trên máy chủ nên chưa thể tải hồ sơ." }] };
   }
@@ -92,22 +118,24 @@ export function buildCccdUploadPlan(input: {
     return { ok: false, errors: [{ documentType: null,
       message: "Phiên bản dòng không hợp lệ; hãy tải lại trạng thái mới." }] };
   }
+  if (input.files.length < 1) {
+    return { ok: false, errors: [{ documentType: null, message: "Chưa chọn tệp nào." }] };
+  }
+  const errors: CccdPlanError[] = [];
   const bySlot = new Map<CccdDocumentType, CccdUploadFile[]>();
   for (const file of input.files) {
     const current = bySlot.get(file.documentType) ?? [];
     current.push(file);
     bySlot.set(file.documentType, current);
   }
-  for (const type of CCCD_DOCUMENT_TYPES) {
-    const files = bySlot.get(type) ?? [];
-    if (files.length === 0) {
-      errors.push({ documentType: type, message: "Thiếu tệp cho " + CCCD_SLOT_LABELS[type] + "." });
-      continue;
-    }
+  for (const [type, files] of bySlot) {
     if (files.length > 1) {
       errors.push({ documentType: type, message: "Chỉ nhận một tệp cho " + CCCD_SLOT_LABELS[type] + "." });
-      continue;
     }
+  }
+  for (const type of CCCD_DOCUMENT_TYPES) {
+    const files = bySlot.get(type);
+    if (!files || files.length !== 1) continue;
     const file = files[0];
     if (file.sizeBytes < 1 || file.sizeBytes > CCCD_MAX_BYTES) {
       errors.push({ documentType: type, message: "Tệp phải lớn hơn 0 và không vượt quá 10 MiB." });
@@ -117,17 +145,19 @@ export function buildCccdUploadPlan(input: {
       errors.push({ documentType: type, message: "Chỉ chấp nhận JPEG, PNG hoặc PDF." });
       continue;
     }
-    if (file.contentSignature.trim() === "") {
+    if (!isCccdSha256(file.sha256)) {
       errors.push({ documentType: type, message: "Không xác định được nội dung tệp." });
       continue;
     }
   }
   if (errors.length > 0) return { ok: false, errors };
-  const intentKeys: Record<CccdDocumentType, string> = { CCCD_FRONT: "", CCCD_BACK: "" };
-  for (const type of CCCD_DOCUMENT_TYPES) {
+  const order = CCCD_DOCUMENT_TYPES.filter((type) => bySlot.has(type));
+  const fingerprints: Record<string, string> = {};
+  for (const type of order) {
     const file = (bySlot.get(type) ?? [])[0];
-    intentKeys[type] = cccdIntentKey({ entryId: input.entryId, documentType: type,
-      contentSignature: file.contentSignature.trim() });
+    fingerprints[type] = cccdIntentFingerprint({ entryId: input.entryId,
+      entryVersion: input.entryVersion, documentType: type, sha256: file.sha256 });
   }
-  return { ok: true, order: CCCD_DOCUMENT_TYPES, intentKeys };
+  return { ok: true, order,
+    fingerprints: fingerprints as Readonly<Record<CccdDocumentType, string>> };
 }
