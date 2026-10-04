@@ -58,6 +58,20 @@ function validBody(overrides = {}) {
   };
 }
 
+function validMetadataBody(overrides = {}) {
+  return {
+    expected_entry_version: 1,
+    expected_payment_version: 0,
+    account_metadata: {
+      account_number: "000012340056",
+      bank_name: "Synthetic Bank",
+      account_holder_name: "Synthetic Account Holder",
+    },
+    reason: "Synthetic metadata correction",
+    ...overrides,
+  };
+}
+
 function dependencies(overrides = {}) {
   const calls = [];
   const reads = [];
@@ -162,6 +176,42 @@ test("valid update uses only trusted actor IDs and preserves the account string"
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
+test("full-replacement account metadata skips catalog lookup and permits explicit clear", async () => {
+  const deps = dependencies();
+  const response = await patchDraftPayment(
+    request(validMetadataBody({
+      account_metadata: {
+        account_number: " 000012340056 ",
+        bank_name: " Ngân hàng Á Châu ",
+        account_holder_name: null,
+      },
+    })), entryId, "true", deps,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(deps.catalogs.length, 0);
+  assert.deepEqual(deps.calls[0].payment, {
+    account_number: "000012340056",
+    bank_name: "Ngân hàng Á Châu",
+    account_holder_name: null,
+  });
+
+  const clear = dependencies();
+  const clearResponse = await patchDraftPayment(request(validMetadataBody({
+    account_metadata: {
+      account_number: null,
+      bank_name: null,
+      account_holder_name: null,
+    },
+  })), entryId, "true", clear);
+  assert.equal(clearResponse.status, 200);
+  assert.deepEqual(clear.calls[0].payment, {
+    account_number: null,
+    bank_name: null,
+    account_holder_name: null,
+  });
+  assert.equal(clear.catalogs.length, 0);
+});
+
 test("unknown/inactive bank, invalid versions, and missing reason fail closed", async () => {
   const invalidBank = dependencies({
     async loadInputCatalog(input) {
@@ -176,6 +226,19 @@ test("unknown/inactive bank, invalid versions, and missing reason fail closed", 
   assert.equal(invalidBank.calls.length, 0);
 
   for (const body of [
+    validMetadataBody({ account_metadata: { account_number: null, bank_name: null } }),
+    validMetadataBody({ account_metadata: {
+      account_number: null,
+      bank_name: null,
+      account_holder_name: null,
+      bank_id: "legacy",
+    } }),
+    validMetadataBody({ account_metadata: {
+      account_number: "1".repeat(65),
+      bank_name: null,
+      account_holder_name: null,
+    } }),
+    { ...validMetadataBody(), payment },
     validBody({ expected_entry_version: 0 }),
     validBody({ expected_payment_version: -1 }),
     validBody({ reason: "" }),

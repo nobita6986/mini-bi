@@ -4,22 +4,37 @@ import {
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import { projectEntry } from "./write-api.ts";
-import { projectPaymentInput } from "./payment-contract.ts";
+import {
+  projectAccountMetadataInput,
+  projectPaymentInput,
+  type AccountMetadataInput,
+  type PaymentInput,
+} from "./payment-contract.ts";
 import type { DirectEntryRepository } from "./write-repository.ts";
 import { readBoundedJson } from "./write-api.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const BODY_KEYS = new Set([
+const COMMON_BODY_KEYS = [
   "expected_entry_version",
   "expected_payment_version",
-  "payment",
   "reason",
-]);
+] as const;
 
 type Dependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: DirectEntryRepository;
 };
+
+type ProjectedRequestBase = {
+  expected_entry_version: number;
+  expected_payment_version: number;
+  reason: string;
+};
+
+type ProjectedRequest = ProjectedRequestBase & (
+  | { payment: PaymentInput; usesAccountMetadata: false }
+  | { payment: AccountMetadataInput; usesAccountMetadata: true }
+);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,22 +53,40 @@ function fail(code: string, status: number): Response {
 
 function projectRequest(value: unknown) {
   if (!isRecord(value) ||
-      Object.keys(value).length !== BODY_KEYS.size ||
-      Object.keys(value).some((key) => !BODY_KEYS.has(key)) ||
       typeof value.expected_entry_version !== "number" ||
       !Number.isSafeInteger(value.expected_entry_version) || value.expected_entry_version < 1 ||
       typeof value.expected_payment_version !== "number" ||
       !Number.isSafeInteger(value.expected_payment_version) || value.expected_payment_version < 0 ||
       typeof value.reason !== "string" || value.reason.trim().length < 1 ||
       value.reason.length > 4000) return null;
-  const payment = projectPaymentInput(value.payment);
-  if (!payment) return null;
-  return {
-    expected_entry_version: value.expected_entry_version,
-    expected_payment_version: value.expected_payment_version,
-    payment,
-    reason: value.reason,
-  };
+  const common = [
+    ...COMMON_BODY_KEYS,
+  ];
+  if (Object.keys(value).length === common.length + 1 &&
+      common.every((key) => key in value) && "payment" in value) {
+    const payment = projectPaymentInput(value.payment);
+    if (!payment) return null;
+    return {
+      expected_entry_version: value.expected_entry_version,
+      expected_payment_version: value.expected_payment_version,
+      payment,
+      usesAccountMetadata: false,
+      reason: value.reason,
+    } satisfies ProjectedRequest;
+  }
+  if (Object.keys(value).length === common.length + 1 &&
+      common.every((key) => key in value) && "account_metadata" in value) {
+    const accountMetadata = projectAccountMetadataInput(value.account_metadata);
+    if (!accountMetadata) return null;
+    return {
+      expected_entry_version: value.expected_entry_version,
+      expected_payment_version: value.expected_payment_version,
+      payment: accountMetadata,
+      usesAccountMetadata: true,
+      reason: value.reason,
+    } satisfies ProjectedRequest;
+  }
+  return null;
 }
 
 export async function patchDraftPayment(
@@ -122,7 +155,7 @@ export async function patchDraftPayment(
       return fail("PAYMENT_UNAVAILABLE", 500);
     }
 
-    if (parsed.payment.state === "provided") {
+    if (!parsed.usesAccountMetadata && parsed.payment.state === "provided") {
       const catalog = await dependencies.repository.loadInputCatalog({
         ...trustedActor,
         effective_date: entry.first_work_date,

@@ -19,7 +19,7 @@ const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
 test("from-scratch apply 37 migrations and read RPC ACLs", async () => {
-  assert.equal(migrations.migrationNames.length, 37);
+  assert.equal(migrations.migrationNames.length, 38);
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.deepEqual(migrations.migrationNames, [...migrations.migrationNames].sort(),
     "migration phai duoc ap theo thu tu ten file");

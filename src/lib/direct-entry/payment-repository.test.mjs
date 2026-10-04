@@ -52,6 +52,35 @@ test("payment repository calls only the existing update RPC and strictly project
   }]);
 });
 
+test("account metadata replacement reuses the existing payment RPC unchanged", async () => {
+  const calls = [];
+  const metadata = {
+    account_number: null,
+    bank_name: "Synthetic Bank",
+    account_holder_name: "Synthetic Holder",
+  };
+  const repository = createDirectEntryWriteRepository(async (name, args) => {
+    calls.push({ name, args });
+    return {
+      data: { entry_id: entryId, entry_version: 8, payment_version: 3 },
+      error: null,
+    };
+  });
+  const result = await repository.updatePayment({
+    ...actor,
+    entry_id: entryId,
+    expected_entry_version: 7,
+    expected_payment_version: 2,
+    payment: metadata,
+    reason: "Synthetic metadata correction",
+    idempotency_key: "synthetic-metadata-key",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "direct_entry_update_payment");
+  assert.deepEqual(calls[0].args.p_payment, metadata);
+});
+
 test("malformed payment RPC results fail closed without returning raw data", async () => {
   const repository = createDirectEntryWriteRepository(async () => ({
     data: {

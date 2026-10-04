@@ -31,7 +31,7 @@ async function database() {
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 37, "PGlite must apply migrations #1-#37");
+  assert.equal(migrations.length, 38, "PGlite must apply migrations #1-#38");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }

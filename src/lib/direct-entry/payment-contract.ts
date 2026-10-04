@@ -14,14 +14,21 @@ export type PaymentInput = {
   account_holder_name: string | null;
 };
 
+export type AccountMetadataInput = {
+  account_number: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+};
+
 export type PaymentProjection = PaymentInput & {
+  bank_name: string | null;
   version: number;
   masked: boolean;
 };
 
 const BANK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const FULL_KEYS = [
-  "state", "account_number", "bank_id", "account_holder_name", "version",
+  "state", "account_number", "bank_id", "bank_name", "account_holder_name", "version",
 ];
 const MASKED_KEYS = ["state", "account_number", "version"];
 
@@ -65,6 +72,27 @@ export function projectPaymentInput(
   return { state, account_number, bank_id, account_holder_name };
 }
 
+function projectOptionalText(value: unknown, maxLength: number): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (normalized.length === 0) return null;
+  const length = Array.from(normalized).length;
+  if (length > maxLength || /[\u0000-\u001f\u007f-\u009f]/.test(normalized)) return undefined;
+  return normalized;
+}
+
+export function projectAccountMetadataInput(value: unknown): AccountMetadataInput | null {
+  if (!isRecord(value) ||
+      !exactKeys(value, ["account_number", "bank_name", "account_holder_name"])) return null;
+  const account_number = projectOptionalText(value.account_number, 64);
+  const bank_name = projectOptionalText(value.bank_name, 256);
+  const account_holder_name = projectOptionalText(value.account_holder_name, 256);
+  if (account_number === undefined || bank_name === undefined ||
+      account_holder_name === undefined) return null;
+  return { account_number, bank_name, account_holder_name };
+}
+
 export function projectPaymentProjection(value: unknown): PaymentProjection | null {
   if (!isRecord(value) ||
       (Object.keys(value).length === MASKED_KEYS.length
@@ -84,6 +112,7 @@ export function projectPaymentProjection(value: unknown): PaymentProjection | nu
       state: value.state,
       account_number: value.account_number as string | null,
       bank_id: null,
+      bank_name: null,
       account_holder_name: null,
       version: value.version,
       masked: true,
@@ -91,15 +120,29 @@ export function projectPaymentProjection(value: unknown): PaymentProjection | nu
   }
 
   if ((value.bank_id !== null && typeof value.bank_id !== "string") ||
-      (value.account_holder_name !== null && typeof value.account_holder_name !== "string")) return null;
-  const payment = projectPaymentInput({
+      (value.bank_id !== null && !BANK_ID.test(value.bank_id)) ||
+      (value.state === "provided"
+        ? [value.account_number, value.bank_name, value.account_holder_name].some(
+            (field, index) => projectOptionalText(field, index === 0 ? 64 : 256) === undefined,
+          )
+        : value.account_number !== null || value.bank_name !== null ||
+          value.account_holder_name !== null || value.bank_id !== null)) return null;
+  const account_number = projectOptionalText(value.account_number, 64);
+  const bank_name = projectOptionalText(value.bank_name, 256);
+  const account_holder_name = projectOptionalText(value.account_holder_name, 256);
+  if (account_number === undefined || bank_name === undefined ||
+      account_holder_name === undefined ||
+      (value.state === "provided" &&
+        account_number === null && bank_name === null && account_holder_name === null)) return null;
+  return {
     state: value.state,
-    account_number: value.account_number,
-    bank_id: value.bank_id,
-    account_holder_name: value.account_holder_name,
-  });
-  if (!payment) return null;
-  return { ...payment, version: value.version, masked: false };
+    account_number,
+    bank_id: value.bank_id as string | null,
+    bank_name,
+    account_holder_name,
+    version: value.version,
+    masked: false,
+  };
 }
 
 export function projectPaymentUpdateResult(

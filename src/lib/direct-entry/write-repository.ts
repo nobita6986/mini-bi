@@ -4,6 +4,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
 import {
   projectPaymentUpdateResult,
+  type AccountMetadataInput,
   type PaymentInput,
 } from "./payment-contract.ts";
 import type { DocumentType } from "../contracts/direct-entry-v1.ts";
@@ -105,7 +106,7 @@ export type DirectEntryRepository = {
     entry_id: string;
     expected_entry_version: number;
     expected_payment_version: number;
-    payment: PaymentInput;
+    payment: PaymentInput | AccountMetadataInput;
     reason: string;
     idempotency_key: string;
   }): Promise<OperationResult<{

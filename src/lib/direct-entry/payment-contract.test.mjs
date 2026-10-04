@@ -6,6 +6,7 @@ import {
   projectPaymentInput,
   projectPaymentProjection,
   projectPaymentUpdateResult,
+  projectAccountMetadataInput,
 } from "./payment-contract.ts";
 
 const activeBanks = new Set(["bank_synthetic"]);
@@ -43,6 +44,44 @@ test("provided account stays a string including leading zeroes and requires ever
   }
 });
 
+test("account metadata is a complete replacement with independently optional text fields", () => {
+  assert.deepEqual(projectAccountMetadataInput({
+    account_number: null,
+    bank_name: null,
+    account_holder_name: null,
+  }), {
+    account_number: null,
+    bank_name: null,
+    account_holder_name: null,
+  });
+  assert.deepEqual(projectAccountMetadataInput({
+    account_number: " 00001234 ",
+    bank_name: " Ngân hàng Á Châu ",
+    account_holder_name: null,
+  }), {
+    account_number: "00001234",
+    bank_name: "Ngân hàng Á Châu",
+    account_holder_name: null,
+  });
+  assert.deepEqual(projectAccountMetadataInput({
+    account_number: null,
+    bank_name: null,
+    account_holder_name: "Synthetic Holder",
+  }), {
+    account_number: null,
+    bank_name: null,
+    account_holder_name: "Synthetic Holder",
+  });
+  for (const invalid of [
+    { account_number: null, bank_name: null },
+    { account_number: 1234, bank_name: null, account_holder_name: null },
+    { account_number: "1".repeat(65), bank_name: null, account_holder_name: null },
+    { account_number: null, bank_name: "x".repeat(257), account_holder_name: null },
+    { account_number: null, bank_name: null, account_holder_name: "bad\nname" },
+    { account_number: null, bank_name: null, account_holder_name: null, bank_id: "legacy" },
+  ]) assert.equal(projectAccountMetadataInput(invalid), null);
+});
+
 test("provided payment rejects inactive/unknown banks, non-digit values, and extra fields", () => {
   const input = {
     state: "provided",
@@ -70,6 +109,7 @@ test("accepts only safe masked/full read projections and strict update versions"
     state: "provided",
     account_number: "••••0056",
     bank_id: null,
+    bank_name: null,
     account_holder_name: null,
     version: 2,
     masked: true,
@@ -78,9 +118,18 @@ test("accepts only safe masked/full read projections and strict update versions"
     state: "provided",
     account_number: "000012340056",
     bank_id: "bank_synthetic",
+    bank_name: null,
     account_holder_name: "Synthetic Account Holder",
     version: 2,
   })?.account_number, "000012340056");
+  assert.deepEqual(projectPaymentProjection({
+    state: "provided",
+    account_number: null,
+    bank_id: null,
+    bank_name: "Ngân hàng Á Châu",
+    account_holder_name: null,
+    version: 2,
+  })?.bank_name, "Ngân hàng Á Châu");
   assert.equal(projectPaymentProjection({
     state: "provided",
     account_number: "000012340056",
