@@ -107,8 +107,11 @@ export function createCccdTransport(input: {
   >;
 }): CccdTransport {
   const base = "/api/direct-entry/entries/" + encodeURIComponent(input.entryId) + "/documents";
+  // Lay ham ra bien local: goi truc tiep qua property cua mot object thuong se lam
+  // Window.fetch nhan sai receiver va nem "Illegal invocation" trong browser that.
+  const callFetch = input.fetchImpl;
   const post = async (url: string, key: string, body: unknown) => {
-    const response = await input.fetchImpl(url, {
+    const response = await callFetch(url, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Idempotency-Key": key, "Content-Type": "application/json" },
@@ -139,7 +142,7 @@ export function createCccdTransport(input: {
       const blob = input.blobs[request.documentType];
       if (!blob) return { ok: false, code: "DOCUMENT_UPLOAD_MISSING" };
       try {
-        const response = await input.fetchImpl(request.url, {
+        const response = await callFetch(request.url, {
           method: "PUT",
           headers: { ...request.headers },
           body: blob,

@@ -378,8 +378,11 @@ export async function postFullProfileBatch(input: {
     return { kind: "rejected", code: "BODY_TOO_LARGE" };
   }
   let response: Response;
+  // Lay ham ra bien local: goi truc tiep qua property cua mot object thuong se lam
+  // Window.fetch nhan sai receiver va nem "Illegal invocation" trong browser that.
+  const callFetch = input.fetchImpl;
   try {
-    response = await input.fetchImpl(FULL_PROFILE_BATCH_ENDPOINT, {
+    response = await callFetch(FULL_PROFILE_BATCH_ENDPOINT, {
       method: "POST",
       credentials: "same-origin",
       headers: {

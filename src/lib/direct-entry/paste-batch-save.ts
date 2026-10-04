@@ -115,8 +115,11 @@ export async function postPasteBatch(input: {
     return { kind: "rejected", code: "PASTE_BATCH_KEY_INVALID" };
   }
   let response: Response;
+  // Lay ham ra bien local: goi truc tiep qua property cua mot object thuong se lam
+  // Window.fetch nhan sai receiver va nem "Illegal invocation" trong browser that.
+  const callFetch = input.fetchImpl;
   try {
-    response = await input.fetchImpl(PASTE_BATCH_ENDPOINT, {
+    response = await callFetch(PASTE_BATCH_ENDPOINT, {
       method: "POST",
       credentials: "same-origin",
       headers: {
