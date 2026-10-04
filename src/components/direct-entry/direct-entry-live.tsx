@@ -621,6 +621,8 @@ export function DirectEntryLive() {
    * national_id/phone cua dong da luu chua co trong projection hien hanh (cho T1B), nen chi gui
    * duoc employee_code — khong tu bia them du lieu.
    */
+  const [profilePasteNotice, setProfilePasteNotice] = useState("");
+
   const existingProfileIdentities = useMemo(
     () => rows
       .filter((row) => row.entryId === null || isUnsavedRowState(row.state))
@@ -1245,6 +1247,27 @@ export function DirectEntryLive() {
             ensureCatalog={ensureCatalog}
             catalogFor={catalogFor}
             existing={existingProfileIdentities}
+            capabilities={capabilities}
+            onSaved={(saved) => {
+              // Nguon su that la server: tai lai ban nhap va giu nguyen cac dong cuc bo khac.
+              setProfilePasteNotice(
+                "Đã lưu " + saved.entryIds.length +
+                  " dòng bằng một yêu cầu atomic. Đang tải lại từ máy chủ…",
+              );
+              void reloadDrafts()
+                .then(() => setProfilePasteNotice(
+                  "Đã lưu " + saved.entryIds.length + " dòng và tải lại bản nháp từ máy chủ.",
+                ))
+                .catch(() => setProfilePasteNotice(
+                  "Đã lưu " + saved.entryIds.length + " dòng nhưng chưa tải lại được bản nháp.",
+                ));
+            }}
+            onConflict={() => {
+              setProfilePasteNotice(
+                "Dữ liệu đã thay đổi ở nơi khác. Danh sách vừa được tải lại.",
+              );
+              void reloadDrafts().catch(() => undefined);
+            }}
           />
           <button type="button" className={styles.secondaryButton} onClick={addRow} disabled={loadState !== "ready"}>
             Thêm dòng
@@ -1267,6 +1290,10 @@ export function DirectEntryLive() {
         ref={lifecycleStatusRef}
       >
         {lifecycleMessage}
+      </p>
+
+      <p className={styles.lifecycleStatus} aria-live="polite" data-testid="profile-paste-status">
+        {profilePasteNotice}
       </p>
 
       <p className={styles.lifecycleStatus} aria-live="polite" data-testid="change-request-status">

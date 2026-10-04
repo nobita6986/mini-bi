@@ -21,6 +21,22 @@ import {
   type WorkerProfilePreview,
   type WorkerProfilePreviewRow,
 } from "@/lib/direct-entry/worker-profile-preview";
+import {
+  buildFullProfileRequestBody,
+  fullProfileBlockerMessage,
+  fullProfileErrorMessage,
+  fullProfileIntentDigest,
+  fullProfileSubmitBlockers,
+  postFullProfileBatch,
+  type FullProfileBlockerCode,
+  type FullProfileSaved,
+} from "@/lib/direct-entry/full-profile-batch";
+import {
+  clearIntentKey,
+  EMPTY_INTENT_KEY,
+  resolveIntentKey,
+  type TransitionIntentKeyState,
+} from "@/lib/direct-entry/submission-lifecycle";
 import type { WorkerProfileOptional } from "@/lib/direct-entry/worker-profile-paste";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import styles from "./direct-entry-shell.module.css";
@@ -53,10 +69,17 @@ export type WorkerProfilePastePanelProps = {
   columnsHelpOpen: boolean;
   expandedRows: readonly number[];
   catalogPending: boolean;
+  /** CTA chi bat khi khong con blocker nao (xem fullProfileSubmitBlockers). */
+  submitBlockers: readonly FullProfileBlockerCode[];
+  submitting: boolean;
+  submitMessage: string;
+  submitMessageKind: "idle" | "error" | "conflict" | "saved";
+  savedEntryCount: number;
   closeSlot?: React.ReactNode;
   onTextChange(value: string): void;
   onToggleColumnsHelp(): void;
   onToggleRow(sourceRow: number): void;
+  onSubmit(): void;
 };
 
 function optionalText(value: WorkerProfileOptional<string>): string {
@@ -170,10 +193,16 @@ export function WorkerProfilePastePanel({
   columnsHelpOpen,
   expandedRows,
   catalogPending,
+  submitBlockers,
+  submitting,
+  submitMessage,
+  submitMessageKind,
+  savedEntryCount,
   closeSlot,
   onTextChange,
   onToggleColumnsHelp,
   onToggleRow,
+  onSubmit,
 }: WorkerProfilePastePanelProps) {
   const errorCount = preview?.errorCount ?? 0;
   const warningCount = preview?.warningCount ?? 0;
@@ -312,16 +341,55 @@ export function WorkerProfilePastePanel({
         </ul>
       )}
 
-      <div className={styles.drawerActions}>
+      {submitMessage !== "" && (
+        <p
+          className={submitMessageKind === "error" || submitMessageKind === "conflict"
+            ? styles.documentError : styles.documentStatus}
+          role={submitMessageKind === "error" || submitMessageKind === "conflict"
+            ? "alert" : "status"}
+          data-testid="profile-submit-message"
+        >
+          {submitMessage}
+        </p>
+      )}
+
+      {savedEntryCount > 0 && (
+        <p className={styles.documentStatus} role="status" data-testid="profile-saved">
+          Đã lưu {savedEntryCount} dòng bằng một yêu cầu duy nhất. Hồ sơ CCCD được tải riêng
+          sau khi hồ sơ đã được lưu.
+        </p>
+      )}
+
+      {submitBlockers.length > 0 && (
+        <ul className={styles.profileNote} data-testid="profile-blockers">
+          {submitBlockers.map((code) => (
+            <li key={code}>{fullProfileBlockerMessage(code)}</li>
+          ))}
+        </ul>
+      )}
+
+      <p className={styles.profileNote} data-testid="profile-atomicity">
+        Cả nhóm được lưu trong một giao dịch: nếu một dòng không hợp lệ thì không dòng nào
+        được lưu.
+      </p>
+
+      <div className={styles.drawerActions} aria-busy={submitting}>
         {closeSlot}
         <button
           type="button"
           className={styles.primaryButton}
           data-testid="profile-submit"
-          disabled
-          aria-disabled="true"
+          disabled={submitBlockers.length > 0}
+          aria-disabled={submitBlockers.length > 0}
+          onClick={onSubmit}
         >
-          {WORKER_PROFILE_SERVER_PENDING_LABEL}
+          {submitting
+            ? "Đang lưu…"
+            : savedEntryCount > 0
+              ? "Đã lưu"
+              : submitMessageKind === "error" || submitMessageKind === "conflict"
+                ? "Thử lại"
+                : "Lưu " + (preview?.validRows ?? 0) + " dòng"}
         </button>
       </div>
     </div>
@@ -337,8 +405,12 @@ export type WorkerProfilePasteDialogProps = {
   ensureCatalog(date: string): Promise<DraftCatalog>;
   catalogFor(date: string): DraftCatalog | undefined;
   existing?: readonly ExistingProfileIdentity[];
-  /** Seam noi bo; KHONG duoc wiring vao server trong task nay. */
-  onValidatedRows?(rows: readonly WorkerProfilePreviewRow[]): void;
+  /** Capability cua session hien tai; server van la authority cuoi cung. */
+  capabilities: readonly string[];
+  /** Goi SAU khi server tra projection hop le; parent reload du lieu tu server. */
+  onSaved?(saved: FullProfileSaved, rows: readonly WorkerProfilePreviewRow[]): void;
+  /** Goi khi 409 de parent reload/reconcile. */
+  onConflict?(): void;
 };
 
 function toCatalogSource(catalog: DraftCatalog | undefined) {
@@ -362,12 +434,21 @@ export function DirectEntryWorkerProfilePasteDialog({
   ensureCatalog,
   catalogFor,
   existing,
-  onValidatedRows,
+  capabilities,
+  onSaved,
+  onConflict,
 }: WorkerProfilePasteDialogProps) {
   const [text, setText] = useState("");
   const [columnsHelpOpen, setColumnsHelpOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState<readonly number[]>([]);
-  const notified = useRef<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState("");
+  const [submitMessageKind, setSubmitMessageKind] =
+    useState<"idle" | "error" | "conflict" | "saved">("idle");
+  const [savedEntryCount, setSavedEntryCount] = useState(0);
+  // Key chong gui trung: chi nam trong memory cua trang, khong persist, khong chua PII.
+  const intentKey = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
+  const inFlight = useRef(false);
 
   // Preview la ham thuan cua (text, catalog, existing): khong setState trong effect.
   const preview = useMemo(() => {
@@ -382,23 +463,97 @@ export function DirectEntryWorkerProfilePasteDialog({
     }
   }, [ensureCatalog, preview]);
 
-  useEffect(() => {
-    if (!preview || !preview.canProceed || !onValidatedRows) return;
-    const signature = preview.rows.map((row) => row.row.employee_code).join("|");
-    if (notified.current === signature) return;
-    notified.current = signature;
-    onValidatedRows(preview.rows);
-  }, [onValidatedRows, preview]);
+  const submitBlockers = useMemo(
+    () => fullProfileSubmitBlockers({ preview, capabilities, submitting }),
+    [capabilities, preview, submitting],
+  );
+
+  const submit = useCallback(async () => {
+    // Chan double submit: busy flag + ref (khong tin vao re-render).
+    if (inFlight.current || submitting) return;
+    if (!preview || preview.rows.length === 0) return;
+    if (fullProfileSubmitBlockers({ preview, capabilities, submitting: false }).length > 0) return;
+    const body = buildFullProfileRequestBody(preview.rows);
+    if (body === null) {
+      setSubmitMessageKind("error");
+      setSubmitMessage(fullProfileErrorMessage("BATCH_INVALID"));
+      return;
+    }
+    const digest = await fullProfileIntentDigest(body.rows);
+    if (digest === null) {
+      setSubmitMessageKind("error");
+      setSubmitMessage(fullProfileBlockerMessage("PROFILE_DIGEST_UNAVAILABLE"));
+      return;
+    }
+    const intent = "full_profile_batch:" + digest;
+    const resolved = resolveIntentKey(intentKey.current, intent, () => crypto.randomUUID());
+    intentKey.current = resolved.state;
+    inFlight.current = true;
+    setSubmitting(true);
+    setSubmitMessage("");
+    setSubmitMessageKind("idle");
+    try {
+      const result = await postFullProfileBatch({
+        rows: body.rows,
+        idempotencyKey: resolved.key,
+        fetchImpl: fetch,
+      });
+      if (result.kind === "saved") {
+        // Chi ket thuc intent khi server da xac nhan bang projection hop le.
+        intentKey.current = clearIntentKey(intentKey.current, intent);
+        setSavedEntryCount(result.entryIds.length);
+        setText("");
+        setExpandedRows([]);
+        setSubmitMessageKind("saved");
+        setSubmitMessage(
+          "Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.",
+        );
+        onSaved?.(result, preview.rows);
+        return;
+      }
+      if (result.kind === "retry") {
+        // Giu nguyen payload + key: lan bam "Thu lai" dung lai cung intent.
+        setSubmitMessageKind("error");
+        setSubmitMessage(fullProfileErrorMessage(result.code));
+        return;
+      }
+      intentKey.current = clearIntentKey(intentKey.current, intent);
+      if (result.kind === "conflict") {
+        setSubmitMessageKind("conflict");
+        setSubmitMessage(fullProfileErrorMessage(result.code));
+        onConflict?.();
+        return;
+      }
+      setSubmitMessageKind("error");
+      setSubmitMessage(fullProfileErrorMessage(result.code));
+    } finally {
+      inFlight.current = false;
+      setSubmitting(false);
+    }
+  }, [capabilities, onConflict, onSaved, preview, submitting]);
 
   const handleOpenChange = useCallback((next: boolean) => {
     if (!next) {
       setText("");
       setColumnsHelpOpen(false);
       setExpandedRows([]);
-      notified.current = null;
+      setSubmitMessage("");
+      setSubmitMessageKind("idle");
+      setSavedEntryCount(0);
+      intentKey.current = EMPTY_INTENT_KEY;
+      inFlight.current = false;
     }
     onOpenChange(next);
   }, [onOpenChange]);
+
+  const handleTextChange = useCallback((value: string) => {
+    setText(value);
+    // Doi du lieu => ket thuc intent cu; key cu khong bao gio duoc dung lai cho payload khac.
+    intentKey.current = EMPTY_INTENT_KEY;
+    setSubmitMessage("");
+    setSubmitMessageKind("idle");
+    setSavedEntryCount(0);
+  }, []);
 
   const handleToggleRow = useCallback((sourceRow: number) => {
     setExpandedRows((current) => current.includes(sourceRow)
@@ -416,6 +571,7 @@ export function DirectEntryWorkerProfilePasteDialog({
       <Dialog.Portal>
         <Dialog.Overlay className={styles.drawerOverlay} />
         <Dialog.Content className={styles.profilePasteDialog}
+          data-testid="profile-paste-dialog"
           aria-describedby="worker-profile-paste-description">
           <Dialog.Title className={styles.drawerTitle}>
             {WORKER_PROFILE_DIALOG_TITLE}
@@ -430,14 +586,20 @@ export function DirectEntryWorkerProfilePasteDialog({
             columnsHelpOpen={columnsHelpOpen}
             expandedRows={expandedRows}
             catalogPending={catalogPending}
+            submitBlockers={submitBlockers}
+            submitting={submitting}
+            submitMessage={submitMessage}
+            submitMessageKind={submitMessageKind}
+            savedEntryCount={savedEntryCount}
             closeSlot={
               <Dialog.Close asChild>
                 <button type="button" className={styles.secondaryButton}>Đóng</button>
               </Dialog.Close>
             }
-            onTextChange={setText}
+            onTextChange={handleTextChange}
             onToggleColumnsHelp={() => setColumnsHelpOpen((current) => !current)}
             onToggleRow={handleToggleRow}
+            onSubmit={() => void submit()}
           />
         </Dialog.Content>
       </Dialog.Portal>
