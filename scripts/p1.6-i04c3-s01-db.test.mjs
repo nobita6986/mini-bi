@@ -33,6 +33,9 @@ const CONTRACT = "worker-profile/1.0";
 const RPC = `select public.direct_entry_create_full_profile_batch(
   $1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text
 ) as result`;
+const GENERATED_RPC = `select public.direct_entry_create_full_profile_batch_v2(
+  $1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text
+) as result`;
 
 async function database() {
   const db = new PGlite();
@@ -40,7 +43,7 @@ async function database() {
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 38, "PGlite must apply all 38 migrations");
+  assert.equal(migrations.length, 39, "PGlite must apply all 39 migrations");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -116,6 +119,20 @@ async function rpc(db, rows, key) {
   }
 }
 
+async function generatedRpc(db, rows, key) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const result = await db.query(GENERATED_RPC, [
+      IDS.auth, IDS.user, "worker-profile/1.1", JSON.stringify(rows), key,
+    ]);
+    await db.exec("commit;");
+    return result.rows[0].result;
+  } catch (error) {
+    await db.exec("rollback;");
+    throw error;
+  }
+}
+
 async function listDrafts(db, authSubject, appUserId) {
   await db.exec("begin; set local role service_role;");
   try {
@@ -156,6 +173,12 @@ function row(index, overrides = {}) {
   };
 }
 
+function generatedRow(index, overrides = {}) {
+  const { employee_code: _employeeCode, provider_type, ...base } = row(index, overrides);
+  void _employeeCode;
+  return { ...base, provider_type: provider_type ?? "hrp" };
+}
+
 async function count(db, table) {
   const { rows } = await db.query(`select count(*)::integer as count from public.${table}`);
   return rows[0].count;
@@ -174,6 +197,114 @@ async function tableStates(db, tables) {
   for (const table of tables) result[table] = await tableState(db, table);
   return result;
 }
+
+test("migration #39 generates employee codes transactionally and replays idempotently", async () => {
+  const db = await database();
+  try {
+    const key = "91600000-0000-4000-8000-000000000201";
+    const rows = [
+      generatedRow(201, { payment: { state: "provided", account_number: "000012340001" } }),
+      generatedRow(202),
+    ];
+    const first = await generatedRpc(db, rows, key);
+    assert.deepEqual(first.employee_codes, ["hrp-2020-000001", "hrp-2020-000002"]);
+    assert.equal(first.replayed, false);
+    const counter = await db.query(
+      "select last_sequence from public.direct_entry_employee_code_counters where employee_year=2020",
+    );
+    assert.equal(counter.rows[0].last_sequence, 2);
+    const savedAccount = await db.query(
+      "select account_number from public.direct_entry_payments where entry_id=$1",
+      [first.entry_ids[0]],
+    );
+    assert.equal(savedAccount.rows[0].account_number, "000012340001");
+
+    const replay = await generatedRpc(db, rows, key);
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.employee_codes, first.employee_codes);
+    assert.deepEqual(replay.entry_ids, first.entry_ids);
+    const unchangedCounter = await db.query(
+      "select last_sequence from public.direct_entry_employee_code_counters where employee_year=2020",
+    );
+    assert.equal(unchangedCounter.rows[0].last_sequence, 2);
+
+    await assert.rejects(
+      generatedRpc(db, [generatedRow(203)], key),
+      (error) => error.code === "22023",
+    );
+    await assert.rejects(
+      generatedRpc(db, [generatedRow(204, { provider_type: "vendor" })],
+        "91600000-0000-4000-8000-000000000202"),
+      (error) => error.message === "RECRUITER_MEMBERSHIP_INVALID",
+    );
+    const afterRejected = await db.query(
+      "select last_sequence from public.direct_entry_employee_code_counters where employee_year=2020",
+    );
+    assert.equal(afterRejected.rows[0].last_sequence, 2);
+    const tablePrivileges = await db.query(
+      "select c.relrowsecurity, c.relforcerowsecurity, " +
+      "has_table_privilege('service_role', c.oid, 'SELECT,INSERT,UPDATE,DELETE') as service_dml, " +
+      "has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE') as anon_dml, " +
+      "has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE') as auth_dml " +
+      "from pg_class c where c.oid='public.direct_entry_employee_code_counters'::regclass",
+    );
+    assert.deepEqual(tablePrivileges.rows[0], {
+      relrowsecurity: true, relforcerowsecurity: true, service_dml: false,
+      anon_dml: false, auth_dml: false,
+    });
+    const rpcPrivileges = await db.query(
+      "select p.prosecdef, p.proconfig, " +
+      "has_function_privilege('service_role', p.oid, 'EXECUTE') as service_exec, " +
+      "has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec, " +
+      "has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec " +
+      "from pg_proc p where p.oid=" +
+      "'public.direct_entry_create_full_profile_batch_v2(uuid,uuid,text,jsonb,text)'::regprocedure",
+    );
+    assert.deepEqual(rpcPrivileges.rows[0], {
+      prosecdef: true,
+      proconfig: ["search_path=pg_catalog, public"],
+      service_exec: true,
+      anon_exec: false,
+      auth_exec: false,
+    });
+  } finally {
+    await db.close();
+  }
+});
+
+test("migration #39 keeps the source-derived function inventory and service boundary aligned", async () => {
+  const db = await database();
+  try {
+    const result = await db.query(`
+      select count(distinct p.proname)::integer as total,
+        count(distinct p.proname) filter (
+          where has_function_privilege('service_role', p.oid, 'EXECUTE')
+        )::integer as service_role,
+        count(distinct p.proname) filter (
+          where not has_function_privilege('service_role', p.oid, 'EXECUTE')
+        )::integer as internal,
+        count(*) filter (
+          where not has_function_privilege('service_role', p.oid, 'EXECUTE')
+            and (has_function_privilege('anon', p.oid, 'EXECUTE')
+              or has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              or exists (
+                select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                 where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+              ))
+        )::integer as exposed_internal
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname like 'direct_entry_%'
+    `);
+    assert.deepEqual(result.rows[0], {
+      total: 69,
+      service_role: 31,
+      internal: 38,
+      exposed_internal: 0,
+    });
+  } finally {
+    await db.close();
+  }
+});
 
 test("migration #36 installs full-profile boundary and atomic batch semantics", async () => {
   const db = await database();

@@ -78,6 +78,16 @@ test("ho so toi thieu: chi 6 cot bat buoc, 1 dong, header bat buoc", () => {
   assert.equal(row.derived.age_years, null);
 });
 
+test("server-generated mode accepts a blank employee-code cell", () => {
+  const result = parseWorkerProfilePaste({
+    text: toTsv([requiredPairs("")]),
+    referenceDate: REFERENCE_DATE,
+    employeeCodeMode: "server-generated",
+  });
+  assert.equal(result.canProceed, true);
+  assert.equal(result.rows[0].employee_code, "");
+});
+
 test("ho so day du: moi cot tuy chon duoc map dung", () => {
   const result = parse(toTsv([fullPairs()]));
   assert.equal(result.errorCount, 0);

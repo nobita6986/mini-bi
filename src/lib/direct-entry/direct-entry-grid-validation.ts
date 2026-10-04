@@ -29,6 +29,10 @@ import { workerProfileIssueMessage } from "./worker-profile-import-contract.ts";
 export const SPREADSHEET_WRITE_COLUMNS = Object.freeze(
   DIRECT_ENTRY_GRID_COLUMNS.filter((column) => column.pasteMode === "write"),
 );
+const SPREADSHEET_VALIDATION_COLUMNS = Object.freeze(
+  DIRECT_ENTRY_GRID_COLUMNS.filter((column) =>
+    column.pasteMode === "write" || column.key === "employee_code"),
+);
 
 function canonicalHeaderFor(columnKey: string): string | null {
   const column = directEntryGridColumn(columnKey);
@@ -42,11 +46,11 @@ function canonicalHeaderFor(columnKey: string): string | null {
 export function serializeSpreadsheetRows(
   rows: readonly SpreadsheetStagedRow[],
 ): string {
-  const headers = SPREADSHEET_WRITE_COLUMNS
+  const headers = SPREADSHEET_VALIDATION_COLUMNS
     .map((column) => canonicalHeaderFor(column.key))
     .filter((header): header is string => header !== null);
   const lines = rows.map((row) =>
-    SPREADSHEET_WRITE_COLUMNS
+    SPREADSHEET_VALIDATION_COLUMNS
       .map((column) => row.cells[column.key] ?? "")
       .join("\t"));
   return [headers.join("\t"), ...lines].join("\n");
@@ -145,6 +149,7 @@ export function buildSpreadsheetValidation(input: {
     referenceDate: input.referenceDate,
     resolver,
     existing: input.existing,
+    employeeCodeMode: "server-generated",
   });
 
   const clientRowIdForSourceRow = (sourceRow: number): string | null => {

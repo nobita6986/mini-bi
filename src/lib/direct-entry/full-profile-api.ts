@@ -12,6 +12,7 @@ const SAFE_CLIENT_CODES = new Set([
   "CLIENT_AUTHORITY_FIELD_FORBIDDEN", "CONTRACT_VERSION_UNSUPPORTED",
   "EMPLOYEE_CODE_DUPLICATE", "EMPLOYEE_CODE_FORMAT",
   "EMPLOYEE_CODE_LEGACY_QUARANTINE", "EMPLOYEE_CODE_YEAR",
+  "EMPLOYEE_CODE_SEQUENCE_EXHAUSTED",
   "GENERAL_NOTE_INVALID", "GENERAL_NOTE_TOO_LONG", "GENDER_VOCABULARY_INVALID",
   "NATIONAL_ID_DUPLICATE", "NATIONAL_ID_INVALID", "NATIONAL_ID_ISSUED_PLACE_INVALID",
   "OFF_REQUIRES_DATE_AND_REASON", "PASTE_VALUE_FORMAT",
@@ -73,17 +74,20 @@ async function readBoundedJson(request: Request): Promise<ReadBodyResult> {
   }
 }
 
-function projectResult(value: unknown, expectedCount: number): {
+function projectResult(value: unknown, expectedCount: number, expectedYears?: readonly string[]): {
   submission_id: string;
   state: "DRAFT";
   version: number;
   entry_ids: string[];
+  employee_codes?: string[];
   replayed: boolean;
 } | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).sort().join(",") !==
-      ["entry_ids", "replayed", "state", "submission_id", "version"].sort().join(",") ||
+  const expectedKeys = expectedYears
+    ? ["employee_codes", "entry_ids", "replayed", "state", "submission_id", "version"]
+    : ["entry_ids", "replayed", "state", "submission_id", "version"];
+  if (Object.keys(record).sort().join(",") !== expectedKeys.sort().join(",") ||
       typeof record.submission_id !== "string" || !UUID.test(record.submission_id) ||
       record.state !== "DRAFT" || typeof record.version !== "number" ||
       !Number.isSafeInteger(record.version) || record.version < 1 ||
@@ -91,11 +95,22 @@ function projectResult(value: unknown, expectedCount: number): {
       record.entry_ids.length !== expectedCount ||
       !record.entry_ids.every((id) => typeof id === "string" && UUID.test(id)) ||
       new Set(record.entry_ids).size !== record.entry_ids.length) return null;
+  let employeeCodes: string[] | undefined;
+  if (expectedYears) {
+    if (!Array.isArray(record.employee_codes) || record.employee_codes.length !== expectedCount ||
+        !record.employee_codes.every((code, index) =>
+          typeof code === "string" &&
+          /^hrp-\d{4}-\d{6}$/.test(code) &&
+          code.slice(4, 8) === expectedYears[index]) ||
+        new Set(record.employee_codes).size !== record.employee_codes.length) return null;
+    employeeCodes = record.employee_codes as string[];
+  }
   return {
     submission_id: record.submission_id,
     state: "DRAFT",
     version: record.version,
     entry_ids: record.entry_ids as string[],
+    ...(employeeCodes ? { employee_codes: employeeCodes } : {}),
     replayed: record.replayed,
   };
 }
@@ -158,7 +173,10 @@ export async function postFullProfileBatch(
       console.error("[direct-entry] full-profile batch unavailable");
       return fail("BATCH_UNAVAILABLE", 500);
     }
-    const projection = projectResult(result.data, parsed.payload.rows.length);
+    const expectedYears = parsed.payload.contract_version === "worker-profile/1.1"
+      ? parsed.payload.rows.map((row) => row.first_work_date.slice(0, 4))
+      : undefined;
+    const projection = projectResult(result.data, parsed.payload.rows.length, expectedYears);
     if (!projection) {
       console.error("[direct-entry] full-profile batch returned malformed projection");
       return fail("BATCH_UNAVAILABLE", 500);

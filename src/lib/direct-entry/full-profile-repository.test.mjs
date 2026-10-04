@@ -33,6 +33,33 @@ test("repository invokes only the versioned full-profile RPC with trusted inputs
   assert.deepEqual(result, { ok: true, data: { submission_id: "synthetic" } });
 });
 
+test("repository routes worker-profile/1.1 only to its versioned server-code RPC", async () => {
+  const calls = [];
+  const repository = createFullProfileRepository(async (name, args) => {
+    calls.push({ name, args });
+    return { data: { ok: true }, error: null };
+  });
+  const payloadV2 = {
+    contract_version: "worker-profile/1.1",
+    rows: [{
+      project_id: "project_synthetic",
+      first_work_date: "2025-03-04",
+      recruiter_id: "93000000-0000-4000-8000-000000000001",
+      provider_type: "hrp",
+      labor_type: "TEMPORARY",
+      display_name: "Synthetic Worker",
+    }],
+  };
+  await repository.createFullProfileBatch({
+    auth_subject: "91000000-0000-4000-8000-000000000001",
+    app_user_id: "92000000-0000-4000-8000-000000000001",
+    payload: payloadV2,
+    idempotency_key: "b1000000-0000-4000-8000-000000000002",
+  });
+  assert.equal(calls[0].name, "direct_entry_create_full_profile_batch_v2");
+  assert.deepEqual(calls[0].args.p_rows, payloadV2.rows);
+});
+
 test("repository sanitizes conflict, authorization, validation, and infrastructure errors", async () => {
   for (const [error, expected] of [
     [{ code: "22023", message: "idempotency key reused with different input" }, { ok: false, kind: "conflict" }],

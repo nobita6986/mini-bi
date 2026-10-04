@@ -11,7 +11,7 @@ const live = source("./direct-entry-live.tsx");
 const importModule = source("../../lib/direct-entry/excel-paste-import.ts");
 
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
-const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id|provider_type|team_id)\s*:/;
+const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id|team_id)\s*:/;
 
 test("nut 'Dan tu Excel' nam canh 'Them dong' va mo bang Radix Dialog co Trigger asChild", () => {
   const actions = live.slice(live.indexOf("liveHeaderActions"), live.indexOf("<p\n        className={styles.lifecycleStatus}"));

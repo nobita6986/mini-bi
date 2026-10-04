@@ -41,6 +41,23 @@
   gap: 10px;
 }
 
+.legacyImportTools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.legacyImportTools summary {
+  cursor: pointer;
+  min-height: 42px;
+  align-content: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .header h1 {
   margin: 2px 0 4px;
   font-size: 28px;
@@ -149,6 +166,26 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.mobileStagedList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mobileStagedCard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.mobileStagedCard summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
 .rowCard {

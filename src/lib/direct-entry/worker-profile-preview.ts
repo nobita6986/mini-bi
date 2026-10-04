@@ -72,7 +72,11 @@ export type ExistingProfileIdentity = {
 export type WorkerProfilePreviewRow = {
   sourceRow: number;
   row: WorkerProfileRow;
-  resolved: { project_id: string | null; recruiter_id: string | null };
+  resolved: {
+    project_id: string | null;
+    recruiter_id: string | null;
+    provider_type: "hrp" | "vendor" | null;
+  };
   labels: { project: string; recruiter: string };
   issues: WorkerProfileIssue[];
   warnings: WorkerProfileIssue[];
@@ -120,7 +124,7 @@ function resolveRow(
   issues: WorkerProfileIssue[] } {
   const issues: WorkerProfileIssue[] = [];
   const resolved: WorkerProfilePreviewRow["resolved"] =
-    { project_id: null, recruiter_id: null };
+    { project_id: null, recruiter_id: null, provider_type: null };
   const labels: WorkerProfilePreviewRow["labels"] =
     { project: row.project_label, recruiter: row.recruiter_label };
   if (source === null) {
@@ -134,7 +138,11 @@ function resolveRow(
     "PASTE_CATALOG_MISSING", "error", row.sourceRow, "project_id"));
 
   const recruiter = matchCatalogReference(row.recruiter_label, source.recruiters);
-  if (recruiter.ok) resolved.recruiter_id = recruiter.id;
+  if (recruiter.ok) {
+    resolved.recruiter_id = recruiter.id;
+    resolved.provider_type = source.recruiters.find((option) => option.id === recruiter.id)
+      ?.provider_type ?? null;
+  }
   else addIssue(issues, issue(recruiter.reason === "AMBIGUOUS" ? "PASTE_CATALOG_AMBIGUOUS" :
     "PASTE_CATALOG_MISSING", "error", row.sourceRow, "recruiter_id"));
 
@@ -153,7 +161,7 @@ function duplicateIssues(
   const nationalId = row.worker.national_id.state === "provided" ? row.worker.national_id.value : null;
   const phone = row.worker.phone.state === "provided" ? row.worker.phone.value : null;
 
-  const codeFirst = firstSeen.get("code:" + row.employee_code);
+  const codeFirst = row.employee_code === "" ? undefined : firstSeen.get("code:" + row.employee_code);
   if (codeFirst !== undefined) {
     addIssue(issues, issue("PASTE_DUPLICATE_EMPLOYEE_CODE", "error", row.sourceRow, "employee_code"));
   }
@@ -165,7 +173,8 @@ function duplicateIssues(
   }
   void index;
 
-  if (existing.some((item) => item.employeeCode === row.employee_code)) {
+  if (row.employee_code !== "" &&
+      existing.some((item) => item.employeeCode === row.employee_code)) {
     addIssue(issues, issue("PASTE_EXISTING_EMPLOYEE_CODE", "error", row.sourceRow, "employee_code"));
   }
   if (nationalId !== null && existing.some((item) => item.nationalId === nationalId)) {
@@ -182,16 +191,17 @@ export function buildWorkerProfilePreview(input: {
   referenceDate: string;
   resolver: PasteCatalogResolver;
   existing?: readonly ExistingProfileIdentity[];
+  employeeCodeMode?: "required" | "server-generated";
 }): WorkerProfilePreview {
   const parsed = parseWorkerProfilePaste({ text: input.text,
-    referenceDate: input.referenceDate });
+    referenceDate: input.referenceDate, employeeCodeMode: input.employeeCodeMode });
   const existing = input.existing ?? [];
   const rows: WorkerProfilePreviewRow[] = [];
 
   // Duplicate detection: trong khoi paste + voi cac dong chua luu do caller cung cap.
   const firstSeen = new Map<string, number>();
   for (const row of parsed.rows) {
-    firstSeen.set("code:" + row.employee_code, row.sourceRow);
+    if (row.employee_code !== "") firstSeen.set("code:" + row.employee_code, row.sourceRow);
     if (row.worker.national_id.state === "provided") {
       firstSeen.set("nid:" + row.worker.national_id.value, row.sourceRow);
     }
@@ -202,7 +212,7 @@ export function buildWorkerProfilePreview(input: {
   const seenOnce = new Map<string, number>();
   for (const row of parsed.rows) {
     const duplicate = duplicateIssues(row, 0, seenOnce, existing);
-    seenOnce.set("code:" + row.employee_code, row.sourceRow);
+    if (row.employee_code !== "") seenOnce.set("code:" + row.employee_code, row.sourceRow);
     if (row.worker.national_id.state === "provided") {
       seenOnce.set("nid:" + row.worker.national_id.value, row.sourceRow);
     }

@@ -120,6 +120,38 @@ test("valid payload calls only the full-profile repository with trusted actor an
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
+test("worker-profile/1.1 returns validated server-generated codes without client code input", async () => {
+  const { employee_code: _employeeCode, ...rowWithoutCode } = row;
+  void _employeeCode;
+  assert.equal("employee_code" in rowWithoutCode, false);
+  const generated = deps();
+  generated.repository.createFullProfileBatch = async (input) => {
+    generated.calls.push(input);
+    return {
+      ok: true,
+      data: { ...rpcResult, employee_codes: ["hrp-2025-000001"] },
+    };
+  };
+  const response = await postFullProfileBatch(request({
+    contract_version: "worker-profile/1.1",
+    rows: [{ ...rowWithoutCode, provider_type: "hrp" }],
+  }), "true", generated);
+  assert.equal(response.status, 201);
+  assert.deepEqual(generated.calls[0].payload.rows[0].provider_type, "hrp");
+  assert.equal("employee_code" in generated.calls[0].payload.rows[0], false);
+  assert.deepEqual((await response.json()).employee_codes, ["hrp-2025-000001"]);
+
+  const wrongYear = deps();
+  wrongYear.repository.createFullProfileBatch = async () => ({
+    ok: true,
+    data: { ...rpcResult, employee_codes: ["hrp-2024-000001"] },
+  });
+  assert.equal((await postFullProfileBatch(request({
+    contract_version: "worker-profile/1.1",
+    rows: [{ ...rowWithoutCode, provider_type: "hrp" }],
+  }), "true", wrongYear)).status, 500);
+});
+
 test("idempotent replay is 200 and conflicts are 409", async () => {
   const replay = deps({
     async createFullProfileBatch() {

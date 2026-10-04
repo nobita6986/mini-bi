@@ -11,7 +11,8 @@ const CLIENT_ROW_ID_PREFIX = "spreadsheet-row";
  * this model. Derived, status, document and action columns remain outside it.
  */
 export const SPREADSHEET_WRITABLE_FIELD_KEYS: readonly string[] = Object.freeze(
-  WORKER_PROFILE_FIELDS.filter((field) => field.persisted).map((field) => field.key),
+  WORKER_PROFILE_FIELDS.filter((field) => field.persisted && field.key !== "employee_code")
+    .map((field) => field.key),
 );
 
 const WRITABLE_FIELD_KEYS = new Set(SPREADSHEET_WRITABLE_FIELD_KEYS);

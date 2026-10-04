@@ -190,7 +190,7 @@ test("requiredCatalogDates: moi effective date mot lan, da sap xep", () => {
 test("preview khong mutation server: module thuan, khong fetch/localStorage/authority", () => {
   const source = readFileSync(new URL("./excel-paste-import.ts", import.meta.url), "utf8");
   for (const forbidden of ["fetch(", "XMLHttpRequest", "localStorage", "sessionStorage",
-    "actor_id", "auth_subject", "app_user_id", "capability", "provider_type", "team_id",
+    "actor_id", "auth_subject", "app_user_id", "capability", "team_id",
     "storage_key", "signed", "checksum"]) {
     assert.equal(source.includes(forbidden), false, forbidden);
   }
