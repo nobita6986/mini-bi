@@ -10,12 +10,18 @@ import { checkSameOriginRequest } from "@/lib/ai/gateway/http-guards.mjs";
 import { errorResponse, jsonResponse } from "@/lib/ai/gateway/server/http.mjs";
 import { createReviewService } from "@/lib/ai/gateway/server/review-wiring";
 import { projectReviewRequest } from "@/lib/ai-report/review-projection";
+import { guardApiSession } from "@/lib/auth/api-session-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
   if (!isAiReportsEnabled()) return errorResponse("AI_DISABLED", "AI report generation đang tắt");
+
+  // P1.7-H04: route nay tung chi duoc bao ve boi Pilot Basic Auth. Sau khi bo Basic Auth,
+  // bat buoc xac thuc Supabase session/actor truoc khi cham bat ky du lieu nao.
+  const session = await guardApiSession();
+  if (!session.ok) return session.response;
 
   const originCheck = checkSameOriginRequest({
     origin: request.headers.get("origin"),

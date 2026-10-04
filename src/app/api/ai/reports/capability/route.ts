@@ -13,11 +13,16 @@ import { isAiReportsEnabled } from "@/lib/ai/gateway/server/config.mjs";
 import { jsonResponse } from "@/lib/ai/gateway/server/http.mjs";
 import { createServerAiReviewService } from "@/lib/ai/gateway/server/review.mjs";
 import { createSupabaseProviderConfigStore } from "@/lib/ai-config/server/store.mjs";
+import { guardApiSession } from "@/lib/auth/api-session-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // P1.7-H04: route nay tung chi duoc bao ve boi Pilot Basic Auth.
+  const session = await guardApiSession();
+  if (!session.ok) return session.response;
+
   const aiEnabled = isAiReportsEnabled();
 
   let configReady = false;

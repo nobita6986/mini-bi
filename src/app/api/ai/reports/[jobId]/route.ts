@@ -8,12 +8,18 @@ import "server-only";
 import { isAiReportsEnabled } from "@/lib/ai/gateway/server/config.mjs";
 import { errorResponse, jsonResponse } from "@/lib/ai/gateway/server/http.mjs";
 import { createServerAiReportGateway } from "@/lib/ai/gateway/server/service.mjs";
+import { guardApiSession } from "@/lib/auth/api-session-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(_request: Request, context: { params: Promise<{ jobId: string }> }) {
   if (!isAiReportsEnabled()) return errorResponse("AI_DISABLED", "AI report generation đang tắt");
+
+  // P1.7-H04: route nay tung chi duoc bao ve boi Pilot Basic Auth. Sau khi bo Basic Auth,
+  // bat buoc xac thuc Supabase session/actor truoc khi cham bat ky du lieu nao.
+  const session = await guardApiSession();
+  if (!session.ok) return session.response;
 
   const params = await context.params;
   const jobId = typeof params?.jobId === "string" ? params.jobId : "";

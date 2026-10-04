@@ -53,8 +53,6 @@ trường do chủ dự án cấp và **không** được commit (xem `.gitignor
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | public | có | Key công khai; bị RLS/RPC grants từ chối mọi truy cập dữ liệu |
 | `SUPABASE_SECRET_KEY` | server-only | khi cần đọc/ghi server | **Key đặc quyền, bypass RLS.** Không đặt tiền tố `NEXT_PUBLIC_` |
 | `PIPELINE_CHECK_ENABLED` | server-only | không (chỉ production) | Guard cho `/pipeline-check`. Xem mục “Trang vận hành” |
-| `PILOT_ACCESS_USERNAME` | server-only | bắt buộc ở production/preview | Basic Auth pilot gate P1-W03. Không đặt `NEXT_PUBLIC_` |
-| `PILOT_ACCESS_PASSWORD` | server-only | bắt buộc ở production/preview | Basic Auth pilot gate P1-W03. Không đặt `NEXT_PUBLIC_` |
 | `SUPABASE_DB_URL` | server-only | cho script ngoài Next.js | Không nạp vào web runtime |
 | `SUPABASE_POOLER_HOST` / `SUPABASE_POOLER_PORT` | server-only | khi host `db.<ref>` chỉ có IPv6 | Xem mục Migration |
 | `SUPABASE_CONFIG_FILE` | server-only | không | Đường dẫn file cấu hình ngoài repo cho script |
@@ -131,26 +129,32 @@ hiện, run gần nhất (succeeded/partial/failed), counters, snapshot và lỗ
 - Production (`pnpm build` + `pnpm start`) — route trả `notFound()` trừ khi `PIPELINE_CHECK_ENABLED=true`.
   Operator muốn mở ở local phải chủ động đặt `PIPELINE_CHECK_ENABLED=true` trong `.env.local`.
 
-Guard chạy **trước** mọi DB query. Đây **không** phải authentication/authorization — dữ liệu thật/BoD
-vẫn bắt buộc triển khai access gate tại **P1-W03**.
+Guard chạy **trước** mọi DB query.
 
-## Access gate pilot (P1-W03)
+## Authentication boundary (P1.7-H04)
 
-HTTP Basic Auth ở tầng Next.js Proxy (`src/proxy.ts`), dùng HTTPS trên domain Vercel. Đây là
-**shared pilot gate tạm thời** — không phải Auth/RBAC P3.
+Pilot HTTP Basic Auth đã bị **loại bỏ hoàn toàn** (`src/proxy.ts` và `src/lib/auth/pilot-access.ts`).
+Preview/Production đi thẳng tới Supabase login/session; không còn `WWW-Authenticate: Basic`,
+realm `Mini BI Pilot`, body `Pilot access unavailable` hay HTTP 503 vì thiếu credential pilot.
 
-- Matcher bảo vệ: `/dashboard`, `/pipeline-check`, `/api/reporting` (kể cả path con).
-- Gate chạy **trước** Server Component, Supabase client, DB query và API handler.
-- `pnpm dev` — không cần credential (phát triển local).
-- Production/Preview — thiếu `PILOT_ACCESS_USERNAME` hoặc `PILOT_ACCESS_PASSWORD` ⇒ **fail closed 503**;
-  thiếu/sai `Authorization` ⇒ **401** (kèm `WWW-Authenticate: Basic realm="Mini BI Pilot", charset="UTF-8"`);
-  đúng credential ⇒ đi tiếp.
-- So sánh credential bằng constant-time (SHA-256 + `timingSafeEqual`). Không log/trả credential.
-- Response protected luôn có `Cache-Control: private, no-store` và `Vary: Authorization`.
-- Proxy không tạo Supabase client, không đọc `SUPABASE_SECRET_KEY`, không gọi DB/API ngoài.
+Các route từng nằm sau Basic Auth giờ tự bảo vệ:
 
-Thiếu biến ở production/preview ⇒ gate fail closed (503). Cấu hình credential là việc của chủ dự án
-qua Vercel env; repo chỉ khai báo **tên biến** (xem `.env.example`), không chứa giá trị.
+| Route | Guard hiện tại |
+| --- | --- |
+| `/login` | Public |
+| `/api/auth/login\|logout\|session` | Contract auth hiện có (same-origin/CSRF) |
+| `/dashboard` | `getDirectEntryActor` → chưa đăng nhập thì `redirect("/login?next=/dashboard")`; actor lỗi dùng UX sanitized |
+| `/direct-entry` | `direct-entry-page-access` (flag + actor + capability) |
+| `/pipeline-check` | Chuyển hướng server-side về `/dashboard`; không fetch dữ liệu |
+| `/api/direct-entry/*` | Actor/capability/CSRF guard hiện hành |
+| `/api/ai/*` | `guardApiSession()` (401/403 sanitized) + feature flag + CSRF/origin hiện hành |
+| `/api/ai/worker/run` | `checkWorkerToken` (endpoint máy-với-máy, có token riêng) |
+
+`/api/reporting/*` không tồn tại trong repo này; dữ liệu reporting được đọc server-side trong
+`/dashboard` và giờ nằm sau guard session ở trên.
+
+Không có biến `PILOT_ACCESS_*` nào còn được đọc. Biến còn sót trong Vercel env (nếu có) không có
+tác dụng và có thể xóa sau khi deploy.
 
 ## Dashboard BoD (`/dashboard`)
 

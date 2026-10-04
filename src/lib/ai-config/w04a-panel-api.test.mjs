@@ -205,10 +205,19 @@ test("W04A-P7: route settings — fail-closed TRƯỚC mọi truy cập DB và K
   assert.equal(readRoute.source.includes("provider_profiles"), true, "GET trả danh sách profile cho panel");
 });
 
-test("W04A-P8: proxy matcher bao gồm /api/ai/settings (panel nằm sau pilot gate)", () => {
-  const proxy = readFileSync(new URL("../../proxy.ts", import.meta.url), "utf8");
-  assert.equal(proxy.includes('"/api/ai/settings"'), true);
-  assert.equal(proxy.includes('"/api/ai/settings/:path*"'), true);
+test("W04A-P8: /api/ai/settings nằm sau Supabase session guard (P1.7-H04 đã bỏ Pilot Basic Auth)", () => {
+  // P1.7-H04: proxy Pilot Basic Auth bị xóa, nên guard phải nằm trong chính route.
+  assert.throws(() => readFileSync(new URL("../../proxy.ts", import.meta.url), "utf8"),
+    "proxy Pilot Basic Auth phải bị xóa");
+  assert.throws(() => readFileSync(new URL("../auth/pilot-access.ts", import.meta.url), "utf8"),
+    "pilot-access phải bị xóa");
+
+  const settings = readFileSync(new URL("../../app/api/ai/settings/route.ts", import.meta.url), "utf8");
+  assert.equal(settings.includes("guardApiSession()"), true,
+    "route settings phải xác thực session trước khi chạm dữ liệu");
+  const guard = readFileSync(new URL("../auth/api-session-guard.ts", import.meta.url), "utf8");
+  assert.equal(guard.includes('"UNAUTHENTICATED"'), true, "guard phải trả 401 sanitized");
+  assert.equal(guard.includes("private, no-store"), true, "response lỗi phải private/no-store");
 });
 
 test("W04A-P9: dashboard chỉ render panel khi server bật cờ (không hard-code bật ở client)", () => {
