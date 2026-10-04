@@ -25,7 +25,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const CHROME = process.env.R3B_CHROME ??
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const OUTDIR = path.join(ROOT, "docs", "acceptance", "p1.6-i04c3-r3b");
+// R4-S02: evidence cua lan chay nay nam o thu muc rieng; ban R3B giu nguyen lam lich su.
+const OUTDIR = path.join(ROOT, "docs", "acceptance", "p1.6-i04c3-r4-s02");
 const HARNESS_DIR = path.join(ROOT, "src", "app", "r3b-harness");
 const HARNESS_FILE = path.join(HARNESS_DIR, "page.tsx");
 const ROUTE = "/r3b-harness";
@@ -98,11 +99,21 @@ const DUPLICATE_HEADER = [["Mã NLĐ", "Mã số ứng viên", "Dự án", "Ngà
 ["hrp-2026-000701", "hrp-2026-000701", "Dự án Giả Bắc", "2026-10-15", "Nguyễn Văn Giả A",
   "Tuyển Dụng Giả 1", "Thời vụ"].join("\t")].join("\n");
 const UNRESOLVED = tsv([profileRow("hrp-2026-000801", { "Dự án": "Dự án Không Có Trong Danh Mục" })]);
-const PAYMENT_ROW = tsv([profileRow("hrp-2026-000901", { STK: "000123456789",
-  "Tên ngân hàng": "Ngân hàng Giả", "Tên chủ tài khoản": "NGUYEN VAN GIA A" })]);
-const MIXED_PAYMENT = tsv([profileRow("hrp-2026-001001"), profileRow("hrp-2026-001002", {
-  STK: "000123456789", "Tên ngân hàng": "Ngân hàng Giả",
-  "Tên chủ tài khoản": "NGUYEN VAN GIA A" })]);
+// R4-S02: metadata tai khoan la text optional, doc lap tung truong.
+const ACCOUNT = "000123456789";
+const BANK_NAME = "Ngân hàng Giả Đông Á";
+const HOLDER = "NGUYỄN VĂN GIẢ A";
+const ACCOUNT_ONLY = tsv([profileRow("hrp-2026-001001", { STK: ACCOUNT })]);
+const BANK_ONLY = tsv([profileRow("hrp-2026-001002", { "Tên ngân hàng": BANK_NAME })]);
+const HOLDER_ONLY = tsv([profileRow("hrp-2026-001003", { "Tên chủ tài khoản": HOLDER })]);
+const PARTIAL_TWO = tsv([profileRow("hrp-2026-001004",
+  { STK: ACCOUNT, "Tên ngân hàng": BANK_NAME })]);
+const WITH_METADATA = tsv([profileRow("hrp-2026-001005",
+  { STK: ACCOUNT, "Tên ngân hàng": BANK_NAME, "Tên chủ tài khoản": HOLDER })]);
+const LEADING_ZERO = tsv([profileRow("hrp-2026-001006",
+  { STK: "000000012345", "Tên ngân hàng": "Ngân hàng TMCP Đông Á — Chi nhánh Hà Nội" })]);
+const MULTI_PARTIAL = tsv([profileRow("hrp-2026-001007"), profileRow("hrp-2026-001008",
+  { "Tên ngân hàng": BANK_NAME }), profileRow("hrp-2026-001009", { STK: ACCOUNT })]);
 
 /* ------------------------------------------------------------------ chrome */
 
@@ -289,7 +300,8 @@ async function runScenarios(send, shots, consoleMessages) {
   await new Promise((resolve) => setTimeout(resolve, 250));
   const detailText = String(await api(send, "bodyText()"));
   check("interactive", "full profile: hien du 5 section",
-    ["Công việc", "Hồ sơ cá nhân", "Tình trạng làm việc", "Thanh toán", "Validation-only"]
+    ["Công việc", "Hồ sơ cá nhân", "Tình trạng làm việc",
+      "Thông tin tài khoản để đối chiếu", "Validation-only"]
       .every((section) => detailText.includes(section)));
   check("interactive", "full profile: CCCD duoc mask", detailText.includes("••••••••8901"));
   check("interactive", "full profile: khong lo raw CCCD", !detailText.includes("012345678901"));
@@ -345,37 +357,77 @@ async function runScenarios(send, shots, consoleMessages) {
     JSON.stringify(await api(send, "blockers()")).includes("chưa đối chiếu được dự án"),
     await api(send, "blockers()"));
 
-  // --- S9/S10: banks=0 ---
+  // --- R4-S02: banks=[] khong con chan metadata tai khoan ---
   await api(send, "setBanks([])");
   await apiAsync(send, "remount()");
   await waitFor(send, 'document.querySelector(\'[data-testid="profile-paste-open"]\') !== null', 15000);
   await new Promise((resolve) => setTimeout(resolve, 400));
   await openDialog(send);
-  await paste(send, MINIMAL);
-  await waitFor(send, "window.__r3b.submitDisabled() === false");
-  check("interactive", "banks=0 + non-payment: CTA van bat",
-    (await api(send, "submitDisabled()")) === false);
 
-  await paste(send, PAYMENT_ROW);
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  check("interactive", "banks=0 + payment-bearing: CTA tat",
-    (await api(send, "submitDisabled()")) === true);
-  check("interactive", "banks=0 + payment-bearing: blocker ro",
-    JSON.stringify(await api(send, "blockers()")).includes("ngân hàng đang hoạt động"),
+  const metadataCases = [
+    [MINIMAL, "khong co metadata tai khoan"],
+    [ACCOUNT_ONLY, "chi STK"],
+    [BANK_ONLY, "chi ten ngan hang"],
+    [HOLDER_ONLY, "chi ten chu tai khoan"],
+    [PARTIAL_TWO, "hai truong"],
+    [WITH_METADATA, "du ba truong"],
+  ];
+  for (const [text, label] of metadataCases) {
+    await paste(send, text);
+    const enabled = await waitFor(send, "window.__r3b.submitDisabled() === false", 6000);
+    check("interactive", "banks=[] + " + label + ": CTA bat", enabled);
+  }
+  check("interactive", "banks=[] khong hien blocker ngan hang",
+    !JSON.stringify(await api(send, "blockers()")).includes("ngân hàng"),
     await api(send, "blockers()"));
-  shots.paymentBlocked = await screenshot(send, "full-profile-payment-blocked-banks-empty");
+  await api(send, 'click("profile-detail-toggle-2")');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  check("interactive", "co ghi chu trung tinh ve metadata tai khoan",
+    String(await api(send, "bodyText()")).includes("thông tin để đối chiếu"),
+    String(await api(send, "bodyText()")).slice(0, 160));
+  shots.metadataFull = await screenshot(send, "banking-metadata-full-desktop");
 
-  await paste(send, MIXED_PAYMENT);
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  check("interactive", "mixed batch co 1 dong payment-bearing: chan ca nhom",
-    (await api(send, "submitDisabled()")) === true);
+  await paste(send, PARTIAL_TWO);
+  await waitFor(send, "window.__r3b.submitDisabled() === false", 6000);
+  shots.metadataPartial = await screenshot(send, "banking-metadata-partial-desktop");
 
-  // --- S11..S14: batch that ---
-  await api(send, "setBanks([{ bank_id: '33333333-3333-4333-8333-333333333333', display_name: 'Ngân hàng Giả' }])");
+  await paste(send, MULTI_PARTIAL);
+  const multiEnabled = await waitFor(send, "window.__r3b.submitDisabled() === false", 6000);
+  check("interactive", "multi-row metadata mot phan: CTA bat", multiEnabled);
+
+  await paste(send, LEADING_ZERO);
+  await waitFor(send, "window.__r3b.submitDisabled() === false", 6000);
+  shots.leadingZero = await screenshot(send, "banking-metadata-leading-zero");
+
+  // Gui that va kiem tra body chinh xac.
+  await api(send, "setBatch({ mode: 'success' })");
+  await api(send, "calls().length = 0");
+  await api(send, 'click("profile-submit")');
+  await waitFor(send, 'window.__r3b.saved() !== null', 8000);
+  const metadataCalls = (await api(send, "calls()")).filter((call) =>
+    call.url.includes("/batches/full-profile"));
+  check("interactive", "metadata: DUNG MOT POST", metadataCalls.length === 1,
+    metadataCalls.length);
+  const metadataPayment = metadataCalls.length === 1
+    ? JSON.parse(metadataCalls[0].body).rows[0].payment : null;
+  check("interactive", "STK giu so 0 dau trong body",
+    metadataPayment !== null && metadataPayment.account_number === "000000012345",
+    metadataPayment);
+  check("interactive", "ten ngan hang Unicode trong body",
+    metadataPayment !== null &&
+    metadataPayment.bank_name === "Ngân hàng TMCP Đông Á — Chi nhánh Hà Nội",
+    metadataPayment);
+  check("interactive", "body KHONG co bank_id",
+    metadataPayment !== null && !("bank_id" in metadataPayment), metadataPayment);
+
+  // --- S11..S14: batch that (van banks=[]) ---
+  // Xoa draft/call gia lap truoc khi do batch 3 dong de so lieu khong lan voi phan metadata.
+  await api(send, "resetDrafts()");
+  await api(send, "setBatch({ mode: 'success' })");
   await apiAsync(send, "remount()");
   await waitFor(send, 'document.querySelector(\'[data-testid="profile-paste-open"]\') !== null', 15000);
   await new Promise((resolve) => setTimeout(resolve, 400));
-  await api(send, "setBatch({ mode: 'success' })");
+  await evaluate(send, "window.__r3b.calls().length = 0");
   await openDialog(send);
   await paste(send, THREE_ROWS);
   await waitFor(send, "window.__r3b.submitDisabled() === false");
@@ -404,7 +456,7 @@ async function runScenarios(send, shots, consoleMessages) {
   check("interactive", "request khong co truong authority",
     !["actor", "actor_id", "app_user_id", "auth_subject", "capability", "scope", "scope_kind",
       "entry_id", "submission_id", "provider_type", "team", "team_id", "payment_state",
-      "bank_label"].some((key) => sentKeys.has(key)), [...sentKeys]);
+      "bank_label", "bank_id"].some((key) => sentKeys.has(key)), [...sentKeys]);
   check("interactive", "header request dung",
     Object.keys(batchCalls[0].idempotencyKey ? { k: 1 } : {}).length === 1 &&
     batchCalls[0].method === "POST");
@@ -537,7 +589,9 @@ async function runScenarios(send, shots, consoleMessages) {
 
   // --- S28: mobile ---
   await setViewport(send, 390, 844);
-  await paste(send, THREE_ROWS);
+  await paste(send, WITH_METADATA);
+  await api(send, 'click("profile-detail-toggle-2")');
+  await new Promise((resolve) => setTimeout(resolve, 300));
   await new Promise((resolve) => setTimeout(resolve, 300));
   const viewport = await api(send, "viewport()");
   check("interactive", "mobile 390x844 khong tran ngang",
@@ -545,7 +599,7 @@ async function runScenarios(send, shots, consoleMessages) {
   const dialogRect = await api(send, 'rect(\'[data-testid="profile-paste-dialog"]\')');
   check("interactive", "mobile: dialog nam trong viewport",
     dialogRect !== null && dialogRect.width <= viewport.innerWidth + 1, dialogRect);
-  shots.mobile = await screenshot(send, "full-profile-paste-mobile");
+  shots.mobile = await screenshot(send, "banking-metadata-mobile");
 
   // --- desktop overflow ---
   await setViewport(send, 1920, 1080);

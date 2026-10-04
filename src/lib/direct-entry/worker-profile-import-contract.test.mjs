@@ -177,7 +177,7 @@ test("issue code co message tinh, khong chua gia tri nguoi dung", () => {
   }
   for (const code of ["PASTE_HEADER_UNKNOWN", "PASTE_HEADER_DUPLICATE", "PASTE_HEADER_REQUIRED",
     "PASTE_HEADER_EMPTY", "PASTE_FORMULA_CELL", "PASTE_NATIONAL_ID_INVALID",
-    "PASTE_DUPLICATE_NATIONAL_ID", "PASTE_BANK_CATALOG_EMPTY", "PASTE_CATALOG_MISSING",
+    "PASTE_DUPLICATE_NATIONAL_ID", "PAYMENT_METADATA_INVALID", "PASTE_CATALOG_MISSING",
     "PASTE_CATALOG_AMBIGUOUS", "PASTE_ROW_LIMIT", "PASTE_MONTH_MISMATCH", "PASTE_AGE_MISMATCH"]) {
     const message = workerProfileIssueMessage(code);
     assert.equal(message.includes(code), false, code);

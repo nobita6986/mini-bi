@@ -165,6 +165,8 @@ if (typeof window !== "undefined") {
     setBatch: (plan: BatchPlan) => { harness.batch = plan; },
     calls: () => harness.calls,
     drafts: () => harness.drafts,
+    /** Xoa draft gia lap (giu nguyen capabilities/banks/batch plan). */
+    resetDrafts: () => { harness.drafts = []; },
     setText: (value: string) => {
       const area = document.querySelector<HTMLTextAreaElement>(
         '[data-testid="profile-paste-textarea"]');

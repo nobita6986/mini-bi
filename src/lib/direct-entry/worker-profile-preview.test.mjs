@@ -19,12 +19,10 @@ const CATALOGS = {
   "2026-10-15": {
     projects: [{ id: "11111111-1111-4111-8111-111111111111", label: "Dự án Giả Bắc" }],
     recruiters: [{ id: "22222222-2222-4222-8222-222222222222", label: "Tuyển Dụng Giả 1" }],
-    banks: [{ id: "33333333-3333-4333-8333-333333333333", label: "Ngân hàng Giả" }],
   },
   "2026-11-01": {
     projects: [{ id: "11111111-1111-4111-8111-111111111112", label: "Dự án Giả Nam" }],
     recruiters: [{ id: "22222222-2222-4222-8222-222222222223", label: "Tuyển Dụng Giả 2" }],
-    banks: [],
   },
 };
 
@@ -52,7 +50,7 @@ function loadCountTracking() {
     counts.set(date, (counts.get(date) ?? 0) + 1);
     const source = CATALOGS[date];
     return source === undefined ? null
-      : { projects: source.projects, recruiters: source.recruiters, banks: source.banks };
+      : { projects: source.projects, recruiters: source.recruiters };
   };
   return { loader, counts };
 }
@@ -109,7 +107,6 @@ test("catalog: exact ID hoac exact label, khong fuzzy; missing/ambiguous la loi 
   const ambiguousResolver = createPasteCatalogResolver(() => ({
     projects: [{ id: "p-a", label: "Dự án Giả Bắc" }, { id: "p-b", label: "Dự án Giả Bắc" }],
     recruiters: CATALOGS["2026-10-15"].recruiters,
-    banks: CATALOGS["2026-10-15"].banks,
   }));
   const ambiguous = buildWorkerProfilePreview({ text: toTsv([row("hrp-2026-000123")]),
     referenceDate: REFERENCE_DATE, resolver: ambiguousResolver });
@@ -140,25 +137,27 @@ test("catalog chua tai duoc => blocker ro o muc dong", () => {
   assert.equal(result.rows[0].resolved.project_id, null);
 });
 
-test("danh muc ngan hang rong: blocker ro, khong tu chuyen ten thanh ID", () => {
-  const text = toTsv([row("hrp-2026-000001", "2026-11-01", {
-    "Dự án": "Dự án Giả Nam", "Tên NV Tuyển dụng": "Tuyển Dụng Giả 2",
+test("R4-S02: metadata tai khoan khong phu thuoc catalog ngan hang", () => {
+  const text = toTsv([row("hrp-2026-000001", "2026-10-15", {
     "STK": "000123456789", "Tên ngân hàng": "Ngân hàng Giả",
     "Tên chủ tài khoản": "NGUYEN VAN GIA A",
   })]);
   const result = preview(text);
-  assert.equal(result.catalogBlocker, true);
-  assert.equal(result.issues.some((item) => item.code === "PASTE_BANK_CATALOG_EMPTY"), true);
-  assert.equal(result.rows[0].resolved.bank_id, null);
-  assert.equal(result.rows[0].labels.bank, "Ngân hàng Giả");
-  assert.equal(result.canProceed, false);
+  // Khong con blocker danh muc ngan hang, va khong sinh bank_id.
+  assert.equal("catalogBlocker" in result, false);
+  assert.equal(result.issues.some((item) => item.code === "PASTE_BANK_CATALOG_EMPTY"), false);
+  assert.equal("bank_id" in result.rows[0].resolved, false);
+  assert.equal(result.canProceed, true);
+  assert.deepEqual(result.rows[0].row.payment.bank_name,
+    { state: "provided", value: "Ngân hàng Giả" });
+});
 
-  const withBank = preview(toTsv([row("hrp-2026-000123", "2026-10-15", {
-    "STK": "000123456789", "Tên ngân hàng": "ngân hàng giả",
-    "Tên chủ tài khoản": "NGUYEN VAN GIA A",
-  })]));
-  assert.equal(withBank.catalogBlocker, false);
-  assert.equal(withBank.rows[0].resolved.bank_id, "33333333-3333-4333-8333-333333333333");
+test("R4-S02: catalog source khong con truong banks", () => {
+  const source = readFileSync(new URL("./worker-profile-preview.ts", import.meta.url), "utf8");
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.equal(code.includes("banks"), false);
+  assert.equal(code.includes("PASTE_BANK_CATALOG_EMPTY"), false);
+  assert.equal(code.includes("catalogBlocker"), false);
 });
 
 test("duplicate trong khoi paste: ma NLĐ va CCCD la loi, SDT la canh bao", () => {

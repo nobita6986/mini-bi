@@ -63,7 +63,7 @@ export type WorkerProfileRow = {
   };
   payment: {
     account_number: WorkerProfileOptional<string>;
-    bank_label: WorkerProfileOptional<string>;
+    bank_name: WorkerProfileOptional<string>;
     account_holder_name: WorkerProfileOptional<string>;
   };
   employment: {
@@ -341,7 +341,9 @@ function buildRow(
     fail(context, "PASTE_LEAVE_BEFORE_START", "leave_date");
   }
 
-  // --- payment (khong tu suy ra payment state) ---
+  // --- R4-S02: metadata tai khoan de doi chieu ---
+  // Ba cot doc lap, deu optional: nhap mot, hai hoac ca ba deu hop le. Khong tu suy ra payment
+  // state, khong doi chieu catalog ngan hang, khong yeu cau bank active.
   const accountNumberRaw = rawCell(context, "account_number");
   let accountNumber: WorkerProfileOptional<string> = omit<string>();
   if (accountNumberRaw !== undefined && accountNumberRaw !== "") {
@@ -353,14 +355,8 @@ function buildRow(
       accountNumber = provided(accountNumberRaw);
     }
   }
-  const bankLabel = optionalText(context, "bank_id");
+  const bankName = optionalText(context, "bank_name");
   const accountHolder = optionalText(context, "account_holder_name");
-  const paymentParts = [valueOf(accountNumber) !== null, valueOf(bankLabel) !== null,
-    valueOf(accountHolder) !== null];
-  const paymentProvided = paymentParts.filter(Boolean).length;
-  if (paymentProvided > 0 && paymentProvided < 3) {
-    fail(context, "PASTE_PAYMENT_INCOMPLETE", "account_number");
-  }
 
   // --- derived / validation-only (D5): khong vao write model ---
   const indexRaw = rawCell(context, "row_index");
@@ -418,7 +414,7 @@ function buildRow(
       address: optionalText(context, "address"),
       phone: optionalText(context, "phone"),
     },
-    payment: { account_number: accountNumber, bank_label: bankLabel,
+    payment: { account_number: accountNumber, bank_name: bankName,
       account_holder_name: accountHolder },
     employment: { initial_status: initialStatus, leave_date: leaveDate,
       leave_reason_text: leaveReason },

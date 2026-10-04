@@ -1,0 +1,534 @@
+{
+  "harness": "p1.6-i04c3-r3b-browser-acceptance",
+  "shots": [
+    {
+      "key": "desktop",
+      "name": "full-profile-paste-preview-desktop",
+      "bytes": 177967
+    },
+    {
+      "key": "error",
+      "name": "full-profile-validation-error",
+      "bytes": 203051
+    },
+    {
+      "key": "metadataFull",
+      "name": "banking-metadata-full-desktop",
+      "bytes": 201593
+    },
+    {
+      "key": "metadataPartial",
+      "name": "banking-metadata-partial-desktop",
+      "bytes": 201234
+    },
+    {
+      "key": "leadingZero",
+      "name": "banking-metadata-leading-zero",
+      "bytes": 201194
+    },
+    {
+      "key": "success",
+      "name": "full-profile-batch-success",
+      "bytes": 187855
+    },
+    {
+      "key": "mobile",
+      "name": "banking-metadata-mobile",
+      "bytes": 125388
+    }
+  ],
+  "consoleErrors": [],
+  "serverError": null,
+  "checks": [
+    {
+      "scope": "interactive",
+      "name": "harness hydrate component that (client bundle da chay)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "nut mo dialog duoc render",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "mo dialog bang nut 'Dan ho so tu Excel'",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "Escape dong dialog",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "focus tra ve nut mo sau Escape",
+      "ok": true,
+      "detail": {
+        "activeTestId": "profile-paste-open",
+        "tag": "BUTTON",
+        "text": "Dán hồ sơ từ Excel"
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "minimal profile: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "minimal profile: summary co 1 dong",
+      "ok": true,
+      "detail": "1 dòng1 hợp lệ0 lỗi0 cảnh báo"
+    },
+    {
+      "scope": "interactive",
+      "name": "minimal profile: preview co 1 card",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "full profile: hien du 5 section",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "full profile: CCCD duoc mask",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "full profile: khong lo raw CCCD",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "full profile: STK duoc mask",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "full profile: khong lo raw STK",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "thu tu cot tuy y: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "alias 'Ma so ung vien' duoc chap nhan",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "UI khong hien 'Ma so ung vien'",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "loi CMT/CCCD chan submit",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "loi hien theo dong/cot",
+      "ok": true,
+      "detail": "R3B harness (synthetic)\nDữ liệu nháp trên máy chủ\nThay đổi chỉ được lưu khi máy chủ xác nhận; bản chưa lưu nằm trong bộ nhớ trang.\n\nP1.6 · DIRECT ENTRY · S03CD\n\nNhập liệu trực tiếp\n\nBản nháp của bạn · 0 dòng\n\nDán từ Excel\nDán hồ sơ từ Excel\nThêm dòng\nLưu nháp\n0 dòng cần lưu hoặc đối chiếu. Tải lại trang sẽ giữ các bản nháp máy chủ đã xác nhận.\nĐợt nhập liệu\n\nTrạng thái được tải từ máy chủ; tải lại trang vẫn giữ đúng đợt đang ở bản nháp, chờ duyệt hoặc đã gửi.\n\nChưa có đợt nhập liệu nào. Dòng mới sẽ tạo đợt ở trạng thái bản nháp khi được lưu.\nYêu cầu thay đổi\n\nYêu cầu thay đổi áp dụng cho đợt đã gửi chính thức. Người đề xuất rút được yêu cầu khi còn chờ duyệt; người có quyền duyệt mở “Xem xét” để đối chiếu và quyết định.\n\nChưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi.\n\nDự án, recruiter, HRP/Vendor và team đến từ danh mục theo ngày hiệu lực.\n\nMã NLĐ\nNgày đầu tiên đi làm\nHọ tên\nDự án\nNgười tuyển\nHRP/Vendor\nTeam\nLoại hình\nTrạng thái lưu\nHồ sơ CCCD\nDán hồ sơ từ Excel\n\nDán hồ sơ đầy đủ từ Excel. Hệ thống đọc tên cột nên thứ tự cột không quan trọng; cột tùy chọn có thể vắng mặt. Ảnh CCCD tải riêng sau khi hồ sơ được lưu.\n\nBắt buộc có dòng header; hệ thống đọc tên cột, không phụ thuộc thứ tự cột.\nCột bắt buộc: Mã NLĐ, Dự án, Ngày bắt đầu làm việc, Họ và tên, Tên NV Tuyển dụng, Loại hình LĐ.\nMỗi lần dán tối đa 100 dòng dữ liệu.\nẢnh CCCD mặt trước/sau được tải riêng sau khi hồ sơ được lưu.\nDanh sách cột hỗ trợ\nDữ liệu dán từ Excel\n\n1 dòng0 hợp lệ1 lỗi0 cảnh báo\n\nhrp-2026-000501\nCó lỗi\n\nNguyễn Văn Giả A · Dự án Giả Bắc · 2026-10-15 · Tuyển Dụng Giả 1\n\nDòng 2 · CMT/CCCD: CMT/CCCD phải gồm đúng 9 hoặc 12 chữ số.\nẨn chi tiết\nCông việc\nMã NLĐ\nhrp-2026-000501\nDự án\nDự án Giả Bắc · danh mục\nNgày bắt đầu làm việc\n2026-10-15\nNgười tuyển\nTuyển Dụng Giả 1 · danh mục\nLoại hình LĐ\nThời vụ\nGhi chú\n—\nHồ sơ cá nhân\nHọ và tên\nNguyễn Văn Giả A\nGiới tính\nMALE\nDOB\n1990-05-20\nCMT/CCCD\n—\nNgày cấp\n—\nNơi cấp\n—\nĐịa chỉ hiện tại\n—\nSố điện thoại\n—\n\nẢnh CCCD mặt trước/sau được tải riêng sau khi hồ sơ được lưu.\n\nTình trạng làm việc\nTình trạng làm việc hiện tại\n—\nNgày nghỉ thực tế\n—\nGhi chú về nghỉ việc\n—\nThông tin tài khoản để đối chiếu\nSTK\n—\nTên ngân hàng\n—\nTên chủ tài khoản\n—\n\nSTK, tên ngân hàng và tên chủ tài khoản là thông tin để đối chiếu, không phải lệnh thanh toán.\n\nValidation-only\nSTT\n—\nTháng\n2026-10\nTuổi\n36\nChi nhánh/Team\n—\nHRP/Vendor\n—\n\nHệ thống sẽ xác nhận chi nhánh/team và HRP/Vendor từ danh mục; các cột này không được lưu.\n\nCòn lỗi trong bảng xem trước; sửa hết lỗi trước khi lưu.\n\nCả nhóm được lưu trong một giao dịch: nếu một dòng không hợp lệ thì không dòng nào được lưu.\n\nĐóng\nLưu 0 dòng"
+    },
+    {
+      "scope": "interactive",
+      "name": "summary loi dung role=alert",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "unknown header fail closed",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "duplicate header fail closed",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "catalog resolve thanh cong: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "catalog unresolved: CTA tat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "catalog unresolved: co blocker ro",
+      "ok": true,
+      "detail": [
+        "Còn lỗi trong bảng xem trước; sửa hết lỗi trước khi lưu.",
+        "Có dòng chưa đối chiếu được dự án hoặc người tuyển với danh mục."
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] + khong co metadata tai khoan: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] + chi STK: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] + chi ten ngan hang: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] + chi ten chu tai khoan: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] + hai truong: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] + du ba truong: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "banks=[] khong hien blocker ngan hang",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "scope": "interactive",
+      "name": "co ghi chu trung tinh ve metadata tai khoan",
+      "ok": true,
+      "detail": "R3B harness (synthetic)\nDữ liệu nháp trên máy chủ\nThay đổi chỉ được lưu khi máy chủ xác nhận; bản chưa lưu nằm trong bộ nhớ trang.\n\nP1.6 · DIRECT ENTRY · S03CD\n"
+    },
+    {
+      "scope": "interactive",
+      "name": "multi-row metadata mot phan: CTA bat",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "metadata: DUNG MOT POST",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "scope": "interactive",
+      "name": "STK giu so 0 dau trong body",
+      "ok": true,
+      "detail": {
+        "state": "provided",
+        "account_number": "000000012345",
+        "bank_name": "Ngân hàng TMCP Đông Á — Chi nhánh Hà Nội"
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "ten ngan hang Unicode trong body",
+      "ok": true,
+      "detail": {
+        "state": "provided",
+        "account_number": "000000012345",
+        "bank_name": "Ngân hàng TMCP Đông Á — Chi nhánh Hà Nội"
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "body KHONG co bank_id",
+      "ok": true,
+      "detail": {
+        "state": "provided",
+        "account_number": "000000012345",
+        "bank_name": "Ngân hàng TMCP Đông Á — Chi nhánh Hà Nội"
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "valid batch: DUNG MOT POST",
+      "ok": true,
+      "detail": {
+        "batchCalls": 1,
+        "all": 3
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "request body dung contract",
+      "ok": true,
+      "detail": [
+        "contract_version",
+        "rows"
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "request header co Idempotency-Key dang UUID",
+      "ok": true,
+      "detail": "afbde6b2-bba5-4db3-9349-6298da616820"
+    },
+    {
+      "scope": "interactive",
+      "name": "request khong co truong authority",
+      "ok": true,
+      "detail": [
+        "contract_version",
+        "rows",
+        "project_id",
+        "first_work_date",
+        "employee_code",
+        "recruiter_id",
+        "labor_type",
+        "display_name",
+        "worker",
+        "gender",
+        "state",
+        "date_of_birth",
+        "national_id",
+        "national_id_issued_at",
+        "national_id_issued_place",
+        "address",
+        "phone",
+        "general_note",
+        "payment",
+        "employment"
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "header request dung",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "chi endpoint full-profile duoc goi",
+      "ok": true,
+      "detail": [
+        "/api/direct-entry/catalog?effective_date=2026-10-15",
+        "/api/direct-entry/batches/full-profile",
+        "/api/direct-entry/drafts"
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "thanh cong chi sau projection hop le",
+      "ok": true,
+      "detail": "Đã lưu 3 dòng bằng một yêu cầu duy nhất. Hồ sơ CCCD được tải riêng sau khi hồ sơ đã được lưu."
+    },
+    {
+      "scope": "interactive",
+      "name": "parent reload tu server va bao trang thai",
+      "ok": true,
+      "detail": "Đã lưu 3 dòng và tải lại bản nháp từ máy chủ."
+    },
+    {
+      "scope": "interactive",
+      "name": "sau khi luu: cot CCCD co nut quan ly va bat dung entry_id",
+      "ok": true,
+      "detail": [
+        {
+          "id": "cccd-manage-fad1d164-62b9-41a8-8d17-2723f40f335f",
+          "disabled": false
+        },
+        {
+          "id": "cccd-manage-5d6d1e53-1aa6-4930-bf83-988d21f5a858",
+          "disabled": false
+        },
+        {
+          "id": "cccd-manage-f8fdefa9-39a2-43df-be1a-76c3d18449a4",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "CCCD hien 'Chua tai trang thai' (khong gia 0/2)",
+      "ok": true,
+      "detail": [
+        "Chưa tải trạng thái",
+        "Chưa tải trạng thái",
+        "Chưa tải trạng thái"
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "5xx: giu key va cho bam Thu lai (khong auto-loop)",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "scope": "interactive",
+      "name": "5xx: thong bao da lam sach, khong lo ma tho",
+      "ok": true,
+      "detail": "Máy chủ chưa xử lý được. Chưa dòng nào được lưu; hãy bấm Thử lại."
+    },
+    {
+      "scope": "interactive",
+      "name": "5xx: nut doi thanh 'Thu lai'",
+      "ok": true,
+      "detail": "Thử lại"
+    },
+    {
+      "scope": "interactive",
+      "name": "retry cung intent dung lai CUNG idempotency key",
+      "ok": true,
+      "detail": [
+        "6032c23c-951c-4125-8b68-1d71b6457ea5",
+        "6032c23c-951c-4125-8b68-1d71b6457ea5"
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "sua du lieu tao intent/key moi",
+      "ok": true,
+      "detail": [
+        "6032c23c-951c-4125-8b68-1d71b6457ea5",
+        "6032c23c-951c-4125-8b68-1d71b6457ea5",
+        "afa63028-feb5-43bf-8163-f126e05e2eb2"
+      ]
+    },
+    {
+      "scope": "interactive",
+      "name": "2xx malformed: chi mot request, khong tu retry",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "scope": "interactive",
+      "name": "2xx malformed: khong hien thanh cong",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "2xx malformed: thong bao da lam sach",
+      "ok": true,
+      "detail": "Máy chủ trả về kết quả không đọc được. Chưa xác định được kết quả; hãy bấm Thử lại với cùng yêu cầu."
+    },
+    {
+      "scope": "interactive",
+      "name": "400: thong bao tieng Viet da lam sach",
+      "ok": true,
+      "detail": "CMT/CCCD phải gồm đúng 9 hoặc 12 chữ số."
+    },
+    {
+      "scope": "interactive",
+      "name": "401: thong bao da lam sach",
+      "ok": true,
+      "detail": "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại."
+    },
+    {
+      "scope": "interactive",
+      "name": "403: thong bao da lam sach",
+      "ok": true,
+      "detail": "Bạn không có quyền lưu hồ sơ đầy đủ cho nhóm dòng này."
+    },
+    {
+      "scope": "interactive",
+      "name": "409: khong auto-retry",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "scope": "interactive",
+      "name": "409: thong bao reconcile da lam sach",
+      "ok": true,
+      "detail": "Dữ liệu đã thay đổi ở nơi khác. Hãy tải lại danh sách rồi dán lại trước khi lưu."
+    },
+    {
+      "scope": "interactive",
+      "name": "409: parent reload/reconcile du lieu server",
+      "ok": true,
+      "detail": "Dữ liệu đã thay đổi ở nơi khác. Danh sách vừa được tải lại."
+    },
+    {
+      "scope": "interactive",
+      "name": "khong PII trong URL/query string",
+      "ok": true,
+      "detail": "/api/direct-entry/batches/full-profile|/api/direct-entry/drafts"
+    },
+    {
+      "scope": "interactive",
+      "name": "khong dung localStorage/sessionStorage",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "interactive",
+      "name": "khong co console error",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "scope": "interactive",
+      "name": "mobile 390x844 khong tran ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "mobile: dialog nam trong viewport",
+      "ok": true,
+      "detail": {
+        "width": 390,
+        "left": 0,
+        "height": 844
+      }
+    },
+    {
+      "scope": "interactive",
+      "name": "desktop 1920x1080 khong tran ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920
+      }
+    }
+  ],
+  "total": 67,
+  "passed": 67,
+  "failed": 0,
+  "ok": true
+}
