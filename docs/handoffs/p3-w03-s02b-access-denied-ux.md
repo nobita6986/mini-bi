@@ -9,7 +9,11 @@
 | Worktree | `C:/CodeApp/BI-p3-access-denied` |
 | Trạng thái | `P3-W03-S02B_ACCESS_DENIED_UX_IMPLEMENTED_FAST_TRACK` (browser acceptance chưa chạy) |
 
-> **SUPERSEDED bởi S02B-R1 và S02B-R2** (các commit sau).
+> **Supersession chain: S02B → R1 → R2 → R3A.**
+>
+> **R3A**: tách quyết định route ra pure helper `src/lib/auth/direct-entry-page-access.ts` (input đã resolve, output union `NOT_FOUND|REDIRECT_LOGIN|ACCOUNT_UNAVAILABLE|TEMPORARY_UNAVAILABLE|ACCESS_DENIED|ALLOW`); page dùng switch exhaustive. Evidence label: **ROUTE DECISION MATRIX (pure) = PASS; FULL TEST/BUILD = PASS; UI COMPONENT BROWSER VISUAL = chưa chạy** (không thêm test route/backdoor nên AccountUnavailable/AccessDenied không render được bằng harness synthetic); **REAL PRODUCTION ROUTE HAPPY PATH / NEGATIVE DB-AUTH STATES = PENDING integration UAT**.
+>
+> **S02B-R1 và S02B-R2** (các commit trước).
 >
 > **R1**: khi `DIRECT_ENTRY_UI_ENABLED != "true"` dùng lại `notFound()`; flag on → route gate server-side: unauthenticated → redirect `/login?next=/direct-entry`; actor missing/disabled → `<AccountUnavailable />`; thiếu mọi `entry_own|entry_team|entry_admin` → `<AccessDenied />`.
 >

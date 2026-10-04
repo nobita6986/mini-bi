@@ -4,6 +4,8 @@ import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denie
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { DirectEntryShell } from "@/components/direct-entry/direct-entry-shell";
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
+import { decideDirectEntryPageAccess } from "@/lib/auth/direct-entry-page-access";
+import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
 import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 
@@ -11,39 +13,34 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Nhập liệu trực tiếp — mini-bi" };
 
-const ENTRY_CAPABILITIES = ["entry_own", "entry_team", "entry_admin"] as const;
-
 export default async function DirectEntryPage() {
-  if (!isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED)) {
-    notFound();
+  const uiEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
+  let actor: ActorResolution | null = null;
+  if (uiEnabled) {
+    try {
+      actor = (await getDirectEntryActor(createDirectEntryActorRepository())).actor;
+    } catch {
+      actor = null;
+    }
   }
 
-  let actor;
-  try {
-    const session = await getDirectEntryActor(createDirectEntryActorRepository());
-    actor = session.actor;
-  } catch {
-    return <TemporaryUnavailable />;
-  }
-
-  if (!actor.ok) {
-    if (actor.reason === "UNAUTHENTICATED") {
+  switch (decideDirectEntryPageAccess({ uiEnabled, actor })) {
+    case "NOT_FOUND":
+      notFound();
+      // notFound() tra ve never; cac nhanh sau khong the chay.
+    case "REDIRECT_LOGIN":
       redirect("/login?next=/direct-entry");
-    }
-    if (actor.reason === "ACTOR_MAPPING_MISSING" || actor.reason === "ACTOR_DISABLED") {
+    case "ACCOUNT_UNAVAILABLE":
       return <AccountUnavailable />;
-    }
-    return <TemporaryUnavailable />;
+    case "TEMPORARY_UNAVAILABLE":
+      return <TemporaryUnavailable />;
+    case "ACCESS_DENIED":
+      return <AccessDenied />;
+    case "ALLOW":
+      return (
+        <DirectEntryShell
+          mode={process.env.DIRECT_ENTRY_API_ENABLED === "true" ? "live" : "demo"}
+        />
+      );
   }
-  const hasEntryCapability = actor.actor.capabilities.some((capability) =>
-    (ENTRY_CAPABILITIES as readonly string[]).includes(capability));
-  if (!hasEntryCapability) {
-    return <AccessDenied />;
-  }
-
-  return (
-    <DirectEntryShell
-      mode={process.env.DIRECT_ENTRY_API_ENABLED === "true" ? "live" : "demo"}
-    />
-  );
 }
