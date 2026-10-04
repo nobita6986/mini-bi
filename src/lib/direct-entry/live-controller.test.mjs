@@ -36,6 +36,22 @@ const projection = {
   employment_status: "UNCONFIRMED",
   created_at: "2026-10-03T00:00:00.000Z",
   updated_at: "2026-10-03T00:00:00.000Z",
+  profile: {
+    contract_version: "worker-profile/1.0",
+    worker_details: {
+      display_name: { state: "provided", value: "Synthetic Worker" },
+      gender: { state: "omitted" },
+      date_of_birth: { state: "omitted" },
+      national_id: { state: "omitted" },
+      national_id_issued_at: { state: "omitted" },
+      national_id_issued_place: { state: "omitted" },
+      address: { state: "omitted" },
+      phone: { state: "omitted" },
+    },
+    general_note: { state: "omitted" },
+    employment: null,
+    payment: null,
+  },
 };
 
 test("persisted IDs, versions and fields hydrate from server; unsaved rows use temporary identity", () => {
@@ -44,6 +60,7 @@ test("persisted IDs, versions and fields hydrate from server; unsaved rows use t
   assert.equal(persisted.entryVersion, 3);
   assert.equal(persisted.submissionVersion, 2);
   assert.equal(persisted.state, "clean");
+  assert.deepEqual(persisted.profile, projection.profile);
   const unsaved = newDraftRow("local-temp-1", "2026-10-15");
   assert.equal(unsaved.entryId, null);
   assert.equal(stableLiveDraftKey(unsaved), "local-temp-1");

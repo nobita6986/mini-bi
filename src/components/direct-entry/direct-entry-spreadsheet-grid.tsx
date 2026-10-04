@@ -47,11 +47,17 @@ export type SpreadsheetGridRow = {
   clientRowId: string;
   /** true khi dong da ton tai tren server, khong phai placeholder. */
   persisted: boolean;
+  /** true chi voi row nam trong staged batch W02. */
+  clientStaged: boolean;
   /** true khi submission state khoa dong (REVIEW/SUBMITTED). */
   locked: boolean;
   cells: Readonly<Record<string, string>>;
+  /** Sanitized display-only labels; these values are never copied or written. */
+  displayValues?: Readonly<Record<string, string>>;
   /** Field key duoc phep sua truc tiep; rong nghia la read-only. */
   editableFields: readonly string[];
+  cccdStatus: string;
+  canManageCccd: boolean;
   employeeCode: string;
   displayName: string;
   projectLabel: string;
@@ -68,7 +74,8 @@ export type SpreadsheetPasteRejection =
   | "CLIPBOARD_ROW_OVERFLOW"
   | "CLIPBOARD_COLUMN_OVERFLOW"
   | "CLIPBOARD_ANCHOR_INVALID"
-  | "CLIPBOARD_EMPTY";
+  | "CLIPBOARD_EMPTY"
+  | "CLIPBOARD_PERSISTED_ROW";
 
 export type SpreadsheetPasteRequest = {
   mapping: Extract<ClipboardMapResult, { ok: true }>;
@@ -86,6 +93,7 @@ export type DirectEntrySpreadsheetGridProps = {
   onClearRow(clientRowId: string): void;
   onDeleteRow(clientRowId: string): void;
   onDuplicateRow(clientRowId: string): void;
+  onOpenDraft?(clientRowId: string): void;
   onManageDocuments?(clientRowId: string): void;
   onSave(): void;
   saveLabel: string;
@@ -150,7 +158,7 @@ function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { colum
 export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProps) {
   const {
     rows, validation, catalogOptions, onCellsChange, onPasteApplied, onPasteRejected,
-    onClearRow, onDeleteRow, onDuplicateRow, onManageDocuments, onSave, saveLabel,
+    onClearRow, onDeleteRow, onDuplicateRow, onOpenDraft, onManageDocuments, onSave, saveLabel,
     saveDisabled, saveBusy, notice, canUndo, onUndo, saveMessage,
   } = props;
 
@@ -172,21 +180,33 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       if (column.key === "row_actions") {
         return {
           key: column.key, name: column.label, width: column.width, resizable: true,
-          renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => (
-            <span className={styles.rowActions}>
-              <button type="button" onClick={() => onDuplicateRow(row.clientRowId)}>Nhân bản</button>
-              <button type="button" onClick={() => onClearRow(row.clientRowId)}>Làm trống</button>
-              <button type="button" onClick={() => onDeleteRow(row.clientRowId)}>Xóa</button>
-            </span>
-          ),
+          renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => !row.clientStaged
+            ? (
+              <button type="button" disabled={!onOpenDraft} aria-label={`Mở bản nháp ${row.employeeCode}`}
+                onClick={() => onOpenDraft?.(row.clientRowId)}>Mở bản nháp</button>
+            )
+            : (
+              <span className={styles.rowActions}>
+                <button type="button" aria-label={`Nhân bản ${row.employeeCode || "dòng mới"}`}
+                  onClick={() => onDuplicateRow(row.clientRowId)}>Nhân bản</button>
+                <button type="button" aria-label={`Làm trống ${row.employeeCode || "dòng mới"}`}
+                  onClick={() => onClearRow(row.clientRowId)}>Làm trống</button>
+                <button type="button" aria-label={`Xóa ${row.employeeCode || "dòng mới"}`}
+                  onClick={() => onDeleteRow(row.clientRowId)}>Xóa</button>
+              </span>
+            ),
         };
       }
       if (column.key === "cccd_documents") {
         return {
           key: column.key, name: column.label, width: column.width, resizable: true,
           renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => (
-            <button type="button" disabled={!row.persisted || !onManageDocuments}
-              onClick={() => onManageDocuments?.(row.clientRowId)}>Hồ sơ CCCD</button>
+            <span className={styles.rowActions}>
+              <span>{row.cccdStatus}</span>
+              <button type="button" aria-label={`Quản lý hồ sơ CCCD ${row.employeeCode}`}
+                disabled={!row.persisted || !row.canManageCccd || !onManageDocuments}
+                onClick={() => onManageDocuments?.(row.clientRowId)}>Quản lý hồ sơ</button>
+            </span>
           ),
         };
       }
@@ -194,6 +214,9 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       const renderCell = ({ row }: RenderCellProps<SpreadsheetGridRow>) => {
         const issue = issueFor(row, column.key);
         const display = (() => {
+          if (row.displayValues && Object.hasOwn(row.displayValues, column.key)) {
+            return row.displayValues[column.key];
+          }
           if (column.key === "save_status") return row.saveStatus;
           if (column.key === "employee_code") return row.employeeCode;
           if (column.key === "display_name") return row.displayName;
@@ -243,7 +266,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       };
     };
     return DIRECT_ENTRY_GRID_COLUMNS.map(build);
-  }, [catalogOptions, isEditable, issueFor, onClearRow, onDeleteRow, onDuplicateRow, onManageDocuments, rowIndexOf]);
+  }, [catalogOptions, isEditable, issueFor, onClearRow, onDeleteRow, onDuplicateRow, onManageDocuments, onOpenDraft, rowIndexOf]);
 
   const onRowsChange = useCallback((next: SpreadsheetGridRow[]) => {
     for (const row of next) {
@@ -274,11 +297,16 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     if (text === "") { onPasteRejected("CLIPBOARD_EMPTY"); return args.row; }
     const parsed = parseClipboardTsv(text);
     if (!parsed.ok) { onPasteRejected("CLIPBOARD_ROW_OVERFLOW"); return args.row; }
-    const mapping = mapClipboardFromAnchor({ matrix: parsed.matrix, anchor: { rowIndex, columnIndex } });
+    const liveDraftRows = rows.filter((row) => !row.clientStaged).length;
+    const mapping = mapClipboardFromAnchor({
+      matrix: parsed.matrix,
+      anchor: { rowIndex, columnIndex },
+      maxRows: liveDraftRows + 100,
+    });
     if (!mapping.ok) { onPasteRejected(mapping.code); return args.row; }
     onPasteApplied({ mapping, rowCount: mapping.rowCount, columnCount: mapping.columnCount });
     return args.row;
-  }, [onPasteApplied, onPasteRejected, rowIndexOf]);
+  }, [onPasteApplied, onPasteRejected, rowIndexOf, rows]);
 
   const onCellCopy = useCallback((args: CellCopyArgs<SpreadsheetGridRow>, event: ClipboardEvent<HTMLDivElement>) => {
     const value = args.row.cells[args.column.key] ?? "";

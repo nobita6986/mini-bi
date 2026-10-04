@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
-import { DataGrid, renderTextEditor, type Column, type RenderEditCellProps } from "react-data-grid";
-import "react-data-grid/lib/styles.css";
 
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
@@ -28,7 +26,6 @@ import {
   keepLocalDraft,
   markDraftConflict,
   newDraftRow,
-  stableLiveDraftKey,
   applyServerDraft,
   updateLiveDraftRow,
   type ConflictCopy,
@@ -79,7 +76,13 @@ import {
   type SubmissionReadItem,
 } from "@/lib/direct-entry/submission-read-contract";
 import { projectSubmissionTransitionResult } from "@/lib/direct-entry/submission-transition-contract";
-import type { DraftCatalog, OwnDraft } from "@/lib/direct-entry/write-repository";
+import {
+  DRAFT_LIST_PROJECTION_VERSION,
+  projectOwnDrafts,
+  type OwnDraft,
+} from "@/lib/direct-entry/draft-list-contract";
+import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
+import { projectDraftProfileGridCells } from "@/lib/direct-entry/draft-profile-grid";
 import {
   DirectEntrySpreadsheetGrid,
   type SpreadsheetGridRow,
@@ -117,6 +120,7 @@ const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
   CLIPBOARD_COLUMN_OVERFLOW: "Vùng dán vượt quá cột cuối của bảng nên đã bị từ chối toàn bộ.",
   CLIPBOARD_ANCHOR_INVALID: "Chưa xác định được ô neo để dán.",
   CLIPBOARD_EMPTY: "Clipboard không có dữ liệu văn bản.",
+  CLIPBOARD_PERSISTED_ROW: "Để tránh sửa nhầm bản nháp đã lưu, chỉ dán ma trận vào vùng dòng chưa lưu.",
 };
 
 const SUBMISSION_PAGE_SIZE = 50;
@@ -177,21 +181,12 @@ function parseCatalog(value: unknown, expectedDate: string): DraftCatalog | null
 }
 
 function parseOwnDrafts(value: unknown): OwnDraft[] | null {
-  if (!isRecord(value) || value.ok !== true || !Array.isArray(value.drafts)) return null;
-  return value.drafts.every((draft) => isRecord(draft) &&
-    typeof draft.entry_id === "string" && typeof draft.submission_id === "string" &&
-    typeof draft.entry_version === "number" && typeof draft.submission_version === "number" &&
-    typeof draft.employee_code === "string" && typeof draft.first_work_date === "string" &&
-    typeof draft.worker_display_name === "string" && typeof draft.project_id === "string" &&
-    typeof draft.project_display_name === "string" && typeof draft.recruiter_id === "string" &&
-    typeof draft.recruiter_display_name === "string" &&
-    (draft.provider_type === "hrp" || draft.provider_type === "vendor") &&
-    typeof draft.team_id === "string" && typeof draft.team_display_name === "string" &&
-    (draft.labor_type === "TEMPORARY" || draft.labor_type === "PERMANENT") &&
-    (draft.employment_status === null || typeof draft.employment_status === "string") &&
-    typeof draft.created_at === "string" && typeof draft.updated_at === "string")
-    ? value.drafts as OwnDraft[]
-    : null;
+  if (!isRecord(value) || Object.keys(value).length !== 3 || value.ok !== true ||
+      value.projection_version !== DRAFT_LIST_PROJECTION_VERSION) return null;
+  return projectOwnDrafts({
+    projection_version: value.projection_version,
+    drafts: value.drafts,
+  });
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -253,6 +248,10 @@ function displayRecruiter(row: LiveDraftRow, catalog: DraftCatalog | undefined):
   return catalog?.recruiters.find(({ recruiter_id }) => recruiter_id === row.recruiterId)?.display_name ?? "";
 }
 
+function rowWithFields(row: LiveDraftRow, fields: EditableDraftFields): LiveDraftRow {
+  return { ...row, ...fields };
+}
+
 function stateText(state: LiveDraftRow["state"]): string {
   return {
     clean: "Đã lưu",
@@ -264,10 +263,6 @@ function stateText(state: LiveDraftRow["state"]): string {
   }[state];
 }
 
-function rowWithFields(row: LiveDraftRow, fields: EditableDraftFields): LiveDraftRow {
-  return { ...row, ...fields };
-}
-
 function Field({
   label,
   children,
@@ -276,38 +271,6 @@ function Field({
   children: React.ReactNode;
 }) {
   return <label className={styles.field}><span>{label}</span>{children}</label>;
-}
-
-function DateEditor(props: RenderEditCellProps<LiveDraftRow>) {
-  return (
-    <input
-      aria-label="Ngày đầu tiên đi làm"
-      type="date"
-      value={props.row.firstWorkDate}
-      disabled={props.row.state === "saving"}
-      onChange={(event) => props.onRowChange({
-        ...props.row,
-        firstWorkDate: event.currentTarget.value,
-      }, true)}
-    />
-  );
-}
-
-function LiveRecruiterEditor({
-  row,
-  onRowChange,
-  catalog,
-}: RenderEditCellProps<LiveDraftRow> & { catalog: DraftCatalog | undefined }) {
-  return (
-    <RecruiterTypeahead
-      id={`live-recruiter-${row.rowId}`}
-      label="Người tuyển"
-      options={optionsFor(catalog)}
-      value={row.recruiterId}
-      disabled={row.state === "saving" || row.state === "conflict"}
-      onChange={(recruiterId) => onRowChange({ ...row, recruiterId }, true)}
-    />
-  );
 }
 
 export function DirectEntryLive() {
@@ -1106,18 +1069,39 @@ export function DirectEntryLive() {
     const persisted: SpreadsheetGridRow[] = rows.map((row) => {
       const editable = row.state !== "saving" && row.state !== "conflict" &&
         isRowEditable(row, submissions);
+      const profileCells = projectDraftProfileGridCells(row.profile);
+      const employment = row.profile.employment;
+      const employmentStatus = employment?.status ?? row.employmentStatus;
+      const employmentStatusLabel = employmentStatus === "ON"
+        ? "Đang làm"
+        : employmentStatus === "OFF"
+          ? "Đã nghỉ"
+          : employmentStatus === "UNCONFIRMED"
+            ? "Chưa xác nhận"
+            : "Chưa xác định";
+      const cccdStatus = readCccdStatus(cccdCache, row.entryId, row.entryVersion);
       // Chi 6 field da co safe mutation path duoc sua; field full-profile khac read-only (W03).
       return {
         clientRowId: row.rowId,
-        persisted: true,
+        persisted: row.entryId !== null,
+        clientStaged: false,
         locked: !editable,
+        cccdStatus: cccdStatus.label,
+        canManageCccd: cccdStatus.canManage,
+        displayValues: profileCells.displayValues,
         cells: {
+          ...profileCells.cells,
           employee_code: row.employeeCode,
           first_work_date: row.firstWorkDate,
           display_name: row.workerName,
           project_id: row.projectId,
           recruiter_id: row.recruiterId,
+          provider_hint: row.providerType?.toUpperCase() ?? "",
+          team_hint: row.teamDisplayName,
           labor_type: row.laborType === "TEMPORARY" ? "Thời vụ" : "Toàn thời gian",
+          initial_status: employment
+            ? `${employmentStatusLabel} · hiệu lực ${employment.effective_date}`
+            : employmentStatusLabel,
         },
         editableFields: editable
           ? ["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"]
@@ -1132,7 +1116,11 @@ export function DirectEntryLive() {
     const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => ({
       clientRowId: row.clientRowId,
       persisted: false,
+      clientStaged: true,
       locked: false,
+      cccdStatus: "Chưa lưu",
+      canManageCccd: false,
+      displayValues: {},
       cells: row.cells,
       editableFields: SPREADSHEET_WRITABLE_FIELD_KEYS,
       employeeCode: row.cells.employee_code ?? "",
@@ -1142,7 +1130,7 @@ export function DirectEntryLive() {
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
     }));
     return [...persisted, ...staged];
-  }, [catalogFor, rows, stagedModel, submissions]);
+  }, [catalogFor, cccdCache, rows, stagedModel, submissions]);
 
   const onSpreadsheetCellsChange = useCallback((
     clientRowId: string,
@@ -1176,16 +1164,31 @@ export function DirectEntryLive() {
 
   /** Paste chi doi React state: khong fetch, khong storage, khong log gia tri. */
   const onStagedPaste = useCallback((request: SpreadsheetPasteRequest) => {
+    const liveDraftRowCount = rows.length;
+    if (request.mapping.cells.some((cell) => cell.rowIndex < liveDraftRowCount)) {
+      setStagedRejection(PASTE_REJECTION_MESSAGES.CLIPBOARD_PERSISTED_ROW);
+      setStagedMessage("");
+      return;
+    }
+    const rebase = <T extends { rowIndex: number },>(cells: readonly T[]) =>
+      cells.map((cell) => ({ ...cell, rowIndex: cell.rowIndex - liveDraftRowCount }));
+    const mapping = {
+      ...request.mapping,
+      cells: rebase(request.mapping.cells),
+      writeCells: rebase(request.mapping.writeCells),
+      validationCells: rebase(request.mapping.validationCells),
+      ignoredCells: rebase(request.mapping.ignoredCells),
+    };
     const snapshot = captureClipboardUndoSnapshot({
-      mapping: request.mapping,
+      mapping,
       currentRowCount: stagedModel.rows.length,
       readCell: (rowIndex, columnKey) => stagedModel.rows[rowIndex]?.cells[columnKey],
     });
-    const maxRowIndex = request.mapping.cells.reduce(
+    const maxRowIndex = mapping.cells.reduce(
       (maximum, cell) => Math.max(maximum, cell.rowIndex), 0);
     let next = ensureSpreadsheetRowCount(stagedModel, maxRowIndex + 1);
     const patches = new Map<number, Record<string, string>>();
-    for (const cell of request.mapping.writeCells) {
+    for (const cell of mapping.writeCells) {
       const bucket = patches.get(cell.rowIndex) ?? {};
       bucket[cell.columnKey] = cell.value;
       patches.set(cell.rowIndex, bucket);
@@ -1199,7 +1202,7 @@ export function DirectEntryLive() {
     setStagedModel(next);
     setStagedRejection("");
     setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
-  }, [stagedModel]);
+  }, [rows.length, stagedModel]);
 
   const onStagedUndo = useCallback(() => {
     const snapshot = stagedUndo.current;
@@ -1291,162 +1294,6 @@ export function DirectEntryLive() {
       setStagedBusy(false);
     }
   }, [reloadDrafts, stagedValidation]);
-
-  const columns = useMemo<readonly Column<LiveDraftRow>[]>(() => {
-    const editableRow = (row: LiveDraftRow) =>
-      row.state !== "saving" && row.state !== "conflict" && isRowEditable(row, submissions);
-    const textColumn = (
-      key: keyof LiveDraftRow,
-      name: string,
-      width: number,
-    ): Column<LiveDraftRow> => ({
-      key: String(key),
-      name,
-      width,
-      editable: editableRow,
-      renderEditCell: renderTextEditor,
-    });
-    return [
-      textColumn("employeeCode", "Mã NLĐ", 160),
-      {
-        key: "firstWorkDate",
-        name: "Ngày đầu tiên đi làm",
-        width: 170,
-        editable: editableRow,
-        renderEditCell: DateEditor,
-      },
-      textColumn("workerName", "Họ tên", 180),
-      {
-        key: "projectId",
-        name: "Dự án",
-        width: 200,
-        editable: editableRow,
-        renderCell: ({ row }) => displayProject(row, catalogFor(row.firstWorkDate)) || "Chọn dự án",
-        renderEditCell: (props) => (
-          <select
-            aria-label="Dự án"
-            value={props.row.projectId}
-            disabled={props.row.state === "saving"}
-            onChange={(event) => props.onRowChange({
-              ...props.row,
-              projectId: event.currentTarget.value,
-            }, true)}
-          >
-            <option value="">Chọn dự án</option>
-            {catalogFor(props.row.firstWorkDate)?.projects.map((project) => (
-              <option key={project.project_id} value={project.project_id}>{project.display_name}</option>
-            ))}
-          </select>
-        ),
-      },
-      {
-        key: "recruiterId",
-        name: "Người tuyển",
-        width: 220,
-        editable: editableRow,
-        renderCell: ({ row }) => displayRecruiter(row, catalogFor(row.firstWorkDate)) || "Chọn người tuyển",
-        renderEditCell: (props) => (
-          <LiveRecruiterEditor {...props} catalog={catalogFor(props.row.firstWorkDate)} />
-        ),
-      },
-      {
-        key: "providerType",
-        name: "HRP/Vendor",
-        width: 115,
-        renderCell: ({ row }) => catalogFor(row.firstWorkDate)?.recruiters.find(
-          ({ recruiter_id }) => recruiter_id === row.recruiterId,
-        )?.provider_type.toUpperCase() ?? "—",
-      },
-      {
-        key: "teamDisplayName",
-        name: "Team",
-        width: 140,
-        renderCell: ({ row }) => catalogFor(row.firstWorkDate)?.recruiters.find(
-          ({ recruiter_id }) => recruiter_id === row.recruiterId,
-        )?.team_display_name ?? "—",
-      },
-      {
-        key: "laborType",
-        name: "Loại hình",
-        width: 150,
-        editable: editableRow,
-        renderCell: ({ row }) => row.laborType === "TEMPORARY" ? "Thời vụ" : "Toàn thời gian",
-        renderEditCell: (props) => (
-          <select
-            aria-label="Loại hình lao động"
-            value={props.row.laborType}
-            disabled={props.row.state === "saving"}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (value === "TEMPORARY" || value === "PERMANENT") {
-                props.onRowChange({ ...props.row, laborType: value }, true);
-              }
-            }}
-          >
-            <option value="TEMPORARY">Thời vụ</option>
-            <option value="PERMANENT">Toàn thời gian</option>
-          </select>
-        ),
-      },
-      {
-        key: "state",
-        name: "Trạng thái lưu",
-        width: 170,
-        renderCell: ({ row }) => stateText(row.state),
-      },
-      {
-        key: "cccdStatus",
-        name: "Hồ sơ CCCD",
-        width: 210,
-        renderCell: ({ row }) => {
-          const status = readCccdStatus(cccdCache, row.entryId, row.entryVersion);
-          return (
-            <span className={styles.cccdCell}>
-              <span data-testid={"cccd-status-" + row.rowId}>{status.label}</span>
-              <button
-                type="button"
-                className={styles.gridEditButton}
-                data-testid={"cccd-manage-" + row.rowId}
-                disabled={!status.canManage}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (status.canManage) setCccdRowId(row.rowId);
-                }}
-              >
-                Quản lý hồ sơ
-              </button>
-            </span>
-          );
-        },
-      },
-      {
-        key: "paymentEditor",
-        name: "Thông tin thanh toán",
-        width: 180,
-        renderCell: ({ row }) => (
-          <button
-            type="button"
-            className={styles.gridEditButton}
-            onClick={(event) => {
-              event.stopPropagation();
-              setSelectedRowId(row.rowId);
-            }}
-          >
-            Mở bản nháp
-          </button>
-        ),
-      },
-    ];
-  }, [catalogFor, cccdCache, submissions]);
-
-  const onRowsChange = useCallback((updated: LiveDraftRow[]) => {
-    setRows((current) => updated.map((next) => {
-      const previous = current.find(({ rowId }) => rowId === next.rowId);
-      if (!previous) return next;
-      const merged = rowWithFields(previous, editableFields(next));
-      return updateLiveDraftRow([previous], previous.rowId, editableFields(next))[0] ?? merged;
-    }));
-  }, []);
 
   const updateDate = useCallback((rowId: string, firstWorkDate: string) => {
     updateRow(rowId, { firstWorkDate, recruiterId: "" });
@@ -1667,6 +1514,7 @@ export function DirectEntryLive() {
               onClearRow={onStagedClear}
               onDeleteRow={onStagedDelete}
               onDuplicateRow={onStagedDuplicate}
+              onOpenDraft={(rowId) => setSelectedRowId(rowId)}
               onManageDocuments={(clientRowId) => {
                 const persistedRow = rows.find((row) => row.rowId === clientRowId);
                 if (persistedRow) setCccdRowId(persistedRow.rowId);
@@ -1680,24 +1528,6 @@ export function DirectEntryLive() {
               onUndo={onStagedUndo}
               saveMessage={stagedMessage}
             />
-          </section>
-
-          <section className={styles.gridSection} aria-label="Bảng bản nháp Direct Entry">
-            <p className={styles.gridHint}>Dự án, recruiter, HRP/Vendor và team đến từ danh mục theo ngày hiệu lực.</p>
-            <div className={styles.gridViewport}>
-              <DataGrid<LiveDraftRow>
-                aria-label="Bản nháp Direct Entry"
-                className={styles.grid}
-                columns={columns}
-                onRowsChange={onRowsChange}
-                rowClass={(row) => row.state === "dirty" || row.state === "error" || row.state === "conflict"
-                  ? styles.dirtyRow
-                  : undefined}
-                rowHeight={44}
-                rowKeyGetter={stableLiveDraftKey}
-                rows={rows}
-              />
-            </div>
           </section>
 
           <section className={styles.mobileSection} aria-label="Danh sách bản nháp">

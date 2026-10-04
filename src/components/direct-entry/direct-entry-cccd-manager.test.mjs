@@ -8,6 +8,8 @@ function source(relative) {
 
 const manager = source("./direct-entry-cccd-manager.tsx");
 const live = source("./direct-entry-live.tsx");
+const grid = source("./direct-entry-spreadsheet-grid.tsx");
+const columns = source("../../lib/direct-entry/direct-entry-grid-columns.ts");
 const runner = source("../../lib/direct-entry/cccd-upload-runner.ts");
 const projection = source("../../lib/direct-entry/document-detail-projection.ts");
 const transport = source("../../lib/direct-entry/cccd-transport.ts");
@@ -16,14 +18,14 @@ const status = source("../../lib/direct-entry/cccd-status.ts");
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 
 test("cot 'Ho so CCCD' hien dung ba trang thai va nut quan ly bi khoa khi chua luu", () => {
-  const column = live.slice(live.indexOf('key: "cccdStatus"'), live.indexOf('key: "paymentEditor"'));
-  assert.match(column, /name: "Hồ sơ CCCD"/);
-  assert.match(column, /readCccdStatus\(cccdCache, row\.entryId, row\.entryVersion\)/);
-  assert.match(column, /\{status\.label\}/);
-  assert.match(column, /disabled={!status\.canManage}/);
-  assert.match(column, /data-testid={"cccd-manage-" \+ row\.rowId}/);
-  assert.match(column, /Quản lý hồ sơ/);
-  assert.equal(column.includes("fetch"), false, "o luoi chi doc cache, khong goi API");
+  assert.match(columns, /key: "cccd_documents", label: "Hồ sơ CCCD"/);
+  assert.match(live, /readCccdStatus\(cccdCache, row\.entryId, row\.entryVersion\)/);
+  assert.match(live, /cccdStatus: cccdStatus\.label/);
+  assert.match(grid, /\{row\.cccdStatus\}/);
+  assert.match(grid, /disabled={!row\.persisted \|\| !row\.canManageCccd \|\| !onManageDocuments}/);
+  assert.match(grid, /onManageDocuments\?\.\(row\.clientRowId\)/);
+  assert.match(grid, /Quản lý hồ sơ/);
+  assert.equal(grid.includes("fetch("), false, "o luoi chi doc cache, khong goi API");
   assert.match(status, /entryId === null \|\| entryId === ""/);
   assert.match(status, /CCCD_UNSAVED_LABEL = "Chưa lưu"/);
   assert.match(status, /CCCD_STATUS_UNKNOWN_LABEL/);

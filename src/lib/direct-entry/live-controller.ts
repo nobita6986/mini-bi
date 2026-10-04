@@ -1,4 +1,4 @@
-import type { OwnDraft } from "./write-repository";
+import type { DraftProfileProjection, OwnDraft } from "./write-repository";
 
 export type EditableDraftFields = {
   employeeCode: string;
@@ -47,6 +47,7 @@ export type LiveDraftRow = EditableDraftFields & {
   projectDisplayName: string;
   recruiterDisplayName: string;
   employmentStatus: "UNCONFIRMED" | "ON" | "OFF" | null;
+  profile: DraftProfileProjection;
   state: DraftSaveState;
   saved: EditableDraftFields | null;
   pendingWrite: PendingDraftWrite | null;
@@ -76,6 +77,7 @@ export function draftRowFromProjection(draft: OwnDraft): LiveDraftRow {
     projectDisplayName: draft.project_display_name,
     recruiterDisplayName: draft.recruiter_display_name,
     employmentStatus: draft.employment_status,
+    profile: draft.profile,
     state: "clean",
     saved: { ...fields },
     pendingWrite: null,
@@ -103,6 +105,22 @@ export function newDraftRow(rowId: string, firstWorkDate: string): LiveDraftRow 
     projectDisplayName: "",
     recruiterDisplayName: "",
     employmentStatus: "UNCONFIRMED",
+    profile: {
+      contract_version: "worker-profile/1.0",
+      worker_details: {
+        display_name: { state: "omitted" },
+        gender: { state: "omitted" },
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        national_id_issued_at: { state: "omitted" },
+        national_id_issued_place: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      },
+      general_note: { state: "omitted" },
+      employment: null,
+      payment: null,
+    },
     state: "dirty",
     saved: null,
     pendingWrite: null,

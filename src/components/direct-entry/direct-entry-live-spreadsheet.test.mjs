@@ -22,7 +22,8 @@ function slice(startMarker, endMarker) {
 }
 
 const pasteHandler = slice("const onStagedPaste = useCallback", "const onStagedUndo = useCallback");
-const saveHandler = slice("const onStagedSave = useCallback", "const columns = useMemo");
+const saveHandler = slice("const onStagedSave = useCallback", "const updateDate = useCallback");
+const reloadDraftHandler = slice("const reloadDrafts = useCallback", "const runTransition = useCallback");
 
 test("live render spreadsheet grid va khoi tao 30 staged rows client-only", () => {
   assert.match(live, /<DirectEntrySpreadsheetGrid/);
@@ -50,6 +51,8 @@ test("zero drafts van co 30 dong trong, va paste gan cuoi bang tu noi rong", () 
 test("paste cap nhat staged rows va khong goi mang", () => {
   assert.match(pasteHandler, /updateSpreadsheetRowCells\(/);
   assert.match(pasteHandler, /ensureSpreadsheetRowCount\(/);
+  assert.match(pasteHandler, /request\.mapping\.cells\.some\(\(cell\) => cell\.rowIndex < liveDraftRowCount\)/);
+  assert.match(pasteHandler, /cell\.rowIndex - liveDraftRowCount/);
   assert.equal(/\bfetch\s*\(/.test(pasteHandler), false, "paste khong fetch");
   assert.equal(/localStorage|sessionStorage|navigator\.clipboard/.test(pasteHandler), false);
   assert.match(pasteHandler, /setStagedNotice\(/);
@@ -106,6 +109,47 @@ test("persisted rows read-only theo submission lock, khong mo field ngoai safe m
   assert.match(live, /editableFields: editable\s*\n\s*\? \["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]\s*\n\s*: \[\],/);
   // Field full-profile khac khong duoc them vao persisted editableFields.
   assert.equal(/editableFields: editable[\s\S]{0,400}account_number/.test(live), false);
+});
+
+test("draft reload requires exact versioned projection and makes one batch call without detail N+1", () => {
+  assert.match(live, /value\.projection_version !== DRAFT_LIST_PROJECTION_VERSION/);
+  assert.match(live, /return projectOwnDrafts\(\{/);
+  assert.equal((reloadDraftHandler.match(/\/api\/direct-entry\/drafts/g) ?? []).length, 1);
+  assert.equal(/\/api\/direct-entry\/entries\//.test(reloadDraftHandler), false);
+});
+
+test("masked display values are excluded from spreadsheet copy and write sources", () => {
+  const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
+  assert.match(grid, /const value = args\.row\.cells\[args\.column\.key\] \?\? ""/);
+  assert.equal(/const value = args\.row\.displayValues/.test(grid), false);
+  assert.match(live, /editableFields: editable\s*\n\s*\? \["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]/);
+  assert.match(live, /CLIPBOARD_PERSISTED_ROW/);
+});
+
+test("spreadsheet is the only live desktop grid and profile hydration is passed to it", () => {
+  assert.equal(/<DataGrid(?:<|\s)/.test(live), false);
+  assert.equal((live.match(/<DirectEntrySpreadsheetGrid\b/g) ?? []).length, 1);
+  assert.equal(live.includes('aria-label="Bảng bản nháp Direct Entry"'), false);
+  assert.match(live, /projectDraftProfileGridCells\(row\.profile\)/);
+  assert.match(live, /provider_hint: row\.providerType\?\.toUpperCase/);
+  assert.match(live, /team_hint: row\.teamDisplayName/);
+  assert.match(live, /onOpenDraft=\{\(rowId\) => setSelectedRowId\(rowId\)\}/);
+  const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
+  assert.match(grid, /maxRows: liveDraftRows \+ 100/);
+});
+
+test("persisted actions reopen the existing drawer; mobile, CCCD, payment and document paths remain", () => {
+  const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
+  assert.match(grid, /!row\.clientStaged\s*\?\s*\(/);
+  assert.match(grid, /onOpenDraft\?\.\(row\.clientRowId\)/);
+  assert.match(grid, /onDuplicateRow\(row\.clientRowId\)/);
+  assert.match(live, /selectedRowLocked = selectedRow !== null && !isRowEditable\(selectedRow, submissions\)/);
+  assert.match(live, /styles\.mobileSection/);
+  assert.match(live, /<Dialog\.Root open=\{selectedRow !== null\}/);
+  for (const marker of ["DirectEntryCccdManager", "DirectEntryPaymentEditor",
+    "DirectEntryDocumentEditor", "onManageDocuments=", "onEntryVersionChange="]) {
+    assert.ok(live.includes(marker), "missing " + marker);
+  }
 });
 
 test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () => {
