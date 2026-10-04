@@ -19,7 +19,11 @@ const css = source("./direct-entry-shell.module.css");
 const cccdManager = source("./direct-entry-cccd-manager.tsx");
 
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
-const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id|provider_type|team_id)\s*:/;
+/**
+ * Truong authority dang REQUEST (khong phai prop `capabilities` dung de gate CTA).
+ * Request that su duoc kiem tra o full-profile-batch.test.mjs theo key set.
+ */
+const REQUEST_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|scope_kind|owner_user_id|created_by_user_id|provider_type|team_id|payment_state|bank_label)\s*:/;
 
 test("dialog: tieu de, huong dan header, textarea, danh sach cot ho tro, summary va CTA cho cho server", () => {
   assert.match(dialog, /Dán hồ sơ từ Excel/);
@@ -32,25 +36,40 @@ test("dialog: tieu de, huong dan header, textarea, danh sach cot ho tro, summary
   assert.match(dialog, /data-testid="profile-paste-textarea"/);
   assert.match(dialog, /data-testid="profile-summary"/);
   assert.match(dialog, /role=\{errorCount > 0 \? "alert" : "status"\}/);
-  // CTA: khong dung chu "Luu", dung trang thai cho server va luon disabled.
-  assert.match(dialog, /export const WORKER_PROFILE_SERVER_PENDING_LABEL = "Chờ máy chủ hỗ trợ hồ sơ đầy đủ"/);
-  assert.match(dialog, /data-testid="profile-submit"[\s\S]{0,120}disabled/);
-  assert.equal(dialog.includes("Lưu hồ sơ"), false);
-  assert.equal(/\bLưu\b/.test(dialogCode), false);
+  // R3B: CTA la that, nhung chi bat khi khong con blocker nao.
+  assert.match(dialog, /data-testid="profile-submit"/);
+  assert.match(dialog, /disabled=\{submitBlockers\.length > 0\}/);
+  assert.match(dialog, /data-testid="profile-blockers"/);
+  assert.match(dialog, /data-testid="profile-atomicity"/);
+  assert.match(dialog, /data-testid="profile-submit-message"/);
+  assert.match(dialog, /data-testid="profile-saved"/);
+  assert.match(dialog, /aria-busy=\{submitting\}/);
+  assert.match(dialog, /Đang lưu…/);
+  // Thong bao atomicity bat buoc hien cho nguoi dung.
+  assert.match(dialog, /nếu một dòng không hợp lệ thì không dòng nào\s*\n?\s*được lưu/);
 });
 
-test("dialog: khong POST, khong fallback payload 6 cot, khong goi API nao", () => {
-  for (const forbidden of ["fetch(", "XMLHttpRequest", "postPasteBatch", "/api/direct-entry",
-    "pasteBatchSignature", "beginPasteGroup", "settlePasteGroup", "buildPasteBatchPayload",
-    "idempotency", "Idempotency-Key"]) {
-    assert.equal(dialogCode.includes(forbidden), false, forbidden);
-  }
-  assert.doesNotMatch(dialogCode, /method:\s*"POST"/);
-  // Khong dung lai payload 6 cot cua duong toi thieu.
-  for (const legacy of ["createPayload", "rows: [", "labor_type:", "recruiter_id:"]) {
+test("dialog: chi goi DUNG endpoint full-profile, mot request, khong fallback 6 cot", () => {
+  assert.match(dialogCode, /FULL_PROFILE_BATCH_ENDPOINT|postFullProfileBatch\(/);
+  assert.equal(dialogCode.includes("postPasteBatch"), false, "khong dung batch toi thieu");
+  assert.equal(dialogCode.includes("buildPasteBatchPayload"), false);
+  assert.equal(dialogCode.includes("beginPasteGroup"), false);
+  assert.equal(dialogCode.includes("settlePasteGroup"), false);
+  assert.equal(dialogCode.includes('"/api/direct-entry/batches"'), false,
+    "khong goi endpoint batch toi thieu");
+  assert.equal(dialogCode.includes('method: "PATCH"'), false, "khong luu tung dong");
+  assert.equal(dialogCode.includes("XMLHttpRequest"), false);
+  // Khong tu dung lai payload 6 cot.
+  for (const legacy of ["createPayload", "labor_type:", "recruiter_id:"]) {
     assert.equal(dialogCode.includes(legacy), false, legacy);
   }
   assert.match(dialogCode, /buildWorkerProfilePreview\(/);
+  assert.match(dialogCode, /buildFullProfileRequestBody\(/);
+  assert.match(dialogCode, /fullProfileIntentDigest\(/);
+  assert.match(dialogCode, /resolveIntentKey\(/);
+  assert.match(dialogCode, /clearIntentKey\(/);
+  // Chi mot lan goi transport trong toan bo component.
+  assert.equal((dialogCode.match(/postFullProfileBatch\(/g) ?? []).length, 1);
 });
 
 test("dialog: Escape + focus tra ve nut mo qua Radix, khong tu quan ly focus", () => {
@@ -61,10 +80,11 @@ test("dialog: Escape + focus tra ve nut mo qua Radix, khong tu quan ly focus", (
   assert.doesNotMatch(dialogCode, /focus-trap|createFocusTrap|aria-modal="true"|\.focus\(\)/);
   // Ref chi duoc ghi trong effect (lint react-hooks/refs cung kiem tra dieu nay).
   const refWrites = dialogCode.split("\n").filter((line) => /\.current\s*=(?!=)/.test(line));
-  assert.equal(refWrites.length, 2, JSON.stringify(refWrites));
-  assert.equal(refWrites.every((line) => line.includes("notified.current")), true);
-  // Khong ghi ref trong than render: moi lan ghi nam trong effect hoac handler.
-  assert.match(dialogCode, /useEffect\(\(\) => \{\s*if \(!preview \|\| !preview\.canProceed/);
+  assert.equal(refWrites.length, 8, JSON.stringify(refWrites));
+  assert.equal(refWrites.every((line) =>
+    line.includes("intentKey.current") || line.includes("inFlight.current")), true);
+  // Khong ghi ref trong than render: moi lan ghi nam trong handler/effect.
+  assert.match(dialogCode, /const submitBlockers = useMemo\(/);
 });
 
 test("dialog: masked CCCD/STK, khong raw JSON, khong console, khong storage", () => {
@@ -76,7 +96,7 @@ test("dialog: masked CCCD/STK, khong raw JSON, khong console, khong storage", ()
     assert.equal(dialogCode.includes(forbidden), false, forbidden);
   }
   assert.doesNotMatch(dialog, RAW_LOGGING);
-  assert.doesNotMatch(dialogCode, CLIENT_AUTHORITY);
+  assert.doesNotMatch(dialogCode, REQUEST_AUTHORITY);
   // Error detail chi la message tinh tu code.
   assert.match(dialogCode, /workerProfileIssueMessage\(entry\.code\)/);
 });
