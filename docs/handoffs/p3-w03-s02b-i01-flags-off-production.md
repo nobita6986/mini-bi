@@ -44,6 +44,24 @@ Reconciliation details:
   redeploys the approved `main` source. Preserve all R2 environment
   configuration; do not delete DB or R2 data as part of rollback.
 
+## First Owner bootstrap and UAT evidence
+
+- The isolated S02A operator previously applied the first-owner bootstrap in a
+  single transaction. Sanitized verification reported one enabled app-user
+  mapping, all 21 canonical capabilities, and the effective `own` and `all`
+  scopes; actor projection matched those counts. No team scope was fabricated.
+- Two subsequent read-only replays reported the same mapping/capability/scope
+  counts with no duplicate grant/scope rows and no second audit event. No
+  unsupported bootstrap audit action was fabricated.
+- Owner-attested Production login UAT passed on **2026-10-04** (date only):
+  sign-in redirected to Dashboard, refresh preserved the session, opening
+  Login while signed in redirected to Dashboard, logout returned to Login,
+  refresh after logout did not silently sign in, and signing in again worked.
+  This is Owner attestation, not an agent-operated credential test.
+- No account identifier, Auth UUID, app-user ID, password, cookie, authorization
+  header, or raw capability payload is included here. The S02B-I01 integration
+  did not rerun the bootstrap or mutate the database.
+
 ## Preflight evidence (read-only)
 
 - `origin/main` was verified at `1577c035758306c54a4cd6be4808bea8452fc7c3`
