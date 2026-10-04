@@ -5,9 +5,16 @@
  * mutation API, KHONG resolve catalog o day (project/recruiter duoc resolve o tang UI theo
  * first_work_date). Server van la authority cua batch; day chi la buoc nhap du lieu.
  */
-import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
+import {
+  foldPasteToken,
+  normalizePasteDate,
+  PASTE_MAX_ROWS,
+  splitPasteCells,
+  splitPasteLines,
+} from "./paste-primitives.ts";
 
-export const EXCEL_PASTE_MAX_ROWS = 100;
+/** Giu ten cu cho tuong thich; gia tri dung chung voi moi parser dan tu Excel. */
+export const EXCEL_PASTE_MAX_ROWS = PASTE_MAX_ROWS;
 export const EXCEL_PASTE_COLUMN_COUNT = 6;
 
 export const LABOR_TYPE_ALIASES: Readonly<Record<string, "TEMPORARY" | "PERMANENT">> = Object.freeze({
@@ -42,52 +49,29 @@ export type ExcelPasteReportError = { line: number; column: number | null; messa
 /** Ket qua day du: dong hop le VA loi cua tung dong (khong dung lai buoc preview). */
 export type ExcelPasteReport = { rows: ExcelPasteParsedRow[]; errors: ExcelPasteReportError[] };
 
+/**
+ * Alias header cua template toi thieu. R3A bo sung cac header canonical cua
+ * worker-profile/1.0 de cung mot file Excel dan duoc vao ca hai duong.
+ */
 const HEADER_TOKENS = [
-  ["ma nld", "employee code", "employee_code", "manv"],
-  ["ngay dau tien di lam", "ngay bat dau lam viec", "first work date", "first_work_date", "ngaybd"],
-  ["ho ten", "display name", "display_name", "hoten", "ten nld"],
-  ["du an", "project", "project_id"],
-  ["nguoi tuyen", "recruiter", "recruiter_id"],
-  ["loai hinh lao dong", "labor type", "labor_type"],
+  ["ma nld", "ma so ung vien", "employee code", "employee_code", "manv"],
+  ["ngay dau tien di lam", "ngay bat dau lam viec", "ngay vao", "first work date",
+    "first_work_date", "ngaybd"],
+  ["ho ten", "ho va ten", "ho ten nld", "display name", "display_name", "hoten", "ten nld"],
+  ["du an", "ten cong ty/du an lam viec", "du an lam viec", "project", "project_id"],
+  ["nguoi tuyen", "nguoi tuyen dung", "ten nv tuyen dung", "recruiter", "recruiter_id"],
+  ["loai hinh lao dong", "loai hinh ld", "loai hinh", "labor type", "labor_type"],
 ];
-
-function normalizeToken(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/đ/g, "d")
-    .replace(/[^a-z0-9]/g, "");
-}
 
 function isHeaderRow(cells: readonly string[]): boolean {
   if (cells.length !== EXCEL_PASTE_COLUMN_COUNT) return false;
   return cells.every((cell, index) =>
-    HEADER_TOKENS[index].some((token) => normalizeToken(token) === normalizeToken(cell)));
-}
-
-function normalizeDate(value: string): string | null {
-  const trimmed = value.trim();
-  if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(trimmed)) {
-    return isRealCalendarDate(trimmed) ? trimmed : null;
-  }
-  const m = /^([0-9]{1,2})\/([0-9]{1,2})\/([0-9]{4})$/.exec(trimmed);
-  if (m) {
-    const day = String(Number(m[1])).padStart(2, "0");
-    const month = String(Number(m[2])).padStart(2, "0");
-    const normalized = m[3] + "-" + month + "-" + day;
-    return isRealCalendarDate(normalized) ? normalized : null;
-  }
-  return null;
+    HEADER_TOKENS[index].some((token) => foldPasteToken(token) === foldPasteToken(cell)));
 }
 
 function normalizeLaborType(value: string): "TEMPORARY" | "PERMANENT" | null {
   const lower = value.trim().toLowerCase();
-  return LABOR_TYPE_ALIASES[lower] ?? (LABOR_TYPE_ALIASES[normalizeToken(value)] ?? null);
-}
-
-function splitLines(text: string): string[] {
-  return text.replace(/\r\n/g, "\n").split("\n");
+  return LABOR_TYPE_ALIASES[lower] ?? (LABOR_TYPE_ALIASES[foldPasteToken(value)] ?? null);
 }
 
 /** Cac chi so cot 1..6 cua khoi dan (dung cho preview va thong bao loi). */
@@ -105,7 +89,7 @@ export const EXCEL_PASTE_COLUMN_CODES = {
  * Khong nem loi, khong evaluate formula, khong goi API.
  */
 export function parseExcelPasteReport(text: string): ExcelPasteReport {
-  const lines = splitLines(text);
+  const lines = splitPasteLines(text);
   const errors: ExcelPasteReportError[] = [];
   const rows: ExcelPasteParsedRow[] = [];
   let lineNumber = 0;
@@ -113,7 +97,7 @@ export function parseExcelPasteReport(text: string): ExcelPasteReport {
   for (const raw of lines) {
     lineNumber += 1;
     if (raw.trim() === "") continue;
-    const cells = raw.split("\t").map((cell) => cell.trim());
+    const cells = splitPasteCells(raw);
     if (!headerSkipped && isHeaderRow(cells)) { headerSkipped = true; continue; }
     headerSkipped = true;
     if (cells.length !== EXCEL_PASTE_COLUMN_COUNT) {
@@ -127,7 +111,7 @@ export function parseExcelPasteReport(text: string): ExcelPasteReport {
     }
     const [employeeCode, firstWorkDate, displayName, project, recruiter, laborType] = cells;
     const normalizedCode = employeeCode.trim();
-    const normalizedDate = normalizeDate(firstWorkDate);
+    const normalizedDate = normalizePasteDate(firstWorkDate);
     const normalizedLabor = normalizeLaborType(laborType);
     if (normalizedCode === "") {
       errors.push({ line: lineNumber, column: EXCEL_PASTE_COLUMN_CODES.employeeCode,
