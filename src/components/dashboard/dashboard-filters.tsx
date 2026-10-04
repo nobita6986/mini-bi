@@ -114,12 +114,6 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
               {EMPLOYMENT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
             </select>
           </Field>
-          <Field id="f-source" label="Nguồn">
-            <select id="f-source" className={inputClass} value={filters.source ?? ""} onChange={(e) => setFilters({ source: e.target.value || null })}>
-              <option value="">Tất cả nguồn</option>
-              {options.sources.map((o) => <option key={o.id} value={o.id}>{o.fileName}</option>)}
-            </select>
-          </Field>
         </div>
       </div>
     </>

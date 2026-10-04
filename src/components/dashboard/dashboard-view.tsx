@@ -2,7 +2,7 @@ import Link from "next/link";
 import Image from "next/image";
 
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
-import { buildBarData, buildCategorySegments, buildProjectDonutData, buildSourceStatusSegments } from "@/lib/reporting/p1-chart-data";
+import { buildBarData, buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingData, ReportingBucket } from "@/lib/reporting/p1-reporting";
 import type { ReportingFetchResult } from "@/lib/reporting/p1-reporting-server";
@@ -21,8 +21,6 @@ import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { ProviderDonut } from "./provider-donut";
 import { RecruiterBarChart } from "./recruiter-bar-chart";
-import { SourceStatusBar } from "./source-status-bar";
-import { SourceStatusTable } from "./source-status-table";
 import { ThemeSelector } from "./theme-selector";
 import { TrendChart } from "./trend-chart";
 
@@ -140,16 +138,12 @@ function NoMatchesBlock() {
 function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsResult: ReportingOptionsResult }) {
   const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
   const dataDays = trend.filter((p) => p.count > 0);
-  const everSnapshotted = data.coverage.expected - data.coverage.neverSucceeded;
-  const ratio = data.coverage.coverageRatio;
-  const nonCovered = data.sources.filter((s) => s.status !== "covered").length;
-  const statusSegments = buildSourceStatusSegments(data.sources);
 
-  if (data.empty.noSources) {
+  if (data.empty.noSources || data.empty.noFacts) {
     return (
       <div className="space-y-4">
         <FiltersOrError optionsResult={optionsResult} />
-        <EmptyState title="Chưa có nguồn dữ liệu" description="Chưa có nguồn báo cáo nào. Khi n8n chạy workflow lần đầu, nguồn sẽ xuất hiện ở đây." />
+        <EmptyState title="Chưa có dữ liệu tuyển dụng" description="Hiện chưa có dữ liệu để hiển thị. Hãy điều chỉnh bộ lọc hoặc tải lại trang sau." />
       </div>
     );
   }
@@ -158,23 +152,13 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
     <div className="space-y-4">
       <FiltersOrError optionsResult={optionsResult} />
 
-      {nonCovered > 0 ? (
-        <Alert tone="warning" title="Trạng thái dữ liệu cần lưu ý">
-          <p>{nonCovered} nguồn chưa ở trạng thái “Đã đồng bộ”. Xem mục “Trạng thái dữ liệu” bên dưới.</p>
-        </Alert>
-      ) : null}
-
-      {data.empty.noFacts ? (
-        <EmptyState title="Có nguồn nhưng chưa có dữ liệu tuyển dụng" description="Các nguồn trong scope chưa có snapshot nào trong daily_recruitment_breakdown." />
-      ) : data.empty.noMatches ? (
+      {data.empty.noMatches ? (
         <NoMatchesBlock />
       ) : (
         <>
-          <section aria-label="Chỉ số chính" className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <section aria-label="Chỉ số chính" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <KpiCard label="Tổng tuyển mới" value={data.recruitedTotal} hint="số người tuyển trong kết quả" accent="var(--primary)" />
             <KpiCard label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
-            <KpiCard label="Nguồn báo cáo" value={data.coverage.expected} hint={data.coverage.succeeded + " đã đồng bộ"} accent="var(--accent)" />
-            <KpiCard label="Độ phủ dữ liệu" value={everSnapshotted + "/" + data.coverage.expected} hint={(ratio === null ? "—" : Math.round(ratio * 100) + "% nguồn từng có snapshot")} accent="var(--semantic-success)" />
           </section>
 
           <section aria-label="Xu hướng tuyển dụng">
@@ -237,17 +221,6 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
           </section>
         </>
       )}
-
-      <section aria-label="Trạng thái dữ liệu">
-        <Card className="p-4">
-          <CardHeader title="Trạng thái nguồn dữ liệu" description="Phân bố trạng thái đồng bộ của các nguồn báo cáo." />
-          <SourceStatusBar segments={statusSegments} total={data.sources.length} />
-          <div className="mt-4">
-            <SourceStatusTable sources={data.sources} />
-          </div>
-          <p className="mt-2 text-xs text-muted">Chưa tự đặt ngưỡng “cũ” theo giờ — chỉ hiển thị freshness thực tế.</p>
-        </Card>
-      </section>
     </div>
   );
 }
