@@ -773,3 +773,149 @@
     font-size: 13px;
   }
 }
+
+/* P1.6-I04C3-R2: hop thoai "Dan tu Excel" (preview + loi tung dong/cot). */
+.pasteDialog {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 51;
+  inset: 0 0 0 auto;
+  display: flex;
+  width: min(760px, 100vw);
+  max-width: 100vw;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 24px;
+  box-shadow: -16px 0 40px rgb(15 23 42 / 18%);
+}
+
+.pasteColumns {
+  display: grid;
+  margin: 0;
+  gap: 4px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pasteTextarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.pasteTotals {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pastePreviewWrap {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.pastePreview {
+  width: 100%;
+  /* Giu cot doc duoc tren mobile: cuon NGANG trong khung bao, khong tran ra trang. */
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pastePreview caption {
+  padding-bottom: 6px;
+  color: var(--muted);
+  text-align: left;
+}
+
+.pastePreview th,
+.pastePreview td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  vertical-align: top;
+}
+
+.pastePreview thead th {
+  background: var(--surface);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pasteRowError td {
+  background: rgb(185 28 28 / 8%);
+}
+
+.pasteIssueList {
+  display: grid;
+  margin: 0;
+  gap: 4px;
+  padding-left: 20px;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+/* P1.6-I04C3-R2: hop thoai quan ly ho so CCCD hai mat. */
+.cccdDialog {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 51;
+  inset: 0 0 0 auto;
+  display: flex;
+  width: min(560px, 100vw);
+  max-width: 100vw;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  padding: 24px;
+  box-shadow: -16px 0 40px rgb(15 23 42 / 18%);
+}
+
+.cccdCell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.cccdSlot {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.cccdSlot .documentTitle {
+  margin: 0;
+}
+
+@media (max-width: 767px) {
+  .pasteDialog,
+  .cccdDialog {
+    width: 100vw;
+    border-left: none;
+    padding: 16px;
+  }
+
+  .pastePreview th,
+  .pastePreview td {
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+}
