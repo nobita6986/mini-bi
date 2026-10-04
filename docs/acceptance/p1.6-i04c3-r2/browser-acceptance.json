@@ -1,0 +1,920 @@
+{
+  "harness": "p1.6-i04c3-r2-browser-acceptance",
+  "typeErrors": 5,
+  "shots": [
+    {
+      "name": "excel-paste-desktop-1920x1080",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "bytes": 87214
+    },
+    {
+      "name": "excel-paste-mobile-390x844",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "bytes": 42617
+    },
+    {
+      "name": "excel-paste-errors-desktop",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "bytes": 74558
+    },
+    {
+      "name": "cccd-dialog-desktop-1920x1080",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "bytes": 69740
+    },
+    {
+      "name": "cccd-dialog-mobile-390x844",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "bytes": 24990
+    }
+  ],
+  "checks": [
+    {
+      "scope": "real-module",
+      "name": "preview.3-dong-hop-le",
+      "ok": true,
+      "detail": {
+        "actual": 3,
+        "expected": 3
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "preview.khong-co-loi",
+      "ok": true,
+      "detail": {
+        "actual": 0,
+        "expected": 0
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "preview.cho-phep-gui",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "preview.bang-co-3-dong",
+      "ok": true,
+      "detail": {
+        "actual": 3,
+        "expected": 3
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "nut-them-hien-dung-so-dong",
+      "ok": true,
+      "detail": {
+        "actual": "Thêm 3 dòng",
+        "expected": "Thêm 3 dòng"
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "nut-them-duoc-bat",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "shell-mirror",
+      "name": "focus.nut-mo-co-focus-truoc-khi-mo",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "shell-mirror",
+      "name": "Escape.dong-dialog",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "shell-mirror",
+      "name": "Escape.tra-focus-ve-nut-mo",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-module",
+      "name": "payload.khong-co-truong-authority",
+      "ok": true,
+      "detail": {
+        "actual": "employee_code,first_work_date,labor_type,project_id,recruiter_id,worker",
+        "expected": "employee_code,first_work_date,labor_type,project_id,recruiter_id,worker"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.mot-request-cho-3-dong",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.header-khop-body",
+      "ok": true,
+      "detail": {
+        "actual": "paste-key-1",
+        "expected": "paste-key-1"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.endpoint-dung-contract",
+      "ok": true,
+      "detail": {
+        "actual": "/api/direct-entry/batches",
+        "expected": "/api/direct-entry/batches"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.chi-gui-truong-rows",
+      "ok": true,
+      "detail": {
+        "actual": "rows",
+        "expected": "rows"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.body-du-3-dong",
+      "ok": true,
+      "detail": {
+        "actual": 3,
+        "expected": 3
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.ket-qua-saved",
+      "ok": true,
+      "detail": {
+        "actual": "saved",
+        "expected": "saved"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.nhom-duoc-danh-dau-da-luu",
+      "ok": true,
+      "detail": {
+        "actual": "saved",
+        "expected": "saved"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.map-entry-id-theo-thu-tu",
+      "ok": true,
+      "detail": {
+        "actual": "e1000000-0000-4000-8000-000000000001|0,e1000000-0000-4000-8000-000000000002|1,e1000000-0000-4000-8000-000000000003|2",
+        "expected": "e1000000-0000-4000-8000-000000000001|0,e1000000-0000-4000-8000-000000000002|1,e1000000-0000-4000-8000-000000000003|2"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "atomic.map-dung-ma-nld",
+      "ok": true,
+      "detail": {
+        "actual": "hrp-2026-000001,hrp-2026-000002,hrp-2026-000003",
+        "expected": "hrp-2026-000001,hrp-2026-000002,hrp-2026-000003"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "retry.dung-lai-key",
+      "ok": true,
+      "detail": {
+        "actual": "paste-key-1",
+        "expected": "paste-key-1"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "sua-du-lieu.tao-key-moi",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "409.chi-mot-request-khong-tu-retry",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "409.nhom-van-chua-luu",
+      "ok": true,
+      "detail": {
+        "actual": "unsaved",
+        "expected": "unsaved"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "409.yeu-cau-reload",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "409.key-duoc-xoa",
+      "ok": true,
+      "detail": {
+        "actual": "paste-key-409b",
+        "expected": "paste-key-409b"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "loi.khong-cho-gui",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "loi.nut-them-bi-khoa",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "loi.bao-dung-cot-du-an",
+      "ok": true,
+      "detail": [
+        {
+          "line": 2,
+          "column": 6,
+          "message": "Loại hình lao động phải là Thời vụ/TEMPORARY hoặc Toàn thời gian/PERMANENT."
+        },
+        {
+          "line": 1,
+          "column": 4,
+          "message": "Dự án không có trong danh mục của ngày hiệu lực."
+        }
+      ]
+    },
+    {
+      "scope": "dom-stub",
+      "name": "loi.hien-thi-theo-dong-va-cot",
+      "ok": true,
+      "detail": "Cột 4: Dự án không có trong danh mục của ngày hiệu lực."
+    },
+    {
+      "scope": "real-module",
+      "name": "duplicate.voi-dong-chua-luu",
+      "ok": true,
+      "detail": [
+        {
+          "line": 1,
+          "column": 1,
+          "message": "Mã NLĐ trùng với một dòng chưa lưu đang có trên trang."
+        }
+      ]
+    },
+    {
+      "scope": "real-module",
+      "name": "webcrypto.sha256-tu-bytes",
+      "ok": true,
+      "detail": {
+        "actual": "45ae705277879f7f01d778f7c95a065bb0c06ab9936cf24307f375211fee13d1",
+        "expected": "45ae705277879f7f01d778f7c95a065bb0c06ab9936cf24307f375211fee13d1"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "webcrypto.sha256-hex-64",
+      "ok": true,
+      "detail": 64
+    },
+    {
+      "scope": "real-module",
+      "name": "luoi.khong-goi-api-khi-render",
+      "ok": true,
+      "detail": {
+        "actual": 0,
+        "expected": 0
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "cot.dong-chua-luu-hien-Chua-luu",
+      "ok": true,
+      "detail": {
+        "actual": "Chưa lưu",
+        "expected": "Chưa lưu"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "cot.dong-da-luu-hien-Chua-tai-trang-thai",
+      "ok": true,
+      "detail": {
+        "actual": "Chưa tải trạng thái",
+        "expected": "Chưa tải trạng thái"
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "nut-quan-ly-bi-khoa-khi-chua-luu",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "nut-quan-ly-mo-khi-da-luu",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "mo-mot-dong.dung-mot-GET",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "mo-mot-dong.dung-url-chi-tiet",
+      "ok": true,
+      "detail": {
+        "actual": "/api/direct-entry/entries/c1000000-0000-4000-8000-0000000000b2",
+        "expected": "/api/direct-entry/entries/c1000000-0000-4000-8000-0000000000b2"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "mo-mot-dong.dung-phuong-thuc",
+      "ok": true,
+      "detail": {
+        "actual": "GET",
+        "expected": "GET"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "mo-mot-dong.tien-do-ban-dau-0-2",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "sau-khi-mo.hien-0-2",
+      "ok": true,
+      "detail": {
+        "actual": "0/2",
+        "expected": "0/2"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "cac-dong-khac-van-chua-tai",
+      "ok": true,
+      "detail": {
+        "actual": "Chưa tải trạng thái",
+        "expected": "Chưa tải trạng thái"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "render-lai-khong-goi-them-api",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.reserve-tuan-tu-FRONT-truoc-BACK",
+      "ok": true,
+      "detail": {
+        "actual": "CCCD_FRONT,CCCD_BACK",
+        "expected": "CCCD_FRONT,CCCD_BACK"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.reserve-khong-song-song",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.put-song-song",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.finalize-tuan-tu",
+      "ok": true,
+      "detail": {
+        "actual": "CCCD_FRONT,CCCD_BACK",
+        "expected": "CCCD_FRONT,CCCD_BACK"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.finalize-khong-song-song",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.reload-dung-mot-lan",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.reserve-dung-version-moi-nhat",
+      "ok": true,
+      "detail": {
+        "actual": "4,5",
+        "expected": "4,5"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.khong-optimistic-READY-khi-scan-PENDING",
+      "ok": true,
+      "detail": {
+        "actual": "pending,pending",
+        "expected": "pending,pending"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "upload.tien-do-sau-reload-la-2-2",
+      "ok": true,
+      "detail": {
+        "actual": "2/2",
+        "expected": "2/2"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "partial.mat-loi-la-failed-retryable",
+      "ok": true,
+      "detail": {
+        "actual": "failed/true",
+        "expected": "failed/true"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "partial.mat-thanh-cong-duoc-giu",
+      "ok": true,
+      "detail": {
+        "actual": "complete",
+        "expected": "complete"
+      }
+    },
+    {
+      "scope": "dom-stub",
+      "name": "partial.chi-hien-nut-thu-lai-cho-mat-loi",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "dom-stub",
+      "name": "partial.khong-hien-nut-thu-lai-cho-mat-da-xong",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-module",
+      "name": "retry.chi-goi-cho-mat-loi",
+      "ok": true,
+      "detail": {
+        "actual": "CCCD_FRONT",
+        "expected": "CCCD_FRONT"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "retry.dung-lai-idempotency-key",
+      "ok": true,
+      "detail": {
+        "actual": "cccd-key-partial",
+        "expected": "cccd-key-partial"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "retry.mat-loi-tro-thanh-complete",
+      "ok": true,
+      "detail": {
+        "actual": "complete",
+        "expected": "complete"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "occ.chi-mot-reserve-khong-tu-retry",
+      "ok": true,
+      "detail": {
+        "actual": 1,
+        "expected": 1
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "occ.khong-co-put",
+      "ok": true,
+      "detail": {
+        "actual": 0,
+        "expected": 0
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "occ.khong-co-finalize",
+      "ok": true,
+      "detail": {
+        "actual": 0,
+        "expected": 0
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "occ.slot-la-conflict",
+      "ok": true,
+      "detail": {
+        "actual": "true/false",
+        "expected": "true/false"
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "occ.key-bi-xoa",
+      "ok": true,
+      "detail": {
+        "actual": 0,
+        "expected": 0
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:cccd.jpg",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:fileName",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:checksum",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:storage_key",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:bucket",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:signed.invalid",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:national_id",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.body:Nguyen Van",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.dom:cccd.jpg",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.dom:checksum",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.dom:storage_key",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.dom:bucket",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-ro-ri.dom:signed.invalid",
+      "ok": true,
+      "detail": {
+        "actual": false,
+        "expected": false
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "khong-luu-storage",
+      "ok": true,
+      "detail": {
+        "actual": 0,
+        "expected": 0
+      }
+    },
+    {
+      "scope": "real-module",
+      "name": "signed-url-chi-trong-request-PUT",
+      "ok": true,
+      "detail": {
+        "actual": true,
+        "expected": true
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:valid.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:valid.pasteDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 760,
+        "left": 1160,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:valid.cccdDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 0,
+        "left": 0,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:valid.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:valid.pasteDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 390,
+        "left": 0,
+        "innerWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:valid.cccdDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 0,
+        "left": 0,
+        "innerWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:error.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:error.pasteDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 760,
+        "left": 1160,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "paste:error.cccdDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 0,
+        "left": 0,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "cccd.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "cccd.pasteDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 0,
+        "left": 0,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "cccd.cccdDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 560,
+        "left": 1360,
+        "innerWidth": 1920
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "cccd.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "cccd.pasteDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 0,
+        "left": 0,
+        "innerWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "cccd.cccdDialog.nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "width": 390,
+        "left": 0,
+        "innerWidth": 390
+      }
+    }
+  ],
+  "ok": true,
+  "total": 95,
+  "passed": 95,
+  "failed": 0,
+  "error": null,
+  "consoleErrors": [],
+  "scopeCounts": {
+    "real-module": 68,
+    "dom-stub": 9,
+    "shell-mirror": 3,
+    "real-css": 15
+  },
+  "limitations": [
+    "Khong mount cay React component: hanh vi Escape/focus cua Radix chi duoc ghi nhan voi scope shell-mirror.",
+    "Khong chay Next.js server, khong DB, khong R2: moi request duoc stub trong trang.",
+    "Bang chung component-level nam o source-contract test, khong phai o harness nay."
+  ]
+}

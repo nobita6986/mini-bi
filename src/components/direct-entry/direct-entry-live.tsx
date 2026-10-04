@@ -13,6 +13,8 @@ import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/dire
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
 import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
+import { DirectEntryExcelPasteDialog, type PasteSubmitResult } from "@/components/direct-entry/direct-entry-excel-paste-dialog";
+import { DirectEntryCccdManager } from "@/components/direct-entry/direct-entry-cccd-manager";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
 import {
@@ -39,6 +41,7 @@ import {
   dropSubmissionRows,
   EMPTY_INTENT_KEY,
   isRowEditable,
+  isUnsavedRowState,
   mergeReloadedDrafts,
   resolveIntentKey,
   shortRef,
@@ -46,6 +49,24 @@ import {
   type SubmissionAction,
   type TransitionIntentKeyState,
 } from "@/lib/direct-entry/submission-lifecycle";
+import {
+  buildPasteBatchPayload,
+  type PastePreviewRow,
+} from "@/lib/direct-entry/excel-paste-import";
+import {
+  assignPasteEntryIds,
+  beginPasteGroup,
+  pasteBatchErrorMessage,
+  postPasteBatch,
+  settlePasteGroup,
+} from "@/lib/direct-entry/paste-batch-save";
+import {
+  EMPTY_CCCD_STATUS_CACHE,
+  readCccdStatus,
+  writeCccdStatus,
+  type CccdStatusCache,
+} from "@/lib/direct-entry/cccd-status";
+import type { CccdDocumentSummary } from "@/lib/direct-entry/cccd-document-pair";
 import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
 import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
 import {
@@ -287,7 +308,12 @@ export function DirectEntryLive() {
     useState<SubmissionReadItem | null>(null);
   const changeRequestCursorRef = useRef<string | null>(null);
   const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const pasteBatchKey = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
+  const [cccdCache, setCccdCache] = useState<CccdStatusCache>(EMPTY_CCCD_STATUS_CACHE);
+  const [cccdRowId, setCccdRowId] = useState<string | null>(null);
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
+  const cccdRow = rows.find(({ rowId }) => rowId === cccdRowId) ?? null;
   const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
 
   useEffect(() => {
@@ -579,6 +605,15 @@ export function DirectEntryLive() {
     await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
   }, [loadChangeRequests, loadSubmissions]);
 
+  /** Ma NLĐ cua cac dong CHUA LUU dang co tren trang (de phat hien trung khi dan). */
+  const unsavedEmployeeCodes = useMemo(
+    () => rows
+      .filter((row) => row.entryId === null || isUnsavedRowState(row.state))
+      .map((row) => row.employeeCode)
+      .filter((code) => code.trim() !== ""),
+    [rows],
+  );
+
   const blockedSubmissionIds = useMemo(() => {
     const blocked = new Set<string>();
     for (const submission of submissions) {
@@ -851,6 +886,96 @@ export function DirectEntryLive() {
     }
   }, [saveRow]);
 
+  /**
+   * Mot nhom dan tu Excel di bang DUNG MOT request toi POST /api/direct-entry/batches.
+   * Khong optimistic-save: chi khi server xac nhan thi nhom moi duoc them vao bang.
+   */
+  const submitPasteGroup = useCallback(async (
+    previewRows: readonly PastePreviewRow[],
+  ): Promise<PasteSubmitResult> => {
+    const payloadRows = buildPasteBatchPayload(previewRows);
+    const group = beginPasteGroup({
+      keyState: pasteBatchKey.current,
+      rows: payloadRows,
+      generate: () => crypto.randomUUID(),
+    });
+    pasteBatchKey.current = group.keyState;
+    const result = await postPasteBatch({
+      rows: group.pending.rows,
+      idempotencyKey: group.pending.key,
+      fetchImpl: fetch,
+    });
+    const settled = settlePasteGroup({
+      pending: group.pending,
+      result,
+      keyState: pasteBatchKey.current,
+    });
+    pasteBatchKey.current = settled.keyState;
+    if (settled.outcome.status === "saved") {
+      const assignments = assignPasteEntryIds({
+        kind: "saved",
+        submissionId: settled.outcome.submissionId,
+        submissionVersion: settled.outcome.submissionVersion,
+        entryIds: settled.outcome.entryIds,
+      }, payloadRows.length);
+      if (!assignments) {
+        return { ok: false, message: pasteBatchErrorMessage("PASTE_BATCH_RESPONSE_INVALID"),
+          reloadRequired: true };
+      }
+      const createdIds = new Set<string>();
+      setRows((current) => {
+        const created = previewRows.map((preview, index) => {
+          const assignment = assignments[index];
+          createdIds.add(assignment.entryId);
+          const fields: EditableDraftFields = {
+            employeeCode: preview.employeeCode,
+            firstWorkDate: preview.firstWorkDate,
+            workerName: preview.workerName,
+            projectId: preview.projectId,
+            recruiterId: preview.recruiterId,
+            laborType: preview.laborType,
+          };
+          return {
+            ...newDraftRow(assignment.entryId, preview.firstWorkDate),
+            ...fields,
+            entryId: assignment.entryId,
+            submissionId: assignment.submissionId,
+            entryVersion: 1,
+            submissionVersion: assignment.submissionVersion,
+            projectDisplayName: preview.projectText,
+            recruiterDisplayName: preview.recruiterText,
+            state: "saved" as const,
+            saved: { ...fields },
+          };
+        });
+        return [...current, ...created];
+      });
+      window.setTimeout(() => {
+        setRows((existing) => existing.map((row) =>
+          row.entryId !== null && createdIds.has(row.entryId) && row.state === "saved"
+            ? { ...row, state: "clean" }
+            : row));
+      }, 1600);
+      return { ok: true };
+    }
+    if (settled.outcome.reloadRequired) {
+      await reloadDrafts().catch(() => undefined);
+    }
+    return {
+      ok: false,
+      message: pasteBatchErrorMessage(settled.outcome.code),
+      reloadRequired: settled.outcome.reloadRequired,
+    };
+  }, [reloadDrafts]);
+
+  const setCccdStatus = useCallback((
+    entryId: string,
+    entryVersion: number,
+    documents: readonly CccdDocumentSummary[],
+  ) => {
+    setCccdCache((current) => writeCccdStatus(current, entryId, entryVersion, documents));
+  }, []);
+
   const loadLatest = useCallback((rowId: string) => {
     setRows((current) => current.map((row) => {
       if (row.rowId !== rowId || !row.conflictCopy) return row;
@@ -985,6 +1110,31 @@ export function DirectEntryLive() {
         renderCell: ({ row }) => stateText(row.state),
       },
       {
+        key: "cccdStatus",
+        name: "Hồ sơ CCCD",
+        width: 210,
+        renderCell: ({ row }) => {
+          const status = readCccdStatus(cccdCache, row.entryId, row.entryVersion);
+          return (
+            <span className={styles.cccdCell}>
+              <span data-testid={"cccd-status-" + row.rowId}>{status.label}</span>
+              <button
+                type="button"
+                className={styles.gridEditButton}
+                data-testid={"cccd-manage-" + row.rowId}
+                disabled={!status.canManage}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (status.canManage) setCccdRowId(row.rowId);
+                }}
+              >
+                Quản lý hồ sơ
+              </button>
+            </span>
+          );
+        },
+      },
+      {
         key: "paymentEditor",
         name: "Thông tin thanh toán",
         width: 180,
@@ -1002,7 +1152,7 @@ export function DirectEntryLive() {
         ),
       },
     ];
-  }, [catalogFor, submissions]);
+  }, [catalogFor, cccdCache, submissions]);
 
   const onRowsChange = useCallback((updated: LiveDraftRow[]) => {
     setRows((current) => updated.map((next) => {
@@ -1045,6 +1195,24 @@ export function DirectEntryLive() {
           <p>Bản nháp của bạn · {rows.length} dòng</p>
         </div>
         <div className={styles.liveHeaderActions}>
+          <DirectEntryExcelPasteDialog
+            open={pasteOpen}
+            onOpenChange={setPasteOpen}
+            trigger={
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                data-testid="paste-excel-open"
+                disabled={loadState !== "ready"}
+              >
+                Dán từ Excel
+              </button>
+            }
+            ensureCatalog={ensureCatalog}
+            catalogFor={catalogFor}
+            existingEmployeeCodes={unsavedEmployeeCodes}
+            onSubmit={submitPasteGroup}
+          />
           <button type="button" className={styles.secondaryButton} onClick={addRow} disabled={loadState !== "ready"}>
             Thêm dòng
           </button>
@@ -1177,6 +1345,7 @@ export function DirectEntryLive() {
                     <span>{row.workerName || "Chưa nhập họ tên"}</span>
                     <span className={styles.rowCardMeta}>
                       {displayProject(row, catalogFor(row.firstWorkDate)) || "Chưa chọn dự án"}
+                      {" · "}Hồ sơ CCCD: {readCccdStatus(cccdCache, row.entryId, row.entryVersion).label}
                     </span>
                   </button>
                 </li>
@@ -1185,6 +1354,17 @@ export function DirectEntryLive() {
           </section>
         </>
       )}
+
+      <DirectEntryCccdManager
+        key={cccdRow?.entryId ?? "no-cccd-row"}
+        row={cccdRow}
+        onOpenChange={(open) => { if (!open) setCccdRowId(null); }}
+        canEdit={cccdRow !== null && capabilities.includes("entry_own") &&
+          capabilities.includes("document_upload") && isRowEditable(cccdRow, submissions)}
+        canView={capabilities.includes("document_view")}
+        onStatus={setCccdStatus}
+        onEntryVersionChange={onPaymentEntryVersionChange}
+      />
 
       <Dialog.Root open={selectedRow !== null} onOpenChange={(open) => {
         if (!open) setSelectedRowId(null);
