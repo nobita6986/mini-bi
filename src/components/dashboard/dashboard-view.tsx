@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Image from "next/image";
 
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
 import { buildBarData, buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
@@ -21,7 +20,6 @@ import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { ProviderDonut } from "./provider-donut";
 import { RecruiterBarChart } from "./recruiter-bar-chart";
-import { ThemeSelector } from "./theme-selector";
 import { TrendChart } from "./trend-chart";
 
 function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
@@ -62,22 +60,16 @@ export function DashboardView({
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
       <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
-            <div className="flex h-16 shrink-0 items-center justify-center rounded-lg bg-white p-1 shadow-sm ring-1 ring-border sm:h-20">
-              <Image src="/brand/hrpartner-logo.png" alt="HR Partner" width={2166} height={1706} priority className="h-full w-auto" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
-              <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
-              <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
-              {generatedAt ? (
-                <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
-              ) : null}
-            </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
+            <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
+            <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+            {generatedAt ? (
+              <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
+            ) : null}
           </div>
-          <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
+          <div className="flex flex-wrap items-start justify-start gap-2 sm:shrink-0 sm:justify-end">
             <AiReportPanel />
-            <ThemeSelector />
             {aiSettingsEnabled ? <AiSettingsPanel /> : null}
           </div>
         </div>
