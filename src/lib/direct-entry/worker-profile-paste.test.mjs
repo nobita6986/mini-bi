@@ -91,7 +91,7 @@ test("ho so day du: moi cot tuy chon duoc map dung", () => {
   assert.deepEqual(row.worker.phone, { state: "provided", value: PHONE });
   assert.deepEqual(row.general_note, { state: "provided", value: "Ghi chú giả" });
   assert.deepEqual(row.payment.account_number, { state: "provided", value: ACCOUNT });
-  assert.deepEqual(row.payment.bank_label, { state: "provided", value: "Ngân hàng Giả" });
+  assert.deepEqual(row.payment.bank_name, { state: "provided", value: "Ngân hàng Giả" });
   assert.deepEqual(row.payment.account_holder_name, { state: "provided", value: HOLDER });
   assert.equal(row.derived.age_years, 36);
   assert.equal(deriveAgeYears("1990-05-20", REFERENCE_DATE), 36);
@@ -291,9 +291,23 @@ test("do dai: ghi chu 4000 ok, 4001 loi; dia chi 1024 ok, 1025 loi", () => {
     item.code === "PASTE_TEXT_TOO_LONG" && item.field === "address"), true);
 });
 
-test("thanh toan: du 3 truong hoac khong co truong nao; khong tu suy ra state", () => {
-  const partial = parse(toTsv([[...requiredPairs(), ["STK", ACCOUNT]]]));
-  assert.equal(partial.issues.some((item) => item.code === "PASTE_PAYMENT_INCOMPLETE"), true);
+test("R4-S02: metadata tai khoan la text optional, nhap mot/hai/ba truong deu hop le", () => {
+  for (const extra of [[["STK", ACCOUNT]], [["Tên ngân hàng", "Ngân hàng Giả"]],
+    [["Tên chủ tài khoản", HOLDER]],
+    [["STK", ACCOUNT], ["Tên ngân hàng", "Ngân hàng Giả"]],
+    [["STK", ACCOUNT], ["Tên chủ tài khoản", HOLDER]],
+    [["Tên ngân hàng", "Ngân hàng Giả"], ["Tên chủ tài khoản", HOLDER]],
+    [["STK", ACCOUNT], ["Tên ngân hàng", "Ngân hàng Giả"], ["Tên chủ tài khoản", HOLDER]]]) {
+    const result = parse(toTsv([[...requiredPairs(), ...extra]]));
+    assert.equal(result.errorCount, 0, JSON.stringify(extra));
+    assert.equal(result.issues.some((item) => item.code === "PASTE_PAYMENT_INCOMPLETE"), false);
+  }
+  // Ba truong deu trong => omitted, khong phai chuoi rong.
+  const blank = parse(toTsv([[...requiredPairs(), ["STK", ""], ["Tên ngân hàng", ""],
+    ["Tên chủ tài khoản", ""]]]));
+  assert.equal(blank.errorCount, 0);
+  assert.deepEqual(blank.rows[0].payment.account_number, { state: "omitted" });
+  assert.deepEqual(blank.rows[0].payment.bank_name, { state: "omitted" });
 
   const full = parse(toTsv([[...requiredPairs(), ["STK", ACCOUNT],
     ["Tên ngân hàng", "Ngân hàng Giả"], ["Tên chủ tài khoản", HOLDER]]]));

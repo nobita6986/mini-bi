@@ -25,7 +25,6 @@ export type { PasteCatalogOption };
 export type PasteCatalogSource = {
   projects: readonly PasteCatalogOption[];
   recruiters: readonly PasteCatalogOption[];
-  banks: readonly PasteCatalogOption[];
 };
 
 /** Caller cung cap nguon catalog theo ngay hieu luc (co the la cache cua trang). */
@@ -73,8 +72,8 @@ export type ExistingProfileIdentity = {
 export type WorkerProfilePreviewRow = {
   sourceRow: number;
   row: WorkerProfileRow;
-  resolved: { project_id: string | null; recruiter_id: string | null; bank_id: string | null };
-  labels: { project: string; recruiter: string; bank: string };
+  resolved: { project_id: string | null; recruiter_id: string | null };
+  labels: { project: string; recruiter: string };
   issues: WorkerProfileIssue[];
   warnings: WorkerProfileIssue[];
   canProceed: boolean;
@@ -93,8 +92,6 @@ export type WorkerProfilePreview = {
   errorCount: number;
   warningCount: number;
   canProceed: boolean;
-  /** true khi co dong can doi chieu ngan hang nhung danh muc ngan hang dang rong. */
-  catalogBlocker: boolean;
   catalogDates: readonly string[];
 };
 
@@ -123,9 +120,9 @@ function resolveRow(
   issues: WorkerProfileIssue[] } {
   const issues: WorkerProfileIssue[] = [];
   const resolved: WorkerProfilePreviewRow["resolved"] =
-    { project_id: null, recruiter_id: null, bank_id: null };
+    { project_id: null, recruiter_id: null };
   const labels: WorkerProfilePreviewRow["labels"] =
-    { project: row.project_label, recruiter: row.recruiter_label, bank: "" };
+    { project: row.project_label, recruiter: row.recruiter_label };
   if (source === null) {
     addIssue(issues, issue("PASTE_CATALOG_UNAVAILABLE", "error", row.sourceRow, null));
     return { resolved, labels, issues };
@@ -141,19 +138,8 @@ function resolveRow(
   else addIssue(issues, issue(recruiter.reason === "AMBIGUOUS" ? "PASTE_CATALOG_AMBIGUOUS" :
     "PASTE_CATALOG_MISSING", "error", row.sourceRow, "recruiter_id"));
 
-  if (row.payment.bank_label.state === "provided") {
-    const bankLabel = row.payment.bank_label.value;
-    labels.bank = bankLabel;
-    if (source.banks.length === 0) {
-      // Danh muc ngan hang chua co du lieu: blocker ro, KHONG tu chuyen ten thanh ID.
-      addIssue(issues, issue("PASTE_BANK_CATALOG_EMPTY", "error", row.sourceRow, "bank_id"));
-    } else {
-      const bank = matchCatalogReference(bankLabel, source.banks);
-      if (bank.ok) resolved.bank_id = bank.id;
-      else addIssue(issues, issue(bank.reason === "AMBIGUOUS" ? "PASTE_CATALOG_AMBIGUOUS" :
-        "PASTE_CATALOG_MISSING", "error", row.sourceRow, "bank_id"));
-    }
-  }
+  // R4-S02: STK / tên ngân hàng / tên chủ tài khoản là TEXT metadata để đối chiếu.
+  // KHONG resolve qua direct_entry_banks, KHONG phu thuoc banks=0, KHONG tao bank_id.
   return { resolved, labels, issues };
 }
 
@@ -201,7 +187,6 @@ export function buildWorkerProfilePreview(input: {
     referenceDate: input.referenceDate });
   const existing = input.existing ?? [];
   const rows: WorkerProfilePreviewRow[] = [];
-  let catalogBlocker = false;
 
   // Duplicate detection: trong khoi paste + voi cac dong chua luu do caller cung cap.
   const firstSeen = new Map<string, number>();
@@ -228,9 +213,6 @@ export function buildWorkerProfilePreview(input: {
     const source = row.first_work_date === "" ? null
       : input.resolver.resolve(row.first_work_date);
     const resolution = resolveRow(row, source);
-    if (resolution.issues.some((item) => item.code === "PASTE_BANK_CATALOG_EMPTY")) {
-      catalogBlocker = true;
-    }
 
     const ownIssues = parsed.issues.filter((item) => item.row === row.sourceRow);
     const all = [...ownIssues, ...resolution.issues, ...duplicate];
@@ -269,7 +251,6 @@ export function buildWorkerProfilePreview(input: {
     errorCount,
     warningCount,
     canProceed: errorCount === 0 && rows.length > 0 && parsed.rows.length > 0,
-    catalogBlocker,
     catalogDates,
   };
 }

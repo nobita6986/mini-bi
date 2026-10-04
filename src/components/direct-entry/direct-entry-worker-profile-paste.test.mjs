@@ -102,8 +102,8 @@ test("dialog: masked CCCD/STK, khong raw JSON, khong console, khong storage", ()
 });
 
 test("dialog: section theo nhom va ghi chu CCCD/team/provider", () => {
-  for (const heading of ["Công việc", "Hồ sơ cá nhân", "Tình trạng làm việc", "Thanh toán",
-    "Validation-only"]) {
+  for (const heading of ["Công việc", "Hồ sơ cá nhân", "Tình trạng làm việc",
+    "Thông tin tài khoản để đối chiếu", "Validation-only"]) {
     assert.equal(dialog.includes(">" + heading + "<"), true, heading);
   }
   assert.match(dialog, /WORKER_PROFILE_CCCD_NOTE/);

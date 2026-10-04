@@ -114,13 +114,15 @@ export const WORKER_PROFILE_FIELDS: readonly WorkerProfileFieldSpec[] = Object.f
 
   // --- F: payment ---
   { key: "account_number", canonicalHeader: "STK", aliases: ["Số tài khoản"],
-    group: "payment", requirement: "conditional", sensitivity: "financial", persisted: true,
+    group: "payment", requirement: "optional", sensitivity: "financial", persisted: true,
     constrained: true, validator: "validateAccountNumber", maxLength: 64 },
-  { key: "bank_id", canonicalHeader: "Tên ngân hàng", aliases: ["Ngân hàng"],
-    group: "payment", requirement: "conditional", sensitivity: "none", persisted: true,
-    constrained: true, validator: "resolveCatalogBank", maxLength: 256 },
+  // R4-S02: "Tên ngân hàng" la TEXT metadata de doi chieu, KHONG resolve qua catalog va khong
+  // phu thuoc direct_entry_banks. Server luu nguyen van ban (da trim).
+  { key: "bank_name", canonicalHeader: "Tên ngân hàng", aliases: ["Ngân hàng"],
+    group: "payment", requirement: "optional", sensitivity: "none", persisted: true,
+    constrained: true, validator: "validateBankName", maxLength: 256 },
   { key: "account_holder_name", canonicalHeader: "Tên chủ tài khoản", aliases: ["Chủ tài khoản"],
-    group: "payment", requirement: "conditional", sensitivity: "direct_pii", persisted: true,
+    group: "payment", requirement: "optional", sensitivity: "direct_pii", persisted: true,
     constrained: false, validator: "validateAccountHolder", maxLength: 256 },
 
   // --- A: derived / validation-only (D5). persisted:false => khong vao write model ---
@@ -214,19 +216,20 @@ export const WORKER_PROFILE_ISSUE_MESSAGES: Readonly<Record<string, string>> = O
   PASTE_NATIONAL_ID_INVALID: "CMT/CCCD phải gồm đúng 9 hoặc 12 chữ số.",
   PASTE_STATUS_INVALID: "Tình trạng làm việc chỉ nhận Chưa xác nhận/Đang làm/Đã nghỉ.",
   PASTE_ACCOUNT_NUMBER_INVALID: "STK phải có 1-64 ký tự và không chứa ký tự điều khiển.",
-  PASTE_PAYMENT_INCOMPLETE: "Thông tin thanh toán phải có đủ STK, tên ngân hàng và tên chủ tài khoản.",
+  PAYMENT_METADATA_INVALID:
+    "Thông tin tài khoản không hợp lệ (độ dài hoặc ký tự điều khiển).",
   PASTE_TEXT_TOO_LONG: "Giá trị vượt quá độ dài cho phép của cột.",
   PASTE_DERIVED_INVALID: "Cột dẫn xuất có giá trị không đọc được nên bị bỏ qua.",
   PASTE_DERIVED_IGNORED: "Cột dẫn xuất không được lưu; hệ thống tự tính lại.",
   PASTE_MONTH_MISMATCH: "Tháng đã dán không khớp tháng của ngày bắt đầu làm việc.",
   PASTE_AGE_MISMATCH: "Tuổi đã dán khác tuổi tính từ ngày sinh.",
+  PASTE_ACCOUNT_METADATA_INFO:
+    "STK, tên ngân hàng và tên chủ tài khoản là thông tin để đối chiếu, không phải lệnh thanh toán.",
   PASTE_TEAM_CONFIRM: "Hệ thống sẽ xác nhận chi nhánh/team từ danh mục.",
   PASTE_PROVIDER_CONFIRM: "Hệ thống sẽ xác nhận HRP/Vendor từ danh mục.",
   PASTE_CATALOG_UNAVAILABLE: "Chưa tải được danh mục cho ngày hiệu lực này.",
   PASTE_CATALOG_MISSING: "Không có trong danh mục của ngày hiệu lực.",
   PASTE_CATALOG_AMBIGUOUS: "Khớp nhiều mục trong danh mục; hãy dùng đúng mã hoặc tên đầy đủ.",
-  PASTE_BANK_CATALOG_EMPTY:
-    "Danh mục ngân hàng chưa có dữ liệu nên chưa thể đối chiếu tên ngân hàng.",
   PASTE_DUPLICATE_EMPLOYEE_CODE: "Mã NLĐ trùng với một dòng khác trong cùng lần dán.",
   PASTE_DUPLICATE_NATIONAL_ID: "CMT/CCCD trùng với một dòng khác trong cùng lần dán.",
   PASTE_DUPLICATE_PHONE: "Số điện thoại trùng với một dòng khác trong cùng lần dán.",

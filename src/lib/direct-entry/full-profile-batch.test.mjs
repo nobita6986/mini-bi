@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   FULL_PROFILE_BATCH_ENDPOINT,
+  buildAccountMetadata,
   buildFullProfileRequestBody,
   buildFullProfileRow,
   classifyFullProfileResponse,
@@ -11,6 +12,8 @@ import {
   fullProfileIntentDigest,
   fullProfileRequiredCapabilities,
   fullProfileSubmitBlockers,
+  hasAnyAccountMetadata,
+  isAccountMetadataValid,
   postFullProfileBatch,
   projectFullProfileSuccess,
 } from "./full-profile-batch.ts";
@@ -59,10 +62,9 @@ function row(code, date = "2026-10-15", overrides = {}) {
 }
 
 function preview(text, options = {}) {
-  const banks = options.banks ?? [BANK];
   const projects = options.projects ?? [PROJECT, PROJECT_2];
   const recruiters = options.recruiters ?? [RECRUITER];
-  const source = { projects, recruiters, banks };
+  const source = { projects, recruiters };
   const resolver = createPasteCatalogResolver(() => source);
   return buildWorkerProfilePreview({ text, referenceDate: REFERENCE_DATE, resolver,
     existing: options.existing });
@@ -134,8 +136,10 @@ test("ho so day du: map worker/payment/employment dung contract", () => {
   assert.deepEqual(requestRow.worker.national_id_issued_at,
     { state: "provided", value: "2020-06-01" });
   assert.deepEqual(requestRow.general_note, { state: "provided", value: "Ghi chú giả" });
+  // R4-S02: chi gui truong da nhap, khong co bank_id.
   assert.deepEqual(requestRow.payment, { state: "provided", account_number: ACCOUNT,
-    bank_id: BANK.id, account_holder_name: HOLDER });
+    bank_name: BANK.label, account_holder_name: HOLDER });
+  assert.equal("bank_id" in requestRow.payment, false);
   assert.deepEqual(requestRow.employment, { initial_status: "OFF", leave_date: "2026-10-20",
     leave_reason_text: "Hết hạn hợp đồng giả" });
   // Non-OFF khong duoc gui leave_date/leave_reason_text.
@@ -266,35 +270,96 @@ test("catalog: exact ID/label resolve; thieu hoac ambiguous deu chan", () => {
   assert.equal(JSON.stringify(hintRow).includes("Team Giả"), false);
 });
 
-test("banks=0: non-payment van gui duoc, payment-bearing bi chan (fail closed)", () => {
-  const noBanks = { banks: [] };
-  const nonPayment = preview(tsv([row("hrp-2026-000123")]), noBanks);
-  assert.equal(blockersFor(nonPayment).length, 0, JSON.stringify(blockersFor(nonPayment)));
-  const body = buildFullProfileRequestBody(nonPayment.rows);
-  assert.equal(body.rows[0].payment, null);
-
-  const paymentBearing = preview(tsv([row("hrp-2026-000123", "2026-10-15", {
-    STK: ACCOUNT, "Tên ngân hàng": BANK.label, "Tên chủ tài khoản": HOLDER,
-  })]), noBanks);
-  const blockers = blockersFor(paymentBearing);
-  assert.equal(blockers.includes("PROFILE_PAYMENT_BANK_REQUIRED"), true);
-  assert.equal(blockers.includes("PROFILE_CATALOG_UNRESOLVED"), true);
-  assert.equal(buildFullProfileRow(paymentBearing.rows[0]), null);
-
-  // Trang thai payment khong can bank (omitted) van duoc phep.
-  const omittedPayment = preview(tsv([row("hrp-2026-000123")]), noBanks);
-  assert.equal(blockersFor(omittedPayment).length, 0);
+test("R4-S02: khong co metadata tai khoan => payment null, CTA bat", () => {
+  const none = preview(tsv([row("hrp-2026-000123")]));
+  assert.equal(blockersFor(none).length, 0, JSON.stringify(blockersFor(none)));
+  assert.equal(buildFullProfileRequestBody(none.rows).rows[0].payment, null);
 });
 
-test("mixed batch: mot dong payment-bearing khong hop le => chan ca nhom", () => {
+test("R4-S02: mot, hai hoac ba truong deu duoc gui (khong phu thuoc catalog ngan hang)", () => {
+  const cases = [
+    [{ STK: ACCOUNT }, { account_number: ACCOUNT }],
+    [{ "Tên ngân hàng": BANK.label }, { bank_name: BANK.label }],
+    [{ "Tên chủ tài khoản": HOLDER }, { account_holder_name: HOLDER }],
+    [{ STK: ACCOUNT, "Tên ngân hàng": BANK.label },
+      { account_number: ACCOUNT, bank_name: BANK.label }],
+    [{ STK: ACCOUNT, "Tên chủ tài khoản": HOLDER },
+      { account_number: ACCOUNT, account_holder_name: HOLDER }],
+    [{ "Tên ngân hàng": BANK.label, "Tên chủ tài khoản": HOLDER },
+      { bank_name: BANK.label, account_holder_name: HOLDER }],
+    [{ STK: ACCOUNT, "Tên ngân hàng": BANK.label, "Tên chủ tài khoản": HOLDER },
+      { account_number: ACCOUNT, bank_name: BANK.label, account_holder_name: HOLDER }],
+  ];
+  for (const [overrides, expected] of cases) {
+    const p = preview(tsv([row("hrp-2026-000123", "2026-10-15", overrides)]));
+    assert.equal(p.errorCount, 0, JSON.stringify(overrides));
+    assert.equal(blockersFor(p).length, 0, JSON.stringify(blockersFor(p)));
+    const payment = buildFullProfileRequestBody(p.rows).rows[0].payment;
+    assert.deepEqual(payment, { state: "provided", ...expected });
+    assert.equal("bank_id" in payment, false);
+  }
+});
+
+test("R4-S02: ba truong deu trong => payment null (khong chen chuoi rong)", () => {
+  const blank = preview(tsv([row("hrp-2026-000123", "2026-10-15", {
+    STK: "", "Tên ngân hàng": "   ", "Tên chủ tài khoản": "",
+  })]));
+  assert.equal(blank.errorCount, 0);
+  assert.equal(blockersFor(blank).length, 0);
+  assert.equal(buildFullProfileRequestBody(blank.rows).rows[0].payment, null);
+});
+
+test("R4-S02: STK giu so 0 dau, ten ngan hang giu Unicode, trim dau/cuoi", () => {
+  const p = preview(tsv([row("hrp-2026-000123", "2026-10-15", {
+    STK: "  000123456789  ", "Tên ngân hàng": "  Ngân hàng Đông Á  ",
+    "Tên chủ tài khoản": "  NGUYỄN VĂN GIẢ A  ",
+  })]));
+  assert.equal(p.errorCount, 0);
+  const payment = buildFullProfileRequestBody(p.rows).rows[0].payment;
+  assert.equal(payment.account_number, "000123456789");
+  assert.equal(payment.bank_name, "Ngân hàng Đông Á");
+  assert.equal(payment.account_holder_name, "NGUYỄN VĂN GIẢ A");
+});
+
+test("R4-S02: metadata sai kieu/do dai => fail closed", () => {
+  const tooLongBank = preview(tsv([row("hrp-2026-000123", "2026-10-15",
+    { "Tên ngân hàng": "x".repeat(257) })]));
+  assert.equal(tooLongBank.errorCount > 0 || blockersFor(tooLongBank)
+    .includes("PROFILE_ACCOUNT_METADATA_INVALID"), true);
+
+  const tooLongHolder = preview(tsv([row("hrp-2026-000123", "2026-10-15",
+    { "Tên chủ tài khoản": "y".repeat(257) })]));
+  assert.equal(tooLongHolder.errorCount > 0 || blockersFor(tooLongHolder)
+    .includes("PROFILE_ACCOUNT_METADATA_INVALID"), true);
+
+  const longAccount = preview(tsv([row("hrp-2026-000123", "2026-10-15",
+    { STK: "9".repeat(65) })]));
+  assert.equal(longAccount.canProceed, false);
+  assert.equal(blockersFor(longAccount).includes("PROFILE_PREVIEW_INVALID"), true);
+});
+
+test("R4-S02: mixed rows van mot batch, khong con blocker ngan hang", () => {
+  const empty = { account_number: { state: "omitted" }, bank_name: { state: "omitted" },
+    account_holder_name: { state: "omitted" } };
+  const withMeta = { account_number: { state: "provided", value: ACCOUNT },
+    bank_name: { state: "omitted" }, account_holder_name: { state: "omitted" } };
+  assert.equal(hasAnyAccountMetadata(empty), false);
+  assert.equal(hasAnyAccountMetadata(withMeta), true);
+  assert.equal(isAccountMetadataValid(withMeta), true);
+  assert.deepEqual(buildAccountMetadata(withMeta),
+    { state: "provided", account_number: ACCOUNT });
+
   const mixed = preview(tsv([
     row("hrp-2026-000001"),
-    row("hrp-2026-000002", "2026-10-15", { STK: ACCOUNT, "Tên ngân hàng": BANK.label,
-      "Tên chủ tài khoản": HOLDER }),
-  ]), { banks: [] });
-  const blockers = blockersFor(mixed);
-  assert.equal(blockers.includes("PROFILE_PAYMENT_BANK_REQUIRED"), true);
-  assert.equal(buildFullProfileRequestBody(mixed.rows), null);
+    row("hrp-2026-000002", "2026-10-15", { "Tên ngân hàng": BANK.label }),
+  ]));
+  assert.equal(blockersFor(mixed).length, 0, JSON.stringify(blockersFor(mixed)));
+  const body = buildFullProfileRequestBody(mixed.rows);
+  assert.equal(body.rows.length, 2);
+  assert.equal(body.rows[0].payment, null);
+  assert.deepEqual(body.rows[1].payment, { state: "provided", bank_name: BANK.label });
+  assert.deepEqual(fullProfileRequiredCapabilities(body.rows),
+    ["entry_create", "submission_create", "payment_view", "payment_edit"]);
 });
 
 test("gioi han: 1..100 dong; body limit duoc kiem tra truoc khi gui", async () => {

@@ -31,12 +31,26 @@ export type FullProfileOptionalText =
   | { state: "omitted" }
   | { state: "provided"; value: string };
 
+/**
+ * R4-S02: metadata tai khoan de doi chieu. Ca ba truong deu optional va doc lap
+ * (mot, hai hoac ba truong deu hop le). KHONG co bank_id: full-profile import khong gui
+ * bank catalog authority. Khop voi `normalizePayment` cua server: chi gui truong da nhap.
+ */
 export type FullProfilePayment = {
   state: "provided";
-  account_number: string;
-  bank_id: string;
-  account_holder_name: string;
+  account_number?: string;
+  bank_name?: string;
+  account_holder_name?: string;
 };
+
+/** Gioi han do dai theo `full-profile-contract.ts` (normalizeText). */
+export const ACCOUNT_METADATA_MAX_LENGTHS = Object.freeze({
+  account_number: 64,
+  bank_name: 256,
+  account_holder_name: 256,
+});
+
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 export type FullProfileEmployment =
   | { initial_status: "UNCONFIRMED" | "ON" }
@@ -75,31 +89,76 @@ function optionalText<T extends string>(value: WorkerProfileOptional<T>):
     : { state: "omitted" };
 }
 
+export type AccountMetadataInput = {
+  account_number: WorkerProfileOptional<string>;
+  bank_name: WorkerProfileOptional<string>;
+  account_holder_name: WorkerProfileOptional<string>;
+};
+
+/** Trim theo dung ECMAScript whitespace nhu server normalizeText; rong => null. */
+function metadataValue(value: WorkerProfileOptional<string>): string | null {
+  if (value.state !== "provided") return null;
+  const trimmed = value.value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+export function accountMetadataValues(input: AccountMetadataInput): Record<string, string | null> {
+  return {
+    account_number: metadataValue(input.account_number),
+    bank_name: metadataValue(input.bank_name),
+    account_holder_name: metadataValue(input.account_holder_name),
+  };
+}
+
+/** true khi nguoi dung co nhap it nhat mot trong ba truong. */
+export function hasAnyAccountMetadata(input: AccountMetadataInput): boolean {
+  return Object.values(accountMetadataValues(input)).some((value) => value !== null);
+}
+
+/** Kieu/do dai theo contract server: string, <= max length, khong ky tu dieu khien. */
+export function isAccountMetadataValid(input: AccountMetadataInput): boolean {
+  const values = accountMetadataValues(input);
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null) continue;
+    const max = ACCOUNT_METADATA_MAX_LENGTHS[key as keyof typeof ACCOUNT_METADATA_MAX_LENGTHS];
+    if (value.length > max || CONTROL_CHARS.test(value)) return false;
+  }
+  return true;
+}
+
+/**
+ * Chieu metadata tai khoan sang payload server:
+ * - ca ba trong  => null ("khong co metadata", server hieu la omitted);
+ * - co it nhat mot truong => { state: "provided", ...chi cac truong da nhap };
+ * - gia tri khong hop le => null (caller fail closed).
+ * KHONG bao gio sinh bank_id hay catalog id.
+ */
+export function buildAccountMetadata(input: AccountMetadataInput): FullProfilePayment | null {
+  if (!hasAnyAccountMetadata(input)) return null;
+  if (!isAccountMetadataValid(input)) return null;
+  const values = accountMetadataValues(input);
+  const payment: FullProfilePayment = { state: "provided" };
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null) continue;
+    (payment as Record<string, string>)[key] = value;
+  }
+  return payment;
+}
+
 /**
  * Chieu mot dong preview da resolve sang request row.
- * Tra null khi catalog bat buoc chua resolve (fail closed, khong doan).
+ * Tra null khi catalog bat buoc chua resolve hoac metadata tai khoan khong hop le
+ * (fail closed, khong doan).
  */
 export function buildFullProfileRow(row: WorkerProfilePreviewRow): FullProfileRequestRow | null {
   const { row: profile } = row;
   if (row.resolved.project_id === null || row.resolved.recruiter_id === null) return null;
 
-  let payment: FullProfilePayment | null = null;
-  const account = profile.payment.account_number;
-  const bank = profile.payment.bank_label;
-  const holder = profile.payment.account_holder_name;
-  if (account.state === "provided" || bank.state === "provided" || holder.state === "provided") {
-    // R3A da bao dam all-three-or-none; o day chi nhan khi bank da resolve sang stable ID.
-    if (account.state !== "provided" || holder.state !== "provided" ||
-        row.resolved.bank_id === null) {
-      return null;
-    }
-    payment = {
-      state: "provided",
-      account_number: account.value,
-      bank_id: row.resolved.bank_id,
-      account_holder_name: holder.value,
-    };
-  }
+  // R4-S02: metadata tai khoan la text optional, doc lap tung truong.
+  // Ca ba trong => payment = null (server hieu la "khong co metadata").
+  // Co it nhat mot truong => state "provided" va CHI gui cac truong da nhap.
+  const payment = buildAccountMetadata(profile.payment);
+  if (payment === null && hasAnyAccountMetadata(profile.payment)) return null;
 
   let employment: FullProfileEmployment | null = null;
   const status = profile.employment.initial_status;
@@ -159,7 +218,7 @@ export type FullProfileBlockerCode =
   | "PROFILE_PREVIEW_EMPTY"
   | "PROFILE_PREVIEW_INVALID"
   | "PROFILE_CATALOG_UNRESOLVED"
-  | "PROFILE_PAYMENT_BANK_REQUIRED"
+  | "PROFILE_ACCOUNT_METADATA_INVALID"
   | "PROFILE_ROW_LIMIT"
   | "PROFILE_BODY_LIMIT"
   | "PROFILE_CAPABILITY_MISSING"
@@ -200,18 +259,18 @@ export function fullProfileSubmitBlockers(
   }
   if (preview.errorCount > 0 || !preview.canProceed) blockers.push("PROFILE_PREVIEW_INVALID");
   if (preview.totalRows > FULL_PROFILE_MAX_ROWS) blockers.push("PROFILE_ROW_LIMIT");
-  if (preview.catalogBlocker) blockers.push("PROFILE_PAYMENT_BANK_REQUIRED");
 
   const rows: FullProfileRequestRow[] = [];
   for (const row of preview.rows) {
-    const paymentBearing = row.row.payment.account_number.state === "provided" ||
-      row.row.payment.bank_label.state === "provided" ||
-      row.row.payment.account_holder_name.state === "provided";
-    if (paymentBearing && row.resolved.bank_id === null) {
-      blockers.push("PROFILE_PAYMENT_BANK_REQUIRED");
+    // R4-S02: KHONG con blocker theo danh muc ngan hang. Metadata tai khoan la text optional
+    // va khong bao gio chan CTA. Chi kiem tra kieu/do dai theo contract server.
+    if (!isAccountMetadataValid(row.row.payment)) {
+      blockers.push("PROFILE_ACCOUNT_METADATA_INVALID");
     }
     const built = buildFullProfileRow(row);
-    if (built === null) blockers.push("PROFILE_CATALOG_UNRESOLVED");
+    if (built === null) blockers.push(
+      isAccountMetadataValid(row.row.payment) ? "PROFILE_CATALOG_UNRESOLVED"
+        : "PROFILE_ACCOUNT_METADATA_INVALID");
     else rows.push(built);
   }
 
@@ -417,8 +476,8 @@ export const FULL_PROFILE_BLOCKER_MESSAGES: Readonly<Record<FullProfileBlockerCo
     PROFILE_PREVIEW_INVALID: "Còn lỗi trong bảng xem trước; sửa hết lỗi trước khi lưu.",
     PROFILE_CATALOG_UNRESOLVED:
       "Có dòng chưa đối chiếu được dự án hoặc người tuyển với danh mục.",
-    PROFILE_PAYMENT_BANK_REQUIRED:
-      "Có dòng khai báo thanh toán nhưng chưa có ngân hàng đang hoạt động trong danh mục.",
+    PROFILE_ACCOUNT_METADATA_INVALID:
+      "Thông tin tài khoản không hợp lệ (độ dài hoặc ký tự điều khiển).",
     PROFILE_ROW_LIMIT: "Mỗi lần lưu tối đa 100 dòng.",
     PROFILE_BODY_LIMIT: "Nhóm dòng vượt quá giới hạn dung lượng cho phép.",
     PROFILE_CAPABILITY_MISSING: "Bạn không có đủ quyền để lưu nhóm dòng này.",

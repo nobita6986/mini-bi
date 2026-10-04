@@ -160,15 +160,16 @@ function RowDetail({ row }: { row: WorkerProfilePreviewRow }) {
         ]} />
       </section>
       <section className={styles.profileSection}>
-        <h4>Thanh toán</h4>
+        <h4>Thông tin tài khoản để đối chiếu</h4>
         <DefinitionList entries={[
           ["STK", payment.account_number.state === "provided"
             ? maskAccountNumber(payment.account_number.value) : "—"],
-          ["Tên ngân hàng", payment.bank_label.state === "provided"
-            ? payment.bank_label.value + " · " + resolved(row.resolved.bank_id, "danh mục")
-            : "—"],
+          ["Tên ngân hàng", optionalText(payment.bank_name)],
           ["Tên chủ tài khoản", optionalText(payment.account_holder_name)],
         ]} />
+        <p className={styles.profileNote} data-testid="profile-account-note">
+          {workerProfileIssueMessage("PASTE_ACCOUNT_METADATA_INFO")}
+        </p>
       </section>
       <section className={styles.profileSection}>
         <h4>Validation-only</h4>
@@ -278,11 +279,6 @@ export function WorkerProfilePastePanel({
         </p>
       )}
 
-      {preview?.catalogBlocker === true && (
-        <p className={styles.documentError} role="alert" data-testid="profile-catalog-blocker">
-          {workerProfileIssueMessage("PASTE_BANK_CATALOG_EMPTY")}
-        </p>
-      )}
 
       {headerIssues.length > 0 && (
         <ul className={styles.profileIssueList} data-testid="profile-table-issues">
@@ -422,7 +418,6 @@ function toCatalogSource(catalog: DraftCatalog | undefined) {
     recruiters: catalog.recruiters.map((recruiter) => ({
       id: recruiter.recruiter_id, label: recruiter.display_name,
     })),
-    banks: catalog.banks.map((bank) => ({ id: bank.bank_id, label: bank.display_name })),
   };
 }
 
