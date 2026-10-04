@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// P1.6-I04C3-R4-I01: live server acceptance against the migration-37 schema.
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import pg from "pg";
@@ -12,7 +13,7 @@ import { createMigratedDatabase } from "./lib/s04c-read-fixture.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
 const EXPECTED_PROJECT_REF = "kiamyvfymxdattohfwmt";
-const MIGRATION = "20261005060000_p1_6_i04c3_full_profile_server_foundation.sql";
+const MIGRATION = "20261005070000_p1_6_i04c3_r4_banking_metadata.sql";
 const CONTRACT = "worker-profile/1.0";
 const RPC = `select public.direct_entry_create_full_profile_batch(
   $1::uuid, $2::uuid, $3::text, $4::jsonb, $5::text
@@ -118,12 +119,15 @@ async function tableSecurityState(client) {
 
 async function verifySchema(client, migrations) {
   const migration = migrations.find(({ name }) => name === MIGRATION);
-  check(migrations.length === 36 && migration, "36 local migrations including #36");
+  check(migrations.length === 37 && migration, "37 local migrations including #37");
+  check(!/\b(?:update|delete)\s+public\.direct_entry_payments\b|\binsert\s+into\s+public\.direct_entry_banks\b/i
+    .test(migration.sql),
+  "migration #37 does not rewrite existing payments or seed the bank catalog");
 
   const { rows: applied } = await client.query(
     "select version, checksum from public.schema_migrations order by version",
   );
-  check(applied.length === migrations.length, "migration ledger has 36 rows");
+  check(applied.length === migrations.length, "migration ledger has 37 rows");
   const checksums = new Map(applied.map(({ version, checksum }) => [version, checksum]));
   check(migrations.every(({ name, checksum }) => checksums.get(name) === checksum),
     "all applied checksums match source");
@@ -131,13 +135,14 @@ async function verifySchema(client, migrations) {
   const expectedNames = expectedDirectEntryFunctions(migrations);
   const sourceNames = [...expectedNames].sort();
   const fromScratch = await createMigratedDatabase();
+  let inventory;
   try {
-    check(fromScratch.migrationNames.length === 36, "PGlite applied all 36 migrations");
+    check(fromScratch.migrationNames.length === 37, "PGlite applied all 37 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();
-    check(sourceNames.length === 67 && sameJson(expectedLiveNames, sourceNames),
-      "live Direct Entry function names equal migration-derived inventory of 67");
+    check(sameJson(expectedLiveNames, sourceNames),
+      "live Direct Entry function names equal the migration-derived PGlite inventory");
     check(expectedFunctions.length === liveFunctions.length &&
       expectedFunctions.every((row, index) =>
         row.proname === liveFunctions[index].proname &&
@@ -152,13 +157,23 @@ async function verifySchema(client, migrations) {
     const serviceNames = liveFunctions
       .filter(({ service_exec }) => service_exec)
       .map(({ proname }) => proname);
-    check(new Set(serviceNames).size === 30 &&
-      liveFunctions.filter(({ service_exec }) => service_exec).length === 30,
+    const expectedServiceCount = expectedFunctions.filter(({ service_exec }) => service_exec).length;
+    const expectedInternalCount = expectedFunctions.length - expectedServiceCount;
+    check(new Set(serviceNames).size === expectedServiceCount &&
+      liveFunctions.filter(({ service_exec }) => service_exec).length === expectedServiceCount,
     "exactly 30 service-role boundary functions");
-    check(liveFunctions.filter(({ service_exec }) => !service_exec).length === 37 &&
+    check(liveFunctions.filter(({ service_exec }) => !service_exec).length === expectedInternalCount &&
       liveFunctions.filter(({ service_exec, anon_exec, auth_exec, public_exec }) =>
         !service_exec && (anon_exec || auth_exec || public_exec)).length === 0,
     "37 internal functions are not executable by runtime roles or PUBLIC");
+    check(sourceNames.length === 67 && expectedServiceCount === 30 &&
+      expectedInternalCount === 37,
+    "derived inventory is 67 total / 30 service-role / 37 internal");
+    inventory = {
+      total: sourceNames.length,
+      serviceRole: expectedServiceCount,
+      internal: expectedInternalCount,
+    };
     const requiredDefiners = new Set([
       "direct_entry_create_full_profile_batch",
       "direct_entry_read_projection",
@@ -183,9 +198,25 @@ async function verifySchema(client, migrations) {
       relrowsecurity && relforcerowsecurity &&
       !insert_priv && !update_priv && !delete_priv && !truncate_priv),
     "Direct Entry tables enforce RLS and grant no runtime DML");
+    const bankIdForeignKey = await client.query(`
+      select not a.attnotnull as nullable, exists (
+        select 1
+          from pg_constraint c
+          join pg_attribute a on a.attrelid = c.conrelid and a.attname = 'bank_id'
+         where c.conrelid = 'public.direct_entry_payments'::regclass
+           and c.confrelid = 'public.direct_entry_banks'::regclass
+           and c.contype = 'f' and a.attnum = any(c.conkey)
+      ) as foreign_key
+        from pg_attribute a
+       where a.attrelid = 'public.direct_entry_payments'::regclass
+         and a.attname = 'bank_id'
+    `);
+    check(bankIdForeignKey.rows[0]?.nullable && bankIdForeignKey.rows[0]?.foreign_key,
+      "legacy bank_id remains nullable and foreign-key compatible");
   } finally {
     await fromScratch.db.close();
   }
+  return inventory;
 }
 
 async function insertActor(client, value, capabilities, withOwnScope) {
@@ -389,7 +420,43 @@ async function liveAcceptance(client) {
     const paymentBlank = row(projectId, recruiter, "hrp-2020-940004", {
       payment: { state: "intentionally_blank" },
     });
-    const rows = [complete, minimal, paymentUnknown, paymentBlank];
+    const metadataRows = [
+      row(projectId, recruiter, "hrp-2020-940010", {
+        payment: { state: "provided", bank_name: "Ngân hàng Giả Đông Á" },
+      }),
+      row(projectId, recruiter, "hrp-2020-940011", {
+        payment: { state: "provided", account_number: "000012345678" },
+      }),
+      row(projectId, recruiter, "hrp-2020-940012", {
+        payment: { state: "provided", account_holder_name: "Synthetic Account Holder" },
+      }),
+      row(projectId, recruiter, "hrp-2020-940013", {
+        payment: {
+          state: "provided", account_number: "000000098765",
+          bank_name: "Ngân hàng Giả — Chi nhánh Hà Nội",
+        },
+      }),
+      row(projectId, recruiter, "hrp-2020-940014", {
+        payment: {
+          state: "provided", account_number: "000000011122",
+          account_holder_name: "Synthetic Two-Field Holder",
+        },
+      }),
+      row(projectId, recruiter, "hrp-2020-940015", {
+        payment: {
+          state: "provided", bank_name: "Ngân hàng Giả miền Nam",
+          account_holder_name: "Synthetic Bank Holder",
+        },
+      }),
+      row(projectId, recruiter, "hrp-2020-940016", {
+        payment: {
+          state: "provided", account_number: "000000033344",
+          bank_name: "Ngân hàng Giả Toàn Diện",
+          account_holder_name: "Synthetic Full Holder",
+        },
+      }),
+    ];
+    const rows = [complete, minimal, paymentUnknown, paymentBlank, ...metadataRows];
     const created = await invokeRpc(client, owner, rows, idempotencyKey);
     check(created.replayed === false && created.entry_ids.length === rows.length &&
       created.entry_ids.every((id) => typeof id === "string"),
@@ -434,6 +501,86 @@ async function liveAcceptance(client) {
       unknownProjection.payment?.account_number == null &&
       blankProjection.payment?.account_number == null,
     "unknown and intentionally-blank payments succeed with banks=0 and no account data");
+    check(await client.query(
+      "select count(*)::int as n from public.direct_entry_banks",
+    ).then(({ rows: result }) => result[0].n === 0),
+    "all optional metadata combinations succeed while bank catalog stays empty");
+
+    const metadataStorage = await client.query(
+      "select e.employee_code, p.account_number, p.bank_id, p.bank_name, p.account_holder_name " +
+      "from public.direct_entries e left join public.direct_entry_payments p using(entry_id) " +
+      "where e.entry_id=any($1::uuid[]) order by e.employee_code",
+      [created.entry_ids],
+    );
+    const storedByCode = new Map(metadataStorage.rows.map((item) =>
+      [item.employee_code, item]));
+    const metadataExpectations = [
+      ["hrp-2020-940002", null, null, null, null],
+      ["hrp-2020-940010", null, null, "Ngân hàng Giả Đông Á", null],
+      ["hrp-2020-940011", "000012345678", null, null, null],
+      ["hrp-2020-940012", null, null, null, "Synthetic Account Holder"],
+      ["hrp-2020-940013", "000000098765", null, "Ngân hàng Giả — Chi nhánh Hà Nội", null],
+      ["hrp-2020-940014", "000000011122", null, null, "Synthetic Two-Field Holder"],
+      ["hrp-2020-940015", null, null, "Ngân hàng Giả miền Nam", "Synthetic Bank Holder"],
+      ["hrp-2020-940016", "000000033344", null, "Ngân hàng Giả Toàn Diện", "Synthetic Full Holder"],
+    ];
+    check(metadataExpectations.every(([code, account, bankId, bankName, holder]) => {
+      const stored = storedByCode.get(code);
+      return stored?.account_number === account && stored.bank_id === bankId &&
+        stored.bank_name === bankName && stored.account_holder_name === holder;
+    }), "partial text metadata persists exactly, retains leading zeroes and never creates bank_id");
+
+    const metadataEntryIds = created.entry_ids.slice(4);
+    const metadataProjections = [];
+    for (const entryId of metadataEntryIds) {
+      metadataProjections.push(await directProjection(client, owner, entryId));
+    }
+    check(metadataProjections.every(({ payment }) => payment?.bank_id == null),
+      "authorized projections do not invent legacy bank IDs for text metadata");
+    const accountProjection = metadataProjections.find(({ employee_code }) =>
+      employee_code === "hrp-2020-940011");
+    check(accountProjection?.payment.account_number === "000012345678",
+      "payment_view holder receives the exact account value in the authorized projection");
+    const bankNameProjection = metadataProjections.find(({ employee_code }) =>
+      employee_code === "hrp-2020-940010");
+    check(bankNameProjection?.payment.bank_name === "Ngân hàng Giả Đông Á",
+      "payment_view holder receives Unicode bank-name metadata");
+
+    await client.query(
+      "delete from public.direct_entry_capability_grants " +
+      "where app_user_id=$1::uuid and capability='payment_view'",
+      [owner.user],
+    );
+    const paymentRedacted = await directProjection(client, owner, metadataEntryIds[1]);
+    check(paymentRedacted.payment?.account_number === "••••••••5678" &&
+      !("bank_name" in paymentRedacted.payment) &&
+      !("account_holder_name" in paymentRedacted.payment),
+    "missing payment_view masks account last-four and omits bank-name/holder metadata");
+    await client.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from) " +
+      "values ($1::uuid,'payment_view','2020-01-01')",
+      [owner.user],
+    );
+
+    const protectedValues = [
+      "000012345678", "000000098765", "000000011122", "000000033344",
+      "Ngân hàng Giả Đông Á", "Ngân hàng Giả — Chi nhánh Hà Nội",
+      "Synthetic Account Holder", "Synthetic Two-Field Holder",
+      "Synthetic Bank Holder", "Synthetic Full Holder",
+    ];
+    const metadataRevisions = await client.query(
+      "select coalesce(before_snapshot::text,'') || coalesce(after_snapshot::text,'') as value " +
+      "from public.direct_entry_revisions where entry_id=any($1::uuid[])",
+      [metadataEntryIds],
+    );
+    const metadataAudit = await client.query(
+      "select to_jsonb(a)::text as value from public.direct_entry_audit_events a " +
+      "where a.resource_ref=any($1::text[])",
+      [metadataEntryIds],
+    );
+    check([...metadataRevisions.rows, ...metadataAudit.rows].every(({ value }) =>
+      protectedValues.every((secret) => !value.includes(secret))),
+    "raw banking metadata is absent from audit events and revision snapshots");
 
     await client.query(
       "delete from public.direct_entry_capability_grants " +
@@ -501,20 +648,44 @@ async function liveAcceptance(client) {
     check(sameJson(await tableStateInTransaction(client), beforeRejected),
       "denied capability and scope attempts leave no business or idempotency residue");
 
-    const paymentProvided = row(projectId, recruiter, "hrp-2020-940007", {
-      payment: {
-        state: "provided",
-        account_number: "000012345678",
-        bank_id: "i03_no_bank",
-        account_holder_name: "Synthetic Holder",
-      },
-    });
-    await expectRpcError(client, "payment-bearing row is blocked while banks=0", "22023",
-      () => invokeRpc(client, owner, [paymentProvided], randomUUID()));
+    await expectRpcError(client, "legacy unknown bank ID is rejected", "22023",
+      () => invokeRpc(client, owner, [row(projectId, recruiter, "hrp-2020-940007", {
+        payment: { state: "provided", account_number: "000012345678", bank_id: "i03_no_bank" },
+      })], randomUUID()));
     check(sameJson(await tableStateInTransaction(client), beforeRejected),
-      "bank-blocked payment row leaves no partial records");
+      "invalid legacy bank ID leaves no partial records");
     check((await tableCounts(client))["public.direct_entry_banks"] === 0,
-      "bank catalog remains empty during acceptance");
+      "bank catalog remains empty after all no-bank metadata cases");
+
+    const bankId = "i04_r4_synthetic_active_bank";
+    await client.query(
+      "insert into public.direct_entry_banks(bank_id,display_name,active) values ($1,$2,true)",
+      [bankId, "Synthetic R4 Bank"],
+    );
+    const legacyResult = await invokeRpc(client, owner, [
+      row(projectId, recruiter, "hrp-2020-940017", {
+        payment: {
+          state: "provided", account_number: "000000055566", bank_id: bankId,
+          account_holder_name: "Synthetic Legacy Holder",
+        },
+      }),
+    ], randomUUID());
+    check(legacyResult.entry_ids.length === 1,
+      "legacy active bank_id path remains accepted when explicitly supplied");
+    await expectRpcError(client, "legacy inactive bank_id is rejected", "22023", async () => {
+      const inactiveBankId = "i04_r4_synthetic_inactive_bank";
+      await client.query(
+        "insert into public.direct_entry_banks(bank_id,display_name,active) values ($1,$2,false)",
+        [inactiveBankId, "Synthetic Inactive R4 Bank"],
+      );
+      await invokeRpc(client, owner, [
+        row(projectId, recruiter, "hrp-2020-940018", {
+          payment: {
+            state: "provided", account_number: "000000077788", bank_id: inactiveBankId,
+          },
+        }),
+      ], randomUUID());
+    });
 
     await client.query("rollback");
     transactionOpen = false;
@@ -548,8 +719,9 @@ async function main() {
   });
   await client.connect();
   let acceptance;
+  let inventory;
   try {
-    await verifySchema(client, migrations);
+    inventory = await verifySchema(client, migrations);
     acceptance = await liveAcceptance(client);
   } finally {
     await client.end();
@@ -558,7 +730,7 @@ async function main() {
     ok: true,
     projectRef: config.projectRef,
     migrationCount: migrations.length,
-    functionInventory: { total: 67, serviceRole: 30, internal: 37 },
+    functionInventory: inventory,
     outerTransactionRolledBack: true,
     banks: 0,
     checks: checks.length,

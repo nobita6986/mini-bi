@@ -179,7 +179,7 @@ function normalizeWorker(value: unknown, path: string, issues: ContractIssue[]) 
 }
 
 function normalizePayment(value: unknown, path: string, issues: ContractIssue[]): FullProfileRpcRow["payment"] {
-  if (value === undefined) return null;
+  if (value === undefined || value === null) return null;
   if (!isRecord(value) ||
       !hasOnlyKeys(value, new Set([
         "state", "account_number", "bank_id", "bank_name", "account_holder_name",

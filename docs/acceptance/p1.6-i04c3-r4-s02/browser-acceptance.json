@@ -303,7 +303,7 @@
       "scope": "interactive",
       "name": "request header co Idempotency-Key dang UUID",
       "ok": true,
-      "detail": "afbde6b2-bba5-4db3-9349-6298da616820"
+      "detail": "ac49042c-48f6-453a-9a2e-1bf62fa8f414"
     },
     {
       "scope": "interactive",
@@ -366,15 +366,15 @@
       "ok": true,
       "detail": [
         {
-          "id": "cccd-manage-fad1d164-62b9-41a8-8d17-2723f40f335f",
+          "id": "cccd-manage-3c0d2e41-9ce8-46ed-8071-d4a7f76bac81",
           "disabled": false
         },
         {
-          "id": "cccd-manage-5d6d1e53-1aa6-4930-bf83-988d21f5a858",
+          "id": "cccd-manage-24459caf-913a-4d95-a5f2-c3464c05d2b4",
           "disabled": false
         },
         {
-          "id": "cccd-manage-f8fdefa9-39a2-43df-be1a-76c3d18449a4",
+          "id": "cccd-manage-82699cc2-9157-44d8-bfd2-6266be0b104f",
           "disabled": false
         }
       ]
@@ -412,8 +412,8 @@
       "name": "retry cung intent dung lai CUNG idempotency key",
       "ok": true,
       "detail": [
-        "6032c23c-951c-4125-8b68-1d71b6457ea5",
-        "6032c23c-951c-4125-8b68-1d71b6457ea5"
+        "0b7b94c1-0d5e-4f8e-be51-45a5f71df203",
+        "0b7b94c1-0d5e-4f8e-be51-45a5f71df203"
       ]
     },
     {
@@ -421,9 +421,9 @@
       "name": "sua du lieu tao intent/key moi",
       "ok": true,
       "detail": [
-        "6032c23c-951c-4125-8b68-1d71b6457ea5",
-        "6032c23c-951c-4125-8b68-1d71b6457ea5",
-        "afa63028-feb5-43bf-8163-f126e05e2eb2"
+        "0b7b94c1-0d5e-4f8e-be51-45a5f71df203",
+        "0b7b94c1-0d5e-4f8e-be51-45a5f71df203",
+        "cf828eab-9f09-4503-a0dd-f21dcf19391c"
       ]
     },
     {

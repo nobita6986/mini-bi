@@ -134,6 +134,9 @@ test("account metadata supports partial text fields without requiring a bank cat
 });
 
 test("empty account metadata normalizes to omitted; unknown keys still fail closed", () => {
+  const nullPayment = parseFullProfilePayload(payload([{ ...baseRow, payment: null }]));
+  assert.equal(nullPayment.ok, true);
+  if (nullPayment.ok) assert.equal(nullPayment.payload.rows[0].payment, null);
   for (const state of ["provided", "omitted"]) {
     const empty = parseFullProfilePayload(payload([{
       ...baseRow,
