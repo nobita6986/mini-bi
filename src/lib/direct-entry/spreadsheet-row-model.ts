@@ -106,6 +106,19 @@ export function ensureSpreadsheetSpareRows(model: SpreadsheetRowModel): Spreadsh
   return appendBlankRows(model, requiredLength - model.rows.length);
 }
 
+/**
+ * Bao dam model co it nhat `minimumRowCount` dong hien thi.
+ * Can cho paste bat dau gan cuoi bang: phai co dong trong de ghi truoc khi ap ma tran.
+ * Day chi la placeholder client-side, khong tinh vao gioi han 100 dong du lieu.
+ */
+export function ensureSpreadsheetRowCount(
+  model: SpreadsheetRowModel,
+  minimumRowCount: number,
+): SpreadsheetRowModel {
+  if (!Number.isFinite(minimumRowCount) || minimumRowCount <= model.rows.length) return model;
+  return appendBlankRows(model, Math.ceil(minimumRowCount) - model.rows.length);
+}
+
 export function createSpreadsheetRowModel(): SpreadsheetRowModel {
   return appendBlankRows({ rows: [], nextClientRowSequence: 1 }, SPREADSHEET_INITIAL_ROW_COUNT);
 }
