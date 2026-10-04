@@ -61,8 +61,11 @@ export type EntryValidationContext = {
 
 export type WorkerDetails = {
   display_name: string;
+  gender?: OptionalValue<"MALE" | "FEMALE" | "OTHER">;
   date_of_birth: OptionalValue<string>;
   national_id: OptionalValue<string>;
+  national_id_issued_at?: OptionalValue<string>;
+  national_id_issued_place?: OptionalValue<string>;
   address: OptionalValue<string>;
   phone: OptionalValue<string>;
 };
@@ -444,8 +447,18 @@ export function validateWorkerDetails(worker: WorkerDetails): ValidationIssue[] 
     typeof worker.display_name !== "string" ||
     worker.display_name.trim() === "" ||
     worker.display_name.length > 256 ||
+    (worker.gender !== undefined &&
+      !validOptional(worker.gender, (value) =>
+        value === "MALE" || value === "FEMALE" || value === "OTHER"
+      )) ||
     !validOptional(worker.date_of_birth, isRealCalendarDate) ||
     !validOptional(worker.national_id, (value) => typeof value === "string" && value.length <= 64) ||
+    (worker.national_id_issued_at !== undefined &&
+      !validOptional(worker.national_id_issued_at, isRealCalendarDate)) ||
+    (worker.national_id_issued_place !== undefined &&
+      !validOptional(worker.national_id_issued_place, (value) =>
+        typeof value === "string" && value.trim().length > 0 && value.length <= 256
+      )) ||
     !validOptional(worker.address, (value) => typeof value === "string" && value.length <= 1024) ||
     !validOptional(worker.phone, (value) => typeof value === "string" && value.length <= 64)
   ) {
