@@ -214,7 +214,11 @@ test("W04A-P8: proxy matcher bao gồm /api/ai/settings (panel nằm sau pilot g
 test("W04A-P9: dashboard chỉ render panel khi server bật cờ (không hard-code bật ở client)", () => {
   const view = readFileSync(new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url), "utf8");
   const page = readFileSync(new URL("../../app/dashboard/page.tsx", import.meta.url), "utf8");
-  assert.equal(view.includes("aiSettingsEnabled ? <AiSettingsPanel /> : null"), true);
-  assert.equal(page.includes("isAiSettingsEnabled()"), true);
+  const layout = readFileSync(new URL("../../app/dashboard/layout.tsx", import.meta.url), "utf8");
+  assert.equal(layout.includes("{isAiSettingsEnabled() ? <AiSettingsPanel /> : null}"), true);
+  assert.equal(layout.includes("await connection()"), true);
+  assert.equal(layout.includes('headerActions={headerActions}'), true);
+  assert.equal(page.includes("isAiSettingsEnabled()"), false);
+  assert.equal(view.includes("AiSettingsPanel"), false);
   assert.equal(view.includes("NEXT_PUBLIC"), false);
 });

@@ -11,8 +11,6 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
-import { AiReportPanel } from "@/components/ai-report/ai-report-panel";
-import { AiSettingsPanel } from "./ai-settings-panel";
 import { DashboardFilters } from "./dashboard-filters";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
@@ -48,19 +46,19 @@ function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
 export function DashboardView({
   report,
   optionsResult,
-  aiSettingsEnabled = false,
 }: {
   report: ReportingFetchResult;
   optionsResult: ReportingOptionsResult;
-  /** W04A — chỉ render panel cấu hình AI khi server đã xác nhận AI_SETTINGS_ENABLED=true. */
-  aiSettingsEnabled?: boolean;
 }) {
   const generatedAt = report.ok ? report.generatedAt : undefined;
+  const trend = report.ok ? buildDailyTrend(report.data.byDate, report.data.applied.from, report.data.applied.to) : [];
+  const dataDays = trend.filter((p) => p.count > 0);
+  const showKpis = report.ok && !report.data.empty.noSources && !report.data.empty.noFacts && !report.data.empty.noMatches;
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
       <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
             <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
             <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
@@ -68,10 +66,12 @@ export function DashboardView({
               <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
             ) : null}
           </div>
-          <div className="flex flex-wrap items-start justify-start gap-2 sm:shrink-0 sm:justify-end">
-            <AiReportPanel />
-            {aiSettingsEnabled ? <AiSettingsPanel /> : null}
-          </div>
+          {showKpis ? (
+            <div aria-label="Chỉ số chính" className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-72 sm:grid-cols-2">
+              <KpiCard variant="compact" label="Tổng tuyển mới" value={report.data.recruitedTotal} hint="số người tuyển" accent="var(--primary)" />
+              <KpiCard variant="compact" label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -79,7 +79,7 @@ export function DashboardView({
         {report.ok === false ? (
           <ReportError report={report} />
         ) : (
-          <DashboardBody data={report.data} optionsResult={optionsResult} />
+          <DashboardBody data={report.data} optionsResult={optionsResult} trend={trend} dataDays={dataDays} />
         )}
       </div>
     </main>
@@ -127,9 +127,17 @@ function NoMatchesBlock() {
   );
 }
 
-function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsResult: ReportingOptionsResult }) {
-  const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
-  const dataDays = trend.filter((p) => p.count > 0);
+function DashboardBody({
+  data,
+  optionsResult,
+  trend,
+  dataDays,
+}: {
+  data: ReportingData;
+  optionsResult: ReportingOptionsResult;
+  trend: ReturnType<typeof buildDailyTrend>;
+  dataDays: ReturnType<typeof buildDailyTrend>;
+}) {
 
   if (data.empty.noSources || data.empty.noFacts) {
     return (
@@ -148,11 +156,6 @@ function DashboardBody({ data, optionsResult }: { data: ReportingData; optionsRe
         <NoMatchesBlock />
       ) : (
         <>
-          <section aria-label="Chỉ số chính" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <KpiCard label="Tổng tuyển mới" value={data.recruitedTotal} hint="số người tuyển trong kết quả" accent="var(--primary)" />
-            <KpiCard label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
-          </section>
-
           <section aria-label="Xu hướng tuyển dụng">
             <Card className="p-4">
               <CardHeader title="Xu hướng tuyển dụng" description="Số người tuyển theo ngày; những ngày không có record thể hiện là 0 trên biểu đồ." />

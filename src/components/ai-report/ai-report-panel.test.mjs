@@ -17,6 +17,12 @@ test("S01-P1: panel là client component, KHÔNG kéo module server-only/provide
   assert.ok(source.includes('from "@/lib/ai-report/report-contract"'), "panel chỉ dùng contract thuần");
 });
 
+test("dashboard navbar trigger is exactly h-11 without changing drawer button sizing", () => {
+  assert.ok(source.includes('const triggerButtonClass = "inline-flex h-11'));
+  assert.ok(source.includes("className={triggerButtonClass}>Tạo báo cáo AI</button>"));
+  assert.ok(source.includes('const secondaryButtonClass = "inline-flex h-9'));
+});
+
 test("S01-P2: panel không nhận/giữ secret, PII, provider URL đầy đủ hay prompt nội bộ", () => {
   for (const forbidden of ["api_key", "API key", "encrypted_secret", "envelope", "ciphertext", "Authorization", "Bearer", "NEXT_PUBLIC_"]) {
     assert.ok(!source.includes(forbidden), "panel không được chứa " + forbidden);

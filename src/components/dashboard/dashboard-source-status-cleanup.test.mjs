@@ -49,7 +49,12 @@ test("remaining business dashboard KPIs and charts stay rendered", () => {
   ]) {
     assert.ok(view.includes(label), `dashboard must keep "${label}"`);
   }
-  assert.ok(view.includes("grid-cols-1 gap-3 sm:grid-cols-2"));
+  assert.equal(view.split('label="Tổng tuyển mới"').length - 1, 1);
+  assert.equal(view.split('label="Số ngày có tuyển"').length - 1, 1);
+  assert.equal(view.split("buildDailyTrend(").length - 1, 1, "daily trend must be built once");
+  assert.ok(view.includes('variant="compact"'));
+  assert.ok(!view.includes('aria-label="Chỉ số chính" className="grid grid-cols-1'), "old KPI section must be removed");
+  assert.ok(view.includes("!report.data.empty.noSources && !report.data.empty.noFacts && !report.data.empty.noMatches"));
 });
 
 test("legacy source filter is hidden while its URL parser remains compatible", () => {

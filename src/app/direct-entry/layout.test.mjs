@@ -31,6 +31,7 @@ test("direct-entry/layout.tsx: KHÔNG tạo App Shell thứ hai (chỉ một App
 test("direct-entry/layout.tsx: không import @/lib/ai-* (server boundary)", () => {
   assert.ok(!/from\s+["']@\/lib\/ai\//.test(layoutSource));
   assert.ok(!/from\s+["']@\/lib\/ai-config\//.test(layoutSource));
+  assert.ok(!layoutSource.includes("headerActions"));
 });
 
 test("direct-entry/layout.tsx: layout file là Server Component (không 'use client')", () => {

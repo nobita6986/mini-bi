@@ -11,11 +11,11 @@
  * - Chưa có RBAC thật: `capability` chỉ là metadata, filter ở đây chỉ theo
  *   `status: 'current'`.
  * - ThemeSelector giữ nguyên (W05 R1 đã ổn định).
- * - AI panels KHÔNG bị động vào.
  */
 
 import type { ReactNode } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { connection } from "next/server";
 
 import { ThemeSelector } from "@/components/dashboard/theme-selector";
@@ -31,8 +31,17 @@ import { UserSessionControl } from "./user-session-control";
  * - children: nội dung trang.
  * - currentPath: đường dẫn hiện tại (từ page). Dùng để highlight active link.
  *   Tính từ server, không dùng hook client.
+ * - headerActions: các action do route hiện tại cung cấp, nếu có.
  */
-export async function AppShell({ children, currentPath }: { children: ReactNode; currentPath: string }) {
+export async function AppShell({
+  children,
+  currentPath,
+  headerActions,
+}: {
+  children: ReactNode;
+  currentPath: string;
+  headerActions?: ReactNode;
+}) {
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const desktopItems = entriesForViewport("desktop", directEntryEnabled);
@@ -41,7 +50,7 @@ export async function AppShell({ children, currentPath }: { children: ReactNode;
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">
+        <div className="mx-auto flex min-h-14 w-full max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:px-6">
           {/* Mobile: hamburger trigger */}
           <MobileNav
             activePath={currentPath}
@@ -53,10 +62,7 @@ export async function AppShell({ children, currentPath }: { children: ReactNode;
             href="/dashboard"
             className="inline-flex items-center gap-2 text-sm font-semibold text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 rounded"
           >
-            <span
-              aria-hidden
-              className="inline-block h-6 w-6 rounded-md bg-primary"
-            />
+            <Image src="/brand/hrpartner-logo.png" alt="HR Partner" width={2166} height={1706} className="h-9 w-auto" />
             <span>HR Partner</span>
           </Link>
 
@@ -65,6 +71,12 @@ export async function AppShell({ children, currentPath }: { children: ReactNode;
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {headerActions ? (
+            <div className="order-last flex basis-full items-center justify-end gap-2 md:order-none md:basis-auto">
+              {headerActions}
+            </div>
+          ) : null}
 
           {/* Session control — login/logout UX (route/RPC van la authority) */}
           <UserSessionControl />

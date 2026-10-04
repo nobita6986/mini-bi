@@ -14,6 +14,13 @@ test("S04-P1: panel là client component, không import server-only/@/lib", () =
   assert.ok(!source.includes("server-only"), "panel không kéo server-only vào client");
 });
 
+test("navbar trigger is exactly h-11 while internal actions keep their existing sizing", () => {
+  assert.ok(source.includes('const triggerButtonClass =\n  "inline-flex h-11'));
+  assert.ok(source.includes("<Dialog.Trigger asChild>"));
+  assert.ok(source.includes("className={triggerButtonClass}"));
+  assert.ok(source.includes('const secondaryButtonClass =\n  "inline-flex min-h-11'));
+});
+
 test("S04-P2: dùng Radix Dialog/Sheet + AlertDialog + Select (không còn focus trap thủ công)", () => {
   assert.ok(source.includes('from "radix-ui/dialog"'), "phải dùng Radix Dialog");
   assert.ok(source.includes('from "radix-ui/alert-dialog"'), "phải dùng Radix AlertDialog");

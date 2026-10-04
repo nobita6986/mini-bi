@@ -56,6 +56,8 @@ const primaryButtonClass =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
 const dangerButtonClass =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-red-500 bg-surface px-3 text-sm font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-60";
+const triggerButtonClass =
+  "inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
 
 type ProviderProfileOption = { id: string; label: string };
 
@@ -444,7 +446,7 @@ export function AiSettingsPanel() {
         }}
       >
         <Dialog.Trigger asChild>
-          <button type="button" className={secondaryButtonClass}>
+          <button type="button" className={triggerButtonClass}>
             Cấu hình AI
           </button>
         </Dialog.Trigger>

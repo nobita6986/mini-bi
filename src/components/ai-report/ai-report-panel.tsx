@@ -62,6 +62,7 @@ async function fetchJson(path: string, options: { method: "GET" | "POST"; body?:
 const inputClass = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary";
 const primaryButtonClass = "inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90 disabled:opacity-50";
 const secondaryButtonClass = "inline-flex h-9 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface/80 disabled:opacity-50";
+const triggerButtonClass = "inline-flex h-11 items-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface/80 disabled:opacity-50";
 
 function Skeleton() {
   return (
@@ -316,7 +317,7 @@ export function AiReportPanel() {
 
   return (
     <div className="relative">
-      <button ref={triggerRef} type="button" aria-haspopup="dialog" aria-expanded={open} aria-controls="ai-report-drawer" onClick={() => (open ? requestClose() : setOpen(true))} className={secondaryButtonClass}>Tạo báo cáo AI</button>
+      <button ref={triggerRef} type="button" aria-haspopup="dialog" aria-expanded={open} aria-controls="ai-report-drawer" onClick={() => (open ? requestClose() : setOpen(true))} className={triggerButtonClass}>Tạo báo cáo AI</button>
       {open ? (
         <>
           <div aria-hidden onClick={requestClose} className="fixed inset-0 z-40 bg-black/40" />
