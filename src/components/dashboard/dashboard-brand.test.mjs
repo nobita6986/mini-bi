@@ -9,10 +9,11 @@ const repoRoot = resolve(here, "../../..");
 const logoPath = join(repoRoot, "public", "brand", "hrpartner-logo.png");
 const viewPath = join(repoRoot, "src", "components", "dashboard", "dashboard-view.tsx");
 const filtersPath = join(repoRoot, "src", "components", "dashboard", "dashboard-filters.tsx");
+const appShellPath = join(repoRoot, "src", "components", "app-shell", "app-shell.tsx");
 
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-test("logo asset exists and is a valid PNG at the trimmed dimensions", () => {
+test("logo asset remains in the repository and is a valid PNG", () => {
   assert.ok(existsSync(logoPath), "public/brand/hrpartner-logo.png must exist");
   const buf = readFileSync(logoPath);
   assert.ok(buf.length > 0, "logo must not be empty");
@@ -21,13 +22,19 @@ test("logo asset exists and is a valid PNG at the trimmed dimensions", () => {
   assert.equal(buf.readUInt32BE(20), 1706, "logo height");
 });
 
-test("dashboard header renders the logo with fixed dimensions, alt and priority", () => {
+test("dashboard hero does not duplicate the global logo or theme selector", () => {
   const src = readFileSync(viewPath, "utf8");
-  assert.ok(src.includes('src="/brand/hrpartner-logo.png"'), "must reference the public brand asset");
-  assert.ok(src.includes('alt="HR Partner"'), "must use the HR Partner alt text");
-  assert.ok(src.includes("width={2166}"), "must set explicit width");
-  assert.ok(src.includes("height={1706}"), "must set explicit height");
-  assert.ok(src.includes("priority"), "must mark the above-the-fold logo priority");
+  assert.ok(!src.includes('from "next/image"'), "dashboard must not import next/image");
+  assert.ok(!src.includes("<Image"), "dashboard must not render the logo image");
+  assert.ok(!src.includes("/brand/hrpartner-logo.png"), "dashboard must not render the global logo asset");
+  assert.ok(!src.includes("ThemeSelector"), "dashboard must not import or render ThemeSelector");
+});
+
+test("AppShell remains the single global home for HR Partner brand and ThemeSelector", () => {
+  const src = readFileSync(appShellPath, "utf8");
+  assert.ok(src.includes("<span>HR Partner</span>"), "AppShell must retain the global brand");
+  assert.ok(src.includes('import { ThemeSelector } from "@/components/dashboard/theme-selector"'));
+  assert.ok(src.includes("<ThemeSelector />"), "AppShell must retain the global theme selector");
 });
 
 test("no local filesystem or Desktop source path leaks into dashboard source", () => {
@@ -44,31 +51,15 @@ test("filter bar uses a single nuqs state and does not scroll on preset change",
   assert.ok(src.includes("shallow: false"), "filter changes must refetch server data");
 });
 
-test("logo plate larger than R5 (h-16 sm:h-20) and not distorted", () => {
+test("dashboard hero keeps its page identity, timestamp and AI actions", () => {
   const src = readFileSync(viewPath, "utf8");
-  assert.ok(src.includes("h-16"), "plate must be h-16 on mobile");
-  assert.ok(src.includes("sm:h-20"), "plate must be sm:h-20 on desktop");
-  assert.ok(src.includes('className="h-full w-auto"'), "logo keeps w-auto (no crop/distort)");
-  assert.ok(src.includes('bg-white p-1'), "plate stays white in all themes/modes");
-});
-
-test("timestamp nằm trong text column, cùng trục trái với title", () => {
-  const src = readFileSync(viewPath, "utf8");
-  const colStart = src.indexOf('className="min-w-0"');
-  const sel = src.indexOf("<ThemeSelector");
-  assert.ok(colStart !== -1 && sel !== -1 && sel > colStart, "text column then theme selector");
-  const col = src.slice(colStart, sel);
-  assert.ok(col.includes("BoD · Báo cáo điều hành"), "label in column");
-  assert.ok(col.includes("Tổng quan tuyển dụng"), "title in column");
-  assert.ok(col.includes("Báo cáo tạo lúc"), "timestamp in column");
-});
-
-test("theme selector được render trong header", () => {
-  const src = readFileSync(viewPath, "utf8");
-  assert.ok(src.includes("<ThemeSelector"), "ThemeSelector in header");
-  const sel = readFileSync(join(repoRoot, "src", "components", "dashboard", "theme-selector.tsx"), "utf8");
-  assert.ok(sel.includes("Màu giao diện"), "selector label");
-  assert.ok(sel.includes("aria-checked"), "radiogroup uses aria-checked");
+  assert.ok(src.includes("BoD · Báo cáo điều hành"), "must retain the report eyebrow");
+  assert.ok(src.includes("Tổng quan tuyển dụng"), "must retain the page title");
+  assert.ok(src.includes("Báo cáo tạo lúc"), "must retain the generated timestamp");
+  assert.ok(src.includes("<AiReportPanel />"), "must retain the AI report action");
+  assert.ok(src.includes("{aiSettingsEnabled ? <AiSettingsPanel /> : null}"), "must retain conditional AI settings");
+  assert.ok(src.includes("flex flex-col gap-3 sm:flex-row"), "actions must wrap below the title on mobile");
+  assert.ok(src.includes("flex flex-wrap items-start"), "actions must be allowed to wrap");
 });
 
 test("filter bar is non-sticky on mobile, sticky from md, and the advanced disclosure is accessible", () => {
