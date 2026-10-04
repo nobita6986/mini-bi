@@ -1,3 +1,14 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,"><title>R3A preview</title><style>:root {
+  --background: #f7f9ff;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  color-scheme: light;
+}
+body { margin: 0; background: var(--background); color: var(--foreground);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+
 .page {
   box-sizing: border-box;
   width: min(100%, 1440px);
@@ -256,7 +267,7 @@
 .field input,
 .field select,
 .field textarea,
-.field :global([role="combobox"]) {
+.field [role="combobox"] {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -272,7 +283,7 @@
 .field input:focus-visible,
 .field select:focus-visible,
 .field textarea:focus-visible,
-.field :global([role="combobox"]):focus-visible {
+.field [role="combobox"]:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--ring) 55%, transparent);
   outline-offset: 1px;
 }
@@ -374,7 +385,7 @@
   font-size: 14px;
 }
 
-.field :global([role="listbox"]) {
+.field [role="listbox"] {
   position: absolute;
   z-index: 60;
   top: calc(100% + 4px);
@@ -391,7 +402,7 @@
   list-style: none;
 }
 
-.field :global([role="option"]) {
+.field [role="option"] {
   min-height: 40px;
   cursor: pointer;
   padding: 9px;
@@ -399,11 +410,11 @@
   font-weight: 400;
 }
 
-.field :global([role="option"][aria-selected="true"]) {
+.field [role="option"][aria-selected="true"] {
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
 }
 
-.grid :global([role="combobox"]) {
+.grid [role="combobox"] {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -416,12 +427,12 @@
   font: inherit;
 }
 
-.grid :global([role="combobox"]):focus-visible {
+.grid [role="combobox"]:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
-.grid :global([role="listbox"]) {
+.grid [role="listbox"] {
   position: absolute;
   z-index: 60;
   top: calc(100% + 2px);
@@ -438,7 +449,7 @@
   list-style: none;
 }
 
-.grid :global([role="option"]) {
+.grid [role="option"] {
   min-height: 34px;
   cursor: pointer;
   padding: 7px;
@@ -446,7 +457,7 @@
   font-weight: 400;
 }
 
-.grid :global([role="option"][aria-selected="true"]) {
+.grid [role="option"][aria-selected="true"] {
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
 }
 
@@ -1112,3 +1123,7 @@
     font-size: 12px;
   }
 }
+</style></head><body><div class="page"><div class="drawerOverlay"><div class="profilePasteDialog" role="dialog" aria-modal="true" aria-labelledby="worker-profile-paste-heading"><h2 id="worker-profile-paste-heading" class="drawerTitle">Dán hồ sơ từ Excel</h2><p class="drawerDescription">Dán hồ sơ đầy đủ từ Excel. Hệ thống đọc tên cột nên thứ tự cột không quan trọng; cột tùy chọn có thể vắng mặt. Ảnh CCCD tải riêng sau khi hồ sơ được lưu.</p><div class="drawerFields" data-testid="profile-paste-panel"><ul class="pasteColumns"><li>Bắt buộc có dòng header; hệ thống đọc tên cột, không phụ thuộc thứ tự cột.</li><li>Cột bắt buộc: Mã NLĐ, Dự án, Ngày bắt đầu làm việc, Họ và tên, Tên NV Tuyển dụng, Loại hình LĐ.</li><li>Mỗi lần dán tối đa 100 dòng dữ liệu.</li><li>Ảnh CCCD mặt trước/sau được tải riêng sau khi hồ sơ được lưu.</li></ul><button type="button" class="secondaryButton" data-testid="profile-columns-toggle" aria-expanded="false">Danh sách cột hỗ trợ</button><label class="field"><span>Dữ liệu dán từ Excel</span><textarea aria-label="Dữ liệu dán hồ sơ từ Excel" class="pasteTextarea" data-testid="profile-paste-textarea" rows="6" spellCheck="false">Mã NLĐ	Dự án	Ngày bắt đầu làm việc	Họ và tên	Tên NV Tuyển dụng	Loại hình LĐ	Giới tính	DOB	CMT/CCCD	Ngày cấp	Nơi cấp	Địa chỉ hiện tại	Số điện thoại	Ghi chú	Tình trạng làm việc hiện tại	STK	Tên ngân hàng	Tên chủ tài khoản
+hrp-2026-000101	Dự án Giả Bắc	2026-10-15	Nguyễn Văn Giả A	Tuyển Dụng Giả 1	Thời vụ	Nam	1990-05-20	012345678901	2020-06-01	Cục Cảnh sát Giả	Số 1 Đường Giả	0900000001	Ghi chú giả	Đang làm	000123456789	Ngân hàng Giả	NGUYEN VAN GIA A
+hrp-2026-000102	Dự án Giả Bắc	2026-10-15	Nguyễn Thị Giả B	Tuyển Dụng Giả 1	Toàn thời gian	Nữ	1995-12-01	012345678				0900000002					
+hrp-2026-000103	Dự án Giả Bắc	2026-10-15	Nguyễn Văn Giả C	Tuyển Dụng Giả 1	Thời vụ		1988-02-02										</textarea></label><p class="profileSummary" data-testid="profile-summary" role="status"><span>3 dòng</span><span>3 hợp lệ</span><span>0 lỗi</span><span>0 cảnh báo</span></p><ul class="profileRowList" data-testid="profile-rows"><li><article class="profileRowCard" data-testid="profile-row-2"><div class="profileRowHead"><span class="profileRowCode">hrp-2026-000101</span><span class="profileBadge profileBadgeOk" data-testid="profile-status-2">Hợp lệ</span></div><p class="profileMeta">Nguyễn Văn Giả A · Dự án Giả Bắc · 2026-10-15 · Tuyển Dụng Giả 1</p><button type="button" class="secondaryButton" data-testid="profile-detail-toggle-2" aria-expanded="true">Ẩn chi tiết</button><div class="profileDetail" data-testid="profile-detail-2"><section class="profileSection"><h4>Công việc</h4><dl class="profileFieldList"><div style="display:contents"><dt>Mã NLĐ</dt><dd>hrp-2026-000101</dd></div><div style="display:contents"><dt>Dự án</dt><dd>Dự án Giả Bắc · danh mục</dd></div><div style="display:contents"><dt>Ngày bắt đầu làm việc</dt><dd>2026-10-15</dd></div><div style="display:contents"><dt>Người tuyển</dt><dd>Tuyển Dụng Giả 1 · danh mục</dd></div><div style="display:contents"><dt>Loại hình LĐ</dt><dd>Thời vụ</dd></div><div style="display:contents"><dt>Ghi chú</dt><dd>Ghi chú giả</dd></div></dl></section><section class="profileSection"><h4>Hồ sơ cá nhân</h4><dl class="profileFieldList"><div style="display:contents"><dt>Họ và tên</dt><dd>Nguyễn Văn Giả A</dd></div><div style="display:contents"><dt>Giới tính</dt><dd>MALE</dd></div><div style="display:contents"><dt>DOB</dt><dd>1990-05-20</dd></div><div style="display:contents"><dt>CMT/CCCD</dt><dd>••••••••8901</dd></div><div style="display:contents"><dt>Ngày cấp</dt><dd>2020-06-01</dd></div><div style="display:contents"><dt>Nơi cấp</dt><dd>Cục Cảnh sát Giả</dd></div><div style="display:contents"><dt>Địa chỉ hiện tại</dt><dd>Số 1 Đường Giả</dd></div><div style="display:contents"><dt>Số điện thoại</dt><dd>0900000001</dd></div></dl><p class="profileNote">Ảnh CCCD mặt trước/sau được tải riêng sau khi hồ sơ được lưu.</p></section><section class="profileSection"><h4>Tình trạng làm việc</h4><dl class="profileFieldList"><div style="display:contents"><dt>Tình trạng làm việc hiện tại</dt><dd>ON</dd></div><div style="display:contents"><dt>Ngày nghỉ thực tế</dt><dd>—</dd></div><div style="display:contents"><dt>Ghi chú về nghỉ việc</dt><dd>—</dd></div></dl></section><section class="profileSection"><h4>Thanh toán</h4><dl class="profileFieldList"><div style="display:contents"><dt>STK</dt><dd>••••••••6789</dd></div><div style="display:contents"><dt>Tên ngân hàng</dt><dd>Ngân hàng Giả · danh mục</dd></div><div style="display:contents"><dt>Tên chủ tài khoản</dt><dd>NGUYEN VAN GIA A</dd></div></dl></section><section class="profileSection"><h4>Validation-only</h4><dl class="profileFieldList"><div style="display:contents"><dt>STT</dt><dd>—</dd></div><div style="display:contents"><dt>Tháng</dt><dd>2026-10</dd></div><div style="display:contents"><dt>Tuổi</dt><dd>36</dd></div><div style="display:contents"><dt>Chi nhánh/Team</dt><dd>—</dd></div><div style="display:contents"><dt>HRP/Vendor</dt><dd>—</dd></div></dl><p class="profileNote">Hệ thống sẽ xác nhận chi nhánh/team và HRP/Vendor từ danh mục; các cột này không được lưu.</p></section></div></article></li><li><article class="profileRowCard" data-testid="profile-row-3"><div class="profileRowHead"><span class="profileRowCode">hrp-2026-000102</span><span class="profileBadge profileBadgeOk" data-testid="profile-status-3">Hợp lệ</span></div><p class="profileMeta">Nguyễn Thị Giả B · Dự án Giả Bắc · 2026-10-15 · Tuyển Dụng Giả 1</p><button type="button" class="secondaryButton" data-testid="profile-detail-toggle-3" aria-expanded="false">Xem chi tiết</button></article></li><li><article class="profileRowCard" data-testid="profile-row-4"><div class="profileRowHead"><span class="profileRowCode">hrp-2026-000103</span><span class="profileBadge profileBadgeOk" data-testid="profile-status-4">Hợp lệ</span></div><p class="profileMeta">Nguyễn Văn Giả C · Dự án Giả Bắc · 2026-10-15 · Tuyển Dụng Giả 1</p><button type="button" class="secondaryButton" data-testid="profile-detail-toggle-4" aria-expanded="false">Xem chi tiết</button></article></li></ul><div class="drawerActions"><button type="button" class="secondaryButton">Đóng</button><button type="button" class="primaryButton" data-testid="profile-submit" disabled="" aria-disabled="true">Chờ máy chủ hỗ trợ hồ sơ đầy đủ</button></div></div></div></div></div></body></html>

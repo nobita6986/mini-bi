@@ -1,0 +1,373 @@
+{
+  "harness": "p1.6-i04c3-r3a-preview-acceptance",
+  "typeErrors": 0,
+  "typeErrorLines": [],
+  "checks": [
+    {
+      "scope": "real-component",
+      "name": "tieu de dialog la output cua component",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "CTA dung trang thai cho server",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "CTA luon disabled",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong co nut nao mang nhan Luu",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "summary co du bon chi so",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "summary loi dung role=alert",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "summary hop le dung role=status",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co section Công việc",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co section Hồ sơ cá nhân",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co section Tình trạng làm việc",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co section Thanh toán",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co section Validation-only",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co dong chi tiet da mo rong",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "dong chua mo khong render chi tiet",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co nut xem chi tiet cho tung dong",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "CCCD duoc mask",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo raw CCCD 12 so",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo raw CCCD 9 so",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "STK duoc mask",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo raw STK",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong co raw JSON",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo storage_key",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo checksum",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo bucket",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo signed",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo actor_id",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo auth_subject",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo capability",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo scope_kind",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo submission_id",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong lo entry_ids",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co dong hop le",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co dong thieu catalog",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co dong loi CCCD",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "co dong loi ngay",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "dong loi hien badge loi",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "khong POST/fetch trong markup",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "raw CCCD chi nam trong buffer dan",
+      "ok": true,
+      "detail": {
+        "rawOccurrences": 1
+      }
+    },
+    {
+      "scope": "real-component",
+      "name": "chi co mot textarea (buffer dan)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-component",
+      "name": "trang thai hon hop van mask CCCD",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-valid-desktop-1920x1080.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920,
+        "dialogWidth": 820
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-valid-desktop-1920x1080.dialog-nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920,
+        "dialogWidth": 820
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-valid-mobile-390x844.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "dialogWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-valid-mobile-390x844.dialog-nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "dialogWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-mixed-desktop-1920x1080.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920,
+        "dialogWidth": 820
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-mixed-desktop-1920x1080.dialog-nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 1920,
+        "innerWidth": 1920,
+        "dialogWidth": 820
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-mixed-mobile-390x844.khong-tran-ngang",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "dialogWidth": 390
+      }
+    },
+    {
+      "scope": "real-css",
+      "name": "fullprofile-mixed-mobile-390x844.dialog-nam-trong-viewport",
+      "ok": true,
+      "detail": {
+        "scrollWidth": 390,
+        "innerWidth": 390,
+        "dialogWidth": 390
+      }
+    }
+  ],
+  "shots": [
+    {
+      "name": "fullprofile-valid-desktop-1920x1080",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "bytes": 105015
+    },
+    {
+      "name": "fullprofile-valid-mobile-390x844",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "bytes": 48105
+    },
+    {
+      "name": "fullprofile-mixed-desktop-1920x1080",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "bytes": 105592
+    },
+    {
+      "name": "fullprofile-mixed-mobile-390x844",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "bytes": 52498
+    }
+  ],
+  "limitations": [
+    "Render tinh (react-dom/server): KHONG mount tuong tac, khong co React runtime trong trang.",
+    "Vi vay Escape/focus cua Radix chi co bang chung o muc ma nguon, khong phai runtime.",
+    "Khung dialog (.drawerOverlay/.profilePasteDialog) va 2 dong title/description do harness cung cap; toan bo phan con lai la output that cua component.",
+    "Khong chay Next.js server, khong DB, khong R2; du lieu la GIA (synthetic)."
+  ],
+  "total": 48,
+  "passed": 48,
+  "failed": 0,
+  "ok": true
+}
