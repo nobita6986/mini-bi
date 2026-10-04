@@ -31,7 +31,7 @@ async function database() {
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 36, "PGlite must apply migrations #1-#36");
+  assert.equal(migrations.length, 37, "PGlite must apply migrations #1-#37");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -492,6 +492,123 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
     }
     const acceptanceAfter = await tableStates(db, acceptanceTables);
     assert.deepEqual(acceptanceAfter, acceptanceBaseline);
+  } finally {
+    await db.close();
+  }
+});
+
+test("migration #37 accepts partial banking metadata without a catalog and preserves redaction", async () => {
+  const db = await database();
+  try {
+    await db.exec("delete from public.direct_entry_banks;");
+    assert.equal(await count(db, "direct_entry_banks"), 0);
+
+    const inputRows = [
+      row(600),
+      row(601, { payment: { state: "provided", bank_name: "\u00a0 Ngân hàng Á Châu \u3000" } }),
+      row(602, { payment: { state: "provided", account_number: "\u00a000001234\u3000" } }),
+      row(603, { payment: { state: "provided", account_holder_name: "\ufeffSynthetic Holder\u202f" } }),
+      row(604, { payment: {
+        state: "provided",
+        account_number: "00005678",
+        bank_name: "Synthetic Bank",
+        account_holder_name: "Synthetic Full Holder",
+      } }),
+    ];
+    const result = await rpc(
+      db, inputRows, "91600000-0000-4000-8000-000000000601",
+    );
+    assert.equal(result.entry_ids.length, 5);
+    const persisted = await db.query(
+      "select e.employee_code, p.account_number, p.bank_name, p.account_holder_name " +
+      "from public.direct_entries e left join public.direct_entry_payments p using(entry_id) " +
+      "where e.entry_id=any($1::uuid[]) order by e.employee_code",
+      [result.entry_ids],
+    );
+    assert.deepEqual(persisted.rows, [
+      { employee_code: "hrp-2020-000600", account_number: null, bank_name: null, account_holder_name: null },
+      { employee_code: "hrp-2020-000601", account_number: null, bank_name: "Ngân hàng Á Châu", account_holder_name: null },
+      { employee_code: "hrp-2020-000602", account_number: "00001234", bank_name: null, account_holder_name: null },
+      { employee_code: "hrp-2020-000603", account_number: null, bank_name: null, account_holder_name: "Synthetic Holder" },
+      { employee_code: "hrp-2020-000604", account_number: "00005678", bank_name: "Synthetic Bank", account_holder_name: "Synthetic Full Holder" },
+    ]);
+    assert.equal(await count(db, "direct_entry_payments"), 4);
+
+    const authorized = await db.query(
+      "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as projection",
+      [IDS.auth, IDS.user, result.entry_ids[1]],
+    );
+    assert.deepEqual(authorized.rows[0].projection.payment, {
+      state: "provided",
+      account_number: null,
+      bank_id: null,
+      bank_name: "Ngân hàng Á Châu",
+      account_holder_name: null,
+      version: 1,
+    });
+    const masked = await db.query(
+      "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as projection",
+      [IDS.readAuth, IDS.readUser, result.entry_ids[2]],
+    );
+    assert.equal(masked.rows[0].projection.payment.account_number, "••••1234");
+    assert.equal("bank_name" in masked.rows[0].projection.payment, false);
+    assert.equal("account_holder_name" in masked.rows[0].projection.payment, false);
+
+    const protectedData = [
+      "00001234", "00005678", "Ngân hàng Á Châu", "Synthetic Bank",
+      "Synthetic Holder", "Synthetic Full Holder",
+    ];
+    const revisions = await db.query(
+      "select coalesce(before_snapshot::text, '') || coalesce(after_snapshot::text, '') as snapshot " +
+      "from public.direct_entry_revisions where entry_id=any($1::uuid[])",
+      [result.entry_ids],
+    );
+    for (const { snapshot } of revisions.rows) {
+      for (const value of protectedData) assert.equal(snapshot.includes(value), false);
+    }
+    const events = await db.query(
+      "select to_jsonb(a)::text as event from public.direct_entry_audit_events a " +
+      "where a.resource_ref=any($1::text[])",
+      [result.entry_ids],
+    );
+    for (const { event } of events.rows) {
+      for (const value of protectedData) assert.equal(event.includes(value), false);
+    }
+
+    const baseline = {
+      entries: await count(db, "direct_entries"),
+      payments: await count(db, "direct_entry_payments"),
+      idempotency: await count(db, "direct_entry_rpc_idempotency"),
+    };
+    await assert.rejects(
+      rpc(db, [row(605, { payment: {
+        state: "provided", account_number: "00009999", bank_id: "missing-synthetic-bank",
+      } })], "91600000-0000-4000-8000-000000000602"),
+      (error) => error.code === "22023",
+    );
+    assert.deepEqual({
+      entries: await count(db, "direct_entries"),
+      payments: await count(db, "direct_entry_payments"),
+      idempotency: await count(db, "direct_entry_rpc_idempotency"),
+    }, baseline);
+
+    await db.exec("begin; set local role service_role;");
+    try {
+      await assert.rejects(
+        db.query(
+          "select public.direct_entry_update_payment($1::uuid,$2::uuid,$3::uuid," +
+          "$4::integer,$5::integer,$6::jsonb,$7::text,$8::text)",
+          [
+            IDS.auth, IDS.user, result.entry_ids[2], 999, 1,
+            JSON.stringify({ state: "provided" }), "Synthetic stale-version check",
+            "91600000-0000-4000-8000-000000000603",
+          ],
+        ),
+        (error) => error.code === "40001",
+      );
+    } finally {
+      await db.exec("rollback;");
+    }
   } finally {
     await db.close();
   }

@@ -48,9 +48,10 @@ export type FullProfileRpcRow = {
   general_note: OptionalText;
   payment: null | {
     state: "omitted" | "unknown" | "intentionally_blank" | "provided";
-    account_number?: string;
+    account_number?: string | null;
     bank_id?: string;
-    account_holder_name?: string;
+    bank_name?: string | null;
+    account_holder_name?: string | null;
   };
   employment: null | {
     initial_status: "UNCONFIRMED" | "ON" | "OFF";
@@ -180,31 +181,55 @@ function normalizeWorker(value: unknown, path: string, issues: ContractIssue[]) 
 function normalizePayment(value: unknown, path: string, issues: ContractIssue[]): FullProfileRpcRow["payment"] {
   if (value === undefined) return null;
   if (!isRecord(value) ||
-      !hasOnlyKeys(value, new Set(["state", "account_number", "bank_id", "account_holder_name"])) ||
+      !hasOnlyKeys(value, new Set([
+        "state", "account_number", "bank_id", "bank_name", "account_holder_name",
+      ])) ||
       !["omitted", "unknown", "intentionally_blank", "provided"].includes(String(value.state))) {
     issues.push({ code: "BATCH_INVALID", path });
     return null;
   }
-  if (value.state !== "provided") {
-    if (Object.hasOwn(value, "account_number") || Object.hasOwn(value, "bank_id") ||
-        Object.hasOwn(value, "account_holder_name")) {
+  const normalizeText = (key: "account_number" | "bank_name" | "account_holder_name",
+    maxLength: number): string | null => {
+    const field = value[key];
+    if (field === undefined || field === null) return null;
+    if (typeof field !== "string") {
       issues.push({ code: "PAYMENT_DETAILS_INVALID", path });
+      return null;
     }
+    const normalized = field.trim();
+    if (normalized.length > maxLength || /[\u0000-\u001f\u007f]/.test(normalized)) {
+      issues.push({ code: "PAYMENT_DETAILS_INVALID", path });
+      return null;
+    }
+    return normalized || null;
+  };
+  const accountNumber = normalizeText("account_number", 64);
+  const bankName = normalizeText("bank_name", 256);
+  const accountHolderName = normalizeText("account_holder_name", 256);
+  const bankIdValue = value.bank_id;
+  const bankId = bankIdValue == null ? null
+    : typeof bankIdValue === "string" && CATALOG_ID.test(bankIdValue.trim())
+      ? bankIdValue.trim()
+      : null;
+  if (bankIdValue != null && bankId === null) {
+    issues.push({ code: "PAYMENT_DETAILS_INVALID", path });
+  }
+  const hasMetadata = accountNumber !== null || bankName !== null || accountHolderName !== null;
+  if (value.state !== "provided") {
+    if (hasMetadata || bankId !== null) issues.push({ code: "PAYMENT_DETAILS_INVALID", path });
     return { state: value.state as "omitted" | "unknown" | "intentionally_blank" };
   }
-  if (typeof value.account_number !== "string" || value.account_number.length < 1 ||
-      value.account_number.length > 64 || /[\u0000-\u001f\u007f]/.test(value.account_number) ||
-      typeof value.bank_id !== "string" || !CATALOG_ID.test(value.bank_id) ||
-      typeof value.account_holder_name !== "string" ||
-      value.account_holder_name.trim().length < 1 || value.account_holder_name.length > 256) {
-    issues.push({ code: "PAYMENT_DETAILS_INVALID", path });
-    return null;
+  if (!hasMetadata) {
+    if (bankId !== null) issues.push({ code: "PAYMENT_DETAILS_INVALID", path });
+    return { state: "omitted" };
   }
+  if (issues.some((issue) => issue.path === path)) return null;
   return {
     state: "provided",
-    account_number: value.account_number,
-    bank_id: value.bank_id,
-    account_holder_name: value.account_holder_name,
+    ...(accountNumber === null ? {} : { account_number: accountNumber }),
+    ...(bankId === null ? {} : { bank_id: bankId }),
+    ...(bankName === null ? {} : { bank_name: bankName }),
+    ...(accountHolderName === null ? {} : { account_holder_name: accountHolderName }),
   };
 }
 

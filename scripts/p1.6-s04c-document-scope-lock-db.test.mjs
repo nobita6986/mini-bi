@@ -85,10 +85,10 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   await db.close();
 });
 
-test("36-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
+test("37-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
-  assert.equal(migrationNames.length, 36);
-  assert.equal(migrationNames.at(-3), scopeMigration);
+  assert.equal(migrationNames.length, 37);
+  assert.equal(migrationNames.at(-4), scopeMigration);
 
   const fixture = await seedChangeRequestFixture(db);
   const parent = await createChangeRequest(db, ACTORS.proposer,
