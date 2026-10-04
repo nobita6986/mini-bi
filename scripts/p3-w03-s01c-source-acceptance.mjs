@@ -42,8 +42,10 @@ test.beforeEach(() => resetHarness());
 
 test("A1: GET /api/auth/session chi goi mot lan khi mo trang", () => {
   const strippedGate = GATE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  const fetchCount = (strippedGate.match(/fetch\(/g) ?? []).length;
-  assert.equal(fetchCount, 1, "LoginGate must call fetch exactly once");
+  const sessionFetchCount = (strippedGate.match(/fetch\(\s*["']\/api\/auth\/session["']/g) ?? []).length;
+  const logoutFetchCount = (strippedGate.match(/fetch\(\s*["']\/api\/auth\/logout["']/g) ?? []).length;
+  assert.equal(sessionFetchCount, 1, "LoginGate must bootstrap session exactly once");
+  assert.equal(logoutFetchCount, 1, "Account-unavailable logout must use its separate endpoint");
   assert.match(GATE, /\/api\/auth\/session/);
 });
 
