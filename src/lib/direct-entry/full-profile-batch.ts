@@ -315,7 +315,7 @@ export async function postFullProfileBatch(input: {
     contract_version: WORKER_PROFILE_CONTRACT_VERSION,
     rows: input.rows,
   } satisfies FullProfileRequestBody);
-  if (body.length > FULL_PROFILE_MAX_BODY_BYTES) {
+  if (new TextEncoder().encode(body).byteLength > FULL_PROFILE_MAX_BODY_BYTES) {
     return { kind: "rejected", code: "BODY_TOO_LARGE" };
   }
   let response: Response;

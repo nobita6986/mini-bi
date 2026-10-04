@@ -578,6 +578,7 @@ async function main() {
   let collectedConsole = [];
   let devServer = null;
   let chrome = null;
+  let chromeProfile = null;
   let socket = null;
   let serverLog = "";
   try {
@@ -595,12 +596,12 @@ async function main() {
     const up = await waitForServer(base + ROUTE, 180000);
     if (!up) throw new Error("next dev did not become ready:\n" + serverLog.slice(-2000));
 
-    const profile = mkdtempSync(path.join(tmpdir(), "i04c3-r3b-chrome-"));
+    chromeProfile = mkdtempSync(path.join(tmpdir(), "i04c3-r3b-chrome-"));
     chrome = spawn(CHROME, ["--headless=new", "--remote-debugging-port=0",
-      "--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check",
+      "--user-data-dir=" + chromeProfile, "--no-first-run", "--no-default-browser-check",
       "--remote-allow-origins=*", "--hide-scrollbars", "about:blank"],
     { stdio: "ignore", detached: false });
-    const devtoolsPort = await readDevToolsPort(profile);
+    const devtoolsPort = await readDevToolsPort(chromeProfile);
     const attached = await attach(devtoolsPort);
     socket = attached.socket;
     const { send, consoleMessages } = attached;
@@ -619,6 +620,7 @@ async function main() {
     if (socket && socket.readyState === WebSocket.OPEN) socket.close();
     if (chrome) { try { chrome.kill(); } catch { /* ignore */ } await waitForExit(chrome); }
     if (devServer) { try { devServer.kill(); } catch { /* ignore */ } await waitForExit(devServer); }
+    if (chromeProfile) rmSync(chromeProfile, { recursive: true, force: true });
     removeFixture();
   }
 

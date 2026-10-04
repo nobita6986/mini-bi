@@ -315,15 +315,16 @@ test("gioi han: 1..100 dong; body limit duoc kiem tra truoc khi gui", async () =
   assert.equal(tooMany.code, "BATCH_SIZE_INVALID");
   assert.equal(calls.length, 0);
 
-  // Body vuot 4 MiB => chan truoc khi goi fetch.
-  const huge = body.rows.map((item) => ({ ...item,
-    worker: { ...item.worker, address: { state: "provided", value: "x".repeat(1024) } },
-    general_note: { state: "provided", value: "y".repeat(4000) } }));
-  const bigBody = await postFullProfileBatch({ rows: huge, idempotencyKey: SUBMISSION,
+  // Unicode vuot 4 MiB UTF-8 nhung van nho hon 4 MiB theo JS string.length.
+  const unicodeBody = body.rows.map((item) => ({ ...item,
+    general_note: { state: "provided", value: "😀".repeat(11000) } }));
+  const unicodeJson = JSON.stringify({ contract_version: "worker-profile/1.0", rows: unicodeBody });
+  assert.equal(unicodeJson.length < 4 * 1024 * 1024, true);
+  assert.equal(new TextEncoder().encode(unicodeJson).byteLength > 4 * 1024 * 1024, true);
+  const bigBody = await postFullProfileBatch({ rows: unicodeBody, idempotencyKey: SUBMISSION,
     fetchImpl: async () => { calls.push(1); throw new Error("x"); } });
-  assert.equal(bigBody.code === "BODY_TOO_LARGE" || bigBody.kind === "saved" ||
-    bigBody.kind === "retry", true);
-  void bigBody;
+  assert.deepEqual(bigBody, { kind: "rejected", code: "BODY_TOO_LARGE" });
+  assert.equal(calls.length, 0);
 });
 
 test("request: dung mot POST, dung endpoint/header/body, khong truong authority", async () => {
