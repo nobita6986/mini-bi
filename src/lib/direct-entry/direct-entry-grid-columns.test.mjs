@@ -43,12 +43,12 @@ test("registry tai su dung worker-profile spec thay vi nhan ban contract", () =>
 });
 
 test("write, validation-only va ignore co boundary fail-closed", () => {
-  for (const key of ["project_id", "employee_code", "display_name", "account_number", "bank_name"]) {
+  for (const key of ["project_id", "display_name", "account_number", "bank_name"]) {
     const column = directEntryGridColumn(key);
     assert.equal(column?.pasteMode, "write", key);
     assert.equal(column?.editable, true, key);
   }
-  for (const key of ["row_index", "age_years", "provider_hint", "team_hint"]) {
+  for (const key of ["row_index", "employee_code", "age_years", "provider_hint", "team_hint"]) {
     const column = directEntryGridColumn(key);
     assert.equal(column?.pasteMode, "validate-only", key);
     assert.equal(column?.editable, false, key);
