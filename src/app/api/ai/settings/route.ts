@@ -49,6 +49,12 @@ export async function POST(request: Request) {
   const guard = guardSettingsRequest(request, { mutation: true, actor_ref: PILOT_ACTOR_REF });
   if (!guard.ok) return guard.response;
 
+  // P3-W02E: route nay dang thieu guard session/actor. Sau H04, moi AI route deu
+  // xac thuc Supabase session truoc khi cham du lieu; POST /api/ai/settings phai
+  // giong cac route anh em (activate/disable/rotate/test) va GET cung route.
+  const session = await guardApiSession();
+  if (!session.ok) return session.response;
+
   const wired = createSettingsWiring();
   if (!wired.ok) return settingsError(wired.code, wired.message);
 
