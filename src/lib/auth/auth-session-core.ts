@@ -9,6 +9,8 @@ const NO_STORE_HEADERS = {
   "Cache-Control": "private, no-store",
   "Pragma": "no-cache",
   "Expires": "0",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
 };
 const emailSchema = z.email().max(254);
 
