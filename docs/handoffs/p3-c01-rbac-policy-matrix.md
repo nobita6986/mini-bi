@@ -1,11 +1,19 @@
-# P3-C01-R1 — RBAC Policy Matrix Locked (Handoff)
+# P3-C01-R2 — Policy Contract Count Corrected (Handoff)
 
-**Status:** `P3-C01-R1_POLICY_LOCKED_READY_FOR_IMPLEMENTATION`
+**Status:** `P3-C01-R2_POLICY_CONTRACT_COUNT_CORRECTED_READY_FOR_IMPLEMENTATION`
 **Base:** `45c99b984be8fd81d0fb1308ec9deda94bbf901e`
 **Worktree:** `C:\CodeApp\BI-p3-c01-rbac-policy`
 **Branch:** `audit/p3-c01-rbac-policy-matrix`
-**Revision:** R1 — T0 sign-off applied. D-1, D-2, D-3 are **LOCKED**.
-**No Owner blocker remains** before T1B seeds the grants migration.
+**Revision:** R2 — capability count and v1/v2 drift claim corrected. The
+canonical source of truth is `CAPABILITIES` in
+`src/lib/auth/direct-entry-v2.ts:10-30`, which enumerates **21
+tokens**. The `Capability` type union in
+`src/lib/contracts/direct-entry-v1.ts:136-157` enumerates the **same
+21 tokens** in the same order, including `entry_restore`. There is
+**no v1-vs-v2 drift** at this base. C01 and R1 overstated the count
+as twenty-two (`22`) and asserted a v1-missing-`entry_restore` drift;
+R2 supersedes both.
+**Predecessor:** [`docs/handoffs/p3-c01-rbac-policy-matrix.md`](../handoffs/p3-c01-rbac-policy-matrix.md) (R1, superseded for the count / drift items; all policy locks retained).
 **Artifact:** [`docs/security/p3-minimal-rbac-capability-matrix.md`](../security/p3-minimal-rbac-capability-matrix.md)
 
 ---
@@ -28,8 +36,10 @@ Only the two C01 documents were edited. The diff is:
 
 A **single, signed-off-ready policy spec** that maps:
 
-- 22 capabilities (the v2 set in
-  `src/lib/auth/direct-entry-v2.ts::CAPABILITIES`) ×
+- 21 capabilities (the v2 / v1 set in
+  `src/lib/auth/direct-entry-v2.ts::CAPABILITIES` and
+  `src/lib/contracts/direct-entry-v1.ts::Capability`; both enumerate
+  the same 21 tokens, including `entry_restore`) ×
 - 5 role classes (`owner`, `hrp`, `vendor`, `reviewer`, `reader`) ×
 - 3 scope flavours (`own`, `team`, `all`) ×
 - ~30 routes, panels and nav entries.
@@ -44,7 +54,7 @@ ship a migration, and **does not** ship UI. T1B (admin surface) and T1A
 
 | Role       | Capability bundle (from artifact §2.2)                                                                  | Scope          |
 | ---------- | ------------------------------------------------------------------------------------------------------- | -------------- |
-| `owner`    | all 22 capabilities, **admin authority** is the AND of `entry_admin` ∧ `recruiter_master_manage` ∧ `team_master_manage` at `all` scope | `all`          |
+| `owner`    | all 21 capabilities, **admin authority** is the AND of `entry_admin` ∧ `recruiter_master_manage` ∧ `team_master_manage` at `all` scope | `all`          |
 | `hrp`      | `entry_create`, `entry_own/team`, `submission_create`, `change_request_create`, `employment_status.request`, `document_*` (own) | own OR team    |
 | `vendor`   | same as `hrp (own)`, **no** `payment_view`, **no** `pii_*`                                             | own only       |
 | `reviewer` | `change_review`, `employment_status.review`, `document_view (all)`; **no** `payment_view` (D-1 LOCKED) | all            |
@@ -61,8 +71,8 @@ read history" posture is withdrawn.
 P3-W01A inventory @ `1f76c1d` documented that the only thing missing
 for P3 implementation is a **policy spec** to glue together:
 
-1. The capability set (22 tokens, declared once in
-   `direct-entry-v2.ts`).
+1. The capability set (21 tokens, declared once in
+   `direct-entry-v2.ts` and mirrored in `contracts/direct-entry-v1.ts`; both enumerate the same 21 tokens, including `entry_restore`).
 2. The grants tables (`direct_entry_capability_grants` /
    `direct_entry_scope_grants` — exist, not yet seeded).
 3. The page decisions (`decideSessionPageAccess`,
@@ -114,7 +124,6 @@ first cut; **C01-R1 locks the policy** for T1B / T1A consumption.
 | `POST /api/ai/settings` session guard        | **already done @ P3-W02E** (`d2b6c3b`); matrix records the posture | W02E is already landed on `45c99b9`.                              |
 | Document JS capability check (`document-api.ts:87`) | **P3-W02.H**          | Defence-in-depth UX gate; C01 keeps it; W02.H may drop it.                                      |
 | `entry_restore` granted RPC                   | **T1B or contract-bump**   | No granted RPC at this base; the matrix keeps the token in `owner` and flags the gap in §8.    |
-| v1-vs-v2 contract drift (`entry_restore` missing from v1) | **contract-bump task** | C01 documents; does not fix.                                                       |
 | Relaxing D-1, D-2, or D-3                    | **contract-bump task**     | R1 explicitly forbids a UI toggle; reversal requires a new capability token and a matrix PR.    |
 
 ---
@@ -135,23 +144,62 @@ first cut; **C01-R1 locks the policy** for T1B / T1A consumption.
 
 ---
 
-## Gates passed (R1)
+## What R2 changed vs R1
+
+R2 is **docs-only** and **does not** touch policy locks, the admin
+authority rule, or the owner fail-closed posture. R2 supersedes two
+factual claims in R1 and updates the count throughout.
+
+| Claim in R1 (quoted, then withdrawn)                       | R2 correction                                                                                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Count was "twenty-two capabilities" (the v2 `CAPABILITIES` array) | Count is twenty-one capabilities (the v2 `CAPABILITIES` array).                                                                      |
+| v1 `Capability` was a "twenty-one-token subset" with `entry_restore` "missing from v1" | v1 `Capability` is the same twenty-one-token set, in the same order, including `entry_restore`. There is no v1-vs-v2 drift. |
+| "v1-vs-v2 contract drift" was listed in §5 principle 6 of the security doc, in §8 gap #7, and in this handoff's out-of-scope table | Withdrawn. R2 §1, §5 principle 6, and §8 gap #7 all record the corrected fact. The handoff's out-of-scope table no longer lists the drift row. |
+| `owner` was described as carrying "twenty-two capabilities" (twice in this handoff) | `owner` carries twenty-one capabilities (twice).                                                                                  |
+
+R2 is **additive on retention, subtractive on the count / drift**:
+
+- **Retained from R1 (unchanged):** D-1, D-2, D-3 LOCKED; admin
+  authority AND of `entry_admin` ∧ `recruiter_master_manage` ∧
+  `team_master_manage`; `owner` is a granted bundle, not a recovery
+  back-door; runtime is fail-closed; no new capability tokens; no
+  per-action UI override; SQL is authority, JS is projection; no
+  Basic Auth resurrection; UI visibility never grants capability;
+  contract bump owns any future drift.
+- **Corrected in R2:** the count is 21, the v1 union mirrors the v2
+  array, and there is no `entry_restore` drift to fix.
+
+The §1 inventory table, §2.2 capability × role matrix, §3 cross-surface
+matrix, §4 page / route / nav visibility, §4.4 panel gates, §7
+cross-check, and the matrix verdict are **unchanged in shape** —
+only the count language and the drift claim were edited.
+
+---
+
+## Gates passed (R2)
 
 - `pnpm docs:check` — **PASS** (6/6).
 - `pnpm secrets:check` — **PASS** (815 files scanned, no secret).
 - `git diff --check` — **PASS**.
-- File budget: 2 files (this handoff + the matrix doc). ≤ 2 as required.
-- Diff vs C01: only the two C01 documents are modified. No new files.
+- `rg`-verified: no remaining count-of-twenty-two claim, no remaining
+  "v1 missing `entry_restore`" claim, no remaining "v1-vs-v2 drift"
+  claim against the v1 contract (the only remaining textual
+  occurrences of the phrase are historical / superseded references
+  inside R2's revision record, not forward-facing policy claims).
+- File budget: 2 files (this handoff + the matrix doc). ≤ 2 as
+  required. No new files.
 
 ---
 
 ## Verdict
 
-**Status:** `P3-C01-R1_POLICY_LOCKED_READY_FOR_IMPLEMENTATION`.
+**Status:** `P3-C01-R2_POLICY_CONTRACT_COUNT_CORRECTED_READY_FOR_IMPLEMENTATION`.
 
 The matrix is the single artifact T1A / T1B need. No code changes. No
 migrations. No UI. **D-1, D-2, D-3 are T0 LOCKED**; no Owner blocker
 remains. The admin authority rule (AND of `entry_admin` ∧
 `recruiter_master_manage` ∧ `team_master_manage`) is the only path
 into the admin surface and uses zero new capability tokens. The
-runtime is fail-closed. P3 PASS is **not** claimed by this handoff.
+runtime is fail-closed. The capability set is **21 tokens**, mirrored
+across `direct-entry-v2.ts` and `contracts/direct-entry-v1.ts`, with
+no drift. P3 PASS is **not** claimed by this handoff.

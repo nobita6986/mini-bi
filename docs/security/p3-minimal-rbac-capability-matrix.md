@@ -16,7 +16,7 @@ schema) and T1A (authz UX, capability-aware navigation) consume.
 
 ## TL;DR
 
-1. **No new capabilities.** The 22-token set in
+1. **No new capabilities.** The 21-token set in
    `src/lib/auth/direct-entry-v2.ts::CAPABILITIES` is the surface. We pick
    roles that compose them. Adding a new capability requires a contract
    bump (`DIRECT_ENTRY_AUTH_CONTRACT_VERSION`) and is out of scope for C01.
@@ -45,12 +45,14 @@ schema) and T1A (authz UX, capability-aware navigation) consume.
 ## 1. Inventory of capabilities (no new ones)
 
 The canonical list lives in
-[`src/lib/auth/direct-entry-v2.ts:10-30`](../security/p3-minimal-rbac-capability-matrix.md)
-(`direct-entry-auth/1.2`). The contract
-[`src/lib/contracts/direct-entry-v1.ts:136-156`](../security/p3-minimal-rbac-capability-matrix.md)
-is a 21-token subset; **`entry_restore` is in v2 but missing from v1**. This
-is a known source-level drift. C01 does **not** add or remove tokens — it
-documents the gap and routes the fix to a separate contract-bump task.
+`src/lib/auth/direct-entry-v2.ts:10-30`
+(`direct-entry-auth/1.2`). The `Capability` type union in
+`src/lib/contracts/direct-entry-v1.ts:136-157` is the **same
+21-token set**, in the same order, including `entry_restore`. There
+is **no v1-vs-v2 drift** at this base; both files enumerate 21
+tokens. C01 / R1 / R2 do **not** add or remove tokens — the matrix
+is generated from the existing v2 / v1 set as a single source of
+truth.
 
 | Group            | Token(s)                                                                                  | DB evaluator                              |
 | ---------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------- |
@@ -101,7 +103,7 @@ reserved and does not contribute to the role's effective access.
 
 | Role ID    | Display name             | Identity profile (Supabase user)             | Intended real-world actor         |
 | ---------- | ------------------------ | -------------------------------------------- | --------------------------------- |
-| `owner`    | Owner / Admin            | `auth.users` row, mapped in `direct_entry_app_users`, with explicit grants for all 22 capabilities and `all` scope | Pilot admin, system owner, dev  |
+| `owner`    | Owner / Admin            | `auth.users` row, mapped in `direct_entry_app_users`, with explicit grants for all 21 capabilities and `all` scope | Pilot admin, system owner, dev  |
 | `hrp`      | HRP / Recruiter          | `auth.users` row, mapped + `recruiter_links`    | In-house HR partner               |
 | `vendor`   | Vendor recruiter         | `auth.users` row, mapped + `recruiter_links` (provider = vendor) | External recruiter    |
 | `reviewer` | Reviewer / approver      | `auth.users` row, mapped, no `recruiter_links`   | Lead HRP / payroll / admin liaison |
@@ -115,7 +117,7 @@ review change requests, they take the `owner` row (which carries
 
 **Owner is **not** a recovery fallback.** The `owner` role is **a
 granted bundle, not a back-door.** An actor carries the `owner` role
-only because the `direct_entry_capability_grants` table holds 22
+only because the `direct_entry_capability_grants` table holds 21
 explicit rows for their `app_user_id` and the
 `direct_entry_scope_grants` table holds the matching `all`-scope rows.
 A misconfigured grant that locks the owner out is recovered through
@@ -413,9 +415,12 @@ requires an explicit amendment.
 6. **Capability / scope drift is owned by a contract bump.** Any
    change to `CAPABILITIES` (add / remove / rename a token) bumps
    `DIRECT_ENTRY_AUTH_CONTRACT_VERSION` and re-derives this matrix.
-   The v1-vs-v2 drift (`entry_restore` missing from v1) is a known
-   bug, owned by a separate contract-bump task, not silently fixed
-   in C01.
+   At this base there is **no** v1-vs-v2 drift: both
+   `direct-entry-v2.ts::CAPABILITIES` and
+   `contracts/direct-entry-v1.ts::Capability` enumerate the same 21
+   tokens, in the same order, with `entry_restore` present in both.
+   R2 records this correction; R1's earlier "drift" claim is
+   superseded.
 7. **No "per-action UI override."** A role that cannot do an action
    does not get a different copy of the page for that action. They
    get the same page with the action's UI hidden and the route
@@ -517,8 +522,11 @@ These are owned by the dependency map in P3-W01A §6 and are explicitly
    Same as `entry_restore`. The matrix keeps them in the Owner role
    but flags them as "no route" — they don't contribute to Owner
    access today but they don't need to be removed to ship C01.
-7. **v1-vs-v2 contract drift** (`entry_restore` in v2 only). Owned
-   by a separate contract-bump task.
+7. **(Removed in R2.)** The earlier "v1-vs-v2 contract drift" gap
+   was based on a misread of the v1 `Capability` union. R2 re-reads
+   the source: both files enumerate the same 21 tokens, with
+   `entry_restore` present in both. There is no drift at this base;
+   the row is withdrawn and the gap is closed.
 
 ---
 
@@ -552,7 +560,7 @@ with the AND rule; the dashboard panel gate is generated from §4.4.
 
 ## 10. Verdict
 
-C01-R1 produces a **5-role, 22-capability, ~30-route matrix** with
+C01-R1 produces a **5-role, 21-capability, ~30-route matrix** with
 the **admin authority rule (AND of three capabilities)** bolted on. It
 consumes zero new code paths, fits inside the existing SQL contract,
 and is implementable by a single migration + a navigation filter PR.
