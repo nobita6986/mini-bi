@@ -228,3 +228,17 @@ test("khong co N+1 entry-detail fetch trong duong staged", () => {
   assert.equal((stagedRegion.match(/\bfetch\s*\(/g) ?? []).length, 0,
     "duong staged khong tu goi fetch");
 });
+
+// ===== P3-W06A R2 — Side-effect registration into full `pnpm test` =====
+// Direct Entry text-cell behavioral regression tests chạy targeted nhưng
+// chưa được đăng ký vào `pnpm test` đầy đủ. Import side-effect một chiều
+// từ `direct-entry-live-spreadsheet.test.mjs` để suite này chạy qua
+// `test:p1.6-i04c3-r3a` (và do đó chạy qua `pnpm test`).
+//
+// Điều kiện an toàn (P3-W06A R2):
+// - `direct-entry-text-cell-regression.test.mjs` KHÔNG import ngược
+//   `direct-entry-live-spreadsheet.test.mjs` (một chiều).
+// - Chỉ phụ thuộc `text-cell-state.ts` (production helper), không tạo
+//   circular import.
+// - Không thay đổi `package.json` / `pnpm-lock.yaml`.
+import "./direct-entry-text-cell-regression.test.mjs";
