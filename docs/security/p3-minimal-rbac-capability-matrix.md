@@ -1,6 +1,9 @@
 # P3-C01 — Minimal RBAC and Capability Policy Matrix
 
-**Status:** `P3-C01_RBAC_POLICY_MATRIX_READY_FOR_IMPLEMENTATION`
+**Status:** `P3-C01-R1_POLICY_LOCKED_READY_FOR_IMPLEMENTATION`
+**Revision:** R1 applies T0 sign-off on D-1, D-2, D-3 and locks the admin
+authority rule. After R1, no Owner blocker remains before T1B can seed
+the grants migration.
 **Base:** `45c99b984be8fd81d0fb1308ec9deda94bbf901e` (P1.7-H08-R1)
 **Worktree:** `C:\CodeApp\BI-p3-c01-rbac-policy`
 **Branch:** `audit/p3-c01-rbac-policy-matrix`
@@ -26,8 +29,16 @@ schema) and T1A (authz UX, capability-aware navigation) consume.
    matrix (a new RPC, a new nav entry, a new panel) is **deny by default**.
 4. **UI visibility ≠ authority.** Nav, panels, buttons hide when the role
    does not carry the capability; they do not grant the capability.
-5. **Three real Owner decisions** are open. The rest are taken as **safe
-   defaults** and can be relaxed later by amending the matrix.
+5. **R1 (this revision) locks D-1, D-2, D-3 to T0 defaults.** The matrix
+   is amended, the cross-surface matrix and the route cross-check are
+   re-derived, and the admin authority rule is tightened to **AND of
+   `entry_admin` ∧ `recruiter_master_manage` ∧ `team_master_manage`**.
+   No new capability tokens are introduced.
+6. **No blocker remains for T1B / T1A.** Every Owner decision has a
+   locked safe default. Recovery from a misconfigured grant is **not** a
+   property of the `owner` role — it is a property of the sanctioned
+   first-owner bootstrap that mints the first `app_user_id` carrying the
+   admin bundle.
 
 ---
 
@@ -90,7 +101,7 @@ reserved and does not contribute to the role's effective access.
 
 | Role ID    | Display name             | Identity profile (Supabase user)             | Intended real-world actor         |
 | ---------- | ------------------------ | -------------------------------------------- | --------------------------------- |
-| `owner`    | Owner / Admin            | `auth.users` row, mapped in `direct_entry_app_users` | Pilot admin, system owner, dev  |
+| `owner`    | Owner / Admin            | `auth.users` row, mapped in `direct_entry_app_users`, with explicit grants for all 22 capabilities and `all` scope | Pilot admin, system owner, dev  |
 | `hrp`      | HRP / Recruiter          | `auth.users` row, mapped + `recruiter_links`    | In-house HR partner               |
 | `vendor`   | Vendor recruiter         | `auth.users` row, mapped + `recruiter_links` (provider = vendor) | External recruiter    |
 | `reviewer` | Reviewer / approver      | `auth.users` row, mapped, no `recruiter_links`   | Lead HRP / payroll / admin liaison |
@@ -101,6 +112,42 @@ accounts (e.g. an HRP who is also a reviewer) are out of scope for C01 —
 the matrix expects one row per `app_user_id`. If Owner needs to also
 review change requests, they take the `owner` row (which carries
 `change_review`).
+
+**Owner is **not** a recovery fallback.** The `owner` role is **a
+granted bundle, not a back-door.** An actor carries the `owner` role
+only because the `direct_entry_capability_grants` table holds 22
+explicit rows for their `app_user_id` and the
+`direct_entry_scope_grants` table holds the matching `all`-scope rows.
+A misconfigured grant that locks the owner out is recovered through
+the **sanctioned first-owner bootstrap path** (the same migration /
+seed that mints the first `app_user_id` carrying the admin bundle),
+**not** through any role / email / env-var fallback. There is no
+implicit owner, no env-driven override, and no "if no admin exists
+treat the requester as admin" rule. The runtime is **fail-closed**:
+a missing grant row denies the request, and the admin surface returns
+the standard `ACTOR_NOT_AVAILABLE` / `CAPABILITY_DENIED` response.
+
+### 2.1a Admin authority rule (T0 LOCKED)
+
+Navigation entries that target the admin surface, **and** every mutation
+on `direct_entry_capability_grants`, `direct_entry_scope_grants`,
+recruiter links, team membership, and recruiter-master rows, requires
+**all three** of the following capabilities on the authenticated actor:
+
+- `entry_admin` (granted at `all` scope)
+- `recruiter_master_manage` (granted at `all` scope)
+- `team_master_manage` (granted at `all` scope)
+
+**AND, not OR.** No capability in the set, on its own, opens the admin
+surface. The `owner` role bundle is the only role in this matrix that
+carries all three at `all` scope, so the admin surface is **owner-only
+by construction** without introducing a new capability token. T1B
+implements the check as a single SQL assertion
+`direct_entry_assert_admin_authority(actor)` that fails closed on any
+missing capability; the JS projection in `authorizeDirectEntry` and the
+nav filter in `entriesForViewport` mirror the same rule. UI visibility
+hides the admin entry for any actor that lacks the AND — it does not
+grant the rule.
 
 ### 2.2 Capability × role matrix
 
@@ -119,8 +166,8 @@ review change requests, they take the `owner` row (which carries
 | `employment_status.review`    |   a     |     —       |      t       |       —        |     a      |    —     |
 | `employment_status.apply`     |   a     |     —       |      t       |       —        |     —      |    —     |
 | `document_upload`             |   a     |     o       |      t       |       o        |     —      |    —     |
-| `document_view`               |   a     |     o       |      t       |       o        |     a      |    o      |
-| `payment_view`                |   a     |     o       |      t       |       —        |     a      |    —     |
+| `document_view`               |   a     |     o       |      t       |       o        |     a      |    **—** |
+| `payment_view`                |   a     |     o       |      t       |       —        | **—**     |    —     |
 | `payment_edit`                |   a     |     —       |      t       |       —        |     —      |    —     |
 | `recruiter_master_manage`     |   a     |     —       |      —       |       —        |     —      |    —     |
 | `team_master_manage`          |   a     |     —       |      —       |       —        |     —      |    —     |
@@ -138,22 +185,42 @@ Reading the matrix:
   `payment_view` (denied) and `pii_*` (denied). It is mechanically
   `hrp` with extra denies; the matrix is the **only** place those
   denies are expressed — no `vendor`-specific code.
-- `reviewer` is a **sibling of hrp/owner**, not a subset. It grants
-  `change_review`, `employment_status.review`, and `payment_view`, but
-  cannot create / edit entries.
-- `reader` is the **only** read-only role and exists for the BoD / leader
-  view. It carries exactly `document_view (own)`. Dashboard reporting
-  reads do not use any capability (the `/dashboard` page does not check
-  capability — see §4.4 below).
+- `reviewer` is a **sibling of hrp/owner**, not a subset. After R1 it
+  carries `change_review`, `employment_status.review`, and
+  `document_view (all)`, but **does not** carry `payment_view`. D-1
+  (T0 LOCKED) — payroll confidentiality for reviewers is enforced by
+  the SQL authority; the JS projection in `authorizeDirectEntry`
+  mirrors it.
+- `reader` is the **only** read-only role and exists for the BoD /
+  leader view. After R1 it carries **no** capability from the v2 set.
+  D-2 (T0 LOCKED) — the reader's reporting access is scoped to
+  dashboard / reporting tables, where RLS is the authority, and **not**
+  to document storage. There is no `document_view` row for `reader`;
+  the matrix cell is now `—` and the previous "carries exactly
+  `document_view (own)`" stance is **replaced** by "carries nothing
+  in the v2 capability set; reaches reporting through
+  RLS-scoped dashboard reads only."
 
 ### 2.3 Why `owner` gets `a` on everything
 
-`owner` is the role that lets an emergency Owner recover the system when
-a misconfigured grant locks a real actor out. It is intentionally
-**unconstrained** in this matrix. The audit trail (`audit_view`) is
-the only restraint. This matches the W04 "pilot-admin" semantics and
-follows from `PILOT_ACTOR_REF = "pilot-admin"` already in the AI
-settings rate limit (P3-W02.A moves that, the role survives the move).
+`owner` is the **admin role**: it carries every capability in the v2 set
+at `all` scope, granted **explicitly** through the
+`direct_entry_capability_grants` and `direct_entry_scope_grants` tables.
+There is no implicit owner, no env-flag override, and no "if no admin
+exists, treat the requester as admin" rule. The `owner` role is the
+**only** role in this matrix that satisfies the admin authority rule in
+§2.1a (`entry_admin` ∧ `recruiter_master_manage` ∧
+`team_master_manage`).
+
+**Recovery from a misconfigured grant is not a property of the `owner`
+role.** It is a property of the **sanctioned first-owner bootstrap** —
+the migration / seed path that mints the first `app_user_id` carrying
+the admin bundle. After the seed runs, the runtime is **fail-closed**:
+a missing or revoked grant row is denied, the AI settings rate limiter
+keys on the authenticated `app_user_id` (P3-W02.A), and the
+settings / report panels become unreachable until a real admin
+re-grants the capability. The audit trail (`audit_view`) is the
+only restraint on the role; the role itself does not bypass authority.
 
 ### 2.4 Why `vendor` is not a new capability
 
@@ -190,15 +257,15 @@ This avoids the W01A risk of adding tokens that have no RPC.
 | Employment status review                 |    ✓    |     —       |      ✓       |       —        |     ✓      |    —     |
 | Employment status apply (final)          |    ✓    |     —       |      ✓       |       —        |     —      |    —     |
 | Document upload                          |    ✓    |      ✓      |      ✓       |       ✓        |     —      |    —     |
-| Document view (own entry)                |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |    ✓     |
-| Document view (any entry)                |    ✓    |     —       |      ✓       |       —        |     ✓      |    —     |
-| Document download                        |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |    ✓     |
-| Payment view (own)                       |    ✓    |      ✓      |      ✓       |       —        |     ✓      |    —     |
-| Payment view (any)                       |    ✓    |     —       |      ✓       |       —        |     ✓      |    —     |
+| Document view (own entry)                |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |   **—**  |
+| Document view (any entry)                |    ✓    |     —       |      ✓       |       —        |     ✓      |   **—**  |
+| Document download                        |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |   **—**  |
+| Payment view (own)                       |    ✓    |      ✓      |      ✓       |       —        |   **—**    |    —     |
+| Payment view (any)                       |    ✓    |     —       |      ✓       |       —        |   **—**    |    —     |
 | Payment edit                             |    ✓    |     —       |      ✓       |       —        |     —      |    —     |
+| AI Settings panel (settings / activate / disable / rotate / test) | ✓ | — | — | — | — | — |
 | AI Report panel (enqueue + review)       |    ✓    |     —       |      —       |       —        |     —      |    —     |
-| AI Report panel (read history)           |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |    ✓     |
-| AI Settings panel                        |    ✓    |     —       |      —       |       —        |     —      |    —     |
+| AI Report panel (job status / history / analysis read) | ✓ | — | — | — | — | — |
 | Admin surface (capability grants)        |    ✓    |     —       |      —       |       —        |     —      |    —     |
 | Admin surface (scope grants)             |    ✓    |     —       |      —       |       —        |     —      |    —     |
 | Admin surface (recruiter links)          |    ✓    |     —       |      —       |       —        |     —      |    —     |
@@ -211,14 +278,29 @@ Footnotes:
   (the row's `created_by_user_id = actor.app_user_id`).
 - "Submission transition" has two stages; the **draft-to-final** is the
   proposer's own action; the **final approval** is a reviewer action.
-- "Document view (own entry)" includes the `reader` role because
-  document view on an entry the reader's recruiter created is allowed —
-  documents are public to the entry's owner-scope. (T1B can tighten if
-  Owner disagrees; see §6 decision D-2.)
-- "AI Report panel (read history)" is allowed for every authenticated
-  user with the panel surface reachable. The panel can already be
-  reached by any session today (W01A gap G4). The matrix keeps that
-  posture but flags it as a `panel` decision (see §6 D-3).
+- **D-1 (T0 LOCKED):** the `reviewer` row carries **no** `payment_view`
+  grant. The "Payment view (own)" and "Payment view (any)" rows for
+  `reviewer` are now `—`. Payroll confidentiality for reviewers is
+  enforced by the SQL authority; the JS projection in
+  `authorizeDirectEntry` mirrors it; UI hides the payment panel for
+  any reviewer session. Relaxing D-1 requires a contract-bump and
+  an amended matrix — not a UI toggle.
+- **D-2 (T0 LOCKED):** the `reader` row carries **no** `document_view`
+  grant. The "Document view (own entry)", "Document view (any entry)",
+  and "Document download" rows for `reader` are now `—`. The
+  reader's reporting access is scoped to `/dashboard` plus
+  RLS-protected reporting tables; document storage is unreachable.
+  Relaxing D-2 requires a contract-bump and an amended matrix.
+- **D-3 (T0 LOCKED):** the entire AI Settings / AI Report surface is
+  `owner`-only. The "AI Report panel (read history)" row is replaced
+  with "AI Report panel (job status / history / analysis read)" and
+  restricted to `owner`. The previous "all authenticated users read
+  history" posture is **withdrawn**: the panel does not render for
+  any non-`owner` role. Expanding the audience later requires
+  **(a)** real actor attribution on the gateway side (P3-W02.A
+  moves `PILOT_ACTOR_REF` onto the authenticated `app_user_id`) and
+  **(b)** a scoped-history contract that limits what a non-owner can
+  read; both are sequenced follow-up tasks, not UI toggles.
 
 ---
 
@@ -254,29 +336,37 @@ all roles.
 The current nav is two entries. T1A's job is to filter by role. The
 mapping is:
 
-| `NAV_ENTRIES` id | Required capability       | `owner` | `hrp` (own) | `hrp` (team) | `vendor` (own) | `reviewer` | `reader` |
-| ---------------- | ------------------------- | :-----: | :---------: | :----------: | :------------: | :--------: | :------: |
-| `dashboard`      | `any` (session only)      |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |    ✓     |
-| `direct-entry`   | any of `entry_*`          |    ✓    |      ✓      |      ✓       |       ✓        |     —      |    —     |
-| `admin` (planned for T1B/D) | `team_master_manage` OR `recruiter_master_manage` | ✓ | — | — | — | — | — |
-| `reports` (read-only if added) | `document_view (own)` or any session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `NAV_ENTRIES` id | Required authority                            | `owner` | `hrp` (own) | `hrp` (team) | `vendor` (own) | `reviewer` | `reader` |
+| ---------------- | --------------------------------------------- | :-----: | :---------: | :----------: | :------------: | :--------: | :------: |
+| `dashboard`      | session only (no capability)                  |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |    ✓     |
+| `direct-entry`   | any of `entry_*`                              |    ✓    |      ✓      |      ✓       |       ✓        |     —      |    —     |
+| `admin` (planned for T1B/D) | **AND** of `entry_admin` ∧ `recruiter_master_manage` ∧ `team_master_manage` (T0 LOCKED, §2.1a) | ✓ | — | — | — | — | — |
+| `reports` (read-only if added) | session only (RLS on reporting tables is the boundary) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 `admin` is **not** a current entry. The matrix pre-approves the slot
-so T1A / T1B can add it without re-litigating the policy.
+so T1A / T1B can add it without re-litigating the policy. The required
+authority for the `admin` entry is the **AND** of the three admin
+capabilities (T0 LOCKED in §2.1a) — T1A implements the filter as
+`actor.capabilities.has("entry_admin") &&
+actor.capabilities.has("recruiter_master_manage") &&
+actor.capabilities.has("team_master_manage")`,
+plus the matching `all`-scope rows in `direct_entry_scope_grants`.
 
 ### 4.4 Dashboard panel gates (P3-W02.F / W02.G)
 
-| Mount                             | Required capability           | `owner` | `hrp` (own) | `hrp` (team) | `vendor` (own) | `reviewer` | `reader` |
-| --------------------------------- | ----------------------------- | :-----: | :---------: | :----------: | :------------: | :--------: | :------: |
-| `<AiSettingsPanel />`             | (no capability today)         |   —     |     —       |      —       |       —        |     —      |    —     |
-| `<AiReportPanel />` (enqueue / review) | (no capability today)    |   —     |     —       |      —       |       —        |     —      |    —     |
-| `<AiReportPanel />` (read history) | (any session)               |    ✓    |      ✓      |      ✓       |       ✓        |     ✓      |    ✓     |
+| Mount                                                 | Required authority                                  | `owner` | `hrp` (own) | `hrp` (team) | `vendor` (own) | `reviewer` | `reader` |
+| ----------------------------------------------------- | --------------------------------------------------- | :-----: | :---------: | :----------: | :------------: | :--------: | :------: |
+| `<AiSettingsPanel />` (settings, activate, disable, rotate, test) | T0 LOCKED: `owner`-only by admin authority rule (§2.1a) | ✓ | — | — | — | — | — |
+| `<AiReportPanel />` (enqueue + review)               | T0 LOCKED: `owner`-only                              |    ✓    |     —       |      —       |       —        |     —      |    —     |
+| `<AiReportPanel />` (job status / history / analysis read) | T0 LOCKED: `owner`-only                         |    ✓    |     —       |      —       |       —        |     —      |    —     |
 
-C01 documents the **target** posture; P3-W02.F / W02.G are the
-implementation tasks. The matrix says: **the AI Report panel stays
-read-only for everyone except `owner`** (who gets the full
-enqueue/review surface). `AiSettingsPanel` is `owner`-only. This is the
-safe default; Owner can relax by amending the matrix.
+D-3 is **T0 LOCKED** (no "all authenticated users read history"
+posture). The entire AI surface — settings, enqueue, review, and
+history — is `owner`-only. The dashboard layout in
+`src/app/dashboard/layout.tsx` mounts the panels **only** when the
+authenticated actor carries the admin authority (the AND of §2.1a);
+JS projection in `decideSessionPageAccess` (or a dedicated
+`decideDashboardPanelAccess`) mirrors the rule.
 
 ### 4.5 Direct-URL behaviour (unchanged by C01)
 
@@ -313,10 +403,13 @@ requires an explicit amendment.
    primitives. The matrix operates entirely within them. A request
    to add a new gate (header, env-flag, cookie) must amend the
    matrix first.
-5. **`owner` is the audit-attribution baseline.** Today
-   `PILOT_ACTOR_REF = "pilot-admin"` is hard-coded. The matrix names
-   `owner` as the role that takes over the same audit slot. P3-W02.A
-   moves the slot; C01 names the role.
+5. **`owner` is the audit-attribution baseline, not a recovery
+   back-door.** Today `PILOT_ACTOR_REF = "pilot-admin"` is hard-coded.
+   The matrix names `owner` as the role that takes over the same audit
+   slot when P3-W02.A moves the slot. The `owner` role **does not**
+   auto-recover from a misconfigured grant; the runtime is fail-closed
+   and recovery happens only through the sanctioned first-owner
+   bootstrap path. There is no role / email / env-flag fallback.
 6. **Capability / scope drift is owned by a contract bump.** Any
    change to `CAPABILITIES` (add / remove / rename a token) bumps
    `DIRECT_ENTRY_AUTH_CONTRACT_VERSION` and re-derives this matrix.
@@ -328,30 +421,39 @@ requires an explicit amendment.
    get the same page with the action's UI hidden and the route
    returning 403 if called directly. (This is already the current
    behaviour; C01 codifies it.)
+8. **Admin authority is AND of three capabilities** (T0 LOCKED, §2.1a).
+   The admin surface — nav entry, capability / scope / recruiter /
+   team mutations — requires `entry_admin` ∧
+   `recruiter_master_manage` ∧ `team_master_manage`, all at `all`
+   scope, on the **same** authenticated actor. No OR. No new
+   capability token. UI visibility hides the surface; it does not
+   grant the rule.
 
 ---
 
 ## 6. Owner decisions (≤ 3, with safe defaults)
 
-The matrix above already takes a **safe default** for every cell. The
-following three cells are real business calls and need explicit Owner
-sign-off. Defaults are listed first; Owner can amend by adding a row to
-the matrix at implementation time.
+## 6. Owner decisions — T0 LOCKED in R1
 
-| ID  | Decision                                                                                  | Safe default (C01)                                                                                          | Alternatives                                                                                  |
-| --- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| D-1 | Does `reviewer` need `payment_view`?                                                    | **Yes** — the reviewer is the payroll liaison; they need to see payment details to approve.                 | Deny. Tightens payroll confidentiality. Owner-side approval.                                  |
-| D-2 | Does `reader` need `document_view` at all, and on which scope?                          | **Own scope only** — the BoD / leader view sees aggregate reporting, not PII documents. No `document_view` for `reader`. | Grant own-scope `document_view` so leader can audit the entries that contributed to a report. |
-| D-3 | Who can enqueue / review AI reports (`AiReportPanel` full surface)?                       | **`owner` only** — the current "any session" posture is unsafe; default is `owner` until P3-W02.G lands.     | `owner` + `hrp (team)` (HRP leadership reviews reports for their teams).                       |
+D-1, D-2, and D-3 are T0-LOCKED. They are no longer owner blockers
+before grants implementation. The matrix above already reflects the
+locked values; this section records the decisions and the only path
+that can reverse them.
 
-If Owner picks the default, no matrix amendment is required. If Owner
-picks an alternative, the matrix is amended first; the T1B / T1A tasks
-then read the amended matrix and the implementation is mechanical.
+| ID  | Decision                                                                              | Locked value (R1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Reversal path                                                                                              |
+| --- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| D-1 | Does `reviewer` carry `payment_view`?                                                | **No.** `reviewer` has zero `payment_view` grants across all scopes. The cross-surface rows for "Payment view (own)" and "Payment view (any)" are `—` for `reviewer`. The §7 cross-check does not list any reviewer-bound `payment_view` route.                                                                                                                                                                                                                                                                  | Contract-bump task: add `payment_view_reviewer` capability (or equivalent) and amend the matrix. Not a UI toggle. |
+| D-2 | Does `reader` carry `document_view` at any scope?                                    | **No.** `reader` carries no capability from the v2 set. The cross-surface rows for "Document view (own entry)", "Document view (any entry)", and "Document download" are `—` for `reader`. The previous "carries exactly `document_view (own)`" text in §2.2 is replaced with "carries nothing in the v2 capability set; reaches reporting through RLS-scoped dashboard reads only." The reader's path is `/dashboard` only.                                                                                                  | Contract-bump task: add `reporting_view` (or equivalent) and amend the matrix. Not a UI toggle.            |
+| D-3 | Who can use the AI Settings / AI Report surface (settings, enqueue, review, history)? | **`owner` only.** The entire surface is gated by the admin authority rule (§2.1a). The previous "AI Report panel (read history) = any session" row is **withdrawn**; the new "AI Report panel (job status / history / analysis read)" row is `owner`-only. The "all authenticated users read history" posture is not retained as a fallback.                                                                                                                                                                       | Requires (a) P3-W02.A land (`actor_ref` keyed on authenticated actor, not `PILOT_ACTOR_REF`) **and** (b) a scoped-history contract that bounds what a non-owner can read; both are sequenced follow-up tasks, not UI toggles. |
 
-The **fourth decision** that the matrix explicitly takes is *not*
-escalated: `vendor` is denied `payment_view` and `pii_*` because vendor
-data sharing is the regulated surface — this is a safe default; relaxing
-requires an amendment, not a T0 sign-off.
+D-1, D-2, and D-3 are no longer owner blockers. **No T0 sign-off is
+required before T1B can seed the grants migration.** The matrix is the
+contract.
+
+The matrix also takes a **fourth decision without escalation**: `vendor`
+is denied `payment_view` and `pii_*` because vendor data sharing is the
+regulated surface. This is a safe default; relaxing requires an
+amendment, not a T0 sign-off.
 
 ---
 
@@ -360,7 +462,12 @@ requires an amendment, not a T0 sign-off.
 Every granted capability in §2.2 must correspond to at least one granted
 RPC, **and every granted RPC must enforce at least one capability from
 §2.2**. The W01A inventory lists 35 service-role-granted RPCs. The
-cross-check below is the audit gate for §2.2.
+cross-check below is the audit gate for §2.2. **The cross-check is
+capability-bound, not role-bound**: an RPC is available to the v2 set,
+and a role must still carry the capability (per §2.2) to reach it.
+After R1, `reviewer` cannot reach any `payment_view` RPC, and `reader`
+cannot reach any `document_view` RPC, even though the underlying
+SQL still binds those RPCs to their respective capabilities.
 
 | Capability                     | Granted RPC (representative)                                              |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -380,6 +487,7 @@ cross-check below is the audit gate for §2.2.
 | `team_master_manage`           | (no granted RPC at this base — **gap, listed in §8**)                     |
 | `pii_view`, `pii_export`       | (no granted RPC at this base — **gap, listed in §8**)                     |
 | `audit_view`                   | `direct_entry_read_audit`                                                  |
+| **admin authority** (§2.1a)    | `direct_entry_assert_admin_authority(actor)` — **AND** of `entry_admin` ∧ `recruiter_master_manage` ∧ `team_master_manage`, all at `all` scope, on the same actor. T1B implements this assertion; every admin mutation RPC funnels through it. |
 
 Every capability above has at least one RPC, and every granted RPC maps
 to at least one capability (the cross-check is exhaustive modulo the
@@ -419,30 +527,41 @@ These are owned by the dependency map in P3-W01A §6 and are explicitly
 T1A (capability-aware navigation + admin UX) reads:
 
 - §2.2 (capability × role).
-- §4.3 (nav mapping).
-- §4.4 (panel gates).
-- §6 (Owner decisions D-2, D-3).
+- §2.1a (admin authority rule, T0 LOCKED).
+- §4.3 (nav mapping — note: `admin` entry requires the AND, not OR).
+- §4.4 (panel gates — D-3 LOCKED, `owner`-only).
+- §6 (D-2 / D-3 already locked; no T0 sign-off needed).
 
 T1B (admin surface schema + grants migration) reads:
 
 - §2.2 (which `direct_entry_capability_grants` to seed).
-- §3 (cross-surface matrix — which routes to mount for which role).
-- §6 (D-1, D-2) — at most two grant amendments before migration.
-- §5 (locked principles) — every T1B / T1A PR is reviewed against these.
+- §2.1a (admin authority — implement as
+  `direct_entry_assert_admin_authority(actor)` SECURITY DEFINER
+  helper; every admin mutation RPC funnels through it).
+- §3 (cross-surface matrix — which routes to mount for which role,
+  including the new `—` for reviewer payment and reader document).
+- §5 principle 8 (admin authority is AND, not OR; no new token).
+- §6 (D-1 / D-2 / D-3 LOCKED — no amendment before grants
+  implementation).
 
 The matrix is consumed as data, not as code. T1B's seed migration is
-generated from §2.2; T1A's nav filter is generated from §4.3; the
-dashboard panel gate is generated from §4.4.
+generated from §2.2 + §2.1a; T1A's nav filter is generated from §4.3
+with the AND rule; the dashboard panel gate is generated from §4.4.
 
 ---
 
 ## 10. Verdict
 
-C01 produces a **5-role, 22-capability, ~30-route matrix** that consumes
-zero new code paths, fits inside the existing SQL contract, and is
-implementable by a single migration + a navigation filter PR. Three real
-Owner decisions (D-1, D-2, D-3) are the only blocking T0 sign-offs. The
-rest is safe defaults. No P3 PASS is implied. P3-W02.A/B and the
+C01-R1 produces a **5-role, 22-capability, ~30-route matrix** with
+the **admin authority rule (AND of three capabilities)** bolted on. It
+consumes zero new code paths, fits inside the existing SQL contract,
+and is implementable by a single migration + a navigation filter PR.
+All three Owner decisions (D-1, D-2, D-3) are **T0 LOCKED** in R1 and
+no longer block grants implementation. The rest is safe defaults. No
+P3 PASS is implied. P3-W02.A/B and the T1A / T1B tasks are the
+consumers; C01-R1 is the policy spec, not the implementation.
+
+**Status:** `P3-C01-R1_POLICY_LOCKED_READY_FOR_IMPLEMENTATION`.
 T1A/T1B tasks are the consumers; C01 is the policy spec, not the
 implementation.
 
