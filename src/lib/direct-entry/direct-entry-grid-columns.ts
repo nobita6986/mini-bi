@@ -35,6 +35,44 @@ export type DirectEntryGridColumn = {
   contractField: WorkerProfileFieldSpec | null;
 };
 
+export const DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS: readonly string[] = Object.freeze([
+  "row_index",
+  "project_id",
+  "first_work_date",
+  "employee_code",
+  "display_name",
+  "gender",
+  "national_id",
+  "national_id_issued_at",
+  "national_id_issued_place",
+  "provider_type",
+  "recruiter_id",
+  "labor_type",
+]);
+
+export const DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS: readonly string[] = Object.freeze([
+  "cccd_documents",
+  "save_status",
+  "row_actions",
+]);
+
+export const DIRECT_ENTRY_GENDER_OPTIONS: readonly string[] = Object.freeze(["", "Nam", "Nữ"]);
+
+export type GridRecruiterOption = {
+  id: string;
+  label: string;
+  provider_type: "hrp" | "vendor";
+};
+
+export function recruitersForProvider(
+  recruiters: readonly GridRecruiterOption[],
+  providerType: "hrp" | "vendor" | "",
+): readonly GridRecruiterOption[] {
+  return providerType === ""
+    ? []
+    : recruiters.filter((recruiter) => recruiter.provider_type === providerType);
+}
+
 type FieldColumnOptions = Pick<DirectEntryGridColumn, "group" | "pasteMode" | "width" | "editor"> &
   Partial<Pick<DirectEntryGridColumn, "editable" | "visibleByDefault" | "label">>;
 
@@ -92,8 +130,10 @@ export const DIRECT_ENTRY_GRID_COLUMNS: readonly DirectEntryGridColumn[] = Objec
     editor: "text" }),
   fieldColumn("provider_hint", { group: "derived", pasteMode: "validate-only", width: 150,
     editor: "readonly", editable: false, label: "HRP/Vendor" }),
+  uiColumn({ key: "provider_type", label: "HRP/Vendor", group: "entry", editable: true,
+    pasteMode: "ignore", required: false, width: 140, visibleByDefault: true, editor: "select" }),
   fieldColumn("recruiter_id", { group: "entry", pasteMode: "write", width: 210,
-    editor: "catalog" }),
+    editor: "catalog", label: "Người tuyển / Vendor" }),
   fieldColumn("team_hint", { group: "derived", pasteMode: "validate-only", width: 160,
     editor: "readonly", editable: false }),
   fieldColumn("labor_type", { group: "entry", pasteMode: "write", width: 140,
@@ -114,7 +154,7 @@ export const DIRECT_ENTRY_GRID_COLUMNS: readonly DirectEntryGridColumn[] = Objec
     editor: "text" }),
   uiColumn({ key: "cccd_documents", label: "Hồ sơ CCCD", group: "action", editable: false,
     pasteMode: "ignore", required: false, width: 150, visibleByDefault: true, editor: "action" }),
-  uiColumn({ key: "save_status", label: "Trạng thái lưu", group: "derived", editable: false,
+  uiColumn({ key: "save_status", label: "Trạng thái", group: "derived", editable: false,
     pasteMode: "ignore", required: false, width: 140, visibleByDefault: true,
     editor: "readonly" }),
   uiColumn({ key: "row_actions", label: "Thao tác", group: "action", editable: false,

@@ -113,19 +113,10 @@ test("dialog: section theo nhom va ghi chu CCCD/team/provider", () => {
   assert.match(dialog, /aria-expanded=\{expanded\}/);
 });
 
-test("live: nut 'Dan ho so tu Excel' canh nut dan toi thieu; khong fallback tu dong", () => {
-  const headerActions = live.slice(live.indexOf("liveHeaderActions"),
-    live.indexOf("Thêm dòng"));
-  assert.match(headerActions, /Dán hồ sơ từ Excel/);
-  assert.match(headerActions, /data-testid="profile-paste-open"/);
-  assert.match(headerActions, /<DirectEntryWorkerProfilePasteDialog/);
-  assert.match(headerActions, /referenceDate=\{today\}/);
-  assert.match(headerActions, /catalogFor=\{catalogFor\}/);
-  assert.match(headerActions, /existing=\{existingProfileIdentities\}/);
-  // Duong toi thieu (6 cot) van con nguyen: khong phai fallback cua duong ho so day du.
-  assert.match(live, /data-testid="paste-excel-open"/);
-  assert.match(live, /postPasteBatch\(/);
-  // Khong truyen callback noi bo ra server.
+test("legacy worker-profile paste dialog remains available but is not rendered by live page", () => {
+  assert.match(dialog, /Dán hồ sơ từ Excel/);
+  assert.doesNotMatch(live, /Dán hồ sơ từ Excel|DirectEntryWorkerProfilePasteDialog|profile-paste-open/);
+  assert.doesNotMatch(live, /Dán từ Excel|DirectEntryExcelPasteDialog|paste-excel-open/);
   assert.equal(liveCode.includes("onValidatedRows="), false);
 });
 

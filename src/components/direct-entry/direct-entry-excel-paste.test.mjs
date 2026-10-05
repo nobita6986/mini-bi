@@ -13,15 +13,18 @@ const importModule = source("../../lib/direct-entry/excel-paste-import.ts");
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id|team_id)\s*:/;
 
-test("nut 'Dan tu Excel' nam canh 'Them dong' va mo bang Radix Dialog co Trigger asChild", () => {
-  const actions = live.slice(live.indexOf("liveHeaderActions"), live.indexOf("<p\n        className={styles.lifecycleStatus}"));
-  assert.match(actions, /Dán từ Excel/);
+test("legacy paste dialog remains reviewable but is not wired into the live toolbar", () => {
+  const start = live.indexOf("<header className={styles.header}>");
+  const end = live.indexOf("</header>", start);
+  const actions = live.slice(start, end);
+  assert.match(actions, /Tải file Excel mẫu/);
+  assert.match(actions, /Nhập file Excel/);
   assert.match(actions, /Thêm dòng/);
-  assert.equal(actions.indexOf("Dán từ Excel") < actions.indexOf("Thêm dòng"), true,
-    "nut dan dung truoc nut them dong");
-  assert.match(actions, /<DirectEntryExcelPasteDialog/);
-  assert.match(actions, /data-testid="paste-excel-open"/);
-  // Focus tra ve nut mo: Radix Trigger asChild + Close, khong tu quan ly focus.
+  assert.match(actions, /Lưu các dòng hợp lệ/);
+  assert.equal((actions.match(/<button\b/g) ?? []).length, 4);
+  assert.doesNotMatch(live, /Dán từ Excel|Dán hồ sơ từ Excel|Ctrl\+V/);
+  assert.doesNotMatch(live, /DirectEntryExcelPasteDialog|DirectEntryWorkerProfilePasteDialog/);
+  assert.match(dialog, /<Dialog\.Trigger asChild>\{trigger\}<\/Dialog\.Trigger>/);
   assert.match(dialog, /<Dialog\.Trigger asChild>\{trigger\}<\/Dialog\.Trigger>/);
   assert.match(dialog, /<Dialog\.Close asChild>/);
   assert.match(dialog, /onOpenChange/);
@@ -53,36 +56,19 @@ test("nut them chi bat khi toan bo dong hop le", () => {
   assert.match(importModule, /canSubmit: rows\.length > 0 && issues\.length === 0/);
 });
 
-test("paste/preview khong mutation: hop thoai khong goi fetch, live chi co MOT request cho ca nhom", () => {
+test("retained legacy dialog has no request side effects; live save uses the atomic full-profile batch", () => {
   assert.equal((dialog.match(/fetch\(/g) ?? []).length, 0, "preview khong goi API");
   assert.equal(dialog.includes("/api/direct-entry"), false);
-  assert.equal((live.match(/postPasteBatch\(/g) ?? []).length, 1, "dung mot request cho ca nhom");
-  assert.match(live, /buildPasteBatchPayload\(previewRows\)/);
-  assert.match(live, /beginPasteGroup\(/);
-  assert.match(live, /settlePasteGroup\(/);
-  assert.match(live, /assignPasteEntryIds\(/);
-  assert.match(live, /idempotencyKey: group\.pending\.key/);
-  // Nhom dan khong tu goi fetch thu cong; chi di qua boundary postPasteBatch.
-  const pasteSubmit = live.slice(live.indexOf("const submitPasteGroup"),
-    live.indexOf("const setCccdStatus"));
-  assert.equal((pasteSubmit.match(/fetch\(/g) ?? []).length, 0);
-  assert.equal(pasteSubmit.includes("/api/direct-entry/batches"), false);
-  assert.match(live, /newDraftRow\(assignment\.entryId, preview\.firstWorkDate\)/);
-  // Regression: luong luu thu cong mot dong van gui batch 1 dong nhu truoc.
+  assert.doesNotMatch(live, /postPasteBatch\(|submitPasteGroup|buildPasteBatchPayload/);
+  assert.match(live, /buildServerGeneratedFullProfileRequestBody\(preview\.rows\)/);
+  assert.match(live, /postFullProfileBatch\(\{/);
   assert.match(live, /body: JSON\.stringify\(\{ rows: \[createPayload\(rowWithFields\(current, pending\.fields\)\)\] \}\)/);
-  assert.match(live, /const saveDirtyRows = useCallback/);
 });
 
-test("khong optimistic-save: nhom chi duoc them vao bang trong nhanh saved", () => {
-  const submit = live.slice(live.indexOf("const submitPasteGroup"), live.indexOf("const setCccdStatus"));
-  const savedBranch = submit.indexOf('settled.outcome.status === "saved"');
-  const setRows = submit.indexOf("setRows((current) => {");
-  assert.equal(savedBranch > 0 && setRows > savedBranch, true,
-    "setRows chi nam trong nhanh da duoc may chu xac nhan");
-  assert.match(submit, /if \(!assignments\) \{/);
-  assert.match(submit, /reloadRequired: settled\.outcome\.reloadRequired/);
-  assert.match(submit, /pasteBatchErrorMessage\(settled\.outcome\.code\)/);
-  assert.doesNotMatch(submit, /retry|setTimeout\(\(\) => void postPasteBatch/);
+test("legacy parser/dialog source remains available without live toolbar triggers", () => {
+  assert.match(dialog, /buildPastePreview\(/);
+  assert.match(importModule, /export function buildPastePreview/);
+  assert.doesNotMatch(live, /pasteOpen|submitPasteGroup|profilePasteOpen/);
 });
 
 test("khong khai authority o client, khong logging, khong storage", () => {
@@ -100,11 +86,9 @@ test("khong khai authority o client, khong logging, khong storage", () => {
 });
 
 test("duplicate duoc doi chieu voi cac dong CHUA LUU dang co tren trang", () => {
-  assert.match(live, /unsavedEmployeeCodes/);
-  assert.match(live, /row\.entryId === null \|\| isUnsavedRowState\(row\.state\)/);
-  assert.match(live, /existingEmployeeCodes={unsavedEmployeeCodes}/);
   assert.match(importModule, /existingEmployeeCodes\?: readonly string\[\]/);
   assert.match(importModule, /validateEmployeeCode\(row\.employeeCode, row\.firstWorkDate, existingCodes\)/);
+  assert.doesNotMatch(live, /unsavedEmployeeCodes|existingEmployeeCodes=/);
 });
 
 test("moi effective date chi resolve catalog mot lan trong preview", () => {

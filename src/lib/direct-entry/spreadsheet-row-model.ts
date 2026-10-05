@@ -22,6 +22,8 @@ export type SpreadsheetStagedRow = {
   clientRowId: string;
   /** Raw cell text as entered or pasted. Validation happens in a separate adapter. */
   cells: Readonly<Record<string, string>>;
+  /** Client-only recruiter filter/assertion; never serialized as a worker-profile field. */
+  providerType: "hrp" | "vendor" | "";
 };
 
 export type SpreadsheetRowModel = {
@@ -45,6 +47,7 @@ function nextBlankRow(sequence: number): SpreadsheetStagedRow {
   return {
     clientRowId: `${CLIENT_ROW_ID_PREFIX}-${sequence}`,
     cells: blankCells(),
+    providerType: "",
   };
 }
 
@@ -142,6 +145,24 @@ export function updateSpreadsheetRowCells(
   return ensureSpreadsheetSpareRows({ ...model, rows });
 }
 
+export function updateSpreadsheetRowProviderType(
+  model: SpreadsheetRowModel,
+  clientRowId: string,
+  providerType: SpreadsheetStagedRow["providerType"],
+): SpreadsheetRowModel {
+  const rows = model.rows.map((row) => {
+    if (row.clientRowId !== clientRowId || row.providerType === providerType) return row;
+    return {
+      ...row,
+      providerType,
+      cells: { ...row.cells, recruiter_id: "" },
+    };
+  });
+  return rows.every((row, index) => row === model.rows[index])
+    ? model
+    : { ...model, rows };
+}
+
 export function clearSpreadsheetRow(
   model: SpreadsheetRowModel,
   clientRowId: string,
@@ -183,6 +204,7 @@ export function duplicateSpreadsheetRow(
   const duplicate = {
     clientRowId: `${CLIENT_ROW_ID_PREFIX}-${model.nextClientRowSequence}`,
     cells: { ...source.cells },
+    providerType: source.providerType,
   };
   const rows = [...model.rows];
   rows.splice(sourceIndex + 1, 0, duplicate);
