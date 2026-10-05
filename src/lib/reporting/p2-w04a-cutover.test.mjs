@@ -35,9 +35,7 @@ function legacyFact(overrides = {}) {
   };
 }
 
-function deFact(
-  overrides = {},
-) {
+function deFact(overrides = {}) {
   return {
     source_id: P2_W04A_DIRECT_ENTRY_SOURCE_ID,
     business_date: "2026-10-17",
@@ -185,16 +183,30 @@ test("10. cutover blocker does NOT double-count or silently drop", () => {
   assert.equal(r.overlap_blocker, 1);
 });
 
-test("11. combineReportingFacts dedupes by full grain", () => {
+test("11. combineReportingFacts does NOT dedupe by grain (Blocker 4 R1 fix)", () => {
+  // R0 deduped by full grain and silently collapsed two same-grain DE
+  // employees into one. R1 concatenates and lets computeReporting sum
+  // per grain via recruited_count, so two eligible DE entries sharing
+  // the same ReportingFact grain each contribute 1.
   const a = legacyFact({ business_date: "2026-10-15" });
   const b = legacyFact({ business_date: "2026-10-15" });
   const c = deFact({ first_work_date: "2026-10-17" });
-  const d = deFact({ first_work_date: "2026-10-17" });
+  const d = deFact({
+    first_work_date: "2026-10-17",
+    entry_id: "00000000-0000-4000-8000-000000000010",
+  });
   const combined = combineReportingFacts([a, b], [c, d]);
-  assert.equal(combined.length, 2);
+  // 2 legacy rows + 2 DE rows = 4 (no dedupe).
+  assert.equal(combined.length, 4);
+  // computeReporting will sum recruited_count per grain:
+  const grain = combined.filter(
+    (f) => f.source_id === P2_W04A_DIRECT_ENTRY_SOURCE_ID,
+  );
+  assert.equal(grain.length, 2, "two DE entries sharing grain kept distinct");
+  assert.equal(grain[0].entry_id !== grain[1].entry_id, true);
 });
 
-test("12. combineReportingFacts partitions by date mask", () => {
+test("12. combineReportingFacts partitions by date mask (legacy + DE coexist)", () => {
   // Legacy on 2026-10-15 + DE on 2026-10-17 must coexist.
   const legacy = [legacyFact({ business_date: "2026-10-15", recruited_count: 2 })];
   const de = [deFact({ first_work_date: "2026-10-17" })];
@@ -231,8 +243,8 @@ test("13. normalizeReconciliationRow converts bigints and string numbers", () =>
 });
 
 test("14. P1 filter semantics apply identically to both sources (combined grain)", () => {
-  // Same project, recruiter, provider, employment across both sources
-  // would dedupe. This documents the intended grain enforcement.
+  // Different business_date => different grain => both kept. Same grain =>
+  // both kept (no dedupe) and computeReporting sums them.
   const legacy = [
     legacyFact({
       business_date: "2026-10-15",
@@ -295,4 +307,44 @@ test("16. Direct Entry recruited_count is always 1 per row (SQL projection invar
   // = 1. The TS contract keeps this explicit at construction time.
   const f = deFact();
   assert.equal(f.recruited_count, 1);
+});
+
+test("17. R1: two DE entries sharing grain => combined.length 2, sum recruited_count 2", () => {
+  // BUG: R0 deduped by full grain and collapsed two DE employees into 1.
+  // R1: concatenate without dedupe; computeReporting sums per grain via
+  // recruited_count = 1 per entry, so the canonical total is 2.
+  const e1 = deFact({
+    first_work_date: "2026-10-17",
+    entry_id: "00000000-0000-4000-8000-0000000000e1",
+  });
+  const e2 = deFact({
+    first_work_date: "2026-10-17",
+    entry_id: "00000000-0000-4000-8000-0000000000e2",
+    submission_id: "00000000-0000-4000-8000-0000000000f2",
+  });
+  // Same business_date / project / recruiter / provider / employment,
+  // distinct entry_id => distinct employees.
+  const combined = combineReportingFacts([], [e1, e2]);
+  assert.equal(combined.length, 2);
+  const sum = combined.reduce((a, f) => a + f.recruited_count, 0);
+  assert.equal(sum, 2, "two DE entries sharing grain => recruited_total 2");
+});
+
+test("18. R1: computeReporting sums two same-grain DE entries into recruitedTotal=2", async () => {
+  const p1 = await import("./p1-reporting.ts");
+  const e1 = deFact({
+    first_work_date: "2026-10-17",
+    entry_id: "00000000-0000-4000-8000-0000000000a1",
+  });
+  const e2 = deFact({
+    first_work_date: "2026-10-17",
+    entry_id: "00000000-0000-4000-8000-0000000000a2",
+    submission_id: "00000000-0000-4000-8000-0000000000b2",
+  });
+  const sources = [P2_W04A_DIRECT_ENTRY_SOURCE];
+  const combined = combineReportingFacts([], [e1, e2]);
+  const data = p1.computeReporting(sources, combined, {});
+  assert.equal(data.recruitedTotal, 2, "Dashboard recruitedTotal = 2 for two same-grain DE entries");
+  assert.equal(data.empty.noFacts, false);
+  assert.equal(data.empty.noSources, false);
 });

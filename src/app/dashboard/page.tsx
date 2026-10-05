@@ -9,8 +9,8 @@ import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-
 import { decideSessionPageAccess } from "@/lib/auth/session-page-access";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
-import { fetchReporting } from "@/lib/reporting/p1-reporting-server";
-import { fetchReportingOptions } from "@/lib/reporting/p1-options-server";
+import { fetchCutoverReporting } from "@/lib/reporting/p2-w04a-reporting-server";
+import { fetchCutoverReportingOptions } from "@/lib/reporting/p2-w04a-options-server";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Tổng quan tuyển dụng — mini-bi" };
@@ -43,6 +43,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
 
   const params = await searchParams;
-  const [report, options] = await Promise.all([fetchReporting(params), fetchReportingOptions()]);
+  const [report, options] = await Promise.all([
+    fetchCutoverReporting(params),
+    fetchCutoverReportingOptions(),
+  ]);
   return <DashboardView report={report} optionsResult={options} />;
 }

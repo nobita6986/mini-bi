@@ -90,11 +90,24 @@ function ReportError({ report }: { report: Extract<ReportingFetchResult, { ok: f
   if (report.code === "INVALID_FILTER") {
     return (
       <div role="alert" className="rounded-2xl border border-red-300 bg-red-50 px-6 py-10 dark:border-red-900 dark:bg-red-950">
-        <p className="text-sm font-semibold text-red-800 dark:text-red-200">Bộ lọc không hợp lệ</p>
+        <p className="mt-2 text-sm font-semibold text-red-800 dark:text-red-200">Bộ lọc không hợp lệ</p>
         <p className="mt-2 text-sm text-red-700 dark:text-red-300">{report.message}</p>
         <p className="mt-4">
           <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
             Xóa bộ lọc
+          </Link>
+        </p>
+      </div>
+    );
+  }
+  if (report.code === "REPORTING_CUTOVER_BLOCKER") {
+    return (
+      <div role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 px-6 py-10 dark:border-amber-900 dark:bg-amber-950">
+        <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">Cutover đang chặn báo cáo</p>
+        <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{report.message}</p>
+        <p className="mt-4">
+          <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
+            Tải lại không kèm bộ lọc
           </Link>
         </p>
       </div>
