@@ -1,6 +1,17 @@
 # P3-W08A — Session revocation / cache go-live hardening
 
-**Status:** `P3-W08A_SESSION_REVOCATION_CACHE_LOCAL_PASS_FAST_TRACK`
+**Status:** `P3-W08A-R1_SESSION_REVOCATION_CACHE_EVIDENCE_CLOSED_LOCAL_PASS_FAST_TRACK`
+
+**R1 delta (above R0 commit `31c3f21`):**
+- Added `W08A G.1` — real behavioural concurrent A/B isolation test using
+  `Promise.all` over two independent `resolveDirectEntrySession` calls,
+  each with its own `createClient` factory, `cookieStore`, and
+  `repository`; both Supabase `getUser` calls confirmed in flight via a
+  mutual gate; no `setTimeout` / `sleep`.
+- Wired the W08A suite into `pnpm test:server` by adding a single
+  side-effect import in `auth-session-core.test.mjs` — no `package.json`
+  edit, no `pnpm-lock.yaml` change.
+- Updated handoff §5 (test matrix), §6 (concurrent invariant), §8 (gates).
 
 This slice audits the Supabase session boundary (login, logout, account
 switching, revocation/freshness, private/no-store responses, and bounded
@@ -65,7 +76,8 @@ No other file was modified. No migration, RPC, capability token, package, lockfi
 | Change | File | Lines |
 | --- | --- | --- |
 | Edited | `src/lib/auth/auth-session-core.ts` | +2 (added `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` to `NO_STORE_HEADERS`) |
-| Added | `src/lib/auth/p3-w08a-session-revocation-cache.test.mjs` | 22 new test cases pinning the full W08A contract |
+| Added | `src/lib/auth/p3-w08a-session-revocation-cache.test.mjs` | 23 new test cases pinning the full W08A contract (R0: 22; R1 adds `G.1`) |
+| Edited (R1) | `src/lib/auth/auth-session-core.test.mjs` | +6 (single side-effect import that re-registers the W08A suite under `pnpm test:server`) |
 
 ## 4. Reuse matrix (no new auth framework)
 
@@ -84,7 +96,7 @@ No other file was modified. No migration, RPC, capability token, package, lockfi
 ## 5. Test matrix
 
 `src/lib/auth/p3-w08a-session-revocation-cache.test.mjs` covers the brief's
-required matrix as 22 cases (all PASS, 0 fail).
+required matrix as 23 cases (all PASS, 0 fail).
 
 | Brief cell | Test | Asserts |
 | --- | --- | --- |
@@ -110,6 +122,7 @@ required matrix as 22 cases (all PASS, 0 fail).
 | E.3 deny never becomes allow | `W08A E.3` | `ACTOR_DISABLED` returned once, immediately; page decision → `ACCOUNT_UNAVAILABLE` |
 | E.4 page decision is pure (no cached ALLOW) | `W08A E.4` | `REDIRECT_LOGIN` for unauth, `ACCESS_DENIED` for entry-incapable actor — no carryover |
 | F.1 /api/auth/session after logout | `W08A F.1` | 401 `AUTH_UNAUTHENTICATED` + `private, no-store` + `nosniff` |
+| G.1 concurrent A & B resolve in parallel without crossing actors | `W08A G.1` | `Promise.all([resolveDirectEntrySession(A), resolveDirectEntrySession(B)])`; per-request `getUser` and `repository.loadByAuthSubject` each called exactly once with the correct `auth_subject`; each returned actor carries its own `app_user_id` / `capabilities` / `scopes[0].reference` / `auth_subject`; serialised projections contain no cross-actor data; no `setTimeout` / `sleep` — concurrent execution is enforced by a mutual `bGate` / `aGate` microtask barrier inside the two `getUser` bodies |
 
 Plus the existing 102-test `test:server` suite and the 25-test `p1.6-w02`
 suite continue to pass unchanged, including:
@@ -133,12 +146,18 @@ contract is enforced by the request-scoped `createServerClient` factory in
 - `resolveActor` then re-queries `repository.loadByAuthSubject(...)` for
   the **resolved** `auth_subject`, with no in-memory memoization
   (see `src/lib/auth/direct-entry-session-core.ts:79-99`).
-- `W08A C.1` is the direct evidence: a single resolve call results in
-  exactly one `getUser()` and one repository load; the test suite can
-  extend this to interleaved concurrent calls (e.g. two simultaneous
-  `Promise.all([resolve(...), resolve(...)])`) but the same evidence
-  pattern applies because the two requests hold independent
-  `cookieStore` instances.
+- `W08A C.1` is the direct evidence that a single resolve call results in
+  exactly one `getUser()` and one repository load, with no cross-call
+  caching.
+- `W08A G.1` (R1) is the direct evidence that two simultaneous resolves do
+  not cross: each request holds an independent `createClient` factory,
+  its own `cookieStore`, and its own `repository` instance. The two
+  Supabase `getUser` calls are forced to be in flight at the same time
+  via a mutual microtask barrier (`aGate` / `bGate`) — no
+  `setTimeout` / `sleep` is used. Each `getUser` is confirmed to be
+  called exactly once with the correct `auth_subject`, each repository
+  is queried exactly once with the correct `auth_subject`, and the
+  serialised projections contain no data from the other request.
 
 ## 7. Cookie-refresh invariant
 
@@ -167,23 +186,25 @@ header, neither the refresh token nor the disallowed headers reach
 `response_headers`; the only forwardable headers are the three
 cache-affecting ones.
 
-## 8. Gates
+## 8. Gates (R1)
 
 | Gate | Result |
 | --- | --- |
-| W08A targeted tests | **22/22 PASS** (`node --test src/lib/auth/p3-w08a-session-revocation-cache.test.mjs`) |
-| `pnpm test:server` (H04 / W02E / auth UI / cookie adapter) | **102/102 PASS** (unchanged from baseline) |
+| W08A targeted tests | **23/23 PASS** (`node --test src/lib/auth/p3-w08a-session-revocation-cache.test.mjs`) |
+| `pnpm test:server` | **125/125 PASS** (102 baseline + 23 W08A registered via side-effect import; no duplicate execution) |
+| `pnpm test` (full) | **PASS, exit 0, 0 fail** (all sub-suites, including the W08A suite) |
 | `pnpm test:p1.6-w02` (direct-entry-v2 / session boundary) | **25/25 PASS** (unchanged from baseline) |
 | `pnpm test:p3-w02e` (AI settings guard) | **4/4 PASS** (unchanged from baseline) |
-| `pnpm test` (full) | **PASS, exit 0, 0 fail** (all sub-suites) |
 | `next typegen` | PASS |
 | `pnpm typecheck` | PASS |
-| `pnpm lint` | PASS, 0 errors (6 pre-existing warnings, all unrelated) |
+| `pnpm lint` | PASS, 0 errors (6 pre-existing warnings, all unrelated to W08A) |
 | `pnpm build` | PASS |
 | `pnpm docs:check` | 6/6 PASS |
 | `pnpm secrets:check` | PASS (no secret/PII/raw token in any auth response) |
 | `pnpm db:migrate --status` | `39 applied / 0 pending / 0 mismatch` (unchanged) |
 | `git diff --check` | exit 0 |
+| `package.json` diff | 0 lines (no edit) |
+| `pnpm-lock.yaml` diff | 0 lines (no edit) |
 
 ## 9. What was deliberately not changed
 
@@ -237,9 +258,9 @@ cache-affecting ones.
 | Already-correct audit + per-cell evidence | §2.1 |
 | Patched change (single, narrow) | §2.2 |
 | Reuse-only helper matrix | §4 |
-| Regression test list (22 cases) | §5 |
-| Concurrent-request invariant | §6 |
+| Regression test list (23 cases, incl. R1 `G.1`) | §5 |
+| Concurrent-request invariant (incl. R1 `G.1` behavioural proof) | §6 |
 | Cookie-refresh invariant | §7 |
-| Gate results | §8 |
+| Gate results (R1) | §8 |
 | Out-of-scope lane boundaries | §9 |
 | Residual risk | §10 |

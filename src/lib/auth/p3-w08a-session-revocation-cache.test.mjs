@@ -674,3 +674,148 @@ test("W08A F.1: /api/auth/session after a real Supabase UNAUTHENTICATED returns 
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.deepEqual(await response.json(), { ok: false, code: "AUTH_UNAUTHENTICATED" });
 });
+
+// ---------------------------------------------------------------------------
+// G. Concurrent actor isolation: two requests in flight at the same time
+//    must each resolve only their own actor / cookie store / repository —
+//    no shared module-level mutable state, no cross-leak.
+// ---------------------------------------------------------------------------
+
+const actorBForConcurrency = {
+  ...structuredClone(baseActor),
+  app_user_id: "00000000-0000-4000-8000-0000000000b1",
+  capabilities: ["change_review"],
+  self_recruiter_suggestion: "rcr_b",
+  scopes: [{
+    kind: "own",
+    reference: "00000000-0000-4000-8000-0000000000b1",
+    valid_from: "0001-01-01",
+    valid_to: null,
+  }],
+};
+
+test("W08A G.1: concurrent A and B requests resolve in parallel without crossing actors", async () => {
+  // Per-actor call counters. Each closure captures its own counter so
+  // there is no shared mutable variable.
+  let aGetUserCalls = 0;
+  let bGetUserCalls = 0;
+  let aRepositoryCalls = 0;
+  let bRepositoryCalls = 0;
+  // Gate: forces A's getUser to wait for B's getUser to have been entered
+  // before resolving. Pure microtask interleaving — no setTimeout / no
+  // sleep — the test passes only if both are genuinely in flight.
+  let aGateResolve;
+  const aGate = new Promise((resolve) => { aGateResolve = resolve; });
+  let bGateResolve;
+  const bGate = new Promise((resolve) => { bGateResolve = resolve; });
+
+  const buildA = () => {
+    const repositoryA = {
+      async loadByAuthSubject(authSubject) {
+        aRepositoryCalls++;
+        assert.equal(authSubject, baseActor.auth_subject, "A repository saw B's auth subject");
+        return fullRecord();
+      },
+    };
+    return {
+      createClient: () => ({
+        auth: {
+          async getUser() {
+            aGetUserCalls++;
+            // Wait for B to be in flight, then proceed. If A returned
+            // before B ever started, this promise would never resolve
+            // and the test would time out.
+            await bGate;
+            // Allow the test to observe that B is genuinely in flight.
+            aGateResolve?.();
+            return { data: { user: { id: baseActor.auth_subject } }, error: null };
+          },
+        },
+      }),
+      resolveActor,
+      supabaseUrl: "https://synthetic-A.supabase.invalid",
+      publishableKey: "synthetic-publishable-A",
+      cookieStore: {
+        getAll: () => [{ name: "sb-A", value: "A-cookie" }],
+        set: () => {},
+      },
+      repository: repositoryA,
+      at: baseTimestamp,
+    };
+  };
+  const buildB = () => {
+    const repositoryB = {
+      async loadByAuthSubject(authSubject) {
+        bRepositoryCalls++;
+        assert.equal(authSubject, actorBForConcurrency.auth_subject,
+          "B repository saw A's auth subject");
+        return fullRecord({
+          app_user_id: actorBForConcurrency.app_user_id,
+          capabilities: ["change_review"],
+          self_recruiter_suggestion: "rcr_b",
+        });
+      },
+    };
+    return {
+      createClient: () => ({
+        auth: {
+          async getUser() {
+            bGetUserCalls++;
+            // Release A's gate and wait for A to confirm it has observed
+            // B being in flight. Symmetric to the A branch.
+            bGateResolve?.();
+            await aGate;
+            return { data: { user: { id: actorBForConcurrency.auth_subject } }, error: null };
+          },
+        },
+      }),
+      resolveActor,
+      supabaseUrl: "https://synthetic-B.supabase.invalid",
+      publishableKey: "synthetic-publishable-B",
+      cookieStore: {
+        getAll: () => [{ name: "sb-B", value: "B-cookie" }],
+        set: () => {},
+      },
+      repository: repositoryB,
+      at: baseTimestamp,
+    };
+  };
+
+  const [resultA, resultB] = await Promise.all([
+    resolveDirectEntrySession(buildA()),
+    resolveDirectEntrySession(buildB()),
+  ]);
+
+  // Both requests reached the auth boundary exactly once.
+  assert.equal(aGetUserCalls, 1, "A's getUser must be called exactly once");
+  assert.equal(bGetUserCalls, 1, "B's getUser must be called exactly once");
+  assert.equal(aRepositoryCalls, 1, "A's repository must be hit exactly once");
+  assert.equal(bRepositoryCalls, 1, "B's repository must be hit exactly once");
+
+  // Each result carries only its own actor. The minimum required
+  // distinguishing fields are app_user_id, capabilities, and scopes; the
+  // session.auth_subject on the returned actor must match the request's
+  // own auth_subject (which is what the repository was queried with).
+  assert.equal(resultA.actor.ok, true);
+  assert.equal(resultA.actor.actor.app_user_id, baseActor.app_user_id);
+  assert.equal(resultA.actor.actor.auth_subject, baseActor.auth_subject);
+  assert.deepEqual(resultA.actor.actor.capabilities, baseActor.capabilities);
+  assert.equal(resultA.actor.actor.scopes[0].reference, baseActor.app_user_id);
+  assert.equal(resultB.actor.ok, true);
+  assert.equal(resultB.actor.actor.app_user_id, actorBForConcurrency.app_user_id);
+  assert.equal(resultB.actor.actor.auth_subject, actorBForConcurrency.auth_subject);
+  assert.deepEqual(resultB.actor.actor.capabilities, ["change_review"]);
+  assert.equal(resultB.actor.actor.scopes[0].reference, actorBForConcurrency.app_user_id);
+
+  // No cross-actor data in the serialised projections.
+  const aText = JSON.stringify(resultA);
+  const bText = JSON.stringify(resultB);
+  for (const forbiddenOfA of [actorBForConcurrency.app_user_id, "rcr_b", "change_review"]) {
+    assert.equal(aText.includes(forbiddenOfA), false,
+      `A response leaked B's marker: ${forbiddenOfA}`);
+  }
+  for (const forbiddenOfB of [baseActor.app_user_id, "rcr_a", "entry_create"]) {
+    assert.equal(bText.includes(forbiddenOfB), false,
+      `B response leaked A's marker: ${forbiddenOfB}`);
+  }
+});
