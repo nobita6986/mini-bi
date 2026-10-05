@@ -215,6 +215,17 @@ test("W04A-P8: /api/ai/settings nằm sau Supabase session guard (P1.7-H04 đã 
   const settings = readFileSync(new URL("../../app/api/ai/settings/route.ts", import.meta.url), "utf8");
   assert.equal(settings.includes("guardApiSession()"), true,
     "route settings phải xác thực session trước khi chạm dữ liệu");
+
+  // P3-W02E: khoa rang GET va POST cung route deu goi guard, khong chi method nao
+  // do. Tach thanh hai block function rieng de assert vi tri guard trong tung method.
+  const getStart = settings.indexOf("export async function GET");
+  const postStart = settings.indexOf("export async function POST");
+  assert.ok(getStart >= 0 && postStart > getStart, "phai co GET truoc POST");
+  const getBlock = settings.slice(getStart, postStart);
+  const postBlock = settings.slice(postStart);
+  assert.match(getBlock, /await guardApiSession\(\)/, "GET phai goi guardApiSession()");
+  assert.match(postBlock, /await guardApiSession\(\)/, "POST phai goi guardApiSession()");
+
   const guard = readFileSync(new URL("../auth/api-session-guard.ts", import.meta.url), "utf8");
   assert.equal(guard.includes('"UNAUTHENTICATED"'), true, "guard phải trả 401 sanitized");
   assert.equal(guard.includes("private, no-store"), true, "response lỗi phải private/no-store");
