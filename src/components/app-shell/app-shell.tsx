@@ -10,12 +10,20 @@
  * P3-W06A — Capability-aware navigation:
  * - Nhận `actor` projection tối thiểu từ page boundary (đã resolve ở layout).
  *   KHÔNG tự resolve session/cookie ở AppShell; tránh duplicate query + lộ PII.
- * - `actor` chỉ chứa `app_user_id` + `capabilities` + `scopes` (đã sanitize từ
+ * - `actor` chỉ chứa `capabilities` + `scopes` (đã sanitize từ
  *   `actorProjection` của `auth-session-core.ts`). Không có `auth_subject`,
  *   không có email, không có PII khác.
- * - Filter cùng `NAV_ENTRIES` qua `filterEntriesForActor` + `decideNavEntryVisibility`
- *   cho desktop và mobile — không tạo registry thứ hai.
+ * - Filter cùng `NAV_ENTRIES` qua `filterEntriesForActor` cho desktop và
+ *   mobile — không tạo registry thứ hai.
  * - `actor === null` (page chưa resolve được) → chỉ `any` còn hiện (Dashboard).
+ *
+ * P3-W06A R1:
+ * - Tầng chịu trách nhiệm viewport: `filterEntriesForActor` (dùng
+ *   `entry.visibility[viewport]` để quyết định). AppShell chỉ truyền
+ *   viewport đúng cho từng tầng; KHÔNG tự xây predicate để tránh mobile
+ *   dùng nhầm desktop visibility.
+ * - Capability predicate (`decideNavEntryVisibility`) chỉ xét capability
+ *   + actor, không trộn viewport vào.
  *
  * Lưu ý:
  * - Route/API/DB vẫn là authority; visibility chỉ là UI hint.
@@ -31,7 +39,6 @@ import { ThemeSelector } from "@/components/dashboard/theme-selector";
 import {
   filterEntriesForActor,
   findEntryByPath,
-  type NavEntry,
 } from "@/lib/navigation/registry";
 import {
   decideNavEntryVisibility,
@@ -66,19 +73,38 @@ export async function AppShell({
 }) {
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
-  const filterInput = {
+
+  // P3-W06A R1: phan tach ro rang tang viewport va tang capability.
+  // - `filterEntriesForActor` chiu trach nhiem viewport/visibility: loc
+  //   `entry.visibility[viewport]` va flag `directEntryEnabled`.
+  // - `decideNavEntryVisibility` chi xet capability + actor, khong quan
+  //   tam viewport. Truyen dung viewport va `entryVisibleInViewport` cho
+  //   tung nhanh desktop/mobile de tranh mobile dung nham desktop visibility
+  //   (bug P3-W06A R1 gap 2).
+  const desktopItems = filterEntriesForActor({
+    viewport: "desktop",
     directEntryEnabled,
     actor,
-    decide: (entry: NavEntry) =>
+    decide: (entry) =>
       decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "desktop",
         entryVisibleInViewport: entry.visibility.desktop,
       }),
-  };
-  const desktopItems = filterEntriesForActor({ ...filterInput, viewport: "desktop" });
-  const mobileItems = filterEntriesForActor({ ...filterInput, viewport: "mobile" });
+  });
+  const mobileItems = filterEntriesForActor({
+    viewport: "mobile",
+    directEntryEnabled,
+    actor,
+    decide: (entry) =>
+      decideNavEntryVisibility({
+        capabilityKey: entry.capability,
+        actor,
+        viewport: "mobile",
+        entryVisibleInViewport: entry.visibility.mobile,
+      }),
+  });
   const activeEntry = findEntryByPath(currentPath);
   return (
     <div className="flex min-h-full flex-1 flex-col">

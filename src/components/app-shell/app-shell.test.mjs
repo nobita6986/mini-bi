@@ -45,10 +45,13 @@ test("app-shell lọc nav theo feature flag + capability predicate tại request
   // P3-W06A: AppShell nhận `actor` prop từ page boundary, filter qua
   // `filterEntriesForActor` + `decideNavEntryVisibility`. Page boundary tự
   // resolve session; AppShell KHÔNG tự query env/cookie.
+  // P3-W06A R1: 2 lan goi filterEntriesForActor voi viewport RIENG (gap 2 fix).
   assert.match(appShellSource, /await connection\(\)/);
   assert.match(appShellSource, /isDirectEntryUiEnabled\(process\.env\.DIRECT_ENTRY_UI_ENABLED\)/);
-  assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]*?viewport:\s*"desktop"\s*\}\)/);
-  assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]*?viewport:\s*"mobile"\s*\}\)/);
+  // Desktop viewport trong filterEntriesForActor.
+  assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]{0,200}viewport:\s*"desktop"[\s\S]{0,400}\}/);
+  // Mobile viewport trong filterEntriesForActor.
+  assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]{0,200}viewport:\s*"mobile"[\s\S]{0,400}\}/);
   assert.match(appShellSource, /decideNavEntryVisibility\(/);
   assert.match(appShellSource, /<DesktopNav activePath=\{currentPath\} items=\{desktopItems\}/);
   assert.match(appShellSource, /items=\{mobileItems\.map\(/);

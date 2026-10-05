@@ -40,6 +40,10 @@ import {
   serializeClipboardTsv,
   type ClipboardMapResult,
 } from "@/lib/direct-entry/direct-entry-grid-clipboard";
+import {
+  commitTextCellCompositionEnd,
+  commitTextCellValue,
+} from "@/components/direct-entry/text-cell-state";
 import type { SpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
 
 import styles from "./direct-entry-spreadsheet-grid.module.css";
@@ -280,12 +284,28 @@ function CellsTextEditorComponent(
     }
   }, []);
 
+  // P3-W06A R1: commit transition goi `commitTextCellValue` / `commitTextCellCompositionEnd`
+  // (text-cell-state.ts). Cung helper do test suite goi de xac minh production
+  // di theo cung contract. Khong con logic inline duplicate.
   function commit(nextValue: string) {
-    setValue(nextValue);
-    onRowChange({
-      ...row,
-      cells: { ...row.cells, [column.key]: nextValue },
-    }, false);
+    const transition = commitTextCellValue({ row, value: nextValue, columnKey: column.key });
+    setValue(transition.value);
+    onRowChange(
+      { ...row, cells: { ...row.cells, [column.key]: transition.value } },
+      false,
+    );
+  }
+  function commitComposition(nextValue: string) {
+    const transition = commitTextCellCompositionEnd({
+      row,
+      committedValue: nextValue,
+      columnKey: column.key,
+    });
+    setValue(transition.value);
+    onRowChange(
+      { ...row, cells: { ...row.cells, [column.key]: transition.value } },
+      false,
+    );
   }
 
   return (
@@ -312,7 +332,7 @@ function CellsTextEditorComponent(
         isComposingRef.current = false;
         // Lay gia tri committed tu currentTarget (data) hoac target (final value).
         const finalValue = (event.currentTarget as HTMLInputElement).value;
-        commit(finalValue);
+        commitComposition(finalValue);
       }}
       onBlur={() => onClose(true, false)}
     />
