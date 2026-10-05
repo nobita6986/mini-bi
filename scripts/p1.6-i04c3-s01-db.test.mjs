@@ -43,7 +43,7 @@ async function database() {
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 39, "PGlite must apply all 39 migrations");
+  assert.equal(migrations.length, 40, "PGlite must apply all 40 migrations");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -295,10 +295,17 @@ test("migration #39 keeps the source-derived function inventory and service boun
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname like 'direct_entry_%'
     `);
+    // P2-W04A migration #40 added 8 new public.direct_entry_reporting_*
+    // helpers (cutoff, source_id, dim_key, recruiter_alias_key,
+    // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
+    // reconciliation_totals). All are revoked from service_role, so the
+    // pre-cutover inventory of 69 (31 service + 38 internal) grows to 77
+    // (31 service + 46 internal). The exposed_internal counter stays at
+    // 0 because no internal function is granted to anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 69,
+      total: 77,
       service_role: 31,
-      internal: 38,
+      internal: 46,
       exposed_internal: 0,
     });
   } finally {
