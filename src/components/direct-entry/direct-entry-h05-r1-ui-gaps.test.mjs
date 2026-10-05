@@ -72,36 +72,39 @@ test("DataGrid nhan dung 18 cot default, khong save_status/row_actions/cccd_docu
 });
 
 test("DataGrid khong render nut × trong bang", () => {
-  // Xoa nut chi con nam trong action rail ben ngoai grid.
+  // P1.7-H06: nut × da duoc loai bo khoi DataGrid; chi con trong contextual
+  // action bar (live) qua nut text "Xóa dòng".
   assert.equal(/aria-label="Xóa dòng"/.test(grid), false,
-    "nut × staged row khong con trong DataGrid");
+    "nut Xóa dòng staged row khong con trong DataGrid");
   assert.equal(grid.includes("data-testid=\"row-delete-"), false,
-    "rail ngoai chi render o live, khong phai trong DataGrid");
+    "row-delete-<clientRowId> chi render trong live, khong phai DataGrid");
   assert.equal(grid.includes("onDeleteRow(row.clientRowId)"), false,
     "DataGrid khong con goi onDeleteRow truc tiep");
-  // Dam bao × chi xuat hien trong live (rail ngoai) hoac trong ten field label
-  // tieng Viet (khong phai button).
-  const liveHasDeleteRail = /data-testid=\{`row-delete-\$\{row\.clientRowId\}`\}/.test(live);
-  assert.ok(liveHasDeleteRail, "rail ngoai phai co data-testid row-delete-<clientRowId>");
+  // P1.7-H06: live co nut "Xóa dòng" trong contextual action bar, khong con
+  // row-delete-* data-testid (the da bi loai theo task §3).
+  assert.doesNotMatch(live, /data-testid=\{`row-delete-\$\{row\.clientRowId\}`\}/);
+  assert.match(live, /data-testid="contextual-delete"/);
 });
 
-test("Desktop action rail dat canh grid trong layout gridWithRail va map tung clientRowId", () => {
-  const gridWithRailStart = live.indexOf('<div className={styles.gridWithRail}>');
-  assert.ok(gridWithRailStart > 0, "phai co layout gridWithRail");
-  // Trong cung mot container, phai co <section className={styles.gridSection}>
-  // truoc va <aside className={styles.actionRailDesktop}> sau.
-  const sectionIdx = live.indexOf('<section className={styles.gridSection}', gridWithRailStart);
-  const asideIdx = live.indexOf('<aside className={styles.actionRailDesktop}', gridWithRailStart);
-  assert.ok(sectionIdx > 0, "phai co grid section trong gridWithRail");
-  assert.ok(asideIdx > 0 && asideIdx > sectionIdx, "rail phai dat sau grid section");
-  // Aside co aria-label, data-testid desktop-action-rail va ul ben trong.
-  assert.match(live, /<aside className=\{styles\.actionRailDesktop\}[\s\S]{0,200}aria-label="Thao tác theo dòng"/);
-  assert.match(live, /<aside className=\{styles\.actionRailDesktop\}[\s\S]{0,400}data-testid="desktop-action-rail"/);
-  // Moi rail item phai map clientRowId qua data-row-index va data-rail-state.
-  assert.match(live, /data-row-index=\{row\.clientRowId\}/);
-  assert.match(live, /data-rail-state="persisted"/);
-  assert.match(live, /data-rail-state="staged"/);
-  // Khong lap lai label dai thanh bang thu hai.
+test("Contextual action bar (H06) thay the action rail; hai nut Hồ sơ NLĐ + Xóa dòng", () => {
+  // P1.7-H06: layout gridWithRail + actionRailDesktop da bi loai bo; chi con
+  // grid section full-width + contextual action bar nam phia tren.
+  assert.equal(live.indexOf('<div className={styles.gridWithRail}>'), -1,
+    "khong con layout gridWithRail");
+  assert.equal(live.indexOf('<aside className={styles.actionRailDesktop}'), -1,
+    "khong con action rail desktop");
+  assert.equal(live.indexOf('data-testid="desktop-action-rail"'), -1,
+    "khong con desktop-action-rail data-testid");
+  // Contextual action bar phai co hai nut.
+  const barIdx = live.indexOf('data-testid="contextual-action-bar"');
+  assert.ok(barIdx > 0, "phai co contextual action bar");
+  const docsBtn = live.match(/data-testid="contextual-documents"[\s\S]{0,400}Hồ sơ NLĐ/);
+  assert.ok(docsBtn, "nut Hồ sơ NLĐ phai nam trong contextual action bar");
+  const deleteBtn = live.match(/data-testid="contextual-delete"[\s\S]{0,400}Xóa dòng/);
+  assert.ok(deleteBtn, "nut Xóa dòng phai nam trong contextual action bar");
+  // Khong lap lai rail/list/table thu hai.
+  assert.equal(/<ul[\s\S]{0,200}actionRail/.test(live), false,
+    "khong con danh sach rail ngoai grid");
   assert.equal(/<table\b[\s\S]{0,200}actionRail/.test(live), false,
     "rail khong duoc la mot bang thu hai");
 });
@@ -125,21 +128,24 @@ test("Quick save (Lưu NLĐ) chi gui row duy nhat, khong gui batch toan bo", () 
   assert.match(live, /data-testid="quick-save-row"[\s\S]{0,200}onQuickSaveRow\(target\.clientRowId\)/);
 });
 
-test("Quick save thanh cong: chi xoa staged row vua luu, giu nguyen row khac", () => {
+test("Quick save thanh cong: chi xoa staged row vua luu, giu nguyen row khac; H06 giu selection", () => {
   const quickSaveBlock = live.match(
-    /const onQuickSaveRow = useCallback\(async \(clientRowId: string\) => \{[\s\S]{0,3500}\}, \[[\s\S]{0,200}\]\);/);
+    /const onQuickSaveRow = useCallback\(async \(clientRowId: string\) => \{[\s\S]{0,5000}\}, \[[\s\S]{0,400}\]\);/);
+  assert.ok(quickSaveBlock, "phai co onQuickSaveRow useCallback");
   const savedBranch = quickSaveBlock[0].indexOf('if (result.kind === "saved")');
   assert.ok(savedBranch > 0, "quick save phai co saved branch");
+  const savedSlice = quickSaveBlock[0].slice(savedBranch, savedBranch + 2000);
   // deleteSpreadsheetRow trong nhanh saved chi nhan clientRowId duy nhat.
-  assert.match(quickSaveBlock[0].slice(savedBranch, savedBranch + 800),
-    /deleteSpreadsheetRow\(current, clientRowId\)/);
-  assert.match(quickSaveBlock[0].slice(savedBranch, savedBranch + 800),
-    /setQuickEditClientRowId\(null\)/);
-  assert.match(quickSaveBlock[0].slice(savedBranch, savedBranch + 800),
-    /await reloadDrafts\(\)/);
+  assert.match(savedSlice, /deleteSpreadsheetRow\(current, clientRowId\)/);
+  assert.match(savedSlice, /setQuickEditClientRowId\(null\)/);
+  assert.match(savedSlice, /await reloadDrafts\(\)/);
   // Phai KHONG dung createSpreadsheetRowModel (se xoa toan bo staged rows).
   assert.equal(quickSaveBlock[0].includes("createSpreadsheetRowModel()"), false,
     "quick save KHONG duoc recreate toan bo staged model");
+  // P1.7-H06: phai giu selection bang server-returned entry_id; khong doan
+  // theo row index/ho ten/CCCD.
+  assert.match(savedSlice, /setSelectionAfterSaveEntryId\(savedEntryId\)/);
+  assert.match(savedSlice, /typeof savedEntryId === "string"/);
 });
 
 test("Quick save loi/retry/OCC: giu nguyen toan bo staged rows, khong dong editor", () => {

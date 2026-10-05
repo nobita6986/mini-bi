@@ -102,6 +102,13 @@ export type DirectEntrySpreadsheetGridProps = {
   canUndo: boolean;
   onUndo(): void;
   saveMessage?: string;
+  /**
+   * P1.7-H06: clientRowId dang duoc chon de contextual action bar thao tac.
+   * Chi truyen mot ID duy nhat moi luc; neu `null` thi khong co dong nao duoc chon.
+   * Select chi thay doi focus/highlight, khong mutate data cell.
+   */
+  selectedClientRowId?: string | null;
+  onSelectedClientRowChange(clientRowId: string | null): void;
 };
 
 const PROVIDER_OPTIONS = ["hrp", "vendor"] as const;
@@ -223,8 +230,9 @@ function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { colum
 export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProps) {
   const {
     rows, validation, catalogOptions, onCellsChange, onPasteApplied, onPasteRejected,
-    onProviderTypeChange, onDeleteRow,
+    onProviderTypeChange,
     notice, canUndo, onUndo, saveMessage,
+    selectedClientRowId, onSelectedClientRowChange,
   } = props;
 
   const rowIndexOf = useCallback((clientRowId: string) =>
@@ -310,7 +318,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       .map((key) => directEntryGridColumn(key))
       .filter((column): column is DirectEntryGridColumn => column !== undefined);
     return dataColumns.map(build);
-  }, [catalogOptions, isEditable, issueFor, onDeleteRow, rowIndexOf]);
+  }, [catalogOptions, isEditable, issueFor, rowIndexOf]);
 
   const onRowsChange = useCallback((next: SpreadsheetGridRow[]) => {
     for (const row of next) {
@@ -412,6 +420,21 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           onCellKeyDown={onCellKeyDown}
           rowHeight={40}
           headerRowHeight={38}
+          selectedRows={selectedClientRowId === null || selectedClientRowId === undefined
+            ? new Set<string>()
+            : new Set<string>([selectedClientRowId])}
+          onSelectedRowsChange={(next) => {
+            // P1.7-H06: chi giu mot clientRowId duy nhat cho contextual action
+            // bar; nhieu selection (cheking box) duoc xem nhuf khong chon.
+            if (next.size === 0) {
+              if (selectedClientRowId !== null) onSelectedClientRowChange(null);
+              return;
+            }
+            const only = next.values().next().value;
+            if (typeof only === "string" && only !== selectedClientRowId) {
+              onSelectedClientRowChange(only);
+            }
+          }}
         />
       </div>
     </div>

@@ -18,11 +18,9 @@ const status = source("../../lib/direct-entry/cccd-status.ts");
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 
 test("cot 'Ho so CCCD' hien dung ba trang thai va nut quan ly bi khoa khi chua luu", () => {
-  // P1.7-H05: CCCD van co trong registry (de su dung boi action rail ben ngoai)
-  // nhung KHONG con la data column cua grid.
+  // P1.7-H06: action rail da duoc loai boi hoan toan; contextual action bar
+  // chi hien thi khi chon mot dong cu the. CCCD mo qua documents dialog.
   assert.match(columns, /key: "cccd_documents", label: "Hồ sơ CCCD"/);
-  // P1.7-H05: action rail ngoai grid (DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS chi con
-  // save_status + row_actions; cccd_documents khong thuoc action rail nua).
   assert.deepEqual(
     JSON.parse(JSON.stringify(["save_status", "row_actions"])),
     ["save_status", "row_actions"],
@@ -35,19 +33,20 @@ test("cot 'Ho so CCCD' hien dung ba trang thai va nut quan ly bi khoa khi chua l
   assert.deepEqual(railKeys, ["save_status", "row_actions"]);
   assert.match(live, /readCccdStatus\(cccdCache, row\.entryId, row\.entryVersion\)/);
   assert.match(live, /cccdStatus: cccdStatus\.label/);
-  // P1.7-H05: cccdStatus chi hien thi trong action rail ngoai grid va tren
-  // mobile/quick editor, KHONG con nam trong react-data-grid data column.
+  // P1.7-H06: CCCD status chi hien thi tren mobile card; khong con action rail
+  // ngoai grid va khong con nut "Tải hoc khong co ban" trong rail cu.
   assert.equal(grid.includes("{row.cccdStatus}"), false,
     "cccdStatus khong con la data cell cua grid");
-  // R1: action rail ben ngoai grid dung disabled={!row.canManageCccd}.
-  assert.match(live, /disabled=\{!row\.canManageCccd\}/);
-  // R1: callback CCCD duoc goi qua setCccdRowId; "onManageDocuments={...}" da
-  // bi loai khoi props cua DirectEntrySpreadsheetGrid (chuyen sang rail ngoai).
-  assert.match(live, /setCccdRowId\(persistedRow\.rowId\)/);
-  assert.match(live, /\{row\.canManageCccd \? "Hồ sơ" : "Tải hồ sơ"\}/);
-  assert.match(live, /aria-label=\{row\.canManageCccd \? `Hồ sơ \$\{row\.employeeCode\}` : "Tải hồ sơ"\}/);
-  // R1: khong con placeholder "Lưu dòng trước" trong rail ngoai (chi Hồ sơ / ×).
+  // H06: callback documents duoc goi qua setDocumentsRowId thay vi setCccdRowId.
+  assert.match(live, /setDocumentsRowId\(persisted\.rowId\)/);
+  assert.match(live, /data-testid="contextual-documents"/);
+  assert.match(live, /data-testid="contextual-action-bar"/);
+  // H06: contextual action bar co nut Hồ sơ NLĐ (khi co capability), nguoc lai disabled.
+  assert.match(live, /Hồ sơ NLĐ/);
+  assert.match(live, /Xóa dòng/);
+  // H06: khong con placeholder "Lưu dòng trước" hay "Tải hồ sơ" trong rail.
   assert.doesNotMatch(live, /Lưu dòng trước/);
+  assert.doesNotMatch(live, /Tải hồ sơ/);
   assert.equal(grid.includes("fetch("), false, "o luoi chi doc cache, khong goi API");
   assert.match(status, /entryId === null \|\| entryId === ""/);
   assert.match(status, /CCCD_UNSAVED_LABEL = "Chưa lưu"/);
@@ -80,8 +79,8 @@ test("mo ho so cua dung mot dong: dung MOT GET, phu thuoc chi entryId/canView", 
   // Trang thai ban dau duoc suy ra tu props, khong setState dong bo trong effect.
   assert.match(manager, /useState<"idle" \| "loading" \| "ready" \| "error">\(entryId === null \? "idle" : "loading"\)/);
   assert.doesNotMatch(openEffect, /setLoadState\("loading"\)/);
-  // Component duoc mount lai theo entry_id => khong dung effect de reset trang thai.
-  assert.match(live, /key=\{cccdRow\?\.entryId \?\? "no-cccd-row"\}/);
+  // P1.7-H06: documents dialog mount lai theo entry_id; khong dung effect de reset trang thai.
+  assert.match(live, /key=\{documentsRow\?\.entryId \?\? "no-documents-row"\}/);
   assert.doesNotMatch(manager, /setSlots\(\{ CCCD_FRONT: EMPTY_SLOT/);
   assert.match(openEffect, /latest\.current\.onStatus\(entryId, projection\.entryVersion, projection\.documents\)/);
   // Callback/rowId di qua ref => doi trang thai bang khong lam phat sinh GET thu hai.
@@ -130,8 +129,10 @@ test("retry rieng mat loi, khong optimistic READY, ghi ro khi chua reload duoc",
 });
 
 test("read-only khi dong khong o ban nhap; khong noi vao change-request API", () => {
-  assert.match(live, /canEdit=\{cccdRow !== null && capabilities\.includes\("entry_own"\) &&/);
-  assert.match(live, /capabilities\.includes\("document_upload"\) && isRowEditable\(cccdRow, submissions\)\}/);
+  // P1.7-H06: read-only check chuyen sang documents dialog; van phai thoa man
+  // entry_own + document_upload + submission lock cho canEditDocuments.
+  assert.match(live, /canEditDocuments=\{documentsRow !== null && capabilities\.includes\("entry_own"\) &&/);
+  assert.match(live, /capabilities\.includes\("document_upload"\) && isRowEditable\(documentsRow, submissions\)\}/);
   assert.match(manager, /disabled=\{!canEdit \|\| busy \|\| detail === null \|\| selectedTypes\.length === 0\}/);
   assert.match(manager, /Dòng này không ở bản nháp nên hồ sơ chỉ xem được/);
   assert.equal(manager.includes("change-request"), false);
@@ -144,8 +145,12 @@ test("read-only khi dong khong o ban nhap; khong noi vao change-request API", ()
 
 test("khong ro ri filename/PII/checksum/storage key/bucket/signed URL ra UI hay log", () => {
   // Phan CCCD cua luoi (cot trang thai + props dialog) khong duoc cham toi du lieu nhay cam.
+  // P1.7-H06: documents dialog thay the CCCD rieng; van giu nguyen contract cu.
+  const docsIndex = live.indexOf("<DirectEntryWorkerDocuments");
   const cccdSlice = live.slice(live.indexOf('key: "cccdStatus"'), live.indexOf('key: "paymentEditor"'))
-    + live.slice(live.indexOf("<DirectEntryCccdManager"), live.indexOf("onEntryVersionChange={onPaymentEntryVersionChange}"));
+    + (docsIndex > 0
+      ? live.slice(docsIndex, live.indexOf("onEntryVersionChange={onPaymentEntryVersionChange}", docsIndex))
+      : "");
   for (const file of [manager, cccdSlice]) {
     assert.doesNotMatch(file, RAW_LOGGING);
     assert.doesNotMatch(file, /dangerouslySetInnerHTML|innerHTML\s*=/);

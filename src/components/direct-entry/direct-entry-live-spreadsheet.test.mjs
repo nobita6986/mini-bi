@@ -137,19 +137,24 @@ test("spreadsheet is the only live desktop grid and profile hydration is passed 
   assert.match(live, /projectDraftProfileGridCells\(row\.profile\)/);
   assert.match(live, /providerType: row\.providerType \?\? ""/);
   assert.match(live, /team_hint: row\.teamDisplayName/);
-  // R1: selectedRowId duoc set qua rail ngoai (khong con onOpenDraft trong grid).
-  assert.match(live, /setCccdRowId\(persistedRow\.rowId\)/);
+  // P1.7-H06: documentsRowId thay cho setCccdRowId; selection qua selectedClientRowId.
+  assert.match(live, /setDocumentsRowId\(persisted\.rowId\)/);
+  assert.match(live, /selectedClientRowId=\{selectedClientRowId\}/);
+  assert.match(live, /onSelectedClientRowChange=\{setSelectedClientRowId\}/);
   assert.ok(live.indexOf("<DirectEntrySpreadsheetGrid") < live.indexOf("<details className={styles.secondaryPanel}"));
   assert.ok(live.indexOf("<DirectEntrySpreadsheetGrid") < live.indexOf("<DirectEntrySubmissionList"));
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /maxRows: liveDraftRows \+ 100/);
   // R1: grid chi nhan 18 default columns, khong them action rail keys.
   assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS/);
+  // H06: grid forward selectedClientRowId vao DataGrid qua `selectedRows`.
+  assert.match(grid, /selectedRows=\{selectedClientRowId === null \|\| selectedClientRowId === undefined/);
 });
 
-test("persisted actions reopen the existing drawer; mobile, CCCD, payment and document paths remain", () => {
+test("persisted actions reopen the existing drawer; mobile, CCCD/payment/document paths remain", () => {
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
-  // R1: action rail (× va Hồ sơ) dat NGOAI DataGrid; DataGrid chi nhan 18 cot.
+  // P1.7-H06: action rail (× va Hồ sơ) da duoc loai bo. DataGrid chi nhan 18 cot
+  // va khong render action nut; selection qua selectedRows.
   assert.doesNotMatch(grid, /aria-label="Xóa dòng"/);
   assert.doesNotMatch(grid, /Quản lý CCCD/);
   // CCCD/employee_code khong con la data column.
@@ -157,14 +162,21 @@ test("persisted actions reopen the existing drawer; mobile, CCCD, payment and do
     "employee_code placeholder da chuyen ra ngoai grid");
   assert.equal(grid.includes("Nhân bản"), false);
   assert.equal(grid.includes("Làm trống"), false);
-  // Live side: rail (ben ngoai grid) co nut × cho staged row va Hồ sơ cho persisted.
-  assert.match(live, /row-delete-/);
+  // P1.7-H06: DataGrid chuyen sang prop selectedRows + onSelectedRowsChange.
+  assert.match(grid, /selectedRows=\{selectedClientRowId === null \|\| selectedClientRowId === undefined/);
+  assert.match(grid, /onSelectedRowsChange=\{/);
+  // Live side: contextual action bar (ben ngoai grid) co nut Xóa dòng cho staged
+  // row va Hồ sơ NLĐ cho persisted; KHONG con row-delete-* icon row.
+  assert.doesNotMatch(live, /data-testid=\{`row-delete-\$\{row\.clientRowId\}`\}/);
+  assert.match(live, /data-testid="contextual-action-bar"/);
+  assert.match(live, /data-testid="contextual-documents"/);
+  assert.match(live, /data-testid="contextual-delete"/);
   assert.match(live, /selectedRowLocked = selectedRow !== null && !isRowEditable\(selectedRow, submissions\)/);
   assert.match(live, /styles\.mobileSection/);
   assert.match(live, /<Dialog\.Root open=\{selectedRow !== null\}/);
-  for (const marker of ["DirectEntryCccdManager", "DirectEntryPaymentEditor",
+  for (const marker of ["DirectEntryPaymentEditor",
     "DirectEntryDocumentEditor", "DirectEntrySubmittedDocumentManager",
-    "onEntryVersionChange=", "setCccdRowId"]) {
+    "DirectEntryWorkerDocuments", "onEntryVersionChange=", "setDocumentsRowId"]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
 });
@@ -179,16 +191,20 @@ test("XLSX import/template and mobile staged editor stay on the spreadsheet work
   assert.match(live, /employeeCodeMode: "server-generated"|Máy chủ sẽ cấp mã khi lưu/);
   assert.match(live, /className=\{styles\.mobileStagedList\}/);
   assert.match(live, /Máy chủ sẽ cấp mã khi lưu/);
+  // P1.7-H06: quick editor co "Lưu trước để tải hồ sơ" hint.
+  assert.match(live, /Lưu trước để tải hồ sơ/);
   // P1.7-H05: HRP/Vendor dropdown chi co 2 option don gian (HRP, Vendor) theo
   // yeu cau production UI; khong dung optgroup nhom.
   assert.match(live, /<option value="hrp">HRP<\/option>/);
   assert.match(live, /<option value="vendor">Vendor<\/option>/);
   assert.equal(live.includes('<optgroup label="HRP">'), false,
     "khong dung optgroup; HRP/Vendor chi co 2 option don gian");
+  // P1.7-H06: mobile staged card list khong con nut × theo row.
+  assert.doesNotMatch(live, /actionRailDeleteButton/);
 });
 
 test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () => {
-  for (const marker of ["DirectEntryCccdManager", "DirectEntryPaymentEditor",
+  for (const marker of ["DirectEntryWorkerDocuments", "DirectEntryPaymentEditor",
     "DirectEntryDocumentEditor", "DirectEntrySubmissionList",
     "DirectEntryChangeRequestList", "DirectEntryChangeRequestProposer",
     "DirectEntryChangeRequestReviewer", "DirectEntrySubmittedDocumentManager",
@@ -197,6 +213,9 @@ test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () =>
   }
   assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
   assert.equal(live.includes("DirectEntryExcelPasteDialog"), false);
+  // P1.7-H06: DirectEntryCccdManager chi con su dung gian tiep qua DirectEntryWorkerDocuments,
+  // khong con render CCCD dialog tren rieng tren live.
+  assert.doesNotMatch(live, /<DirectEntryCccdManager/);
 });
 
 test("khong co N+1 entry-detail fetch trong duong staged", () => {
