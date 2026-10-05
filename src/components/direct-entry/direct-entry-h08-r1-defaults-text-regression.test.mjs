@@ -189,25 +189,37 @@ test("R1-21 Excel paste/import khong bi anh huong boi default place", () => {
 test("R1-13 cellsTextEditor doc/ghi row.cells[column.key] (H07 contract)", () => {
   // Mac dinh renderTextEditor cua react-data-grid doc row[column.key] (sai cho row model nay).
   // cellsTextEditor phai doc/ghi row.cells[column.key].
-  const editor = grid.match(/function cellsTextEditor[\s\S]{0,800}\}/);
-  assert.ok(editor, "phai co cellsTextEditor");
+  // P3-W06A Scope C: cellsTextEditor la wrapper; CellsTextEditorComponent moi
+  // la noi doc/ghi. Test van pass neu wrapper uy quyen qua <CellsTextEditor>.
+  const wrapper = grid.match(/function cellsTextEditor[\s\S]{0,600}\}/);
+  assert.ok(wrapper, "phai co cellsTextEditor wrapper");
+  assert.match(wrapper[0], /<CellsTextEditor\s+row=\{row\}\s+column=\{column\}\s+onRowChange=\{onRowChange\}\s+onClose=\{onClose\}\s*\/>/);
+  // CellsTextEditorComponent chua contract doc/ghi row.cells.
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,2500}\n\}/);
+  assert.ok(component, "phai co CellsTextEditorComponent");
   // Doc cells.
-  assert.match(editor[0], /const value = row\.cells\[column\.key\] \?\? ""/);
+  assert.match(component[0], /const \[value, setValue\] = useState\(\(\) => row\.cells\[column\.key\] \?\? ""\)/);
   // Ghi cells qua onRowChange.
-  assert.match(editor[0], /onRowChange\(\{[\s\S]{0,200}cells:\s*\{\s*\.\.\.\s*row\.cells/);
+  assert.match(component[0], /onRowChange\(\{[\s\S]{0,200}cells:\s*\{\s*\.\.\.\s*row\.cells/);
 });
 
 test("R1-14 cellsTextEditor KHONG commit/close sau moi onChange keystroke", () => {
-  const editor = grid.match(/function cellsTextEditor[\s\S]{0,800}\}/);
-  assert.ok(editor);
-  // onRowChange KHONG truyen commitChanges=true (mac dinh false) trong onChange handler.
-  // Lay trong doan tu `onChange={` den `>}` dong (ket thuc JSX self-closing input).
-  const onChange = editor[0].match(/onChange=\{[\s\S]{0,500}?\}\s*\/>/);
-  assert.ok(onChange, "phai co onChange handler (JSX self-closing)");
-  assert.equal(/onRowChange\([^)]*,\s*true\s*\)/.test(onChange[0]), false,
-    "onChange KHONG goi onRowChange voi commitChanges=true (se close editor)");
+  // P3-W06A: cellsTextEditor la wrapper; CellsTextEditorComponent commit logic.
+  // Wrapper chi uy quyen (khong commit truc tiep).
+  const wrapper = grid.match(/function cellsTextEditor[\s\S]{0,600}\}/);
+  assert.ok(wrapper);
+  // Wrapper chi render <CellsTextEditor/>, khong goi onRowChange truc tiep.
+  assert.doesNotMatch(wrapper[0], /onRowChange\(/,
+    "wrapper cellsTextEditor KHONG goi onRowChange truc tiep (de tranh double commit)");
+  // CellsTextEditorComponent: commit() goi onRowChange voi commitChanges=false (mac dinh).
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,3500}\n\}/);
+  assert.ok(component);
+  // commit() goi onRowChange voi tham so mac dinh commitChanges=false.
+  // (P3-W06A: trong khi composing, KHONG goi onRowChange; sau compositionend moi commit.)
+  assert.match(component[0], /function commit\(nextValue: string\)/);
+  assert.match(component[0], /commit\(finalValue\)/);
   // Commit chi xay ra tren onBlur (onClose(true)).
-  assert.match(editor[0], /onBlur=\{\(\) => onClose\(true, false\)\}/);
+  assert.match(component[0], /onBlur=\{\(\) => onClose\(true, false\)\}/);
 });
 
 test("R1-15 Column build cho data cells editable dung cellsTextEditor (khong dung renderTextEditor)", () => {
@@ -234,11 +246,13 @@ test("R1-16 Date va Select cell editor van commit truc tiep (khong qua cellsText
 test("R1-17 simulated multi-character Vietnamese input: cellsTextEditor contract persists string", () => {
   // Gia lap behavior cua editor: typing tung keystroke phai accumulate.
   // Day la structural test (khong render React): verify contract qua source.
-  const editor = grid.match(/function cellsTextEditor[\s\S]{0,800}\}/);
-  assert.ok(editor);
+  // P3-W06A: cellsTextEditor la wrapper; contract trong CellsTextEditorComponent.
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,2500}\n\}/);
+  assert.ok(component);
   // value doc tu row.cells => moi keystroke tiep theo doc duoc gia tri cu.
-  assert.match(editor[0], /value=\{value\}/);
-  // onChange cap nhat cells => onRowChange se goi onRowsChange o parent.
+  assert.match(component[0], /value=\{value\}/);
+  // commit() cap nhat cells va goi onRowChange (commitChanges=false).
+  assert.match(component[0], /function commit\(nextValue: string\)/);
   // Parent onRowsChange trong grid chi goi onCellsChange(clientRowId, patch) neu co diff.
   assert.match(grid, /onRowsChange[\s\S]{0,500}onCellsChange\(row\.clientRowId, patch\)/);
   // Dam bao onCellsChange chi merge patch (khong full replace row).
@@ -310,9 +324,15 @@ test("R1-22 dropdown/date editors khong dung cellsTextEditor (tai su dung commit
   assert.ok(dateEditor);
   assert.match(dateEditor[0], /type="date"/);
   // cellsTextEditor la input rdg-text-editor (rieng biet).
-  const cellsEditor = grid.match(/function cellsTextEditor[\s\S]{0,800}\}/);
+  // P3-W06A: cellsTextEditor la wrapper uy quyen; className "rdg-text-editor"
+  // nam trong CellsTextEditorComponent. Test wrapper co khop <CellsTextEditor/>.
+  const cellsEditor = grid.match(/function cellsTextEditor[\s\S]{0,600}\}/);
   assert.ok(cellsEditor);
-  assert.match(cellsEditor[0], /className="rdg-text-editor"/);
+  assert.match(cellsEditor[0], /<CellsTextEditor\s+row=\{row\}\s+column=\{column\}\s+onRowChange=\{onRowChange\}\s+onClose=\{onClose\}\s*\/>/);
+  // CellsTextEditorComponent van nhan className="rdg-text-editor".
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,2500}\n\}/);
+  assert.ok(component);
+  assert.match(component[0], /className="rdg-text-editor"/);
   // Quick editor dropdown: project select co aria-label "Dự án".
   assert.match(live, /<select aria-label="Dự án"/);
   // HRP/Vendor: provider dropdown trong SelectCellEditor co aria-label rieng.

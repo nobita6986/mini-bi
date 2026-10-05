@@ -14,9 +14,16 @@ const layoutSource = readFileSync(new URL("./layout.tsx", import.meta.url), "utf
 const pageSource = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 
 test("direct-entry/layout.tsx: default export là function và wrap AppShell với currentPath='/direct-entry'", () => {
-  assert.match(layoutSource, /export default function DirectEntryLayout/);
+  assert.match(layoutSource, /export default async function DirectEntryLayout/);
   assert.ok(layoutSource.includes("AppShell"));
   assert.ok(layoutSource.includes('currentPath="/direct-entry"'));
+});
+
+test("direct-entry/layout.tsx: truyền actor projection cho AppShell (P3-W06A capability-aware)", () => {
+  // P3-W06A: page boundary resolve actor một lần và truyền vào AppShell.
+  assert.match(layoutSource, /import\s*\{[^}]*resolveNavActorForAppShell[^}]*\}\s*from\s*["']@\/lib\/navigation\/resolve-nav-actor/);
+  assert.match(layoutSource, /await resolveNavActorForAppShell\(\)/);
+  assert.match(layoutSource, /actor=\{actor\}/);
 });
 
 test("direct-entry/layout.tsx: KHÔNG tạo App Shell thứ hai (chỉ một AppShell từ @/components/app-shell)", () => {

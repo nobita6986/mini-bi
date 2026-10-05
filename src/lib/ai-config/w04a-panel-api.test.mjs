@@ -231,14 +231,32 @@ test("W04A-P8: /api/ai/settings nằm sau Supabase session guard (P1.7-H04 đã 
   assert.equal(guard.includes("private, no-store"), true, "response lỗi phải private/no-store");
 });
 
-test("W04A-P9: dashboard chỉ render panel khi server bật cờ (không hard-code bật ở client)", () => {
+test("W04A-P9: dashboard layout không render AI panels trong P3 release (P3-W06A Scope B)", () => {
+  // P3-W06A Scope B: AI deferred to P3.1. Dashboard layout KHÔNG import / render
+  // AiReportPanel / AiSettingsPanel nữa, kể cả khi server bật cờ.
+  // Implementation vẫn giữ nguyên trong source, chỉ layout bỏ leave `headerActions` AI.
   const view = readFileSync(new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url), "utf8");
   const page = readFileSync(new URL("../../app/dashboard/page.tsx", import.meta.url), "utf8");
   const layout = readFileSync(new URL("../../app/dashboard/layout.tsx", import.meta.url), "utf8");
-  assert.equal(layout.includes("{isAiSettingsEnabled() ? <AiSettingsPanel /> : null}"), true);
-  assert.equal(layout.includes("await connection()"), true);
-  assert.equal(layout.includes('headerActions={headerActions}'), true);
-  assert.equal(page.includes("isAiSettingsEnabled()"), false);
+  // Layout KHÔNG import AI panels.
+  assert.equal(
+    /import\s*\{[^}]*AiReportPanel[^}]*\}\s*from\s*["']@\/components\/ai-report\//.test(layout),
+    false,
+    "P3-W06A: dashboard layout KHÔNG import AiReportPanel",
+  );
+  assert.equal(
+    /import\s*\{[^}]*AiSettingsPanel[^}]*\}\s*from\s*["']@\/components\/dashboard\/ai-settings-panel/.test(layout),
+    false,
+    "P3-W06A: dashboard layout KHÔNG import AiSettingsPanel",
+  );
+  // Layout KHÔNG reference isAiSettingsEnabled / headerActions (loại comment).
+  const layoutCode = layout.split("\n").filter((line) => !/^\s*(\*|\/\/)/.test(line)).join("\n");
+  assert.equal(/isAiSettingsEnabled/.test(layoutCode), false,
+    "P3-W06A: dashboard layout KHÔNG goi isAiSettingsEnabled");
+  assert.equal(/headerActions/.test(layoutCode), false,
+    "P3-W06A: dashboard layout KHÔNG truyền headerActions");
+  // Page và view cũng không import AI panels (khong hard-code bat o client).
+  assert.equal(/isAiSettingsEnabled\(\)/.test(page), false);
   assert.equal(view.includes("AiSettingsPanel"), false);
   assert.equal(view.includes("NEXT_PUBLIC"), false);
 });

@@ -7,9 +7,18 @@
  *   (giao diện là "compact navigation" trên header — desktop chỉ có nav bar trên).
  * - Mobile: Sheet (shadcn-style, dựa trên `radix-ui` Dialog) bên trái.
  *
+ * P3-W06A — Capability-aware navigation:
+ * - Nhận `actor` projection tối thiểu từ page boundary (đã resolve ở layout).
+ *   KHÔNG tự resolve session/cookie ở AppShell; tránh duplicate query + lộ PII.
+ * - `actor` chỉ chứa `app_user_id` + `capabilities` + `scopes` (đã sanitize từ
+ *   `actorProjection` của `auth-session-core.ts`). Không có `auth_subject`,
+ *   không có email, không có PII khác.
+ * - Filter cùng `NAV_ENTRIES` qua `filterEntriesForActor` + `decideNavEntryVisibility`
+ *   cho desktop và mobile — không tạo registry thứ hai.
+ * - `actor === null` (page chưa resolve được) → chỉ `any` còn hiện (Dashboard).
+ *
  * Lưu ý:
- * - Chưa có RBAC thật: `capability` chỉ là metadata, filter ở đây chỉ theo
- *   `status: 'current'`.
+ * - Route/API/DB vẫn là authority; visibility chỉ là UI hint.
  * - ThemeSelector giữ nguyên (W05 R1 đã ổn định).
  */
 
@@ -19,7 +28,15 @@ import Image from "next/image";
 import { connection } from "next/server";
 
 import { ThemeSelector } from "@/components/dashboard/theme-selector";
-import { entriesForViewport, findEntryByPath } from "@/lib/navigation/registry";
+import {
+  filterEntriesForActor,
+  findEntryByPath,
+  type NavEntry,
+} from "@/lib/navigation/registry";
+import {
+  decideNavEntryVisibility,
+  type NavActorProjection,
+} from "@/lib/navigation/registry-capability";
 import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 
 import { DesktopNav } from "./desktop-nav";
@@ -32,20 +49,36 @@ import { UserSessionControl } from "./user-session-control";
  * - currentPath: đường dẫn hiện tại (từ page). Dùng để highlight active link.
  *   Tính từ server, không dùng hook client.
  * - headerActions: các action do route hiện tại cung cấp, nếu có.
+ *   P3-W06A Scope B: AI deferred → header actions chỉ render khi page truyền vào.
+ * - actor: projection tối thiểu từ page boundary (đã resolve ở layout). Có thể
+ *   null khi page không resolve được session — AppShell vẫn render Dashboard.
  */
 export async function AppShell({
   children,
   currentPath,
   headerActions,
+  actor,
 }: {
   children: ReactNode;
   currentPath: string;
   headerActions?: ReactNode;
+  actor: NavActorProjection | null;
 }) {
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
-  const desktopItems = entriesForViewport("desktop", directEntryEnabled);
-  const mobileItems = entriesForViewport("mobile", directEntryEnabled);
+  const filterInput = {
+    directEntryEnabled,
+    actor,
+    decide: (entry: NavEntry) =>
+      decideNavEntryVisibility({
+        capabilityKey: entry.capability,
+        actor,
+        viewport: "desktop",
+        entryVisibleInViewport: entry.visibility.desktop,
+      }),
+  };
+  const desktopItems = filterEntriesForActor({ ...filterInput, viewport: "desktop" });
+  const mobileItems = filterEntriesForActor({ ...filterInput, viewport: "mobile" });
   const activeEntry = findEntryByPath(currentPath);
   return (
     <div className="flex min-h-full flex-1 flex-col">
