@@ -87,7 +87,7 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
 
 test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
-  assert.equal(migrationNames.length, 39);
+  assert.equal(migrationNames.length, 40);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -130,6 +130,13 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   const actual = new Set(rows.map((row) => row.proname));
   assert.deepEqual(actual, expected);
   const serviceRpcs = rows.filter((row) => row.service_exec).length;
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [69, 31, 38]);
+  // P2-W04A migration #40 added 8 new public.direct_entry_reporting_*
+  // helpers (cutoff, source_id, dim_key, recruiter_alias_key,
+  // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
+  // reconciliation_totals). All are revoked from service_role (they run
+  // inside service_role via SQL only and are not callable as RPCs), so the
+  // pre-cutover inventory of 69 (31 service + 38 internal) grows to 77
+  // (31 service + 46 internal).
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [77, 31, 46]);
   await db.close();
 });
