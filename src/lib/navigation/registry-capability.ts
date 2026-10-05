@@ -25,7 +25,6 @@ import type { Capability } from "@/lib/auth/direct-entry-v2";
 
 /** Subset các field mà nav cần từ actor projection. */
 export type NavActorProjection = {
-  app_user_id: string;
   capabilities: readonly Capability[];
   scopes: readonly { kind: "own" | "team" | "all" }[];
 };

@@ -268,3 +268,202 @@ Không được sửa:
 **`P3-W06A_CAPABILITY_NAV_TEXT_EDITOR_LOCAL_PASS_FAST_TRACK`** — chưa push,
 chưa deploy, chưa Production UAT. Tất cả quality gates đã pass locally trong
 worktree `C:\CodeApp\BI-p3-w06a-capability-nav-text-editor`.
+
+---
+
+# R1 — Review gaps closure
+
+**Trạng thái R1:** `P3-W06A-R1_CAPABILITY_NAV_TEXT_EDITOR_REVIEW_GAPS_CLOSED_LOCAL_PASS_FAST_TRACK`
+**Base R1:** `e4ae7991a836876354fb08bc074dc1436648420c` (giữ nguyên, không
+amend/rebase).
+**Worktree:** `C:\CodeApp\BI-p3-w06a-capability-nav-text-editor`
+**Branch:** `feature/p3-w06a-capability-nav-text-editor`
+
+## Bối cảnh
+
+R00 review nêu 3 gap trong implementation `e4ae799`:
+
+1. **Gap 1 — Actor resolve 2 lần/request.** `dashboard/layout.tsx`,
+   `dashboard/page.tsx`, `direct-entry/layout.tsx`, `direct-entry/page.tsx`
+   đều tự gọi `getDirectEntryActor`/`resolveSessionWithBoundedRetry`. AppShell
+   đôi khi gọi thêm qua layout; page gọi lại qua route guard → 2 lần
+   Supabase `getUser` + 2 lần actor repository resolution cho cùng 1 request.
+2. **Gap 2 — Mobile dùng nhầm desktop viewport.** AppShell xây 1 closure
+   `decide` hardcode `viewport: "desktop"` rồi dùng lại cho cả desktopItems
+   và mobileItems. Mobile bị filter theo `entry.visibility.desktop` thay vì
+   `entry.visibility.mobile`.
+3. **Gap 3 — Behavioral text-cell test tách rời component.** Helper trong
+   `text-cell-state.ts` (`applyTextCellKeystroke`, `simulateAsciiKeystrokes`,
+   …) là mô phỏng, KHÔNG được `CellsTextEditorComponent` import/gọi. Test
+   xanh không chứng minh production đi theo transition tương ứng.
+
+## Cách đóng từng gap
+
+### Gap 1 — Request-scoped actor resolution (React `cache()`)
+
+- `src/lib/navigation/resolve-nav-actor.ts`:
+  - Import `cache` từ `react` (RSC request-scoped memo, theo
+    `node_modules/next/dist/docs/01-app/02-guides/caching-without-cache-components.md`).
+  - `resolveActorForRequest = cache(async () => …)` — trả về
+    `ActorResolution` đầy đủ cho route access.
+  - `resolveNavActorForAppShell = cache(async (input: { directEntryEnabled }) => …)` —
+    trả về `NavActorProjection` (chỉ `capabilities` + `scopes.kind`).
+  - Bỏ `app_user_id` khỏi `NavActorProjection` vì predicate trong
+    `registry-capability.ts` không dùng nó.
+  - Khi `directEntryEnabled === false`, `resolveNavActorForAppShell` return
+    `null` luôn (không query) — AppShell vẫn render Dashboard vì capability
+    `any` pass với `actor === null`.
+  - Bounded retry H07 (`resolveSessionWithBoundedRetry`) vẫn nằm trong
+    `resolveActorForRequest`; chỉ chạy 1 lần nhờ cache.
+- `src/app/dashboard/layout.tsx` & `src/app/direct-entry/layout.tsx`:
+  - Truyền `directEntryEnabled` cho `resolveNavActorForAppShell` để tránh
+    query thừa khi UI flag off.
+- `src/app/dashboard/page.tsx` & `src/app/direct-entry/page.tsx`:
+  - Gọi `resolveActorForRequest()` (cùng module, cùng cache) thay vì
+    gọi trực tiếp `getDirectEntryActor` / `resolveSessionWithBoundedRetry`.
+  - Dùng `.catch(() => null)` (Promise chain) thay vì try/catch vì resolver
+    đã được wrap bởi React `cache()` trong RSC.
+  - direct-entry page chỉ resolve khi `uiEnabled === true` (fail-closed:
+    `actor = null` → `decideDirectEntryPageAccess` trả `NOT_FOUND`).
+- Tổng quan request lifecycle: 1 request → 1 lần Supabase `getUser` + 1 lần
+  actor repository resolution. Layout + page share cache. AppShell nhận
+  `actor` projection; route access ở page dùng `ActorResolution` đầy đủ.
+
+### Gap 2 — Asymmetric desktop/mobile viewport
+
+- `src/components/app-shell/app-shell.tsx`:
+  - Tách 2 lần gọi `filterEntriesForActor` cho desktop và mobile, mỗi lần
+    truyền `viewport` RIÊNG và `entryVisibleInViewport` tương ứng:
+    ```ts
+    const desktopItems = filterEntriesForActor({
+      viewport: "desktop",
+      directEntryEnabled,
+      actor,
+      decide: (entry) => decideNavEntryVisibility({
+        capabilityKey: entry.capability, actor, viewport: "desktop",
+        entryVisibleInViewport: entry.visibility.desktop,
+      }),
+    });
+    const mobileItems = filterEntriesForActor({ /* ... viewport: "mobile" ... */ });
+    ```
+  - Phân lớp trách nhiệm rõ: `filterEntriesForActor` filter theo viewport
+    (visibility), `decideNavEntryVisibility` chỉ xét capability + actor.
+- `src/lib/navigation/registry.ts`:
+  - Bỏ `app_user_id` khỏi `actor` type trong `filterEntriesForActor` (PII).
+  - `decide` vẫn nhận `NavEntry` đầy đủ (entry-level metadata) — caller chịu
+    trách nhiệm truyền viewport/entryVisibleInViewport đúng.
+- Test bổ sung: `registry-capability.test.mjs` có 4 test Gap 2 (xem phần
+  "Test evidence").
+
+### Gap 3 — Wire production component vào helper
+
+- `src/components/direct-entry/text-cell-state.ts`:
+  - Helper duy nhất production dùng: `commitTextCellValue({ row, value, columnKey })`
+    → `{ value, nextRow, patch }`. Test gọi cùng helper này.
+  - `commitTextCellCompositionEnd({ row, committedValue, columnKey })` cho
+    IME composition end (cancel = `committedValue === ""`).
+  - Bỏ `applyTextCellKeystroke`, `applyTextCellCompositionEnd` (cũ),
+    `simulateAsciiKeystrokes`, `simulateVietnameseIme` (helper mô phỏng bị
+    tách rời trước đây).
+- `src/components/direct-entry/direct-entry-spreadsheet-grid.tsx`:
+  - `CellsTextEditorComponent` import helper:
+    ```ts
+    import { commitTextCellValue, commitTextCellCompositionEnd }
+      from "@/components/direct-entry/text-cell-state";
+    ```
+  - `commit(nextValue)` gọi `commitTextCellValue({ row, value, nextValue, columnKey: column.key })`.
+  - `commitComposition(finalValue)` gọi `commitTextCellCompositionEnd(…)`.
+  - `onChange` (keystroke ASCII) → `commit(next)`; `onCompositionEnd` →
+    `commitComposition(finalValue)`. `onBlur` vẫn `onClose(true, false)`.
+  - Giữ nguyên: stable DOM (`memo(CellsTextEditorComponent)`), `useRef` +
+    `useEffect([])` focus/select 1 lần, không debounce, blur/Enter/Tab commit,
+    paste/dropdown/date/selection không regress.
+- `src/components/direct-entry/direct-entry-text-cell-regression.test.mjs`:
+  - Test production thực sự: gọi `commitTextCellValue`/`commitTextCellCompositionEnd`
+    với row accumulated qua từng lần (giống `onRowChange` → re-render).
+  - Chuỗi `"" → "N" → "Ng" → "Ngu" → "Nguyễn"` verify `row.cells` giữ
+    full value.
+  - Composition end với `committedValue = "tiếng"` verify ghi vào
+    `row.cells.display_name` (gồm ký tự có dấu `ế`).
+  - Composition cancel (`committedValue = ""`) giữ nguyên current.
+  - Bổ sung `R2-S7` đảm bảo `CellsTextEditorComponent` thực sự import
+    helper (regex check import + call site).
+
+## Files thay đổi trong R1
+
+### Sửa (8 files)
+
+| Path | Gap | Thay đổi |
+|---|---|---|
+| `src/lib/navigation/resolve-nav-actor.ts` | 1 | Wrap cả `resolveActorForRequest` và `resolveNavActorForAppShell` bằng React `cache()`. Bỏ `app_user_id` khỏi projection. `resolveNavActorForAppShell` nhận `directEntryEnabled` để skip query khi UI off. |
+| `src/lib/navigation/registry-capability.ts` | 1 | Bỏ `app_user_id` khỏi `NavActorProjection`. |
+| `src/lib/navigation/registry.ts` | 1+2 | Bỏ `app_user_id` khỏi `filterEntriesForActor.actor` type; `decide` giữ nhận `NavEntry` đầy đủ. |
+| `src/components/app-shell/app-shell.tsx` | 2 | Tách 2 lần gọi `filterEntriesForActor` với `viewport` RIÊNG; truyền `entry.visibility.desktop`/`mobile` đúng cho từng nhánh. |
+| `src/app/dashboard/layout.tsx` | 1 | Truyền `directEntryEnabled` cho resolver; dùng `resolveNavActorForAppShell({ directEntryEnabled })`. |
+| `src/app/direct-entry/layout.tsx` | 1 | Tương tự dashboard. |
+| `src/app/dashboard/page.tsx` | 1 | Dùng `resolveActorForRequest()` (share cache) thay vì gọi trực tiếp `getDirectEntryActor`. Dùng `.catch(() => null)`. |
+| `src/app/direct-entry/page.tsx` | 1 | Tương tự. Skip resolve khi `uiEnabled === false`. |
+| `src/components/direct-entry/direct-entry-spreadsheet-grid.tsx` | 3 | `CellsTextEditorComponent` import & gọi `commitTextCellValue` / `commitTextCellCompositionEnd`. |
+| `src/components/direct-entry/text-cell-state.ts` | 3 | Bỏ helper mô phỏng (`applyTextCellKeystroke`, …). Thêm `commitTextCellValue` / `commitTextCellCompositionEnd` — pure transition thực sự mà production dùng. |
+
+### Sửa test (5 files)
+
+| Path | Gap | Thay đổi |
+|---|---|---|
+| `src/lib/navigation/registry-capability.test.mjs` | 1+2 | Bỏ `app_user_id` khỏi `makeActor`; thêm 4 test Gap 2 (asymmetric viewport). |
+| `src/lib/navigation/resolve-nav-actor.test.mjs` | 1 | Mới: 12 test source-string cho React `cache()` wrap, NavActorProjection shape, layout/page share cache, page skip khi UI off. |
+| `src/components/app-shell/app-shell.test.mjs` | 2 | Update regex `filterEntriesForActor` (mở rộng body vì có `directEntryEnabled`); vẫn verify 2 lần gọi với `viewport: "desktop"` / `"mobile"` RIÊNG. |
+| `src/components/direct-entry/direct-entry-text-cell-regression.test.mjs` | 3 | Viết lại: test gọi đúng `commitTextCellValue` / `commitTextCellCompositionEnd` (helper production thực sự). Chuỗi `"" → "N" → "Ng" → "Ngu" → "Nguyễn"`. Composition `"tiếng"`. Cancel. Thêm `R2-S7` regex kiểm tra component import helper. |
+| `src/components/direct-entry/direct-entry-h08-r1-defaults-text-regression.test.mjs` | 3 | Update regex match `cellsTextEditor` (thêm `rowIdx` forward, mở rộng `CellsTextEditorComponent` body length vì thêm `commitComposition`). |
+| `src/components/direct-entry/direct-entry-h07-session-grid-ux.test.mjs` | 1 | Update test A2: page dùng `resolveActorForRequest().catch(() => null)` (Promise chain) thay vì `try/catch`. |
+| `src/app/dashboard/layout.test.mjs` | 1 | Update assertion: `resolveNavActorForAppShell({ directEntryEnabled })`. |
+| `src/app/direct-entry/layout.test.mjs` | 1 | Tương tự. |
+
+## Test evidence
+
+Toàn bộ targeted tests (chạy từ worktree `C:\CodeApp\BI-p3-w06a-capability-nav-text-editor`):
+
+| Suite | Số test | Pass |
+|---|---:|---:|
+| `registry-capability.test.mjs` (incl. 4 Gap 2) | 18 | 18 |
+| `resolve-nav-actor.test.mjs` (mới) | 12 | 12 |
+| `app-shell.test.mjs` (Gap 2 regex) | 21 | 21 |
+| `direct-entry-text-cell-regression.test.mjs` (helper production) | 13 | 13 |
+| `direct-entry-h08-r1-defaults-text-regression.test.mjs` (regex mở rộng) | 25+ | tất cả |
+| `direct-entry-h07-session-grid-ux.test.mjs` (Promise catch) | A1-A3 + 30+ | tất cả |
+| `registry.test.mjs` + 3 layout tests (`test:app-nav-02a`) | 53 | 53 |
+| `direct-entry-text-cell-regression` + `direct-entry-excel-paste` + `direct-entry-h08-r1-defaults-text-regression` + `direct-entry-h07-session-grid-ux` + `direct-entry-live-spreadsheet` + `direct-entry-cccd-manager` | 94 | 94 |
+| `pnpm test:main` | 447 | 447 |
+| `pnpm test:server` | 102 | 102 |
+| `pnpm test:export` | 4 | 4 |
+| `pnpm test` (toàn bộ) | nhiều trăm | 0 fail |
+
+Quality gates:
+
+- `next typegen`: ✓ Types generated successfully
+- `pnpm typecheck`: ✓ 0 errors
+- `pnpm lint`: ✓ 0 errors (6 pre-existing warnings, không phải R1)
+- `pnpm build`: ✓ Static + Dynamic routes OK
+- `pnpm docs:check`: ✓ 6/6 examples pass
+- `pnpm secrets:check`: ✓ ĐẠT — không tìm thấy secret
+- `pnpm db:migrate --status`: ✓ 39 applied, 0 pending (39/0/0)
+- `git diff --check`: ✓ no whitespace errors
+
+## Ranh giới
+
+Không sửa:
+
+- `src/lib/auth/direct-entry-session.ts` (Supabase + `resolveDirectEntrySession`).
+- `src/lib/auth/direct-entry-session-retry.ts` (H07 bounded retry).
+- `src/lib/direct-entry/actor-context-repository.ts` (Supabase RPC).
+- Migration/DB/RPC/reporting/AI API internals/package/lockfile/env/workflow/main/deployment/primary checkout.
+- Bất kỳ chỗ nào ngoài 13 file nêu trên (trừ doc).
+
+## Local SHA
+
+- R1 base (giữ nguyên): `e4ae7991a836876354fb08bc074dc1436648420c`
+- R1 commit (sẽ commit + push trên `feature/p3-w06a-capability-nav-text-editor`).
+
+## Trạng thái
+
+**`P3-W06A-R1_CAPABILITY_NAV_TEXT_EDITOR_REVIEW_GAPS_CLOSED_LOCAL_PASS_FAST_TRACK`** — local pass, chưa push, chưa deploy, chưa UI UAT.

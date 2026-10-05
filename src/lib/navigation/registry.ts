@@ -140,6 +140,15 @@ export function entriesForViewport(
  * - KHÔNG tạo registry thứ hai; tái sử dụng toàn bộ `NAV_ENTRIES` + `CURRENT_NAV_ENTRIES`.
  * - KHÔNG dùng role name / email / env làm quyền.
  *
+ * P3-W06A R1:
+ * - Viewport + visibility là trách nhiệm của `filterEntriesForActor` (filter
+ *   `entry.visibility[viewport]`). Caller KHÔNG cần truyền `viewport` /
+ *   `entryVisibleInViewport` vào predicate.
+ * - Capability là trách nhiệm của `decide` (đóng gói `decideNavEntryVisibility`
+ *   với `actor` đã biết + capability key).
+ * - `decide` nhận `NavEntry` để có thể xét capability key + bất kỳ metadata
+ *   nào trong entry (kể cả visibility) nếu cần.
+ *
  * Hàm này sống cùng `entriesForViewport` cũ để test cũ vẫn xanh; AppShell sẽ
  * dùng phiên bản này từ P3-W06A trở đi.
  */
@@ -147,7 +156,6 @@ export function filterEntriesForActor(input: {
   viewport: "desktop" | "mobile";
   directEntryEnabled: boolean;
   actor: {
-    app_user_id: string;
     capabilities: readonly string[];
     scopes: readonly { kind: "own" | "team" | "all" }[];
   } | null;

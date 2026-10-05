@@ -1,148 +1,98 @@
 /**
- * P3-W06A — Pure state-transition cho Direct Entry text cell editor.
+ * P3-W06A R1 — Pure state-transition helpers cho Direct Entry text cell editor.
  *
- * Mục đích:
- * - Tách phần "nhận keystroke + sinh patch" ra khỏi React render để có thể
- *   test hành vi bằng `node:test` (không cần jsdom/happy-dom).
- * - Hàm thuần, deterministic, không phụ thuộc React, ref, focus hay DOM.
+ * Muc tieu:
+ * - Tach phan "nhan keystroke + composition end + sinh next row/patch" ra khoi
+ *   React render, de:
+ *     (a) production component (CellsTextEditorComponent) goi cung helper
+ *         (khong con duplicate inline logic);
+ *     (b) tests co the goi cung helper de xac minh contract production
+ *         di theo (khong con tinh trang helper mo phong bi tach roi).
+ * - Ham thuan, deterministic, khong phu thuoc React, ref, focus hay DOM.
  *
  * Production bug (P1.7-RESIDUAL-TEXT-CELL_SINGLE_CHARACTER_INPUT):
- * - Editor trước đây dùng `ref={(node) => { if (node) { node.focus(); node.select(); } }}`
- *   với arrow function inline. Mỗi lần React re-render (do `onChange` → `onRowChange`),
- *   React unmount + remount ref callback → gọi lại `node.select()` → highlight toàn bộ
- *   text → keystroke tiếp theo thay thế toàn bộ, chỉ thấy 1 ký tự.
- * - Fix ở `cellsTextEditor` (cellsTextEditor.tsx) dùng `useRef` + `useEffect` để
- *   focus + select CHỈ MỘT LẦN khi mount; subsequent re-render giữ nguyên DOM
+ * - Editor truoc su dung `ref={(node) => { if (node) { node.focus(); node.select(); } }}`
+ *   voi arrow function inline. Moi React re-render (do `onChange` → `onRowChange`)
+ *   se unmount + remount ref callback → goi lai `node.select()` → highlight toan
+ *   bo text → keystroke tiep theo thay the toan bo, chi thay 1 ky tu.
+ * - Fix o `cellsTextEditor` (cellsTextEditor.tsx) dung `useRef` + `useEffect` de
+ *   focus + select CHI 1 LAN khi mount; subsequent re-render giu nguyen DOM
  *   node + focus/selection.
  *
- * Hàm `applyTextCellKeystroke` ở đây chỉ là phép biến đổi text thuần
- * (input current + key event → next text + patch delta). Nó ĐẶC TẢ contract
- * mà editor phải tuân theo; còn DOM/IME/focus là việc của component.
+ * `commitTextCellValue` va `commitTextCellCompositionEnd` la contract thuc su
+ * ma `CellsTextEditorComponent` goi (khong con helper mo phong tach roi).
  */
 
-export type TextCellNextState = {
-  /** Gia tri moi se dat vao `row.cells[column.key]`. */
+export type SpreadsheetRowLike = {
+  cells: Readonly<Record<string, string>>;
+};
+
+export type TextCellCommit = {
+  /** Gia tri moi se dat vao `row.cells[columnKey]` (de UI cap nhat local state). */
   value: string;
-  /** Patch delta de merge vao row.cells (giong nhu cach onCellsChange dang lam). */
+  /** Row moi voi `cells[columnKey]` da duoc merge full value. */
+  nextRow: SpreadsheetRowLike;
+  /** Patch chi chua `columnKey` (de parent dua len orchestrator). */
   patch: Readonly<Record<string, string>>;
 };
 
 /**
- * Ap dung mot keystroke ASCII don le (khong qua IME composition).
+ * Merge mot full value vao `row.cells[columnKey]`, giu nguyen cac field khac.
  *
- * - Thay the 1 ky tu tai `selectionStart` (hoac append neu khong co selection).
- * - Khong commit/close.
+ * Day la buoc chuyen tiep chuan ma CellsTextEditorComponent goi khi user
+ * nhap mot keystroke (ASCII) don le hoac khi editor commit gia tri cuoi
+ * cung (blur/Enter/Tab) ma khong qua IME composition.
+ *
+ * Contract:
+ * - `nextRow.cells[columnKey] === value` (full value, khong phai delta).
+ * - `patch` chi chua `columnKey` (parent co the dua len orchestrator
+ *   de merge vao row model goc ma khong mat thong tin field khac).
+ * - Ham thuan: cung input luon cho cung output.
  */
-export function applyTextCellKeystroke(input: {
-  currentValue: string;
-  selectionStart: number;
-  selectionEnd: number;
-  key: string;
+export function commitTextCellValue(input: {
+  row: SpreadsheetRowLike;
+  value: string;
   columnKey: string;
-}): TextCellNextState {
-  const { currentValue, selectionStart, selectionEnd, key, columnKey } = input;
-  const start = clampIndex(selectionStart, currentValue.length);
-  const end = clampIndex(selectionEnd, currentValue.length);
-  const before = currentValue.slice(0, start);
-  const after = currentValue.slice(end);
-  const next = before + key + after;
+}): TextCellCommit {
+  const { row, value, columnKey } = input;
+  const nextRow: SpreadsheetRowLike = {
+    ...row,
+    cells: { ...row.cells, [columnKey]: value },
+  };
   return {
-    value: next,
-    patch: { [columnKey]: next },
+    value,
+    nextRow,
+    patch: { [columnKey]: value },
   };
 }
 
 /**
- * Ap dung composition (IME): input hien tai (co the chua cac composing char
- * dang duoc the hien tam thoi) + composition data cua trinh duyet → text da
- * committed. Editor se goi ham nay khi `compositionend` xay ra.
+ * Composition end (IME) transition: thay the toan bo current value bang
+ * committed value cuoi cung.
  *
- * - Neu `committedValue` rong (user cancel composition), giu nguyen currentValue.
- * - Neu khong rong, replace toan bo current value bang committed value (day la
- *   semantic cua composition: composition cuoi cung quyet dinh text cuoi cung,
- *   khong phai cac composing char trung gian).
+ * Day la buoc chuyen tiep ma CellsTextEditorComponent goi khi `onCompositionEnd`
+ * xay ra. Composition semantics: cac composing char trung gian (pre-edit) duoc
+ * browser hien thi trong input, nhung gia tri committed cuoi cung moi la
+ * quyet dinh text cuoi cung. Editor KHONG commit pre-edit vao row de tranh
+ * ghi de lan nhau.
+ *
+ * Contract:
+ * - Neu `committedValue` rong (user cancel composition, e.g. Esc), giu nguyen
+ *   `row.cells[columnKey]`.
+ * - Neu khong rong, replace full value va commit vao `row.cells[columnKey]`.
  */
-export function applyTextCellCompositionEnd(input: {
-  currentValue: string;
+export function commitTextCellCompositionEnd(input: {
+  row: SpreadsheetRowLike;
   committedValue: string;
   columnKey: string;
-}): TextCellNextState {
-  const { currentValue, committedValue, columnKey } = input;
+}): TextCellCommit {
+  const { row, committedValue, columnKey } = input;
   if (committedValue === "") {
-    return { value: currentValue, patch: { [columnKey]: currentValue } };
+    return {
+      value: row.cells[columnKey] ?? "",
+      nextRow: row,
+      patch: { [columnKey]: row.cells[columnKey] ?? "" },
+    };
   }
-  return {
-    value: committedValue,
-    patch: { [columnKey]: committedValue },
-  };
-}
-
-/**
- * Mo phong chuoi keystroke lien tiep (ASCII) de test regression: tung keystroke
- * phai accumulate, ky tu cu khong bi mat.
- */
-export function simulateAsciiKeystrokes(input: {
-  initialValue: string;
-  keys: readonly string[];
-  columnKey: string;
-}): {
-  finalValue: string;
-  intermediateValues: readonly string[];
-  patches: readonly Readonly<Record<string, string>>[];
-} {
-  let value = input.initialValue;
-  const intermediateValues: string[] = [value];
-  const patches: Readonly<Record<string, string>>[] = [];
-  for (const key of input.keys) {
-    const next = applyTextCellKeystroke({
-      currentValue: value,
-      selectionStart: value.length,
-      selectionEnd: value.length,
-      key,
-      columnKey: input.columnKey,
-    });
-    value = next.value;
-    patches.push(next.patch);
-    intermediateValues.push(value);
-  }
-  return { finalValue: value, intermediateValues, patches };
-}
-
-/**
- * Mo phong Vietnamese IME composition: go "tie" (khong dau) → trinh duyet
- * compositionstart → cap nhat compositiondata tung pre-edit char → compositionend
- * voi "tiếng" (co dau). Editor phai giu gia tri committed cuoi cung.
- */
-export function simulateVietnameseIme(input: {
-  initialValue: string;
-  preEditFragments: readonly string[]; // cac gia tri pre-edit qua cac compositionupdate
-  finalCommitted: string; // "tiếng" - chuoi cuoi cung sau khi commit
-  columnKey: string;
-}): {
-  finalValue: string;
-  intermediateValues: readonly string[];
-} {
-  let value = input.initialValue;
-  const intermediate: string[] = [value];
-  for (const fragment of input.preEditFragments) {
-    // Composition data la text trung gian (co the co dau, co the khong).
-    // Editor nen hien thi fragment qua value nhung KHONG commit vao row
-    // cho den khi compositionend (chung ta mo phong day du bang cach
-    // truyen gia tri committed cuoi cung qua applyTextCellCompositionEnd).
-    // Trong mo phong thuan, ta gia su gia tri hien thi = fragment.
-    value = fragment;
-    intermediate.push(value);
-  }
-  const committed = applyTextCellCompositionEnd({
-    currentValue: value,
-    committedValue: input.finalCommitted,
-    columnKey: input.columnKey,
-  });
-  return { finalValue: committed.value, intermediateValues: intermediate };
-}
-
-function clampIndex(value: number, max: number): number {
-  if (!Number.isFinite(value) || value < 0) return 0;
-  if (value > max) return max;
-  return Math.floor(value);
+  return commitTextCellValue({ row, value: committedValue, columnKey });
 }

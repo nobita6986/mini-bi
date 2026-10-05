@@ -191,16 +191,17 @@ test("R1-13 cellsTextEditor doc/ghi row.cells[column.key] (H07 contract)", () =>
   // cellsTextEditor phai doc/ghi row.cells[column.key].
   // P3-W06A Scope C: cellsTextEditor la wrapper; CellsTextEditorComponent moi
   // la noi doc/ghi. Test van pass neu wrapper uy quyen qua <CellsTextEditor>.
+  // P3-W06A R1: wrapper cung forward rowIdx de trinh bien dich.
   const wrapper = grid.match(/function cellsTextEditor[\s\S]{0,600}\}/);
   assert.ok(wrapper, "phai co cellsTextEditor wrapper");
-  assert.match(wrapper[0], /<CellsTextEditor\s+row=\{row\}\s+column=\{column\}\s+onRowChange=\{onRowChange\}\s+onClose=\{onClose\}\s*\/>/);
+  assert.match(wrapper[0], /<CellsTextEditor\s+row=\{row\}[\s\S]{0,300}\/>/);
   // CellsTextEditorComponent chua contract doc/ghi row.cells.
-  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,2500}\n\}/);
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,3500}\n\}/);
   assert.ok(component, "phai co CellsTextEditorComponent");
   // Doc cells.
   assert.match(component[0], /const \[value, setValue\] = useState\(\(\) => row\.cells\[column\.key\] \?\? ""\)/);
-  // Ghi cells qua onRowChange.
-  assert.match(component[0], /onRowChange\(\{[\s\S]{0,200}cells:\s*\{\s*\.\.\.\s*row\.cells/);
+  // Ghi cells qua onRowChange (production can transition helper `commitTextCellValue`).
+  assert.match(component[0], /onRowChange\([\s\S]{0,200}cells:\s*\{\s*\.\.\.\s*row\.cells/);
 });
 
 test("R1-14 cellsTextEditor KHONG commit/close sau moi onChange keystroke", () => {
@@ -214,10 +215,9 @@ test("R1-14 cellsTextEditor KHONG commit/close sau moi onChange keystroke", () =
   // CellsTextEditorComponent: commit() goi onRowChange voi commitChanges=false (mac dinh).
   const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,3500}\n\}/);
   assert.ok(component);
-  // commit() goi onRowChange voi tham so mac dinh commitChanges=false.
-  // (P3-W06A: trong khi composing, KHONG goi onRowChange; sau compositionend moi commit.)
+  // P3-W06A R1: commit() goi commitTextCellValue(...) va truyen value vao cells.
   assert.match(component[0], /function commit\(nextValue: string\)/);
-  assert.match(component[0], /commit\(finalValue\)/);
+  assert.match(component[0], /commitComposition\(finalValue\)/);
   // Commit chi xay ra tren onBlur (onClose(true)).
   assert.match(component[0], /onBlur=\{\(\) => onClose\(true, false\)\}/);
 });
@@ -247,7 +247,8 @@ test("R1-17 simulated multi-character Vietnamese input: cellsTextEditor contract
   // Gia lap behavior cua editor: typing tung keystroke phai accumulate.
   // Day la structural test (khong render React): verify contract qua source.
   // P3-W06A: cellsTextEditor la wrapper; contract trong CellsTextEditorComponent.
-  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,2500}\n\}/);
+  // P3-W06A R1: contract can them vi CellsTextEditorComponent dai hon (commit/composition).
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,3500}\n\}/);
   assert.ok(component);
   // value doc tu row.cells => moi keystroke tiep theo doc duoc gia tri cu.
   assert.match(component[0], /value=\{value\}/);
@@ -328,9 +329,11 @@ test("R1-22 dropdown/date editors khong dung cellsTextEditor (tai su dung commit
   // nam trong CellsTextEditorComponent. Test wrapper co khop <CellsTextEditor/>.
   const cellsEditor = grid.match(/function cellsTextEditor[\s\S]{0,600}\}/);
   assert.ok(cellsEditor);
-  assert.match(cellsEditor[0], /<CellsTextEditor\s+row=\{row\}\s+column=\{column\}\s+onRowChange=\{onRowChange\}\s+onClose=\{onClose\}\s*\/>/);
+  // P3-W06A R1: cellsTextEditor wrapper forward rowIdx de typecheck (RowIdx la
+  // bat buoc cua CellsTextEditor memo). Pattern nay match ca rowIdx=4.
+  assert.match(cellsEditor[0], /<CellsTextEditor\s+row=\{row\}[\s\S]{0,300}\/>/);
   // CellsTextEditorComponent van nhan className="rdg-text-editor".
-  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,2500}\n\}/);
+  const component = grid.match(/function CellsTextEditorComponent[\s\S]{0,3500}\n\}/);
   assert.ok(component);
   assert.match(component[0], /className="rdg-text-editor"/);
   // Quick editor dropdown: project select co aria-label "Dự án".

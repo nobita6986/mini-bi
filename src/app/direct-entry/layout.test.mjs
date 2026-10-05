@@ -21,8 +21,10 @@ test("direct-entry/layout.tsx: default export là function và wrap AppShell v�
 
 test("direct-entry/layout.tsx: truyền actor projection cho AppShell (P3-W06A capability-aware)", () => {
   // P3-W06A: page boundary resolve actor một lần và truyền vào AppShell.
+  // P3-W06A R1: resolver wrap boi React `cache()` (request-scoped) va nhan
+  // flag `directEntryEnabled` de tranh query thua khi UI off.
   assert.match(layoutSource, /import\s*\{[^}]*resolveNavActorForAppShell[^}]*\}\s*from\s*["']@\/lib\/navigation\/resolve-nav-actor/);
-  assert.match(layoutSource, /await resolveNavActorForAppShell\(\)/);
+  assert.match(layoutSource, /await resolveNavActorForAppShell\(\s*\{\s*directEntryEnabled\s*\}\s*\)/);
   assert.match(layoutSource, /actor=\{actor\}/);
 });
 

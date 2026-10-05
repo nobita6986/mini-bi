@@ -39,8 +39,11 @@ test("A1. /direct-entry va /dashboard su dung resolveSessionWithBoundedRetry (A.
 });
 
 test("A2. /direct-entry va /dashboard van catch throw va fallback null de khong crash SSR", () => {
-  assert.match(dePage, /catch \{[^}]*actor = null/);
-  assert.match(dashPage, /catch \{[^}]*actor = null/);
+  // P3-W06A R1: page goi `resolveActorForRequest().catch(() => null)` (Promise
+  // chain) thay vi try/catch vi resolver wrap boi React cache va goi tu RSC.
+  // Catch handler phai fallback `null` de khong crash SSR.
+  assert.match(dePage, /resolveActorForRequest\(\)\.catch\(\(\) => null\)/);
+  assert.match(dashPage, /resolveActorForRequest\(\)\.catch\(\(\) => null\)/);
 });
 
 test("A3. resolveSessionWithBoundedRetry retry toi da 2 lan va co delay bounded (khong polling vo han)", async () => {
