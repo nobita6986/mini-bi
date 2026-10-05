@@ -133,6 +133,34 @@ export function entriesForViewport(
 }
 
 /**
+ * P3-W06A: filter cùng registry theo viewport + capability predicate từ session thật.
+ *
+ * - Nếu `actor === null`: chỉ `any` còn hiện (Dashboard). Direct Entry / AI / admin ẩn.
+ * - Nếu `actor` đã resolve: predicate tương ứng với `entry.capability` quyết định.
+ * - KHÔNG tạo registry thứ hai; tái sử dụng toàn bộ `NAV_ENTRIES` + `CURRENT_NAV_ENTRIES`.
+ * - KHÔNG dùng role name / email / env làm quyền.
+ *
+ * Hàm này sống cùng `entriesForViewport` cũ để test cũ vẫn xanh; AppShell sẽ
+ * dùng phiên bản này từ P3-W06A trở đi.
+ */
+export function filterEntriesForActor(input: {
+  viewport: "desktop" | "mobile";
+  directEntryEnabled: boolean;
+  actor: {
+    app_user_id: string;
+    capabilities: readonly string[];
+    scopes: readonly { kind: "own" | "team" | "all" }[];
+  } | null;
+  decide: (entry: NavEntry) => boolean;
+}): ReadonlyArray<NavEntry> {
+  return CURRENT_NAV_ENTRIES.filter((entry) => {
+    if (!entry.visibility[input.viewport]) return false;
+    if (entry.id === "direct-entry" && !input.directEntryEnabled) return false;
+    return input.decide(entry);
+  });
+}
+
+/**
  * Tìm entry theo path — dùng cho highlight "active" trong App Shell.
  * Trả về undefined nếu path không thuộc registry (vd. landing page `/`).
  */

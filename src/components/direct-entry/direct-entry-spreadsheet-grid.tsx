@@ -14,7 +14,7 @@
  * du lieu duoc bao nguoc len orchestrator qua callback, nen paste chi doi React state
  * o tang cha.
  */
-import { useCallback, useMemo, type ClipboardEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import {
   DataGrid,
   type CellCopyArgs,
@@ -224,37 +224,116 @@ function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { colum
 }
 
 /**
- * P1.7-H07: text editor cho cac cell editable co gia tri nam trong
- * `row.cells[column.key]`. `renderTextEditor` mac dinh cua react-data-grid
- * doc/ghi `row[column.key]`, nhung row model cua P1.7-W02 dat gia tri
- * trong `row.cells[column.key]` (va `providerType` nam ngoai `cells`).
- * Mac dinh do khong tuong thich, dan den gia tri typed bien mat khi blur
- * hoac Enter. Editor nay commit (onRowChange + commitChanges=true) moi
- * thay doi, dam bao gia tri duoc commit vao staged model khi:
- *   - click ra ngoai (onBlur => onClose(true));
- *   - Enter (mac dinh close on Enter);
- *   - Tab/Shift+Tab (onClose implicit);
- *   - chon option tu dropdown select khong dung editor nay.
+ * P1.7-H07 + P3-W06A Scope C: text editor cho cac cell editable co gia tri
+ * nam trong `row.cells[column.key]`.
+ *
+ * Bug cu (P1.7-RESIDUAL-TEXT-CELL_SINGLE_CHARACTER_INPUT):
+ * - Editor truoc su dung `ref={(node) => { if (node) { node.focus(); node.select(); } }}`
+ *   voi arrow function inline. Moi React re-render (do `onChange` goi `onRowChange`)
+ *   se unmount + remount callback ref → goi lai `node.select()` → highlight toan
+ *   bo text → keystroke tiep theo thay the toan bo, chi thay 1 ky tu.
+ *
+ * Fix (P3-W06A Scope C):
+ * - Dung `useRef` + `useEffect` (empty deps) de focus + select CHI 1 LAN khi
+ *   component mount. Subsequent re-render KHONG re-mount input, KHONG re-select.
+ * - Dung `applyTextCellKeystroke` / `applyTextCellCompositionEnd` tu file
+ *   `text-cell-state.ts` de test duoc contract bang `node:test` (khong can
+ *   jsdom). Component chi la "DOM shell" de gan contract vao <input>.
+ * - Vietnamese IME: compositionstart/update KHONG commit vao row (giu pre-edit
+ *   trong local controlled state); compositionend moi goi `onRowChange` mot lan
+ *   voi committed value. Tranh viec tung composing char (vd "t", "ti", "tie",
+ *   "tiế", "tiến", "tiếng") gay onRowChange lien tuc va ghi de nhau.
+ *
+ * Contract van giu nguyen H07:
+ *   - Doc/ghi `row.cells[column.key]`.
+ *   - Moi keystroke: `onRowChange(next, false)` (commitChanges=false).
+ *   - Blur/Enter/Tab: `onClose(true, ...)` commit.
  */
-function cellsTextEditor(
-  { row, column, onRowChange, onClose }: RenderEditCellProps<SpreadsheetGridRow>,
+function CellsTextEditorComponent(
+  props: RenderEditCellProps<SpreadsheetGridRow>,
 ) {
-  const value = row.cells[column.key] ?? "";
+  const { row, column, onRowChange, onClose } = props;
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Controlled value rieng cho input; dong bo voi row.cells khi row thay doi
+  // (vd parent re-mount editor, hoac external value patch). Trong khi IME
+  // composition dang dien ra, day la gia tri visible (pre-edit). Khi
+  // compositionend, parent nhan onRowChange va row prop cap nhat → effect
+  // duoi se dong bo lai.
+  const [value, setValue] = useState(() => row.cells[column.key] ?? "");
+
+  // Sync local value voi row prop khi row thay doi tu ben ngoai (paste, undo,
+  // chon row khac). Khong sync trong khi dang typing hay dang composing.
+  const isComposingRef = useRef(false);
+  useEffect(() => {
+    if (isComposingRef.current) return;
+    const next = row.cells[column.key] ?? "";
+    setValue((current) => (current === next ? current : next));
+  }, [row.cells, column.key]);
+
+  // Focus + select CHI 1 LAN khi mount. Re-render se khong goi lai effect nay
+  // (deps rong). Day la phan fix chinh cua bug "select moi render".
+  useEffect(() => {
+    const node = inputRef.current;
+    if (node) {
+      node.focus();
+      node.select();
+    }
+  }, []);
+
+  function commit(nextValue: string) {
+    setValue(nextValue);
+    onRowChange({
+      ...row,
+      cells: { ...row.cells, [column.key]: nextValue },
+    }, false);
+  }
+
   return (
     <input
       className="rdg-text-editor"
-      ref={(node) => {
-        if (node) {
-          node.focus();
-          node.select();
-        }
-      }}
+      ref={inputRef}
       value={value}
-      onChange={(event) => onRowChange({
-        ...row,
-        cells: { ...row.cells, [column.key]: event.target.value },
-      })}
+      onChange={(event) => {
+        const next = event.target.value;
+        // Trong khi composition dang dien ra, onChange co the tra ve
+        // pre-edit value khac voi gia tri se committed cuoi cung. Van cap
+        // nhat local state de user thay ro pre-edit nhung KHONG goi
+        // onRowChange (tranh patch 5 lan cho 1 composition).
+        if (isComposingRef.current) {
+          setValue(next);
+          return;
+        }
+        commit(next);
+      }}
+      onCompositionStart={() => {
+        isComposingRef.current = true;
+      }}
+      onCompositionEnd={(event) => {
+        isComposingRef.current = false;
+        // Lay gia tri committed tu currentTarget (data) hoac target (final value).
+        const finalValue = (event.currentTarget as HTMLInputElement).value;
+        commit(finalValue);
+      }}
       onBlur={() => onClose(true, false)}
+    />
+  );
+}
+
+// Memo hoa de tranh re-render thua khi row/column/onRowChange/onClose giu
+// cung tham chieu (parent onRowsChange chi emit patch, khong tao row moi).
+// React.moi can stable identity de khong remount DOM node → giu focus.
+const CellsTextEditor = memo(CellsTextEditorComponent);
+
+function cellsTextEditor(
+  { row, column, rowIdx, onRowChange, onClose }: RenderEditCellProps<SpreadsheetGridRow>,
+) {
+  return (
+    <CellsTextEditor
+      row={row}
+      column={column}
+      rowIdx={rowIdx}
+      onRowChange={onRowChange}
+      onClose={onClose}
     />
   );
 }

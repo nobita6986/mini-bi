@@ -19,20 +19,41 @@ test("dashboard/layout.tsx: default export là function và wrap AppShell với 
   assert.ok(dashboardLayout.includes('currentPath="/dashboard"'));
 });
 
-test("dashboard/layout.tsx: chỉ import server-side AI feature flag, không import AI internals", () => {
+test("dashboard/layout.tsx: chỉ import server-side nav actor, không import AI internals", () => {
+  // P3-W06A: thay import AI feature flag bằng resolveNavActorForAppShell.
   assert.ok(!/from\s+["']@\/lib\/ai\//.test(dashboardLayout));
-  assert.ok(dashboardLayout.includes('from "@/lib/ai-config/settings-flag"'));
+  assert.ok(!/from\s+["']@\/lib\/ai-config\//.test(dashboardLayout));
+  assert.match(dashboardLayout, /from\s+["']@\/lib\/navigation\/resolve-nav-actor["']/);
 });
 
-test("dashboard/layout.tsx: truyền AI actions, settings vẫn fail-closed theo server flag", () => {
-  assert.ok(dashboardLayout.includes('import { AiReportPanel } from "@/components/ai-report/ai-report-panel"'));
-  assert.ok(dashboardLayout.includes('import { AiSettingsPanel } from "@/components/dashboard/ai-settings-panel"'));
-  assert.ok(dashboardLayout.includes('import { isAiSettingsEnabled } from "@/lib/ai-config/settings-flag"'));
-  assert.ok(dashboardLayout.includes("await connection()"));
-  assert.equal(dashboardLayout.split("<AiReportPanel />").length - 1, 1);
-  assert.equal(dashboardLayout.split("<AiSettingsPanel />").length - 1, 1);
-  assert.ok(dashboardLayout.includes("{isAiSettingsEnabled() ? <AiSettingsPanel /> : null}"));
-  assert.ok(dashboardLayout.includes('headerActions={headerActions}'));
+test("dashboard/layout.tsx: truyền actor projection tối thiểu cho AppShell (P3-W06A capability-aware)", () => {
+  // P3-W06A Scope B: AI deferred to P3.1 → KHÔNG import AI panels nữa.
+  // Implementation vẫn giữ nguyên trong source nhưng layout không render headerActions AI.
+  assert.equal(
+    /import\s*\{[^}]*AiReportPanel[^}]*\}\s*from\s*["']@\/components\/ai-report\//.test(dashboardLayout),
+    false,
+    "P3-W06A: dashboard layout KHÔNG import AiReportPanel (AI deferred to P3.1)",
+  );
+  assert.equal(
+    /import\s*\{[^}]*AiSettingsPanel[^}]*\}\s*from\s*["']@\/components\/dashboard\/ai-settings-panel/.test(dashboardLayout),
+    false,
+    "P3-W06A: dashboard layout KHÔNG import AiSettingsPanel (AI deferred to P3.1)",
+  );
+  assert.equal(
+    /isAiSettingsEnabled/.test(dashboardLayout),
+    false,
+    "P3-W06A: dashboard layout KHÔNG gọi isAiSettingsEnabled",
+  );
+  // headerActions rỗng → AppShell sẽ không render button AI.
+  // Loc bo comment truoc khi check, vi file co the ghi chu "headerActions rỗng".
+  const codeLines = dashboardLayout.split("\n").filter((line) => !/^\s*(\*|\/\/)/.test(line));
+  const codeOnly = codeLines.join("\n");
+  assert.equal(/headerActions/.test(codeOnly), false,
+    "P3-W06A: dashboard layout KHÔNG truyền headerActions (đã ẩn AI)");
+  // P3-W06A Scope A: truyền actor projection tối thiểu vào AppShell.
+  assert.match(dashboardLayout, /import\s*\{[^}]*resolveNavActorForAppShell[^}]*\}\s*from\s*["']@\/lib\/navigation\/resolve-nav-actor/);
+  assert.match(dashboardLayout, /await resolveNavActorForAppShell\(\)/);
+  assert.match(dashboardLayout, /actor=\{actor\}/);
 });
 
 test("dashboard/page.tsx keeps report retrieval but no longer owns AI actions", () => {

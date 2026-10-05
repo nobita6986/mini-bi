@@ -41,13 +41,45 @@ test("app-shell.tsx: có header cấu trúc đúng và re-export ThemeSelector",
   // aria-label 'Điều hướng chính' nằm ở DesktopNav/MobileNav (đã test riêng bên dưới).
 });
 
-test("app-shell lọc nav theo feature flag tại request-time Server Component boundary", () => {
+test("app-shell lọc nav theo feature flag + capability predicate tại request-time", () => {
+  // P3-W06A: AppShell nhận `actor` prop từ page boundary, filter qua
+  // `filterEntriesForActor` + `decideNavEntryVisibility`. Page boundary tự
+  // resolve session; AppShell KHÔNG tự query env/cookie.
   assert.match(appShellSource, /await connection\(\)/);
   assert.match(appShellSource, /isDirectEntryUiEnabled\(process\.env\.DIRECT_ENTRY_UI_ENABLED\)/);
-  assert.match(appShellSource, /entriesForViewport\("desktop", directEntryEnabled\)/);
-  assert.match(appShellSource, /entriesForViewport\("mobile", directEntryEnabled\)/);
+  assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]*?viewport:\s*"desktop"\s*\}\)/);
+  assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]*?viewport:\s*"mobile"\s*\}\)/);
+  assert.match(appShellSource, /decideNavEntryVisibility\(/);
   assert.match(appShellSource, /<DesktopNav activePath=\{currentPath\} items=\{desktopItems\}/);
   assert.match(appShellSource, /items=\{mobileItems\.map\(/);
+});
+
+test("app-shell.tsx: actor prop là NavActorProjection tối thiểu, không nhận auth_subject/email", () => {
+  // Đảm bảo AppShell chỉ yêu cầu { app_user_id, capabilities, scopes }.
+  // KHÔNG nhận `actor` object gốc từ v2 (tránh rò PII/auth_subject).
+  assert.match(appShellSource, /actor:\s*NavActorProjection\s*\|\s*null/);
+  assert.ok(!/actor:\s*DirectEntryActor/.test(appShellSource),
+    "AppShell KHÔNG nhận DirectEntryActor đầy đủ (tránh rò auth_subject/email/PII)");
+  // auth_subject/email chỉ được phép xuất hiện trong comment (PII hygiene).
+  const codeLines = appShellSource.split("\n").filter((line) => !/^\s*(\*|\/\/)/.test(line));
+  const codeOnly = codeLines.join("\n");
+  assert.ok(!/auth_subject/.test(codeOnly),
+    "AppShell code (khong tinh comment) KHÔNG reference auth_subject");
+  assert.ok(!/\bemail\b/.test(codeOnly),
+    "AppShell code (khong tinh comment) KHÔNG reference email");
+});
+
+test("app-shell.tsx: AI deferred (P3-W06A Scope B) — KHÔNG render 'Tạo báo cáo AI' / 'Cấu hình AI'", () => {
+  // P3-W06A Scope B: AI actions deferred to P3.1. AppShell chỉ render
+  // `headerActions` do page truyền vào; dashboard layout truyền undefined.
+  // Ở cấp component, đảm bảo KHÔNG có button/anchor mang nhãn AI cố định.
+  for (const forbidden of ["Tạo báo cáo AI", "Cấu hình AI", "AiReportPanel", "AiSettingsPanel"]) {
+    assert.ok(!appShellSource.includes(forbidden),
+      `app-shell.tsx không được chứa '${forbidden}' (AI deferred to P3.1)`);
+  }
+  // Đồng thời không tham chiếu AI feature flag / settings panel.
+  assert.ok(!/isAiSettingsEnabled/.test(appShellSource));
+  assert.ok(!/isAiReportsEnabled/.test(appShellSource));
 });
 
 test("app-shell.tsx: re-export ThemeSelector hiện có (không phá W05 R1)", () => {
