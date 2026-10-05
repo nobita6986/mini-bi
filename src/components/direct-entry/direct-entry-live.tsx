@@ -11,7 +11,7 @@ import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/dire
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
 import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
-import { DirectEntryCccdManager } from "@/components/direct-entry/direct-entry-cccd-manager";
+import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
 import {
@@ -315,9 +315,37 @@ export function DirectEntryLive() {
   const changeRequestCursorRef = useRef<string | null>(null);
   const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const [cccdCache, setCccdCache] = useState<CccdStatusCache>(EMPTY_CCCD_STATUS_CACHE);
-  const [cccdRowId, setCccdRowId] = useState<string | null>(null);
+  /**
+   * P1.7-H06: selection di theo clientRowId (khong phai row index), dung cho
+   * contextual action bar desktop. Luc chua co row nao duoc chon => null.
+   * Cap nhat qua `onSelectedClientRowChange` cua DirectEntrySpreadsheetGrid.
+   */
+  const [selectedClientRowId, setSelectedClientRowId] = useState<string | null>(null);
+  /**
+   * P1.7-H06: rowId cua NLĐ dang mo hop thoai "Hồ sơ NLĐ" (CCCD + EMPLOYMENT_CONTRACT).
+   * CCCD rieng (legacy) khong con mo tren UI nguoi dung; việc xem hồ sơ CCCD
+   * đi qua documents dialog.
+   */
+  const [documentsRowId, setDocumentsRowId] = useState<string | null>(null);
+  /**
+   * P1.7-H06: CTA xuat hien sau khi server xac nhan save thanh cong de nhac
+   * nguoi dung mo "Hồ sơ NLĐ" (khong tu mo file browser, khong tu upload).
+   */
+  const [savedCtaClientRowId, setSavedCtaClientRowId] = useState<string | null>(null);
+  /**
+   * P1.7-H06: entry_id de mot doi nen giu selection chuyen sang persisted row
+   * tuong ung sau khi reload. Effect ben doc se set
+   * `selectedClientRowId = rowId` neu row co entry_id trung khop.
+   */
+  const [selectionAfterSaveEntryId, setSelectionAfterSaveEntryId] =
+    useState<string | null>(null);
   const selectedRow = rows.find(({ rowId }) => rowId === selectedRowId) ?? null;
-  const cccdRow = rows.find(({ rowId }) => rowId === cccdRowId) ?? null;
+  /**
+   * P1.7-H06: resolved lookup cho contextual action bar. `clientRowId` co the
+   * la rowId (persisted) hoac staged id (spreadsheet-row-N). Lookup do selected
+   * spreadsheetRows (ghep persisted + staged) de tra ra dung kieu.
+   */
+  const documentsRow = rows.find(({ rowId }) => rowId === documentsRowId) ?? null;
   const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
 
   useEffect(() => {
@@ -1087,6 +1115,50 @@ export function DirectEntryLive() {
     return [...persisted, ...staged];
   }, [catalogFor, catalogs, cccdCache, rows, stagedModel, submissions]);
 
+  /**
+   * P1.7-H06: selected spreadsheet row lookup. Tra ra cho contextual action
+   * bar de xac dinh loai row (staged/persisted), CCCD status va ten hien thi.
+   *
+   * Neu `selectedClientRowId` khong con trong `spreadsheetRows` (row da bi
+   * xoa, hoac reload lam row bien mat), tra ve `null` de UI khong thao tac
+   * nham NLĐ. Viec "clear" `selectedClientRowId` state chi chay khi can
+   * (qua setter, KHONG goi setState trong effect).
+   */
+  const selectedSpreadsheetRow = useMemo(() => {
+    if (selectedClientRowId === null) return null;
+    for (const row of spreadsheetRows) {
+      if (row.clientRowId === selectedClientRowId) return row;
+    }
+    return null;
+  }, [selectedClientRowId, spreadsheetRows]);
+
+  /**
+   * P1.7-H06: chuyen selection tu staged sang persisted row tuong ung theo
+   * server-returned entry_id sau khi `reloadDrafts` da nap xong. KHONG
+   * doan theo row index, ho ten hay CCCD.
+   *
+   * Thay vi dung useEffect + setState (vi pham
+   * `react-hooks/set-state-in-effect`), thuc hien resolve trong render
+   * (React cho phep setState de derive state tu state khac trong render body
+   * khi dieu kien phu thuoc thay doi). Khi `rows` chua co row voi entry_id
+   * khop (dang cho reload), giu nguyen `selectionAfterSaveEntryId` de lan
+   * render tiep theo resolve lai.
+   */
+  if (selectionAfterSaveEntryId !== null) {
+    const match = rows.find((row) => row.entryId === selectionAfterSaveEntryId);
+    if (match !== undefined) {
+      setSelectedClientRowId(match.rowId);
+      setSavedCtaClientRowId(match.rowId);
+      setSelectionAfterSaveEntryId(null);
+    } else if (rows.length > 0) {
+      // Rows da duoc load nhung khong co entry_id khop: clear signal de khong
+      // giu mot "ghost selection" ngoai grid, va clear selected an toan.
+      setSelectedClientRowId(null);
+      setSavedCtaClientRowId(null);
+      setSelectionAfterSaveEntryId(null);
+    }
+  }
+
   const onSpreadsheetCellsChange = useCallback((
     clientRowId: string,
     patch: Readonly<Record<string, string>>,
@@ -1357,10 +1429,34 @@ export function DirectEntryLive() {
         setStagedCanUndo(false);
         setStagedNotice("");
         setStagedRejection("");
+        // P1.7-H06: server cam tra entryIds theo dung thu tu rows gui len; tao
+        // anh xa clientRowId (staged) -> entry_id server-returned de giu
+        // selection cho persisted row tuong ung (việc mapping xem row index
+        // hay tên đều bị hủy bỏ; chi dung entry_id server-issued).
+        const savedClientRowIds = stagedValidation.rows.map((row) => row.clientRowId);
+        const savedEntryIds = result.entryIds;
+        const stagedToEntry = new Map<string, string>();
+        for (let index = 0; index < savedClientRowIds.length; index += 1) {
+          const cid = savedClientRowIds[index];
+          const eid = savedEntryIds[index];
+          if (cid !== undefined && eid !== undefined) stagedToEntry.set(cid, eid);
+        }
         // Chi clear staged rows sau khi server xac nhan bang projection hop le.
         setStagedModel(createSpreadsheetRowModel());
         setStagedMessage("Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.");
         await reloadDrafts();
+        // Map lai selection: chi giu persisted row co entry_id trung khop;
+        // KHONG doan theo row index/ho ten/CCCD.
+        if (selectedClientRowId !== null) {
+          const expectedEntryId = stagedToEntry.get(selectedClientRowId);
+          if (expectedEntryId !== undefined) {
+            setSelectionAfterSaveEntryId(expectedEntryId);
+            setSavedCtaClientRowId(null);
+          } else {
+            setSelectedClientRowId(null);
+            setSavedCtaClientRowId(null);
+          }
+        }
         return;
       }
       if (result.kind === "retry") {
@@ -1373,7 +1469,7 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [reloadDrafts, setStagedModel, stagedValidation]);
+  }, [reloadDrafts, selectedClientRowId, setStagedModel, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -1437,6 +1533,16 @@ export function DirectEntryLive() {
         // Chi remove row vua luu (goc clientRowId), giu nguyen cac staged row khac.
         setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
         setQuickEditClientRowId(null);
+        // P1.7-H06: chi giu selection neu server tra entry_id trung khop; neu khong
+        // xac dinh duoc, clear selection an toan (khong doan theo row/ten).
+        const savedEntryId = result.entryIds[0];
+        if (typeof savedEntryId === "string") {
+          setSelectionAfterSaveEntryId(savedEntryId);
+          // Saved CTA se hien thi khi effect resolver set selection.
+        } else {
+          setSelectedClientRowId(null);
+          setSavedCtaClientRowId(null);
+        }
         await reloadDrafts();
         setStagedMessage("Đã lưu NLĐ bằng một yêu cầu atomic. Các dòng còn lại trong bảng giữ nguyên.");
         return;
@@ -1536,80 +1642,138 @@ export function DirectEntryLive() {
 
       {loadState === "ready" && (
         <>
-          <div className={styles.gridWithRail}>
-            <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
-              {stagedRejection !== "" && (
-                <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
-              )}
-              {stagedValidation.firstError !== null && (
-                <button type="button" data-testid="spreadsheet-first-error"
-                  onClick={() => {
-                    const index = stagedValidation.rowOrder.indexOf(
-                      stagedValidation.firstError?.clientRowId ?? "");
-                    setStagedMessage(
-                      "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
-                      (stagedValidation.firstError?.columnKey ?? "") + ".");
-                  }}>
-                  Đi tới lỗi đầu tiên
-                </button>
-              )}
-              <DirectEntrySpreadsheetGrid
-                rows={spreadsheetRows}
-                validation={stagedValidation}
-                catalogOptions={stagedCatalogOptions}
-                onCellsChange={onSpreadsheetCellsChange}
-                onProviderTypeChange={onStagedProviderTypeChange}
-                onPasteApplied={onStagedPaste}
-                onPasteRejected={onStagedPasteRejected}
-                onDeleteRow={onStagedDelete}
-                notice={stagedNotice}
-                canUndo={stagedCanUndo}
-                onUndo={onStagedUndo}
-                saveMessage={stagedMessage}
-              />
-            </section>
-            <aside className={styles.actionRailDesktop} aria-label="Thao tác theo dòng"
-              data-testid="desktop-action-rail">
-              <p className={styles.actionRailTitle}>Thao tác</p>
-              {spreadsheetRows.length === 0 && (
-                <p className={styles.actionRailLabel}>Chưa có dòng nào trong bảng.</p>
-              )}
-              <ul className={styles.actionRailDesktopList}>
-                {spreadsheetRows.map((row) => row.persisted
-                  ? (
-                    <li key={row.clientRowId}
-                      className={styles.actionRailDesktopItem}
-                      data-row-index={row.clientRowId}
-                      data-rail-state="persisted">
-                      <button type="button" className={styles.actionRailButton}
-                        aria-label={row.canManageCccd ? `Hồ sơ ${row.employeeCode}` : "Tải hồ sơ"}
-                        disabled={!row.canManageCccd}
-                        onClick={() => {
-                          const persistedRow = rows.find((entry) => entry.rowId === row.clientRowId);
-                          if (persistedRow) setCccdRowId(persistedRow.rowId);
-                        }}>
-                        {row.canManageCccd ? "Hồ sơ" : "Tải hồ sơ"}
-                      </button>
-                    </li>
-                  )
-                  : (
-                    <li key={row.clientRowId}
-                      className={styles.actionRailDesktopItem}
-                      data-row-index={row.clientRowId}
-                      data-rail-state="staged">
-                      <button type="button" className={styles.actionRailDeleteButton}
-                        aria-label="Xóa dòng"
-                        title="Xóa dòng"
-                        data-testid={`row-delete-${row.clientRowId}`}
-                        onClick={() => onStagedDelete(row.clientRowId)}>
-                        ×
-                      </button>
-                    </li>
-                  ),
+          <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
+            {(() => {
+              /**
+               * P1.7-H06: contextual action bar (desktop) hien thi dong dang chon
+               * hoac nhac chon. Khong render desktop bar tren mobile (do
+               * gridSection bi an o breakpoint mobile va phan mobile co card rieng).
+               */
+              const selected = selectedSpreadsheetRow;
+              const selectedIsStaged = selected !== null && !selected.persisted;
+              const selectedIsPersisted = !!selected?.persisted;
+              const selectedHasEntryId = selectedIsPersisted
+                && rows.some((row) => row.rowId === selected.clientRowId &&
+                  row.entryId !== null);
+              const canViewDocs = capabilities.includes("document_view");
+              const canEditDocs = selectedHasEntryId
+                && capabilities.includes("entry_own")
+                && capabilities.includes("document_upload");
+              const canOpenReadOnly = selectedHasEntryId && canViewDocs && !canEditDocs;
+              const ctaFor = savedCtaClientRowId !== null
+                && selected !== null
+                && selected.clientRowId === savedCtaClientRowId;
+              return (
+                <>
+                <div className={styles.contextualActionBar}
+                  data-testid="contextual-action-bar"
+                  data-selection-state={selected === null
+                    ? "none"
+                    : selectedIsPersisted
+                      ? "persisted"
+                      : "staged"}>
+                  <p className={styles.contextualActionLabel}
+                    data-testid="contextual-action-label">
+                    {selected === null
+                      ? <span className={styles.contextualActionLabelMuted}>
+                          Chọn một dòng để thao tác
+                        </span>
+                      : <>Đang chọn: <strong>{
+                            selected.displayName !== ""
+                              ? selected.displayName
+                              : "Dòng " + (spreadsheetRows.findIndex((row) =>
+                                  row.clientRowId === selected.clientRowId) + 1)
+                          }</strong>{selectedIsPersisted && selected.employeeCode !== ""
+                              ? ` >  Mã NLĐ ${selected.employeeCode}`
+                              : ""}</>}
+                  </p>
+                  <div className={styles.contextualActionGroup}>
+                    <button type="button"
+                      data-testid="contextual-documents"
+                      className={styles.contextualActionButton}
+                      aria-label="Hồ sơ NLĐ"
+                      disabled={selected === null
+                        || selectedIsStaged
+                        || !selectedHasEntryId
+                        || (!canEditDocs && !canOpenReadOnly)}
+                      title={selected === null
+                        ? "Chọn một dòng đã lưu trước"
+                        : selectedIsStaged
+                          ? "Lưu NLĐ trước khi tải hồ sơ"
+                          : !selectedHasEntryId
+                            ? "Dòng chưa có mã nhập do máy chủ cấp"
+                            : !canViewDocs
+                              ? "Bạn không có quyền xem hồ sơ"
+                              : undefined}
+                      onClick={() => {
+                        if (selected === null) return;
+                        if (!selectedHasEntryId) return;
+                        const persisted = rows.find((entry) =>
+                          entry.rowId === selected.clientRowId);
+                        if (persisted) setDocumentsRowId(persisted.rowId);
+                      }}>
+                      Hồ sơ NLĐ
+                    </button>
+                    <button type="button"
+                      data-testid="contextual-delete"
+                      className={`${styles.contextualActionButton} ${styles.contextualActionButtonDanger}`}
+                      aria-label="Xóa dòng"
+                      disabled={selected === null || !selectedIsStaged}
+                      title={selected === null
+                        ? "Chọn một dòng đang nhập trước"
+                        : !selectedIsStaged
+                          ? "Chỉ xóa được bản nháp đang nhập"
+                          : undefined}
+                      onClick={() => {
+                        if (selected === null) return;
+                        if (!selectedIsStaged) return;
+                        onStagedDelete(selected.clientRowId);
+                      }}>
+                      Xóa dòng
+                    </button>
+                  </div>
+                </div>
+                {ctaFor && (
+                  <p className={styles.lifecycleStatus} role="status"
+                    data-testid="saved-cta">
+                    Đã lưu — chọn Hồ sơ NLĐ để tải tài liệu
+                  </p>
                 )}
-              </ul>
-            </aside>
-          </div>
+                </>
+              );
+            })()}
+            {stagedRejection !== "" && (
+              <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
+            )}
+            {stagedValidation.firstError !== null && (
+              <button type="button" data-testid="spreadsheet-first-error"
+                onClick={() => {
+                  const index = stagedValidation.rowOrder.indexOf(
+                    stagedValidation.firstError?.clientRowId ?? "");
+                  setStagedMessage(
+                    "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
+                    (stagedValidation.firstError?.columnKey ?? "") + ".");
+                }}>
+                Đi tới lỗi đầu tiên
+              </button>
+            )}
+            <DirectEntrySpreadsheetGrid
+              rows={spreadsheetRows}
+              validation={stagedValidation}
+              catalogOptions={stagedCatalogOptions}
+              onCellsChange={onSpreadsheetCellsChange}
+              onProviderTypeChange={onStagedProviderTypeChange}
+              onPasteApplied={onStagedPaste}
+              onPasteRejected={onStagedPasteRejected}
+              onDeleteRow={onStagedDelete}
+              notice={stagedNotice}
+              canUndo={stagedCanUndo}
+              onUndo={onStagedUndo}
+              saveMessage={stagedMessage}
+              selectedClientRowId={selectedClientRowId}
+              onSelectedClientRowChange={setSelectedClientRowId}
+            />
+          </section>
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}
 
           <details className={styles.secondaryPanel}>
@@ -1695,6 +1859,18 @@ export function DirectEntryLive() {
                       {" · "}Hồ sơ CCCD: {readCccdStatus(cccdCache, row.entryId, row.entryVersion).label}
                     </span>
                   </button>
+                  {row.entryId !== null && (
+                    <div className={styles.mobileStagedFooter}>
+                      <button type="button"
+                        className={styles.contextualActionButton}
+                        data-testid={`mobile-open-documents-${row.rowId}`}
+                        aria-label="Hồ sơ"
+                        disabled={!capabilities.includes("document_view")}
+                        onClick={() => setDocumentsRowId(row.rowId)}>
+                        Hồ sơ
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1817,16 +1993,10 @@ export function DirectEntryLive() {
                         </Field>
                       </div>
                       <div className={styles.mobileStagedFooter}>
-                        <button type="button" className={styles.actionRailButton}
+                        <button type="button" className={styles.contextualActionButton}
                           aria-label="Mở sửa nhanh"
                           onClick={() => openQuickEditor(stagedRow.clientRowId)}>
                           Sửa nhanh
-                        </button>
-                        <button type="button" className={styles.actionRailDeleteButton}
-                          aria-label="Xóa dòng"
-                          title="Xóa dòng"
-                          onClick={() => onStagedDelete(stagedRow.clientRowId)}>
-                          ×
                         </button>
                       </div>
                     </details>
@@ -1838,16 +2008,21 @@ export function DirectEntryLive() {
         </>
       )}
 
-      <DirectEntryCccdManager
-        key={cccdRow?.entryId ?? "no-cccd-row"}
-        row={cccdRow}
-        onOpenChange={(open) => { if (!open) setCccdRowId(null); }}
-        canEdit={cccdRow !== null && capabilities.includes("entry_own") &&
-          capabilities.includes("document_upload") && isRowEditable(cccdRow, submissions)}
-        canView={capabilities.includes("document_view")}
-        onStatus={setCccdStatus}
+      <DirectEntryWorkerDocuments
+        key={documentsRow?.entryId ?? "no-documents-row"}
+        row={documentsRow}
+        onOpenChange={(open) => { if (!open) setDocumentsRowId(null); }}
+        canEditDocuments={documentsRow !== null && capabilities.includes("entry_own") &&
+          capabilities.includes("document_upload") && isRowEditable(documentsRow, submissions)}
+        canViewDocuments={capabilities.includes("document_view")}
+        onCccdStatus={setCccdStatus}
         onEntryVersionChange={onPaymentEntryVersionChange}
       />
+
+      {/* P1.7-H06: legacy CCCD manager van duoc goi qua DirectEntryWorkerDocuments
+          (CCCD_FRONT/BACK) de giu nguyen transport/upload/OCC/idempotency
+          hien huu. The CCCD manager nguyen ban khong con render rieng tren
+          desktop; cac nut "Hồ sơ" da chuyen sang documents dialog. */}
 
       <Dialog.Root open={quickEditClientRowId !== null}
         onOpenChange={(open) => { if (!open) setQuickEditClientRowId(null); }}>
@@ -1874,6 +2049,7 @@ export function DirectEntryLive() {
                 </div>
                 <Dialog.Description id="quick-edit-description" className={styles.drawerDescription}>
                   Nhập nhanh một người lao động; dữ liệu sẽ đồng bộ ngay vào đúng dòng trong bảng.
+                  Lưu trước để tải hồ sơ.
                 </Dialog.Description>
                 <div className={styles.quickDrawerFields}>
                   <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
@@ -1992,7 +2168,7 @@ export function DirectEntryLive() {
                     onClick={() => setQuickEditClientRowId(null)}>
                     Đóng
                   </button>
-                  <button type="button" className={styles.secondaryButton}
+                  <button type="button" className={styles.contextualActionButtonDanger}
                     data-testid="quick-delete-row"
                     onClick={() => {
                       onStagedDelete(target.clientRowId);

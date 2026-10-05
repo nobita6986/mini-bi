@@ -106,26 +106,44 @@ test("provider filtering, recruiter reset, and CCCD/action rail outside grid are
     "employee_code placeholder khong con tren grid");
 });
 
-test("action rail dat NGOAI grid va chi gom CCCD button (persisted) hoac × (staged)", () => {
-  // P1.7-H05-R1: action rail chuyen hoan toan ra ngoai DataGrid. Grid chi nhan
-  // 18 cot default; khong con cot 'save_status', 'row_actions' hay cccd_documents.
-  // Khong con cot frozen hay callback onManageDocuments trong grid.
+test("contextual action bar thay the rail; chi hai nut (Hồ sơ NLĐ + Xóa dòng)", () => {
+  // P1.7-H06: action rail bi loai bo; contextual action bar (desktop) nam
+  // phia tren DataGrid voi hinh thu mot theo clientRowId.
+  // DataGrid chi nhan 18 cot default; khong con cot 'save_status', 'row_actions'
+  // hay cccd_documents. Khong con cot frozen hay callback onManageDocuments trong grid.
   assert.equal(grid.includes("frozen"), false,
     "khong con cot frozen trong grid H05");
   assert.equal(grid.includes("Quản lý CCCD"), false,
     "Quan ly CCCD phai dat ngoai grid");
   assert.equal(grid.includes("Lưu dòng trước"), false);
   assert.equal(/onManageDocuments=\{[^}]*\(clientRowId\)/.test(live), false,
-    "onManageDocuments da chuyen khoi grid sang rail ngoai");
+    "onManageDocuments da chuyen khoi grid");
   assert.equal(grid.includes("aria-label=\"Xóa dòng\""), false,
-    "nut × cua staged row da chuyen ra ngoai DataGrid");
-  // Live side: rail ben ngoai grid su dung setCccdRowId va aria-label tha ngu canh.
-  assert.match(live, /setCccdRowId\(persistedRow\.rowId\)/);
-  assert.match(live, /disabled=\{!row\.canManageCccd\}/);
-  assert.match(live, /\{row\.canManageCccd \? "Hồ sơ" : "Tải hồ sơ"\}/);
-  assert.match(live, /aria-label=\{row\.canManageCccd \? `Hồ sơ \$\{row\.employeeCode\}` : "Tải hồ sơ"\}/);
-  assert.match(live, /data-testid=\{`row-delete-\$\{row\.clientRowId\}`\}/);
+    "nut × cua staged row khong con trong DataGrid");
+  assert.equal(grid.includes("data-testid=\"row-delete-"), false,
+    "row-delete da chuyen dc contextual bar (live)");
+  // P1.7-H06: live su dung setDocumentsRowId thay cho setCccdRowId cu.
+  assert.match(live, /setDocumentsRowId\(persisted\.rowId\)/);
+  // Contextual action bar co hai nut, kiem tra theo data-testid.
+  assert.match(live, /data-testid="contextual-action-bar"/);
+  assert.match(live, /data-testid="contextual-documents"/);
+  assert.match(live, /data-testid="contextual-delete"/);
+  assert.match(live, /Hồ sơ NLĐ/);
+  assert.match(live, /Xóa dòng/);
+  // Khong con data-rail-state="persisted|staged" hay aria-label cu.
+  assert.doesNotMatch(live, /data-rail-state="persisted"/);
+  assert.doesNotMatch(live, /data-rail-state="staged"/);
+  assert.doesNotMatch(live, /data-row-index=\{row\.clientRowId\}/);
+  assert.doesNotMatch(live, /<table\b[\s\S]{0,200}actionRail/);
   assert.doesNotMatch(grid, /Nhân bản|Làm trống/);
   assert.match(live, /persisted: row\.entryId !== null/);
   assert.match(live, /onDeleteRow=\{onStagedDelete\}/);
+  // DirectEntrySpreadsheetGrid nhan selectedClientRowId + onSelectedClientRowChange.
+  assert.match(grid, /selectedClientRowId\?: string \| null/);
+  assert.match(grid, /onSelectedClientRowChange\(clientRowId: string \| null\)/);
+  assert.match(grid, /selectedRows=\{selectedClientRowId === null \|\| selectedClientRowId === undefined/);
+  assert.match(grid, /onSelectedRowsChange=\{/);
+  // Live side forwarding props:
+  assert.match(live, /selectedClientRowId=\{selectedClientRowId\}/);
+  assert.match(live, /onSelectedClientRowChange=\{setSelectedClientRowId\}/);
 });
