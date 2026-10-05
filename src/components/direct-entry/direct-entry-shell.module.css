@@ -189,6 +189,22 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+/* P1.7-H08: inline explanation trong contextual bar khi nut khong the
+   render. Hien thi trong cung group de giu alignment va khong tao
+   dead button. Color muted de phan biet voi action chinh. */
+.contextualActionHint {
+  margin: 0;
+  padding: 0 6px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted, #64748b);
+  font-size: 13px;
+  font-weight: 500;
+  font-style: italic;
 }
 
 .contextualActionButton {

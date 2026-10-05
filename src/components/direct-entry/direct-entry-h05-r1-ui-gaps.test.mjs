@@ -219,7 +219,7 @@ test("Mã NLĐ (employee_code) khong co input/edit path tren UI", () => {
   assert.ok(foundOutput, "persisted Mã NLĐ phai render bang <output>");
   // Quick editor khong co input cho Mã NLĐ.
   const quickFields = live.match(
-    /<Dialog\.Content className=\{styles\.quickDrawer\}[\s\S]{0,10000}<\/Dialog\.Content>/);
+    /<Dialog\.Content className=\{styles\.quickDrawer\}[\s\S]{0,20000}<\/Dialog\.Content>/);
   assert.ok(quickFields, "phai co quick editor dialog");
   // Khong cho sua Mã NLĐ: assert khong co handleMobileStagedFieldChange voi employee_code.
   assert.equal(/handleMobileStagedFieldChange\([^,]+,\s*"employee_code"\)/.test(quickFields[0]), false,
@@ -242,7 +242,7 @@ test("4 optional field (STK/Bank/AccountHolder/Note) editable o staged, XLSX imp
   }
   // Quick editor co input cho 4 optional field.
   const quickFields = live.match(
-    /<Dialog\.Content className=\{styles\.quickDrawer\}[\s\S]{0,10000}<\/Dialog\.Content>/);
+    /<Dialog\.Content className=\{styles\.quickDrawer\}[\s\S]{0,20000}<\/Dialog\.Content>/);
   assert.ok(quickFields, "phai co quick editor");
   for (const key of FOUR_OPTIONAL_FIELDS) {
     assert.match(quickFields[0],

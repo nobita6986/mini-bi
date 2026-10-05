@@ -129,9 +129,10 @@ test("retry rieng mat loi, khong optimistic READY, ghi ro khi chua reload duoc",
 });
 
 test("read-only khi dong khong o ban nhap; khong noi vao change-request API", () => {
-  // P1.7-H06: read-only check chuyen sang documents dialog; van phai thoa man
-  // entry_own + document_upload + submission lock cho canEditDocuments.
-  assert.match(live, /canEditDocuments=\{documentsRow !== null && capabilities\.includes\("entry_own"\) &&/);
+  // P1.7-H06 + H08: read-only check chuyen sang documents dialog; canEditDocuments
+  // chap nhan ca entry_own lan entry_admin + document_upload + submission lock.
+  assert.match(live, /canEditDocuments=\{documentsRow !== null/);
+  assert.match(live, /entry_own[\s\S]{0,200}\|\|[\s\S]{0,200}entry_admin/);
   assert.match(live, /capabilities\.includes\("document_upload"\) && isRowEditable\(documentsRow, submissions\)\}/);
   assert.match(manager, /disabled=\{!canEdit \|\| busy \|\| detail === null \|\| selectedTypes\.length === 0\}/);
   assert.match(manager, /Dòng này không ở bản nháp nên hồ sơ chỉ xem được/);

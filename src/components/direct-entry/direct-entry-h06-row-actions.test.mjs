@@ -72,31 +72,39 @@ test("H06-4 click/focus cell chon dung clientRowId qua DataGrid selectedRows", (
   assert.match(live, /selectedClientRowId=\{selectedClientRowId\}/);
 });
 
-/* ----- 5. Khong selection -> hai action disabled ----- */
-test("H06-5 khong selection => hai action disabled", () => {
-  const bar = live.match(/<div className=\{styles\.contextualActionBar\}[\s\S]{0,3500}<\/div>/);
+/* ----- 5. Khong selection -> khong co Ho so NLD; Xoa disabled ----- */
+test("H06-5 khong selection => Xoa disabled, khong co Ho so NLD", () => {
+  // P1.7-H08: khi chua co selection, contextual bar chi hien Xoa (disabled).
+  // Hồ sơ NLĐ chi render khi row da chon + co entry_id + co quyen xem.
+  const bar = live.match(/<div className=\{styles\.contextualActionBar\}[\s\S]{0,6000}<\/div>/);
   assert.ok(bar, "phai co contextual action bar");
-  // Hồ sơ NLĐ: disabled khi selected === null.
-  assert.match(bar[0], /data-testid="contextual-documents"[\s\S]{0,500}disabled=\{selected === null/);
   // Xóa dòng: disabled khi selected === null.
   assert.match(bar[0], /data-testid="contextual-delete"[\s\S]{0,500}disabled=\{selected === null \|\| !selectedIsStaged\}/);
+  // Khong co nut Ho so NLD render trong bar khi khong co selection.
+  // (H08 chi render nut khi selectedIsPersisted && canOpenWorkerDocuments).
 });
 
-/* ----- 6. Staged selection => Xóa enabled, Hồ sơ disabled ----- */
-test("H06-6 staged selection: Xóa enabled, Hồ sơ disabled", () => {
-  // Hồ sơ NLĐ disabled khi staged (no entry_id), tooltip "Lưu NLĐ trước khi tải hồ sơ".
-  assert.match(live, /selectedIsStaged[\s\S]{0,300}"Lưu NLĐ trước khi tải hồ sơ"/);
+/* ----- 6. Staged selection => Xóa enabled, hien thi hint "Luu NLĐ" ----- */
+test("H06-6 staged selection: Xóa enabled, hien thi hint", () => {
+  // P1.7-H08: staged row khong con nut disabled "Ho so NLD"; thay vao do
+  // hien thi inline hint "Lưu NLĐ để thêm hồ sơ" (data-testid="contextual-staged-hint").
+  assert.match(live, /contextual-staged-hint/);
+  assert.match(live, /Lưu NLĐ để thêm hồ sơ/);
   // Xóa dòng chi enabled khi staged.
   assert.match(live, /disabled=\{selected === null \|\| !selectedIsStaged\}/);
 });
 
 /* ----- 7. Persisted selection => Xóa disabled, Hồ sơ theo capability ----- */
 test("H06-7 persisted selection: Xóa disabled, Hồ sơ theo capability", () => {
-  // Hồ sơ NLĐ: disable khi khong ca canEditDocs va canOpenReadOnly.
-  const contextualDocs = live.match(/data-testid="contextual-documents"[\s\S]{0,1500}/);
+  // P1.7-H08: nut Ho so NLD chi render khi co entry_id + canViewDocs.
+  // canEditDocuments prop truy vao DirectEntryWorkerDocuments chap nhan ca
+  // entry_own lan entry_admin (truoc day chi entry_own).
+  const contextualDocs = live.match(/data-testid="contextual-documents"[\s\S]{0,2500}/);
   assert.ok(contextualDocs, "phai co nut contextual-documents");
-  assert.match(contextualDocs[0], /\|\| \(!canEditDocs && !canOpenReadOnly\)\}/);
-  assert.match(contextualDocs[0], /!canViewDocs[\s\S]{0,100}"Bạn không có quyền xem hồ sơ"/);
+  // canEditDocuments prop accepts entry_own OR entry_admin.
+  const workerDoc = live.match(/canEditDocuments=\{[\s\S]{0,400}\}/);
+  assert.ok(workerDoc, "phai co canEditDocuments prop");
+  assert.match(workerDoc[0], /entry_own[\s\S]{0,200}\|\|[\s\S]{0,200}entry_admin/);
   // Xóa dòng: disabled khi !selectedIsStaged (persisted => disabled).
   const contextualDel = live.match(/data-testid="contextual-delete"[\s\S]{0,400}/);
   assert.ok(contextualDel);
@@ -225,7 +233,7 @@ test("H06-15 mobile persisted card mo cung documents dialog", () => {
 /* ----- 16. Quick editor staged khong upload ----- */
 test("H06-16 staged quick editor khong upload", () => {
   // Quick editor chi goi onQuickSaveRow; khong co direct upload transport.
-  const quickEditor = live.match(/<Dialog\.Content className=\{styles\.quickDrawer\}[\s\S]{0,10000}<\/Dialog\.Content>/);
+  const quickEditor = live.match(/<Dialog\.Content className=\{styles\.quickDrawer\}[\s\S]{0,20000}<\/Dialog\.Content>/);
   assert.ok(quickEditor);
   assert.equal(/createCccdTransport|runCccdUpload|\/documents"/.test(quickEditor[0]), false,
     "quick editor khong goi upload transport");

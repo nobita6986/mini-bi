@@ -1200,6 +1200,25 @@ export function DirectEntryLive() {
     }
   }
 
+  /**
+   * P1.7-H08: clear stale `selectedClientRowId` khi row khong con trong
+   * `spreadsheetRows` (row bi xoa/reload lam bien mat). Thuc hien trong
+   * render body (React cho phep setState de derive state tu state khac
+   * trong render) sau khi `selectionAfterSaveEntryId` block da resolve
+   * xong, de khong clear ngay sau khi user vua save.
+   *
+   * Dam bao contextual action bar hien thi "Chon mot dong de thao tac"
+   * thay vi giu mot ghost selection khong the thao tac.
+   */
+  if (selectedClientRowId !== null && selectionAfterSaveEntryId === null) {
+    const stillExists = spreadsheetRows.some((row) =>
+      row.clientRowId === selectedClientRowId);
+    if (!stillExists) {
+      setSelectedClientRowId(null);
+      setSavedCtaClientRowId(null);
+    }
+  }
+
   const onSpreadsheetCellsChange = useCallback((
     clientRowId: string,
     patch: Readonly<Record<string, string>>,
@@ -1715,14 +1734,38 @@ export function DirectEntryLive() {
               const selected = selectedSpreadsheetRow;
               const selectedIsStaged = selected !== null && !selected.persisted;
               const selectedIsPersisted = !!selected?.persisted;
+              // P1.7-H08: `selected.persisted` da duoc project tu
+              // `row.entryId !== null` o spreadsheetRows. Khong can
+              // `rows.some(...)` re-check; thay vao do, neu `selected` co
+              // `employeeCode` (server-issued) hoac `entryId` (via row), row
+              // da co entry_id. Dung `selected.employeeCode !== ""` lam proxy
+              // cho persisted-with-entry_id projection.
               const selectedHasEntryId = selectedIsPersisted
-                && rows.some((row) => row.rowId === selected.clientRowId &&
-                  row.entryId !== null);
+                && selected.employeeCode !== "";
+              // P1.7-H08: capability gate chinh xac hon. Mo "Ho so NLD" chi
+              // can `document_view` (xem duoc ho so) + row co entry_id. Edit
+              // path them `document_upload` + (entry_own HOAC entry_admin) +
+              // row editable. Truoc day, `canEditDocs` chi nhan `entry_own`
+              // nen user co `entry_admin` bi loai khoi ca edit path (sau do
+              // canOpenReadOnly cuu nhung phai co `document_view`).
               const canViewDocs = capabilities.includes("document_view");
-              const canEditDocs = selectedHasEntryId
-                && capabilities.includes("entry_own")
-                && capabilities.includes("document_upload");
-              const canOpenReadOnly = selectedHasEntryId && canViewDocs && !canEditDocs;
+              // P1.7-H08: lookup LiveDraftRow tu selected (SpreadsheetGridRow)
+              // de isRowEditable co submissionId. selected.clientRowId =
+              // rowId (persisted) cho row da luu.
+              const selectedLiveRow = selectedIsPersisted
+                ? rows.find((row) => row.rowId === selected.clientRowId) ?? null
+                : null;
+              const canEditDocsFromCta = canViewDocs
+                && selectedHasEntryId
+                && capabilities.includes("document_upload")
+                && (capabilities.includes("entry_own") ||
+                  capabilities.includes("entry_admin"))
+                && (selectedLiveRow !== null
+                  && isRowEditable(selectedLiveRow, submissions));
+              // P1.7-H08: `canOpenWorkerDocuments` la gate chinh cho nut
+              // "Ho so NLD". Chi can `document_view` + entry_id. Thieu
+              // quyen upload chi dan den dialog read-only, KHONG chan mo.
+              const canOpenWorkerDocuments = canViewDocs && selectedHasEntryId;
               const ctaFor = savedCtaClientRowId !== null
                 && selected !== null
                 && selected.clientRowId === savedCtaClientRowId;
@@ -1749,32 +1792,42 @@ export function DirectEntryLive() {
                               : ""}</>}
                   </p>
                   <div className={styles.contextualActionGroup}>
-                    <button type="button"
-                      data-testid="contextual-documents"
-                      className={styles.contextualActionButton}
-                      aria-label="Hồ sơ NLĐ"
-                      disabled={selected === null
-                        || selectedIsStaged
-                        || !selectedHasEntryId
-                        || (!canEditDocs && !canOpenReadOnly)}
-                      title={selected === null
-                        ? "Chọn một dòng đã lưu trước"
-                        : selectedIsStaged
-                          ? "Lưu NLĐ trước khi tải hồ sơ"
-                          : !selectedHasEntryId
-                            ? "Dòng chưa có mã nhập do máy chủ cấp"
-                            : !canViewDocs
-                              ? "Bạn không có quyền xem hồ sơ"
-                              : undefined}
-                      onClick={() => {
-                        if (selected === null) return;
-                        if (!selectedHasEntryId) return;
-                        const persisted = rows.find((entry) =>
-                          entry.rowId === selected.clientRowId);
-                        if (persisted) setDocumentsRowId(persisted.rowId);
-                      }}>
-                      Hồ sơ NLĐ
-                    </button>
+                    {/*
+                      P1.7-H08: render nut "Ho so NLD" hoac ly do inline
+                      tuy theo trang thai. KHONG bao gio render nut disabled
+                      ma khong co explanation (touch device khong hover).
+                     */}
+                    {selectedIsStaged ? (
+                      <p className={styles.contextualActionHint}
+                        data-testid="contextual-staged-hint">
+                        Lưu NLĐ để thêm hồ sơ.
+                      </p>
+                    ) : selectedIsPersisted && canOpenWorkerDocuments ? (
+                      <button type="button"
+                        data-testid="contextual-documents"
+                        className={styles.contextualActionButton}
+                        aria-label="Hồ sơ NLĐ"
+                        disabled={false}
+                        title={canEditDocsFromCta
+                          ? "Mở hồ sơ NLĐ (sửa được)"
+                          : "Mở hồ sơ NLĐ (chỉ xem)"}
+                        onClick={() => {
+                          if (selected === null) return;
+                          if (!selectedHasEntryId) return;
+                          if (!canViewDocs) return;
+                          const persisted = rows.find((entry) =>
+                            entry.rowId === selected.clientRowId);
+                          if (persisted) setDocumentsRowId(persisted.rowId);
+                        }}>
+                        Hồ sơ NLĐ
+                      </button>
+                    ) : selectedIsPersisted && !canViewDocs ? (
+                      <p className={styles.contextualActionHint}
+                        data-testid="contextual-no-permission-hint"
+                        role="status">
+                        Bạn không có quyền xem hồ sơ.
+                      </p>
+                    ) : null}
                     <button type="button"
                       data-testid="contextual-delete"
                       className={`${styles.contextualActionButton} ${styles.contextualActionButtonDanger}`}
@@ -2073,7 +2126,8 @@ export function DirectEntryLive() {
         key={documentsRow?.entryId ?? "no-documents-row"}
         row={documentsRow}
         onOpenChange={(open) => { if (!open) setDocumentsRowId(null); }}
-        canEditDocuments={documentsRow !== null && capabilities.includes("entry_own") &&
+        canEditDocuments={documentsRow !== null &&
+          (capabilities.includes("entry_own") || capabilities.includes("entry_admin")) &&
           capabilities.includes("document_upload") && isRowEditable(documentsRow, submissions)}
         canViewDocuments={capabilities.includes("document_view")}
         onCccdStatus={setCccdStatus}
