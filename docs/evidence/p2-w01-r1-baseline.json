@@ -1,0 +1,82 @@
+{
+  "meta": {
+    "projectRef": "kiamyvfymxdattohfwmt",
+    "usesPooler": false
+  },
+  "aggregate": {
+    "rows": 34,
+    "recruited_total": 44,
+    "min_business_date": "2026-10-01",
+    "max_business_date": "2026-10-16",
+    "distinct_sources": 6,
+    "aggregate_fingerprint_sha256": "7abfbdab53b0f1b01bd119a02b5ebe5417f3a369d7a9ccdba26e425b2106b1bd",
+    "by_source_date_count": 19
+  },
+  "direct_entry": {
+    "total_entries": 0,
+    "eligible_entries": 0,
+    "min_first_work_date": null,
+    "max_first_work_date": null,
+    "submissions_total": 0,
+    "submissions_by_state": [],
+    "candidates_total": 0
+  },
+  "overlap": {
+    "aggregate_dim_counts": {
+      "distinct_dates": 16,
+      "distinct_projects": 10,
+      "distinct_recruiters": 13,
+      "distinct_providers": 3,
+      "distinct_employments": 3
+    },
+    "direct_entry_dim_counts": {
+      "distinct_dates": 0,
+      "distinct_projects": 0,
+      "distinct_recruiters": 0,
+      "distinct_teams": 0,
+      "distinct_providers": 0,
+      "distinct_employments": 0
+    },
+    "aggregate_date_fingerprint_sha256": "9f77b41a3ffd2a99e7b6131fcd16b9143bb81b68c1d35c4157cd360bc86628b7"
+  },
+  "source_registry": {
+    "total": 28,
+    "active_true": 28,
+    "active_false": 0,
+    "is_test_true": 2,
+    "is_test_false": 26,
+    "external_authority_column_present": false,
+    "external_authority_active": null,
+    "by_latest_run_status": [
+      {
+        "status": "failed",
+        "count": 24
+      },
+      {
+        "status": "succeeded",
+        "count": 4
+      }
+    ],
+    "ever_succeeded": 6
+  },
+  "cutoff": {
+    "rule": "DE_ELIGIBLE_ZERO_AFTER_LEGACY",
+    "legacy_min_date": "2026-10-01",
+    "legacy_max_date": "2026-10-16",
+    "de_eligible_min_first_work_date": null,
+    "de_eligible_max_first_work_date": null,
+    "hcm_today": "2026-10-05",
+    "candidate_cutoff_date": "2026-10-17",
+    "legacy_mask": "< cutoff_date",
+    "de_mask": ">= cutoff_date",
+    "no_double_count": "ENFORCED_VIA_DISJOINT_MASKS"
+  },
+  "t0_locked_decisions": {
+    "retain_legacy_history": "YES",
+    "external_retained_sources": "NONE",
+    "team_extension": "NO",
+    "status_summary_ui": "NO",
+    "alerts": "dry-run only",
+    "totals_coverage_source": "actual Production results from this run"
+  }
+}

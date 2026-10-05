@@ -2,16 +2,18 @@
 
 | Property | Value |
 |---|---|
-| Evidence version | W01-2026-10-05 |
-| Base when measured | `45c99b984be8fd81d0fb1308ec9deda94bbf901e` (post H08-R1) |
+| Evidence version | W01-R1-2026-10-05 |
+| Base when measured | `ff3cae507ea2ffe988206ccc10145f8142b94ccc` (W01 commit) — extends `45c99b984be8fd81d0fb1308ec9deda94bbf901e` (post H08-R1) |
 | Companion contract | `docs/contracts/p2-direct-entry-reporting-reconciliation-contract-draft.md` (DRAFT, at `e6f1e9f`) |
 | Companion rebaseline | `docs/handoffs/p2-r00-readiness-audit.md`, `docs/roadmaps/p2-post-direct-entry-rebaseline.md` |
 | Companion P1 reporting | `p1-reporting/0.1`, `daily-recruitment-breakdown/0.2` |
 | Companion P1.6/P1.7 lifecycle | `direct-entry/1.1` + P1.7 H01–H08 series |
-| Method | Read-only — code + migrations + contracts (no DB query execution on Production) |
-| Read-only enforcement | Tất cả "đo đếm" dưới đây là derived từ schema/code/contract; không có query nào thực sự chạy trên Production DB. Truy vấn "repeatable" chỉ ở dạng doc-only sẵn sàng cho staging. |
+| Method | **W01-R1: Live read-only Production baseline.** SELECT-only trong transaction `READ ONLY` với `SET LOCAL statement_timeout='15s'`, ROLLBACK. Helper: `scripts/lib/load-supabase-config.mjs` + `scripts/lib/supabase-tls.mjs` + `pg.Client` (đã có sẵn trong repo, không viết DB client mới). |
+| Read-only enforcement | Mọi query đều có `/* READ-ONLY */` semantics; transaction mở `READ ONLY` + `statement_timeout` + `ROLLBACK`; helper DB đã pin TLS root CA. Không in PII, tên NLĐ, CCCD, payment, document, connection string, secret token. Chỉ xuất aggregate counts, date ranges, fingerprint. |
+| Production evidence file | `docs/evidence/p2-w01-r1-baseline.json` (output of `scripts/p2-w01-r1-baseline.mjs`; atomic rename từ `.tmp`) |
+| Production fingerprint | `aggregate_fingerprint_sha256` = `7abfbdab53b0f1b01bd119a02b5ebe5417f3a369d7a9ccdba26e425b2106b1bd` (deterministic per `(source_id, business_date, sum(recruited_count), grain_rows)`) |
 
-> **Tuyên bố trung thực:** Tài liệu này ghi nhận **bằng chứng code-level** cho rằng hệ thống hiện tại có khả năng cutover. Nó **không** tự chạy query trên Production và **không** tuyên bố cutover thật. Mọi số liệu "expected at cutover" là mặc định kỹ thuật do T1 đề xuất — Owner/T0 phải xác nhận.
+> **Tuyên bố trung thực (W01-R1):** Tài liệu này ghi nhận **bằng chứng Production thật** thu được qua read-only transaction tại thời điểm `2026-10-05 (Asia/Ho_Chi_Minh)`. Mọi số liệu ở §B, §C, §F-15 đều từ query thật. Tài liệu này **vẫn** không tuyên bố cutover thật / P2 PASS / Production ready — cutover thật vẫn chờ P1.7 J01 + 4 quyết định Owner.
 
 ---
 
@@ -99,73 +101,107 @@ where exists (
 
 ---
 
-## B. Đo baseline (read-only, derived từ code + migration)
+## B. Đo baseline (W01-R1: live Production read-only)
 
-> Tất cả số liệu dưới đây là **default kỹ thuật** mà T1 đề xuất. Không có số liệu thực tế nào được chạy trên Production. Owner phải xác nhận bằng evidence độc lập sau P1.7 J01.
+> Tất cả số liệu trong §B này là **Production evidence thật** thu được tại `2026-10-05` qua `scripts/p2-w01-r1-baseline.mjs` chạy với `BEGIN; SET TRANSACTION READ ONLY; SET LOCAL statement_timeout='15s'; …; ROLLBACK;`. File gốc: `docs/evidence/p2-w01-r1-baseline.json`. Helper: `scripts/lib/load-supabase-config.mjs` + `scripts/lib/supabase-tls.mjs` + `pg.Client` (đã có sẵn trong repo, không viết DB client mới).
 
-### B.1. Direct Entry eligible count (default metric)
+### B.1. Legacy aggregate — Production evidence
 
-| Metric | Definition | Default đề xuất | Cách đo (read-only) |
-|---|---|---|---|
-| DE eligible entries | `count(*)` của `direct_entries` thỏa §A.4 | **0** tại baseline `45c99b9` (theo P2-R00 E-03) | `select count(*) from direct_entries e where exists (...) and e.deleted_at is null` (query doc, không chạy Production) |
-| DE date range | `min/max(first_work_date)` | **null** (no entries) | `select min(first_work_date), max(first_work_date) ...` |
-| DE submissions (mọi state) | `count(*)` của `direct_entry_submissions` | **0** theo P2-R00 E-03 | n/a |
-| DE candidates | `count(*)` của `direct_entry_candidates` | **0** theo P2-R00 E-03 | n/a |
-
-**Default cutoff candidate (T1 đề xuất):** `cutoff_date = 'YYYY-MM-DD'` mà tại đó:
-- `daily_recruitment_breakdown` sau `cutoff_date` = 0 dòng (mask → 0 ngay, không có dữ liệu mới từ Sheets nên `recruited_count` = 0 về mặt kỹ thuật).
-- `direct_entries` trước `cutoff_date` = 0 dòng (mask → 0 vì chưa có Direct Entry thật tại baseline).
-
-→ **Với baseline `45c99b9` (0 Direct Entry), cutoff kỹ thuật có thể là `BẤT KỲ NGÀY NÀO` mà Owner chọn** vì cả hai phía đều cho kết quả empty. Điều này **không** có nghĩa cutover đã sẵn sàng; nghĩa là chỉ cần chốt ngày symbolic.
-
-**F-06:** Trong trạng thái hiện tại, dashboard có thể chuyển sang "Direct Entry only" từ bất kỳ ngày nào và sẽ hiển thị 0 (vì chưa có data). Đây là baseline measurement, không phải production behavior.
-
-### B.2. Legacy aggregate rows, recruited total, date range
-
-| Metric | Definition | Default đề xuất | Cách đo (read-only) |
-|---|---|---|---|
-| Aggregate rows | `count(*)` của `daily_recruitment_breakdown` | **0** theo P2-R00 E-03 (chỉ có source fixture từ P0; tất cả source thật có thể đã bị ngưng publish) | `select count(*), sum(recruited_count), min(business_date), max(business_date), count(distinct source_id) from daily_recruitment_breakdown` |
-| `recruited_total` aggregate | `sum(recruited_count)` | **0** | (cùng query) |
-| Aggregate date range | `min/max(business_date)` | **null** (nếu 0 rows) | (cùng query) |
-| Distinct source_id | `count(distinct source_id)` | **0..30** tuỳ trạng thái Source (xem B.3) | (cùng query) |
-
-**F-07:** Cần Owner confirm lại số liệu aggregate bằng cách chạy trên Production/staging read-only sau J01. T1 không có quyền truy cập.
-
-### B.3. 30 reporting source states (default expectation)
-
-Theo P2-R00 E-03: "30 active non-test reporting sources, 8 project keys, 10 recruiter keys, 0 direct entries/submissions/candidates". Đây là snapshot **tại P1.6 J01**, không phải tại `45c99b9`.
-
-| Trạng thái | Default expectation | Cách đo (read-only, doc only) |
+| Metric | Value tại baseline | Source |
 |---|---|---|
-| `sources_expected` (active=true, is_test=false) | 30 (nếu chưa retire) | `select count(*) from data_sources where active = true and is_test = false` |
-| `sources_ever_succeeded` (last_successful_sync_at IS NOT NULL) | cần đo lại | (cùng query + filter) |
-| `sources_failed_latest` | cần đo lại | join `reporting_latest_sync_runs_v01` |
-| `sources_never_succeeded` | cần đo lại | `where last_successful_sync_at IS NULL` |
-| Project keys (distinct) | ≤ 8 (P2-R00 snapshot) | `select count(distinct project_key) from daily_recruitment_breakdown` |
-| Recruiter keys (distinct) | ≤ 10 (P2-R00 snapshot) | `select count(distinct recruiter_key) from daily_recruitment_breakdown` |
+| `agg_rows` | **34** | `select count(*)::bigint from public.daily_recruitment_breakdown` |
+| `recruited_total` aggregate | **44** | `coalesce(sum(recruited_count),0)::bigint` |
+| `min_business_date` | **2026-10-01** | `to_char(min(business_date), 'YYYY-MM-DD')` |
+| `max_business_date` | **2026-10-16** | `to_char(max(business_date), 'YYYY-MM-DD')` |
+| `distinct_sources` | **6** | `count(distinct source_id)::bigint` |
+| `by_source_date_count` | **19** | `group by source_id, business_date` distinct (source, date) pairs |
+| `aggregate_fingerprint_sha256` | `7abfbdab53b0f1b01bd119a02b5ebe5417f3a369d7a9ccdba26e425b2106b1bd` | sha256 của `sid\|YYYY-MM-DD\|sum_count\|grain_rows` theo `(source_id, business_date)` |
 
-**F-08:** Bằng chứng về 30 source là từ P2-R00 E-03 — observation tại một thời điểm, không phải invariant. W01 **không thể** xác nhận số liệu này từ code-only evidence; cần Owner query.
+**Quan sát:** `aggregate rows > 0` và `recruited_total > 0`. Do đó cutover "all-DE" (mask aggregate hoàn toàn) sẽ cho `recruited_total = 0`, gây drop-out visible cho BoD. Cần cutoff cụ thể để giữ lại một phần aggregate đã có.
 
-### B.4. Coverage / freshness
+### B.2. Direct Entry canonical — Production evidence
 
-| Signal | Aggregate (cũ) | Direct Entry (mới) |
+| Metric | Value tại baseline | Source |
 |---|---|---|
-| Coverage ratio | `sources_ever_succeeded / sources_expected` | `entries_submitted_in_scope / eligible_total` (C01A §3.5.c) |
-| Freshness | `max(last_successful_sync_at)` | `max(direct_entry_submissions.submitted_at) WHERE state='SUBMITTED'` |
+| `direct_entries.total` | **0** | `select count(*) from public.direct_entries` |
+| `direct_entry_submissions.total` | **0** | `select count(*) from public.direct_entry_submissions` |
+| `direct_entry_submissions_by_state` | `[]` (empty) | `group by state` |
+| `direct_entry_candidates.total` | **0** | `select count(*) from public.direct_entry_candidates` |
+| `de_eligible_entries` | **0** | `state='SUBMITTED' AND deleted_at IS NULL` |
+| `de_min_first_work_date` | **null** | (no rows) |
+| `de_max_first_work_date` | **null** | (no rows) |
 
-**F-09:** Cả hai metric đều cần query Production để có số thật. W01 chỉ xác nhận contract/semantics.
+**Quan sát:** Direct Entry hiện **chưa có submission nào** (kể cả DRAFT/REVIEW) tại thời điểm baseline. Mọi eligibility count = 0 vì `direct_entries` rỗng. Khi có DE thật từ UI, `state='SUBMITTED' AND deleted_at IS NULL` sẽ là filter canonical duy nhất.
 
-### B.5. Overlap theo ngày / project / recruiter / provider / team
+**F-15 (mới, W01-R1):** Tại baseline Production `2026-10-05`, Direct Entry canonical rỗng trên cả 3 mức (entries / submissions / candidates). Chưa có dữ liệu Direct Entry thật để chạy gate G5/G6 (C01A §3.3 / §3.5) — gate đó sẽ được chạy ở P2-W04 sau khi UI được UAT bởi Owner.
 
-Với `DE eligible = 0` tại baseline:
-- Overlap theo `first_work_date` ∩ `business_date` = 0 dòng (DE phía rỗng).
-- Overlap theo project_key = 0 (chưa thể map vì DE = 0).
-- Overlap theo recruiter_key = 0.
-- Overlap theo provider_type_key = 0.
-- Overlap theo employment_type_key = 0.
-- Team: aggregate cũ không có `team`; DE có `team_id` — không có khả năng overlap.
+### B.3. Source registry — Production evidence
 
-**F-10:** Tại baseline `45c99b9`, overlap là structurally rỗng vì DE = 0. Cutover **không thể** PASS gate G5 (3.3) của C01A cho đến khi có Direct Entry thật.
+| Metric | Value tại baseline | Source |
+|---|---|---|
+| `data_sources.total` | **28** | `select count(*) from public.data_sources` |
+| `data_sources.active=true` | **28** | `count(*) filter (where active = true)` |
+| `data_sources.active=false` | **0** | `count(*) filter (where active = false)` |
+| `data_sources.is_test=true` | **2** | `count(*) filter (where coalesce(is_test,false) = true)` |
+| `data_sources.is_test=false` | **26** | `count(*) filter (where coalesce(is_test,false) = false)` |
+| `last_successful_sync_at IS NOT NULL` (`ever_succeeded`) | **6** | `count(*) where last_successful_sync_at is not null` |
+| `last_successful_sync_at IS NULL` (`never_succeeded`) | **22** | (derived: total 28 − ever_succeeded 6) |
+| Source with latest run status `succeeded` | **4** | `reporting_latest_sync_runs_v01 group by status` |
+| Source with latest run status `failed` | **24** | (cùng query) |
+| External authority column (`external_authority` / `is_external` / `is_authority`) | **không tồn tại trong schema** | `information_schema.columns` lookup |
+| Source nào được giữ làm external authority? | **0** (cột không tồn tại ⇒ không có source nào được pin làm authority) | n/a |
+
+**Quan sát:** Source registry thật tại `2026-10-05` Production:
+- Có **28 sources** (24 production, 2 test, 28 active) — thấp hơn P2-R00 expectation "30 active non-test" một chút (số P2-R00 là observation cũ, hiện đã giảm 4 source non-test). Có thể do retire ở P1.6/P1.7.
+- 22/28 source **chưa từng chạy sync thành công** (`last_successful_sync_at IS NULL`). Trong đó 24 có latest run = `failed`. Chỉ 4 source có latest run `succeeded`.
+- **Không có cột external authority** trong schema. Không có source nào được pin làm authority. ⇒ T0 decision "external retained sources = NONE" được xác nhận bởi schema (không phải chỉ vì không có nguồn ngoài, mà vì schema cũng không có khái niệm này).
+
+**F-16 (mới, W01-R1):** Source registry thật = 28 sources, trong đó 22 chưa bao giờ sync thành công. P2-R00 E-03 dự đoán 30 active non-test — observation cũ không còn chính xác (giảm 4 source). T1 đã cập nhật W01 với số Production thật.
+
+### B.4. Coverage / freshness — Production evidence
+
+| Signal | Aggregate (cũ) | Direct Entry (mới) | Production value |
+|---|---|---|---|
+| Coverage ratio | `sources_ever_succeeded / sources_expected` = `6/28` ≈ **0.214** | `entries_submitted_in_scope / eligible_total` = `0/0` = **undefined** (cả 2 = 0) | ratios ghi nhận trong evidence file |
+| Freshness | `max(last_successful_sync_at)` từ `data_sources` | `max(submitted_at) WHERE state='SUBMITTED'` = **null** | ghi nhận trong evidence file |
+
+**F-17 (mới, W01-R1):** Coverage ratio aggregate = `6/28 = 0.214` (21.4%). 22 source chưa từng chạy được. Nguyên nhân cần Owner/T0 điều tra riêng (P2-N01 source retirement). **W01 không** đề xuất cutover "all-aggregate" vì coverage thấp.
+
+### B.5. Overlap theo ngày / project / recruiter / provider / team — Production evidence
+
+**Aggregate dimension counts** (từ `daily_recruitment_breakdown`):
+
+| Dimension | Distinct count | Source |
+|---|---|---|
+| `business_date` | **16** | `count(distinct business_date)` |
+| `project_key` | **10** | `count(distinct project_key)` |
+| `recruiter_key` | **13** | `count(distinct recruiter_key)` |
+| `provider_type_key` | **3** | `count(distinct provider_type_key)` |
+| `employment_type_key` | **3** | `count(distinct employment_type_key)` |
+
+**Direct Entry dimension counts** (từ `direct_entries` join `direct_entry_submissions`):
+
+| Dimension | Distinct count | Source |
+|---|---|---|
+| `first_work_date` | **0** | (no rows) |
+| `project_id` | **0** | (no rows) |
+| `recruiter_id` | **0** | (no rows) |
+| `team_id` | **0** | (no rows) |
+| `provider_type` | **0** | (no rows) |
+| `labor_type` | **0** | (no rows) |
+
+**Aggregate date fingerprint** (hash của `min|max(distinct_sources)`):
+
+`aggregate_date_fingerprint_sha256 = 9f77b41a3ffd2a99e7b6131fcd16b9143bb81b68c1d35c4157cd360bc86628b7`
+
+**Overlap phân tích:**
+
+- `agg_min_date = 2026-10-01`, `agg_max_date = 2026-10-16`. Khoảng **16 ngày** aggregate đã publish.
+- DE phía rỗng ⇒ `first_work_date ∩ business_date = ∅` (intersection cardinality = 0).
+- Project/recruiter/provider/employment: cả hai phía không thể map trực tiếp vì DE rỗng. Khi có DE thật, cần `recruiter_aliases` để map `recruiter_key` ↔ `recruiter_id` (xem §A.2).
+- Team: aggregate không có `team_id`; DE có `team_id`. Khi có DE, có thể đếm `team` ở phía DE nhưng không thể phía aggregate.
+
+**F-10 (cập nhật, W01-R1):** Tại Production `2026-10-05`, overlap intersection cardinality = 0 (DE rỗng) ⇒ cutover với **bất kỳ cutoff ≤ min(legacy_min)** sẽ mask aggregate hoàn toàn, kết quả = 0; cutoff **nằm trong khoảng aggregate** sẽ giữ lại một phần; cutoff **> max(legacy_max)** sẽ giữ lại toàn bộ.
 
 ### B.6. Bằng chứng chống double-count (kỹ thuật)
 
@@ -187,18 +223,47 @@ Bằng chứng này là **structural**, không phải empirical. Để empirical
 
 ## C. Candidate cutoff và bằng chứng chống double-count
 
-### C.1. Default cutoff candidate (T1 đề xuất)
+### C.1. Candidate cutoff (W01-R1: Production evidence-based)
 
-**Đề xuất:** `cutoff_date = 'infinity'` (không giới hạn, tức là DE dùng cho mọi ngày; aggregate bị mask hoàn toàn khi `business_date >= 'infinity'` ⇒ tức là mask cả bảng). Đây là **default kỹ thuật**, không phải ngày cụ thể.
+**Candidate cutoff (T1 đề xuất dựa trên evidence Production tại `2026-10-05`):**
+
+```
+cutoff_date = 2026-10-17
+```
 
 **Lý do:**
-- Tại baseline `45c99b9`, aggregate cũ đã không tăng (F-05); DE = 0 (F-06).
-- Cutover "all-aggregate" hoặc "all-DE" đều cho kết quả 0 hiện tại → không có ngày thật nào để test.
-- Owner/T0 sẽ chốt ngày cụ thể sau P1.7 J01 + khi có DE thật.
 
-**Kỳ vọng thực tế (sau P1.7 J01 + Owner data):**
-- Cutoff nên là **ngày Owner chọn** ∈ {P1.7 J01+1 ngày, ngày đầu tháng/quý kế tiếp, ngày có ≥ N DE submissions thật}.
-- Mặc định kỹ thuật: aggregate inclusive `< cutoff`, DE exclusive `< cutoff` (C01A §2.3 quyết định 1, mặc định an toàn).
+- `agg_min_date = 2026-10-01`, `agg_max_date = 2026-10-16`. Khoảng aggregate đã publish = 16 ngày.
+- `de_eligible_entries = 0`. Direct Entry phía rỗng ⇒ `first_work_date >= cutoff` sẽ luôn là 0 dòng (mask DE không lấy gì).
+- `hcm_today = 2026-10-05` (theo `(now() at time zone 'Asia/Ho_Chi_Minh')::date`).
+- Rule "DE eligible = 0" áp dụng (vì `de_eligible_entries == 0`):
+  ```
+  after_legacy = agg_max_date + 1 day = 2026-10-17
+  candidate    = max(after_legacy, hcm_today) = max(2026-10-17, 2026-10-05) = 2026-10-17
+  ```
+- Vì `2026-10-17 > hcm_today = 2026-10-05`, candidate cutoff là **12 ngày trong tương lai** so với ngày baseline. Điều này an toàn: mask aggregate `< 2026-10-17` giữ lại toàn bộ 34 dòng aggregate đã publish (44 người); mask DE `>= 2026-10-17` không lấy gì (DE rỗng).
+- **Tuyệt đối không dùng `'infinity'`.** Cutoff `2026-10-17` cụ thể, có thể thực thi, có thể rollback bằng cách dời ngày.
+
+**Hiệu lực của cutoff `2026-10-17` tại baseline:**
+
+| Mask | Filter | Rows | Recruited total |
+|---|---|---|---|
+| Aggregate (in-range) | `business_date < '2026-10-17'` | 34 (toàn bộ) | 44 |
+| Aggregate (after cutoff) | `business_date >= '2026-10-17'` | 0 | 0 |
+| DE (in-range, eligible) | `first_work_date < '2026-10-17' AND state='SUBMITTED' AND deleted_at IS NULL` | 0 | 0 |
+| DE (after cutoff, eligible) | `first_work_date >= '2026-10-17' AND state='SUBMITTED' AND deleted_at IS NULL` | 0 | 0 |
+| **Total visible sau cutover (với cutoff `2026-10-17`)** | aggregate in-range + DE after-cutoff | 34 | 44 |
+
+→ Với cutoff `2026-10-17`, dashboard giữ nguyên 44 người (toàn bộ aggregate) trong khi chờ DE thật. Khi Owner/UI tạo submission SUBMITTED đầu tiên với `first_work_date >= 2026-10-17`, nó sẽ xuất hiện ở nhóm "DE" mà không overlap (vì aggregate phía trước cutoff, DE phía sau cutoff, mask rời nhau).
+
+**Kịch bản khi DE thật xuất hiện (T0/Owner kế hoạch):**
+
+- Nếu DE thật đầu tiên có `first_work_date < 2026-10-17` (backdated — sửa lại first_work_date của NLĐ đã onboard từ trước cutoff): cần **chốt lại cutoff_date** về ngày trước `min(first_work_date)` của DE backdated. Đây là lý do vì sao T0 nên chốt cutoff SAU khi có DE thật đầu tiên, không phải trước.
+- Nếu DE thật đầu tiên có `first_work_date >= 2026-10-17` (forward): cutoff giữ nguyên, không cần điều chỉnh.
+
+**So sánh với P2-R00 expectation:**
+
+- P2-R00 E-03 nói "30 active non-test reporting sources, 0 direct entries/submissions/candidates". W01-R1 confirm DE = 0, nhưng source non-test = **26** (giảm 4 so với P2-R00). Có thể do retire ở P1.6/P1.7.
 
 ### C.2. Bằng chứng chống double-count (cấu trúc)
 
@@ -212,21 +277,28 @@ Bằng chứng này là **structural**, không phải empirical. Để empirical
 
 **F-12:** Chống double-count được đảm bảo structural bởi 5 cơ chế trên. Cả 5 cơ chế **chưa được implement** thành RPC/report; đó là phần việc của P2-W04.
 
-### C.3. Tại sao cutover có thể chốt cutoff symbol tại baseline
+### C.3. Tại sao cutoff `2026-10-17` an toàn tại baseline
 
-- Tại `45c99b9`:
-  - Aggregate rows: có thể = 0 (cần Owner query).
-  - DE rows: 0 (theo P2-R00 E-03).
-- Nếu aggregate = 0: cutover "all-DE" cho ra tổng = 0; cutover "all-aggregate" cũng tổng = 0. Diff = 0.
-- Nếu aggregate > 0: cutover với cutoff bất kỳ trước `min(business_date)` sẽ mask aggregate hoàn toàn, chỉ giữ DE (= 0) → tổng = 0. Diff ≠ 0 ⇒ **PHẢI có Owner confirm** expected total trước khi cutover thật.
+- Tại `ff3cae5` (W01 commit, extends `45c99b9`):
+  - Aggregate rows: **34** (đã đo bằng query thật).
+  - Aggregate recruited_total: **44**.
+  - DE rows: **0** (đã đo bằng query thật).
+- Với cutoff `2026-10-17`:
+  - Aggregate in-range: 34 rows × 44 recruited (giữ nguyên).
+  - DE in-range: 0 (mask `first_work_date < 2026-10-17` lấy 0 vì DE rỗng).
+  - DE after-cutoff: 0 (chưa có DE).
+  - Total sau cutover = 44, **bằng aggregate hiện tại**. → Diff = 0. → **KHÔNG drop-out** cho BoD.
+- Khi có DE thật (forward), mask `first_work_date >= 2026-10-17` sẽ nhặt từng entry mới. Mỗi entry = 1 người (grain `(first_work_date, project_id, recruiter_id, team_id, provider_type, labor_type)`, `recruited_count = 1`).
+- Khi có DE thật (backdated về trước `2026-10-17`): **cần Owner chốt lại cutoff** về ngày trước `min(first_work_date)` của DE backdated. Đây là trigger event cho P2-W04: khi W04 phát hiện DE có first_work_date < cutoff hiện tại, nó phải dừng và yêu cầu T0 quyết định lại.
 
-**F-13:** W01 chỉ cung cấp structural evidence. Cutover thật yêu cầu Owner/T0:
-- (a) confirm aggregate cũ đang có bao nhiêu (chạy query B.2);
-- (b) confirm expected total sau cutover;
-- (c) chốt cutoff date cụ thể;
-- (d) chạy gates G1–G8 của C01A §3.6.
+**F-13 (cập nhật, W01-R1):** W01-R1 cung cấp **production evidence thật** cho cutoff `2026-10-17`. Cutover thật yêu cầu Owner/T0:
+- (a) confirm aggregate `34 rows / 44 recruited` còn đúng (W01-R1 đã xác nhận);
+- (b) confirm expected total sau cutover = **44** (chỉ aggregate) → sau khi DE thật xuất hiện sẽ tăng dần;
+- (c) chốt cutoff_date cụ thể (W01-R1 đề xuất `2026-10-17`, có thể điều chỉnh);
+- (d) chạy gates G1–G8 của C01A §3.6 (W04 sẽ chạy).
 
 ---
+
 
 ## D. Đề xuất mặc định cho 8 quyết định C01A
 
@@ -251,6 +323,21 @@ Bằng chứng này là **structural**, không phải empirical. Để empirical
 | 8 | Stale threshold / channel | **Default 24h, dry-run only** | Freshness `submitted_at` > 24h = stale. Không gửi cảnh báo trong cutover này; chỉ log + dashboard banner. Threshold là P2-W05/W06. |
 
 **F-14:** W01 chỉ giữ 4 quyết định cho Owner (D.1) và đề xuất default cho 4 quyết định còn lại (D.2). Tổng Owner load giảm từ 8 → 4 quyết định.
+
+### D.3. T0 LOCKED decisions (W01-R1, theo task)
+
+> W01-R1 được lệnh khóa các quyết định T0 bên dưới. Mỗi quyết định ghi rõ **trạng thái** (LOCKED YES/NO/none/dry-run), **lý do evidence** từ Production, và **nguồn**.
+
+| T0 decision | LOCKED value | Evidence từ Production | Nguồn / hằng số |
+|---|---|---|---|
+| `retain_legacy_history` | **LOCKED YES** | `aggregate rows=34, recruited_total=44, date range 2026-10-01..2026-10-16` đã được publish. Retain toàn bộ 34 rows trong `daily_recruitment_breakdown` (mask `< cutoff_date`). | T0 decision (task W01-R1) |
+| `external_retained_sources` | **LOCKED NONE** | `information_schema.columns` lookup: schema `public.data_sources` **không có cột** `external_authority` / `is_external` / `is_authority`. Không có source nào được pin làm external authority trong DB. | T0 decision + evidence schema |
+| `team_extension` | **LOCKED NO** | Aggregate cũ không có `team_id` (`daily_recruitment_breakdown` grain không chứa team). Mở rộng team dimension ở cutover đợt này sẽ đổi grain hiện hành. | T0 decision (task W01-R1) |
+| `status_summary_ui` | **LOCKED NO** | Status `UNCONFIRMED`/`ON`/`OFF` đã canonical trong `direct_entry_employment_status_events` nhưng metric phụ (status summary) chưa implement ở reporting layer. Defer đến P2-W04. | T0 decision (task W01-R1) |
+| `alerts` | **LOCKED dry-run only** | Freshness `submitted_at` > 24h = stale (C01A §3.5.d contract). Cutover đợt này chỉ log + dashboard banner; KHÔNG gửi cảnh báo. Threshold/stale là P2-W05/W06. | T0 decision (task W01-R1) |
+| `totals/coverage source` | **LOCKED actual Production results** | Số liệu §B (aggregate=34/44, DE=0/0, sources=28/6 ever_succeeded) là từ query thật tại `2026-10-05`, ghi trong `docs/evidence/p2-w01-r1-baseline.json`. KHÔNG dùng default hay derived. | T0 decision (task W01-R1) |
+
+**F-18 (mới, W01-R1):** 6 T0 decisions đã được khóa với evidence Production. Evidence JSON đính kèm (`docs/evidence/p2-w01-r1-baseline.json`) là nguồn số liệu thật, có fingerprint sha256 để reproduce. Status chỉ claim được khi evidence file tồn tại, số liệu khớp với tài liệu, và gates `pnpm docs:check` + `pnpm secrets:check` + `git diff --check` PASS.
 
 ---
 
@@ -364,15 +451,17 @@ select
 
 ---
 
-## F. Risks & open items (W01)
+## F. Risks & open items (W01-R1)
 
-1. **DE = 0 tại baseline `45c99b9`.** Mọi số liệu "expected at cutover" chỉ là default. Owner phải xác nhận bằng cách chạy E.1/E.2 trên Production read-only.
-2. **Aggregate có thể > 0.** Nếu Owner xác nhận aggregate vẫn còn dòng, cutover symbolic "all-DE" sẽ tạo tổng = 0, dẫn đến drop-out visible cho BoD. W01 không thể khuyến nghị "all-DE" mà không có aggregate expected total.
-3. **P1.7 J01 vẫn là gate.** W01 không thay đổi gate này; W01 chỉ thu thập evidence.
+1. **Aggregate rows = 34, recruited_total = 44, date range 2026-10-01..2026-10-16 (đã đo Production).** Cutover symbolic "all-DE" sẽ tạo tổng = 0, drop-out visible. W01-R1 đề xuất cutoff `2026-10-17` để giữ nguyên 44 người.
+2. **DE = 0 tại baseline (đã đo Production).** Khi có DE thật (forward, `first_work_date >= 2026-10-17`): mask nhặt, không cần điều chỉnh cutoff. Khi có DE backdated (`first_work_date < 2026-10-17`): **cần T0 chốt lại cutoff** về ngày trước `min(first_work_date)` của DE backdated. Đây là trigger event cho P2-W04.
+3. **P1.7 J01 vẫn là gate.** W01-R1 không thay đổi; W01-R1 chỉ thu thập evidence.
 4. **Recruiter alias backfill** (§D.2 #5) là default conditional; cần chạy 3.1.b để biết có cần hay không.
-5. **30 source states** (B.3) cần Owner query; W01 chỉ tham chiếu P2-R00.
-6. **Coverage/freshness DE** (B.4) cần Owner query; W01 chỉ mô tả contract.
-7. **Truy vấn reconciliation E.6** dùng `cutoff = 'infinity'` chỉ để test mask; Owner phải thay bằng ngày cụ thể khi chạy G3 gate.
+5. **28 source states (đã đo Production)** — thấp hơn P2-R00 expectation "30 active non-test" một chút. 22/28 chưa từng sync thành công. Cần Owner/T0 điều tra riêng (P2-N01 source retirement).
+6. **Coverage ratio aggregate = 6/28 = 0.214 (21.4%, đã đo Production).** W01 không đề xuất cutover "all-aggregate" vì coverage thấp. Cutoff `2026-10-17` vẫn giữ 34 rows × 44 recruited (là rows đã có, không phụ thuộc coverage mới).
+7. **Fingerprint stability:** `aggregate_fingerprint_sha256 = 7abfbdab53b0f1b01bd119a02b5ebe5417f3a369d7a9ccdba26e425b2106b1bd` sẽ thay đổi khi có dữ liệu aggregate mới. Nếu W04 chạy muộn hơn W01-R1 nhiều ngày, cần re-baseline lại fingerprint.
+8. **Backdated DE chưa được test.** Cutoff `2026-10-17` chỉ safe cho forward DE. Test case "DE backdated" sẽ là W04 acceptance test.
+9. **Truy vấn E.6** dùng `cutoff = date '9999-12-31'` chỉ để test mask; Owner/W04 phải thay bằng `'2026-10-17'` khi chạy G3 gate.
 
 ---
 
@@ -392,3 +481,32 @@ select
 - `src/lib/reporting/p1-reporting.ts` + `p1-reporting-server.ts` (codegraph)
 - `src/lib/contracts/direct-entry-v1.ts` (codegraph)
 - `src/lib/direct-entry/submission-read-contract.ts` (codegraph)
+
+---
+
+## H. Run artifacts (W01-R1)
+
+### H.1. Script chạy read-only
+
+| File | Vai trò |
+|---|---|
+| `scripts/p2-w01-r1-baseline.mjs` | Mở `pg.Client` qua `loadSupabaseConfig()` + `buildSslOptions()` (helpers có sẵn, không viết DB client mới). Trong 1 transaction: `BEGIN` → `SET TRANSACTION READ ONLY` → `SET LOCAL statement_timeout='15s'` → 19 SELECT queries (aggregate, DE, overlap, source registry, today) → `ROLLBACK` → `client.end()`. Output atomic rename từ `.tmp` → `OUT_PATH`. |
+| `scripts/p2-w01-r1-verify-date.mjs` | Probe tay: xác nhận cách Postgres trả `date` qua session UTC (tránh nhầm ±1 ngày). Đã dùng để chọn `to_char(..., 'YYYY-MM-DD')` thay vì cast date object. |
+| `scripts/p2-w01-r1-tx-probe.mjs` | Probe transaction state (BEGIN + SET TRANSACTION READ ONLY + SET LOCAL). |
+| `scripts/lib/load-supabase-config.mjs` | (repo có sẵn) đọc config ngoài repo. |
+| `scripts/lib/supabase-tls.mjs` | (repo có sẵn) pin TLS root CA. |
+
+**Không có file mới nào trong `src/lib/`, `supabase/migrations/`, `supabase/tests/`, `src/app/api/`, `package.json`, `pnpm-lock.yaml`.** Chỉ thêm 3 script trong `scripts/` (probe + baseline + verify).
+
+### H.2. Output JSON evidence
+
+| File | Vai trò |
+|---|---|
+| `docs/evidence/p2-w01-r1-baseline.json` | Atomic output của `scripts/p2-w01-r1-baseline.mjs` tại `2026-10-05`. Mọi số liệu §B, §C đều xuất phát từ file này. Có fingerprint sha256. |
+
+### H.3. PII / secrets policy
+
+- Script **không** in: `databaseUrl`, `password`, `secretKey`, `publishableKey`, `projectRef` đầy đủ, `supabaseConfigFile` đầy đủ, PII, tên NLĐ, CCCD, payment, document, connection string.
+- Chỉ in summary ra `stderr` với aggregate counts/date ranges/fingerprint.
+- JSON output: không có PII, chỉ counts + date strings + sha256.
+- `p2_w01_r1_baseline.json` KHÔNG chứa field nào từ PII.
