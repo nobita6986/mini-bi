@@ -190,3 +190,17 @@ test("registry: KHÔNG có chuỗi 'Google Sheets' hay 'n8n' trong description c
     );
   }
 });
+
+// ===== P3-W06A R2 — Side-effect registration into full `pnpm test` =====
+// Registry capability + request-scoped actor resolver tests chạy targeted
+// nhưng chưa được đăng ký vào `pnpm test` đầy đủ. Import side-effect
+// một chiều từ `registry.test.mjs` để cả hai suite chạy qua
+// `test:app-nav-02a` (và do đó chạy qua `pnpm test`).
+//
+// Điều kiện an toàn (P3-W06A R2):
+// - `registry-capability.test.mjs` và `resolve-nav-actor.test.mjs` KHÔNG
+//   import ngược `registry.test.mjs` (một chiều).
+// - Cả hai chỉ phụ thuộc module `.ts` độc lập, không tạo circular.
+// - Không thay đổi `package.json` / `pnpm-lock.yaml`.
+import "./registry-capability.test.mjs";
+import "./resolve-nav-actor.test.mjs";

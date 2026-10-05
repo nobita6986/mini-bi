@@ -467,3 +467,156 @@ Không sửa:
 ## Trạng thái
 
 **`P3-W06A-R1_CAPABILITY_NAV_TEXT_EDITOR_REVIEW_GAPS_CLOSED_LOCAL_PASS_FAST_TRACK`** — local pass, chưa push, chưa deploy, chưa UI UAT.
+
+---
+
+# R2 — Test registration into full `pnpm test`
+
+**Trạng thái R2:** `P3-W06A-R2_REGRESSION_SUITES_REGISTERED_LOCAL_PASS_FAST_TRACK`
+**Base R2:** `106f0d7b63b773491e1f473fc17eb6ad23abb1f7` (giữ nguyên R1, không
+amend/rebase).
+**Worktree:** `C:\CodeApp\BI-p3-w06a-capability-nav-text-editor`
+**Branch:** `feature/p3-w06a-capability-nav-text-editor`
+
+## Bối cảnh
+
+R00 review phát hiện ba suite chỉ chạy targeted, chưa được đăng ký vào full
+`pnpm test`:
+
+- `src/lib/navigation/registry-capability.test.mjs` (18 test — capability
+  projection + filter + Gap 2 asymmetric viewport).
+- `src/lib/navigation/resolve-nav-actor.test.mjs` (12 test — React `cache()`
+  wrap cho request-scoped actor resolution).
+- `src/components/direct-entry/direct-entry-text-cell-regression.test.mjs`
+  (13 test — text cell continuous typing + Vietnamese IME + composition end).
+
+R1 đã được duyệt (`106f0d7`). Source runtime không được sửa. R2 chỉ đăng ký
+các test vào canonical test path mà không phải chạy trùng, không thêm
+dependency, không phá circular, không đụng `pnpm-lock.yaml`.
+
+## Cách đăng ký
+
+### Navigation capability + resolver (test:app-nav-02a)
+
+`src/lib/navigation/registry.test.mjs` (đã có sẵn trong `test:app-nav-02a`)
+thêm 2 side-effect import một chiều ở cuối file:
+
+```mjs
+import "./registry-capability.test.mjs";
+import "./resolve-nav-actor.test.mjs";
+```
+
+Khi `node --test` chạy file `registry.test.mjs`, side-effect import load hai
+file kia và `node:test` tự đăng ký test của chúng trong cùng runner. Vì ba
+file này chỉ phụ thuộc module `.ts` độc lập (`registry-capability.ts`,
+`resolve-nav-actor.ts`) và không import ngược `registry.test.mjs`, không có
+circular.
+
+### Text-cell regression (test:p1.6-i04c3-r3a)
+
+`src/components/direct-entry/direct-entry-live-spreadsheet.test.mjs` (đã có
+sẵn trong `test:p1.6-i04c3-r3a`) thêm 1 side-effect import:
+
+```mjs
+import "./direct-entry-text-cell-regression.test.mjs";
+```
+
+File được import chỉ phụ thuộc `text-cell-state.ts` (production helper) và
+không import ngược parent, không circular.
+
+### Chain composition (package.json)
+
+`pnpm test` chưa từng gọi `test:app-nav-02a`. Trước R2 chỉ gọi
+`test:p1.6-w01..i04c3-r4-s02`, `test:main`, `test:server`, `test:export`.
+R2 chèn thêm `&& pnpm test:app-nav-02a` giữa `test:p1.6-i04c3-r4-s02` và
+`test:main` (vị trí hợp lý: sau nhóm Direct Entry, trước nhóm reporting).
+
+Đây là thay đổi **một dòng** trong `scripts.test` — KHÔNG đụng
+`dependencies`, `devDependencies`, `packageManager`, version pin,
+`pnpm-lock.yaml`, hay bất kỳ runtime config nào.
+
+## Files thay đổi trong R2
+
+| Path | Thay đổi |
+|---|---|
+| `src/lib/navigation/registry.test.mjs` | +2 dòng `import "./registry-capability.test.mjs"`, `import "./resolve-nav-actor.test.mjs"` (cuối file, kèm comment giải thích một chiều + không circular). |
+| `src/components/direct-entry/direct-entry-live-spreadsheet.test.mjs` | +1 dòng `import "./direct-entry-text-cell-regression.test.mjs"` (cuối file, kèm comment). |
+| `package.json` | Thêm `&& pnpm test:app-nav-02a` vào chuỗi `scripts.test`. Một dòng. |
+
+Không thay đổi runtime source (`registry.ts`, `registry-capability.ts`,
+`resolve-nav-actor.ts`, `app-shell.tsx`, page layouts, grid/text-cell-state,
+etc.).
+
+## Test evidence (đã chạy trong worktree)
+
+| Gate | Số test | Pass |
+|---|---:|---:|
+| `pnpm test:app-nav-02a` | 83 | 83 (53 cũ + 18 registry-capability + 12 resolve-nav-actor) |
+| `pnpm test:p1.6-i04c3-r3a` | 100 | 100 (87 cũ + 13 text-cell-regression) |
+| `pnpm test` (full) | 1600+ | 0 fail (xem chi tiết output bên dưới) |
+| `next typegen` | — | PASS |
+| `pnpm typecheck` | — | PASS (0 errors) |
+| `pnpm lint` | — | PASS (0 errors, 6 pre-existing warnings) |
+| `pnpm build` | — | PASS (5 routes, tất cả generate OK) |
+| `pnpm docs:check` | — | PASS (6/6 doc examples) |
+| `pnpm secrets:check` | — | PASS (1175 files scanned, 0 secrets) |
+| `pnpm db:migrate --status` | — | PASS (39 applied, 0 pending — 39/0/0) |
+| `git diff --check` | — | PASS (no whitespace errors) |
+
+### Test counts chi tiết từ `pnpm test` output
+
+```
+test:p1.6-w01            19 tests / 19 pass
+test:p1.6-w02            25 tests / 25 pass
+test:p1.6-w03            20 tests / 20 pass
+test:p1.6-w04-s02         5 tests /  5 pass
+test:p1.6-w04-s03a       10 tests / 10 pass
+test:p1.6-w04-s03b       11 tests / 11 pass
+test:p1.6-w04-s03cd      16 tests / 16 pass
+test:p1.6-w04-s04a       40 tests / 40 pass
+test:p1.6-w04-s04b-s01   22 tests / 22 pass
+test:p1.6-w04-s04b-r2a   32 tests / 32 pass
+test:p1.6-w04-s04c-s03b1 13 tests / 13 pass
+test:p1.6-w04-s04c-s03b2 28 tests / 28 pass
+test:p1.6-w04-s04c-s03b3-r1 15 tests / 15 pass
+test:p1.6-w04-s04c-s02a  26 tests / 26 pass
+test:p1.6-w04-s04c-s02b  27 tests / 27 pass
+test:p1.6-w04-s04c-s02c  24 tests / 24 pass
+test:p1.6-i04c2b         16 tests / 16 pass
+test:p1.6-i04c3-s01      26 tests / 26 pass
+test:p1.6-i04c3-r2       65 tests / 65 pass
+test:p1.6-i04c3-r3a     100 tests / 100 pass (incl. 13 text-cell-regression)
+test:p1.6-i04c3-r3b      24 tests / 24 pass
+test:p1.6-i04c3-r4-s02   14 tests / 14 pass
+test:app-nav-02a         83 tests / 83 pass (incl. 18 registry-capability
+                          + 12 resolve-nav-actor)
+test:main               447 tests / 447 pass
+test:server             102 tests / 102 pass
+test:export               4 tests /  4 pass
+```
+
+Không có duplicate test count giữa các gate — registry capability / resolve
+actor chỉ chạy qua `test:app-nav-02a`; text-cell regression chỉ chạy qua
+`test:p1.6-i04c3-r3a`. Cả hai được kéo vào `pnpm test` qua chain composition.
+
+## Ranh giới
+
+Không sửa:
+
+- Source runtime (`registry.ts`, `registry-capability.ts`,
+  `resolve-nav-actor.ts`, `app-shell.tsx`, page layouts, grid, helpers,
+  text-cell-state, ...).
+- `dependencies` / `devDependencies` / `packageManager` / version pin.
+- `pnpm-lock.yaml`.
+- Migration/DB/RPC/reporting/AI API internals.
+- Primary checkout `C:\CodeApp\BI`.
+
+## Local SHA
+
+- R2 base (giữ nguyên): `106f0d7b63b773491e1f473fc17eb6ad23abb1f7` (R1).
+- R2 commit (sẽ commit + push trên `feature/p3-w06a-capability-nav-text-editor`).
+
+## Trạng thái
+
+**`P3-W06A-R2_REGRESSION_SUITES_REGISTERED_LOCAL_PASS_FAST_TRACK`** — local
+pass, chưa push, chưa deploy, chưa UI UAT.
