@@ -32,7 +32,7 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () =
       "20261007020000_p2_w04a_direct_entry_reporting_cutover.sql",
     );
 
-    // 1. View exists.
+    // 1. Projection view exists.
     const viewRes = await db.query(
       "select c.relname from pg_class c" +
       " join pg_namespace n on n.oid = c.relnamespace" +
@@ -40,7 +40,7 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () =
     );
     assert.equal(viewRes.rows.length, 1);
 
-    // 2. View columns match ReportingFact grain + delivery line fields.
+    // 2. Projection view columns match ReportingFact grain + delivery line fields.
     const cols = await db.query(
       "select array_agg(attname order by attnum) as cols" +
       " from pg_attribute" +
@@ -65,6 +65,15 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () =
       "cutoff_date",
     ]);
 
+    // 2b. Dimension options view exists with the canonical 4-column shape.
+    const dimCols = await db.query(
+      "select array_agg(attname order by attnum) as cols" +
+      " from pg_attribute" +
+      " where attrelid = 'public.direct_entry_reporting_dimension_options_v01'::regclass" +
+      " and attnum > 0 and not attisdropped",
+    );
+    assert.deepEqual(dimCols.rows[0].cols, ["dimension", "key", "display", "recruited_count"]);
+
     // 3. Cutoff is locked.
     const cutoffRes = await db.query("select public.direct_entry_reporting_cutoff()::text as c");
     assert.equal(cutoffRes.rows[0].c, "2026-10-17");
@@ -78,6 +87,31 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () =
     assert.equal(Number(totals.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(totals.rows[0].overlap_blocker), 0);
     assert.equal(totals.rows[0].cutoff_date, "2026-10-17");
+  } finally {
+    await db.close();
+  }
+});
+
+test("R1 migration test: service_role has EXECUTE on every runtime helper", async () => {
+  const { db } = await buildDb();
+  try {
+    const helpers = [
+      "public.direct_entry_reporting_cutoff()",
+      "public.direct_entry_reporting_source_id()",
+      "public.direct_entry_reporting_dim_key(text)",
+      "public.direct_entry_reporting_recruiter_alias_key(uuid, date)",
+      "public.direct_entry_reporting_recruiter_provider_key(uuid, date)",
+      "public.direct_entry_reporting_employment_key(text)",
+      "public.direct_entry_reporting_pre_cutover_blocker_count()",
+      "public.direct_entry_reporting_reconciliation_totals()"
+    ];
+    for (const sig of helpers) {
+      const res = await db.query(
+        "select has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') as svc",
+        [sig],
+      );
+      assert.equal(res.rows[0].svc, true, sig + " must be EXECUTE-able by service_role");
+    }
   } finally {
     await db.close();
   }

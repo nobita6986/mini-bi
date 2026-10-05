@@ -162,14 +162,14 @@ async function verifySchema(client, migrations) {
     const expectedInternalCount = expectedFunctions.length - expectedServiceCount;
     check(new Set(serviceNames).size === expectedServiceCount &&
       liveFunctions.filter(({ service_exec }) => service_exec).length === expectedServiceCount,
-    "exactly 31 service-role boundary functions");
+    "exactly 39 service-role boundary functions");
     check(liveFunctions.filter(({ service_exec }) => !service_exec).length === expectedInternalCount &&
       liveFunctions.filter(({ service_exec, anon_exec, auth_exec, public_exec }) =>
         !service_exec && (anon_exec || auth_exec || public_exec)).length === 0,
     "38 internal functions are not executable by runtime roles or PUBLIC");
-    check(sourceNames.length === 69 && expectedServiceCount === 31 &&
+    check(sourceNames.length === 77 && expectedServiceCount === 39 &&
       expectedInternalCount === 38,
-    "derived inventory is 69 total / 31 service-role / 38 internal");
+    "derived inventory is 77 total / 39 service-role / 38 internal");
     inventory = {
       total: sourceNames.length,
       serviceRole: expectedServiceCount,

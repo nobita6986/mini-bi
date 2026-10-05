@@ -133,10 +133,10 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // P2-W04A migration #40 added 8 new public.direct_entry_reporting_*
   // helpers (cutoff, source_id, dim_key, recruiter_alias_key,
   // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
-  // reconciliation_totals). All are revoked from service_role (they run
-  // inside service_role via SQL only and are not callable as RPCs), so the
-  // pre-cutover inventory of 69 (31 service + 38 internal) grows to 77
-  // (31 service + 46 internal).
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [77, 31, 46]);
+  // reconciliation_totals). All are GRANT EXECUTE to service_role so the
+  // runtime can use them (no public RPC exposure). Pre-cutover inventory
+  // was 69 (31 service + 38 internal); after #40 it grows to 77 (39 service
+  // + 38 internal).
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [77, 39, 38]);
   await db.close();
 });

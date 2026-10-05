@@ -1,7 +1,7 @@
 import type { ReportingFact, ReportingSource } from "./p1-reporting";
 
 /**
- * P2-W04A — Direct Entry reporting cutover contract.
+ * P2-W04A — Direct Entry reporting cutover contract (R1).
  *
  *   - Cutoff date locked at 2026-10-17 (Asia/Ho_Chi_Minh).
  *   - Legacy facts counted only when business_date < cutoff.
@@ -12,8 +12,9 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting";
  *
  * This file is pure data (no SQL, no IO). The DB-side masks live in
  * `supabase/migrations/20261007020000_p2_w04a_direct_entry_reporting_cutover.sql`.
- * The read-path seam (`src/lib/reporting/p1-reporting-server.ts`) loads both
- * sources and combines them via `combineReportingFacts` / `reconcileCutover`.
+ * The read-path (`src/lib/reporting/p2-w04a-reporting-server.ts`) loads both
+ * sources and combines them via `combineReportingFacts` /
+ * `runCutoverReporting`.
  *
  * The TS layer never multiplies rows by revisions/documents/payments/events:
  * the SQL projection itself has grain = entry_id, so the "no double count"
@@ -69,56 +70,6 @@ export interface CutoverReconciliation {
   direct_entry_subtotal: number;
   overlap_blocker: number;
   combined_total: number;
-  cutoff_date: string;
-}
-
-/**
- * Combined `ReportingData` result returned by the read path. Wraps the
- * existing P1 `ReportingData` shape plus the cutover reconciliation block.
- * The dashboard UI is expected to render the existing dashboard; this type
- * is for the server-only API response.
- */
-export interface CombinedReportingData {
-  /** Legacy subtotal (business_date < cutoff). */
-  legacy_subtotal: number;
-  /** Direct Entry subtotal (first_work_date >= cutoff). */
-  direct_entry_subtotal: number;
-  /** Eligible Direct Entry rows on the legacy side of the cutoff; >0 = blocker. */
-  overlap_blocker: number;
-  /** legacy_subtotal + direct_entry_subtotal. */
-  combined_total: number;
-  /** Locked cutover date. */
-  cutoff_date: string;
-  /** Pre-existing P1 reporting data (legacy-aggregate + dashboard metadata). */
-  data: import("./p1-reporting").ReportingData;
-}
-
-/** Read-path result with the cutover contract. */
-export type CutoverReportingResult =
-  | { ok: true; data: CombinedReportingData; generatedAt: string }
-  | {
-      ok: false;
-      code: string;
-      message: string;
-      // When the blocker is a cutover blocker, the partial reconciliation
-      // is attached so the caller can surface it without re-running the
-      // reconciliation query.
-      reconciliation?: CutoverReconciliation;
-    };
-
-/**
- * Direct Entry reporting fact projection shape. Mirrors the SQL view
- * `public.direct_entry_reporting_facts_v01`. The view returns one row per
- * eligible entry, with `recruited_count = 1` and `first_work_date >=
- * cutoff` already enforced at the database boundary.
- */
-export interface DirectEntryReportingFact extends ReportingFact {
-  source_id: typeof P2_W04A_DIRECT_ENTRY_SOURCE_ID;
-  business_date: string;
-  recruited_count: 1;
-  first_work_date: string;
-  entry_id: string;
-  submission_id: string;
   cutoff_date: string;
 }
 
@@ -201,45 +152,38 @@ export function hasCutoverBlocker(r: CutoverReconciliation): boolean {
 }
 
 /**
- * Combine legacy masked facts + Direct Entry masked facts into one
- * ReportingFact array, deduplicated by full ReportingFact grain.
+ * Concatenate legacy masked facts + Direct Entry masked facts WITHOUT
+ * deduplicating by ReportingFact grain.
  *
- * Legacy facts keep their `source_id` from data_sources. Direct Entry facts
- * use the synthetic DE source id. The synthetic source is appended to the
- * sources list at the seam so the existing `computeReporting` semantics
- * treat DE rows as in-scope.
+ * Why no dedupe? Legacy facts are aggregate rows with arbitrary
+ * `recruited_count` (a date/grain row already represents many people
+ * compressed into one row); Direct Entry facts are canonical entry rows
+ * with `recruited_count = 1`. Two eligible Direct Entry entries that
+ * share the same ReportingFact grain (same source_id, business_date,
+ * project_key, recruiter_key, provider_type_key, employment_type_key)
+ * MUST each contribute 1 — distinct employees sharing a grain is the
+ * legitimate, expected case.
+ *
+ * The original `combineReportingFacts` (R0) deduplicated by full grain and
+ * silently collapsed two DE employees into one, undercounting the total
+ * (Blocker 4). The fix is to concatenate and let `computeReporting` sum
+ * per grain via `sumBy` / `groupByDimension`, which already handles
+ * `recruited_count` correctly for any number of rows sharing a grain.
+ *
+ * The legacy side may legitimately contain duplicate-grain rows in rare
+ * cases (backfill / re-import). Concatenating those rows still yields the
+ * correct total because `computeReporting` sums `recruited_count` per grain
+ * — the SQL projection itself does NOT multiply legacy facts, so this
+ * only concatenates canonical rows.
  */
 export function combineReportingFacts(
   legacyFacts: ReportingFact[],
   directEntryFacts: DirectEntryReportingFact[],
 ): ReportingFact[] {
-  const seen = new Set<string>();
-  const out: ReportingFact[] = [];
-  for (const f of legacyFacts) {
-    const key = factGrainKey(f);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(f);
-  }
-  for (const f of directEntryFacts) {
-    const fwd = f as unknown as ReportingFact;
-    const key = factGrainKey(fwd);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(fwd);
-  }
-  return out;
-}
-
-function factGrainKey(f: ReportingFact): string {
-  return [
-    f.source_id,
-    f.business_date,
-    f.project_key,
-    f.recruiter_key,
-    f.provider_type_key,
-    f.employment_type_key,
-  ].join("|");
+  const merged: ReportingFact[] = [];
+  for (const f of legacyFacts) merged.push(f);
+  for (const f of directEntryFacts) merged.push(f as unknown as ReportingFact);
+  return merged;
 }
 
 /**
@@ -284,4 +228,20 @@ export function normalizeReconciliationRow(row: {
     combined_total: legacy + direct,
     cutoff_date: row.cutoff_date,
   };
+}
+
+/**
+ * Direct Entry reporting fact projection shape. Mirrors the SQL view
+ * `public.direct_entry_reporting_facts_v01`. The view returns one row per
+ * eligible entry, with `recruited_count = 1` and `first_work_date >=
+ * cutoff` already enforced at the database boundary.
+ */
+export interface DirectEntryReportingFact extends ReportingFact {
+  source_id: typeof P2_W04A_DIRECT_ENTRY_SOURCE_ID;
+  business_date: string;
+  recruited_count: 1;
+  first_work_date: string;
+  entry_id: string;
+  submission_id: string;
+  cutoff_date: string;
 }

@@ -6,11 +6,28 @@ import { parseReportingFilters } from "./p1-filter";
 import {
   buildReportingFactQuery,
   computeReporting,
+  reportingQueryFailed,
 } from "./p1-reporting";
-import type { ReportingFact, ReportingData, RunStatus } from "./p1-reporting";
-import { paginateAll, REPORTING_FACT_ORDER, REPORTING_PAGE_SIZE } from "./p1-reporting-pagination";
+import type {
+  ReportingData,
+  ReportingFact,
+  ReportingSource,
+  RunStatus,
+} from "./p1-reporting";
 import {
-  buildReconciliation,
+  paginateAll,
+  REPORTING_FACT_ORDER,
+  REPORTING_PAGE_SIZE,
+} from "./p1-reporting-pagination";
+
+// Deterministic tie-breaker for the Direct Entry paginated fact read.
+// Two eligible DE entries that share the same ReportingFact grain MUST
+// paginate deterministically; the SQL view's ORDER BY uses REPORTING_FACT_ORDER
+// and appends entry_id as the unique tie-breaker. The TS loader mirrors that
+// clause so a Supabase PostgREST range query stays consistent with the view
+// definition (otherwise page boundaries could collapse same-grain rows).
+const DE_TIE_BREAKER_ORDER = ["entry_id"] as const;
+import {
   combineReportingFacts,
   cutoverBlockerError,
   hasCutoverBlocker,
@@ -22,28 +39,33 @@ import {
   P2_W04A_DIRECT_ENTRY_SOURCE_ID,
 } from "./p2-w04a-cutover";
 import type {
-  CombinedReportingData,
   CutoverReconciliation,
-  CutoverReportingResult,
   DirectEntryReportingFact,
 } from "./p2-w04a-cutover";
 
 /**
- * P2-W04A — Combined cutover read path.
+ * P2-W04A — Combined cutover read path (R1).
  *
  * Reads both legacy aggregate and the Direct Entry projection view, masks
- * both at the boundary, combines them into a single `ReportingFact[]` and
- * produces a unified `ReportingData` shape (so the existing P1 dashboard
- * continues to work unchanged).
+ * both at the boundary, runs the SQL blocker helper INDEPENDENTLY of the
+ * masked view (so a pre-cutoff eligible row can never be hidden behind a
+ * silently-bypassed view), concatenates them WITHOUT grain-dedupe so two
+ * DE employees that share the same ReportingFact grain each contribute 1,
+ * and feeds `computeReporting` to produce the same `ReportingData` shape
+ * the dashboard already consumes.
  *
  * The Direct Entry synthetic source is added to the in-memory sources
  * array so `computeReporting` treats DE facts as in-scope. The synthetic
  * source is NOT inserted into `public.data_sources`.
  *
- * If an eligible Direct Entry row has first_work_date < cutoff, the read
- * path returns a hard-fail cutover blocker. The reconciliation is attached
- * to the error so callers can surface the diagnostic data without
- * re-querying.
+ * Result shape is intentionally identical to P1's `ReportingFetchResult`:
+ *
+ *   { ok: true, data: ReportingData, generatedAt }
+ *   { ok: false, code, message, reconciliation? }
+ *
+ * No `data.data`. Reconciliation metadata (when the read path returns a
+ * cutover blocker) is attached ONLY to the error and is never placed
+ * inside `data`. DashboardView consumes `data` exactly as P1 expects.
  */
 
 const LEGACY_FACT_COLUMNS =
@@ -52,12 +74,21 @@ const LEGACY_FACT_COLUMNS =
 const DIRECT_ENTRY_FACT_COLUMNS =
   "source_id, business_date, project_key, project_display, recruiter_key, recruiter_display, provider_type_key, provider_type_display, employment_type_key, employment_type_display, recruited_count, first_work_date, entry_id, submission_id, cutoff_date";
 
-/** Combined read-path result. Keeps the existing P1 type so the dashboard
- *  does not need to change.
+/**
+ * Read-path result for the cutover seam.
+ *
+ * Success shape is byte-equivalent to `ReportingFetchResult` so the
+ * dashboard treats `data` as a plain `ReportingData`. The optional
+ * `reconciliation` field only appears on the failure branch.
  */
 export type CutoverFetchResult =
-  | { ok: true; data: CombinedReportingData; generatedAt: string }
-  | { ok: false; code: string; message: string; reconciliation?: CutoverReconciliation };
+  | { ok: true; data: ReportingData; generatedAt: string }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      reconciliation?: CutoverReconciliation;
+    };
 
 function logSafeError(prefix: string, error: unknown) {
   const safeCode =
@@ -68,14 +99,16 @@ function logSafeError(prefix: string, error: unknown) {
 }
 
 /**
- * Fetches legacy masked facts from `daily_recruitment_breakdown`. The
+ * Fetch legacy masked facts from `daily_recruitment_breakdown`. The
  * server applies the date mask `business_date < cutoff` to the SELECT.
- * The TS-level mask is still applied as a defense-in-depth.
+ * The TS-level mask is still applied as defense-in-depth.
  */
 async function fetchLegacyFacts(params: {
   sb: ReturnType<typeof createServiceSupabaseClient>;
   plan: ReportingPlanFactQuery;
-}): Promise<{ rows: ReportingFact[]; count: number } | { error: { code: string; message: string } }> {
+}): Promise<
+  { rows: ReportingFact[]; count: number } | { error: { code: string; message: string } }
+> {
   let q = params.sb
     .from("daily_recruitment_breakdown")
     .select(LEGACY_FACT_COLUMNS, { count: "exact" })
@@ -103,7 +136,7 @@ async function fetchLegacyFacts(params: {
 }
 
 /**
- * Fetches Direct Entry masked facts from `direct_entry_reporting_facts_v01`.
+ * Fetch Direct Entry masked facts from `direct_entry_reporting_facts_v01`.
  * The SQL view already applies the date mask `first_work_date >= cutoff`,
  * so this loader simply returns whatever the view exposes. The TS-level
  * mask is still applied for defense in depth.
@@ -111,7 +144,9 @@ async function fetchLegacyFacts(params: {
 async function fetchDirectEntryFacts(params: {
   sb: ReturnType<typeof createServiceSupabaseClient>;
   filters: import("./p1-filter").ReportingFilters;
-}): Promise<{ rows: DirectEntryReportingFact[]; count: number } | { error: { code: string; message: string } }> {
+}): Promise<
+  { rows: DirectEntryReportingFact[]; count: number } | { error: { code: string; message: string } }
+> {
   let q = params.sb
     .from("direct_entry_reporting_facts_v01")
     .select(DIRECT_ENTRY_FACT_COLUMNS, { count: "exact" });
@@ -121,7 +156,10 @@ async function fetchDirectEntryFacts(params: {
   if (params.filters.recruiter) q = q.eq("recruiter_key", params.filters.recruiter);
   if (params.filters.provider) q = q.eq("provider_type_key", params.filters.provider);
   if (params.filters.employment) q = q.eq("employment_type_key", params.filters.employment);
+  // ReportingFact grain first; entry_id as the unique tie-breaker (matches
+  // the SQL view's ORDER BY). Same-grain DE entries paginate deterministically.
   for (const col of REPORTING_FACT_ORDER) q = q.order(col);
+  for (const col of DE_TIE_BREAKER_ORDER) q = q.order(col);
 
   const paged = await paginateAll<DirectEntryReportingFact>(async ([from, to]) => {
     const res = await q.range(from, to);
@@ -150,11 +188,42 @@ interface ReportingPlanFactQuery {
 }
 
 /**
+ * Read the runtime blocker helper ONCE per request.
+ *
+ * The blocker helper is INDEPENDENT of `direct_entry_reporting_facts_v01`
+ * (which already applies the >= cutoff mask). It re-counts eligible DE
+ * rows with first_work_date < cutoff directly from
+ * `direct_entries`/`direct_entry_submissions`. The TS seam uses this
+ * number as the authoritative source of truth for the fail-closed check,
+ * so the blocker survives any silent bypass of the SQL view definition.
+ */
+async function fetchCutoverBlockerCount(params: {
+  sb: ReturnType<typeof createServiceSupabaseClient>;
+}): Promise<
+  { count: number } | { error: { code: string; message: string } }
+> {
+  const res = await params.sb.rpc(
+    "direct_entry_reporting_pre_cutover_blocker_count",
+  );
+  if (res.error) {
+    return { error: { code: res.error.code, message: res.error.message } };
+  }
+  // RPC returns the scalar value directly.
+  const count = Number((res.data ?? 0) as unknown);
+  if (!Number.isFinite(count) || count < 0) {
+    return { error: { code: P2_W04A_CUTOVER_FAILED_CODE, message: "blocker count not a non-negative number" } };
+  }
+  return { count };
+}
+
+/**
  * Main read-path entrypoint for the cutover. Returns a `CutoverFetchResult`
- * that extends the P1 `ReportingData` with a reconciliation block. The
- * dashboard treats the returned `data` field identically to the legacy
- * shape; only the additional `legacy_subtotal` / `direct_entry_subtotal` /
- * `overlap_blocker` / `combined_total` / `cutoff_date` fields are new.
+ * whose SUCCESS shape is byte-equivalent to P1 `ReportingFetchResult` so
+ * the dashboard treats it identically.
+ *
+ * Cutover block: a non-zero SQL blocker count or a non-zero TS-side detector
+ * yields `REPORTING_CUTOVER_BLOCKER` BEFORE any partial Dashboard is
+ * constructed. The reconciliation block is attached to the error.
  */
 export async function fetchCutoverReporting(
   params: Record<string, string | string[] | undefined>,
@@ -162,7 +231,14 @@ export async function fetchCutoverReporting(
   try {
     const sb = createServiceSupabaseClient();
 
-    // 1. Legacy scope (data_sources active && !is_test).
+    // 1. Runtime blocker check (one RPC call per request; no N+1).
+    //    Done BEFORE any expensive fact load so a blocker fails fast.
+    const blocker = await fetchCutoverBlockerCount({ sb });
+    if ("error" in blocker) {
+      return { ok: false, code: blocker.error.code, message: blocker.error.message };
+    }
+
+    // 2. Legacy scope (data_sources active && !is_test).
     const sourcesRes = await sb
       .from("data_sources")
       .select("id, drive_file_id, file_name, active, is_test, last_seen_at, last_successful_sync_at")
@@ -170,7 +246,7 @@ export async function fetchCutoverReporting(
       .eq("is_test", false);
     if (sourcesRes.error) throw sourcesRes.error;
     const rawSources = (sourcesRes.data ?? []) as Omit<
-      import("./p1-reporting").ReportingSource,
+      ReportingSource,
       "latest_run_status"
     >[];
     const scopeIds = new Set(rawSources.map((s) => s.id));
@@ -178,14 +254,9 @@ export async function fetchCutoverReporting(
     const parsed = parseReportingFilters(params, scopeIds);
     if (!parsed.ok) return { ok: false, code: parsed.code, message: parsed.message };
 
-    if (scopeIds.size === 0) {
-      // No legacy sources: the dashboard can still render if there are DE
-      // facts. We still go through the full path.
-    }
-
     const scopeIdArray = Array.from(scopeIds);
 
-    // 2. Latest run for each source.
+    // 3. Latest run for each source (legacy scope only — DE is synthetic).
     const latestBySource: Map<string, RunStatus> = new Map();
     if (scopeIdArray.length > 0) {
       const runsRes = await sb
@@ -198,9 +269,7 @@ export async function fetchCutoverReporting(
       }
     }
 
-    const sources: ReportingData["sources"][number] extends never
-      ? never
-      : import("./p1-reporting").ReportingSource[] = rawSources.map((s) => ({
+    const sources: ReportingSource[] = rawSources.map((s) => ({
       ...s,
       latest_run_status: latestBySource.get(s.id) ?? null,
     }));
@@ -211,7 +280,7 @@ export async function fetchCutoverReporting(
     sources.push(P2_W04A_DIRECT_ENTRY_SOURCE);
     scopeIds.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
 
-    // 3. Presence from the legacy view (DISTINCT source_id, data-minimal).
+    // 4. Presence from the legacy view (DISTINCT source_id, data-minimal).
     const sourcesWithFacts = new Set<string>();
     if (scopeIdArray.length > 0) {
       const presenceRes = await sb
@@ -223,8 +292,12 @@ export async function fetchCutoverReporting(
         sourcesWithFacts.add(r.source_id);
       }
     }
+    // DE source is "present" iff its projection view returns >= 1 row.
+    // Tracked via a follow-up count on the projection view below if needed.
+    // We add it lazily after the DE fact load (Blocker 5 / sourcesWithFacts
+    // for empty-state fidelity).
 
-    // 4. Plan and load legacy facts with the date mask applied at the DB.
+    // 5. Plan and load legacy facts with the date mask applied at the DB.
     const plan = buildReportingFactQuery(parsed.filters, scopeIds);
     const legacyFacts: ReportingFact[] = [];
     if (!plan.skip && scopeIdArray.length > 0) {
@@ -242,12 +315,11 @@ export async function fetchCutoverReporting(
       if ("error" in legacyLoad) {
         return { ok: false, code: legacyLoad.error.code, message: legacyLoad.error.message };
       }
-      // Defense-in-depth: mask in TS as well.
       const masked = maskLegacyFacts(legacyLoad.rows);
       legacyFacts.push(...masked);
     }
 
-    // 5. Load Direct Entry projection facts. The SQL view already applies
+    // 6. Load Direct Entry projection facts. The SQL view already applies
     //    the cutoff mask; TS re-applies as a safety net.
     const deLoad = await fetchDirectEntryFacts({ sb, filters: parsed.filters });
     if ("error" in deLoad) {
@@ -256,12 +328,24 @@ export async function fetchCutoverReporting(
     const directEntryFactsRaw = deLoad.rows;
     const maskedDirectEntry = maskDirectEntryFacts(directEntryFactsRaw);
 
-    // 6. Build the reconciliation BEFORE combining. The reconciliation is
-    //    the source of truth for the cutoff blocker.
-    const reconciliation = buildReconciliation({
-      legacyFacts,
-      directEntryFactsRaw,
-    });
+    // Track DE source presence for empty-state fidelity.
+    if (maskedDirectEntry.length > 0) sourcesWithFacts.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
+
+    // 7. Build the reconciliation BEFORE combining. The reconciliation is
+    //    the source of truth for the cutoff blocker. The runtime blocker
+    //    count from step 1 is the AUTHORITATIVE number (it queries DB
+    //    directly, independent of the masked view), so the reconciliation
+    //    inherits it.
+    const legacy_subtotal = legacyFacts.reduce((a, f) => a + f.recruited_count, 0);
+    const direct_entry_subtotal = maskedDirectEntry.length;
+    const reconciliation: CutoverReconciliation = {
+      legacy_subtotal,
+      direct_entry_subtotal,
+      overlap_blocker: blocker.count, // AUTHORITATIVE runtime count
+      combined_total: legacy_subtotal + direct_entry_subtotal,
+      cutoff_date: "2026-10-17",
+    };
+
     if (hasCutoverBlocker(reconciliation)) {
       const err = cutoverBlockerError(reconciliation);
       console.error(
@@ -272,29 +356,17 @@ export async function fetchCutoverReporting(
       return { ok: false, code: err.code, message: err.message, reconciliation };
     }
 
-    // 7. Combine the two sources and feed computeReporting. The synthetic
-    //    DE source_id is in `sources` so `computeReporting` keeps DE rows.
+    // 8. Concatenate the two sources WITHOUT grain-dedupe (Blocker 4).
+    //    computeReporting will sum per grain, so two same-grain DE entries
+    //    correctly contribute 2.
     const combinedFacts = combineReportingFacts(legacyFacts, maskedDirectEntry);
 
     const data = computeReporting(sources, combinedFacts, parsed.filters, sourcesWithFacts);
 
-    // 8. If legacy scope is empty but DE has facts, computeReporting will
-    //    report noSources=true. The dashboard treats that as empty; that's
-    //    acceptable. The reconciliation still records the DE subtotal.
-
-    const combined: CombinedReportingData = {
-      legacy_subtotal: reconciliation.legacy_subtotal,
-      direct_entry_subtotal: reconciliation.direct_entry_subtotal,
-      overlap_blocker: reconciliation.overlap_blocker,
-      combined_total: reconciliation.combined_total,
-      cutoff_date: reconciliation.cutoff_date,
-      data,
-    };
-
-    return { ok: true, data: combined, generatedAt: new Date().toISOString() };
+    return { ok: true, data, generatedAt: new Date().toISOString() };
   } catch (error) {
     logSafeError("p2-w04a-cutover", error);
-    return { ok: false, code: P2_W04A_CUTOVER_FAILED_CODE, message: "Cutover read path failed." };
+    return reportingQueryFailed();
   }
 }
 
@@ -303,11 +375,6 @@ export async function fetchCutoverReporting(
  * function inside a READ ONLY transaction and rolls back. Used by the
  * production read-only script (`scripts/p2-w04a-reconcile.mjs`) and the
  * acceptance tests.
- *
- * Implementation note: this helper does NOT open its own pg client — it
- * returns the SQL that should be executed inside the read-only transaction
- * (BEGIN; SET TRANSACTION READ ONLY; SET LOCAL statement_timeout; <sql>;
- * ROLLBACK;). The script wraps the SQL with the transaction itself.
  */
 export const P2_W04A_RECONCILIATION_SQL = `
   select
@@ -325,9 +392,3 @@ export { P2_W04A_CUTOVER_BLOCKER_CODE, P2_W04A_CUTOVER_FAILED_CODE };
 
 // Suppress unused-import lint when ReportingData is only used as a type.
 export type { ReportingData };
-// Suppress unused-import lint for ReportingFetchResult — not used directly here
-// but the existing module export is kept for compatibility.
-export type { CutoverReportingResult };
-
-// Suppress unused-import lint for paginateAll (already imported above).
-void paginateAll;
