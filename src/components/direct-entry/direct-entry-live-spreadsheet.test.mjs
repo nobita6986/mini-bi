@@ -106,8 +106,9 @@ test("success reload tu server va chi clear staged sau khi server xac nhan", () 
 test("persisted rows read-only theo submission lock, khong mo field ngoai safe mutation", () => {
   assert.match(live, /const editable = row\.state !== "saving" && row\.state !== "conflict" &&/);
   assert.match(live, /isRowEditable\(row, submissions\)/);
-  assert.match(live, /editableFields: editable\s*\n\s*\? \["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]\s*\n\s*: \[\],/);
-  // Field full-profile khac khong duoc them vao persisted editableFields.
+  // R1: employee_code do server cap, khong editable; 4 optional field (STK/Bank/
+  // AccountHolder/Note) chi editable o staged, persisted chi hien thi projection.
+  assert.match(live, /editableFields: editable[\s\S]*\?\s*\["first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]/);
   assert.equal(/editableFields: editable[\s\S]{0,400}account_number/.test(live), false);
 });
 
@@ -122,7 +123,10 @@ test("masked display values are excluded from spreadsheet copy and write sources
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /const value = args\.row\.cells\[args\.column\.key\] \?\? ""/);
   assert.equal(/const value = args\.row\.displayValues/.test(grid), false);
-  assert.match(live, /editableFields: editable\s*\n\s*\? \["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]/);
+  // R1: employee_code do server cap, khong editable tren UI; 4 optional field
+  // (STK/Bank/AccountHolder/Note) chi editable o staged, persisted chi hien thi.
+  assert.match(live, /editableFields: editable[\s\S]*\?\s*\["first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]/);
+  assert.doesNotMatch(live, /editableFields: editable\s*\n\s*\?\s*\["employee_code"/);
   assert.match(live, /CLIPBOARD_PERSISTED_ROW/);
 });
 
@@ -133,33 +137,34 @@ test("spreadsheet is the only live desktop grid and profile hydration is passed 
   assert.match(live, /projectDraftProfileGridCells\(row\.profile\)/);
   assert.match(live, /providerType: row\.providerType \?\? ""/);
   assert.match(live, /team_hint: row\.teamDisplayName/);
-  assert.match(live, /onOpenDraft=\{\(rowId\) => setSelectedRowId\(rowId\)\}/);
+  // R1: selectedRowId duoc set qua rail ngoai (khong con onOpenDraft trong grid).
+  assert.match(live, /setCccdRowId\(persistedRow\.rowId\)/);
   assert.ok(live.indexOf("<DirectEntrySpreadsheetGrid") < live.indexOf("<details className={styles.secondaryPanel}"));
   assert.ok(live.indexOf("<DirectEntrySpreadsheetGrid") < live.indexOf("<DirectEntrySubmissionList"));
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /maxRows: liveDraftRows \+ 100/);
-  assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[\s\S]*DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS/);
+  // R1: grid chi nhan 18 default columns, khong them action rail keys.
+  assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS/);
 });
 
 test("persisted actions reopen the existing drawer; mobile, CCCD, payment and document paths remain", () => {
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
-  // P1.7-H05: action rail ben trong grid chi co row_actions voi Xoa cho
-  // staged row va save_status; CCCD/employee_code da chuyen ra ngoai grid.
-  assert.match(grid, /!row\.clientStaged/);
-  assert.match(grid, /onDeleteRow\(row\.clientRowId\)/);
-  assert.match(grid, /Xóa dòng<\/button>|aria-label="Xóa dòng"/);
-  // P1.7-H05: KHONG con CCCD/employee_code trong grid data columns.
-  assert.equal(grid.includes("Quản lý CCCD"), false,
-    "Quan ly CCCD phai dat ngoai grid");
+  // R1: action rail (× va Hồ sơ) dat NGOAI DataGrid; DataGrid chi nhan 18 cot.
+  assert.doesNotMatch(grid, /aria-label="Xóa dòng"/);
+  assert.doesNotMatch(grid, /Quản lý CCCD/);
+  // CCCD/employee_code khong con la data column.
   assert.equal(grid.includes("Tự sinh khi lưu"), false,
     "employee_code placeholder da chuyen ra ngoai grid");
   assert.equal(grid.includes("Nhân bản"), false);
   assert.equal(grid.includes("Làm trống"), false);
+  // Live side: rail (ben ngoai grid) co nut × cho staged row va Hồ sơ cho persisted.
+  assert.match(live, /row-delete-/);
   assert.match(live, /selectedRowLocked = selectedRow !== null && !isRowEditable\(selectedRow, submissions\)/);
   assert.match(live, /styles\.mobileSection/);
   assert.match(live, /<Dialog\.Root open=\{selectedRow !== null\}/);
   for (const marker of ["DirectEntryCccdManager", "DirectEntryPaymentEditor",
-    "DirectEntryDocumentEditor", "onManageDocuments=", "onEntryVersionChange="]) {
+    "DirectEntryDocumentEditor", "DirectEntrySubmittedDocumentManager",
+    "onEntryVersionChange=", "setCccdRowId"]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
 });

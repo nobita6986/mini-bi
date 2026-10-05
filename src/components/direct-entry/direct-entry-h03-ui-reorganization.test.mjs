@@ -64,11 +64,12 @@ test("only the approved 18 data columns render; action rail is outside that set"
     "account_number", "bank_name", "account_holder_name", "general_note",
   ]);
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 18);
-  // CCCD ho so da chuyen ra ngoai grid (mo bang drawer/dialog rieng cua row).
+  // R1: DataGrid chi nhan 18 default columns. ACTION_RAIL chi con la tap
+  // metadata ngoai DataGrid (cho action rail ben ngoai).
   assert.deepEqual(DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS, ["save_status", "row_actions"]);
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.some((key) =>
     DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS.includes(key)), false);
-  assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[\s\S]*DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS/);
+  assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS/);
   assert.doesNotMatch(grid, /return DIRECT_ENTRY_GRID_COLUMNS\.map\(build\)/);
   assert.deepEqual(DIRECT_ENTRY_GENDER_OPTIONS, ["Nam", "Nữ"]);
   assert.match(grid, /columnKey === "gender"\) return DIRECT_ENTRY_GENDER_OPTIONS/);
@@ -105,22 +106,26 @@ test("provider filtering, recruiter reset, and CCCD/action rail outside grid are
     "employee_code placeholder khong con tren grid");
 });
 
-test("action rail has only staged Remove, frozen controls, and CCCD manager outside grid", () => {
-  // Action rail ben trong grid chi gom save_status + row_actions.
-  assert.match(grid, /key: column\.key, name: headerLabel, width: column\.width, resizable: true, frozen/);
-  // P1.7-H05: chi staged row moi co nut Xoa trong action rail ben trong grid.
-  assert.match(grid, /!row\.clientStaged/);
-  // P1.7-H05: khong con "Quan ly CCCD" trong grid - no da chuyen ra ngoai action rail
-  // ben ngoai grid. Grid chi con Xoa (staged) + save_status.
+test("action rail dat NGOAI grid va chi gom CCCD button (persisted) hoac × (staged)", () => {
+  // P1.7-H05-R1: action rail chuyen hoan toan ra ngoai DataGrid. Grid chi nhan
+  // 18 cot default; khong con cot 'save_status', 'row_actions' hay cccd_documents.
+  // Khong con cot frozen hay callback onManageDocuments trong grid.
+  assert.equal(grid.includes("frozen"), false,
+    "khong con cot frozen trong grid H05");
   assert.equal(grid.includes("Quản lý CCCD"), false,
     "Quan ly CCCD phai dat ngoai grid");
-  // Nut CCCD trong action rail ben ngoai grid (direct-entry-live.tsx) dung
-  // disabled={!row.canManageCccd}.
+  assert.equal(grid.includes("Lưu dòng trước"), false);
+  assert.equal(/onManageDocuments=\{[^}]*\(clientRowId\)/.test(live), false,
+    "onManageDocuments da chuyen khoi grid sang rail ngoai");
+  assert.equal(grid.includes("aria-label=\"Xóa dòng\""), false,
+    "nut × cua staged row da chuyen ra ngoai DataGrid");
+  // Live side: rail ben ngoai grid su dung setCccdRowId va aria-label tha ngu canh.
+  assert.match(live, /setCccdRowId\(persistedRow\.rowId\)/);
   assert.match(live, /disabled=\{!row\.canManageCccd\}/);
-  assert.match(live, /row\.canManageCccd \? "Hồ sơ" : "Tải hồ sơ"/);
-  assert.match(live, /Lưu dòng trước/);
+  assert.match(live, /\{row\.canManageCccd \? "Hồ sơ" : "Tải hồ sơ"\}/);
+  assert.match(live, /aria-label=\{row\.canManageCccd \? `Hồ sơ \$\{row\.employeeCode\}` : "Tải hồ sơ"\}/);
+  assert.match(live, /data-testid=\{`row-delete-\$\{row\.clientRowId\}`\}/);
   assert.doesNotMatch(grid, /Nhân bản|Làm trống/);
   assert.match(live, /persisted: row\.entryId !== null/);
   assert.match(live, /onDeleteRow=\{onStagedDelete\}/);
-  assert.match(live, /onManageDocuments=\{[^}]*\(clientRowId\)/);
 });

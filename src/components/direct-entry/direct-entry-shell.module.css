@@ -150,6 +150,27 @@
   display: block;
 }
 
+/* P1.7-H05-R1: dat grid va action rail tren cung mot hang (desktop);
+   rail nam ben phai va khong cuon theo 18 cot du lieu cua grid. */
+.gridWithRail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  .gridWithRail {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+  .gridWithRail > .gridSection {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
 .actionRail {
   display: flex;
   flex-direction: column;
@@ -165,6 +186,55 @@
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+}
+
+.actionRailDesktop {
+  display: none;
+}
+
+.actionRailDesktopList {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.actionRailDesktopItem {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  padding: 0 4px;
+}
+
+.actionRailDesktopItem[data-rail-state="persisted"] {
+  background: color-mix(in srgb, var(--background, #f4f4f5) 60%, var(--surface, #fff));
+}
+
+@media (min-width: 1024px) {
+  .actionRailDesktop {
+    display: flex;
+    flex: 0 0 88px;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 10px 6px;
+    border: 1px solid var(--border, #d4d4d8);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--background, #f4f4f5) 40%, var(--surface, #fff));
+    position: sticky;
+    top: 12px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .actionRailDesktop > .actionRailTitle {
+    text-align: center;
+    font-size: 12px;
+  }
 }
 
 .actionRailRow {
@@ -476,6 +546,21 @@
   color: var(--foreground);
   padding: 8px 10px;
   font: inherit;
+}
+
+.field output {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--background) 50%, var(--surface));
+  color: var(--muted);
+  padding: 8px 10px;
+  font: inherit;
+  font-style: italic;
 }
 
 .field input:focus-visible,

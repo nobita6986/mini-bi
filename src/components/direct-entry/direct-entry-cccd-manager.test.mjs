@@ -39,14 +39,15 @@ test("cot 'Ho so CCCD' hien dung ba trang thai va nut quan ly bi khoa khi chua l
   // mobile/quick editor, KHONG con nam trong react-data-grid data column.
   assert.equal(grid.includes("{row.cccdStatus}"), false,
     "cccdStatus khong con la data cell cua grid");
-  // P1.7-H05: nut Quan ly CCCD dat ngoai grid (action rail) voi disabled rule
-  // tuong duong (`!row.canManageCccd` vi cccd_documents da chuyen ra rail).
-  // Hien thi label "Hồ sơ" khi co the quan ly, "Tải hồ sơ" khi chua luu dong.
+  // R1: action rail ben ngoai grid dung disabled={!row.canManageCccd}.
   assert.match(live, /disabled=\{!row\.canManageCccd\}/);
-  assert.match(live, /onManageDocuments=\{[^}]*\(clientRowId\)/);
+  // R1: callback CCCD duoc goi qua setCccdRowId; "onManageDocuments={...}" da
+  // bi loai khoi props cua DirectEntrySpreadsheetGrid (chuyen sang rail ngoai).
+  assert.match(live, /setCccdRowId\(persistedRow\.rowId\)/);
   assert.match(live, /\{row\.canManageCccd \? "Hồ sơ" : "Tải hồ sơ"\}/);
   assert.match(live, /aria-label=\{row\.canManageCccd \? `Hồ sơ \$\{row\.employeeCode\}` : "Tải hồ sơ"\}/);
-  assert.match(live, /Lưu dòng trước/);
+  // R1: khong con placeholder "Lưu dòng trước" trong rail ngoai (chi Hồ sơ / ×).
+  assert.doesNotMatch(live, /Lưu dòng trước/);
   assert.equal(grid.includes("fetch("), false, "o luoi chi doc cache, khong goi API");
   assert.match(status, /entryId === null \|\| entryId === ""/);
   assert.match(status, /CCCD_UNSAVED_LABEL = "Chưa lưu"/);

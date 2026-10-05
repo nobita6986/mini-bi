@@ -936,14 +936,19 @@ export function DirectEntryLive() {
   const ADD_STAGED_ROW_BATCH = 10;
   const addStagedRows = useCallback(() => {
     setStagedModel((current) => {
-      const nonEmpty = selectNonEmptySpreadsheetRows(current).length;
-      if (nonEmpty + ADD_STAGED_ROW_BATCH > SPREADSHEET_MAX_DATA_ROWS) {
+      // R1: check dua tren tong staged rows hien co, khong phai so non-empty.
+      // Gioi han 100 row; neu con duoi 10 vi tri thi KHONG them mot phan.
+      if (current.rows.length + ADD_STAGED_ROW_BATCH > SPREADSHEET_MAX_DATA_ROWS) {
         setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu; không thêm được 10 dòng mới.");
         return current;
       }
       return ensureSpreadsheetRowCount(current, current.rows.length + ADD_STAGED_ROW_BATCH);
     });
   }, [setStagedModel, setStagedMessage]);
+
+  const canAddStagedRows = useCallback((model: SpreadsheetRowModel) =>
+    model.rows.length + ADD_STAGED_ROW_BATCH <= SPREADSHEET_MAX_DATA_ROWS,
+  []);
 
   /**
    * P1.7-H05 §9.B: nút "Thêm nhanh NLĐ" — chọn một staged row trống và mở editor.
@@ -959,8 +964,7 @@ export function DirectEntryLive() {
         setQuickEditClientRowId(emptyRow.clientRowId);
         return current;
       }
-      const nonEmpty = selectNonEmptySpreadsheetRows(current).length;
-      if (nonEmpty + 1 > SPREADSHEET_MAX_DATA_ROWS) {
+      if (current.rows.length + 1 > SPREADSHEET_MAX_DATA_ROWS) {
         setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu; không mở thêm NLĐ mới.");
         return current;
       }
@@ -1030,6 +1034,8 @@ export function DirectEntryLive() {
         displayValues: profileCells.displayValues,
         cells: {
           ...profileCells.cells,
+          // P1.7-H05-R1: Mã NLĐ chi de hien thi (output), khong sua; cell key
+          // van render gia tri hien tai de rail/drawer doc duoc.
           employee_code: row.employeeCode,
           first_work_date: row.firstWorkDate,
           display_name: row.workerName,
@@ -1043,7 +1049,10 @@ export function DirectEntryLive() {
             : employmentStatusLabel,
         },
         editableFields: editable
-          ? ["employee_code", "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"]
+          // P1.7-H05-R1: Mã NLĐ do server cấp; khong sua tren UI. 4 optional
+          // field (STK/Bank/AccountHolder/Note) chi editable khi staged; duoc
+          // hien thi read-only tren persisted (projection qua profileCells).
+          ? ["first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"]
           : [],
         employeeCode: row.employeeCode,
         displayName: row.workerName,
@@ -1082,16 +1091,20 @@ export function DirectEntryLive() {
     clientRowId: string,
     patch: Readonly<Record<string, string>>,
   ) => {
+    // P1.7-H05-R1: Mã NLĐ do server cấp; bo qua patch.employee_code de tranh
+    // phat sinh mutation tren UI.
+    const safePatch: Readonly<Record<string, string>> = patch.employee_code !== undefined
+      ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== "employee_code"))
+      : patch;
     const persistedRow = rows.find((row) => row.rowId === clientRowId);
     if (persistedRow) {
       const draftPatch: Partial<EditableDraftFields> = {};
-      if (patch.employee_code !== undefined) draftPatch.employeeCode = patch.employee_code;
-      if (patch.first_work_date !== undefined) draftPatch.firstWorkDate = patch.first_work_date;
-      if (patch.display_name !== undefined) draftPatch.workerName = patch.display_name;
-      if (patch.project_id !== undefined) draftPatch.projectId = patch.project_id;
-      if (patch.recruiter_id !== undefined) draftPatch.recruiterId = patch.recruiter_id;
-      if (patch.labor_type !== undefined) {
-        draftPatch.laborType = patch.labor_type === "Chính thức" ? "PERMANENT" : "TEMPORARY";
+      if (safePatch.first_work_date !== undefined) draftPatch.firstWorkDate = safePatch.first_work_date;
+      if (safePatch.display_name !== undefined) draftPatch.workerName = safePatch.display_name;
+      if (safePatch.project_id !== undefined) draftPatch.projectId = safePatch.project_id;
+      if (safePatch.recruiter_id !== undefined) draftPatch.recruiterId = safePatch.recruiter_id;
+      if (safePatch.labor_type !== undefined) {
+        draftPatch.laborType = safePatch.labor_type === "Chính thức" ? "PERMANENT" : "TEMPORARY";
       }
       if (Object.keys(draftPatch).length === 0) return;
       setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
@@ -1101,8 +1114,8 @@ export function DirectEntryLive() {
       return;
     }
     setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
-      ...patch,
-      ...(patch.first_work_date !== undefined ? { recruiter_id: "" } : {}),
+      ...safePatch,
+      ...(safePatch.first_work_date !== undefined ? { recruiter_id: "" } : {}),
     }));
   }, [ensureCatalog, rows, setStagedModel]);
 
@@ -1362,6 +1375,84 @@ export function DirectEntryLive() {
     }
   }, [reloadDrafts, setStagedModel, stagedValidation]);
 
+  /**
+   * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
+   * dang mo (quickEditClientRowId). Khong gui bat ky staged row nao khac.
+   * Idempotency digest/key duoc tinh tren selection thuc su gui di; cac row
+   * staged con lai giu nguyen cho den khi user luu rieng.
+   * - Thanh cong: chi remove row vua luu (con lai giu nguyen), reload persisted
+   *   drafts va dong quick editor.
+   * - Loi/retry/OCC: giu row va du lieu, khong dong editor, giu dung
+   *   retry/idempotency semantics.
+   * - Khong ghi nhan thanh cong truoc khi server xac nhan; khong tao endpoint moi.
+   */
+  const onQuickSaveRow = useCallback(async (clientRowId: string) => {
+    if (stagedInFlight.current) return;
+    const target = stagedModel.rows.find((row) => row.clientRowId === clientRowId);
+    if (!target) {
+      setStagedMessage("Dòng đã đóng hoặc không còn tồn tại.");
+      return;
+    }
+    // Loc preview chi giu row dang mo, giu nguyen preview validation logic cua H05.
+    const fullPreview = stagedValidation.preview;
+    if (fullPreview === null) {
+      setStagedMessage("Chưa có dòng hợp lệ để lưu.");
+      return;
+    }
+    // P1.7-H05-R1: mapping clientRowId -> preview row thong qua validation.rows
+    // (validation.rows co cung thu tu voi preview.rows nen tao anh xa 1:1).
+    const matchingPreviewIndex = stagedValidation.rows.findIndex((row) =>
+      row.clientRowId === clientRowId);
+    const matchingPreview = matchingPreviewIndex >= 0
+      ? fullPreview.rows[matchingPreviewIndex]
+      : undefined;
+    if (!matchingPreview) {
+      setStagedMessage("Dòng đang mở chưa hợp lệ; hãy kiểm tra lại dữ liệu.");
+      return;
+    }
+    const body = buildServerGeneratedFullProfileRequestBody([matchingPreview]);
+    if (body === null) {
+      setStagedMessage(fullProfileErrorMessage("BATCH_INVALID"));
+      return;
+    }
+    const digest = await fullProfileIntentDigest(body.rows);
+    if (digest === null) {
+      setStagedMessage("Không tạo được dấu vết yêu cầu; hãy thử lại.");
+      return;
+    }
+    const intent = "quick_full_profile_row:" + clientRowId + ":" + digest;
+    const resolved = resolveIntentKey(stagedIntent.current, intent, () => crypto.randomUUID());
+    stagedIntent.current = resolved.state;
+    stagedInFlight.current = true;
+    setStagedBusy(true);
+    setStagedMessage("");
+    try {
+      const result = await postFullProfileBatch({
+        rows: body.rows,
+        idempotencyKey: resolved.key,
+        fetchImpl: fetch,
+      });
+      if (result.kind === "saved") {
+        stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
+        // Chi remove row vua luu (goc clientRowId), giu nguyen cac staged row khac.
+        setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
+        setQuickEditClientRowId(null);
+        await reloadDrafts();
+        setStagedMessage("Đã lưu NLĐ bằng một yêu cầu atomic. Các dòng còn lại trong bảng giữ nguyên.");
+        return;
+      }
+      if (result.kind === "retry") {
+        setStagedMessage(fullProfileErrorMessage(result.code));
+        return;
+      }
+      stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
+      setStagedMessage(fullProfileErrorMessage(result.code));
+    } finally {
+      stagedInFlight.current = false;
+      setStagedBusy(false);
+    }
+  }, [reloadDrafts, setStagedModel, stagedModel, stagedValidation, setQuickEditClientRowId]);
+
   const updateDate = useCallback((rowId: string, firstWorkDate: string) => {
     updateRow(rowId, { firstWorkDate, recruiterId: "" });
     if (isRealCalendarDate(firstWorkDate)) void ensureCatalog(firstWorkDate).catch(() => {});
@@ -1408,7 +1499,7 @@ export function DirectEntryLive() {
           <button type="button" className={styles.secondaryButton}
             data-testid="add-rows-batch"
             onClick={addStagedRows}
-            disabled={loadState !== "ready"}>
+            disabled={loadState !== "ready" || !canAddStagedRows(stagedModel)}>
             Thêm dòng
           </button>
           <button type="button" className={styles.secondaryButton}
@@ -1445,86 +1536,80 @@ export function DirectEntryLive() {
 
       {loadState === "ready" && (
         <>
-          <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
-            {stagedRejection !== "" && (
-              <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
-            )}
-            {stagedValidation.firstError !== null && (
-              <button type="button" data-testid="spreadsheet-first-error"
-                onClick={() => {
-                  const index = stagedValidation.rowOrder.indexOf(
-                    stagedValidation.firstError?.clientRowId ?? "");
-                  setStagedMessage(
-                    "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
-                    (stagedValidation.firstError?.columnKey ?? "") + ".");
-                }}>
-                Đi tới lỗi đầu tiên
-              </button>
-            )}
-            <DirectEntrySpreadsheetGrid
-              rows={spreadsheetRows}
-              validation={stagedValidation}
-              catalogOptions={stagedCatalogOptions}
-              onCellsChange={onSpreadsheetCellsChange}
-              onProviderTypeChange={onStagedProviderTypeChange}
-              onPasteApplied={onStagedPaste}
-              onPasteRejected={onStagedPasteRejected}
-              onDeleteRow={onStagedDelete}
-              onOpenDraft={(rowId) => setSelectedRowId(rowId)}
-              onManageDocuments={(clientRowId) => {
-                const persistedRow = rows.find((row) => row.rowId === clientRowId);
-                if (persistedRow) setCccdRowId(persistedRow.rowId);
-              }}
-              notice={stagedNotice}
-              canUndo={stagedCanUndo}
-              onUndo={onStagedUndo}
-              saveMessage={stagedMessage}
-            />
-          </section>
-          <section className={styles.actionRail} aria-label="Thao tác theo dòng">
-            <p className={styles.actionRailTitle}>Hồ sơ &amp; thao tác theo dòng</p>
-            {spreadsheetRows.length === 0 && (
-              <p className={styles.actionRailLabel}>Chưa có dòng nào trong bảng.</p>
-            )}
-            {spreadsheetRows.map((row) => row.persisted
-              ? (
-                <div key={row.clientRowId} className={styles.actionRailRow}>
-                  <span className={styles.actionRailLabel}>
-                    {row.employeeCode || "Dòng đã lưu"} · {row.displayName || "Chưa nhập họ tên"}
-                  </span>
-                  <button type="button" className={styles.actionRailButton}
-                    aria-label={row.canManageCccd ? `Hồ sơ ${row.employeeCode}` : "Tải hồ sơ"}
-                    disabled={!row.canManageCccd}
-                    onClick={() => {
-                      const persistedRow = rows.find((entry) => entry.rowId === row.clientRowId);
-                      if (persistedRow) setCccdRowId(persistedRow.rowId);
-                    }}>
-                    {row.canManageCccd ? "Hồ sơ" : "Tải hồ sơ"}
-                  </button>
-                </div>
-              )
-              : (
-                <div key={row.clientRowId} className={styles.actionRailRow}>
-                  <span className={styles.actionRailLabel}>
-                    Dòng đang nhập · {row.displayName || "Chưa nhập họ tên"}
-                  </span>
-                  <button type="button" className={styles.actionRailButton}
-                    aria-label="Lưu dòng trước"
-                    title="Lưu dòng trước"
-                    disabled>
-                    Lưu dòng trước
-                  </button>
-                  <button type="button" className={styles.actionRailDeleteButton}
-                    aria-label="Xóa dòng"
-                    title="Xóa dòng"
-                    data-testid={`row-delete-${row.clientRowId}`}
-                    onClick={() => onStagedDelete(row.clientRowId)}>
-                    ×
-                  </button>
-                </div>
-              ),
-            )}
-          </section>
+          <div className={styles.gridWithRail}>
+            <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
+              {stagedRejection !== "" && (
+                <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
+              )}
+              {stagedValidation.firstError !== null && (
+                <button type="button" data-testid="spreadsheet-first-error"
+                  onClick={() => {
+                    const index = stagedValidation.rowOrder.indexOf(
+                      stagedValidation.firstError?.clientRowId ?? "");
+                    setStagedMessage(
+                      "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
+                      (stagedValidation.firstError?.columnKey ?? "") + ".");
+                  }}>
+                  Đi tới lỗi đầu tiên
+                </button>
+              )}
+              <DirectEntrySpreadsheetGrid
+                rows={spreadsheetRows}
+                validation={stagedValidation}
+                catalogOptions={stagedCatalogOptions}
+                onCellsChange={onSpreadsheetCellsChange}
+                onProviderTypeChange={onStagedProviderTypeChange}
+                onPasteApplied={onStagedPaste}
+                onPasteRejected={onStagedPasteRejected}
+                onDeleteRow={onStagedDelete}
+                notice={stagedNotice}
+                canUndo={stagedCanUndo}
+                onUndo={onStagedUndo}
+                saveMessage={stagedMessage}
+              />
+            </section>
+            <aside className={styles.actionRailDesktop} aria-label="Thao tác theo dòng"
+              data-testid="desktop-action-rail">
+              <p className={styles.actionRailTitle}>Thao tác</p>
+              {spreadsheetRows.length === 0 && (
+                <p className={styles.actionRailLabel}>Chưa có dòng nào trong bảng.</p>
+              )}
+              <ul className={styles.actionRailDesktopList}>
+                {spreadsheetRows.map((row) => row.persisted
+                  ? (
+                    <li key={row.clientRowId}
+                      className={styles.actionRailDesktopItem}
+                      data-row-index={row.clientRowId}
+                      data-rail-state="persisted">
+                      <button type="button" className={styles.actionRailButton}
+                        aria-label={row.canManageCccd ? `Hồ sơ ${row.employeeCode}` : "Tải hồ sơ"}
+                        disabled={!row.canManageCccd}
+                        onClick={() => {
+                          const persistedRow = rows.find((entry) => entry.rowId === row.clientRowId);
+                          if (persistedRow) setCccdRowId(persistedRow.rowId);
+                        }}>
+                        {row.canManageCccd ? "Hồ sơ" : "Tải hồ sơ"}
+                      </button>
+                    </li>
+                  )
+                  : (
+                    <li key={row.clientRowId}
+                      className={styles.actionRailDesktopItem}
+                      data-row-index={row.clientRowId}
+                      data-rail-state="staged">
+                      <button type="button" className={styles.actionRailDeleteButton}
+                        aria-label="Xóa dòng"
+                        title="Xóa dòng"
+                        data-testid={`row-delete-${row.clientRowId}`}
+                        onClick={() => onStagedDelete(row.clientRowId)}>
+                        ×
+                      </button>
+                    </li>
+                  ),
+                )}
+              </ul>
+            </aside>
+          </div>
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}
 
           <details className={styles.secondaryPanel}>
@@ -1900,7 +1985,7 @@ export function DirectEntryLive() {
                 <div className={styles.quickDrawerActions}>
                   <button type="button" className={styles.primaryButton}
                     data-testid="quick-save-row"
-                    onClick={() => void onStagedSave()}>
+                    onClick={() => void onQuickSaveRow(target.clientRowId)}>
                     Lưu NLĐ
                   </button>
                   <button type="button" className={styles.secondaryButton}
@@ -1941,9 +2026,12 @@ export function DirectEntryLive() {
               )}
               <div className={styles.drawerFields}>
                 <Field label="Mã người lao động">
-                  <input aria-label="Mã người lao động" value={selectedRow.employeeCode}
-                    disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
-                    onChange={(event) => updateRow(selectedRow.rowId, { employeeCode: event.target.value })} />
+                  {/* P1.7-H05-R1: Mã NLĐ do server cấp (migration #39).
+                      Khong cho nhap hoac sua; chi hien thi ma da cap bang <output>. */}
+                  <output aria-label="Mã người lao động"
+                    data-testid="persisted-employee-code">
+                    {selectedRow.employeeCode || "Máy chủ sẽ cấp mã khi lưu"}
+                  </output>
                 </Field>
                 <Field label={<><span>Ngày đầu tiên đi làm</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <input aria-label="Ngày đầu tiên đi làm" type="date" value={selectedRow.firstWorkDate}

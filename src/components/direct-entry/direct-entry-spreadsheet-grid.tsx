@@ -28,11 +28,9 @@ import {
 import "react-data-grid/lib/styles.css";
 
 import {
-  DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS,
   DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS,
   DIRECT_ENTRY_GENDER_OPTIONS,
   DIRECT_ENTRY_LABOR_TYPE_OPTIONS,
-  DIRECT_ENTRY_PROVIDER_OPTIONS,
   recruitersForProvider,
   directEntryGridColumn,
   type DirectEntryGridColumn,
@@ -100,8 +98,6 @@ export type DirectEntrySpreadsheetGridProps = {
   onPasteApplied(request: SpreadsheetPasteRequest): void;
   onPasteRejected(reason: SpreadsheetPasteRejection): void;
   onDeleteRow(clientRowId: string): void;
-  onOpenDraft?(clientRowId: string): void;
-  onManageDocuments?(clientRowId: string): void;
   notice: string;
   canUndo: boolean;
   onUndo(): void;
@@ -227,7 +223,7 @@ function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { colum
 export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProps) {
   const {
     rows, validation, catalogOptions, onCellsChange, onPasteApplied, onPasteRejected,
-    onProviderTypeChange, onDeleteRow, onOpenDraft, onManageDocuments,
+    onProviderTypeChange, onDeleteRow,
     notice, canUndo, onUndo, saveMessage,
   } = props;
 
@@ -245,39 +241,10 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     const build = (column: DirectEntryGridColumn): Column<SpreadsheetGridRow> => {
       const editable = column.editor !== "readonly" && column.editor !== "action" &&
         (column.key === "provider_type" || column.pasteMode === "write");
-      const frozen = column.group === "action" || column.key === "save_status" ? "end" as const : undefined;
       const headerLabel = column.required
         ? <span><span>{column.label}</span><span className={styles.requiredMark} aria-hidden="true"> *</span><span className={styles.srOnly}> (bắt buộc)</span></span>
         : column.label;
 
-      if (column.key === "row_actions") {
-        return {
-          key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
-          cellClass: styles.actionRailCell,
-          headerCellClass: styles.actionRailHeader,
-          // P1.7-H05: action rail NGOAI grid — chi icon X do xoa staged row.
-          // Persisted row khong co icon xoa (theo rule H05 §8).
-          renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => row.clientStaged
-            ? (
-              <button
-                type="button"
-                className={styles.deleteRowButton}
-                aria-label="Xóa dòng"
-                title="Xóa dòng"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDeleteRow(row.clientRowId);
-                }}
-              >×</button>
-            )
-            : <span aria-hidden="true" />,
-        };
-      }
-      // P1.7-H05: cccd_documents da chuyen ra ngoai grid (action rail ben ngoai).
-      // Trong grid chi con save_status va row_actions.
-      if (column.key === "cccd_documents") {
-        return null as unknown as Column<SpreadsheetGridRow>;
-      }
 
       const renderCell = ({ row }: RenderCellProps<SpreadsheetGridRow>) => {
         const issue = issueFor(row, column.key);
@@ -285,7 +252,6 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           if (row.displayValues && Object.hasOwn(row.displayValues, column.key)) {
             return row.displayValues[column.key];
           }
-          if (column.key === "save_status") return row.saveStatus;
           if (column.key === "display_name") return row.displayName;
           if (column.key === "project_id") return row.projectLabel;
           if (column.key === "provider_type") return row.providerType.toUpperCase();
@@ -305,14 +271,13 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       if (!editable) {
         return {
           key: column.key, name: headerLabel, width: column.width, resizable: true,
-          frozen, cellClass: frozen ? styles.actionRailCell : undefined,
-          headerCellClass: frozen ? styles.actionRailHeader : undefined, renderCell,
+          renderCell,
         };
       }
 
       if (column.editor === "select" || column.editor === "catalog") {
         return {
-          key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
+          key: column.key, name: headerLabel, width: column.width, resizable: true,
           editable: (row: SpreadsheetGridRow) => column.key === "provider_type"
             ? row.clientStaged
             : isEditable(row, column.key) &&
@@ -326,7 +291,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       }
       if (column.editor === "date") {
         return {
-          key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
+          key: column.key, name: headerLabel, width: column.width, resizable: true,
           editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (
@@ -335,7 +300,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
         };
       }
       return {
-        key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
+        key: column.key, name: headerLabel, width: column.width, resizable: true,
         editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
         renderCell,
         renderEditCell: renderTextEditor,
@@ -344,11 +309,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     const dataColumns = DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS
       .map((key) => directEntryGridColumn(key))
       .filter((column): column is DirectEntryGridColumn => column !== undefined);
-    const actionColumns = DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS
-      .map((key) => directEntryGridColumn(key))
-      .filter((column): column is DirectEntryGridColumn => column !== undefined);
-    return [...dataColumns, ...actionColumns].map(build).filter((c): c is Column<SpreadsheetGridRow> =>
-      c !== null && c !== undefined);
+    return dataColumns.map(build);
   }, [catalogOptions, isEditable, issueFor, onDeleteRow, rowIndexOf]);
 
   const onRowsChange = useCallback((next: SpreadsheetGridRow[]) => {

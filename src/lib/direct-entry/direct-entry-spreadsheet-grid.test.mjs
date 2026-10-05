@@ -25,10 +25,9 @@ test("registry co dung 28 cot (27 contract + provider_type UI) va thu tu vat ly 
 });
 
 test("grid render cot tu registry, khong hard-code danh sach cot", () => {
-  // P1.7-H05: grid su dung DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS va
-  // DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS, khong render full registry.
+  // P1.7-H05-R1: DataGrid chi nhan 18 default columns; status/action/document
+  // khong con nam trong DataGrid.
   assert.match(source, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS/);
-  assert.match(source, /DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS/);
   assert.equal(source.includes('name: "Mã NLĐ"'), false, "khong duoc hard-code ten cot");
 });
 
@@ -89,7 +88,9 @@ test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia 
   // P1.7-H05: dropdown vocabulary su dung hang so import tu direct-entry-grid-columns.
   assert.match(source, /DIRECT_ENTRY_GENDER_OPTIONS/);
   assert.match(source, /DIRECT_ENTRY_LABOR_TYPE_OPTIONS/);
-  assert.match(source, /DIRECT_ENTRY_PROVIDER_OPTIONS/);
+  // provider_type options are defined as a local const to keep the registry
+  // contract surface area separate.
+  assert.match(source, /PROVIDER_OPTIONS/);
   // Khong con LABOR_TYPE_OPTIONS hay STATUS_OPTIONS hard-code.
   assert.equal(source.includes("Toàn thời gian"), false,
     "P1.7-H05: UI khong con hien thi 'Toan thoi gian'");
@@ -103,10 +104,12 @@ test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia 
     "khong hard-code UUID catalog");
 });
 
-test("thao tac dong: chi Xoa cho staged row, khong co API xoa", () => {
-  // P1.7-H05: chi giu Xoa (staged), CCCD/employee_code/duplicate/clear da chuyen
-  // ra ngoai grid (action rail ben ngoai) hoac bi loai bo.
-  assert.match(source, /onDeleteRow\(row\.clientRowId\)/);
+test("thao tac dong: chi Xoa cho staged row o RAIL NGOAI grid, khong goi tu DataGrid", () => {
+  // P1.7-H05-R1: nut Xoa cua staged row da chuyen ra ngoai DataGrid vao rail
+  // ngoai cung cap. Trong DataGrid khong con goi truc tiep onDeleteRow.
+  assert.equal(source.includes("onDeleteRow(row.clientRowId)"), false,
+    "DataGrid khong con goi onDeleteRow truc tiep o H05-R1");
+  assert.match(source, /onDeleteRow/);
   // Khong con Clear/Duplicate/Nhan ban trong grid.
   assert.equal(source.includes("onClearRow"), false,
     "khong con Clear row trong grid H05");
