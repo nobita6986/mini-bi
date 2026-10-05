@@ -150,6 +150,143 @@
   display: block;
 }
 
+.actionRail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background, #f4f4f5) 40%, var(--surface, #fff));
+}
+
+.actionRailTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.actionRailRow {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed var(--border, #e4e4e7);
+}
+
+.actionRailRow:last-child {
+  border-bottom: none;
+}
+
+.actionRailLabel {
+  font-size: 13px;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actionRailButton {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.actionRailButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.actionRailDeleteButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #dc2626;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.actionRailDeleteButton:hover {
+  background: #fee2e2;
+}
+
+.actionRailDeleteButton:focus-visible {
+  outline: 3px solid #dc2626;
+  outline-offset: 2px;
+}
+
+.quickDrawer {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: flex;
+  width: 100vw;
+  max-width: 100vw;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  color: var(--foreground);
+  padding: 20px;
+}
+
+@media (min-width: 768px) {
+  .quickDrawer {
+    inset: 0 0 0 auto;
+    width: min(520px, 100vw);
+    border-left: 1px solid var(--border, #d4d4d8);
+  }
+}
+
+.quickDrawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.quickDrawerTitle {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.quickDrawerFields {
+  display: grid;
+  gap: 12px;
+}
+
+.quickDrawerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+  border-top: 1px solid var(--border, #d4d4d8);
+  padding-top: 16px;
+}
+
+.requiredStar {
+  color: #dc2626;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
 .gridHint {
   margin: 0 0 8px;
   color: var(--muted);
@@ -211,6 +348,16 @@
 .mobileStagedCard summary {
   cursor: pointer;
   font-weight: 700;
+}
+
+.mobileStagedFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--border, #d4d4d8);
+  margin-top: 10px;
+  padding-top: 10px;
 }
 
 .rowCard {

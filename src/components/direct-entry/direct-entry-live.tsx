@@ -87,6 +87,7 @@ import {
 } from "@/lib/direct-entry/direct-entry-grid-clipboard";
 import {
   SPREADSHEET_WRITABLE_FIELD_KEYS,
+  SPREADSHEET_MAX_DATA_ROWS,
   createSpreadsheetRowModel,
   deleteSpreadsheetRow,
   ensureSpreadsheetRowCount,
@@ -271,7 +272,7 @@ function Field({
   label,
   children,
 }: {
-  label: string;
+  label: React.ReactNode;
   children: React.ReactNode;
 }) {
   return <label className={styles.field}><span>{label}</span>{children}</label>;
@@ -741,9 +742,10 @@ export function DirectEntryLive() {
 
   const [stagedModel, setStagedModel] = useState<SpreadsheetRowModel>(() => createSpreadsheetRowModel());
 
-  const addStagedRow = useCallback(() => {
-    setStagedModel((current) => ensureSpreadsheetRowCount(current, current.rows.length + 1));
-  }, [setStagedModel]);
+  // P1.7-H05 §9.A & §9.B: handlers cho nut "Thêm dòng" / "Thêm nhanh NLĐ" duoc
+  // dinh nghia ben duoi sau khi stagedMessage, setStagedMessage, quickEditClientRowId
+  // va setQuickEditClientRowId da duoc khai bao (tranh "Cannot access variable
+  // before it is declared" do React Compiler).
 
   const saveRow = useCallback(async (rowId: string) => {
     const current = rowsRef.current.find((row) => row.rowId === rowId);
@@ -920,10 +922,56 @@ export function DirectEntryLive() {
   const [stagedBusy, setStagedBusy] = useState(false);
   const [stagedCanUndo, setStagedCanUndo] = useState(false);
   const [xlsxMessage, setXlsxMessage] = useState("");
+  // P1.7-H05 §9.B: clientRowId cua row dang mo quick editor (drawer/dialog nhap nhanh).
+  const [quickEditClientRowId, setQuickEditClientRowId] = useState<string | null>(null);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
   const stagedIntent = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const stagedUndo = useRef<ClipboardUndoSnapshot | null>(null);
   const stagedInFlight = useRef(false);
+
+  /**
+   * P1.7-H05 §9.A: nút "Thêm dòng" — mỗi lần bấm thêm đúng 10 staged rows.
+   * Neu khong con du cho 10 row (gioi han 100 data) thi KHONG them mot phan.
+   */
+  const ADD_STAGED_ROW_BATCH = 10;
+  const addStagedRows = useCallback(() => {
+    setStagedModel((current) => {
+      const nonEmpty = selectNonEmptySpreadsheetRows(current).length;
+      if (nonEmpty + ADD_STAGED_ROW_BATCH > SPREADSHEET_MAX_DATA_ROWS) {
+        setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu; không thêm được 10 dòng mới.");
+        return current;
+      }
+      return ensureSpreadsheetRowCount(current, current.rows.length + ADD_STAGED_ROW_BATCH);
+    });
+  }, [setStagedModel, setStagedMessage]);
+
+  /**
+   * P1.7-H05 §9.B: nút "Thêm nhanh NLĐ" — chọn một staged row trống và mở editor.
+   * Neu khong co row trang thi tao moi (gioi han 100) va mo drawer editor cua row do.
+   */
+  const openQuickEditor = useCallback((clientRowId: string) => {
+    setQuickEditClientRowId(clientRowId);
+  }, [setQuickEditClientRowId]);
+  const addQuickStagedRow = useCallback(() => {
+    setStagedModel((current) => {
+      const emptyRow = current.rows.find(spreadsheetRowIsBlank);
+      if (emptyRow) {
+        setQuickEditClientRowId(emptyRow.clientRowId);
+        return current;
+      }
+      const nonEmpty = selectNonEmptySpreadsheetRows(current).length;
+      if (nonEmpty + 1 > SPREADSHEET_MAX_DATA_ROWS) {
+        setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu; không mở thêm NLĐ mới.");
+        return current;
+      }
+      const next = ensureSpreadsheetRowCount(current, current.rows.length + 1);
+      // Tao row moi (chinh la row cuoi cung sau khi append):
+      const newRow = next.rows[next.rows.length - 1];
+      if (newRow) setQuickEditClientRowId(newRow.clientRowId);
+      return next;
+    });
+  }, [setStagedModel, setStagedMessage, setQuickEditClientRowId]);
+
 
   const stagedCatalogSource = useCallback((date: string) => {
     const catalog = catalogs[date];
@@ -989,7 +1037,7 @@ export function DirectEntryLive() {
           recruiter_id: row.recruiterId,
           provider_hint: row.providerType?.toUpperCase() ?? "",
           team_hint: row.teamDisplayName,
-          labor_type: row.laborType === "TEMPORARY" ? "Thời vụ" : "Toàn thời gian",
+          labor_type: row.laborType === "TEMPORARY" ? "Thời vụ" : "Chính thức",
           initial_status: employment
             ? `${employmentStatusLabel} · hiệu lực ${employment.effective_date}`
             : employmentStatusLabel,
@@ -1043,7 +1091,7 @@ export function DirectEntryLive() {
       if (patch.project_id !== undefined) draftPatch.projectId = patch.project_id;
       if (patch.recruiter_id !== undefined) draftPatch.recruiterId = patch.recruiter_id;
       if (patch.labor_type !== undefined) {
-        draftPatch.laborType = patch.labor_type === "Toàn thời gian" ? "PERMANENT" : "TEMPORARY";
+        draftPatch.laborType = patch.labor_type === "Chính thức" ? "PERMANENT" : "TEMPORARY";
       }
       if (Object.keys(draftPatch).length === 0) return;
       setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
@@ -1069,7 +1117,7 @@ export function DirectEntryLive() {
   const onStagedPasteRejected = useCallback((reason: SpreadsheetPasteRejection) => {
     setStagedRejection(PASTE_REJECTION_MESSAGES[reason]);
     setStagedMessage("");
-  }, []);
+  }, [setStagedMessage]);
 
   /** Paste chi doi React state: khong fetch, khong storage, khong log gia tri. */
   const onStagedPaste = useCallback((request: SpreadsheetPasteRequest) => {
@@ -1111,7 +1159,7 @@ export function DirectEntryLive() {
     setStagedModel(next);
     setStagedRejection("");
     setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
-  }, [rows.length, setStagedModel, stagedModel]);
+  }, [rows.length, setStagedModel, stagedModel, setStagedMessage, setStagedRejection, setStagedNotice]);
 
   const onXlsxFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
@@ -1158,7 +1206,7 @@ export function DirectEntryLive() {
             first_work_date: row.first_work_date,
             display_name: row.display_name,
             recruiter_id: recruiter?.recruiter_id ?? row.recruiter_label,
-            labor_type: row.labor_type === "PERMANENT" ? "Toàn thời gian" : "Thời vụ",
+            labor_type: row.labor_type === "PERMANENT" ? "Chính thức" : "Thời vụ",
             gender: value(row.worker.gender),
             date_of_birth: value(row.worker.date_of_birth),
             national_id: value(row.worker.national_id),
@@ -1188,7 +1236,7 @@ export function DirectEntryLive() {
     setStagedNotice("");
     setStagedRejection("");
     setXlsxMessage(`Đã nhập ${imported.rowCount} dòng vào bảng. Kiểm tra lỗi trước khi lưu.`);
-  }, [catalogs, setStagedModel, today]);
+  }, [catalogs, setStagedModel, today, setStagedMessage, setStagedNotice, setStagedRejection]);
 
   const downloadXlsxTemplate = useCallback(async () => {
     try {
@@ -1223,7 +1271,7 @@ export function DirectEntryLive() {
     setStagedCanUndo(false);
     setStagedNotice("");
     setStagedRejection("");
-  }, [setStagedModel]);
+  }, [setStagedModel, setStagedCanUndo, setStagedNotice, setStagedRejection]);
 
   const onStagedDelete = useCallback((clientRowId: string) => {
     setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
@@ -1242,6 +1290,23 @@ export function DirectEntryLive() {
       void ensureCatalog(value).catch(() => undefined);
     }
   }, [ensureCatalog, setStagedModel]);
+
+  // P1.7-H05: capture handler trong bien cuc bo truoc khi render de tranh
+  // React Compiler canh bao "Cannot access refs during render" khi closure
+  // duoc truyen truc tiep vao onChange cua <select>/<input> trong JSX.
+  const handleMobileStagedProjectChange = useCallback(
+    (clientRowId: string) => (event: React.ChangeEvent<HTMLSelectElement>) => {
+      onMobileStagedChange(clientRowId, "project_id", event.currentTarget.value);
+    },
+    [onMobileStagedChange],
+  );
+  const handleMobileStagedFieldChange = useCallback(
+    (clientRowId: string, field: string) =>
+      (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        onMobileStagedChange(clientRowId, field, event.currentTarget.value);
+      },
+    [onMobileStagedChange],
+  );
 
   /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
   const onStagedSave = useCallback(async () => {
@@ -1340,9 +1405,17 @@ export function DirectEntryLive() {
             onClick={() => xlsxInputRef.current?.click()}>
             Nhập file Excel
           </button>
-          <button type="button" className={styles.secondaryButton} onClick={addStagedRow}
+          <button type="button" className={styles.secondaryButton}
+            data-testid="add-rows-batch"
+            onClick={addStagedRows}
             disabled={loadState !== "ready"}>
             Thêm dòng
+          </button>
+          <button type="button" className={styles.secondaryButton}
+            data-testid="quick-add-row"
+            onClick={addQuickStagedRow}
+            disabled={loadState !== "ready"}>
+            Thêm nhanh NLĐ
           </button>
           <button type="button" className={styles.primaryButton}
             data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
@@ -1407,6 +1480,50 @@ export function DirectEntryLive() {
               onUndo={onStagedUndo}
               saveMessage={stagedMessage}
             />
+          </section>
+          <section className={styles.actionRail} aria-label="Thao tác theo dòng">
+            <p className={styles.actionRailTitle}>Hồ sơ &amp; thao tác theo dòng</p>
+            {spreadsheetRows.length === 0 && (
+              <p className={styles.actionRailLabel}>Chưa có dòng nào trong bảng.</p>
+            )}
+            {spreadsheetRows.map((row) => row.persisted
+              ? (
+                <div key={row.clientRowId} className={styles.actionRailRow}>
+                  <span className={styles.actionRailLabel}>
+                    {row.employeeCode || "Dòng đã lưu"} · {row.displayName || "Chưa nhập họ tên"}
+                  </span>
+                  <button type="button" className={styles.actionRailButton}
+                    aria-label={row.canManageCccd ? `Hồ sơ ${row.employeeCode}` : "Tải hồ sơ"}
+                    disabled={!row.canManageCccd}
+                    onClick={() => {
+                      const persistedRow = rows.find((entry) => entry.rowId === row.clientRowId);
+                      if (persistedRow) setCccdRowId(persistedRow.rowId);
+                    }}>
+                    {row.canManageCccd ? "Hồ sơ" : "Tải hồ sơ"}
+                  </button>
+                </div>
+              )
+              : (
+                <div key={row.clientRowId} className={styles.actionRailRow}>
+                  <span className={styles.actionRailLabel}>
+                    Dòng đang nhập · {row.displayName || "Chưa nhập họ tên"}
+                  </span>
+                  <button type="button" className={styles.actionRailButton}
+                    aria-label="Lưu dòng trước"
+                    title="Lưu dòng trước"
+                    disabled>
+                    Lưu dòng trước
+                  </button>
+                  <button type="button" className={styles.actionRailDeleteButton}
+                    aria-label="Xóa dòng"
+                    title="Xóa dòng"
+                    data-testid={`row-delete-${row.clientRowId}`}
+                    onClick={() => onStagedDelete(row.clientRowId)}>
+                    ×
+                  </button>
+                </div>
+              ),
+            )}
           </section>
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}
 
@@ -1517,66 +1634,115 @@ export function DirectEntryLive() {
                         <Field label="Mã NLĐ">
                           <output>Máy chủ sẽ cấp mã khi lưu</output>
                         </Field>
-                        <Field label="Ngày đầu tiên đi làm">
+                        <Field label={<><span>Ngày bắt đầu làm việc</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                           <input type="date" value={cells.first_work_date ?? ""}
-                            onChange={(event) => onMobileStagedChange(
-                              stagedRow.clientRowId, "first_work_date", event.currentTarget.value,
-                            )} />
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "first_work_date")} />
                         </Field>
-                        <Field label="Dự án">
-                          <select value={cells.project_id ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "project_id", event.currentTarget.value)}>
+                        <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                          <select value={cells.project_id ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "project_id")}>
                             <option value="">Chọn dự án</option>
                             {(catalog?.projects ?? []).map((project) =>
-                              <option key={project.project_id} value={project.display_name}>
+                              <option key={project.project_id} value={project.project_id}>
                                 {project.display_name}
                               </option>)}
                           </select>
                         </Field>
-                        <Field label="Họ và tên">
-                          <input value={cells.display_name ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "display_name", event.currentTarget.value)} />
+                        <Field label={<><span>Họ và tên</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                          <input value={cells.display_name ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "display_name")} />
                         </Field>
-                        <Field label="Người tuyển">
-                          <select value={cells.recruiter_id ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "recruiter_id", event.currentTarget.value)}>
-                            <option value="">Chọn người tuyển</option>
-                            <optgroup label="HRP">
-                              {(catalog?.recruiters ?? []).filter(({ provider_type }) => provider_type === "hrp")
-                                .map((recruiter) => <option key={recruiter.recruiter_id}
-                                  value={recruiter.display_name}>{recruiter.display_name}</option>)}
-                            </optgroup>
-                            <optgroup label="Vendor">
-                              {(catalog?.recruiters ?? []).filter(({ provider_type }) => provider_type === "vendor")
-                                .map((recruiter) => <option key={recruiter.recruiter_id}
-                                  value={recruiter.display_name}>{recruiter.display_name}</option>)}
-                            </optgroup>
+                        <Field label="Giới tính">
+                          <select value={cells.gender ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "gender")}>
+                            <option value="">—</option>
+                            <option value="Nam">Nam</option>
+                            <option value="Nữ">Nữ</option>
                           </select>
                         </Field>
-                        <Field label="Loại hình lao động">
-                          <select value={cells.labor_type ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "labor_type", event.currentTarget.value)}>
-                            <option value="">Chọn loại hình</option>
-                            <option value="Thời vụ">Thời vụ</option>
-                            <option value="Toàn thời gian">Toàn thời gian</option>
-                          </select>
-                        </Field>
-                        <Field label="Số điện thoại">
-                          <input value={cells.phone ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "phone", event.currentTarget.value)} />
+                        <Field label="DOB">
+                          <input type="date" value={cells.date_of_birth ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "date_of_birth")} />
                         </Field>
                         <Field label="CMT/CCCD">
-                          <input value={cells.national_id ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "national_id", event.currentTarget.value)} />
+                          <input value={cells.national_id ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "national_id")} />
+                        </Field>
+                        <Field label="Ngày cấp">
+                          <input type="date" value={cells.national_id_issued_at ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "national_id_issued_at")} />
+                        </Field>
+                        <Field label="Nơi cấp">
+                          <input value={cells.national_id_issued_place ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "national_id_issued_place")} />
+                        </Field>
+                        <Field label="Địa chỉ">
+                          <input value={cells.address ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "address")} />
+                        </Field>
+                        <Field label="Số điện thoại">
+                          <input value={cells.phone ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "phone")} />
+                        </Field>
+                        <Field label={<><span>HRP/Vendor</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                          <select value={stagedRow.providerType}
+                            onChange={(event) => {
+                              const next = event.currentTarget.value;
+                              const providerType = next === "hrp" || next === "vendor" ? next : "";
+                              onStagedProviderTypeChange(stagedRow.clientRowId, providerType);
+                            }}>
+                            <option value="hrp">HRP</option>
+                            <option value="vendor">Vendor</option>
+                          </select>
+                        </Field>
+                        <Field label={<><span>Người tuyển / Vendor</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                          <select value={cells.recruiter_id ?? ""}
+                            disabled={stagedRow.providerType === ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "recruiter_id")}>
+                            <option value="">—</option>
+                            {(catalog?.recruiters ?? []).filter((recruiter) =>
+                              stagedRow.providerType === "" || recruiter.provider_type === stagedRow.providerType)
+                              .map((recruiter) => <option key={recruiter.recruiter_id}
+                                value={recruiter.recruiter_id}>{recruiter.display_name}</option>)}
+                          </select>
+                        </Field>
+                        <Field label={<><span>Loại hình LĐ</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                          <select value={cells.labor_type ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "labor_type")}>
+                            <option value="">—</option>
+                            <option value="Thời vụ">Thời vụ</option>
+                            <option value="Chính thức">Chính thức</option>
+                          </select>
                         </Field>
                         <Field label="STK">
-                          <input value={cells.account_number ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "account_number", event.currentTarget.value)} />
+                          <input value={cells.account_number ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "account_number")} />
                         </Field>
                         <Field label="Tên ngân hàng">
-                          <input value={cells.bank_name ?? ""} onChange={(event) =>
-                            onMobileStagedChange(stagedRow.clientRowId, "bank_name", event.currentTarget.value)} />
+                          <input value={cells.bank_name ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "bank_name")} />
                         </Field>
+                        <Field label="Tên chủ tài khoản">
+                          <input value={cells.account_holder_name ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "account_holder_name")} />
+                        </Field>
+                        <Field label="Ghi chú">
+                          <input value={cells.general_note ?? ""}
+                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "general_note")} />
+                        </Field>
+                      </div>
+                      <div className={styles.mobileStagedFooter}>
+                        <button type="button" className={styles.actionRailButton}
+                          aria-label="Mở sửa nhanh"
+                          onClick={() => openQuickEditor(stagedRow.clientRowId)}>
+                          Sửa nhanh
+                        </button>
+                        <button type="button" className={styles.actionRailDeleteButton}
+                          aria-label="Xóa dòng"
+                          title="Xóa dòng"
+                          onClick={() => onStagedDelete(stagedRow.clientRowId)}>
+                          ×
+                        </button>
                       </div>
                     </details>
                   </li>
@@ -1597,6 +1763,164 @@ export function DirectEntryLive() {
         onStatus={setCccdStatus}
         onEntryVersionChange={onPaymentEntryVersionChange}
       />
+
+      <Dialog.Root open={quickEditClientRowId !== null}
+        onOpenChange={(open) => { if (!open) setQuickEditClientRowId(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className={styles.drawerOverlay} />
+          {quickEditClientRowId !== null && (() => {
+            const target = stagedModel.rows.find(
+              (candidate) => candidate.clientRowId === quickEditClientRowId);
+            if (!target) return null;
+            const rowCatalog = catalogs[target.cells.first_work_date ?? ""];
+            const isLoadingCatalog = target.cells.first_work_date !== undefined &&
+              target.cells.first_work_date !== "" && !rowCatalog;
+            const hasCatalogError = target.cells.first_work_date !== undefined &&
+              target.cells.first_work_date !== "" && !!catalogErrors[target.cells.first_work_date];
+            return (
+              <Dialog.Content className={styles.quickDrawer}
+                aria-describedby="quick-edit-description"
+                data-testid="quick-edit-drawer">
+                <div className={styles.quickDrawerHeader}>
+                  <Dialog.Title className={styles.quickDrawerTitle}>Thêm nhanh NLĐ</Dialog.Title>
+                  <Dialog.Close asChild>
+                    <button type="button" className={styles.secondaryButton}>Đóng</button>
+                  </Dialog.Close>
+                </div>
+                <Dialog.Description id="quick-edit-description" className={styles.drawerDescription}>
+                  Nhập nhanh một người lao động; dữ liệu sẽ đồng bộ ngay vào đúng dòng trong bảng.
+                </Dialog.Description>
+                <div className={styles.quickDrawerFields}>
+                  <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                    {target.cells.first_work_date === undefined || target.cells.first_work_date === ""
+                      ? <p className={styles.derivedValue}>Nhập ngày bắt đầu trước</p>
+                      : isLoadingCatalog
+                        ? <p className={styles.derivedValue}>Đang tải danh mục…</p>
+                        : hasCatalogError
+                          ? <p className={styles.derivedValue} role="alert">Danh mục chưa khả dụng</p>
+                          : (rowCatalog?.projects.length ?? 0) === 0
+                            ? <p className={styles.derivedValue}>Chưa có dự án khả dụng</p>
+                            : <select aria-label="Dự án" value={target.cells.project_id ?? ""}
+                              onChange={handleMobileStagedProjectChange(target.clientRowId)}>
+                              <option value="">Chọn dự án</option>
+                              {rowCatalog?.projects.map((project) =>
+                                <option key={project.project_id} value={project.project_id}>
+                                  {project.display_name}
+                                </option>)}
+                            </select>}
+                  </Field>
+                  <Field label={<><span>Ngày bắt đầu làm việc</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                    <input type="date" value={target.cells.first_work_date ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "first_work_date")} />
+                  </Field>
+                  <Field label={<><span>Họ và tên</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                    <input value={target.cells.display_name ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "display_name")} />
+                  </Field>
+                  <Field label="Giới tính">
+                    <select value={target.cells.gender ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "gender")}>
+                      <option value="">—</option>
+                      <option value="Nam">Nam</option>
+                      <option value="Nữ">Nữ</option>
+                    </select>
+                  </Field>
+                  <Field label="DOB">
+                    <input type="date" value={target.cells.date_of_birth ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "date_of_birth")} />
+                  </Field>
+                  <Field label="CMT/CCCD">
+                    <input value={target.cells.national_id ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "national_id")} />
+                  </Field>
+                  <Field label="Ngày cấp">
+                    <input type="date" value={target.cells.national_id_issued_at ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "national_id_issued_at")} />
+                  </Field>
+                  <Field label="Nơi cấp">
+                    <input value={target.cells.national_id_issued_place ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "national_id_issued_place")} />
+                  </Field>
+                  <Field label="Địa chỉ">
+                    <input value={target.cells.address ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "address")} />
+                  </Field>
+                  <Field label="Số điện thoại">
+                    <input value={target.cells.phone ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "phone")} />
+                  </Field>
+                  <Field label={<><span>HRP/Vendor</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                    <select value={target.providerType}
+                      onChange={(event) => {
+                        const next = event.currentTarget.value;
+                        const providerType = next === "hrp" || next === "vendor" ? next : "";
+                        onStagedProviderTypeChange(target.clientRowId, providerType);
+                      }}>
+                      <option value="hrp">HRP</option>
+                      <option value="vendor">Vendor</option>
+                    </select>
+                  </Field>
+                  <Field label={<><span>Người tuyển / Vendor</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                    <select value={target.cells.recruiter_id ?? ""}
+                      disabled={target.providerType === ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "recruiter_id")}>
+                      <option value="">—</option>
+                      {(rowCatalog?.recruiters ?? [])
+                        .filter((recruiter) => target.providerType === "" ||
+                          recruiter.provider_type === target.providerType)
+                        .map((recruiter) => <option key={recruiter.recruiter_id}
+                          value={recruiter.recruiter_id}>{recruiter.display_name}</option>)}
+                    </select>
+                  </Field>
+                  <Field label={<><span>Loại hình LĐ</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
+                    <select value={target.cells.labor_type ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "labor_type")}>
+                      <option value="">—</option>
+                      <option value="Thời vụ">Thời vụ</option>
+                      <option value="Chính thức">Chính thức</option>
+                    </select>
+                  </Field>
+                  <Field label="STK">
+                    <input value={target.cells.account_number ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "account_number")} />
+                  </Field>
+                  <Field label="Tên ngân hàng">
+                    <input value={target.cells.bank_name ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "bank_name")} />
+                  </Field>
+                  <Field label="Tên chủ tài khoản">
+                    <input value={target.cells.account_holder_name ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "account_holder_name")} />
+                  </Field>
+                  <Field label="Ghi chú">
+                    <input value={target.cells.general_note ?? ""}
+                      onChange={handleMobileStagedFieldChange(target.clientRowId, "general_note")} />
+                  </Field>
+                </div>
+                <div className={styles.quickDrawerActions}>
+                  <button type="button" className={styles.primaryButton}
+                    data-testid="quick-save-row"
+                    onClick={() => void onStagedSave()}>
+                    Lưu NLĐ
+                  </button>
+                  <button type="button" className={styles.secondaryButton}
+                    onClick={() => setQuickEditClientRowId(null)}>
+                    Đóng
+                  </button>
+                  <button type="button" className={styles.secondaryButton}
+                    data-testid="quick-delete-row"
+                    onClick={() => {
+                      onStagedDelete(target.clientRowId);
+                      setQuickEditClientRowId(null);
+                    }}>
+                    Xóa dòng
+                  </button>
+                </div>
+              </Dialog.Content>
+            );
+          })()}
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={selectedRow !== null} onOpenChange={(open) => {
         if (!open) setSelectedRowId(null);
@@ -1621,17 +1945,17 @@ export function DirectEntryLive() {
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => updateRow(selectedRow.rowId, { employeeCode: event.target.value })} />
                 </Field>
-                <Field label="Ngày đầu tiên đi làm">
+                <Field label={<><span>Ngày đầu tiên đi làm</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <input aria-label="Ngày đầu tiên đi làm" type="date" value={selectedRow.firstWorkDate}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => updateDate(selectedRow.rowId, event.target.value)} />
                 </Field>
-                <Field label="Họ tên người lao động">
+                <Field label={<><span>Họ tên người lao động</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <input aria-label="Họ tên người lao động" value={selectedRow.workerName}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => updateRow(selectedRow.rowId, { workerName: event.target.value })} />
                 </Field>
-                <Field label="Dự án">
+                <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <select aria-label="Dự án" value={selectedRow.projectId}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" ||
                       selectedRowLocked || !catalogFor(selectedRow.firstWorkDate)}
@@ -1655,7 +1979,7 @@ export function DirectEntryLive() {
                   HRP/Vendor: <strong>{currentRecruiter?.provider_type.toUpperCase() ?? "Chưa chọn"}</strong>
                   {" · "}Team: <strong>{currentRecruiter?.team_display_name ?? "—"}</strong>
                 </p>
-                <Field label="Loại hình lao động">
+                <Field label={<><span>Loại hình lao động</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <select aria-label="Loại hình lao động" value={selectedRow.laborType}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
                     onChange={(event) => {
@@ -1665,7 +1989,7 @@ export function DirectEntryLive() {
                       }
                     }}>
                     <option value="TEMPORARY">Thời vụ</option>
-                    <option value="PERMANENT">Toàn thời gian</option>
+                    <option value="PERMANENT">Chính thức</option>
                   </select>
                 </Field>
                 <DirectEntryPaymentEditor

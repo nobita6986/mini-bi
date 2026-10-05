@@ -44,6 +44,78 @@
   background: #fef2f2;
 }
 
+/* P1.7-H05: editor select phu full cell, dropdown arrow can ben phai,
+   focus ring ro rang, row height khong nhay khi mo editor. */
+.viewport :global(.rdg-cell) :global(select) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 36px;
+  padding: 0 28px 0 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface, #fff);
+  border: 2px solid var(--primary, #2563eb);
+  border-radius: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23111827' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+}
+
+.viewport :global(.rdg-cell) :global(select):focus-visible {
+  outline: 3px solid var(--ring, #2563eb);
+  outline-offset: 1px;
+}
+
+.viewport :global(.rdg-cell) :global(input) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 36px;
+  padding: 0 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface, #fff);
+  border: 2px solid var(--primary, #2563eb);
+  border-radius: 4px;
+}
+
+.viewport :global(.rdg-cell) :global(input):focus-visible {
+  outline: 3px solid var(--ring, #2563eb);
+  outline-offset: 1px;
+}
+
+.cellHint {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 6px;
+  color: var(--muted, #6b7280);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.requiredMark {
+  color: #dc2626;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .rowActions {
   display: inline-flex;
   gap: 4px;
@@ -53,6 +125,32 @@
   font-size: 12px;
   padding: 2px 6px;
   cursor: pointer;
+}
+
+.deleteRowButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dc2626;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.deleteRowButton:hover {
+  background: #fee2e2;
+}
+
+.deleteRowButton:focus-visible {
+  outline: 3px solid #dc2626;
+  outline-offset: 2px;
 }
 
 .actionRailCell {

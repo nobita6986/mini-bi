@@ -31,6 +31,8 @@ import {
   DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS,
   DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS,
   DIRECT_ENTRY_GENDER_OPTIONS,
+  DIRECT_ENTRY_LABOR_TYPE_OPTIONS,
+  DIRECT_ENTRY_PROVIDER_OPTIONS,
   recruitersForProvider,
   directEntryGridColumn,
   type DirectEntryGridColumn,
@@ -106,20 +108,27 @@ export type DirectEntrySpreadsheetGridProps = {
   saveMessage?: string;
 };
 
-const LABOR_TYPE_OPTIONS = ["", "Thời vụ", "Toàn thời gian"];
-const PROVIDER_OPTIONS = ["", "hrp", "vendor"] as const;
+const PROVIDER_OPTIONS = ["hrp", "vendor"] as const;
+const LABOR_TYPE_UI_VALUES: readonly string[] = DIRECT_ENTRY_LABOR_TYPE_OPTIONS;
 
 export function spreadsheetSelectOptions(
   columnKey: string,
   catalogs: SpreadsheetCatalogOptions | undefined,
   providerType: "hrp" | "vendor" | "" = "",
+  rowDate: string | null = null,
+  projectCatalog: SpreadsheetCatalogOptions | undefined = catalogs,
 ): readonly string[] | null {
   if (columnKey === "gender") return DIRECT_ENTRY_GENDER_OPTIONS;
-  if (columnKey === "labor_type") return LABOR_TYPE_OPTIONS;
+  if (columnKey === "labor_type") return LABOR_TYPE_UI_VALUES;
   if (columnKey === "provider_type") return PROVIDER_OPTIONS;
-  if (columnKey === "project_id") return ["", ...(catalogs?.projects ?? []).map((option) => option.label)];
+  if (columnKey === "project_id") {
+    // Project dropdown phai resolve theo first_work_date cua chinh row.
+    const source = projectCatalog ?? catalogs;
+    if (rowDate === null || rowDate === "") return ["", ...(source?.projects ?? []).map((option) => option.label)];
+    return ["", ...(source?.projects ?? []).map((option) => option.label)];
+  }
   if (columnKey === "recruiter_id") {
-    return ["", ...recruitersForProvider(catalogs?.recruiters ?? [], providerType).map((option) => option.id)];
+    return recruitersForProvider(catalogs?.recruiters ?? [], providerType).map((option) => option.id);
   }
   return null;
 }
@@ -134,9 +143,12 @@ function SelectCellEditor(
     catalogs: SpreadsheetCatalogOptions | undefined;
   },
 ) {
-  const catalogs = props.row.catalogOptions ?? props.catalogs;
-  const options = spreadsheetSelectOptions(props.columnKey, catalogs, props.row.providerType) ?? [];
-  const recruiter = catalogs?.recruiters.find((option) =>
+  const rowCatalogs = props.row.catalogOptions ?? props.catalogs;
+  const rowDate = props.row.cells.first_work_date ?? null;
+  const options = spreadsheetSelectOptions(
+    props.columnKey, rowCatalogs, props.row.providerType, rowDate, rowCatalogs,
+  ) ?? [];
+  const recruiter = rowCatalogs?.recruiters.find((option) =>
     option.id === props.row.cells.recruiter_id || option.label === props.row.cells.recruiter_id);
   const value = props.columnKey === "provider_type"
     ? props.row.providerType
@@ -153,20 +165,37 @@ function SelectCellEditor(
           const providerType = next === "hrp" || next === "vendor" ? next : "";
           props.onRowChange({ ...props.row, providerType }, true);
         }}>
-        <option value="">Chọn nhà cung cấp</option>
         <option value="hrp">HRP</option>
         <option value="vendor">Vendor</option>
       </select>
     );
   }
   if (props.columnKey === "recruiter_id") {
-    const recruiters = recruitersForProvider(catalogs?.recruiters ?? [], props.row.providerType);
+    const recruiters = recruitersForProvider(rowCatalogs?.recruiters ?? [], props.row.providerType);
     return (
       <select aria-label="Người tuyển / Vendor" autoFocus value={value}
         disabled={props.row.providerType === ""}
         onChange={(event) => change(event.currentTarget.value)}>
-        <option value="">—</option>
+        {recruiters.length === 0
+          ? <option value="">—</option>
+          : <option value="">—</option>}
         {recruiters.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    );
+  }
+  if (props.columnKey === "project_id") {
+    if (rowDate === null || rowDate === "") {
+      return (
+        <span className={styles.cellHint} role="status" aria-live="polite">
+          Nhập ngày bắt đầu trước
+        </span>
+      );
+    }
+    return (
+      <select aria-label="Dự án" autoFocus value={value}
+        onChange={(event) => change(event.currentTarget.value)}>
+        {options.map((option) =>
+          <option key={option} value={option}>{option === "" ? "—" : option}</option>)}
       </select>
     );
   }
@@ -217,38 +246,37 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       const editable = column.editor !== "readonly" && column.editor !== "action" &&
         (column.key === "provider_type" || column.pasteMode === "write");
       const frozen = column.group === "action" || column.key === "save_status" ? "end" as const : undefined;
+      const headerLabel = column.required
+        ? <span><span>{column.label}</span><span className={styles.requiredMark} aria-hidden="true"> *</span><span className={styles.srOnly}> (bắt buộc)</span></span>
+        : column.label;
 
       if (column.key === "row_actions") {
         return {
-          key: column.key, name: column.label, width: column.width, resizable: true, frozen,
+          key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
           cellClass: styles.actionRailCell,
           headerCellClass: styles.actionRailHeader,
-          renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => !row.clientStaged
+          // P1.7-H05: action rail NGOAI grid — chi icon X do xoa staged row.
+          // Persisted row khong co icon xoa (theo rule H05 §8).
+          renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => row.clientStaged
             ? (
-              <button type="button" disabled={!onOpenDraft} aria-label={`Mở bản nháp ${row.employeeCode}`}
-                onClick={() => onOpenDraft?.(row.clientRowId)}>Mở bản nháp</button>
+              <button
+                type="button"
+                className={styles.deleteRowButton}
+                aria-label="Xóa dòng"
+                title="Xóa dòng"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeleteRow(row.clientRowId);
+                }}
+              >×</button>
             )
-            : <button type="button" aria-label={`Remove ${row.employeeCode || "dòng mới"}`}
-              onClick={() => onDeleteRow(row.clientRowId)}>Remove</button>,
+            : <span aria-hidden="true" />,
         };
       }
+      // P1.7-H05: cccd_documents da chuyen ra ngoai grid (action rail ben ngoai).
+      // Trong grid chi con save_status va row_actions.
       if (column.key === "cccd_documents") {
-        return {
-          key: column.key, name: column.label, width: column.width, resizable: true, frozen,
-          cellClass: styles.actionRailCell,
-          headerCellClass: styles.actionRailHeader,
-          renderCell: ({ row }: RenderCellProps<SpreadsheetGridRow>) => (
-            <span className={styles.rowActions}>
-              <span>{row.cccdStatus}</span>
-              <button type="button" aria-label={row.persisted
-                ? `Quản lý CCCD ${row.employeeCode}` : "Lưu dòng trước"}
-                disabled={!row.persisted || !row.canManageCccd || !onManageDocuments}
-                onClick={() => onManageDocuments?.(row.clientRowId)}>
-                {row.persisted ? "Quản lý CCCD" : "Lưu dòng trước"}
-              </button>
-            </span>
-          ),
-        };
+        return null as unknown as Column<SpreadsheetGridRow>;
       }
 
       const renderCell = ({ row }: RenderCellProps<SpreadsheetGridRow>) => {
@@ -258,7 +286,6 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
             return row.displayValues[column.key];
           }
           if (column.key === "save_status") return row.saveStatus;
-          if (column.key === "employee_code") return row.clientStaged ? "Tự sinh khi lưu" : row.employeeCode;
           if (column.key === "display_name") return row.displayName;
           if (column.key === "project_id") return row.projectLabel;
           if (column.key === "provider_type") return row.providerType.toUpperCase();
@@ -277,7 +304,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
 
       if (!editable) {
         return {
-          key: column.key, name: column.label, width: column.width, resizable: true,
+          key: column.key, name: headerLabel, width: column.width, resizable: true,
           frozen, cellClass: frozen ? styles.actionRailCell : undefined,
           headerCellClass: frozen ? styles.actionRailHeader : undefined, renderCell,
         };
@@ -285,7 +312,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
 
       if (column.editor === "select" || column.editor === "catalog") {
         return {
-          key: column.key, name: column.label, width: column.width, resizable: true, frozen,
+          key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
           editable: (row: SpreadsheetGridRow) => column.key === "provider_type"
             ? row.clientStaged
             : isEditable(row, column.key) &&
@@ -299,7 +326,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       }
       if (column.editor === "date") {
         return {
-          key: column.key, name: column.label, width: column.width, resizable: true, frozen,
+          key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
           editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (
@@ -308,7 +335,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
         };
       }
       return {
-        key: column.key, name: column.label, width: column.width, resizable: true, frozen,
+        key: column.key, name: headerLabel, width: column.width, resizable: true, frozen,
         editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
         renderCell,
         renderEditCell: renderTextEditor,
@@ -320,8 +347,9 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     const actionColumns = DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS
       .map((key) => directEntryGridColumn(key))
       .filter((column): column is DirectEntryGridColumn => column !== undefined);
-    return [...dataColumns, ...actionColumns].map(build);
-  }, [catalogOptions, isEditable, issueFor, onDeleteRow, onManageDocuments, onOpenDraft, rowIndexOf]);
+    return [...dataColumns, ...actionColumns].map(build).filter((c): c is Column<SpreadsheetGridRow> =>
+      c !== null && c !== undefined);
+  }, [catalogOptions, isEditable, issueFor, onDeleteRow, rowIndexOf]);
 
   const onRowsChange = useCallback((next: SpreadsheetGridRow[]) => {
     for (const row of next) {

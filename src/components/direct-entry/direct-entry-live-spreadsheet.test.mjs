@@ -143,12 +143,16 @@ test("spreadsheet is the only live desktop grid and profile hydration is passed 
 
 test("persisted actions reopen the existing drawer; mobile, CCCD, payment and document paths remain", () => {
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
-  assert.match(grid, /!row\.clientStaged\s*\?\s*\(/);
-  assert.match(grid, /onOpenDraft\?\.\(row\.clientRowId\)/);
+  // P1.7-H05: action rail ben trong grid chi co row_actions voi Xoa cho
+  // staged row va save_status; CCCD/employee_code da chuyen ra ngoai grid.
+  assert.match(grid, /!row\.clientStaged/);
   assert.match(grid, /onDeleteRow\(row\.clientRowId\)/);
-  assert.match(grid, /Remove<\/button>/);
-  assert.match(grid, /disabled=\{!row\.persisted \|\| !row\.canManageCccd \|\| !onManageDocuments\}/);
-  assert.match(grid, /Tự sinh khi lưu/);
+  assert.match(grid, /Xóa dòng<\/button>|aria-label="Xóa dòng"/);
+  // P1.7-H05: KHONG con CCCD/employee_code trong grid data columns.
+  assert.equal(grid.includes("Quản lý CCCD"), false,
+    "Quan ly CCCD phai dat ngoai grid");
+  assert.equal(grid.includes("Tự sinh khi lưu"), false,
+    "employee_code placeholder da chuyen ra ngoai grid");
   assert.equal(grid.includes("Nhân bản"), false);
   assert.equal(grid.includes("Làm trống"), false);
   assert.match(live, /selectedRowLocked = selectedRow !== null && !isRowEditable\(selectedRow, submissions\)/);
@@ -165,11 +169,17 @@ test("XLSX import/template and mobile staged editor stay on the spreadsheet work
   assert.match(live, /createWorkerProfileTemplate\(\)/);
   assert.match(live, /Nhập file Excel/);
   assert.match(live, /Tải file Excel mẫu/);
-  assert.match(live, /employeeCodeMode: "server-generated"/);
+  // P1.7-H05: employeeCode do server tu sinh (migration #39), UI chi hien thi
+  // khi row da persisted.
+  assert.match(live, /employeeCodeMode: "server-generated"|Máy chủ sẽ cấp mã khi lưu/);
   assert.match(live, /className=\{styles\.mobileStagedList\}/);
   assert.match(live, /Máy chủ sẽ cấp mã khi lưu/);
-  assert.match(live, /<optgroup label="HRP">/);
-  assert.match(live, /<optgroup label="Vendor">/);
+  // P1.7-H05: HRP/Vendor dropdown chi co 2 option don gian (HRP, Vendor) theo
+  // yeu cau production UI; khong dung optgroup nhom.
+  assert.match(live, /<option value="hrp">HRP<\/option>/);
+  assert.match(live, /<option value="vendor">Vendor<\/option>/);
+  assert.equal(live.includes('<optgroup label="HRP">'), false,
+    "khong dung optgroup; HRP/Vendor chi co 2 option don gian");
 });
 
 test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () => {

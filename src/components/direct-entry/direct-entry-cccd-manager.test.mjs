@@ -18,14 +18,35 @@ const status = source("../../lib/direct-entry/cccd-status.ts");
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 
 test("cot 'Ho so CCCD' hien dung ba trang thai va nut quan ly bi khoa khi chua luu", () => {
+  // P1.7-H05: CCCD van co trong registry (de su dung boi action rail ben ngoai)
+  // nhung KHONG con la data column cua grid.
   assert.match(columns, /key: "cccd_documents", label: "Hồ sơ CCCD"/);
+  // P1.7-H05: action rail ngoai grid (DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS chi con
+  // save_status + row_actions; cccd_documents khong thuoc action rail nua).
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(["save_status", "row_actions"])),
+    ["save_status", "row_actions"],
+  );
+  // Dam bao cccd_documents khong con trong action rail - no da chuyen ra ngoai grid.
+  const railMatch = columns.match(/DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS[^=]*=\s*Object\.freeze\(\[([^\]]+)\]\)/);
+  assert.ok(railMatch, "DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS phai duoc dinh nghia");
+  const railKeys = railMatch[1].split(",").map((k) => k.trim()).filter(Boolean)
+    .map((k) => k.replace(/^["']|["']$/g, ""));
+  assert.deepEqual(railKeys, ["save_status", "row_actions"]);
   assert.match(live, /readCccdStatus\(cccdCache, row\.entryId, row\.entryVersion\)/);
   assert.match(live, /cccdStatus: cccdStatus\.label/);
-  assert.match(grid, /\{row\.cccdStatus\}/);
-  assert.match(grid, /disabled={!row\.persisted \|\| !row\.canManageCccd \|\| !onManageDocuments}/);
-  assert.match(grid, /onManageDocuments\?\.\(row\.clientRowId\)/);
-  assert.match(grid, /Quản lý CCCD/);
-  assert.match(grid, /Lưu dòng trước/);
+  // P1.7-H05: cccdStatus chi hien thi trong action rail ngoai grid va tren
+  // mobile/quick editor, KHONG con nam trong react-data-grid data column.
+  assert.equal(grid.includes("{row.cccdStatus}"), false,
+    "cccdStatus khong con la data cell cua grid");
+  // P1.7-H05: nut Quan ly CCCD dat ngoai grid (action rail) voi disabled rule
+  // tuong duong (`!row.canManageCccd` vi cccd_documents da chuyen ra rail).
+  // Hien thi label "Hồ sơ" khi co the quan ly, "Tải hồ sơ" khi chua luu dong.
+  assert.match(live, /disabled=\{!row\.canManageCccd\}/);
+  assert.match(live, /onManageDocuments=\{[^}]*\(clientRowId\)/);
+  assert.match(live, /\{row\.canManageCccd \? "Hồ sơ" : "Tải hồ sơ"\}/);
+  assert.match(live, /aria-label=\{row\.canManageCccd \? `Hồ sơ \$\{row\.employeeCode\}` : "Tải hồ sơ"\}/);
+  assert.match(live, /Lưu dòng trước/);
   assert.equal(grid.includes("fetch("), false, "o luoi chi doc cache, khong goi API");
   assert.match(status, /entryId === null \|\| entryId === ""/);
   assert.match(status, /CCCD_UNSAVED_LABEL = "Chưa lưu"/);

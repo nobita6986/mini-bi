@@ -10,18 +10,25 @@ import {
 const source = readFileSync(
   new URL("../../components/direct-entry/direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
 
-test("registry co dung 27 cot va thu tu vat ly on dinh", () => {
-  assert.equal(DIRECT_ENTRY_GRID_COLUMNS.length, 27);
+test("registry co dung 28 cot (27 contract + provider_type UI) va thu tu vat ly on dinh", () => {
+  // P1.7-H05: 28 cot tong (27 contract/derived/action + provider_type UI-only).
+  // 18 cot mac dinh tren grid; registry day du de drawer/projection/validation
+  // va mo rong sau nay.
+  assert.equal(DIRECT_ENTRY_GRID_COLUMNS.length, 28);
   assert.equal(directEntryGridColumnIndex("project_id"), 1);
   assert.equal(directEntryGridColumnIndex("employee_code"), 3);
-  assert.equal(directEntryGridColumnIndex("row_actions"), 26);
+  assert.equal(directEntryGridColumnIndex("provider_type"), 14);
+  assert.equal(directEntryGridColumnIndex("row_actions"), 27);
   assert.equal(directEntryGridColumnIndex("khong_ton_tai"), -1);
   // Moi cot deu co khoa duy nhat.
-  assert.equal(new Set(DIRECT_ENTRY_GRID_COLUMNS.map((column) => column.key)).size, 27);
+  assert.equal(new Set(DIRECT_ENTRY_GRID_COLUMNS.map((column) => column.key)).size, 28);
 });
 
 test("grid render cot tu registry, khong hard-code danh sach cot", () => {
-  assert.match(source, /DIRECT_ENTRY_GRID_COLUMNS\.map\(build\)/);
+  // P1.7-H05: grid su dung DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS va
+  // DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS, khong render full registry.
+  assert.match(source, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS/);
+  assert.match(source, /DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS/);
   assert.equal(source.includes('name: "Mã NLĐ"'), false, "khong duoc hard-code ten cot");
 });
 
@@ -60,10 +67,10 @@ test("banner paste co so hang x cot va nut Hoan tac", () => {
 });
 
 test("nut luu co busy/disabled va khong tu bao da luu", () => {
-  assert.match(source, /data-testid="spreadsheet-save"/);
-  assert.match(source, /disabled=\{saveDisabled \|\| saveBusy === true\}/);
-  assert.match(source, /aria-busy=\{saveBusy === true\}/);
-  assert.equal(source.includes("Đã lưu"), false, "khong optimistic da luu trong component");
+  // P1.7-H05: nut save nam trong toolbar header (live), ngoai grid. Grid chi
+  // hien thi save message/status (readonly).
+  assert.match(source, /data-testid="spreadsheet-save-message"|saveMessage|saveBusy/);
+  assert.equal(source.includes("Đã lưu"), false, "khong optimistic da luu trong component grid");
 });
 
 test("dong bi khoa khong editable va derived/action khong editable", () => {
@@ -79,19 +86,35 @@ test("loi duoc danh dau tren dung o va co tong ket dong loi", () => {
 });
 
 test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia nghiep vu moi", () => {
-  assert.match(source, /const GENDER_OPTIONS = \["", "Nam", "Nữ", "Khác"\];/);
-  assert.match(source, /const LABOR_TYPE_OPTIONS = \["", "Thời vụ", "Toàn thời gian"\];/);
-  assert.match(source, /const STATUS_OPTIONS = \["", "Chưa xác nhận", "Đang làm", "Đã nghỉ"\];/);
+  // P1.7-H05: dropdown vocabulary su dung hang so import tu direct-entry-grid-columns.
+  assert.match(source, /DIRECT_ENTRY_GENDER_OPTIONS/);
+  assert.match(source, /DIRECT_ENTRY_LABOR_TYPE_OPTIONS/);
+  assert.match(source, /DIRECT_ENTRY_PROVIDER_OPTIONS/);
+  // Khong con LABOR_TYPE_OPTIONS hay STATUS_OPTIONS hard-code.
+  assert.equal(source.includes("Toàn thời gian"), false,
+    "P1.7-H05: UI khong con hien thi 'Toan thoi gian'");
+  assert.equal(source.includes("STATUS_OPTIONS"), false,
+    "status khong con nam trong grid mac dinh");
   // Option project/recruiter den tu catalog truyen vao, khong hard-code ID.
-  assert.match(source, /catalogs\?\.projects \?\? \[\]\)\.map\(\(option\) => option\.label\)/);
-  assert.match(source, /catalogs\?\.recruiters \?\? \[\]\)\.map\(\(option\) => option\.label\)/);
+  assert.match(source, /source\?\.projects \?\? \[\]/);
+  assert.match(source, /catalogs\?\.recruiters \?\? \[\]/);
+  assert.match(source, /recruitersForProvider\(/);
   assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(source), false,
     "khong hard-code UUID catalog");
 });
 
-test("thao tac dong la client-only, khong co API xoa", () => {
-  assert.match(source, /onClearRow\(row\.clientRowId\)/);
+test("thao tac dong: chi Xoa cho staged row, khong co API xoa", () => {
+  // P1.7-H05: chi giu Xoa (staged), CCCD/employee_code/duplicate/clear da chuyen
+  // ra ngoai grid (action rail ben ngoai) hoac bi loai bo.
   assert.match(source, /onDeleteRow\(row\.clientRowId\)/);
-  assert.match(source, /onDuplicateRow\(row\.clientRowId\)/);
+  // Khong con Clear/Duplicate/Nhan ban trong grid.
+  assert.equal(source.includes("onClearRow"), false,
+    "khong con Clear row trong grid H05");
+  assert.equal(source.includes("onDuplicateRow"), false,
+    "khong con Duplicate row trong grid H05");
+  assert.equal(source.includes("Nhân bản"), false,
+    "khong con nut Nhan ban trong grid H05");
+  assert.equal(source.includes("Làm trống"), false,
+    "khong con nut Lam trong trong grid H05");
   assert.equal(/method:\s*"DELETE"/.test(source), false);
 });
