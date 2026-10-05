@@ -256,4 +256,3 @@ test("H08-17 chi co document_view (khong entry_own/admin, khong document_upload)
   // canViewDocuments prop truyen vao dialog.
   assert.match(live, /canViewDocuments=\{capabilities\.includes\("document_view"\)\}/);
 });
-
