@@ -70,10 +70,14 @@ test("undo dung snapshot W01 va khoi phuc dung truoc paste", () => {
 test("validation chay tren staged rows va map issue ve dung o", () => {
   assert.match(live, /buildSpreadsheetValidation\(\{/);
   assert.match(live, /rows: stagedModel\.rows,/);
-  assert.match(live, /validation=\{stagedValidation\}/);
+  // P1.7-H07: UI su dung `stagedValidationForDisplay` (loai bo
+  // PASTE_VALUE_REQUIRED khi user chua bam "Lưu cac dong hop le").
+  assert.match(live, /validation=\{stagedValidationForDisplay\}/);
   // Blank rows khong vao save: chi rowOrder (non-empty) duoc dem.
   assert.match(live, /Lưu các dòng hợp lệ/);
-  assert.match(live, /disabled=\{loadState !== "ready" \|\| !stagedValidation\.canSave \|\| stagedBusy\}/);
+  // P1.7-H07: nut Save luon click duoc (khong bi khoa theo canSave)
+  // de kich hoat required validation va nguoi dung thay nguyen nhan.
+  assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy\}/);
 });
 
 test("save dung full-profile batch, mot request, co chan double submit", () => {

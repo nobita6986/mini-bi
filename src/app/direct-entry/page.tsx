@@ -4,6 +4,7 @@ import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denie
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { DirectEntryShell } from "@/components/direct-entry/direct-entry-shell";
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
+import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-retry";
 import { decideDirectEntryPageAccess } from "@/lib/auth/direct-entry-page-access";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
@@ -17,8 +18,12 @@ export default async function DirectEntryPage() {
   const uiEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   let actor: ActorResolution | null = null;
   if (uiEnabled) {
+    // P1.7-H07: bounded retry (toi da 1 lan) cho transient SSR errors; chi
+    // fallback ve `null` (=> TEMPORARY_UNAVAILABLE) neu retry cung throw.
     try {
-      actor = (await getDirectEntryActor(createDirectEntryActorRepository())).actor;
+      const session = await resolveSessionWithBoundedRetry(() =>
+        getDirectEntryActor(createDirectEntryActorRepository()));
+      actor = session.actor;
     } catch {
       actor = null;
     }

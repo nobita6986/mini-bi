@@ -5,6 +5,7 @@ import { AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
+import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-retry";
 import { decideSessionPageAccess } from "@/lib/auth/session-page-access";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
@@ -23,7 +24,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // session/actor TRUOC khi doc bat ky du lieu reporting nao.
   let actor: ActorResolution | null = null;
   try {
-    actor = (await getDirectEntryActor(createDirectEntryActorRepository())).actor;
+    const session = await resolveSessionWithBoundedRetry(() =>
+      getDirectEntryActor(createDirectEntryActorRepository()));
+    actor = session.actor;
   } catch {
     actor = null;
   }

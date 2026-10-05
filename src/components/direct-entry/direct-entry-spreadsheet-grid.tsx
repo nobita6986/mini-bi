@@ -17,7 +17,6 @@
 import { useCallback, useMemo, type ClipboardEvent } from "react";
 import {
   DataGrid,
-  renderTextEditor,
   type CellCopyArgs,
   type CellKeyDownArgs,
   type CellPasteArgs,
@@ -187,13 +186,10 @@ function SelectCellEditor(
     );
   }
   if (props.columnKey === "project_id") {
-    if (rowDate === null || rowDate === "") {
-      return (
-        <span className={styles.cellHint} role="status" aria-live="polite">
-          Nhập ngày bắt đầu trước
-        </span>
-      );
-    }
+    // P1.7-H07: dropdown Dự án phai mo va co options khi `first_work_date`
+    // chua co (mac dinh dung fallback catalog da set o `row.catalogOptions`).
+    // Khi user nhap ngay sau do, live component se re-resolve catalog qua
+    // `onCellsChange` => `ensureCatalog` va truyen option moi.
     return (
       <select aria-label="Dự án" autoFocus value={value}
         onChange={(event) => change(event.currentTarget.value)}>
@@ -223,6 +219,42 @@ function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { colum
       value={props.row.cells[props.columnKey] ?? ""}
       onChange={(event) => props.onRowChange(
         { ...props.row, cells: { ...props.row.cells, [props.columnKey]: event.currentTarget.value } }, true)}
+    />
+  );
+}
+
+/**
+ * P1.7-H07: text editor cho cac cell editable co gia tri nam trong
+ * `row.cells[column.key]`. `renderTextEditor` mac dinh cua react-data-grid
+ * doc/ghi `row[column.key]`, nhung row model cua P1.7-W02 dat gia tri
+ * trong `row.cells[column.key]` (va `providerType` nam ngoai `cells`).
+ * Mac dinh do khong tuong thich, dan den gia tri typed bien mat khi blur
+ * hoac Enter. Editor nay commit (onRowChange + commitChanges=true) moi
+ * thay doi, dam bao gia tri duoc commit vao staged model khi:
+ *   - click ra ngoai (onBlur => onClose(true));
+ *   - Enter (mac dinh close on Enter);
+ *   - Tab/Shift+Tab (onClose implicit);
+ *   - chon option tu dropdown select khong dung editor nay.
+ */
+function cellsTextEditor(
+  { row, column, onRowChange, onClose }: RenderEditCellProps<SpreadsheetGridRow>,
+) {
+  const value = row.cells[column.key] ?? "";
+  return (
+    <input
+      className="rdg-text-editor"
+      ref={(node) => {
+        if (node) {
+          node.focus();
+          node.select();
+        }
+      }}
+      value={value}
+      onChange={(event) => onRowChange({
+        ...row,
+        cells: { ...row.cells, [column.key]: event.target.value },
+      })}
+      onBlur={() => onClose(true, false)}
     />
   );
 }
@@ -311,7 +343,11 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
         key: column.key, name: headerLabel, width: column.width, resizable: true,
         editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
         renderCell,
-        renderEditCell: renderTextEditor,
+        // P1.7-H07: dung `cellsTextEditor` thay vi `renderTextEditor` mac
+        // dinh vi row model dat gia tri trong `row.cells[column.key]`, khong
+        // phai `row[column.key]`. Mac dinh se dan den gia tri typed bien mat
+        // khi blur/Enter/Tab.
+        renderEditCell: cellsTextEditor,
       };
     };
     const dataColumns = DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS
@@ -374,6 +410,19 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
 
   const onCellKeyDown = useCallback((args: CellKeyDownArgs<SpreadsheetGridRow>, event: { key: string; preventGridDefault: () => void }) => {
     if (args.mode !== "ACTIVE") return;
+    // P1.7-H07: phim dieu huong (mũi tên, Tab, Enter, Home, End, PageUp/Down)
+    // cung cap nhat selected row theo `args.row.clientRowId` hien tai. Viec
+    // cap nhat chi xay ra neu row thuc su ton tai va khac selection hien tai
+    // (tranh re-render thua khi giu phim).
+    if (args.row && args.row.clientRowId !== selectedClientRowId) {
+      const navigationKeys = new Set([
+        "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+        "Tab", "Enter", "Home", "End", "PageUp", "PageDown",
+      ]);
+      if (navigationKeys.has(event.key)) {
+        onSelectedClientRowChange(args.row.clientRowId);
+      }
+    }
     if (event.key !== "Delete" && event.key !== "Backspace") return;
     const column = args.column;
     const row = args.row;
@@ -381,7 +430,15 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     if (!isEditable(row, column.key)) return;
     event.preventGridDefault();
     onCellsChange(row.clientRowId, { [column.key]: "" });
-  }, [isEditable, onCellsChange]);
+  }, [isEditable, onCellsChange, onSelectedClientRowChange, selectedClientRowId]);
+
+  const onCellClick = useCallback((args: { row: SpreadsheetGridRow }) => {
+    // P1.7-H07: click cell dong thoi chon row chua cell do, cap nhat
+    // contextual action bar. Bo qua neu row khong co clientRowId.
+    if (args.row && args.row.clientRowId !== selectedClientRowId) {
+      onSelectedClientRowChange(args.row.clientRowId);
+    }
+  }, [onSelectedClientRowChange, selectedClientRowId]);
 
   const errorRowCount = validation.rows.filter((row) => row.errorCount > 0).length;
 
@@ -418,6 +475,12 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           onCellPaste={onCellPaste}
           onCellCopy={onCellCopy}
           onCellKeyDown={onCellKeyDown}
+          onCellClick={onCellClick}
+          // P1.7-H07: highlight toan bo row duoc chon (khong phai chi cell
+          // active) de nguoi dung thay ro context cua action bar.
+          rowClass={(row) => row.clientRowId === selectedClientRowId
+            ? `${styles.rowHighlight ?? ""}`.trim() || "rdg-row-selected"
+            : undefined}
           rowHeight={40}
           headerRowHeight={38}
           selectedRows={selectedClientRowId === null || selectedClientRowId === undefined

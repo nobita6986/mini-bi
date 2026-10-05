@@ -949,6 +949,15 @@ export function DirectEntryLive() {
   const [stagedRejection, setStagedRejection] = useState("");
   const [stagedBusy, setStagedBusy] = useState(false);
   const [stagedCanUndo, setStagedCanUndo] = useState(false);
+  // P1.7-H07: batch save validation chi chay sau khi user bam "Lưu các dòng
+  // hợp lệ". Truoc do chi hien thi loi format/catalog (co the gap ngay khi
+  // go), con loi required-missing bi tri hoan. Sau khi save attempt, neu
+  // user chinh sua cell va lam mat required thi error phai bien mat ngay.
+  const [stagedValidationTriggered, setStagedValidationTriggered] = useState(false);
+  // P1.7-H07: tuong tu cho quick save - "validation clientRowId" chi chay
+  // sau khi user bam "Lưu NLĐ" trong quick editor; cac lan edit/typing
+  // truoc do khong hien thi required error.
+  const [quickValidationTriggeredFor, setQuickValidationTriggeredFor] = useState<string | null>(null);
   const [xlsxMessage, setXlsxMessage] = useState("");
   // P1.7-H05 §9.B: clientRowId cua row dang mo quick editor (drawer/dialog nhap nhanh).
   const [quickEditClientRowId, setQuickEditClientRowId] = useState<string | null>(null);
@@ -1030,11 +1039,41 @@ export function DirectEntryLive() {
     existing: rows.map((row) => ({ employeeCode: row.employeeCode })),
   }), [rows, stagedCatalogSource, stagedModel, today]);
 
+  // P1.7-H07: chi hien thi issue `PASTE_VALUE_REQUIRED` (required-missing) sau
+  // khi user bam "Lưu các dòng hợp lệ". Other validation issues (format,
+  // catalog, paste structure) van hien thi ngay. Khi user chinh sua cell va
+  // required value quay lai, issue tu bien mat (stagedValidation.cellIssues
+  // khong con chua code PASTE_VALUE_REQUIRED cho cell do).
+  const stagedValidationForDisplay = useMemo(() => {
+    if (stagedValidationTriggered) return stagedValidation;
+    const filteredIssues = stagedValidation.cellIssues.filter((issue) =>
+      issue.code !== "PASTE_VALUE_REQUIRED");
+    const filteredFirstError = stagedValidation.firstError && filteredIssues.some((issue) =>
+      issue === stagedValidation.firstError
+      || (issue.clientRowId === stagedValidation.firstError?.clientRowId &&
+        issue.columnKey === stagedValidation.firstError?.columnKey &&
+        issue.code === "PASTE_VALUE_REQUIRED"))
+      ? null
+      : stagedValidation.firstError;
+    return {
+      ...stagedValidation,
+      cellIssues: Object.freeze(filteredIssues),
+      errorCount: filteredIssues.filter((issue) => issue.severity === "error").length,
+      firstError: filteredFirstError,
+      canSave: stagedValidation.canSave,
+    };
+  }, [stagedValidation, stagedValidationTriggered]);
+
   useEffect(() => {
     for (const date of stagedValidation.catalogDates) void ensureCatalog(date).catch(() => undefined);
   }, [ensureCatalog, stagedValidation]);
 
   const spreadsheetRows = useMemo<readonly SpreadsheetGridRow[]>(() => {
+    // P1.7-H07: default catalog fallback khi row chua co first_work_date
+    // hoac catalog cho ngay do chua load xong. Dropdown Project/Recruiter
+    // van phai mo va co options; ngay nhap sau se re-resolve theo ngay.
+    const fallbackCatalog = catalogs[today] ?? Object.values(catalogs).find((catalog) =>
+      catalog !== undefined) ?? null;
     const persisted: SpreadsheetGridRow[] = rows.map((row) => {
       const editable = row.state !== "saving" && row.state !== "conflict" &&
         isRowEditable(row, submissions);
@@ -1058,7 +1097,8 @@ export function DirectEntryLive() {
         providerType: row.providerType ?? "",
         cccdStatus: cccdStatus.label,
         canManageCccd: cccdStatus.canManage,
-        catalogOptions: spreadsheetCatalogOptions(catalogFor(row.firstWorkDate)),
+        catalogOptions: spreadsheetCatalogOptions(
+          row.firstWorkDate === "" ? fallbackCatalog : catalogFor(row.firstWorkDate)),
         displayValues: profileCells.displayValues,
         cells: {
           ...profileCells.cells,
@@ -1090,7 +1130,8 @@ export function DirectEntryLive() {
       };
     });
     const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => {
-      const catalog = catalogs[row.cells.first_work_date ?? ""];
+      const dateKey = row.cells.first_work_date ?? "";
+      const catalog = dateKey === "" ? fallbackCatalog : catalogs[dateKey] ?? null;
       const recruiter = catalog?.recruiters.find((option) =>
         option.recruiter_id === row.cells.recruiter_id ||
         option.display_name === row.cells.recruiter_id);
@@ -1113,7 +1154,7 @@ export function DirectEntryLive() {
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
     }); });
     return [...persisted, ...staged];
-  }, [catalogFor, catalogs, cccdCache, rows, stagedModel, submissions]);
+  }, [catalogFor, catalogs, cccdCache, rows, stagedModel, submissions, today]);
 
   /**
    * P1.7-H06: selected spreadsheet row lookup. Tra ra cho contextual action
@@ -1396,6 +1437,11 @@ export function DirectEntryLive() {
   /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
   const onStagedSave = useCallback(async () => {
     if (stagedInFlight.current) return;
+    // P1.7-H07: user da bam "Lưu" => kich hoat hien thi required-missing
+    // errors va validate truoc khi gui. Neu khong co row non-blank hoac
+    // validation that bai (bao gom required-missing), thong bao va return
+    // (khong goi server). Error se duoc hien thi ngay o cell.
+    setStagedValidationTriggered(true);
     const preview = stagedValidation.preview;
     if (preview === null || !stagedValidation.canSave) {
       setStagedMessage("Chưa có dòng hợp lệ để lưu.");
@@ -1443,6 +1489,7 @@ export function DirectEntryLive() {
         }
         // Chi clear staged rows sau khi server xac nhan bang projection hop le.
         setStagedModel(createSpreadsheetRowModel());
+        setStagedValidationTriggered(false);
         setStagedMessage("Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.");
         await reloadDrafts();
         // Map lai selection: chi giu persisted row co entry_id trung khop;
@@ -1484,6 +1531,11 @@ export function DirectEntryLive() {
    */
   const onQuickSaveRow = useCallback(async (clientRowId: string) => {
     if (stagedInFlight.current) return;
+    // P1.7-H07: trigger required-missing error hien thi tren cell khi user
+    // bam "Lưu NLĐ" trong quick editor. Sau do, neu user chinh sua cell va
+    // required value quay lai, error tu bien mat (validation re-runs theo
+    // stagedModel moi).
+    setQuickValidationTriggeredFor(clientRowId);
     const target = stagedModel.rows.find((row) => row.clientRowId === clientRowId);
     if (!target) {
       setStagedMessage("Dòng đã đóng hoặc không còn tồn tại.");
@@ -1533,6 +1585,7 @@ export function DirectEntryLive() {
         // Chi remove row vua luu (goc clientRowId), giu nguyen cac staged row khac.
         setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
         setQuickEditClientRowId(null);
+        setQuickValidationTriggeredFor(null);
         // P1.7-H06: chi giu selection neu server tra entry_id trung khop; neu khong
         // xac dinh duoc, clear selection an toan (khong doan theo row/ten).
         const savedEntryId = result.entryIds[0];
@@ -1565,12 +1618,22 @@ export function DirectEntryLive() {
   }, [ensureCatalog, updateRow]);
 
   const selectedRowLocked = selectedRow !== null && !isRowEditable(selectedRow, submissions);
-  const currentOptions = selectedRow ? optionsFor(catalogFor(selectedRow.firstWorkDate)) : [];
-  const currentRecruiter = selectedRow
-    ? catalogFor(selectedRow.firstWorkDate)?.recruiters.find(
-      ({ recruiter_id }) => recruiter_id === selectedRow.recruiterId,
-    )
-    : undefined;
+  // P1.7-H07: khi row chua co first_work_date, dropdown Project/Recruiter
+  // van phai mo va lay option tu default catalog (hom nay hoac catalog
+  // dau tien co san). Re-resolve catalog theo ngay khi user nhap ngay.
+  const defaultCatalog = catalogs[today] ?? Object.values(catalogs).find((catalog) =>
+    catalog !== undefined) ?? null;
+  const selectedRowCatalog = selectedRow
+    ? (selectedRow.firstWorkDate === ""
+      ? defaultCatalog
+      : catalogFor(selectedRow.firstWorkDate) ?? defaultCatalog)
+    : null;
+  const currentOptions = selectedRowCatalog
+    ? optionsFor(selectedRowCatalog)
+    : [];
+  const currentRecruiter = selectedRowCatalog?.recruiters.find(
+    ({ recruiter_id }) => recruiter_id === selectedRow?.recruiterId,
+  );
   const catalogMissing = Object.values(catalogs).some(({ projects, recruiters }) =>
     projects.length === 0 || recruiters.length === 0,
   );
@@ -1616,7 +1679,7 @@ export function DirectEntryLive() {
           </button>
           <button type="button" className={styles.primaryButton}
             data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
-            disabled={loadState !== "ready" || !stagedValidation.canSave || stagedBusy}
+            disabled={loadState !== "ready" || stagedBusy}
             aria-busy={stagedBusy}>
             Lưu các dòng hợp lệ
           </button>
@@ -1678,13 +1741,11 @@ export function DirectEntryLive() {
                       ? <span className={styles.contextualActionLabelMuted}>
                           Chọn một dòng để thao tác
                         </span>
-                      : <>Đang chọn: <strong>{
-                            selected.displayName !== ""
-                              ? selected.displayName
-                              : "Dòng " + (spreadsheetRows.findIndex((row) =>
-                                  row.clientRowId === selected.clientRowId) + 1)
+                      : <>Đang chọn dòng STT <strong>{
+                            spreadsheetRows.findIndex((row) =>
+                              row.clientRowId === selected.clientRowId) + 1
                           }</strong>{selectedIsPersisted && selected.employeeCode !== ""
-                              ? ` >  Mã NLĐ ${selected.employeeCode}`
+                              ? ` · Mã NLĐ ${selected.employeeCode}`
                               : ""}</>}
                   </p>
                   <div className={styles.contextualActionGroup}>
@@ -1745,21 +1806,21 @@ export function DirectEntryLive() {
             {stagedRejection !== "" && (
               <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
             )}
-            {stagedValidation.firstError !== null && (
+            {stagedValidationForDisplay.firstError !== null && (
               <button type="button" data-testid="spreadsheet-first-error"
                 onClick={() => {
-                  const index = stagedValidation.rowOrder.indexOf(
-                    stagedValidation.firstError?.clientRowId ?? "");
+                  const index = stagedValidationForDisplay.rowOrder.indexOf(
+                    stagedValidationForDisplay.firstError?.clientRowId ?? "");
                   setStagedMessage(
                     "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
-                    (stagedValidation.firstError?.columnKey ?? "") + ".");
+                    (stagedValidationForDisplay.firstError?.columnKey ?? "") + ".");
                 }}>
                 Đi tới lỗi đầu tiên
               </button>
             )}
             <DirectEntrySpreadsheetGrid
               rows={spreadsheetRows}
-              validation={stagedValidation}
+              validation={stagedValidationForDisplay}
               catalogOptions={stagedCatalogOptions}
               onCellsChange={onSpreadsheetCellsChange}
               onProviderTypeChange={onStagedProviderTypeChange}
@@ -1875,9 +1936,9 @@ export function DirectEntryLive() {
               ))}
             </ul>
             <h2>Bản ghi đang nhập</h2>
-            {stagedValidation.rows.length === 0 && <p>Chưa có dòng đang nhập.</p>}
+            {stagedValidationForDisplay.rows.length === 0 && <p>Chưa có dòng đang nhập.</p>}
             <ul className={styles.mobileStagedList}>
-              {stagedValidation.rows.map((validationRow) => {
+              {stagedValidationForDisplay.rows.map((validationRow) => {
                 const stagedRow = stagedModel.rows.find(
                   (candidate) => candidate.clientRowId === validationRow.clientRowId,
                 );
@@ -2051,6 +2112,33 @@ export function DirectEntryLive() {
                   Nhập nhanh một người lao động; dữ liệu sẽ đồng bộ ngay vào đúng dòng trong bảng.
                   Lưu trước để tải hồ sơ.
                 </Dialog.Description>
+                {quickValidationTriggeredFor === target.clientRowId && (() => {
+                  // P1.7-H07: chi hien thi required-missing errors (PASTE_VALUE_REQUIRED)
+                  // cua row dang mo khi user da bam "Lưu NLĐ". Khi sua cell
+                  // va required value duoc dien, error tu bien mat.
+                  const rowIssues = stagedValidation.cellIssues.filter((issue) =>
+                    issue.clientRowId === target.clientRowId
+                    && issue.code === "PASTE_VALUE_REQUIRED");
+                  if (rowIssues.length === 0) return null;
+                  const labels: Record<string, string> = {
+                    project_id: "Dự án",
+                    first_work_date: "Ngày bắt đầu làm việc",
+                    display_name: "Họ và tên",
+                    recruiter_id: "Người tuyển / Vendor",
+                    labor_type: "Loại hình LĐ",
+                    provider_type: "HRP/Vendor",
+                  };
+                  return (
+                    <ul className={styles.quickErrorList} role="alert"
+                      data-testid="quick-edit-required-errors">
+                      {rowIssues.map((issue) => (
+                        <li key={(issue.columnKey ?? "") + "-" + issue.message}>
+                          {labels[issue.columnKey ?? ""] ?? issue.columnKey}: {issue.message}
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()}
                 <div className={styles.quickDrawerFields}>
                   <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                     {target.cells.first_work_date === undefined || target.cells.first_work_date === ""
@@ -2222,10 +2310,10 @@ export function DirectEntryLive() {
                 <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <select aria-label="Dự án" value={selectedRow.projectId}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" ||
-                      selectedRowLocked || !catalogFor(selectedRow.firstWorkDate)}
+                      selectedRowLocked || selectedRowCatalog === null}
                     onChange={(event) => updateRow(selectedRow.rowId, { projectId: event.target.value })}>
                     <option value="">Chọn dự án</option>
-                    {catalogFor(selectedRow.firstWorkDate)?.projects.map((project) =>
+                    {selectedRowCatalog?.projects.map((project) =>
                       <option key={project.project_id} value={project.project_id}>{project.display_name}</option>,
                     )}
                   </select>
@@ -2261,7 +2349,7 @@ export function DirectEntryLive() {
                   entryId={selectedRow.entryId}
                   entryVersion={selectedRow.entryVersion}
                   rowId={selectedRow.rowId}
-                  banks={catalogFor(selectedRow.firstWorkDate)?.banks ?? []}
+                  banks={selectedRowCatalog?.banks ?? []}
                   canEdit={capabilities.includes("entry_own") &&
                     selectedRow.state !== "saving" && selectedRow.state !== "conflict" &&
                     !selectedRowLocked}

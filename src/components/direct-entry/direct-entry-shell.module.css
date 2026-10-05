@@ -284,6 +284,22 @@
   gap: 12px;
 }
 
+/* P1.7-H07: list required-missing errors cho quick editor row sau khi
+   user bam "Lưu NLĐ" nhung validation that bai. */
+.quickErrorList {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  list-style: disc;
+  border: 1px solid #dc2626;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 13px;
+}
+.quickErrorList li {
+  margin: 2px 0;
+}
+
 .quickDrawerActions {
   display: flex;
   flex-wrap: wrap;
