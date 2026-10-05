@@ -7,6 +7,31 @@ export const SPREADSHEET_MAX_DATA_ROWS = 100;
 const CLIENT_ROW_ID_PREFIX = "spreadsheet-row";
 
 /**
+ * P1.7-H08-R1: default issue place cho moi staged row moi. Nguoi dung duoc
+ * sua/xoa; day chi la gia tri khoi tao (server/imported value khong bi ghi de).
+ */
+export const DEFAULT_NATIONAL_ID_ISSUED_PLACE = "Bộ Công An";
+
+/** First-work-date default la ngay hien tai theo Asia/Ho_Chi_Minh (GMT+7). */
+export const SPREADSHEET_DEFAULT_DATE_FIELD_KEY = "first_work_date";
+export const SPREADSHEET_DEFAULT_PLACE_FIELD_KEY = "national_id_issued_place";
+
+/**
+ * Tra ve ngay hien tai (YYYY-MM-DD) theo timezone Asia/Ho_Chi_Minh. Tranh
+ * dung `toISOString()` vi mac dinh la UTC, gay lech ngay khi may o GMT-/+ khac.
+ */
+export function spreadsheetDefaultFirstWorkDate(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+/**
  * The persisted worker-profile fields are the only user-entered values owned by
  * this model. Derived, status, document and action columns remain outside it.
  */
@@ -39,14 +64,47 @@ export class SpreadsheetDataRowLimitError extends RangeError {
   }
 }
 
-function blankCells(): Record<string, string> {
-  return Object.fromEntries(SPREADSHEET_WRITABLE_FIELD_KEYS.map((key) => [key, ""]));
+/**
+ * P1.7-H08-R1: cel mac dinh cho staged row moi.
+ * - `first_work_date` = ngay hien tai theo GMT+7 (tranh lech ngay do UTC).
+ * - `national_id_issued_place` = "Bộ Công An".
+ * User co the sua/xoa; import/imported values tu pipeline khong bi ghi de.
+ */
+export function defaultCells(now: Date = new Date()): Record<string, string> {
+  const cells = Object.fromEntries(SPREADSHEET_WRITABLE_FIELD_KEYS.map((key) => [key, ""]));
+  cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = spreadsheetDefaultFirstWorkDate(now);
+  cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] = DEFAULT_NATIONAL_ID_ISSUED_PLACE;
+  return cells;
+}
+
+/**
+ * Returns true neu row chi chua default values (khong co business input nao).
+ * Duoc dung de:
+ *  - loc row khoi validation save/filter.
+ *  - khong dem row vao batch request.
+ *  - khong trigger required validation.
+ * Khi user nhap business field (display_name, project_id, recruiter_id, ...)
+ * hoac thay doi default value (vd xoa "Bộ Công An" de go "Khác"), row se
+ * tu dong duoc tinh la khong trong.
+ */
+export function spreadsheetRowIsBlank(row: SpreadsheetStagedRow): boolean {
+  return SPREADSHEET_WRITABLE_FIELD_KEYS.every((key) => {
+    const value = (row.cells[key] ?? "").trim();
+    if (value.length === 0) return true;
+    if (key === SPREADSHEET_DEFAULT_DATE_FIELD_KEY) {
+      return value === spreadsheetDefaultFirstWorkDate();
+    }
+    if (key === SPREADSHEET_DEFAULT_PLACE_FIELD_KEY) {
+      return value === DEFAULT_NATIONAL_ID_ISSUED_PLACE;
+    }
+    return false;
+  });
 }
 
 function nextBlankRow(sequence: number): SpreadsheetStagedRow {
   return {
     clientRowId: `${CLIENT_ROW_ID_PREFIX}-${sequence}`,
-    cells: blankCells(),
+    cells: defaultCells(),
     providerType: "",
   };
 }
@@ -72,11 +130,6 @@ function assertWritablePatch(patch: Readonly<Record<string, string>>): void {
       throw new TypeError(`Spreadsheet cell ${key} must be a string.`);
     }
   }
-}
-
-export function spreadsheetRowIsBlank(row: SpreadsheetStagedRow): boolean {
-  return SPREADSHEET_WRITABLE_FIELD_KEYS.every((key) =>
-    (row.cells[key] ?? "").trim().length === 0);
 }
 
 export function selectNonEmptySpreadsheetRows(
@@ -171,7 +224,7 @@ export function clearSpreadsheetRow(
   const rows = model.rows.map((row) => {
     if (row.clientRowId !== clientRowId) return row;
     found = true;
-    return { ...row, cells: blankCells() };
+    return { ...row, cells: defaultCells() };
   });
   if (!found) return model;
 
