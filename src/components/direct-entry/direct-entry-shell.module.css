@@ -20,11 +20,36 @@
   line-height: 1.45;
 }
 
+.serverStatus {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .notice {
   margin: 16px 0;
   border-color: var(--border);
   background: var(--surface);
   color: var(--foreground);
+}
+
+.notice:empty {
+  display: none;
+}
+
+.secondaryPanel {
+  margin-top: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.secondaryPanel summary {
+  min-height: 40px;
+  align-content: center;
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .header {

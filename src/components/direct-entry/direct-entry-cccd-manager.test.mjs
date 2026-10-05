@@ -24,7 +24,8 @@ test("cot 'Ho so CCCD' hien dung ba trang thai va nut quan ly bi khoa khi chua l
   assert.match(grid, /\{row\.cccdStatus\}/);
   assert.match(grid, /disabled={!row\.persisted \|\| !row\.canManageCccd \|\| !onManageDocuments}/);
   assert.match(grid, /onManageDocuments\?\.\(row\.clientRowId\)/);
-  assert.match(grid, /Quản lý hồ sơ/);
+  assert.match(grid, /Quản lý CCCD/);
+  assert.match(grid, /Lưu dòng trước/);
   assert.equal(grid.includes("fetch("), false, "o luoi chi doc cache, khong goi API");
   assert.match(status, /entryId === null \|\| entryId === ""/);
   assert.match(status, /CCCD_UNSAVED_LABEL = "Chưa lưu"/);

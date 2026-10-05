@@ -15,6 +15,7 @@ import {
   duplicateSpreadsheetRow,
   selectNonEmptySpreadsheetRows,
   spreadsheetRowIsBlank,
+  updateSpreadsheetRowProviderType,
   updateSpreadsheetRowCells,
 } from "./spreadsheet-row-model.ts";
 
@@ -67,6 +68,25 @@ test("save selection skips internal blank rows and preserves visual order", () =
   );
 });
 
+test("provider selection stays client-only and clears an incompatible recruiter", () => {
+  const initial = createSpreadsheetRowModel();
+  const clientRowId = initial.rows[0].clientRowId;
+  const withRecruiter = updateSpreadsheetRowCells(initial, clientRowId, {
+    recruiter_id: "hrp-recruiter-id",
+  });
+  const selected = updateSpreadsheetRowProviderType(withRecruiter, clientRowId, "hrp");
+  assert.equal(selected.rows[0].providerType, "hrp");
+  assert.equal(selected.rows[0].cells.recruiter_id, "");
+  const changed = updateSpreadsheetRowProviderType(
+    updateSpreadsheetRowCells(selected, clientRowId, { recruiter_id: "hrp-recruiter-id" }),
+    clientRowId,
+    "vendor",
+  );
+  assert.equal(changed.rows[0].providerType, "vendor");
+  assert.equal(changed.rows[0].cells.recruiter_id, "");
+  assert.equal(Object.hasOwn(changed.rows[0].cells, "provider_type"), false);
+});
+
 test("replenishes ten trailing blanks and refuses a 101st data row", () => {
   let model = createSpreadsheetRowModel();
   for (let index = 0; index < SPREADSHEET_MAX_DATA_ROWS; index += 1) {
@@ -91,6 +111,7 @@ test("replenishes ten trailing blanks and refuses a 101st data row", () => {
 test("clear, delete and duplicate keep identities stable and never recycle IDs", () => {
   let model = createSpreadsheetRowModel();
   const sourceId = model.rows[0].clientRowId;
+  model = updateSpreadsheetRowProviderType(model, sourceId, "vendor");
   model = updateSpreadsheetRowCells(model, sourceId, {
     display_name: "Nguyễn Văn A",
   });
@@ -99,6 +120,7 @@ test("clear, delete and duplicate keep identities stable and never recycle IDs",
   const duplicate = duplicated.rows[1];
   assert.notEqual(duplicate.clientRowId, sourceId);
   assert.deepEqual(duplicate.cells, duplicated.rows[0].cells);
+  assert.equal(duplicate.providerType, "vendor");
   assert.equal(duplicated.rows[0].clientRowId, sourceId);
 
   const cleared = clearSpreadsheetRow(duplicated, sourceId);

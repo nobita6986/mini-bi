@@ -72,8 +72,8 @@ test("validation chay tren staged rows va map issue ve dung o", () => {
   assert.match(live, /rows: stagedModel\.rows,/);
   assert.match(live, /validation=\{stagedValidation\}/);
   // Blank rows khong vao save: chi rowOrder (non-empty) duoc dem.
-  assert.match(live, /"Lưu các dòng đã nhập \(" \+ stagedValidation\.rowOrder\.length \+ "\)"/);
-  assert.match(live, /saveDisabled=\{!stagedValidation\.canSave\}/);
+  assert.match(live, /Lưu các dòng hợp lệ/);
+  assert.match(live, /disabled=\{loadState !== "ready" \|\| !stagedValidation\.canSave \|\| stagedBusy\}/);
 });
 
 test("save dung full-profile batch, mot request, co chan double submit", () => {
@@ -131,18 +131,26 @@ test("spreadsheet is the only live desktop grid and profile hydration is passed 
   assert.equal((live.match(/<DirectEntrySpreadsheetGrid\b/g) ?? []).length, 1);
   assert.equal(live.includes('aria-label="Bảng bản nháp Direct Entry"'), false);
   assert.match(live, /projectDraftProfileGridCells\(row\.profile\)/);
-  assert.match(live, /provider_hint: row\.providerType\?\.toUpperCase/);
+  assert.match(live, /providerType: row\.providerType \?\? ""/);
   assert.match(live, /team_hint: row\.teamDisplayName/);
   assert.match(live, /onOpenDraft=\{\(rowId\) => setSelectedRowId\(rowId\)\}/);
+  assert.ok(live.indexOf("<DirectEntrySpreadsheetGrid") < live.indexOf("<details className={styles.secondaryPanel}"));
+  assert.ok(live.indexOf("<DirectEntrySpreadsheetGrid") < live.indexOf("<DirectEntrySubmissionList"));
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /maxRows: liveDraftRows \+ 100/);
+  assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[\s\S]*DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS/);
 });
 
 test("persisted actions reopen the existing drawer; mobile, CCCD, payment and document paths remain", () => {
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /!row\.clientStaged\s*\?\s*\(/);
   assert.match(grid, /onOpenDraft\?\.\(row\.clientRowId\)/);
-  assert.match(grid, /onDuplicateRow\(row\.clientRowId\)/);
+  assert.match(grid, /onDeleteRow\(row\.clientRowId\)/);
+  assert.match(grid, /Remove<\/button>/);
+  assert.match(grid, /disabled=\{!row\.persisted \|\| !row\.canManageCccd \|\| !onManageDocuments\}/);
+  assert.match(grid, /Tự sinh khi lưu/);
+  assert.equal(grid.includes("Nhân bản"), false);
+  assert.equal(grid.includes("Làm trống"), false);
   assert.match(live, /selectedRowLocked = selectedRow !== null && !isRowEditable\(selectedRow, submissions\)/);
   assert.match(live, /styles\.mobileSection/);
   assert.match(live, /<Dialog\.Root open=\{selectedRow !== null\}/);
@@ -155,8 +163,8 @@ test("persisted actions reopen the existing drawer; mobile, CCCD, payment and do
 test("XLSX import/template and mobile staged editor stay on the spreadsheet workflow", () => {
   assert.match(live, /workerProfileXlsxToTsv\(file\)/);
   assert.match(live, /createWorkerProfileTemplate\(\)/);
-  assert.match(live, /Nhập workbook \.xlsx/);
-  assert.match(live, /Tải mẫu \.xlsx/);
+  assert.match(live, /Nhập file Excel/);
+  assert.match(live, /Tải file Excel mẫu/);
   assert.match(live, /employeeCodeMode: "server-generated"/);
   assert.match(live, /className=\{styles\.mobileStagedList\}/);
   assert.match(live, /Máy chủ sẽ cấp mã khi lưu/);
@@ -169,10 +177,11 @@ test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () =>
     "DirectEntryDocumentEditor", "DirectEntrySubmissionList",
     "DirectEntryChangeRequestList", "DirectEntryChangeRequestProposer",
     "DirectEntryChangeRequestReviewer", "DirectEntrySubmittedDocumentManager",
-    "DirectEntryWorkerProfilePasteDialog", "DirectEntryExcelPasteDialog",
     "styles.mobileSection"]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
+  assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
+  assert.equal(live.includes("DirectEntryExcelPasteDialog"), false);
 });
 
 test("khong co N+1 entry-detail fetch trong duong staged", () => {
