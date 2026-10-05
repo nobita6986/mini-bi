@@ -7,6 +7,12 @@ import {
   createAuthLogoutResponse,
   createAuthSessionResponse,
 } from "./auth-session-core.ts";
+// P3-W08A regression matrix: re-registered here so the suite runs as
+// part of the canonical `pnpm test:server` path. The W08A test file
+// imports this module's *production* code (`./auth-session-core.ts`)
+// and never references this test module, so the import is one-way and
+// introduces no cycle.
+import "./p3-w08a-session-revocation-cache.test.mjs";
 
 const actor = {
   auth_subject: "auth-subject-must-not-leak",
