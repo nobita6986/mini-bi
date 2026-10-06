@@ -24,6 +24,17 @@ test("E21: reporting server takes actor as a mandatory input and calls the scope
   assert.ok(!/\.from\("direct_entry_reporting_facts_v01"\)/.test(server), "facts must go through the scoped RPC, not the raw view");
 });
 
+test("R1: reporting server defers to the DB audience (no TS/UTC inference, no pre-RPC global metadata)", () => {
+  assert.ok(!/resolveReportingAudienceKind/.test(server), "no TS audience inference in the fetcher");
+  assert.ok(!/\.from\("data_sources"\)/.test(server), "data_sources must be read only inside the RPC");
+  assert.ok(!/\.from\("reporting_latest_sync_runs_v01"\)/.test(server), "sync runs must be read only inside the RPC");
+  assert.ok(!/\.from\("reporting_sources_with_current_facts_v01"\)/.test(server), "presence must be read only inside the RPC");
+  assert.match(server, /payload\.sources/);
+  assert.match(server, /payload\.latest_runs/);
+  assert.match(server, /payload\.presence/);
+  assert.match(server, /dbKind === "all"/);
+});
+
 test("E22: audience projection carries only kind + label (no UUID/grants/raw scope)", () => {
   const typeMatch = audience.match(/interface ReportingAudience \{[\s\S]*?\}/);
   assert.ok(typeMatch, "ReportingAudience type must exist");
