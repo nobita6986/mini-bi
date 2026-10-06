@@ -1,78 +1,37 @@
-# P3-W07C-R1 — Direct Entry save date lazy defaults (HANDOFF update)
-
+# P3-W07C-R1 — Direct Entry save date lazy defaults (HANDOFF)
 Status: `P3-W07C-R1_LAZY_DEFAULT_ENTRYPOINTS_CLOSED_LOCAL_PASS_AWAITING_INTEGRATION`
-
-Final R1 commit: `20b570bdda31b48abc89dd7ddd0a3801e52948ab` ("fix(p3-w07c-r1):
-close lazy default entry points"). Branch
-`feature/p3-w07c-direct-entry-save-date-lazy-defaults-hotfix` (rebased on
-`origin/main` `6a81f5637d61bdd66d09c835ba613482609b8ea8`). Sits on top of
-W07C hotfix commit `a8a02ce`. Subsequent docs-only commits pin this SHA
-for readers.
+R1 commit `20b570b` on
+`feature/p3-w07c-direct-entry-save-date-lazy-defaults-hotfix`
+(base `origin/main@6a81f56`; sits on W07C hotfix `a8a02ce`).
 
 ## Root cause (A) — corrected
-
-`normalizePayment` already accepted `null` as omitted. The defect lived
-in `normalizeEmployment` (`src/lib/direct-entry/full-profile-contract.ts`):
-its guard `if (value === undefined)` rejected `payment: null` and
-`employment: null` payloads the staging pipeline intentionally omits, and
-the contract parser emitted `BATCH_INVALID` for the whole batch.
-
-Fix: treat `null` as omitted (`value === undefined || value === null`).
-Safe error codes remain for genuinely invalid values; `BATCH_INVALID` is
-the umbrella required-missing code and continues to cover shape and
-required-field gaps — it is NOT reserved solely for required-missing.
-
-Regression tests in `full-profile-api.test.mjs` (production-shaped row +
-Postgres safe-code classification) lock the safe-code propagation.
+`normalizePayment` already accepted `null`. Defect was in
+`normalizeEmployment` (`full-profile-contract.ts`): guard `if (value
+=== undefined)` rejected `payment: null` / `employment: null`,
+emitting `BATCH_INVALID`. Fix: `value === undefined || value ===
+null`. Code is the umbrella required-missing (shape + required-
+field) — NOT reserved solely for required-missing. Safe codes
+preserved; tests in `full-profile-api.test.mjs` lock propagation.
 
 ## Lazy defaults (B) — R1 entry points closed
-
-`defaultCells()` stays empty. `updateSpreadsheetRowCells` and
-`updateSpreadsheetRowProviderType` now activate lazy defaults BEFORE
-applying the user/patch (idempotent; `now` thread for deterministic
-tests). Activation is therefore guaranteed on:
-
-- click/select row (grid `onSelectedClientRowChange` → wrapper
-  `setSelectedClientRowId` activates);
-- `addQuickStagedRow` (activates the empty row OR appends a new one then
-  selects; `setQuickEditClientRowId` is called outside the
-  `setStagedModel` updater);
-- quick editor open (`openQuickEditor` activates before
-  `setQuickEditClientRowId`);
-- mobile `<details>` open (`onToggle` activates when
-  `event.currentTarget.open`);
-- mobile field change (still routes through `updateSpreadsheetRowCells`);
-- HRP/Vendor selection (activates inside `updateSpreadsheetRowProviderType`);
-- paste/import (`updateSpreadsheetRowCells` is the single write path;
-  user/paste values always win because the patch is applied AFTER
-  activation).
-
-Default-only rows remain blank, are excluded from validation, batch
-count, and server send. `clear row` resets to EMPTY +
-`lazyDefaultsApplied: false`. New behavioral regression file
-`direct-entry-live-lazy-default-entrypoints.test.mjs` covers every
-entry point; `spreadsheet-row-model.test.mjs` got three new R1 tests
-covering `updateSpreadsheetRowCells` activation, provider activation,
-and default-only blank exclusion. The h08 R1 structural file is updated
-to drop "inherit defaults from row factory" wording.
+`defaultCells()` empty. `updateSpreadsheetRowCells` and
+`updateSpreadsheetRowProviderType` activate BEFORE patch
+(idempotent; `now` thread). Activation guaranteed on: click/select;
+addQuick (empty OR new append; `setQuickEditClientRowId` outside
+`setStagedModel` updater); quick editor open; mobile `<details>`
+onToggle when open; mobile field change; HRP/Vendor; paste/import.
+User/paste always win (patch AFTER activation). Default-only rows
+stay blank (no validate/batch/server). `clear row` resets EMPTY +
+`lazyDefaultsApplied: false`. New
+`direct-entry-live-lazy-default-entrypoints.test.mjs` (10 tests);
+`spreadsheet-row-model.test.mjs` +3 R1; h08 file drops "inherit
+defaults from row factory".
 
 ## Date display / label / error presentation (C/D/E)
+Unchanged. See `a8a02ce` HANDOFF.
 
-Unchanged from the W07C hotfix commit. See `a8a02ce` HANDOFF ancestor.
-
-## Targeted gates (delta)
-
-- `node --test src/lib/direct-entry/spreadsheet-row-model.test.mjs` ✓
-- `node --test src/lib/direct-entry/direct-entry-date-format.test.mjs` ✓
-- `node --conditions=react-server --test src/lib/direct-entry/full-profile-api.test.mjs` ✓
-- `pnpm test:p1.6-i04c3-r3a` 129/129 ✓
-- `pnpm typecheck` ✓
-- `pnpm lint` ✓ (0 errors, 11 pre-existing warnings)
-- `pnpm build` ✓
-- `git diff --check` ✓
-- direct-entry suites 635/635 ✓
-
-## Blocked / deferred
-
-None. No migration; no Production mutation; reporting/cutover/W04B
-untouched.
+## Gates
+`spreadsheet-row-model` 19/19 · `direct-entry-date-format` 6/6 ·
+`full-profile-api` 9/9 · `pnpm test:p1.6-i04c3-r3a` 129/129 ·
+`typecheck` ✓ · `lint` ✓ (0e/11w) · `build` ✓ · `git diff --check` ✓
+· direct-entry 635/635. Deferred: None.
