@@ -984,6 +984,10 @@ export function DirectEntryLive() {
   const [xlsxMessage, setXlsxMessage] = useState("");
   // P1.7-H05 §9.B: clientRowId cua row dang mo quick editor (drawer/dialog nhap nhanh).
   const [quickEditClientRowId, setQuickEditClientRowId] = useState<string | null>(null);
+  // P3-W07C-R1 zoom: chi in-memory; chi tac dong len khu vuc bang nhap lieu
+  // (direct-entry-spreadsheet-grid). Mac dinh 100; cac muc co dinh 80/90/
+  // 100/110/120. Khong persistence, khong browser zoom API.
+  const [directEntryGridZoomLevel, setDirectEntryGridZoomLevel] = useState(100);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
   const stagedIntent = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const stagedUndo = useRef<ClipboardUndoSnapshot | null>(null);
@@ -1964,6 +1968,8 @@ export function DirectEntryLive() {
               saveTone={stagedTone}
               selectedClientRowId={selectedClientRowId}
               onSelectedClientRowChange={setSelectedClientRowId}
+              zoomLevel={directEntryGridZoomLevel}
+              onZoomChange={setDirectEntryGridZoomLevel}
             />
           </section>
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}

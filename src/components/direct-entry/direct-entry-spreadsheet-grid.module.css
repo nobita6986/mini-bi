@@ -3,6 +3,8 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  /* P3-W07C-R1 zoom: gia tri base; data-zoom-level attribute set inline. */
+  font-size: var(--direct-entry-grid-font-size, 13px);
 }
 
 .toolbar {
@@ -10,7 +12,41 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--direct-entry-grid-font-size, 13px);
+}
+
+.zoomControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoomControls button {
+  min-height: 34px;
+  min-width: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 6px;
+  background: var(--background, #ffffff);
+  font-size: var(--direct-entry-grid-font-size, 13px);
+  cursor: pointer;
+}
+
+.zoomControls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.zoomControls button:focus-visible {
+  outline: 3px solid var(--ring, #2563eb);
+  outline-offset: 1px;
+}
+
+.zoomLevel {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .toolbar button {
@@ -32,6 +68,15 @@
   border: 1px solid var(--border, #d4d4d8);
   border-radius: 6px;
   max-height: 60vh;
+  font-size: var(--direct-entry-grid-font-size, 13px);
+}
+
+.viewport :global(.rdg-cell),
+.viewport :global(.rdg-cell .rdg-text-editor) {
+  padding: var(--direct-entry-grid-cell-padding-y, 2px)
+    var(--direct-entry-grid-cell-padding-x, 4px);
+  font-size: var(--direct-entry-grid-font-size, 13px);
+  line-height: 1.4;
 }
 
 .cellError {

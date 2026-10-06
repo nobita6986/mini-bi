@@ -53,6 +53,21 @@ import styles from "./direct-entry-spreadsheet-grid.module.css";
 
 export const SPREADSHEET_GRID_ARIA_LABEL = "Bảng nhập liệu Direct Entry";
 
+/**
+ * P3-W07C-R1 zoom: cac muc zoom co dinh cho khu vuc bang nhap lieu Direct
+ * Entry. Mac dinh 100%. KHONG persistence; chi dieu khien in-memory.
+ * Khong dung CSS `transform: scale()` hay thuoc tinh `zoom`.
+ */
+export const DIRECT_ENTRY_GRID_ZOOM_LEVELS: readonly number[] = Object.freeze([
+  80, 90, 100, 110, 120,
+]);
+export const DIRECT_ENTRY_GRID_DEFAULT_ZOOM = 100;
+export const DIRECT_ENTRY_GRID_BASE_ROW_HEIGHT = 40;
+export const DIRECT_ENTRY_GRID_BASE_HEADER_ROW_HEIGHT = 38;
+export const DIRECT_ENTRY_GRID_BASE_FONT_PX = 13;
+export const DIRECT_ENTRY_GRID_BASE_CELL_PADDING_Y_PX = 2;
+export const DIRECT_ENTRY_GRID_BASE_CELL_PADDING_X_PX = 4;
+
 export type SpreadsheetGridRow = {
   clientRowId: string;
   /** true khi dong da ton tai tren server, khong phai placeholder. */
@@ -129,6 +144,13 @@ export type DirectEntrySpreadsheetGridProps = {
    */
   selectedClientRowId?: string | null;
   onSelectedClientRowChange(clientRowId: string | null): void;
+  /**
+   * P3-W07C-R1 zoom: ty le zoom (percent) chi tac dong len khu vuc bang
+   * nhap lieu. 80 -> thu nho (gom cot), 120 -> phong to (de doc). Phai
+   * nam trong `DIRECT_ENTRY_GRID_ZOOM_LEVELS`. Mac dinh 100.
+   */
+  zoomLevel?: number;
+  onZoomChange?(level: number): void;
 };
 
 const PROVIDER_OPTIONS = ["hrp", "vendor"] as const;
@@ -405,7 +427,39 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     onProviderTypeChange,
     notice, canUndo, onUndo, saveMessage, saveTone,
     selectedClientRowId, onSelectedClientRowChange,
+    zoomLevel, onZoomChange,
   } = props;
+
+  // P3-W07C-R1 zoom: chi chap nhan cac muc co dinh; mac dinh 100.
+  const effectiveZoom = DIRECT_ENTRY_GRID_ZOOM_LEVELS.includes(zoomLevel ?? DIRECT_ENTRY_GRID_DEFAULT_ZOOM)
+    ? (zoomLevel ?? DIRECT_ENTRY_GRID_DEFAULT_ZOOM)
+    : DIRECT_ENTRY_GRID_DEFAULT_ZOOM;
+  const zoomFactor = effectiveZoom / 100;
+
+  const onZoomDecrease = useCallback(() => {
+    if (!onZoomChange) return;
+    const idx = DIRECT_ENTRY_GRID_ZOOM_LEVELS.indexOf(effectiveZoom);
+    if (idx <= 0) return;
+    const next = DIRECT_ENTRY_GRID_ZOOM_LEVELS[idx - 1];
+    if (typeof next === "number") onZoomChange(next);
+  }, [effectiveZoom, onZoomChange]);
+
+  const onZoomIncrease = useCallback(() => {
+    if (!onZoomChange) return;
+    const idx = DIRECT_ENTRY_GRID_ZOOM_LEVELS.indexOf(effectiveZoom);
+    if (idx < 0 || idx >= DIRECT_ENTRY_GRID_ZOOM_LEVELS.length - 1) return;
+    const next = DIRECT_ENTRY_GRID_ZOOM_LEVELS[idx + 1];
+    if (typeof next === "number") onZoomChange(next);
+  }, [effectiveZoom, onZoomChange]);
+
+  const onZoomReset = useCallback(() => {
+    if (!onZoomChange) return;
+    onZoomChange(DIRECT_ENTRY_GRID_DEFAULT_ZOOM);
+  }, [onZoomChange]);
+
+  const zoomCanDecrease = DIRECT_ENTRY_GRID_ZOOM_LEVELS.indexOf(effectiveZoom) > 0;
+  const zoomCanIncrease = DIRECT_ENTRY_GRID_ZOOM_LEVELS.indexOf(effectiveZoom)
+    < DIRECT_ENTRY_GRID_ZOOM_LEVELS.length - 1;
 
   const rowIndexOf = useCallback((clientRowId: string) =>
     rows.findIndex((row) => row.clientRowId === clientRowId), [rows]);
@@ -424,6 +478,10 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       const headerLabel = column.required
         ? <span><span>{column.label}</span><span className={styles.requiredMark} aria-hidden="true"> *</span><span className={styles.srOnly}> (bắt buộc)</span></span>
         : column.label;
+      // P3-W07C-R1 zoom: do rong cot scale theo `effectiveZoom`. Pixel goc
+      // giu trong `DIRECT_ENTRY_GRID_COLUMNS`; chi scale tai thoi diem render
+      // (khong mutate registry).
+      const scaledWidth = Math.max(32, Math.round(column.width * zoomFactor));
 
 
       const renderCell = ({ row }: RenderCellProps<SpreadsheetGridRow>) => {
@@ -465,14 +523,14 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
 
       if (!editable) {
         return {
-          key: column.key, name: headerLabel, width: column.width, resizable: true,
+          key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
           renderCell,
         };
       }
 
       if (column.editor === "select" || column.editor === "catalog") {
         return {
-          key: column.key, name: headerLabel, width: column.width, resizable: true,
+          key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
           editable: (row: SpreadsheetGridRow) => column.key === "provider_type"
             ? row.clientStaged
             : isEditable(row, column.key) &&
@@ -486,7 +544,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       }
       if (column.editor === "date") {
         return {
-          key: column.key, name: headerLabel, width: column.width, resizable: true,
+          key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
           editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (
@@ -495,7 +553,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
         };
       }
       return {
-        key: column.key, name: headerLabel, width: column.width, resizable: true,
+        key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
         editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
         renderCell,
         // P1.7-H07: dung `cellsTextEditor` thay vi `renderTextEditor` mac
@@ -509,7 +567,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       .map((key) => directEntryGridColumn(key))
       .filter((column): column is DirectEntryGridColumn => column !== undefined);
     return dataColumns.map(build);
-  }, [catalogOptions, isEditable, issueFor, rowIndexOf]);
+  }, [catalogOptions, isEditable, issueFor, rowIndexOf, zoomFactor]);
 
   const onRowsChange = useCallback((next: SpreadsheetGridRow[]) => {
     for (const row of next) {
@@ -597,9 +655,65 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
 
   const errorRowCount = validation.rows.filter((row) => row.errorCount > 0).length;
 
+  // P3-W07C-R1 zoom: ty le de truyen vao CSS variables (font-size, padding,
+  // row height). Pixel tuyet/constrain bi clamp de tranh gia tri qua nho.
+  const scaledRowHeight = Math.max(28,
+    Math.round(DIRECT_ENTRY_GRID_BASE_ROW_HEIGHT * zoomFactor));
+  const scaledHeaderRowHeight = Math.max(28,
+    Math.round(DIRECT_ENTRY_GRID_BASE_HEADER_ROW_HEIGHT * zoomFactor));
+  const scaledFontPx = Math.max(10,
+    Math.round(DIRECT_ENTRY_GRID_BASE_FONT_PX * zoomFactor));
+  const scaledCellPaddingY = Math.max(1,
+    Math.round(DIRECT_ENTRY_GRID_BASE_CELL_PADDING_Y_PX * zoomFactor));
+  const scaledCellPaddingX = Math.max(2,
+    Math.round(DIRECT_ENTRY_GRID_BASE_CELL_PADDING_X_PX * zoomFactor));
+
   return (
-    <div className={styles.spreadsheet} data-testid="spreadsheet-grid">
+    <div
+      className={styles.spreadsheet}
+      data-testid="spreadsheet-grid"
+      data-zoom-level={effectiveZoom}
+      style={{
+        ["--direct-entry-grid-font-size" as string]: `${scaledFontPx}px`,
+        ["--direct-entry-grid-cell-padding-y" as string]: `${scaledCellPaddingY}px`,
+        ["--direct-entry-grid-cell-padding-x" as string]: `${scaledCellPaddingX}px`,
+        ["--direct-entry-grid-row-height" as string]: `${scaledRowHeight}px`,
+        ["--direct-entry-grid-header-row-height" as string]: `${scaledHeaderRowHeight}px`,
+      }}>
       <div className={styles.toolbar}>
+        {onZoomChange !== undefined && (
+          <span className={styles.zoomControls} role="group" aria-label="Phóng to thu nhỏ bảng nhập liệu">
+            <button
+              type="button"
+              data-testid="spreadsheet-zoom-decrease"
+              onClick={onZoomDecrease}
+              disabled={!zoomCanDecrease}
+              aria-label="Thu nhỏ bảng nhập liệu">
+              −
+            </button>
+            <button
+              type="button"
+              data-testid="spreadsheet-zoom-reset"
+              onClick={onZoomReset}
+              aria-label="Đặt lại tỷ lệ bảng nhập liệu">
+              Đặt lại
+            </button>
+            <button
+              type="button"
+              data-testid="spreadsheet-zoom-increase"
+              onClick={onZoomIncrease}
+              disabled={!zoomCanIncrease}
+              aria-label="Phóng to bảng nhập liệu">
+              +
+            </button>
+            <span
+              data-testid="spreadsheet-zoom-level"
+              data-zoom-level={effectiveZoom}
+              aria-live="polite">
+              {`${effectiveZoom}%`}
+            </span>
+          </span>
+        )}
         {notice !== "" && (
           <span data-testid="spreadsheet-paste-notice" role="status">
             <span>{notice}</span>
@@ -648,8 +762,8 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           rowClass={(row) => row.clientRowId === selectedClientRowId
             ? `${styles.rowHighlight ?? ""}`.trim() || "rdg-row-selected"
             : undefined}
-          rowHeight={40}
-          headerRowHeight={38}
+          rowHeight={scaledRowHeight}
+          headerRowHeight={scaledHeaderRowHeight}
           selectedRows={selectedClientRowId === null || selectedClientRowId === undefined
             ? new Set<string>()
             : new Set<string>([selectedClientRowId])}
