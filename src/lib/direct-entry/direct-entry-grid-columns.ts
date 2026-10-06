@@ -101,6 +101,24 @@ export type GridRecruiterOption = {
   vendor_id: string | null;
 };
 
+/**
+ * P3-W07A-R1: locked UI label mapping for the canonical `personnel_position`
+ * enum. W07A is data-only and does not add a role token; the helper just
+ * renders the catalog position in Vietnamese. A `TEAM_LEADER` row is a
+ * catalog/membership fact, not an authenticated app user. Account,
+ * capability and team dashboard creation live in P3-W07B.
+ */
+export const PERSONNEL_POSITION_UI_LABELS: Readonly<Record<"STAFF" | "TEAM_LEADER", string>> =
+  Object.freeze({
+    STAFF: "Nhân viên",
+    TEAM_LEADER: "Trưởng nhóm",
+  });
+
+export function personnelPositionUiLabel(position: "STAFF" | "TEAM_LEADER" | null): string {
+  if (position === null) return "—";
+  return PERSONNEL_POSITION_UI_LABELS[position];
+}
+
 export function recruitersForProvider(
   recruiters: readonly GridRecruiterOption[],
   providerType: "hrp" | "vendor" | "",

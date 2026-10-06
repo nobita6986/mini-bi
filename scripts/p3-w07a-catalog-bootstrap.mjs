@@ -207,6 +207,7 @@ function cellText(cell) {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value.normalize("NFC").trim();
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  if (typeof value === "boolean") return value ? "true" : "false";
   if (value instanceof Date) {
     return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(
       value.getUTCDate(),
@@ -495,15 +496,61 @@ async function applyCatalog({ client, parsed }) {
     if (inserted) report.recruiters_inserted += 1;
     else report.recruiters_updated += 1;
 
-    // Team membership: open-ended effective from IMPORT_EFFECTIVE. Check
-    // first because the overlap guard trigger fires BEFORE the unique-index
-    // conflict check.
-    const existingTeamMembership = await client.query(
-      "select 1 from public.recruiter_team_memberships" +
+    // Team membership (effective-dated, append-only):
+    //   - if there is already a row for this recruiter with
+    //     valid_from = IMPORT_EFFECTIVE, the workbook is re-applying the
+    //     SAME effective date; we only update its team_id if the team
+    //     changed (idempotent on re-import).
+    //   - if the recruiter has an OPEN team membership (valid_to is null)
+    //     with valid_from < IMPORT_EFFECTIVE and a DIFFERENT team_id, we
+    //     close it (valid_to = IMPORT_EFFECTIVE - 1 day) before inserting
+    //     the new membership. This is the W07A merge semantic: a workbook
+    //     team change replaces the active open-ended membership without
+    //     destroying history.
+    //   - if the recruiter has no membership yet, we insert the new one
+    //     open-ended from IMPORT_EFFECTIVE.
+    const previousOpenMembership = await client.query(
+      "select membership_id, team_id, valid_from from public.recruiter_team_memberships" +
+      " where recruiter_id = $1::uuid" +
+      " and valid_from < $2::date" +
+      " and valid_to is null" +
+      " order by valid_from desc" +
+      " limit 1",
+      [recruiterId, IMPORT_EFFECTIVE],
+    );
+    const sameEffectiveMembership = await client.query(
+      "select membership_id, team_id from public.recruiter_team_memberships" +
       " where recruiter_id = $1::uuid and valid_from = $2::date limit 1",
       [recruiterId, IMPORT_EFFECTIVE],
     );
-    if (existingTeamMembership.rows.length === 0) {
+    if (sameEffectiveMembership.rows.length > 0) {
+      // Re-import with the same effective date: keep the row but replace
+      // team_id if it changed. This is the idempotent path.
+      if (sameEffectiveMembership.rows[0].team_id !== teamId) {
+        await client.query(
+          "update public.recruiter_team_memberships set team_id = $1::uuid" +
+          " where membership_id = $2::uuid",
+          [teamId, sameEffectiveMembership.rows[0].membership_id],
+        );
+      }
+    } else {
+      if (previousOpenMembership.rows.length > 0 &&
+          previousOpenMembership.rows[0].team_id !== teamId) {
+        // Close the previous open membership the day before the new one.
+        const previousValidFrom = previousOpenMembership.rows[0].valid_from;
+        const previousMembershipId = previousOpenMembership.rows[0].membership_id;
+        const closeDate = await client.query(
+          "select (($1::date) - INTERVAL '1 day')::date as d",
+          [IMPORT_EFFECTIVE],
+        );
+        await client.query(
+          "update public.recruiter_team_memberships set valid_to = $1::date" +
+          " where membership_id = $2::uuid" +
+          " and valid_to is null" +
+          " and valid_from = $3::date",
+          [closeDate.rows[0].d, previousMembershipId, previousValidFrom],
+        );
+      }
       await client.query(
         "insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from)" +
         " values ($1::uuid, $2::uuid, $3::date)",

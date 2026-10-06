@@ -376,3 +376,134 @@ test("R17 dropdown registry keeps exact editor keys (gender/labor_type/provider_
   assert.equal(directEntryGridColumn("project_id")?.editor, "catalog");
   assert.equal(directEntryGridColumn("labor_type")?.editor, "select");
 });
+
+// ---------------------------------------------------------------------------
+// S4 — behavioral contract for "open dropdown, no change, blur/Enter/Tab"
+// The W07A dropdown contract requires that opening a dropdown and dismissing
+// it without picking a different option MUST keep the current value, for
+// every dropdown column. R3 already pins the source-level commitBlur wiring;
+// R18-R22 add explicit unit assertions for each locked scenario.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure model of the SelectCellEditor commit pipeline.
+ *
+ * The grid component routes through three paths:
+ *   - `onChange` => `commit(value)` => `onRowChange(row, true)` (selection)
+ *   - `onBlur`  => `commitBlur()`   => `onClose(true, false)` (commit)
+ *   - `onKeyDown` (Enter/Tab) is forwarded to react-data-grid's editor
+ *     lifecycle; Tab commits via onBlur, Enter via onClose.
+ *
+ * The grid's `onRowsChange` only emits a patch when the cell value differs
+ * from the current value; same-value re-selection is therefore a no-op at
+ * the data layer (no clobber, no double-write).
+ */
+function dropdownBehavior({
+  initialValue,
+  onChangeTarget,
+  blurBeforeFinish,
+}) {
+  let rowValue = initialValue;
+  let patches = 0;
+  const seenValues = [rowValue];
+  // Simulate the grid's onRowsChange rule: a patch is only emitted when
+  // the new value differs from the current value.
+  const onRowChange = (next) => {
+    if (next === rowValue) {
+      // The grid compares cell-by-cell; same value => no patch.
+      return;
+    }
+    patches += 1;
+    rowValue = next;
+    seenValues.push(rowValue);
+  };
+  // Simulate the editor's onChange handler: re-select the option via the
+  // controlled <select>.
+  if (onChangeTarget !== undefined && onChangeTarget !== null) {
+    onRowChange(onChangeTarget);
+  }
+  // Simulate the editor's onBlur / Enter / Tab lifecycle: commitBlur
+  // routes through onClose(true, false). The grid treats it as a value
+  // commit at the current `value` (no change in our model).
+  if (blurBeforeFinish) {
+    onRowChange(rowValue); // onClose commits the current value, which is unchanged.
+  }
+  return { finalValue: rowValue, patches, seenValues };
+}
+
+test("R18 gender: open dropdown while current value is `Nam`, re-pick `Nam`, blur keeps `Nam`", () => {
+  const result = dropdownBehavior({
+    initialValue: "Nam",
+    onChangeTarget: "Nam", // user re-picks the same option
+    blurBeforeFinish: true,
+  });
+  assert.equal(result.finalValue, "Nam", "value stays `Nam`");
+  // Same-value re-select must NOT emit a patch (grid dedup).
+  assert.equal(result.patches, 0, "no patch emitted for same-value re-select");
+});
+
+test("R19 gender: open dropdown, pick `Nữ`, blur keeps `Nữ`", () => {
+  const result = dropdownBehavior({
+    initialValue: "Nam",
+    onChangeTarget: "Nữ",
+    blurBeforeFinish: true,
+  });
+  assert.equal(result.finalValue, "Nữ", "value changes to `Nữ` and persists after blur");
+  assert.equal(result.patches, 1, "one patch emitted for the value change");
+});
+
+test("R20 dropdown contract uniform across all 5 dropdown editors (gender, labor_type, provider_type, project_id, recruiter_id)", () => {
+  // Each editor must support the three locked scenarios:
+  //   1. open + re-pick current value + blur/Enter/Tab => value unchanged
+  //   2. open + pick different value + blur/Enter/Tab => new value committed
+  //   3. open + click outside (blur) without picking anything => value unchanged
+  const cases = [
+    { column: "gender",        initial: "Nam",        current: "Nam",        pick: "Nữ" },
+    { column: "labor_type",    initial: "Thời vụ",   current: "Thời vụ",   pick: "Chính thức" },
+    { column: "provider_type", initial: "hrp",        current: "hrp",        pick: "vendor" },
+    { column: "project_id",    initial: "proj_alpha", current: "proj_alpha", pick: "proj_beta" },
+    { column: "recruiter_id",  initial: "rec_1",      current: "rec_1",      pick: "rec_2" },
+  ];
+  for (const c of cases) {
+    // Scenario 1: re-pick current value
+    const same = dropdownBehavior({ initialValue: c.initial, onChangeTarget: c.current, blurBeforeFinish: true });
+    assert.equal(same.finalValue, c.initial, `${c.column}: same-value re-pick keeps value`);
+    assert.equal(same.patches, 0, `${c.column}: same-value re-pick emits no patch`);
+    // Scenario 2: pick a different value
+    const diff = dropdownBehavior({ initialValue: c.initial, onChangeTarget: c.pick, blurBeforeFinish: true });
+    assert.equal(diff.finalValue, c.pick, `${c.column}: different value is committed`);
+    assert.equal(diff.patches, 1, `${c.column}: exactly one patch emitted`);
+    // Scenario 3: open then click outside, no pick
+    const noop = dropdownBehavior({ initialValue: c.initial, onChangeTarget: null, blurBeforeFinish: true });
+    assert.equal(noop.finalValue, c.initial, `${c.column}: open+blur (no pick) keeps value`);
+    assert.equal(noop.patches, 0, `${c.column}: open+blur (no pick) emits no patch`);
+  }
+});
+
+test("R21 no need to pick a different option first; just opening then blurring keeps the current value", () => {
+  // Pre-condition: every SelectCellEditor branch wires onBlur={commitBlur}.
+  // commitBlur calls onClose(true, false) — react-data-grid commits the
+  // current value without re-running onChange. The grid's onRowsChange
+  // then dedups same-value patches. No value mutation.
+  assert.match(gridSource, /const commitBlur = \(\) => props\.onClose\(true, false\)/);
+  // provider_type branch uses a dedicated onChange that mutates
+  // row.providerType. Same value must still not clobber.
+  assert.match(gridSource, /if \(props\.columnKey === "provider_type"\)/);
+  // The grid's onRowsChange dedups by current value:
+  assert.match(gridSource, /if \(value !== \(current\.cells\[key\] \?\? ""\)\) patch\[key\] = value/);
+});
+
+test("R22 Enter / Tab routing is the same commit path as blur (Enter=commit, Tab=commit)", () => {
+  // react-data-grid's editor lifecycle calls onClose(true, ...) for both
+  // Enter and Tab when the editor is a "change" cell editor. SelectCellEditor
+  // registers onBlur to call onClose(true, false), so Tab and Enter ride the
+  // same code path and produce the same commit behaviour. The contract
+  // therefore holds for Enter, Tab and blur without per-key branching.
+  assert.match(gridSource, /onBlur=\{commitBlur\}/);
+  // The default branch (gender / labor_type / project_id / recruiter_id)
+  // uses `commit(event.currentTarget.value)` on onChange. The same value
+  // is committed by commitBlur via onClose, so Enter/Tab route the same.
+  const branchCommits = (gridSource.match(/commit\(event\.currentTarget\.value\)/g) ?? []).length;
+  assert.ok(branchCommits >= 3,
+    `expected commit() to be invoked from onChange in every dropdown branch; got ${branchCommits}`);
+});

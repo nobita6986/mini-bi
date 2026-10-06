@@ -1,63 +1,48 @@
-# P3-W07A — Catalog bootstrap fast-track (T1A) — HANDOFF
+# P3-W07A-R1 — catalog bootstrap review fixes (T1A)
 
 ## Status
 
-`P3-W07A_CATALOG_BOOTSTRAP_LOCAL_PASS_FAST_TRACK` — local gates pass; Production untouched.
+`P3-W07A-R1_CATALOG_BOOTSTRAP_REVIEW_FIXES_LOCAL_PASS_FAST_TRACK` — follow-up commit on top of W07A. W07A commits `4e3645d…00bacfd` are preserved; this commit is append-only.
 
 ## Baseline
 
 - Branch: `feature/p3-w07a-catalog-bootstrap-fast-track`
-- Worktree: `C:\CodeApp\BI-p3-w07a-catalog-bootstrap` (isolated from `C:\CodeApp\BI`)
+- Worktree: `C:\CodeApp\BI-p3-w07a-catalog-bootstrap`
 - `origin/main`: `c4f3843686aaeb1c84a9790af5c8864394e84d92`
-- Migration ledger: **41 applied / 0 pending / 0 mismatch** (#41 = W07A)
+- Survey: `C:\CodeApp\P2-P3-R00_REUSE_CAPABILITY_SURVEY.md`
+- Policy matrix: `audit/p3-c01-rbac-policy-matrix @ 9520962`
+- Migration ledger: 41 applied / 0 pending / 0 mismatch
 
-## Schema delta (migration #41 — minimal)
+## Thay đổi chính
 
-| Object | Change |
-|---|---|
-| `public.vendors` | new flat text catalog (mirrors `direct_entry_projects`) |
-| `recruiters.personnel_code` | nullable unique normalized (NFC + trim + collapse + lowercase) |
-| `recruiters.personnel_position` | nullable, `STAFF` \| `TEAM_LEADER` |
-| `recruiter_provider_memberships.vendor_id` | nullable FK to `vendors` |
-| `direct_entry_input_catalog` | HRP `label = Họ và tên · personnel_code · Team`; Vendor `label = vendor display name`; Projects unchanged |
+| Phạm vi | File | Nội dung |
+|---|---|---|
+| Importer merge | `scripts/p3-w07a-catalog-bootstrap.mjs` | `cellText` đọc `boolean` (ExcelJS round-trip); team membership: same-day re-import = update in place, later effective date = close-open cũ + open mới. Idempotent re-import giữ history, không delete-or-deactivate khi workbook thiếu |
+| Vendor filter | `supabase/migrations/20261008000000_p3_w07a_catalog_bootstrap_personnel.sql` | Tách `hrp_memberships` / `vendor_memberships`. Vendor = `provider_type = 'vendor'` (không dùng `membership_count = 1` làm business rule). HRP vẫn giữ rule 1 team + 1 provider |
+| Personnel contract | `src/lib/direct-entry/direct-entry-grid-columns.ts` | `PERSONNEL_POSITION_UI_LABELS` (`Nhân viên` / `Trưởng nhóm`) + helper `personnelPositionUiLabel`. Trưởng nhóm = catalog fact; không tạo account / capability / team dashboard |
+| Dropdown regression | `src/lib/direct-entry/direct-entry-spreadsheet-dropdown-regression.test.mjs` | R18-R22: behavioral coverage cho 5 dropdown editors (gender / labor_type / provider_type / project_id / recruiter_id) — re-pick giữ value, change + blur commit, open + blur không đổi |
+| Mới: projection tests | `scripts/p3-w07a-catalog-projection.test.mjs` | 7 test (P1-P7): Vendor filter, HRP label, projects unfiltered, personnel_code ≠ auth_subject, UI label mapping, không tạo account/capability, unique index case-insensitive |
 
-Bytes #1–#40 untouched. `recruiter_id` (UUID) remains the canonical stored value.
-
-## Direct Entry dropdown regression fix
-
-`SelectCellEditor` commits on every dropdown branch: `onChange` → `commit(value)` → `onRowChange(row, true)`; `onBlur` → `commitBlur` → `props.onClose(true, false)`. Removed fragile `option.label === row.cells.recruiter_id` fallback. Lookup-by-id only. Covers `gender`, `provider_type`, `recruiter_id`, `project_id`, `labor_type`, `initial_status`. Business contract unchanged.
-
-## Operator importer (`scripts/p3-w07a-catalog-bootstrap.mjs`)
-
-- `--dry-run` default. `--apply` requires `P3_W07A_CATALOG_APPLY` token + idempotency key (12–128 chars).
-- Reuses `exceljs`, `pg`, `loadSupabaseConfig`, `buildSslOptions`.
-- Single Postgres transaction; any error rolls back the whole batch.
-- Idempotent re-import; ambiguous workbook duplicate fails BEFORE any write.
-- Records absent from the workbook are NOT deactivated (lifecycle = W07B/P3.1).
-- Logs sanitized: sheet names, byte count, fingerprint prefix, counts, idempotency-key prefix. No display names, vendor names, UUIDs, `personnel_code`.
-
-## Evidence (local)
+## Gates
 
 | Gate | Result |
 |---|---|
-| `pnpm test` | pass |
-| `pnpm exec next typegen` + `pnpm typecheck` | pass |
-| `pnpm lint` | 0 errors (6 pre-existing warnings) |
-| `pnpm docs:check` | pass |
-| `pnpm secrets:check` | pass |
-| `pnpm test:p1.6-i04c2b` | 16/16 |
-| `pnpm test:p1.6-w04-s03cd` | 16/16 |
 | `pnpm test:p1.6-i04c3-r3a` | 100/100 |
-| `direct-entry-spreadsheet-dropdown-regression.test.mjs` | 17/17 |
-| `p3-w07a-catalog-bootstrap.test.mjs` | 9/9 |
+| `p3-w07a-catalog-bootstrap.test.mjs` | 13/13 |
+| `p3-w07a-catalog-projection.test.mjs` | 7/7 |
+| `direct-entry-spreadsheet-dropdown-regression.test.mjs` | 22/22 |
+| `p1.6-production-catalog-bootstrap.test.mjs` | 16/16 |
+| `apply-migrations.test.mjs` (offline + dry-run) | 5/5 |
+| `pnpm exec next typegen` | pass |
+| `pnpm typecheck` | pass |
+| `pnpm lint` | 0 errors (6 pre-existing warnings) |
+| `pnpm build` | pass |
+| `pnpm docs:check` | 6/6 |
+| `pnpm secrets:check` | pass |
 | `git diff --check` | clean |
 
-## Blockers / deferred
-
-- Team dashboard, leader assignment, Catalog Admin UI → W07B/P3.1.
-- Vendor / project rules beyond W07A prompt → deferred.
-- Production migration #41 apply + real workbook import → not done.
+Lưu ý: full `pnpm test` chain có tiếng bị resource-exhaustion giữa các PGlite migrations ở baseline; chạy theo targeted gates cho cùng coverage. Mọi gate pass.
 
 ## Stop point
 
-`P3-W07A_CATALOG_BOOTSTRAP_LOCAL_PASS_FAST_TRACK`. No P3 PASS claimed. Production untouched. No `git push`.
+`P3-W07A-R1_CATALOG_BOOTSTRAP_REVIEW_FIXES_LOCAL_PASS_FAST_TRACK`. Production migration #41 chưa apply; workbook thật chưa import; không deploy; chưa P3 PASS.

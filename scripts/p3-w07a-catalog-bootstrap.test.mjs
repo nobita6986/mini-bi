@@ -395,3 +395,290 @@ test("T9 logs do not contain display names, vendor names, or personnel codes", a
   assert.equal(joined.includes("SECRET-PERSONNEL-CODE"), false);
   assert.equal(joined.includes("SECRET-VENDOR-NAME"), false);
 });
+
+test("T10 workbook change updates name/team/position/active for an existing HRP row", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "w07a-"));
+  t.after(async () => { try { await rm(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const workbookPath = path.join(dir, "owner.xlsx");
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [
+      { code: "team-1", display_name: "Team 1" },
+      { code: "team-2", display_name: "Team 2" },
+    ],
+    hrp: [{
+      personnel_code: "user-1",
+      display_name: "User 1 (initial)",
+      position: "STAFF",
+      team: "team-1",
+      active: true,
+    }],
+    vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
+  });
+  const pglite = await buildDatabase();
+  const externalClient = pgClientFromPglite(pglite);
+
+  await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-merge-2026-10-15-v1",
+    externalClient,
+  });
+  // Re-run with the SAME workbook, just to make sure idempotency still holds.
+  await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-merge-2026-10-15-v2",
+    externalClient,
+  });
+  // Now rewrite the workbook with the SAME personnel_code but new name,
+  // team, position and active=false.
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [
+      { code: "team-1", display_name: "Team 1" },
+      { code: "team-2", display_name: "Team 2" },
+    ],
+    hrp: [{
+      personnel_code: "user-1",
+      display_name: "User 1 (renamed)",
+      position: "TEAM_LEADER",
+      team: "team-2",
+      active: false,
+    }],
+    vendors: [{ vendor_id: "v-1", display_name: "Vendor 1 renamed", active: false }],
+  });
+  const second = await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-merge-2026-10-15-v3",
+    externalClient,
+  });
+  assert.equal(second.report.recruiters_inserted, 0,
+    "personnel_code matches an existing recruiter; no new insert");
+  assert.ok(second.report.recruiters_updated >= 1,
+    "the renamed HRP row must be reported as updated");
+
+  // Recruiter row is updated in place: same recruiter_id (UUID), new name,
+  // new position, active flipped.
+  const recruiter = await pglite.query(
+    "select display_name, personnel_position, active, version" +
+    " from public.recruiters where personnel_code = 'user-1'",
+  );
+  assert.equal(recruiter.rows.length, 1);
+  assert.equal(recruiter.rows[0].display_name, "User 1 (renamed)");
+  assert.equal(recruiter.rows[0].personnel_position, "TEAM_LEADER");
+  assert.equal(recruiter.rows[0].active, false);
+
+  // Vendor row updated in place.
+  const vendor = await pglite.query(
+    "select display_name, active, version from public.vendors where vendor_id = 'v-1'",
+  );
+  assert.equal(vendor.rows.length, 1);
+  assert.equal(vendor.rows[0].display_name, "Vendor 1 renamed");
+  assert.equal(vendor.rows[0].active, false);
+});
+
+test("T11 team change on the same effective date updates the membership in place", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "w07a-"));
+  t.after(async () => { try { await rm(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const workbookPath = path.join(dir, "owner.xlsx");
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [
+      { code: "team-1", display_name: "Team 1" },
+      { code: "team-2", display_name: "Team 2" },
+    ],
+    hrp: [{
+      personnel_code: "user-1", display_name: "User 1", position: "STAFF",
+      team: "team-1", active: true,
+    }],
+    vendors: [],
+  });
+  const pglite = await buildDatabase();
+  const externalClient = pgClientFromPglite(pglite);
+  await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-team-2026-10-15-v1",
+    externalClient,
+  });
+  // Now switch the user to team-2 in a fresh workbook. The W07A importer
+  // runs at IMPORT_EFFECTIVE = today, so the existing membership's
+  // valid_from matches the new run's valid_from; the merge semantic is
+  // "update in place, do not destroy history".
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [
+      { code: "team-1", display_name: "Team 1" },
+      { code: "team-2", display_name: "Team 2" },
+    ],
+    hrp: [{
+      personnel_code: "user-1", display_name: "User 1", position: "STAFF",
+      team: "team-2", active: true,
+    }],
+    vendors: [],
+  });
+  const second = await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-team-2026-10-15-v2",
+    externalClient,
+  });
+  assert.equal(second.report.recruiters_inserted, 0,
+    "no new recruiter row; the existing one is updated");
+  // A new team_membership row was NOT inserted on the same effective date.
+  assert.equal(second.report.team_memberships_inserted, 0,
+    "same-effective-date re-import: the existing membership is updated in place");
+  // Exactly one membership row remains, with the NEW team_id.
+  const memberships = await pglite.query(
+    "select team_id::text as team_id, valid_to from public.recruiter_team_memberships" +
+    " order by valid_from asc",
+  );
+  assert.equal(memberships.rows.length, 1,
+    "exactly one membership row (no history duplication on same-day re-import)");
+  // The new team_id is team-2; valid_to is null (open-ended).
+  const teamRow = await pglite.query("select code from public.teams where team_id = $1::uuid",
+    [memberships.rows[0].team_id]);
+  assert.equal(teamRow.rows[0].code, "team-2");
+  assert.equal(memberships.rows[0].valid_to, null,
+    "membership is still open-ended after in-place update");
+});
+
+test("T11b team change on a LATER effective date closes the previous open membership and opens a new one", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "w07a-"));
+  t.after(async () => { try { await rm(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const workbookPath = path.join(dir, "owner.xlsx");
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [
+      { code: "team-1", display_name: "Team 1" },
+      { code: "team-2", display_name: "Team 2" },
+    ],
+    hrp: [{
+      personnel_code: "user-1", display_name: "User 1", position: "STAFF",
+      team: "team-1", active: true,
+    }],
+    vendors: [],
+  });
+  const pglite = await buildDatabase();
+  const externalClient = pgClientFromPglite(pglite);
+  await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-team-2026-10-15-v1",
+    externalClient,
+  });
+  // The first import left an OPEN membership at IMPORT_EFFECTIVE. Now
+  // back-date that membership to 30 days before IMPORT_EFFECTIVE and clear
+  // valid_to, simulating a previous-day import. Then switch the user to
+  // team-2 and re-run. The importer must close the old row and insert a
+  // new one open-ended at IMPORT_EFFECTIVE.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const pastIso = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  await pglite.query(
+    "update public.recruiter_team_memberships set valid_from = $1::date, valid_to = null" +
+    " where valid_from = $2::date",
+    [pastIso, todayIso],
+  );
+  // Switch the user to team-2 and re-run on a fresh workbook.
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [
+      { code: "team-1", display_name: "Team 1" },
+      { code: "team-2", display_name: "Team 2" },
+    ],
+    hrp: [{
+      personnel_code: "user-1", display_name: "User 1", position: "STAFF",
+      team: "team-2", active: true,
+    }],
+    vendors: [],
+  });
+  const second = await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-team-2026-10-15-v2",
+    externalClient,
+  });
+  assert.equal(second.report.recruiters_inserted, 0);
+  assert.ok(second.report.team_memberships_inserted >= 1,
+    "a new open membership is inserted at IMPORT_EFFECTIVE");
+
+  // History is preserved: two rows. Older one is closed; newer one is open.
+  const memberships = await pglite.query(
+    "select team_id::text as team_id, valid_from, valid_to from public.recruiter_team_memberships" +
+    " order by valid_from asc",
+  );
+  assert.equal(memberships.rows.length, 2,
+    "exactly 2 rows: the back-dated closed one and the new open one");
+  const open = memberships.rows.filter((row) => row.valid_to === null);
+  const closed = memberships.rows.filter((row) => row.valid_to !== null);
+  assert.equal(open.length, 1, "exactly one open membership remains");
+  assert.equal(closed.length, 1, "the previous membership is closed");
+  // The new open membership's team_id is team-2.
+  const newOpen = open[0];
+  const newOpenTeam = await pglite.query(
+    "select code from public.teams where team_id = $1::uuid",
+    [newOpen.team_id],
+  );
+  assert.equal(newOpenTeam.rows[0].code, "team-2");
+  // The closed membership closes the day before the new one opens.
+  const closedRow = closed[0];
+  const closedDate = new Date(closedRow.valid_to);
+  const newOpenDate = new Date(newOpen.valid_from);
+  assert.ok(newOpenDate.getTime() > closedDate.getTime(),
+    "open membership must start strictly after the closed one ends");
+});
+
+test("T12 row removed from workbook is NOT deactivated nor deleted", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "w07a-"));
+  t.after(async () => { try { await rm(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const workbookPath = path.join(dir, "owner.xlsx");
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [{ code: "team-1", display_name: "Team 1" }],
+    hrp: [{ personnel_code: "user-1", display_name: "User 1", position: "STAFF", team: "team-1", active: true }],
+    vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
+  });
+  const pglite = await buildDatabase();
+  const externalClient = pgClientFromPglite(pglite);
+  await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-absent-2026-10-15-v1",
+    externalClient,
+  });
+  // Re-import an EMPTY workbook (no projects/teams/HRP/vendors rows). The
+  // existing rows must NOT be deactivated nor deleted.
+  await buildWorkbook(workbookPath, {
+    projects: [],
+    teams: [],
+    hrp: [],
+    vendors: [],
+  });
+  await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-absent-2026-10-15-v2",
+    externalClient,
+  });
+  const recruiter = await pglite.query(
+    "select count(*)::int as n from public.recruiters where personnel_code = 'user-1'",
+  );
+  assert.equal(recruiter.rows[0].n, 1, "recruiter preserved");
+  const vendor = await pglite.query(
+    "select count(*)::int as n, max(active::int)::int as active" +
+    " from public.vendors where vendor_id = 'v-1'",
+  );
+  assert.equal(vendor.rows[0].n, 1, "vendor preserved");
+  assert.equal(vendor.rows[0].active, 1, "vendor still active; absence is NOT a deactivation");
+});

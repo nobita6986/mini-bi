@@ -136,19 +136,31 @@ begin
     raise exception 'actor capability denied' using errcode = '42501';
   end if;
 
-  with providers as (
-    -- Total provider memberships per recruiter_id at `effective_date`.
-    -- The original P1.6 contract requires `membership_count = 1` so that a
-    -- recruiter is eligible only when they have exactly one provider
-    -- membership in force. P3-W07A keeps that rule.
-    select m.recruiter_id, count(*) as membership_count,
-           min(m.provider_type) filter (where m.provider_type in ('hrp','vendor')) as provider_type,
-           min(m.vendor_id) as vendor_id
+  with hrp_memberships as (
+    -- P1.6 contract: an HRP recruiter is eligible only when they have
+    -- exactly one HRP provider membership in force on `effective_date`.
+    -- A recruiter with overlapping HRP memberships is excluded; the
+    -- overlap guard trigger enforces the same invariant at write time.
+    select m.recruiter_id, count(*) as membership_count
       from public.recruiter_provider_memberships m
-     where m.valid_from <= p_effective_date
+     where m.provider_type = 'hrp'
+       and m.valid_from <= p_effective_date
        and (m.valid_to is null or p_effective_date < m.valid_to)
      group by m.recruiter_id
-  ), teams as (
+  ), vendor_memberships as (
+    -- P3-W07A: Vendor eligibility is decided by `provider_type = 'vendor'`
+    -- membership at `effective_date`. Membership count is NOT a business
+    -- rule for Vendor. A Vendor recruiter may carry more than one vendor
+    -- membership (e.g. switch vendor during a release window); the catalog
+    -- surfaces each membership as its own row, filtered by
+    -- `provider_type = 'vendor'`. Vendor has no team / leader / project
+    -- restriction in this release.
+    select m.recruiter_id, m.vendor_id
+      from public.recruiter_provider_memberships m
+     where m.provider_type = 'vendor'
+       and m.valid_from <= p_effective_date
+       and (m.valid_to is null or p_effective_date < m.valid_to)
+  ), hrp_teams as (
     select m.recruiter_id, count(*) as membership_count,
            min(m.team_id::text)::uuid as team_id
       from public.recruiter_team_memberships m
@@ -159,26 +171,24 @@ begin
     select r.recruiter_id, r.display_name, r.personnel_code, tt.team_id,
            team.display_name as team_display_name
       from public.recruiters r
-      join providers p on p.recruiter_id = r.recruiter_id
-                      and p.membership_count = 1
-                      and p.provider_type = 'hrp'
-                      and p.vendor_id is null
-      join teams tt on tt.recruiter_id = r.recruiter_id and tt.membership_count = 1
+      join hrp_memberships p on p.recruiter_id = r.recruiter_id
+                            and p.membership_count = 1
+      join hrp_teams tt on tt.recruiter_id = r.recruiter_id
+                        and tt.membership_count = 1
       join public.teams team on team.team_id = tt.team_id and team.active
      where r.active
   ), vendor_recruiters as (
-    select r.recruiter_id, r.display_name, v.vendor_id, v.display_name as vendor_display_name,
-           p.vendor_id as membership_vendor_id
+    select r.recruiter_id, r.display_name, vm.vendor_id,
+           v.display_name as vendor_display_name
       from public.recruiters r
-      join providers p on p.recruiter_id = r.recruiter_id
-                      and p.membership_count = 1
-                      and p.provider_type = 'vendor'
-      left join public.vendors v on v.vendor_id = p.vendor_id and v.active
+      join vendor_memberships vm on vm.recruiter_id = r.recruiter_id
+      left join public.vendors v on v.vendor_id = vm.vendor_id and v.active
      where r.active
-       -- Vendor recruiters without a vendor_id are legacy rows (P1.6 bootstrap
-       -- vendors); they still appear in the catalog with their display name
-       -- as the label until the W07A importer links them to a vendor.
-       and (p.vendor_id is null or v.vendor_id is not null)
+       -- Vendor recruiters without a `vendor_id` on the membership are
+       -- legacy P1.6 bootstrap rows; they still appear in the catalog with
+       -- the recruiter display_name as the label until the W07A importer
+       -- links them to a vendor record.
+       and (vm.vendor_id is null or v.vendor_id is not null)
   )
   select jsonb_build_object(
     'effective_date', p_effective_date,
@@ -235,12 +245,20 @@ comment on column public.recruiters.personnel_code is
   'P3-W07A: business identifier (e.g. vinht.td). Unique when present (NFC + '
   'trim + collapse + lowercase normalization). Distinct from canonical '
   'recruiter_id (UUID).';
-comment on column public.recruiters.personnel_position is
-  'P3-W07A: STAFF or TEAM_LEADER. Identity-only; not a role token. Team '
-  'dashboard and assignment admin live in P3-W07B.';
 comment on column public.recruiter_provider_memberships.vendor_id is
   'P3-W07A: vendor membership target. NULL for HRP rows; required for Vendor '
   'rows (enforced by the input-catalog projection).';
+
+-- P3-W07A-R1: pin the locked UI label mapping for HRP positions.
+-- The catalog projection is the only place that maps the canonical enum to
+-- the UI label; keep this comment in sync with `personnel_position` so the
+-- wiring stays discoverable. UI label mapping is enforced at the live
+-- (TypeScript) layer; the migration only carries the canonical enum.
+comment on column public.recruiters.personnel_position is
+  'P3-W07A: STAFF (UI: Nhân viên) or TEAM_LEADER (UI: Trưởng nhóm). '
+  'Identity-only; not a role token. Trưởng nhóm = authenticated app user; '
+  'team dashboard and assignment admin live in P3-W07B. W07A does NOT create '
+  'accounts, capability grants or team dashboards based on this column.';
 
 -- -----------------------------------------------------------------------------
 -- In-migration self-check (data-agnostic; structural invariants only).
