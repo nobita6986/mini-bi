@@ -1,38 +1,37 @@
-import Link from "next/link";
+/**
+ * P3-W06B - Root entry fast-track.
+ *
+ * Domain root `/` is no longer a marketing/landing page; it now hands the
+ * user straight to the access gate (`/dashboard`) on the server. The
+ * existing session/access gate at `/dashboard` is the single source of
+ * truth for auth, so this page deliberately renders nothing client-side:
+ * no landing button, no marketing copy, no client-side router effect.
+ * There is no flash because the redirect happens before any UI is
+ * streamed.
+ *
+ * Behaviour preserved end-to-end:
+ *   - Anonymous         : `/` -> `/dashboard` -> `/login?next=/dashboard`
+ *   - Authenticated     : `/` -> `/dashboard`
+ *   - `next=/direct-entry` (explicit deep link via `/login?next=...`)
+ *                        : still routed through `resolveSafeAuthDestination`
+ *                          on the login page; this file does not see `next`.
+ *   - Unsafe / external `next` : still falls back to `/dashboard`
+ *                          (enforced by `resolveSafeAuthDestination`
+ *                          in `@/lib/auth/auth-ui`).
+ *
+ * No middleware is added and no new auth framework is introduced: the
+ * existing `decideSessionPageAccess` gate on `/dashboard` decides
+ * login vs allow, and the login page's `LoginGate` already decides
+ * the post-login destination.
+ */
+import { redirect } from "next/navigation";
 
-import { Card, CardHeader } from "@/components/ui/card";
-
+// Server-side 307, no streaming UI is rendered.
+export const dynamic = "force-dynamic";
 export const metadata = {
   title: "mini-bi — Báo cáo tuyển dụng",
 };
 
-export default function Home() {
-  return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-12">
-      <header>
-        <p className="text-sm font-medium text-muted">Sales Performance &amp; Reporting System V1 — P1</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">Báo cáo tuyển dụng</h1>
-        <p className="mt-2 text-sm text-muted">
-          Số người tuyển theo ngày — theo dự án, người tuyển, HRP/Vendor và loại hình làm việc.
-        </p>
-      </header>
-
-      <div>
-        <Link
-          href="/dashboard"
-          className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-on-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/40"
-        >
-          Mở báo cáo
-        </Link>
-        <p className="mt-2 text-xs text-muted">Báo cáo được bảo vệ bằng access gate — cần đăng nhập pilot để xem dữ liệu.</p>
-      </div>
-
-      <Card>
-        <CardHeader title="Giới thiệu" description="Hệ thống báo cáo kết quả tuyển dụng cho BoD / Leader / Staff." />
-        <p className="text-sm text-muted">
-          “Kết quả kinh doanh” ở đây là số người được tuyển theo ngày, không phải tiền. Dashboard không hiển thị dữ liệu cá nhân của ứng viên.
-        </p>
-      </Card>
-    </main>
-  );
+export default function RootEntry(): never {
+  redirect("/dashboard");
 }
