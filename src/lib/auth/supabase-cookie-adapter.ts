@@ -5,6 +5,21 @@ export type AuthCookieStore = {
   set(name: string, value: string, options: CookieOptions): void;
 };
 
+export type AuthCookieWriteMode = "read-write" | "read-only";
+
+export function scopeAuthCookieStore(
+  cookieStore: AuthCookieStore,
+  writeMode: AuthCookieWriteMode = "read-write",
+): AuthCookieStore {
+  return {
+    getAll: () => cookieStore.getAll(),
+    set: (name, value, options) => {
+      if (writeMode === "read-only") return;
+      cookieStore.set(name, value, options);
+    },
+  };
+}
+
 export function createSupabaseCookieAdapter(
   cookieStore: AuthCookieStore,
 ): CookieMethodsServer {

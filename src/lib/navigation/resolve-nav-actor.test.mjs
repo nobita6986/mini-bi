@@ -150,3 +150,10 @@ test("Gap1-12: layout va page deu import tu cung module resolve-nav-actor", () =
   assert.match(dashboardLayout, /from\s*["']@\/lib\/navigation\/resolve-nav-actor["']/);
   assert.match(dashboardPage, /from\s*["']@\/lib\/navigation\/resolve-nav-actor["']/);
 });
+
+test("Gap1-13: RSC actor resolver reads cookies without attempting a forbidden write", () => {
+  assert.match(
+    resolveNavActor,
+    /getDirectEntryActor\(createDirectEntryActorRepository\(\),\s*\{\s*cookieWriteMode:\s*["']read-only["'],?\s*\}\)/,
+  );
+});

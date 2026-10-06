@@ -9,9 +9,14 @@ import {
   type DirectEntrySessionResult,
 } from "./direct-entry-session-core";
 import { resolveActor, type ActorRepository } from "./direct-entry-v2";
+import {
+  scopeAuthCookieStore,
+  type AuthCookieWriteMode,
+} from "./supabase-cookie-adapter";
 
 export async function getDirectEntryActor(
   repository: ActorRepository | null | undefined,
+  options: { cookieWriteMode?: AuthCookieWriteMode } = {},
 ): Promise<DirectEntrySessionResult> {
   const env = getServerEnv();
   const cookieStore = await cookies();
@@ -21,10 +26,10 @@ export async function getDirectEntryActor(
     resolveActor,
     supabaseUrl: env.supabaseUrl,
     publishableKey: env.supabasePublishableKey,
-    cookieStore: {
+    cookieStore: scopeAuthCookieStore({
       getAll: () => cookieStore.getAll(),
       set: (name, value, options) => cookieStore.set(name, value, options),
-    },
+    }, options.cookieWriteMode),
     repository,
     at: new Date().toISOString(),
   });

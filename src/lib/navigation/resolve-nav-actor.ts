@@ -50,7 +50,9 @@ import type { NavActorProjection } from "@/lib/navigation/registry-capability";
 export const resolveActorForRequest = cache(
   async (): Promise<ActorResolution> => {
     const result = await resolveSessionWithBoundedRetry(() =>
-      getDirectEntryActor(createDirectEntryActorRepository()));
+      getDirectEntryActor(createDirectEntryActorRepository(), {
+        cookieWriteMode: "read-only",
+      }));
     return result.actor;
   },
 );
