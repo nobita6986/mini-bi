@@ -63,6 +63,12 @@ export function UserSessionControl() {
   return (
     <div className="flex items-center gap-2">
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+      <Link
+        href="/dashboard/account/password"
+        className={linkClass}
+      >
+        Đổi mật khẩu
+      </Link>
       <button
         type="button"
         onClick={() => void logout()}

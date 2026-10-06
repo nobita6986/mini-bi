@@ -14,6 +14,9 @@ export function resolveSafeAuthDestination(next: string | null | undefined): str
 export const AUTH_UI_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   AUTH_REQUEST_INVALID: "Thông tin đăng nhập chưa hợp lệ.",
   AUTH_INVALID_CREDENTIALS: "Email hoặc mật khẩu không đúng.",
+  AUTH_INVALID_CURRENT_PASSWORD: "Mật khẩu hiện tại không đúng.",
+  AUTH_PASSWORD_TOO_WEAK: "Mật khẩu mới cần tối thiểu 8 ký tự và khác mật khẩu hiện tại.",
+  AUTH_UNAUTHENTICATED: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
   ACCOUNT_NOT_AVAILABLE: "Tài khoản chưa được cấp quyền sử dụng hệ thống.",
   AUTH_UNAVAILABLE: "Hệ thống xác thực tạm thời không khả dụng.",
   CSRF_REJECTED: "Phiên hoặc yêu cầu không hợp lệ. Vui lòng tải lại trang.",
