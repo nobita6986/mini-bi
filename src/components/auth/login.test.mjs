@@ -11,12 +11,14 @@ const gate = source("./login-gate.tsx");
 const control = source("../app-shell/user-session-control.tsx");
 const page = source("../../app/login/page.tsx");
 
-test("login form: native form, mot POST, email trim, password khong trim", () => {
+test("login form: native form, mot POST, identifier trim, password khong trim", () => {
   assert.match(form, /<form onSubmit=/);
   assert.match(form, /\/api\/auth\/login/);
   assert.match(form, /method: "POST"/);
   assert.equal((form.match(/fetch\(/g) ?? []).length, 1);
-  assert.match(form, /email\.trim\(\), password/);
+  assert.match(form, /identifier\.trim\(\), password/);
+  assert.match(form, /Email hoặc ID/);
+  assert.match(form, /type="text"/);
   assert.match(form, /type=\{showPassword \? "text" : "password"\}/);
   assert.match(form, /aria-label=\{showPassword \? "Ẩn mật khẩu" : "Hiện mật khẩu"\}/);
   assert.match(form, /autoComplete="username"/);

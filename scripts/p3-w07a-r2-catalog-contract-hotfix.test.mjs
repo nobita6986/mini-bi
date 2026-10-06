@@ -16,7 +16,7 @@
  *
  * This test pins the locked four-top-level-key / eight-key-per-recruiter
  * contract end-to-end:
- *   1. PGlite applies all 42 migrations from scratch.
+ *   1. PGlite applies all migrations from scratch.
  *   2. Production `direct_entry_input_catalog` is called as service_role.
  *   3. The verbatim raw RPC result is fed into `projectDraftCatalog`.
  *   4. Scenarios cover: empty catalog, HRP, Vendor, active banks, missing

@@ -87,11 +87,8 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
 
 test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
-  // P3-W07A migration #41 added the W07A catalog bootstrap (vendors +
-  // personnel_code/position + vendor_id). P3-W07A-R2 migration #42 added
-  // the catalog runtime contract hotfix (banks restoration + Vendor null
-  // team + HRP null vendor_id). Total now 42.
-  assert.equal(migrationNames.length, 42);
+  // P3-W07B migration #43 adds project-manager scope enforcement.
+  assert.equal(migrationNames.length, 43);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -138,9 +135,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // helpers (cutoff, source_id, dim_key, recruiter_alias_key,
   // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
   // reconciliation_totals). All are GRANT EXECUTE to service_role so the
-  // runtime can use them (no public RPC exposure). Pre-cutover inventory
-  // was 69 (31 service + 38 internal); after #40 it grows to 77 (39 service
-  // + 38 internal).
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [77, 39, 38]);
+  // runtime can use them (no public RPC exposure). W07B adds three internal
+  // helpers/wrapped implementations while preserving 39 service boundaries.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [80, 39, 41]);
   await db.close();
 });

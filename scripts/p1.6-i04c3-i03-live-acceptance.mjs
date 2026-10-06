@@ -138,9 +138,8 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    // P3-W07A migration #41 added the W07A catalog bootstrap. P3-W07A-R2
-    // migration #42 added the catalog runtime contract hotfix. Total now 42.
-    check(fromScratch.migrationNames.length === 42, "PGlite applied all 42 migrations");
+    // P3-W07B migration #43 adds project-manager scope enforcement.
+    check(fromScratch.migrationNames.length === 43, "PGlite applied all 43 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();
@@ -168,10 +167,10 @@ async function verifySchema(client, migrations) {
     check(liveFunctions.filter(({ service_exec }) => !service_exec).length === expectedInternalCount &&
       liveFunctions.filter(({ service_exec, anon_exec, auth_exec, public_exec }) =>
         !service_exec && (anon_exec || auth_exec || public_exec)).length === 0,
-    "38 internal functions are not executable by runtime roles or PUBLIC");
-    check(sourceNames.length === 77 && expectedServiceCount === 39 &&
-      expectedInternalCount === 38,
-    "derived inventory is 77 total / 39 service-role / 38 internal");
+    "41 internal functions are not executable by runtime roles or PUBLIC");
+    check(sourceNames.length === 80 && expectedServiceCount === 39 &&
+      expectedInternalCount === 41,
+    "derived inventory is 80 total / 39 service-role / 41 internal");
     inventory = {
       total: sourceNames.length,
       serviceRole: expectedServiceCount,

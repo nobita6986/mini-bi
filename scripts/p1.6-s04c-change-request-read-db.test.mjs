@@ -25,10 +25,8 @@ const fixture = await seedChangeRequestFixture(db);
 const requests = await seedChangeRequests(db, fixture);
 
 test("from-scratch migration apply covers the new read migration and its ACLs", async () => {
-  // P3-W07A migration #41 added the W07A catalog bootstrap. P3-W07A-R2
-  // migration #42 added the catalog runtime contract hotfix (banks
-  // restoration + Vendor null team + HRP null vendor_id). Total now 42.
-  assert.equal(migrations.migrationNames.length, 42);
+  // P3-W07B migration #43 adds project-manager scope enforcement.
+  assert.equal(migrations.migrationNames.length, 43);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));

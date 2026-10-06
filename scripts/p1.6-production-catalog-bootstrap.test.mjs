@@ -49,6 +49,11 @@ async function database() {
     );
   }
   await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from)" +
+    " values ($1::uuid, 'all', '2020-01-01')",
+    [ACTOR.app_user_id],
+  );
+  await db.query(
     "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from)" +
     " values ($1::uuid, 'entry_create', '2020-01-01')",
     [ACTOR.app_user_id],
@@ -171,11 +176,11 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("42 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("43 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  assert.equal(names.length, 42,
-    "the migrations directory now carries 42 files (40 W07A baseline + W07A-R1 + W07A-R2)");
+  assert.equal(names.length, 43,
+    "the migrations directory now carries 43 files (W07B project-manager scope on W07A-R2)");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +

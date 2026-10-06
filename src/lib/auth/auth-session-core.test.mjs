@@ -108,6 +108,24 @@ test("login verifies returned auth id and returns only the minimal actor project
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
+test("login accepts an HR Partner account ID and maps it to the internal @hrpartner.vn email", async () => {
+  let input;
+  const response = await createAuthLoginResponse(
+    request("/api/auth/login", { email: " VinhNT.TD ", password: "temporary" }),
+    {
+      ...baseDependencies(),
+      createClient: async () => successClient({
+        signInWithPassword: async (value) => {
+          input = value;
+          return { data: { user: { id: "trusted-auth-subject" } }, error: null };
+        },
+      }),
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(input, { email: "vinhnt.td@hrpartner.vn", password: "temporary" });
+});
+
 test("login returns generic credentials failure and actor rejection signs out locally", async () => {
   const rejected = await createAuthLoginResponse(request("/api/auth/login", credentials), {
     ...baseDependencies(),

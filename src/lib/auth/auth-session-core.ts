@@ -125,7 +125,10 @@ function projectCredentials(value: unknown): { email: string; password: string }
       !Object.hasOwn(record, "email") || !Object.hasOwn(record, "password") ||
       typeof record.email !== "string" || typeof record.password !== "string") return null;
 
-  const email = record.email.trim();
+  const identifier = record.email.trim().toLowerCase();
+  const email = /^[a-z0-9][a-z0-9._-]{0,63}$/.test(identifier)
+    ? `${identifier}@hrpartner.vn`
+    : identifier;
   if (!emailSchema.safeParse(email).success ||
       record.password.length === 0 ||
       new TextEncoder().encode(record.password).byteLength > MAX_PASSWORD_BYTES) return null;

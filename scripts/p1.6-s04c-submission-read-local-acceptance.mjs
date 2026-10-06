@@ -27,11 +27,9 @@ function pass(label) {
 
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
-// P3-W07A migration #41 added the W07A catalog bootstrap. P3-W07A-R2
-// migration #42 added the catalog runtime contract hotfix (banks
-// restoration + Vendor null team + HRP null vendor_id). Total now 42.
-assert.equal(migrations.migrationNames.length, 42);
-pass("from-scratch apply 42 migration local trong PGlite (khong dung shared DB, khong network)");
+// P3-W07B migration #43 adds project-manager scope enforcement.
+assert.equal(migrations.migrationNames.length, 43);
+pass("from-scratch apply 43 migration local trong PGlite (khong dung shared DB, khong network)");
 
 for (const signature of [
   "public.direct_entry_list_own_submissions(uuid,uuid,integer,text,text)",

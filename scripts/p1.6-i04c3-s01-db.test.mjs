@@ -43,7 +43,7 @@ async function database() {
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 42, "P3-W07A-R2 migration #42 (catalog contract hotfix) on top of W07A baseline; PGlite must apply all 42 migrations");
+  assert.equal(migrations.length, 43, "P3-W07B migration #43 adds project-manager scope; PGlite must apply all 43 migrations");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -76,6 +76,11 @@ async function database() {
              ('${IDS.noProviderRecruiter}', '${IDS.team}', '2020-01-01');
     insert into public.direct_entry_projects(project_id, display_name)
       values ('project_i04c3_synthetic', 'Synthetic I04C3 Project');
+    insert into public.direct_entry_project_manager_assignments(project_id, manager_recruiter_id)
+      values ('project_i04c3_synthetic', '${IDS.recruiter}');
+    insert into public.direct_entry_app_user_recruiter_links
+      (app_user_id, recruiter_id, verified, valid_from)
+      values ('${IDS.user}', '${IDS.recruiter}', true, '2020-01-01');
     insert into public.direct_entry_banks(bank_id, display_name, active) values
       ('${IDS.bank}', 'Synthetic Active Bank', true),
       ('${IDS.inactiveBank}', 'Synthetic Inactive Bank', false);
@@ -300,13 +305,14 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
     // reconciliation_totals). All are GRANT EXECUTE to service_role so the
     // runtime can call them (no public RPC exposure). Pre-cutover inventory
-    // was 69 (31 service + 38 internal); after #40 it grows to 77
-    // (39 service + 38 internal). The exposed_internal counter stays at 0
+    // was 69 (31 service + 38 internal); #40 adds 8 service helpers and
+    // W07B adds 3 private scope helpers/wrapped implementations. The
+    // exposed_internal counter stays at 0
     // because no function is granted to anon/authenticated/public.
     assert.deepEqual(result.rows[0], {
-      total: 77,
+      total: 80,
       service_role: 39,
-      internal: 38,
+      internal: 41,
       exposed_internal: 0,
     });
   } finally {

@@ -12,7 +12,7 @@ import { authUiErrorMessage } from "@/lib/auth/auth-ui";
 export function LoginForm({ destination, onError }:
   { destination: string; onError?: () => void }) {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export function LoginForm({ destination, onError }:
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email: identifier.trim(), password }),
       });
       if (response.ok) {
         router.replace(destination);
@@ -58,17 +58,19 @@ export function LoginForm({ destination, onError }:
   return (
     <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="login-email" className="text-sm font-medium text-foreground">Email</label>
+        <label htmlFor="login-email" className="text-sm font-medium text-foreground">Email hoặc ID</label>
         <input
           id="login-email"
           name="email"
-          type="email"
+          type="text"
           autoComplete="username"
           inputMode="email"
+          autoCapitalize="none"
+          spellCheck={false}
           required
-          value={email}
+          value={identifier}
           aria-describedby={error ? "login-error" : undefined}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={(event) => setIdentifier(event.target.value)}
           className="h-11 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         />
       </div>
