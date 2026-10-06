@@ -68,8 +68,9 @@ function assertNoSensitive(label, value) {
 test("from-scratch apply covers the policy closure migration and its ACLs", async () => {
   // P3-W07B migration #43 adds project-manager scope enforcement.
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-  // P3-W07C-R2 is migration #45 on this branch (slot #46 after W05A).
-  assert.equal(migrations.migrationNames.length, 47);
+  // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
+  // as #48.
+  assert.equal(migrations.migrationNames.length, 48);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(

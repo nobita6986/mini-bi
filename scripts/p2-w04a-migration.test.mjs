@@ -26,11 +26,14 @@ async function buildDb() {
 test("P2-W04C migration is append-only after the 46-migration baseline", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    assert.equal(migrationNames.length, 47);
+    // W04B (#44) stays immediately after W07B; main carries W07C-R2 (#45),
+    // W07C-R3 (#46) and P2-W04C (#47) after it, and the appended W05A migration
+    // is last (#48).
+    assert.equal(migrationNames.length, 48);
     assert.equal(
       migrationNames[migrationNames.length - 1],
-      "20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql",
-      "W04C must append after the existing 46 migrations",
+      "20261008070000_p3_w05a_actor_scoped_reporting.sql",
+      "W05A must append after every migration already on main",
     );
     // Historical ordering remains byte-for-byte append-only.
     const w07bIdx = migrationNames.indexOf(
@@ -326,9 +329,10 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   } finally {
     await db.close();
   }
-  // W07C-R2 is present after W04B in the source inventory; this test skipped
-  // applying only W04B to exercise its rollback behavior.
-  assert.equal(names.length, 47);
+  // Later main migrations (including the appended W05A migration) are present
+  // after W04B in the source inventory; this test skipped applying only W04B to
+  // exercise its rollback behavior.
+  assert.equal(names.length, 48);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

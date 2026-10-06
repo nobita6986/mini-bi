@@ -38,10 +38,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       break;
   }
 
+  // ALLOW is returned only when actor.ok is true; narrow before the scoped fetch.
+  if (!actor?.ok) {
+    return <TemporaryUnavailable />;
+  }
+
   const params = await searchParams;
   const [report, options] = await Promise.all([
-    fetchCutoverReporting(params),
-    fetchCutoverReportingOptions(),
+    fetchCutoverReporting(params, actor.actor),
+    fetchCutoverReportingOptions(actor.actor),
   ]);
   return <DashboardView report={report} optionsResult={options} />;
 }
