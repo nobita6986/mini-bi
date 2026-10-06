@@ -22,9 +22,12 @@ const catalog = {
   recruiters: [{
     recruiter_id: "93100000-0000-4000-8000-000000000001",
     display_name: "Synthetic recruiter",
+    personnel_code: "synthetic.td",
     provider_type: "hrp",
+    vendor_id: null,
     team_id: "94100000-0000-4000-8000-000000000001",
     team_display_name: "Synthetic team",
+    label: "Synthetic recruiter · synthetic.td · Synthetic team",
   }],
 };
 const draft = {

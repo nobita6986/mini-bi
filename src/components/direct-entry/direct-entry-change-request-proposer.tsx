@@ -128,10 +128,11 @@ function baselineOf(entry: ProposerEntryProjection): ProposerFields {
 function optionsFor(catalog: DraftCatalog | undefined): PickerOption[] {
   return catalog?.recruiters.map((recruiter) => ({
     id: recruiter.recruiter_id,
-    label: recruiter.display_name,
-    groupLabel: recruiter.provider_type.toUpperCase() + " · " + recruiter.team_display_name,
+    // P3-W07A: server-side `label` is the canonical UI string.
+    label: recruiter.label,
+    groupLabel: recruiter.provider_type.toUpperCase() + " · " + (recruiter.team_display_name ?? "—"),
     provider: recruiter.provider_type.toUpperCase(),
-    team: recruiter.team_display_name,
+    team: recruiter.team_display_name ?? "—",
   })) ?? [];
 }
 

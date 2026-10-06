@@ -44,7 +44,8 @@ export function toPasteCatalog(catalog: DraftCatalog | undefined): PasteCatalog 
     })),
     recruiters: catalog.recruiters.map((recruiter) => ({
       id: recruiter.recruiter_id,
-      label: recruiter.display_name,
+      // P3-W07A: server-side `label` is the canonical UI string.
+      label: recruiter.label,
     })),
   };
 }

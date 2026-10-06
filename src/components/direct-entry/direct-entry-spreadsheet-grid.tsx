@@ -155,14 +155,30 @@ function SelectCellEditor(
     props.columnKey, rowCatalogs, props.row.providerType, rowDate, rowCatalogs,
   ) ?? [];
   const recruiter = rowCatalogs?.recruiters.find((option) =>
-    option.id === props.row.cells.recruiter_id || option.label === props.row.cells.recruiter_id);
+    option.id === props.row.cells.recruiter_id);
   const value = props.columnKey === "provider_type"
     ? props.row.providerType
     : props.columnKey === "recruiter_id"
       ? recruiter?.id ?? ""
       : props.row.cells[props.columnKey] ?? "";
-  const change = (nextValue: string) => props.onRowChange(
-    { ...props.row, cells: { ...props.row.cells, [props.columnKey]: nextValue } }, true);
+
+  // P3-W07A dropdown contract:
+  //   1. Selecting an option commits via `onRowChange(row, true)`.
+  //   2. Re-selecting the SAME option must still commit (no clobbering when
+  //      the value is unchanged).
+  //   3. Blur (click-outside) commits the current `value` even if the user
+  //      never changed it. This protects the case where the dropdown is
+  //      opened and dismissed without selection.
+  //   4. The contract applies uniformly to provider_type, recruiter_id,
+  //      project_id, gender, labor_type and every other dropdown column.
+  const commit = (nextValue: string) => {
+    props.onRowChange(
+      { ...props.row, cells: { ...props.row.cells, [props.columnKey]: nextValue } },
+      true,
+    );
+  };
+  const commitBlur = () => props.onClose(true, false);
+
   if (props.columnKey === "provider_type") {
     return (
       <select aria-label="HRP/Vendor" autoFocus value={value}
@@ -170,7 +186,8 @@ function SelectCellEditor(
           const next = event.currentTarget.value;
           const providerType = next === "hrp" || next === "vendor" ? next : "";
           props.onRowChange({ ...props.row, providerType }, true);
-        }}>
+        }}
+        onBlur={commitBlur}>
         <option value="hrp">HRP</option>
         <option value="vendor">Vendor</option>
       </select>
@@ -181,10 +198,9 @@ function SelectCellEditor(
     return (
       <select aria-label="Người tuyển / Vendor" autoFocus value={value}
         disabled={props.row.providerType === ""}
-        onChange={(event) => change(event.currentTarget.value)}>
-        {recruiters.length === 0
-          ? <option value="">—</option>
-          : <option value="">—</option>}
+        onChange={(event) => commit(event.currentTarget.value)}
+        onBlur={commitBlur}>
+        <option value="">—</option>
         {recruiters.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>
     );
@@ -196,7 +212,8 @@ function SelectCellEditor(
     // `onCellsChange` => `ensureCatalog` va truyen option moi.
     return (
       <select aria-label="Dự án" autoFocus value={value}
-        onChange={(event) => change(event.currentTarget.value)}>
+        onChange={(event) => commit(event.currentTarget.value)}
+        onBlur={commitBlur}>
         {options.map((option) =>
           <option key={option} value={option}>{option === "" ? "—" : option}</option>)}
       </select>
@@ -207,7 +224,8 @@ function SelectCellEditor(
       aria-label={props.columnKey}
       autoFocus
       value={value}
-      onChange={(event) => change(event.currentTarget.value)}
+      onChange={(event) => commit(event.currentTarget.value)}
+      onBlur={commitBlur}
     >
       {options.map((option) => <option key={option} value={option}>{option === "" ? "—" : option}</option>)}
     </select>

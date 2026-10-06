@@ -179,8 +179,13 @@ function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
     })),
     recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({
       id: recruiter.recruiter_id,
-      label: recruiter.display_name,
+      // P3-W07A: server-side `label` carries the locked HRP/Vendor display
+      // (`Họ và tên · personnel_code · Team` for HRP; vendor display name for
+      // Vendor). Grid shows `label`, not `display_name`.
+      label: recruiter.label,
       provider_type: recruiter.provider_type,
+      personnel_code: recruiter.personnel_code,
+      vendor_id: recruiter.vendor_id,
     })),
   };
 }
@@ -237,10 +242,11 @@ function updatePayload(fields: EditableDraftFields) {
 function optionsFor(catalog: DraftCatalog | undefined): PickerOption[] {
   return catalog?.recruiters.map((recruiter) => ({
     id: recruiter.recruiter_id,
-    label: recruiter.display_name,
-    groupLabel: `${recruiter.provider_type.toUpperCase()} · ${recruiter.team_display_name}`,
+    // P3-W07A: server-side `label` is the canonical UI string.
+    label: recruiter.label,
+    groupLabel: `${recruiter.provider_type.toUpperCase()} · ${recruiter.team_display_name ?? "—"}`,
     provider: recruiter.provider_type.toUpperCase(),
-    team: recruiter.team_display_name,
+    team: recruiter.team_display_name ?? "—",
   })) ?? [];
 }
 
@@ -250,7 +256,7 @@ function displayProject(row: LiveDraftRow, catalog: DraftCatalog | undefined): s
 }
 
 function displayRecruiter(row: LiveDraftRow, catalog: DraftCatalog | undefined): string {
-  return catalog?.recruiters.find(({ recruiter_id }) => recruiter_id === row.recruiterId)?.display_name ?? "";
+  return catalog?.recruiters.find(({ recruiter_id }) => recruiter_id === row.recruiterId)?.label ?? "";
 }
 
 function rowWithFields(row: LiveDraftRow, fields: EditableDraftFields): LiveDraftRow {
@@ -1021,8 +1027,10 @@ export function DirectEntryLive() {
       projects: catalog.projects.map((project) => ({ id: project.project_id, label: project.display_name })),
       recruiters: catalog.recruiters.map((recruiter) => ({
         id: recruiter.recruiter_id,
-        label: recruiter.display_name,
+        label: recruiter.label,
         provider_type: recruiter.provider_type,
+        personnel_code: recruiter.personnel_code,
+        vendor_id: recruiter.vendor_id,
       })),
     };
   }, [catalogs]);
@@ -1134,7 +1142,7 @@ export function DirectEntryLive() {
       const catalog = dateKey === "" ? fallbackCatalog : catalogs[dateKey] ?? null;
       const recruiter = catalog?.recruiters.find((option) =>
         option.recruiter_id === row.cells.recruiter_id ||
-        option.display_name === row.cells.recruiter_id);
+        option.label === row.cells.recruiter_id);
       const providerType = row.providerType || recruiter?.provider_type || "";
       return ({
       clientRowId: row.clientRowId,
@@ -1150,7 +1158,7 @@ export function DirectEntryLive() {
       employeeCode: row.cells.employee_code ?? "",
       displayName: row.cells.display_name ?? "",
       projectLabel: row.cells.project_id ?? "",
-      recruiterLabel: recruiter?.display_name ?? row.cells.recruiter_id ?? "",
+      recruiterLabel: recruiter?.label ?? row.cells.recruiter_id ?? "",
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
     }); });
     return [...persisted, ...staged];
