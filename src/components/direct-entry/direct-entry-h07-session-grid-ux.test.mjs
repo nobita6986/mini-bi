@@ -142,8 +142,8 @@ test("D3. Column build cho data cells editable dung cellsTextEditor (khong phai 
 test("D4. Date va Select cell editor van commit truc tiep (khong qua cellsTextEditor)", () => {
   // Date editor: commit qua onRowChange({...row, cells: {...row.cells, ...}}, true)
   assert.match(grid, /DateCellEditor[\s\S]*onChange=\{[\s\S]*onRowChange\(/);
-  // Select editor: providerType/commit dua tren change() helper
-  assert.match(grid, /const change = \(nextValue: string\) => props\.onRowChange\(/);
+  // Select editor: providerType/value commit directly through the commit() helper.
+  assert.match(grid, /const commit = \(nextValue: string\) => \{[\s\S]{0,120}props\.onRowChange\(/);
 });
 
 // --- E. Row selection ---------------------------------------------------

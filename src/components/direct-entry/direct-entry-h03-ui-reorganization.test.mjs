@@ -72,7 +72,7 @@ test("only the approved 18 data columns render; action rail is outside that set"
   assert.match(grid, /DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS/);
   assert.doesNotMatch(grid, /return DIRECT_ENTRY_GRID_COLUMNS\.map\(build\)/);
   assert.deepEqual(DIRECT_ENTRY_GENDER_OPTIONS, ["Nam", "Nữ"]);
-  assert.match(grid, /columnKey === "gender"\) return DIRECT_ENTRY_GENDER_OPTIONS/);
+  assert.match(grid, /columnKey === "gender"\) return \["", \.\.\.DIRECT_ENTRY_GENDER_OPTIONS\]/);
   assert.doesNotMatch(grid, /STATUS_OPTIONS/);
   // CCCD column key da duoc loai khoi action rail va khong con xuat hien trong grid.
   assert.equal(grid.includes('key: "cccd_documents"'), false,

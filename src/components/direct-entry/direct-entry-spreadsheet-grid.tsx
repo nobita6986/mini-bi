@@ -132,9 +132,14 @@ export function spreadsheetSelectOptions(
   rowDate: string | null = null,
   projectCatalog: SpreadsheetCatalogOptions | undefined = catalogs,
 ): readonly string[] | null {
-  if (columnKey === "gender") return DIRECT_ENTRY_GENDER_OPTIONS;
-  if (columnKey === "labor_type") return LABOR_TYPE_UI_VALUES;
-  if (columnKey === "provider_type") return PROVIDER_OPTIONS;
+  // The row model uses an empty string for an unselected cell. Native
+  // <select> elements must therefore also have a matching empty option.
+  // Without it the browser visually selects the first business option while
+  // the row still stores ""; choosing that visible option emits no change and
+  // the value disappears when the editor closes.
+  if (columnKey === "gender") return ["", ...DIRECT_ENTRY_GENDER_OPTIONS];
+  if (columnKey === "labor_type") return ["", ...LABOR_TYPE_UI_VALUES];
+  if (columnKey === "provider_type") return ["", ...PROVIDER_OPTIONS];
   if (columnKey === "project_id") {
     // Project dropdown phai resolve theo first_work_date cua chinh row.
     const source = projectCatalog ?? catalogs;
@@ -196,6 +201,7 @@ function SelectCellEditor(
           props.onRowChange({ ...props.row, providerType }, true);
         }}
         onBlur={commitBlur}>
+        <option value="">—</option>
         <option value="hrp">HRP</option>
         <option value="vendor">Vendor</option>
       </select>

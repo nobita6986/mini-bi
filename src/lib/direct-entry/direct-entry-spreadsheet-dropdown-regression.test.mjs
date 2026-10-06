@@ -128,9 +128,9 @@ test("R5 every dropdown column variant carries the same commit wiring", () => {
 test("R6 catalog column key checks cover gender, project_id, recruiter_id, labor_type", () => {
   // `spreadsheetSelectOptions` lives in the grid component. The grid source
   // is read into `gridSource` at the top of this file.
-  assert.match(gridSource, /if \(columnKey === "gender"\) return DIRECT_ENTRY_GENDER_OPTIONS/);
-  assert.match(gridSource, /if \(columnKey === "labor_type"\) return LABOR_TYPE_UI_VALUES/);
-  assert.match(gridSource, /if \(columnKey === "provider_type"\) return PROVIDER_OPTIONS/);
+  assert.match(gridSource, /if \(columnKey === "gender"\) return \["", \.\.\.DIRECT_ENTRY_GENDER_OPTIONS\]/);
+  assert.match(gridSource, /if \(columnKey === "labor_type"\) return \["", \.\.\.LABOR_TYPE_UI_VALUES\]/);
+  assert.match(gridSource, /if \(columnKey === "provider_type"\) return \["", \.\.\.PROVIDER_OPTIONS\]/);
   assert.match(gridSource, /if \(columnKey === "project_id"\)/);
   assert.match(gridSource, /if \(columnKey === "recruiter_id"\)/);
 });
@@ -157,9 +157,9 @@ function selectOptions(
   catalogs,
   providerType,
 ) {
-  if (columnKey === "gender") return ["Nam", "Nữ"];
-  if (columnKey === "labor_type") return ["Thời vụ", "Chính thức"];
-  if (columnKey === "provider_type") return ["hrp", "vendor"];
+  if (columnKey === "gender") return ["", "Nam", "Nữ"];
+  if (columnKey === "labor_type") return ["", "Thời vụ", "Chính thức"];
+  if (columnKey === "provider_type") return ["", "hrp", "vendor"];
   if (columnKey === "project_id") {
     const list = (catalogs?.projects ?? []).map((p) => p.id);
     return ["", ...list];
@@ -228,8 +228,8 @@ const SAMPLE_CATALOG = {
       personnel_code: null,
       provider_type: "vendor",
       vendor_id: "vendor_x",
-      team_id: "92100000-0000-4000-8000-000000000002",
-      team_display_name: "Vendor unassigned",
+      team_id: null,
+      team_display_name: null,
       label: "Vendor X",
     },
   ],
@@ -351,12 +351,15 @@ test("R15 when project dropdown returns the catalog options in deterministic ord
 
 test("R16 gender and labor_type dropdowns return the canonical vocabulary unchanged", () => {
   const genderOptions = selectOptions("gender", undefined, "");
-  assert.deepEqual(genderOptions, ["Nam", "Nữ"]);
+  assert.deepEqual(genderOptions, ["", "Nam", "Nữ"]);
   const laborTypeOptions = selectOptions("labor_type", undefined, "");
-  assert.deepEqual(laborTypeOptions, ["Thời vụ", "Chính thức"]);
-  // First option is the canonical first entry — re-selecting it must commit.
-  assert.equal(genderOptions[0], "Nam");
-  assert.equal(laborTypeOptions[0], "Thời vụ");
+  assert.deepEqual(laborTypeOptions, ["", "Thời vụ", "Chính thức"]);
+  // Empty row state must map to a real placeholder. The first business value
+  // is therefore an actual change instead of a browser-only visual fallback.
+  assert.equal(genderOptions[0], "");
+  assert.equal(genderOptions[1], "Nam");
+  assert.equal(laborTypeOptions[0], "");
+  assert.equal(laborTypeOptions[1], "Thời vụ");
 });
 
 test("R17 dropdown registry keeps exact editor keys (gender/labor_type/provider_type/project_id/recruiter_id)", () => {
@@ -506,4 +509,28 @@ test("R22 Enter / Tab routing is the same commit path as blur (Enter=commit, Tab
   const branchCommits = (gridSource.match(/commit\(event\.currentTarget\.value\)/g) ?? []).length;
   assert.ok(branchCommits >= 3,
     `expected commit() to be invoked from onChange in every dropdown branch; got ${branchCommits}`);
+});
+
+test("R23 empty stored value uses a real placeholder, so choosing the first business option commits", () => {
+  for (const scenario of [
+    { column: "gender", pick: "Nam" },
+    { column: "labor_type", pick: "Thời vụ" },
+    { column: "provider_type", pick: "hrp" },
+  ]) {
+    const options = selectOptions(scenario.column, undefined, "");
+    assert.equal(options[0], "", `${scenario.column}: placeholder matches the stored empty value`);
+    assert.equal(options[1], scenario.pick, `${scenario.column}: first business option follows placeholder`);
+    const result = dropdownBehavior({
+      initialValue: "",
+      onChangeTarget: scenario.pick,
+      blurBeforeFinish: true,
+    });
+    assert.equal(result.finalValue, scenario.pick, `${scenario.column}: first business option persists after blur`);
+    assert.equal(result.patches, 1, `${scenario.column}: selection emits exactly one patch`);
+  }
+  assert.match(
+    gridSource,
+    /<option value="">—<\/option>\s*<option value="hrp">HRP<\/option>/,
+    "provider_type must render an explicit empty placeholder before HRP",
+  );
 });

@@ -240,7 +240,7 @@ test("R1-16 Date va Select cell editor van commit truc tiep (khong qua cellsText
   // SelectCellEditor: cung commit truc tiep.
   const selectEditor = grid.match(/function SelectCellEditor[\s\S]{0,1500}\}/);
   assert.ok(selectEditor, "phai co SelectCellEditor");
-  assert.match(selectEditor[0], /const change = \(nextValue: string\) => props\.onRowChange\([\s\S]{0,200},\s*true\)/);
+  assert.match(selectEditor[0], /const commit = \(nextValue: string\) => \{[\s\S]{0,200}props\.onRowChange\([\s\S]{0,200},\s*true/);
 });
 
 test("R1-17 simulated multi-character Vietnamese input: cellsTextEditor contract persists string", () => {
