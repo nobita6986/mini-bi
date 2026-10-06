@@ -176,11 +176,11 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("44 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("45 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  assert.equal(names.length, 44,
-    "the migrations directory now carries 44 files (P2-W04B cutoff rebaseline on top of W07B project-manager scope)");
+  assert.equal(names.length, 45,
+    "the migrations directory now carries 45 files (P3-W05A actor-scoped reporting on top of P2-W04B cutoff rebaseline)");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +

@@ -27,15 +27,15 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39 (P2-W04B add
   const { db, migrationNames } = await buildDb();
   try {
     // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-    assert.equal(migrationNames.length, 44);
+    assert.equal(migrationNames.length, 45);
     // P2-W04B migration #44 is APPEND-ONLY: it must come AFTER the
     // last applied migration on origin/main (`20261008020000_p3_w07b_…`)
     // so a fresh PGlite apply and a Production apply share the same
     // ordering. W04B sits between W07B and any later migration.
     assert.equal(
       migrationNames[migrationNames.length - 1],
-      "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
-      "P2-W04B migration #44 must be the LAST migration on disk (append-only after W07B)",
+      "20261008040000_p3_w05a_actor_scoped_reporting.sql",
+      "P3-W05A migration #45 must be the LAST migration on disk (append-only after W04B)",
     );
     // W07B must still be present and immediately precede W04B.
     const w07bIdx = migrationNames.indexOf(
@@ -331,7 +331,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   // Sanity: the base migrations were applied (count includes the W04B
   // filename even though we skipped applying it; that is the file
   // inventory assertion, not the applied set).
-  assert.equal(names.length, 44);
+  assert.equal(names.length, 45);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

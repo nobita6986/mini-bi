@@ -299,17 +299,16 @@ test("P2-W04B-R1 reconcile: read-only transaction always rolls back (no mutation
   assert.equal(calls[calls.length - 1], "rollback");
 });
 
-test("P2-W04B-R1 reconcile: migration #44 is the only pending file (inventory append-only after W07B)", async () => {
-  // The reconcile script's first static check is migration count. Read
-  // the inventory and assert W04B is the last migration and ordered
-  // immediately after W07B.
+test("W05A inventory: migration #45 is last and W04B is ordered immediately after W07B", async () => {
+  // Read the on-disk inventory and assert W05A (#45) is the last migration,
+  // while W04B (#44) is still ordered immediately after W07B (#43).
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 44);
+  assert.equal(names.length, 45);
   assert.equal(
     names[names.length - 1],
-    "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
+    "20261008040000_p3_w05a_actor_scoped_reporting.sql",
   );
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",

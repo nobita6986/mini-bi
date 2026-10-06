@@ -68,10 +68,10 @@ test("P1.7-H04: /dashboard xac thuc TRUOC khi doc du lieu reporting", () => {
   const page = source("../../app/dashboard/page.tsx");
   assert.match(page, /decideSessionPageAccess\(actor\)/);
   assert.match(page, /redirect\("\/login\?next=\/dashboard"\)/);
-  // Thu tu bat buoc: guard phai xuat hien truoc fetchReporting.
+  // Thu tu bat buoc: guard phai xuat hien truoc fetch (P2-W04A renamed the fetcher).
   const guardAt = page.indexOf("decideSessionPageAccess(actor)");
-  const fetchAt = page.indexOf("fetchReporting(params)");
-  assert.ok(guardAt > 0 && fetchAt > guardAt, "guard phai chay truoc fetchReporting");
+  const fetchAt = page.indexOf("fetchCutoverReporting(params, actor.actor)");
+  assert.ok(guardAt > 0 && fetchAt > guardAt, "guard phai chay truoc fetchCutoverReporting");
 });
 
 test("P1.7-H04: env status va .env.example khong con khai bao PILOT_ACCESS", () => {
