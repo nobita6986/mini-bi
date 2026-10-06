@@ -25,8 +25,8 @@ const fixture = await seedChangeRequestFixture(db);
 const requests = await seedChangeRequests(db, fixture);
 
 test("from-scratch migration apply covers the new read migration and its ACLs", async () => {
-  // P3-W07B migration #43 adds project-manager scope enforcement.
-  assert.equal(migrations.migrationNames.length, 43);
+  // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
+  assert.equal(migrations.migrationNames.length, 44);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));

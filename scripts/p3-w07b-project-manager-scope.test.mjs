@@ -23,7 +23,9 @@ async function database() {
   const names = (await readdir(path.resolve("supabase/migrations")))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 43);
+  // P2-W04B adds migration #44 (cutoff rebaseline 2026-10-06) on top of
+  // the W07B #43.
+  assert.equal(names.length, 44);
   for (const name of names) {
     await db.exec(await readFile(path.resolve("supabase/migrations", name), "utf8"));
   }

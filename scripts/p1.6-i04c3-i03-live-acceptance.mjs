@@ -138,8 +138,8 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    // P3-W07B migration #43 adds project-manager scope enforcement.
-    check(fromScratch.migrationNames.length === 43, "PGlite applied all 43 migrations");
+    // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
+    check(fromScratch.migrationNames.length === 44, "PGlite applied all 44 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();

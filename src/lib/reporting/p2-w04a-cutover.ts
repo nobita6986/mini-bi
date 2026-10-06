@@ -1,20 +1,24 @@
 import type { ReportingFact, ReportingSource } from "./p1-reporting";
 
 /**
- * P2-W04A — Direct Entry reporting cutover contract (R1).
+ * P2-W04A — Direct Entry reporting cutover contract.
  *
- *   - Cutoff date locked at 2026-10-17 (Asia/Ho_Chi_Minh).
- *   - Legacy facts counted only when business_date < cutoff.
- *   - Direct Entry facts counted only when first_work_date >= cutoff.
+ *   - Cutoff date locked at 2026-10-06 (Asia/Ho_Chi_Minh). P2-W04B rebaseline
+ *     after the pre-UAT sample/business-data purge (origin/a74caa3 baseline
+ *     measured 0 legacy rows and 0 eligible Direct Entry rows). The locked
+ *     mask is: legacy < cutoff; Direct Entry >= cutoff; eligible pre-cutoff
+ *     Direct Entry raises a hard cutover blocker.
  *   - Eligibility: submission.state = 'SUBMITTED' AND deleted_at IS NULL.
  *   - One eligible Direct Entry row => recruited_count = 1.
- *   - Pre-cutoff eligible Direct Entry rows => cutover blocker (fail closed).
  *
  * This file is pure data (no SQL, no IO). The DB-side masks live in
- * `supabase/migrations/20261007020000_p2_w04a_direct_entry_reporting_cutover.sql`.
- * The read-path (`src/lib/reporting/p2-w04a-reporting-server.ts`) loads both
- * sources and combines them via `combineReportingFacts` /
- * `runCutoverReporting`.
+ * `supabase/migrations/20261007020000_p2_w04a_direct_entry_reporting_cutover.sql`
+ * (migration #40) and
+ * `supabase/migrations/20261007030000_p2_w04b_post_purge_cutover_rebaseline.sql`
+ * (migration #44). Every SQL mask reads through
+ * `public.direct_entry_reporting_cutoff()` so a single rebaseline flows
+ * through to the projection view, the blocker helper and the
+ * reconciliation totals without touching their SQL text.
  *
  * The TS layer never multiplies rows by revisions/documents/payments/events:
  * the SQL projection itself has grain = entry_id, so the "no double count"
@@ -22,7 +26,7 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting";
  */
 
 /** Hard-coded cutover date. Mirrors `public.direct_entry_reporting_cutoff()`. */
-export const P2_W04A_CUTOVER_DATE = "2026-10-17" as const;
+export const P2_W04A_CUTOVER_DATE = "2026-10-06" as const;
 
 /** Synthetic Direct Entry source id. Mirrors `public.direct_entry_reporting_source_id()`. */
 export const P2_W04A_DIRECT_ENTRY_SOURCE_ID =

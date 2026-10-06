@@ -34,6 +34,7 @@ import {
   maskDirectEntryFacts,
   maskLegacyFacts,
   P2_W04A_CUTOVER_BLOCKER_CODE,
+  P2_W04A_CUTOVER_DATE,
   P2_W04A_CUTOVER_FAILED_CODE,
   P2_W04A_DIRECT_ENTRY_SOURCE,
   P2_W04A_DIRECT_ENTRY_SOURCE_ID,
@@ -113,8 +114,10 @@ async function fetchLegacyFacts(params: {
     .from("daily_recruitment_breakdown")
     .select(LEGACY_FACT_COLUMNS, { count: "exact" })
     .in("source_id", params.plan.scopeIds);
-  // Apply date mask < cutoff at the database boundary.
-  q = q.lt("business_date", "2026-10-17");
+  // Apply date mask < cutoff at the database boundary. The literal is the
+  // single source of truth exported by p2-w04a-cutover; any future
+  // rebaseline updates the constant, not this seam.
+  q = q.lt("business_date", P2_W04A_CUTOVER_DATE);
   if (params.plan.source) q = q.eq("source_id", params.plan.source);
   if (params.plan.from) q = q.gte("business_date", params.plan.from);
   if (params.plan.to) q = q.lte("business_date", params.plan.to);
@@ -343,7 +346,7 @@ export async function fetchCutoverReporting(
       direct_entry_subtotal,
       overlap_blocker: blocker.count, // AUTHORITATIVE runtime count
       combined_total: legacy_subtotal + direct_entry_subtotal,
-      cutoff_date: "2026-10-17",
+      cutoff_date: P2_W04A_CUTOVER_DATE,
     };
 
     if (hasCutoverBlocker(reconciliation)) {

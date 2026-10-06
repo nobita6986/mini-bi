@@ -23,14 +23,23 @@ async function buildDb() {
   return { db, migrationNames: names };
 }
 
-test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () => {
+test("P2-W04A migration #40 applies cleanly after migrations #1-#39 (P2-W04B adds #44)", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    // P3-W07B migration #43 adds project-manager scope enforcement.
-    assert.equal(migrationNames.length, 43);
+    // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
+    assert.equal(migrationNames.length, 44);
+    const lastFive = migrationNames.slice(-5);
+    assert.ok(
+      lastFive.includes("20261007020000_p2_w04a_direct_entry_reporting_cutover.sql"),
+      "P2-W04A migration #40 must be one of the last 5 migrations",
+    );
+    assert.ok(
+      lastFive.includes("20261007030000_p2_w04b_post_purge_cutover_rebaseline.sql"),
+      "P2-W04B migration #44 must be one of the last 5 migrations",
+    );
     assert.equal(
-      migrationNames[migrationNames.length - 3],
-      "20261007020000_p2_w04a_direct_entry_reporting_cutover.sql",
+      migrationNames[migrationNames.length - 1],
+      "20261008020000_p3_w07b_project_manager_scope.sql",
     );
 
     // 1. Projection view exists.
@@ -75,9 +84,9 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () =
     );
     assert.deepEqual(dimCols.rows[0].cols, ["dimension", "key", "display", "recruited_count"]);
 
-    // 3. Cutoff is locked.
+    // 3. Cutoff is locked to the P2-W04B rebaseline value.
     const cutoffRes = await db.query("select public.direct_entry_reporting_cutoff()::text as c");
-    assert.equal(cutoffRes.rows[0].c, "2026-10-17");
+    assert.equal(cutoffRes.rows[0].c, "2026-10-06");
 
     // 4. Reconciliation totals are zero on fresh DB.
     const totals = await db.query(
@@ -87,7 +96,7 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () =
     assert.equal(Number(totals.rows[0].legacy_subtotal), 0);
     assert.equal(Number(totals.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(totals.rows[0].overlap_blocker), 0);
-    assert.equal(totals.rows[0].cutoff_date, "2026-10-17");
+    assert.equal(totals.rows[0].cutoff_date, "2026-10-06");
   } finally {
     await db.close();
   }

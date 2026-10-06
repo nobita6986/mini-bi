@@ -116,24 +116,25 @@ async function submitSubmission(db, submissionId) {
       submissionId, 2, "SUBMITTED", idemBase + "-submit"]);
 }
 
-test("W04A acceptance: legacy 2026-10-16 IS counted (business_date < cutoff)", async () => {
+test("W04A acceptance: legacy 2026-10-05 IS counted (business_date < cutoff)", async () => {
   const { db } = await buildDb();
   try {
     await seedFixture(db);
-    // Seed a legacy row on 2026-10-16 and a legacy row on 2026-10-17.
+    // Seed a legacy row on 2026-10-05 (pre-2026-10-06 cutoff) and a
+    // legacy row on 2026-10-06 (the cutoff day, masked out).
     await db.query("insert into public.data_sources (id, drive_file_id, file_name, sheet_name, active, is_test) values ($1, $2, $3, $4, $5, $6)",
       ["11111111-1111-4111-8111-111111111111", "W04A-LEGACY", "w04a-legacy.xlsx", "Sheet1", true, false]);
     await db.query("insert into public.sync_runs (run_id, source_id, trigger_type, status, started_at, finished_at) values ($1, $2, $3, $4, $5, $5)",
-      ["21111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111", "manual", "succeeded", "2026-10-16T00:00:00Z"]);
+      ["21111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111", "manual", "succeeded", "2026-10-05T00:00:00Z"]);
     await db.query(
       "insert into public.daily_recruitment_breakdown" +
       " (source_id, business_date, project_key, project_display, recruiter_key, recruiter_display," +
       "  provider_type_key, provider_type_display, employment_type_key, employment_type_display," +
       "  recruited_count, sync_run_id, snapshot_at)" +
-      " values ($1, '2026-10-16', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
-      " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 2, $2, '2026-10-16T00:00:00Z')," +
-      "        ($1, '2026-10-17', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
-      " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 9, $2, '2026-10-16T00:00:00Z')",
+      " values ($1, '2026-10-05', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 2, $2, '2026-10-05T00:00:00Z')," +
+      "        ($1, '2026-10-06', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 9, $2, '2026-10-05T00:00:00Z')",
       ["11111111-1111-4111-8111-111111111111", "21111111-1111-4111-8111-111111111111"],
     );
 
@@ -141,7 +142,7 @@ test("W04A acceptance: legacy 2026-10-16 IS counted (business_date < cutoff)", a
     const res = await db.query(
       "select * from public.direct_entry_reporting_reconciliation_totals()",
     );
-    // Legacy 2026-10-16 contributes 2, legacy 2026-10-17 is masked out.
+    // Legacy 2026-10-05 contributes 2, legacy 2026-10-06 is masked out.
     assert.equal(Number(res.rows[0].legacy_subtotal), 2);
     assert.equal(Number(res.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(res.rows[0].overlap_blocker), 0);
@@ -150,11 +151,11 @@ test("W04A acceptance: legacy 2026-10-16 IS counted (business_date < cutoff)", a
   }
 });
 
-test("W04A acceptance: eligible Direct Entry 2026-10-16 raises overlap_blocker", async () => {
+test("W04A acceptance: eligible Direct Entry 2026-10-05 raises overlap_blocker", async () => {
   const { db } = await buildDb();
   try {
     await seedFixture(db);
-    const entryId = await createEntry(db, "2026-10-16", "hrp-2026-101601");
+    const entryId = await createEntry(db, "2026-10-05", "hrp-2026-100501");
     const submissionRes = await db.query(
       "select submission_id from public.direct_entries where entry_id = $1",
       [entryId],
@@ -443,20 +444,23 @@ test("W04A acceptance: read-only transaction does not mutate DB (reconciliation 
   }
 });
 
-test("W04A acceptance: baseline 34/44 invariants match the production baseline (table-empty check)", async () => {
+test("W04A acceptance: fresh-DB reconciliation returns 0/0/0 with the locked cutoff", async () => {
   const { db } = await buildDb();
   try {
     await setRole(db, "service_role");
     // On a fresh migrated DB with no seeded business data, reconciliation
-    // totals must be 0/0/0. The production baseline (34 rows / 44 total /
-    // fingerprint 7abfbdab...) is verified by a separate read-only
-    // transaction in scripts/p2-w04a-reconcile.mjs against Production.
+    // totals must be 0/0/0 and the cutoff must be the locked post-purge
+    // rebaseline value 2026-10-06. Production data-plane verification
+    // (real row count / subtotal) is performed by the data-agnostic
+    // scripts/p2-w04a-reconcile.mjs in a read-only transaction.
     const res = await db.query(
-      "select * from public.direct_entry_reporting_reconciliation_totals()",
+      "select legacy_subtotal, direct_entry_subtotal, overlap_blocker," +
+      " cutoff_date::text as cutoff_date from public.direct_entry_reporting_reconciliation_totals()",
     );
     assert.equal(Number(res.rows[0].legacy_subtotal), 0);
     assert.equal(Number(res.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(res.rows[0].overlap_blocker), 0);
+    assert.equal(res.rows[0].cutoff_date, "2026-10-06");
   } finally {
     await db.close();
   }
@@ -467,13 +471,23 @@ test("W04A acceptance: baseline 34/44 invariants match the production baseline (
 //
 // R1 mandate: migration self-check is data-agnostic, runtime blocker is
 // independent of the masked view, service-role ACL is explicit, dimension
-// options cover DE-only values, and the Production-shaped non-zero legacy
-// baseline (34 rows / 44 total) survives #40 cleanly.
+// options cover DE-only values, and the W04A production-shape non-zero
+// legacy baseline (34 rows / 44 total) survives #40 cleanly. P2-W04B
+// rebaseline retires the 34/44 magnitude assertion in favour of
+// structural invariants; only the #40 isolation test still relies on
+// the historical magnitude and that test deliberately re-applies #40
+// without #44, so the original cutoff (2026-10-17) is preserved.
 // =============================================================================
 
 async function seedProductionShapeLegacy(db) {
-  // Mirrors the locked Production baseline (p2-w01-r1):
-  //   34 rows / 44 total / 2026-10-01..2026-10-16 / 6 distinct sources.
+  // P2-W04B rebaseline: the post-purge legacy aggregate is empty
+  // (0 rows / 0 total). The old "34 rows / 44 total / 2026-10-01..16"
+  // baseline from p2-w01-r1 is intentionally NOT reproduced because the
+  // cutover reads through direct_entry_reporting_cutoff() and the pre-purge
+  // distribution is no longer canonical. This seed is only used by the
+  // migration #40 isolation test (which applies only #40, with cutoff =
+  // 2026-10-17). Under that cutoff all 34 rows are pre-cutoff, so the
+  // legacy subtotal is preserved at 44.
   await db.query(
     "insert into public.data_sources (id, drive_file_id, file_name, sheet_name, active, is_test) values" +
     " ('11111111-1111-4111-8111-111111111111', 'W04A-LEGACY-1', 'w04a-legacy-1.xlsx', 'Sheet1', true, false)," +
@@ -483,9 +497,13 @@ async function seedProductionShapeLegacy(db) {
     " ('11111111-1111-4111-8111-111111111115', 'W04A-LEGACY-5', 'w04a-legacy-5.xlsx', 'Sheet1', true, false)," +
     " ('11111111-1111-4111-8111-111111111116', 'W04A-LEGACY-6', 'w04a-legacy-6.xlsx', 'Sheet1', true, false)"
   );
+  // 34 rows over days 2026-10-01..2026-10-07. With 6 sources and 7 days,
+  // 6*7 = 42 distinct (source, day) pairs > 34 rows: the (source_id,
+  // business_date, ...) primary key never collides. 24 rows have count
+  // 1 and 10 rows have count 2: 24*1 + 10*2 = 44.
   const daySources = [];
   for (let i = 0; i < 34; i++) {
-    const day = String(1 + (i % 16)).padStart(2, "0");
+    const day = String(1 + (i % 7)).padStart(2, "0");
     const source = "11111111-1111-4111-8111-11111111111" + (1 + (i % 6));
     daySources.push({ source, day, count: i < 24 ? 1 : 2 });
   }
@@ -514,6 +532,10 @@ test("R1 acceptance: migration #40 applies cleanly on Production-shape DB (34/44
   // Production-shaped DB that already carries 34 legacy rows / 44 total
   // / 6 sources. The migration must apply cleanly and the legacy subtotal
   // must be preserved by the reconciliation helper.
+  //
+  // This test focuses on migration #40 (the original W04A closure). It
+  // deliberately skips both #40 and #44 in the apply loop, then re-applies
+  // only #40 explicitly so the test isolates the #40 R1 self-check.
   const db = new PGlite();
   try {
     await db.exec(AUTH_PROLOGUE);
@@ -522,6 +544,7 @@ test("R1 acceptance: migration #40 applies cleanly on Production-shape DB (34/44
       .sort();
     for (const name of names) {
       if (name.includes("p2_w04a_direct_entry_reporting_cutover")) continue;
+      if (name.includes("p2_w04b_post_purge_cutover_rebaseline")) continue;
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await seedProductionShapeLegacy(db);
@@ -550,7 +573,7 @@ test("R1 acceptance: runtime blocker count is 1+ on a pre-cutoff eligible DE row
   const { db } = await buildDb();
   try {
     await seedFixture(db);
-    const entryId = await createEntry(db, "2026-10-16", "hrp-2026-101601");
+    const entryId = await createEntry(db, "2026-10-05", "hrp-2026-100501");
     const submissionRes = await db.query(
       "select submission_id from public.direct_entries where entry_id = $1",
       [entryId]
@@ -786,34 +809,54 @@ test("R1 acceptance: Dashboard page imports the cutover read path, not the legac
     "DashboardView must NOT introduce a data.data field; ReportingFetchResult shape preserved");
 });
 
-test("R1 acceptance: legacy 2026-10-17 row is masked out (post-cutoff day excluded from legacy)", async () => {
-  // Baseline invariants (34 rows / 44 total / 2026-10-01..2026-10-16)
-  // are not impacted.
+test("R1 acceptance: legacy 2026-10-06 row is masked out (post-cutoff day excluded from legacy)", async () => {
+  // P2-W04B rebaseline: the legacy aggregate mask is `business_date <
+  // direct_entry_reporting_cutoff()` = `business_date < 2026-10-06`. Rows
+  // on 2026-10-06 itself must be masked out. The seed is data-agnostic
+  // (no fixed 34/44 magnitude is asserted — the pre-purge baseline was
+  // retired by the W04B rebaseline). The test proves the boundary: rows
+  // on day 05 contribute, rows on day 06 are masked, the same
+  // reconciliation helper agrees with the direct masked sum.
   const { db } = await buildDb();
   try {
-    await seedProductionShapeLegacy(db);
-    // The legacy aggregate table has RLS enabled (see p0_daily_recruitment_breakdown_foundation).
-    // service_role is subject to that RLS policy. The R0 baseline invariants
-    // here run as the migration owner (postgres, which bypasses RLS) so the
-    // test stays independent of the service_role RLS policy surface.
-    const res = await db.query(
-      "select count(*)::bigint as n, sum(recruited_count)::bigint as s, min(business_date)::text as min, max(business_date)::text as max" +
-      " from public.daily_recruitment_breakdown where business_date < '2026-10-17'"
+    // Seed two legacy rows: one strictly before the new cutoff, one
+    // exactly on the new cutoff day.
+    await seedFixture(db);
+    await db.query(
+      "insert into public.data_sources (id, drive_file_id, file_name, sheet_name, active, is_test) values ($1, $2, $3, $4, $5, $6)",
+      ["11111111-1111-4111-8111-111111111111", "W04B-LEGACY", "w04b-legacy.xlsx", "Sheet1", true, false]
     );
-    assert.equal(Number(res.rows[0].n), 34, "Production-shape legacy row count = 34");
-    assert.equal(Number(res.rows[0].s), 44, "Production-shape legacy subtotal = 44");
-    assert.equal(res.rows[0].min, "2026-10-01");
-    assert.equal(res.rows[0].max, "2026-10-16");
-    // service_role can still call the reconciliation helper (SECURITY
-    // DEFINER + legacy aggregate grant) and the result MUST match the
-    // 34/44 baseline.
+    await db.query(
+      "insert into public.sync_runs (run_id, source_id, trigger_type, status, started_at, finished_at) values ($1, $2, $3, $4, $5, $5)",
+      ["21111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111", "manual", "succeeded", "2026-10-05T00:00:00Z"]
+    );
+    await db.query(
+      "insert into public.daily_recruitment_breakdown" +
+      " (source_id, business_date, project_key, project_display, recruiter_key, recruiter_display," +
+      "  provider_type_key, provider_type_display, employment_type_key, employment_type_display," +
+      "  recruited_count, sync_run_id, snapshot_at)" +
+      " values ($1, '2026-10-05', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 4, $2, '2026-10-05T00:00:00Z')," +
+      "        ($1, '2026-10-06', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 7, $2, '2026-10-05T00:00:00Z')",
+      ["11111111-1111-4111-8111-111111111111", "21111111-1111-4111-8111-111111111111"]
+    );
+    // Direct masked sum MUST equal the legacy subtotal returned by the
+    // helper. Row on 2026-10-05 contributes 4, row on 2026-10-06 is
+    // masked out.
+    const masked = await db.query(
+      "select coalesce(sum(recruited_count), 0)::bigint as subtotal" +
+      " from public.daily_recruitment_breakdown where business_date < '2026-10-06'"
+    );
+    assert.equal(Number(masked.rows[0].subtotal), 4,
+      "row on 2026-10-05 contributes 4, row on 2026-10-06 is masked out");
     await setRole(db, "service_role");
     const recon = await db.query(
       "select legacy_subtotal::text as legacy_subtotal" +
       " from public.direct_entry_reporting_reconciliation_totals()"
     );
-    assert.equal(Number(recon.rows[0].legacy_subtotal), 44,
-      "service_role sees the same legacy subtotal via the helper");
+    assert.equal(Number(recon.rows[0].legacy_subtotal), 4,
+      "reconciliation helper agrees with the direct masked sum");
   } finally {
     await resetRole(db);
     await db.close();
@@ -943,7 +986,7 @@ test("R1 service-role execution: views and table-reading helpers succeed under S
     );
     assert.equal(Number(recon.rows[0].direct_entry_subtotal), 1);
     assert.equal(Number(recon.rows[0].overlap_blocker), 0);
-    assert.equal(recon.rows[0].cutoff_date, "2026-10-17");
+    assert.equal(recon.rows[0].cutoff_date, "2026-10-06");
 
     // alias_key / provider_key helpers with a NON-EXISTENT recruiter_id =>
     // "__unknown__" sentinel (proves SECURITY DEFINER + table read works).
@@ -1210,6 +1253,21 @@ test("R1 reconcile reads cutoff as date text without host-timezone conversion", 
     "reconcile must preserve the PostgreSQL date wire value as YYYY-MM-DD text");
   assert.doesNotMatch(source, /totals\.cutoff_date\.toISOString/,
     "reconcile must not convert the cutoff through a host-local JavaScript Date");
-  assert.match(source, /source_id::text as sid[\s\S]+count\(\*\)::bigint as grain_rows/,
-    "reconcile fingerprint must retain the locked W01-R1 source/date grouping");
+  // P2-W04B rebaseline removed the locked W01-R1 fingerprint contract
+  // (the pre-purge baseline was retired). The new reconcile script must
+  // still read the legacy aggregate via the SQL cutoff function, must
+  // assert the locked 2026-10-06 cutoff, and must run inside a read-only
+  // transaction that is always rolled back.
+  assert.match(source, /2026-10-06/,
+    "reconcile must reference the locked post-purge cutoff 2026-10-06");
+  assert.match(source, /begin read only/,
+    "reconcile must open a read-only transaction");
+  assert.match(source, /rollback/,
+    "reconcile must roll back the transaction");
+  assert.match(source, /public\.direct_entry_reporting_cutoff\(\)/,
+    "reconcile must rely on the SQL cutoff function for the legacy mask");
+  assert.doesNotMatch(source, /EXPECTED_FINGERPRINT/,
+    "reconcile must no longer hard-code a historical fingerprint");
+  assert.doesNotMatch(source, /EXPECTED_LEGACY_ROWS/,
+    "reconcile must no longer hard-code a historical legacy row count");
 });
