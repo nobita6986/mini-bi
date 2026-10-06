@@ -268,6 +268,32 @@ error. The script JSON-outputs the verification summary on success.
 - n8n / Google Sheets ingestion changes.
 - A second TS aggregation engine.
 
+## P2-W04B — Post-purge reporting cutover rebaseline (delta)
+
+`P2-W04B_POST_PURGE_CUTOVER_REBASELINE_LOCAL_PASS_AWAITING_INTEGRATION`
+on `feature/p2-w04b-post-purge-cutover-rebaseline` from
+`origin/main@a74caa3cfcbe8e91096ed905ca53b55715962a2c`.
+
+- Migration #44 `20261007030000_p2_w04b_post_purge_cutover_rebaseline.sql`
+  rebaselines `public.direct_entry_reporting_cutoff()` to `date '2026-10-06'`
+  via `create or replace`. Every mask (facts view, blocker helper,
+  reconciliation totals, dimension options view) reads through the function,
+  so a single rebaseline flows through. ACL/DEFINER posture is preserved.
+- Migrations #1..#43 are byte-identical to `origin/main`.
+- `P2_W04A_CUTOVER_DATE = "2026-10-06"` in `p2-w04a-cutover.ts`; the
+  reporting server imports the constant instead of duplicating the literal.
+- `scripts/p2-w04a-reconcile.mjs` is now data-agnostic: it no longer asserts
+  34/44, the historical date range, or the locked fingerprint. It asserts
+  cutoff = 2026-10-06, overlap_blocker = 0, combined_total = legacy_subtotal
+  + direct_entry_subtotal, and the direct masked sum agrees with the helper.
+- `scripts/p2-w04b-preflight.mjs` is the Phase 0 read-only Production
+  preflight evidence: legacy 0, eligible DE pre-new-cutoff 0, 28 sources
+  inactive, migration ledger 43 / 0 / 0. No hard stop.
+- Gates: W04A suite 18/18 + migration 5/5 + acceptance 30/30; full
+  `pnpm test` green; typegen, typecheck, lint (0 errors), build, docs:check,
+  secrets:check, `db:migrate -- --offline` 44 valid, `db:migrate -- --dry-run`
+  43 applied / 1 pending / 0 mismatch. Not applied to Production.
+
 ## Status target
 
 `P2-W04A_DIRECT_ENTRY_REPORTING_CUTOVER_LOCAL_PASS_FAST_TRACK`

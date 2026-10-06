@@ -27,9 +27,9 @@ function pass(label) {
 
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
-// P3-W07B migration #43 adds project-manager scope enforcement.
-assert.equal(migrations.migrationNames.length, 43);
-pass("from-scratch apply 43 migration local trong PGlite (khong dung shared DB, khong network)");
+// P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
+assert.equal(migrations.migrationNames.length, 44);
+pass("from-scratch apply 44 migration local trong PGlite (khong dung shared DB, khong network)");
 
 for (const signature of [
   "public.direct_entry_list_own_submissions(uuid,uuid,integer,text,text)",
