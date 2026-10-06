@@ -1,23 +1,41 @@
 #!/usr/bin/env node
 /**
- * P2-W04B — read-only Production reconciliation dry-run (data-agnostic).
+ * P2-W04B-R1 — read-only Production reconciliation verifier (data-agnostic).
  *
  * Opens a Postgres connection in a READ ONLY transaction, runs the SQL
- * reconciliation helper, and verifies structural invariants only. The
+ * reconciliation helper, and verifies structural invariants. The
  * pre-purge baseline (34 legacy rows / 44 recruited / 2026-10-01..16 /
  * fingerprint 7abfbdab...) was retired by the W04B post-purge rebaseline.
- * The script therefore no longer asserts a specific historical row count
- * or fingerprint; it asserts that:
+ * The script no longer asserts a specific historical row count or
+ * fingerprint; it asserts that:
  *
  *   1. The migration ledger is in sync (no drift on the local checkout).
  *   2. The cutoff is the locked post-purge rebaseline value.
  *   3. The runtime overlap blocker is 0 (no pre-cutoff eligible DE rows).
  *   4. combined_total = legacy_subtotal + direct_entry_subtotal.
- *   5. The legacy aggregate, the masked legacy view and the reconciliation
- *      subtotals agree on `legacy_subtotal` (no silent truncate, no
- *      partial result, no double count).
+ *   5. The masked legacy aggregate agrees with the helper subtotal (no
+ *      silent truncate, no partial result, no double count).
+ *   6. POST-PURGE ZERO INVARIANTS:
+ *      - legacy_subtotal MUST be exactly 0.
+ *      - active && !is_test source rows MUST be exactly 0.
+ *   7. DIRECT ENTRY PROJECTION INTEGRITY:
+ *      - count(*) of `direct_entry_reporting_facts_v01` MUST equal
+ *        direct_entry_subtotal.
+ *      - sum(recruited_count) of `direct_entry_reporting_facts_v01` MUST
+ *        equal direct_entry_subtotal (proves recruited_count = 1 per
+ *        eligible row).
  *
  * The transaction is always rolled back so the database is never mutated.
+ *
+ * IMPORTANT — expected negative check: running this script against
+ * Production BEFORE migration #44 is applied MUST fail with
+ * `MIGRATION_STATE_DRIFT` (44 expected, 43 applied) or `MIGRATION_PENDING`
+ * (the W04B filename is missing from the applied set). This is the
+ * expected state and is a smoke test that the script is checking the
+ * ledger correctly. Do NOT apply migration #44 just to get this script
+ * to print a green PASS — the green PASS must come from the integration
+ * / release lane after a controlled apply.
+ *
  * Exit codes:
  *   0  invariants match
  *   1  drift detected
@@ -174,7 +192,62 @@ async function main() {
         `reconciliation legacy_subtotal ${legacySubtotal}`);
     }
 
-    // 7) ROLLBACK — never commit. The script is read-only by construction.
+    // 7) Post-purge zero invariant: legacy_subtotal MUST be exactly 0.
+    //    The pre-purge baseline was retired; the rebaseline only
+    //    succeeds when the legacy aggregate is empty. Any non-zero
+    //    subtotal after migration #44 indicates either a refill or
+    //    silent truncation; either way, fail stable.
+    if (legacySubtotal !== 0) {
+      fail("POST_PURGE_LEGACY_NOT_ZERO",
+        `legacy_subtotal must be 0 post-purge, got ${legacySubtotal}`);
+    }
+
+    // 8) Post-purge source invariant: active && !is_test source MUST be
+    //    exactly 0. Any such row can refill the legacy aggregate via a
+    //    future sync run.
+    const activeNonTestSources = await row(
+      client,
+      "select count(*)::bigint as n" +
+      " from public.data_sources" +
+      " where active = true and is_test = false",
+    );
+    if (Number(activeNonTestSources.n) !== 0) {
+      fail("POST_PURGE_ACTIVE_SOURCE_NOT_ZERO",
+        `active non-test sources must be 0 post-purge, got ${Number(activeNonTestSources.n)}`);
+    }
+
+    // 9) Direct Entry projection count vs helper subtotal. The view
+    //    `direct_entry_reporting_facts_v01` is the canonical read path
+    //    for DE rows; its `count(*)` MUST equal the helper subtotal
+    //    (otherwise the view is dropping or adding rows relative to the
+    //    reconciliation helper).
+    const deProjectionCount = await row(
+      client,
+      "select count(*)::bigint as n" +
+      " from public.direct_entry_reporting_facts_v01",
+    );
+    const deProjectionCountN = Number(deProjectionCount.n);
+    if (deProjectionCountN !== directEntrySubtotal) {
+      fail("DE_PROJECTION_COUNT_MISMATCH",
+        `projection count ${deProjectionCountN} != helper subtotal ${directEntrySubtotal}`);
+    }
+
+    // 10) Same-grain recruited_count invariant. Every eligible DE row
+    //     has recruited_count = 1, so `sum(recruited_count)` MUST equal
+    //     `count(*)`. Any deviation proves a row has count != 1 or the
+    //     helper / view have drifted.
+    const deProjectionSum = await row(
+      client,
+      "select coalesce(sum(recruited_count), 0)::bigint as s" +
+      " from public.direct_entry_reporting_facts_v01",
+    );
+    const deProjectionSumN = Number(deProjectionSum.s);
+    if (deProjectionSumN !== directEntrySubtotal) {
+      fail("DE_PROJECTION_SUM_MISMATCH",
+        `projection sum(recruited_count) ${deProjectionSumN} != helper subtotal ${directEntrySubtotal}`);
+    }
+
+    // 11) ROLLBACK — never commit. The script is read-only by construction.
     await client.query("rollback");
     transactionOpen = false;
 
@@ -195,6 +268,13 @@ async function main() {
         combined_equals_sum: combined === legacySubtotal + directEntrySubtotal,
         legacy_mask_matches_helper:
           Number(maskedLegacy.subtotal) === legacySubtotal,
+        legacy_subtotal_zero_post_purge: legacySubtotal === 0,
+        active_non_test_sources_zero:
+          Number(activeNonTestSources.n) === 0,
+        de_projection_count_equals_helper:
+          deProjectionCountN === directEntrySubtotal,
+        de_projection_sum_equals_helper:
+          deProjectionSumN === directEntrySubtotal,
       },
       rolled_back: true,
     };

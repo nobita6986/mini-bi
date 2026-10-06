@@ -22,7 +22,7 @@ test("from-scratch apply 44 migrations and read RPC ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   assert.equal(migrations.migrationNames.length, 44);
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
-  assert.ok(migrations.migrationNames.includes("20261007030000_p2_w04b_post_purge_cutover_rebaseline.sql"));
+  assert.ok(migrations.migrationNames.includes("20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql"));
   assert.deepEqual(migrations.migrationNames, [...migrations.migrationNames].sort(),
     "migration phai duoc ap theo thu tu ten file");
   for (const signature of [LIST_RPC, READ_RPC]) {

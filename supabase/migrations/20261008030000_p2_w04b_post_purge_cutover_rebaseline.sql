@@ -223,6 +223,64 @@ begin
     raise exception 'pre_cutover_blocker_count must be non-negative, got %', v_blocker_count;
   end if;
 
+  -- 6b. R1 HARD STOP at apply time. The migration is the SQL-level
+  --      last line of defense. The preflight script (a separate
+  --      safety gate) should have already rejected these conditions
+  --      BEFORE apply, but if the preflight was skipped, the
+  --      migration MUST still abort + roll back here. The blocker
+  --      must be EXACTLY 0, not just non-negative. No pre-purge
+  --      legacy or active non-test source may remain. All three
+  --      checks query raw tables with literal dates so the apply
+  --      contract does not depend on the cutoff function being
+  --      already rebaselined in this transaction.
+  --
+  --   (a) eligible DE rows with first_work_date < 2026-10-06.
+  --       (Lock: hard blocker if > 0.)
+  if (
+    select count(*)::bigint
+      from public.direct_entries e
+      join public.direct_entry_submissions s on s.submission_id = e.submission_id
+     where s.state = 'SUBMITTED'
+       and e.deleted_at is null
+       and e.first_work_date < date '2026-10-06'
+  ) > 0 then
+    raise exception
+      'P2-W04B migration #44 refused: eligible Direct Entry rows exist with first_work_date < 2026-10-06. '
+      'Rebaseline blocked. Investigate and re-key dates before retrying.';
+  end if;
+
+  --   (b) Legacy aggregate: post-purge invariant is rows = 0 AND
+  --       subtotal = 0. The contract is the full pre-UAT sample
+  --       purge; the rebaseline MUST NOT happen on a legacy
+  --       aggregate that still has rows.
+  if (
+    select count(*)::bigint
+      from public.daily_recruitment_breakdown
+  ) <> 0
+  or coalesce(
+    (select sum(recruited_count)::bigint
+       from public.daily_recruitment_breakdown),
+    0
+  ) <> 0 then
+    raise exception
+      'P2-W04B migration #44 refused: legacy aggregate still has rows or non-zero subtotal. '
+      'Run the controlled pre-UAT sample/business purge before retrying.';
+  end if;
+
+  --   (c) Active non-test source = 0. Any active non-test source
+  --       can refill the legacy aggregate and break the post-purge
+  --       invariant.
+  if (
+    select count(*)::bigint
+      from public.data_sources
+     where active = true
+       and is_test = false
+  ) > 0 then
+    raise exception
+      'P2-W04B migration #44 refused: active non-test source rows exist. '
+      'Deactivate the legacy source registry before retrying.';
+  end if;
+
   -- 7. Reconciliation totals return the canonical 4-column shape and the
   --    locked cutoff date. Fresh DB returns 0/0/0.
   select legacy_subtotal, direct_entry_subtotal, overlap_blocker
