@@ -26,9 +26,10 @@ async function buildDb() {
 test("P2-W04A migration #40 applies cleanly after migrations #1-#39", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    assert.equal(migrationNames.length, 40);
+    // P3-W07A migration #41 added the W07A catalog bootstrap. Total now 41.
+    assert.equal(migrationNames.length, 41);
     assert.equal(
-      migrationNames[migrationNames.length - 1],
+      migrationNames[migrationNames.length - 2],
       "20261007020000_p2_w04a_direct_entry_reporting_cutover.sql",
     );
 
