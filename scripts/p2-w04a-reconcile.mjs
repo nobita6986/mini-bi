@@ -60,16 +60,7 @@ function row(client, sql, values) {
 
 function fingerprint(rows) {
   const canonical = rows
-    .map((r) => [
-      r.source_id,
-      r.business_date,
-      r.project_key,
-      r.recruiter_key,
-      r.provider_type_key,
-      r.employment_type_key,
-      Number(r.recruited_count),
-    ].join("|"))
-    .sort()
+    .map((r) => `${r.sid}|${r.bd}|${r.total_count}|${r.grain_rows}`)
     .join("\n");
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -126,11 +117,13 @@ async function main() {
     //    truth for the locked contract.
     const totals = await row(
       client,
-      "select * from public.direct_entry_reporting_reconciliation_totals()",
+      "select legacy_subtotal, direct_entry_subtotal, overlap_blocker," +
+      " cutoff_date::text as cutoff_date" +
+      " from public.direct_entry_reporting_reconciliation_totals()",
     );
-    if (totals.cutoff_date.toISOString().slice(0, 10) !== EXPECTED_CUTOVER) {
+    if (totals.cutoff_date !== EXPECTED_CUTOVER) {
       fail("CUTOVER_DRIFT",
-        `expected cutoff ${EXPECTED_CUTOVER}, got ${totals.cutoff_date.toISOString().slice(0, 10)}`);
+        `expected cutoff ${EXPECTED_CUTOVER}, got ${totals.cutoff_date}`);
     }
     if (Number(totals.legacy_subtotal) !== EXPECTED_RECRUITED_TOTAL) {
       fail("BASELINE_RECRUITED_TOTAL_DRIFT",
@@ -172,7 +165,18 @@ async function main() {
       fail("BASELINE_MAX_DATE_DRIFT",
         `expected max ${EXPECTED_BUSINESS_DATE_MAX}, got ${maxDate}`);
     }
-    const fp = fingerprint(rows);
+    // Keep the fingerprint contract byte-identical to the locked W01-R1
+    // baseline: aggregate by source + business date before hashing. The
+    // detailed rows above remain the authority for row-count and total checks.
+    const fingerprintRows = (await client.query(
+      "select source_id::text as sid, business_date::text as bd," +
+      " coalesce(sum(recruited_count), 0)::bigint as total_count," +
+      " count(*)::bigint as grain_rows" +
+      " from public.daily_recruitment_breakdown" +
+      " where business_date < '2026-10-17'" +
+      " group by 1, 2 order by 1, 2"
+    )).rows;
+    const fp = fingerprint(fingerprintRows);
     if (fp !== EXPECTED_FINGERPRINT) {
       fail("BASELINE_FINGERPRINT_DRIFT",
         `expected ${EXPECTED_FINGERPRINT}, got ${fp}`);

@@ -1203,3 +1203,13 @@ test("R1 DE pagination tie-breaker: view ORDER BY includes entry_id as the last 
     await db.close();
   }
 });
+
+test("R1 reconcile reads cutoff as date text without host-timezone conversion", async () => {
+  const source = await readFile("scripts/p2-w04a-reconcile.mjs", "utf8");
+  assert.match(source, /cutoff_date::text as cutoff_date/,
+    "reconcile must preserve the PostgreSQL date wire value as YYYY-MM-DD text");
+  assert.doesNotMatch(source, /totals\.cutoff_date\.toISOString/,
+    "reconcile must not convert the cutoff through a host-local JavaScript Date");
+  assert.match(source, /source_id::text as sid[\s\S]+count\(\*\)::bigint as grain_rows/,
+    "reconcile fingerprint must retain the locked W01-R1 source/date grouping");
+});
