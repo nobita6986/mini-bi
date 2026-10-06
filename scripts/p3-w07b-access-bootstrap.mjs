@@ -83,7 +83,7 @@ async function validateDatabase(client) {
     [personnelCodes],
   );
   const allHrp = await client.query(
-    "select lower(personnel_code) as personnel_code from public.recruiters" +
+    "select recruiter_id, lower(personnel_code) as personnel_code from public.recruiters" +
     " where lower(personnel_code) = any($1::text[]) and active",
     [[...HRP_ACCOUNT_IDS]],
   );
@@ -91,7 +91,7 @@ async function validateDatabase(client) {
   if (unassigned.rows.length !== UNASSIGNED_PROJECTS.length) throw new Error("UNASSIGNED_PROJECT_SET_MISMATCH");
   if (recruiters.rows.length !== personnelCodes.length) throw new Error("MANAGER_SET_MISMATCH");
   if (allHrp.rows.length !== HRP_ACCOUNT_IDS.length) throw new Error("HRP_ACCOUNT_SET_MISMATCH");
-  return new Map(recruiters.rows.map((row) => [row.personnel_code, row.recruiter_id]));
+  return new Map(allHrp.rows.map((row) => [row.personnel_code, row.recruiter_id]));
 }
 
 async function applyPublicMappings(client, authUsersByEmail, recruiterByCode) {
