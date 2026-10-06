@@ -14,8 +14,9 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting";
  * This file is pure data (no SQL, no IO). The DB-side masks live in
  * `supabase/migrations/20261007020000_p2_w04a_direct_entry_reporting_cutover.sql`
  * (migration #40) and
- * `supabase/migrations/20261007030000_p2_w04b_post_purge_cutover_rebaseline.sql`
- * (migration #44). Every SQL mask reads through
+ * `supabase/migrations/20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql`
+ * (migration #44; append-only after W07B so fresh-apply and Production-apply
+ * share the same ordering). Every SQL mask reads through
  * `public.direct_entry_reporting_cutoff()` so a single rebaseline flows
  * through to the projection view, the blocker helper and the
  * reconciliation totals without touching their SQL text.

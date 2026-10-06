@@ -18,19 +18,20 @@ Production-ready. Cutover to Production requires a separate runbook.
 
 ## Locked business contract
 
-- Cutoff date: **2026-10-17** (Asia/Ho_Chi_Minh). Hard-coded as a SQL function
+- Cutoff date: **2026-10-06** (Asia/Ho_Chi_Minh). Hard-coded as a SQL function
   `public.direct_entry_reporting_cutoff()` and mirrored in TS as
-  `P2_W04A_CUTOVER_DATE`.
-- Legacy aggregate counted only when `business_date < '2026-10-17'`.
-- Direct Entry counted only when `first_work_date >= '2026-10-17'`.
+  `P2_W04A_CUTOVER_DATE`. P2-W04A originally locked `2026-10-17`; the
+  P2-W04B-R1 rebaseline after the pre-UAT purge moves it to
+  `2026-10-06`. The pre-purge baseline (34 / 44 / 2026-10-01..16 /
+  fingerprint `7abfbdab...`) was retired by the controlled purge and
+  is no longer asserted by any test or script.
+- Legacy aggregate counted only when `business_date < '2026-10-06'`.
+- Direct Entry counted only when `first_work_date >= '2026-10-06'`.
 - Eligibility: `direct_entry_submissions.state = 'SUBMITTED'` AND
   `direct_entries.deleted_at IS NULL`.
 - Each eligible entry contributes exactly `recruited_count = 1`.
 - Pre-cutoff eligible Direct Entry rows raise a hard-fail cutover blocker. They
   are never silently dropped and never double-counted.
-- Production baseline (pre-purge): legacy rows = 34, `recruited_total` = 44,
-  date range 2026-10-01..2026-10-16, Direct Entry eligible = 0, fingerprint
-  `7abfbdab53b0f1b01bd119a02b5ebe5417f3a369d7a9ccdba26e425b2106b1bd`.
 
 ## Reuse first
 
@@ -268,32 +269,47 @@ error. The script JSON-outputs the verification summary on success.
 - n8n / Google Sheets ingestion changes.
 - A second TS aggregation engine.
 
-## P2-W04B — Post-purge reporting cutover rebaseline (delta)
+## P2-W04B-R1 — Post-purge reporting cutover rebaseline (R1 closure)
 
-`P2-W04B_POST_PURGE_CUTOVER_REBASELINE_LOCAL_PASS_AWAITING_INTEGRATION`
+Status ceiling: **`P2-W04B-R1_CUTOVER_SAFETY_GAPS_CLOSED_LOCAL_PASS_AWAITING_INTEGRATION`**
 on `feature/p2-w04b-post-purge-cutover-rebaseline` from
-`origin/main@a74caa3cfcbe8e91096ed905ca53b55715962a2c`.
+`origin/main@a74caa3cfcbe8e91096ed905ca53b55715962a2c`. R1 follows R0
+(`592a89f`); R0 status `P2-W04B_POST_PURGE_CUTOVER_REBASELINE_LOCAL_PASS_AWAITING_INTEGRATION`
+is replaced.
 
-- Migration #44 `20261007030000_p2_w04b_post_purge_cutover_rebaseline.sql`
-  rebaselines `public.direct_entry_reporting_cutoff()` to `date '2026-10-06'`
-  via `create or replace`. Every mask (facts view, blocker helper,
-  reconciliation totals, dimension options view) reads through the function,
-  so a single rebaseline flows through. ACL/DEFINER posture is preserved.
-- Migrations #1..#43 are byte-identical to `origin/main`.
-- `P2_W04A_CUTOVER_DATE = "2026-10-06"` in `p2-w04a-cutover.ts`; the
-  reporting server imports the constant instead of duplicating the literal.
-- `scripts/p2-w04a-reconcile.mjs` is now data-agnostic: it no longer asserts
-  34/44, the historical date range, or the locked fingerprint. It asserts
-  cutoff = 2026-10-06, overlap_blocker = 0, combined_total = legacy_subtotal
-  + direct_entry_subtotal, and the direct masked sum agrees with the helper.
-- `scripts/p2-w04b-preflight.mjs` is the Phase 0 read-only Production
-  preflight evidence: legacy 0, eligible DE pre-new-cutoff 0, 28 sources
-  inactive, migration ledger 43 / 0 / 0. No hard stop.
-- Gates: W04A suite 18/18 + migration 5/5 + acceptance 30/30; full
-  `pnpm test` green; typegen, typecheck, lint (0 errors), build, docs:check,
-  secrets:check, `db:migrate -- --offline` 44 valid, `db:migrate -- --dry-run`
-  43 applied / 1 pending / 0 mismatch. Not applied to Production.
+### R1 deltas (append-only, no feature change)
 
-## Status target
+A. **Migration renamed** to `20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql`
+so it is APPEND-ONLY after `20261008020000_p3_w07b_project_manager_scope.sql`.
+B. **Preflight is an executable fail-closed safety gate** with stop-condition
+table; success needs (1) local=44 (2) prod=43, (3) pending=W04B only,
+(4) mismatch=0, (5) no applied-missing-on-disk, (6) prod cutoff=2026-10-17,
+(7) legacy=0 (rows AND subtotal), (8) DE pre 2026-10-06=0,
+(9) active non-test sources=0. DE 2026-10-06..2026-10-16 is NOT a blocker.
+Exit 1 stop / 2 DB-error; transaction always rolls back.
+C. **Migration #44 self-protection**: at apply time the rebaseline itself
+raises + rolls back if eligible DE pre-2026-10-06 > 0, legacy != 0, or
+active non-test source > 0 (SQL last line behind the preflight).
+D. **Reconcile data-path invariants**: legacy_subtotal=0, active
+non-test sources=0, view count and sum(recruited_count) equal
+direct_entry_subtotal; helper/projection mismatch emits a stable code.
+Pre-apply reconcile on Production correctly fails `MIGRATION_STATE_DRIFT`.
 
-`P2-W04A_DIRECT_ENTRY_REPORTING_CUTOVER_LOCAL_PASS_FAST_TRACK`
+### Verification (R1)
+
+- `p2-w04b-preflight.test.mjs`: 15/15 (table-driven: success + 8 stops
+  + DE-window accepted + every-path rollback + adapter-error).
+- `p2-w04a-migration.test.mjs`: 8/8 (5 R0 + 3 R1 self-protection).
+- `p2-w04a-reconcile-verify.test.mjs`: 4/4.
+- `p2-w04a-cutover.test.mjs`: 18/18 (unchanged from R0).
+- Production preflight (re-run): PREFLIGHT OK, 43 applied / 1 pending /
+  0 mismatch, legacy 0, eligible DE 0, active non-test sources 0.
+- Production reconcile (re-run): `MIGRATION_STATE_DRIFT expected 44,
+  got 43` — expected negative check, not a post-migration PASS.
+- Migrations #1..#43 byte-identical to `origin/main@a74caa3`.
+
+### Out of scope (R1, unchanged)
+
+No Production apply. No main push. No deploy. No new dependency. No
+Dashboard / auth / AI / package change. R1 stays inside the W04B
+lane.
