@@ -23,10 +23,14 @@ import { z } from "zod";
 const MAX_BODY_BYTES = 4096;
 const MIN_PASSWORD_BYTES = 8;
 const MAX_PASSWORD_BYTES = 1024;
+// Mirrors the auth-session-core surface (no-store + nosniff + no-referrer) so
+// every JSON response from this route is treated the same way by the browser.
 const NO_STORE_HEADERS = {
   "Cache-Control": "private, no-store",
   "Pragma": "no-cache",
   "Expires": "0",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
 };
 
 type User = { id: string; email?: string | null };
