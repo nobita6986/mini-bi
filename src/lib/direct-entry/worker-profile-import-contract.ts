@@ -63,11 +63,12 @@ export const WORKER_PROFILE_FIELDS: readonly WorkerProfileFieldSpec[] = Object.f
     group: "worker", requirement: "required", sensitivity: "direct_pii", persisted: true,
     constrained: false, validator: "validateDisplayName", maxLength: 256 },
   { key: "recruiter_id", canonicalHeader: "Tên NV Tuyển dụng",
-    aliases: ["Người tuyển", "Người tuyển dụng", "Tên nhân viên tuyển dụng"],
+    aliases: ["Người tuyển", "Người tuyển dụng", "Tên nhân viên tuyển dụng",
+      "Người tuyển / Vendor"],
     group: "entry", requirement: "required", sensitivity: "none", persisted: true,
     constrained: true, validator: "resolveCatalogRecruiter", maxLength: 256 },
   { key: "labor_type", canonicalHeader: "Loại hình LĐ",
-    aliases: ["Loại hình lao động", "Loại hình"],
+    aliases: ["Loại hình lao động", "Loại hình", "Chính thức"],
     group: "entry", requirement: "required", sensitivity: "none", persisted: true,
     constrained: true, validator: "normalizeLaborType" },
 
@@ -138,7 +139,8 @@ export const WORKER_PROFILE_FIELDS: readonly WorkerProfileFieldSpec[] = Object.f
   { key: "team_hint", canonicalHeader: "Chi nhánh/Team", aliases: ["Chi nhánh", "Team"],
     group: "derived", requirement: "derived", sensitivity: "derived", persisted: false,
     constrained: false, validator: "validationHintOnly", maxLength: 256 },
-  { key: "provider_hint", canonicalHeader: "Người tuyển dụng (HRP/Vendor)", aliases: [],
+  { key: "provider_hint", canonicalHeader: "Người tuyển dụng (HRP/Vendor)",
+    aliases: ["HRP/Vendor"],
     group: "derived", requirement: "derived", sensitivity: "derived", persisted: false,
     constrained: false, validator: "validationHintOnly", maxLength: 32 },
 ]);
@@ -263,10 +265,14 @@ export type HeaderResolution =
  * Doi chieu dong header: NFC + trim + gop khoang trang + ha case. Khong fuzzy.
  * Thu tu cot tuy y; so cot khong co dinh; cot tuy chon co the vang mat.
  */
-export function resolveWorkerProfileHeader(cells: readonly string[]): HeaderResolution {
+export function resolveWorkerProfileHeader(
+  cells: readonly string[],
+  options: { omittedRequiredKeys?: readonly string[] } = {},
+): HeaderResolution {
   const issues: WorkerProfileIssue[] = [];
   const columns: ResolvedColumn[] = [];
   const seen = new Map<string, number>();
+  const omittedRequiredKeys = new Set(options.omittedRequiredKeys ?? []);
   for (let index = 0; index < cells.length; index += 1) {
     const raw = cells[index];
     if (raw.trim() === "") {
@@ -288,6 +294,7 @@ export function resolveWorkerProfileHeader(cells: readonly string[]): HeaderReso
   }
   for (const field of WORKER_PROFILE_FIELDS) {
     if (field.requirement !== "required") continue;
+    if (omittedRequiredKeys.has(field.key)) continue;
     if (!seen.has(field.key)) {
       issues.push(issue("PASTE_HEADER_REQUIRED", "error", 0, field.key));
     }

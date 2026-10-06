@@ -6,6 +6,7 @@ import {
   createWorkerProfileTemplate,
   workerProfileXlsxToTsv,
 } from "./worker-profile-xlsx.ts";
+import { parseWorkerProfilePaste } from "./worker-profile-paste.ts";
 
 function fakeFile(name, bytes) {
   return {
@@ -49,8 +50,8 @@ test("template is versioned, has 17 H05 data headers and contains no identifiers
   // (de nguoi dung khai provider truoc, recruiter sau).
   assert.equal(headers[10], "HRP/Vendor");
   assert.equal(headers[11], "Người tuyển / Vendor");
-  // P1.7-H05: Loai hinh LĐ hien thi label "Chính thức" tren XLSX template (UI H05).
-  assert.equal(headers[12], "Chính thức");
+  // Header phai la ten cot canonical; "Chính thức" la gia tri dropdown.
+  assert.equal(headers[12], "Loại hình LĐ");
   assert.equal(headers[13], "STK");
   assert.equal(headers[14], "Tên ngân hàng");
   assert.equal(headers[15], "Tên chủ tài khoản");
@@ -72,7 +73,7 @@ test("template is versioned, has 17 H05 data headers and contains no identifiers
     sheet.getCell(2, genderColumn).dataValidation,
     { type: "list", allowBlank: true, formulae: ['"Nam,Nữ"'] },
   );
-  const laborColumn = headers.indexOf("Chính thức") + 1;
+  const laborColumn = headers.indexOf("Loại hình LĐ") + 1;
   assert.deepEqual(
     sheet.getCell(2, laborColumn).dataValidation,
     { type: "list", allowBlank: true, formulae: ['"Thời vụ,Chính thức"'] },
@@ -85,6 +86,86 @@ test("template is versioned, has 17 H05 data headers and contains no identifiers
     const cell = sheet.getRow(2).getCell(column);
     assert.equal(cell.value, null, `row 2 column ${column} khong co gia tri mau`);
   }
+});
+
+test("generated template round-trips through the production XLSX and paste parsers", async () => {
+  const template = await createWorkerProfileTemplate();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(template.buffer.slice(
+    template.byteOffset,
+    template.byteOffset + template.byteLength,
+  ));
+  const sheet = workbook.getWorksheet("Direct Entry");
+  assert.ok(sheet);
+  sheet.getRow(2).values = [
+    "Synthetic Project",
+    "2026-10-06",
+    "Synthetic Worker",
+    "Nam",
+    "1995-04-03",
+    "012345678901",
+    "2020-01-02",
+    "Bộ Công An",
+    "Synthetic Address",
+    "0912345678",
+    "HRP",
+    "synthetic-recruiter-id",
+    "Chính thức",
+    "000012345678",
+    "Synthetic Bank",
+    "Synthetic Worker",
+    "Synthetic Note",
+  ];
+  const filled = new Uint8Array(await workbook.xlsx.writeBuffer());
+
+  const imported = await workerProfileXlsxToTsv(fakeFile("direct-entry-template.xlsx", filled));
+  assert.equal(imported.ok, true);
+  if (!imported.ok) return;
+  assert.equal(imported.rowCount, 1);
+
+  const parsed = parseWorkerProfilePaste({
+    text: imported.text,
+    referenceDate: "2026-10-06",
+    employeeCodeMode: "server-generated",
+  });
+  assert.equal(parsed.errorCount, 0, JSON.stringify(parsed.issues));
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.canProceed, true);
+  assert.equal(parsed.rows[0].employee_code, "");
+  assert.equal(parsed.rows[0].project_label, "Synthetic Project");
+  assert.equal(parsed.rows[0].recruiter_label, "synthetic-recruiter-id");
+  assert.equal(parsed.rows[0].labor_type, "PERMANENT");
+  assert.equal(parsed.rows[0].derived.provider_hint, "HRP");
+  assert.deepEqual(parsed.rows[0].worker.gender, { state: "provided", value: "MALE" });
+  assert.deepEqual(parsed.rows[0].payment.account_number,
+    { state: "provided", value: "000012345678" });
+});
+
+test("previously downloaded H05 template also imports without requiring a re-download", async () => {
+  const bytes = await workbookBytes((sheet) => {
+    sheet.addRow([
+      "Dự án", "Ngày bắt đầu làm việc", "Họ và tên", "Giới tính", "DOB", "CMT/CCCD",
+      "Ngày cấp", "Nơi cấp", "Địa chỉ", "Số điện thoại", "HRP/Vendor",
+      "Người tuyển / Vendor", "Chính thức", "STK", "Tên ngân hàng",
+      "Tên chủ tài khoản", "Ghi chú",
+    ]);
+    sheet.addRow([
+      "Synthetic Project", "2026-10-06", "Synthetic Worker", "Nữ", "", "", "", "", "",
+      "", "HRP", "synthetic-recruiter-id", "Thời vụ", "", "", "", "",
+    ]);
+  });
+  const imported = await workerProfileXlsxToTsv(fakeFile("old-direct-entry-template.xlsx", bytes));
+  assert.equal(imported.ok, true);
+  if (!imported.ok) return;
+  const parsed = parseWorkerProfilePaste({
+    text: imported.text,
+    referenceDate: "2026-10-06",
+    employeeCodeMode: "server-generated",
+  });
+  assert.equal(parsed.errorCount, 0, JSON.stringify(parsed.issues));
+  assert.equal(parsed.rows.length, 1);
+  assert.equal(parsed.rows[0].labor_type, "TEMPORARY");
+  assert.deepEqual(parsed.rows[0].worker.gender, { state: "provided", value: "FEMALE" });
 });
 
 test("imports 17-field H05 sheet and drops legacy Mã NLĐ column when present", async () => {

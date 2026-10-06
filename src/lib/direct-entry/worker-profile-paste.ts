@@ -98,6 +98,7 @@ const LABOR_ALIASES: Readonly<Record<string, LaborType>> = Object.freeze({
   temporary: "TEMPORARY",
   thoivu: "TEMPORARY",
   permanent: "PERMANENT",
+  chinhthuc: "PERMANENT",
   toanthoigian: "PERMANENT",
 });
 
@@ -482,7 +483,10 @@ export function parseWorkerProfilePaste(input: {
       issues, errorCount: 1, warningCount: 0, canProceed: false };
   }
 
-  const header = resolveWorkerProfileHeader(splitPasteCells(lines[headerLine]));
+  const employeeCodeMode = input.employeeCodeMode ?? "required";
+  const header = resolveWorkerProfileHeader(splitPasteCells(lines[headerLine]), {
+    omittedRequiredKeys: employeeCodeMode === "server-generated" ? ["employee_code"] : [],
+  });
   issues.push(...header.issues);
   if (!header.ok) {
     return { contractVersion: WORKER_PROFILE_CONTRACT_VERSION, columns: header.columns, rows: [],
@@ -513,7 +517,7 @@ export function parseWorkerProfilePaste(input: {
       columnIndex,
       index + 1,
       input.referenceDate,
-      input.employeeCodeMode ?? "required",
+      employeeCodeMode,
     );
     rows.push(built.row);
     issues.push(...built.issues);

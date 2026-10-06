@@ -35,13 +35,8 @@ const XLSX_TEMPLATE_KEYS: readonly string[] = Object.freeze([
 
 /**
  * P1.7-H05: legacy alias "Toàn thời gian" duoc XLSX import chap nhan (map sang
- * canonical UI "Chính thức" -> "PERMANENT" server). Moi giao dien moi hien thi
- * "Chính thức".
+ * canonical UI value "Chính thức" -> "PERMANENT" server).
  */
-const LABOR_TYPE_HEADER_BY_KEY: Readonly<Record<string, string>> = Object.freeze({
-  TEMPORARY: "Thời vụ",
-  PERMANENT: "Chính thức",
-});
 const LABOR_TYPE_KEY_BY_HEADER: Readonly<Record<string, "TEMPORARY" | "PERMANENT">> = Object.freeze({
   "Thời vụ": "TEMPORARY",
   "Chính thức": "PERMANENT",
@@ -171,7 +166,7 @@ export async function createWorkerProfileTemplate(): Promise<Uint8Array> {
   const sheet = workbook.addWorksheet("Direct Entry");
   // P1.7-H05: 17 header theo dung thu tu production UI; STK text format de giu so 0.
   const headers = XLSX_TEMPLATE_KEYS.map((key) => {
-    if (key === "labor_type") return LABOR_TYPE_HEADER_BY_KEY.PERMANENT;
+    if (key === "labor_type") return canonicalHeaderForField(key) ?? key;
     if (key === "gender") return "Giới tính";
     if (key === "recruiter_id") return "Người tuyển / Vendor";
     if (key === "provider_type") return "HRP/Vendor";
@@ -211,7 +206,7 @@ export async function createWorkerProfileTemplate(): Promise<Uint8Array> {
       formulae: ['"HRP,Vendor"'],
     };
   }
-  const laborTypeColumn = headers.indexOf("Chính thức") + 1;
+  const laborTypeColumn = headers.indexOf("Loại hình LĐ") + 1;
   if (laborTypeColumn > 0) {
     sheet.getCell(2, laborTypeColumn).dataValidation = {
       type: "list",
@@ -241,7 +236,7 @@ export function xlsxTemplateHeaderKeys(): readonly string[] {
 
 export function xlsxTemplateHeaders(): readonly string[] {
   return XLSX_TEMPLATE_KEYS.map((key) => {
-    if (key === "labor_type") return LABOR_TYPE_HEADER_BY_KEY.PERMANENT;
+    if (key === "labor_type") return canonicalHeaderForField(key) ?? key;
     if (key === "gender") return "Giới tính";
     if (key === "recruiter_id") return "Người tuyển / Vendor";
     if (key === "provider_type") return "HRP/Vendor";

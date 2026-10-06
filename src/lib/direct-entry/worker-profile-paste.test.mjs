@@ -88,6 +88,27 @@ test("server-generated mode accepts a blank employee-code cell", () => {
   assert.equal(result.rows[0].employee_code, "");
 });
 
+test("server-generated mode accepts a sheet with no employee-code header", () => {
+  const result = parseWorkerProfilePaste({
+    text: toTsv([[...requiredPairs("").filter(([header]) => header !== "Mã NLĐ"),
+      ["HRP/Vendor", "HRP"]]]),
+    referenceDate: REFERENCE_DATE,
+    employeeCodeMode: "server-generated",
+  });
+  assert.equal(result.errorCount, 0);
+  assert.equal(result.canProceed, true);
+  assert.equal(result.rows[0].employee_code, "");
+  assert.equal(result.rows[0].derived.provider_hint, "HRP");
+});
+
+test("labor type accepts the current UI value Chính thức", () => {
+  const pairs = requiredPairs().map(([header, value]) =>
+    [header, header === "Loại hình LĐ" ? "Chính thức" : value]);
+  const result = parse(toTsv([pairs]));
+  assert.equal(result.errorCount, 0);
+  assert.equal(result.rows[0].labor_type, "PERMANENT");
+});
+
 test("ho so day du: moi cot tuy chon duoc map dung", () => {
   const result = parse(toTsv([fullPairs()]));
   assert.equal(result.errorCount, 0);

@@ -57,6 +57,8 @@ test("alias import van duoc nhan, ke ca 'Ma so ung vien' -> employee_code", () =
   assert.equal(isKnownWorkerProfileHeader("Tên Công ty/Dự án làm việc"), true);
   assert.equal(isKnownWorkerProfileHeader("Họ tên NLĐ"), true);
   assert.equal(isKnownWorkerProfileHeader("Người tuyển dụng"), true);
+  assert.equal(isKnownWorkerProfileHeader("Người tuyển / Vendor"), true);
+  assert.equal(isKnownWorkerProfileHeader("HRP/Vendor"), true);
   assert.equal(isKnownWorkerProfileHeader("Loại hình lao động"), true);
   assert.equal(isKnownWorkerProfileHeader("SĐT"), true);
   assert.equal(isKnownWorkerProfileHeader("Ngày sinh"), true);
@@ -67,6 +69,26 @@ test("alias import van duoc nhan, ke ca 'Ma so ung vien' -> employee_code", () =
   assert.equal(resolved.ok, true);
   assert.deepEqual(resolved.columns.map((column) => column.key),
     ["employee_code", "project_id", "first_work_date", "display_name", "recruiter_id", "labor_type"]);
+});
+
+test("header: server-generated mode may omit the employee-code column", () => {
+  const headers = [
+    "Dự án", "Ngày bắt đầu làm việc", "Họ và tên", "HRP/Vendor",
+    "Người tuyển / Vendor", "Loại hình LĐ",
+  ];
+  const strict = resolveWorkerProfileHeader(headers);
+  assert.equal(strict.ok, false);
+  assert.equal(strict.issues.some((item) =>
+    item.code === "PASTE_HEADER_REQUIRED" && item.field === "employee_code"), true);
+
+  const serverGenerated = resolveWorkerProfileHeader(headers, {
+    omittedRequiredKeys: ["employee_code"],
+  });
+  assert.equal(serverGenerated.ok, true);
+  assert.deepEqual(serverGenerated.columns.map((column) => column.key), [
+    "project_id", "first_work_date", "display_name", "provider_hint", "recruiter_id",
+    "labor_type",
+  ]);
 });
 
 test("header: NFC + gop khoang trang + ha case; khong fuzzy", () => {
