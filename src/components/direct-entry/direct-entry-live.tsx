@@ -1043,22 +1043,31 @@ export function DirectEntryLive() {
     setQuickEditClientRowId(clientRowId);
   }, [activateStagedRowLazyDefaults, setQuickEditClientRowId]);
   const addQuickStagedRow = useCallback(() => {
+    // P3-W07C-R1: tinh target rowId + activated model TRUOC khi setState.
+    // setQuickEditClientRowId duoc goi ben ngoai setStagedModel updater
+    // (tranh side effect trong React state updater). activatedModel dam bao
+    // drawer nhan du 2 defaults.
+    // Note: targetClientRowId duoc set trong updater nham tinh "what row is
+    // being added/activated". Vi React strict mode co the double-invoke
+    // updater de kiem tra purity, gia tri nay chi duoc commit lan cuoi cung
+    // (tai vi tri setState commit) nen van deterministic.
+    let targetClientRowId: string | null = null;
     setStagedModel((current) => {
       const emptyRow = current.rows.find((row) => spreadsheetRowIsBlank(row));
       if (emptyRow) {
-        setQuickEditClientRowId(emptyRow.clientRowId);
-        return current;
+        targetClientRowId = emptyRow.clientRowId;
+        return activateSpreadsheetRowLazyDefaults(current, emptyRow.clientRowId);
       }
       if (current.rows.length + 1 > SPREADSHEET_MAX_DATA_ROWS) {
         setStagedMessageWithTone("Đã đạt giới hạn 100 dòng dữ liệu; không mở thêm NLĐ mới.", "info");
         return current;
       }
       const next = ensureSpreadsheetRowCount(current, current.rows.length + 1);
-      // Tao row moi (chinh la row cuoi cung sau khi append):
       const newRow = next.rows[next.rows.length - 1];
-      if (newRow) setQuickEditClientRowId(newRow.clientRowId);
+      if (newRow) targetClientRowId = newRow.clientRowId;
       return next;
     });
+    if (targetClientRowId !== null) setQuickEditClientRowId(targetClientRowId);
   }, [setStagedModel, setStagedMessageWithTone, setQuickEditClientRowId]);
 
 
@@ -2069,7 +2078,15 @@ export function DirectEntryLive() {
                 const catalog = catalogs[cells.first_work_date ?? ""];
                 return (
                   <li key={stagedRow.clientRowId}>
-                    <details className={styles.mobileStagedCard}>
+                    <details
+                      className={styles.mobileStagedCard}
+                      onToggle={(event) => {
+                        // P3-W07C-R1: mo card = tuong tac cua user => activate
+                        // lazy defaults de row co date/place ngay khi mo.
+                        if ((event.currentTarget as HTMLDetailsElement).open) {
+                          activateStagedRowLazyDefaults(stagedRow.clientRowId);
+                        }
+                      }}>
                       <summary>
                         {cells.display_name || "Dòng chưa có tên"}
                         {" · "}{validationRow.errorCount} lỗi

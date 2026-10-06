@@ -4,20 +4,24 @@
  * Group 1: default Ngày bắt đầu làm việc (GMT+7) + Nơi cấp (`Bộ Công An`).
  *   - Source chỉ define defaults 1 chỗ (spreadsheet-row-model.ts).
  *   - Live component dùng `createSpreadsheetRowModel()` (đã gồm defaults)
- *     cho cả 30 initial rows, 10 added batch rows và quick editor drawer.
+ *   - P3-W07C: defaultCells EMPTY (lazy). Activation chen defaults khi user
+ *     tuong tac lan dau voi row (select, open quick editor, mobile details
+ *     onToggle, edit cell, chon HRP/Vendor, paste/import).
+ *   - Live component dung `createSpreadsheetRowModel()` (30 initial rows
+ *     EMPTY, 10 added batch rows EMPTY, paste-pad) + activation contracts
+ *     chen defaults khi can.
  *   - Quick editor + mobile staged card render `target.cells.first_work_date`
- *     và `target.cells.national_id_issued_place` (kế thừa từ staged row factory).
- *   - User có thể sửa/xóa defaults; rerender KHÔNG ghi đè lại.
- *   - Không dùng `toISOString()` trong runtime (tránh lệch UTC).
- *   - Spreadsheet row factory `appendBlankRows` gắn defaults cho mọi row
- *     mới (initial 30, batch 10, paste-pad).
+ *     va `target.cells.national_id_issued_place` (duoc activation khi mo).
+ *   - User co the sua/xoa defaults; rerender KHONG ghi de lai (idempotent).
+ *   - Khong dung `toISOString()` trong runtime (tranh lech UTC).
  *
- * Group 2: default-only row vẫn là blank.
- *   - `spreadsheetRowIsBlank` đã được nâng cấp để coi row chỉ chứa 2 default
- *     là blank → không tính vào save batch, không validate, không gửi server.
- *   - `selectNonEmptySpreadsheetRows` đã dùng predicate này.
- *   - `buildSpreadsheetValidation` filter qua cùng predicate.
- *   - Khi user sửa default hoặc nhập business field, row tự active.
+ * Group 2: default-only row van la blank.
+ *   - `spreadsheetRowIsBlank` da duoc nang cap de coi row chi chua 2 default
+ *     la blank → khong tinh vao save batch, khong validate, khong gui server.
+ *   - `selectNonEmptySpreadsheetRows` da dung predicate nay.
+ *   - `buildSpreadsheetValidation` filter qua cung predicate.
+ *   - P3-W07C-R1: activation chen defaults vao cell EMPTY; user/paste patch
+ *     van thang (khong bi default overwrite).
  *
  * Group 3: text editor nhiều ký tự (H07 cellsTextEditor regression).
  *   - Editor đọc/ghi `row.cells[column.key]`.
@@ -94,20 +98,20 @@ test("R1-3 createSpreadsheetRowModel / appendBlankRows / nextBlankRow dung defau
 });
 
 test("R1-4 live su dung createSpreadsheetRowModel cho 30 initial + clear sau save", () => {
-  // Initial 30 rows: useState khoi tao qua factory.
+  // Initial 30 rows: useState khoi tao qua factory (defaultCells EMPTY; lazy).
   assert.match(live, /useState<SpreadsheetRowModel>\(\(\) => createSpreadsheetRowModel\(\)\)/);
-  // Sau khi save thanh cong, clear staged qua cung factory (defaults se apply cho batch moi).
+  // Sau khi save thanh cong, clear staged qua cung factory (batch moi EMPTY, lazy activate khi user tuong tac).
   assert.match(live, /setStagedModel\(createSpreadsheetRowModel\(\)\)/);
-  // addStagedRows them 10 rows moi qua ensureSpreadsheetRowCount (appendBlankRows => defaultCells).
+  // addStagedRows them 10 rows moi qua ensureSpreadsheetRowCount (appendBlankRows => defaultCells EMPTY).
   assert.match(live, /ensureSpreadsheetRowCount\(current, current\.rows\.length \+ ADD_STAGED_ROW_BATCH\)/);
-  // addQuickStagedRow cung dung ensureSpreadsheetRowCount (quick editor se thua huong defaults).
-  assert.match(live, /addQuickStagedRow[\s\S]{0,500}ensureSpreadsheetRowCount/);
+  // addQuickStagedRow cung dung ensureSpreadsheetRowCount (cho append path) + activation truoc khi mo drawer.
+  assert.match(live, /addQuickStagedRow[\s\S]{0,1500}ensureSpreadsheetRowCount/);
 });
 
-test("R1-5 quick editor (desktop drawer) render defaults tu target.cells (ke thua tu row factory)", () => {
+test("R1-5 quick editor (desktop drawer) render values tu target.cells (lazy defaults khi activated)", () => {
   // Quick editor desktop doc truc tiep target.cells.first_work_date
-  // va target.cells.national_id_issued_place, vi vay defaults tu row factory
-  // se hien thi ngay khi user mo drawer.
+  // va target.cells.national_id_issued_place. Sau P3-W07C defaultCells EMPTY;
+  // openQuickEditor activate row nen cells co defaults ngay khi mo drawer.
   // Dat ten nho de biet: `quickDrawer`.
   const quickStart = live.indexOf("Dialog.Content className={styles.quickDrawer}");
   assert.ok(quickStart > 0, "phai co Dialog.Content cho quick editor drawer");
@@ -118,8 +122,9 @@ test("R1-5 quick editor (desktop drawer) render defaults tu target.cells (ke thu
   assert.match(quickEditor, /target\.cells\.national_id_issued_place \?\? ""/);
 });
 
-test("R1-6 mobile staged card render defaults tu cells (ke thua tu row factory)", () => {
+test("R1-6 mobile staged card render values tu cells (lazy activation qua onToggle)", () => {
   // Mobile staged card cung render cells.first_work_date va cells.national_id_issued_place.
+  // P3-W07C-R1: details.onToggle activate lazy defaults khi user mo card.
   const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,8000}<\/details>/);
   assert.ok(mobileStaged, "phai co mobileStagedCard section");
   assert.match(mobileStaged[0], /cells\.first_work_date \?\? ""/);
@@ -136,9 +141,10 @@ test("R1-7 user edit defaults qua handleMobileStagedFieldChange khong bi factory
 });
 
 test("R1-8 updateSpreadsheetRowCells MERGE patch (khong full replace cells)", () => {
-  // Dam bao updateSpreadsheetRowCells chi ghi de cac key trong patch,
-  // giu nguyen gia tri default (date/place) neu user khong sua.
-  assert.match(rowModel, /updateSpreadsheetRowCells[\s\S]{0,400}cells:\s*\{\s*\.\.\.\s*row\.cells,\s*\.\.\.\s*patch\s*\}/);
+  // P3-W07C-R1: updateSpreadsheetRowCells activation truoc (chen defaults vao
+  // cell EMPTY) roi apply patch (user/paste luon thang). Merge patch shape
+  // van giu nguyen.
+  assert.match(rowModel, /updateSpreadsheetRowCells[\s\S]{0,800}cells:\s*\{\s*\.\.\.\s*row\.cells,\s*\.\.\.\s*patch\s*\}/);
 });
 
 // ===== Group 2: default-only row vẫn là blank =============================
@@ -349,15 +355,14 @@ test("R1-22 dropdown/date editors khong dung cellsTextEditor (tai su dung commit
 });
 
 test("R1-23 blank spare rows van duoc maintain qua ensureSpreadsheetSpareRows (10 trailing)", () => {
-  // ensureSpreadsheetSpareRows goi appendBlankRows (them default cells).
-  // Dam bao so spare rows khong doi sau H08-R1.
+  // P3-W07C-R1: ensureSpreadsheetSpareRows goi appendBlankRows (them row
+  // EMPTY, lazy). Spare rows luon EMPTY truoc khi user tuong tac.
   assert.match(rowModel, /SPREADSHEET_SPARE_ROW_COUNT = 10/);
   assert.match(rowModel, /ensureSpreadsheetSpareRows[\s\S]{0,600}appendBlankRows/);
-  // Test: cap nhat 100 row full data, spare rows van co default + blank.
   // (Verified in spreadsheet-row-model.test.mjs R1-3 + replenish test.)
 });
 
-test("R1-24 quick editor field order giu nguyen (place luon render, defaults co san)", () => {
+test("R1-24 quick editor field order giu nguyen (place luon render, defaults activation)", () => {
   // Quick editor phai render field national_id_issued_place (de user co the sua default).
   const quickStart = live.indexOf("Dialog.Content className={styles.quickDrawer}");
   assert.ok(quickStart > 0);
@@ -365,17 +370,20 @@ test("R1-24 quick editor field order giu nguyen (place luon render, defaults co 
   assert.ok(quickEnd > quickStart);
   const quickEditor = live.slice(quickStart, quickEnd);
   assert.match(quickEditor, /Nơi cấp/);
-  // Mac dinh hien thi qua cells.national_id_issued_place (da co default tu row factory).
+  // P3-W07C: cells.national_id_issued_place hien thi (duoc activation khi
+  // openQuickEditor; neu chua activation thi EMPTY + placeholder).
   assert.match(quickEditor, /target\.cells\.national_id_issued_place \?\? ""/);
   // Field first_work_date cung render.
   assert.match(quickEditor, /Ngày bắt đầu làm việc/);
   assert.match(quickEditor, /target\.cells\.first_work_date \?\? ""/);
 });
 
-test("R1-25 mobile staged card field order giu nguyen (place luon render, defaults co san)", () => {
+test("R1-25 mobile staged card field order giu nguyen (place luon render, activation onToggle)", () => {
   const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,8000}<\/details>/);
   assert.ok(mobileStaged);
   assert.match(mobileStaged[0], /Nơi cấp/);
+  // P3-W07C-R1: cells.national_id_issued_place hien thi (activation qua
+  // onToggle khi user mo details).
   assert.match(mobileStaged[0], /cells\.national_id_issued_place \?\? ""/);
   assert.match(mobileStaged[0], /Ngày bắt đầu làm việc/);
   assert.match(mobileStaged[0], /cells\.first_work_date \?\? ""/);

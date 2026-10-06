@@ -258,43 +258,83 @@ export function createSpreadsheetRowModel(): SpreadsheetRowModel {
   return appendBlankRows({ rows: [], nextClientRowSequence: 1 }, SPREADSHEET_INITIAL_ROW_COUNT);
 }
 
+/**
+ * P3-W07C-R1: moi edit/provider cell vao row tu dong activate lazy defaults
+ * truoc khi apply patch. Activation chen ngay hom nay (Asia/Ho_Chi_Minh)
+ * va `Bo Cong An` vao cac cell default neu chung EMPTY. Patch cua user /
+ * paste / import luon thang (apply sau cung).
+ *
+ * - Idempotent: row da activate thi activation khong doi gia tri.
+ * - Khong overwrite gia tri date/place do user hoac file cung cap
+ *   (chi chen khi cell EMPTY truoc patch).
+ * - Tra ve model khong doi neu row khong ton tai.
+ */
 export function updateSpreadsheetRowCells(
   model: SpreadsheetRowModel,
   clientRowId: string,
   patch: Readonly<Record<string, string>>,
+  now: Date = new Date(),
 ): SpreadsheetRowModel {
   assertWritablePatch(patch);
 
   let found = false;
-  const rows = model.rows.map((row) => {
-    if (row.clientRowId !== clientRowId) return row;
+  let needsActivation = false;
+  for (const row of model.rows) {
+    if (row.clientRowId !== clientRowId) continue;
     found = true;
-    return { ...row, cells: { ...row.cells, ...patch }, lazyDefaultsApplied: true };
-  });
+    if (!row.lazyDefaultsApplied) {
+      needsActivation = true;
+    }
+    break;
+  }
   if (!found) return model;
 
-  return ensureSpreadsheetSpareRows({ ...model, rows });
+  const baseModel = needsActivation
+    ? activateSpreadsheetRowLazyDefaults(model, clientRowId, now)
+    : model;
+  const rows = baseModel.rows.map((row) => {
+    if (row.clientRowId !== clientRowId) return row;
+    return { ...row, cells: { ...row.cells, ...patch }, lazyDefaultsApplied: true };
+  });
+
+  return ensureSpreadsheetSpareRows({ ...baseModel, rows });
 }
 
 export function updateSpreadsheetRowProviderType(
   model: SpreadsheetRowModel,
   clientRowId: string,
   providerType: SpreadsheetStagedRow["providerType"],
+  now: Date = new Date(),
 ): SpreadsheetRowModel {
-  const rows = model.rows.map((row) => {
+  // P3-W07C-R1: chon HRP/Vendor cung la tuong tac => activate lazy defaults truoc.
+  let needsActivation = false;
+  let found = false;
+  for (const row of model.rows) {
+    if (row.clientRowId !== clientRowId) continue;
+    found = true;
+    if (!row.lazyDefaultsApplied) {
+      needsActivation = true;
+    }
+    break;
+  }
+  if (!found) return model;
+  const baseModel = needsActivation
+    ? activateSpreadsheetRowLazyDefaults(model, clientRowId, now)
+    : model;
+
+  const rows = baseModel.rows.map((row) => {
     if (row.clientRowId !== clientRowId || row.providerType === providerType) return row;
     return {
       ...row,
       providerType,
       cells: { ...row.cells, recruiter_id: "" },
-      // P3-W07C: chon HRP/Vendor cung la mot tuong tac voi row; danh dau da
-      // kich hoat lazy defaults de row khong bi reset ve placeholder.
+      // P3-W07C-R1: danh dau activated de row khong reset ve placeholder.
       lazyDefaultsApplied: true,
     };
   });
-  return rows.every((row, index) => row === model.rows[index])
-    ? model
-    : { ...model, rows };
+  return rows.every((row, index) => row === baseModel.rows[index])
+    ? baseModel
+    : { ...baseModel, rows };
 }
 
 export function clearSpreadsheetRow(

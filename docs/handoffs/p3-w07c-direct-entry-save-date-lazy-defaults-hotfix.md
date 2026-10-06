@@ -1,75 +1,74 @@
-# P3-W07C — Direct Entry save date lazy defaults hotfix (HANDOFF)
+# P3-W07C-R1 — Direct Entry save date lazy defaults (HANDOFF update)
 
-Status: `P3-W07C_DIRECT_ENTRY_SAVE_DATE_LAZY_DEFAULTS_HOTFIX_LOCAL_PASS_AWAITING_INTEGRATION`
+Status: `P3-W07C-R1_LAZY_DEFAULT_ENTRYPOINTS_CLOSED_LOCAL_PASS_AWAITING_INTEGRATION`
 
-Local SHA = remote SHA: `b0c4751940ea2ad38fa1085db0f2a34ff7d513cf` (branch
-`feature/p3-w07c-direct-entry-save-date-lazy-defaults-hotfix`, rebased on
-`origin/main` `6a81f56`).
+Local SHA = remote SHA: TBD (push pending; this commit sits on top of
+`a8a02ce` from the W07C hotfix). Base: `origin/main@6a81f5637d61bdd66d09c835ba613482609b8ea8`.
 
-## Root cause (A)
+## Root cause (A) — corrected
 
-`normalizeEmployment` in `src/lib/direct-entry/full-profile-contract.ts`
-collapsed `payment: null` / `employment: null` (server-generated fields the
-client intentionally omits) into `BATCH_INVALID`. The guard only accepted
-`undefined`. The staging pipeline built the request body with `null` for
-these server-omitted fields, so the contract parser refused the row.
+`normalizePayment` already accepted `null` as omitted. The defect lived
+in `normalizeEmployment` (`src/lib/direct-entry/full-profile-contract.ts`):
+its guard `if (value === undefined)` rejected `payment: null` and
+`employment: null` payloads the staging pipeline intentionally omits, and
+the contract parser emitted `BATCH_INVALID` for the whole batch.
 
-Fix: accept `null` as omitted (`value === undefined || value === null`).
-Safe error codes (BATCH_* domain) are preserved for genuinely invalid
-values. `BATCH_INVALID` is only emitted for true required-missing.
+Fix: treat `null` as omitted (`value === undefined || value === null`).
+Safe error codes remain for genuinely invalid values; `BATCH_INVALID` is
+the umbrella required-missing code and continues to cover shape and
+required-field gaps — it is NOT reserved solely for required-missing.
 
-Regression test added in `full-profile-api.test.mjs` (production-shaped row
-+ Postgres safe-code classification).
+Regression tests in `full-profile-api.test.mjs` (production-shaped row +
+Postgres safe-code classification) lock the safe-code propagation.
 
-## Lazy defaults (B)
+## Lazy defaults (B) — R1 entry points closed
 
-`defaultCells()` now returns empty cells. New flag
-`SpreadsheetStagedRow.lazyDefaultsApplied` and helper
-`activateSpreadsheetRowLazyDefaults(model, clientRowId, now)`.
+`defaultCells()` stays empty. `updateSpreadsheetRowCells` and
+`updateSpreadsheetRowProviderType` now activate lazy defaults BEFORE
+applying the user/patch (idempotent; `now` thread for deterministic
+tests). Activation is therefore guaranteed on:
 
-- First user interaction (select row, open quick editor, focus/edit cell)
-  inserts `today` (Asia/Ho_Chi_Minh) and `Bộ Công An` once.
-- Idempotent; never overwrites user/paste/import values.
-- `spreadsheetRowIsBlank` and `selectNonEmptySpreadsheetRows` accept
-  optional `now` for deterministic tests; default-only rows are blank and
-  are excluded from validation, batch count, and server send.
-- `clear row` resets to blank + `lazyDefaultsApplied = false`.
+- click/select row (grid `onSelectedClientRowChange` → wrapper
+  `setSelectedClientRowId` activates);
+- `addQuickStagedRow` (activates the empty row OR appends a new one then
+  selects; `setQuickEditClientRowId` is called outside the
+  `setStagedModel` updater);
+- quick editor open (`openQuickEditor` activates before
+  `setQuickEditClientRowId`);
+- mobile `<details>` open (`onToggle` activates when
+  `event.currentTarget.open`);
+- mobile field change (still routes through `updateSpreadsheetRowCells`);
+- HRP/Vendor selection (activates inside `updateSpreadsheetRowProviderType`);
+- paste/import (`updateSpreadsheetRowCells` is the single write path;
+  user/paste values always win because the patch is applied AFTER
+  activation).
 
-## Date display (C)
+Default-only rows remain blank, are excluded from validation, batch
+count, and server send. `clear row` resets to EMPTY +
+`lazyDefaultsApplied: false`. New behavioral regression file
+`direct-entry-live-lazy-default-entrypoints.test.mjs` covers every
+entry point; `spreadsheet-row-model.test.mjs` got three new R1 tests
+covering `updateSpreadsheetRowCells` activation, provider activation,
+and default-only blank exclusion. The h08 R1 structural file is updated
+to drop "inherit defaults from row factory" wording.
 
-State, payload, DB contract: ISO `YYYY-MM-DD`. Closed cells: `DD/MM/YYYY`
-via pure string helpers in `direct-entry-date-format.ts`
-(`parseIsoDate`, `formatDateToDDMM`, `todayInHoChiMinhAsDDMM`).
-No `new Date("YYYY-MM-DD")`; no timezone leak. Date editors remain `type=date`
-and receive ISO value.
+## Date display / label / error presentation (C/D/E)
 
-## Label (D)
+Unchanged from the W07C hotfix commit. See `a8a02ce` HANDOFF ancestor.
 
-`date_of_birth` column label overridden to `Ngày sinh` via
-`direct-entry-grid-columns.ts` (single registry). Mobile staged card and
-quick editor also show `Ngày sinh`. Canonical payload key unchanged.
+## Targeted gates (delta)
 
-## Error presentation (E)
-
-Explicit `stagedTone` state (`error | success | info | ""`) and
-`setStagedMessageWithTone`. Legacy `setStagedMessage` wrapper auto-sets
-tone to `error`. Save message element renders `role="alert"` + red
-`.spreadsheetSaveMessageError` for errors, `role="status"` for
-success/info (`.spreadsheetSaveMessageSuccess` /
-`.spreadsheetSaveMessageInfo`). Vietnamese-text inference removed.
-
-## Targeted gates
-
-- `pnpm exec next typegen` ✓
+- `node --test src/lib/direct-entry/spreadsheet-row-model.test.mjs` ✓
+- `node --test src/lib/direct-entry/direct-entry-date-format.test.mjs` ✓
+- `node --conditions=react-server --test src/lib/direct-entry/full-profile-api.test.mjs` ✓
+- `pnpm test:p1.6-i04c3-r3a` 129/129 ✓
 - `pnpm typecheck` ✓
 - `pnpm lint` ✓ (0 errors, 11 pre-existing warnings)
 - `pnpm build` ✓
 - `git diff --check` ✓
-- `node --test --conditions=react-server` (direct-entry suites) 623/623
-- `pnpm test:p1.6-i04c3-r3a` 111/111
-- `pnpm test:p1.6-i04c3-r3b` 24/24
-- `pnpm test:p1.6-i04c3-s01` 29/29
+- direct-entry suites 635/635 ✓
 
 ## Blocked / deferred
 
-None. Production evidence matches safe-code fix; no migration required.
+None. No migration; no Production mutation; reporting/cutover/W04B
+untouched.
