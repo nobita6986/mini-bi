@@ -4,21 +4,19 @@ import { AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
 import { Card, CardHeader } from "@/components/ui/card";
-import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { decideSessionPageAccess } from "@/lib/auth/session-page-access";
-import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
-import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
+import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Đổi mật khẩu — mini-bi" };
 
 export default async function ChangePasswordPage() {
-  let actor: ActorResolution | null = null;
-  try {
-    actor = (await getDirectEntryActor(createDirectEntryActorRepository())).actor;
-  } catch {
-    actor = null;
-  }
+  // P3-W09A-R1: use the request-scoped resolver shared with the AppShell and
+  // Dashboard. Layout already called `resolveNavActorForAppShell` earlier in
+  // the same render pass, so the React cache returns the same actor we would
+  // otherwise fetch a second time. The shared resolver also runs H07 bounded
+  // retry and pins `cookieWriteMode: "read-only"` for Server Components.
+  const actor = await resolveActorForRequest().catch(() => null);
 
   switch (decideSessionPageAccess(actor)) {
     case "REDIRECT_LOGIN":

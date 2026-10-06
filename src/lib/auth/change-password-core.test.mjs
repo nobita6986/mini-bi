@@ -88,6 +88,10 @@ test("change-password rejects cross-origin and any non-JSON / unbounded body bef
     const response = await createChangePasswordResponse(request, deps);
     assert.equal(response.status, expectedStatus);
     assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff",
+      "every JSON response must declare X-Content-Type-Options: nosniff");
+    assert.equal(response.headers.get("referrer-policy"), "no-referrer",
+      "every JSON response must declare Referrer-Policy: no-referrer");
   }
   assert.equal(created, 0, "client must never be created for an invalid request");
 });
@@ -224,4 +228,87 @@ test("change-password returns AUTH_UNAVAILABLE if the session has no email and c
   });
   assert.equal(response.status, 503);
   assert.deepEqual(await response.clone().json(), { ok: false, code: "AUTH_UNAVAILABLE" });
+});
+
+test("change-password: every response carries the auth no-store / nosniff / no-referrer headers", async () => {
+  // 1) success path
+  const success = await createChangePasswordResponse(post(validPayload()), {
+    createClient: async () => clientRecorder().client,
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(success.status, 200);
+  for (const [name, expected] of [
+    ["cache-control", "private, no-store"],
+    ["x-content-type-options", "nosniff"],
+    ["referrer-policy", "no-referrer"],
+  ]) {
+    assert.equal(success.headers.get(name), expected, `success response missing ${name}=${expected}`);
+  }
+
+  // 2) 401 UNAUTHENTICATED (no live session)
+  const { client: anon } = clientRecorder({
+    getUser: async () => ({ data: { user: null }, error: null }),
+  });
+  const unauth = await createChangePasswordResponse(post(validPayload()), {
+    createClient: async () => anon,
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(unauth.status, 401);
+  for (const [name, expected] of [
+    ["x-content-type-options", "nosniff"],
+    ["referrer-policy", "no-referrer"],
+  ]) {
+    assert.equal(unauth.headers.get(name), expected, `401 response missing ${name}=${expected}`);
+  }
+
+  // 3) 403 ACCOUNT_NOT_AVAILABLE (actor disabled)
+  const { client: disabled } = clientRecorder();
+  const forbidden = await createChangePasswordResponse(post(validPayload()), {
+    createClient: async () => disabled,
+    now: () => "2026-01-01T00:00:00.000Z",
+    resolveActor: async () => ({ ok: false, reason: "ACTOR_DISABLED" }),
+    repository: { loadByAuthSubject: async () => null },
+  });
+  assert.equal(forbidden.status, 403);
+  for (const [name, expected] of [
+    ["x-content-type-options", "nosniff"],
+    ["referrer-policy", "no-referrer"],
+  ]) {
+    assert.equal(forbidden.headers.get(name), expected, `403 response missing ${name}=${expected}`);
+  }
+
+  // 4) 422 AUTH_PASSWORD_TOO_WEAK
+  const { client: weak } = clientRecorder({
+    update: async () => ({
+      data: { user: null },
+      error: Object.assign(new Error("Password should be at least 8 characters"), { status: 422 }),
+    }),
+  });
+  const tooWeak = await createChangePasswordResponse(post(validPayload()), {
+    createClient: async () => weak,
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(tooWeak.status, 422);
+  for (const [name, expected] of [
+    ["x-content-type-options", "nosniff"],
+    ["referrer-policy", "no-referrer"],
+  ]) {
+    assert.equal(tooWeak.headers.get(name), expected, `422 response missing ${name}=${expected}`);
+  }
+
+  // 5) 403 CSRF_REJECTED
+  const csrf = await createChangePasswordResponse(
+    new Request("https://app.example/api/auth/change-password", { method: "POST", headers: { Host: "app.example" }, body: JSON.stringify(validPayload()) }),
+    {
+      createClient: async () => { throw new Error("createClient must not be called for CSRF failure"); },
+      now: () => "2026-01-01T00:00:00.000Z",
+    },
+  );
+  assert.equal(csrf.status, 403);
+  for (const [name, expected] of [
+    ["x-content-type-options", "nosniff"],
+    ["referrer-policy", "no-referrer"],
+  ]) {
+    assert.equal(csrf.headers.get(name), expected, `CSRF response missing ${name}=${expected}`);
+  }
 });

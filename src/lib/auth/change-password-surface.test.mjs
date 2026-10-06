@@ -36,6 +36,12 @@ test("change-password core derives the email from getUser() and rejects client-s
   assert.match(core, /AUTH_UNAVAILABLE/);
   assert.match(core, /checkSameOriginRequest/);
   assert.match(core, /projectChangePasswordInput/);
+  assert.match(core, /X-Content-Type-Options/,
+    "every JSON response must declare X-Content-Type-Options");
+  assert.match(core, /Referrer-Policy/,
+    "every JSON response must declare Referrer-Policy");
+  assert.match(core, /nosniff/);
+  assert.match(core, /no-referrer/);
   assert.doesNotMatch(core, /console\.log|console\.warn|console\.error/);
   assert.doesNotMatch(core, /localStorage|sessionStorage/);
   assert.doesNotMatch(core, /\bfetch\s*\(/);
@@ -77,7 +83,13 @@ test("change-password form: only sanitized code keys are forwarded to the user-f
 
 test("change-password page is a server page that runs through decideSessionPageAccess", () => {
   assert.match(page, /export const dynamic = "force-dynamic"/);
-  assert.match(page, /getDirectEntryActor/);
+  assert.match(page, /resolveActorForRequest/);
+  assert.doesNotMatch(page, /getDirectEntryActor/,
+    "page must use the request-scoped resolver shared with the AppShell, not call getDirectEntryActor directly");
+  assert.doesNotMatch(page, /createDirectEntryActorRepository/,
+    "page must not instantiate the actor repository; the shared resolver owns it");
+  assert.doesNotMatch(page, /resolveSessionWithBoundedRetry/,
+    "page must not duplicate the bounded retry; the shared resolver wraps it");
   assert.match(page, /decideSessionPageAccess/);
   assert.match(page, /redirect\("\/login\?next=\/dashboard\/account\/password"\)/);
   assert.match(page, /<ChangePasswordForm /);
