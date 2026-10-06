@@ -275,6 +275,9 @@ declare
   v_employment text;
   v_source text;
   v_facts jsonb;
+  v_sources jsonb;
+  v_latest_runs jsonb;
+  v_presence jsonb;
 begin
   v_from := nullif(p_filters->>'from', '')::date;
   v_to := nullif(p_filters->>'to', '')::date;
@@ -367,9 +370,47 @@ begin
          and (v_employment is null or b.employment_type_key = v_employment)
     ) facts;
 
+  -- Source metadata is gated by the SAME DB-resolved audience: only a
+  -- DB-confirmed "all" audience receives the global source registry, latest
+  -- sync status and source presence. "team"/"own" receive empty metadata
+  -- (the Direct Entry synthetic source is added by the server, never here).
+  if v_kind = 'all' then
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'id', ds.id::text,
+             'drive_file_id', ds.drive_file_id,
+             'file_name', ds.file_name,
+             'active', ds.active,
+             'is_test', ds.is_test,
+             'last_seen_at', ds.last_seen_at::text,
+             'last_successful_sync_at', ds.last_successful_sync_at::text
+           ) order by ds.id), '[]'::jsonb)
+      into v_sources
+      from public.data_sources ds
+     where ds.active
+       and not ds.is_test;
+
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'source_id', r.source_id::text,
+             'status', r.status
+           ) order by r.source_id), '[]'::jsonb)
+      into v_latest_runs
+      from public.reporting_latest_sync_runs_v01 r;
+
+    select coalesce(jsonb_agg(p.source_id::text order by p.source_id), '[]'::jsonb)
+      into v_presence
+      from public.reporting_sources_with_current_facts_v01 p;
+  else
+    v_sources := '[]'::jsonb;
+    v_latest_runs := '[]'::jsonb;
+    v_presence := '[]'::jsonb;
+  end if;
+
   return jsonb_build_object(
     'audience', v_audience,
-    'facts', v_facts
+    'facts', v_facts,
+    'sources', v_sources,
+    'latest_runs', v_latest_runs,
+    'presence', v_presence
   );
 end;
 $$;
