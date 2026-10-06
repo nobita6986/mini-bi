@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import "../../lib/direct-entry/catalog-response.test.mjs";
+
 import {
   SPREADSHEET_INITIAL_ROW_COUNT,
   SPREADSHEET_MAX_DATA_ROWS,

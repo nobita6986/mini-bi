@@ -72,6 +72,7 @@ import {
   type OwnDraft,
 } from "@/lib/direct-entry/draft-list-contract";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
+import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
 import { projectDraftProfileGridCells } from "@/lib/direct-entry/draft-profile-grid";
 import {
   DirectEntrySpreadsheetGrid,
@@ -151,24 +152,6 @@ function hcmDate(): string {
   }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
   return `${values.year}-${values.month}-${values.day}`;
-}
-
-function parseCatalog(value: unknown, expectedDate: string): DraftCatalog | null {
-  if (!isRecord(value) || value.ok !== true || !isRecord(value.catalog) ||
-      value.catalog.effective_date !== expectedDate ||
-      !Array.isArray(value.catalog.projects) || !Array.isArray(value.catalog.recruiters) ||
-      !Array.isArray(value.catalog.banks)) return null;
-  if (!value.catalog.projects.every((project) => isRecord(project) &&
-      typeof project.project_id === "string" && typeof project.display_name === "string") ||
-      !value.catalog.recruiters.every((recruiter) => isRecord(recruiter) &&
-        typeof recruiter.recruiter_id === "string" && typeof recruiter.display_name === "string" &&
-        (recruiter.provider_type === "hrp" || recruiter.provider_type === "vendor") &&
-        typeof recruiter.team_id === "string" && typeof recruiter.team_display_name === "string")) {
-    return null;
-  }
-  if (!value.catalog.banks.every((bank) => isRecord(bank) &&
-      typeof bank.bank_id === "string" && typeof bank.display_name === "string")) return null;
-  return value.catalog as DraftCatalog;
 }
 
 function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
@@ -368,7 +351,7 @@ export function DirectEntryLive() {
       credentials: "same-origin",
     }).then(async (response) => {
       const body = await readJson(response);
-      const payload = parseCatalog(body, date);
+      const payload = parseDirectEntryCatalogResponse(body, date);
       if (!response.ok || !payload) {
         const code = isRecord(body) && typeof body.code === "string" ? body.code : "CATALOG_UNAVAILABLE";
         if (response.status === 401 || response.status === 403) throw new Error(code);
