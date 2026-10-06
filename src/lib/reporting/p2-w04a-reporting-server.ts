@@ -11,10 +11,7 @@ import type {
   ReportingSource,
   RunStatus,
 } from "./p1-reporting";
-import {
-  reportingAudienceFromDb,
-  resolveReportingAudienceKind,
-} from "./p3-w05a-audience";
+import { reportingAudienceFromDb } from "./p3-w05a-audience";
 import type { ReportingAudience } from "./p3-w05a-audience";
 import {
   combineReportingFacts,
@@ -34,14 +31,12 @@ import type {
 } from "./p2-w04a-cutover";
 
 /**
- * P3-W05A — Actor-scoped cutover read path.
+ * P3-W05A-R1 - DB-authoritative scoped cutover read path.
  *
- * Reads authorized facts through the actor-scoped RPC at the DB boundary (never
- * fetches company-wide facts and hides them in React). The audience is resolved
- * server-side (all > team > own) and re-verified inside the RPC.
- *
- * Success shape is byte-compatible with P1's ReportingFetchResult plus an
- * additive `audience` projection for W06C. `data` is a plain ReportingData.
+ * Reads authorized facts AND source metadata through one actor-scoped RPC at
+ * the DB boundary. The DB-resolved audience (all > team > own, HCM date) is the
+ * single authority for both facts and metadata: no TypeScript/UTC audience
+ * inference, no pre-RPC global metadata read (no TOCTOU leak).
  */
 
 type ScopedFactRow = ReportingFact & {
@@ -49,6 +44,16 @@ type ScopedFactRow = ReportingFact & {
   entry_id?: string | null;
   submission_id?: string | null;
   cutoff_date?: string | null;
+};
+
+type ScopedSourceRow = {
+  id: string;
+  drive_file_id: string;
+  file_name: string;
+  active: boolean;
+  is_test: boolean;
+  last_seen_at: string | null;
+  last_successful_sync_at: string | null;
 };
 
 export type CutoverFetchResult =
@@ -99,7 +104,6 @@ export async function fetchCutoverReporting(
 ): Promise<CutoverFetchResult> {
   try {
     const sb = createServiceSupabaseClient();
-    const audienceKind = resolveReportingAudienceKind(actor, new Date().toISOString());
 
     // 1. Runtime blocker check (one RPC call per request; global invariant).
     const blocker = await fetchCutoverBlockerCount({ sb });
@@ -107,27 +111,16 @@ export async function fetchCutoverReporting(
       return { ok: false, code: blocker.error.code, message: blocker.error.message };
     }
 
-    // 2. Legacy scope (active && !is_test) only for `all`.
-    const rawSources: Omit<ReportingSource, "latest_run_status">[] = [];
-    let scopeIds = new Set<string>();
-    if (audienceKind === "all") {
-      const sourcesRes = await sb
-        .from("data_sources")
-        .select("id, drive_file_id, file_name, active, is_test, last_seen_at, last_successful_sync_at")
-        .eq("active", true)
-        .eq("is_test", false);
-      if (sourcesRes.error) throw sourcesRes.error;
-      rawSources.push(...((sourcesRes.data ?? []) as Omit<ReportingSource, "latest_run_status">[]));
-      scopeIds = new Set(rawSources.map((s) => s.id));
-    }
-
-    // 3. Parse filters. The source filter is legacy-only.
-    const parsed = parseReportingFilters(params, audienceKind === "all" ? scopeIds : undefined);
+    // 2. Parse filters. Source is validated as a UUID but not against scope
+    //    here: the scoped RPC is the authority and applies it only to the
+    //    legacy side for a DB-confirmed "all" audience.
+    const parsed = parseReportingFilters(params, undefined);
     if (!parsed.ok) return { ok: false, code: parsed.code, message: parsed.message };
     const filters = parsed.filters;
-    if (audienceKind !== "all") filters.source = undefined;
 
-    // 4. Actor-scoped facts at the DB boundary (authorized + filtered).
+    // 3. Actor-scoped facts AND source metadata, both gated by the SAME
+    //    DB-resolved audience (no TS/UTC audience inference, no pre-RPC
+    //    global metadata read => no TOCTOU leak).
     const factsRes = await sb.rpc("direct_entry_reporting_scoped_facts", {
       p_auth_subject: actor.auth_subject,
       p_app_user_id: actor.app_user_id,
@@ -137,11 +130,25 @@ export async function fetchCutoverReporting(
       logSafeError("p3-w05a-facts", factsRes.error);
       return reportingQueryFailed();
     }
-    const payload = (factsRes.data ?? {}) as { audience?: unknown; facts?: unknown[] };
+    const payload = (factsRes.data ?? {}) as {
+      audience?: unknown;
+      facts?: unknown[];
+      sources?: ScopedSourceRow[];
+      latest_runs?: { source_id: string; status: RunStatus }[];
+      presence?: string[];
+    };
     const scopedFacts = (payload.facts ?? []) as ScopedFactRow[];
     const audience = reportingAudienceFromDb(payload.audience);
+    const dbKind = audience?.kind ?? null;
 
-    // 5. Split + defense-in-depth mask + combine.
+    // The DB-confirmed audience is the sole authority for metadata scope.
+    const rawSources: Omit<ReportingSource, "latest_run_status">[] =
+      dbKind === "all" ? (payload.sources ?? []) : [];
+    const latestBySource = new Map<string, RunStatus>();
+    for (const r of payload.latest_runs ?? []) latestBySource.set(r.source_id, r.status);
+    const sourcesWithFacts = new Set<string>(payload.presence ?? []);
+
+    // 4. Split + defense-in-depth mask + combine.
     const legacyFactsRaw: ReportingFact[] = [];
     const directEntryFactsRaw: DirectEntryReportingFact[] = [];
     for (const f of scopedFacts) {
@@ -154,40 +161,19 @@ export async function fetchCutoverReporting(
     const maskedDirectEntry = maskDirectEntryFacts(directEntryFactsRaw);
     const legacyFacts = maskLegacyFacts(legacyFactsRaw);
 
-    // 6. Sources + latest run status (legacy only for `all`).
-    const latestBySource: Map<string, RunStatus> = new Map();
-    if (audienceKind === "all" && rawSources.length > 0) {
-      const runsRes = await sb
-        .from("reporting_latest_sync_runs_v01")
-        .select("source_id, status")
-        .in("source_id", rawSources.map((s) => s.id));
-      if (runsRes.error) throw runsRes.error;
-      for (const r of (runsRes.data ?? []) as { source_id: string; status: RunStatus }[]) {
-        latestBySource.set(r.source_id, r.status);
-      }
-    }
+    // 5. Strip the legacy-only source filter for a non-all DB audience.
+    if (dbKind !== "all") filters.source = undefined;
+
+    // 6. Sources for computeReporting: DB-provided legacy sources (all only)
+    //    + the Direct Entry synthetic source.
     const sources: ReportingSource[] = rawSources.map((s) => ({
       ...s,
       latest_run_status: latestBySource.get(s.id) ?? null,
     }));
     sources.push(P2_W04A_DIRECT_ENTRY_SOURCE);
-    scopeIds.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
-
-    // 7. Presence (sourcesWithFacts) for empty-state fidelity.
-    const sourcesWithFacts = new Set<string>();
-    if (audienceKind === "all" && rawSources.length > 0) {
-      const presenceRes = await sb
-        .from("reporting_sources_with_current_facts_v01")
-        .select("source_id")
-        .in("source_id", rawSources.map((s) => s.id));
-      if (presenceRes.error) throw presenceRes.error;
-      for (const r of (presenceRes.data ?? []) as { source_id: string }[]) {
-        sourcesWithFacts.add(r.source_id);
-      }
-    }
     if (maskedDirectEntry.length > 0) sourcesWithFacts.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
 
-    // 8. Reconciliation (overlap_blocker is the authoritative global count).
+    // 7. Reconciliation (overlap_blocker is the authoritative global count).
     const legacy_subtotal = legacyFacts.reduce((a, f) => a + f.recruited_count, 0);
     const direct_entry_subtotal = maskedDirectEntry.length;
     const reconciliation: CutoverReconciliation = {
@@ -208,7 +194,7 @@ export async function fetchCutoverReporting(
       return { ok: false, code: err.code, message: err.message, reconciliation };
     }
 
-    // 9. Concatenate WITHOUT grain-dedupe, then compute.
+    // 8. Concatenate WITHOUT grain-dedupe, then compute.
     const combinedFacts = combineReportingFacts(legacyFacts, maskedDirectEntry);
     const data = computeReporting(sources, combinedFacts, filters, sourcesWithFacts);
 

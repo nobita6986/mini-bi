@@ -278,3 +278,50 @@ test("E18: scoped RPC/view ACL is service-role-only and raw tables stay denied",
   } finally { await db.close(); }
 });
 
+test("R1: DB gates source metadata by the resolved audience (no global metadata for team/own)", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db); await seedEntries(db); await seedLegacy(db);
+
+    const allRes = await facts(db, APP_ALL, AUTH_ALL);
+    assert.equal(allRes.audience.audience, "all");
+    assert.equal(allRes.sources.length, 1, "all receives the global source registry");
+    assert.equal(allRes.sources[0].id, DS1);
+    assert.equal(allRes.sources[0].file_name, "legacy.xlsx");
+    assert.equal(allRes.sources[0].drive_file_id, "legacy");
+    assert.deepEqual(allRes.latest_runs, [{ source_id: DS1, status: "succeeded" }]);
+    assert.deepEqual(allRes.presence, [DS1]);
+
+    const teamRes = await facts(db, APP_TEAMA, AUTH_TEAMA);
+    assert.equal(teamRes.audience.audience, "team");
+    assert.deepEqual(teamRes.sources, [], "team must not receive the source registry");
+    assert.deepEqual(teamRes.latest_runs, [], "team must not receive sync status");
+    assert.deepEqual(teamRes.presence, [], "team must not receive source presence");
+
+    const ownRes = await facts(db, APP_OWNA1, AUTH_OWNA1);
+    assert.equal(ownRes.audience.audience, "own");
+    assert.deepEqual(ownRes.sources, [], "own must not receive the source registry");
+    assert.deepEqual(ownRes.latest_runs, []);
+    assert.deepEqual(ownRes.presence, []);
+  } finally { await db.close(); }
+});
+
+test("R1: scope effectiveness follows the HCM authorization date (not UTC)", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db);
+    const auth = uuid(91); const app = uuid(92);
+    await db.query("insert into auth.users (id) values ($1)", [auth]);
+    await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [app, auth]);
+
+    // grant valid from HCM tomorrow => not yet effective => own (empty)
+    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,(select public.direct_entry_authorization_date() + 1))", [app, TEAM_A]);
+    assert.equal((await audience(db, app, auth)).audience, "own", "future-dated team grant is not effective at HCM today");
+
+    // grant valid from HCM today => effective => team
+    await db.query("delete from public.direct_entry_scope_grants where app_user_id=$1 and scope_kind='team'", [app]);
+    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,(select public.direct_entry_authorization_date()))", [app, TEAM_A]);
+    assert.equal((await audience(db, app, auth)).audience, "team", "today-dated team grant is effective at HCM today");
+  } finally { await db.close(); }
+});
+
