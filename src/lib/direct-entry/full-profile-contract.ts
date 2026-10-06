@@ -252,7 +252,7 @@ function normalizeEmployment(
   path: string,
   issues: ContractIssue[],
 ): FullProfileRpcRow["employment"] {
-  if (value === undefined) return null;
+  if (value === undefined || value === null) return null;
   if (!isRecord(value) ||
       !hasOnlyKeys(value, new Set(["initial_status", "leave_date", "leave_reason_text"])) ||
       !["UNCONFIRMED", "ON", "OFF"].includes(String(value.initial_status))) {

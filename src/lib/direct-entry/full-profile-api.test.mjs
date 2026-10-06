@@ -205,3 +205,118 @@ test("unauthenticated and malformed RPC responses fail closed", async () => {
   });
   assert.equal((await postFullProfileBatch(request(), "true", malformed)).status, 500);
 });
+
+// P3-W07C regression: khoa nguyen nhan 2 request 400 BATCH_INVALID tren
+// Production 2026-10-06 23:13:37 / 23:13:46 GMT+7 (deployment dpl_4kYHy...).
+// 1) Production-shaped valid row PHAI tra 201 (khong 400).
+// 2) Loi Postgres 23514/22023/22008/23505 co message trong SAFE_INVALID_CODES
+//    phai duoc chuyen nguyen ban, khong collapse ve BATCH_INVALID.
+// 3) Loi 23505/22023 voi message khong trong SAFE_INVALID_CODES phai duoc
+//    fallback BATCH_INVALID, NHUNG khong leak PII/UUID/auth (404 fallback).
+test("P3-W07C REGRESSION: production-shaped valid row (today GMT+7, full profile) returns 201, not 400", async () => {
+  // Tao ngay hom nay theo Asia/Ho_Chi_Minh, dinh dang YYYY-MM-DD (pure helper,
+  // tranh `new Date("YYYY-MM-DD")` gay UTC leak).
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const today = `${parts.find((p) => p.type === "year").value}-${parts.find((p) => p.type === "month").value}-${parts.find((p) => p.type === "day").value}`;
+
+  // Row khop Production (today + DOB + gender + project + HRP + recruiter +
+  // labor_type + national_id 12 chu so + issued_at/place).
+  const productionRow = {
+    project_id: "project_synthetic_01",
+    first_work_date: today,
+    employee_code: `hrp-${today.slice(0, 4)}-000123`,
+    recruiter_id: "93000000-0000-4000-8000-000000000001",
+    labor_type: "TEMPORARY",
+    display_name: "Synthetic Worker Production",
+    worker: {
+      gender: { state: "provided", value: "MALE" },
+      date_of_birth: { state: "provided", value: "1990-05-20" },
+      national_id: { state: "provided", value: "012345678901" },
+      national_id_issued_at: { state: "provided", value: "2020-06-01" },
+      national_id_issued_place: { state: "provided", value: "Bộ Công An" },
+      address: { state: "omitted" },
+      phone: { state: "omitted" },
+    },
+    general_note: { state: "omitted" },
+    payment: null,
+    employment: null,
+  };
+  const prodPayload = { contract_version: "worker-profile/1.0", rows: [productionRow] };
+  const dependencies = deps();
+  const response = await postFullProfileBatch(
+    new Request("https://example.test/api/direct-entry/batches/full-profile", {
+      method: "POST",
+      headers: {
+        origin: "https://example.test",
+        host: "example.test",
+        "content-type": "application/json",
+        "idempotency-key": "b1000000-0000-4000-8000-000000000010",
+      },
+      body: JSON.stringify(prodPayload),
+    }),
+    "true",
+    dependencies,
+  );
+  assert.equal(response.status, 201,
+    "production-shaped valid row phai 201; neu 400 => reproduction BATCH_INVALID");
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.state, "DRAFT");
+  // Da forward row dung (today + DOB + issued place) toi repository, khong mutate.
+  const forwarded = dependencies.calls[0].payload.rows[0];
+  assert.equal(forwarded.first_work_date, today);
+  assert.equal(forwarded.worker_details.date_of_birth.value, "1990-05-20");
+  assert.equal(forwarded.worker_details.national_id_issued_place.value, "Bộ Công An");
+});
+
+test("P3-W07C REGRESSION: Postgres check/range/unique errors forward safe code, khong collapse ve BATCH_INVALID", async () => {
+  // Khi repository (Postgres) raise 23514/22023/22008/23505 voi message
+  // thuoc SAFE_INVALID_CODES, API phai tra DUNG code do, khong doi thanh
+  // BATCH_INVALID (nguyen nhan goc 2 request 400 Production).
+  const cases = [
+    ["23514", "BANK_NOT_ACTIVE", "BANK_NOT_ACTIVE"],
+    ["23514", "PROJECT_NOT_ACTIVE", "PROJECT_NOT_ACTIVE"],
+    ["23514", "RECRUITER_NOT_ACTIVE", "RECRUITER_NOT_ACTIVE"],
+    ["23514", "RECRUITER_MEMBERSHIP_INVALID", "RECRUITER_MEMBERSHIP_INVALID"],
+    ["23514", "NATIONAL_ID_DUPLICATE", "NATIONAL_ID_DUPLICATE"],
+    ["23514", "NATIONAL_ID_INVALID", "NATIONAL_ID_INVALID"],
+    ["23514", "EMPLOYEE_CODE_DUPLICATE", "EMPLOYEE_CODE_DUPLICATE"],
+    ["22023", "PROFILE_DATE_INVALID", "PROFILE_DATE_INVALID"],
+    ["22008", "PROFILE_DATE_INVALID", "PROFILE_DATE_INVALID"],
+    ["23505", "NATIONAL_ID_DUPLICATE", "NATIONAL_ID_DUPLICATE"],
+  ];
+  for (const [pgCode, message, expectedClientCode] of cases) {
+    const dependencies = deps({
+      async createFullProfileBatch() {
+        return { ok: false, kind: "invalid", code: message };
+      },
+    });
+    const response = await postFullProfileBatch(request(), "true", dependencies);
+    assert.equal(response.status, 400,
+      `pg ${pgCode} ${message} => phai 400`);
+    const body = await response.json();
+    assert.equal(body.code, expectedClientCode,
+      `pg ${pgCode} ${message} => API phai tra ${expectedClientCode}, KHONG collapse ve BATCH_INVALID`);
+  }
+});
+
+test("P3-W07C REGRESSION: loi Postgres khong xac dinh => BATCH_INVALID fallback (khong leak PII/UUID)", async () => {
+  const sensitive = "duplicate key value violates unique constraint \"direct_entries_pkey\" with UUID 12345";
+  const dependencies = deps({
+    async createFullProfileBatch() {
+      return { ok: false, kind: "invalid", code: sensitive };
+    },
+  });
+  const response = await postFullProfileBatch(request(), "true", dependencies);
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.code, "BATCH_INVALID",
+    "code khong nam trong SAFE_INVALID_CODES phai fallback BATCH_INVALID, khong leak PII/UUID/auth");
+  const responseText = JSON.stringify(body);
+  assert.equal(responseText.includes("12345"), false,
+    "fallback khong duoc chua gia tri sensitive tu raw error message");
+  assert.equal(responseText.toLowerCase().includes("unique"), false,
+    "fallback khong duoc chua thong tin SQL/constraint noi bo");
+});

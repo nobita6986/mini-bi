@@ -113,7 +113,7 @@ test("Quick save (Lưu NLĐ) chi gui row duy nhat, khong gui batch toan bo", () 
   // onQuickSaveRow phai validate va build body chi voi matchingPreview,
   // khong lay toan bo stagedModel.rows.
   const quickSaveBlock = live.match(
-    /const onQuickSaveRow = useCallback\(async \(clientRowId: string\) => \{[\s\S]{0,3500}\}, \[[\s\S]{0,200}\]\);/);
+    /const onQuickSaveRow = useCallback\(async \(clientRowId: string\) => \{[\s\S]{0,5000}\}, \[[\s\S]{0,400}\]\);/);
   assert.ok(quickSaveBlock, "phai co onQuickSaveRow useCallback");
   assert.match(quickSaveBlock[0], /buildServerGeneratedFullProfileRequestBody\(\[\s*matchingPreview\s*\]\)/);
   assert.match(quickSaveBlock[0], /stagedValidation\.rows\.findIndex\(\(row\) =>\s*row\.clientRowId === clientRowId\)/);
@@ -150,7 +150,7 @@ test("Quick save thanh cong: chi xoa staged row vua luu, giu nguyen row khac; H0
 
 test("Quick save loi/retry/OCC: giu nguyen toan bo staged rows, khong dong editor", () => {
   const quickSaveBlock = live.match(
-    /const onQuickSaveRow = useCallback\(async \(clientRowId: string\) => \{[\s\S]{0,3500}\}, \[[\s\S]{0,200}\]\);/);
+    /const onQuickSaveRow = useCallback\(async \(clientRowId: string\) => \{[\s\S]{0,5000}\}, \[[\s\S]{0,400}\]\);/);
   const savedBranch = quickSaveBlock[0].indexOf('if (result.kind === "saved")');
   const afterSaved = quickSaveBlock[0].slice(savedBranch);
   // Nhanh retry/conflict (khong phai saved): KHONG xoa row, KHONG dong drawer.
@@ -169,7 +169,7 @@ test("Quick save loi/retry/OCC: giu nguyen toan bo staged rows, khong dong edito
 });
 
 test("Thêm dòng: them dung 10 rows va check tren tong staged rows hien co", () => {
-  const addBlock = live.match(/const addStagedRows = useCallback\(\(\) => \{[\s\S]{0,500}\}, \[[\s\S]{0,200}\]\);/);
+  const addBlock = live.match(/const addStagedRows = useCallback\(\(\) => \{[\s\S]{0,800}\}, \[[\s\S]{0,300}\]\);/);
   assert.ok(addBlock, "phai co addStagedRows useCallback");
   assert.match(addBlock[0], /current\.rows\.length \+ ADD_STAGED_ROW_BATCH > SPREADSHEET_MAX_DATA_ROWS/);
   assert.match(addBlock[0], /ensureSpreadsheetRowCount\(current, current\.rows\.length \+ ADD_STAGED_ROW_BATCH\)/);

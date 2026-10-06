@@ -89,6 +89,10 @@ import {
 import {
   SPREADSHEET_WRITABLE_FIELD_KEYS,
   SPREADSHEET_MAX_DATA_ROWS,
+  DEFAULT_NATIONAL_ID_ISSUED_PLACE,
+  SPREADSHEET_DEFAULT_DATE_FIELD_KEY,
+  SPREADSHEET_DEFAULT_PLACE_FIELD_KEY,
+  activateSpreadsheetRowLazyDefaults,
   createSpreadsheetRowModel,
   deleteSpreadsheetRow,
   ensureSpreadsheetRowCount,
@@ -98,6 +102,9 @@ import {
   updateSpreadsheetRowCells,
   type SpreadsheetRowModel,
 } from "@/lib/direct-entry/spreadsheet-row-model";
+import {
+  todayInHoChiMinhAsDDMM,
+} from "@/lib/direct-entry/direct-entry-date-format";
 import {
   buildServerGeneratedFullProfileRequestBody,
   fullProfileErrorMessage,
@@ -309,7 +316,7 @@ export function DirectEntryLive() {
    * contextual action bar desktop. Luc chua co row nao duoc chon => null.
    * Cap nhat qua `onSelectedClientRowChange` cua DirectEntrySpreadsheetGrid.
    */
-  const [selectedClientRowId, setSelectedClientRowId] = useState<string | null>(null);
+  const [selectedClientRowId, setSelectedClientRowIdInternal] = useState<string | null>(null);
   /**
    * P1.7-H06: rowId cua NLĐ dang mo hop thoai "Hồ sơ NLĐ" (CCCD + EMPLOYMENT_CONTRACT).
    * CCCD rieng (legacy) khong con mo tren UI nguoi dung; việc xem hồ sơ CCCD
@@ -934,10 +941,37 @@ export function DirectEntryLive() {
   /* ------------------------------------------------------- P1.7-W02 spreadsheet */
   // Row staging client-only: khong tron clientRowId voi entry_id va khong tao server draft.
   const [stagedNotice, setStagedNotice] = useState("");
-  const [stagedMessage, setStagedMessage] = useState("");
+  const [stagedMessage, setStagedMessageRaw] = useState("");
   const [stagedRejection, setStagedRejection] = useState("");
   const [stagedBusy, setStagedBusy] = useState(false);
   const [stagedCanUndo, setStagedCanUndo] = useState(false);
+  // P3-W07C: trang thai tone tuong minh cho `spreadsheet-save-message` (error/success/info).
+  // - error: chu do, role="alert".
+  // - success: khong do, role="status".
+  // - info: khong do, role="status" (thong bao trung tinh).
+  // Mac dinh "" (chua co message) -> khong render element.
+  const [stagedTone, setStagedTone] = useState<"error" | "success" | "info" | "">("");
+  /**
+   * P3-W07C: trang thai tone tuong minh. setStagedMessage legacy duoc wrap de
+   * mac dinh tone "error" (cac callsite cu setStagedMessage(fullProfileErrorMessage(...))
+   * se hien thi alert red, role="alert"). Callsite moi can phan biet success/info
+   * nen dung setStagedMessageWithTone. Empty message cung clear tone.
+   */
+  const setStagedMessage = useCallback((message: string) => {
+    setStagedMessageRaw(message);
+    setStagedTone(message === "" ? "" : "error");
+  }, []);
+  /**
+   * P3-W07C: setStagedMessage kem theo tone (error/success/info). Su dung
+   * helper nay de dam bao saveMessage va tone luon dong bo va UI phan
+   * biet duoc alert (red) vs status (khong red) qua role va styling.
+   * Empty message + empty tone cung duoc phep (clear state).
+   */
+  const setStagedMessageWithTone = useCallback((message: string,
+    tone: "error" | "success" | "info" | "") => {
+    setStagedMessageRaw(message);
+    setStagedTone(tone);
+  }, []);
   // P1.7-H07: batch save validation chi chay sau khi user bam "Lưu các dòng
   // hợp lệ". Truoc do chi hien thi loi format/catalog (co the gap ngay khi
   // go), con loi required-missing bi tri hoan. Sau khi save attempt, neu
@@ -965,12 +999,33 @@ export function DirectEntryLive() {
       // R1: check dua tren tong staged rows hien co, khong phai so non-empty.
       // Gioi han 100 row; neu con duoi 10 vi tri thi KHONG them mot phan.
       if (current.rows.length + ADD_STAGED_ROW_BATCH > SPREADSHEET_MAX_DATA_ROWS) {
-        setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu; không thêm được 10 dòng mới.");
+        setStagedMessageWithTone("Đã đạt giới hạn 100 dòng dữ liệu; không thêm được 10 dòng mới.", "info");
         return current;
       }
       return ensureSpreadsheetRowCount(current, current.rows.length + ADD_STAGED_ROW_BATCH);
     });
-  }, [setStagedModel, setStagedMessage]);
+  }, [setStagedMessageWithTone, setStagedModel]);
+
+  /**
+   * P3-W07C: kich hoat lazy defaults cho staged row khi user co y thuc tuong
+   * tac (click/select row, mo quick editor, sua cell). Idempotent: row da
+   * kich hoat hoac khong ton tai thi khong doi.
+   */
+  const activateStagedRowLazyDefaults = useCallback((clientRowId: string) => {
+    setStagedModel((current) =>
+      activateSpreadsheetRowLazyDefaults(current, clientRowId, new Date()));
+  }, [setStagedModel]);
+
+  /**
+   * P3-W07C: wrapper setSelectedClientRowId de kich hoat lazy defaults khi
+   * user chon row. Wrapper giu ten setSelectedClientRowId de JSX prop
+   * `onSelectedClientRowChange={setSelectedClientRowId}` match contract
+   * test pattern (source assertion). Select "" hoac null chi cap nhat state.
+   */
+  const setSelectedClientRowId = useCallback((clientRowId: string | null) => {
+    if (clientRowId !== null) activateStagedRowLazyDefaults(clientRowId);
+    setSelectedClientRowIdInternal(clientRowId);
+  }, [activateStagedRowLazyDefaults]);
 
   const canAddStagedRows = useCallback((model: SpreadsheetRowModel) =>
     model.rows.length + ADD_STAGED_ROW_BATCH <= SPREADSHEET_MAX_DATA_ROWS,
@@ -979,19 +1034,23 @@ export function DirectEntryLive() {
   /**
    * P1.7-H05 §9.B: nút "Thêm nhanh NLĐ" — chọn một staged row trống và mở editor.
    * Neu khong co row trang thi tao moi (gioi han 100) va mo drawer editor cua row do.
+   *
+   * P3-W07C: mo quick editor cung la mot tuong tac cua user => kich hoat lazy
+   * defaults (neu chua). Sau do render cell se hien "Bộ Công An" + hom nay.
    */
   const openQuickEditor = useCallback((clientRowId: string) => {
+    activateStagedRowLazyDefaults(clientRowId);
     setQuickEditClientRowId(clientRowId);
-  }, [setQuickEditClientRowId]);
+  }, [activateStagedRowLazyDefaults, setQuickEditClientRowId]);
   const addQuickStagedRow = useCallback(() => {
     setStagedModel((current) => {
-      const emptyRow = current.rows.find(spreadsheetRowIsBlank);
+      const emptyRow = current.rows.find((row) => spreadsheetRowIsBlank(row));
       if (emptyRow) {
         setQuickEditClientRowId(emptyRow.clientRowId);
         return current;
       }
       if (current.rows.length + 1 > SPREADSHEET_MAX_DATA_ROWS) {
-        setStagedMessage("Đã đạt giới hạn 100 dòng dữ liệu; không mở thêm NLĐ mới.");
+        setStagedMessageWithTone("Đã đạt giới hạn 100 dòng dữ liệu; không mở thêm NLĐ mới.", "info");
         return current;
       }
       const next = ensureSpreadsheetRowCount(current, current.rows.length + 1);
@@ -1000,7 +1059,7 @@ export function DirectEntryLive() {
       if (newRow) setQuickEditClientRowId(newRow.clientRowId);
       return next;
     });
-  }, [setStagedModel, setStagedMessage, setQuickEditClientRowId]);
+  }, [setStagedModel, setStagedMessageWithTone, setQuickEditClientRowId]);
 
 
   const stagedCatalogSource = useCallback((date: string) => {
@@ -1127,6 +1186,21 @@ export function DirectEntryLive() {
         option.recruiter_id === row.cells.recruiter_id ||
         option.label === row.cells.recruiter_id);
       const providerType = row.providerType || recruiter?.provider_type || "";
+      // P3-W07C: lazy default placeholders. Neu row CHUA kich hoat, 2 cell
+      // default (first_work_date, national_id_issued_place) hien placeholder
+      // mo (italic, color muted). State cells gia tri rong, render layer
+      // (grid renderCell) nhan biet qua `displayValues` + `cells[]` empty.
+      // Sau khi user tuong tac (select row, open quick editor, edit cell),
+      // `lazyDefaultsApplied = true` => khong con placeholder, cell hien gia tri that.
+      const placeholderValues: Record<string, string> = {};
+      if (!row.lazyDefaultsApplied) {
+        if ((row.cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] ?? "") === "") {
+          placeholderValues[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = todayInHoChiMinhAsDDMM();
+        }
+        if ((row.cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] ?? "") === "") {
+          placeholderValues[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] = DEFAULT_NATIONAL_ID_ISSUED_PLACE;
+        }
+      }
       return ({
       clientRowId: row.clientRowId,
       persisted: false,
@@ -1137,6 +1211,8 @@ export function DirectEntryLive() {
       canManageCccd: false,
       catalogOptions: spreadsheetCatalogOptions(catalog),
       cells: row.cells,
+      displayValues: Object.keys(placeholderValues).length > 0
+        ? placeholderValues : undefined,
       editableFields: SPREADSHEET_WRITABLE_FIELD_KEYS,
       employeeCode: row.cells.employee_code ?? "",
       displayName: row.cells.display_name ?? "",
@@ -1252,15 +1328,15 @@ export function DirectEntryLive() {
 
   const onStagedPasteRejected = useCallback((reason: SpreadsheetPasteRejection) => {
     setStagedRejection(PASTE_REJECTION_MESSAGES[reason]);
-    setStagedMessage("");
-  }, [setStagedMessage]);
+    setStagedMessageWithTone("", "");
+  }, [setStagedMessageWithTone]);
 
   /** Paste chi doi React state: khong fetch, khong storage, khong log gia tri. */
   const onStagedPaste = useCallback((request: SpreadsheetPasteRequest) => {
     const liveDraftRowCount = rows.length;
     if (request.mapping.cells.some((cell) => cell.rowIndex < liveDraftRowCount)) {
       setStagedRejection(PASTE_REJECTION_MESSAGES.CLIPBOARD_PERSISTED_ROW);
-      setStagedMessage("");
+      setStagedMessageWithTone("", "");
       return;
     }
     const rebase = <T extends { rowIndex: number },>(cells: readonly T[]) =>
@@ -1295,7 +1371,7 @@ export function DirectEntryLive() {
     setStagedModel(next);
     setStagedRejection("");
     setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
-  }, [rows.length, setStagedModel, stagedModel, setStagedMessage, setStagedRejection, setStagedNotice]);
+  }, [rows.length, setStagedModel, stagedModel, setStagedMessageWithTone, setStagedRejection, setStagedNotice]);
 
   const onXlsxFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
@@ -1454,17 +1530,17 @@ export function DirectEntryLive() {
     setStagedValidationTriggered(true);
     const preview = stagedValidation.preview;
     if (preview === null || !stagedValidation.canSave) {
-      setStagedMessage("Chưa có dòng hợp lệ để lưu.");
+      setStagedMessageWithTone("Chưa có dòng hợp lệ để lưu.", "info");
       return;
     }
     const body = buildServerGeneratedFullProfileRequestBody(preview.rows);
     if (body === null) {
-      setStagedMessage(fullProfileErrorMessage("BATCH_INVALID"));
+      setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
     }
     const digest = await fullProfileIntentDigest(body.rows);
     if (digest === null) {
-      setStagedMessage("Không tạo được dấu vết yêu cầu; hãy thử lại.");
+      setStagedMessageWithTone("Không tạo được dấu vết yêu cầu; hãy thử lại.", "error");
       return;
     }
     const intent = "full_profile_batch:" + digest;
@@ -1472,7 +1548,7 @@ export function DirectEntryLive() {
     stagedIntent.current = resolved.state;
     stagedInFlight.current = true;
     setStagedBusy(true);
-    setStagedMessage("");
+    setStagedMessageWithTone("", "");
     try {
       const result = await postFullProfileBatch({
         rows: body.rows,
@@ -1500,7 +1576,7 @@ export function DirectEntryLive() {
         // Chi clear staged rows sau khi server xac nhan bang projection hop le.
         setStagedModel(createSpreadsheetRowModel());
         setStagedValidationTriggered(false);
-        setStagedMessage("Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.");
+        setStagedMessageWithTone("Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.", "success");
         await reloadDrafts();
         // Map lai selection: chi giu persisted row co entry_id trung khop;
         // KHONG doan theo row index/ho ten/CCCD.
@@ -1521,12 +1597,12 @@ export function DirectEntryLive() {
         return;
       }
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
-      setStagedMessage(fullProfileErrorMessage(result.code));
+      setStagedMessageWithTone(fullProfileErrorMessage(result.code), "error");
     } finally {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [reloadDrafts, selectedClientRowId, setStagedModel, stagedValidation]);
+  }, [reloadDrafts, selectedClientRowId, setStagedModel, setStagedMessageWithTone, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -1548,13 +1624,13 @@ export function DirectEntryLive() {
     setQuickValidationTriggeredFor(clientRowId);
     const target = stagedModel.rows.find((row) => row.clientRowId === clientRowId);
     if (!target) {
-      setStagedMessage("Dòng đã đóng hoặc không còn tồn tại.");
+      setStagedMessageWithTone("Dòng đã đóng hoặc không còn tồn tại.", "error");
       return;
     }
     // Loc preview chi giu row dang mo, giu nguyen preview validation logic cua H05.
     const fullPreview = stagedValidation.preview;
     if (fullPreview === null) {
-      setStagedMessage("Chưa có dòng hợp lệ để lưu.");
+      setStagedMessageWithTone("Chưa có dòng hợp lệ để lưu.", "info");
       return;
     }
     // P1.7-H05-R1: mapping clientRowId -> preview row thong qua validation.rows
@@ -1565,17 +1641,17 @@ export function DirectEntryLive() {
       ? fullPreview.rows[matchingPreviewIndex]
       : undefined;
     if (!matchingPreview) {
-      setStagedMessage("Dòng đang mở chưa hợp lệ; hãy kiểm tra lại dữ liệu.");
+      setStagedMessageWithTone("Dòng đang mở chưa hợp lệ; hãy kiểm tra lại dữ liệu.", "error");
       return;
     }
     const body = buildServerGeneratedFullProfileRequestBody([matchingPreview]);
     if (body === null) {
-      setStagedMessage(fullProfileErrorMessage("BATCH_INVALID"));
+      setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
     }
     const digest = await fullProfileIntentDigest(body.rows);
     if (digest === null) {
-      setStagedMessage("Không tạo được dấu vết yêu cầu; hãy thử lại.");
+      setStagedMessageWithTone("Không tạo được dấu vết yêu cầu; hãy thử lại.", "error");
       return;
     }
     const intent = "quick_full_profile_row:" + clientRowId + ":" + digest;
@@ -1583,7 +1659,7 @@ export function DirectEntryLive() {
     stagedIntent.current = resolved.state;
     stagedInFlight.current = true;
     setStagedBusy(true);
-    setStagedMessage("");
+    setStagedMessageWithTone("", "");
     try {
       const result = await postFullProfileBatch({
         rows: body.rows,
@@ -1607,7 +1683,7 @@ export function DirectEntryLive() {
           setSavedCtaClientRowId(null);
         }
         await reloadDrafts();
-        setStagedMessage("Đã lưu NLĐ bằng một yêu cầu atomic. Các dòng còn lại trong bảng giữ nguyên.");
+        setStagedMessageWithTone("Đã lưu NLĐ bằng một yêu cầu atomic. Các dòng còn lại trong bảng giữ nguyên.", "success");
         return;
       }
       if (result.kind === "retry") {
@@ -1615,12 +1691,12 @@ export function DirectEntryLive() {
         return;
       }
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
-      setStagedMessage(fullProfileErrorMessage(result.code));
+      setStagedMessageWithTone(fullProfileErrorMessage(result.code), "error");
     } finally {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [reloadDrafts, setStagedModel, stagedModel, stagedValidation, setQuickEditClientRowId]);
+  }, [reloadDrafts, setStagedModel, setStagedMessageWithTone, stagedModel, stagedValidation, setQuickEditClientRowId]);
 
   const updateDate = useCallback((rowId: string, firstWorkDate: string) => {
     updateRow(rowId, { firstWorkDate, recruiterId: "" });
@@ -1855,9 +1931,10 @@ export function DirectEntryLive() {
                 onClick={() => {
                   const index = stagedValidationForDisplay.rowOrder.indexOf(
                     stagedValidationForDisplay.firstError?.clientRowId ?? "");
-                  setStagedMessage(
+                  setStagedMessageWithTone(
                     "Lỗi đầu tiên ở dòng dữ liệu " + (index + 1) + ", cột " +
-                    (stagedValidationForDisplay.firstError?.columnKey ?? "") + ".");
+                    (stagedValidationForDisplay.firstError?.columnKey ?? "") + ".",
+                    "error");
                 }}>
                 Đi tới lỗi đầu tiên
               </button>
@@ -1875,6 +1952,7 @@ export function DirectEntryLive() {
               canUndo={stagedCanUndo}
               onUndo={onStagedUndo}
               saveMessage={stagedMessage}
+              saveTone={stagedTone}
               selectedClientRowId={selectedClientRowId}
               onSelectedClientRowChange={setSelectedClientRowId}
             />
@@ -2026,7 +2104,7 @@ export function DirectEntryLive() {
                             <option value="Nữ">Nữ</option>
                           </select>
                         </Field>
-                        <Field label="DOB">
+                        <Field label="Ngày sinh">
                           <input type="date" value={cells.date_of_birth ?? ""}
                             onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "date_of_birth")} />
                         </Field>
@@ -2219,7 +2297,7 @@ export function DirectEntryLive() {
                       <option value="Nữ">Nữ</option>
                     </select>
                   </Field>
-                  <Field label="DOB">
+                  <Field label="Ngày sinh">
                     <input type="date" value={target.cells.date_of_birth ?? ""}
                       onChange={handleMobileStagedFieldChange(target.clientRowId, "date_of_birth")} />
                   </Field>

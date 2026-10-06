@@ -7,8 +7,9 @@ export const SPREADSHEET_MAX_DATA_ROWS = 100;
 const CLIENT_ROW_ID_PREFIX = "spreadsheet-row";
 
 /**
- * P1.7-H08-R1: default issue place cho moi staged row moi. Nguoi dung duoc
- * sua/xoa; day chi la gia tri khoi tao (server/imported value khong bi ghi de).
+ * P3-W07C: "Bộ Công An" van la gia tri mac dinh duoc dien vao o `Nơi cấp`,
+ * nhung CHI khi row duoc kich hoat lan dau (lazy default). Truoc do o
+ * trong state va hien thi placeholder mo.
  */
 export const DEFAULT_NATIONAL_ID_ISSUED_PLACE = "Bộ Công An";
 
@@ -45,8 +46,22 @@ const WRITABLE_FIELD_KEYS = new Set(SPREADSHEET_WRITABLE_FIELD_KEYS);
 export type SpreadsheetStagedRow = {
   /** Client-only stable identity. It is never a server entry identifier. */
   clientRowId: string;
-  /** Raw cell text as entered or pasted. Validation happens in a separate adapter. */
+  /**
+   * Raw cell text as entered or pasted. Validation happens in a separate adapter.
+   *
+   * P3-W07C: 2 o `first_work_date` va `national_id_issued_place` co the la
+   * lazy default (CHI khi row da kich hoat). Truoc khi kich hoat, o giu
+   * string rong; render layer hien placeholder mo.
+   */
   cells: Readonly<Record<string, string>>;
+  /**
+   * P3-W07C: client-only co row da duoc kich hoat lazy defaults chua. Mot lan
+   * kich hoat moi row, khong tu khoi tao. Import/paste giu gia tri nguoi
+   * dung nhap (co the la lazy default neu gia tri trung ngay hom nay /
+   * `Bộ Công An`, nhung row do co `lazyDefaultsApplied: true` vi row da
+   * nhan gia tri).
+   */
+  lazyDefaultsApplied: boolean;
   /** Client-only recruiter filter/assertion; never serialized as a worker-profile field. */
   providerType: "hrp" | "vendor" | "";
 };
@@ -65,34 +80,43 @@ export class SpreadsheetDataRowLimitError extends RangeError {
 }
 
 /**
- * P1.7-H08-R1: cel mac dinh cho staged row moi.
- * - `first_work_date` = ngay hien tai theo GMT+7 (tranh lech ngay do UTC).
- * - `national_id_issued_place` = "Bộ Công An".
- * User co the sua/xoa; import/imported values tu pipeline khong bi ghi de.
+ * P3-W07C: tra ve cells TRONG (tat ca field empty) cho staged row moi.
+ * Lazy defaults (`first_work_date = today`, `national_id_issued_place = "Bộ Công An"`)
+ * CHI duoc chen vao sau khi user tuong tac lan dau voi row (click, focus,
+ * mo quick editor, sua o). Truoc do render layer hien placeholder mo.
+ *
+ * Cells o day KHONG can `lazyDefaultsApplied: true`; row moi sinh ra voi
+ * `lazyDefaultsApplied: false` de phan biet voi row da duoc kich hoat.
  */
-export function defaultCells(now: Date = new Date()): Record<string, string> {
-  const cells = Object.fromEntries(SPREADSHEET_WRITABLE_FIELD_KEYS.map((key) => [key, ""]));
-  cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = spreadsheetDefaultFirstWorkDate(now);
-  cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] = DEFAULT_NATIONAL_ID_ISSUED_PLACE;
-  return cells;
+export function defaultCells(): Record<string, string> {
+  return Object.fromEntries(SPREADSHEET_WRITABLE_FIELD_KEYS.map((key) => [key, ""]));
 }
 
 /**
- * Returns true neu row chi chua default values (khong co business input nao).
- * Duoc dung de:
- *  - loc row khoi validation save/filter.
- *  - khong dem row vao batch request.
- *  - khong trigger required validation.
- * Khi user nhap business field (display_name, project_id, recruiter_id, ...)
- * hoac thay doi default value (vd xoa "Bộ Công An" de go "Khác"), row se
- * tu dong duoc tinh la khong trong.
+ * P3-W07C: mot row duoc goi la blank neu KHONG co du lieu nguoi dung nao.
+ * Mot row la blank neu:
+ *  - tat ca writable fields empty; HOAC
+ *  - row co lazy defaults (hoac user da tu xoa sau khi kich hoat) va khong
+ *    co business field nao khac.
+ *
+ * Cu the: row se khong la blank neu co it nhat MOT writable field co gia
+ * tri non-empty KHONG PHAI lazy default. Row chi chua 2 default value
+ * (hoac chi empty) van la blank, duoc loai khoi save/validate.
+ *
+ * `now` chi dung de resolve "hom nay" (Asia/Ho_Chi_Minh) khi so sanh
+ * first_work_date co phai default. Production goi khong truyen now
+ * (de lay hien tai); test truyen co dinh de khoa hanh vi.
  */
-export function spreadsheetRowIsBlank(row: SpreadsheetStagedRow): boolean {
+export function spreadsheetRowIsBlank(
+  row: SpreadsheetStagedRow,
+  now: Date = new Date(),
+): boolean {
+  const today = spreadsheetDefaultFirstWorkDate(now);
   return SPREADSHEET_WRITABLE_FIELD_KEYS.every((key) => {
     const value = (row.cells[key] ?? "").trim();
     if (value.length === 0) return true;
     if (key === SPREADSHEET_DEFAULT_DATE_FIELD_KEY) {
-      return value === spreadsheetDefaultFirstWorkDate();
+      return value === today;
     }
     if (key === SPREADSHEET_DEFAULT_PLACE_FIELD_KEY) {
       return value === DEFAULT_NATIONAL_ID_ISSUED_PLACE;
@@ -101,10 +125,63 @@ export function spreadsheetRowIsBlank(row: SpreadsheetStagedRow): boolean {
   });
 }
 
+/**
+ * P3-W07C: kich hoat lazy defaults cho mot row. Idempotent: neu row da duoc
+ * kich hoat, tra ve model giu nguyen. Neu row chua co trong model, tra ve
+ * nguyen model.
+ *
+ * Sau khi kich hoat:
+ *  - 2 cell default duoc set (chi khi chung EMPTY; khong ghi de gia tri
+ *    user/paste/import).
+ *  - `lazyDefaultsApplied = true` de row khong bi kich hoat nhieu lan.
+ *  - Row van la blank (theo `spreadsheetRowIsBlank`) neu khong co business
+ *    field nao.
+ */
+export function activateSpreadsheetRowLazyDefaults(
+  model: SpreadsheetRowModel,
+  clientRowId: string,
+  now: Date = new Date(),
+): SpreadsheetRowModel {
+  let changed = false;
+  const today = spreadsheetDefaultFirstWorkDate(now);
+  const rows = model.rows.map((row) => {
+    if (row.clientRowId !== clientRowId) return row;
+    if (row.lazyDefaultsApplied) return row;
+    changed = true;
+    const cells = { ...row.cells };
+    if ((cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] ?? "").trim() === "") {
+      cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = today;
+    }
+    if ((cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] ?? "").trim() === "") {
+      cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] = DEFAULT_NATIONAL_ID_ISSUED_PLACE;
+    }
+    return { ...row, cells, lazyDefaultsApplied: true };
+  });
+  if (!changed) return model;
+  return { ...model, rows };
+}
+
+/**
+ * P3-W07C: import/paste mot row batch vao staged row set. Nguon du lieu
+ * (paste, Excel) cung cap toan bo writable fields. Row duoc danh dau
+ * `lazyDefaultsApplied: true` vi no da nhan gia tri tu nguon ngoai (nguoi
+ * dung da co y thuc dien). Mot so cell co the trung lazy default neu nguoi
+ * dung dan nhu vay; `spreadsheetRowIsBlank` van phan biet duoc.
+ */
+function importedCells(cells: Readonly<Record<string, string>>): Record<string, string> {
+  const out = defaultCells();
+  for (const key of SPREADSHEET_WRITABLE_FIELD_KEYS) {
+    const value = cells[key];
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
+
 function nextBlankRow(sequence: number): SpreadsheetStagedRow {
   return {
     clientRowId: `${CLIENT_ROW_ID_PREFIX}-${sequence}`,
     cells: defaultCells(),
+    lazyDefaultsApplied: false,
     providerType: "",
   };
 }
@@ -134,8 +211,9 @@ function assertWritablePatch(patch: Readonly<Record<string, string>>): void {
 
 export function selectNonEmptySpreadsheetRows(
   model: SpreadsheetRowModel,
+  now: Date = new Date(),
 ): SpreadsheetStagedRow[] {
-  return model.rows.filter((row) => !spreadsheetRowIsBlank(row));
+  return model.rows.filter((row) => !spreadsheetRowIsBlank(row, now));
 }
 
 /**
@@ -191,7 +269,7 @@ export function updateSpreadsheetRowCells(
   const rows = model.rows.map((row) => {
     if (row.clientRowId !== clientRowId) return row;
     found = true;
-    return { ...row, cells: { ...row.cells, ...patch } };
+    return { ...row, cells: { ...row.cells, ...patch }, lazyDefaultsApplied: true };
   });
   if (!found) return model;
 
@@ -209,6 +287,9 @@ export function updateSpreadsheetRowProviderType(
       ...row,
       providerType,
       cells: { ...row.cells, recruiter_id: "" },
+      // P3-W07C: chon HRP/Vendor cung la mot tuong tac voi row; danh dau da
+      // kich hoat lazy defaults de row khong bi reset ve placeholder.
+      lazyDefaultsApplied: true,
     };
   });
   return rows.every((row, index) => row === model.rows[index])
@@ -224,7 +305,8 @@ export function clearSpreadsheetRow(
   const rows = model.rows.map((row) => {
     if (row.clientRowId !== clientRowId) return row;
     found = true;
-    return { ...row, cells: defaultCells() };
+    // P3-W07C: clear row RONG + chua kich hoat.
+    return { ...row, cells: defaultCells(), lazyDefaultsApplied: false };
   });
   if (!found) return model;
 
@@ -256,7 +338,11 @@ export function duplicateSpreadsheetRow(
 
   const duplicate = {
     clientRowId: `${CLIENT_ROW_ID_PREFIX}-${model.nextClientRowSequence}`,
+    // P3-W07C: duplicate copy nguyen cells nguon; neu nguon chua kich hoat,
+    // duplicate cung chua kich hoat. Neu nguon da kich hoat hoac co gia
+    // tri user, duplicate giu nguyen.
     cells: { ...source.cells },
+    lazyDefaultsApplied: source.lazyDefaultsApplied,
     providerType: source.providerType,
   };
   const rows = [...model.rows];
@@ -265,5 +351,45 @@ export function duplicateSpreadsheetRow(
   return ensureSpreadsheetSpareRows({
     rows,
     nextClientRowSequence: model.nextClientRowSequence + 1,
+  });
+}
+
+/**
+ * P3-W07C: import / paste batch rows vao model.
+ * - Khong ghi de row nguoi dung da co gia tri; moi row import co
+ *   `lazyDefaultsApplied: true` (vi nguon ngoai da cung cap gia tri).
+ * - Row import chi dem vao batch neu khong phai blank (theo
+ *   `spreadsheetRowIsBlank`).
+ * - Khong them row moi neu so data row vuot qua `SPREADSHEET_MAX_DATA_ROWS`.
+ */
+export function importSpreadsheetRows(
+  model: SpreadsheetRowModel,
+  imported: ReadonlyArray<Readonly<Record<string, string>>>,
+): SpreadsheetRowModel {
+  if (imported.length === 0) return model;
+
+  const currentDataRows = selectNonEmptySpreadsheetRows(model).length;
+  let allowed = SPREADSHEET_MAX_DATA_ROWS - currentDataRows;
+  if (allowed <= 0) return model;
+
+  const newRows: SpreadsheetStagedRow[] = [];
+  for (const cells of imported) {
+    if (allowed <= 0) break;
+    const nextCells = importedCells(cells);
+    const candidate: SpreadsheetStagedRow = {
+      clientRowId: `${CLIENT_ROW_ID_PREFIX}-${model.nextClientRowSequence + newRows.length}`,
+      cells: nextCells,
+      lazyDefaultsApplied: true,
+      providerType: "",
+    };
+    if (spreadsheetRowIsBlank(candidate)) continue;
+    newRows.push(candidate);
+    allowed -= 1;
+  }
+
+  if (newRows.length === 0) return model;
+  return ensureSpreadsheetSpareRows({
+    rows: [...model.rows, ...newRows],
+    nextClientRowSequence: model.nextClientRowSequence + newRows.length,
   });
 }

@@ -35,6 +35,9 @@ import {
   type DirectEntryGridColumn,
 } from "@/lib/direct-entry/direct-entry-grid-columns";
 import {
+  formatDateToDDMM,
+} from "@/lib/direct-entry/direct-entry-date-format";
+import {
   mapClipboardFromAnchor,
   parseClipboardTsv,
   serializeClipboardTsv,
@@ -113,6 +116,12 @@ export type DirectEntrySpreadsheetGridProps = {
   canUndo: boolean;
   onUndo(): void;
   saveMessage?: string;
+  /**
+   * P3-W07C: tone tuong minh cho saveMessage. `error` => chu do, role="alert".
+   * `success` hoac `info` => khong do, role="status". Khong suy luan bang
+   * cach do noi dung tieng Viet.
+   */
+  saveTone?: "error" | "success" | "info" | "";
   /**
    * P1.7-H06: clientRowId dang duoc chon de contextual action bar thao tac.
    * Chi truyen mot ID duy nhat moi luc; neu `null` thi khong co dong nao duoc chon.
@@ -394,7 +403,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
   const {
     rows, validation, catalogOptions, onCellsChange, onPasteApplied, onPasteRejected,
     onProviderTypeChange,
-    notice, canUndo, onUndo, saveMessage,
+    notice, canUndo, onUndo, saveMessage, saveTone,
     selectedClientRowId, onSelectedClientRowChange,
   } = props;
 
@@ -428,12 +437,27 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           if (column.key === "provider_type") return row.providerType.toUpperCase();
           if (column.key === "recruiter_id") return row.recruiterLabel;
           if (column.key === "row_index") return String(rowIndexOf(row.clientRowId) + 1);
+          // P3-W07C: cell o trang thai khong edit phai render date theo DD/MM/YYYY.
+          // State, request payload, DB contract van giu ISO YYYY-MM-DD; chi
+          // closed-cell display chuyen qua DD/MM/YYYY. Pure string helper
+          // (tranh `new Date(...)` gay UTC leak).
+          if (column.editor === "date") {
+            const iso = row.cells[column.key] ?? "";
+            return iso === "" ? "" : formatDateToDDMM(iso);
+          }
           return row.cells[column.key] ?? "";
         })();
+        const isPlaceholder = row.displayValues !== undefined
+          && Object.hasOwn(row.displayValues, column.key)
+          && (row.cells[column.key] ?? "") === "";
         return (
           <span data-cell-state={issue ? issue.severity : "ok"}
+            data-placeholder={isPlaceholder ? "true" : undefined}
             title={issue ? issue.message : undefined}
-            className={issue ? styles.cellError : undefined}>
+            className={[
+              issue ? styles.cellError : undefined,
+              isPlaceholder ? styles.cellPlaceholder : undefined,
+            ].filter(Boolean).join(" ")}>
             {display}
           </span>
         );
@@ -593,7 +617,19 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           </span>
         )}
         {saveMessage !== undefined && saveMessage !== "" && (
-          <span data-testid="spreadsheet-save-message" role="status">{saveMessage}</span>
+          <span
+            data-testid="spreadsheet-save-message"
+            data-tone={saveTone === "error" ? "error" : saveTone === "success" ? "success" : "info"}
+            className={
+              saveTone === "error"
+                ? styles.spreadsheetSaveMessageError
+                : saveTone === "success"
+                  ? styles.spreadsheetSaveMessageSuccess
+                  : styles.spreadsheetSaveMessageInfo
+            }
+            role={saveTone === "error" ? "alert" : "status"}>
+            {saveMessage}
+          </span>
         )}
       </div>
       <div className={styles.viewport}>

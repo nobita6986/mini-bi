@@ -22,6 +22,8 @@ const H05_LABEL_OVERRIDES = Object.freeze({
   phone: "Số điện thoại",
   provider_hint: "HRP/Vendor",
   recruiter_id: "Người tuyển / Vendor",
+  // P3-W07C: doi label UI tu "DOB" (contract canonicalHeader) sang "Ngày sinh".
+  date_of_birth: "Ngày sinh",
 });
 
 const EXPECTED_KEYS = [

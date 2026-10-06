@@ -167,3 +167,26 @@
 .rowHighlight {
   background-color: color-mix(in srgb, var(--primary, #2563eb) 10%, transparent);
 }
+
+/* P3-W07C: placeholder cho unactivated row. Mau mo de phan biet voi gia tri
+   that nhung van dam bao contrast WCAG AA. */
+.cellPlaceholder {
+  color: var(--text-muted, #71717a);
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* P3-W07C: phan biet alert (error, do) vs status (success/info, khong do).
+   Contrast van dam bao noi dung ro nghia, khong chi dua vao mau sac. */
+.spreadsheetSaveMessageError {
+  color: var(--danger, #b91c1c);
+  font-weight: 600;
+}
+.spreadsheetSaveMessageSuccess {
+  color: var(--success, #15803d);
+  font-weight: 500;
+}
+.spreadsheetSaveMessageInfo {
+  color: var(--text-muted, #52525b);
+  font-weight: 500;
+}

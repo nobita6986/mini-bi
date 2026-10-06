@@ -59,13 +59,19 @@ test("R1-1 spreadsheet-row-model export constants cho defaults va field keys", (
   assert.match(rowModel, /export const SPREADSHEET_DEFAULT_PLACE_FIELD_KEY = "national_id_issued_place"/);
   // Co helper cho phep test inject `now` deterministic.
   assert.match(rowModel, /export function spreadsheetDefaultFirstWorkDate\(now: Date = new Date\(\)\)/);
-  // Co helper defaultCells() de share logic giua row factory va blank clear.
-  assert.match(rowModel, /export function defaultCells\(now: Date = new Date\(\)\)/);
+  // P3-W07C: defaultCells() tra ve EMPTY (lazy); activation qua
+  // activateSpreadsheetRowLazyDefaults se chen default khi row duoc kich hoat.
+  assert.match(rowModel, /export function defaultCells\(\)/);
+  assert.match(rowModel, /export function activateSpreadsheetRowLazyDefaults\(/);
 });
 
-test("R1-2 defaultCells set first_work_date theo Asia/Ho_Chi_Minh va place = Bộ Công An", () => {
-  assert.match(rowModel, /defaultCells[\s\S]{0,400}spreadsheetDefaultFirstWorkDate\(now\)/);
-  assert.match(rowModel, /defaultCells[\s\S]{0,400}DEFAULT_NATIONAL_ID_ISSUED_PLACE/);
+test("R1-2 defaultCells tra ve EMPTY (lazy); activate chen default theo Asia/Ho_Chi_Minh", () => {
+  // P3-W07C: defaultCells() tra ve EMPTY. Lazy activation chen default
+  // (date theo Asia/Ho_Chi_Minh + place "Bộ Công An") qua
+  // activateSpreadsheetRowLazyDefaults.
+  assert.match(rowModel, /defaultCells[\s\S]{0,400}SPREADSHEET_WRITABLE_FIELD_KEYS\.map\(\(key\) => \[key, ""\]\)/);
+  assert.match(rowModel, /activateSpreadsheetRowLazyDefaults[\s\S]{0,800}spreadsheetDefaultFirstWorkDate\(now\)/);
+  assert.match(rowModel, /activateSpreadsheetRowLazyDefaults[\s\S]{0,800}DEFAULT_NATIONAL_ID_ISSUED_PLACE/);
   // Runtime khong hard-code ngay default va khong dung toISOString().
   const withoutComments = rowModel
     .split("\n")
@@ -145,7 +151,7 @@ test("R1-9 spreadsheetRowIsBlank da nang cap de bo qua default-only rows", () =>
   // Phai co 2 nhanh default (date + place).
   assert.match(predicate[0], /SPREADSHEET_DEFAULT_DATE_FIELD_KEY/);
   assert.match(predicate[0], /SPREADSHEET_DEFAULT_PLACE_FIELD_KEY/);
-  assert.match(predicate[0], /spreadsheetDefaultFirstWorkDate\(\)/);
+  assert.match(predicate[0], /spreadsheetDefaultFirstWorkDate\(now\)/);
   assert.match(predicate[0], /DEFAULT_NATIONAL_ID_ISSUED_PLACE/);
 });
 

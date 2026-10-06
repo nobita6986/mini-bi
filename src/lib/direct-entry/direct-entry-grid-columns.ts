@@ -170,7 +170,10 @@ export const DIRECT_ENTRY_GRID_COLUMNS: readonly DirectEntryGridColumn[] = Objec
   fieldColumn("gender", { group: "worker", pasteMode: "write", width: 120,
     editor: "select" }),
   fieldColumn("date_of_birth", { group: "worker", pasteMode: "write", width: 130,
-    editor: "date" }),
+    // P3-W07C: doi label UI tu "DOB" (contract canonicalHeader) sang "Ngày sinh"
+    // (pho bien o VN). Payload key van la `date_of_birth`, chi thay doi header
+    // hien thi tren grid, quick editor va mobile card.
+    editor: "date", label: "Ngày sinh" }),
   fieldColumn("age_years", { group: "derived", pasteMode: "validate-only", width: 88,
     editor: "readonly", editable: false }),
   fieldColumn("national_id", { group: "worker", pasteMode: "write", width: 150,
