@@ -2,10 +2,10 @@
 
 Status: `P3-W07C-R1_LAZY_DEFAULT_ENTRYPOINTS_CLOSED_LOCAL_PASS_AWAITING_INTEGRATION`
 
-Local SHA = remote SHA: `20b570bdda31b48abc89dd7ddd0a3801e52948ab` (branch
+Local SHA = remote SHA: `24d99d13ad605789b92f11a076d72932ea5ff279` (branch
 `feature/p3-w07c-direct-entry-save-date-lazy-defaults-hotfix`, rebased on
 `origin/main` `6a81f5637d61bdd66d09c835ba613482609b8ea8`). Sits on top of
-W07C hotfix commit `a8a02ce`.
+W07C hotfix commit `a8a02ce`; code commit `20b570b`.
 
 ## Root cause (A) — corrected
 
