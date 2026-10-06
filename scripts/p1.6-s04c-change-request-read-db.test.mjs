@@ -26,8 +26,8 @@ const requests = await seedChangeRequests(db, fixture);
 
 test("from-scratch migration apply covers the new read migration and its ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-  // P3-W07C-R2 is migration #45 on this branch (slot #46 after W05A).
-  assert.equal(migrations.migrationNames.length, 46);
+  // Main carries W07C-R2 (#45) and W07C-R3 (#46); W05A appends as #47.
+  assert.equal(migrations.migrationNames.length, 47);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));

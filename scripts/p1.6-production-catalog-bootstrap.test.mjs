@@ -179,9 +179,9 @@ async function reportingBaseline(db) {
 test("45 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  // P2-W04B (#44) rebaselines the cutoff; W07C-R2 is this branch's #45
-  // (slot #46 after W05A's #45 is integrated).
-  assert.equal(names.length, 46);
+  // Main carries W07C-R2 (#45) and W07C-R3 (#46); W05A appends as #47.
+  assert.equal(names.length, 47,
+    "the migrations directory now carries 47 files (P3-W05A actor-scoped reporting appended after W07C-R2/R3)");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +

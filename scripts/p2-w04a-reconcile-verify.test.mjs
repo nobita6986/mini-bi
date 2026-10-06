@@ -301,18 +301,23 @@ test("P2-W04B-R1 reconcile: read-only transaction always rolls back (no mutation
   assert.equal(calls[calls.length - 1], "rollback");
 });
 
-test("P2-W04B reconcile retains its release baseline before the later W07C migration", async () => {
+test("W04B reconcile keeps its release baseline while later main migrations append", async () => {
   // W04B's production preflight is intentionally scoped to its 44-migration
-  // release baseline; this branch has the later W07C migration after it.
+  // release baseline; main carries later migrations after it (W07C-R2, W07C-R3
+  // and the appended W05A), which the frozen reconcile script must not absorb.
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 46);
+  assert.equal(names.length, 47);
   assert.equal(
-    names[names.length - 2],
-    "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
+    names[names.length - 1],
+    "20261008070000_p3_w05a_actor_scoped_reporting.sql",
   );
-  assert.equal(names[names.length - 1], "20261008050000_p3_w07c_r2_raw_text_dates.sql");
+  assert.equal(
+    names[names.length - 4],
+    "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
+    "W04B stays before the later main migrations and the appended W05A",
+  );
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );
