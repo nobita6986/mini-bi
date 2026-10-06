@@ -174,7 +174,7 @@ async function reportingBaseline(db) {
 test("40 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  assert.equal(names.length, 40);
+  assert.equal(names.length, 41);
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +
@@ -462,8 +462,21 @@ test("apply creates the unassigned catalog once with non-overlapping history; re
   );
   assert.equal(catalog[0].data.projects.length, 2);
   assert.equal(catalog[0].data.recruiters.length, 2);
-  assert.ok(catalog[0].data.recruiters.every((r) =>
-    r.provider_type === "vendor" && r.team_display_name === "Chưa phân nhóm"));
+  // P3-W07A: HRP recruiters show label = `display_name · personnel_code · Team`;
+  // Vendor recruiters with vendor_id=NULL show label = display_name.
+  // The P1.6 baseline catalog has 2 vendors (vendor rows for recruiter-a and
+  // recruiter-b). Both appear in the catalog with their display_name as the
+  // label until W07A links them to vendor records.
+  assert.deepEqual(
+    catalog[0].data.recruiters.map((r) => ({
+      provider_type: r.provider_type,
+      label: r.label,
+    })),
+    [
+      { provider_type: "vendor", label: "Synthetic Recruiter A" },
+      { provider_type: "vendor", label: "Synthetic Recruiter B" },
+    ],
+  );
   assert.deepEqual(await reportingBaseline(db), baseline);
 
   const replay = await apply(db, planned.source_fingerprint);

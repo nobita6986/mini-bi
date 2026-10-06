@@ -95,6 +95,10 @@ export type GridRecruiterOption = {
   id: string;
   label: string;
   provider_type: "hrp" | "vendor";
+  /** P3-W07A: business identifier (e.g. vinht.td); null for Vendor rows. */
+  personnel_code: string | null;
+  /** P3-W07A: vendor id for Vendor rows; null for HRP rows. */
+  vendor_id: string | null;
 };
 
 export function recruitersForProvider(

@@ -73,9 +73,16 @@ export type DraftCatalog = {
   recruiters: Array<{
     recruiter_id: string;
     display_name: string;
+    /** P3-W07A: business identifier (e.g. vinht.td); null for Vendor rows. */
+    personnel_code: string | null;
     provider_type: "hrp" | "vendor";
+    /** P3-W07A: vendor id for Vendor rows; null for HRP rows. */
+    vendor_id: string | null;
     team_id: string;
     team_display_name: string;
+    /** P3-W07A: pre-rendered UI label. HRP = `display · personnel_code · team_display_name`;
+    Vendor = vendor display name. */
+    label: string;
   }>;
   banks: Array<{ bank_id: string; display_name: string }>;
 };
@@ -254,18 +261,39 @@ export function projectDraftCatalog(value: unknown, expectedDate?: string): Draf
   const recruiters: DraftCatalog["recruiters"] = [];
   for (const recruiter of value.recruiters) {
     if (!isRecord(recruiter) || !hasExactKeys(recruiter, [
-      "recruiter_id", "display_name", "provider_type", "team_id", "team_display_name",
+      "recruiter_id", "display_name", "personnel_code", "provider_type", "vendor_id",
+      "team_id", "team_display_name", "label",
     ]) || typeof recruiter.recruiter_id !== "string" || !UUID.test(recruiter.recruiter_id) ||
         typeof recruiter.display_name !== "string" ||
+        (recruiter.personnel_code !== null && typeof recruiter.personnel_code !== "string") ||
         (recruiter.provider_type !== "hrp" && recruiter.provider_type !== "vendor") ||
+        (recruiter.vendor_id !== null && (
+          typeof recruiter.vendor_id !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(recruiter.vendor_id)
+        )) ||
         typeof recruiter.team_id !== "string" || !UUID.test(recruiter.team_id) ||
-        typeof recruiter.team_display_name !== "string") return null;
+        typeof recruiter.team_display_name !== "string" ||
+        typeof recruiter.label !== "string" || recruiter.label.trim().length === 0) return null;
+    // Vendor rows must have provider_type === "vendor"; vendor_id may be null
+    // for legacy Vendor Sale rows that were created before the W07A importer
+    // linked them to a vendor record.
+    if (recruiter.provider_type === "vendor" && recruiter.vendor_id !== null &&
+        (typeof recruiter.vendor_id !== "string" ||
+         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(recruiter.vendor_id))) {
+      return null;
+    }
+    if (recruiter.provider_type === "hrp" && recruiter.vendor_id !== null) {
+      return null;
+    }
     recruiters.push({
       recruiter_id: recruiter.recruiter_id,
       display_name: recruiter.display_name,
+      personnel_code: recruiter.personnel_code,
       provider_type: recruiter.provider_type,
+      vendor_id: recruiter.vendor_id,
       team_id: recruiter.team_id,
       team_display_name: recruiter.team_display_name,
+      label: recruiter.label,
     });
   }
   const banks: DraftCatalog["banks"] = [];
