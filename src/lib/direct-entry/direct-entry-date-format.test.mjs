@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   formatDateToDDMM,
+  parseDDMMToIso,
   parseIsoDate,
   todayInHoChiMinhAsDDMM,
 } from "./direct-entry-date-format.ts";
@@ -94,4 +95,41 @@ test("todayInHoChiMinhAsDDMM: tra DD/MM/YYYY theo Asia/Ho_Chi_Minh (khong lech U
   assert.equal(todayInHoChiMinhAsDDMM(new Date("2026-07-31T17:00:00.000Z")), "01/08/2026");
   // Format check.
   assert.match(todayInHoChiMinhAsDDMM(new Date("2026-04-15T08:00:00.000Z")), /^\d{2}\/\d{2}\/\d{4}$/);
+});
+
+test("parseDDMMToIso: chuyen DD/MM/YYYY thanh YYYY-MM-DD", () => {
+  assert.equal(parseDDMMToIso("06/10/2026"), "2026-10-06");
+  assert.equal(parseDDMMToIso("29/02/2000"), "2000-02-29");
+  assert.equal(parseDDMMToIso("01/01/1999"), "1999-01-01");
+  // Padding day/month single-digit.
+  assert.equal(parseDDMMToIso("9/1/2026"), "2026-01-09");
+  // Separator "-" cung duoc chap nhan.
+  assert.equal(parseDDMMToIso("06-10-2026"), "2026-10-06");
+});
+
+test("parseDDMMToIso: fail closed khi input khong hop le", () => {
+  assert.equal(parseDDMMToIso(""), "");
+  // Trim truoc khi parse.
+  assert.equal(parseDDMMToIso("  "), "");
+  // Sai format
+  assert.equal(parseDDMMToIso("2026-10-06"), "");
+  assert.equal(parseDDMMToIso("06/10"), "");
+  assert.equal(parseDDMMToIso("06/10/2026abc"), "");
+  assert.equal(parseDDMMToIso("not-a-date"), "");
+  // Ngay khong ton tai theo lich.
+  assert.equal(parseDDMMToIso("30/02/2026"), "");
+  assert.equal(parseDDMMToIso("31/04/2026"), "");
+  // Thang 00 (MM=00) khong hop le (thang 1..12).
+  assert.equal(parseDDMMToIso("15/00/2026"), "");
+  // Ngay 00 (DD=00) khong hop le (ngay 1..31).
+  assert.equal(parseDDMMToIso("00/10/2026"), "");
+  // 1900 KHONG phai nam nhuan (gregorian rule).
+  assert.equal(parseDDMMToIso("29/02/1900"), "");
+  // 2026 khong nhuan.
+  assert.equal(parseDDMMToIso("29/02/2026"), "");
+  // Khong phai string.
+  // @ts-expect-error: testing runtime guard
+  assert.equal(parseDDMMToIso(null), "");
+  // @ts-expect-error: testing runtime guard
+  assert.equal(parseDDMMToIso(undefined), "");
 });

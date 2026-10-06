@@ -125,7 +125,7 @@ test("R1-5 quick editor (desktop drawer) render values tu target.cells (lazy def
 test("R1-6 mobile staged card render values tu cells (lazy activation qua onToggle)", () => {
   // Mobile staged card cung render cells.first_work_date va cells.national_id_issued_place.
   // P3-W07C-R1: details.onToggle activate lazy defaults khi user mo card.
-  const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,8000}<\/details>/);
+  const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,12000}<\/details>/);
   assert.ok(mobileStaged, "phai co mobileStagedCard section");
   assert.match(mobileStaged[0], /cells\.first_work_date \?\? ""/);
   assert.match(mobileStaged[0], /cells\.national_id_issued_place \?\? ""/);
@@ -379,7 +379,7 @@ test("R1-24 quick editor field order giu nguyen (place luon render, defaults act
 });
 
 test("R1-25 mobile staged card field order giu nguyen (place luon render, activation onToggle)", () => {
-  const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,8000}<\/details>/);
+  const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,12000}<\/details>/);
   assert.ok(mobileStaged);
   assert.match(mobileStaged[0], /Nơi cấp/);
   // P3-W07C-R1: cells.national_id_issued_place hien thi (activation qua

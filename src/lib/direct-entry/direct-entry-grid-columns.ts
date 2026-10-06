@@ -16,6 +16,7 @@ export type DirectEntryGridPasteMode = "write" | "validate-only" | "ignore";
 export type DirectEntryGridEditor =
   | "text"
   | "date"
+  | "dateText"
   | "select"
   | "catalog"
   | "readonly"
@@ -173,13 +174,13 @@ export const DIRECT_ENTRY_GRID_COLUMNS: readonly DirectEntryGridColumn[] = Objec
     // P3-W07C: doi label UI tu "DOB" (contract canonicalHeader) sang "Ngày sinh"
     // (pho bien o VN). Payload key van la `date_of_birth`, chi thay doi header
     // hien thi tren grid, quick editor va mobile card.
-    editor: "date", label: "Ngày sinh" }),
+    editor: "dateText", label: "Ngày sinh" }),
   fieldColumn("age_years", { group: "derived", pasteMode: "validate-only", width: 88,
     editor: "readonly", editable: false }),
   fieldColumn("national_id", { group: "worker", pasteMode: "write", width: 150,
     editor: "text" }),
   fieldColumn("national_id_issued_at", { group: "worker", pasteMode: "write", width: 130,
-    editor: "date" }),
+    editor: "dateText" }),
   fieldColumn("national_id_issued_place", { group: "worker", pasteMode: "write", width: 180,
     editor: "text" }),
   fieldColumn("address", { group: "worker", pasteMode: "write", width: 260,

@@ -203,6 +203,6 @@ test("openQuickEditor activate truoc khi mo drawer", () => {
 });
 
 test("handleMobileStagedFieldChange (mobile edit) di qua updateSpreadsheetRowCells", () => {
-  assert.match(live, /const onMobileStagedChange = useCallback\(\([\s\S]{0,500}updateSpreadsheetRowCells\(current, clientRowId, \{[\s\S]{0,500}\}\)/,
+  assert.match(live, /const onMobileStagedChange = useCallback\(\([\s\S]{0,1200}updateSpreadsheetRowCells\(current, clientRowId, \{[\s\S]{0,500}\}\)/,
     "onMobileStagedChange phai goi updateSpreadsheetRowCells (activation contract)");
 });

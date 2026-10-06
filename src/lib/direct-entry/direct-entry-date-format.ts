@@ -44,6 +44,30 @@ export function formatDateToDDMMRaw(value: string): string {
   return formatted;
 }
 
+/**
+ * Parse "DD/MM/YYYY" thanh ISO "YYYY-MM-DD". Tra ve "" neu input rong
+ * hoac khong hop le (parse that bai). Khong mutate format goc.
+ *
+ * Chap nhan cac separator "/" hoac "-". Validate ngay theo lich.
+ */
+export function parseDDMMToIso(value: string): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  const match = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(trimmed);
+  if (!match) return "";
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return "";
+  if (month < 1 || month > 12) return "";
+  if (day < 1 || day > 31) return "";
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1
+      || probe.getUTCDate() !== day) return "";
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 /** Ngay hom nay theo Asia/Ho_Chi_Minh, dang "DD/MM/YYYY". */
 export function todayInHoChiMinhAsDDMM(now: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-GB", {

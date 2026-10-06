@@ -32,6 +32,8 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GRID = join(HERE, "direct-entry-spreadsheet-grid.tsx");
+const LIVE = join(HERE, "direct-entry-live.tsx");
+const COLUMNS = join(HERE, "..", "..", "lib", "direct-entry", "direct-entry-grid-columns.ts");
 
 /** @type {{ cells: Readonly<Record<string, string>> }} */
 const EMPTY_ROW = { cells: {} };
@@ -194,4 +196,63 @@ test("R2-S7 production component thuc su goi helper (khong con logic inline)", (
   assert.match(source, /from\s+["']@\/components\/direct-entry\/text-cell-state["']/);
   assert.match(source, /commitTextCellValue\(/);
   assert.match(source, /commitTextCellCompositionEnd\(/);
+});
+
+// ===== P3-W07C-R1: editor dateText (DD/MM/YYYY text input) =================
+
+test("R2-T1 grid registry co editor type 'dateText' cho date_of_birth va national_id_issued_at", () => {
+  // P3-W07C-R1: doi tu native date picker sang text input DD/MM/YYYY.
+  // 2 cot nay dung `editor: "dateText"` thay cho `editor: "date"`.
+  // first_work_date van giu `editor: "date"` (native picker).
+  const columns = readFileSync(COLUMNS, "utf8");
+  assert.match(columns, /fieldColumn\("date_of_birth"[\s\S]{0,400}editor:\s*"dateText"/);
+  assert.match(columns, /fieldColumn\("national_id_issued_at"[\s\S]{0,400}editor:\s*"dateText"/);
+  // first_work_date khong doi (van `editor: "date"`).
+  const firstWorkDate = columns.match(/fieldColumn\("first_work_date"[\s\S]{0,300}\}\)/);
+  assert.ok(firstWorkDate);
+  assert.match(firstWorkDate[0], /editor:\s*"date"/);
+});
+
+test("R2-T2 grid dang ky CellsDateTextEditor va renderEditCell dat vao dateText column", () => {
+  const source = readFileSync(GRID, "utf8");
+  // Component helper + memo wrapper.
+  assert.match(source, /function CellsDateTextEditorComponent/);
+  assert.match(source, /const CellsDateTextEditor = memo\(CellsDateTextEditorComponent\)/);
+  assert.match(source, /function cellsDateTextEditor/);
+  // Editor: text input voi placeholder DD/MM/YYYY.
+  const component = source.match(/function CellsDateTextEditorComponent[\s\S]{0,3500}\n\}/);
+  assert.ok(component, "phai co CellsDateTextEditorComponent body");
+  assert.match(component[0], /type="text"/);
+  assert.match(component[0], /placeholder="DD\/MM\/YYYY"/);
+  assert.match(component[0], /inputMode="numeric"/);
+  // Commit: parse DD/MM/YYYY -> ISO va goi onRowChange.
+  assert.match(component[0], /parseDDMMToIso\(nextValue\)/);
+  // Column routing: `editor: "dateText"` di qua cellsDateTextEditor.
+  assert.match(source, /column\.editor === "dateText"[\s\S]{0,500}renderEditCell: cellsDateTextEditor/);
+  // Closed-cell display: cung DD/MM/YYYY format nhu `date`.
+  assert.match(source, /column\.editor === "date" \|\| column\.editor === "dateText"/);
+});
+
+test("R2-T3 mobile staged card: Ngày sinh va Ngày cấp la text input DD/MM/YYYY", () => {
+  // P3-W07C-R1: chuyen type=date sang type=text voi placeholder DD/MM/YYYY.
+  // Source khoa cung hien thi (formatDateToDDMM) va parser (parseDDMMToIso)
+  // trong onMobileStagedChange.
+  const live = readFileSync(LIVE, "utf8");
+  // Khong con type="date" cho date_of_birth hay national_id_issued_at.
+  assert.doesNotMatch(live,
+    /type="date"[\s\S]{0,200}value=\{cells\.date_of_birth\??\s*\?\?\s*""/);
+  assert.doesNotMatch(live,
+    /type="date"[\s\S]{0,200}value=\{cells\.national_id_issued_at\??\s*\?\?\s*""/);
+  assert.doesNotMatch(live,
+    /type="date"[\s\S]{0,200}value=\{target\.cells\.date_of_birth\??\s*\?\?\s*""/);
+  assert.doesNotMatch(live,
+    /type="date"[\s\S]{0,200}value=\{target\.cells\.national_id_issued_at\??\s*\?\?\s*""/);
+  // text input voi placeholder DD/MM/YYYY va hien thi formatDateToDDMM.
+  assert.match(live,
+    /type="text"[\s\S]{0,200}placeholder="DD\/MM\/YYYY"[\s\S]{0,200}value=\{formatDateToDDMM\(cells\.date_of_birth/);
+  assert.match(live,
+    /type="text"[\s\S]{0,200}placeholder="DD\/MM\/YYYY"[\s\S]{0,200}value=\{formatDateToDDMM\(cells\.national_id_issued_at/);
+  // onMobileStagedChange parse DD/MM/YYYY -> ISO truoc khi luu.
+  assert.match(live,
+    /onMobileStagedChange = useCallback\(\([\s\S]{0,800}parseDDMMToIso\(value\)[\s\S]{0,800}updateSpreadsheetRowCells\(/);
 });
