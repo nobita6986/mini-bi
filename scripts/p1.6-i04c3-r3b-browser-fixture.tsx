@@ -43,8 +43,9 @@ const PROJECTS = [
 ];
 const RECRUITERS = [
   { recruiter_id: "22222222-2222-4222-8222-222222222222", display_name: "Tuyển Dụng Giả 1",
-    provider_type: "hrp" as const, team_id: "77777777-7777-4777-8777-777777777777",
-    team_display_name: "Team Giả" },
+    personnel_code: null, provider_type: "hrp" as const, vendor_id: null,
+    team_id: "77777777-7777-4777-8777-777777777777",
+    team_display_name: "Team Giả", label: "Tuyển Dụng Giả 1 · — · Team Giả" },
 ];
 const BANKS = [
   { bank_id: "33333333-3333-4333-8333-333333333333", display_name: "Ngân hàng Giả" },

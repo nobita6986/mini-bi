@@ -59,11 +59,9 @@ import { projectDraftCatalog } from "./write-repository.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
 const GRID = join(ROOT, "src/components/direct-entry/direct-entry-spreadsheet-grid.tsx");
-const COLUMNS = join(ROOT, "src/lib/direct-entry/direct-entry-grid-columns.ts");
 const LIVE = join(ROOT, "src/components/direct-entry/direct-entry-live.tsx");
 
 const gridSource = readFileSync(GRID, "utf8");
-const columnsSource = readFileSync(COLUMNS, "utf8");
 const liveSource = readFileSync(LIVE, "utf8");
 
 // ---------------------------------------------------------------------------
@@ -158,7 +156,6 @@ function selectOptions(
   columnKey,
   catalogs,
   providerType,
-  rowDate,
 ) {
   if (columnKey === "gender") return ["Nam", "Nữ"];
   if (columnKey === "labor_type") return ["Thời vụ", "Chính thức"];
@@ -188,9 +185,9 @@ test("R8 Vendor recruiter has no team / no personnel_code; label = vendor displa
       { id: "22222222-2222-4222-8222-222222222222", label: "HRP Sale · vinht.td · Team Alpha", provider_type: "hrp", personnel_code: "vinht.td", vendor_id: null },
     ],
   };
-  const options = selectOptions("recruiter_id", catalogs, "vendor", null);
+  const options = selectOptions("recruiter_id", catalogs, "vendor");
   assert.deepEqual(options, ["11111111-1111-4111-8111-111111111111"]);
-  const hrpOptions = selectOptions("recruiter_id", catalogs, "hrp", null);
+  const hrpOptions = selectOptions("recruiter_id", catalogs, "hrp");
   assert.deepEqual(hrpOptions, ["22222222-2222-4222-8222-222222222222"]);
 });
 
@@ -316,12 +313,12 @@ test("R14 recruiter_id and project_id dropdown return option IDs (not display la
       { id: "91100000-0000-4000-8000-000000000002", label: "Vendor X", provider_type: "vendor", personnel_code: null, vendor_id: "vendor_x" },
     ],
   };
-  const recruiterOptions = selectOptions("recruiter_id", catalogs, "hrp", null);
+  const recruiterOptions = selectOptions("recruiter_id", catalogs, "hrp");
   // First option is the recruiter UUID, not the display label.
   assert.equal(recruiterOptions[0], "91100000-0000-4000-8000-000000000001");
   // Project option list carries project_id text (not display label) so the
   // dropdown writes the canonical key back into `cells.project_id`.
-  const projectOptions = selectOptions("project_id", catalogs, "", "2026-10-15");
+  const projectOptions = selectOptions("project_id", catalogs, "");
   assert.equal(projectOptions[0], "");
   assert.equal(projectOptions[1], "project_alpha");
 });
@@ -341,8 +338,8 @@ test("R15 when project dropdown returns the catalog options in deterministic ord
     ],
     recruiters: [],
   };
-  const a = selectOptions("project_id", catalogsA, "", "2026-10-15");
-  const b = selectOptions("project_id", catalogsB, "", "2026-10-15");
+  const a = selectOptions("project_id", catalogsA, "");
+  const b = selectOptions("project_id", catalogsB, "");
   // First option is always the empty placeholder. Remaining ids come from
   // the catalog declaration order. The real spreadsheet implementation
   // returns projects sorted by display_name (server-side), so identical
@@ -353,9 +350,9 @@ test("R15 when project dropdown returns the catalog options in deterministic ord
 });
 
 test("R16 gender and labor_type dropdowns return the canonical vocabulary unchanged", () => {
-  const genderOptions = selectOptions("gender", undefined, "", null);
+  const genderOptions = selectOptions("gender", undefined, "");
   assert.deepEqual(genderOptions, ["Nam", "Nữ"]);
-  const laborTypeOptions = selectOptions("labor_type", undefined, "", null);
+  const laborTypeOptions = selectOptions("labor_type", undefined, "");
   assert.deepEqual(laborTypeOptions, ["Thời vụ", "Chính thức"]);
   // First option is the canonical first entry — re-selecting it must commit.
   assert.equal(genderOptions[0], "Nam");

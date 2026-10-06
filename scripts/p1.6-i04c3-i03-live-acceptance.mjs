@@ -138,7 +138,8 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    check(fromScratch.migrationNames.length === 40, "PGlite applied all 40 migrations");
+    // P3-W07A migration #41 added the W07A catalog bootstrap. Total now 41.
+    check(fromScratch.migrationNames.length === 41, "PGlite applied all 41 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();

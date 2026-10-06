@@ -28,8 +28,9 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 
-assert.equal(migrations.migrationNames.length, 40);
-pass("from-scratch apply 40 migration local trong PGlite (khong dung shared DB)");
+// P3-W07A migration #41 added the W07A catalog bootstrap. Total now 41.
+assert.equal(migrations.migrationNames.length, 41);
+pass("from-scratch apply 41 migration local trong PGlite (khong dung shared DB)");
 
 const fixture = await seedChangeRequestFixture(db);
 const requests = await seedChangeRequests(db, fixture);

@@ -66,7 +66,9 @@ function assertNoSensitive(label, value) {
 }
 
 test("from-scratch apply covers the policy closure migration and its ACLs", async () => {
-  assert.equal(migrations.migrationNames.length, 40);
+  // P3-W07A migration #41 added the W07A catalog bootstrap (vendors +
+  // personnel_code/position + vendor_id). Total now 41.
+  assert.equal(migrations.migrationNames.length, 41);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(
