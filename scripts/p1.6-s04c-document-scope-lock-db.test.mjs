@@ -88,8 +88,10 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
 test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
   // P3-W07A migration #41 added the W07A catalog bootstrap (vendors +
-  // personnel_code/position + vendor_id). Total now 41.
-  assert.equal(migrationNames.length, 41);
+  // personnel_code/position + vendor_id). P3-W07A-R2 migration #42 added
+  // the catalog runtime contract hotfix (banks restoration + Vendor null
+  // team + HRP null vendor_id). Total now 42.
+  assert.equal(migrationNames.length, 42);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);

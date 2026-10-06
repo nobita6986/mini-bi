@@ -67,23 +67,44 @@ export type DocumentFinalization = DocumentLifecycle & {
   reused: boolean;
 };
 
+export type DraftCatalogRecruiterHrp = {
+  recruiter_id: string;
+  display_name: string;
+  /** P3-W07A: business identifier (e.g. vinht.td); always present for HRP. */
+  personnel_code: string;
+  provider_type: "hrp";
+  /** P3-W07A: vendor id is explicitly null for HRP rows. */
+  vendor_id: null;
+  /** P3-W07A: team UUID for HRP; Vendor has no business team in this release. */
+  team_id: string;
+  team_display_name: string;
+  /** P3-W07A: pre-rendered UI label = `display · personnel_code · team_display_name`. */
+  label: string;
+};
+
+export type DraftCatalogRecruiterVendor = {
+  recruiter_id: string;
+  display_name: string;
+  /** Vendor rows have no personnel_code. */
+  personnel_code: null;
+  provider_type: "vendor";
+  /** Vendor id; null only for legacy P1.6 bootstrap rows (no vendor link yet). */
+  vendor_id: string | null;
+  /** Vendor has no business team / leader in this release. */
+  team_id: null;
+  team_display_name: null;
+  /** P3-W07A: pre-rendered UI label = vendor display name (or recruiter name for legacy). */
+  label: string;
+};
+
+export type DraftCatalogRecruiter =
+  | DraftCatalogRecruiterHrp
+  | DraftCatalogRecruiterVendor;
+
 export type DraftCatalog = {
   effective_date: string;
   projects: Array<{ project_id: string; display_name: string }>;
-  recruiters: Array<{
-    recruiter_id: string;
-    display_name: string;
-    /** P3-W07A: business identifier (e.g. vinht.td); null for Vendor rows. */
-    personnel_code: string | null;
-    provider_type: "hrp" | "vendor";
-    /** P3-W07A: vendor id for Vendor rows; null for HRP rows. */
-    vendor_id: string | null;
-    team_id: string;
-    team_display_name: string;
-    /** P3-W07A: pre-rendered UI label. HRP = `display · personnel_code · team_display_name`;
-    Vendor = vendor display name. */
-    label: string;
-  }>;
+  recruiters: DraftCatalogRecruiter[];
   banks: Array<{ bank_id: string; display_name: string }>;
 };
 
@@ -258,43 +279,62 @@ export function projectDraftCatalog(value: unknown, expectedDate?: string): Draf
         typeof project.display_name !== "string") return null;
     projects.push({ project_id: project.project_id, display_name: project.display_name });
   }
+  // P3-W07A-R2: discriminated HRP / Vendor contract. Both shapes carry
+  // exactly eight keys; HRP requires a UUID team and a non-null vendor_id
+  // (always null), Vendor requires null team and null personnel_code. The
+  // runtime must fail closed on any other combination — the contract is
+  // the production seam that closed the CATALOG_UNAVAILABLE blocker.
   const recruiters: DraftCatalog["recruiters"] = [];
   for (const recruiter of value.recruiters) {
     if (!isRecord(recruiter) || !hasExactKeys(recruiter, [
       "recruiter_id", "display_name", "personnel_code", "provider_type", "vendor_id",
       "team_id", "team_display_name", "label",
     ]) || typeof recruiter.recruiter_id !== "string" || !UUID.test(recruiter.recruiter_id) ||
-        typeof recruiter.display_name !== "string" ||
-        (recruiter.personnel_code !== null && typeof recruiter.personnel_code !== "string") ||
+        typeof recruiter.display_name !== "string" || recruiter.display_name.trim().length === 0 ||
         (recruiter.provider_type !== "hrp" && recruiter.provider_type !== "vendor") ||
-        (recruiter.vendor_id !== null && (
-          typeof recruiter.vendor_id !== "string" ||
-          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(recruiter.vendor_id)
-        )) ||
-        typeof recruiter.team_id !== "string" || !UUID.test(recruiter.team_id) ||
-        typeof recruiter.team_display_name !== "string" ||
-        typeof recruiter.label !== "string" || recruiter.label.trim().length === 0) return null;
-    // Vendor rows must have provider_type === "vendor"; vendor_id may be null
-    // for legacy Vendor Sale rows that were created before the W07A importer
-    // linked them to a vendor record.
-    if (recruiter.provider_type === "vendor" && recruiter.vendor_id !== null &&
-        (typeof recruiter.vendor_id !== "string" ||
-         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(recruiter.vendor_id))) {
+        typeof recruiter.label !== "string" || recruiter.label.trim().length === 0) {
       return null;
     }
-    if (recruiter.provider_type === "hrp" && recruiter.vendor_id !== null) {
-      return null;
+    if (recruiter.provider_type === "hrp") {
+      if (typeof recruiter.personnel_code !== "string" || recruiter.personnel_code.trim().length === 0 ||
+          recruiter.vendor_id !== null ||
+          typeof recruiter.team_id !== "string" || !UUID.test(recruiter.team_id) ||
+          typeof recruiter.team_display_name !== "string" ||
+          recruiter.team_display_name.trim().length === 0) {
+        return null;
+      }
+      recruiters.push({
+        recruiter_id: recruiter.recruiter_id,
+        display_name: recruiter.display_name,
+        personnel_code: recruiter.personnel_code,
+        provider_type: "hrp",
+        vendor_id: null,
+        team_id: recruiter.team_id,
+        team_display_name: recruiter.team_display_name,
+        label: recruiter.label,
+      });
+    } else {
+      // provider_type === "vendor"
+      if (recruiter.personnel_code !== null ||
+          recruiter.team_id !== null ||
+          recruiter.team_display_name !== null ||
+          (recruiter.vendor_id !== null && (
+            typeof recruiter.vendor_id !== "string" ||
+            !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(recruiter.vendor_id)
+          ))) {
+        return null;
+      }
+      recruiters.push({
+        recruiter_id: recruiter.recruiter_id,
+        display_name: recruiter.display_name,
+        personnel_code: null,
+        provider_type: "vendor",
+        vendor_id: recruiter.vendor_id,
+        team_id: null,
+        team_display_name: null,
+        label: recruiter.label,
+      });
     }
-    recruiters.push({
-      recruiter_id: recruiter.recruiter_id,
-      display_name: recruiter.display_name,
-      personnel_code: recruiter.personnel_code,
-      provider_type: recruiter.provider_type,
-      vendor_id: recruiter.vendor_id,
-      team_id: recruiter.team_id,
-      team_display_name: recruiter.team_display_name,
-      label: recruiter.label,
-    });
   }
   const banks: DraftCatalog["banks"] = [];
   for (const bank of value.banks) {

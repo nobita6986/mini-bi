@@ -171,10 +171,11 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("40 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("42 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  assert.equal(names.length, 41);
+  assert.equal(names.length, 42,
+    "the migrations directory now carries 42 files (40 W07A baseline + W07A-R1 + W07A-R2)");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +

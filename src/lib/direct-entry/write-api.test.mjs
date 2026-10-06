@@ -69,9 +69,12 @@ function dependencies(overrides = {}) {
             recruiters: [{
               recruiter_id: validRow.recruiter_id,
               display_name: "Synthetic recruiter",
+              personnel_code: "synthetic.td",
               provider_type: "hrp",
+              vendor_id: null,
               team_id: "94000000-0000-4000-8000-000000000001",
               team_display_name: "Synthetic team",
+              label: "Synthetic recruiter · synthetic.td · Synthetic team",
             }],
             banks: [],
           },

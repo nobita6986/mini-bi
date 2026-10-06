@@ -18,9 +18,11 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 41 migrations and read RPC ACLs", async () => {
-  // P3-W07A migration #41 added the W07A catalog bootstrap. Total now 41.
-  assert.equal(migrations.migrationNames.length, 41);
+test("from-scratch apply 42 migrations and read RPC ACLs", async () => {
+  // P3-W07A migration #41 added the W07A catalog bootstrap. P3-W07A-R2
+  // migration #42 added the catalog runtime contract hotfix (banks
+  // restoration + Vendor null team + HRP null vendor_id). Total now 42.
+  assert.equal(migrations.migrationNames.length, 42);
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.deepEqual(migrations.migrationNames, [...migrations.migrationNames].sort(),
     "migration phai duoc ap theo thu tu ten file");
