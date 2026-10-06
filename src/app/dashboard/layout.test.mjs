@@ -59,7 +59,18 @@ test("dashboard/layout.tsx: truyền actor projection tối thiểu cho AppShell
 });
 
 test("dashboard/page.tsx keeps report retrieval but no longer owns AI actions", () => {
-  assert.ok(dashboardPage.includes("fetchReporting"));
+  // P2-W04A cutover: dashboard must use the cutover reporting fetcher, not
+  // the legacy `fetchReporting` / `fetchReportingOptions` (T1B replaced
+  // them with `fetchCutoverReporting` + `fetchCutoverReportingOptions`).
+  assert.ok(dashboardPage.includes("fetchCutoverReporting"));
+  assert.ok(dashboardPage.includes("fetchCutoverReportingOptions"));
+  assert.ok(!dashboardPage.includes("fetchReportingOptions"));
+  // The legacy `fetchReporting` only survives as a substring in a
+  // comment; require the imported-symbol call to be the cutover one.
+  assert.ok(
+    /await\s+Promise\.all\(\s*\[\s*fetchCutoverReporting\(/.test(dashboardPage),
+    "P2-W04A: dashboard/page must call fetchCutoverReporting in Promise.all",
+  );
   assert.ok(dashboardPage.includes("DashboardView"));
   assert.ok(dashboardPage.includes('dynamic = "force-dynamic"'));
   assert.ok(!dashboardPage.includes("isAiSettingsEnabled"));
