@@ -878,9 +878,9 @@ test("R1: new helpers/RPCs are hardened and the revision table is locked down", 
 });
 
 // ---------------------------------------------------------------------------
-// 9. F3 regression guard: #50/#51 stay pending, no single-transaction apply.
+// 9. F3 regression guard: #50/#51 keep their order; no fake atomic apply.
 // ---------------------------------------------------------------------------
-test("R1: #50/#51 cannot be applied atomically and stay unmerged with main", async () => {
+test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () => {
   const w07e = (await readFile(path.join(MIGRATION_DIR, W07E_MIGRATION), "utf8")).toLowerCase();
   const w02 = (await readFile(path.join(MIGRATION_DIR, W02_MIGRATION), "utf8")).toLowerCase();
   for (const [name, sql] of [[W07E_MIGRATION, w07e], [W02_MIGRATION, w02]]) {
@@ -891,7 +891,7 @@ test("R1: #50/#51 cannot be applied atomically and stay unmerged with main", asy
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
   assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 51,
-    "Production stays at 49 applied / 2 pending (#50 + #51) / 0 mismatch");
+    "the repository ledger contains #1 through #51; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
   // grouped-apply mode that could make the two files atomic.
