@@ -69,8 +69,8 @@ test("from-scratch apply covers the policy closure migration and its ACLs", asyn
   // P3-W07B migration #43 adds project-manager scope enforcement.
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
-  // as #48.
-  assert.equal(migrations.migrationNames.length, 48);
+  // as #49 after W07C-R7.
+  assert.equal(migrations.migrationNames.length, 49);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(

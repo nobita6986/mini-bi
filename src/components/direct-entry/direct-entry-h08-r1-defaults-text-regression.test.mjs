@@ -263,9 +263,13 @@ test("R1-15 Column build cho data cells editable dung cellsTextEditor (khong dun
 
 test("R1-16 Date va Select cell editor van commit truc tiep (khong qua cellsTextEditor)", () => {
   // DateCellEditor: commit onRowChange voi commitChanges=true.
-  const dateEditor = grid.match(/function DateCellEditor[\s\S]{0,400}\}/);
-  assert.ok(dateEditor, "phai co DateCellEditor");
-  assert.match(dateEditor[0], /onRowChange\([\s\S]{0,200},\s*true\)/);
+  const dateEditorStart = grid.indexOf("function DateCellEditor");
+  const dateEditorEnd = grid.indexOf("\n}\n", dateEditorStart);
+  const dateEditor = dateEditorStart >= 0 && dateEditorEnd > dateEditorStart
+    ? grid.slice(dateEditorStart, dateEditorEnd + 3)
+    : "";
+  assert.notEqual(dateEditor, "", "phai co DateCellEditor");
+  assert.match(dateEditor, /onRowChange\([\s\S]{0,400},\s*true\)/);
   // SelectCellEditor: cung commit truc tiep.
   const selectEditor = grid.match(/function SelectCellEditor[\s\S]{0,1500}\}/);
   assert.ok(selectEditor, "phai co SelectCellEditor");

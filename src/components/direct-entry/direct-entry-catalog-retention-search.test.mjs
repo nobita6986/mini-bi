@@ -119,12 +119,19 @@ test("P3 hotfix: du an hien thi ten rut gon nhung editor luu project_id va nhan 
     "ten phap ly cu van duoc dung lam alias de hien thi/tra cuu du lieu cu");
 });
 
-test("P3 hotfix: click ra ngoai khong de react-data-grid dong editor truoc blur commit", () => {
+test("P3 hotfix: click ra ngoai commit ngay ca khi vung dich khong phat blur", () => {
   const dateColumn = grid.slice(grid.indexOf('if (column.editor === "date")'));
-  assert.match(dateColumn, /editorOptions:\s*\{\s*commitOnOutsideClick:\s*false\s*\}/,
-    "neu khong, react-data-grid capture mousedown va commit stale row truoc khi draft blur chay");
+  assert.match(dateColumn, /editorOptions:\s*\{\s*commitOnOutsideClick:\s*true\s*\}/,
+    "grid phai dong editor khi click vao vung khong focusable");
+  const dateEditor = grid.match(/function DateCellEditor\([\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(dateEditor, /onDraftChange=\{\(iso\) =>/,
+    "draft hop le phai duoc dua vao active row truoc khi grid xu ly click ngoai");
+  assert.match(dateEditor, /props\.onRowChange\([\s\S]*?,\s*false\s*\)/,
+    "draft sync chi cap nhat active row, chua commit model cha");
   assert.match(ddmm, /onBlur=\{commit\}/,
-    "blur phai dua DD/MM/YYYY draft qua cung commit handler nhu Enter");
+    "blur van commit theo cung handler nhu Enter");
+  assert.match(ddmm, /props\.onDraftChange\(iso === "" \? null : iso\)/,
+    "grid nhan draft da parse, khong nhan chuoi dang go chua hop le");
   assert.match(ddmm, /onCommit\(decision\.iso\)/,
     "ngay hop le phai duoc gui len row truoc khi editor dong");
 });

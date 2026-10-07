@@ -474,6 +474,13 @@ function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { colum
       ariaLabel={props.columnKey}
       autoFocus
       value={props.row.cells[props.columnKey] ?? ""}
+      onDraftChange={(iso) => {
+        if (iso === null || iso === (props.row.cells[props.columnKey] ?? "")) return;
+        props.onRowChange(
+          { ...props.row, cells: { ...props.row.cells, [props.columnKey]: iso } },
+          false,
+        );
+      }}
       onCommit={(iso) => props.onRowChange(
         { ...props.row, cells: { ...props.row.cells, [props.columnKey]: iso } }, true)}
       onClose={(commitChanges) => props.onClose(commitChanges, false)}
@@ -742,10 +749,10 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       if (column.editor === "date") {
         return {
           key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
-          // The grid's default outside-mousedown handler closes before input blur,
-          // committing its stale row and unmounting the DD/MM draft. Let the editor
-          // commit its draft in onBlur instead.
-          editorOptions: { commitOnOutsideClick: false },
+          // Keep the default outside-click commit. DateCellEditor mirrors each
+          // valid ISO draft into RDG's active row so even clicks on non-focusable
+          // cells (which do not fire input blur) commit the latest date.
+          editorOptions: { commitOnOutsideClick: true },
           editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (

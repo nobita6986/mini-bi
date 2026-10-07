@@ -259,7 +259,8 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       (value.provider_type !== "hrp" && value.provider_type !== "vendor") ||
       (value.labor_type !== "TEMPORARY" && value.labor_type !== "PERMANENT") ||
       typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
-      (value.scope_kind !== "own" && value.scope_kind !== "team" && value.scope_kind !== "all") ||
+      (value.scope_kind !== "own" && value.scope_kind !== "team" &&
+        value.scope_kind !== "all" && value.scope_kind !== "project") ||
       (value.payment !== null && !projectPaymentProjection(value.payment)) ||
       !isRecord(value.employment_status) ||
       !Array.isArray(value.documents)) return null;

@@ -28,9 +28,9 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 
-// Main carries 47 migrations (#47 = P2-W04C); the appended W05A migration is #48.
-assert.equal(migrations.migrationNames.length, 48);
-pass("from-scratch apply 48 migration local trong PGlite (khong dung shared DB)");
+// Main carries through W05A #48; W07C-R7 appends as #49.
+assert.equal(migrations.migrationNames.length, 49);
+pass("from-scratch apply 49 migration local trong PGlite (khong dung shared DB)");
 
 const fixture = await seedChangeRequestFixture(db);
 const requests = await seedChangeRequests(db, fixture);

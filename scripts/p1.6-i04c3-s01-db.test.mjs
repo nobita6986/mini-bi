@@ -20,12 +20,15 @@ const IDS = {
   outsideUser: "92600000-0000-4000-8000-000000000005",
   disabledAuth: "91600000-0000-4000-8000-000000000006",
   disabledUser: "92600000-0000-4000-8000-000000000006",
+  projectManagerAuth: "91600000-0000-4000-8000-000000000007",
+  projectManagerUser: "92600000-0000-4000-8000-000000000007",
   team: "94600000-0000-4000-8000-000000000001",
   outsideTeam: "94600000-0000-4000-8000-000000000002",
   recruiter: "93600000-0000-4000-8000-000000000001",
   inactiveRecruiter: "93600000-0000-4000-8000-000000000002",
   noTeamRecruiter: "93600000-0000-4000-8000-000000000003",
   noProviderRecruiter: "93600000-0000-4000-8000-000000000004",
+  projectManagerRecruiter: "93600000-0000-4000-8000-000000000005",
   bank: "bank_i04c3_synthetic",
   inactiveBank: "bank_i04c3_inactive",
 };
@@ -47,9 +50,7 @@ async function databaseUpTo(untilName) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   // P3-W07C-R3 server default for `national_id_issued_place` is #46 and P2-W04C
-  // owns #47; the W05A actor-scoped reporting migration appended afterwards is
-  // #48 (`20261008080000_p3_w05a_actor_scoped_reporting.sql`), so this helper
-  // only tracks the local count instead of a fixed slot per file.
+  // owns #47; W05A is #48 and W07C-R7 appends as #49.
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
@@ -60,21 +61,22 @@ async function databaseUpTo(untilName) {
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 48, "W05A appends as #48 after P2-W04C #47");
+  assert.equal(totalCount, 49, "W07C-R7 appends as #49 after W05A #48");
   for (const name of apply) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   await db.exec(`
     insert into auth.users(id) values
       ('${IDS.auth}'), ('${IDS.readAuth}'), ('${IDS.teamAuth}'), ('${IDS.paymentAuth}'),
-      ('${IDS.outsideAuth}'), ('${IDS.disabledAuth}');
+      ('${IDS.outsideAuth}'), ('${IDS.disabledAuth}'), ('${IDS.projectManagerAuth}');
     insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled) values
       ('${IDS.user}', '${IDS.auth}', true),
       ('${IDS.readUser}', '${IDS.readAuth}', true),
       ('${IDS.teamUser}', '${IDS.teamAuth}', true),
       ('${IDS.paymentUser}', '${IDS.paymentAuth}', true),
       ('${IDS.outsideUser}', '${IDS.outsideAuth}', true),
-      ('${IDS.disabledUser}', '${IDS.disabledAuth}', false);
+      ('${IDS.disabledUser}', '${IDS.disabledAuth}', false),
+      ('${IDS.projectManagerUser}', '${IDS.projectManagerAuth}', true);
     insert into public.teams(team_id, code, display_name)
       values ('${IDS.team}', 'I04C3-SYNTH', 'Synthetic I04C3 Team'),
              ('${IDS.outsideTeam}', 'I04C3-OUTSIDE', 'Synthetic outside team');
@@ -82,7 +84,8 @@ async function databaseUpTo(untilName) {
       values ('${IDS.recruiter}', 'Synthetic I04C3 Recruiter', true),
              ('${IDS.inactiveRecruiter}', 'Synthetic Inactive Recruiter', false),
              ('${IDS.noTeamRecruiter}', 'Synthetic Recruiter Without Team', true),
-             ('${IDS.noProviderRecruiter}', 'Synthetic Recruiter Without Provider', true);
+             ('${IDS.noProviderRecruiter}', 'Synthetic Recruiter Without Provider', true),
+             ('${IDS.projectManagerRecruiter}', 'Synthetic Replacement Project Manager', true);
     insert into public.recruiter_provider_memberships
       (recruiter_id, provider_type, valid_from)
       values ('${IDS.recruiter}', 'hrp', '2020-01-01'),
@@ -97,7 +100,8 @@ async function databaseUpTo(untilName) {
       values ('project_i04c3_synthetic', '${IDS.recruiter}');
     insert into public.direct_entry_app_user_recruiter_links
       (app_user_id, recruiter_id, verified, valid_from)
-      values ('${IDS.user}', '${IDS.recruiter}', true, '2020-01-01');
+      values ('${IDS.user}', '${IDS.recruiter}', true, '2020-01-01'),
+             ('${IDS.projectManagerUser}', '${IDS.projectManagerRecruiter}', true, '2020-01-01');
     insert into public.direct_entry_banks(bank_id, display_name, active) values
       ('${IDS.bank}', 'Synthetic Active Bank', true),
       ('${IDS.inactiveBank}', 'Synthetic Inactive Bank', false);
@@ -115,6 +119,8 @@ async function databaseUpTo(untilName) {
       ('${IDS.teamUser}', 'employment_status.apply', '2020-01-01'),
       ('${IDS.paymentUser}', 'entry_admin', '2020-01-01'),
       ('${IDS.paymentUser}', 'payment_view', '2020-01-01'),
+      ('${IDS.projectManagerUser}', 'entry_create', '2020-01-01'),
+      ('${IDS.projectManagerUser}', 'pii_view', '2020-01-01'),
       ('${IDS.outsideUser}', 'entry_team', '2020-01-01');
     insert into public.direct_entry_scope_grants
       (app_user_id, scope_kind, team_id, valid_from) values
@@ -147,6 +153,18 @@ async function generatedRpc(db, rows, key) {
     const result = await db.query(GENERATED_RPC, [
       IDS.auth, IDS.user, "worker-profile/1.1", JSON.stringify(rows), key,
     ]);
+    await db.exec("commit;");
+    return result.rows[0].result;
+  } catch (error) {
+    await db.exec("rollback;");
+    throw error;
+  }
+}
+
+async function serviceRpc(db, query, args) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const result = await db.query(query, args);
     await db.exec("commit;");
     return result.rows[0].result;
   } catch (error) {
@@ -294,6 +312,160 @@ test("migration #39 generates employee codes transactionally and replays idempot
   }
 });
 
+test("P3-W07C-R7 historical work dates use current recruiter membership and date-only draft edits preserve assignment", async () => {
+  const db = await database();
+  try {
+    const { rows: dates } = await db.query(`
+      select public.direct_entry_authorization_date()::text as today,
+             (public.direct_entry_authorization_date() - 1)::text as recent,
+             (public.direct_entry_authorization_date() - 3)::text as historical,
+             (public.direct_entry_authorization_date() - 4)::text as earlier
+    `);
+    const { today, recent, historical, earlier } = dates[0];
+    const employeeYear = historical.slice(0, 4);
+
+    // Simulate a recruiter whose current team/provider assignment starts today,
+    // after the worker's historical first_work_date.
+    await db.query(`
+      update public.recruiter_provider_memberships
+         set valid_to = $1::date
+       where recruiter_id = $2::uuid and valid_to is null
+    `, [historical, IDS.recruiter]);
+    await db.query(`
+      update public.recruiter_team_memberships
+         set valid_to = $1::date
+       where recruiter_id = $2::uuid and valid_to is null
+    `, [historical, IDS.recruiter]);
+    await db.query(`
+      insert into public.recruiter_provider_memberships
+        (recruiter_id, provider_type, valid_from) values ($1::uuid, 'hrp', $2::date)
+    `, [IDS.recruiter, today]);
+    await db.query(`
+      insert into public.recruiter_team_memberships
+        (recruiter_id, team_id, valid_from) values ($1::uuid, $2::uuid, $3::date)
+    `, [IDS.recruiter, IDS.team, today]);
+    const historicalMembership = await db.query(`
+      select count(*)::integer as count
+        from public.recruiter_provider_memberships
+       where recruiter_id = $1::uuid and valid_from <= $2::date
+         and (valid_to is null or $2::date < valid_to)
+    `, [IDS.recruiter, historical]);
+    assert.equal(historicalMembership.rows[0].count, 0,
+      "recruiter has no provider membership effective on the worker's start date");
+
+    const created = await generatedRpc(db, [generatedRow(930001, {
+      first_work_date: historical,
+    })], "91600000-0000-4000-8000-000000000930");
+    assert.equal(created.state, "DRAFT");
+    const stored = await db.query(`
+      select first_work_date::text, provider_type, team_id::text
+        from public.direct_entries where entry_id = $1::uuid
+    `, [created.entry_ids[0]]);
+    assert.deepEqual(stored.rows[0], {
+      first_work_date: historical,
+      provider_type: "hrp",
+      team_id: IDS.team,
+    }, "new historical entry keeps current, DB-validated recruiter metadata");
+
+    // The recruiter later leaves: there is no current membership and the
+    // recruiter master is inactive. A date-only edit must retain the saved
+    // attribution rather than requiring that recruiter to be current again.
+    await db.query("update public.recruiters set active=false where recruiter_id=$1::uuid", [IDS.recruiter]);
+    await db.query(`
+      update public.recruiter_provider_memberships
+         set valid_from = $1::date, valid_to = $2::date
+       where recruiter_id = $3::uuid and valid_from = $4::date
+    `, [recent, today, IDS.recruiter, today]);
+    await db.query(`
+      update public.recruiter_team_memberships
+         set valid_from = $1::date, valid_to = $2::date
+       where recruiter_id = $3::uuid and valid_from = $4::date
+    `, [recent, today, IDS.recruiter, today]);
+
+    const update = await serviceRpc(db, `
+      select public.direct_entry_update_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text
+      ) as result
+    `, [IDS.auth, IDS.user, created.entry_ids[0], JSON.stringify({
+      first_work_date: earlier,
+      employee_code: `hrp-${employeeYear}-000001`,
+    }), "91600000-0000-4000-8000-000000000931"]);
+    assert.equal(update.version, 2,
+      "changing only the work date does not require active recruiter membership");
+    const afterUpdate = await db.query(`
+      select first_work_date::text, provider_type, team_id::text
+        from public.direct_entries where entry_id = $1::uuid
+    `, [created.entry_ids[0]]);
+    assert.deepEqual(afterUpdate.rows[0], {
+      first_work_date: earlier,
+      provider_type: "hrp",
+      team_id: IDS.team,
+    }, "date-only edit preserves the saved recruiter/provider/team assignment");
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R7 replacement project manager can read and edit an old draft only while assigned", async () => {
+  const db = await database();
+  try {
+    const created = await generatedRpc(db, [generatedRow(930002)],
+      "91600000-0000-4000-8000-000000000932");
+    const entryId = created.entry_ids[0];
+
+    await db.query(`
+      update public.direct_entry_project_manager_assignments
+         set manager_recruiter_id = $1::uuid
+       where project_id = 'project_i04c3_synthetic'
+    `, [IDS.projectManagerRecruiter]);
+
+    const drafts = await listDrafts(db, IDS.projectManagerAuth, IDS.projectManagerUser);
+    assert.equal(drafts.drafts.length, 1,
+      "current project assignment exposes the old owner's DRAFT row");
+    assert.equal(drafts.drafts[0].entry_id, entryId);
+    assert.equal(drafts.drafts[0].worker_display_name, "Synthetic Worker 930002");
+
+    const read = await serviceRpc(db, `
+      select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as result
+    `, [IDS.projectManagerAuth, IDS.projectManagerUser, entryId]);
+    assert.equal(read.scope_kind, "project");
+    assert.equal(read.worker_details.display_name, "Synthetic Worker 930002");
+
+    const updated = await serviceRpc(db, `
+      select public.direct_entry_update_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text
+      ) as result
+    `, [IDS.projectManagerAuth, IDS.projectManagerUser, entryId,
+      JSON.stringify({ worker_details: { display_name: "Updated by successor manager" } }),
+      "91600000-0000-4000-8000-000000000933"]);
+    assert.equal(updated.version, 2,
+      "the assigned successor manager can update a historical Draft row");
+    const audit = await db.query(`
+      select capability, scope_kind from public.direct_entry_audit_events
+       where action = 'draft_row_update' and resource_ref = $1
+    `, [entryId]);
+    assert.deepEqual(audit.rows[0], { capability: "project_manager", scope_kind: null },
+      "project authority is auditable without mislabeling it as own/team/all");
+
+    await db.query(`
+      update public.direct_entry_project_manager_assignments
+         set manager_recruiter_id = $1::uuid
+       where project_id = 'project_i04c3_synthetic'
+    `, [IDS.recruiter]);
+    const afterHandoff = await listDrafts(db, IDS.projectManagerAuth, IDS.projectManagerUser);
+    assert.equal(afterHandoff.drafts.length, 0,
+      "the previous manager loses project-scoped access after reassignment");
+    await assert.rejects(
+      serviceRpc(db, `
+        select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as result
+      `, [IDS.projectManagerAuth, IDS.projectManagerUser, entryId]),
+      (error) => error.code === "42501",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("migration #39 keeps the source-derived function inventory and service boundary aligned", async () => {
   const db = await database();
   try {
@@ -317,14 +489,14 @@ test("migration #39 keeps the source-derived function inventory and service boun
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname like 'direct_entry_%'
     `);
-    // P3-W07C-R2 replaces bodies of existing functions only; it adds no
-    // function and does not change the service-role boundary inventory.
+    // P3-W07C-R7 adds one internal scope resolver; no new callable surface is
+    // exposed to service_role, anon, authenticated, or PUBLIC.
     // P3-W05A (#47) adds six service-role-only scoped reporting helpers, all
     // GRANT EXECUTE to service_role and none reachable by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 86,
+      total: 87,
       service_role: 45,
-      internal: 41,
+      internal: 42,
       exposed_internal: 0,
     });
   } finally {

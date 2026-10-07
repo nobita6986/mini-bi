@@ -260,6 +260,14 @@ test("read validates UUID before session and keeps the restricted projection", a
   assert.equal(deps.calls[0].auth_subject, actor.auth_subject);
   assert.equal(deps.calls[0].app_user_id, actor.app_user_id);
 
+  deps.repository.readEntry = async () => ({
+    ok: true,
+    data: { ...projection, scope_kind: "project" },
+  });
+  const projectManagerResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(projectManagerResponse.status, 200,
+    "a project-manager-scoped draft projection is a valid server response");
+
   deps.repository.readEntry = async () => ({ ok: false, kind: "denied" });
   const denied = await getDirectEntryEntry(entryId, "true", deps);
   assert.equal(denied.status, 404);

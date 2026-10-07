@@ -17,6 +17,7 @@ import {
   canDdmmSettle,
   decideDdmmCommit,
   formatDateToDDMM,
+  parseDDMMToIso,
   reduceDdmmSettle,
   type DdmmSettleAction,
   type DdmmSettleState,
@@ -29,6 +30,12 @@ export type DdmmDateInputProps = {
   value: string;
   /** Goi khi nguoi dung commit mot ngay hop le. */
   onCommit(iso: string): void;
+  /**
+   * Cap nhat draft hop le vao active row cua grid, chua ghi vao model cha.
+   * Can thiet vi click vao vung khong focusable khong phat blur; grid se commit
+   * active row khi click ra ngoai.
+   */
+  onDraftChange?: (iso: string | null) => void;
   ariaLabel: string;
   disabled?: boolean;
   autoFocus?: boolean;
@@ -67,7 +74,7 @@ export function DdmmDateInput(props: DdmmDateInputProps) {
       onClose?.(false);
       return;
     }
-    if (decision.iso === value) {
+    if (decision.iso === value && !props.onDraftChange) {
       // Khong doi gi: chi dong editor, khong ban commit thua.
       setDraft(formatDateToDDMM(value));
       onClose?.(false);
@@ -103,7 +110,15 @@ export function DdmmDateInput(props: DdmmDateInputProps) {
       aria-label={ariaLabel}
       disabled={disabled}
       value={draft}
-      onChange={(event) => { dispatchSettle("edit"); setDraft(event.currentTarget.value); }}
+      onChange={(event) => {
+        const nextDraft = event.currentTarget.value;
+        dispatchSettle("edit");
+        setDraft(nextDraft);
+        if (props.onDraftChange) {
+          const iso = parseDDMMToIso(nextDraft);
+          props.onDraftChange(iso === "" ? null : iso);
+        }
+      }}
       onFocus={() => { dispatchSettle("focus"); }}
       onKeyDown={onKeyDown}
       onBlur={commit}

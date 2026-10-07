@@ -18,11 +18,11 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 45 migrations and read RPC ACLs", async () => {
+test("from-scratch apply 49 migrations and read RPC ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
-  // as #48.
-  assert.equal(migrations.migrationNames.length, 48);
+  // as #49 after W07C-R7.
+  assert.equal(migrations.migrationNames.length, 49);
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.ok(migrations.migrationNames.includes("20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql"));
   assert.deepEqual(migrations.migrationNames, [...migrations.migrationNames].sort(),
