@@ -11,29 +11,42 @@
  * Both helpers therefore return the '__unknown__' sentinel and the Dashboard
  * groups the rows under "Không xác định".
  *
- * This module derives the correction from evidence that already exists in the
- * database - never from an assumption:
+ * The correction is derived from evidence that already exists in the database -
+ * never from an assumption:
  *   * provider: the single membership row per recruiter must carry the same
  *     provider_type as every stored fact of that recruiter, and only its
- *     valid_from is re-dated to the earliest non-deleted entry work date;
+ *     valid_from is re-dated;
  *   * recruiter key: HRP uses recruiters.personnel_code, Vendor uses
  *     recruiter_provider_memberships.vendor_id, written into the designed
  *     reporting vocabulary table recruiter_aliases.
- * A recruiter whose metadata is missing, ambiguous or contradictory is REFUSED,
- * so genuinely unmapped rows keep resolving to '__unknown__'.
+ *
+ * R1 (T0 review of d8d5caa) hardening:
+ *   * the anchor date is the earliest first_work_date of the recruiter's facts
+ *     INSIDE the reporting window (SUBMITTED, not deleted, >= cutoff) - Draft or
+ *     out-of-window rows can never pull the timeline further back;
+ *   * a derived reporting key that another recruiter already uses after the
+ *     anchor date is refused instead of merging two people onto one key;
+ *   * every audit row carries the operating actor (auth_subject + app_user_id),
+ *     the capability actually held and a restricted reason_id;
+ *   * the acceptance check compares the WHOLE window against the expected
+ *     post-repair distribution, so a second run after a successful repair is a
+ *     valid no-op instead of a failure.
  *
  * The module is pure except for SQL text: the CLI script and the DB regression
  * test execute the exact same statements.
  */
 
 export const REPAIR_ACTION = "p2_de_reporting_dimension_repair";
-export const REPAIR_CAPABILITY = "recruiter_master_manage";
 export const REPAIR_CONFIRM_ENV = "P2_DE_DIM_REPAIR_CONFIRM";
 export const REPAIR_CONFIRM_TOKEN = "P2_DE_DIM_REPAIR_APPLY";
+// The audit capability is the one the operating account must actually hold.
+export const REPAIR_CAPABILITIES = ["recruiter_master_manage", "entry_admin"];
+export const MIN_REASON_LENGTH = 8;
+export const MAX_REASON_LENGTH = 400;
+export const UNKNOWN_KEY = "__unknown__";
 
-// Business reporting codes look like `tu.vd` / `anhhn.td`: lowercase, dotted,
-// no spaces. Anything else is refused instead of being copied into the
-// vocabulary table.
+// Business reporting codes are lowercase, dotted, no spaces. Anything else is
+// refused instead of being copied into the vocabulary table.
 export const REPORTING_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /**
@@ -53,19 +66,15 @@ export const REPAIR_PLAN_SQL = [
   "    count(*)::int as facts," +
   "    count(distinct f.provider_type)::int as stored_providers," +
   "    min(f.provider_type) as stored_provider," +
-  "    min(f.first_work_date) as fact_from," +
+  "    min(f.first_work_date) as target_from," +
   "    max(f.first_work_date) as fact_to," +
   "    count(*) filter (where public.direct_entry_reporting_recruiter_provider_key(" +
   "      f.recruiter_id, f.first_work_date) = '__unknown__')::int as facts_unknown_provider," +
   "    count(*) filter (where public.direct_entry_reporting_recruiter_alias_key(" +
   "      f.recruiter_id, f.first_work_date) = '__unknown__')::int as facts_unknown_alias" +
   "    from facts f group by f.recruiter_id)," +
-  " targets as (" +
-  "  select e.recruiter_id, min(e.first_work_date) as target_from" +
-  "    from public.direct_entries e where e.deleted_at is null group by e.recruiter_id)" +
-  " select o.recruiter_id::text as recruiter_id, o.facts, o.stored_providers," +
-  "   o.stored_provider, o.fact_from::text as fact_from, o.fact_to::text as fact_to," +
-  "   o.facts_unknown_provider, o.facts_unknown_alias, t.target_from::text as target_from," +
+  " resolved as (" +
+  "  select o.*," +
   "   (select count(*)::int from public.recruiter_provider_memberships m" +
   "     where m.recruiter_id = o.recruiter_id) as membership_rows," +
   "   (select m.membership_id::text from public.recruiter_provider_memberships m" +
@@ -76,26 +85,38 @@ export const REPAIR_PLAN_SQL = [
   "     where m.recruiter_id = o.recruiter_id order by m.valid_from limit 1) as membership_from," +
   "   (select m.valid_to::text from public.recruiter_provider_memberships m" +
   "     where m.recruiter_id = o.recruiter_id order by m.valid_from limit 1) as membership_to," +
-  "   (select m.vendor_id from public.recruiter_provider_memberships m" +
+  "   (select nullif(btrim(m.vendor_id), '') from public.recruiter_provider_memberships m" +
   "     where m.recruiter_id = o.recruiter_id order by m.valid_from limit 1) as membership_vendor_id," +
   "   (select count(*)::int from public.recruiter_provider_memberships m" +
   "     where m.recruiter_id = o.recruiter_id and m.provider_type <> o.stored_provider)" +
   "     as contradicting_memberships," +
   "   (select count(*)::int from public.recruiter_aliases al" +
   "     where al.recruiter_id = o.recruiter_id) as alias_rows," +
-  "   (select count(*)::int from public.recruiter_aliases al" +
-  "     where al.recruiter_id = o.recruiter_id" +
-  "       and (al.valid_to is null or t.target_from < al.valid_to))" +
-  "     as alias_rows_touching_target," +
   "   (select nullif(btrim(r.personnel_code), '') from public.recruiters r" +
   "     where r.recruiter_id = o.recruiter_id) as personnel_code" +
-  "  from owners o join targets t on t.recruiter_id = o.recruiter_id" +
-  " order by o.facts desc, o.recruiter_id",
+  "    from owners o)," +
+  " coded as (" +
+  "  select r.*," +
+  "   case when r.stored_provider = 'hrp' then r.personnel_code" +
+  "        when r.stored_provider = 'vendor' then r.membership_vendor_id" +
+  "        else null end as key_candidate" +
+  "    from resolved r)" +
+  " select c.recruiter_id::text as recruiter_id, c.facts, c.stored_providers," +
+  "   c.stored_provider, c.target_from::text as target_from, c.fact_to::text as fact_to," +
+  "   c.facts_unknown_provider, c.facts_unknown_alias, c.membership_rows, c.membership_id," +
+  "   c.membership_provider, c.membership_from::text as membership_from," +
+  "   c.membership_to::text as membership_to, c.membership_vendor_id," +
+  "   c.contradicting_memberships, c.alias_rows, c.personnel_code, c.key_candidate," +
+  "   (select count(*)::int from public.recruiter_aliases al" +
+  "     where al.recruiter_id <> c.recruiter_id" +
+  "       and al.reporting_key = c.key_candidate" +
+  "       and (al.valid_to is null or c.target_from < al.valid_to)) as foreign_alias_conflicts" +
+  "  from coded c" +
+  " order by c.facts desc, c.recruiter_id",
 ].join("\n");
 
 /**
- * Post-repair verification over the whole reporting window: no fact may keep an
- * unresolved sentinel for a recruiter the plan claimed to repair.
+ * Post-repair verification over the whole reporting window.
  */
 export const REPAIR_VERIFY_SQL = [
   "select count(*)::int as facts_total," +
@@ -110,9 +131,8 @@ export const REPAIR_VERIFY_SQL = [
 ].join("\n");
 
 /**
- * Post-repair distribution over the whole reporting window. Grouped exactly like
- * the projection does (key, not display) so it proves the chart buckets and not
- * just a label.
+ * Distribution over the whole reporting window, grouped exactly like the
+ * projection does (key, not display).
  */
 export const REPAIR_DISTRIBUTION_SQL = [
   "select public.direct_entry_reporting_recruiter_provider_key(" +
@@ -127,34 +147,26 @@ export const REPAIR_DISTRIBUTION_SQL = [
   " group by 1, 2 order by 1, 2",
 ].join("\n");
 
-/** Fold distribution rows into the same shape as summariseRepairPlan(). */
-export function foldDistribution(rows) {
-  const providerSplit = {};
-  const codeSplit = {};
-  let facts = 0;
-  for (const row of rows) {
-    const n = Number(row.n);
-    facts += n;
-    providerSplit[row.provider_key] = (providerSplit[row.provider_key] ?? 0) + n;
-    codeSplit[row.recruiter_key] = (codeSplit[row.recruiter_key] ?? 0) + n;
-  }
-  return { facts_total: facts, provider_split: providerSplit, reporting_code_split: codeSplit };
-}
+/**
+ * Operator resolution: the account must exist, be enabled and actually hold one
+ * of REPAIR_CAPABILITIES. Nothing is invented and nothing is escalated.
+ */
+export const REPAIR_ACTOR_SQL = [
+  "select a.app_user_id::text as app_user_id, a.auth_subject::text as auth_subject," +
+  "  (select c.capability from public.direct_entry_capability_grants c" +
+  "    where c.app_user_id = a.app_user_id" +
+  "      and c.capability in ('recruiter_master_manage', 'entry_admin')" +
+  "      and c.valid_from <= public.direct_entry_authorization_date()" +
+  "      and (c.valid_to is null or public.direct_entry_authorization_date() < c.valid_to)" +
+  "    order by case c.capability when 'recruiter_master_manage' then 0 else 1 end" +
+  "    limit 1) as capability" +
+  "  from public.direct_entry_app_users a" +
+  " where a.app_user_id = $1::uuid and a.enabled",
+].join("\n");
 
-/** Stable comparison used by the in-transaction acceptance check. */
-export function distributionMatches(expected, actual) {
-  const same = (a, b) => {
-    const left = Object.entries(a ?? {}).sort();
-    const right = Object.entries(b ?? {}).sort();
-    return JSON.stringify(left) === JSON.stringify(right);
-  };
-  return {
-    ok: same(expected.provider_split, actual.provider_split) &&
-      same(expected.reporting_code_split, actual.reporting_code_split),
-    provider_split_ok: same(expected.provider_split, actual.provider_split),
-    reporting_code_split_ok: same(expected.reporting_code_split, actual.reporting_code_split),
-  };
-}
+/** Restricted reason for this operation, via the existing audited mechanism. */
+export const REPAIR_REASON_SQL =
+  "select public.direct_entry_reason($1::uuid, $2::text)::text as reason_id";
 
 function isBlank(value) {
   return value === null || value === undefined || String(value).trim() === "";
@@ -196,7 +208,7 @@ export function deriveRepairPlan(rows) {
       continue;
     }
     if (isBlank(row.target_from)) {
-      refusals.push(refusal(row, "no non-deleted entry work date to anchor the correction"));
+      refusals.push(refusal(row, "no windowed fact to anchor the correction"));
       continue;
     }
     if (!isBlank(row.membership_to) && row.membership_to <= row.target_from) {
@@ -210,37 +222,37 @@ export function deriveRepairPlan(rows) {
       refusals.push(refusal(row, "recruiter already has a reporting alias history"));
       continue;
     }
-    let reportingKey = null;
-    let keySource = null;
-    if (row.stored_provider === "hrp") {
-      reportingKey = isBlank(row.personnel_code) ? null : String(row.personnel_code).trim();
-      keySource = "recruiters.personnel_code";
-    } else if (row.stored_provider === "vendor") {
-      reportingKey = isBlank(row.membership_vendor_id) ? null : String(row.membership_vendor_id).trim();
-      keySource = "recruiter_provider_memberships.vendor_id";
-    } else {
-      refusals.push(refusal(row, "stored provider_type is not a canonical hrp/vendor value"));
-      continue;
-    }
+    const reportingKey = isBlank(row.key_candidate) ? null : String(row.key_candidate).trim();
     if (reportingKey === null || !REPORTING_KEY_PATTERN.test(reportingKey)) {
       refusals.push(refusal(row, "no canonical reporting code available for this recruiter"));
+      continue;
+    }
+    // The new alias is open-ended (valid_to = NULL), so any alias of ANOTHER
+    // recruiter that still carries the same key after the anchor date would be
+    // merged with this one. Refuse instead of picking a winner.
+    if (Number(row.foreign_alias_conflicts) !== 0) {
+      refusals.push(refusal(row, "reporting code is already used by another recruiter"));
       continue;
     }
     assignments.push({
       recruiter_id: row.recruiter_id,
       facts: Number(row.facts),
+      facts_unknown_provider: unknownProvider,
+      facts_unknown_alias: unknownAlias,
       stored_provider: row.stored_provider,
       membership_id: row.membership_id,
       membership_from: row.membership_from,
       membership_to: row.membership_to,
       target_from: row.target_from,
       reporting_key: reportingKey,
-      reporting_key_source: keySource,
+      reporting_key_source: row.stored_provider === "hrp"
+        ? "recruiters.personnel_code"
+        : "recruiter_provider_memberships.vendor_id",
       update_membership: row.membership_from > row.target_from,
       insert_alias: Number(row.alias_rows) === 0,
     });
   }
-  // Two recruiters must never be collapsed onto one reporting code.
+  // Two recruiters inside this batch must never be collapsed onto one code.
   const byKey = new Map();
   for (const assignment of assignments) {
     const list = byKey.get(assignment.reporting_key) ?? [];
@@ -255,7 +267,7 @@ export function deriveRepairPlan(rows) {
       refusals.push({
         recruiter_id: assignment.recruiter_id,
         facts: assignment.facts,
-        reason: "reporting code is claimed by more than one recruiter",
+        reason: "reporting code is claimed by more than one recruiter in this batch",
       });
       continue;
     }
@@ -266,20 +278,26 @@ export function deriveRepairPlan(rows) {
 
 /** Counts-only view of a plan - safe to print (no UUID, no name, no PII). */
 export function summariseRepairPlan(plan) {
-  const membershipUpdates = plan.assignments.filter((a) => a.update_membership).length;
-  const aliasInserts = plan.assignments.filter((a) => a.insert_alias).length;
   const byProvider = {};
   const byCode = {};
   let facts = 0;
+  let membershipUpdates = 0;
+  let aliasInserts = 0;
   for (const assignment of plan.assignments) {
     facts += assignment.facts;
+    if (assignment.update_membership) membershipUpdates += 1;
+    if (assignment.insert_alias) aliasInserts += 1;
     byProvider[assignment.stored_provider] =
       (byProvider[assignment.stored_provider] ?? 0) + assignment.facts;
-    byCode[assignment.reporting_key] = (byCode[assignment.reporting_key] ?? 0) + assignment.facts;
+    byCode[assignment.reporting_key] =
+      (byCode[assignment.reporting_key] ?? 0) + assignment.facts;
   }
+  const anchors = plan.assignments.map((a) => a.target_from).sort();
   return {
     recruiters_to_repair: plan.assignments.length,
     facts_covered: facts,
+    anchor_from_min: anchors.length > 0 ? anchors[0] : null,
+    anchor_from_max: anchors.length > 0 ? anchors[anchors.length - 1] : null,
     membership_valid_from_updates: membershipUpdates,
     alias_rows_inserted: aliasInserts,
     provider_split: byProvider,
@@ -287,6 +305,99 @@ export function summariseRepairPlan(plan) {
     already_resolved_recruiters: plan.skipped.length,
     refused_recruiters: plan.refusals.length,
     refusal_reasons: [...new Set(plan.refusals.map((r) => r.reason))].sort(),
+  };
+}
+
+/** Fold distribution rows into the comparable shape. */
+export function foldDistribution(rows) {
+  const providerSplit = {};
+  const codeSplit = {};
+  let facts = 0;
+  for (const row of rows) {
+    const n = Number(row.n);
+    facts += n;
+    providerSplit[row.provider_key] = (providerSplit[row.provider_key] ?? 0) + n;
+    codeSplit[row.recruiter_key] = (codeSplit[row.recruiter_key] ?? 0) + n;
+  }
+  return { facts_total: facts, provider_split: providerSplit, reporting_code_split: codeSplit };
+}
+
+/** Stable comparison used by the in-transaction acceptance check. */
+export function distributionMatches(expected, actual) {
+  const same = (a, b) => {
+    const left = Object.entries({ ...(a ?? {}) }).filter(([, n]) => Number(n) !== 0).sort();
+    const right = Object.entries({ ...(b ?? {}) }).filter(([, n]) => Number(n) !== 0).sort();
+    return JSON.stringify(left) === JSON.stringify(right);
+  };
+  return {
+    ok: same(expected.provider_split, actual.provider_split) &&
+      same(expected.reporting_code_split, actual.reporting_code_split),
+    provider_split_ok: same(expected.provider_split, actual.provider_split),
+    reporting_code_split_ok: same(expected.reporting_code_split, actual.reporting_code_split),
+  };
+}
+
+/**
+ * Expected whole-window distribution after the plan is applied: only the facts
+ * that are currently unresolved move to their derived key, everything else stays.
+ */
+export function expectedDistribution(before, plan) {
+  const provider = { ...before.distribution.provider_split };
+  const code = { ...before.distribution.reporting_code_split };
+  let providerResolved = 0;
+  let aliasResolved = 0;
+  for (const assignment of plan.assignments) {
+    providerResolved += assignment.facts_unknown_provider;
+    aliasResolved += assignment.facts_unknown_alias;
+    provider[assignment.stored_provider] =
+      (provider[assignment.stored_provider] ?? 0) + assignment.facts_unknown_provider;
+    code[assignment.reporting_key] =
+      (code[assignment.reporting_key] ?? 0) + assignment.facts_unknown_alias;
+  }
+  provider[UNKNOWN_KEY] = (provider[UNKNOWN_KEY] ?? 0) - providerResolved;
+  code[UNKNOWN_KEY] = (code[UNKNOWN_KEY] ?? 0) - aliasResolved;
+  return {
+    facts_total: before.distribution.facts_total,
+    provider_split: provider,
+    reporting_code_split: code,
+    provider_resolved: providerResolved,
+    alias_resolved: aliasResolved,
+  };
+}
+
+/**
+ * Acceptance: the whole window must equal the expected distribution, the fact
+ * count must not move and exactly the planned sentinels must be gone. With an
+ * empty plan (a re-run after a successful repair) this is a valid no-op.
+ */
+export function acceptanceCheck(before, after, plan) {
+  const expected = expectedDistribution(before, plan);
+  const match = distributionMatches(expected, after.distribution);
+  const factsUnchanged = after.window.facts_total === before.window.facts_total &&
+    after.distribution.facts_total === before.distribution.facts_total;
+  const providerOk = after.window.provider_unknown ===
+    before.window.provider_unknown - expected.provider_resolved;
+  const aliasOk = after.window.recruiter_unknown ===
+    before.window.recruiter_unknown - expected.alias_resolved;
+  return {
+    facts_total_before: before.window.facts_total,
+    facts_total_after: after.window.facts_total,
+    facts_total_unchanged: factsUnchanged,
+    provider_unknown_before: before.window.provider_unknown,
+    provider_unknown_after: after.window.provider_unknown,
+    recruiter_unknown_before: before.window.recruiter_unknown,
+    recruiter_unknown_after: after.window.recruiter_unknown,
+    resolved_by_this_run: {
+      provider: expected.provider_resolved,
+      recruiter: expected.alias_resolved,
+    },
+    provider_split_ok: match.provider_split_ok,
+    reporting_code_split_ok: match.reporting_code_split_ok,
+    provider_unknown_ok: providerOk,
+    recruiter_unknown_ok: aliasOk,
+    distribution: after.distribution,
+    expected_distribution: expected,
+    ok: match.ok && factsUnchanged && providerOk && aliasOk,
   };
 }
 
@@ -312,21 +423,44 @@ export function assignmentStatements(assignment) {
   return statements;
 }
 
-/** Audit rows: one per repaired recruiter, values-free (no PII, no reporting code). */
-export function auditStatements(assignment) {
+/**
+ * Audit rows: one per repaired recruiter, carrying the operating actor, the
+ * capability the actor actually holds and the restricted reason id. Values only;
+ * no worker PII and no reporting code.
+ */
+export function auditStatements(assignment, actor) {
   return [{
     purpose: "audit_event",
     sql: "insert into public.direct_entry_audit_events" +
-      " (action, capability, resource_ref, outcome, changed_fields)" +
-      " values ($1::text, $2::text, $3::text, 'APPLIED', $4::text[])",
+      " (auth_subject, app_user_id, action, capability, resource_ref, outcome, reason_id, changed_fields)" +
+      " values ($1::uuid, $2::uuid, $3::text, $4::text, $5::text, 'APPLIED', $6::uuid, $7::text[])",
     params: [
+      actor.authSubject,
+      actor.appUserId,
       REPAIR_ACTION,
-      REPAIR_CAPABILITY,
+      actor.capability,
       assignment.recruiter_id,
+      actor.reasonId,
       [
         assignment.update_membership ? "provider_membership.valid_from" : "provider_membership.unchanged",
         assignment.insert_alias ? "recruiter_alias.reporting_key" : "recruiter_alias.unchanged",
       ],
     ],
   }];
+}
+
+/** Validate the operator input flags without touching the database. */
+export function validateOperatorInput({ actor, reason }) {
+  const problems = [];
+  if (isBlank(actor) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(actor))) {
+    problems.push("ACTOR_INVALID");
+  }
+  const trimmed = isBlank(reason) ? "" : String(reason).trim();
+  if (trimmed.length < MIN_REASON_LENGTH || trimmed.length > MAX_REASON_LENGTH) {
+    problems.push("REASON_INVALID");
+  }
+  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(trimmed)) {
+    problems.push("REASON_CONTAINS_IDENTIFIER");
+  }
+  return { ok: problems.length === 0, problems, reason: trimmed };
 }

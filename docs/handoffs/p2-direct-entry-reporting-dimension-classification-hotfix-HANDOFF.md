@@ -102,3 +102,45 @@ integrated the ledger becomes 49 and T0 must resolve the two files sharing the
   extended with a derived code.
 - The repair anchors `valid_from` on the earliest non-deleted entry work date of each
   recruiter; it does not attempt to reconstruct exact employment start dates.
+
+## R1 (T0 static review of `d8d5caa`) - findings closed
+
+Same branch, new commit on top; `d8d5caa` is untouched (no amend/rebase/force-push).
+
+1. **Anchor date (finding 1).** `target_from` is now `min(first_work_date)` over the
+   recruiter's facts INSIDE the reporting window (SUBMITTED, not deleted, `>=` cutoff).
+   The old `targets` CTE - every non-deleted entry, Draft and pre-cutoff included - is
+   gone (`min(f.first_work_date) as target_from` on the `facts` CTE). Regression:
+   `R1: an older Draft or pre-cutoff row never pulls the anchor back` seeds a Draft and a
+   pre-cutoff SUBMITTED row at 2026-09-25 and asserts every anchor stays 2026-10-02 and
+   that the repaired membership/alias `valid_from` is exactly `2026-10-02`.
+   Production `--check` reports `anchor_from_min = 2026-10-02`,
+   `anchor_from_max = 2026-10-05`, 0 refusals.
+2. **Reporting-key collision with an existing alias (finding 2).** The plan now counts,
+   per recruiter, `recruiter_aliases` rows of OTHER recruiters that carry the derived key
+   and are still effective after the anchor (`al.valid_to is null or target < al.valid_to`,
+   because the new alias is open-ended). Any conflict refuses that recruiter with
+   `reporting code is already used by another recruiter`. Regressions: the conflict case
+   (foreign open-ended alias) and the time-bounded case (foreign alias closed before the
+   anchor must NOT block). The in-batch duplicate guard is kept (reason now reads
+   `... in this batch`).
+3. **Audit actor and reason (finding 3).** `--apply` and `--dry-run` now require
+   `--actor <app_user_id>` and `--reason <text>` (8..400 chars, refusing text that embeds an
+   identifier). Both are validated OFFLINE before any connection. The actor must be an
+   enabled `direct_entry_app_users` account holding an effective `recruiter_master_manage`
+   or `entry_admin` grant (resolved with `direct_entry_authorization_date()`), otherwise the
+   run fails closed with `ACTOR_NOT_AUTHORIZED` before touching data. The reason is created
+   through the existing `direct_entry_reason()` / `direct_entry_restricted_reasons`
+   mechanism, and every audit row now carries `auth_subject`, `app_user_id`, the capability
+   actually held and `reason_id`. No actor is invented and no worker PII is logged.
+4. **Acceptance and safe re-run (finding 4).** Acceptance now compares the WHOLE window
+   against the expected post-repair distribution (`expectedDistribution()`: only the
+   currently unresolved facts move to their derived key), plus fact-count invariance and the
+   exact sentinel delta. A second run therefore plans nothing, writes nothing (0 statements,
+   no duplicate alias, audit or reason) and still passes acceptance. Regression:
+   `R1: the second run is a no-op with no duplicate alias or audit`.
+
+R1 test evidence: `scripts/p2-de-reporting-dimension-hotfix-db.test.mjs` 12/12 (8 original
++ 4 new R1 cases) and `-safety.test.mjs` 7/7 (new operator/audit/no-op source guards).
+No schema, migration, auth, permission, cutoff or reporting-scope change; the projection
+still has no `direct_entries.provider_type` fallback. Production `--apply` was NOT run.

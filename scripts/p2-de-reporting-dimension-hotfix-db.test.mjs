@@ -24,6 +24,8 @@ import { PGlite } from "@electric-sql/pglite";
 import {
   REPAIR_DISTRIBUTION_SQL,
   REPAIR_PLAN_SQL,
+  REPAIR_VERIFY_SQL,
+  acceptanceCheck,
   assignmentStatements,
   auditStatements,
   deriveRepairPlan,
@@ -41,7 +43,10 @@ const AUTH_PROLOGUE =
 const WORK_EARLY = "2026-10-02";
 const WORK_LATE = "2026-10-05";
 const REPAIRED_FROM = "2026-10-06";
-const PRE_REPAIR_FROM = "2026-10-01";
+// Early enough that a pre-window entry (Draft or pre-cutoff) can be inserted and
+// still be proven NOT to move the repair anchor.
+const PRE_REPAIR_FROM = "2026-09-01";
+const OLD_ROW_DATE = "2026-09-25";
 
 const TEAM = uuid(11);
 const AUTH_ALL = uuid(31), APP_ALL = uuid(41);
@@ -139,7 +144,7 @@ async function seedBase(db) {
 }
 
 let entrySeq = 0;
-async function insertEntry(db, { project, recruiter, provider, date }) {
+async function insertEntry(db, { project, recruiter, provider, date, submit = true }) {
   entrySeq += 1;
   const entry = uuid(1000 + entrySeq), sub = uuid(2000 + entrySeq), cand = uuid(3000 + entrySeq);
   const code = "hrp-2026-" + String(100000 + entrySeq);
@@ -156,8 +161,10 @@ async function insertEntry(db, { project, recruiter, provider, date }) {
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,'TEMPORARY')",
       [entry, sub, cand, APP_ALL, project, date, code,
         JSON.stringify(workerDetails("Worker " + entrySeq)), recruiter, TEAM, provider]);
-    await db.query("update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1", [sub]);
-    await db.query("update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1", [sub]);
+    if (submit) {
+      await db.query("update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1", [sub]);
+      await db.query("update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1", [sub]);
+    }
     await db.exec("commit");
   } catch (error) {
     await db.exec("rollback");
@@ -189,18 +196,41 @@ async function repairPlan(db) {
   return deriveRepairPlan(rows.rows);
 }
 
-async function applyPlan(db, plan) {
+// The operating account used by the repair (enabled + entry_admin capability).
+const REPAIR_ACTOR = {
+  appUserId: APP_ALL,
+  authSubject: AUTH_ALL,
+  capability: "entry_admin",
+  reasonText: "P2 DE reporting dimension metadata repair (PGlite regression)",
+};
+
+async function createReason(db, reasonText = REPAIR_ACTOR.reasonText) {
+  const res = await db.query(
+    "select public.direct_entry_reason($1::uuid,$2::text)::text as reason_id",
+    [REPAIR_ACTOR.appUserId, reasonText]);
+  return res.rows[0].reason_id;
+}
+
+async function applyPlan(db, plan, reasonId = null) {
   await db.exec("begin");
   try {
     let statements = 0;
-    for (const assignment of plan.assignments) {
-      for (const statement of assignmentStatements(assignment)) {
-        await db.query(statement.sql, statement.params);
-        statements += 1;
-      }
-      for (const statement of auditStatements(assignment)) {
-        await db.query(statement.sql, statement.params);
-        statements += 1;
+    if (plan.assignments.length > 0) {
+      const resolvedReason = reasonId ?? (await createReason(db));
+      for (const assignment of plan.assignments) {
+        for (const statement of assignmentStatements(assignment)) {
+          await db.query(statement.sql, statement.params);
+          statements += 1;
+        }
+        for (const statement of auditStatements(assignment, {
+          authSubject: REPAIR_ACTOR.authSubject,
+          appUserId: REPAIR_ACTOR.appUserId,
+          capability: REPAIR_ACTOR.capability,
+          reasonId: resolvedReason,
+        })) {
+          await db.query(statement.sql, statement.params);
+          statements += 1;
+        }
       }
     }
     await db.exec("commit");
@@ -211,9 +241,28 @@ async function applyPlan(db, plan) {
   }
 }
 
+/** Mirrors the CLI: before -> plan -> execute -> after -> acceptance check. */
+async function runRepair(db) {
+  const before = await currentState(db);
+  const plan = await repairPlan(db);
+  const statements = await applyPlan(db, plan);
+  const after = await currentState(db);
+  return { before, plan, statements, after, acceptance: acceptanceCheck(before, after, plan) };
+}
+
 async function distribution(db) {
   const res = await db.query(REPAIR_DISTRIBUTION_SQL);
   return foldDistribution(res.rows);
+}
+
+async function countOf(db, sql) {
+  const res = await db.query(sql);
+  return Number(Object.values(res.rows[0])[0]);
+}
+
+async function currentState(db) {
+  const window = await db.query(REPAIR_VERIFY_SQL);
+  return { window: window.rows[0], distribution: await distribution(db) };
 }
 // ---------------------------------------------------------------------------
 // 1. The defect, reproduced on the real projection.
@@ -285,9 +334,12 @@ test("P2-DE-dim: the repair restores the acceptance distribution and is audited"
     await seedBase(db);
     await seedBatch(db);
     await redateMemberships(db);
-    const plan = await repairPlan(db);
-    const statements = await applyPlan(db, plan);
-    assert.equal(statements, 21, "7 membership re-dates + 7 alias rows + 7 audit events");
+    const run = await runRepair(db);
+    assert.equal(run.statements, 21, "7 membership re-dates + 7 alias rows + 7 audit events");
+    assert.equal(run.acceptance.ok, true, "the acceptance check must pass on the first run");
+    assert.equal(run.acceptance.facts_total_unchanged, true, "the fact count must not move");
+    assert.equal(run.acceptance.provider_unknown_after, 0);
+    assert.equal(run.acceptance.recruiter_unknown_after, 0);
 
     const after = await distribution(db);
     assert.equal(after.facts_total, 17);
@@ -317,10 +369,34 @@ test("P2-DE-dim: the repair restores the acceptance distribution and is audited"
 
     const audit = await db.query(
       "select action, capability, outcome, cardinality(changed_fields)::int as fields," +
-      " count(*)::int as n from public.direct_entry_audit_events group by 1,2,3,4");
-    assert.deepEqual(audit.rows, [
-      { action: "p2_de_reporting_dimension_repair", capability: "recruiter_master_manage", outcome: "APPLIED", fields: 2, n: 7 },
-    ]);
+      " count(*)::int as n," +
+      " count(*) filter (where auth_subject is not null)::int as with_auth_subject," +
+      " count(*) filter (where app_user_id is not null)::int as with_app_user," +
+      " count(*) filter (where reason_id is not null)::int as with_reason," +
+      " count(distinct reason_id)::int as distinct_reasons," +
+      " bool_and(auth_subject::text = $1::text) as auth_subject_matches," +
+      " bool_and(app_user_id::text = $2::text) as app_user_matches" +
+      " from public.direct_entry_audit_events group by 1,2,3,4", [AUTH_ALL, APP_ALL]);
+    assert.deepEqual(audit.rows, [{
+      action: "p2_de_reporting_dimension_repair",
+      capability: "entry_admin",
+      outcome: "APPLIED",
+      fields: 2,
+      n: 7,
+      with_auth_subject: 7,
+      with_app_user: 7,
+      with_reason: 7,
+      distinct_reasons: 1,
+      auth_subject_matches: true,
+      app_user_matches: true,
+    }]);
+    const reason = await db.query(
+      "select reason_text, actor_user_id::text as actor, count(*) over ()::int as total" +
+      " from public.direct_entry_restricted_reasons");
+    assert.equal(reason.rows.length, 1, "exactly one restricted reason per run");
+    assert.equal(reason.rows[0].total, 1);
+    assert.equal(reason.rows[0].reason_text, REPAIR_ACTOR.reasonText);
+    assert.equal(reason.rows[0].actor, APP_ALL);
 
     // Idempotent: a second run has nothing left to do.
     const second = summariseRepairPlan(await repairPlan(db));
@@ -480,10 +556,133 @@ test("P2-DE-dim: two recruiters deriving the same code are both refused", async 
     await redateMemberships(db);
     const summary = summariseRepairPlan(await repairPlan(db));
     assert.equal(summary.refused_recruiters, 2);
-    assert.deepEqual(summary.refusal_reasons, ["reporting code is claimed by more than one recruiter"]);
+    assert.deepEqual(summary.refusal_reasons, ["reporting code is claimed by more than one recruiter in this batch"]);
     assert.equal(summary.recruiters_to_repair, 7, "the acceptance batch is unaffected");
     assert.equal(Object.hasOwn(summary.reporting_code_split, "shared.td"), false,
       "an ambiguous code must never enter the repaired split");
+  } finally {
+    await db.close();
+  }
+});
+// ---------------------------------------------------------------------------
+// 6. R1: the repair anchor is the earliest WINDOW fact, never an older row.
+// ---------------------------------------------------------------------------
+test("P2-DE-dim R1: an older Draft or pre-cutoff row never pulls the anchor back", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db);
+    await seedBatch(db);
+    // A Draft and a pre-cutoff SUBMITTED row, both older than every window fact.
+    await insertEntry(db, {
+      project: "proj_jahwa", recruiter: R_THINHVUONG, provider: "vendor",
+      date: OLD_ROW_DATE, submit: false,
+    });
+    await insertEntry(db, {
+      project: "proj_dongyang", recruiter: R_DHR, provider: "vendor", date: OLD_ROW_DATE,
+    });
+    await redateMemberships(db);
+    const plan = await repairPlan(db);
+    assert.equal(plan.refusals.length, 0);
+    assert.equal(plan.assignments.length, 7);
+    for (const assignment of plan.assignments) {
+      assert.equal(assignment.target_from, WORK_EARLY,
+        "the anchor must stay on the earliest reporting-window fact");
+    }
+    assert.equal(await countOf(db, "select count(*)::int as n from public.direct_entry_reporting_facts_v01"),
+      17, "the pre-window rows must not join the reporting window");
+    await applyPlan(db, plan);
+    const bounds = await db.query(
+      "select min(m.valid_from)::text as membership_from," +
+      " (select min(a.valid_from)::text from public.recruiter_aliases a) as alias_from" +
+      " from public.recruiter_provider_memberships m");
+    assert.deepEqual(bounds.rows[0], { membership_from: WORK_EARLY, alias_from: WORK_EARLY });
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. R1: a reporting key already used by ANOTHER recruiter is refused.
+// ---------------------------------------------------------------------------
+const R_FOREIGN = uuid(34);
+
+async function seedForeignAlias(db, { key, validTo }) {
+  await db.query(
+    "insert into public.recruiters (recruiter_id, display_name, personnel_code)" +
+    " values ($1,'Foreign Recruiter','foreign.td')", [R_FOREIGN]);
+  await db.query(
+    "insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from, valid_to)" +
+    " values ($1,$2,'2020-01-01',$3::date)", [R_FOREIGN, key, validTo]);
+}
+
+test("P2-DE-dim R1: a key already claimed by another recruiter is refused", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db);
+    await seedBatch(db);
+    // Another recruiter still carries the key thinhvuong.vd (open ended), so a new
+    // alias with valid_to = NULL would merge two people onto one reporting key.
+    await seedForeignAlias(db, { key: "thinhvuong.vd", validTo: null });
+    await redateMemberships(db);
+    const plan = await repairPlan(db);
+    const summary = summariseRepairPlan(plan);
+    assert.equal(summary.refused_recruiters, 1);
+    assert.deepEqual(summary.refusal_reasons, ["reporting code is already used by another recruiter"]);
+    assert.equal(summary.recruiters_to_repair, 6, "the other recruiters stay repairable");
+    assert.equal(plan.assignments.some((a) => a.reporting_key === "thinhvuong.vd"), false,
+      "the contested key must never be inserted");
+    assert.equal(Object.hasOwn(summary.reporting_code_split, "thinhvuong.vd"), false);
+    // The foreign alias is untouched.
+    assert.equal(await countOf(db, "select count(*)::int as n from public.recruiter_aliases"), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test("P2-DE-dim R1: a foreign alias closed before the anchor does not block the repair", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db);
+    await seedBatch(db);
+    await seedForeignAlias(db, { key: "thinhvuong.vd", validTo: "2026-10-01" });
+    await redateMemberships(db);
+    const summary = summariseRepairPlan(await repairPlan(db));
+    assert.equal(summary.refused_recruiters, 0);
+    assert.equal(summary.recruiters_to_repair, 7);
+    assert.deepEqual(summary.reporting_code_split, EXPECTED_CODE_SPLIT);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 8. R1: a second run after a successful repair is a valid no-op.
+// ---------------------------------------------------------------------------
+test("P2-DE-dim R1: the second run is a no-op with no duplicate alias or audit", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db);
+    await seedBatch(db);
+    await redateMemberships(db);
+    const first = await runRepair(db);
+    assert.equal(first.acceptance.ok, true);
+    const aliasesAfterFirst = await countOf(db, "select count(*)::int as n from public.recruiter_aliases");
+    const auditAfterFirst = await countOf(db, "select count(*)::int as n from public.direct_entry_audit_events");
+    assert.equal(aliasesAfterFirst, 7);
+    assert.equal(auditAfterFirst, 7);
+
+    const second = await runRepair(db);
+    assert.equal(second.plan.assignments.length, 0, "nothing left to repair");
+    assert.equal(second.plan.skipped.length, 7);
+    assert.equal(second.statements, 0, "a no-op run must not write anything");
+    assert.equal(second.acceptance.ok, true, "a no-op rerun must still satisfy acceptance");
+    assert.equal(second.acceptance.resolved_by_this_run.provider, 0);
+    assert.equal(second.acceptance.resolved_by_this_run.recruiter, 0);
+    assert.deepEqual(second.after.distribution, first.after.distribution);
+    assert.equal(await countOf(db, "select count(*)::int as n from public.recruiter_aliases"), 7);
+    assert.equal(await countOf(db, "select count(*)::int as n from public.direct_entry_audit_events"), 7);
+    assert.equal(await countOf(db, "select count(*)::int as n from public.direct_entry_restricted_reasons"), 1,
+      "a no-op run must not create another restricted reason");
   } finally {
     await db.close();
   }
