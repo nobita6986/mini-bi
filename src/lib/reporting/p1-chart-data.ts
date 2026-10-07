@@ -6,6 +6,7 @@
  * Không tạo index-based random color.
  */
 
+import { buildCompanyDisplayNames } from "../display/company-display-name.ts";
 import type { ColorSlot, ChartSlot } from "../theme/theme-registry";
 
 import type { ProjectProviderMix, ReportingBucket, ReportingSourceStatusRow } from "./p1-reporting";
@@ -155,9 +156,14 @@ export function buildProjectDonutData(buckets: Record<string, ReportingBucket>):
   const baseColors: ColorSlot[] = slices.map((s) => (s.key === OTHER_KEY ? OTHER_SLOT : stableColorForKey(s.key)));
   const colors = resolveAdjacentSlots(baseColors);
 
+  // P3-UI-COMPANY-DISPLAY-NAMES: nhan bieu do dung ten hien thi gon; ten phap ly
+  // van la du lieu chuan cua read-model. Trung ten => fallback ten day du.
+  const displayNames = buildCompanyDisplayNames(
+    slices.map((s) => ({ key: s.key, fullName: s.display })));
+
   return slices.map((s, i) => ({
     key: s.key,
-    display: s.display,
+    display: displayNames.get(s.key) ?? s.display,
     value: s.recruitedCount,
     color: colors[i],
     percent: percentageOfTotal(s.recruitedCount, total),
@@ -228,9 +234,13 @@ export function buildProjectMixRows(mix: ProjectProviderMix[]): ProjectMixRow[] 
   const hrpBase = stableColorForKey("hrp");
   const vendorBase = stableColorForKey("vendor");
   const [hrpSlot, vendorSlot] = distinctChartSlots(hrpBase, vendorBase);
+  // P3-UI-COMPANY-DISPLAY-NAMES: nhan cot/legend dung ten hien thi gon.
+  const displayNames = buildCompanyDisplayNames(
+    mix.map((m) => ({ key: m.projectKey, fullName: m.projectDisplay })));
+
   return mix.map((m) => ({
     key: m.projectKey,
-    display: m.projectDisplay,
+    display: displayNames.get(m.projectKey) ?? m.projectDisplay,
     projectTotal: m.projectTotal,
     knownTotal: m.knownTotal,
     hrpCount: m.hrpCount,

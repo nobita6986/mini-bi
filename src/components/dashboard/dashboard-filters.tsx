@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { parseAsString, useQueryStates } from "nuqs";
 
+import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
 import { EMPLOYMENT_OPTIONS, PROVIDER_OPTIONS } from "@/lib/reporting/p1-dashboard";
 import type { ReportingOptionsCatalog } from "@/lib/reporting/p1-dashboard";
 import { computeDatePresets, countActiveFilterCriteria, isAllTimeActive, matchDatePreset } from "@/lib/reporting/p1-date-presets";
@@ -31,6 +32,10 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 }
 
 export function DashboardFilters({ options }: { options: ReportingOptionsCatalog }) {
+  // P3-UI-COMPANY-DISPLAY-NAMES: danh sach chon hien thi ten gon; gia tri value
+  // van la project key nen khong doi khoa lien ket hay ket qua loc.
+  const projectDisplayNames = buildCompanyDisplayNames(
+    options.dimensions.projects.map((o) => ({ key: o.key, fullName: o.display })));
   const [filters, setFilters] = useQueryStates(parsers, { shallow: false, scroll: false });
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -93,7 +98,7 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
           <Field id="f-project" label="Dự án">
             <select id="f-project" className={inputClass} value={filters.project ?? ""} onChange={(e) => setFilters({ project: e.target.value || null })}>
               <option value="">Tất cả dự án</option>
-              {options.dimensions.projects.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
+              {options.dimensions.projects.map((o) => <option key={o.key} value={o.key}>{projectDisplayNames.get(o.key) ?? o.display}</option>)}
             </select>
           </Field>
           <Field id="f-recruiter" label="Người tuyển">

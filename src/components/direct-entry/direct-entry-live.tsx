@@ -105,6 +105,7 @@ import {
   formatFreeDateText,
   todayInHoChiMinhAsDDMM,
 } from "@/lib/direct-entry/direct-entry-date-format";
+import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
 import {
   buildServerGeneratedFullProfileRequestBody,
   fullProfileErrorMessage,
@@ -162,10 +163,17 @@ function hcmDate(): string {
 }
 
 function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
+  // P3-UI-COMPANY-DISPLAY-NAMES: nhan dropdown Du an dung ten hien thi gon; id gui
+  // len server van la project_id day du, ten phap ly khong bi thay doi.
+  const projectNames = buildCompanyDisplayNames(
+    (catalog?.projects ?? []).map((project) => ({
+      key: project.project_id, fullName: project.display_name,
+    })));
+
   return {
     projects: (catalog?.projects ?? []).map((project) => ({
       id: project.project_id,
-      label: project.display_name,
+      label: projectNames.get(project.project_id) ?? project.display_name,
     })),
     recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({
       id: recruiter.recruiter_id,
