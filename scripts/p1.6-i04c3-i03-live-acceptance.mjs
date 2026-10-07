@@ -138,8 +138,8 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    // W07C-R7 is #49, W07E #50; P2.5-W02 multi-manager authority appends as #51.
-    check(fromScratch.migrationNames.length === 51, "PGlite applied all 51 migrations");
+    // W07C-R7 is #49, W07E #50, P2.5-W02 #51; P2.5-W03 appends as #52.
+    check(fromScratch.migrationNames.length === 52, "PGlite applied all 52 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();

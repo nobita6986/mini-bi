@@ -1,0 +1,630 @@
+/**
+ * P2.5-W03 - worker directory server projection (DB regression, PGlite over the
+ * 52-migration ledger).
+ *
+ * Proves the P2.5 section 4.1 read model at the DB boundary:
+ *   * recruiter audience = verified/effective app-user -> recruiter link, and the
+ *     uploader (created_by) is NOT a recruiter;
+ *   * project audience  = effective project-manager assignment, several managers
+ *     included, cross-project denied, out-of-scope project refused;
+ *   * all audience      = entry_admin + effective all scope only;
+ *   * keyset pagination and every filter are server-side and bounded;
+ *   * payment is capability-gated and masked; raw PII is never returned;
+ *   * allowed_actions is server-supplied and propose_change stays false until W04.
+ */
+import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { test } from "node:test";
+
+import { PGlite } from "@electric-sql/pglite";
+
+const MIGRATION_DIR = path.resolve("supabase/migrations");
+const W03_MIGRATION = "20261008120000_p2_5_w03_worker_directory_projection.sql";
+const W02_MIGRATION = "20261008110000_p2_5_w02_multi_manager_project_authority.sql";
+
+const AUTH_PROLOGUE =
+  "create role anon; create role authenticated; create role service_role;" +
+  " create schema auth; create table auth.users (id uuid primary key);";
+
+function uuid(n) {
+  return "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
+}
+
+const TEAM = uuid(11);
+const PROJ_A = "proj_a", PROJ_B = "proj_b", PROJ_C = "proj_c";
+const REC_A = uuid(21), REC_B = uuid(22), REC_C = uuid(23);
+const ADMIN_AUTH = uuid(31), ADMIN_APP = uuid(41);
+const MGR_A_AUTH = uuid(32), MGR_A_APP = uuid(42);
+const MGR_B_AUTH = uuid(33), MGR_B_APP = uuid(43);
+const UPLOADER_AUTH = uuid(34), UPLOADER_APP = uuid(44);
+const PLAIN_AUTH = uuid(35), PLAIN_APP = uuid(45);
+
+async function buildDb() {
+  const db = new PGlite();
+  await db.exec(AUTH_PROLOGUE);
+  const names = (await readdir(MIGRATION_DIR))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  for (const name of names) {
+    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  }
+  assert.equal(names.length, 52, "the ledger carries 52 migrations after P2.5-W03");
+  assert.equal(names[names.length - 1], W03_MIGRATION, "W03 appends as #52");
+  assert.equal(names[names.length - 2], W02_MIGRATION, "W03 depends on W02 #51");
+  return db;
+}
+
+async function seed(db) {
+  entrySeq = 0;
+  for (const [auth, app] of [[ADMIN_AUTH, ADMIN_APP], [MGR_A_AUTH, MGR_A_APP],
+    [MGR_B_AUTH, MGR_B_APP], [UPLOADER_AUTH, UPLOADER_APP], [PLAIN_AUTH, PLAIN_APP]]) {
+    await db.query("insert into auth.users (id) values ($1)", [auth]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
+      " values ($1,$2,true)", [app, auth]);
+  }
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
+    " values ($1,'entry_admin','2020-01-01')", [ADMIN_APP]);
+  await db.query(
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
+    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+  for (const app of [MGR_A_APP, MGR_B_APP, UPLOADER_APP, PLAIN_APP]) {
+    await db.query(
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
+      " values ($1,'entry_create','2020-01-01')", [app]);
+  }
+  await db.query(
+    "insert into public.teams (team_id, code, display_name) values ($1,'TEAM_W3','Team W3')", [TEAM]);
+  for (const [project, name] of [[PROJ_A, "Project A"], [PROJ_B, "Project B"], [PROJ_C, "Project C"]]) {
+    await db.query(
+      "insert into public.direct_entry_projects (project_id, display_name) values ($1,$2)",
+      [project, name]);
+  }
+  for (const [recruiter, name] of [[REC_A, "Recruiter A"], [REC_B, "Recruiter B"], [REC_C, "Recruiter C"]]) {
+    await db.query(
+      "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
+      " values ($1,'hrp','2020-01-01')", [recruiter]);
+    await db.query(
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
+      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+  }
+  // MGR_A <-> REC_A, MGR_B <-> REC_B: the verified link is the recruiter identity.
+  for (const [app, recruiter] of [[MGR_A_APP, REC_A], [MGR_B_APP, REC_B], [UPLOADER_APP, REC_C]]) {
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links" +
+      " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+      [app, recruiter]);
+  }
+  // PLAIN stays unlinked: it must never resolve to a recruiter audience.
+}
+
+let entrySeq = 0;
+/** Live sibling created alongside a soft-deleted row (see addWorker). */
+let lastSibling = null;
+/** One SUBMITTED worker row; returns the entry id. */
+async function addWorker(db, {
+  project = PROJ_A, recruiter = REC_A, createdBy = UPLOADER_APP,
+  workDate = "2026-10-01", state = "SUBMITTED", deleted = false,
+  payment = null,
+}) {
+  entrySeq += 1;
+  const n = entrySeq;
+  const candidate = uuid(5000 + n), submission = uuid(6000 + n), entry = uuid(7000 + n);
+  const year = String(workDate).slice(0, 4);
+  await db.exec("begin");
+  try {
+    await db.query("insert into public.direct_entry_candidates (candidate_id) values ($1)", [candidate]);
+    await db.query(
+      "insert into public.direct_entry_submissions (submission_id, created_by_user_id, state)" +
+      " values ($1,$2,'DRAFT')", [submission, createdBy]);
+    await db.query(
+      "insert into public.direct_entries (entry_id, submission_id, candidate_id, created_by_user_id," +
+      " project_id, first_work_date, employee_code, worker_details, recruiter_id, team_id," +
+      " provider_type, labor_type)" +
+      " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
+      [entry, submission, candidate, createdBy, project, workDate,
+        "hrp-" + year + "-" + String(300000 + n),
+        JSON.stringify({ display_name: "Worker " + n,
+          date_of_birth: { state: "provided", value: "1990-01-01" },
+          national_id: { state: "provided", value: String(100000000000 + n) },
+          address: { state: "provided", value: "1 Synthetic Street " + n },
+          phone: { state: "provided", value: "0900" + String(100000 + n) } }),
+        recruiter, TEAM]);
+    if (state !== "DRAFT") {
+      await db.query(
+        "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
+        [submission]);
+    }
+    if (state === "SUBMITTED") {
+      await db.query(
+        "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
+        [submission]);
+    }
+    if (payment !== null) {
+      await db.query(
+        "insert into public.direct_entry_payments (entry_id, state, account_number, bank_id," +
+        " account_holder_name) values ($1,$2,$3,$4,$5)",
+        [entry, payment.state, payment.account_number ?? null, payment.bank_id ?? null,
+          payment.account_holder_name ?? null]);
+    }
+    let sibling = null;
+    if (deleted) {
+      // A submission may not end up with only deleted rows, so the soft-deleted
+      // worker keeps a live sibling in the same submission.
+      sibling = uuid(9000 + n);
+      await db.query(
+        "insert into public.direct_entries (entry_id, submission_id, candidate_id," +
+        " created_by_user_id, project_id, first_work_date, employee_code, worker_details," +
+        " recruiter_id, team_id, provider_type, labor_type)" +
+        " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
+        [sibling, submission, candidate, createdBy, project, workDate,
+          "hrp-" + year + "-" + String(400000 + n),
+          JSON.stringify({ display_name: "Worker " + n + " sibling",
+            date_of_birth: { state: "omitted" }, national_id: { state: "omitted" },
+            address: { state: "omitted" }, phone: { state: "omitted" } }),
+          recruiter, TEAM]);
+      // direct_entries has an OCC trigger: every mutation must advance the version.
+      await db.query(
+        "update public.direct_entries set deleted_at = now(), version = version + 1" +
+        " where entry_id = $1", [entry]);
+    }
+    lastSibling = sibling;
+    await db.exec("commit");
+  } catch (error) {
+    await db.exec("rollback");
+    throw error;
+  }
+  return entry;
+}
+
+/**
+ * Employment status history. The first event must be UNCONFIRMED at
+ * first_work_date; later events are ON/OFF transitions (OFF carries a leave date).
+ */
+async function setEmploymentHistory(db, entry, steps) {
+  const reasonId = await syntheticReason(db, "synthetic status reason");
+  let version = 0;
+  for (const step of steps) {
+    version += 1;
+    await db.query(
+      "insert into public.direct_entry_employment_status_events" +
+      " (entry_id, status, effective_date, leave_date, leave_reason_text, version," +
+      " actor_user_id, reason_id)" +
+      " values ($1,$2,$3::date, case when $2 = 'OFF' then $3::date else null end," +
+      " case when $2 = 'OFF' then 'synthetic leave' else null end, $4,$5,$6)",
+      [entry, step.status, step.effective, version, UPLOADER_APP, reasonId]);
+  }
+}
+
+async function grantCapability(db, app, capability) {
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
+    " values ($1,$2,'2020-01-01')", [app, capability]);
+}
+
+async function assignManager(db, { project, recruiter, key }) {
+  const version = await currentProjectVersion(db, project);
+  await db.query(
+    "select public.direct_entry_assign_project_manager($1::uuid,$2::uuid,$3::text,$4::uuid," +
+    "$5::date,$6::integer,$7::text,$8::text)",
+    [ADMIN_AUTH, ADMIN_APP, project, recruiter, null, version,
+      "synthetic assignment", key]);
+}
+
+async function currentProjectVersion(db, project) {
+  const res = await db.query(
+    "select version from public.direct_entry_projects where project_id = $1", [project]);
+  return res.rows[0].version;
+}
+
+async function listWorkers(db, {
+  auth = MGR_A_AUTH, app = MGR_A_APP, scope = "managed",
+  project = null, recruiter = null, employment = null, cursor = null, pageSize = null,
+} = {}) {
+  const res = await db.query(
+    "select public.direct_entry_list_workers($1::uuid,$2::uuid,$3::text,$4::text,$5::uuid," +
+    "$6::text,$7::text,$8::integer) as data",
+    [auth, app, scope, project, recruiter, employment, cursor, pageSize]);
+  return res.rows[0].data;
+}
+
+function codes(items) {
+  return items.map((row) => row.employee_code).sort();
+}
+
+/**
+ * Row-level change-request fixtures. The directory only reads the request tables,
+ * so these insert the rows directly: this suite must not re-test the W04 engine
+ * policy, and it must keep working while that policy is rebaselined.
+ */
+async function syntheticReason(db, text = "synthetic reason") {
+  const res = await db.query(
+    "insert into public.direct_entry_restricted_reasons (actor_user_id, reason_text)" +
+    " values ($1,$2) returning reason_id::text as id", [UPLOADER_APP, text]);
+  return res.rows[0].id;
+}
+
+async function insertPendingRequest(db, { entry, key }) {
+  const reasonId = await syntheticReason(db);
+  const res = await db.query(
+    "insert into public.direct_entry_change_requests" +
+    " (proposer_user_id, state, version, idempotency_key, request_hash, reason_id)" +
+    " values ($1,'PENDING',1,$2,$3,$4) returning request_id::text as id",
+    [MGR_A_APP, key, "a".repeat(64), reasonId]);
+  const requestId = res.rows[0].id;
+  await db.query(
+    "insert into public.direct_entry_change_request_items" +
+    " (request_id, entry_id, target_kind, expected_version, proposal)" +
+    " values ($1,$2,'ENTRY_FIELD',1,$3::jsonb)",
+    [requestId, entry, JSON.stringify({ phone: "0900000001" })]);
+  return requestId;
+}
+
+async function rejectRequest(db, requestId) {
+  const reasonId = await syntheticReason(db, "synthetic rejection");
+  await db.query(
+    "update public.direct_entry_change_requests set state='REJECTED', version=2," +
+    " decided_by_user_id=$2, decided_at=now(), decision_reason_id=$3 where request_id=$1",
+    [requestId, ADMIN_APP, reasonId]);
+}
+
+// ---------------------------------------------------------------------------
+// 1. Three relationships stay distinct: recruiter != uploader != project manager.
+// ---------------------------------------------------------------------------
+test("W03: recruiter, uploader and project manager are three different audiences", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    // REC_A worker was entered by the uploader; another worker belongs to REC_B.
+    const entryA = await addWorker(db, { recruiter: REC_A, createdBy: UPLOADER_APP });
+    await addWorker(db, { recruiter: REC_B, createdBy: UPLOADER_APP, workDate: "2026-10-02" });
+
+    // The uploader is REC_C's linked account and entered both rows, but is neither
+    // the recruiter of record nor a project manager.
+    const uploaderRecruited = await listWorkers(db, {
+      auth: UPLOADER_AUTH, app: UPLOADER_APP, scope: "recruited",
+    });
+    assert.deepEqual(uploaderRecruited.items, [],
+      "created_by is not a recruiter identity");
+    await assert.rejects(
+      () => listWorkers(db, { auth: UPLOADER_AUTH, app: UPLOADER_APP, scope: "managed" }),
+      (error) => error.code === "42501",
+      "created_by is not a project assignment");
+
+    // The canonical recruiter of record sees exactly their own rows.
+    const recruiterA = await listWorkers(db, {
+      auth: MGR_A_AUTH, app: MGR_A_APP, scope: "recruited",
+    });
+    assert.deepEqual(codes(recruiterA.items), ["hrp-2026-300001"]);
+    assert.equal(recruiterA.items[0].entry_id, entryA);
+    assert.equal(recruiterA.items[0].recruiter_id, REC_A);
+    assert.equal(recruiterA.items[0].is_project_manager, false,
+      "a recruiter with no assignment is not a project manager");
+    assert.equal(recruiterA.items[0].allowed_actions.propose_change, false);
+    // The uploader is NOT leaked into the canonical recruiter's projection.
+    assert.equal(recruiterA.items[0].created_by_user_id, undefined);
+
+    // An unlinked account resolves to no audience at all.
+    await assert.rejects(
+      () => listWorkers(db, { auth: PLAIN_AUTH, app: PLAIN_APP, scope: "recruited" }),
+      (error) => error.code === "42501",
+      "recruiter audience needs a verified link");
+    await assert.rejects(
+      () => listWorkers(db, { auth: UPLOADER_AUTH, app: UPLOADER_APP, scope: "all" }),
+      (error) => error.code === "42501",
+      "all audience needs entry_admin + all scope");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 2. Project audience: effective assignment only, multi-manager, cross-project.
+// ---------------------------------------------------------------------------
+test("W03: project audience follows the effective assignment, several managers included", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await addWorker(db, { project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01" });
+    await addWorker(db, { project: PROJ_A, recruiter: REC_B, workDate: "2026-10-02" });
+    await addWorker(db, { project: PROJ_B, recruiter: REC_A, workDate: "2026-10-03" });
+
+    // MGR_A manages PROJ_A, MGR_B manages PROJ_A as well: multi-manager.
+    await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
+    await assignManager(db, { project: PROJ_A, recruiter: REC_B, key: "assign-b" });
+
+    for (const [auth, app] of [[MGR_A_AUTH, MGR_A_APP], [MGR_B_AUTH, MGR_B_APP]]) {
+      const page = await listWorkers(db, { auth, app, scope: "managed" });
+      assert.deepEqual(codes(page.items), ["hrp-2026-300001", "hrp-2026-300002"],
+        "both effective managers see every worker of the project");
+      assert.equal(page.items.every((row) => row.project_id === PROJ_A), true);
+      assert.equal(page.items.every((row) => row.is_project_manager === true), true,
+        "rows in a managed project report is_project_manager");
+    }
+
+    // A worker of PROJ_B is outside the assignment of both managers.
+    await assignManager(db, { project: PROJ_B, recruiter: REC_C, key: "assign-c" });
+    const crossProject = await listWorkers(db, {
+      auth: MGR_A_AUTH, app: MGR_A_APP, scope: "managed", project: PROJ_B,
+    }).catch((error) => error);
+    assert.equal(crossProject.code, "42501",
+      "asking for a project outside the effective assignment is refused");
+
+    // Filters stay inside the audience: a recruiter filter cannot widen it.
+    const filtered = await listWorkers(db, {
+      auth: MGR_A_AUTH, app: MGR_A_APP, scope: "managed", recruiter: REC_B,
+    });
+    assert.deepEqual(codes(filtered.items), ["hrp-2026-300002"]);
+    // Revoking the assignment removes the rows immediately.
+    const assignment = await db.query(
+      "select assignment_id::text as id, version from public.direct_entry_project_manager_assignments" +
+      " a join public.direct_entry_app_user_recruiter_links l" +
+      " on l.recruiter_id = a.manager_recruiter_id and l.app_user_id = $1::uuid" +
+      " where a.project_id = $2 and a.valid_to is null", [MGR_A_APP, PROJ_A]);
+    await db.query(
+      "select public.direct_entry_unassign_project_manager($1::uuid,$2::uuid,$3::uuid,$4::integer," +
+      "$5::integer,$6::text,$7::text)",
+      [ADMIN_AUTH, ADMIN_APP, assignment.rows[0].id, assignment.rows[0].version,
+        await currentProjectVersion(db, PROJ_A), "synthetic revocation", "unassign-a"]);
+    const afterRevoke = await listWorkers(db, {
+      auth: MGR_A_AUTH, app: MGR_A_APP, scope: "managed",
+    }).catch((error) => error);
+    assert.equal(afterRevoke.code, "42501", "no assignment left => no project audience");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 3. All audience: DB-authoritative capability + scope, never inferred.
+// ---------------------------------------------------------------------------
+test("W03: the all audience needs the entry_admin capability and an all scope grant", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await addWorker(db, { project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01" });
+    await addWorker(db, { project: PROJ_B, recruiter: REC_B, workDate: "2026-10-02" });
+
+    const all = await listWorkers(db, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" });
+    assert.deepEqual(codes(all.items), ["hrp-2026-300001", "hrp-2026-300002"]);
+
+    // entry_admin without the all scope is not enough.
+    await grantCapability(db, MGR_A_APP, "entry_admin");
+    await assert.rejects(
+      () => listWorkers(db, { auth: MGR_A_AUTH, app: MGR_A_APP, scope: "all" }),
+      (error) => error.code === "42501",
+      "entry_admin without an all scope grant is refused");
+    // A reporting-style team scope is NOT an approval/directory capability.
+    await db.query(
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
+      " values ($1,'team',$2,'2020-01-01')", [MGR_A_APP, TEAM]);
+    await assert.rejects(
+      () => listWorkers(db, { auth: MGR_A_AUTH, app: MGR_A_APP, scope: "all" }),
+      (error) => error.code === "42501",
+      "a team scope never opens the directory");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 4. Keyset pagination and server-side filters.
+// ---------------------------------------------------------------------------
+test("W03: pagination is keyset, stable and bounded; filters are server-side", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
+    const codesInOrder = [];
+    for (const day of ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"]) {
+      const entry = await addWorker(db, { project: PROJ_A, workDate: day });
+      codesInOrder.push(entry);
+    }
+    await addWorker(db, { project: PROJ_A, workDate: "2026-10-06", state: "REVIEW" });
+    const deletedEntry = await addWorker(db, { project: PROJ_A, workDate: "2026-10-07", deleted: true });
+    const liveSibling = lastSibling;
+    await addWorker(db, { project: PROJ_B, workDate: "2026-10-08" });
+
+    const first = await listWorkers(db, { scope: "managed", pageSize: 2 });
+    assert.equal(first.page_size, 2);
+    assert.equal(first.has_more, true);
+    assert.deepEqual(first.items.map((row) => row.first_work_date),
+      ["2026-10-07", "2026-10-05"], "newest first, stable ordering");
+    assert.match(first.next_cursor, /^[0-9]{8}:[0-9a-f-]{36}$/);
+
+    const seen = [...first.items.map((row) => row.entry_id)];
+    let cursor = first.next_cursor;
+    let guard = 0;
+    while (cursor !== null && guard < 10) {
+      const page = await listWorkers(db, { scope: "managed", pageSize: 2, cursor });
+      seen.push(...page.items.map((row) => row.entry_id));
+      cursor = page.next_cursor;
+      guard += 1;
+    }
+    assert.deepEqual(seen, [liveSibling, ...[...codesInOrder].reverse()],
+      "the full scan returns every eligible row exactly once");
+    assert.equal(new Set(seen).size, seen.length, "no duplicate row across pages");
+
+    // REVIEW, soft-deleted rows and other projects never appear in the page.
+    assert.equal(seen.length, 6);
+    assert.equal(seen.includes(deletedEntry), false, "a soft-deleted row is not a worker");
+    assert.equal(seen.includes(liveSibling), true, "its live sibling still is");
+
+    // Bounds and validation are server-side.
+    for (const pageSize of [0, 101]) {
+      await assert.rejects(() => listWorkers(db, { scope: "managed", pageSize }),
+        (error) => error.code === "22023", "page size " + pageSize);
+    }
+    await assert.rejects(() => listWorkers(db, { scope: "managed", cursor: "not-a-cursor" }),
+      (error) => error.code === "22023");
+    await assert.rejects(() => listWorkers(db, { scope: "everything" }),
+      (error) => error.code === "22023");
+    await assert.rejects(() => listWorkers(db, { scope: "managed", employment: "MAYBE" }),
+      (error) => error.code === "22023");
+    await assert.rejects(
+      () => listWorkers(db, { scope: "managed", project: "bad project id" }),
+      (error) => error.code === "22023");
+
+  } finally {
+    await db.close();
+  }
+});
+
+test("W03: the employment status filter reads the latest status event", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
+    const worker = await addWorker(db, { project: PROJ_A, workDate: "2026-10-02" });
+    const untouched = await addWorker(db, { project: PROJ_A, workDate: "2026-10-03" });
+    const raw = await addWorker(db, { project: PROJ_A, workDate: "2026-10-05" });
+    await setEmploymentHistory(db, worker, [
+      { status: "UNCONFIRMED", effective: "2026-10-02" },
+      { status: "ON", effective: "2026-10-03" },
+      { status: "OFF", effective: "2026-10-04" },
+    ]);
+    await setEmploymentHistory(db, untouched, [
+      { status: "UNCONFIRMED", effective: "2026-10-03" },
+    ]);
+
+    const off = await listWorkers(db, { scope: "managed", employment: "OFF" });
+    assert.deepEqual(off.items.map((row) => row.entry_id), [worker]);
+    assert.equal(off.items[0].employment_status, "OFF");
+    const unconfirmed = await listWorkers(db, { scope: "managed", employment: "UNCONFIRMED" });
+    assert.deepEqual(unconfirmed.items.map((row) => row.entry_id), [untouched],
+      "the filter follows the latest status event");
+    assert.equal(unconfirmed.items[0].employment_status, "UNCONFIRMED");
+    // A worker with no status event has no status: the directory mirrors the
+    // existing read projection instead of inventing the engine's implicit default.
+    const all = await listWorkers(db, { scope: "managed" });
+    assert.equal(all.items.find((row) => row.entry_id === raw).employment_status, null);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 5. PII / payment projection is capability-gated and masked.
+// ---------------------------------------------------------------------------
+test("W03: payment is masked and gated by payment_view; raw PII is never projected", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
+    await addWorker(db, {
+      project: PROJ_A, workDate: "2026-10-01",
+      payment: { state: "provided", account_number: "012345678901", bank_id: null,
+        account_holder_name: "Synthetic Holder" },
+    });
+
+    const withoutCapability = await listWorkers(db, { scope: "managed" });
+    const rowWithout = withoutCapability.items[0];
+    assert.equal(rowWithout.payment, null, "no payment_view => no payment object");
+    assert.equal(rowWithout.allowed_actions.view_payment, false);
+    assert.equal(rowWithout.allowed_actions.view_pii, false);
+    for (const leaked of ["national_id", "date_of_birth", "address", "phone", "worker_details"]) {
+      assert.equal(leaked in rowWithout, false, leaked + " must never be in the directory row");
+    }
+
+    await grantCapability(db, MGR_A_APP, "payment_view");
+    await grantCapability(db, MGR_A_APP, "pii_view");
+    const withCapability = await listWorkers(db, { scope: "managed" });
+    const rowWith = withCapability.items[0];
+    assert.equal(rowWith.allowed_actions.view_payment, true);
+    assert.equal(rowWith.allowed_actions.view_pii, true);
+    assert.equal(rowWith.payment.state, "provided");
+    assert.equal(rowWith.payment.account_number, "••••••••8901",
+      "only the last four digits survive the mask");
+    assert.equal(rowWith.payment.account_number.includes("012345678901"), false,
+      "the raw account number is never returned");
+    assert.deepEqual(Object.keys(rowWithout).sort(), Object.keys(rowWith).sort(),
+      "the row key set never changes with capability");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 6. allowed_actions is server-supplied; propose_change stays closed until W04.
+// ---------------------------------------------------------------------------
+test("W03: allowed_actions is server-supplied and propose_change stays false until W04", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
+    const entry = await addWorker(db, { project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01" });
+
+    for (const [auth, app, scope] of [
+      [MGR_A_AUTH, MGR_A_APP, "managed"],
+      [MGR_A_AUTH, MGR_A_APP, "recruited"],
+      [ADMIN_AUTH, ADMIN_APP, "all"],
+    ]) {
+      const page = await listWorkers(db, { auth, app, scope });
+      for (const row of page.items) {
+        assert.deepEqual(row.allowed_actions, {
+          view: true,
+          view_pii: false,
+          view_payment: false,
+          propose_change: false,
+          propose_change_code: "PROPOSE_PENDING_W04_POLICY",
+        }, scope + " must not advertise propose_change before W04");
+      }
+    }
+
+    // The project manager is still reported as data, so W04 can flip the action
+    // without a contract change.
+    const managed = await listWorkers(db, { scope: "managed" });
+    assert.equal(managed.items[0].is_project_manager, true);
+    assert.equal(managed.items[0].entry_id, entry);
+
+    // Pending request and last decision metadata come from the existing engine tables.
+    const requestId = await insertPendingRequest(db, { entry, key: "w03-propose-1" });
+    const pending = await listWorkers(db, { scope: "managed" });
+    assert.deepEqual(pending.items[0].pending_request, {
+      request_id: requestId, state: "PENDING", version: 1,
+    });
+    assert.equal(pending.items[0].last_decision, null);
+
+    await rejectRequest(db, requestId);
+    const decided = await listWorkers(db, { scope: "managed" });
+    assert.equal(decided.items[0].pending_request, null);
+    assert.equal(decided.items[0].last_decision.state, "REJECTED");
+    assert.match(decided.items[0].last_decision.decided_at, /^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$/);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. ACL / hardening.
+// ---------------------------------------------------------------------------
+test("W03: the directory RPC is service_role only and the audience guard is revoked", async () => {
+  const db = await buildDb();
+  try {
+    const rpc = "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer)";
+    const guard = "public.direct_entry_worker_directory_audience(uuid, uuid, text, text)";
+    const res = await db.query(
+      "select p.prosecdef, p.proconfig from pg_proc p where p.oid = $1::regprocedure", [rpc]);
+    assert.equal(res.rows[0].prosecdef, true);
+    assert.ok(res.rows[0].proconfig.includes("search_path=pg_catalog, public"));
+    for (const [role, expected] of [["service_role", true], ["anon", false], ["authenticated", false]]) {
+      const priv = await db.query(
+        "select has_function_privilege($1, $2::regprocedure, 'EXECUTE') as ok", [role, rpc]);
+      assert.equal(priv.rows[0].ok, expected, rpc + " vs " + role);
+    }
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const priv = await db.query(
+        "select has_function_privilege($1, $2::regprocedure, 'EXECUTE') as ok", [role, guard]);
+      assert.equal(priv.rows[0].ok, false, guard + " must stay revoked from " + role);
+    }
+    const guardDef = await db.query(
+      "select p.prosecdef from pg_proc p where p.oid = $1::regprocedure", [guard]);
+    assert.equal(guardDef.rows[0].prosecdef, true);
+  } finally {
+    await db.close();
+  }
+});

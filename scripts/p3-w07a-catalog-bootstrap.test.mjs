@@ -35,7 +35,7 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 import { runCatalogBootstrap } from "./p3-w07a-catalog-bootstrap.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
-// P2.5-W02 (#51) is the last migration in the ledger.
+// P2.5-W03 (#52) is the last migration in the ledger.
 const PRE_W02_MIGRATION = "20261008100000_p3_w07e_project_manager_submitted_change_requests.sql";
 
 async function buildDatabase({ untilMigration = null } = {}) {

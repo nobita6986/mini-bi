@@ -95,8 +95,8 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P3-W07B migration #43 adds project-manager scope enforcement.
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
-  // as #49 after W07C-R7; W07E #50 and P2.5-W02 #51.
-  assert.equal(migrationNames.length, 51);
+  // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
+  assert.equal(migrationNames.length, 52);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -161,6 +161,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // its R1 successor adds four internal project-master helpers (row lock/OCC,
   // snapshot, revision writer, version bump) and five service-role-only project
   // RPCs (list/get/create/update/set-active), still with no anon surface.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [107, 53, 54]);
+  // P2.5-W03 (#52) adds one internal worker-directory audience guard and one
+  // service-role-only directory RPC.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [109, 54, 55]);
   await db.close();
 });

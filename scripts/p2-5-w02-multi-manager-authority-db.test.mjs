@@ -28,6 +28,8 @@ import { PGlite } from "@electric-sql/pglite";
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const W02_MIGRATION =
   "20261008110000_p2_5_w02_multi_manager_project_authority.sql";
+const W03_MIGRATION =
+  "20261008120000_p2_5_w03_worker_directory_projection.sql";
 const PRE_W02_MIGRATION =
   "20261008100000_p3_w07e_project_manager_submitted_change_requests.sql";
 
@@ -74,8 +76,9 @@ async function migratedDb(untilName = null) {
 
 async function buildDb() {
   const { db, names } = await migratedDb(null);
-  assert.equal(names.length, 51, "the ledger carries 51 migrations after P2.5-W02");
-  assert.equal(names[names.length - 1], W02_MIGRATION, "W02 appends as #51");
+  assert.equal(names.length, 52, "the ledger carries 52 migrations after P2.5-W03");
+  assert.equal(names[names.length - 2], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - 1], W03_MIGRATION, "P2.5-W03 appends as #52");
   return db;
 }
 
