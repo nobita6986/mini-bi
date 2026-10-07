@@ -35,6 +35,14 @@ test("R1: reporting server defers to the DB audience (no TS/UTC inference, no pr
   assert.match(server, /dbKind === "all"/);
 });
 
+test("R3: reporting server validates the all-source filter against the DB allowlist", () => {
+  assert.match(server, /validateAllSourceFilter\(/);
+  assert.match(server, /allowlist: dbSources\.map\(\(s\) => s\.id\)/);
+  assert.match(server, /if \(!sourceCheck\.ok\)/);
+  assert.match(server, /return \{ ok: false, code: sourceCheck\.code, message: sourceCheck\.message \}/);
+  assert.match(server, /dbKind === "all"/);
+});
+
 test("E22: audience projection carries only kind + label (no UUID/grants/raw scope)", () => {
   const typeMatch = audience.match(/interface ReportingAudience \{[\s\S]*?\}/);
   assert.ok(typeMatch, "ReportingAudience type must exist");
