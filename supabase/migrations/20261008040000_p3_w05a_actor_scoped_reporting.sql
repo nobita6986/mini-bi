@@ -323,7 +323,7 @@ begin
                p_auth_subject, p_app_user_id
              ) ae
          )
-         and (v_source is null)  -- source filter is legacy-only
+         and (v_kind <> 'all' or v_source is null)  -- source filter is legacy-only; team/own ignore it
          and (v_from is null or f.business_date >= v_from)
          and (v_to is null or f.business_date <= v_to)
          and (v_project is null or f.project_key = v_project)
