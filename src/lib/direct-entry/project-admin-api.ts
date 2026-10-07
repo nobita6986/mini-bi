@@ -296,7 +296,7 @@ export async function getProjectAdmin(
   const actor = await resolveTrustedActor(dependencies);
   if (!actor.ok) return actor.response;
   try {
-    const result = await dependencies.repository.getProject({ ...actor.value, project_id: id });
+    const result = await dependencies.repository.getProjectDetail({ ...actor.value, project_id: id });
     if (!result.ok) return projectAdminErrorResponse(result.kind);
     return respond({ ok: true, detail: result.data }, 200);
   } catch {

@@ -20,6 +20,7 @@ const {
   decideNavEntryVisibility,
   directEntryNavPredicate,
   adminAuthorityNavPredicate,
+  projectAdminNavPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -53,6 +54,19 @@ test("adminAuthorityNavPredicate: phải có đủ 3 capability + scope 'all'", 
     adminAuthorityNavPredicate(makeActor(allCaps, [{ kind: "team", reference: "t" }])),
     false,
   );
+});
+
+test("F5: projectAdminNavPredicate = entry_admin + all scope, KHONG can 2 token kia", () => {
+  // DB W02 (direct_entry_assert_project_admin) chi can entry_admin + all scope.
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "all", reference: "all" }])), true);
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"],
+    [{ kind: "all", reference: "all" }])), true, "them 2 token khong anh huong");
+  // entry_own/entry_team KHONG duoc render page roi moi cho API 403.
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_own"], [{ kind: "all", reference: "all" }])), false);
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_team"], [{ kind: "all", reference: "all" }])), false);
+  // entry_admin nhung KHONG co scope all => fail.
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "team", reference: "t" }])), false);
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [])), false);
 });
 
 test("resolveNavCapabilityPredicate: token không xác định fail-closed", () => {

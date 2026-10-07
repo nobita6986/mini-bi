@@ -53,8 +53,11 @@ test("app-shell lọc nav theo feature flag + capability predicate tại request
   // Mobile viewport trong filterEntriesForActor.
   assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]{0,200}viewport:\s*"mobile"[\s\S]{0,400}\}/);
   assert.match(appShellSource, /decideNavEntryVisibility\(/);
-  assert.match(appShellSource, /<DesktopNav activePath=\{currentPath\} items=\{desktopItems\}/);
+  assert.match(appShellSource, /<DesktopNav items=\{desktopItems\}/);
   assert.match(appShellSource, /items=\{mobileItems\.map\(/);
+  // F6: active label duoc tinh client-side, khong con currentPath server.
+  assert.match(appShellSource, /<ActivePageLabel \/>/);
+  assert.ok(!/currentPath/.test(appShellSource), "AppShell khong con nhan currentPath");
 });
 
 test("app-shell.tsx: actor prop là NavActorProjection tối thiểu, không nhận auth_subject/email", () => {
@@ -137,8 +140,10 @@ test("mobile-nav.tsx: không dùng localStorage / console.log / API key", () => 
   }
 });
 
-test("desktop-nav.tsx: là Server Component (KHÔNG có 'use client')", () => {
-  assert.ok(!desktopNavSource.includes('"use client"'), "desktop-nav.tsx phải là Server Component");
+test("desktop-nav.tsx: là Client Component dùng usePathname + findEntryByPath (F6)", () => {
+  assert.ok(desktopNavSource.includes('"use client"'), "desktop-nav.tsx phải là Client Component");
+  assert.ok(desktopNavSource.includes("usePathname"), "dùng usePathname de tinh active");
+  assert.ok(desktopNavSource.includes("findEntryByPath"), "dùng findEntryByPath longest-prefix");
 });
 
 test("desktop-nav.tsx: dùng next/link và có nav landmark", () => {
@@ -167,11 +172,14 @@ test("desktop-nav nhận các entry đã filter từ AppShell, không tự quy�
   assert.ok(!desktopNavSource.includes("Nhập liệu trực tiếp"));
 });
 
-test("mobile-nav chỉ nhận danh sách server-filtered và không đọc env/registry", () => {
+test("mobile-nav nhận danh sách server-filtered, dùng usePathname, không đọc env", () => {
   assert.ok(mobileNavSource.includes("items: ReadonlyArray<MobileNavItem>"));
   assert.ok(!mobileNavSource.includes("entriesForViewport"));
   assert.ok(!mobileNavSource.includes("process.env"));
-  assert.ok(!mobileNavSource.includes('from "@/lib/navigation/registry"'));
+  // F6: mobile chi import findEntryByPath cho active detection, khong tu filter.
+  assert.ok(mobileNavSource.includes("findEntryByPath"));
+  assert.ok(mobileNavSource.includes("usePathname"));
+  assert.ok(mobileNavSource.includes('"project-operations": Building2'), "mobile co icon cho Dự án");
   assert.ok(!mobileNavSource.includes("Pipeline check"));
   assert.ok(!mobileNavSource.includes("Nhập liệu trực tiếp"));
 });

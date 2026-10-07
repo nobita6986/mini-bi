@@ -13,10 +13,11 @@ import { readFileSync } from "node:fs";
 const dashboardLayout = readFileSync(new URL("./layout.tsx", import.meta.url), "utf8");
 const dashboardPage = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 
-test("dashboard/layout.tsx: default export là function và wrap AppShell với currentPath='/dashboard'", () => {
+test("dashboard/layout.tsx: default export là function và wrap AppShell", () => {
   assert.match(dashboardLayout, /export default async function DashboardLayout/);
   assert.ok(dashboardLayout.includes('AppShell'));
-  assert.ok(dashboardLayout.includes('currentPath="/dashboard"'));
+  // F6: active path giờ do usePathname tinh client-side, layout khong truyen currentPath.
+  assert.ok(!dashboardLayout.includes('currentPath'));
 });
 
 test("dashboard/layout.tsx: chỉ import server-side nav actor, không import AI internals", () => {

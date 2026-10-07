@@ -24,6 +24,7 @@ import {
   buildSetActiveRequest,
   buildUnassignRequest,
   classifyResponse,
+  mutationProjectVersion,
   newIdempotencyKey,
   parseDetailResponse,
   parseListResponse,
@@ -257,9 +258,9 @@ export function ProjectOperations() {
       const { outcome, payload } = await send(
         API + "/" + encodeURIComponent(detail.project_id) + "/managers", "POST", request, key);
       if (!applyOutcome(outcome)) { setBusy(false); await afterSuccess(detail.project_id); return; }
-      const root = payload as { project?: { version?: unknown } } | null;
-      const next = root && root.project ? root.project.version : null;
-      if (typeof next !== "number") { setBusy(false); await afterSuccess(detail.project_id); return; }
+      // OCC dung project_version (khong phai version = assignment version).
+      const next = mutationProjectVersion(payload);
+      if (next === null) { setBusy(false); await afterSuccess(detail.project_id); return; }
       version = next;
     }
     setBusy(false);
@@ -401,7 +402,9 @@ export function ProjectOperations() {
           <div className="flex flex-col gap-4 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm">
-                <span className="font-medium">{detail.project_id}</span>
+                <span className="font-medium">{detail.display_name}</span>
+                {" · "}
+                <span className="font-mono text-xs">{detail.project_id}</span>
                 {" — "}
                 {projectStatusLabel(detail.project_active)}
                 {" — phiên bản "}
@@ -515,9 +518,10 @@ export function ProjectOperations() {
                 onSubmit={(event) => { event.preventDefault(); void submitAssign(); }}>
                 <Dialog.Title className="text-base font-medium">Gán quản lý dự án</Dialog.Title>
                 <Dialog.Description className="text-sm text-muted-foreground">
-                  Có thể gán nhiều quản lý trong một lần gửi.
+                  Các phân công được xử lý lần lượt; nếu một bước lỗi, hãy tải lại để xem phần đã áp dụng.
                 </Dialog.Description>
-                <Field id="manager-id" label="Mã người tuyển (quản lý)">
+                <Field id="manager-id" label="recruiter_id (UUID)"
+                  hint="Mã định danh người tuyển. Chỉ recruiter có verified account link được chấp nhận (server enforce).">
                   <input id="manager-id" className={inputClass} value={managerId}
                     onChange={(event) => setManagerId(event.target.value)} />
                 </Field>

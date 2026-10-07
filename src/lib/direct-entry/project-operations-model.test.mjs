@@ -8,6 +8,7 @@ import {
   buildSetActiveRequest,
   buildUnassignRequest,
   classifyResponse,
+  mutationProjectVersion,
   parseDetailResponse,
   parseListResponse,
   projectStatusLabel,
@@ -170,14 +171,29 @@ test("parse response: fail-closed khi shape sai", () => {
     { project_id: "p1", display_name: "A", active: true, version: 2 },
   ] } }), [{ project_id: "p1", display_name: "A", active: true, version: 2 }]);
 
-  assert.equal(parseDetailResponse({ ok: true, detail: { assignments: [{}] } }), null);
-  const detail = parseDetailResponse({ ok: true, detail: { authorization_date: "2026-10-07",
-    project_id: "p1", project_version: 2, project_active: true,
-    active_assignment_count: 1, assignments: [{ assignment_id: ASSIGNMENT, project_id: "p1",
-      project_version: 2, manager_recruiter_id: RECRUITER, valid_from: "2026-10-01",
-      valid_to: null, effective: true, version: 1, revoked_at: null,
-      created_at: "2026-10-01T00:00:00Z" }] } });
+  // F4: detail co shape moi { master, assignments } (get + list assignments).
+  assert.equal(parseDetailResponse({ ok: true, detail: { master: {} } }), null);
+  const detail = parseDetailResponse({ ok: true, detail: {
+    master: { project_id: "p1", display_name: "Dự án 01", active: true, version: 2 },
+    assignments: { authorization_date: "2026-10-07", project_id: "p1", project_version: 2,
+      project_active: true, include_history: true, active_assignment_count: 1,
+      assignments: [{ assignment_id: ASSIGNMENT, project_id: "p1", project_version: 2,
+        manager_recruiter_id: RECRUITER, valid_from: "2026-10-01", valid_to: null,
+        effective: true, version: 1, revoked_at: null,
+        created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z" }] } } });
   assert.equal(detail.assignments.length, 1);
+  assert.equal(detail.display_name, "Dự án 01");
+  assert.equal(detail.project_version, 2);
+});
+
+test("F3: mutationProjectVersion doc project_version, KHONG dung assignment version", () => {
+  // Project version ban dau KHAC assignment version; phai lay project_version.
+  const payload = { ok: true, project: { assignment_id: ASSIGNMENT, project_id: "p1",
+    version: 1, project_version: 7, valid_to: null, already_assigned: false } };
+  assert.equal(mutationProjectVersion(payload), 7);
+  assert.notEqual(mutationProjectVersion(payload), 1, "khong duoc dung version (assignment)");
+  assert.equal(mutationProjectVersion({ ok: true, project: { version: 1 } }), null);
+  assert.equal(mutationProjectVersion(null), null);
 });
 
 test("tach quan ly hien tai va lich su phan cong", () => {

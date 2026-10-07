@@ -46,7 +46,8 @@ export type NavCapability =
   | "hrp"
   | "entry_own"
   | "entry_team"
-  | "entry_admin";
+  | "entry_admin"
+  | "project_admin";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -122,12 +123,12 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     path: "/direct-entry/projects",
     description:
       "P2.5-W06A: quản lý dự án (tạo, đổi tên, ngừng/kích hoạt) và gán/thu hồi " +
-      "quản lý dự án. Capability 'owner' ánh xạ adminAuthorityNavPredicate " +
-      "(entry_admin ∧ recruiter_master_manage ∧ team_master_manage, scope all); " +
-      "chỉ là metadata hiển thị — quyền thật do RPC admin enforce.",
+      "quản lý dự án. Capability 'project_admin' ánh xạ projectAdminNavPredicate " +
+      "(entry_admin ∧ effective all scope) đúng DB W02; chỉ là metadata hiển thị — " +
+      "quyền thật do RPC admin enforce.",
     icon: Building2,
     status: "current",
-    capability: "owner",
+    capability: "project_admin",
     visibility: { desktop: true, mobile: true },
   },
 ];
@@ -193,8 +194,20 @@ export function filterEntriesForActor(input: {
 
 /**
  * Tìm entry theo path — dùng cho highlight "active" trong App Shell.
- * Trả về undefined nếu path không thuộc registry (vd. landing page `/`).
+ * Exact match thang; neu khong co, tra entry co path la prefix dai nhat
+ * (de /direct-entry/projects highlight "Dự án", khong phai "Nhập liệu").
+ * Tra undefined neu path khong thuoc registry (vd. landing page `/`).
  */
 export function findEntryByPath(path: string): NavEntry | undefined {
-  return CURRENT_NAV_ENTRIES.find((e) => e.path === path);
+  for (const entry of CURRENT_NAV_ENTRIES) {
+    if (path === entry.path) return entry;
+  }
+  let best: NavEntry | undefined;
+  for (const entry of CURRENT_NAV_ENTRIES) {
+    if (path.startsWith(entry.path + "/") &&
+        (!best || entry.path.length > best.path.length)) {
+      best = entry;
+    }
+  }
+  return best;
 }

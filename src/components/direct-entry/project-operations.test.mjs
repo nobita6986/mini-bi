@@ -50,6 +50,27 @@ test("gui dung version OCC (du an + phan cong)", () => {
   assert.match(source, /expectedVersion: assignment\.version/);
 });
 
+test("F3: multi-assign doc project_version tu response, KHONG dung assignment version", () => {
+  // Khong duoc doc .version (assignment) lam OCC project cho buoc tiep theo.
+  assert.match(source, /mutationProjectVersion\(payload\)/);
+  assert.equal(/root\.project\.version/.test(source), false,
+    "khong duoc dung payload.project.version cho OCC project");
+});
+
+test("F3: assign khong quang cao all-or-nothing; neu ro xu ly lan luot", () => {
+  assert.match(source, /xử lý lần lượt/);
+  assert.match(source, /tải lại để xem phần đã áp dụng/);
+});
+
+test("F7: manager input la recruiter_id (UUID), khong gia mao selector ten", () => {
+  assert.match(source, /recruiter_id \(UUID\)/);
+  assert.match(source, /verified account link/);
+  // Khong su dung catalog/typeahead selector (gap server projection chua co).
+  assert.equal(/RecruiterTypeahead/.test(source), false);
+  assert.equal(/input_catalog/.test(source), false);
+  assert.equal(/catalog/i.test(source), false);
+});
+
 test("xung dot OCC => bat buoc tai lai, KHONG ghi de ngam", () => {
   // 409 duoc map thanh reload-required: khong cap nhat state du an truc tiep.
   assert.match(source, /outcome\.kind === "reload-required"/);
@@ -91,9 +112,9 @@ test("mobile parity: bang cuon ngang va layout responsive", () => {
   assert.match(source, /min-w-\[/);
 });
 
-test("page boundary: gate flag truoc, cung quyet dinh truy cap nhu /direct-entry", () => {
+test("page boundary: gate flag truoc + dung project admin decision (F5)", () => {
   assert.match(page, /isDirectEntryUiEnabled\(process\.env\.DIRECT_ENTRY_UI_ENABLED\)/);
-  assert.match(page, /decideDirectEntryPageAccess/);
+  assert.match(page, /decideProjectOperationsPageAccess/);
   assert.match(page, /case "NOT_FOUND":[\s\S]{0,40}notFound\(\)/);
   assert.match(page, /redirect\("\/login\?next=\/direct-entry\/projects"\)/);
   assert.match(page, /case "ALLOW":[\s\S]{0,80}<ProjectOperations \/>/);

@@ -117,6 +117,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "entry_own",
         "entry_team",
         "entry_admin",
+        "project_admin",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );

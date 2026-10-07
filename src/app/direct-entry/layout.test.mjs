@@ -13,10 +13,11 @@ import { readFileSync } from "node:fs";
 const layoutSource = readFileSync(new URL("./layout.tsx", import.meta.url), "utf8");
 const pageSource = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 
-test("direct-entry/layout.tsx: default export là function và wrap AppShell với currentPath='/direct-entry'", () => {
+test("direct-entry/layout.tsx: default export là function và wrap AppShell", () => {
   assert.match(layoutSource, /export default async function DirectEntryLayout/);
   assert.ok(layoutSource.includes("AppShell"));
-  assert.ok(layoutSource.includes('currentPath="/direct-entry"'));
+  // F6: active path giờ do usePathname tinh client-side, layout khong truyen currentPath.
+  assert.ok(!layoutSource.includes("currentPath"));
 });
 
 test("direct-entry/layout.tsx: truyền actor projection cho AppShell (P3-W06A capability-aware)", () => {

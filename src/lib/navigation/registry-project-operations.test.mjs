@@ -16,7 +16,8 @@ test("entry 'project-operations' duoc dang ky trong cung registry", () => {
   const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "project-operations");
   assert.ok(entry, "thieu entry project-operations");
   assert.equal(entry.path, "/direct-entry/projects");
-  assert.equal(entry.capability, "owner", "dung admin authority predicate (fail-closed)");
+  assert.equal(entry.capability, "project_admin",
+    "dung projectAdminNavPredicate (entry_admin + all scope, dung DB W02)");
   assert.deepEqual(entry.visibility, { desktop: true, mobile: true });
   assert.equal(findEntryByPath("/direct-entry/projects"), entry);
 });
@@ -33,6 +34,15 @@ test("moi route /direct-entry* deu bi gate boi cung flag", () => {
 
   const on = entriesForViewport("desktop", true).map((entry) => entry.id);
   assert.equal(on.includes("project-operations"), true);
+});
+
+test("F6: findEntryByPath dung longest-prefix de highlight dung muc", () => {
+  assert.equal(findEntryByPath("/direct-entry/projects")?.id, "project-operations");
+  assert.equal(findEntryByPath("/direct-entry")?.id, "direct-entry");
+  assert.equal(findEntryByPath("/direct-entry/projects/anything")?.id, "project-operations");
+  assert.equal(findEntryByPath("/dashboard")?.id, "dashboard");
+  assert.equal(findEntryByPath("/dashboard/account/password")?.id, "dashboard");
+  assert.equal(findEntryByPath("/login"), undefined);
 });
 
 test("flag off an ca entry qua filterEntriesForActor (AppShell)", () => {

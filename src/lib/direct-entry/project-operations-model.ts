@@ -37,8 +37,11 @@ export type AssignmentView = {
 };
 
 export type ProjectDetailView = {
-  authorization_date: string;
   project_id: string;
+  display_name: string;
+  /** master.version (project OCC). */
+  version: number;
+  /** assignments.project_version (project OCC) — dong nhat voi version. */
   project_version: number;
   project_active: boolean;
   active_assignment_count: number;
@@ -129,31 +132,43 @@ export function parseListResponse(payload: unknown): ProjectView[] | null {
   return projects;
 }
 
-/** Doc detail tu response; tra null khi shape khong dung. */
+/** Doc detail tu response { master, assignments }; tra null khi shape khong dung. */
 export function parseDetailResponse(payload: unknown): ProjectDetailView | null {
   const root = asRecord(payload);
   if (!root || root.ok !== true) return null;
   const detail = asRecord(root.detail);
-  if (!detail || !Array.isArray(detail.assignments)) return null;
-  const project_id = asText(detail.project_id);
-  const project_version = asCount(detail.project_version);
-  const project_active = asBool(detail.project_active);
-  const active_assignment_count = asCount(detail.active_assignment_count);
-  const authorization_date = asText(detail.authorization_date);
-  if (project_id === null || project_version === null || project_active === null ||
-      active_assignment_count === null || authorization_date === null) {
+  if (!detail) return null;
+  const master = asRecord(detail.master);
+  const block = asRecord(detail.assignments);
+  if (!master || !block || !Array.isArray(block.assignments)) return null;
+  const project_id = asText(master.project_id);
+  const display_name = asText(master.display_name);
+  const masterVersion = asCount(master.version);
+  const project_version = asCount(block.project_version);
+  const project_active = asBool(block.project_active);
+  const active_assignment_count = asCount(block.active_assignment_count);
+  if (project_id === null || display_name === null || masterVersion === null ||
+      project_version === null || project_active === null || active_assignment_count === null) {
     return null;
   }
   const assignments: AssignmentView[] = [];
-  for (const item of detail.assignments) {
+  for (const item of block.assignments) {
     const assignment = parseAssignment(item);
     if (assignment === null) return null;
     assignments.push(assignment);
   }
   return {
-    authorization_date, project_id, project_version, project_active,
-    active_assignment_count, assignments,
+    project_id, display_name, version: masterVersion, project_version,
+    project_active, active_assignment_count, assignments,
   };
+}
+
+/** Doc project_version tu assign/unassign response (NOT version = assignment version). */
+export function mutationProjectVersion(payload: unknown): number | null {
+  const root = asRecord(payload);
+  const project = root ? asRecord(root.project) : null;
+  if (!project) return null;
+  return asCount(project.project_version);
 }
 
 /* ---------- validate input ---------- */

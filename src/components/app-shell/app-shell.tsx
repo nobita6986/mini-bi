@@ -36,16 +36,14 @@ import Image from "next/image";
 import { connection } from "next/server";
 
 import { ThemeSelector } from "@/components/dashboard/theme-selector";
-import {
-  filterEntriesForActor,
-  findEntryByPath,
-} from "@/lib/navigation/registry";
+import { filterEntriesForActor } from "@/lib/navigation/registry";
 import {
   decideNavEntryVisibility,
   type NavActorProjection,
 } from "@/lib/navigation/registry-capability";
 import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 
+import { ActivePageLabel } from "./active-page-label";
 import { DesktopNav } from "./desktop-nav";
 import { MobileNav } from "./mobile-nav";
 import { UserSessionControl } from "./user-session-control";
@@ -53,21 +51,20 @@ import { UserSessionControl } from "./user-session-control";
 /**
  * Props:
  * - children: nội dung trang.
- * - currentPath: đường dẫn hiện tại (từ page). Dùng để highlight active link.
- *   Tính từ server, không dùng hook client.
  * - headerActions: các action do route hiện tại cung cấp, nếu có.
  *   P3-W06A Scope B: AI deferred → header actions chỉ render khi page truyền vào.
  * - actor: projection tối thiểu từ page boundary (đã resolve ở layout). Có thể
  *   null khi page không resolve được session — AppShell vẫn render Dashboard.
+ *
+ * P2.5-W06A-R1: highlight active link tinh bang usePathname() trong nav/client
+ * (layout khong biet route con) thay vi tinh active path tu server layout.
  */
 export async function AppShell({
   children,
-  currentPath,
   headerActions,
   actor,
 }: {
   children: ReactNode;
-  currentPath: string;
   headerActions?: ReactNode;
   actor: NavActorProjection | null;
 }) {
@@ -105,14 +102,12 @@ export async function AppShell({
         entryVisibleInViewport: entry.visibility.mobile,
       }),
   });
-  const activeEntry = findEntryByPath(currentPath);
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex min-h-14 w-full max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:px-6">
           {/* Mobile: hamburger trigger */}
           <MobileNav
-            activePath={currentPath}
             items={mobileItems.map(({ id, label, path }) => ({ id, label, path }))}
           />
 
@@ -126,7 +121,7 @@ export async function AppShell({
           </Link>
 
           {/* Desktop nav — ẩn trên mobile */}
-          <DesktopNav activePath={currentPath} items={desktopItems} />
+          <DesktopNav items={desktopItems} />
 
           {/* Spacer */}
           <div className="flex-1" />
@@ -145,9 +140,7 @@ export async function AppShell({
         </div>
 
         {/* Active page label — phụ trợ a11y cho screen-reader */}
-        {activeEntry ? (
-          <p className="sr-only">Đang ở trang: {activeEntry.label}</p>
-        ) : null}
+        <ActivePageLabel />
       </header>
 
       <main className="flex-1">{children}</main>
