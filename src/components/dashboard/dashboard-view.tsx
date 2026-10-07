@@ -2,22 +2,28 @@ import Link from "next/link";
 
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
 import { buildBarData, buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
+import {
+  resolveDashboardAudienceKind,
+  resolveScopedDashboardView,
+} from "@/lib/reporting/p3-w06c-audience-view";
+import type { ReportingAudience } from "@/lib/reporting/p3-w05a-audience";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingData, ReportingBucket } from "@/lib/reporting/p1-reporting";
 import type { ReportingFetchResult } from "@/lib/reporting/p1-reporting-server";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
 import { Card, CardHeader } from "@/components/ui/card";
-import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
-import { DashboardFilters } from "./dashboard-filters";
+import { FiltersOrError, NoMatchesBlock } from "./dashboard-shared";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
+import { OwnDashboardView } from "./own-dashboard-view";
 import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { ProviderDonut } from "./provider-donut";
 import { RecruiterBarChart } from "./recruiter-bar-chart";
+import { TeamDashboardView } from "./team-dashboard-view";
 import { TrendChart } from "./trend-chart";
 
 function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
@@ -46,10 +52,45 @@ function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
 export function DashboardView({
   report,
   optionsResult,
+  audience = null,
 }: {
   report: ReportingFetchResult;
   optionsResult: ReportingOptionsResult;
+  audience?: ReportingAudience | null;
 }) {
+  // P3-W06C: the audience is DB-authoritative (W05A scoped payload); it is never
+  // inferred from a UI role. The company-wide BoD layout is only rendered for a
+  // DB-confirmed "all"; every other case fails closed to the scoped view.
+  const audienceKind = resolveDashboardAudienceKind(audience);
+
+  if (!report.ok) {
+    // Fail closed: no data and no scope claim when the scoped read path failed.
+    return (
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+        <ReportError report={report} />
+      </main>
+    );
+  }
+
+  if (audienceKind !== "all") {
+    const scopedView = resolveScopedDashboardView(audience);
+    return scopedView.kind === "team" ? (
+      <TeamDashboardView
+        data={report.data}
+        generatedAt={report.generatedAt}
+        optionsResult={optionsResult}
+        view={scopedView}
+      />
+    ) : (
+      <OwnDashboardView
+        data={report.data}
+        generatedAt={report.generatedAt}
+        optionsResult={optionsResult}
+        view={scopedView}
+      />
+    );
+  }
+
   const generatedAt = report.ok ? report.generatedAt : undefined;
   const trend = report.ok ? buildDailyTrend(report.data.byDate, report.data.applied.from, report.data.applied.to) : [];
   const dataDays = trend.filter((p) => p.count > 0);
@@ -76,11 +117,7 @@ export function DashboardView({
       </header>
 
       <div className="mt-4">
-        {report.ok === false ? (
-          <ReportError report={report} />
-        ) : (
-          <DashboardBody data={report.data} optionsResult={optionsResult} trend={trend} dataDays={dataDays} />
-        )}
+        <DashboardBody data={report.data} optionsResult={optionsResult} trend={trend} dataDays={dataDays} />
       </div>
     </main>
   );
@@ -114,30 +151,6 @@ function ReportError({ report }: { report: Extract<ReportingFetchResult, { ok: f
     );
   }
   return <ErrorState title="Không tải được báo cáo" detail={report.code + " · " + report.message} />;
-}
-
-function FiltersOrError({ optionsResult }: { optionsResult: ReportingOptionsResult }) {
-  if (optionsResult.ok) return <DashboardFilters options={optionsResult.options} />;
-  return (
-    <Alert tone="error" title="Không tải được danh mục bộ lọc">
-      <p>{optionsResult.code} · {optionsResult.message}</p>
-      <p>Dữ liệu bên dưới vẫn đúng cho URL hiện tại, nhưng không thể chọn bộ lọc. Hãy thử tải lại trang.</p>
-    </Alert>
-  );
-}
-
-function NoMatchesBlock() {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-muted/10 px-6 py-12 text-center">
-      <p className="text-sm font-medium text-foreground">Không có dữ liệu khớp bộ lọc hiện tại</p>
-      <p className="mt-1 text-sm text-muted">Không có ngày/dự án/người tuyển/nhóm nào khớp bộ lọc đang chọn.</p>
-      <p className="mt-4">
-        <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
-          Xóa bộ lọc
-        </Link>
-      </p>
-    </div>
-  );
 }
 
 function DashboardBody({

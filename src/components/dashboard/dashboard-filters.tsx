@@ -30,7 +30,14 @@ function Field({ id, label, children }: { id: string; label: string; children: R
   );
 }
 
-export function DashboardFilters({ options }: { options: ReportingOptionsCatalog }) {
+export function DashboardFilters({
+  options,
+  showRecruiter = true,
+}: {
+  options: ReportingOptionsCatalog;
+  /** The own-scope dashboard hides the recruiter filter (scope is one person). */
+  showRecruiter?: boolean;
+}) {
   const [filters, setFilters] = useQueryStates(parsers, { shallow: false, scroll: false });
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
@@ -96,12 +103,14 @@ export function DashboardFilters({ options }: { options: ReportingOptionsCatalog
               {options.dimensions.projects.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
             </select>
           </Field>
-          <Field id="f-recruiter" label="Người tuyển">
-            <select id="f-recruiter" className={inputClass} value={filters.recruiter ?? ""} onChange={(e) => setFilters({ recruiter: e.target.value || null })}>
-              <option value="">Tất cả người tuyển</option>
-              {options.dimensions.recruiters.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
-            </select>
-          </Field>
+          {showRecruiter ? (
+            <Field id="f-recruiter" label="Người tuyển">
+              <select id="f-recruiter" className={inputClass} value={filters.recruiter ?? ""} onChange={(e) => setFilters({ recruiter: e.target.value || null })}>
+                <option value="">Tất cả người tuyển</option>
+                {options.dimensions.recruiters.map((o) => <option key={o.key} value={o.key}>{o.display}</option>)}
+              </select>
+            </Field>
+          ) : null}
           <Field id="f-provider" label="HRP/Vendor">
             <select id="f-provider" className={inputClass} value={filters.provider ?? ""} onChange={(e) => setFilters({ provider: e.target.value || null })}>
               <option value="">Tất cả</option>
