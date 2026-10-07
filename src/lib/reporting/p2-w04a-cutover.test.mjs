@@ -12,11 +12,14 @@ import {
   maskDirectEntryFacts,
   maskLegacyFacts,
   normalizeReconciliationRow,
+  P2_W04A_BLOCKER_RPC,
   P2_W04A_CUTOVER_BLOCKER_CODE,
   P2_W04A_CUTOVER_DATE,
   P2_W04A_DIRECT_ENTRY_SOURCE,
   P2_W04A_DIRECT_ENTRY_SOURCE_ID,
+  readCutoverBlocker,
 } from "./p2-w04a-cutover.ts";
+import { reportingQueryFailed } from "./p1-reporting.ts";
 
 function legacyFact(overrides = {}) {
   return {
@@ -349,4 +352,149 @@ test("18. R1: computeReporting sums two same-grain DE entries into recruitedTota
   assert.equal(data.recruitedTotal, 2, "Dashboard recruitedTotal = 2 for two same-grain DE entries");
   assert.equal(data.empty.noFacts, false);
   assert.equal(data.empty.noSources, false);
+});
+
+// ---------------------------------------------------------------------------
+// P3-J01B-R1 - sanitized pre-cutover blocker read.
+//
+// The read path used to forward the raw Supabase code/message into
+// CutoverFetchResult, and dashboard-view.tsx renders
+// `report.code + " · " + report.message` for an unrecognized failure, so a raw
+// provider/database message could reach the operator. These tests pin the
+// sanitized contract and the preserved blocker semantics.
+// ---------------------------------------------------------------------------
+
+// Raw sentinel: the exact kind of value a PostgREST/provider error carries.
+const RAW_CODE = "RAW_PROVIDER_CODE_9F3A";
+const RAW_MESSAGE =
+  "RAW_PROVIDER_MESSAGE pg_relation_missing at 20261007020000_p2_w04a cutover";
+const RAW_SENTINELS = [RAW_CODE, RAW_MESSAGE, "pg_relation_missing", "RAW_PROVIDER"];
+
+function assertNoSentinel(serialized, label) {
+  for (const sentinel of RAW_SENTINELS) {
+    assert.equal(serialized.includes(sentinel), false, label + " must not leak " + sentinel);
+  }
+}
+
+async function readWith(rpcResult, capture) {
+  const lines = capture ?? [];
+  const result = await readCutoverBlocker(() => rpcResult, (line) => lines.push(line));
+  return { result, lines };
+}
+
+test("19. J01B-R1: a raw RPC error is returned as the stable sanitized error", async () => {
+  const { result, lines } = await readWith({ data: null, error: { code: RAW_CODE, message: RAW_MESSAGE } });
+  assert.deepEqual(result, reportingQueryFailed(),
+    "the blocked read must reuse the existing stable reporting error");
+  assert.equal(result.code, "REPORTING_QUERY_FAILED");
+  assert.equal(result.ok, false);
+  assertNoSentinel(JSON.stringify(result), "the result");
+  // The dashboard renders exactly this composition for an unknown failure code.
+  assertNoSentinel(result.code + " · " + result.message, "the rendered copy");
+  assert.equal(lines.length, 1, "exactly one safe log line");
+  for (const line of lines) assertNoSentinel(line, "the log line");
+  assert.ok(lines[0].includes("reason=rpc_error"), "the log keeps a fixed reason marker");
+});
+
+test("20. J01B-R1: malformed, missing, negative and fractional counts are sanitized", async () => {
+  const payloads = [
+    { label: "missing payload", rpc: { data: undefined, error: null } },
+    { label: "null payload", rpc: { data: null, error: null } },
+    { label: "object payload", rpc: { data: { count: 1 }, error: null } },
+    { label: "boolean payload", rpc: { data: true, error: null } },
+    { label: "empty string", rpc: { data: "  ", error: null } },
+    { label: "non numeric string", rpc: { data: RAW_MESSAGE, error: null } },
+    { label: "negative", rpc: { data: -1, error: null } },
+    { label: "negative string", rpc: { data: "-17", error: null } },
+    { label: "fractional", rpc: { data: 2.5, error: null } },
+    { label: "exponential", rpc: { data: "1e3", error: null } },
+    { label: "not a safe integer", rpc: { data: "9007199254740993", error: null } },
+  ];
+  for (const item of payloads) {
+    const { result, lines } = await readWith(item.rpc);
+    assert.deepEqual(result, reportingQueryFailed(), item.label + " must fail closed");
+    assertNoSentinel(JSON.stringify(result) + lines.join("\n"), item.label);
+  }
+});
+
+test("21. J01B-R1: a thrown transport failure is sanitized too", async () => {
+  const lines = [];
+  const result = await readCutoverBlocker(
+    () => { throw new Error(RAW_MESSAGE); },
+    (line) => lines.push(line),
+  );
+  assert.deepEqual(result, reportingQueryFailed());
+  assertNoSentinel(JSON.stringify(result) + lines.join("\n"), "a thrown error");
+});
+
+test("22. J01B-R1: a valid count still reads through (bigint-as-string included)", async () => {
+  const zero = await readWith({ data: 0, error: null });
+  assert.deepEqual(zero.result, { ok: true, count: 0 });
+  assert.deepEqual(zero.lines, [], "a successful read must not log");
+  const big = await readWith({ data: "17", error: null });
+  assert.deepEqual(big.result, { ok: true, count: 17 });
+  const numeric = await readWith({ data: 3, error: null });
+  assert.deepEqual(numeric.result, { ok: true, count: 3 });
+  const atRpc = await readCutoverBlocker((name) => {
+    assert.equal(name, P2_W04A_BLOCKER_RPC, "the blocker helper is read through its own RPC");
+    return { data: 1, error: null };
+  });
+  assert.deepEqual(atRpc, { ok: true, count: 1 });
+});
+
+test("23. J01B-R1: a real blocker count still wins over the sanitized error", async () => {
+  // Reading succeeds with a non-zero count => the reconciliation carries it and
+  // the locked cutover blocker (NOT the generic reporting error) is returned.
+  const read = await readWith({ data: 4, error: null });
+  assert.deepEqual(read.result, { ok: true, count: 4 });
+  // Four eligible Direct Entry rows before the cutoff => 4 blocker rows, which is
+  // exactly what the runtime helper counts and what the read path forwards.
+  const preCutoff = [1, 2, 3, 4].map((i) =>
+    deFact({
+      first_work_date: "2026-09-29",
+      business_date: "2026-09-29",
+      entry_id: "00000000-0000-4000-8000-0000000000c" + i,
+      submission_id: "00000000-0000-4000-8000-0000000000d" + i,
+    }),
+  );
+  const reconciliation = buildReconciliation({
+    legacyFacts: [],
+    directEntryFactsRaw: preCutoff,
+  });
+  assert.equal(reconciliation.overlap_blocker, read.result.count,
+    "the reconciliation forwards the sanitized read count unchanged");
+  assert.equal(hasCutoverBlocker(reconciliation), true);
+  const err = cutoverBlockerError(reconciliation);
+  assert.equal(err.code, P2_W04A_CUTOVER_BLOCKER_CODE);
+  assert.equal(err.ok, false);
+  assert.equal(err.reconciliation.overlap_blocker, 4);
+  assert.notEqual(err.code, reportingQueryFailed().code,
+    "a genuine blocker must never collapse into the generic error");
+  // Zero blocker count is a clean read, not a blocker.
+  const clean = await readWith({ data: 0, error: null });
+  const cleanReconciliation = buildReconciliation({
+    legacyFacts: [legacyFact()],
+    directEntryFactsRaw: [deFact({ first_work_date: "2026-10-17" })],
+  });
+  assert.equal(cleanReconciliation.overlap_blocker, clean.result.count);
+  assert.equal(hasCutoverBlocker(cleanReconciliation), false);
+});
+
+test("24. J01B-R1: the read path stays wired to the sanitizer", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const server = await readFile(new URL("./p2-w04a-reporting-server.ts", import.meta.url), "utf8");
+  assert.equal(server.includes("readCutoverBlocker((name) => sb.rpc(name))"), true,
+    "the server must read the blocker through the sanitizer");
+  assert.equal(server.includes("fetchCutoverBlockerCount"), false,
+    "the raw forwarding helper must be gone");
+  assert.equal(/blocker\.error\.(code|message)/.test(server), false,
+    "no raw Supabase code/message may be forwarded from the blocker read");
+  assert.equal(server.includes("return { ok: false, code: blocker.code, message: blocker.message };"), true);
+  // The sanitized pair is what the dashboard composes into its copy.
+  const view = await readFile(
+    new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(view.includes('detail={report.code + " · " + report.message}'), true,
+    "dashboard copy still composes code + message, so the sanitized pair is what renders");
 });

@@ -532,25 +532,26 @@ test("R1 acceptance: migration #40 applies cleanly on Production-shape DB (34/44
   // / 6 sources. The migration must apply cleanly and the legacy subtotal
   // must be preserved by the reconciliation helper.
   //
-  // This test focuses on migration #40 (the original W04A closure). It
-  // deliberately skips both #40 and #44 in the apply loop, then re-applies
-  // only #40 explicitly so the test isolates the #40 R1 self-check.
+  // This test focuses on migration #40 (the original W04A closure). It applies
+  // the REAL prerequisite chain - every migration that sorts before the closure
+  // in the ledger - and then the closure itself, so the test isolates the #40 R1
+  // self-check. Later migrations are deliberately NOT applied here: W04B (#44)
+  // and W04C (#47) rebaseline the same cutoff and would change the value this
+  // test asserts, and they also depend on the closure helper that #40 creates.
   const db = new PGlite();
   try {
     await db.exec(AUTH_PROLOGUE);
     const names = (await readdir(MIGRATION_DIR))
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    for (const name of names) {
-      if (name.includes("p2_w04a_direct_entry_reporting_cutover")) continue;
-      if (name.includes("p2_w04b_post_purge_cutover_rebaseline")) continue;
+    const closureName = "20261007020000_p2_w04a_direct_entry_reporting_cutover.sql";
+    const closureIndex = names.indexOf(closureName);
+    assert.notEqual(closureIndex, -1, "the W04A closure migration must be in the ledger");
+    for (const name of names.slice(0, closureIndex)) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await seedProductionShapeLegacy(db);
-    const migration40 = await readFile(
-      path.join(MIGRATION_DIR, "20261007020000_p2_w04a_direct_entry_reporting_cutover.sql"),
-      "utf8"
-    );
+    const migration40 = await readFile(path.join(MIGRATION_DIR, closureName), "utf8");
     await db.exec(migration40);
     await db.exec("set role service_role");
     const res = await db.query(

@@ -1,4 +1,7 @@
-import type { ReportingFact, ReportingSource } from "./p1-reporting";
+// Explicit .ts specifier: this module is imported at runtime by node --test
+// (type-stripping ESM), where an extensionless specifier cannot resolve.
+import { reportingQueryFailed } from "./p1-reporting.ts";
+import type { ReportingFact, ReportingSource } from "./p1-reporting.ts";
 
 /**
  * P2-W04A — Direct Entry reporting cutover contract.
@@ -211,6 +214,87 @@ export function cutoverBlockerError(r: CutoverReconciliation): {
       "Cutover must not proceed. Investigate submissions/entries and re-key dates.",
     reconciliation: r,
   };
+}
+
+/**
+ * P3-J01B-R1 - sanitized runtime read of the pre-cutover blocker count.
+ *
+ * The RPC returns one non-negative integer (Postgres bigint; the client may hand
+ * it back as a number or as a string). The read path used to forward the raw
+ * Supabase `code`/`message` into CutoverFetchResult, and the dashboard renders
+ * `report.code + " · " + report.message` for an unrecognized failure, so a raw
+ * provider/database message could reach the operator.
+ *
+ * Any RPC error or malformed payload now fails closed with the EXISTING stable
+ * reporting error (`reportingQueryFailed()`) - no parallel error taxonomy, no
+ * raw code/message/identifier in the result, and no raw message in the log.
+ */
+export const P2_W04A_BLOCKER_RPC =
+  "direct_entry_reporting_pre_cutover_blocker_count" as const;
+
+export type CutoverBlockerRead =
+  | { ok: true; count: number }
+  | { ok: false; code: string; message: string };
+
+/** Minimal shape of a Supabase RPC result, so the read is unit-testable. */
+export type CutoverBlockerRpcResult = {
+  data: unknown;
+  error: { code?: string; message?: string } | null;
+};
+
+export type CutoverBlockerLogger = (line: string) => void;
+
+const defaultCutoverBlockerLogger: CutoverBlockerLogger = (line) =>
+  console.error(line);
+
+/**
+ * Log a fixed reason marker only: never the raw code, message, payload or an
+ * identifier, so a database/provider message can never be reconstructed here.
+ */
+function logBlockerReadFailure(
+  reason: string,
+  log: CutoverBlockerLogger,
+): void {
+  log("[p3-w05a-cutover-blocker] read failed. reason=" + reason);
+}
+
+/**
+ * Read the blocker count once per request through the injected RPC caller.
+ * Fails closed (sanitized) on: RPC error, thrown transport failure, a missing
+ * payload, a non-numeric payload, a negative/fractional value or an
+ * out-of-range integer.
+ */
+export async function readCutoverBlocker(
+  rpc: (name: string) => PromiseLike<CutoverBlockerRpcResult>,
+  log: CutoverBlockerLogger = defaultCutoverBlockerLogger,
+): Promise<CutoverBlockerRead> {
+  let res: CutoverBlockerRpcResult;
+  try {
+    res = await rpc(P2_W04A_BLOCKER_RPC);
+  } catch {
+    logBlockerReadFailure("rpc_threw", log);
+    return reportingQueryFailed();
+  }
+  if (res === null || typeof res !== "object" || res.error) {
+    logBlockerReadFailure("rpc_error", log);
+    return reportingQueryFailed();
+  }
+  const raw = res.data;
+  if (typeof raw !== "number" && typeof raw !== "string") {
+    logBlockerReadFailure("payload_not_numeric", log);
+    return reportingQueryFailed();
+  }
+  const text = typeof raw === "number" ? String(raw) : raw.trim();
+  if (!/^\d+$/.test(text)) {
+    logBlockerReadFailure("payload_not_non_negative_integer", log);
+    return reportingQueryFailed();
+  }
+  const count = Number(text);
+  if (!Number.isSafeInteger(count)) {
+    logBlockerReadFailure("payload_out_of_range", log);
+    return reportingQueryFailed();
+  }
+  return { ok: true, count };
 }
 
 /**

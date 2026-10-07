@@ -18,6 +18,7 @@ import {
   combineReportingFacts,
   cutoverBlockerError,
   hasCutoverBlocker,
+  readCutoverBlocker,
   maskDirectEntryFacts,
   maskLegacyFacts,
   P2_W04A_CUTOVER_BLOCKER_CODE,
@@ -75,27 +76,6 @@ function logSafeError(prefix: string, error: unknown) {
 }
 
 /**
- * Read the runtime blocker helper ONCE per request (global cutover invariant).
- */
-async function fetchCutoverBlockerCount(params: {
-  sb: ReturnType<typeof createServiceSupabaseClient>;
-}): Promise<
-  { count: number } | { error: { code: string; message: string } }
-> {
-  const res = await params.sb.rpc(
-    "direct_entry_reporting_pre_cutover_blocker_count",
-  );
-  if (res.error) {
-    return { error: { code: res.error.code, message: res.error.message } };
-  }
-  const count = Number((res.data ?? 0) as unknown);
-  if (!Number.isFinite(count) || count < 0) {
-    return { error: { code: P2_W04A_CUTOVER_FAILED_CODE, message: "blocker count not a non-negative number" } };
-  }
-  return { count };
-}
-
-/**
  * Main read-path entrypoint. `actor` is a mandatory input (the page resolves
  * it once via resolveActorForRequest and passes it server-side).
  */
@@ -107,9 +87,13 @@ export async function fetchCutoverReporting(
     const sb = createServiceSupabaseClient();
 
     // 1. Runtime blocker check (one RPC call per request; global invariant).
-    const blocker = await fetchCutoverBlockerCount({ sb });
-    if ("error" in blocker) {
-      return { ok: false, code: blocker.error.code, message: blocker.error.message };
+    //    P3-J01B-R1: the read is delegated to the cutover contract module, which
+    //    fails closed with the stable sanitized reporting error. A raw Supabase
+    //    code/message must never reach CutoverFetchResult, because the dashboard
+    //    renders `report.code + " · " + report.message` for an unknown failure.
+    const blocker = await readCutoverBlocker((name) => sb.rpc(name));
+    if (!blocker.ok) {
+      return { ok: false, code: blocker.code, message: blocker.message };
     }
 
     // 2. Parse filters. Source is validated as a UUID but not against scope
