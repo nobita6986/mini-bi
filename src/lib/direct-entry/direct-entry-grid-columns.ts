@@ -51,6 +51,10 @@ export type DirectEntryGridColumn = {
  * `DIRECT_ENTRY_GRID_COLUMNS` để xử lý template/legacy paste; client
  * không ghi đè được default ở RPC boundary.
  *
+ * P3-W07E-R1: trên grid nhập liệu, `Số điện thoại` và `CMT/CCCD` nằm ngay
+ * sau `Họ và tên` để người dùng đối chiếu định danh nhanh hơn. Thay đổi này
+ * chỉ là thứ tự hiển thị; key payload, registry vật lý và template Excel giữ nguyên.
+ *
  * Registry tong `DIRECT_ENTRY_GRID_COLUMNS` van giu day du cac truong de ho tro
  * drawer/projection, validation va mo rong sau nay; chỉ danh sach default visible bi
  * gioi han theo yeu cau H05 + R3.
@@ -63,12 +67,12 @@ export const DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS: readonly string[] = Object.f
   "labor_type",
   "first_work_date",
   "display_name",
+  "phone",
+  "national_id",
   "gender",
   "date_of_birth",
-  "national_id",
   "national_id_issued_at",
   "address",
-  "phone",
   "account_number",
   "bank_name",
   "account_holder_name",

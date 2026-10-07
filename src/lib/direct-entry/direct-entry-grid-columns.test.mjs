@@ -73,8 +73,8 @@ test("default visible data columns are the 17 R3 columns and exclude action rail
   // còn trong template Excel mới.
   assert.deepEqual(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS, [
     "row_index", "project_id", "provider_type", "recruiter_id", "labor_type",
-    "first_work_date", "display_name", "gender", "date_of_birth", "national_id",
-    "national_id_issued_at", "address", "phone", "account_number", "bank_name",
+    "first_work_date", "display_name", "phone", "national_id", "gender", "date_of_birth",
+    "national_id_issued_at", "address", "account_number", "bank_name",
     "account_holder_name", "general_note",
   ]);
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 17);
@@ -83,6 +83,9 @@ test("default visible data columns are the 17 R3 columns and exclude action rail
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 1], "provider_type");
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 2], "recruiter_id");
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 3], "labor_type");
+  const nameIndex = DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.indexOf("display_name");
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[nameIndex + 1], "phone");
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[nameIndex + 2], "national_id");
   // Ma NLĐ khong xuat hien tren grid va khong cho nhap o day; server tu sinh.
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("employee_code"), false);
   // P3-W07C-R3: `Nơi cấp` không còn hiện trên grid mặc định.

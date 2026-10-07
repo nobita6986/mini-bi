@@ -40,8 +40,8 @@ const grid = readFileSync(
 const FOUR_OPTIONAL_FIELDS = ["account_number", "bank_name", "account_holder_name", "general_note"];
 const EXPECTED_17_COLUMNS = Object.freeze([
   "row_index", "project_id", "provider_type", "recruiter_id", "labor_type",
-  "first_work_date", "display_name", "gender", "date_of_birth", "national_id",
-  "national_id_issued_at", "address", "phone", "account_number", "bank_name",
+  "first_work_date", "display_name", "phone", "national_id", "gender", "date_of_birth",
+  "national_id_issued_at", "address", "account_number", "bank_name",
   "account_holder_name", "general_note",
 ]);
 
