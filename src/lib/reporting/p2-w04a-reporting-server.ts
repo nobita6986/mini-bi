@@ -58,7 +58,7 @@ type ScopedSourceRow = {
 };
 
 export type CutoverFetchResult =
-  | { ok: true; data: ReportingData; generatedAt: string; audience: ReportingAudience | null }
+  | { ok: true; data: ReportingData; generatedAt: string; audience: ReportingAudience }
   | {
       ok: false;
       code: string;

@@ -94,7 +94,6 @@ export function resolveAudienceScopeLabel(
   const others = Math.trunc(teamCount) - 1;
   return audience.label + " và " + others + " nhóm khác";
 }
-
 /**
  * Compose the final sanitized audience projection from a scoped RPC payload.
  * Returns null when the payload carries no usable audience, so the read path
@@ -111,4 +110,3 @@ export function resolveReportingAudienceProjection(
     label: resolveAudienceScopeLabel(audience, audienceTeamScopeCount(value)),
   };
 }
-

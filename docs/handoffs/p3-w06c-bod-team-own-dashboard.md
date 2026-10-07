@@ -6,29 +6,32 @@
 
 ## What changed
 
-Audience-aware dashboard UX over the W05A DB-authoritative scoped payload. No backend,
-migration, auth, grant, schema or Production change. No new dependency.
+Audience-aware dashboard UX over the W05A DB-authoritative scoped payload, plus the two
+T0-review corrections. No migration, auth, grant, schema or Production change; no new dependency.
 
 | Area | Change |
 |---|---|
-| `src/lib/reporting/p3-w06c-audience-view.ts` (new) | Pure audience→view contract: `resolveDashboardAudience`, `resolveDashboardAudienceKind`, `resolveScopedDashboardView`, `buildMemberContributions`. Missing/unknown audience fails closed to `own`. |
-| `src/components/dashboard/dashboard-view.tsx` | Dispatches on the DB audience. The BoD layout renders only for a DB-confirmed `all`; `team`/`own` render their own views; a failed read renders a scope-neutral error shell. |
-| `src/components/dashboard/team-dashboard-view.tsx` (new) | Team UX: scope banner, team KPIs (total / members / average per member), member contribution roster with share bars, team trend, team project/provider/employment breakdown. |
-| `src/components/dashboard/own-dashboard-view.tsx` (new) | Personal UX: personal summary, personal trend, own project breakdown, employment mix. No roster, no recruiter filter. |
-| `src/components/dashboard/dashboard-shared.tsx` (new) | Shared `FiltersOrError`, `NoMatchesBlock`, `ScopeNote`, `BucketList`; contains no audience decision. |
-| `src/components/dashboard/dashboard-filters.tsx` | Optional `showRecruiter` so `own` hides the single-person recruiter filter. |
-| `src/app/dashboard/page.tsx` | Passes `audience={report.ok ? report.audience : null}` taken from the scoped payload. |
+| `src/lib/reporting/p3-w06c-audience-view.ts` (new) | Pure audience→view contract: `resolveDashboardAudienceKind` (null when unresolved), `resolveDashboardMode` (`error`\|`all`\|`team`\|`own`), `resolveScopedDashboardView`, `buildMemberContributions`. |
+| `src/lib/reporting/p2-w04a-reporting-server.ts` | **Review fix 1**: a successful RPC payload without a usable audience now returns the sanitized `REPORTING_QUERY_FAILED` error instead of `ok: true` + facts; the success type carries a non-null `ReportingAudience`. **Review fix 2**: the team label is made inclusive from the DB-reported team count before it reaches the UI. |
+| `src/lib/reporting/p3-w05a-audience.ts` | Adds `audienceTeamScopeCount` (count only, no team UUID leaves the module) and `resolveAudienceScopeLabel` (`"<first> và N nhóm khác"` when several teams are in scope). |
+| `src/components/dashboard/dashboard-view.tsx` | Dispatches on `resolveDashboardMode`. BoD renders only for a DB-confirmed `all`; `team`/`own` render their own views; the `error` mode renders a neutral scope-free error and returns before any fact section. |
+| `src/components/dashboard/team-dashboard-view.tsx` (new) | Team UX: scope banner, team KPIs (total / members / average), member contribution roster with share bars, team trend, team project/provider/employment. |
+| `src/components/dashboard/own-dashboard-view.tsx` (new) | Personal UX: personal summary, trend, own project breakdown, employment. No roster, no recruiter filter. |
+| `src/components/dashboard/dashboard-shared.tsx` (new) | Shared `FiltersOrError`, `NoMatchesBlock`, `ScopeNote`, `BucketList`; no audience decision. |
+| `src/components/dashboard/dashboard-filters.tsx` | Optional `showRecruiter` so `own` hides the single-person filter. |
+| `src/app/dashboard/page.tsx` | Passes `audience={report.ok ? report.audience : null}` from the scoped payload. |
 
 Reused: existing scoped reporting closures, `Card`/`KpiCard`/`EmptyState`/`ErrorState`/`Alert`,
 Recharts components, `p1-chart-data`, `p1-dashboard`, `DashboardFilters` and design tokens.
-There is no parallel fetch, no service-role read and no fetch-everything-then-filter-in-client path.
+No parallel fetch, no service-role read, no fetch-everything-then-filter-in-client path.
 
 ## Gates
 
 | Gate | Result |
 |---|---|
-| `pnpm test:p3-w06c` (new) | 14 pass |
-| Affected dashboard/reporting tests | 73 pass (dashboard-brand, dashboard-source-status-cleanup, dashboard/layout, p1-dashboard, p1-chart-data, resolve-nav-actor, pilot-removal) |
+| `pnpm test:p3-w06c` (new) | 22 pass |
+| `pnpm test:p3-w05a` (touched audience/read-path files) | 43 pass |
+| Affected dashboard/reporting tests | 66 pass (dashboard-brand, dashboard-source-status-cleanup, dashboard/layout, p1-dashboard, p1-chart-data, resolve-nav-actor) |
 | react-server affected | 36 pass (w04a-panel-api, p3-w08a-session-revocation-cache, session-page-access) |
 | `next typegen` / `pnpm typecheck` | pass / clean |
 | `pnpm lint` | 0 errors (8 pre-existing warnings) |
@@ -37,16 +40,18 @@ There is no parallel fetch, no service-role read and no fetch-everything-then-fi
 
 ## Acceptance evidence
 
-- `all`: BoD layout renders only after the `audienceKind !== "all"` gate; team/own never reach it.
-- `team`: team-scoped aggregate and filter options; distinct member-roster UX; no global source metadata.
-- `own`: personal aggregate and options; no roster, no recruiter filter; no global source metadata.
-- Fail closed: null/unknown audience resolves to `own`; a failed read renders a neutral error with no scope claim.
-- Scoped views receive props only (no fetch/RPC/service-role read) and never render `drive_file_id`,
-  `file_name`, latest sync status or source presence.
+- `all`: BoD layout only for a DB-confirmed `all`; team/own never reach it.
+- `team`: team-scoped aggregate and options, distinct member-roster UX, no global source metadata.
+- `own`: personal aggregate and options; no roster, no recruiter filter, no global source metadata.
+- Fail closed: a failed read **or** a successful read without a usable audience renders a neutral error
+  and never renders facts under a guessed scope label.
+- Multi-team: the scope label stays inclusive (`<first> và N nhóm khác`) and the title/scope note never
+  claim the whole scope is one named team.
+- Scoped views receive props only and never render `drive_file_id`, `file_name`, sync status or presence.
 
 ## Deferred / notes
 
-- Route `loading.tsx` stays a neutral skeleton: the audience is only known after the scoped read,
-  so it cannot be audience-specific without a client-side guess.
-- The error shell is shared and scope-neutral; team/own empty copy is audience-specific.
+- The schema still allows several effective team scope grants per person; W06C only keeps the label
+  inclusive. Locking the "one team scope per person" invariant needs a DB change, which stays T0's call.
+- Route `loading.tsx` stays a neutral skeleton: the audience is only known after the scoped read.
 - No Owner UI UAT, no Production access, no migration apply; Release A migration ordering stays T0's.
