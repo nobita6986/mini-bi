@@ -319,9 +319,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     `);
     // P3-W07C-R2 replaces bodies of existing functions only; it adds no
     // function and does not change the service-role boundary inventory.
+    // P3-W05A (#47) adds six service-role-only scoped reporting helpers, all
+    // GRANT EXECUTE to service_role and none reachable by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 80,
-      service_role: 39,
+      total: 86,
+      service_role: 45,
       internal: 41,
       exposed_internal: 0,
     });

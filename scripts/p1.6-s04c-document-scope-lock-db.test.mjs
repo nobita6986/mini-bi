@@ -141,6 +141,9 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // helpers/wrapped implementations while preserving 39 service boundaries.
   // P3-W07C-R2 redefines existing validators/RPCs only; no date-conversion
   // helper is added and the prior function inventory stays unchanged.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [80, 39, 41]);
+  // P3-W05A (#47) adds six service-role-only scoped reporting helpers
+  // (resolve_audience, authorized_entries, scoped_facts, de_options_scoped,
+  // scoped_options, seed_team_scope_grants) with no public RPC exposure.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [86, 45, 41]);
   await db.close();
 });
