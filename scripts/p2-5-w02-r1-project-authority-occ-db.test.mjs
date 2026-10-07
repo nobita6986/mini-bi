@@ -448,11 +448,12 @@ test("R1: every assignment mutation bumps the project version and appends a revi
     assert.deepEqual(revisions.map((r) => r.version), [1, 2, 3, 4],
       "one revision per mutation, contiguous and unique per project");
     assert.deepEqual(
-      revisions.slice(1).map((r) => r.after_snapshot.change), ["ASSIGN", "ASSIGN", "UNASSIGN"]);
-    assert.equal(revisions[3].after_snapshot.assignment_id, a.assignment_id);
+      revisions.slice(1).map((r) => r.after_snapshot.assignment_change.change),
+      ["ASSIGN", "ASSIGN", "UNASSIGN"]);
+    assert.equal(revisions[3].after_snapshot.assignment_change.assignment_id, a.assignment_id);
+    assert.equal(revisions[1].after_snapshot.assignment_change.manager_recruiter_id, REC_A);
     assert.equal(revisions[3].before_snapshot.version, 3,
       "before/after snapshots bracket the mutation");
-    assert.equal(revisions[1].after_snapshot.manager_recruiter_id, REC_A);
     assert.equal(revisions.every((r) => r.actor === ADMIN_APP), true,
       "the revision records the acting administrator");
     assert.equal(revisions.every((r) => r.has_reason), true);
@@ -467,6 +468,81 @@ test("R1: every assignment mutation bumps the project version and appends a revi
         "project_manager_assignment_unassign"]);
     assert.deepEqual(linked.rows.map((r) => r.version), [2, 3, 4],
       "assignment audit events are linked to the project revision they caused");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 3b. R2: the revision snapshot contract holds after real mutations.
+//     Mirrors the #51 self-check predicate (section 5 of the migration) so the
+//     invariant is verified against data, not only at migration time.
+// ---------------------------------------------------------------------------
+const REVISION_SNAPSHOT_KEYS = ["project_id", "display_name", "active", "version"];
+const REVISION_INVARIANT_SQL =
+  "select count(*)::int as n from public.direct_entry_project_revisions r" +
+  " where not (r.after_snapshot ?& array['project_id','display_name','active','version'])" +
+  " or r.after_snapshot->>'project_id' is distinct from r.project_id" +
+  " or (r.after_snapshot->>'version')::int is distinct from r.version" +
+  " or (r.before_snapshot is not null" +
+  "     and not (r.before_snapshot ?& array['project_id','display_name','active','version']))";
+
+test("R2: every project revision stores a full project snapshot, not a delta", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await createProject(db);                                   // revision 1 (create)
+    const a = await assign(db, { manager: REC_A, expectedProjectVersion: 1 }); // revision 2
+    await assign(db, { manager: REC_B, expectedProjectVersion: 2, key: "assign-key-2" }); // 3
+    await unassign(db, { assignmentId: a.assignment_id, expectedVersion: 1,
+      expectedProjectVersion: 3, key: "unassign-key-snap" });  // revision 4
+    await updateProject(db, { expectedVersion: 4, displayName: "R2 Snapshot",
+      key: "update-key-snap" });                               // revision 5
+    await setProjectActive(db, { active: false, expectedVersion: 5,
+      key: "active-key-snap" });                               // revision 6
+
+    assert.equal(await countOf(db, REVISION_INVARIANT_SQL), 0,
+      "the #51 self-check invariant must find no bad revision after assign/unassign");
+
+    const revisions = await revisionRows(db);
+    assert.deepEqual(revisions.map((r) => r.version), [1, 2, 3, 4, 5, 6]);
+    for (const revision of revisions) {
+      for (const key of REVISION_SNAPSHOT_KEYS) {
+        assert.ok(key in revision.after_snapshot,
+          "after_snapshot of revision " + revision.version + " must carry " + key);
+      }
+      assert.equal(revision.after_snapshot.project_id, revision.project_id);
+      assert.equal(revision.after_snapshot.version, revision.version,
+        "after_snapshot.version must equal revision.version");
+      assert.equal(revision.after_snapshot.display_name !== undefined, true);
+      assert.equal(revision.after_snapshot.active !== undefined, true);
+      assert.equal(revision.after_snapshot.change, undefined,
+        "the assignment delta must not replace the project snapshot");
+      if (revision.before_snapshot !== null) {
+        for (const key of REVISION_SNAPSHOT_KEYS) {
+          assert.ok(key in revision.before_snapshot,
+            "before_snapshot of revision " + revision.version + " must carry " + key);
+        }
+        assert.equal(revision.before_snapshot.version, revision.version - 1,
+          "before_snapshot is the project state before the mutation");
+      }
+    }
+    assert.equal(revisions[0].before_snapshot, null, "creation has no before state");
+
+    // The assignment delta is preserved under its own key.
+    assert.deepEqual(
+      revisions.slice(1, 4).map((r) => r.after_snapshot.assignment_change.change),
+      ["ASSIGN", "ASSIGN", "UNASSIGN"]);
+    assert.equal(revisions.slice(1, 4).every(
+      (r) => r.after_snapshot.display_name === "R1 Project"), true,
+    "an assignment mutation does not rewrite the project display name");
+    assert.equal(revisions[4].after_snapshot.display_name, "R2 Snapshot");
+    assert.equal(revisions[4].after_snapshot.assignment_change, undefined);
+    assert.equal(revisions[5].after_snapshot.active, false);
+
+    // The stored sequence cannot disagree with the project row.
+    assert.equal(revisions[revisions.length - 1].version, await projectVersion(db),
+      "the last revision version is the project version");
   } finally {
     await db.close();
   }

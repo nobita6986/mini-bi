@@ -112,6 +112,12 @@ comment on column public.direct_entry_project_manager_assignments.valid_to is
 -- tables) and are NEVER backfilled: a project that predates W02 keeps an empty
 -- history instead of an invented one, and its version stays 1 until the first
 -- audited mutation.
+--
+-- Snapshot contract (P2.5-W02-R2): before_snapshot and after_snapshot are ALWAYS
+-- project snapshots -- project_id, display_name, active, version -- whichever
+-- mutation wrote them (create/update/set-active/assign/unassign). An assignment
+-- mutation additionally stores its delta under the assignment_change key, so the
+-- revision table has ONE shape and the #51 self-check can verify it.
 -- -----------------------------------------------------------------------------
 create table public.direct_entry_project_revisions (
   revision_id uuid primary key default gen_random_uuid(),
@@ -725,12 +731,20 @@ begin
     into v_project_version, v_revision_id
     from public.direct_entry_bump_project_version(
       p_project_id, p_app_user_id, v_reason_id, v_before,
-      jsonb_build_object(
-        'assignment_id', v_assignment_id,
-        'manager_recruiter_id', p_manager_recruiter_id,
-        'valid_from', v_valid_from,
-        'valid_to', null,
-        'change', 'ASSIGN'
+      -- after_snapshot is ALWAYS a project snapshot (project_id, display_name,
+      -- active, version); the assignment delta lives under its own key so the
+      -- revision contract and the #51 self-check stay identical for every writer.
+      jsonb_set(
+        public.direct_entry_project_snapshot(v_project),
+        '{assignment_change}',
+        jsonb_build_object(
+          'change', 'ASSIGN',
+          'assignment_id', v_assignment_id,
+          'manager_recruiter_id', p_manager_recruiter_id,
+          'valid_from', v_valid_from,
+          'valid_to', null
+        ),
+        true
       )
     ) b;
 
@@ -885,11 +899,16 @@ begin
     into v_project_version, v_revision_id
     from public.direct_entry_bump_project_version(
       v_project_id, p_app_user_id, v_reason_id, v_before,
-      jsonb_build_object(
-        'assignment_id', p_assignment_id,
-        'manager_recruiter_id', v_assignment.manager_recruiter_id,
-        'valid_to', v_revoke_to,
-        'change', 'UNASSIGN'
+      jsonb_set(
+        public.direct_entry_project_snapshot(v_project),
+        '{assignment_change}',
+        jsonb_build_object(
+          'change', 'UNASSIGN',
+          'assignment_id', p_assignment_id,
+          'manager_recruiter_id', v_assignment.manager_recruiter_id,
+          'valid_to', v_revoke_to
+        ),
+        true
       )
     ) b;
 
@@ -1539,13 +1558,18 @@ begin
     raise exception 'P2.5-W02 assignment backfill invariant failed on % row(s)', v_rows;
   end if;
 
-  -- Project revisions are only ever backfilled by an audited mutation, so at
-  -- migration time the table must be empty, and any row that exists later must
-  -- describe the version it claims to describe.
+  -- Revision snapshot contract (P2.5-W02-R2): every revision -- project edit,
+  -- activate/deactivate, assign and unassign -- stores a PROJECT snapshot in
+  -- before_snapshot and after_snapshot: project_id, display_name, active and the
+  -- version it produced. Assignment detail is carried under a separate key
+  -- (assignment_change) and never replaces the project snapshot.
   select count(*)::int into v_rows
     from public.direct_entry_project_revisions r
-   where r.after_snapshot->>'project_id' is distinct from r.project_id
-      or (r.after_snapshot->>'version')::int is distinct from r.version;
+   where not (r.after_snapshot ?& array['project_id', 'display_name', 'active', 'version'])
+      or r.after_snapshot->>'project_id' is distinct from r.project_id
+      or (r.after_snapshot->>'version')::int is distinct from r.version
+      or (r.before_snapshot is not null
+          and not (r.before_snapshot ?& array['project_id', 'display_name', 'active', 'version']));
   if v_rows <> 0 then
     raise exception 'P2.5-W02 project revision invariant failed on % row(s)', v_rows;
   end if;

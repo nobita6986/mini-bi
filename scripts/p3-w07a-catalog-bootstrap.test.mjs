@@ -2,7 +2,9 @@
  * P3-W07A — operator importer test.
  *
  * Strategy:
- *   - Use PGlite + all 41 migrations applied to a fresh DB.
+ *   - Use PGlite + the real ledger applied to a fresh DB: the full ledger for
+ *     T1/T6/T9/T13, and the pre-P2.5-W02 slice for T2/T5/T7/T10/T11/T11b/T12
+ *     where the importer's raw project upsert is still the only project writer.
  *   - Build a synthetic XLSX workbook (in memory) using exceljs and write
  *     it to a temp file. NEVER touch the repository.
  *   - Invoke `runCatalogBootstrap({ workbookPath, ... })` against a
@@ -33,15 +35,31 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 import { runCatalogBootstrap } from "./p3-w07a-catalog-bootstrap.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
+// P2.5-W02 (#51) is the last migration in the ledger.
+const PRE_W02_MIGRATION = "20261008100000_p3_w07e_project_manager_submitted_change_requests.sql";
 
-async function buildDatabase() {
+async function buildDatabase({ untilMigration = null } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const migrations = readdirSync(MIGRATION_DIR).filter((name) => name.endsWith(".sql")).sort();
-  for (const name of migrations) {
+  let applied = migrations;
+  if (untilMigration !== null) {
+    const index = migrations.indexOf(untilMigration);
+    assert.notEqual(index, -1, "migration not found: " + untilMigration);
+    applied = migrations.slice(0, index + 1);
+  }
+  for (const name of applied) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   return db;
+}
+
+/**
+ * The ledger as it stood BEFORE P2.5-W02 (#51). The raw project upsert in the
+ * importer is only legitimate there; from #51 on it is retired (T13).
+ */
+async function buildLegacyDatabase() {
+  return buildDatabase({ untilMigration: PRE_W02_MIGRATION });
 }
 
 async function buildWorkbook(workbookPath, {
@@ -162,7 +180,7 @@ test("T2 apply inserts every sheet once and reports counts", async (t) => {
     vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
   });
 
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
 
   const result = await runCatalogBootstrap({
@@ -237,7 +255,7 @@ test("T5 second apply on the same workbook is idempotent", async (t) => {
     vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
   });
 
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
 
   const first = await runCatalogBootstrap({
@@ -305,7 +323,7 @@ test("T7 records absent from workbook are preserved (no delete / no deactivate)"
     vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
   });
 
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
 
   // Seed an unrelated project / vendor / recruiter that the workbook does
@@ -415,7 +433,7 @@ test("T10 workbook change updates name/team/position/active for an existing HRP 
     }],
     vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
   });
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
 
   await runCatalogBootstrap({
@@ -498,7 +516,7 @@ test("T11 team change on the same effective date updates the membership in place
     }],
     vendors: [],
   });
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
   await runCatalogBootstrap({
     workbookPath,
@@ -566,7 +584,7 @@ test("T11b team change on a LATER effective date closes the previous open member
     }],
     vendors: [],
   });
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
   await runCatalogBootstrap({
     workbookPath,
@@ -647,7 +665,7 @@ test("T12 row removed from workbook is NOT deactivated nor deleted", async (t) =
     hrp: [{ personnel_code: "user-1", display_name: "User 1", position: "STAFF", team: "team-1", active: true }],
     vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
   });
-  const pglite = await buildDatabase();
+  const pglite = await buildLegacyDatabase();
   const externalClient = pgClientFromPglite(pglite);
   await runCatalogBootstrap({
     workbookPath,
@@ -681,4 +699,96 @@ test("T12 row removed from workbook is NOT deactivated nor deleted", async (t) =
   );
   assert.equal(vendor.rows[0].n, 1, "vendor preserved");
   assert.equal(vendor.rows[0].active, 1, "vendor still active; absence is NOT a deactivation");
+});
+
+test("T13 post-#51 apply with project rows is retired BEFORE any write", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "w07a-"));
+  t.after(async () => { try { await rm(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  const workbookPath = path.join(dir, "owner.xlsx");
+  await buildWorkbook(workbookPath, {
+    projects: [{ project_id: "proj-1", display_name: "Project 1" }],
+    teams: [{ code: "team-1", display_name: "Team 1" }],
+    hrp: [{ personnel_code: "user-1", display_name: "User 1", position: "STAFF", team: "team-1", active: true }],
+    vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
+  });
+
+  const pglite = await buildDatabase();
+  const gate = await pglite.query(
+    "select to_regclass('public.direct_entry_project_revisions') is not null as present");
+  assert.equal(gate.rows[0].present, true, "the full ledger carries P2.5-W02 #51");
+
+  const TABLES = ["vendors", "direct_entry_projects", "teams", "recruiters",
+    "direct_entry_project_revisions"];
+  async function tableCounts() {
+    const counts = {};
+    for (const table of TABLES) {
+      const rows = await pglite.query("select count(*)::int as n from public." + table);
+      counts[table] = rows.rows[0].n;
+    }
+    return counts;
+  }
+  const before = await tableCounts();
+
+  // Record every statement so "before any write" and "clean rollback" are proven
+  // from the wire, not inferred from the final rows.
+  const statements = [];
+  const recordingClient = {
+    async connect() { /* no-op */ },
+    async end() { /* no-op */ },
+    query(text, params) {
+      statements.push(String(text).trim());
+      return pglite.query(text, params);
+    },
+  };
+
+  let error = null;
+  try {
+    await runCatalogBootstrap({
+      workbookPath,
+      apply: true,
+      confirm: "P3_W07A_CATALOG_APPLY",
+      idempotencyKey: "owner-bootstrap-retired-2026-10-15-v1",
+      externalClient: recordingClient,
+    });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error, "an apply with project rows must fail closed after #51");
+  assert.equal(error.code, "PROJECT_BOOTSTRAP_RETIRED_USE_PROJECT_RPCS");
+
+  const writes = statements.filter((sql) => /^(insert|update|delete|merge|truncate)\b/i.test(sql));
+  assert.deepEqual(writes, [], "the guard must fire before the first write");
+  assert.equal(statements[0], "begin");
+  assert.equal(statements[statements.length - 1], "rollback",
+    "the open transaction is rolled back, not left dangling");
+  assert.deepEqual(await tableCounts(), before,
+    "a refused apply leaves every catalog table byte-identical");
+
+  // The connection is not left in an aborted transaction: a dry-run and an apply
+  // WITHOUT project rows both still work on the same ledger.
+  const dryRun = await runCatalogBootstrap({
+    workbookPath, externalClient: pgClientFromPglite(pglite),
+  });
+  assert.equal(dryRun.mode, "dry-run");
+  assert.equal(dryRun.counts.projects, 1, "dry-run is still allowed after #51");
+
+  await buildWorkbook(workbookPath, {
+    projects: [],
+    teams: [{ code: "team-1", display_name: "Team 1" }],
+    hrp: [],
+    vendors: [{ vendor_id: "v-1", display_name: "Vendor 1", active: true }],
+  });
+  const withoutProjects = await runCatalogBootstrap({
+    workbookPath,
+    apply: true,
+    confirm: "P3_W07A_CATALOG_APPLY",
+    idempotencyKey: "owner-bootstrap-retired-2026-10-15-v2",
+    externalClient: pgClientFromPglite(pglite),
+  });
+  assert.equal(withoutProjects.report.vendors_inserted, 1,
+    "an apply without project rows is not blocked");
+  const after = await tableCounts();
+  assert.equal(after.direct_entry_projects, before.direct_entry_projects,
+    "the retired path never wrote a project row");
+  assert.equal(after.direct_entry_project_revisions, 0);
 });

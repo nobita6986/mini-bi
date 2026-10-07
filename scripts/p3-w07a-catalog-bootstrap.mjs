@@ -19,6 +19,12 @@
  *   - Records already in the database that are absent from the workbook are
  *     preserved; the script NEVER deletes/deactivates anything solely because
  *     it is missing from the workbook. (W07B/P3.1 owns lifecycle.)
+ *   - P2.5-W02-R2: `--apply` with project rows is RETIRED once
+ *     `public.direct_entry_project_revisions` exists (migration #51). It fails
+ *     closed with `PROJECT_BOOTSTRAP_RETIRED_USE_PROJECT_RPCS` BEFORE any write;
+ *     project master mutations then go through `direct_entry_create_project` /
+ *     `direct_entry_update_project` / `direct_entry_set_project_active`.
+ *     `--dry-run` and `--apply` without project rows are unaffected.
  *   - Logs are sanitized — sheet names, count, fingerprint, row numbers, and
  *     normalized error codes only. No display names, no personnel_code, no
  *     vendor display name, no UUIDs in logs.
@@ -61,6 +67,10 @@ const PERSONNEL_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const POSITION_SET = new Set(["STAFF", "TEAM_LEADER"]);
 const TEAM_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REQUIRED_SHEETS = Object.freeze(["Projects", "Teams", "HRP_Personnel", "Vendors"]);
+// P2.5-W02-R2: once the #51 project revision table exists, the raw project
+// upsert here is retired -- project master mutations must go through the W02
+// project RPCs (reason + audit + revision + OCC). Stable refusal code.
+const PROJECT_BOOTSTRAP_RETIRED = "PROJECT_BOOTSTRAP_RETIRED_USE_PROJECT_RPCS";
 
 // Sheet column contracts. Headers can be in Vietnamese or English; the
 // importer normalizes via `normalizeHeader` and then dispatches on the key.
@@ -375,6 +385,28 @@ function logSanitized(payload) {
 // ---------------------------------------------------------------------------
 // Database plan / apply
 // ---------------------------------------------------------------------------
+/**
+ * P2.5-W02-R2 guard: the raw project upsert predates the W02 project master. On a
+ * ledger that carries #51 the project RPCs own reason/audit/revision/OCC, so a
+ * workbook apply must not silently bump direct_entry_projects.version without a
+ * revision. Refuse with a stable code; no rewrite of this importer into an admin
+ * framework, and no write has happened yet when this throws.
+ */
+async function assertProjectBootstrapRetired({ client, parsed }) {
+  if (parsed.projects.length === 0) return;
+  const gate = await client.query(
+    "select to_regclass('public.direct_entry_project_revisions') is not null as present",
+  );
+  if (!gate.rows[0].present) return;
+  const error = new Error(
+    "project rows must be created or updated through the P2.5-W02 project RPCs" +
+    " (direct_entry_create_project / direct_entry_update_project /" +
+    " direct_entry_set_project_active); the raw catalog upsert is retired",
+  );
+  error.code = PROJECT_BOOTSTRAP_RETIRED;
+  throw error;
+}
+
 async function plan({ parsed }) {
   // Read-only projection of what the apply would do. The transaction is
   // always rolled back; nothing is written.
@@ -616,6 +648,12 @@ export async function runCatalogBootstrap({
     transactionOpen = true;
 
     if (apply) {
+      // Fail closed BEFORE the first write of the transaction: vendors are
+      // upserted first inside applyCatalog, so a guard placed any later would
+      // already have mutated the catalog. The open transaction is rolled back
+      // by the caller's finally block.
+      await assertProjectBootstrapRetired({ client, parsed });
+
       const { report, importEffective } = await applyCatalog({
         client,
         parsed,
