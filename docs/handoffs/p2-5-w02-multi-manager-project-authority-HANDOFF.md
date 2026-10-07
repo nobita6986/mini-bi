@@ -41,6 +41,22 @@ unknown (no invented history). Rows are never deleted: revocation closes `valid_
 - #50 redefines the two assignment helpers WITHOUT an interval predicate and tries the
   creator/team/`first_work_date` fallback before the assignment check. #51 applies after #50 and
   supersedes all three: interval-aware helpers + assignment-only propose resolver.
+- CORRECTION (P2.5-W02-R1, T0 finding 3): #51 closes ONLY the CREATE resolver fallback. The
+  audience/read/withdraw paths of #50 still carry creator/team/`first_work_date` semantics:
+  `direct_entry_change_request_audience` (calls `direct_entry_assert_entry_access(...,
+  created_by_user_id, team_id, first_work_date)`), the submission list `project_scoped` branch, the
+  submission read `created_by_user_id <> p_app_user_id` check, and the withdraw path. Those are W04
+  scope and are NOT closed by this migration. It is therefore WRONG to say the W07E fallback is
+  fully closed; the accurate statement is: "CREATE resolver fallback closed; audience/read/withdraw
+  policy still pending W04".
+- The earlier `psql --single-transaction -f #50 -f #51` proposal is INVALID and withdrawn: both files
+  contain their own BEGIN/COMMIT, so an inner COMMIT ends the outer transaction and the two files are
+  not applied atomically by that command.
+- Deployment rule (T0): keep Production at 49 applied; #50 and #51 stay PENDING until W04 produces the
+  final policy and an operator procedure is proven not to create an intermediate insecure state. Do
+  not apply #50 or #51 separately. A grouped apply would only be acceptable with a test proving: no
+  inner COMMIT breaks the transaction, the #50/#51 ledger rows are written atomically, and rollback
+  restores both schema and ledger. No custom ledger runner is added in W02.
 - Reachability on Production (read-only `scripts/p2-5-w02-w07e50-safety-check.mjs`): W07E #50 not
   applied, scope resolver absent, **55 enabled accounts hold an effective `change_request_create`
   grant, 17 SUBMITTED entries** => applying #50 WITHOUT #51 would make the fallback reachable.
@@ -56,7 +72,8 @@ unknown (no invented history). Rows are never deleted: revocation closes `valid_
   keeps history+audit; created_by audit-only; recruiter attribution is not authority; past/future
   `first_work_date` irrelevant; duplicate active pair blocked while other managers stay allowed;
   admin RPC capability/all-scope/reason/OCC/idempotency/audit; expand/backfill invents nothing;
-  ACL/SECURITY DEFINER/search_path/reuse assertions; closed #50 creator/team/date propose fallback.
+  ACL/SECURITY DEFINER/search_path/reuse assertions; #51 closes the #50 CREATE resolver fallback
+  (audience/read/withdraw remain W04 - see the correction above).
 - Fixture impact of the closure: the shared change-request fixture assigns its proposer as project
   manager (`scripts/lib/s04c-read-fixture.mjs`, guarded for historical ledgers); the DOCUMENT
   scope-lock test accepts the policy-level refusal (42501) or the table constraint (23514).
@@ -68,6 +85,17 @@ unknown (no invented history). Rows are never deleted: revocation closes `valid_
 - W02 suite 12/12; `pnpm test` 1449/1449 (0 fail); `db:migrate --offline` 51 valid; `--dry-run`
   49 applied / 2 pending (W07E #50 + W02 #51) / 0 mismatch; typegen+typecheck, lint, build,
   docs:check 6/6, secrets:check ĐẠT, `git diff --check` clean.
+
+## OPEN after R1 review (NOT delivered in this commit)
+
+- Finding 1 (real OCC): assign/unassign still use `p_expected_active_count`; they must lock the
+  `direct_entry_projects` row, take the expected project version, fail closed on mismatch, bump the
+  project version in the same transaction, and store a project before/after revision. An ABA test
+  (manager A removed + manager B added, same count, stale snapshot refused) is missing.
+- Finding 2 (project CRUD): list/get, create, update display name, activate/deactivate (never
+  hard-delete a referenced project) with actor mapping + entry_admin + all scope + reason +
+  expected version + idempotency + immutable audit + project revision are NOT implemented.
+- `direct_entry_projects` has no `version` column today, so Finding 1 needs a schema addition.
 
 ## Out of scope / remaining
 
