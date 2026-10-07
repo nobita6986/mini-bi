@@ -313,3 +313,24 @@ Pre-apply reconcile on Production correctly fails `MIGRATION_STATE_DRIFT`.
 No Production apply. No main push. No deploy. No new dependency. No
 Dashboard / auth / AI / package change. R1 stays inside the W04B
 lane.
+
+## P2-W04C — Cutoff rebaseline to 2026-09-30
+
+Current reporting cutoff: **2026-09-30** (Asia/Ho_Chi_Minh), introduced by
+append-only migration #47, `20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql`.
+The shared SQL cutoff helper and `P2_W04A_CUTOVER_DATE` remain the only DB/TS
+mask inputs: legacy is `< 2026-09-30`; eligible submitted Direct Entry is
+`>= 2026-09-30`. Migration #44 is historical and remains unchanged.
+
+Production preflight before #47: ledger 46 applied / 1 pending / 0 mismatch;
+current cutoff 2026-10-06; legacy rows/subtotal 0; active non-test sources 0;
+eligible Direct Entry before 2026-09-30 = 0; 17 eligible rows are at/after
+the proposed cutoff. The #47 migration repeats those safety checks in SQL,
+then verifies cutoff, zero legacy subtotal, zero blocker, projection count and
+sum against the helper, and the service-role-only / invoker posture of the
+pure cutoff function.
+
+The W04B preflight is a frozen release record for migration #44. The current
+read-only reconciler now targets cutoff 2026-09-30 and migration #47. Any
+subsequent migration must append after #47; W05A therefore takes the next
+slot, #48.

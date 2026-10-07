@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * P2-W04B-R1 — read-only Production reconciliation verifier (data-agnostic).
+ * P2-W04C — read-only Production reconciliation verifier (data-agnostic).
  *
  * Opens a Postgres connection in a READ ONLY transaction, runs the SQL
  * reconciliation helper, and verifies structural invariants. The
@@ -28,11 +28,11 @@
  * The transaction is always rolled back so the database is never mutated.
  *
  * IMPORTANT — expected negative check: running this script against
- * Production BEFORE migration #44 is applied MUST fail with
- * `MIGRATION_STATE_DRIFT` (44 expected, 43 applied) or `MIGRATION_PENDING`
- * (the W04B filename is missing from the applied set). This is the
+ * Production BEFORE migration #47 is applied MUST fail with
+ * `MIGRATION_STATE_DRIFT` (47 expected, 46 applied) or `MIGRATION_PENDING`
+ * (the W04C filename is missing from the applied set). This is the
  * expected state and is a smoke test that the script is checking the
- * ledger correctly. Do NOT apply migration #44 just to get this script
+ * ledger correctly. Do NOT apply migration #47 just to get this script
  * to print a green PASS — the green PASS must come from the integration
  * / release lane after a controlled apply.
  *
@@ -50,13 +50,14 @@ import { buildSslOptions } from "./lib/supabase-tls.mjs";
 import { readMigrations } from "./lib/migration-validation.mjs";
 
 // Locked post-purge cutoff (mirrors `public.direct_entry_reporting_cutoff()`).
-const EXPECTED_CUTOVER = "2026-10-06";
+const EXPECTED_CUTOVER = "2026-09-30";
 
-// Migration inventory at base `origin/main@a74caa3` is 43. P2-W04B
-// rebaseline adds migration #44, so the on-disk inventory MUST be 44.
-const EXPECTED_MIGRATION_COUNT = 44;
+// Migration inventory at base `origin/main@6f5d38e` is 46. P2-W04C
+// rebaseline adds migration #47, so the on-disk inventory MUST be 47.
+const EXPECTED_MIGRATION_COUNT = 47;
 const W04A_MIGRATION_MARKER = "p2_w04a_direct_entry_reporting_cutover";
 const W04B_MIGRATION_MARKER = "p2_w04b_post_purge_cutover_rebaseline";
+const W04C_MIGRATION_MARKER = "p2_w04c_cutoff_rebaseline_2026_09_30";
 
 const MIGRATION_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -111,13 +112,18 @@ async function main() {
       fail("MIGRATION_W04B_MISSING",
         "migration #44 (p2_w04b_post_purge_cutover_rebaseline) not found");
     }
+    const w04c = migrations.find((m) => m.name.includes(W04C_MIGRATION_MARKER));
+    if (!w04c) {
+      fail("MIGRATION_W04C_MISSING",
+        "migration #47 (p2_w04c_cutoff_rebaseline_2026_09_30) not found");
+    }
 
     // 2) Open a READ ONLY transaction. The database is NEVER mutated.
     await client.query("begin read only");
     transactionOpen = true;
     await client.query("set local statement_timeout = '30s'");
 
-    // 3) Migration ledger: 44 applied / 0 pending / 0 mismatch.
+    // 3) Migration ledger: 47 applied / 0 pending / 0 mismatch.
     const applied = await client.query(
       "select version, checksum from public.schema_migrations",
     );
@@ -292,7 +298,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === path.res
     const code = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]+$/.test(error.code)
       ? error.code
       : "RECONCILE_DATABASE_ERROR";
-    console.error(`P2_W04B_RECONCILE_FAILED ${code}${error.detail ? " " + error.detail : ""}`);
+    console.error(`P2_W04C_RECONCILE_FAILED ${code}${error.detail ? " " + error.detail : ""}`);
     process.exitCode = code === "RECONCILE_DATABASE_ERROR" ? 2 : 1;
   });
 }

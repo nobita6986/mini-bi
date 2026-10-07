@@ -23,18 +23,16 @@ async function buildDb() {
   return { db, migrationNames: names };
 }
 
-test("P2-W04A/W04B migrations retain order before the later W07C migration", async () => {
+test("P2-W04C migration is append-only after the 46-migration baseline", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    // W04B (#44) stays immediately after W07B; W07C-R2 is the later #45
-    // on this branch (and becomes #46 after W05A is integrated).
-    assert.equal(migrationNames.length, 46);
+    assert.equal(migrationNames.length, 47);
     assert.equal(
       migrationNames[migrationNames.length - 1],
-      "20261008050000_p3_w07c_r2_raw_text_dates.sql",
-      "W07C-R2 must append after the existing W04B migration",
+      "20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql",
+      "W04C must append after the existing 46 migrations",
     );
-    // W07B must still be present and immediately precede W04B.
+    // Historical ordering remains byte-for-byte append-only.
     const w07bIdx = migrationNames.indexOf(
       "20261008020000_p3_w07b_project_manager_scope.sql",
     );
@@ -94,9 +92,9 @@ test("P2-W04A/W04B migrations retain order before the later W07C migration", asy
     );
     assert.deepEqual(dimCols.rows[0].cols, ["dimension", "key", "display", "recruited_count"]);
 
-    // 3. Cutoff is locked to the P2-W04B rebaseline value.
+    // 3. Cutoff is locked to the P2-W04C rebaseline value.
     const cutoffRes = await db.query("select public.direct_entry_reporting_cutoff()::text as c");
-    assert.equal(cutoffRes.rows[0].c, "2026-10-06");
+    assert.equal(cutoffRes.rows[0].c, "2026-09-30");
 
     // 4. Reconciliation totals are zero on fresh DB.
     const totals = await db.query(
@@ -106,7 +104,7 @@ test("P2-W04A/W04B migrations retain order before the later W07C migration", asy
     assert.equal(Number(totals.rows[0].legacy_subtotal), 0);
     assert.equal(Number(totals.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(totals.rows[0].overlap_blocker), 0);
-    assert.equal(totals.rows[0].cutoff_date, "2026-10-06");
+    assert.equal(totals.rows[0].cutoff_date, "2026-09-30");
   } finally {
     await db.close();
   }
@@ -264,6 +262,7 @@ async function applyBaseMigrations(db) {
     .sort();
   for (const name of names) {
     if (name.includes("p2_w04b_post_purge_cutover_rebaseline")) continue;
+    if (name.includes("p2_w04c_cutoff_rebaseline_2026_09_30")) continue;
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   return names;
@@ -329,7 +328,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // W07C-R2 is present after W04B in the source inventory; this test skipped
   // applying only W04B to exercise its rollback behavior.
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 47);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

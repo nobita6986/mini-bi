@@ -3,9 +3,8 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting";
 /**
  * P2-W04A — Direct Entry reporting cutover contract.
  *
- *   - Cutoff date locked at 2026-10-06 (Asia/Ho_Chi_Minh). P2-W04B rebaseline
- *     after the pre-UAT sample/business-data purge (origin/a74caa3 baseline
- *     measured 0 legacy rows and 0 eligible Direct Entry rows). The locked
+ *   - Cutoff date locked at 2026-09-30 (Asia/Ho_Chi_Minh). P2-W04C rebaseline
+ *     after the first canonical Direct Entry production intake. The locked
  *     mask is: legacy < cutoff; Direct Entry >= cutoff; eligible pre-cutoff
  *     Direct Entry raises a hard cutover blocker.
  *   - Eligibility: submission.state = 'SUBMITTED' AND deleted_at IS NULL.
@@ -16,7 +15,9 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting";
  * (migration #40) and
  * `supabase/migrations/20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql`
  * (migration #44; append-only after W07B so fresh-apply and Production-apply
- * share the same ordering). Every SQL mask reads through
+ * share the same ordering), then
+ * `supabase/migrations/20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql`
+ * (migration #47). Every SQL mask reads through
  * `public.direct_entry_reporting_cutoff()` so a single rebaseline flows
  * through to the projection view, the blocker helper and the
  * reconciliation totals without touching their SQL text.
@@ -27,7 +28,7 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting";
  */
 
 /** Hard-coded cutover date. Mirrors `public.direct_entry_reporting_cutoff()`. */
-export const P2_W04A_CUTOVER_DATE = "2026-10-06" as const;
+export const P2_W04A_CUTOVER_DATE = "2026-09-30" as const;
 
 /** Synthetic Direct Entry source id. Mirrors `public.direct_entry_reporting_source_id()`. */
 export const P2_W04A_DIRECT_ENTRY_SOURCE_ID =

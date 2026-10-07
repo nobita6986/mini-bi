@@ -1,12 +1,12 @@
 /**
- * P2-W04B-R1 — reconcile-focused test suite.
+ * P2-W04C — reconcile-focused test suite.
  *
  * Mirrors the read-only invariants the `p2-w04a-reconcile.mjs` script
  * performs, but against PGlite so the assertions are exercisable as
  * unit tests. The test seeds the post-purge shape (legacy aggregate
  * empty, all sources inactive) and asserts:
  *
- *   * the reconciliation helper returns the locked cutoff 2026-10-06;
+ *   * the reconciliation helper returns the locked cutoff 2026-09-30;
  *   * legacy_subtotal = 0 (post-purge invariant);
  *   * active & !is_test sources = 0;
  *   * the DE projection view count and sum(recruited_count) equal the
@@ -132,11 +132,11 @@ async function createAndSubmit(db, firstWorkDate, employeeCode) {
   );
 }
 
-test("P2-W04B-R1 reconcile: post-purge zero invariants and DE projection count/sum", async () => {
+test("P2-W04C reconcile: post-purge zero invariants and DE projection count/sum", async () => {
   const { db } = await buildPostPurgeDb();
   try {
     await seedFixture(db);
-    // Seed 3 eligible DE rows on dates >= the new cutoff (2026-10-06).
+    // Seed 3 eligible DE rows on dates >= the new cutoff (2026-09-30).
     await createAndSubmit(db, "2026-10-06", "hrp-2026-100601");
     await createAndSubmit(db, "2026-10-09", "hrp-2026-100901");
     await createAndSubmit(db, "2026-10-15", "hrp-2026-101501");
@@ -147,7 +147,7 @@ test("P2-W04B-R1 reconcile: post-purge zero invariants and DE projection count/s
       " cutoff_date::text as cutoff_date" +
       " from public.direct_entry_reporting_reconciliation_totals()",
     );
-    assert.equal(totals.rows[0].cutoff_date, "2026-10-06");
+    assert.equal(totals.rows[0].cutoff_date, "2026-09-30");
     assert.equal(Number(totals.rows[0].legacy_subtotal), 0);
     assert.equal(Number(totals.rows[0].direct_entry_subtotal), 3);
     assert.equal(Number(totals.rows[0].overlap_blocker), 0);
@@ -191,7 +191,7 @@ test("P2-W04B-R1 reconcile: post-purge zero invariants and DE projection count/s
   }
 });
 
-test("P2-W04B-R1 reconcile: DE projection count drift would fail", async () => {
+test("P2-W04C reconcile: DE projection count drift would fail", async () => {
   // Drive the helper / projection count to drift by inserting a DE row
   // then making it invisible to the projection (e.g. via delete_at
   // change). The projection count will fall, but the helper subtotal
@@ -247,7 +247,7 @@ test("P2-W04B-R1 reconcile: DE projection count drift would fail", async () => {
   }
 });
 
-test("P2-W04B-R1 reconcile: read-only transaction always rolls back (no mutation)", async () => {
+test("P2-W04C reconcile: read-only transaction always rolls back (no mutation)", async () => {
   // We construct a fake pg.Client-like surface that records whether
   // `begin`/`rollback`/`commit` were called in the right order. The
   // reconcile script (via its main()) opens a `begin read only` then
@@ -271,7 +271,7 @@ test("P2-W04B-R1 reconcile: read-only transaction always rolls back (no mutation
             legacy_subtotal: 0,
             direct_entry_subtotal: 0,
             overlap_blocker: 0,
-            cutoff_date: "2026-10-06",
+            cutoff_date: "2026-09-30",
           }],
         };
       }
@@ -301,18 +301,13 @@ test("P2-W04B-R1 reconcile: read-only transaction always rolls back (no mutation
   assert.equal(calls[calls.length - 1], "rollback");
 });
 
-test("P2-W04B reconcile retains its release baseline before the later W07C migration", async () => {
-  // W04B's production preflight is intentionally scoped to its 44-migration
-  // release baseline; this branch has the later W07C migration after it.
+test("P2-W04C reconcile tracks the current append-only release inventory", async () => {
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 46);
-  assert.equal(
-    names[names.length - 2],
-    "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
-  );
-  assert.equal(names[names.length - 1], "20261008050000_p3_w07c_r2_raw_text_dates.sql");
+  assert.equal(names.length, 47);
+  assert.equal(names[names.length - 1],
+    "20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );
@@ -320,6 +315,6 @@ test("P2-W04B reconcile retains its release baseline before the later W07C migra
     "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
   );
   assert.equal(w04bIdx, w07bIdx + 1);
-  assert.equal(Number(readFileSync(RECONCILE, "utf8").match(/EXPECTED_MIGRATION_COUNT\s*=\s*(\d+)/)?.[1]), 44,
-    "W04B's release preflight must not silently absorb later migration work");
+  assert.equal(Number(readFileSync(RECONCILE, "utf8").match(/EXPECTED_MIGRATION_COUNT\s*=\s*(\d+)/)?.[1]), 47,
+    "the current reconciliation verifier must track W04C migration #47");
 });
