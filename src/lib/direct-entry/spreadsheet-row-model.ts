@@ -6,16 +6,16 @@ export const SPREADSHEET_MAX_DATA_ROWS = 100;
 
 const CLIENT_ROW_ID_PREFIX = "spreadsheet-row";
 
-/**
- * P3-W07C: "Bộ Công An" van la gia tri mac dinh duoc dien vao o `Nơi cấp`,
- * nhung CHI khi row duoc kich hoat lan dau (lazy default). Truoc do o
- * trong state va hien thi placeholder mo.
- */
-export const DEFAULT_NATIONAL_ID_ISSUED_PLACE = "Bộ Công An";
-
 /** First-work-date default la ngay hien tai theo Asia/Ho_Chi_Minh (GMT+7). */
 export const SPREADSHEET_DEFAULT_DATE_FIELD_KEY = "first_work_date";
-export const SPREADSHEET_DEFAULT_PLACE_FIELD_KEY = "national_id_issued_place";
+
+/**
+ * P3-W07C-R3: không còn lazy default cho `national_id_issued_place`. Giá
+ * trị "Bộ Công An" do server-authoritative migration #46 ghi tại RPC
+ * create-batch; client không cần (và không nên) nhập trường này nữa. Các
+ * key còn lại trong row (date_of_birth, national_id, ...) vẫn do user
+ * nhập và không tự điền.
+ */
 
 /**
  * Tra ve ngay hien tai (YYYY-MM-DD) theo timezone Asia/Ho_Chi_Minh. Tranh
@@ -49,17 +49,18 @@ export type SpreadsheetStagedRow = {
   /**
    * Raw cell text as entered or pasted. Validation happens in a separate adapter.
    *
-   * P3-W07C: 2 o `first_work_date` va `national_id_issued_place` co the la
-   * lazy default (CHI khi row da kich hoat). Truoc khi kich hoat, o giu
-   * string rong; render layer hien placeholder mo.
+   * P3-W07C-R3: chỉ còn `first_work_date` là lazy default (CHỦ khi row
+   * được kích hoạt lần đầu). Trước khi kích hoạt, ô giữ string rỗng;
+   * render layer hiện placeholder mờ. `national_id_issued_place` không
+   * còn tự điền ở client — server-authoritative migration #46 ghi
+   * "Bộ Công An" tại RPC create-batch.
    */
   cells: Readonly<Record<string, string>>;
   /**
-   * P3-W07C: client-only co row da duoc kich hoat lazy defaults chua. Mot lan
-   * kich hoat moi row, khong tu khoi tao. Import/paste giu gia tri nguoi
-   * dung nhap (co the la lazy default neu gia tri trung ngay hom nay /
-   * `Bộ Công An`, nhung row do co `lazyDefaultsApplied: true` vi row da
-   * nhan gia tri).
+   * P3-W07C: client-only cờ row đã được kích hoạt lazy defaults chưa. Một lần
+   * kích hoạt mỗi row, không tự khởi tạo. Import/paste giữ giá trị người
+   * dùng nhập (có thể trùng lazy default nếu giá trị trùng ngày hôm nay,
+   * nhưng row đó có `lazyDefaultsApplied: true` vì row đã nhận giá trị).
    */
   lazyDefaultsApplied: boolean;
   /** Client-only recruiter filter/assertion; never serialized as a worker-profile field. */
@@ -81,9 +82,10 @@ export class SpreadsheetDataRowLimitError extends RangeError {
 
 /**
  * P3-W07C: tra ve cells TRONG (tat ca field empty) cho staged row moi.
- * Lazy defaults (`first_work_date = today`, `national_id_issued_place = "Bộ Công An"`)
- * CHI duoc chen vao sau khi user tuong tac lan dau voi row (click, focus,
- * mo quick editor, sua o). Truoc do render layer hien placeholder mo.
+ * Lazy default (`first_work_date = today`) CHI duoc chen vao sau khi
+ * user tuong tac lan dau voi row (click, focus, mo quick editor, sua o).
+ * Truoc do render layer hien placeholder mo. P3-W07C-R3: khong con lazy
+ * default cho `national_id_issued_place` (server migration #46 ghi).
  *
  * Cells o day KHONG can `lazyDefaultsApplied: true`; row moi sinh ra voi
  * `lazyDefaultsApplied: false` de phan biet voi row da duoc kich hoat.
@@ -96,12 +98,16 @@ export function defaultCells(): Record<string, string> {
  * P3-W07C: mot row duoc goi la blank neu KHONG co du lieu nguoi dung nao.
  * Mot row la blank neu:
  *  - tat ca writable fields empty; HOAC
- *  - row co lazy defaults (hoac user da tu xoa sau khi kich hoat) va khong
- *    co business field nao khac.
+ *  - row co lazy default cho first_work_date (hom nay) va khong co business
+ *    field nao khac.
+ *
+ * P3-W07C-R3: chỉ còn lazy default cho `first_work_date`. Mọi giá trị
+ * khác (kể cả `national_id_issued_place` nếu legacy template gửi lên)
+ * đều tính là dữ liệu người dùng.
  *
  * Cu the: row se khong la blank neu co it nhat MOT writable field co gia
- * tri non-empty KHONG PHAI lazy default. Row chi chua 2 default value
- * (hoac chi empty) van la blank, duoc loai khoi save/validate.
+ * tri non-empty KHONG PHAI lazy default. Row chi chua first_work_date =
+ * today (hoac chi empty) van la blank, duoc loai khoi save/validate.
  *
  * `now` chi dung de resolve "hom nay" (Asia/Ho_Chi_Minh) khi so sanh
  * first_work_date co phai default. Production goi khong truyen now
@@ -118,9 +124,6 @@ export function spreadsheetRowIsBlank(
     if (key === SPREADSHEET_DEFAULT_DATE_FIELD_KEY) {
       return value === today;
     }
-    if (key === SPREADSHEET_DEFAULT_PLACE_FIELD_KEY) {
-      return value === DEFAULT_NATIONAL_ID_ISSUED_PLACE;
-    }
     return false;
   });
 }
@@ -130,12 +133,15 @@ export function spreadsheetRowIsBlank(
  * kich hoat, tra ve model giu nguyen. Neu row chua co trong model, tra ve
  * nguyen model.
  *
+ * P3-W07C-R3: chỉ còn lazy default cho `first_work_date` (hôm nay theo
+ * Asia/Ho_Chi_Minh). `national_id_issued_place` đã do server-authoritative
+ * migration #46 ghi tại RPC, không còn tự điền ở client.
+ *
  * Sau khi kich hoat:
- *  - 2 cell default duoc set (chi khi chung EMPTY; khong ghi de gia tri
- *    user/paste/import).
- *  - `lazyDefaultsApplied = true` de row khong bi kich hoat nhieu lan.
- *  - Row van la blank (theo `spreadsheetRowIsBlank`) neu khong co business
- *    field nao.
+ *  - cell `first_work_date` được set nếu EMPTY (không ghi đè user/paste/import).
+ *  - `lazyDefaultsApplied = true` để row không bị kích hoạt nhiều lần.
+ *  - Row vẫn là blank (theo `spreadsheetRowIsBlank`) nếu không có business
+ *    field nào.
  */
 export function activateSpreadsheetRowLazyDefaults(
   model: SpreadsheetRowModel,
@@ -151,9 +157,6 @@ export function activateSpreadsheetRowLazyDefaults(
     const cells = { ...row.cells };
     if ((cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] ?? "").trim() === "") {
       cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = today;
-    }
-    if ((cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] ?? "").trim() === "") {
-      cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] = DEFAULT_NATIONAL_ID_ISSUED_PLACE;
     }
     return { ...row, cells, lazyDefaultsApplied: true };
   });
@@ -261,11 +264,14 @@ export function createSpreadsheetRowModel(): SpreadsheetRowModel {
 /**
  * P3-W07C-R1: moi edit/provider cell vao row tu dong activate lazy defaults
  * truoc khi apply patch. Activation chen ngay hom nay (Asia/Ho_Chi_Minh)
- * va `Bo Cong An` vao cac cell default neu chung EMPTY. Patch cua user /
- * paste / import luon thang (apply sau cung).
+ * vao o `first_work_date` neu o EMPTY. Patch cua user / paste / import
+ * luon thang (apply sau cung).
+ *
+ * P3-W07C-R3: chi con lazy default cho `first_work_date`; khong con
+ * lazy default cho `national_id_issued_place` (server migration #46 ghi).
  *
  * - Idempotent: row da activate thi activation khong doi gia tri.
- * - Khong overwrite gia tri date/place do user hoac file cung cap
+ * - Khong overwrite gia tri first_work_date do user hoac file cung cap
  *   (chi chen khi cell EMPTY truoc patch).
  * - Tra ve model khong doi neu row khong ton tai.
  */

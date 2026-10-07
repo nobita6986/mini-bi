@@ -38,17 +38,21 @@ const grid = readFileSync(
   new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
 
 const FOUR_OPTIONAL_FIELDS = ["account_number", "bank_name", "account_holder_name", "general_note"];
-const EXPECTED_18_COLUMNS = Object.freeze([
-  "row_index", "project_id", "first_work_date", "display_name", "gender",
-  "date_of_birth", "national_id", "national_id_issued_at", "national_id_issued_place",
-  "address", "phone", "provider_type", "recruiter_id", "labor_type",
-  "account_number", "bank_name", "account_holder_name", "general_note",
+const EXPECTED_17_COLUMNS = Object.freeze([
+  "row_index", "project_id", "provider_type", "recruiter_id", "labor_type",
+  "first_work_date", "display_name", "gender", "date_of_birth", "national_id",
+  "national_id_issued_at", "address", "phone", "account_number", "bank_name",
+  "account_holder_name", "general_note",
 ]);
 
-test("DataGrid nhan dung 18 cot default, khong save_status/row_actions/cccd_documents", () => {
-  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 18);
-  assert.deepEqual([...DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS], [...EXPECTED_18_COLUMNS]);
-  for (const forbidden of ["save_status", "row_actions", "cccd_documents"]) {
+test("DataGrid nhan dung 17 cot default (R3), khong save_status/row_actions/cccd_documents", () => {
+  // P3-W07C-R3: ba cột ngay sau `Dự án` là HRP/Vendor, Người tuyển / Vendor,
+  // Loại hình LĐ. Cột `Nơi cấp` đã được bỏ khỏi grid mặc định (server-authoritative
+  // migration #46 ghi "Bộ Công An" cho mỗi entry mới). Tổng còn 17 cột.
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 17);
+  assert.deepEqual([...DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS], [...EXPECTED_17_COLUMNS]);
+  for (const forbidden of ["save_status", "row_actions", "cccd_documents",
+    "national_id_issued_place"]) {
     assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes(forbidden), false,
       `cot ${forbidden} khong duoc co trong DataGrid default`);
   }
@@ -63,11 +67,11 @@ test("DataGrid nhan dung 18 cot default, khong save_status/row_actions/cccd_docu
     assert.equal(grid.includes(`"${key}"`), false,
       `DataGrid khong duoc append cot/pseudo ${key}`);
   }
-  // 4 optional field van nam trong 18 cot (account_number/bank_name/
+  // 4 optional field van nam trong 17 cot (account_number/bank_name/
   // account_holder_name/general_note).
   for (const key of FOUR_OPTIONAL_FIELDS) {
     assert.ok(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes(key),
-      `optional field ${key} phai co trong grid 18 cot`);
+      `optional field ${key} phai co trong grid 17 cot`);
   }
 });
 

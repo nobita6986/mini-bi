@@ -38,30 +38,37 @@ export type DirectEntryGridColumn = {
 /**
  * P1.7-H05 - Bo cot mac dinh cho Direct Entry Production UI.
  *
- * Thu tu 18 cot vat ly da duoc khoa theo task brief. STT chi la hien thi, Mã NLĐ
+ * Thu tu 17 cot mac dinh da duoc khoa theo task brief. STT chi la hien thi, Mã NLĐ
  * khong xuat hien o day va them khong cho nhap; việc cấp mã định danh vẫn do server
  * (migration #39) đảm nhiệm và hiện ở action rail/drawer. Tuổi suy ra từ DOB; lifecycle
  * (nghỉ việc/trạng thái) đóng vai trò nội bộ và không nằm trên grid mặc định.
  *
+ * P3-W07C-R3: thứ tự mặc định đã đảo để ba cột ngay sau `Dự án` là
+ * `HRP/Vendor → Người tuyển / Vendor → Loại hình LĐ` (theo brief). Cột
+ * `national_id_issued_place` đã được bỏ khỏi mặc định vì giá trị do
+ * server-authoritative migration #46 ghi ("Bộ Công An") và cũng không
+ * còn xuất hiện trong template Excel mới. Trường này vẫn còn trong
+ * `DIRECT_ENTRY_GRID_COLUMNS` để xử lý template/legacy paste; client
+ * không ghi đè được default ở RPC boundary.
+ *
  * Registry tong `DIRECT_ENTRY_GRID_COLUMNS` van giu day du cac truong de ho tro
  * drawer/projection, validation va mo rong sau nay; chỉ danh sach default visible bi
- * gioi han theo yeu cau H05.
+ * gioi han theo yeu cau H05 + R3.
  */
 export const DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS: readonly string[] = Object.freeze([
   "row_index",
   "project_id",
+  "provider_type",
+  "recruiter_id",
+  "labor_type",
   "first_work_date",
   "display_name",
   "gender",
   "date_of_birth",
   "national_id",
   "national_id_issued_at",
-  "national_id_issued_place",
   "address",
   "phone",
-  "provider_type",
-  "recruiter_id",
-  "labor_type",
   "account_number",
   "bank_name",
   "account_holder_name",
@@ -184,7 +191,11 @@ export const DIRECT_ENTRY_GRID_COLUMNS: readonly DirectEntryGridColumn[] = Objec
     // P3-W07C-R2: ordinary text through cell/payload/JSONB/read; no date parsing.
     editor: "text" }),
   fieldColumn("national_id_issued_place", { group: "worker", pasteMode: "write", width: 180,
-    editor: "text" }),
+    // P3-W07C-R3: cột này không còn hiện trong mặc định nữa (DB/RPC luôn
+    // ghi "Bộ Công An"). Trường vẫn có trong registry để legacy template
+    // vẫn paste được; client gửi giá trị nào cũng bị RPC ghi đè bằng
+    // server default.
+    editor: "text", visibleByDefault: false }),
   fieldColumn("address", { group: "worker", pasteMode: "write", width: 260,
     editor: "text", label: "Địa chỉ" }),
   fieldColumn("phone", { group: "worker", pasteMode: "write", width: 150,

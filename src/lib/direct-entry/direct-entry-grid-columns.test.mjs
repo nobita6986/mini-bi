@@ -65,16 +65,28 @@ test("registry tai su dung worker-profile spec thay vi nhan ban contract", () =>
   assert.equal(directEntryGridColumn("recruiter_id")?.label, "Người tuyển / Vendor");
 });
 
-test("default visible data columns are the 18 H05 columns and exclude action rail", () => {
+test("default visible data columns are the 17 R3 columns and exclude action rail", () => {
+  // P3-W07C-R3: ba cột ngay sau `Dự án` là
+  // `HRP/Vendor → Người tuyển / Vendor → Loại hình LĐ`. Cột
+  // `national_id_issued_place` đã được bỏ khỏi mặc định vì giá trị do
+  // server-authoritative migration #46 ghi ("Bộ Công An") và cũng không
+  // còn trong template Excel mới.
   assert.deepEqual(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS, [
-    "row_index", "project_id", "first_work_date", "display_name", "gender",
-    "date_of_birth", "national_id", "national_id_issued_at", "national_id_issued_place",
-    "address", "phone", "provider_type", "recruiter_id", "labor_type",
-    "account_number", "bank_name", "account_holder_name", "general_note",
+    "row_index", "project_id", "provider_type", "recruiter_id", "labor_type",
+    "first_work_date", "display_name", "gender", "date_of_birth", "national_id",
+    "national_id_issued_at", "address", "phone", "account_number", "bank_name",
+    "account_holder_name", "general_note",
   ]);
-  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 18);
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 17);
+  // Ba cột ngay sau `Dự án` phải đúng thứ tự theo brief R3.
+  const projectIndex = DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.indexOf("project_id");
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 1], "provider_type");
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 2], "recruiter_id");
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 3], "labor_type");
   // Ma NLĐ khong xuat hien tren grid va khong cho nhap o day; server tu sinh.
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("employee_code"), false);
+  // P3-W07C-R3: `Nơi cấp` không còn hiện trên grid mặc định.
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("national_id_issued_place"), false);
   // Tuoi, trang thai lam viec, ngay nghi, ghi chu nghi khong xuat hien tren grid.
   for (const key of ["age_years", "initial_status", "leave_date", "leave_reason_text",
     "team_hint", "provider_hint"]) {
@@ -89,6 +101,16 @@ test("default visible data columns are the 18 H05 columns and exclude action rai
     "bank_name", "account_holder_name", "general_note"]) {
     assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes(key), true, key);
   }
+  // `recruiter_id` vẫn là cột bắt buộc theo contract.
+  const recruiterColumn = directEntryGridColumn("recruiter_id");
+  assert.equal(recruiterColumn?.required, true, "recruiter_id still required");
+  assert.equal(recruiterColumn?.label, "Người tuyển / Vendor");
+  // Registry vẫn giữ field để hỗ trợ legacy paste (template cũ có cột này).
+  const placeColumn = directEntryGridColumn("national_id_issued_place");
+  assert.equal(placeColumn?.visibleByDefault, false,
+    "national_id_issued_place is registered but not visible by default");
+  assert.equal(placeColumn?.pasteMode, "write",
+    "national_id_issued_place still pasteable from legacy templates");
   assert.deepEqual(DIRECT_ENTRY_GENDER_OPTIONS, ["Nam", "Nữ"]);
   assert.equal(DIRECT_ENTRY_GENDER_OPTIONS.includes(""), false,
     "khong co option trong cho gioi tinh");

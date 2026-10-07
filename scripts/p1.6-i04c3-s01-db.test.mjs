@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -38,18 +38,31 @@ const GENERATED_RPC = `select public.direct_entry_create_full_profile_batch_v2(
 ) as result`;
 
 async function database() {
+  return databaseUpTo(null);
+}
+
+// P3-W07C-R3: cho phep test "trước/sau migration" chạy đúng bằng cách áp dụng
+// chỉ một phần migrations. `null` = tất cả; mảng = whitelist tên file.
+async function databaseUpTo(untilName) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
-  // P3-W07C-R2 stores DOB/CCCD issue as raw text. On this branch the new
-  // migration is the only file in the 20261008050000 slot; when W05A's
-  // cherry-pick (`20261008040000_p3_w05a_actor_scoped_reporting.sql`,
-  // currently on a separate branch) is integrated, this R2 file will
-  // land as #46. The check below tracks the local count only.
+  // P3-W07C-R3 server default for `national_id_issued_place` is the only file
+  // in the 20261008060000 slot; on this branch it lands as #46. When W05A's
+  // `#45` (`20261008040000_p3_w05a_actor_scoped_reporting.sql`, currently
+  // on a separate branch) integrates, this R3 file becomes #47 and the
+  // check below tracks only the local count.
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 45, "P3-W07C-R2 migration lands as the last 20261008 file; W05A's #45 stays on its own branch until integration");
-  for (const name of migrations) {
+  const totalCount = migrations.length;
+  const apply = untilName === null
+    ? migrations
+    : migrations.slice(0, migrations.indexOf(untilName) + 1);
+  if (untilName !== null && !migrations.includes(untilName)) {
+    throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
+  }
+  assert.equal(totalCount, 46, "P3-W07C-R3 migration lands as the last 20261008 file; W05A's #45 stays on its own branch until integration");
+  for (const name of apply) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   await db.exec(`
@@ -999,6 +1012,211 @@ test("P3-W07C-R2 full-profile RPC stores raw date text and preserves unrelated p
     assert.match(functionBody.rows[0].prosrc, /direct_entry_payments/);
     assert.match(functionBody.rows[0].prosrc, /direct_entry_write_revision/);
     assert.match(functionBody.rows[0].prosrc, /direct_entry_audit_events/);
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R3 RPC server-defaults national_id_issued_place when client omits or sends empty", async () => {
+  // Migration mới: RPC luôn ghi `Bộ Công An` khi client không gửi
+  // (`worker_details.national_id_issued_place` vắng mặt). Validator vẫn
+  // chấp nhận key cũ cho legacy readers; chỉ RPC create-batch mới ép
+  // giá trị server-authoritative.
+  const db = await database();
+  try {
+    const input = row(910001, {
+      worker_details: {
+        gender: { state: "omitted" },
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        national_id_issued_at: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      },
+    });
+    // Xóa hẳn key (mô phỏng payload từ client mới sau khi bỏ cột).
+    delete input.worker_details.national_id_issued_place;
+    const result = await rpc(db, [input], "91600000-0000-4000-8000-000000000998");
+    const stored = await db.query(
+      `select worker_details->'national_id_issued_place' as place
+         from public.direct_entries where entry_id = $1::uuid`,
+      [result.entry_ids[0]],
+    );
+    assert.deepEqual(stored.rows[0].place, {
+      state: "provided",
+      value: "Bộ Công An",
+    });
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R3 RPC overrides client-supplied national_id_issued_place (empty/different)", async () => {
+  // Client vẫn có thể gửi key (template cũ / payload legacy). Bất kể
+  // client gửi rỗng, omitted, hay giá trị khác (vd. "Hà Nội"), server
+  // ép về "Bộ Công An". Đây là hành vi create-batch mới và chỉ áp dụng
+  // cho NLĐ Direct Entry tạo mới.
+  const db = await database();
+  try {
+    const cases = [
+      { state: "omitted" },
+      { state: "intentionally_blank" },
+      { state: "provided", value: "" },
+      { state: "provided", value: "Hà Nội" },
+      { state: "provided", value: "Bộ Lao Động" },
+    ];
+    let index = 911000;
+    for (const place of cases) {
+      const input = row(index, {
+        worker_details: {
+          gender: { state: "omitted" },
+          date_of_birth: { state: "omitted" },
+          national_id: { state: "omitted" },
+          national_id_issued_at: { state: "omitted" },
+          national_id_issued_place: place,
+          address: { state: "omitted" },
+          phone: { state: "omitted" },
+        },
+      });
+      const result = await rpc(db, [input], `91600000-0000-4000-8000-${String(index).padStart(12, "0")}`);
+      const stored = await db.query(
+        `select worker_details->'national_id_issued_place' as stored
+           from public.direct_entries where entry_id = $1::uuid`,
+        [result.entry_ids[0]],
+      );
+      assert.deepEqual(stored.rows[0].stored, {
+        state: "provided",
+        value: "Bộ Công An",
+      }, `case ${JSON.stringify(place)} must be overwritten by server default`);
+      index += 1;
+    }
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R3 validator still accepts legacy national_id_issued_place (raw text path preserved)", async () => {
+  // Validator không bị patch: các client cũ / template cũ vẫn có thể gửi
+  // giá trị chuỗi tùy ý (1..256 ký tự) cho key này. Server default chỉ
+  // áp dụng tại create-batch RPC boundary, không ở validator.
+  const db = await database();
+  try {
+    const ok = (value) => db.query(
+      "select public.direct_entry_valid_worker_details($1::jsonb) as ok",
+      [JSON.stringify({
+        display_name: "Synthetic Worker",
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+        national_id_issued_place: { state: "provided", value },
+      })],
+    ).then((result) => result.rows[0].ok);
+    for (const value of ["Hà Nội", "Bộ Công An", "TP. Hồ Chí Minh"]) {
+      assert.equal(await ok(value), true, `legacy value still accepted: ${value}`);
+    }
+    assert.equal(await ok(""), false, "empty still rejected");
+    assert.equal(await ok("x".repeat(257)), false, "oversize still rejected");
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R3 historical rows are not modified by the new migration", async () => {
+  // Migration mới không được chứa UPDATE/DELETE/ALTER nào trên
+  // direct_entries (chỉ re-define RPC). Hồ sơ lịch sử chỉ được phép
+  // thay đổi nếu tương lai mở hởng task này (backfill) – trong scope
+  // R3, migration này chỉ ghi đè tại create-batch RPC.
+  const migrationText = await readFile(
+    path.join(MIGRATION_DIR, "20261008060000_p3_w07c_r3_issue_place_server_default.sql"),
+    "utf8",
+  );
+  const lower = migrationText.toLowerCase();
+  // Không có tác vụ DML/DDL làm thay đổi dữ liệu đã lưu.
+  assert.equal(lower.includes("update public.direct_entries"), false,
+    "migration must not update direct_entries");
+  assert.equal(lower.includes("delete from public.direct_entries"), false,
+    "migration must not delete direct_entries");
+  assert.equal(lower.includes("alter table public.direct_entries"), false,
+    "migration must not alter direct_entries");
+  // Migration thực sự dùng pg_proc.prosrc + replace() để rewrite RPC,
+  // không phải CREATE OR REPLACE FUNCTION ở top level. Cú pháp mong đợi:
+  //   * Khai báo regprocedure cho `direct_entry_create_full_profile_batch(...)`.
+  //   * Tham chiếu đến default mới `Bộ Công An`.
+  assert.match(migrationText, /regprocedure\s*:=\s*'public\.direct_entry_create_full_profile_batch/);
+  assert.match(migrationText, /Bộ Công An/);
+  assert.match(migrationText, /v_worker_input->'national_id_issued_place'/);
+
+  // P3-W07C-R3: test thật sự trước/sau migration.
+  //   1) Áp dụng migrations tới hết W07C-R2 (#45, chưa có R3). Tạo 1
+  //      row legacy với `national_id_issued_place = "Hà Nội"` qua RPC
+  //      pre-R3 (vẫn dùng COALESCE -> lưu đúng giá trị client gửi).
+  //   2) Áp dụng migration R3 (#46). Patch RPC trong chỗ; không đụng
+  //      dữ liệu.
+  //   3) Verify row legacy vẫn giữ giá trị cũ ("Hà Nội"), không bị
+  //      migration rewrite.
+  //   4) Tạo row mới qua RPC đã patch — phải nhận default "Bộ Công An".
+  const db = await databaseUpTo("20261008050000_p3_w07c_r2_raw_text_dates.sql");
+  try {
+    // (1) Tạo row legacy qua pre-R3 RPC với giá trị client-supplied.
+    const legacy = await rpc(db, [row(920001, {
+      worker_details: {
+        gender: { state: "omitted" },
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        national_id_issued_at: { state: "omitted" },
+        national_id_issued_place: { state: "provided", value: "Hà Nội" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      },
+    })], "91600000-0000-4000-8000-000000000996");
+    const before = await db.query(
+      `select worker_details->'national_id_issued_place' as place
+         from public.direct_entries where entry_id = $1::uuid`,
+      [legacy.entry_ids[0]],
+    );
+    assert.deepEqual(before.rows[0].place, {
+      state: "provided",
+      value: "Hà Nội",
+    }, "pre-R3 RPC phai luu gia tri client-supplied (Hà Nội)");
+
+    // (2) Apply R3 migration len DB hien tai (patch RPC trong cho).
+    await db.exec(await readFile(
+      path.join(MIGRATION_DIR, "20261008060000_p3_w07c_r3_issue_place_server_default.sql"),
+      "utf8",
+    ));
+
+    // (3) Row legacy khong bi R3 migration sua. Van giu "Hà Nội".
+    const after = await db.query(
+      `select worker_details->'national_id_issued_place' as place
+         from public.direct_entries where entry_id = $1::uuid`,
+      [legacy.entry_ids[0]],
+    );
+    assert.deepEqual(after.rows[0].place, {
+      state: "provided",
+      value: "Hà Nội",
+    }, "R3 migration KHONG duoc sua row legacy; gia tri van la 'Hà Nội'");
+
+    // (4) Tao row moi qua RPC da patch -> server default "Bộ Công An".
+    const newer = await rpc(db, [row(920002, {
+      worker_details: {
+        gender: { state: "omitted" },
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        national_id_issued_at: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      },
+    })], "91600000-0000-4000-8000-000000000995");
+    const newerStored = await db.query(
+      `select worker_details->'national_id_issued_place' as place
+         from public.direct_entries where entry_id = $1::uuid`,
+      [newer.entry_ids[0]],
+    );
+    assert.deepEqual(newerStored.rows[0].place, {
+      state: "provided",
+      value: "Bộ Công An",
+    }, "post-R3 RPC tao row moi: server-authoritative default");
   } finally {
     await db.close();
   }

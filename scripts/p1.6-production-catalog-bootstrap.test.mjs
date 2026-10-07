@@ -181,7 +181,7 @@ test("45 migrations apply from scratch and expose only the approved RPC boundary
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
   // P2-W04B (#44) rebaselines the cutoff; W07C-R2 is this branch's #45
   // (slot #46 after W05A's #45 is integrated).
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 46);
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +

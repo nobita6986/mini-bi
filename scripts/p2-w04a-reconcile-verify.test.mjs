@@ -307,7 +307,7 @@ test("P2-W04B reconcile retains its release baseline before the later W07C migra
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 46);
   assert.equal(
     names[names.length - 2],
     "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",

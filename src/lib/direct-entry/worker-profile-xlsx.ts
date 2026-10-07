@@ -7,26 +7,33 @@ export const WORKER_PROFILE_XLSX_MAX_BYTES = 4 * 1024 * 1024;
 export const WORKER_PROFILE_XLSX_MAX_ROWS = 100;
 
 /**
- * P1.7-H05: 17 data header cho XLSX template va import. Thu tu khoa theo yeu cau
+ * P1.7-H05: 16 data header cho XLSX template va import. Thu tu khoa theo yeu cau
  * production UI; cot STT/Mã NLĐ/Tuổi/status/team/system/UUID deu KHONG xuat hien.
  * Truong STK duoc luu text de giu so 0 dau. Cot `provider_type` HRP/Vendor duoc
- * them vao XLSX (17 headers) de nguoi dung khai ro provider khi can, dong thoi
+ * them vao XLSX (16 headers) de nguoi dung khai ro provider khi can, dong thoi
  * recruiter_id van duoc server resolve theo catalog.
+ *
+ * P3-W07C-R3: header / thứ tự cột đồng bộ chính xác với parser/importer.
+ * Cột `Nơi cấp` (`national_id_issued_place`) đã được bỏ khỏi template mới
+ * vì giá trị do server-authoritative migration #46 ghi ("Bộ Công An") tại
+ * RPC create-batch; client không cần nhập. KHÔNG còn tương thích ngược với
+ * file Excel mẫu cũ (còn cột `Nơi cấp` hoặc cột `Mã NLĐ` ở đầu). Nếu
+ * upload file không khớp 16 header theo đúng thứ tự, hệ thống trả lỗi
+ * `XLSX_INVALID` rõ ràng.
  */
 const XLSX_TEMPLATE_KEYS: readonly string[] = Object.freeze([
   "project_id",
+  "provider_type",
+  "recruiter_id",
+  "labor_type",
   "first_work_date",
   "display_name",
   "gender",
   "date_of_birth",
   "national_id",
   "national_id_issued_at",
-  "national_id_issued_place",
   "address",
   "phone",
-  "provider_type",
-  "recruiter_id",
-  "labor_type",
   "account_number",
   "bank_name",
   "account_holder_name",
@@ -108,20 +115,21 @@ export async function workerProfileXlsxToTsv(file: File): Promise<WorkerProfileX
     if (headers.length === 0 || headers.every((header) => header.trim() === "")) {
       return { ok: false, code: "XLSX_INVALID" };
     }
-    // P1.7-H05: không prepend "Mã NLĐ"; XLSX data bắt đầu ngay 17 field đầu theo
-    // đúng thứ tự 17 headers. Nếu XLSX legacy có cột "Mã NLĐ" ở đầu, bỏ qua cột
-    // đó (skip 1 cell offset khi đọc data rows).
-    const hasLegacyEmployeeCode = headers.some((header) =>
-      normalizePasteHeader(header) === normalizePasteHeader("Mã NLĐ") ||
-      normalizePasteHeader(header) === normalizePasteHeader("Mã số ứng viên"));
-    const sourceHeaders = headers.filter((header) => {
-      if (hasLegacyEmployeeCode) {
-        const normalized = normalizePasteHeader(header);
-        if (normalized === normalizePasteHeader("Mã NLĐ") ||
-            normalized === normalizePasteHeader("Mã số ứng viên")) return false;
-      }
-      return true;
-    });
+    // P3-W07C-R3: đồng bộ chính xác header với mẫu mới. Không còn tương
+    // thích ngược với file Excel mẫu cũ (cột `Nơi cấp` / cột `Mã NLĐ`
+    // thừa). Bất kỳ header nào không khớp bộ khóa canonical của template
+    // — đặc biệt là `national_id_issued_place` — đều trả lỗi rõ ràng để
+    // người dùng tải lại mẫu mới.
+    const templateKeys = XLSX_TEMPLATE_KEYS;
+    const expectedHeaders = xlsxTemplateHeaders();
+    const templateHeaderSet = new Set(expectedHeaders);
+    const unknownHeaders = headers.filter((header) =>
+      !templateHeaderSet.has(header) && !FIELD_BY_HEADER.has(normalizePasteHeader(header)));
+    if (unknownHeaders.length > 0 || headers.length !== templateKeys.length
+        || headers.some((header, index) => header !== expectedHeaders[index])) {
+      return { ok: false, code: "XLSX_INVALID" };
+    }
+    const sourceHeaders = [...headers];
     const outputHeaders = [...sourceHeaders];
     const matrix = [outputHeaders];
     let dataRows = 0;
@@ -129,13 +137,10 @@ export async function workerProfileXlsxToTsv(file: File): Promise<WorkerProfileX
       const row = sheet.getRow(rowNumber);
       const source: string[] = [];
       let hasValue = false;
-      // Neu legacy XLSX them cot "Mã NLĐ" o dau, cell data bat dau tu
-      // column (1 + 1) = 2 de giu dung vi tri header sau khi filter.
-      const cellOffset = hasLegacyEmployeeCode ? 1 : 0;
       for (let column = 1; column <= sourceHeaders.length; column += 1) {
         const header = sourceHeaders[column - 1] ?? "";
         const key = FIELD_BY_HEADER.get(normalizePasteHeader(header)) ?? "";
-        const cell = row.getCell(column + cellOffset);
+        const cell = row.getCell(column);
         if (cell.type === excel.ValueType.Formula || cell.type === excel.ValueType.Hyperlink ||
             cell.type === excel.ValueType.Error) {
           return { ok: false, code: "XLSX_CELL_UNSUPPORTED" };

@@ -90,7 +90,7 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P3-W07B migration #43 adds project-manager scope enforcement.
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // P3-W07C-R2 is migration #45 on this branch (slot #46 after W05A).
-  assert.equal(migrationNames.length, 45);
+  assert.equal(migrationNames.length, 46);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);

@@ -144,7 +144,6 @@ function RowDetail({ row }: { row: WorkerProfilePreviewRow }) {
           ["CMT/CCCD", worker.national_id.state === "provided"
             ? maskNationalId(worker.national_id.value) : "—"],
           ["Ngày cấp", optionalText(worker.national_id_issued_at)],
-          ["Nơi cấp", optionalText(worker.national_id_issued_place)],
           ["Địa chỉ hiện tại", optionalText(worker.address)],
           ["Số điện thoại", optionalText(worker.phone)],
         ]} />

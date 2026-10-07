@@ -139,7 +139,7 @@ async function verifySchema(client, migrations) {
   let inventory;
   try {
     // P3-W07C-R2 adds migration #45 on this branch (slot #46 after W05A).
-    check(fromScratch.migrationNames.length === 45, "PGlite applied all 45 migrations");
+    check(fromScratch.migrationNames.length === 46, "PGlite applied all 46 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();

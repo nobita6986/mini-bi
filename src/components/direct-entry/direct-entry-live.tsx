@@ -89,9 +89,7 @@ import {
 import {
   SPREADSHEET_WRITABLE_FIELD_KEYS,
   SPREADSHEET_MAX_DATA_ROWS,
-  DEFAULT_NATIONAL_ID_ISSUED_PLACE,
   SPREADSHEET_DEFAULT_DATE_FIELD_KEY,
-  SPREADSHEET_DEFAULT_PLACE_FIELD_KEY,
   activateSpreadsheetRowLazyDefaults,
   createSpreadsheetRowModel,
   deleteSpreadsheetRow,
@@ -1041,7 +1039,7 @@ export function DirectEntryLive() {
    * Neu khong co row trang thi tao moi (gioi han 100) va mo drawer editor cua row do.
    *
    * P3-W07C: mo quick editor cung la mot tuong tac cua user => kich hoat lazy
-   * defaults (neu chua). Sau do render cell se hien "Bộ Công An" + hom nay.
+   * defaults (neu chua). P3-W07C-R3: chi con lazy default cho first_work_date.
    */
   const openQuickEditor = useCallback((clientRowId: string) => {
     activateStagedRowLazyDefaults(clientRowId);
@@ -1200,19 +1198,19 @@ export function DirectEntryLive() {
         option.recruiter_id === row.cells.recruiter_id ||
         option.label === row.cells.recruiter_id);
       const providerType = row.providerType || recruiter?.provider_type || "";
-      // P3-W07C: lazy default placeholders. Neu row CHUA kich hoat, 2 cell
-      // default (first_work_date, national_id_issued_place) hien placeholder
-      // mo (italic, color muted). State cells gia tri rong, render layer
-      // (grid renderCell) nhan biet qua `displayValues` + `cells[]` empty.
-      // Sau khi user tuong tac (select row, open quick editor, edit cell),
-      // `lazyDefaultsApplied = true` => khong con placeholder, cell hien gia tri that.
+      // P3-W07C: lazy default placeholders. Neu row CHUA kich hoat, cell
+      // default `first_work_date` hien placeholder mo (italic, color muted).
+      // State cells gia tri rong, render layer (grid renderCell) nhan biet
+      // qua `displayValues` + `cells[]` empty. Sau khi user tuong tac
+      // (select row, open quick editor, edit cell), `lazyDefaultsApplied = true`
+      // => khong con placeholder, cell hien gia tri that.
+      // P3-W07C-R3: `national_id_issued_place` không còn lazy default ở
+      // client; server-authoritative migration #46 ghi "Bộ Công An" tại
+      // RPC create-batch, nên placeholder này bỏ.
       const placeholderValues: Record<string, string> = {};
       if (!row.lazyDefaultsApplied) {
         if ((row.cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] ?? "") === "") {
           placeholderValues[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = todayInHoChiMinhAsDDMM();
-        }
-        if ((row.cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] ?? "") === "") {
-          placeholderValues[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] = DEFAULT_NATIONAL_ID_ISSUED_PLACE;
         }
       }
       return ({
@@ -2147,10 +2145,10 @@ export function DirectEntryLive() {
                             value={formatFreeDateText(cells.national_id_issued_at ?? "")}
                             onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "national_id_issued_at")} />
                         </Field>
-                        <Field label="Nơi cấp">
-                          <input value={cells.national_id_issued_place ?? ""}
-                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "national_id_issued_place")} />
-                        </Field>
+                        {/* P3-W07C-R3: đã bỏ ô "Nơi cấp" khỏi mobile input. Server-
+                            authoritative migration #46 ghi "Bộ Công An" tại RPC
+                            create-batch. Người dùng không cần và không được
+                            nhập trường này. */}
                         <Field label="Địa chỉ">
                           <input value={cells.address ?? ""}
                             onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "address")} />
@@ -2342,10 +2340,7 @@ export function DirectEntryLive() {
                       value={formatFreeDateText(target.cells.national_id_issued_at ?? "")}
                       onChange={handleMobileStagedFieldChange(target.clientRowId, "national_id_issued_at")} />
                   </Field>
-                  <Field label="Nơi cấp">
-                    <input value={target.cells.national_id_issued_place ?? ""}
-                      onChange={handleMobileStagedFieldChange(target.clientRowId, "national_id_issued_place")} />
-                  </Field>
+                  {/* P3-W07C-R3: bỏ ô "Nơi cấp" khỏi quick editor. Server migration #46. */}
                   <Field label="Địa chỉ">
                     <input value={target.cells.address ?? ""}
                       onChange={handleMobileStagedFieldChange(target.clientRowId, "address")} />

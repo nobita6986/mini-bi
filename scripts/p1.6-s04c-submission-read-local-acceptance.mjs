@@ -28,7 +28,7 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 // P3-W07C-R2 is migration #45 on this branch (slot #46 after W05A).
-assert.equal(migrations.migrationNames.length, 45);
+assert.equal(migrations.migrationNames.length, 46);
 pass("from-scratch apply 45 migration local trong PGlite (khong dung shared DB, khong network)");
 
 for (const signature of [

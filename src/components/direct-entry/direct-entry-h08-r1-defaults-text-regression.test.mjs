@@ -57,10 +57,17 @@ const validation = readFileSync(VALIDATION, "utf8");
 
 // ===== Group 1: defaults for date + place ================================
 
-test("R1-1 spreadsheet-row-model export constants cho defaults va field keys", () => {
-  assert.match(rowModel, /export const DEFAULT_NATIONAL_ID_ISSUED_PLACE = "Bộ Công An"/);
+test("R1-1 spreadsheet-row-model export constants cho date field key (R3: place do server migration)", () => {
+  // P3-W07C-R3: chi con lazy default cho first_work_date o client.
+  // `national_id_issued_place` do server-authoritative migration #46
+  // ghi (R3); client khong export hang so "Bộ Công An" nua.
   assert.match(rowModel, /export const SPREADSHEET_DEFAULT_DATE_FIELD_KEY = "first_work_date"/);
-  assert.match(rowModel, /export const SPREADSHEET_DEFAULT_PLACE_FIELD_KEY = "national_id_issued_place"/);
+  assert.doesNotMatch(rowModel,
+    /export const DEFAULT_NATIONAL_ID_ISSUED_PLACE = "Bộ Công An"/,
+    "R3: khong con hang so client cho Bộ Công An");
+  assert.doesNotMatch(rowModel,
+    /export const SPREADSHEET_DEFAULT_PLACE_FIELD_KEY = "national_id_issued_place"/,
+    "R3: khong con lazy default cho place o client");
   // Co helper cho phep test inject `now` deterministic.
   assert.match(rowModel, /export function spreadsheetDefaultFirstWorkDate\(now: Date = new Date\(\)\)/);
   // P3-W07C: defaultCells() tra ve EMPTY (lazy); activation qua
@@ -75,7 +82,9 @@ test("R1-2 defaultCells tra ve EMPTY (lazy); activate chen default theo Asia/Ho_
   // activateSpreadsheetRowLazyDefaults.
   assert.match(rowModel, /defaultCells[\s\S]{0,400}SPREADSHEET_WRITABLE_FIELD_KEYS\.map\(\(key\) => \[key, ""\]\)/);
   assert.match(rowModel, /activateSpreadsheetRowLazyDefaults[\s\S]{0,800}spreadsheetDefaultFirstWorkDate\(now\)/);
-  assert.match(rowModel, /activateSpreadsheetRowLazyDefaults[\s\S]{0,800}DEFAULT_NATIONAL_ID_ISSUED_PLACE/);
+  assert.doesNotMatch(rowModel,
+    /activateSpreadsheetRowLazyDefaults[\s\S]{0,800}DEFAULT_NATIONAL_ID_ISSUED_PLACE/,
+    "R3: activate khong con chen 'Bộ Công An' o client");
   // Runtime khong hard-code ngay default va khong dung toISOString().
   const withoutComments = rowModel
     .split("\n")
@@ -109,9 +118,11 @@ test("R1-4 live su dung createSpreadsheetRowModel cho 30 initial + clear sau sav
 });
 
 test("R1-5 quick editor (desktop drawer) render values tu target.cells (lazy defaults khi activated)", () => {
-  // Quick editor desktop doc truc tiep target.cells.first_work_date
-  // va target.cells.national_id_issued_place. Sau P3-W07C defaultCells EMPTY;
-  // openQuickEditor activate row nen cells co defaults ngay khi mo drawer.
+  // Quick editor desktop doc truc tiep target.cells.first_work_date.
+  // Sau P3-W07C defaultCells EMPTY; openQuickEditor activate row nen
+  // cells co first_work_date default ngay khi mo drawer.
+  // P3-W07C-R3: quick editor đã bỏ ô "Nơi cấp" (server migration #46
+  // ghi "Bộ Công An" ở RPC create-batch). Editor chỉ render first_work_date.
   // Dat ten nho de biet: `quickDrawer`.
   const quickStart = live.indexOf("Dialog.Content className={styles.quickDrawer}");
   assert.ok(quickStart > 0, "phai co Dialog.Content cho quick editor drawer");
@@ -119,16 +130,19 @@ test("R1-5 quick editor (desktop drawer) render values tu target.cells (lazy def
   assert.ok(quickEnd > quickStart);
   const quickEditor = live.slice(quickStart, quickEnd);
   assert.match(quickEditor, /target\.cells\.first_work_date \?\? ""/);
-  assert.match(quickEditor, /target\.cells\.national_id_issued_place \?\? ""/);
+  assert.doesNotMatch(quickEditor, /target\.cells\.national_id_issued_place \?\? ""/,
+    "R3: quick editor da bo ô Nơi cấp");
 });
 
 test("R1-6 mobile staged card render values tu cells (lazy activation qua onToggle)", () => {
-  // Mobile staged card cung render cells.first_work_date va cells.national_id_issued_place.
-  // P3-W07C-R1: details.onToggle activate lazy defaults khi user mo card.
+  // Mobile staged card render cells.first_work_date. P3-W07C-R1:
+  // details.onToggle activate lazy defaults khi user mo card. P3-W07C-R3:
+  // mobile card cũng bỏ ô "Nơi cấp" — chỉ render first_work_date.
   const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,12000}<\/details>/);
   assert.ok(mobileStaged, "phai co mobileStagedCard section");
   assert.match(mobileStaged[0], /cells\.first_work_date \?\? ""/);
-  assert.match(mobileStaged[0], /cells\.national_id_issued_place \?\? ""/);
+  assert.doesNotMatch(mobileStaged[0], /cells\.national_id_issued_place \?\? ""/,
+    "R3: mobile staged card da bo ô Nơi cấp");
 });
 
 test("R1-7 user edit defaults qua handleMobileStagedFieldChange khong bi factory overwrite", () => {
@@ -149,16 +163,19 @@ test("R1-8 updateSpreadsheetRowCells MERGE patch (khong full replace cells)", ()
 
 // ===== Group 2: default-only row vẫn là blank =============================
 
-test("R1-9 spreadsheetRowIsBlank da nang cap de bo qua default-only rows", () => {
-  // Truoc H08-R1: every writable field empty => blank.
-  // Sau H08-R1: every writable field empty HOAC default => blank.
+test("R1-9 spreadsheetRowIsBlank chi default cho first_work_date (R3: place do server)", () => {
+  // P3-W07C-R3: chi con first_work_date = today lam default. Place
+  // khong con o row model; server migration #46 ghi "Bộ Công An" o RPC.
   const predicate = rowModel.match(/export function spreadsheetRowIsBlank[\s\S]{0,800}\}/);
   assert.ok(predicate, "phai co spreadsheetRowIsBlank");
-  // Phai co 2 nhanh default (date + place).
+  // Phai co nhanh default cho date (first_work_date = today).
   assert.match(predicate[0], /SPREADSHEET_DEFAULT_DATE_FIELD_KEY/);
-  assert.match(predicate[0], /SPREADSHEET_DEFAULT_PLACE_FIELD_KEY/);
   assert.match(predicate[0], /spreadsheetDefaultFirstWorkDate\(now\)/);
-  assert.match(predicate[0], /DEFAULT_NATIONAL_ID_ISSUED_PLACE/);
+  // R3: khong con nhanh default cho place o predicate.
+  assert.doesNotMatch(predicate[0], /SPREADSHEET_DEFAULT_PLACE_FIELD_KEY/,
+    "R3: predicate khong con nhanh default place");
+  assert.doesNotMatch(predicate[0], /DEFAULT_NATIONAL_ID_ISSUED_PLACE/,
+    "R3: predicate khong con hang so 'Bộ Công An'");
 });
 
 test("R1-10 selectNonEmptySpreadsheetRows su dung cung predicate (khong duplicate logic)", () => {
@@ -362,29 +379,34 @@ test("R1-23 blank spare rows van duoc maintain qua ensureSpreadsheetSpareRows (1
   // (Verified in spreadsheet-row-model.test.mjs R1-3 + replenish test.)
 });
 
-test("R1-24 quick editor field order giu nguyen (place luon render, defaults activation)", () => {
-  // Quick editor phai render field national_id_issued_place (de user co the sua default).
+test("R1-24 quick editor field order (R3: place da bo, chi con first_work_date)", () => {
+  // P3-W07C-R3: quick editor KHONG render field "Nơi cấp" nua — server
+  // migration #46 ghi "Bộ Công An" o RPC create-batch. Comment trong
+  // source van ghi chú bo field; assertion phai khop chinh xac JSX
+  // <Field label="Nơi cấp"> (khong phai comment).
   const quickStart = live.indexOf("Dialog.Content className={styles.quickDrawer}");
   assert.ok(quickStart > 0);
   const quickEnd = live.indexOf("</Dialog.Content>", quickStart);
   assert.ok(quickEnd > quickStart);
   const quickEditor = live.slice(quickStart, quickEnd);
-  assert.match(quickEditor, /Nơi cấp/);
-  // P3-W07C: cells.national_id_issued_place hien thi (duoc activation khi
-  // openQuickEditor; neu chua activation thi EMPTY + placeholder).
-  assert.match(quickEditor, /target\.cells\.national_id_issued_place \?\? ""/);
-  // Field first_work_date cung render.
+  assert.doesNotMatch(quickEditor, /<Field label="Nơi cấp">/,
+    "R3: quick editor khong con JSX <Field label=\"Nơi cấp\">");
+  assert.doesNotMatch(quickEditor, /target\.cells\.national_id_issued_place \?\? ""/,
+    "R3: quick editor khong con doc cells.national_id_issued_place");
+  // Field first_work_date van render.
   assert.match(quickEditor, /Ngày bắt đầu làm việc/);
   assert.match(quickEditor, /target\.cells\.first_work_date \?\? ""/);
 });
 
-test("R1-25 mobile staged card field order giu nguyen (place luon render, activation onToggle)", () => {
+test("R1-25 mobile staged card field order (R3: place da bo, chi con first_work_date)", () => {
+  // P3-W07C-R3: mobile staged card KHONG render field "Nơi cấp" nua —
+  // server migration #46 ghi "Bộ Công An" o RPC create-batch.
   const mobileStaged = live.match(/styles\.mobileStagedCard[\s\S]{0,12000}<\/details>/);
   assert.ok(mobileStaged);
-  assert.match(mobileStaged[0], /Nơi cấp/);
-  // P3-W07C-R1: cells.national_id_issued_place hien thi (activation qua
-  // onToggle khi user mo details).
-  assert.match(mobileStaged[0], /cells\.national_id_issued_place \?\? ""/);
+  assert.doesNotMatch(mobileStaged[0], /<Field label="Nơi cấp">/,
+    "R3: mobile staged card khong con JSX <Field label=\"Nơi cấp\">");
+  assert.doesNotMatch(mobileStaged[0], /cells\.national_id_issued_place \?\? ""/,
+    "R3: mobile staged card khong con doc cells.national_id_issued_place");
   assert.match(mobileStaged[0], /Ngày bắt đầu làm việc/);
   assert.match(mobileStaged[0], /cells\.first_work_date \?\? ""/);
 });

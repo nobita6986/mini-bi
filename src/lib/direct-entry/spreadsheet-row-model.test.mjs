@@ -4,9 +4,7 @@ import test from "node:test";
 
 import { WORKER_PROFILE_FIELDS } from "./worker-profile-import-contract.ts";
 import {
-  DEFAULT_NATIONAL_ID_ISSUED_PLACE,
   SPREADSHEET_DEFAULT_DATE_FIELD_KEY,
-  SPREADSHEET_DEFAULT_PLACE_FIELD_KEY,
   SPREADSHEET_INITIAL_ROW_COUNT,
   SPREADSHEET_MAX_DATA_ROWS,
   SPREADSHEET_SPARE_ROW_COUNT,
@@ -157,8 +155,10 @@ test("clear, delete and duplicate keep identities stable and never recycle IDs",
   assert.equal(cleared.rows[0].lazyDefaultsApplied, false);
   assert.equal(cleared.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], "",
     "clear row xoa luon lazy default (state rong)");
-  assert.equal(cleared.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], "",
-    "clear row xoa luon lazy default (state rong)");
+  // P3-W07C-R3: không còn lazy default cho national_id_issued_place ở
+  // client; server-authoritative migration #46 ghi "Bộ Công An" tại RPC.
+  assert.equal(cleared.rows[0].cells.national_id_issued_place, "",
+    "clear row cung dat lai o national_id_issued_place ve rong");
   // Duplicate row khong bi clear.
   assert.equal(spreadsheetRowIsBlank(cleared.rows[1]), false);
 
@@ -219,7 +219,9 @@ test("P3-W07C R2-2 30 initial rows deu rong; khong co lazy default nao trong sta
   for (const row of initial.rows) {
     assert.equal(row.cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], "",
       "row moi khong co first_work_date lazy default trong state");
-    assert.equal(row.cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], "",
+    // P3-W07C-R3: khong con lazy default cho `national_id_issued_place` o
+    // client (server-authoritative migration #46 ghi gia tri).
+    assert.equal(row.cells.national_id_issued_place ?? "", "",
       "row moi khong co national_id_issued_place lazy default trong state");
     assert.equal(row.lazyDefaultsApplied, false);
   }
@@ -237,11 +239,14 @@ test("P3-W07C R2-3 activateSpreadsheetRowLazyDefaults: idempotent, chen default 
     model, firstId, new Date("2026-04-15T08:00:00.000Z"));
   assert.equal(activated.rows[0].lazyDefaultsApplied, true);
   assert.equal(activated.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], today);
-  assert.equal(activated.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], DEFAULT_NATIONAL_ID_ISSUED_PLACE);
+  // P3-W07C-R3: `national_id_issued_place` khong con bi lazy default; chi
+  // first_work_date duoc set. Cell nay van empty o client; server
+  // migration #46 ghi "Bộ Công An" khi RPC create-batch xu ly row.
+  assert.equal(activated.rows[0].cells.national_id_issued_place ?? "", "",
+    "activate khong con dien 'Bộ Công An' o client");
   // Cac field khac van empty (khong tu dien them).
   for (const key of SPREADSHEET_WRITABLE_FIELD_KEYS) {
     if (key === SPREADSHEET_DEFAULT_DATE_FIELD_KEY) continue;
-    if (key === SPREADSHEET_DEFAULT_PLACE_FIELD_KEY) continue;
     assert.equal(activated.rows[0].cells[key], "", `field ${key} phai van empty`);
   }
 
@@ -250,23 +255,24 @@ test("P3-W07C R2-3 activateSpreadsheetRowLazyDefaults: idempotent, chen default 
     activated, firstId, new Date("2099-12-31T00:00:00.000Z"));
   assert.equal(twice.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], today,
     "activate lan 2 KHONG ghi de ngay default da set (date cua lan 1)");
-  assert.equal(twice.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], DEFAULT_NATIONAL_ID_ISSUED_PLACE);
 });
 
 test("P3-W07C R2-4 activate KHONG ghi de gia tri user/paste; row khong ton tai thi no-op", () => {
   const model = createSpreadsheetRowModel();
   const firstId = model.rows[0].clientRowId;
-  // User/paste da dien gia tri rieng vao 2 cell default.
+  // User/paste da dien gia tri rieng vao first_work_date. (national_id_issued_place
+  // khong con lazy default nhung neu user van dien gia tri, activate
+  // cung khong ghi de.)
   const seeded = updateSpreadsheetRowCells(model, firstId, {
     [SPREADSHEET_DEFAULT_DATE_FIELD_KEY]: "2027-01-15",
-    [SPREADSHEET_DEFAULT_PLACE_FIELD_KEY]: "Sở Công An Tỉnh",
+    national_id_issued_place: "Sở Công An Tỉnh",
   });
   // Activate khong ghi de gia tri user (cells da co).
   const activated = activateSpreadsheetRowLazyDefaults(
     seeded, firstId, new Date("2099-12-31T00:00:00.000Z"));
   assert.equal(activated.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], "2027-01-15",
     "activate phai giu nguyen gia tri user/paste cua first_work_date");
-  assert.equal(activated.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], "Sở Công An Tỉnh",
+  assert.equal(activated.rows[0].cells.national_id_issued_place, "Sở Công An Tỉnh",
     "activate phai giu nguyen gia tri user/paste cua national_id_issued_place");
 
   // Khong ton tai rowId => no-op (tra ve nguyen model).
@@ -282,10 +288,11 @@ test("P3-W07C R2-5 row chi chua lazy defaults (sau activate) van la blank", () =
   const now = new Date("2026-04-15T08:00:00.000Z");
   // Truoc activate: row rong => blank.
   assert.equal(spreadsheetRowIsBlank(model.rows[0], now), true);
-  // Sau activate: chi co 2 default value => van blank.
+  // Sau activate: chi co first_work_date default => van blank (P3-W07C-R3:
+  // khong con lazy default cho `national_id_issued_place`).
   const activated = activateSpreadsheetRowLazyDefaults(model, firstId, now);
   assert.equal(spreadsheetRowIsBlank(activated.rows[0], now), true,
-    "row chi co lazy defaults (today + 'Bộ Công An') van la blank");
+    "row chi co first_work_date default van la blank");
   assert.equal(selectNonEmptySpreadsheetRows(activated, now).length, 0,
     "activated row khong dem vao batch");
 
@@ -303,28 +310,31 @@ test("P3-W07C R2-6 user sua default value (sau activate) => row non-blank; impor
   const firstId = model.rows[0].clientRowId;
   const now = new Date("2026-04-15T08:00:00.000Z");
   const activated = activateSpreadsheetRowLazyDefaults(model, firstId, now);
-  // User doi 'Bộ Công An' thanh noi cap rieng.
+  // P3-W07C-R3: gia tri "Bộ Công An" khong con o client; server ghi. Neu
+  // user van dien (template cu hoac paste), row khong con default-only
+  // => non-blank ngay.
   const userEdited = updateSpreadsheetRowCells(activated, firstId, {
-    [SPREADSHEET_DEFAULT_PLACE_FIELD_KEY]: "Sở Công An Tỉnh",
+    national_id_issued_place: "Sở Công An Tỉnh",
   });
   assert.equal(spreadsheetRowIsBlank(userEdited.rows[0], now), false,
-    "user doi gia tri default => row khong con default-only => non-blank");
+    "user dien gia tri (template cu) => row non-blank");
 
-  // User doi ca ngay default.
+  // User doi ngay default.
   const dateEdited = updateSpreadsheetRowCells(activated, firstId, {
     [SPREADSHEET_DEFAULT_DATE_FIELD_KEY]: "2099-12-31",
   });
   assert.equal(spreadsheetRowIsBlank(dateEdited.rows[0], now), false,
     "user doi ngay default => row non-blank");
 
-  // User clear default place thanh "" (sau activate): row van con 1 default (today) => van blank.
+  // User clear gia tri national_id_issued_place (o EMPTY): row van con
+  // first_work_date default => van blank.
   const clearedPlace = updateSpreadsheetRowCells(activated, firstId, {
-    [SPREADSHEET_DEFAULT_PLACE_FIELD_KEY]: "",
+    national_id_issued_place: "",
   });
   assert.equal(spreadsheetRowIsBlank(clearedPlace.rows[0], now), true,
-    "xoa default place (empty) + 1 default con lai => row van blank");
+    "xoa gia tri (empty) + 1 default con lai => row van blank");
 
-  // Clear ca 2 default => row chi empty => van blank.
+  // Clear luon first_work_date => row chi empty => van blank.
   const clearedAll = updateSpreadsheetRowCells(clearedPlace, firstId, {
     [SPREADSHEET_DEFAULT_DATE_FIELD_KEY]: "",
   });
@@ -333,32 +343,44 @@ test("P3-W07C R2-6 user sua default value (sau activate) => row non-blank; impor
 
 test("P3-W07C R2-7 import batch rows: lazyDefaultsApplied=true; row blank bi loai khoi batch", () => {
   const model = createSpreadsheetRowModel();
-  const now = new Date("2026-04-15T08:00:00.000Z");
+  // P3-W07C-R3: client khong con dat lazy default 'Bộ Công An' nhung van
+  // co the nhan gia tri tu template cu; server migration #46 ghi đè.
+  // Test này dùng input thật (today theo Asia/Ho_Chi_Minh) để blank
+  // check trong importSpreadsheetRows đồng bộ với test expectation.
+  const now = new Date();
   const today = spreadsheetDefaultFirstWorkDate(now);
-  // Mix: 1 row day du, 1 row chi co 2 default, 1 row empty.
+  // Mix: 1 row day du, 1 row chi co first_work_date = today (van blank
+  // theo `spreadsheetRowIsBlank` vi today là lazy default), 1 row empty.
   const result = importSpreadsheetRows(model, [
     { display_name: "Nguyễn Văn A", first_work_date: today,
       national_id_issued_place: "Bộ Công An", project_id: "P",
       recruiter_id: "R", labor_type: "TEMPORARY" },
-    { first_work_date: today, national_id_issued_place: "Bộ Công An" },
+    { first_work_date: today },
     {},
   ]);
-  // Import them 2 row; 1 row blank bi loai.
-  const imported = result.rows.filter((row) => row.cells.display_name === "Nguyễn Văn A"
-    || (row.cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] === today
-      && row.cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY] === "Bộ Công An"
-      && row.cells.display_name === ""));
-  // Row 1 (full data) co mat; row 2 (chi 2 default) cung duoc them nhung
-  // van la blank theo spreadsheetRowIsBlank.
-  assert.equal(imported.length, 2);
-  for (const row of imported) {
+  // Batch chi dem 1 row co business data (blank rows bi loai khi select).
+  const nonEmpty = selectNonEmptySpreadsheetRows(result, now);
+  assert.equal(nonEmpty.length, 1,
+    "chi 1 row co business data; cac row blank bi loai khoi batch");
+  assert.equal(nonEmpty[0].cells.display_name, "Nguyễn Văn A");
+
+  // Tất cả imported rows phải được đánh dấu `lazyDefaultsApplied: true`.
+  // Cột mốc: rows được import có `clientRowId` lớn hơn original count.
+  // Bỏ qua trailing blanks mà ensureSpreadsheetSpareRows append.
+  const originalCount = model.rows.length;
+  const newImported = result.rows.filter((row) => {
+    const sequence = Number(row.clientRowId.replace(/^spreadsheet-row-/, ""));
+    return sequence > originalCount && row.lazyDefaultsApplied === true;
+  });
+  // Row 1 (full data) duoc them vao model; row 2 (chi first_work_date
+  // = today) la blank theo `spreadsheetRowIsBlank` (chi co lazy default)
+  // va bi skip; row 3 empty cung bi skip. Vậy chi 1 row mới.
+  assert.equal(newImported.length, 1,
+    "import them 1 row co business data; row 2 (chi first_work_date default) va row 3 empty bi skip vi blank");
+  for (const row of newImported) {
     assert.equal(row.lazyDefaultsApplied, true,
       "imported row phai duoc danh dau la da kich hoat");
   }
-  // Batch chi dem 1 row co business data (blank rows bi loai khi select).
-  const nonEmpty = selectNonEmptySpreadsheetRows(result, now);
-  assert.equal(nonEmpty.length, 1);
-  assert.equal(nonEmpty[0].cells.display_name, "Nguyễn Văn A");
 
   // Import 0 row (empty input) => khong doi model.
   const empty = importSpreadsheetRows(model, []);
@@ -382,28 +404,32 @@ test("P3-W07C R2-7 import batch rows: lazyDefaultsApplied=true; row blank bi loa
     "khi dat max data row, import se khong them row nao (no-op)");
 });
 
-test("P3-W07C R2-8 lazy defaults la hang so khong hard-code; chi mot noi runtime 'Bộ Công An'", () => {
-  assert.equal(DEFAULT_NATIONAL_ID_ISSUED_PLACE, "Bộ Công An");
+test("P3-W07C R2-8 lazy defaults chi con first_work_date; 'Bộ Công An' chi o migration SQL", () => {
+  // P3-W07C-R3: lazy default cho `national_id_issued_place` đã bỏ khỏi
+  // client. Gia tri "Bộ Công An" chi xuat hien o migration SQL
+  // `20261008060000_p3_w07c_r3_issue_place_server_default.sql`, khong
+  // con o file TypeScript nay.
   assert.equal(SPREADSHEET_DEFAULT_DATE_FIELD_KEY, "first_work_date");
-  assert.equal(SPREADSHEET_DEFAULT_PLACE_FIELD_KEY, "national_id_issued_place");
   const source = readFileSync(new URL("./spreadsheet-row-model.ts", import.meta.url), "utf8");
   const withoutComments = source
     .split("\n")
     .filter((line) => !/^\s*(\*|\/\/)/.test(line))
     .join("\n");
-  assert.equal((withoutComments.match(/Bộ Công An/g) ?? []).length, 1,
-    "chi co mot noi runtime 'Bộ Công An' (khong tinh comment)");
+  assert.equal((withoutComments.match(/Bộ Công An/g) ?? []).length, 0,
+    "khong con runtime 'Bộ Công An' o file nay (client khong tu dien)");
   assert.equal(/"\d{4}-\d{2}-\d{2}"/.test(source), false,
     "khong hard-code ngay default; phai tinh tu Asia/Ho_Chi_Minh");
 });
 
 test("P3-W07C-R1 updateSpreadsheetRowCells activate lazy defaults truoc khi apply patch", () => {
-  // R1 contract: edit cell tu dong activate lazy defaults (date + place
-  // duoc chen vao cell EMPTY truoc patch). Patch cua user thang defaults.
+  // R1 contract: edit cell tu dong activate lazy defaults (date duoc
+  // chen vao cell EMPTY truoc patch). Patch cua user thang defaults.
+  // P3-W07C-R3: chi con lazy default cho `first_work_date`.
   const now = new Date("2026-04-15T08:00:00.000Z");
   const today = spreadsheetDefaultFirstWorkDate(now);
 
-  // 1) Edit display_name: 2 default cell duoc dien, display_name giu nguyen.
+  // 1) Edit display_name: first_work_date default cell duoc dien,
+  //    display_name giu nguyen, national_id_issued_place van empty.
   let model = createSpreadsheetRowModel();
   const firstId = model.rows[0].clientRowId;
   let result = updateSpreadsheetRowCells(model, firstId, {
@@ -413,10 +439,11 @@ test("P3-W07C-R1 updateSpreadsheetRowCells activate lazy defaults truoc khi appl
   assert.equal(result.rows[0].cells.display_name, "Trần Thị B");
   assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], today,
     "edit cell tu dong chen first_work_date default");
-  assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], DEFAULT_NATIONAL_ID_ISSUED_PLACE,
-    "edit cell tu dong chen national_id_issued_place default");
+  assert.equal(result.rows[0].cells.national_id_issued_place ?? "",
+    "",
+    "edit cell KHONG con chen national_id_issued_place default (R3)");
   assert.equal(spreadsheetRowIsBlank(result.rows[0], now), false,
-    "row co 1 business field + 2 default khong con blank");
+    "row co 1 business field + 1 default khong con blank");
 
   // 2) Patch cua user/paste cho date/place THANG defaults (khong bi default
   // overwrite gia tri do nguon ngoai cung cap).
@@ -424,29 +451,32 @@ test("P3-W07C-R1 updateSpreadsheetRowCells activate lazy defaults truoc khi appl
   result = updateSpreadsheetRowCells(model, firstId, {
     display_name: "Nguyễn Văn C",
     [SPREADSHEET_DEFAULT_DATE_FIELD_KEY]: "2027-01-15",
-    [SPREADSHEET_DEFAULT_PLACE_FIELD_KEY]: "Sở Công An Tỉnh",
+    national_id_issued_place: "Sở Công An Tỉnh",
   }, now);
   assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], "2027-01-15",
     "patch date tu user thang default");
-  assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], "Sở Công An Tỉnh",
+  assert.equal(result.rows[0].cells.national_id_issued_place, "Sở Công An Tỉnh",
     "patch place tu user thang default");
 
   // 3) Idempotent: row da activated, edit tiep khong doi defaults.
   const again = updateSpreadsheetRowCells(result, firstId, { address: "Hà Nội" }, now);
   assert.equal(again.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], "2027-01-15");
-  assert.equal(again.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], "Sở Công An Tỉnh");
+  assert.equal(again.rows[0].cells.national_id_issued_place, "Sở Công An Tỉnh");
 
   // 4) Row khong ton tai => no-op (tra ve nguyen model, khong throw).
   const ghost = updateSpreadsheetRowCells(result, "spreadsheet-row-9999",
     { display_name: "X" }, now);
   assert.equal(ghost, result);
 
-  // 5) Patch rong (chi danh dau activated, defaults van duoc chen neu EMPTY).
+  // 5) Patch rong (chi danh dau activated, first_work_date default van
+  //    duoc chen neu EMPTY).
   model = createSpreadsheetRowModel();
   result = updateSpreadsheetRowCells(model, firstId, {}, now);
   assert.equal(result.rows[0].lazyDefaultsApplied, true);
   assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], today);
-  assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], DEFAULT_NATIONAL_ID_ISSUED_PLACE);
+  assert.equal(result.rows[0].cells.national_id_issued_place ?? "",
+    "",
+    "patch rong van khong tu dien national_id_issued_place");
 });
 
 test("P3-W07C-R1 updateSpreadsheetRowProviderType activate lazy defaults truoc khi set provider", () => {
@@ -458,7 +488,9 @@ test("P3-W07C-R1 updateSpreadsheetRowProviderType activate lazy defaults truoc k
   const result = updateSpreadsheetRowProviderType(model, firstId, "hrp", now);
   assert.equal(result.rows[0].lazyDefaultsApplied, true);
   assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY], today);
-  assert.equal(result.rows[0].cells[SPREADSHEET_DEFAULT_PLACE_FIELD_KEY], DEFAULT_NATIONAL_ID_ISSUED_PLACE);
+  // P3-W07C-R3: chi first_work_date duoc dien default o client; server
+  // migration #46 ghi 'Bộ Công An' khi RPC xu ly row.
+  assert.equal(result.rows[0].cells.national_id_issued_place ?? "", "");
   assert.equal(result.rows[0].providerType, "hrp");
   assert.equal(result.rows[0].cells.recruiter_id, "");
 
@@ -479,7 +511,7 @@ test("P3-W07C-R1 default-only row van la blank, loai khoi batch", () => {
   assert.equal(spreadsheetRowIsBlank(model.rows[0], now), true);
 
   // Sau khi edit 1 business field (qua updateSpreadsheetRowCells), row co
-  // 2 default + 1 business field => KHONG blank.
+  // 1 default + 1 business field => KHONG blank.
   model = updateSpreadsheetRowCells(model, firstId, { display_name: "Trần Thị B" }, now);
   assert.equal(spreadsheetRowIsBlank(model.rows[0], now), false);
   assert.equal(selectNonEmptySpreadsheetRows(model, now).length, 1);
@@ -497,7 +529,7 @@ test("P3-W07C-R1 default-only row van la blank, loai khoi batch", () => {
   // row tro ve default-only => lai blank, loai khoi batch.
   const cleared = updateSpreadsheetRowCells(model, firstId, { display_name: "" }, now);
   assert.equal(spreadsheetRowIsBlank(cleared.rows[0], now), true,
-    "clear business field, chi con 2 default => lai blank");
+    "clear business field, chi con 1 default => lai blank");
   assert.equal(selectNonEmptySpreadsheetRows(cleared, now).length, 0,
     "clear business field => row default-only bi loai khoi batch");
 });

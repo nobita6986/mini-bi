@@ -28,7 +28,7 @@ test("P2-W04A/W04B migrations retain order before the later W07C migration", asy
   try {
     // W04B (#44) stays immediately after W07B; W07C-R2 is the later #45
     // on this branch (and becomes #46 after W05A is integrated).
-    assert.equal(migrationNames.length, 45);
+    assert.equal(migrationNames.length, 46);
     assert.equal(
       migrationNames[migrationNames.length - 1],
       "20261008050000_p3_w07c_r2_raw_text_dates.sql",
