@@ -80,14 +80,27 @@ test("W07C-R4: ban phim — mui ten di chuyen tren danh sach DA LOC", () => {
   assert.equal(moveTypeaheadIndex(0, visible.length, "up"), 1);
 });
 
-test("W07C-R4: editor commit contract duoc giu nguyen", () => {
-  // Khong bao gio tu dong commit option dau tien: chi auto khi dung MOT ket qua.
-  assert.match(grid, /visible\.length === 1 \? visible\[0\] : undefined/);
-  // Blur/Tab giu nguyen gia tri da luu.
-  assert.match(grid, /onBlur=\{\(\) => props\.onClose\(true, false\)\}/);
+test("W07C-R4-R1: mo o da co gia tri roi go ngay thi loc dung, khong noi vao nhan cu", () => {
+  // Neu query bi NOI vao nhan cu: "Compal" + "C" = "CompalC" => khong khop gi.
+  assert.equal(filterCatalogSearchOptions(PROJECTS, "CompalC").length, 0);
+  // Sau khi chon het text khi focus, ky tu dau tien THAY THE nhan cu.
+  assert.deepEqual(filterCatalogSearchOptions(PROJECTS, "C").map((o) => o.label),
+    ["Compal", "CDL", "Khác"]);
+  assert.match(grid, /onFocus=\{selectAll\}/);
+  assert.match(grid, /ref=\{queryInput\}/);
+  assert.match(grid, /const browsing = query === pristineQuery;/);
+  assert.match(grid, /browsing \? \[\.\.\.options\] : filterCatalogSearchOptions/);
+});
+
+test("W07C-R4-R1: dong ma chua chon thi gia tri cu khong doi, khong auto-commit", () => {
   // Escape dong ma khong doi gia tri.
   assert.match(grid, /props\.onClose\(false, false\)/);
-  // Commit chi xay ra khi nguoi dung chon.
+  // Blur/Tab giu nguyen row da luu.
+  assert.match(grid, /onBlur=\{\(\) => props\.onClose\(true, false\)\}/);
+  // KHONG con auto-commit chi vi ket qua loc con mot muc.
+  assert.equal(/visible\.length === 1 \? visible\[0\]/.test(grid), false);
+  assert.match(grid, /const target = activeIndex >= 0 \? visible\[activeIndex\] : undefined;/);
+  // Commit chi xay ra khi nguoi dung chon bang click.
   assert.match(grid, /onClick=\{\(\) => commit\(option\)\}/);
 });
 

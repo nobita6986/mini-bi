@@ -330,7 +330,28 @@ function SearchableCatalogCellEditor(
   const [query, setQuery] = useState(selected?.label ?? "");
   const [activeIndex, setActiveIndex] = useState(-1);
   const composing = useRef(false);
-  const visible = useMemo(() => filterCatalogSearchOptions(options, query), [options, query]);
+  const queryInput = useRef<HTMLInputElement | null>(null);
+
+  /**
+   * P3-W07C-R4-R1: query khoi tao bang NHAN dang chon. Neu khong chon het text khi
+   * focus thi ky tu nguoi dung go se noi vao nhan cu ("Compal" + "C" = "CompalC")
+   * nen loc ra rong. Chon het text ngay khi mo o de ky tu dau tien THAY THE nhan cu.
+   *
+   * Khi query van dung bang nhan goc (nguoi dung chua go gi) thi hien TOAN BO option
+   * de con xem va chon lai, thay vi thu ve mot muc.
+   */
+  const pristineQuery = selected?.label ?? "";
+  const browsing = query === pristineQuery;
+  const visible = useMemo(
+    () => (browsing ? [...options] : filterCatalogSearchOptions(options, query)),
+    [browsing, options, query],
+  );
+
+  const selectAll = () => {
+    const node = queryInput.current;
+    if (node) node.select();
+  };
+  useEffect(() => { selectAll(); }, []);
 
   const commit = (option: CatalogSearchOption) => {
     props.onRowChange({
@@ -352,9 +373,9 @@ function SearchableCatalogCellEditor(
     }
     if (action === "commit") {
       event.preventDefault();
-      const target = activeIndex >= 0
-        ? visible[activeIndex]
-        : (visible.length === 1 ? visible[0] : undefined);
+      // Chi commit khi nguoi dung da chon ro rang (click, hoac mui ten roi Enter).
+      // KHONG tu commit chi vi ket qua loc con dung mot muc.
+      const target = activeIndex >= 0 ? visible[activeIndex] : undefined;
       if (target) commit(target);
       else props.onClose(true, false);
       return;
@@ -373,9 +394,11 @@ function SearchableCatalogCellEditor(
         role="combobox"
         aria-expanded="true"
         aria-controls={"search-options-" + props.columnKey}
+        ref={queryInput}
         value={query}
         onChange={(event) => { setQuery(event.currentTarget.value); setActiveIndex(-1); }}
         onKeyDown={onKeyDown}
+        onFocus={selectAll}
         onBlur={() => props.onClose(true, false)}
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}

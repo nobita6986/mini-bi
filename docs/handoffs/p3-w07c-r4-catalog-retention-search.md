@@ -59,6 +59,22 @@ PASS; targeted ESLint 0 errors (3 pre-existing warnings in `direct-entry-live.ts
 - Full suite intentionally not run (targeted scope only), per the task.
 - No Owner UI verification was performed; this is a local pass only.
 
+## R4-R1 follow-up — type-to-search on a cell that already has a value
+
+The combobox seeded its query with the selected label but did not select the text on focus, so
+typing appended to the old label ("Compal" + "C" = "CompalC") and the filter came back empty.
+
+- The input now selects all text on mount and on focus, so the first keystroke replaces the label.
+- While the query still equals the original label the list shows **all** options, so opening a
+  filled cell lets the user browse and re-pick instead of being narrowed to one row.
+- The single-match auto-commit was removed: Enter commits only when the user has highlighted an
+  option with the arrow keys, or clicked one. Escape closes without changing the value, and
+  blur/Tab keep the stored value. Provider scoping and stored value shapes are unchanged.
+
+Regression tests added (suite now 11/11): opening a filled cell and typing a letter filters
+correctly and the concatenated label would have matched nothing; closing without choosing keeps
+the previous value and never auto-commits.
+
 ## Stop point
 
 Pushed for T0 review. No merge, no deploy, no Production apply. Schema, migration, RPC, catalog
