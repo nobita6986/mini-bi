@@ -56,6 +56,10 @@ import {
 } from "@/lib/direct-entry/cccd-status";
 import type { CccdDocumentSummary } from "@/lib/direct-entry/cccd-document-pair";
 import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
+import {
+  DRAFTS_UNAVAILABLE,
+  draftLoadErrorMessage,
+} from "@/lib/direct-entry/draft-error-copy";
 import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
 import {
   projectChangeRequestListPage,
@@ -422,8 +426,15 @@ export function DirectEntryLive() {
       cache: "no-store",
       credentials: "same-origin",
     });
-    const payload = parseOwnDrafts(await readJson(response));
-    if (!response.ok || !payload) throw new Error("DRAFTS_UNAVAILABLE");
+    const body = await readJson(response);
+    const payload = parseOwnDrafts(body);
+    if (!response.ok || !payload) {
+      // P3-W07D: keep the sanitized server code so the notice can tell a scope
+      // problem (DRAFT_SCOPE_DENIED) from a transient failure.
+      throw new Error(
+        isRecord(body) && typeof body.code === "string" ? body.code : DRAFTS_UNAVAILABLE,
+      );
+    }
     const serverRows = payload.map(draftRowFromProjection);
     setRows((current) => mergeReloadedDrafts(current, serverRows));
   }, []);
@@ -678,9 +689,14 @@ export function DirectEntryLive() {
           fetch("/api/direct-entry/drafts", { cache: "no-store", credentials: "same-origin" }),
           ensureCatalog(today),
         ]);
-        const draftPayload = parseOwnDrafts(await readJson(draftResponse));
+        const draftBody = await readJson(draftResponse);
+        const draftPayload = parseOwnDrafts(draftBody);
         if (!draftResponse.ok || !draftPayload) {
-          throw new Error("DRAFTS_UNAVAILABLE");
+          throw new Error(
+            isRecord(draftBody) && typeof draftBody.code === "string"
+              ? draftBody.code
+              : DRAFTS_UNAVAILABLE,
+          );
         }
         const mapped = draftPayload.map(draftRowFromProjection);
         // P3-W07C-R6-R1: da xoa date-set + Promise.all(map(ensureCatalog)) theo ngay
@@ -1788,7 +1804,9 @@ export function DirectEntryLive() {
       <div className={styles.notice} role={loadState === "error" ? "alert" : "status"}
         aria-live="polite">
         {loadState === "loading" && "Đang tải quyền, danh mục và bản nháp…"}
-        {loadState === "error" && `Không tải được Direct Entry (${loadMessage}). Không dùng dữ liệu mẫu khi chế độ máy chủ đang bật.`}
+        {loadState === "error" &&
+          draftLoadErrorMessage(loadMessage) +
+            " Không dùng dữ liệu mẫu khi chế độ máy chủ đang bật."}
         {loadState === "ready" && catalogMissing &&
           "Danh mục dự án hoặc người tuyển chưa được cấu hình; thao tác lưu đang bị khóa."}
         {Object.entries(catalogErrors).map(([date, message]) =>

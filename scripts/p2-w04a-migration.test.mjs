@@ -26,13 +26,13 @@ async function buildDb() {
 test("P2-W04A/W04B migrations retain order before the later W07C migration", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    // W04B (#44) stays immediately after W07B; W07C-R2 is the later #45
-    // on this branch (and becomes #46 after W05A is integrated).
-    assert.equal(migrationNames.length, 46);
+    // W04B (#44) stays immediately after W07B; main carries W07C-R2 (#45) and
+    // W07C-R3 (#46) after it, and the appended W07D migration is last (#47).
+    assert.equal(migrationNames.length, 47);
     assert.equal(
       migrationNames[migrationNames.length - 1],
-      "20261008050000_p3_w07c_r2_raw_text_dates.sql",
-      "W07C-R2 must append after the existing W04B migration",
+      "20261008080000_p3_w07d_draft_scope_precedence.sql",
+      "W07D must append after every migration already on main",
     );
     // W07B must still be present and immediately precede W04B.
     const w07bIdx = migrationNames.indexOf(
@@ -329,7 +329,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // W07C-R2 is present after W04B in the source inventory; this test skipped
   // applying only W04B to exercise its rollback behavior.
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 47);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

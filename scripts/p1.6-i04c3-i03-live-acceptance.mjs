@@ -138,8 +138,8 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    // P3-W07C-R2 adds migration #45 on this branch (slot #46 after W05A).
-    check(fromScratch.migrationNames.length === 46, "PGlite applied all 46 migrations");
+    // W07D appends the migration that carries the draft scope precedence fix.
+    check(fromScratch.migrationNames.length === 47, "PGlite applied all 47 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();

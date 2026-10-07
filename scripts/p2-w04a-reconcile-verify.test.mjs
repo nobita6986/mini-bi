@@ -307,12 +307,16 @@ test("P2-W04B reconcile retains its release baseline before the later W07C migra
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 46);
+  assert.equal(names.length, 47);
   assert.equal(
-    names[names.length - 2],
-    "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
+    names[names.length - 1],
+    "20261008080000_p3_w07d_draft_scope_precedence.sql",
   );
-  assert.equal(names[names.length - 1], "20261008050000_p3_w07c_r2_raw_text_dates.sql");
+  assert.equal(
+    names[names.length - 4],
+    "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
+    "W04B stays before the later main migrations and the appended W07D",
+  );
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );

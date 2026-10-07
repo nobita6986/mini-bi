@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -46,11 +46,11 @@ async function database() {
 async function databaseUpTo(untilName) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
-  // P3-W07C-R3 server default for `national_id_issued_place` is the only file
-  // in the 20261008060000 slot; on this branch it lands as #46. When W05A's
-  // `#45` (`20261008040000_p3_w05a_actor_scoped_reporting.sql`, currently
-  // on a separate branch) integrates, this R3 file becomes #47 and the
-  // check below tracks only the local count.
+  // P3-W07C-R3 server default for `national_id_issued_place` is #46 on main. The
+  // W07D draft-scope migration appends as #47 on this branch
+  // (`20261008080000_p3_w07d_draft_scope_precedence.sql`); W05A owns its own
+  // `20261008070000` slot on a separate branch, so this helper tracks only the
+  // local count instead of a fixed slot per file.
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
@@ -61,7 +61,7 @@ async function databaseUpTo(untilName) {
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 46, "P3-W07C-R3 migration lands as the last 20261008 file; W05A's #45 stays on its own branch until integration");
+  assert.equal(totalCount, 47, "W07D appends as #47 after the W07C-R2/R3 migrations already on main");
   for (const name of apply) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }

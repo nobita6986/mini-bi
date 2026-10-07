@@ -15,6 +15,8 @@ import {
   type DraftCatalog,
 } from "./write-repository.ts";
 import { readBoundedJson } from "./write-api.ts";
+import { DRAFT_SCOPE_DENIED, DRAFTS_UNAVAILABLE } from "./draft-error-copy.ts";
+import { todayDateIso } from "../format.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PATCH_KEYS = new Set([
@@ -142,10 +144,15 @@ export async function getOwnDrafts(
       app_user_id: session.actor.actor.app_user_id,
     });
     if (!result.ok) {
-      if (result.kind === "denied") return fail("ACTOR_NOT_AVAILABLE", 403);
+      // P3-W07D: the DB boundary answers 42501 for BOTH an unmapped actor and a
+      // row outside every effective scope grant. Both are a scope problem for the
+      // caller, so they map to the dedicated draft scope code instead of
+      // collapsing into the generic transient code (and into the legacy
+      // ACTOR_NOT_AVAILABLE, which the W07D contract does not name).
+      if (result.kind === "denied") return fail(DRAFT_SCOPE_DENIED, 403);
       if (result.kind === "too-large") return fail("DRAFT_LIMIT_EXCEEDED", 413);
       console.error("[direct-entry] own drafts unavailable");
-      return fail("DRAFTS_UNAVAILABLE", 500);
+      return fail(DRAFTS_UNAVAILABLE, 500);
     }
     return respond({
       ok: true,
@@ -203,9 +210,14 @@ export async function patchDraftEntry(
       auth_subject: session.actor.actor.auth_subject,
       app_user_id: session.actor.actor.app_user_id,
     };
+    // P3-W07D: the patch catalog is the PAGE catalog (W07C-R6-R1), so it must be
+    // resolved at today's Asia/Ho_Chi_Minh date exactly like the read path. Using
+    // the row's (possibly historical) first_work_date rejected the edit of a
+    // historical draft whose recruiter membership no longer covers that date
+    // (DRAFT_MASTER_INVALID) even though the row itself is still valid.
     const catalogResult = await dependencies.repository.loadInputCatalog({
       ...trustedActor,
-      effective_date: parsed.patch.first_work_date,
+      effective_date: todayDateIso(),
     });
     if (!catalogResult.ok) {
       if (catalogResult.kind === "denied") return fail("ACTOR_NOT_AVAILABLE", 403);
