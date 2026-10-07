@@ -18,7 +18,17 @@ Existing change-request engine, reason, OCC, idempotency, audit, capability regi
 `pnpm test` 0 fail; typegen + typecheck clean; lint 0 errors; build ok; `docs:check` 6/6; `secrets:check` ĐẠT; `git diff --check` clean; `db:migrate --offline` 53 valid. Production dry-run (read-only): 49 applied / 4 pending (#50/#51/#52/#53) / 0 mismatch.
 
 ## Deployment safety (#50 -> #51 -> #52 -> #53)
-#50 alone re-adds the creator/team/first_work_date propose fallback (Production holds 55 change_request_create accounts + 17 SUBMITTED entries). Apply all four back-to-back in one maintenance window: disable the create/propose path, apply #50..#53 sequentially, run acceptance, reopen only after #53 + acceptance pass. Pre 49/3/0; post 53/0/0. The runner commits each file separately, so the window is bounded by the procedure, not one transaction.
+
+T0 finding: before #53, direct payment/status writes on SUBMITTED are still open, so create/propose-only gating is insufficient. Reuse the existing full kill-switch `DIRECT_ENTRY_API_ENABLED` (returns 404 before session/repository) — it already gates EVERY Direct Entry API route, so it is a full write-maintenance switch covering all five mutation paths:
+- create: `batches`, `batches/full-profile`, `drafts`;
+- propose: `change-requests` POST;
+- payment: `entries/[entryId]/payment`;
+- employment status: `submissions/[submissionId]/transition`, `full-profile`, `entries/[entryId]`;
+- privileged edit: `entries/[entryId]` PUT/PATCH; approve/reject/withdraw: `change-requests/[requestId]/decision` + `/withdraw`.
+
+Evidence: every `src/app/api/direct-entry/**/route.ts` checks `process.env.DIRECT_ENTRY_API_ENABLED !== "true"` first (change-requests/route.ts:24, entries/[entryId]/route.ts:16, entries/[entryId]/payment/route.ts:15, submissions/[submissionId]/transition/route.ts:22, batches/full-profile/route.ts:12). Service-role RPCs are revoked from anon/authenticated, so the HTTP gate is the only reachable write surface.
+
+Procedure: set `DIRECT_ENTRY_API_ENABLED=false` and redeploy → apply #50..#53 sequentially → read-only acceptance (assignment-only proposer, protected fields, direct mutation denied, approval applies once) → set `DIRECT_ENTRY_API_ENABLED=true` and redeploy. Pre 49/3/0; post 53/0/0. Runner commits per-file, so the gate bounds the window.
 
 ## Migrations
 #1-#52 byte-identical to `origin/main`; #53 appended. No Production apply, no deploy, no main merge.
