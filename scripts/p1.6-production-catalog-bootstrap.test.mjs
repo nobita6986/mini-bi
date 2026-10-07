@@ -181,7 +181,7 @@ test("50 migrations apply from scratch and expose only the approved RPC boundary
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); the appended
   // W05A is #48; W07C-R7 is #49; W07E is #50; P2.5-W02 #51; P2.5-W03 appends as #52.
-  assert.equal(names.length, 52,
+  assert.equal(names.length, 53,
     "the migrations directory now carries 52 files (P2.5-W03 appended after P2.5-W02)");
 
   const acl = await db.query(

@@ -95,7 +95,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
   const migrated = await createMigratedDatabase();
   const db = migrated.db;
   try {
-    assert.equal(migrated.migrationNames.length, 52);
+    assert.equal(migrated.migrationNames.length, 53);
     const initialWorkerDetails = worker("S02B worker1");
     initialWorkerDetails.date_of_birth = { state: "provided", value: "01/01/2000" };
     initialWorkerDetails.national_id = { state: "provided", value: "000000000000" };
@@ -143,13 +143,18 @@ test("current project assignment exposes submitted rows for proposals, but not d
     assert.equal(projection.rows[0].data.payment.account_holder_name, "Synthetic Holder");
     assert.deepEqual(projection.rows[0].data.documents, []);
 
+    const w04Proposal = {
+      ...initialWorkerDetails,
+      address: { state: "provided", value: "W04 proposed address" },
+    };
     const projectChange = await createChangeRequest(db, PROJECT_MANAGER,
-      [item(fixture.entryA.entry_id, fixture.entryA.version, { labor_type: "PERMANENT" })],
+      [item(fixture.entryA.entry_id, fixture.entryA.version, { worker_details: w04Proposal })],
       "W07E project manager proposes a normal field change", "w07e_project_field");
     assert.equal(projectChange.error, null);
     const beforeApproval = await db.query(
-      "select labor_type from public.direct_entries where entry_id=$1", [fixture.entryA.entry_id]);
-    assert.equal(beforeApproval.rows[0].labor_type, "TEMPORARY");
+      "select worker_details->'address'->>'value' as address from public.direct_entries where entry_id=$1",
+      [fixture.entryA.entry_id]);
+    assert.equal(beforeApproval.rows[0].address, null);
     const managerRequests = await listChangeRequests(db, PROJECT_MANAGER, { pageSize: 20 });
     assert.equal(managerRequests.error, null);
     assert.equal(managerRequests.data.requests.length, 1);
@@ -185,7 +190,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
     assert.equal(documentChange.error.code, "42501");
 
     const finalProposal = await createChangeRequest(db, PROJECT_MANAGER,
-      [item(fixture.entryA.entry_id, fixture.entryA.version, { labor_type: "PERMANENT" })],
+      [item(fixture.entryA.entry_id, fixture.entryA.version, { worker_details: w04Proposal })],
       "W07E reviewer approval test", "w07e_project_reviewer");
     assert.equal(finalProposal.error, null);
     await db.query(
@@ -201,12 +206,21 @@ test("current project assignment exposes submitted rows for proposals, but not d
     const selfReview = await decideChangeRequest(db, PROJECT_MANAGER, finalProposal.data.request_id,
       "approve", 1, "Self-review must fail", "w07e_self_review");
     assert.equal(selfReview.error.code, "42501");
+    // P2.5-W04: reviewing a worker_details proposal needs change_review + pii_view.
+    await db.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " select $1::uuid,'pii_view','2020-01-01'" +
+      " where not exists (select 1 from public.direct_entry_capability_grants g" +
+      "  where g.app_user_id=$1::uuid and g.capability='pii_view')",
+      [ACTORS.reviewerAll.app_user_id],
+    );
     const approved = await decideChangeRequest(db, ACTORS.reviewerAll, finalProposal.data.request_id,
       "approve", 1, "Authorized reviewer approval", "w07e_reviewer_approve");
     assert.equal(approved.error, null);
     const afterApproval = await db.query(
-      "select labor_type from public.direct_entries where entry_id=$1", [fixture.entryA.entry_id]);
-    assert.equal(afterApproval.rows[0].labor_type, "PERMANENT");
+      "select worker_details->'address'->>'value' as address from public.direct_entries where entry_id=$1",
+      [fixture.entryA.entry_id]);
+    assert.equal(afterApproval.rows[0].address, "W04 proposed address");
 
     const currentEntry = await db.query(
       "select version from public.direct_entries where entry_id=$1", [fixture.entryA.entry_id]);
@@ -226,12 +240,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
     assert.equal(beforeWorkerApproval.rows[0].date_of_birth, "01/01/2000");
 
     // Reviewer authorization stays explicit and target-specific; assignment does
-    // not grant pii_view to the proposer or reviewer.
-    await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'pii_view','2020-01-01')",
-      [ACTORS.reviewerAll.app_user_id],
-    );
+    // not grant pii_view to the proposer or reviewer (already granted above).
     const workerApproved = await decideChangeRequest(db, ACTORS.reviewerAll,
       workerChange.data.request_id, "approve", 1, "Authorized PII reviewer approval",
       "w07e_reviewer_worker_approve");

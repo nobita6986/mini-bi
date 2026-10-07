@@ -153,7 +153,8 @@ export async function seedChangeRequestFixture(db, {
       [ACTORS.proposer.app_user_id, RECRUITER_A]);
   }
   await insertActor(db, ACTORS.reviewer, ["change_review"], "team", TEAM_A);
-  await insertActor(db, ACTORS.reviewerAll, ["change_review"], "all", null);
+  // P2.5-W04: ENTRY_FIELD proposals are worker_details, so the all-scope reviewer needs change_review + pii_view.
+  await insertActor(db, ACTORS.reviewerAll, ["change_review", "pii_view"], "all", null);
   await insertActor(db, ACTORS.reviewerNoCapability, [], "team", TEAM_A);
   await insertActor(db, ACTORS.outsider, ["change_review"], "own", null);
 
@@ -275,14 +276,30 @@ export async function setRequestCreatedAt(db, requestId, stamp) {
 export async function seedChangeRequests(db, fixture) {
   const { entryA, entryB } = fixture;
   const requests = {};
+  // P2.5-W04: ENTRY_FIELD may only carry unprotected worker_details, and the
+  // proposal must carry the full profile shape (DB check constraint).
+  const storedDetails = (await db.query(
+    "select worker_details from public.direct_entries where entry_id=$1",
+    [entryA.entry_id])).rows[0].worker_details;
+  const storedDetailsB = (await db.query(
+    "select worker_details from public.direct_entries where entry_id=$1",
+    [entryB.entry_id])).rows[0].worker_details;
+  const W04_UNPROTECTED_DETAILS = {
+    ...storedDetails,
+    address: { state: "provided", value: "W04 unprotected address" },
+  };
+  const W04_UNPROTECTED_DETAILS_B = {
+    ...storedDetailsB,
+    address: { state: "provided", value: "W04 unprotected address" },
+  };
   const plan = [
-    ["single", [item(entryA.entry_id, entryA.version, { labor_type: "PERMANENT" })], REQUEST_STAMPS.single],
-    ["multi", [item(entryA.entry_id, entryA.version, { labor_type: "PERMANENT" }),
-      item(entryB.entry_id, entryB.version, { labor_type: "PERMANENT" })], REQUEST_STAMPS.multi],
-    ["withdrawn", [item(entryA.entry_id, entryA.version, { labor_type: "PERMANENT" })], REQUEST_STAMPS.withdrawn],
-    ["rejected", [item(entryA.entry_id, entryA.version, { labor_type: "PERMANENT" })], REQUEST_STAMPS.rejected],
-    ["approved", [item(entryA.entry_id, entryA.version, { labor_type: "PERMANENT" })], REQUEST_STAMPS.approved],
-    ["tied", [item(entryA.entry_id, entryA.version, { labor_type: "PERMANENT" })], REQUEST_STAMPS.tied],
+    ["single", [item(entryA.entry_id, entryA.version, { worker_details: { ...W04_UNPROTECTED_DETAILS } })], REQUEST_STAMPS.single],
+    ["multi", [item(entryA.entry_id, entryA.version, { worker_details: { ...W04_UNPROTECTED_DETAILS } }),
+      item(entryB.entry_id, entryB.version, { worker_details: { ...W04_UNPROTECTED_DETAILS_B } })], REQUEST_STAMPS.multi],
+    ["withdrawn", [item(entryA.entry_id, entryA.version, { worker_details: { ...W04_UNPROTECTED_DETAILS } })], REQUEST_STAMPS.withdrawn],
+    ["rejected", [item(entryA.entry_id, entryA.version, { worker_details: { ...W04_UNPROTECTED_DETAILS } })], REQUEST_STAMPS.rejected],
+    ["approved", [item(entryA.entry_id, entryA.version, { worker_details: { ...W04_UNPROTECTED_DETAILS } })], REQUEST_STAMPS.approved],
+    ["tied", [item(entryA.entry_id, entryA.version, { worker_details: { ...W04_UNPROTECTED_DETAILS } })], REQUEST_STAMPS.tied],
   ];
   for (const [name, items, stamp] of plan) {
     const created = await createChangeRequest(db, ACTORS.proposer, items,

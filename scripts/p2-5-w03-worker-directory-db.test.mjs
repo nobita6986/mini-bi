@@ -22,6 +22,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const W03_MIGRATION = "20261008120000_p2_5_w03_worker_directory_projection.sql";
+const W04_MIGRATION = "20261008130000_p2_5_w04_project_manager_change_request_policy.sql";
 const W02_MIGRATION = "20261008110000_p2_5_w02_multi_manager_project_authority.sql";
 
 const AUTH_PROLOGUE =
@@ -51,9 +52,9 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 52, "the ledger carries 52 migrations after P2.5-W03");
-  assert.equal(names[names.length - 1], W03_MIGRATION, "W03 appends as #52");
-  assert.equal(names[names.length - 2], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names.length, 53, "the ledger carries 53 migrations after P2.5-W03");
+  assert.equal(names[names.length - 1], W04_MIGRATION, "W03 appends as #52");
+  assert.equal(names[names.length - 3], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 

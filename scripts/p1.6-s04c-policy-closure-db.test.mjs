@@ -70,7 +70,7 @@ test("from-scratch apply covers the policy closure migration and its ACLs", asyn
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 52);
+  assert.equal(migrations.migrationNames.length, 53);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(
@@ -128,24 +128,24 @@ test("from-scratch apply covers the policy closure migration and its ACLs", asyn
   }
 });
 
-test("ENTRY_FIELD non-PII with change_review stays decidable for approve and reject", async () => {
+test("P2.5-W04: ENTRY_FIELD carries only worker_details and stays decidable with change_review + pii_view", async () => {
   const approveKey = "s03b3r1_approve_nonpii";
-  const approved = await decide(db, POLICY_ACTORS.entryOnly, requests.nonPiiApprove,
+  const approved = await decide(db, POLICY_ACTORS.piiView, requests.nonPiiApprove,
     "approve", 1, "S03B3R1 approved", approveKey);
   assert.equal(approved.error, null);
   assert.deepEqual(approved.data, {
     request_id: requests.nonPiiApprove, state: "APPROVED", version: 2,
   });
-  assert.equal((await entryRow(db, entries.nonPiiApprove.entry_id)).labor_type, "PERMANENT");
-  const replay = await decide(db, POLICY_ACTORS.entryOnly, requests.nonPiiApprove,
+  assert.equal((await entryRow(db, entries.nonPiiApprove.entry_id)).version, 2);
+  const replay = await decide(db, POLICY_ACTORS.piiView, requests.nonPiiApprove,
     "approve", 1, "S03B3R1 approved", approveKey);
   assert.deepEqual(replay.data, approved.data, "replay cung key phai tra cung ket qua");
 
-  const rejected = await decide(db, POLICY_ACTORS.entryOnly, requests.nonPiiReject,
+  const rejected = await decide(db, POLICY_ACTORS.piiView, requests.nonPiiReject,
     "reject", 1, "S03B3R1 rejected", "s03b3r1_reject_nonpii");
   assert.equal(rejected.error, null);
   assert.equal(rejected.data.state, "REJECTED");
-  assert.equal((await entryRow(db, entries.nonPiiReject.entry_id)).labor_type, "TEMPORARY",
+  assert.equal((await entryRow(db, entries.nonPiiReject.entry_id)).version, 1,
     "reject khong duoc doi du lieu canonical");
 });
 
@@ -197,9 +197,8 @@ test("mixed request thieu dung mot capability thi khong item nao duoc ap dung", 
   const denied = await decide(db, POLICY_ACTORS.paymentView, requests.mixed,
     "approve", 1, "S03B3R1 mixed denied", "s03b3r1_mixed");
   assert.equal(denied.error.code, "42501");
-  assert.equal((await entryRow(db, entries.nonPiiApprove.entry_id)).employee_code,
-    "hrp-2026-300101", "item thu nhat khong duoc ap dung");
-  assert.equal((await entryRow(db, entries.payment.entry_id)).version, 1);
+  assert.equal((await entryRow(db, entries.payment.entry_id)).version, 1,
+    "item thu hai khong duoc ap dung");
   assert.equal(await revisionCount(db, entries.nonPiiApprove.entry_id), revisionsBefore);
   assert.equal(await revisionCount(db, entries.payment.entry_id), paymentRevisionsBefore);
   assert.equal((await requestRow(db, requests.mixed)).state, "PENDING");
@@ -235,17 +234,17 @@ test("reviewer du capability thi quyet dinh thanh cong cho tung target kind", as
 });
 
 test("OCC va idempotency khong hoi quy", async () => {
-  const conflict = await decide(db, POLICY_ACTORS.entryOnly, requests.occ,
+  const conflict = await decide(db, POLICY_ACTORS.piiView, requests.occ,
     "approve", 99, "S03B3R1 occ conflict", "s03b3r1_occ_conflict");
   assert.equal(conflict.error.code, "40001");
-  const approved = await decide(db, POLICY_ACTORS.entryOnly, requests.occ,
+  const approved = await decide(db, POLICY_ACTORS.piiView, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_approved");
   assert.equal(approved.error, null, json(approved.error));
   assert.equal(approved.data.version, 2);
-  const replay = await decide(db, POLICY_ACTORS.entryOnly, requests.occ,
+  const replay = await decide(db, POLICY_ACTORS.piiView, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_approved");
   assert.deepEqual(replay.data, approved.data);
-  const decided = await decide(db, POLICY_ACTORS.entryOnly, requests.occ,
+  const decided = await decide(db, POLICY_ACTORS.piiView, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_second_key");
   assert.equal(decided.error.code, "40001");
 });
@@ -324,12 +323,13 @@ test("read projection tra FULL / MASKED / PRESENCE_ONLY / OMIT theo capability",
     { document_type: "EMPLOYMENT_CONTRACT" });
 
   const fullPii = await readDetail(db, POLICY_ACTORS.piiView, requests.pii);
-  assert.equal(fullPii.data.items[0].proposal.worker_details.display_name, "Synthetic worker");
+  assert.equal(fullPii.data.items[0].proposal.worker_details.display_name,
+    "Synthetic " + entries.pii.employee_code);
   const presencePii = await readDetail(db, POLICY_ACTORS.entryOnly, requests.pii);
   assert.deepEqual(presencePii.data.items[0].proposal, { worker_details: { present: true } });
 
   const nonPii = await readDetail(db, POLICY_ACTORS.entryOnly, requests.nonPiiApprove);
-  assert.deepEqual(nonPii.data.items[0].proposal, { labor_type: "PERMANENT" });
+  assert.deepEqual(nonPii.data.items[0].proposal, { worker_details: { present: true } });
   assert.deepEqual(Object.keys(nonPii.data.items[0]).sort(),
     ["entry_id", "expected_version", "proposal", "target_kind"]);
 

@@ -27,6 +27,8 @@ const W02_MIGRATION =
   "20261008110000_p2_5_w02_multi_manager_project_authority.sql";
 const W03_MIGRATION =
   "20261008120000_p2_5_w03_worker_directory_projection.sql";
+const W04_MIGRATION =
+  "20261008130000_p2_5_w04_project_manager_change_request_policy.sql";
 const W07E_MIGRATION =
   "20261008100000_p3_w07e_project_manager_submitted_change_requests.sql";
 
@@ -54,9 +56,9 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 52, "the ledger carries 52 migrations after P2.5-W03");
-  assert.equal(names[names.length - 2], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - 1], W03_MIGRATION, "P2.5-W03 appends as #52");
+  assert.equal(names.length, 53, "the ledger carries 53 migrations after P2.5-W03");
+  assert.equal(names[names.length - 3], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - 1], W04_MIGRATION, "P2.5-W03 appends as #52");
   return db;
 }
 
@@ -893,7 +895,7 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 52,
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 53,
     "the repository ledger contains #1 through #52; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no

@@ -96,12 +96,12 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrationNames.length, 52);
+  assert.equal(migrationNames.length, 53);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
   const parent = await createChangeRequest(db, ACTORS.proposer,
-    [item(fixture.entryA.entry_id, fixture.entryA.version, { labor_type: "PERMANENT" })],
+    [item(fixture.entryA.entry_id, fixture.entryA.version, { worker_details: { address: { state: "provided", value: "W04 address" } } })],
     "synthetic parent request", "scope_lock_parent");
   assert.equal(parent.error, null);
   const before = await snapshot(db);
@@ -163,6 +163,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // RPCs (list/get/create/update/set-active), still with no anon surface.
   // P2.5-W03 (#52) adds one internal worker-directory audience guard and one
   // service-role-only directory RPC.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [109, 54, 55]);
+  // P2.5-W04 (#53) adds two service-role-only worker_details guards.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [111, 56, 55]);
   await db.close();
 });

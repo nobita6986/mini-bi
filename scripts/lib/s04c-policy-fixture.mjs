@@ -88,6 +88,10 @@ export const POLICY_ACTORS = Object.freeze({
   },
 });
 
+export function unprotectedWorkerDetails(displayName) {
+  return { ...worker(displayName), address: { state: "provided", value: "W04 unprotected change" } };
+}
+
 export function worker(displayName) {
   const optional = { state: "unknown" };
   return {
@@ -195,12 +199,12 @@ export async function seedPolicyRequests(db, seeded, suffix) {
     ...WORK_STATUS_PROPOSAL, effective_date: seeded.firstWorkDate,
   };
   const plan = [
-    ["nonPiiApprove", entries.nonPiiApprove, "ENTRY_FIELD", { labor_type: "PERMANENT" }],
-    ["nonPiiReject", entries.nonPiiReject, "ENTRY_FIELD", { labor_type: "PERMANENT" }],
-    ["pii", entries.pii, "ENTRY_FIELD", { worker_details: worker("Synthetic worker") }],
+    ["nonPiiApprove", entries.nonPiiApprove, "ENTRY_FIELD", { worker_details: unprotectedWorkerDetails("Synthetic " + entries.nonPiiApprove.employee_code) }],
+    ["nonPiiReject", entries.nonPiiReject, "ENTRY_FIELD", { worker_details: unprotectedWorkerDetails("Synthetic " + entries.nonPiiReject.employee_code) }],
+    ["pii", entries.pii, "ENTRY_FIELD", { worker_details: unprotectedWorkerDetails("Synthetic " + entries.pii.employee_code) }],
     ["payment", entries.payment, "PAYMENT", PAYMENT_PROPOSAL],
     ["status", entries.status, "WORK_STATUS", workStatusProposal],
-    ["occ", entries.occ, "ENTRY_FIELD", { labor_type: "PERMANENT" }],
+    ["occ", entries.occ, "ENTRY_FIELD", { worker_details: unprotectedWorkerDetails("Synthetic " + entries.occ.employee_code) }],
   ];
   const requests = {};
   for (const [name, entry, targetKind, proposal] of plan) {
@@ -216,7 +220,7 @@ export async function seedPolicyRequests(db, seeded, suffix) {
     db, ACTORS.proposer,
     [
       item(entries.nonPiiApprove.entry_id, entries.nonPiiApprove.version,
-        { employee_code: "hrp-2026-300199" }),
+        { worker_details: unprotectedWorkerDetails("Synthetic " + entries.nonPiiApprove.employee_code) }),
       item(entries.payment.entry_id, entries.payment.version, PAYMENT_PROPOSAL, "PAYMENT"),
     ],
     "S03B3R1 mixed reason", suffix + "_create_mixed",

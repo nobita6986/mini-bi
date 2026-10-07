@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 52, "P2.5-W03 appends as #52 after P2.5-W02 #51");
+  assert.equal(totalCount, 53, "P2.5-W03 appends as #53 after P2.5-W02 #51");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -591,8 +591,8 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // P2.5-W03 (#52) adds one internal audience guard and one service-role-only
     // worker-directory RPC; still nothing reachable by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 109,
-      service_role: 54,
+      total: 111,
+      service_role: 56,
       internal: 55,
       exposed_internal: 0,
     });

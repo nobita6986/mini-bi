@@ -997,10 +997,14 @@ test("multi-entry change approval rolls back all rows, revisions, audit, state, 
     const { rows: change } = await db.query(
       `select public.direct_entry_create_change_request(
         $1,$2,$3::jsonb,'Synthetic atomic reason','atomic_change_create_01') as result`,
-      [actor, user, JSON.stringify([first, second].map((entryId) => ({
-        entry_id: entryId, target_kind: "ENTRY_FIELD", expected_version: 1,
-        proposal: { labor_type: "PERMANENT" },
-      })))],
+      // P2.5-W04: ENTRY_FIELD proposals carry only worker_details; display_name
+      // must match the stored canonical value.
+      [actor, user, JSON.stringify([
+        { entry_id: first, target_kind: "ENTRY_FIELD", expected_version: 1,
+          proposal: { worker_details: { ...syntheticWorker("Synthetic Row One"), address: { state: "provided", value: "W04 address" } } } },
+        { entry_id: second, target_kind: "ENTRY_FIELD", expected_version: 1,
+          proposal: { worker_details: { ...syntheticWorker("Synthetic Row Two"), address: { state: "provided", value: "W04 address" } } } },
+      ])],
     );
     const requestId = change[0].result.request_id;
     await db.exec("reset role");
