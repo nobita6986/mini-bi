@@ -1,6 +1,6 @@
 # P3-W07C-R7 — Membership-Independent Historical Entry
 
-**Status:** `P3-W07C-R7_LOCAL_PASS_AWAITING_T0_REVIEW`
+**Status:** `P3-W07C-R7_R1_LOCAL_PASS_READY_FOR_RELEASE`
 **Branch:** `feature/p3-w07c-date-blur-recruiter-scope-hotfix`
 **Base:** `a9010fd`
 **Migration:** `20261008090000_p3_w07c_r7_membership_independent_of_work_date.sql` (#49)
@@ -18,15 +18,16 @@
 
 The append-only migration patches the existing RPC/trigger source only after exact-source assertions. It adds one internal draft-scope resolver (not executable by `service_role`, `authenticated`, `anon`, or `PUBLIC`) and keeps existing function ACL/security-definer boundaries. Migration inventory is 49; the frozen production reconciliation expected-applied count remains 47.
 
-No existing rows, scope grants, project assignments, dependencies, or production data are changed. No Production apply/query, deploy, main push, or commit was performed.
+R1 handles both LF and CRLF in the existing entry/draft authorization helper source while still requiring exactly one matching historical predicate in each function. The first Production migration attempt stopped at that guard and rolled back; a read-only inspection confirmed CRLF source formatting. No persistent database changes resulted from the failed attempt.
 
 ## Regression coverage and gates
 
 - PGlite: a recruiter with no membership on the historical work date can create a row using current membership; date-only edits preserve its saved assignment after the recruiter is inactive.
 - PGlite: a replacement project manager with no own/team/all grant can list/read/update the old manager's DRAFT row while assigned; after reassignment, list/read fail closed. Audit records `capability=project_manager` and a null legacy `scope_kind` rather than mislabeling project scope.
+- PGlite regression: the R7 source patch succeeds when the existing authorization helpers use CRLF, and the updated predicates retain that line-ending format.
 - API projection accepts the new `scope_kind=project` value; project authorization remains server-side.
-- `pnpm test` — all constituent suites pass; `pnpm test:p1.6-i04c3-s01` — 39/39; `pnpm test:p1.6-w04-s03cd` — 16/16; `pnpm test:p3-w07b-project-scope` — 2/2; migration inventory — 8/8.
-- `pnpm typecheck`, `pnpm lint` (0 errors; 10 existing warnings), `pnpm build`, `pnpm db:migrate --offline` (49 valid), and `git diff --check` — pass.
+- `pnpm test` — all constituent suites pass; `pnpm test:p1.6-i04c3-s01` — 40/40; `pnpm test:p1.6-w04-s03cd` — 16/16; `pnpm test:p3-w07b-project-scope` — 2/2; migration inventory — 8/8.
+- `pnpm typecheck`, `pnpm lint` (0 errors; 10 existing warnings), `pnpm build`, `pnpm db:migrate --offline` (49 valid), `pnpm db:migrate --dry-run` (48 applied / 1 pending / 0 mismatch), and `git diff --check` — pass.
 
 ## T0 / integration note
 

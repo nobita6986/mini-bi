@@ -270,16 +270,16 @@ declare
   v_draft_definition text;
   v_entry_next text;
   v_draft_next text;
-  v_old_entry_date constant text := $old_entry$
+  v_old_entry_date text := $old_entry$
      and g.valid_from <= p_effective_date
      and (g.valid_to is null or p_effective_date < g.valid_to)$old_entry$;
-  v_new_entry_date constant text := $new_entry$
+  v_new_entry_date text := $new_entry$
      and g.valid_from <= public.direct_entry_authorization_date()
      and (g.valid_to is null or public.direct_entry_authorization_date() < g.valid_to)$new_entry$;
-  v_old_draft_date constant text := $old_draft$
+  v_old_draft_date text := $old_draft$
      and g.valid_from <= p_resource_scope_date
      and (g.valid_to is null or p_resource_scope_date < g.valid_to)$old_draft$;
-  v_new_draft_date constant text := $new_draft$
+  v_new_draft_date text := $new_draft$
      and g.valid_from <= public.direct_entry_authorization_date()
      and (g.valid_to is null or public.direct_entry_authorization_date() < g.valid_to)$new_draft$;
   v_replaced integer;
@@ -292,6 +292,17 @@ begin
   select p.prosrc into v_draft_source from pg_proc p where p.oid = v_draft_signature;
   if v_entry_source is null or v_draft_source is null then
     raise exception 'P3-W07C-R7 could not find entry-scope authorization helpers';
+  end if;
+
+  -- PostgreSQL preserves the source migration's line endings in prosrc. Match
+  -- the exact historical predicate using that function's existing format.
+  if position(E'\r\n' in v_entry_source) > 0 then
+    v_old_entry_date := replace(v_old_entry_date, E'\n', E'\r\n');
+    v_new_entry_date := replace(v_new_entry_date, E'\n', E'\r\n');
+  end if;
+  if position(E'\r\n' in v_draft_source) > 0 then
+    v_old_draft_date := replace(v_old_draft_date, E'\n', E'\r\n');
+    v_new_draft_date := replace(v_new_draft_date, E'\n', E'\r\n');
   end if;
 
   v_replaced := length(v_entry_source) - length(replace(v_entry_source, v_old_entry_date, ''));
@@ -506,6 +517,9 @@ begin
   if v_source is null then
     raise exception 'P3-W07C-R7 could not find direct-entry identity trigger';
   end if;
+  -- The deployed trigger body may retain CRLF from its original migration.
+  -- Normalize only line endings so the exact source guards below stay stable.
+  v_source := replace(v_source, E'\r\n', E'\n');
   v_replaced := length(v_source) - length(replace(v_source, v_old_recruiter_check, ''));
   if v_replaced <> length(v_old_recruiter_check) then
     raise exception 'P3-W07C-R7 expected one exact active-recruiter check';
@@ -522,7 +536,7 @@ begin
   end if;
   v_next_source := replace(v_next_source, v_old_membership_check, v_new_membership_check);
 
-  v_definition := pg_get_functiondef(v_signature);
+  v_definition := replace(pg_get_functiondef(v_signature), E'\r\n', E'\n');
   v_replaced := length(v_definition) - length(replace(v_definition, v_source, ''));
   if v_replaced <> length(v_source) then
     raise exception 'P3-W07C-R7 could not safely reconstruct identity trigger';
@@ -720,6 +734,8 @@ begin
   if v_source is null then
     raise exception 'P3-W07C-R7 could not find draft-row update RPC';
   end if;
+  -- Match CRLF-backed function bodies without weakening exact block checks.
+  v_source := replace(v_source, E'\r\n', E'\n');
   v_replaced := length(v_source) - length(replace(v_source, v_old_access, ''));
   if v_replaced <> length(v_old_access) then
     raise exception 'P3-W07C-R7 expected one exact draft-row scope check';
@@ -745,7 +761,7 @@ begin
     raise exception 'P3-W07C-R7 expected one exact draft master-state block';
   end if;
   v_next_source := replace(v_next_source, v_old_master_check, v_new_master_check);
-  v_definition := pg_get_functiondef(v_signature);
+  v_definition := replace(pg_get_functiondef(v_signature), E'\r\n', E'\n');
   v_replaced := length(v_definition) - length(replace(v_definition, v_source, ''));
   if v_replaced <> length(v_source) then
     raise exception 'P3-W07C-R7 could not safely reconstruct draft-row update RPC';

@@ -7,6 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
+const W07C_R7_MIGRATION = "20261008090000_p3_w07c_r7_membership_independent_of_work_date.sql";
 const IDS = {
   auth: "91600000-0000-4000-8000-000000000001",
   user: "92600000-0000-4000-8000-000000000001",
@@ -44,9 +45,43 @@ async function database() {
   return databaseUpTo(null);
 }
 
+async function rewriteLegacyScopeHelpersWithCrlf(db) {
+  await db.exec(`
+    do $test$
+    declare
+      v_signatures regprocedure[] := array[
+        'public.direct_entry_assert_entry_access(uuid,uuid,text,uuid,uuid,date,text)'::regprocedure,
+        'public.direct_entry_assert_draft_access(uuid,uuid,uuid,uuid,date,text)'::regprocedure,
+        'public.direct_entry_validate_new_entry()'::regprocedure,
+        'public.direct_entry_update_draft_row(uuid,uuid,uuid,integer,jsonb,text)'::regprocedure
+      ];
+      v_signature regprocedure;
+      v_source text;
+      v_next_source text;
+      v_definition text;
+      v_replaced integer;
+    begin
+      foreach v_signature in array v_signatures loop
+        select p.prosrc into v_source from pg_proc p where p.oid = v_signature;
+        v_next_source := replace(v_source, E'\\n', E'\\r\\n');
+        if v_source = v_next_source then
+          raise exception 'fixture expected LF source before CRLF conversion';
+        end if;
+        v_definition := pg_get_functiondef(v_signature);
+        v_replaced := length(v_definition) - length(replace(v_definition, v_source, ''));
+        if v_replaced <> length(v_source) then
+          raise exception 'fixture could not safely reconstruct scope helper';
+        end if;
+        execute replace(v_definition, v_source, v_next_source);
+      end loop;
+    end;
+    $test$;
+  `);
+}
+
 // P3-W07C-R3: cho phep test "trước/sau migration" chạy đúng bằng cách áp dụng
 // chỉ một phần migrations. `null` = tất cả; mảng = whitelist tên file.
-async function databaseUpTo(untilName) {
+async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   // P3-W07C-R3 server default for `national_id_issued_place` is #46 and P2-W04C
@@ -63,6 +98,21 @@ async function databaseUpTo(untilName) {
   }
   assert.equal(totalCount, 49, "W07C-R7 appends as #49 after W05A #48");
   for (const name of apply) {
+    if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
+      await rewriteLegacyScopeHelpersWithCrlf(db);
+      const { rows } = await db.query(`
+        select count(*)::integer as count
+          from pg_proc p
+         where p.oid in (
+           'public.direct_entry_assert_entry_access(uuid,uuid,text,uuid,uuid,date,text)'::regprocedure,
+           'public.direct_entry_assert_draft_access(uuid,uuid,uuid,uuid,date,text)'::regprocedure,
+           'public.direct_entry_validate_new_entry()'::regprocedure,
+           'public.direct_entry_update_draft_row(uuid,uuid,uuid,integer,jsonb,text)'::regprocedure
+         )
+           and position(E'\\r\\n' in p.prosrc) > 0
+      `);
+      assert.equal(rows[0].count, 4, "fixture stores all four patched legacy functions with CRLF");
+    }
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   await db.exec(`
@@ -401,6 +451,42 @@ test("P3-W07C-R7 historical work dates use current recruiter membership and date
       provider_type: "hrp",
       team_id: IDS.team,
     }, "date-only edit preserves the saved recruiter/provider/team assignment");
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R7 source patch accepts CRLF legacy scope helper bodies", async () => {
+  const db = await databaseUpTo(W07C_R7_MIGRATION, { crlfLegacyScopeHelpers: true });
+  try {
+    const { rows } = await db.query(`
+      select p.proname, p.prosrc
+        from pg_proc p
+       where p.oid in (
+         'public.direct_entry_assert_entry_access(uuid,uuid,text,uuid,uuid,date,text)'::regprocedure,
+         'public.direct_entry_assert_draft_access(uuid,uuid,uuid,uuid,date,text)'::regprocedure,
+         'public.direct_entry_validate_new_entry()'::regprocedure,
+         'public.direct_entry_update_draft_row(uuid,uuid,uuid,integer,jsonb,text)'::regprocedure
+       )
+    `);
+    assert.equal(rows.length, 4);
+    for (const row of rows) {
+      if (row.proname.startsWith("direct_entry_assert_")) {
+        assert.match(row.prosrc, /g\.valid_from <= public\.direct_entry_authorization_date\(\)/);
+        assert.doesNotMatch(row.prosrc, /g\.valid_from <= p_(?:effective_date|resource_scope_date)/);
+        assert.ok(row.prosrc.includes("\r\n"), `${row.proname} retains CRLF source formatting`);
+      } else {
+        assert.ok(!row.prosrc.includes("\r\n"), `${row.proname} is normalized to LF for exact patching`);
+      }
+      if (row.proname === "direct_entry_validate_new_entry") {
+        assert.match(row.prosrc, /m\.valid_from <= public\.direct_entry_authorization_date\(\)/);
+        assert.doesNotMatch(row.prosrc, /m\.valid_from <= new\.first_work_date/);
+      }
+      if (row.proname === "direct_entry_update_draft_row") {
+        assert.match(row.prosrc, /m\.valid_from <= public\.direct_entry_authorization_date\(\)/);
+        assert.doesNotMatch(row.prosrc, /m\.valid_from <= v_new_work_date/);
+      }
+    }
   } finally {
     await db.close();
   }
