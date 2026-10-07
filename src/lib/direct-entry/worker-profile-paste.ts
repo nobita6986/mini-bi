@@ -208,6 +208,12 @@ function requiredText(context: RowContext, key: string): string {
   return raw;
 }
 
+/**
+ * P3-W07C-R2: doi voi `date_of_birth` va `national_id_issued_at`, paste path
+ * GIU NGUYEN raw text (DD/MM/YYYY hoac DD-MM-YYYY) trong `value`. Doi voi cac
+ * truong ngay khac (first_work_date, leave_date, effective_month, ...), van
+ * normalize thanh ISO nhu truoc.
+ */
 function optionalDate(context: RowContext, key: string): WorkerProfileOptional<string> {
   const raw = rawCell(context, key);
   if (raw === undefined || raw === "") return omit<string>();
@@ -215,6 +221,16 @@ function optionalDate(context: RowContext, key: string): WorkerProfileOptional<s
   if (spec?.constrained && isFormulaLikeCell(raw)) {
     fail(context, "PASTE_FORMULA_CELL", key);
     return omit<string>();
+  }
+  if (spec?.maxLength !== undefined && raw.length > spec.maxLength) {
+    fail(context, "PASTE_TEXT_TOO_LONG", key);
+    return omit<string>();
+  }
+  // P3-W07C-R2: hai truong raw-text date (date_of_birth, national_id_issued_at)
+  // giu raw text thay vi normalize thanh ISO. Cac truong khac (first_work_date,
+  // leave_date, effective_month) van normalize nhu cu.
+  if (key === "date_of_birth" || key === "national_id_issued_at") {
+    return provided(raw);
   }
   const normalized = normalizePasteDate(raw);
   if (normalized === null) {
@@ -281,16 +297,8 @@ function buildRow(
   // --- optional worker profile ---
   const dob = optionalDate(context, "date_of_birth");
   const issuedAt = optionalDate(context, "national_id_issued_at");
-  if (valueOf(dob) !== null && valueOf(dob)! > referenceDate) {
-    fail(context, "PASTE_DOB_FUTURE", "date_of_birth");
-  }
-  if (valueOf(issuedAt) !== null && valueOf(issuedAt)! > referenceDate) {
-    fail(context, "PASTE_ISSUED_FUTURE", "national_id_issued_at");
-  }
-  if (valueOf(dob) !== null && valueOf(issuedAt) !== null &&
-      valueOf(issuedAt)! < valueOf(dob)!) {
-    fail(context, "PASTE_ISSUED_BEFORE_DOB", "national_id_issued_at");
-  }
+  // P3-W07C-R2: DOB va Ngay cap khong co date parsing, future-date hay
+  // cross-field chronology validation trong luong nhap lieu.
 
   const genderRaw = rawCell(context, "gender");
   let gender: WorkerProfileOptional<Gender> = omit<Gender>();
@@ -382,14 +390,13 @@ function buildRow(
       fail(context, "PASTE_MONTH_MISMATCH", "effective_month");
     }
   }
-  const derivedAge = valueOf(dob) === null ? null : deriveAgeYears(valueOf(dob)!, referenceDate);
   const ageRaw = rawCell(context, "age_years");
   if (ageRaw !== undefined && ageRaw !== "") {
     if (!/^[0-9]{1,3}$/.test(ageRaw)) {
       fail(context, "PASTE_DERIVED_INVALID", "age_years", "warning");
-    } else if (derivedAge !== null && Number(ageRaw) !== derivedAge) {
-      fail(context, "PASTE_AGE_MISMATCH", "age_years", "warning");
     }
+    // P3-W07C-R2: DOB la TEXT thuan nen khong derive age o paste path;
+    // chi canh bao neu `age_years` co format sai (validate xong vuoi).
   }
   const teamHint = rawCell(context, "team_hint");
   const providerHint = rawCell(context, "provider_hint");
@@ -425,7 +432,7 @@ function buildRow(
     derived: {
       row_index: rowIndex,
       effective_month: derivedMonth,
-      age_years: derivedAge,
+      age_years: null,
       team_hint: teamHint === undefined || teamHint === "" ? null : teamHint,
       provider_hint: providerHint === undefined || providerHint === "" ? null : providerHint,
     },

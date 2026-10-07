@@ -89,7 +89,8 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   const { db, migrationNames } = await createMigratedDatabase();
   // P3-W07B migration #43 adds project-manager scope enforcement.
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-  assert.equal(migrationNames.length, 44);
+  // P3-W07C-R2 is migration #45 on this branch (slot #46 after W05A).
+  assert.equal(migrationNames.length, 45);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -138,6 +139,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // reconciliation_totals). All are GRANT EXECUTE to service_role so the
   // runtime can use them (no public RPC exposure). W07B adds three internal
   // helpers/wrapped implementations while preserving 39 service boundaries.
+  // P3-W07C-R2 redefines existing validators/RPCs only; no date-conversion
+  // helper is added and the prior function inventory stays unchanged.
   assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [80, 39, 41]);
   await db.close();
 });

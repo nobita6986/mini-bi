@@ -148,7 +148,8 @@ test("ho so day du: map worker/payment/employment dung contract", () => {
   assert.equal(p.errorCount, 0, JSON.stringify(p.issues));
   const requestRow = buildFullProfileRequestBody(p.rows).rows[0];
   assert.deepEqual(requestRow.worker.gender, { state: "provided", value: "FEMALE" });
-  assert.deepEqual(requestRow.worker.date_of_birth, { state: "provided", value: "1990-05-20" });
+  // P3-W07C-R2: DOB la TEXT thuan, giu raw text user paste (DD/MM/YYYY).
+  assert.deepEqual(requestRow.worker.date_of_birth, { state: "provided", value: "20/05/1990" });
   assert.deepEqual(requestRow.worker.national_id, { state: "provided", value: NID });
   assert.deepEqual(requestRow.worker.national_id_issued_at,
     { state: "provided", value: "2020-06-01" });
@@ -238,8 +239,13 @@ test("gender vocabulary D11; gia tri la bi chan", () => {
 test("ngay khong hop le va ghi chu vuot gioi han deu chan submit", () => {
   const badDate = preview(tsv([row("hrp-2026-000123", "31/02/2026")]));
   assert.equal(badDate.canProceed, false);
+  // P3-W07C-R2: DOB la TEXT thuan; paste path khong canh bao ngay tuong lai
+  // hay calendar-invalid (DOB validator chi check non-empty). van giu
+  // first_work_date contract.
   const futureDob = preview(tsv([row("hrp-2026-000123", "2026-10-15", { DOB: "2027-01-01" })]));
-  assert.equal(futureDob.canProceed, false);
+  assert.equal(futureDob.canProceed, true);
+  const garbageDob = preview(tsv([row("hrp-2026-000123", "2026-10-15", { DOB: "31/02/1990" })]));
+  assert.equal(garbageDob.canProceed, true);
 
   const noteOk = preview(tsv([row("hrp-2026-000123", "2026-10-15", { "Ghi chú": "x".repeat(4000) })]));
   assert.equal(noteOk.canProceed, true);

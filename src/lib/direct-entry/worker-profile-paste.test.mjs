@@ -124,7 +124,10 @@ test("ho so day du: moi cot tuy chon duoc map dung", () => {
   assert.deepEqual(row.payment.account_number, { state: "provided", value: ACCOUNT });
   assert.deepEqual(row.payment.bank_name, { state: "provided", value: "Ngân hàng Giả" });
   assert.deepEqual(row.payment.account_holder_name, { state: "provided", value: HOLDER });
-  assert.equal(row.derived.age_years, 36);
+  // P3-W07C-R2: `date_of_birth` la TEXT thuan; can not derive age o paste path
+  // (se parse lambda cannot). Vi vay `derived.age_years` luon null; helper
+  // `deriveAgeYears` (van con, nhan ISO) chi con dung cho read side.
+  assert.equal(row.derived.age_years, null);
   assert.equal(deriveAgeYears("1990-05-20", REFERENCE_DATE), 36);
   assert.equal(deriveAgeYears("1990-11-20", REFERENCE_DATE), 35);
 });
@@ -218,15 +221,18 @@ test("ma NLĐ: regex canonical va nam phai khop ngay bat dau", () => {
   assert.equal(wrongYear.issues.some((item) => item.code === "PASTE_EMPLOYEE_CODE_YEAR"), true);
 });
 
-test("ngay: YYYY-MM-DD va DD/MM/YYYY, ngay lich that, khong tuong lai", () => {
+test("ngay: first_work_date normalize thanh ISO; date_of_birth giu raw text (P3-W07C-R2)", () => {
   const slash = parse(toTsv([[["Mã NLĐ", "hrp-2026-000123"], ["Dự án", PROJECT],
     ["Ngày bắt đầu làm việc", "15/10/2026"], ["Họ và tên", NAME],
     ["Tên NV Tuyển dụng", RECRUITER], ["Loại hình LĐ", "Thời vụ"],
     ["DOB", "20/5/1990"]]]));
   assert.equal(slash.errorCount, 0);
+  // P3-W07C-R2: date_of_birth giu raw text user paste ("20/5/1990"), KHONG
+  // normalize thanh ISO. first_work_date van normalize nhu cu (contract rieng).
   assert.equal(slash.rows[0].first_work_date, "2026-10-15");
-  assert.deepEqual(slash.rows[0].worker.date_of_birth, { state: "provided", value: "1990-05-20" });
+  assert.deepEqual(slash.rows[0].worker.date_of_birth, { state: "provided", value: "20/5/1990" });
 
+  // first_work_date van giu contract ISO (DOB/issuedAt da o pure text).
   for (const bad of ["2026-02-31", "31/02/2026", "2026-13-01", "khong-phai-ngay", "2026/10/15"]) {
     const result = parse(toTsv([[["Mã NLĐ", "hrp-2026-000123"], ["Dự án", PROJECT],
       ["Ngày bắt đầu làm việc", bad], ["Họ và tên", NAME],
@@ -234,22 +240,40 @@ test("ngay: YYYY-MM-DD va DD/MM/YYYY, ngay lich that, khong tuong lai", () => {
     assert.equal(result.issues.some((item) => item.code === "PASTE_DATE_INVALID"), true, bad);
   }
 
+  // P3-W07C-R2: DOB la bounded text, khong reject future/calendar-invalid.
+  // Khong con `PASTE_DOB_FUTURE` hay so sanh DOB voi ngay hien tai.
   const futureDob = parse(toTsv([[...requiredPairs(), ["DOB", "2027-01-01"]]]));
-  assert.equal(futureDob.issues.some((item) => item.code === "PASTE_DOB_FUTURE"), true);
+  assert.equal(futureDob.issues.some((item) => item.code === "PASTE_DOB_FUTURE"), false);
+  assert.deepEqual(futureDob.rows[0].worker.date_of_birth, { state: "provided", value: "2027-01-01" });
+  // Calendar-invalid text van accepted (pure text), khong block paste.
+  const garbageDob = parse(toTsv([[...requiredPairs(), ["DOB", "31/02/1990"]]]));
+  assert.equal(garbageDob.errorCount, 0);
+  assert.deepEqual(garbageDob.rows[0].worker.date_of_birth, { state: "provided", value: "31/02/1990" });
 });
 
-test("ngay cap: khong tuong lai, khong truoc ngay sinh", () => {
+test("ngay cap: P3-W07C-R2 khong con cross-field compare; issuedAt la pure text", () => {
+  // P3-W07C-R2: khong con `PASTE_ISSUED_FUTURE` / `PASTE_ISSUED_BEFORE_DOB`;
+  // validator treats issue date as bounded text, not a date.
   const future = parse(toTsv([[...requiredPairs(), ["DOB", "1990-05-20"],
     ["Ngày cấp", "2027-01-01"]]]));
-  assert.equal(future.issues.some((item) => item.code === "PASTE_ISSUED_FUTURE"), true);
+  assert.equal(future.issues.some((item) => item.code === "PASTE_ISSUED_FUTURE"), false);
+  assert.deepEqual(future.rows[0].worker.national_id_issued_at,
+    { state: "provided", value: "2027-01-01" });
 
   const beforeDob = parse(toTsv([[...requiredPairs(), ["DOB", "1990-05-20"],
     ["Ngày cấp", "1989-01-01"]]]));
-  assert.equal(beforeDob.issues.some((item) => item.code === "PASTE_ISSUED_BEFORE_DOB"), true);
+  assert.equal(beforeDob.issues.some((item) => item.code === "PASTE_ISSUED_BEFORE_DOB"), false);
+  assert.deepEqual(beforeDob.rows[0].worker.national_id_issued_at,
+    { state: "provided", value: "1989-01-01" });
 
   const sameDay = parse(toTsv([[...requiredPairs(), ["DOB", "1990-05-20"],
     ["Ngày cấp", "1990-05-20"]]]));
-  assert.equal(sameDay.issues.some((item) => item.code === "PASTE_ISSUED_BEFORE_DOB"), false);
+  assert.equal(sameDay.errorCount, 0);
+  assert.deepEqual(sameDay.rows[0].worker.national_id_issued_at,
+    { state: "provided", value: "1990-05-20" });
+
+  const oversized = parse(toTsv([[...requiredPairs(), ["Ngày cấp", "1".repeat(11)]]]));
+  assert.equal(oversized.issues.some((item) => item.code === "PASTE_TEXT_TOO_LONG"), true);
 });
 
 test("gioi tinh: alias Nam/Nu/Khac + gia tri la", () => {
@@ -358,7 +382,9 @@ test("cot dan xuat: validation-only, khong vao write model", () => {
   const row = result.rows[0];
   assert.equal(row.derived.row_index, 7);
   assert.equal(row.derived.effective_month, "2026-10");
-  assert.equal(row.derived.age_years, 36);
+  // P3-W07C-R2: DOB la TEXT thuan nen `derived.age_years` luon null o paste path.
+  // Cell `Tuổi` (user nhap) van doc duoc nhu text, nhung khong tu suy ra tu DOB.
+  assert.equal(row.derived.age_years, null);
   assert.equal(row.derived.team_hint, "Team Giả");
   assert.equal(row.derived.provider_hint, "HRP");
   // Chi la canh bao (khong luu), khong chan dong.
@@ -385,9 +411,14 @@ test("cot dan xuat: mismatch thang la loi; format khong doc duoc chi la canh bao
     item.code === "PASTE_DERIVED_INVALID" && item.severity === "warning"), true);
   assert.equal(badMonth.errorCount, 0);
 
+  // P3-W07C-R2: DOB la TEXT thuan, paste path khong derive age tu DOB nen
+  // khong co canh bao `PASTE_AGE_MISMATCH` tu sinh. Tuổi phai duoc dien mot
+  // tay va chi canh bao `PASTE_DERIVED_INVALID` neu format sai.
   const badAge = parse(toTsv([[...requiredPairs(), ["DOB", "1990-05-20"], ["Tuổi", "99"]]]));
   assert.equal(badAge.issues.some((item) =>
-    item.code === "PASTE_AGE_MISMATCH" && item.severity === "warning"), true);
+    item.code === "PASTE_AGE_MISMATCH" && item.severity === "warning"), false);
+  // Tuổi van parse duoc (numeric), errorCount van bang 0.
+  assert.equal(badAge.errorCount, 0);
 
   const badIndex = parse(toTsv([[...requiredPairs(), ["STT", "-1"]]]));
   assert.equal(badIndex.issues.some((item) => item.code === "PASTE_DERIVED_INVALID"), true);

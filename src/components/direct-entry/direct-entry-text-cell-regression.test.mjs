@@ -198,39 +198,37 @@ test("R2-S7 production component thuc su goi helper (khong con logic inline)", (
   assert.match(source, /commitTextCellCompositionEnd\(/);
 });
 
-// ===== P3-W07C-R1: editor dateText (DD/MM/YYYY text input) =================
+// ===== P3-W07C-R2: raw-text date storage (DD/MM/YYYY hoac DD-MM-YYYY) ===
 
-test("R2-T1 grid registry co editor type 'dateText' cho date_of_birth va national_id_issued_at", () => {
-  // P3-W07C-R1: doi tu native date picker sang text input DD/MM/YYYY.
-  // 2 cot nay dung `editor: "dateText"` thay cho `editor: "date"`.
-  // first_work_date van giu `editor: "date"` (native picker).
+test("R2-T1 grid registry dung text editor cho date_of_birth va national_id_issued_at; giu raw text (R2)", () => {
+  // P3-W07C-R1: chuyen tu native date picker sang text input DD/MM/YYYY
+  // (CellsDateTextEditor). R2 gop vao `editor: "text"` chung, raw text giu
+  // nguyen qua edit/blur. first_work_date van giu `editor: "date"`.
   const columns = readFileSync(COLUMNS, "utf8");
-  assert.match(columns, /fieldColumn\("date_of_birth"[\s\S]{0,400}editor:\s*"dateText"/);
-  assert.match(columns, /fieldColumn\("national_id_issued_at"[\s\S]{0,400}editor:\s*"dateText"/);
+  assert.match(columns, /fieldColumn\("date_of_birth"[\s\S]{0,800}editor:\s*"text"/);
+  assert.match(columns, /fieldColumn\("national_id_issued_at"[\s\S]{0,800}editor:\s*"text"/);
   // first_work_date khong doi (van `editor: "date"`).
   const firstWorkDate = columns.match(/fieldColumn\("first_work_date"[\s\S]{0,300}\}\)/);
   assert.ok(firstWorkDate);
   assert.match(firstWorkDate[0], /editor:\s*"date"/);
+  // R2: khong con editor: "dateText" trong registry.
+  assert.doesNotMatch(columns, /editor:\s*"dateText"/);
 });
 
-test("R2-T2 grid dang ky CellsDateTextEditor va renderEditCell dat vao dateText column", () => {
+test("R2-T2 grid su dung CellsTextEditor chung; khong con date editor; render raw text", () => {
+  // P3-W07C-R2: CellsDateTextEditor da gop vao CellsTextEditor (text editor
+  // ghi raw vao `row.cells`). Closed-cell render echoes that value unchanged.
   const source = readFileSync(GRID, "utf8");
-  // Component helper + memo wrapper.
-  assert.match(source, /function CellsDateTextEditorComponent/);
-  assert.match(source, /const CellsDateTextEditor = memo\(CellsDateTextEditorComponent\)/);
-  assert.match(source, /function cellsDateTextEditor/);
-  // Editor: text input voi placeholder DD/MM/YYYY.
-  const component = source.match(/function CellsDateTextEditorComponent[\s\S]{0,3500}\n\}/);
-  assert.ok(component, "phai co CellsDateTextEditorComponent body");
-  assert.match(component[0], /type="text"/);
-  assert.match(component[0], /placeholder="DD\/MM\/YYYY"/);
-  assert.match(component[0], /inputMode="numeric"/);
-  // Commit: parse DD/MM/YYYY -> ISO va goi onRowChange.
-  assert.match(component[0], /parseDDMMToIso\(nextValue\)/);
-  // Column routing: `editor: "dateText"` di qua cellsDateTextEditor.
-  assert.match(source, /column\.editor === "dateText"[\s\S]{0,500}renderEditCell: cellsDateTextEditor/);
-  // Closed-cell display: cung DD/MM/YYYY format nhu `date`.
-  assert.match(source, /column\.editor === "date" \|\| column\.editor === "dateText"/);
+  assert.doesNotMatch(source, /function CellsDateTextEditorComponent/);
+  assert.doesNotMatch(source, /function cellsDateTextEditor/);
+  // CellsTextEditor van la editor chung.
+  assert.match(source, /function CellsTextEditorComponent/);
+  assert.match(source, /const CellsTextEditor = memo\(CellsTextEditorComponent\)/);
+  // Closed-cell render for raw-text fields is identity-preserving.
+  assert.match(source,
+    /column\.key === "date_of_birth" \|\| column\.key === "national_id_issued_at"[\s\S]{0,500}formatFreeDateText/);
+  // Khong con branch `editor === "dateText"` trong routing.
+  assert.doesNotMatch(source, /column\.editor === "dateText"/);
 });
 
 test("R2-T3 mobile staged card: Ngày sinh va Ngày cấp la text input DD/MM/YYYY", () => {
@@ -247,12 +245,13 @@ test("R2-T3 mobile staged card: Ngày sinh va Ngày cấp la text input DD/MM/YY
     /type="date"[\s\S]{0,200}value=\{target\.cells\.date_of_birth\??\s*\?\?\s*""/);
   assert.doesNotMatch(live,
     /type="date"[\s\S]{0,200}value=\{target\.cells\.national_id_issued_at\??\s*\?\?\s*""/);
-  // text input voi placeholder DD/MM/YYYY va hien thi formatDateToDDMM.
+  // text input accepts slash or dash forms and echoes the exact text.
   assert.match(live,
-    /type="text"[\s\S]{0,200}placeholder="DD\/MM\/YYYY"[\s\S]{0,200}value=\{formatDateToDDMM\(cells\.date_of_birth/);
+    /type="text"[\s\S]{0,200}placeholder="DD\/MM\/YYYY"[\s\S]{0,200}value=\{formatFreeDateText\(cells\.date_of_birth/);
   assert.match(live,
-    /type="text"[\s\S]{0,200}placeholder="DD\/MM\/YYYY"[\s\S]{0,200}value=\{formatDateToDDMM\(cells\.national_id_issued_at/);
-  // onMobileStagedChange parse DD/MM/YYYY -> ISO truoc khi luu.
+    /type="text"[\s\S]{0,200}placeholder="DD\/MM\/YYYY"[\s\S]{0,200}value=\{formatFreeDateText\(cells\.national_id_issued_at/);
+  // P3-W07C-R2: onMobileStagedChange giu raw text, KHONG parse sang ISO.
+  // Validation keeps the value as text and does not parse a calendar date.
   assert.match(live,
-    /onMobileStagedChange = useCallback\(\([\s\S]{0,800}parseDDMMToIso\(value\)[\s\S]{0,800}updateSpreadsheetRowCells\(/);
+    /onMobileStagedChange = useCallback\(\([\s\S]{0,800}const storedValue = value;[\s\S]{0,800}updateSpreadsheetRowCells\(/);
 });

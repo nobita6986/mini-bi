@@ -40,10 +40,15 @@ const GENERATED_RPC = `select public.direct_entry_create_full_profile_batch_v2(
 async function database() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
+  // P3-W07C-R2 stores DOB/CCCD issue as raw text. On this branch the new
+  // migration is the only file in the 20261008050000 slot; when W05A's
+  // cherry-pick (`20261008040000_p3_w05a_actor_scoped_reporting.sql`,
+  // currently on a separate branch) is integrated, this R2 file will
+  // land as #46. The check below tracks the local count only.
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(migrations.length, 44, "P2-W04B migration #44 rebaselines the cutoff; PGlite must apply all 44 migrations");
+  assert.equal(migrations.length, 45, "P3-W07C-R2 migration lands as the last 20261008 file; W05A's #45 stays on its own branch until integration");
   for (const name of migrations) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -300,15 +305,8 @@ test("migration #39 keeps the source-derived function inventory and service boun
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname like 'direct_entry_%'
     `);
-    // P2-W04A migration #40 added 8 new public.direct_entry_reporting_*
-    // helpers (cutoff, source_id, dim_key, recruiter_alias_key,
-    // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
-    // reconciliation_totals). All are GRANT EXECUTE to service_role so the
-    // runtime can call them (no public RPC exposure). Pre-cutover inventory
-    // was 69 (31 service + 38 internal); #40 adds 8 service helpers and
-    // W07B adds 3 private scope helpers/wrapped implementations. The
-    // exposed_internal counter stays at 0
-    // because no function is granted to anon/authenticated/public.
+    // P3-W07C-R2 replaces bodies of existing functions only; it adds no
+    // function and does not change the service-role boundary inventory.
     assert.deepEqual(result.rows[0], {
       total: 80,
       service_role: 39,
@@ -897,6 +895,110 @@ test("migration #37 accepts partial banking metadata without a catalog and prese
     } finally {
       await db.exec("rollback;");
     }
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R2 validator: date_of_birth/national_id_issued_at la TEXT thuan, khong parse/compare/canonicalize", async () => {
+  // Migration moi: validator chi check object envelope + non-empty string
+  // khi `state=provided`. Moi text user nhap (DD/MM/YYYY, DD-MM-YYYY, ISO,
+  // hoac text "khong phai ngay") deu hop le neu non-empty. Cross-field
+  // comparisons (duo, issued > today, issued < dob) da duoc GO bo o RPC.
+  const db = await database();
+  try {
+    const ok = (value) => db.query(
+      "select public.direct_entry_valid_worker_details($1::jsonb) as ok",
+      [JSON.stringify({
+        display_name: "Synthetic Worker",
+        date_of_birth: { state: "provided", value },
+        national_id: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+        national_id_issued_at: { state: "omitted" },
+      })],
+    ).then((result) => result.rows[0].ok);
+    // P3-W07C-R2: chap nhan moi raw text non-empty, ke ca calendar-invalid.
+    for (const value of ["07/10/1990", "07-10-1990", "7/10/1990", "1990-10-07",
+      "31/02/1990", "garbage", "abc xyz", "2026-13-01"]) {
+      assert.equal(await ok(value), true, `expected valid (pure text): ${value}`);
+    }
+    // Empty -> reject.
+    for (const value of ["", "   "]) {
+      assert.equal(await ok(value), false, `expected invalid (empty): "${value}"`);
+    }
+    // national_id_issued_at cung pure text tuong tu.
+    const okIssued = (value) => db.query(
+      "select public.direct_entry_valid_worker_details($1::jsonb) as ok",
+      [JSON.stringify({
+        display_name: "Synthetic Worker",
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+        national_id_issued_at: { state: "provided", value },
+      })],
+    ).then((result) => result.rows[0].ok);
+    assert.equal(await okIssued("20/06/2020"), true, "raw DD/MM/YYYY ok");
+    assert.equal(await okIssued("2020-06-20"), true, "legacy ISO ok");
+    assert.equal(await okIssued(""), false, "empty reject");
+    assert.equal(await ok("12345678901"), false, "oversized text rejected at DB boundary");
+  } finally {
+    await db.close();
+  }
+});
+
+test("P3-W07C-R2 full-profile RPC stores raw date text and preserves unrelated profile fields", async () => {
+  const db = await database();
+  try {
+    const input = row(900001, {
+      worker_details: {
+        gender: { state: "provided", value: "OTHER" },
+        date_of_birth: { state: "provided", value: "31/02/2030" },
+        national_id: { state: "omitted" },
+        national_id_issued_at: { state: "provided", value: "01-01-2020" },
+        national_id_issued_place: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      },
+      payment: {
+        state: "provided",
+        account_number: "000123",
+        bank_name: "Synthetic bank text",
+        account_holder_name: "Synthetic account holder",
+      },
+    });
+    const result = await rpc(db, [input], "91600000-0000-4000-8000-000000000999");
+    const stored = await db.query(
+      `select worker_details->'date_of_birth'->>'value' as dob,
+              worker_details->'national_id_issued_at'->>'value' as issued_at
+         from public.direct_entries where entry_id = $1::uuid`,
+      [result.entry_ids[0]],
+    );
+    assert.deepEqual(stored.rows[0], {
+      dob: "31/02/2030",
+      issued_at: "01-01-2020",
+    });
+    const bankAccountMetadata = await db.query(
+      `select state, account_number, bank_name, account_holder_name
+         from public.direct_entry_payments where entry_id = $1::uuid`,
+      [result.entry_ids[0]],
+    );
+    assert.deepEqual(bankAccountMetadata.rows[0], {
+      state: "provided",
+      account_number: "000123",
+      bank_name: "Synthetic bank text",
+      account_holder_name: "Synthetic account holder",
+    });
+    const functionBody = await db.query(
+      `select prosrc from pg_proc
+        where oid = 'public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text)'::regprocedure`,
+    );
+    assert.doesNotMatch(functionBody.rows[0].prosrc,
+      /v_worker_details->'date_of_birth'->>'value'\s*>\s*to_char/);
+    assert.match(functionBody.rows[0].prosrc, /direct_entry_payments/);
+    assert.match(functionBody.rows[0].prosrc, /direct_entry_write_revision/);
+    assert.match(functionBody.rows[0].prosrc, /direct_entry_audit_events/);
   } finally {
     await db.close();
   }

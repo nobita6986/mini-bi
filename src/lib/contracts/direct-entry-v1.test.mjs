@@ -15,6 +15,7 @@ import {
   decideChangeRequest,
   documentCompleteness,
   deriveCurrentStatus,
+  isValidFreeDate,
   isLegacyEmployeeCode,
   resolveExplicitRecruiterLink,
   searchEligibleRecruiters,
@@ -76,6 +77,14 @@ test("contract is versioned and fixtures pass the direct-entry validator", () =>
   assert.equal(validateEntry({ entry, ...validationContext }).ok, true);
   assert.equal(validateEntry({ entry: null, ...validationContext }).issues[0].code, "ENTRY_INVALID");
   assert.equal(entry.employment_events[0].status, "UNCONFIRMED");
+});
+
+test("DOB and CCCD issue date are bounded text, not parsed dates", () => {
+  for (const value of ["31/02/1990", "01-01-2020", "1990-10-07", "garbage"]) {
+    assert.equal(isValidFreeDate(value), true, value);
+  }
+  assert.equal(isValidFreeDate("   "), false);
+  assert.equal(isValidFreeDate("12345678901"), false);
 });
 
 test("app user and recruiter are separate; a verified explicit link is optional", () => {

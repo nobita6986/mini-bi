@@ -23,19 +23,16 @@ async function buildDb() {
   return { db, migrationNames: names };
 }
 
-test("P2-W04A migration #40 applies cleanly after migrations #1-#39 (P2-W04B adds #44)", async () => {
+test("P2-W04A/W04B migrations retain order before the later W07C migration", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-    assert.equal(migrationNames.length, 44);
-    // P2-W04B migration #44 is APPEND-ONLY: it must come AFTER the
-    // last applied migration on origin/main (`20261008020000_p3_w07b_…`)
-    // so a fresh PGlite apply and a Production apply share the same
-    // ordering. W04B sits between W07B and any later migration.
+    // W04B (#44) stays immediately after W07B; W07C-R2 is the later #45
+    // on this branch (and becomes #46 after W05A is integrated).
+    assert.equal(migrationNames.length, 45);
     assert.equal(
       migrationNames[migrationNames.length - 1],
-      "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
-      "P2-W04B migration #44 must be the LAST migration on disk (append-only after W07B)",
+      "20261008050000_p3_w07c_r2_raw_text_dates.sql",
+      "W07C-R2 must append after the existing W04B migration",
     );
     // W07B must still be present and immediately precede W04B.
     const w07bIdx = migrationNames.indexOf(
@@ -46,7 +43,9 @@ test("P2-W04A migration #40 applies cleanly after migrations #1-#39 (P2-W04B add
     );
     assert.ok(w07bIdx >= 0, "W07B migration must be present");
     assert.ok(w04bIdx >= 0, "W04B migration must be present");
-    assert.equal(w04bIdx, w07bIdx + 1, "W04B must be ordered immediately after W07B");
+    assert.equal(w04bIdx, w07bIdx + 1, "W04B must remain immediately after W07B");
+    assert.equal(migrationNames.indexOf("20261008050000_p3_w07c_r2_raw_text_dates.sql"), w04bIdx + 1,
+      "W07C-R2 must follow W04B on this branch");
     // The original W04A migration is still in the inventory.
     assert.ok(
       migrationNames.includes("20261007020000_p2_w04a_direct_entry_reporting_cutover.sql"),
@@ -328,10 +327,9 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   } finally {
     await db.close();
   }
-  // Sanity: the base migrations were applied (count includes the W04B
-  // filename even though we skipped applying it; that is the file
-  // inventory assertion, not the applied set).
-  assert.equal(names.length, 44);
+  // W07C-R2 is present after W04B in the source inventory; this test skipped
+  // applying only W04B to exercise its rollback behavior.
+  assert.equal(names.length, 45);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

@@ -138,8 +138,8 @@ async function verifySchema(client, migrations) {
   const fromScratch = await createMigratedDatabase();
   let inventory;
   try {
-    // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-    check(fromScratch.migrationNames.length === 44, "PGlite applied all 44 migrations");
+    // P3-W07C-R2 adds migration #45 on this branch (slot #46 after W05A).
+    check(fromScratch.migrationNames.length === 45, "PGlite applied all 45 migrations");
     const expectedFunctions = await functionState(fromScratch.db);
     const liveFunctions = await functionState(client);
     const expectedLiveNames = [...new Set(liveFunctions.map(({ proname }) => proname))].sort();

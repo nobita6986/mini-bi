@@ -13,6 +13,7 @@ import {
   validateWorkerDetails,
   DOCUMENT_MAX_BYTES_HARD_LIMIT,
   DOCUMENT_MIME_TYPES,
+  isValidFreeDate,
   type DocumentType,
   type OptionalState,
   type OptionalValue,
@@ -118,7 +119,7 @@ export function projectWorkerDetails(value: unknown): WorkerDetails | null {
   if (!isRecord(value) || Object.keys(value).length !== 5) return null;
   if (!hasOnlyKeys(value, Object.keys(WORKER_FIELD_LABELS))) return null;
   if (typeof value.display_name !== "string") return null;
-  const dateOfBirth = projectOptionalValue(value.date_of_birth, isRealCalendarDate);
+  const dateOfBirth = projectOptionalValue(value.date_of_birth, isValidFreeDate);
   const nationalId = projectOptionalValue(value.national_id,
     (input) => input.length >= 1 && input.length <= 64);
   const address = projectOptionalValue(value.address,

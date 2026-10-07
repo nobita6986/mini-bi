@@ -100,14 +100,69 @@ test("rejects recursive unknown/authority fields without projecting them", () =>
 });
 
 test("rejects invalid calendar dates, gender, national ID, and employee-code year", () => {
+  // P3-W07C-R2: date_of_birth va national_id_issued_at la TEXT thuan. Calendar-
+  // invalid text ("31/02/1990", "garbage") van accepted; chi first_work_date
+  // (contract ISO DATE) moi reject calendar-invalid. Pa do khong con trong
+  // validator nua.
   const cases = [
     { ...baseRow, first_work_date: "2025-02-30" },
     { ...baseRow, employee_code: "hrp-2024-000001" },
     { ...baseRow, worker: { gender: { state: "provided", value: "UNKNOWN" } } },
     { ...baseRow, worker: { national_id: { state: "provided", value: "12345678" } } },
-    { ...baseRow, worker: { date_of_birth: { state: "provided", value: "03/04/2000" } } },
+    // DOB calendar-invalid o R2 duoc accept (pure text); bo khoi day.
   ];
   for (const row of cases) assert.equal(parseFullProfilePayload(payload([row])).ok, false);
+});
+
+test("P3-W07C-R2: date_of_birth/national_id_issued_at are bounded raw text, not dates", () => {
+  // Raw text (ke ca calendar-invalid) duoc giu nguyen; chi reject empty/over 10.
+  for (const value of ["07/10/1990", "07-10-1990", "7/10/1990", "7-10-1990",
+    "1990-10-07", "31/02/1990", "31-02-1990", "garbage", "2026-13-01"]) {
+    const parsed = parseFullProfilePayload(payload([{
+      ...baseRow,
+      worker: { date_of_birth: { state: "provided", value } },
+    }]));
+    assert.equal(parsed.ok, true, value);
+    if (parsed.ok) assert.equal(parsed.payload.rows[0].worker_details.date_of_birth.value, value);
+  }
+  // Empty reject.
+  const empty = parseFullProfilePayload(payload([{
+    ...baseRow,
+    worker: { date_of_birth: { state: "provided", value: "" } },
+  }]));
+  assert.equal(empty.ok, false);
+  const whitespace = parseFullProfilePayload(payload([{
+    ...baseRow,
+    worker: { date_of_birth: { state: "provided", value: "   " } },
+  }]));
+  assert.equal(whitespace.ok, false);
+  const oversized = parseFullProfilePayload(payload([{
+    ...baseRow,
+    worker: { national_id_issued_at: { state: "provided", value: "1".repeat(11) } },
+  }]));
+  assert.equal(oversized.ok, false);
+});
+
+test("accepts raw DD/MM/YYYY and DD-MM-YYYY for DOB and CCCD issue date", () => {
+  // P3-W07C-R2: raw text DD/MM/YYYY va DD-MM-YYYY duoc phep (giu raw text
+  // qua payload + DB). Calendar validity is intentionally not checked.
+  for (const value of ["07/10/1990", "07-10-1990", "7/10/1990", "7-10-1990", "1990-10-07"]) {
+    const parsed = parseFullProfilePayload(payload([{
+      ...baseRow,
+      worker: { date_of_birth: { state: "provided", value } },
+    }]));
+    assert.equal(parsed.ok, true, value);
+    if (parsed.ok) assert.equal(parsed.payload.rows[0].worker_details.date_of_birth.value, value);
+  }
+  for (const value of ["15/06/2020", "15-06-2020", "2020-06-15"]) {
+    const parsed = parseFullProfilePayload(payload([{
+      ...baseRow,
+      worker: { national_id_issued_at: { state: "provided", value } },
+    }]));
+    assert.equal(parsed.ok, true, value);
+    if (parsed.ok) assert.equal(
+      parsed.payload.rows[0].worker_details.national_id_issued_at.value, value);
+  }
 });
 
 test("rejects duplicate codes and enforces the 100-row contract bound", () => {

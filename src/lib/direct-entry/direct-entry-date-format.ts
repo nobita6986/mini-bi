@@ -1,8 +1,9 @@
 /**
- * P3-W07C - Pure helpers chuyen doi ngay giua cac format.
+ * P3-W07C - Pure helpers for date-shaped text and ISO date-only fields.
  *
- * Source of truth luon la ISO `YYYY-MM-DD` (contract, request payload, DB).
- * UI closed-cell render `DD/MM/YYYY` theo format Viet Nam.
+ * `date_of_birth` and `national_id_issued_at` are ordinary strings: keep the
+ * exact value the user typed. Other date fields such as `first_work_date`
+ * and `leave_date` retain their ISO contract and may use the converters below.
  *
  * Tuyet doi KHONG dung `new Date("YYYY-MM-DD")` de format/parse: khi may
  * chay o GMT- (vd America), constructor se phan tich chuoi ISO nhu UTC va
@@ -30,6 +31,14 @@ export function parseIsoDate(value: string): { year: number; month: number; day:
   return { year, month, day };
 }
 
+/**
+ * Return DOB/CCCD issue-date text unchanged for closed-cell display and input
+ * echo. Do not parse or normalize `/`, `-`, ISO-looking, or other text.
+ */
+export function formatFreeDateText(value: string): string {
+  return value;
+}
+
 /** Format {year, month, day} hoac ISO "YYYY-MM-DD" thanh "DD/MM/YYYY". Tra ve "" neu sai. */
 export function formatDateToDDMM(value: string): string {
   const parts = parseIsoDate(value);
@@ -49,6 +58,9 @@ export function formatDateToDDMMRaw(value: string): string {
  * hoac khong hop le (parse that bai). Khong mutate format goc.
  *
  * Chap nhan cac separator "/" hoac "-". Validate ngay theo lich.
+ *
+ * P3-W07C-R2: use only for fields that retain a real date contract, never
+ * for `date_of_birth` or `national_id_issued_at`.
  */
 export function parseDDMMToIso(value: string): string {
   if (typeof value !== "string") return "";

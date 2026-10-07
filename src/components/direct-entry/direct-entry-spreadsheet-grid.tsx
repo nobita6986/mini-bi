@@ -36,7 +36,7 @@ import {
 } from "@/lib/direct-entry/direct-entry-grid-columns";
 import {
   formatDateToDDMM,
-  parseDDMMToIso,
+  formatFreeDateText,
 } from "@/lib/direct-entry/direct-entry-date-format";
 import {
   mapClipboardFromAnchor,
@@ -422,89 +422,6 @@ function cellsTextEditor(
   );
 }
 
-/**
- * P3-W07C-R1: text editor cho ngay (DD/MM/YYYY ↔ ISO YYYY-MM-DD).
- * State trong row.cells van la ISO (source of truth contract). Editor
- * hien thi input DD/MM/YYYY de user go (khong phai native date picker).
- * - Mount: doc row.cells[key] (ISO) -> format DD/MM/YYYY.
- * - Commit: parse DD/MM/YYYY -> ISO; truyen ISO vao onRowChange.
- * - Empty input -> "" (ISO empty).
- *
- * "userTyped" tracking: khi user dang go, ghi gia tri thay the cho display
- * (giu gia tri khi user go "1" truoc khi parse duoc "DD/MM/YYYY"). External
- * patch (paste/undo/chon row khac) khong set `userTyped` => display follow
- * row.cells[key] (ISO -> DD/MM/YYYY). Khi nguoi dung blur, set `userTyped`
- * = null de reset ve theo row.cells.
- */
-function CellsDateTextEditorComponent(
-  props: RenderEditCellProps<SpreadsheetGridRow>,
-) {
-  const { row, column, onRowChange, onClose } = props;
-  const inputRef = useRef<HTMLInputElement>(null);
-  const isoFromCells = row.cells[column.key] ?? "";
-  const formattedFromCells = isoFromCells === "" ? "" : formatDateToDDMM(isoFromCells);
-  // userTyped khong null => user dang go (giu raw input de khong bi parse
-  // reset ve format mac dinh). null => display follow formattedFromCells.
-  const [userTyped, setUserTyped] = useState<string | null>(null);
-  const value = userTyped ?? formattedFromCells;
-
-  useEffect(() => {
-    const node = inputRef.current;
-    if (node) {
-      node.focus();
-      node.select();
-    }
-  }, []);
-
-  function commit(nextValue: string) {
-    const iso = parseDDMMToIso(nextValue);
-    // Hien thi gia tri user vua go (raw) de user thay ro nhap, khong ep
-    // format. Sau blur (onClose) se reset `userTyped` ve null, luc do
-    // display se hien formattedFromCells (DD/MM/YYYY neu parse duoc, ""
-    // neu parse that bai).
-    setUserTyped(nextValue);
-    onRowChange(
-      { ...row, cells: { ...row.cells, [column.key]: iso } },
-      false,
-    );
-  }
-
-  return (
-    <input
-      className="rdg-text-editor"
-      ref={inputRef}
-      type="text"
-      inputMode="numeric"
-      placeholder="DD/MM/YYYY"
-      value={value}
-      onChange={(event) => {
-        commit(event.currentTarget.value);
-      }}
-      onBlur={() => {
-        // Reset userTyped de display follow formattedFromCells sau khi commit.
-        setUserTyped(null);
-        onClose(true, false);
-      }}
-    />
-  );
-}
-
-const CellsDateTextEditor = memo(CellsDateTextEditorComponent);
-
-function cellsDateTextEditor(
-  { row, column, rowIdx, onRowChange, onClose }: RenderEditCellProps<SpreadsheetGridRow>,
-) {
-  return (
-    <CellsDateTextEditor
-      row={row}
-      column={column}
-      rowIdx={rowIdx}
-      onRowChange={onRowChange}
-      onClose={onClose}
-    />
-  );
-}
-
 export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProps) {
   const {
     rows, validation, catalogOptions, onCellsChange, onPasteApplied, onPasteRejected,
@@ -579,13 +496,16 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           if (column.key === "provider_type") return row.providerType.toUpperCase();
           if (column.key === "recruiter_id") return row.recruiterLabel;
           if (column.key === "row_index") return String(rowIndexOf(row.clientRowId) + 1);
-          // P3-W07C: cell o trang thai khong edit phai render date theo DD/MM/YYYY.
-          // State, request payload, DB contract van giu ISO YYYY-MM-DD; chi
-          // closed-cell display chuyen qua DD/MM/YYYY. Pure string helper
-          // (tranh `new Date(...)` gay UTC leak).
-          if (column.editor === "date" || column.editor === "dateText") {
+          // `first_work_date` retains its ISO contract and renders DD/MM/YYYY.
+          // DOB/CCCD issue date are ordinary text and render exactly as stored.
+          if (column.editor === "date") {
             const iso = row.cells[column.key] ?? "";
             return iso === "" ? "" : formatDateToDDMM(iso);
+          }
+          if (column.key === "date_of_birth" || column.key === "national_id_issued_at") {
+            // P3-W07C-R2: text editor writes the exact string to row.cells;
+            // closed-cell display is an identity projection, no date format.
+            return formatFreeDateText(row.cells[column.key] ?? "");
           }
           return row.cells[column.key] ?? "";
         })();
@@ -636,16 +556,6 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           ),
         };
       }
-      if (column.editor === "dateText") {
-        return {
-          key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
-          editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
-          renderCell,
-          // P3-W07C: text input DD/MM/YYYY cho ngay sinh va ngay cap CCCD.
-          // Native date picker (HTMLInputElement type=date) bi thay the.
-          renderEditCell: cellsDateTextEditor,
-        };
-      }
       return {
         key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
         editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
@@ -654,6 +564,8 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
         // dinh vi row model dat gia tri trong `row.cells[column.key]`, khong
         // phai `row[column.key]`. Mac dinh se dan den gia tri typed bien mat
         // khi blur/Enter/Tab.
+        // P3-W07C-R2: date_of_birth and national_id_issued_at use the common
+        // text editor and remain plain text through preview and save.
         renderEditCell: cellsTextEditor,
       };
     };

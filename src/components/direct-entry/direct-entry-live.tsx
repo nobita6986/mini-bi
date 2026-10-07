@@ -103,8 +103,7 @@ import {
   type SpreadsheetRowModel,
 } from "@/lib/direct-entry/spreadsheet-row-model";
 import {
-  formatDateToDDMM,
-  parseDDMMToIso,
+  formatFreeDateText,
   todayInHoChiMinhAsDDMM,
 } from "@/lib/direct-entry/direct-entry-date-format";
 import {
@@ -1509,13 +1508,11 @@ export function DirectEntryLive() {
     field: string,
     value: string,
   ) => {
-    // P3-W07C: `date_of_birth` va `national_id_issued_at` la text input
-    // DD/MM/YYYY tren mobile staged card. Source-of-truth luon ISO YYYY-MM-DD
-    // (validation `isRealCalendarDate`, payload). Parse DD/MM/YYYY -> ISO;
-    // neu khong hop le hoac rong, giu "" (validation se fail-soft).
-    const storedValue = (field === "date_of_birth" || field === "national_id_issued_at")
-      ? parseDDMMToIso(value)
-      : value;
+    // P3-W07C-R2: `date_of_birth` va `national_id_issued_at` la TEXT thuong
+    // (raw DD/MM/YYYY hoac DD-MM-YYYY). Giu nguyen chuoi user nhap vao
+    // `row.cells`; preview enforces only the text contract (non-empty/length),
+    // never date parsing or ISO conversion.
+    const storedValue = value;
     setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
       [field]: storedValue,
       ...(field === "first_work_date" ? { recruiter_id: "" } : {}),
@@ -2138,7 +2135,7 @@ export function DirectEntryLive() {
                         </Field>
                         <Field label="Ngày sinh">
                           <input type="text" inputMode="numeric" placeholder="DD/MM/YYYY"
-                            value={formatDateToDDMM(cells.date_of_birth ?? "")}
+                            value={formatFreeDateText(cells.date_of_birth ?? "")}
                             onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "date_of_birth")} />
                         </Field>
                         <Field label="CMT/CCCD">
@@ -2147,7 +2144,7 @@ export function DirectEntryLive() {
                         </Field>
                         <Field label="Ngày cấp">
                           <input type="text" inputMode="numeric" placeholder="DD/MM/YYYY"
-                            value={formatDateToDDMM(cells.national_id_issued_at ?? "")}
+                            value={formatFreeDateText(cells.national_id_issued_at ?? "")}
                             onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "national_id_issued_at")} />
                         </Field>
                         <Field label="Nơi cấp">
@@ -2333,7 +2330,7 @@ export function DirectEntryLive() {
                   </Field>
                   <Field label="Ngày sinh">
                     <input type="text" inputMode="numeric" placeholder="DD/MM/YYYY"
-                      value={formatDateToDDMM(target.cells.date_of_birth ?? "")}
+                      value={formatFreeDateText(target.cells.date_of_birth ?? "")}
                       onChange={handleMobileStagedFieldChange(target.clientRowId, "date_of_birth")} />
                   </Field>
                   <Field label="CMT/CCCD">
@@ -2342,7 +2339,7 @@ export function DirectEntryLive() {
                   </Field>
                   <Field label="Ngày cấp">
                     <input type="text" inputMode="numeric" placeholder="DD/MM/YYYY"
-                      value={formatDateToDDMM(target.cells.national_id_issued_at ?? "")}
+                      value={formatFreeDateText(target.cells.national_id_issued_at ?? "")}
                       onChange={handleMobileStagedFieldChange(target.clientRowId, "national_id_issued_at")} />
                   </Field>
                   <Field label="Nơi cấp">

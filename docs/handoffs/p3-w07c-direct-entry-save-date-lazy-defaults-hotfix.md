@@ -37,3 +37,11 @@ Unchanged. See `a8a02ce` HANDOFF.
 `full-profile-api` 9/9 · `pnpm test:p1.6-i04c3-r3a` 146/146 ·
 `typecheck` ✓ · `lint` ✓ (0e/11w) · `build` ✓ · `git diff --check` ✓
 · direct-entry 652/652. Deferred: None.
+
+## R2 raw-text dates — local takeover
+Status: `P3-W07C-R2_RAW_TEXT_DOB_CCCD_LOCAL_PASS_AWAITING_INTEGRATION`.
+DOB + CCCD issue date remain ordinary bounded text (≤10 chars): UI, paste, payload, JSONB, and read display preserve the exact value; no ISO conversion, calendar validation, future-date check, or cross-field comparison. `first_work_date` remains ISO.
+Migration `20261008050000_p3_w07c_r2_raw_text_dates.sql` safely removes only the known lexical-check block from the existing batch RPC; no new DB helper or column. W07C branch count: 45; after W05A migration #45 integrates, this becomes #46.
+Targeted direct-entry tests 109/109 (includes PGlite 6/6); P2 migration 8/8; P2 reconcile 4/4; impacted S04C migration tests 28/28.
+Gates: full `pnpm test` exit 0; typegen, typecheck, build ✓; lint 0 errors / 11 warnings; `git diff --check` clean.
+No Production DB query/apply. Main push is authorized and may trigger Vercel deployment; the migration remains pending for a separately controlled DB apply. Preserve the pre-existing untracked `test_output.txt`.

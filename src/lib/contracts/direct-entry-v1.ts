@@ -441,6 +441,12 @@ export function validatePaymentDetails(
   return [];
 }
 
+// P3-W07C-R2: DOB/Ngay cap la text thuong, chi chan rong va qua 10 ky tu.
+// Khong parse, regex, canonicalize hay so sanh nhu mot ngay.
+export function isValidFreeDate(value: string): boolean {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 10;
+}
+
 export function validateWorkerDetails(worker: WorkerDetails): ValidationIssue[] {
   if (
     !worker ||
@@ -451,10 +457,10 @@ export function validateWorkerDetails(worker: WorkerDetails): ValidationIssue[] 
       !validOptional(worker.gender, (value) =>
         value === "MALE" || value === "FEMALE" || value === "OTHER"
       )) ||
-    !validOptional(worker.date_of_birth, isRealCalendarDate) ||
+    !validOptional(worker.date_of_birth, isValidFreeDate) ||
     !validOptional(worker.national_id, (value) => typeof value === "string" && value.length <= 64) ||
     (worker.national_id_issued_at !== undefined &&
-      !validOptional(worker.national_id_issued_at, isRealCalendarDate)) ||
+      !validOptional(worker.national_id_issued_at, isValidFreeDate)) ||
     (worker.national_id_issued_place !== undefined &&
       !validOptional(worker.national_id_issued_place, (value) =>
         typeof value === "string" && value.trim().length > 0 && value.length <= 256

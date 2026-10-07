@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   formatDateToDDMM,
+  formatFreeDateText,
   parseDDMMToIso,
   parseIsoDate,
   todayInHoChiMinhAsDDMM,
@@ -53,6 +54,21 @@ test("formatDateToDDMM: fail closed khi input khong hop le (khong tu sua sai)", 
   // KHONG tu dich sang ngay khac neu format sai (vi du "2026-1-1" phai fail
   // thay vi "01/01/2026").
   assert.equal(formatDateToDDMM("2026-1-1"), "");
+});
+
+test("formatFreeDateText: DOB/CCCD issue date echo dung nguyen text, khong chuan hoa", () => {
+  for (const value of [
+    "07/10/1990",
+    "07-10-1990",
+    "7/10/1990",
+    "1990-10-07",
+    "31/02/2030",
+    "not-a-date",
+    "  07/10/1990  ",
+  ]) {
+    assert.equal(formatFreeDateText(value), value);
+  }
+  assert.equal(formatFreeDateText(""), "");
 });
 
 test("formatDateToDDMM khong dung Date constructor (tranh UTC leak)", () => {

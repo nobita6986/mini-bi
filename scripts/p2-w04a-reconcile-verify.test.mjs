@@ -19,12 +19,14 @@
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
+const RECONCILE = path.resolve("scripts/p2-w04a-reconcile.mjs");
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -299,18 +301,18 @@ test("P2-W04B-R1 reconcile: read-only transaction always rolls back (no mutation
   assert.equal(calls[calls.length - 1], "rollback");
 });
 
-test("P2-W04B-R1 reconcile: migration #44 is the only pending file (inventory append-only after W07B)", async () => {
-  // The reconcile script's first static check is migration count. Read
-  // the inventory and assert W04B is the last migration and ordered
-  // immediately after W07B.
+test("P2-W04B reconcile retains its release baseline before the later W07C migration", async () => {
+  // W04B's production preflight is intentionally scoped to its 44-migration
+  // release baseline; this branch has the later W07C migration after it.
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 44);
+  assert.equal(names.length, 45);
   assert.equal(
-    names[names.length - 1],
+    names[names.length - 2],
     "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
   );
+  assert.equal(names[names.length - 1], "20261008050000_p3_w07c_r2_raw_text_dates.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );
@@ -318,4 +320,6 @@ test("P2-W04B-R1 reconcile: migration #44 is the only pending file (inventory ap
     "20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql",
   );
   assert.equal(w04bIdx, w07bIdx + 1);
+  assert.equal(Number(readFileSync(RECONCILE, "utf8").match(/EXPECTED_MIGRATION_COUNT\s*=\s*(\d+)/)?.[1]), 44,
+    "W04B's release preflight must not silently absorb later migration work");
 });

@@ -135,14 +135,14 @@ function optionalText(value: unknown, path: string, maxLength: number): {
   return { value: { state: "provided", value: value.value } };
 }
 
-function optionalDate(
+// P3-W07C-R2: DOB va Ngay cap la text thuong. Chi gioi han kich thuoc payload
+// (10 ky tu) va chan chuoi rong; khong parse/regex/validate ngay hay so sanh.
+function optionalFreeDate(
   value: unknown,
   path: string,
 ): { value: OptionalText; issue?: ContractIssue } {
   const parsed = optionalText(value, path, 10);
-  if (parsed.value.state === "provided" &&
-      (!/^\d{4}-\d{2}-\d{2}$/.test(parsed.value.value) ||
-        !isRealCalendarDate(parsed.value.value))) {
+  if (parsed.value.state === "provided" && parsed.value.value.trim().length === 0) {
     return { value: { state: "omitted" }, issue: { code: "PASTE_VALUE_FORMAT", path } };
   }
   return parsed;
@@ -155,9 +155,10 @@ function normalizeWorker(value: unknown, path: string, issues: ContractIssue[]) 
     return null;
   }
   const gender = optionalText(input.gender, `${path}.gender`, 32);
-  const dateOfBirth = optionalDate(input.date_of_birth, `${path}.date_of_birth`);
+  // P3-W07C-R2: validator o day chi check non-empty; khong parse/canonicalize.
+  const dateOfBirth = optionalFreeDate(input.date_of_birth, `${path}.date_of_birth`);
   const nationalId = optionalText(input.national_id, `${path}.national_id`, 64);
-  const issuedAt = optionalDate(input.national_id_issued_at, `${path}.national_id_issued_at`);
+  const issuedAt = optionalFreeDate(input.national_id_issued_at, `${path}.national_id_issued_at`);
   const issuedPlace = optionalText(input.national_id_issued_place, `${path}.national_id_issued_place`, 256);
   const address = optionalText(input.address, `${path}.address`, 1024);
   const phone = optionalText(input.phone, `${path}.phone`, 64);

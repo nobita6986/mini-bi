@@ -184,6 +184,10 @@ test("moi field co sensitivity marker va tham chieu validator; khong co DTO/auth
   }
   assert.equal(workerProfileField("account_number").sensitivity, "financial");
   assert.equal(workerProfileField("general_note").sensitivity, "sensitive_free_text");
+  for (const key of ["date_of_birth", "national_id_issued_at"]) {
+    assert.equal(workerProfileField(key).validator, "preserveRawText", key);
+    assert.equal(workerProfileField(key).maxLength, 10, key);
+  }
 
   const source = codeOnly(
     readFileSync(new URL("./worker-profile-import-contract.ts", import.meta.url), "utf8"));
