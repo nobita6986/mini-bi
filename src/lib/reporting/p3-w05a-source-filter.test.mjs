@@ -35,4 +35,3 @@ test("R3: nonexistent source UUID is rejected as INVALID_FILTER", () => {
   const r = validateAllSourceFilter({ source: MISSING, allowlist: ALLOWLIST });
   assert.deepEqual(r, { ok: false, code: "INVALID_FILTER", message: SOURCE_OUT_OF_SCOPE_MESSAGE });
 });
-
