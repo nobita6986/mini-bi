@@ -103,5 +103,5 @@ capping and a short viewport with the anchor outside it.
 
 ## Stop point
 
-Pushed for T0 review. No merge, no deploy, no Production apply. Schema, migration, RPC, catalog
-data, permissions, auth and API contracts are untouched.
+T0 review completed; R4-R2 is approved for branch push. No merge, no deploy, no Production
+apply. Schema, migration, RPC, catalog data, permissions, auth and API contracts are untouched.
