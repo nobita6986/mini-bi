@@ -26,12 +26,34 @@ P3-W05A-I01-R2; the original #45 review base was
 - all: legacy (< cutoff) + Direct Entry (>= cutoff); team: `direct_entries.team_id` in effective team scope; own: `recruiter_id` = verified link.
 - Legacy aggregate is excluded fail-closed for team/own; out-of-scope filters return empty without error.
 
-## Gates
+## Gates (P3-W05A-I01-R2 rebaseline)
 
-- W05A targeted 32 pass; W04A/W04B impacted 42 pass; actor/session/grant 71 pass.
-- `next typegen` / `typecheck` / `lint` (0 errors) / `build` / `docs:check` / `git diff --check` pass.
-- `db:migrate --offline`: 45 valid; `--dry-run`: 44 applied, 1 pending, 0 mismatch.
-- Production read-only: 7 active HRP team leaders, 0 team-scope grants, 0 leaders with invalid link/membership, ledger 44/0/0.
+- `pnpm test:p3-w05a` — 53/53 (audience projection, page, source filter, actor-scoped DB,
+  team-scope seed, multi-team regression).
+- `pnpm test` (canonical) — 1403/1403, 0 fail.
+- `pnpm exec next typegen` ok; `pnpm typecheck` ok; `pnpm lint` 0 errors (10 pre-existing
+  warnings, none introduced here); `pnpm build` ok; `pnpm docs:check` 6/6;
+  `pnpm secrets:check` ĐẠT (892 files); `git diff --check` clean.
+- `pnpm db:migrate --offline` — 48 valid; `--dry-run` — 47 applied (checksum matches), exactly
+  1 pending (`20261008080000_p3_w05a_actor_scoped_reporting.sql`), 0 mismatch. Read-only; no
+  Production apply, no deploy.
+
+## Rebaseline notes (I01-R2)
+
+- P2-W04C already owns migration #47 (`20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql`),
+  so the append-only W05A migration was renamed to `20261008080000` (#48). Its body is unchanged
+  from the #45 review — only the filename and the migration-number comments differ. Migrations
+  #1-#47 stay byte-identical to `origin/main@054d543`.
+- W04C's migration and the frozen `EXPECTED_MIGRATION_COUNT = 47` in
+  `scripts/p2-w04a-reconcile.mjs` are deliberately untouched: that verifier tracks the applied
+  Production release, which does not include W05A. Only the on-disk inventory assertions (13
+  places) move to 48.
+- W05A fixtures now follow W04C's cutoff rebaseline to 2026-09-30: the legacy aggregate seed is
+  2026-09-25 (2026-10-01 would now fall on the Direct Entry side) and E15 asserts the new cutoff
+  with a 2026-09-29 pre-cutoff Direct Entry row. W05A logic, ACLs and the multi-team regression
+  are unchanged.
+- No source branch was rewritten: the 7 W05A commits were replayed as new commits on top of
+  `054d543`. No force-push, no amend, no history edit; the source branches keep their commits.
 
 ## Deferred / out of scope
 
