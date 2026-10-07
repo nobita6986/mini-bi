@@ -2,10 +2,7 @@ import Link from "next/link";
 
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
 import { buildBarData, buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
-import {
-  resolveDashboardAudienceKind,
-  resolveScopedDashboardView,
-} from "@/lib/reporting/p3-w06c-audience-view";
+import { resolveDashboardMode } from "@/lib/reporting/p3-w06c-audience-view";
 import type { ReportingAudience } from "@/lib/reporting/p3-w05a-audience";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingData, ReportingBucket } from "@/lib/reporting/p1-reporting";
@@ -52,19 +49,19 @@ function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
 export function DashboardView({
   report,
   optionsResult,
-  audience = null,
+  audience,
 }: {
   report: ReportingFetchResult;
   optionsResult: ReportingOptionsResult;
-  audience?: ReportingAudience | null;
+  /** DB-authoritative audience from the scoped payload; null fails closed. */
+  audience: ReportingAudience | null;
 }) {
   // P3-W06C: the audience is DB-authoritative (W05A scoped payload); it is never
-  // inferred from a UI role. The company-wide BoD layout is only rendered for a
-  // DB-confirmed "all"; every other case fails closed to the scoped view.
-  const audienceKind = resolveDashboardAudienceKind(audience);
+  // inferred from a UI role. A failed read, or a successful read without a usable
+  // audience, is an error mode: no facts are rendered and no scope is claimed.
+  const mode = resolveDashboardMode({ ok: report.ok, audience });
 
   if (!report.ok) {
-    // Fail closed: no data and no scope claim when the scoped read path failed.
     return (
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
         <ReportError report={report} />
@@ -72,21 +69,37 @@ export function DashboardView({
     );
   }
 
-  if (audienceKind !== "all") {
-    const scopedView = resolveScopedDashboardView(audience);
-    return scopedView.kind === "team" ? (
+  if (mode.kind === "error") {
+    // Fail closed: the read succeeded but the DB did not confirm a scope, so no
+    // fact row may be rendered under a guessed audience label.
+    return (
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+        <ErrorState
+          title="Không xác định được phạm vi báo cáo"
+          detail="Phiên hiện tại chưa có phạm vi báo cáo hợp lệ nên dữ liệu không được hiển thị. Vui lòng tải lại trang; nếu vẫn lỗi, liên hệ quản trị viên."
+        />
+      </main>
+    );
+  }
+
+  if (mode.kind === "team") {
+    return (
       <TeamDashboardView
         data={report.data}
         generatedAt={report.generatedAt}
         optionsResult={optionsResult}
-        view={scopedView}
+        view={mode.view}
       />
-    ) : (
+    );
+  }
+
+  if (mode.kind === "own") {
+    return (
       <OwnDashboardView
         data={report.data}
         generatedAt={report.generatedAt}
         optionsResult={optionsResult}
-        view={scopedView}
+        view={mode.view}
       />
     );
   }

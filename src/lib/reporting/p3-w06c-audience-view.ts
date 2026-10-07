@@ -3,37 +3,33 @@
  *
  * Maps the DB-authoritative W05A audience projection to the dashboard UX the
  * user may see. Audience is NEVER inferred from UI role: it comes from the
- * scoped RPC payload. An unknown/missing audience fails closed to the
- * NARROWEST view (own), never the company-wide BoD view.
+ * scoped RPC payload.
+ *
+ * Fail closed: a missing or unknown audience is NOT mapped to a narrower scope.
+ * It resolves to an error mode so no fact row is ever rendered under a guessed
+ * scope label.
  *
  * Reuses the existing dashboard components/charts/tokens; it only decides copy
  * and which sections/filters are rendered.
  */
 
-import { REPORTING_AUDIENCE_OWN_FALLBACK_LABEL } from "./p3-w05a-audience.ts";
 import type { ReportingAudience, ReportingAudienceKind } from "./p3-w05a-audience.ts";
 
 export type DashboardAudienceKind = ReportingAudienceKind;
 
 /**
- * Normalize the audience for the dashboard. Fail closed: a missing or unknown
- * audience becomes the narrowest scope (own), never the company-wide view.
+ * Resolve the dashboard kind from the DB-authoritative audience. Returns null
+ * when the audience is missing or unknown so callers render a neutral error
+ * instead of labelling facts with a scope the DB never confirmed.
  */
-export function resolveDashboardAudience(
-  audience: ReportingAudience | null,
-): ReportingAudience {
-  if (audience) {
-    if (audience.kind === "all" || audience.kind === "team" || audience.kind === "own") {
-      return audience;
-    }
-  }
-  return { kind: "own", label: REPORTING_AUDIENCE_OWN_FALLBACK_LABEL };
-}
-
 export function resolveDashboardAudienceKind(
   audience: ReportingAudience | null,
-): DashboardAudienceKind {
-  return resolveDashboardAudience(audience).kind;
+): DashboardAudienceKind | null {
+  if (!audience) return null;
+  if (audience.kind === "all" || audience.kind === "team" || audience.kind === "own") {
+    return audience.kind;
+  }
+  return null;
 }
 
 export interface ScopedDashboardView {
@@ -54,24 +50,49 @@ export interface ScopedDashboardView {
   showRecruiterFilter: boolean;
 }
 
+export type DashboardMode =
+  | { kind: "error" }
+  | { kind: "all" }
+  | { kind: "team"; view: ScopedDashboardView }
+  | { kind: "own"; view: ScopedDashboardView };
+
 /**
- * Describe the scoped (team/own) dashboard. Only team/own reach this helper;
- * the BoD (company-wide) view is rendered by the BoD dashboard itself.
+ * Decide what the dashboard may render. A failed read, or a successful read
+ * without a usable audience, is an error mode: no facts are rendered and no
+ * scope is claimed.
+ */
+export function resolveDashboardMode(input: {
+  ok: boolean;
+  audience: ReportingAudience | null;
+}): DashboardMode {
+  if (!input.ok) return { kind: "error" };
+  const audience = input.audience;
+  if (!audience) return { kind: "error" };
+  if (audience.kind === "all") return { kind: "all" };
+  if (audience.kind === "team" || audience.kind === "own") {
+    return { kind: audience.kind, view: resolveScopedDashboardView(audience) };
+  }
+  return { kind: "error" };
+}
+
+/**
+ * Describe the scoped (team/own) dashboard. Only a DB-confirmed team/own
+ * audience reaches this helper; the BoD (company-wide) view is rendered by the
+ * BoD dashboard itself.
  */
 export function resolveScopedDashboardView(
-  audience: ReportingAudience | null,
+  audience: ReportingAudience,
 ): ScopedDashboardView {
-  const resolved = resolveDashboardAudience(audience);
-  const scopeLabel = resolved.label;
-  if (resolved.kind === "team") {
+  const scopeLabel = audience.label;
+  if (audience.kind === "team") {
     return {
       kind: "team",
       scopeLabel,
       eyebrow: "Trưởng nhóm · Báo cáo nhóm",
       title: "Tổng quan nhóm " + scopeLabel,
       description:
-        "Số người tuyển của nhóm theo ngày, dự án, thành viên và loại hình làm việc. Chỉ trong phạm vi nhóm được cấp.",
-      scopeNote: "Đang xem dữ liệu trong phạm vi nhóm " + scopeLabel + ".",
+        "Số người tuyển của (các) nhóm được cấp theo ngày, dự án, thành viên và loại hình làm việc. Chỉ trong phạm vi nhóm được cấp.",
+      scopeNote: "Đang xem dữ liệu trong phạm vi nhóm được cấp: " + scopeLabel + ".",
       emptyTitle: "Nhóm chưa có dữ liệu tuyển dụng",
       emptyDescription:
         "Nhóm chưa có dữ liệu trong phạm vi được cấp. Hãy điều chỉnh bộ lọc hoặc tải lại trang sau.",

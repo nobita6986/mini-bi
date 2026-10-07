@@ -8,21 +8,54 @@ const team = readFileSync(new URL("./team-dashboard-view.tsx", HERE), "utf8");
 const own = readFileSync(new URL("./own-dashboard-view.tsx", HERE), "utf8");
 const filters = readFileSync(new URL("./dashboard-filters.tsx", HERE), "utf8");
 const page = readFileSync(new URL("../../app/dashboard/page.tsx", HERE), "utf8");
+const server = readFileSync(new URL("../../lib/reporting/p2-w04a-reporting-server.ts", HERE), "utf8");
 
 const SCOPED_VIEWS = ["team-dashboard-view.tsx", "own-dashboard-view.tsx"];
 const SCOPED_SOURCES = [team, own];
 
 test("W06C: the dashboard dispatches on the DB-authoritative audience", () => {
-  assert.match(view, /resolveDashboardAudienceKind/);
-  assert.match(view, /resolveScopedDashboardView/);
+  assert.match(view, /resolveDashboardMode\(/);
   assert.match(view, /<TeamDashboardView/);
   assert.match(view, /<OwnDashboardView/);
-  // BoD layout is gated behind a DB-confirmed `all`.
-  assert.match(view, /audienceKind !== "all"/);
+  // BoD layout is gated behind a DB-confirmed `all` (mode.kind === "all").
   assert.ok(
-    view.indexOf("audienceKind !== \"all\"") < view.indexOf("BoD · Báo cáo điều hành"),
-    "the BoD hero must render only after the all-audience gate",
+    view.indexOf("mode.kind === \"own\"") < view.indexOf("BoD · Báo cáo điều hành"),
+    "the BoD hero must render only after the team/own modes are excluded",
   );
+});
+
+test("W06C: a successful read without a usable audience renders a neutral error, never facts", () => {
+  assert.match(view, /resolveDashboardMode\(\{ ok: report\.ok, audience \}\)/);
+  assert.match(view, /mode\.kind === "error"/);
+  assert.ok(
+    view.includes("Không xác định được phạm vi báo cáo"),
+    "a neutral audience error must exist",
+  );
+  const errorAt = view.indexOf('mode.kind === "error"');
+  assert.ok(errorAt > 0, "the audience error branch must exist");
+  assert.ok(errorAt < view.indexOf("<DashboardBody"), "no fact section may render before the audience error");
+  assert.ok(errorAt < view.indexOf("BoD · Báo cáo điều hành"), "no BoD hero may render before the audience error");
+  // The scoped audience is never guessed from a missing payload.
+  assert.ok(!/resolveDashboardAudience\(/.test(view), "the dashboard must not invent a fallback audience");
+});
+
+test("W06C: the reporting read path fails closed when the audience payload is unusable", () => {
+  assert.match(server, /if \(audience === null\)/);
+  assert.ok(
+    server.indexOf("if (audience === null)") < server.indexOf("const data = computeReporting("),
+    "the audience guard must run before the report is computed",
+  );
+  assert.match(server, /return reportingQueryFailed\(\);/);
+  // A successful result can no longer carry a null audience.
+  assert.match(server, /audience: ReportingAudience \}/);
+  assert.ok(!/audience: ReportingAudience \| null/.test(server), "success type must not allow a null audience");
+});
+
+test("W06C: the team scope label stays inclusive when several teams are in scope", () => {
+  assert.match(server, /audienceTeamScopeCount\(payload\.audience\)/);
+  assert.match(server, /resolveAudienceScopeLabel\(audience, /);
+  assert.ok(server.includes("const scopedAudience: ReportingAudience"), "the inclusive label must be applied");
+  assert.match(team, /view\.scopeLabel|view\.scopeNote/);
 });
 
 test("W06C: the page passes the audience from the scoped payload, never a UI role", () => {

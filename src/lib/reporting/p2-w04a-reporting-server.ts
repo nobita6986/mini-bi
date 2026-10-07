@@ -11,7 +11,11 @@ import type {
   ReportingSource,
   RunStatus,
 } from "./p1-reporting";
-import { reportingAudienceFromDb } from "./p3-w05a-audience";
+import {
+  audienceTeamScopeCount,
+  reportingAudienceFromDb,
+  resolveAudienceScopeLabel,
+} from "./p3-w05a-audience";
 import type { ReportingAudience } from "./p3-w05a-audience";
 import { validateAllSourceFilter } from "./p3-w05a-source-filter";
 import {
@@ -58,7 +62,7 @@ type ScopedSourceRow = {
 };
 
 export type CutoverFetchResult =
-  | { ok: true; data: ReportingData; generatedAt: string; audience: ReportingAudience | null }
+  | { ok: true; data: ReportingData; generatedAt: string; audience: ReportingAudience }
   | {
       ok: false;
       code: string;
@@ -139,8 +143,23 @@ export async function fetchCutoverReporting(
       presence?: string[];
     };
     const scopedFacts = (payload.facts ?? []) as ScopedFactRow[];
+
+    // Fail closed: a successful RPC response without a usable audience must not
+    // be turned into facts under a guessed scope. Return the sanitized read-path
+    // error instead of rendering rows nobody can be shown to be authorized for.
     const audience = reportingAudienceFromDb(payload.audience);
-    const dbKind = audience?.kind ?? null;
+    if (audience === null) {
+      logSafeError("p3-w05a-audience", "audience payload missing or malformed");
+      return reportingQueryFailed();
+    }
+    // The DB resolves the team audience from every effective team grant but
+    // labels only the first team; keep the label inclusive when several are in
+    // scope so the dashboard never claims the whole scope is one named team.
+    const scopedAudience: ReportingAudience = {
+      kind: audience.kind,
+      label: resolveAudienceScopeLabel(audience, audienceTeamScopeCount(payload.audience)),
+    };
+    const dbKind = scopedAudience.kind;
     const dbSources = (payload.sources ?? []) as ScopedSourceRow[];
 
     // Validate the legacy-only source filter against the DB-authoritative
@@ -214,7 +233,7 @@ export async function fetchCutoverReporting(
     const combinedFacts = combineReportingFacts(legacyFacts, maskedDirectEntry);
     const data = computeReporting(sources, combinedFacts, filters, sourcesWithFacts);
 
-    return { ok: true, data, generatedAt: new Date().toISOString(), audience };
+    return { ok: true, data, generatedAt: new Date().toISOString(), audience: scopedAudience };
   } catch (error) {
     logSafeError("p3-w05a-scoped-reporting", error);
     return reportingQueryFailed();
