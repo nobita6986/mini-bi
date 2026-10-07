@@ -28,6 +28,7 @@ import {
   type RenderEditCellProps,
 } from "react-data-grid";
 import "react-data-grid/lib/styles.css";
+import { createPortal } from "react-dom";
 
 import {
   DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS,
@@ -46,8 +47,11 @@ import {
   typeaheadKeyAction,
 } from "@/lib/direct-entry/typeahead";
 import {
+  SEARCH_POPUP_MAX_HEIGHT,
+  computeSearchPopupPosition,
   filterCatalogSearchOptions,
   type CatalogSearchOption,
+  type SearchPopupLayout,
 } from "@/lib/direct-entry/catalog-search";
 import {
   mapClipboardFromAnchor,
@@ -353,6 +357,37 @@ function SearchableCatalogCellEditor(
   };
   useEffect(() => { selectAll(); }, []);
 
+  /**
+   * P3-W07C-R4-R2: o cua react-data-grid co overflow: clip, nen danh sach goi y
+   * render BEN TRONG cell se bi cat khoi o du search co ket qua. Danh sach duoc
+   * render qua portal ra document.body va dat bang position: fixed, neo theo
+   * input dang sua; toa do duoc tinh lai khi grid cuon hoac viewport doi kich thuoc.
+   */
+  const [popup, setPopup] = useState<SearchPopupLayout | null>(null);
+  const listHeight = Math.min(visible.length * 32 + 8, SEARCH_POPUP_MAX_HEIGHT);
+
+  const updatePopup = useCallback(() => {
+    const node = queryInput.current;
+    if (!node || typeof window === "undefined") return;
+    const rect = node.getBoundingClientRect();
+    setPopup(computeSearchPopupPosition({
+      anchor: { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width },
+      listHeight,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+    }));
+  }, [listHeight]);
+
+  useEffect(() => { updatePopup(); }, [updatePopup, query]);
+  useEffect(() => {
+    const onViewportChange = () => updatePopup();
+    window.addEventListener("scroll", onViewportChange, true);
+    window.addEventListener("resize", onViewportChange);
+    return () => {
+      window.removeEventListener("scroll", onViewportChange, true);
+      window.removeEventListener("resize", onViewportChange);
+    };
+  }, [updatePopup]);
+
   const commit = (option: CatalogSearchOption) => {
     props.onRowChange({
       ...props.row,
@@ -403,19 +438,33 @@ function SearchableCatalogCellEditor(
         onCompositionStart={() => { composing.current = true; }}
         onCompositionEnd={() => { composing.current = false; }}
       />
-      <ul id={"search-options-" + props.columnKey} role="listbox" className={styles.searchList}>
-        {visible.map((option, index) => (
-          <li key={option.id} role="option" aria-selected={index === activeIndex}>
-            <button
-              type="button"
-              className={index === activeIndex ? styles.searchOptionActive : undefined}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => commit(option)}>
-              {option.label}
-            </button>
-          </li>
-        ))}
-      </ul>
+      {popup !== null && typeof document !== "undefined" && createPortal(
+        <ul
+          data-testid="catalog-search-popup"
+          id={"search-options-" + props.columnKey}
+          role="listbox"
+          className={styles.searchList}
+          style={{
+            position: "fixed",
+            top: popup.top,
+            left: popup.left,
+            width: popup.width,
+            maxHeight: popup.maxHeight,
+          }}>
+          {visible.map((option, index) => (
+            <li key={option.id} role="option" aria-selected={index === activeIndex}>
+              <button
+                type="button"
+                className={index === activeIndex ? styles.searchOptionActive : undefined}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => commit(option)}>
+                {option.label}
+              </button>
+            </li>
+          ))}
+        </ul>,
+        document.body,
+      )}
     </div>
   );
 }

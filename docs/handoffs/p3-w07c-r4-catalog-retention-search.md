@@ -75,6 +75,32 @@ Regression tests added (suite now 11/11): opening a filled cell and typing a let
 correctly and the concatenated label would have matched nothing; closing without choosing keeps
 the previous value and never auto-commits.
 
+## R4-R2 follow-up — suggestion list was clipped by the grid cell
+
+Root cause: the suggestion list rendered **inside** the react-data-grid cell editor. The cell
+rule in `react-data-grid/lib/styles.css` sets `overflow: clip` (inside `@layer rdg.Cell`;
+the class name is hashed, so it is not a literal `.rdg-cell` selector), so the popup was cut off
+at the cell boundary even when the filter matched.
+
+- The list is now rendered through `createPortal` into `document.body` and positioned with
+  `position: fixed` anchored to the input being edited, so no cell ancestor can clip it.
+- Position comes from the new pure `computeSearchPopupPosition` in `catalog-search.ts`: it flips
+  above the cell when there is not enough room below, clamps horizontally inside the viewport
+  margin, caps the height, and caps height against the viewport itself even when the anchor has
+  scrolled out of view.
+- Position is recomputed on `scroll` (capture, so the grid's own scroller is seen) and on
+  `resize`; listeners are removed on unmount.
+- The option buttons keep `onMouseDown` `preventDefault` so clicking an option does not blur the
+  input and close the editor before the click lands.
+- Unchanged: provider/project scoping, stored value shapes, the existing search, click or
+  arrow+Enter selection, Escape/blur/Tab keeping the value, and no first-option auto-select.
+
+Regression tests added (suite now 14/14): the stylesheet really does clip cell content, and the
+list is rendered through the portal to `document.body` rather than inside the cell — a
+source-only assertion would not have caught this, so the check is tied to the actual CSS rule and
+to the portal call structure. Geometry tests cover below/above flip, horizontal clamping, height
+capping and a short viewport with the anchor outside it.
+
 ## Stop point
 
 Pushed for T0 review. No merge, no deploy, no Production apply. Schema, migration, RPC, catalog

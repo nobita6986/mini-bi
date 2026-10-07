@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { filterCatalogSearchOptions } from "../../lib/direct-entry/catalog-search.ts";
+import {
+  SEARCH_POPUP_MAX_HEIGHT,
+  computeSearchPopupPosition,
+  filterCatalogSearchOptions,
+} from "../../lib/direct-entry/catalog-search.ts";
 import { moveTypeaheadIndex } from "../../lib/direct-entry/typeahead.ts";
 import {
   createSpreadsheetRowModel,
@@ -102,6 +106,77 @@ test("W07C-R4-R1: dong ma chua chon thi gia tri cu khong doi, khong auto-commit"
   assert.match(grid, /const target = activeIndex >= 0 \? visible\[activeIndex\] : undefined;/);
   // Commit chi xay ra khi nguoi dung chon bang click.
   assert.match(grid, /onClick=\{\(\) => commit\(option\)\}/);
+});
+
+test("W07C-R4-R2: danh sach goi y KHONG con nam trong cell (thoat overflow: clip)", () => {
+  // Nguyen nhan: o cua react-data-grid co overflow: clip nen danh sach render
+  // ben trong cell bi cat khoi o. Kiem tra chinh xac luat CSS do van ton tai,
+  // de test nay that su gan voi loi clipping chu khong chi la khop chuoi.
+  const rdgCss = readFileSync(
+    new URL("../../../node_modules/react-data-grid/lib/styles.css", import.meta.url), "utf8");
+  // Selector cua cell bi hash nen khop theo layer + thuoc tinh, khong theo ten class.
+  assert.match(rdgCss, /@layer rdg\.Cell\s*\{[\s\S]{0,900}overflow:\s*clip/,
+    "o grid van clip noi dung");
+
+  // Danh sach phai duoc render qua portal ra document.body => khong con la con cua
+  // cell, nen khong the bi clip. Day la dieu kien ma code cu (ul nam trong cell) vi pham.
+  const portalAt = grid.indexOf("createPortal(");
+  const listAt = grid.indexOf('<ul');
+  assert.ok(portalAt > 0, "phai dung createPortal");
+  assert.ok(listAt > portalAt, "ul phai nam TRONG loi goi createPortal");
+  assert.match(grid, /createPortal\([\s\S]{0,1600}document\.body\s*,?\s*\)/,
+    "portal target la document.body");
+  assert.equal((grid.match(/<ul/g) ?? []).length, 1, "chi co mot danh sach goi y");
+  // Popup dat bang position: fixed voi toa do tinh tu anchor.
+  assert.match(grid, /position: "fixed"/);
+  assert.match(grid, /top: popup\.top/);
+  assert.match(grid, /left: popup\.left/);
+});
+
+test("W07C-R4-R2: toa do popup luon nam trong viewport", () => {
+  const viewport = { width: 1000, height: 800 };
+  const anchor = { top: 300, bottom: 330, left: 200, width: 220 };
+
+  // Du cho phia duoi => dat duoi o.
+  const below = computeSearchPopupPosition({ anchor, listHeight: 200, viewport });
+  assert.equal(below.placement, "below");
+  assert.equal(below.top, 330);
+  assert.ok(below.top + below.maxHeight <= viewport.height);
+
+  // Sat day viewport => lat len tren, khong tran ra ngoai.
+  const flipped = computeSearchPopupPosition({
+    anchor: { top: 760, bottom: 790, left: 200, width: 220 }, listHeight: 200, viewport,
+  });
+  assert.equal(flipped.placement, "above");
+  assert.ok(flipped.top >= 0, "khong bi day len tren viewport");
+  assert.ok(flipped.top + flipped.maxHeight <= 760, "nam gon phia tren o");
+
+  // Keo sat mep phai => kep lai trong le margin.
+  const right = computeSearchPopupPosition({
+    anchor: { top: 100, bottom: 130, left: 960, width: 220 }, listHeight: 120, viewport,
+  });
+  assert.ok(right.left + right.width <= viewport.width, "khong tran ngang");
+  assert.ok(right.left >= 0);
+
+  // Danh sach dai bi cat theo tran chieu cao.
+  const capped = computeSearchPopupPosition({ anchor, listHeight: 5000, viewport });
+  assert.ok(capped.maxHeight <= SEARCH_POPUP_MAX_HEIGHT);
+
+  // Viewport rat thap van tra ve vi tri hop le (khong am, khong tran).
+  const tiny = computeSearchPopupPosition({
+    anchor, listHeight: 200, viewport: { width: 320, height: 200 },
+  });
+  assert.ok(tiny.top >= 0);
+  assert.ok(tiny.top + tiny.maxHeight <= 200);
+});
+
+test("W07C-R4-R2: popup tinh lai vi tri khi grid cuon hoac viewport doi kich thuoc", () => {
+  assert.match(grid, /window\.addEventListener\("scroll", onViewportChange, true\)/,
+    "bat scroll theo capture de thay ca scroll cua grid");
+  assert.match(grid, /window\.addEventListener\("resize", onViewportChange\)/);
+  assert.match(grid, /window\.removeEventListener\("scroll", onViewportChange, true\)/);
+  assert.match(grid, /window\.removeEventListener\("resize", onViewportChange\)/);
+  assert.match(grid, /getBoundingClientRect\(\)/, "neo theo input dang sua");
 });
 
 test("W07C-R4: hai cot Dự án / Người tuyển dung editor co tim kiem", () => {
