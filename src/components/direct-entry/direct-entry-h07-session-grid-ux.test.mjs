@@ -61,18 +61,20 @@ test("A3. resolveSessionWithBoundedRetry retry toi da 2 lan va co delay bounded 
 // --- B. Project dropdown before first_work_date ------------------------
 
 test("B1. Desktop quick editor: project select khong disable khi firstWorkDate rong", () => {
-  // selectedRowCatalog duoc khoi tao khi firstWorkDate === "" tu defaultCatalog.
-  // Khong con `!catalogFor(selectedRow.firstWorkDate)` trong dieu kien disable.
-  assert.match(live, /selectedRowCatalog\s*=\s*selectedRow/);
-  assert.match(live, /selectedRow\.firstWorkDate === ""\s*\?\s*defaultCatalog/);
-  assert.equal(/disabled=\{[^}]*!\s*catalogFor\(selectedRow\.firstWorkDate\)[^}]*\}/.test(live), false,
-    "Khong con dung catalogFor(selectedRow.firstWorkDate) trong dieu kien disable");
+  // P3-W07C-R6: selectedRowCatalog la catalog HIEN TAI, khong phu thuoc firstWorkDate.
+  assert.match(live, /const selectedRowCatalog = selectedRow \? defaultCatalog : null;/);
+  assert.equal(/catalogFor\(selectedRow\.firstWorkDate\)/.test(live), false,
+    "Khong con dung catalogFor(selectedRow.firstWorkDate)");
+  assert.equal(/selectedRow\.firstWorkDate === ""/.test(live), false,
+    "Khong con nhanh theo ngay cua dong");
   assert.match(live, /selectedRowCatalog\?\.projects\.map/);
 });
 
-test("B2. Spreadsheet row: catalogOptions fallback khi first_work_date rong", () => {
-  assert.match(live, /row\.firstWorkDate === ""\s*\?\s*fallbackCatalog\s*:\s*catalogFor\(row\.firstWorkDate\)/);
-  assert.match(live, /dateKey === ""\s*\?\s*fallbackCatalog\s*:\s*catalogs\[dateKey\]/);
+test("B2. Spreadsheet row: catalogOptions dung catalog hien tai, khong theo ngay", () => {
+  // P3-W07C-R6: bo hoan toan nhanh fallback tam roi thay bang catalog theo ngay.
+  assert.match(live, /catalogOptions: spreadsheetCatalogOptions\(fallbackCatalog \?\? undefined\)/);
+  assert.match(live, /const fallbackCatalog = currentCatalog;/);
+  assert.equal(/catalogs\[dateKey\]/.test(live), false, "khong con tra catalog theo ngay cua dong");
 });
 
 test("B3. SelectCellEditor project_id khong con hien thi 'Nhập ngày bắt đầu trước' khi date rong", () => {
@@ -140,8 +142,9 @@ test("D3. Column build cho data cells editable dung cellsTextEditor (khong phai 
 });
 
 test("D4. Date va Select cell editor van commit truc tiep (khong qua cellsTextEditor)", () => {
-  // Date editor: commit qua onRowChange({...row, cells: {...row.cells, ...}}, true)
-  assert.match(grid, /DateCellEditor[\s\S]*onChange=\{[\s\S]*onRowChange\(/);
+  // P3-W07C-R6: date editor dung DdmmDateInput (text DD/MM/YYYY) va commit qua onCommit.
+  assert.match(grid, /DateCellEditor[\s\S]{0,400}<DdmmDateInput/);
+  assert.match(grid, /onCommit=\{\(iso\) => props\.onRowChange\(/);
   // Select editor: providerType/value commit directly through the commit() helper.
   assert.match(grid, /const commit = \(nextValue: string\) => \{[\s\S]{0,120}props\.onRowChange\(/);
 });

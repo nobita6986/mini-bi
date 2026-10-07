@@ -80,6 +80,7 @@ import {
   type SpreadsheetPasteRejection,
   type SpreadsheetPasteRequest,
 } from "@/components/direct-entry/direct-entry-spreadsheet-grid";
+import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import { buildSpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
 import {
   captureClipboardUndoSnapshot,
@@ -700,20 +701,10 @@ export function DirectEntryLive() {
     return () => { cancelled = true; };
   }, [ensureCatalog, loadChangeRequests, loadSubmissions, today]);
 
-  useEffect(() => {
-    for (const row of rows) {
-      if (row.firstWorkDate && !catalogCache.current.has(row.firstWorkDate) &&
-          !catalogErrors[row.firstWorkDate]) {
-        void ensureCatalog(row.firstWorkDate).then((catalog) => {
-          const current = rowsRef.current.find(({ rowId }) => rowId === row.rowId);
-          if (current && current.recruiterId &&
-              !catalog.recruiters.some(({ recruiter_id }) => recruiter_id === current.recruiterId)) {
-            setRows((existing) => updateLiveDraftRow(existing, current.rowId, { recruiterId: "" }));
-          }
-        }).catch(() => {});
-      }
-    }
-  }, [catalogErrors, ensureCatalog, rows]);
+  // P3-W07C-R6: da bo effect tai catalog theo row.firstWorkDate. Effect cu vua
+  // phat request catalog theo ngay cua tung dong, vua XOA recruiterId khi danh muc
+  // cua ngay do khong chua recruiter da chon — dung hai trieu chung Owner bao cao.
+  // Catalog bay gio la mot catalog hien tai, actor-scoped; xem currentCatalog.
 
   const updateRow = useCallback((
     rowId: string,
@@ -738,14 +729,14 @@ export function DirectEntryLive() {
     if (!draftsResponse.ok || !drafts) return null;
     const latest = drafts.find(({ entry_id }) => entry_id === entryId);
     if (!latest) return null;
-    await ensureCatalog(latest.first_work_date);
+    // P3-W07C-R6: khong tai catalog theo first_work_date cua ban nhap nua.
     const serverRow = draftRowFromProjection(latest);
     return {
       version: serverRow.entryVersion!,
       submissionVersion: serverRow.submissionVersion!,
       fields: editableFields(serverRow),
     };
-  }, [ensureCatalog]);
+  }, []);
 
   const retryConflictLoad = useCallback(async (rowId: string) => {
     const current = rowsRef.current.find((row) => row.rowId === rowId);
@@ -1074,12 +1065,23 @@ export function DirectEntryLive() {
   }, [setStagedModel, setStagedMessageWithTone, setQuickEditClientRowId]);
 
 
-  const stagedCatalogSource = useCallback((date: string) => {
-    const catalog = catalogs[date];
-    if (!catalog) return null;
+  /**
+   * P3-W07C-R6: first_work_date KHONG con dieu khien catalog.
+   *
+   * Moi be mat (grid, mobile card, quick editor, drawer, Excel import, validation)
+   * dung MOT catalog hien tai: ngay HCM cua trang, da duoc server gioi han theo
+   * actor/quyen account. Doi ngay bat dau lam viec khong doi danh muc, khong xoa
+   * project/recruiter/providerType, va khong phat request catalog theo ngay moi.
+   */
+  const currentCatalog = useMemo(() => catalogs[today] ?? Object.values(catalogs).find(
+    (catalog) => catalog !== undefined) ?? null, [catalogs, today]);
+
+  // Ham khong nhan tham so ngay: catalog luon la catalog hien tai (P3-W07C-R6).
+  const stagedCatalogSource = useCallback(() => {
+    if (!currentCatalog) return null;
     return {
-      projects: catalog.projects.map((project) => ({ id: project.project_id, label: project.display_name })),
-      recruiters: catalog.recruiters.map((recruiter) => ({
+      projects: currentCatalog.projects.map((project) => ({ id: project.project_id, label: project.display_name })),
+      recruiters: currentCatalog.recruiters.map((recruiter) => ({
         id: recruiter.recruiter_id,
         label: recruiter.label,
         provider_type: recruiter.provider_type,
@@ -1087,11 +1089,11 @@ export function DirectEntryLive() {
         vendor_id: recruiter.vendor_id,
       })),
     };
-  }, [catalogs]);
+  }, [currentCatalog]);
 
   const stagedCatalogOptions = useMemo(() => {
-    return spreadsheetCatalogOptions(catalogs[today]);
-  }, [catalogs, today]);
+    return spreadsheetCatalogOptions(currentCatalog ?? undefined);
+  }, [currentCatalog]);
 
   // Validation tai cho: chi chay tren staged rows KHONG trong, va tai dung pipeline P1.6.
   const stagedValidation = useMemo(() => buildSpreadsheetValidation({
@@ -1126,16 +1128,13 @@ export function DirectEntryLive() {
     };
   }, [stagedValidation, stagedValidationTriggered]);
 
-  useEffect(() => {
-    for (const date of stagedValidation.catalogDates) void ensureCatalog(date).catch(() => undefined);
-  }, [ensureCatalog, stagedValidation]);
+  // P3-W07C-R6: staged validation dung catalog hien tai (stagedCatalogSource bo qua
+  // tham so ngay), nen khong con vong load catalog theo catalogDates cua tung dong.
 
   const spreadsheetRows = useMemo<readonly SpreadsheetGridRow[]>(() => {
-    // P1.7-H07: default catalog fallback khi row chua co first_work_date
-    // hoac catalog cho ngay do chua load xong. Dropdown Project/Recruiter
-    // van phai mo va co options; ngay nhap sau se re-resolve theo ngay.
-    const fallbackCatalog = catalogs[today] ?? Object.values(catalogs).find((catalog) =>
-      catalog !== undefined) ?? null;
+    // P3-W07C-R6: mot catalog hien tai cho MOI dong, khong con fallback tam roi
+    // thay bang catalog theo ngay o render sau.
+    const fallbackCatalog = currentCatalog;
     const persisted: SpreadsheetGridRow[] = rows.map((row) => {
       const editable = row.state !== "saving" && row.state !== "conflict" &&
         isRowEditable(row, submissions);
@@ -1159,8 +1158,7 @@ export function DirectEntryLive() {
         providerType: row.providerType ?? "",
         cccdStatus: cccdStatus.label,
         canManageCccd: cccdStatus.canManage,
-        catalogOptions: spreadsheetCatalogOptions(
-          row.firstWorkDate === "" ? fallbackCatalog : catalogFor(row.firstWorkDate)),
+        catalogOptions: spreadsheetCatalogOptions(fallbackCatalog ?? undefined),
         displayValues: profileCells.displayValues,
         cells: {
           ...profileCells.cells,
@@ -1186,17 +1184,14 @@ export function DirectEntryLive() {
           : [],
         employeeCode: row.employeeCode,
         displayName: row.workerName,
-        projectLabel: displayProject(row, catalogFor(row.firstWorkDate)),
-        recruiterLabel: displayRecruiter(row, catalogFor(row.firstWorkDate)),
+        projectLabel: displayProject(row, fallbackCatalog ?? undefined),
+        recruiterLabel: displayRecruiter(row, fallbackCatalog ?? undefined),
         saveStatus: stateText(row.state),
       };
     });
     const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => {
-      const dateKey = row.cells.first_work_date ?? "";
-      // P3-W07C-R4: neu danh muc cua ngay moi chua tai xong thi dung fallback da co
-      // thay vi tra null, de dropdown Dự án / Người tuyển vẫn mở được ngay sau khi
-      // sua ngay. Khi danh muc dung ngay san sang, vong render sau se dung no.
-      const catalog = dateKey === "" ? fallbackCatalog : catalogs[dateKey] ?? fallbackCatalog;
+      // P3-W07C-R6: catalog cua moi dong la catalog hien tai, KHONG theo first_work_date.
+      const catalog = fallbackCatalog;
       const recruiter = catalog?.recruiters.find((option) =>
         option.recruiter_id === row.cells.recruiter_id ||
         option.label === row.cells.recruiter_id);
@@ -1236,7 +1231,7 @@ export function DirectEntryLive() {
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
     }); });
     return [...persisted, ...staged];
-  }, [catalogFor, catalogs, cccdCache, rows, stagedModel, submissions, today]);
+  }, [cccdCache, currentCatalog, rows, stagedModel, submissions]);
 
   /**
    * P1.7-H06: selected spreadsheet row lookup. Tra ra cho contextual action
@@ -1322,14 +1317,12 @@ export function DirectEntryLive() {
       }
       if (Object.keys(draftPatch).length === 0) return;
       setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
-      if (draftPatch.firstWorkDate && isRealCalendarDate(draftPatch.firstWorkDate)) {
-        void ensureCatalog(draftPatch.firstWorkDate).catch(() => undefined);
-      }
+      // P3-W07C-R6: doi ngay bat dau lam viec KHONG phat request catalog theo ngay moi.
       return;
     }
     // P3-W07C-R4: doi ngay KHONG xoa recruiter da chon.
     setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, safePatch));
-  }, [ensureCatalog, rows, setStagedModel]);
+  }, [rows, setStagedModel]);
 
   const onStagedProviderTypeChange = useCallback((
     clientRowId: string,
@@ -1422,7 +1415,8 @@ export function DirectEntryLive() {
           if (!target) return;
           const value = (field: { state: string; value?: string }) =>
             field.state === "provided" ? field.value ?? "" : "";
-          const rowCatalog = catalogs[row.first_work_date];
+          // P3-W07C-R6: resolve recruiter label bang catalog hien tai, khong theo ngay.
+          const rowCatalog = currentCatalog ?? undefined;
           const recruiter = rowCatalog?.recruiters.find((option) =>
             option.recruiter_id === row.recruiter_label ||
             option.display_name === row.recruiter_label);
@@ -1461,7 +1455,7 @@ export function DirectEntryLive() {
     setStagedNotice("");
     setStagedRejection("");
     setXlsxMessage(`Đã nhập ${imported.rowCount} dòng vào bảng. Kiểm tra lỗi trước khi lưu.`);
-  }, [catalogs, setStagedModel, today, setStagedMessage, setStagedNotice, setStagedRejection]);
+  }, [currentCatalog, setStagedModel, setStagedNotice, setStagedRejection, today]);
 
   const downloadXlsxTemplate = useCallback(async () => {
     try {
@@ -1515,10 +1509,8 @@ export function DirectEntryLive() {
     setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
       [field]: storedValue,
     }));
-    if (field === "first_work_date" && isRealCalendarDate(storedValue)) {
-      void ensureCatalog(storedValue).catch(() => undefined);
-    }
-  }, [ensureCatalog, setStagedModel]);
+    // P3-W07C-R6: doi ngay KHONG phat request catalog theo ngay vua nhap.
+  }, [setStagedModel]);
 
   // P1.7-H05: capture handler trong bien cuc bo truoc khi render de tranh
   // React Compiler canh bao "Cannot access refs during render" khi closure
@@ -1716,9 +1708,10 @@ export function DirectEntryLive() {
   }, [reloadDrafts, setStagedModel, setStagedMessageWithTone, stagedModel, stagedValidation, setQuickEditClientRowId]);
 
   const updateDate = useCallback((rowId: string, firstWorkDate: string) => {
-    updateRow(rowId, { firstWorkDate, recruiterId: "" });
-    if (isRealCalendarDate(firstWorkDate)) void ensureCatalog(firstWorkDate).catch(() => {});
-  }, [ensureCatalog, updateRow]);
+    // P3-W07C-R6: doi ngay bat dau lam viec KHONG xoa recruiter da chon va KHONG
+    // phat request catalog theo ngay vua nhap.
+    updateRow(rowId, { firstWorkDate });
+  }, [updateRow]);
 
   const selectedRowLocked = selectedRow !== null && !isRowEditable(selectedRow, submissions);
   // P1.7-H07: khi row chua co first_work_date, dropdown Project/Recruiter
@@ -1726,11 +1719,8 @@ export function DirectEntryLive() {
   // dau tien co san). Re-resolve catalog theo ngay khi user nhap ngay.
   const defaultCatalog = catalogs[today] ?? Object.values(catalogs).find((catalog) =>
     catalog !== undefined) ?? null;
-  const selectedRowCatalog = selectedRow
-    ? (selectedRow.firstWorkDate === ""
-      ? defaultCatalog
-      : catalogFor(selectedRow.firstWorkDate) ?? defaultCatalog)
-    : null;
+  // P3-W07C-R6: drawer/persisted editor dung catalog hien tai, khong theo ngay cua dong.
+  const selectedRowCatalog = selectedRow ? defaultCatalog : null;
   const currentOptions = selectedRowCatalog
     ? optionsFor(selectedRowCatalog)
     : [];
@@ -2057,7 +2047,7 @@ export function DirectEntryLive() {
                     </span>
                     <span>{row.workerName || "Chưa nhập họ tên"}</span>
                     <span className={styles.rowCardMeta}>
-                      {displayProject(row, catalogFor(row.firstWorkDate)) || "Chưa chọn dự án"}
+                      {displayProject(row, currentCatalog ?? undefined) || "Chưa chọn dự án"}
                       {" · "}Hồ sơ CCCD: {readCccdStatus(cccdCache, row.entryId, row.entryVersion).label}
                     </span>
                   </button>
@@ -2085,7 +2075,8 @@ export function DirectEntryLive() {
                 );
                 if (!stagedRow) return null;
                 const cells = stagedRow.cells;
-                const catalog = catalogs[cells.first_work_date ?? ""];
+                // P3-W07C-R6: danh muc khong phu thuoc first_work_date.
+                const catalog = currentCatalog ?? undefined;
                 return (
                   <li key={stagedRow.clientRowId}>
                     <details
@@ -2106,8 +2097,10 @@ export function DirectEntryLive() {
                           <output>Máy chủ sẽ cấp mã khi lưu</output>
                         </Field>
                         <Field label={<><span>Ngày bắt đầu làm việc</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
-                          <input type="date" value={cells.first_work_date ?? ""}
-                            onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "first_work_date")} />
+                          <DdmmDateInput ariaLabel="Ngày bắt đầu làm việc"
+                            value={cells.first_work_date ?? ""}
+                            onCommit={(iso) => onMobileStagedChange(
+                              stagedRow.clientRowId, "first_work_date", iso)} />
                         </Field>
                         <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                           <select value={cells.project_id ?? ""}
@@ -2245,11 +2238,10 @@ export function DirectEntryLive() {
             const target = stagedModel.rows.find(
               (candidate) => candidate.clientRowId === quickEditClientRowId);
             if (!target) return null;
-            const rowCatalog = catalogs[target.cells.first_work_date ?? ""];
-            const isLoadingCatalog = target.cells.first_work_date !== undefined &&
-              target.cells.first_work_date !== "" && !rowCatalog;
-            const hasCatalogError = target.cells.first_work_date !== undefined &&
-              target.cells.first_work_date !== "" && !!catalogErrors[target.cells.first_work_date];
+            // P3-W07C-R6: quick editor dung catalog hien tai, khong theo ngay cua dong.
+            const rowCatalog = currentCatalog ?? undefined;
+            const isLoadingCatalog = currentCatalog === null && !catalogErrors[today];
+            const hasCatalogError = currentCatalog === null && !!catalogErrors[today];
             return (
               <Dialog.Content className={styles.quickDrawer}
                 aria-describedby="quick-edit-description"
@@ -2311,8 +2303,10 @@ export function DirectEntryLive() {
                             </select>}
                   </Field>
                   <Field label={<><span>Ngày bắt đầu làm việc</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
-                    <input type="date" value={target.cells.first_work_date ?? ""}
-                      onChange={handleMobileStagedFieldChange(target.clientRowId, "first_work_date")} />
+                    <DdmmDateInput ariaLabel="Ngày bắt đầu làm việc"
+                      value={target.cells.first_work_date ?? ""}
+                      onCommit={(iso) => onMobileStagedChange(
+                        target.clientRowId, "first_work_date", iso)} />
                   </Field>
                   <Field label={<><span>Họ và tên</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                     <input value={target.cells.display_name ?? ""}
@@ -2449,9 +2443,9 @@ export function DirectEntryLive() {
                   </output>
                 </Field>
                 <Field label={<><span>Ngày đầu tiên đi làm</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
-                  <input aria-label="Ngày đầu tiên đi làm" type="date" value={selectedRow.firstWorkDate}
+                  <DdmmDateInput ariaLabel="Ngày đầu tiên đi làm" value={selectedRow.firstWorkDate}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
-                    onChange={(event) => updateDate(selectedRow.rowId, event.target.value)} />
+                    onCommit={(iso) => updateDate(selectedRow.rowId, iso)} />
                 </Field>
                 <Field label={<><span>Họ tên người lao động</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                   <input aria-label="Họ tên người lao động" value={selectedRow.workerName}
