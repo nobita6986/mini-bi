@@ -67,3 +67,48 @@ export function reportingAudienceFromDb(value: unknown): ReportingAudience | nul
   return { kind, label };
 }
 
+/**
+ * Count the effective team scope reported by the scoped RPC. The DB resolves the
+ * team audience from EVERY effective team scope grant but returns only the first
+ * team's display label, so callers need the count to keep that label inclusive.
+ * Only a count is derived here - no team UUID leaves this module.
+ */
+export function audienceTeamScopeCount(value: unknown): number {
+  if (typeof value !== "object" || value === null) return 0;
+  const teamIds = (value as Record<string, unknown>)["team_ids"];
+  if (!Array.isArray(teamIds)) return 0;
+  return teamIds.length;
+}
+
+/**
+ * Keep the team scope label inclusive when more than one team is in scope. A
+ * single team keeps the DB label verbatim; a multi-team scope is labelled so no
+ * surface can claim the whole scope is one named team.
+ */
+export function resolveAudienceScopeLabel(
+  audience: ReportingAudience,
+  teamCount: number,
+): string {
+  if (audience.kind !== "team") return audience.label;
+  if (!Number.isFinite(teamCount) || teamCount <= 1) return audience.label;
+  const others = Math.trunc(teamCount) - 1;
+  return audience.label + " và " + others + " nhóm khác";
+}
+
+/**
+ * Compose the final sanitized audience projection from a scoped RPC payload.
+ * Returns null when the payload carries no usable audience, so the read path
+ * fails closed instead of labelling facts with a scope the DB never confirmed.
+ * The returned label is always the inclusive scope label (never a UUID).
+ */
+export function resolveReportingAudienceProjection(
+  value: unknown,
+): ReportingAudience | null {
+  const audience = reportingAudienceFromDb(value);
+  if (audience === null) return null;
+  return {
+    kind: audience.kind,
+    label: resolveAudienceScopeLabel(audience, audienceTeamScopeCount(value)),
+  };
+}
+
