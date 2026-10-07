@@ -140,7 +140,9 @@ Same branch, new commit on top; `d8d5caa` is untouched (no amend/rebase/force-pu
    no duplicate alias, audit or reason) and still passes acceptance. Regression:
    `R1: the second run is a no-op with no duplicate alias or audit`.
 
-R1 test evidence: `scripts/p2-de-reporting-dimension-hotfix-db.test.mjs` 12/12 (8 original
-+ 4 new R1 cases) and `-safety.test.mjs` 7/7 (new operator/audit/no-op source guards).
+R1 test evidence: `scripts/p2-de-reporting-dimension-hotfix-db.test.mjs` 13/13 (8 original
++ 5 new R1 cases, including an offline proof that the dry-run transaction rolls back every
+membership window and writes no alias/audit/reason row) and `-safety.test.mjs` 7/7 (new
+operator/audit/no-op source guards).
 No schema, migration, auth, permission, cutoff or reporting-scope change; the projection
 still has no `direct_entries.provider_type` fallback. Production `--apply` was NOT run.

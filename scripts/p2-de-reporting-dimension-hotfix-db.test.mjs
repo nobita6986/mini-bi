@@ -687,3 +687,56 @@ test("P2-DE-dim R1: the second run is a no-op with no duplicate alias or audit",
     await db.close();
   }
 });
+// ---------------------------------------------------------------------------
+// 9. R1: the dry-run path applies the real statements and rolls everything back.
+// ---------------------------------------------------------------------------
+test("P2-DE-dim R1: a dry-run applies nothing and leaves the window untouched", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db);
+    await seedBatch(db);
+    await redateMemberships(db);
+    const before = await currentState(db);
+    const plan = await repairPlan(db);
+    assert.equal(plan.assignments.length, 7);
+
+    // Exactly what the CLI does for --dry-run: begin, execute, verify, rollback.
+    await db.exec("begin");
+    const reasonId = await createReason(db);
+    let statements = 0;
+    for (const assignment of plan.assignments) {
+      for (const statement of assignmentStatements(assignment)) {
+        await db.query(statement.sql, statement.params);
+        statements += 1;
+      }
+      for (const statement of auditStatements(assignment, {
+        authSubject: REPAIR_ACTOR.authSubject,
+        appUserId: REPAIR_ACTOR.appUserId,
+        capability: REPAIR_ACTOR.capability,
+        reasonId,
+      })) {
+        await db.query(statement.sql, statement.params);
+        statements += 1;
+      }
+    }
+    const inside = await currentState(db);
+    const acceptance = acceptanceCheck(before, inside, plan);
+    assert.equal(statements, 21);
+    assert.equal(acceptance.ok, true, "acceptance must hold inside the dry-run transaction");
+    assert.equal(inside.window.provider_unknown, 0);
+    assert.deepEqual(inside.distribution.provider_split, EXPECTED_PROVIDER_SPLIT);
+    await db.exec("rollback");
+
+    // Nothing persisted.
+    assert.equal(await countOf(db, "select count(*)::int as n from public.recruiter_aliases"), 0);
+    assert.equal(await countOf(db, "select count(*)::int as n from public.direct_entry_audit_events"), 0);
+    assert.equal(await countOf(db, "select count(*)::int as n from public.direct_entry_restricted_reasons"), 0);
+    const reverted = await db.query(
+      "select count(*)::int as still_open from public.recruiter_provider_memberships" +
+      " where valid_from = $1::date", [REPAIRED_FROM]);
+    assert.equal(reverted.rows[0].still_open, 7, "every membership window must be back to its original date");
+    assert.deepEqual((await currentState(db)).distribution, before.distribution);
+  } finally {
+    await db.close();
+  }
+});
