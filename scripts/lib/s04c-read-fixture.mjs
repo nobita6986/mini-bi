@@ -131,9 +131,27 @@ export async function seedChangeRequestFixture(db, {
     "insert into public.direct_entry_banks(bank_id,display_name) values ($1,$2)",
     ["s02b_bank", "S02B bank"]);
 
+
   await insertActor(db, ACTORS.proposer,
     ["entry_create", "submission_create", "entry_own", "change_request_create", "change_review"],
     "own", null);
+  // P2.5-W02: proposer authority is the EFFECTIVE project-manager assignment; the
+  // creator/team/first_work_date fallback is closed by migration #51, so the
+  // synthetic proposer is the assigned manager of this project. Historical-ledger
+  // tests apply migrations only up to an older number, so the assignment is
+  // created only when the W07B table already exists.
+  const assignmentTable = await db.query(
+    "select to_regclass('public.direct_entry_project_manager_assignments') is not null as present");
+  if (assignmentTable.rows[0].present) {
+    await db.query(
+      "insert into public.direct_entry_project_manager_assignments" +
+      " (project_id, manager_recruiter_id, valid_from) values ($1,$2,'2020-01-01')",
+      [PROJECT_ID, RECRUITER_A]);
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links" +
+      " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+      [ACTORS.proposer.app_user_id, RECRUITER_A]);
+  }
   await insertActor(db, ACTORS.reviewer, ["change_review"], "team", TEAM_A);
   await insertActor(db, ACTORS.reviewerAll, ["change_review"], "all", null);
   await insertActor(db, ACTORS.reviewerNoCapability, [], "team", TEAM_A);

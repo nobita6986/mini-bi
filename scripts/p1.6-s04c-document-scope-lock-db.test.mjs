@@ -39,7 +39,7 @@ async function snapshot(db) {
   return rows[0];
 }
 
-async function assertConstraintError(db, savepoint, run) {
+async function assertConstraintError(db, savepoint, run, expectedCodes = ["23514"]) {
   await db.query("savepoint " + savepoint);
   let error;
   try {
@@ -47,7 +47,12 @@ async function assertConstraintError(db, savepoint, run) {
   } catch (caught) {
     error = caught;
   }
-  assert.equal(error?.code, "23514");
+  // P2.5-W02 (#51) closes the creator/team/date proposer fallback, so the RPC
+  // path may now refuse a DOCUMENT target at the policy layer (42501) before the
+  // table constraint (23514) is reached. Both are fail-closed; the residue
+  // assertions below stay unchanged.
+  assert.ok(expectedCodes.includes(error?.code),
+    "expected " + expectedCodes.join("|") + ", got " + error?.code);
   await db.query("rollback to savepoint " + savepoint);
   await db.query("release savepoint " + savepoint);
   return error;
@@ -90,8 +95,8 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P3-W07B migration #43 adds project-manager scope enforcement.
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
-  // as #49 after W07C-R7.
-  assert.equal(migrationNames.length, 50);
+  // as #49 after W07C-R7; W07E #50 and P2.5-W02 #51.
+  assert.equal(migrationNames.length, 51);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -109,8 +114,12 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
         JSON.stringify([item(fixture.entryB.entry_id, fixture.entryB.version,
           DOCUMENT_PROPOSAL, "DOCUMENT")]),
         "synthetic direct DOCUMENT RPC", "scope_lock_document_rpc"]);
-  });
-  assert.equal(rpcError.constraint, "direct_entry_change_request_items_document_scope_lock");
+  }, ["23514", "42501"]);
+  if (rpcError.code === "42501") {
+    assert.match(String(rpcError.message), /document change requests are not supported/);
+  } else {
+    assert.equal(rpcError.constraint, "direct_entry_change_request_items_document_scope_lock");
+  }
   assert.deepEqual(await snapshot(db), before);
 
   const insertError = await assertConstraintError(db, "document_insert", () => db.query(
@@ -147,6 +156,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // scoped_options, seed_team_scope_grants) with no public RPC exposure.
   // P3-W07C-R7 adds one internal draft-scope resolver, not exposed to any role.
   // P3-W07E adds four private scope/proposal helpers, also not executable by roles.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [91, 45, 46]);
+  // P2.5-W02 (#51) adds five internal helpers/trigger functions plus three
+  // service-role-only administration RPCs (list/assign/unassign assignments).
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [98, 48, 50]);
   await db.close();
 });

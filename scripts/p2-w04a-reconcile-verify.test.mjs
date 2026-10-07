@@ -303,13 +303,13 @@ test("P2-W04C reconcile: read-only transaction always rolls back (no mutation)",
 
 test("P2-W04C reconcile tracks the current append-only release inventory", async () => {
   // W04B's production preflight stays scoped to its frozen release baseline;
-  // later W05A, W07C-R7 and W07E migrations must not be absorbed by it.
+  // later W05A, W07C-R7, W07E and P2.5-W02 migrations must not be absorbed.
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 50);
+  assert.equal(names.length, 51);
   assert.equal(names[names.length - 1],
-    "20261008100000_p3_w07e_project_manager_submitted_change_requests.sql");
+    "20261008110000_p2_5_w02_multi_manager_project_authority.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );

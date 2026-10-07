@@ -25,8 +25,8 @@ async function database() {
     .sort();
   // P2-W04B adds migration #44 (cutoff rebaseline 2026-10-06) on top of
   // the W07B #43. P2-W04B is #44, W07C-R2 is #45, W07C-R3 is #46, P2-W04C is
-  // #47, W05A #48, W07C-R7 #49, and W07E #50.
-  assert.equal(names.length, 50);
+  // #47, W05A #48, W07C-R7 #49, W07E #50 and P2.5-W02 #51.
+  assert.equal(names.length, 51);
   for (const name of names) {
     await db.exec(await readFile(path.resolve("supabase/migrations", name), "utf8"));
   }

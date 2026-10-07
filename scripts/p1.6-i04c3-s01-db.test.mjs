@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 50, "W07E appends as #50 after W07C-R7 #49");
+  assert.equal(totalCount, 51, "P2.5-W02 appends as #51 after W07E #50");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -579,10 +579,14 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // project-proposal helpers. Neither migration exposes a new callable surface.
     // P3-W05A (#47) adds six service-role-only scoped reporting helpers, all
     // GRANT EXECUTE to service_role and none reachable by anon/authenticated.
+    // P2.5-W02 (#51) adds five internal helpers (effective-assignment predicate,
+    // admin guard, two trigger functions, the closed propose-scope resolver) and
+    // three service-role-only administration RPCs (list/assign/unassign); no new
+    // callable surface is exposed to anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 91,
-      service_role: 45,
-      internal: 46,
+      total: 98,
+      service_role: 48,
+      internal: 50,
       exposed_internal: 0,
     });
   } finally {

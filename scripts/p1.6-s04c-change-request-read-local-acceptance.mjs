@@ -28,8 +28,8 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 
-// W07C-R7 is #49; W07E project-manager proposals appends as #50.
-assert.equal(migrations.migrationNames.length, 50);
+// W07C-R7 #49, W07E #50, P2.5-W02 #51.
+assert.equal(migrations.migrationNames.length, 51);
 pass("from-scratch apply 49 migration local trong PGlite (khong dung shared DB)");
 
 const fixture = await seedChangeRequestFixture(db);

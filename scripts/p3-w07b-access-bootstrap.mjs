@@ -151,8 +151,8 @@ async function applyPublicMappings(client, authUsersByEmail, recruiterByCode) {
         `insert into public.direct_entry_project_manager_assignments
            (project_id, manager_recruiter_id)
          values ($1::text, $2::uuid)
-         on conflict (project_id) do update
-           set manager_recruiter_id=excluded.manager_recruiter_id, updated_at=now()`,
+         on conflict (project_id, manager_recruiter_id) where valid_to is null
+           do update set updated_at=now()`,
         [projectId, recruiterByCode.get(personnelCode)],
       );
     }
