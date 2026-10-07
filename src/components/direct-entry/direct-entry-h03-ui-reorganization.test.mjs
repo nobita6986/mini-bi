@@ -56,15 +56,20 @@ test("grid renders immediately before collapsed submission and change-request pa
   assert.doesNotMatch(live, /<details className=\{styles\.secondaryPanel\}[^>]*\bopen\b/);
 });
 
-test("only the approved 18 data columns render; action rail is outside that set", () => {
+test("only the approved 17 data columns render; action rail is outside that set", () => {
+  // Canonical order theo DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS: provider/recruiter/labor
+  // nam ngay sau Du an, va national_id_issued_place da bi loai khoi UI/grid (DB tu ghi
+  // "Bộ Công An" cho ho so moi).
   assert.deepEqual(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS, [
-    "row_index", "project_id", "first_work_date", "display_name", "gender",
-    "date_of_birth", "national_id", "national_id_issued_at", "national_id_issued_place",
-    "address", "phone", "provider_type", "recruiter_id", "labor_type",
-    "account_number", "bank_name", "account_holder_name", "general_note",
+    "row_index", "project_id", "provider_type", "recruiter_id", "labor_type",
+    "first_work_date", "display_name", "gender", "date_of_birth", "national_id",
+    "national_id_issued_at", "address", "phone", "account_number", "bank_name",
+    "account_holder_name", "general_note",
   ]);
-  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 18);
-  // R1: DataGrid chi nhan 18 default columns. ACTION_RAIL chi con la tap
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 17);
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("national_id_issued_place"), false,
+    "national_id_issued_place khong con la cot UI");
+  // R1: DataGrid chi nhan 17 default columns. ACTION_RAIL chi con la tap
   // metadata ngoai DataGrid (cho action rail ben ngoai).
   assert.deepEqual(DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS, ["save_status", "row_actions"]);
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.some((key) =>
@@ -109,7 +114,7 @@ test("provider filtering, recruiter reset, and CCCD/action rail outside grid are
 test("contextual action bar thay the rail; chi hai nut (Hồ sơ NLĐ + Xóa dòng)", () => {
   // P1.7-H06: action rail bi loai bo; contextual action bar (desktop) nam
   // phia tren DataGrid voi hinh thu mot theo clientRowId.
-  // DataGrid chi nhan 18 cot default; khong con cot 'save_status', 'row_actions'
+  // DataGrid chi nhan 17 cot default; khong con cot 'save_status', 'row_actions'
   // hay cccd_documents. Khong con cot frozen hay callback onManageDocuments trong grid.
   assert.equal(grid.includes("frozen"), false,
     "khong con cot frozen trong grid H05");
