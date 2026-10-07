@@ -80,6 +80,28 @@ export function parseDDMMToIso(value: string): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+/**
+ * P3-W07C-R6: quyet dinh commit cho editor ngay dang text DD/MM/YYYY.
+ *
+ * Chi commit khi chuoi nguoi dung nhap parse duoc thanh ngay hop le. Chuoi sai
+ * KHONG duoc bien thanh rong va KHONG duoc ghi de gia tri cu.
+ */
+export type DdmmCommitDecision =
+  | { ok: true; iso: string }
+  | { ok: false; reason: "empty" | "invalid" };
+
+export function decideDdmmCommit(text: string, previousIso: string): DdmmCommitDecision {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    // O trong san (chua tung co ngay) thi commit rong la vo hai; con neu dang co
+    // ngay cu thi giu nguyen, khong xoa.
+    return previousIso === "" ? { ok: true, iso: "" } : { ok: false, reason: "empty" };
+  }
+  const iso = parseDDMMToIso(trimmed);
+  if (iso === "") return { ok: false, reason: "invalid" };
+  return { ok: true, iso };
+}
+
 /** Ngay hom nay theo Asia/Ho_Chi_Minh, dang "DD/MM/YYYY". */
 export function todayInHoChiMinhAsDDMM(now: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-GB", {

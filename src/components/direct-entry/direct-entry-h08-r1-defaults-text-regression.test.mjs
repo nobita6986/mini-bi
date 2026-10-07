@@ -307,8 +307,9 @@ test("R1-19 H07 invariants: lazy validation, project fallback, row selection", (
   // Lazy validation (chi hien PASTE_VALUE_REQUIRED sau khi bam Save).
   assert.match(live, /stagedValidationForDisplay/);
   assert.match(live, /stagedValidationTriggered/);
-  // Project fallback khi first_work_date rong.
-  assert.match(live, /row\.firstWorkDate === ""\s*\?\s*fallbackCatalog/);
+  // P3-W07C-R6: mot catalog hien tai cho moi dong, khong con nhanh theo first_work_date.
+  assert.match(live, /const fallbackCatalog = currentCatalog;/);
+  assert.equal(/catalogs\[dateKey\]/.test(live), false);
   // Row selection: rowClass highlight + click/keyboard cap nhat selected.
   assert.match(grid, /rowClass=\{\(row\) => row\.clientRowId === selectedClientRowId/);
   assert.match(grid, /onSelectedClientRowChange/);
@@ -349,10 +350,11 @@ test("R1-22 dropdown/date editors khong dung cellsTextEditor (tai su dung commit
   assert.match(selectEditor[0], /<select /);
   // SelectCellEditor co aria-label "Dự án" cho project dropdown.
   assert.match(selectEditor[0], /<select aria-label="Dự án"/);
-  // Date editor render qua DateCellEditor (type="date").
+  // P3-W07C-R6: DateCellEditor dung DdmmDateInput (text DD/MM/YYYY), khong con type="date".
   const dateEditor = grid.match(/function DateCellEditor[\s\S]{0,400}\}/);
   assert.ok(dateEditor);
-  assert.match(dateEditor[0], /type="date"/);
+  assert.match(dateEditor[0], /<DdmmDateInput/);
+  assert.equal(/type="date"/.test(dateEditor[0]), false, "khong dung input type=date");
   // cellsTextEditor la input rdg-text-editor (rieng biet).
   // P3-W06A: cellsTextEditor la wrapper uy quyen; className "rdg-text-editor"
   // nam trong CellsTextEditorComponent. Test wrapper co khop <CellsTextEditor/>.

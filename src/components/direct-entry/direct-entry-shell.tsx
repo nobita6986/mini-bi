@@ -13,6 +13,7 @@ import {
   SYNTHETIC_RECRUITERS,
   type DirectEntryRow,
 } from "@/lib/direct-entry/ui-model";
+import { DdmmDateInput } from "./direct-entry-ddmm-date-input";
 import styles from "./direct-entry-shell.module.css";
 import { DirectEntryLive } from "./direct-entry-live";
 
@@ -40,12 +41,14 @@ function RecruiterEditor({
 }
 
 function DateEditor({ row, onRowChange }: RenderEditCellProps<DirectEntryRow>) {
+  // P3-W07C-R6: text DD/MM/YYYY thay cho input type="date" (locale trinh duyet).
   return (
-    <input
-      aria-label="Ngày bắt đầu làm"
-      type="date"
+    <DdmmDateInput
+      ariaLabel="Ngày bắt đầu làm"
+      autoFocus
       value={row.firstWorkDate}
-      onChange={(event) => onRowChange({ ...row, firstWorkDate: event.currentTarget.value }, true)}
+      onCommit={(iso) => onRowChange({ ...row, firstWorkDate: iso }, true)}
+      onClose={(commitChanges) => onRowChange(row, commitChanges)}
     />
   );
 }
@@ -234,7 +237,8 @@ function DemoDirectEntryShell() {
                   <input aria-label="Mã người lao động" value={selectedRow.employeeCode} onChange={(event) => updateRow(selectedRow.rowId, { employeeCode: event.target.value })} />
                 </Field>
                 <Field label="Ngày bắt đầu làm">
-                  <input aria-label="Ngày bắt đầu làm" type="date" value={selectedRow.firstWorkDate} onChange={(event) => updateRow(selectedRow.rowId, { firstWorkDate: event.target.value })} />
+                  <DdmmDateInput ariaLabel="Ngày bắt đầu làm" value={selectedRow.firstWorkDate}
+                    onCommit={(iso) => updateRow(selectedRow.rowId, { firstWorkDate: iso })} />
                 </Field>
                 <Field label="Người lao động">
                   <input aria-label="Người lao động" value={selectedRow.workerLabel} onChange={(event) => updateRow(selectedRow.rowId, { workerLabel: event.target.value })} />

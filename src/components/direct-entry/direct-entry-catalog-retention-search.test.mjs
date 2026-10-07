@@ -44,9 +44,12 @@ test("W07C-R4: live khong con xoa recruiter_id khi first_work_date thay doi", ()
   assert.equal(live.includes('recruiter_id: ""'), false, "khong con patch xoa recruiter");
 });
 
-test("W07C-R4: danh muc cua ngay moi chua tai xong thi dung fallback, khong tra null", () => {
-  assert.match(live, /catalogs\[dateKey\] \?\? fallbackCatalog/);
-  assert.equal(/catalogs\[dateKey\] \?\? null/.test(live), false);
+test("W07C-R6: catalog khong con resolve theo ngay cua dong", () => {
+  // R4 tung dung fallback tam theo ngay; R6 bo han: chi con mot catalog hien tai.
+  assert.match(live, /const currentCatalog = useMemo/);
+  assert.equal(/catalogs\[dateKey\]/.test(live), false);
+  assert.equal(/catalogs\[row\.firstWorkDate\]/.test(live), false);
+  assert.equal(/catalogs\[cells\.first_work_date/.test(live), false);
 });
 
 test("W07C-R4: tim kiem khong phan biet hoa/thuong theo nhan hien thi", () => {

@@ -30,6 +30,8 @@ import {
 import "react-data-grid/lib/styles.css";
 import { createPortal } from "react-dom";
 
+import { DdmmDateInput } from "./direct-entry-ddmm-date-input";
+
 import {
   DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS,
   DIRECT_ENTRY_GENDER_OPTIONS,
@@ -469,15 +471,19 @@ function SearchableCatalogCellEditor(
   );
 }
 
+/**
+ * P3-W07C-R6: KHONG dung input type="date" (trinh duyet hien theo locale may, vd
+ * MM/DD/YYYY). Dung editor text DD/MM/YYYY dung chung, commit ve ISO khi hop le.
+ */
 function DateCellEditor(props: RenderEditCellProps<SpreadsheetGridRow> & { columnKey: string }) {
   return (
-    <input
-      aria-label={props.columnKey}
+    <DdmmDateInput
+      ariaLabel={props.columnKey}
       autoFocus
-      type="date"
       value={props.row.cells[props.columnKey] ?? ""}
-      onChange={(event) => props.onRowChange(
-        { ...props.row, cells: { ...props.row.cells, [props.columnKey]: event.currentTarget.value } }, true)}
+      onCommit={(iso) => props.onRowChange(
+        { ...props.row, cells: { ...props.row.cells, [props.columnKey]: iso } }, true)}
+      onClose={(commitChanges) => props.onClose(commitChanges, false)}
     />
   );
 }
