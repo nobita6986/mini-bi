@@ -48,5 +48,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     fetchCutoverReporting(params, actor.actor),
     fetchCutoverReportingOptions(actor.actor),
   ]);
-  return <DashboardView report={report} optionsResult={options} />;
+  // P3-W06C: the dashboard audience comes from the DB-authoritative W05A scoped
+  // payload, never from a UI role. A failed read passes null so the view fails
+  // closed to the narrowest scope instead of claiming the company-wide one.
+  return (
+    <DashboardView
+      report={report}
+      optionsResult={options}
+      audience={report.ok ? report.audience : null}
+    />
+  );
 }
