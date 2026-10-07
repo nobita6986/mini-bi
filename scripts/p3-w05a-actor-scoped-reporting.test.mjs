@@ -325,3 +325,49 @@ test("R1: scope effectiveness follows the HCM authorization date (not UTC)", asy
   } finally { await db.close(); }
 });
 
+test("R2: own/team ignore a legacy source filter (DE facts unchanged, metadata still empty)", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db); await seedEntries(db); await seedLegacy(db);
+
+    const teamNoSource = await facts(db, APP_TEAMA, AUTH_TEAMA);
+    const teamWithSource = await facts(db, APP_TEAMA, AUTH_TEAMA, { source: DS1 });
+    assert.deepEqual(
+      teamWithSource.facts.map((f) => f.entry_id).sort(),
+      teamNoSource.facts.map((f) => f.entry_id).sort(),
+      "team DE facts must be unchanged by a legacy source filter",
+    );
+    assert.deepEqual(teamWithSource.sources, [], "team metadata still empty");
+    assert.deepEqual(teamWithSource.latest_runs, []);
+    assert.deepEqual(teamWithSource.presence, []);
+
+    const ownNoSource = await facts(db, APP_OWNA1, AUTH_OWNA1);
+    const ownWithSource = await facts(db, APP_OWNA1, AUTH_OWNA1, { source: DS1 });
+    assert.deepEqual(
+      ownWithSource.facts.map((f) => f.entry_id).sort(),
+      ownNoSource.facts.map((f) => f.entry_id).sort(),
+      "own DE facts must be unchanged by a legacy source filter",
+    );
+    assert.deepEqual(ownWithSource.sources, []);
+    assert.deepEqual(ownWithSource.latest_runs, []);
+    assert.deepEqual(ownWithSource.presence, []);
+  } finally { await db.close(); }
+});
+
+test("R2: all keeps the legacy source filter (legacy-only, no DE facts)", async () => {
+  const db = await buildDb();
+  try {
+    await seedBase(db); await seedEntries(db); await seedLegacy(db);
+    const res = await facts(db, APP_ALL, AUTH_ALL, { source: DS1 });
+    assert.equal(res.audience.audience, "all");
+    const de = res.facts.filter((f) => f.entry_id !== null);
+    const legacy = res.facts.filter((f) => f.entry_id === null);
+    assert.equal(de.length, 0, "all + source excludes DE facts (legacy-only filter)");
+    assert.equal(legacy.length, 1);
+    assert.equal(legacy[0].source_id, DS1);
+    assert.equal(legacy[0].recruited_count, 7);
+    assert.equal(res.sources.length, 1, "all still receives the source registry");
+    assert.deepEqual(res.presence, [DS1]);
+  } finally { await db.close(); }
+});
+
