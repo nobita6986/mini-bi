@@ -13,6 +13,7 @@ import type {
 } from "./p1-reporting";
 import { reportingAudienceFromDb } from "./p3-w05a-audience";
 import type { ReportingAudience } from "./p3-w05a-audience";
+import { validateAllSourceFilter } from "./p3-w05a-source-filter";
 import {
   combineReportingFacts,
   cutoverBlockerError,
@@ -140,10 +141,28 @@ export async function fetchCutoverReporting(
     const scopedFacts = (payload.facts ?? []) as ScopedFactRow[];
     const audience = reportingAudienceFromDb(payload.audience);
     const dbKind = audience?.kind ?? null;
+    const dbSources = (payload.sources ?? []) as ScopedSourceRow[];
+
+    // Validate the legacy-only source filter against the DB-authoritative
+    // allowlist (active/non-test sources). Only a DB-confirmed "all" audience
+    // may filter by source; an unknown / test / inactive source is rejected as
+    // INVALID_FILTER (never a silently-empty report). own/team ignore the
+    // source filter (R2).
+    if (dbKind === "all") {
+      const sourceCheck = validateAllSourceFilter({
+        source: filters.source,
+        allowlist: dbSources.map((s) => s.id),
+      });
+      if (!sourceCheck.ok) {
+        return { ok: false, code: sourceCheck.code, message: sourceCheck.message };
+      }
+    } else {
+      filters.source = undefined;
+    }
 
     // The DB-confirmed audience is the sole authority for metadata scope.
     const rawSources: Omit<ReportingSource, "latest_run_status">[] =
-      dbKind === "all" ? (payload.sources ?? []) : [];
+      dbKind === "all" ? dbSources : [];
     const latestBySource = new Map<string, RunStatus>();
     for (const r of payload.latest_runs ?? []) latestBySource.set(r.source_id, r.status);
     const sourcesWithFacts = new Set<string>(payload.presence ?? []);
@@ -160,9 +179,6 @@ export async function fetchCutoverReporting(
     }
     const maskedDirectEntry = maskDirectEntryFacts(directEntryFactsRaw);
     const legacyFacts = maskLegacyFacts(legacyFactsRaw);
-
-    // 5. Strip the legacy-only source filter for a non-all DB audience.
-    if (dbKind !== "all") filters.source = undefined;
 
     // 6. Sources for computeReporting: DB-provided legacy sources (all only)
     //    + the Direct Entry synthetic source.
