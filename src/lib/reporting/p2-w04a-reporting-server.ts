@@ -11,7 +11,7 @@ import type {
   ReportingSource,
   RunStatus,
 } from "./p1-reporting";
-import { reportingAudienceFromDb } from "./p3-w05a-audience";
+import { resolveReportingAudienceProjection } from "./p3-w05a-audience";
 import type { ReportingAudience } from "./p3-w05a-audience";
 import { validateAllSourceFilter } from "./p3-w05a-source-filter";
 import {
@@ -139,8 +139,17 @@ export async function fetchCutoverReporting(
       presence?: string[];
     };
     const scopedFacts = (payload.facts ?? []) as ScopedFactRow[];
-    const audience = reportingAudienceFromDb(payload.audience);
-    const dbKind = audience?.kind ?? null;
+
+    // Fail closed and keep the scope label inclusive. A successful response
+    // without a usable audience must not become facts under a guessed scope, and
+    // a team audience resolved from several effective grants must never read as
+    // one named team (the DB only labels the first one).
+    const audience = resolveReportingAudienceProjection(payload.audience);
+    if (audience === null) {
+      logSafeError("p3-w05a-audience", "audience payload missing or malformed");
+      return reportingQueryFailed();
+    }
+    const dbKind = audience.kind;
     const dbSources = (payload.sources ?? []) as ScopedSourceRow[];
 
     // Validate the legacy-only source filter against the DB-authoritative

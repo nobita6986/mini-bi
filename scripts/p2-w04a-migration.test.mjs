@@ -329,7 +329,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // Later main migrations are present after W04B in the source inventory; this
   // test skipped applying only W04B to exercise its rollback behavior.
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 47);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {
