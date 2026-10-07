@@ -5,8 +5,10 @@ import test from "node:test";
 import {
   SEARCH_POPUP_MAX_HEIGHT,
   computeSearchPopupPosition,
+  findCatalogOptionByStoredValue,
   filterCatalogSearchOptions,
 } from "../../lib/direct-entry/catalog-search.ts";
+import { buildSpreadsheetValidation } from "../../lib/direct-entry/direct-entry-grid-validation.ts";
 import { moveTypeaheadIndex } from "../../lib/direct-entry/typeahead.ts";
 import {
   createSpreadsheetRowModel,
@@ -19,6 +21,7 @@ function source(relative) {
 }
 const live = source("./direct-entry-live.tsx");
 const grid = source("./direct-entry-spreadsheet-grid.tsx");
+const ddmm = source("./direct-entry-ddmm-date-input.tsx");
 
 const PROJECTS = [{ id: "p1", label: "Compal" }, { id: "p2", label: "CDL" }, { id: "p3", label: "Khác" }];
 const RECRUITERS = [
@@ -75,6 +78,55 @@ test("W07C-R4: tim kiem theo ma/dinh danh va tu khoa bo sung", () => {
 test("W07C-R4: query rong tra ve toan bo option, khong tu loc bot", () => {
   assert.equal(filterCatalogSearchOptions(PROJECTS, "").length, 3);
   assert.equal(filterCatalogSearchOptions(PROJECTS, "   ").length, 3);
+});
+
+test("P3 hotfix: du an hien thi ten rut gon nhung editor luu project_id va nhan dien nhan cu", () => {
+  const project = {
+    id: "project-coasia",
+    label: "COASIA CM VINA",
+    keywords: "Công ty TNHH Coasia CM Vina",
+  };
+  const options = [project];
+  assert.equal(findCatalogOptionByStoredValue(options, project.id), project);
+  assert.equal(findCatalogOptionByStoredValue(options, project.label), project);
+  assert.equal(findCatalogOptionByStoredValue(options, project.keywords), project,
+    "gia tri ten phap ly tu phiên bản truoc van resolve duoc ve cung project");
+
+  // Submit stable catalog identity: shortened presentation labels must not turn
+  // into PASTE_CATALOG_MISSING in the existing full-profile validation pipeline.
+  const model = createSpreadsheetRowModel();
+  const rowId = model.rows[0].clientRowId;
+  const populated = updateSpreadsheetRowCells(model, rowId, {
+    project_id: project.id,
+    first_work_date: "2026-10-02",
+    display_name: "Nguyễn Văn Giả A",
+    recruiter_id: "r1",
+    labor_type: "Thời vụ",
+  });
+  const validation = buildSpreadsheetValidation({
+    rows: populated.rows,
+    referenceDate: "2026-10-20",
+    catalogFor: () => ({
+      projects: [{ id: project.id, label: project.keywords }],
+      recruiters: [RECRUITERS[0]],
+    }),
+  });
+  assert.equal(validation.cellIssues.some((issue) =>
+    issue.columnKey === "project_id" && issue.code === "PASTE_CATALOG_MISSING"), false);
+  assert.match(grid, /\[props\.columnKey\]: option\.id/,
+    "project_id va recruiter_id deu luu catalog ID, khong luu nhan UI");
+  assert.match(live, /keywords: project\.display_name/,
+    "ten phap ly cu van duoc dung lam alias de hien thi/tra cuu du lieu cu");
+});
+
+test("P3 hotfix: click ra ngoai khong de react-data-grid dong editor truoc blur commit", () => {
+  const dateColumn = grid.slice(grid.indexOf('if (column.editor === "date")'));
+  assert.match(dateColumn, /editorOptions:\s*\{\s*commitOnOutsideClick:\s*false\s*\}/,
+    "neu khong, react-data-grid capture mousedown va commit stale row truoc khi draft blur chay");
+  assert.match(ddmm, /onBlur=\{commit\}/,
+    "blur phai dua DD/MM/YYYY draft qua cung commit handler nhu Enter");
+  assert.match(ddmm, /onCommit\(decision\.iso\)/,
+    "ngay hop le phai duoc gui len row truoc khi editor dong");
 });
 
 test("W07C-R4: ban phim — mui ten di chuyen tren danh sach DA LOC", () => {

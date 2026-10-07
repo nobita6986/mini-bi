@@ -51,6 +51,7 @@ import {
 import {
   SEARCH_POPUP_MAX_HEIGHT,
   computeSearchPopupPosition,
+  findCatalogOptionByStoredValue,
   filterCatalogSearchOptions,
   type CatalogSearchOption,
   type SearchPopupLayout,
@@ -111,7 +112,7 @@ export type SpreadsheetGridRow = {
 };
 
 export type SpreadsheetCatalogOptions = {
-  projects: readonly { id: string; label: string }[];
+  projects: readonly { id: string; label: string; keywords?: string }[];
   recruiters: readonly {
     id: string;
     label: string;
@@ -178,8 +179,6 @@ export function spreadsheetSelectOptions(
   columnKey: string,
   catalogs: SpreadsheetCatalogOptions | undefined,
   providerType: "hrp" | "vendor" | "" = "",
-  rowDate: string | null = null,
-  projectCatalog: SpreadsheetCatalogOptions | undefined = catalogs,
 ): readonly string[] | null {
   // The row model uses an empty string for an unselected cell. Native
   // <select> elements must therefore also have a matching empty option.
@@ -190,10 +189,8 @@ export function spreadsheetSelectOptions(
   if (columnKey === "labor_type") return ["", ...LABOR_TYPE_UI_VALUES];
   if (columnKey === "provider_type") return ["", ...PROVIDER_OPTIONS];
   if (columnKey === "project_id") {
-    // Project dropdown phai resolve theo first_work_date cua chinh row.
-    const source = projectCatalog ?? catalogs;
-    if (rowDate === null || rowDate === "") return ["", ...(source?.projects ?? []).map((option) => option.label)];
-    return ["", ...(source?.projects ?? []).map((option) => option.label)];
+    // Stable project IDs are stored; the searchable editor renders separate labels.
+    return ["", ...(catalogs?.projects ?? []).map((option) => option.id)];
   }
   if (columnKey === "recruiter_id") {
     return recruitersForProvider(catalogs?.recruiters ?? [], providerType).map((option) => option.id);
@@ -212,9 +209,8 @@ function SelectCellEditor(
   },
 ) {
   const rowCatalogs = props.row.catalogOptions ?? props.catalogs;
-  const rowDate = props.row.cells.first_work_date ?? null;
   const options = spreadsheetSelectOptions(
-    props.columnKey, rowCatalogs, props.row.providerType, rowDate, rowCatalogs,
+    props.columnKey, rowCatalogs, props.row.providerType,
   ) ?? [];
   const recruiter = rowCatalogs?.recruiters.find((option) =>
     option.id === props.row.cells.recruiter_id);
@@ -316,7 +312,7 @@ function SearchableCatalogCellEditor(
   const options = useMemo<readonly CatalogSearchOption[]>(() => {
     if (props.columnKey === "project_id") {
       return (rowCatalogs?.projects ?? []).map((project) => ({
-        id: project.id, label: project.label,
+        id: project.id, label: project.label, keywords: project.keywords,
       }));
     }
     return recruitersForProvider(rowCatalogs?.recruiters ?? [], props.row.providerType)
@@ -327,11 +323,8 @@ function SearchableCatalogCellEditor(
       }));
   }, [props.columnKey, props.row.providerType, rowCatalogs]);
 
-  /** Dự án luu nhan hien thi; Nguoi tuyen luu stable id — giu nguyen hanh vi cu. */
-  const commitValueFor = (option: CatalogSearchOption) =>
-    props.columnKey === "project_id" ? option.label : option.id;
-  const selected = options.find((option) => commitValueFor(option) === storedValue) ??
-    options.find((option) => option.label === storedValue);
+  /** Ca hai cot deu luu stable catalog ID; label/keywords chi de hien thi/nhan dien row cu. */
+  const selected = findCatalogOptionByStoredValue(options, storedValue);
 
   const [query, setQuery] = useState(selected?.label ?? "");
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -393,7 +386,7 @@ function SearchableCatalogCellEditor(
   const commit = (option: CatalogSearchOption) => {
     props.onRowChange({
       ...props.row,
-      cells: { ...props.row.cells, [props.columnKey]: commitValueFor(option) },
+      cells: { ...props.row.cells, [props.columnKey]: option.id },
     }, true);
   };
 
@@ -749,6 +742,10 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       if (column.editor === "date") {
         return {
           key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
+          // The grid's default outside-mousedown handler closes before input blur,
+          // committing its stale row and unmounting the DD/MM draft. Let the editor
+          // commit its draft in onBlur instead.
+          editorOptions: { commitOnOutsideClick: false },
           editable: (row: SpreadsheetGridRow) => isEditable(row, column.key),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (

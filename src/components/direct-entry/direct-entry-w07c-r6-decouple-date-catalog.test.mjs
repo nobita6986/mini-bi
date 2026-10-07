@@ -126,12 +126,12 @@ test("R6-B8/B9: catalog hien tai resolve UUID recruiter thanh label, khong bao t
   assert.equal(validation.rows[0].projectLabel, PROJECT.label);
 });
 
-test("R6-B: provider scoping va stored value shapes khong doi", () => {
+test("R6-B: provider scoping va stored catalog IDs duoc giu nguyen", () => {
   assert.deepEqual(recruitersForProvider([RECRUITER], "hrp").map((o) => o.id), [RECRUITER.id]);
   assert.deepEqual(recruitersForProvider([RECRUITER], "vendor").map((o) => o.id), []);
   assert.deepEqual(recruitersForProvider([RECRUITER], "").map((o) => o.id), []);
-  // Recruiter luu stable UUID; project luu theo contract hien tai (nhan hien thi).
-  assert.match(grid, /props\.columnKey === "project_id" \? option\.label : option\.id/);
+  // Both catalog fields use stable IDs; shortened names remain display-only.
+  assert.match(grid, /\[props\.columnKey\]: option\.id/);
 });
 
 test("R6-C: search popup R4-R2 van dung portal ra document.body", () => {

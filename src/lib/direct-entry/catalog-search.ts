@@ -31,6 +31,29 @@ export function filterCatalogSearchOptions<
       .includes(normalized));
 }
 
+/**
+ * Resolve a stored catalog value without confusing a presentation label with
+ * its stable key. Exact label/keyword matches are retained only to recognize
+ * rows saved by older UI versions; new edits always commit `option.id`.
+ * Ambiguous legacy labels fail closed instead of selecting an arbitrary row.
+ */
+export function findCatalogOptionByStoredValue<
+  T extends { id: string; label: string; keywords?: string },
+>(options: readonly T[], value: string): T | undefined {
+  const normalize = (text: string) => text.trim().normalize("NFC").toLocaleLowerCase("vi");
+  const needle = normalize(value);
+  if (needle === "") return undefined;
+
+  const ids = options.filter((option) => normalize(option.id) === needle);
+  if (ids.length === 1) return ids[0];
+  if (ids.length > 1) return undefined;
+
+  const legacyValues = options.filter((option) =>
+    normalize(option.label) === needle ||
+    (option.keywords !== undefined && normalize(option.keywords) === needle));
+  return legacyValues.length === 1 ? legacyValues[0] : undefined;
+}
+
 /* ------------------------------------------------------------------ popup */
 
 export type SearchPopupAnchor = {

@@ -106,6 +106,7 @@ import {
   todayInHoChiMinhAsDDMM,
 } from "@/lib/direct-entry/direct-entry-date-format";
 import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
+import { findCatalogOptionByStoredValue } from "@/lib/direct-entry/catalog-search";
 import {
   buildServerGeneratedFullProfileRequestBody,
   fullProfileErrorMessage,
@@ -162,7 +163,7 @@ function hcmDate(): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
+function spreadsheetProjectOptions(catalog: DraftCatalog | undefined) {
   // P3-UI-COMPANY-DISPLAY-NAMES: nhan dropdown Du an dung ten hien thi gon; id gui
   // len server van la project_id day du, ten phap ly khong bi thay doi.
   const projectNames = buildCompanyDisplayNames(
@@ -170,11 +171,17 @@ function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
       key: project.project_id, fullName: project.display_name,
     })));
 
+  return (catalog?.projects ?? []).map((project) => ({
+    id: project.project_id,
+    label: projectNames.get(project.project_id) ?? project.display_name,
+    // Recognize the former full-name value for already staged/persisted rows.
+    keywords: project.display_name,
+  }));
+}
+
+function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
   return {
-    projects: (catalog?.projects ?? []).map((project) => ({
-      id: project.project_id,
-      label: projectNames.get(project.project_id) ?? project.display_name,
-    })),
+    projects: spreadsheetProjectOptions(catalog),
     recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({
       id: recruiter.recruiter_id,
       // P3-W07A: server-side `label` carries the locked HRP/Vendor display
@@ -249,7 +256,7 @@ function optionsFor(catalog: DraftCatalog | undefined): PickerOption[] {
 }
 
 function displayProject(row: LiveDraftRow, catalog: DraftCatalog | undefined): string {
-  return catalog?.projects.find(({ project_id }) => project_id === row.projectId)?.display_name ??
+  return findCatalogOptionByStoredValue(spreadsheetProjectOptions(catalog), row.projectId)?.label ??
     row.projectDisplayName;
 }
 
@@ -1143,6 +1150,9 @@ export function DirectEntryLive() {
     // P3-W07C-R6: mot catalog hien tai cho MOI dong, khong con fallback tam roi
     // thay bang catalog theo ngay o render sau.
     const fallbackCatalog = currentCatalog;
+    const projectOptions = spreadsheetProjectOptions(fallbackCatalog ?? undefined);
+    const projectLabelFor = (value: string, fallback = value) =>
+      findCatalogOptionByStoredValue(projectOptions, value)?.label ?? fallback;
     const persisted: SpreadsheetGridRow[] = rows.map((row) => {
       const editable = row.state !== "saving" && row.state !== "conflict" &&
         isRowEditable(row, submissions);
@@ -1192,7 +1202,7 @@ export function DirectEntryLive() {
           : [],
         employeeCode: row.employeeCode,
         displayName: row.workerName,
-        projectLabel: displayProject(row, fallbackCatalog ?? undefined),
+        projectLabel: projectLabelFor(row.projectId, row.projectDisplayName),
         recruiterLabel: displayRecruiter(row, fallbackCatalog ?? undefined),
         saveStatus: stateText(row.state),
       };
@@ -1234,7 +1244,7 @@ export function DirectEntryLive() {
       editableFields: SPREADSHEET_WRITABLE_FIELD_KEYS,
       employeeCode: row.cells.employee_code ?? "",
       displayName: row.cells.display_name ?? "",
-      projectLabel: row.cells.project_id ?? "",
+      projectLabel: projectLabelFor(row.cells.project_id ?? ""),
       recruiterLabel: recruiter?.label ?? row.cells.recruiter_id ?? "",
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
     }); });
