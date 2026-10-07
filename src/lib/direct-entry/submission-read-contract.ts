@@ -22,7 +22,7 @@ export const LIST_QUERY_KEYS = ["page_size", "cursor", "state"] as const;
 export const LIST_PAGE_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
 export const LIST_ITEM_KEYS = [
   "submission_id", "state", "version", "entry_count",
-  "created_at", "updated_at", "submitted_at", "allowed_transitions",
+  "created_at", "updated_at", "submitted_at", "allowed_transitions", "project_scoped",
 ] as const;
 export const DETAIL_KEYS = [...LIST_ITEM_KEYS, "entry_ids"] as const;
 
@@ -117,6 +117,8 @@ export type SubmissionReadItem = {
   updated_at: string;
   submitted_at: string | null;
   allowed_transitions: SubmissionState[];
+  /** True when the server exposed only entries in the actor's current project assignments. */
+  project_scoped: boolean;
 };
 
 export type SubmissionReadListPage = {
@@ -142,6 +144,7 @@ function projectItem(value: unknown, keys: readonly string[]): SubmissionReadIte
     return null;
   }
   if (!matchesTransitionMatrix(value.state, value.allowed_transitions)) return null;
+  if (typeof value.project_scoped !== "boolean") return null;
   return {
     submission_id: value.submission_id,
     state: value.state,
@@ -151,6 +154,7 @@ function projectItem(value: unknown, keys: readonly string[]): SubmissionReadIte
     updated_at: value.updated_at,
     submitted_at: value.submitted_at,
     allowed_transitions: [...value.allowed_transitions],
+    project_scoped: value.project_scoped,
   };
 }
 

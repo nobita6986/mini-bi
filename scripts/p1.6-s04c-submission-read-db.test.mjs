@@ -18,11 +18,10 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 49 migrations and read RPC ACLs", async () => {
+test("from-scratch apply 50 migrations and read RPC ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-  // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
-  // as #49 after W07C-R7.
-  assert.equal(migrations.migrationNames.length, 49);
+  // W05A #48, W07C-R7 #49, and W07E project-manager proposals #50.
+  assert.equal(migrations.migrationNames.length, 50);
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.ok(migrations.migrationNames.includes("20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql"));
   assert.deepEqual(migrations.migrationNames, [...migrations.migrationNames].sort(),
@@ -89,7 +88,7 @@ test("detail returns deterministic entry_ids and hides existence from other acto
   assert.deepEqual([...detail.data.entry_ids].sort(), detail.data.entry_ids);
   assert.equal(new Set(detail.data.entry_ids).size, detail.data.entry_ids.length);
   assert.deepEqual(Object.keys(detail.data).sort(), [
-    "allowed_transitions", "created_at", "entry_count", "entry_ids", "state",
+    "allowed_transitions", "created_at", "entry_count", "entry_ids", "project_scoped", "state",
     "submission_id", "submitted_at", "updated_at", "version",
   ]);
   const other = await readOwnSubmission(db, ACTORS.otherOwner, submissions.submitted);
@@ -166,7 +165,7 @@ test("invalid cursor, page size and state fail closed, and projection leaks noth
   }
   for (const item of listed.data.items) {
     assert.deepEqual(Object.keys(item).sort(), [
-      "allowed_transitions", "created_at", "entry_count", "state",
+      "allowed_transitions", "created_at", "entry_count", "project_scoped", "state",
       "submission_id", "submitted_at", "updated_at", "version",
     ]);
   }

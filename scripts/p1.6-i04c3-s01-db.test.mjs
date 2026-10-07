@@ -85,7 +85,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   // P3-W07C-R3 server default for `national_id_issued_place` is #46 and P2-W04C
-  // owns #47; W05A is #48 and W07C-R7 appends as #49.
+  // owns #47; W05A is #48, W07C-R7 is #49, and W07E appends as #50.
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 49, "W07C-R7 appends as #49 after W05A #48");
+  assert.equal(totalCount, 50, "W07E appends as #50 after W07C-R7 #49");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -575,14 +575,14 @@ test("migration #39 keeps the source-derived function inventory and service boun
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname like 'direct_entry_%'
     `);
-    // P3-W07C-R7 adds one internal scope resolver; no new callable surface is
-    // exposed to service_role, anon, authenticated, or PUBLIC.
+    // P3-W07C-R7 adds one internal scope resolver; P3-W07E adds four internal
+    // project-proposal helpers. Neither migration exposes a new callable surface.
     // P3-W05A (#47) adds six service-role-only scoped reporting helpers, all
     // GRANT EXECUTE to service_role and none reachable by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 87,
+      total: 91,
       service_role: 45,
-      internal: 42,
+      internal: 46,
       exposed_internal: 0,
     });
   } finally {

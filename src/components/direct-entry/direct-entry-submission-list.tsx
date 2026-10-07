@@ -112,7 +112,9 @@ export function DirectEntrySubmissionList({
               </dl>
               {terminal && (
                 <p className={styles.submissionTerminalNote}>
-                  Đã gửi chính thức là trạng thái cuối. Thay đổi sau đó phải đi qua yêu cầu thay đổi.
+                  {submission.project_scoped
+                    ? "Đợt này thuộc dự án được giao quản lý; chỉ gửi đề xuất thay đổi, dữ liệu gốc cần reviewer có thẩm quyền duyệt."
+                    : "Đã gửi chính thức là trạng thái cuối. Thay đổi sau đó phải đi qua yêu cầu thay đổi."}
                 </p>
               )}
               <div className={styles.submissionActions}>
@@ -140,13 +142,15 @@ export function DirectEntrySubmissionList({
                     >
                       Yêu cầu thay đổi
                     </button>
-                    <button
-                      type="button"
-                      className={styles.secondaryButton}
-                      onClick={() => onManageDocuments(submission)}
-                    >
-                      Quản lý tài liệu
-                    </button>
+                    {!submission.project_scoped && (
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => onManageDocuments(submission)}
+                      >
+                        Quản lý tài liệu
+                      </button>
+                    )}
                   </>
                 )}
               </div>

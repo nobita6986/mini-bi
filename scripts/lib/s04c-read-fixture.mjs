@@ -103,7 +103,10 @@ export function transitionInput(actor, submissionId, expectedVersion, targetStat
   };
 }
 
-export async function seedChangeRequestFixture(db, { manageTransaction = true } = {}) {
+export async function seedChangeRequestFixture(db, {
+  manageTransaction = true,
+  workerDetailsForFirstEntry = null,
+} = {}) {
   if (manageTransaction) await db.query("begin");
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
     [TEAM_A, "s02b_team_a", "S02B team A"]);
@@ -147,7 +150,9 @@ export async function seedChangeRequestFixture(db, { manageTransaction = true } 
         project_id: PROJECT_ID,
         first_work_date: "2026-10-15",
         employee_code: row.code,
-        worker_details: worker("S02B worker" + row.code.slice(-1)),
+        worker_details: row.code === "hrp-2026-300001" && workerDetailsForFirstEntry !== null
+          ? workerDetailsForFirstEntry
+          : worker("S02B worker" + row.code.slice(-1)),
         recruiter_id: row.recruiterId,
         labor_type: "TEMPORARY",
       }))),

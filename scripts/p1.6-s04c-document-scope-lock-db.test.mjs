@@ -91,7 +91,7 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7.
-  assert.equal(migrationNames.length, 49);
+  assert.equal(migrationNames.length, 50);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -146,6 +146,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // (resolve_audience, authorized_entries, scoped_facts, de_options_scoped,
   // scoped_options, seed_team_scope_grants) with no public RPC exposure.
   // P3-W07C-R7 adds one internal draft-scope resolver, not exposed to any role.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [87, 45, 42]);
+  // P3-W07E adds four private scope/proposal helpers, also not executable by roles.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [91, 45, 46]);
   await db.close();
 });

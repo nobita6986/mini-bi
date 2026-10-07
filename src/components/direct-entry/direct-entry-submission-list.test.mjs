@@ -61,6 +61,12 @@ test("live component reuses server projections and lifecycle helpers instead of 
   assert.doesNotMatch(liveComponent, /optimistic/i);
 });
 
+test("project-scoped submissions allow proposals but keep document management out of scope", () => {
+  assert.match(listComponent, /submission\.project_scoped\s*\?/);
+  assert.match(listComponent, /Yêu cầu thay đổi/);
+  assert.match(listComponent, /!submission\.project_scoped\s*&&\s*\(\s*<button[\s\S]*?onManageDocuments\(submission\)/);
+});
+
 test("no test or mock route exists inside the app router", () => {
   function walk(directory) {
     const entries = readdirSync(directory, { withFileTypes: true });

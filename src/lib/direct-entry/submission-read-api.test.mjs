@@ -22,6 +22,7 @@ const listItem = {
   updated_at: createdAt,
   submitted_at: null,
   allowed_transitions: ["REVIEW"],
+  project_scoped: false,
 };
 const detail = { ...listItem, entry_ids: [entryA] };
 

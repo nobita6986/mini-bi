@@ -28,6 +28,7 @@ function item(overrides = {}) {
     updated_at: updatedAt,
     submitted_at: null,
     allowed_transitions: ["REVIEW"],
+    project_scoped: false,
     ...overrides,
   };
 }
@@ -125,6 +126,7 @@ test("submitted timestamp invariant and strict field types", () => {
     item({ updated_at: "not-a-date" }),
     item({ submission_id: "not-a-uuid" }),
     item({ state: "draft" }),
+    item({ project_scoped: "true" }),
   ];
   for (const [index, broken] of invalid.entries()) {
     assert.equal(projectSubmissionListPage(page({ items: [broken] }),

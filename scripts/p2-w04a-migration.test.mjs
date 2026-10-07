@@ -27,8 +27,8 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
   const { db, migrationNames } = await buildDb();
   try {
     // W04B (#44) stays immediately after W07B; W07C-R2 (#45), W07C-R3 (#46),
-    // P2-W04C (#47), W05A (#48), then W07C-R7 (#49) remain append-only.
-    assert.equal(migrationNames.length, 49);
+    // P2-W04C (#47), W05A (#48), W07C-R7 (#49), then W07E (#50).
+    assert.equal(migrationNames.length, 50);
     assert.equal(
       migrationNames[47],
       "20261008080000_p3_w05a_actor_scoped_reporting.sql",
@@ -333,7 +333,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // Later main migrations (W05A and W07C-R7) are present after W04B in the
   // source inventory; this test skipped applying only W04B to exercise rollback.
-  assert.equal(names.length, 49);
+  assert.equal(names.length, 50);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

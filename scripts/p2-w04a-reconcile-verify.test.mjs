@@ -307,7 +307,7 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 49);
+  assert.equal(names.length, 50);
   assert.equal(names[names.length - 1],
     "20261008090000_p3_w07c_r7_membership_independent_of_work_date.sql");
   const w07bIdx = names.indexOf(
