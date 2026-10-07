@@ -1,10 +1,11 @@
 # P3-W07C-R3 — Direct Entry column order + server default for CCCD issue place (HANDOFF)
 
-Status: `P3-W07C-R3_ISSUE_PLACE_DEFAULT_COLUMN_ORDER_LOCAL_PASS_AWAITING_INTEGRATION`
+Status: `P3-W07C-R3_PRODUCTION_DEPLOYED_AWAITING_OWNER_UAT`
 Branch: `feature/p3-w07c-r3-issue-place-default-column-order` (worktree `C:/CodeApp/BI-p3-w07c-r3-issue-place-default-column-order`)
-Base SHA: `origin/main@c86cd928` (W07C-R2 fast-forward, no merge conflicts).
-HEAD: vẫn `c86cd92`; worktree **chỉ chứa thay đổi R3, chưa commit** (23 file tracked sửa + 3 file mới + `src/app/favicon.ico`).
-Migration slot: `supabase/migrations/20261008060000_p3_w07c_r3_issue_place_server_default.sql` (#46 trên branch; #47 sau khi W05A #45 integrate).
+Base SHA: `origin/main@c86cd928`; R3 code commit: `e76dc3a`.
+Integration: fast-forward `main` to `e76dc3a`; feature branch and `origin/main` both point there; worktree clean.
+Production ledger: 46 applied / 0 pending / 0 mismatch after applying W07C-R2 then R3; W05A remains separate.
+Migration: `20261008050000_p3_w07c_r2_raw_text_dates.sql` then `20261008060000_p3_w07c_r3_issue_place_server_default.sql`.
 
 ## Thay đổi chính
 
@@ -25,6 +26,12 @@ Lịch sử hồ sơ và update flow KHÔNG bị đụng.
 **5. Lazy default client** — chỉ còn `first_work_date` (Asia/Ho_Chi_Minh today). `national_id_issued_place` không còn tự điền ở client; server migration #46 là nguồn.
 
 **6. Favicon** — thay nội dung `src/app/favicon.ico` (Next.js App Router file convention) bằng file ICO mới 15086 bytes (SHA256 `042EBC6A9FCFFCD0…`). Next.js tự generate `<link rel="icon" href="/favicon.ico" sizes="any" />` trong `<head>` — không cần code. Build phục vụ asset tại `.next/static/media/favicon.<hash>.ico` và `.next/server/app/favicon.ico`; routes manifest đăng ký `/favicon.ico`. Không thêm dependency; không tham chiếu `Downloads` trong runtime/build.
+
+## Production verification
+
+- `bi.hrpartner.vn/favicon.ico` → 200, `image/vnd.microsoft.icon`, 15,086 bytes; SHA-256 khớp file nguồn.
+- `/login` → 200; `/dashboard` → 200; `/direct-entry` → 307 login redirect.
+- Owner UI UAT remains pending; W05A stays separate (not included; its migration was not applied).
 
 ## Test mới / sửa (rút gọn)
 
@@ -50,6 +57,4 @@ Lịch sử hồ sơ và update flow KHÔNG bị đụng.
 
 ## Blocker / Deferred
 
-- Production DB apply (operator-controlled, deferred).
-- Main push + Vercel deployment (integration owner).
-- Branch chưa commit — changes để working tree chờ review.
+- Deferred: Owner Direct Entry UAT; W05A scoped-reporting integration (not part of this release).
