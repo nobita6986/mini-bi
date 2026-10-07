@@ -4,6 +4,10 @@
 -- Task:    P3-W05A_ACTOR_SCOPED_REPORTING_AND_TEAM_SCOPE
 -- Status:  P3-W05A_ACTOR_SCOPED_REPORTING_TEAM_SCOPE_LOCAL_PASS_AWAITING_UX
 -- Base:    origin/main@6a81f5637d61bdd66d09c835ba613482609b8ea8
+-- Rebased: P3-W05A-I01-R2 onto origin/main@054d54360c6b94f4a8173bb8d0248019fe8d3fc9
+--          (P2-W04C now owns the 20261008070000 slot, so this file appends as
+--          migration #48 with an unchanged body; only the filename and the
+--          migration-number comments changed).
 -- Source:  C:\CodeApp\P2-P3-R00_REUSE_CAPABILITY_SURVEY.md (Release A / 2A)
 --
 -- Turns the authenticated-but-unscoped Dashboard into actor-scoped reporting
@@ -30,7 +34,8 @@
 --   * service_role EXECUTE only; public/anon/authenticated revoked.
 --   * No raw Direct Entry table is exposed to the browser roles.
 --
--- This is migration #45 (append-only after #44 W04B).
+-- This is migration #48 (append-only after P2-W04C #47; body unchanged from the
+-- #45 review).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -832,7 +837,7 @@ begin
     end if;
   end loop;
 
-  raise notice 'P3-W05A migration #45 self-check OK (6 scoped helpers + seed)';
+  raise notice 'P3-W05A migration #48 self-check OK (6 scoped helpers + seed)';
 end
 $$;
 

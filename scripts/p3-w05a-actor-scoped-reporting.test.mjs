@@ -101,7 +101,9 @@ async function seedLegacy(db) {
   await db.query(
     "insert into public.daily_recruitment_breakdown " +
     "(source_id, business_date, project_key, project_display, recruiter_key, recruiter_display, provider_type_key, provider_type_display, employment_type_key, employment_type_display, recruited_count, sync_run_id, snapshot_at) " +
-    "values ($1,'2026-10-01','legacy_proj','Legacy Project','legacy_rec','Legacy Recruiter','hrp','HRP','thời vụ','Thời vụ',7,$2,'2026-10-05T00:00:00Z')",
+    // P2-W04C rebaselined the reporting cutoff to 2026-09-30, so the legacy row
+    // must sit before that date to stay on the legacy-aggregate side.
+    "values ($1,'2026-09-25','legacy_proj','Legacy Project','legacy_rec','Legacy Recruiter','hrp','HRP','thời vụ','Thời vụ',7,$2,'2026-10-05T00:00:00Z')",
     [DS1, RUN1],
   );
 }
@@ -212,13 +214,13 @@ test("E3/E14: options and rankings use the same authorized row set as totals", a
   } finally { await db.close(); }
 });
 
-test("E15: cutoff 2026-10-06 and pre-cutoff Direct Entry is excluded (blocker)", async () => {
+test("E15: cutoff 2026-09-30 and pre-cutoff Direct Entry is excluded (blocker)", async () => {
   const db = await buildDb();
   try {
     await seedBase(db); await seedEntries(db); await seedLegacy(db);
     const cutoff = await db.query("select public.direct_entry_reporting_cutoff()::text as c");
-    assert.equal(cutoff.rows[0].c, "2026-10-06");
-    await insertEntry(db, { entry: uuid(105), sub: uuid(205), cand: uuid(305), createdBy: APP_OWNA1, project: "proj_a", date: "2026-10-05", code: "hrp-2026-000005", recruiter: REC_A1, team: TEAM_A, provider: "hrp", labor: "TEMPORARY" });
+    assert.equal(cutoff.rows[0].c, "2026-09-30");
+    await insertEntry(db, { entry: uuid(105), sub: uuid(205), cand: uuid(305), createdBy: APP_OWNA1, project: "proj_a", date: "2026-09-29", code: "hrp-2026-000005", recruiter: REC_A1, team: TEAM_A, provider: "hrp", labor: "TEMPORARY" });
     const blocker = await db.query("select public.direct_entry_reporting_pre_cutover_blocker_count() as c");
     assert.equal(Number(blocker.rows[0].c), 1, "pre-cutoff eligible row must trip the blocker");
     const res = await facts(db, APP_ALL, AUTH_ALL);

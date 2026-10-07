@@ -46,10 +46,10 @@ async function database() {
 async function databaseUpTo(untilName) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
-  // P3-W07C-R3 server default for `national_id_issued_place` is #46. The W05A
-  // actor-scoped reporting migration integrated afterwards takes the appended
-  // #47 slot (`20261008070000_p3_w05a_actor_scoped_reporting.sql`), so this
-  // helper only tracks the local count instead of a fixed slot per file.
+  // P3-W07C-R3 server default for `national_id_issued_place` is #46 and P2-W04C
+  // owns #47; the W05A actor-scoped reporting migration appended afterwards is
+  // #48 (`20261008080000_p3_w05a_actor_scoped_reporting.sql`), so this helper
+  // only tracks the local count instead of a fixed slot per file.
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
@@ -60,7 +60,7 @@ async function databaseUpTo(untilName) {
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 47, "W05A appends as #47 after the W07C-R2/R3 migrations already on main");
+  assert.equal(totalCount, 48, "W05A appends as #48 after P2-W04C #47");
   for (const name of apply) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }

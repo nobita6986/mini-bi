@@ -310,7 +310,7 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
     .sort();
   assert.equal(names.length, 48);
   assert.equal(names[names.length - 1],
-    "20261008070000_p3_w05a_actor_scoped_reporting.sql");
+    "20261008080000_p3_w05a_actor_scoped_reporting.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );

@@ -51,7 +51,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 47, "the rebaselined inventory must carry 47 migrations");
+  assert.equal(names.length, 48, "the rebaselined inventory must carry 48 migrations");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }
@@ -130,7 +130,9 @@ async function seedFixture(db) {
   await db.query(
     "insert into public.daily_recruitment_breakdown " +
     "(source_id, business_date, project_key, project_display, recruiter_key, recruiter_display, provider_type_key, provider_type_display, employment_type_key, employment_type_display, recruited_count, sync_run_id, snapshot_at) " +
-    "values ($1,'2026-10-01','legacy_proj','Legacy Project','legacy_rec','Legacy Recruiter','hrp','HRP','thời vụ','Thời vụ',7,$2,'2026-10-05T00:00:00Z')",
+    // P2-W04C rebaselined the reporting cutoff to 2026-09-30, so the legacy row
+    // must sit before that date for the "no legacy leak" assertions to bite.
+    "values ($1,'2026-09-25','legacy_proj','Legacy Project','legacy_rec','Legacy Recruiter','hrp','HRP','thời vụ','Thời vụ',7,$2,'2026-10-05T00:00:00Z')",
     [DS1, RUN1],
   );
 }

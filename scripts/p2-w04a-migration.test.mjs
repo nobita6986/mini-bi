@@ -32,7 +32,7 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
     assert.equal(migrationNames.length, 48);
     assert.equal(
       migrationNames[migrationNames.length - 1],
-      "20261008070000_p3_w05a_actor_scoped_reporting.sql",
+      "20261008080000_p3_w05a_actor_scoped_reporting.sql",
       "W05A must append after every migration already on main",
     );
     // Historical ordering remains byte-for-byte append-only.

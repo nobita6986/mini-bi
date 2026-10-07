@@ -1,13 +1,17 @@
 # P3-W05A — Actor-scoped reporting + team scope (Handoff)
 
-**Status:** `P3-W05A_ACTOR_SCOPED_REPORTING_TEAM_SCOPE_LOCAL_PASS_AWAITING_UX`
-**Base:** `origin/main@6a81f5637d61bdd66d09c835ba613482609b8ea8`
-**Branch:** `feature/p3-w05a-actor-scoped-reporting-team-scope`
+**Status:** `P3-W05A-I01-R2_REBASELINE_054D543_LOCAL_PASS_AWAITING_T0_REVIEW`
+**Base:** `origin/main@054d54360c6b94f4a8173bb8d0248019fe8d3fc9` (rebaselined by
+P3-W05A-I01-R2; the original #45 review base was
+`origin/main@6a81f5637d61bdd66d09c835ba613482609b8ea8`, then `ebb8217` for I01-R1)
+**Branch:** `feature/p3-w05a-i01-r2-rebaseline-054d543`
 
 ## What changed
 
-- Migration #47 `20261008070000_p3_w05a_actor_scoped_reporting.sql` (rebased onto
-  `origin/main@ebb8217` by P3-W05A-I01-R1; migrations #1-#46 stay byte-identical):
+- Migration #48 `20261008080000_p3_w05a_actor_scoped_reporting.sql` (rebased onto
+  `origin/main@054d543` by P3-W05A-I01-R2; P2-W04C owns #47 at
+  `20261008070000_p2_w04c_cutoff_rebaseline_2026_09_30.sql`, migrations #1-#47
+  stay byte-identical and the W05A body is unchanged from the #45 review):
   - `direct_entry_reporting_resolve_audience(uuid,uuid)` — DB-side actor verify + audience `all > team > own` (sanitized jsonb).
   - `direct_entry_reporting_authorized_entries(uuid,uuid)` — shared authorized-row predicate.
   - `direct_entry_reporting_scoped_facts(uuid,uuid,jsonb)` / `direct_entry_reporting_scoped_options(uuid,uuid)` — filter at the SQL boundary.
