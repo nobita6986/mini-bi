@@ -1,53 +1,37 @@
-# P2.5-W06A — Project Operations UI (server foundation)
+# P2.5-W06A — Project Operations UI (vertical slice)
 
-**Status:** `P2.5-W06A_PROJECT_ADMIN_SERVER_FOUNDATION_LOCAL_PASS_UI_PENDING`
+**Status:** `P2.5-W06A_LOCAL_PASS` (API + UI complete). Base `origin/main@dcf4a6ac56deb6e236ced3184639d77c75eef8d0` (51 migrations, W02-R2 `6b5a833`). Branch `feature/p2-5-w06a-project-operations-ui`. No Production apply, no deploy, no push to main.
 
-Base `origin/main@dcf4a6ac56deb6e236ced3184639d77c75eef8d0` (51 migrations, W02-R2 `6b5a833` integrated).
-Branch `feature/p2-5-w06a-project-operations-ui`. No Production apply, deploy or push to main.
-
-## Delivered (verified)
+## Delivered
 
 | File | Role |
 | --- | --- |
-| `src/lib/direct-entry/project-admin-contract.ts` | Strict fail-closed projections for all 7 admin RPC responses |
-| `src/lib/direct-entry/project-admin-repository.ts` | RPC boundary for the 7 canonical RPCs + SQLSTATE→kind mapping |
-| `src/lib/direct-entry/project-admin-repository.test.mjs` | 9 tests (lane registered in `test:server`) |
+| `src/lib/direct-entry/project-admin-contract.ts` | Strict fail-closed projections for the 7 admin RPC responses |
+| `src/lib/direct-entry/project-admin-repository.ts` | RPC boundary (7 canonical RPCs) + SQLSTATE→kind mapping |
+| `src/lib/direct-entry/project-admin-api.ts` | API boundary: gate → CSRF → bounded JSON → authority scan → strict projection → session actor → repository → sanitized response |
+| `src/app/api/direct-entry/projects/**` | 5 routes: list/create, detail/patch, set-active, managers assign, managers/[id] unassign |
+| `src/lib/direct-entry/project-operations-model.ts` | Pure client model: validators, request builders, sanitized taxonomy, OCC reload-required |
+| `src/components/direct-entry/project-operations.tsx` | UI: list, create/rename/activate/deactivate, managers + history, multi-assign, revoke |
+| `src/app/direct-entry/projects/page.tsx` | Boundary: same flag, actor resolver and access decision as `/direct-entry` |
+| `src/lib/navigation/registry.ts` | Entry `project-operations` (`capability: owner`); every `/direct-entry*` route gated by the same flag |
 
-Contract captured directly from `20261008110000_p2_5_w02_multi_manager_project_authority.sql`:
-project `{project_id,display_name,active,version}`; assignment
-`{assignment_id,project_id,project_version,manager_recruiter_id,valid_from,valid_to,effective,version,revoked_at,created_at,updated_at}`;
-list `{authorization_date,include_inactive,projects[]}`; detail
-`{authorization_date,project_id,project_version,project_active,active_assignment_count,assignments[]}`;
-mutations `{project_id,display_name,active,version,revision_id}`; assign/unassign
-`{assignment_id,project_id,version,project_version,valid_to,already_*}`.
+## Properties
 
-Established properties: actor identity is always server-passed (`p_auth_subject`/`p_app_user_id`,
-never client); **deactivate uses `direct_entry_set_project_active(..., false)`** with no extra RPC;
-OCC carried on `p_expected_version` (assignment) *and* `p_expected_project_version` (project);
-missing/extra key, wrong type or blank string ⇒ `unavailable`, never a partial success; every RPC
-error maps to `conflict|denied|invalid|not-found|unavailable` from SQLSTATE only, and the raw DB
-message is never surfaced.
+Authority comes only from the server response/RPC — never inferred from role, email, recruiter, team or
+`created_by`; UI hide/disable is UX only. The client never sends actor/capability/scope/role and the API
+rejects such fields before touching session or repository. Deactivate is `direct_entry_set_project_active(..., false)`
+— no separate RPC. Every project/assignment mutation carries OCC (`expected_version` + `expected_project_version`)
+and a **mandatory reason**; 409 maps to reload-required (no optimistic overwrite). Errors use a fixed sanitized
+taxonomy (`PROJECT_DENIED`/`PROJECT_NOT_FOUND`/`PROJECT_CONFLICT`/`PROJECT_INVALID`/`PROJECT_UNAVAILABLE`);
+raw DB messages are never forwarded; path ids are checked against the DB `project_id` shape before any RPC call.
 
-## Gates
+## Tests
 
-Targeted 9/9 · `pnpm test:server` lane 152/152 · `pnpm typecheck` PASS · targeted ESLint 0
-problems · `pnpm build` PASS · `git diff --check` PASS.
+`project-admin-repository` 9 · `project-admin-api` 12 (gate/CSRF before body+repository, actor only from session,
+sanitized errors) · `project-operations-model` 12 (create/rename/deactivate/reactivate, assign/unassign, mandatory
+reason, stale project + assignment version) · `project-operations` 11 source/a11y/mobile/keyboard assertions ·
+`registry-project-operations` 3. Lanes: `test:server`, `test:app-nav-02a`, `pnpm test`, `pnpm typecheck`,
+ESLint, `pnpm build`, `git diff --check` — all PASS.
 
-## NOT delivered (blocked on budget, not on contract)
-
-The W02 RPCs had **no server glue at all** before this task — no repository, no API route, no page.
-This lane builds bottom-up, so the remaining work is a full vertical slice:
-
-1. API routes under `src/app/api/direct-entry/projects/**` using the existing session guard +
-   `allowed_actions`-style server authority (no client-inferred permission).
-2. `src/app/...` Project Operations page: list/create/rename/activate/**deactivate**,
-   assign/unassign multi-manager with mandatory reason + OCC, assignment history (no hard delete),
-   desktop/mobile/a11y parity.
-3. UI tests + the mobile/keyboard acceptance cases.
-
-Reuse targets already confirmed present: `direct-entry-spreadsheet-grid.tsx` patterns,
-`access-denied.tsx`, `temporary-unavailable.tsx`, `getDirectEntryActor`, the repository pattern
-mirrored from `submission-transition-repository.ts`. No CRUD/form/grid framework, no new dependency,
-no new RPC, no migration.
-
-Owner/worker-directory/change-request/reviewer UI was explicitly out of scope and is untouched.
+Out of scope and untouched: worker directory, change requests, reviewer UI, capability/DB-schema decisions,
+any new RPC, migration or dependency.

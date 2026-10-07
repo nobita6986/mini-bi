@@ -14,10 +14,13 @@ const mod = await import("./registry.ts");
 const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } = mod;
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
-test("CURRENT_NAV_ENTRIES chỉ có Dashboard + Direct Entry (App-NAV-02A)", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 2, "phải có đúng 2 entries current");
+test("CURRENT_NAV_ENTRIES có Dashboard + Direct Entry + Dự án (App-NAV-02A)", () => {
+  // P2.5-W06A bổ sung entry 'project-operations' vào CÙNG registry (không tạo
+  // registry thứ hai): Dashboard + Direct Entry + Dự án.
+  assert.equal(CURRENT_NAV_ENTRIES.length, 3, "phải có đúng 3 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["dashboard", "direct-entry"], `got ids: ${ids.join(",")}`);
+  assert.deepEqual(ids, ["dashboard", "direct-entry", "project-operations"],
+    `got ids: ${ids.join(",")}`);
 });
 
 test("Dashboard label là 'Tổng quan' và path '/dashboard'", () => {

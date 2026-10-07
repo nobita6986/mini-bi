@@ -165,7 +165,7 @@ test("filterEntriesForActor: actor null → chỉ Dashboard (fail-closed cho Dir
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
-test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry", () => {
+test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry + Dự án", () => {
   const ownerActor = makeActor(
     ["entry_admin", "recruiter_master_manage", "team_master_manage"],
     [{ kind: "all", reference: "all" }],
@@ -176,7 +176,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboa
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  assert.deepEqual(result.map((e) => e.id).sort(), ["dashboard", "direct-entry"]);
+  // P2.5-W06A: owner (admin authority đủ 3 token) thấy thêm entry Dự án.
+  assert.deepEqual(result.map((e) => e.id).sort(),
+    ["dashboard", "direct-entry", "project-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -191,8 +193,9 @@ test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù 
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
+  // P2.5-W06A chỉ THÊM một entry vào registry hiện có; không registry thứ hai.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["dashboard", "direct-entry"]);
+  assert.deepEqual(ids, ["dashboard", "direct-entry", "project-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============
