@@ -1193,7 +1193,10 @@ export function DirectEntryLive() {
     });
     const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => {
       const dateKey = row.cells.first_work_date ?? "";
-      const catalog = dateKey === "" ? fallbackCatalog : catalogs[dateKey] ?? null;
+      // P3-W07C-R4: neu danh muc cua ngay moi chua tai xong thi dung fallback da co
+      // thay vi tra null, de dropdown Dự án / Người tuyển vẫn mở được ngay sau khi
+      // sua ngay. Khi danh muc dung ngay san sang, vong render sau se dung no.
+      const catalog = dateKey === "" ? fallbackCatalog : catalogs[dateKey] ?? fallbackCatalog;
       const recruiter = catalog?.recruiters.find((option) =>
         option.recruiter_id === row.cells.recruiter_id ||
         option.label === row.cells.recruiter_id);
@@ -1324,10 +1327,8 @@ export function DirectEntryLive() {
       }
       return;
     }
-    setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
-      ...safePatch,
-      ...(safePatch.first_work_date !== undefined ? { recruiter_id: "" } : {}),
-    }));
+    // P3-W07C-R4: doi ngay KHONG xoa recruiter da chon.
+    setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, safePatch));
   }, [ensureCatalog, rows, setStagedModel]);
 
   const onStagedProviderTypeChange = useCallback((
@@ -1513,7 +1514,6 @@ export function DirectEntryLive() {
     const storedValue = value;
     setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
       [field]: storedValue,
-      ...(field === "first_work_date" ? { recruiter_id: "" } : {}),
     }));
     if (field === "first_work_date" && isRealCalendarDate(storedValue)) {
       void ensureCatalog(storedValue).catch(() => undefined);

@@ -161,6 +161,47 @@
   border: 0;
 }
 
+/* P3-W07C-R4: dropdown Dự án / Người tuyển có tìm kiếm. */
+.searchEditor {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--background, #ffffff);
+}
+
+.searchEditor input {
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 4px;
+}
+
+.searchList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 4px;
+  background: var(--background, #ffffff);
+}
+
+.searchList button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.searchOptionActive {
+  background: #eef2ff;
+}
+
 .rowActions {
   display: inline-flex;
   gap: 4px;

@@ -14,7 +14,10 @@
  * du lieu duoc bao nguoc len orchestrator qua callback, nen paste chi doi React state
  * o tang cha.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import {
+  memo, useCallback, useEffect, useMemo, useRef, useState,
+  type ClipboardEvent, type KeyboardEvent,
+} from "react";
 import {
   DataGrid,
   type CellCopyArgs,
@@ -38,6 +41,14 @@ import {
   formatDateToDDMM,
   formatFreeDateText,
 } from "@/lib/direct-entry/direct-entry-date-format";
+import {
+  moveTypeaheadIndex,
+  typeaheadKeyAction,
+} from "@/lib/direct-entry/typeahead";
+import {
+  filterCatalogSearchOptions,
+  type CatalogSearchOption,
+} from "@/lib/direct-entry/catalog-search";
 import {
   mapClipboardFromAnchor,
   parseClipboardTsv,
@@ -275,6 +286,114 @@ function SelectCellEditor(
     >
       {options.map((option) => <option key={option} value={option}>{option === "" ? "—" : option}</option>)}
     </select>
+  );
+}
+
+/**
+ * P3-W07C-R4: dropdown co TIM KIEM cho Dự án / Người tuyển.
+ *
+ * Giu nguyen commit contract cua `SelectCellEditor`:
+ *  - chi commit khi nguoi dung that su chon (click hoac Enter) => khong bao gio
+ *    tu dong chon option dau tien;
+ *  - blur/Tab khong lam mat gia tri da luu (onClose(true,false) giu nguyen row);
+ *  - Escape dong ma khong doi gia tri.
+ */
+function SearchableCatalogCellEditor(
+  props: RenderEditCellProps<SpreadsheetGridRow> & {
+    columnKey: "project_id" | "recruiter_id";
+    catalogs: SpreadsheetCatalogOptions | undefined;
+  },
+) {
+  const rowCatalogs = props.row.catalogOptions ?? props.catalogs;
+  const storedValue = props.row.cells[props.columnKey] ?? "";
+
+  const options = useMemo<readonly CatalogSearchOption[]>(() => {
+    if (props.columnKey === "project_id") {
+      return (rowCatalogs?.projects ?? []).map((project) => ({
+        id: project.id, label: project.label,
+      }));
+    }
+    return recruitersForProvider(rowCatalogs?.recruiters ?? [], props.row.providerType)
+      .map((recruiter) => ({
+        id: recruiter.id,
+        label: recruiter.label,
+        keywords: [recruiter.personnel_code, recruiter.vendor_id].filter(Boolean).join(" "),
+      }));
+  }, [props.columnKey, props.row.providerType, rowCatalogs]);
+
+  /** Dự án luu nhan hien thi; Nguoi tuyen luu stable id — giu nguyen hanh vi cu. */
+  const commitValueFor = (option: CatalogSearchOption) =>
+    props.columnKey === "project_id" ? option.label : option.id;
+  const selected = options.find((option) => commitValueFor(option) === storedValue) ??
+    options.find((option) => option.label === storedValue);
+
+  const [query, setQuery] = useState(selected?.label ?? "");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const composing = useRef(false);
+  const visible = useMemo(() => filterCatalogSearchOptions(options, query), [options, query]);
+
+  const commit = (option: CatalogSearchOption) => {
+    props.onRowChange({
+      ...props.row,
+      cells: { ...props.row.cells, [props.columnKey]: commitValueFor(option) },
+    }, true);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    const action = typeaheadKeyAction(
+      event.key,
+      event.nativeEvent.isComposing || composing.current,
+    );
+    if (action === null || action === "ignore") return;
+    if (action === "up" || action === "down") {
+      event.preventDefault();
+      setActiveIndex((current) => moveTypeaheadIndex(current, visible.length, action));
+      return;
+    }
+    if (action === "commit") {
+      event.preventDefault();
+      const target = activeIndex >= 0
+        ? visible[activeIndex]
+        : (visible.length === 1 ? visible[0] : undefined);
+      if (target) commit(target);
+      else props.onClose(true, false);
+      return;
+    }
+    if (action === "close") {
+      event.preventDefault();
+      props.onClose(false, false);
+    }
+  };
+
+  return (
+    <div className={styles.searchEditor}>
+      <input
+        aria-label={props.columnKey === "project_id" ? "Dự án" : "Người tuyển / Vendor"}
+        autoFocus
+        role="combobox"
+        aria-expanded="true"
+        aria-controls={"search-options-" + props.columnKey}
+        value={query}
+        onChange={(event) => { setQuery(event.currentTarget.value); setActiveIndex(-1); }}
+        onKeyDown={onKeyDown}
+        onBlur={() => props.onClose(true, false)}
+        onCompositionStart={() => { composing.current = true; }}
+        onCompositionEnd={() => { composing.current = false; }}
+      />
+      <ul id={"search-options-" + props.columnKey} role="listbox" className={styles.searchList}>
+        {visible.map((option, index) => (
+          <li key={option.id} role="option" aria-selected={index === activeIndex}>
+            <button
+              type="button"
+              className={index === activeIndex ? styles.searchOptionActive : undefined}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => commit(option)}>
+              {option.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -541,8 +660,11 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
               (column.key !== "recruiter_id" || row.providerType !== ""),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (
-            <SelectCellEditor {...editProps} columnKey={column.key} catalogs={catalogOptions}
-            />
+            column.key === "project_id" || column.key === "recruiter_id"
+              // P3-W07C-R4: hai cot nay doi sang dropdown co tim kiem.
+              ? <SearchableCatalogCellEditor {...editProps} columnKey={column.key}
+                  catalogs={catalogOptions} />
+              : <SelectCellEditor {...editProps} columnKey={column.key} catalogs={catalogOptions} />
           ),
         };
       }
