@@ -583,10 +583,15 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // admin guard, two trigger functions, the closed propose-scope resolver) and
     // three service-role-only administration RPCs (list/assign/unassign); no new
     // callable surface is exposed to anon/authenticated.
+    // P2.5-W02-R1 (#51, same file) adds four more internal helpers (project row
+    // lock/OCC guard, project snapshot, project revision writer, project version
+    // bump) and five service-role-only project master RPCs
+    // (list/get/create/update/set-active). Still nothing reachable by
+    // anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 98,
-      service_role: 48,
-      internal: 50,
+      total: 107,
+      service_role: 53,
+      internal: 54,
       exposed_internal: 0,
     });
   } finally {

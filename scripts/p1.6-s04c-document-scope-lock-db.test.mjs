@@ -157,7 +157,10 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // P3-W07C-R7 adds one internal draft-scope resolver, not exposed to any role.
   // P3-W07E adds four private scope/proposal helpers, also not executable by roles.
   // P2.5-W02 (#51) adds five internal helpers/trigger functions plus three
-  // service-role-only administration RPCs (list/assign/unassign assignments).
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [98, 48, 50]);
+  // service-role-only administration RPCs (list/assign/unassign assignments);
+  // its R1 successor adds four internal project-master helpers (row lock/OCC,
+  // snapshot, revision writer, version bump) and five service-role-only project
+  // RPCs (list/get/create/update/set-active), still with no anon surface.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [107, 53, 54]);
   await db.close();
 });

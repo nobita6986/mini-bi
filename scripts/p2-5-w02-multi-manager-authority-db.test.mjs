@@ -154,24 +154,44 @@ async function listAssignments(db, projectId = null, includeHistory = false) {
   return res.rows[0].data;
 }
 
+/**
+ * The project OCC token, exactly as the list RPC hands it to a client. P2.5-W02-R1
+ * replaced "expected active assignment count" with this monotonic version, so a
+ * stale snapshot is refused even when the row count did not change (ABA).
+ */
+async function currentProjectVersion(db, project = PROJ_1) {
+  const res = await db.query(
+    "select version from public.direct_entry_projects where project_id = $1", [project]);
+  return res.rows[0].version;
+}
+
 async function assign(db, {
-  project = PROJ_1, manager = REC_A, validFrom = null, expectedActiveCount = 0,
+  project = PROJ_1, manager = REC_A, validFrom = null, expectedProjectVersion = null,
   reason = "Owner approved project manager assignment", key = "assign-key-1",
   actor = ADMIN_APP, auth = ADMIN_AUTH,
 } = {}) {
+  // Tests that are not about OCC read the current token; OCC cases pass it in.
+  const expected = expectedProjectVersion === null
+    ? await currentProjectVersion(db, project) : expectedProjectVersion;
   const res = await db.query(
     "select public.direct_entry_assign_project_manager($1::uuid,$2::uuid,$3::text,$4::uuid,$5::date,$6::integer,$7::text,$8::text) as data",
-    [auth, actor, project, manager, validFrom, expectedActiveCount, reason, key]);
+    [auth, actor, project, manager, validFrom, expected, reason, key]);
   return res.rows[0].data;
 }
 
 async function unassign(db, {
-  assignmentId, expectedVersion = 1, reason = "Owner removed project manager",
+  assignmentId, expectedVersion = 1, expectedProjectVersion = null,
+  reason = "Owner removed project manager",
   key = "unassign-key-1", actor = ADMIN_APP, auth = ADMIN_AUTH,
 } = {}) {
+  const owner = await db.query(
+    "select project_id from public.direct_entry_project_manager_assignments where assignment_id = $1",
+    [assignmentId]);
+  const expectedProject = expectedProjectVersion === null
+    ? await currentProjectVersion(db, owner.rows[0].project_id) : expectedProjectVersion;
   const res = await db.query(
-    "select public.direct_entry_unassign_project_manager($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
-    [auth, actor, assignmentId, expectedVersion, reason, key]);
+    "select public.direct_entry_unassign_project_manager($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::integer,$6::text,$7::text) as data",
+    [auth, actor, assignmentId, expectedVersion, expectedProject, reason, key]);
   return res.rows[0].data;
 }
 
@@ -279,7 +299,7 @@ test("P2.5-W02: two active managers on one project both hold authority", async (
     assert.equal(first.version, 1);
     assert.equal(first.valid_to, null);
     const second = await assign(db, {
-      manager: REC_B, expectedActiveCount: 1, key: "assign-key-2",
+      manager: REC_B, key: "assign-key-2",
     });
     assert.notEqual(second.assignment_id, first.assignment_id);
 
@@ -303,6 +323,10 @@ test("P2.5-W02: two active managers on one project both hold authority", async (
     assert.equal(list.active_assignment_count, 2);
     assert.equal(list.assignments.length, 2);
     assert.equal(list.assignments.every((a) => a.effective), true);
+    assert.equal(list.project_version, 3,
+      "the list RPC hands back the PROJECT OCC token the caller must return");
+    assert.equal(list.project_active, true);
+    assert.equal(list.assignments.every((a) => a.project_version === 3), true);
   } finally {
     await db.close();
   }
@@ -351,7 +375,7 @@ test("P2.5-W02: expired, future and revoked assignments confer no authority", as
     assert.equal(await isAssignedPm(db, MGR_C_APP, PROJ_1), false);
     // Revoked interval (through the admin RPC). The future REC_C assignment is
     // still OPEN, so the OCC count for this project is 1.
-    const created = await assign(db, { manager: REC_A, expectedActiveCount: 1 });
+    const created = await assign(db, { manager: REC_A });
     assert.equal(await canAccess(db, MGR_A_APP, PROJ_1), true);
     await unassign(db, { assignmentId: created.assignment_id });
     assert.equal(await canAccess(db, MGR_A_APP, PROJ_1), false, "revocation is immediate");
@@ -505,7 +529,7 @@ test("P2.5-W02: a duplicate active pair is blocked while other managers are allo
     await seedActors(db);
     await assign(db, { manager: REC_A });
     await assert.rejects(
-      () => assign(db, { manager: REC_A, expectedActiveCount: 1, key: "assign-key-dup" }),
+      () => assign(db, { manager: REC_A, key: "assign-key-dup" }),
       (error) => error.code === "23505",
       "the same manager cannot be assigned twice to the same project");
     const overlappingOpenFrom = await shiftedDate(db, -1);
@@ -515,7 +539,7 @@ test("P2.5-W02: a duplicate active pair is blocked while other managers are allo
       "direct DML cannot create a second open row for the same pair");
     // Different managers on the same project remain legal.
     const second = await assign(db, {
-      manager: REC_B, expectedActiveCount: 1, key: "assign-key-b",
+      manager: REC_B, key: "assign-key-b",
     });
     assert.ok(second.assignment_id);
     assert.equal(await countOf(db,
@@ -558,12 +582,17 @@ test("P2.5-W02: admin RPCs require capability, all scope, reason and OCC", async
       () => assign(db, { reason: "   " }),
       (error) => error.code === "22023",
       "an empty reason is refused");
-    // OCC on the active-assignment count.
-    const created = await assign(db, { manager: REC_A });
+    // OCC on the project version (row-locked and fail-closed). P2.5-W02-R1
+    // replaced the active-assignment count, which could not detect ABA.
+    const v0 = await currentProjectVersion(db, PROJ_1);
+    const created = await assign(db, { manager: REC_A, expectedProjectVersion: v0 });
+    assert.equal(created.project_version, v0 + 1, "assign advances the project version");
     await assert.rejects(
-      () => assign(db, { manager: REC_A, expectedActiveCount: 5, key: "assign-key-occ" }),
-      (error) => error.code === "40001" || error.code === "23505",
-      "a stale expected count is a conflict");
+      () => assign(db, {
+        manager: REC_C, expectedProjectVersion: 5, key: "assign-key-occ",
+      }),
+      (error) => error.code === "40001",
+      "a stale expected project version is a conflict");
     // OCC on revocation.
     await assert.rejects(
       () => unassign(db, { assignmentId: created.assignment_id, expectedVersion: 9 }),
@@ -581,15 +610,16 @@ test("P2.5-W02: admin RPCs require capability, all scope, reason and OCC", async
       scope_kind: "all", has_reason: true,
     }]);
     // Idempotent replay: same key + same payload => same result, no new rows.
-    const replay = await assign(db, { manager: REC_A, expectedActiveCount: 0 });
+    const replay = await assign(db, { manager: REC_A, expectedProjectVersion: v0 });
     assert.equal(replay.assignment_id, created.assignment_id);
+    assert.equal(replay.project_version, created.project_version);
     assert.equal(await countOf(db,
       "select count(*)::int as n from public.direct_entry_project_manager_assignments"), 1);
     assert.equal(await countOf(db,
       "select count(*)::int as n from public.direct_entry_restricted_reasons"), 1);
     // Same key, different payload => conflict.
     await assert.rejects(
-      () => assign(db, { manager: REC_B, expectedActiveCount: 1 }),
+      () => assign(db, { manager: REC_B, expectedProjectVersion: v0 }),
       (error) => error.code === "22023",
       "an idempotency key cannot be reused with different input");
     // The list RPC is admin-only too.
@@ -658,7 +688,12 @@ const AUTHORITY_HELPERS = [
 const ADMIN_RPCS = [
   "public.direct_entry_list_project_manager_assignments(uuid, uuid, text, boolean)",
   "public.direct_entry_assign_project_manager(uuid, uuid, text, uuid, date, integer, text, text)",
-  "public.direct_entry_unassign_project_manager(uuid, uuid, uuid, integer, text, text)",
+  "public.direct_entry_unassign_project_manager(uuid, uuid, uuid, integer, integer, text, text)",
+  "public.direct_entry_list_projects_admin(uuid, uuid, boolean)",
+  "public.direct_entry_get_project_admin(uuid, uuid, text)",
+  "public.direct_entry_create_project(uuid, uuid, text, text, text, text)",
+  "public.direct_entry_update_project(uuid, uuid, text, integer, text, text, text)",
+  "public.direct_entry_set_project_active(uuid, uuid, text, boolean, integer, text, text)",
 ];
 
 test("P2.5-W02: table ACL, helper hardening and W07B reuse stay intact", async () => {
