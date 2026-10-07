@@ -6,8 +6,11 @@
 --     -> direct_entries.recruiter_id (CANONICAL recruiter identity);
 --   * project audience    = effective project-manager assignment (W07B/W02
 --     predicate, never re-implemented here) -> direct_entries.project_id;
---   * all audience        = the Accounting/Admin bundle only: entry_admin
---     capability + an effective all scope grant (same guard as W02);
+--   * all audience        = an effective all scope grant AND at least one
+--     effective reviewer/admin capability: entry_admin (Admin/project
+--     administrator) or change_review (Accounting/BoD reviewer, P2.5 section 3).
+--     The reporting audience (W05A own/team/all) is a different decision and is
+--     never consulted, and no role/email can substitute for the grants;
 --   * created_by_user_id  = uploader history only. It never widens an audience and
 --     it never grants view of anybody else's rows.
 --
@@ -142,11 +145,32 @@ begin
     );
   end if;
 
-  -- 'all': Accounting/Admin bundle. Reuses the W02 project-administration guard
-  -- (actor mapping + entry_admin capability + effective all scope). Reporting
-  -- audience (W05A own/team/all) is NOT an approval or directory capability and is
-  -- deliberately not consulted here.
-  perform public.direct_entry_assert_project_admin(p_auth_subject, p_app_user_id);
+  -- 'all': the DB-authoritative directory audience. Both conditions are required:
+  --   1. an effective all scope grant, and
+  --   2. at least one effective reviewer/admin capability - entry_admin (Admin or
+  --      project administrator) or change_review (Accounting / BoD reviewer).
+  -- A reviewer bundle therefore never has to accept entry_admin just to read the
+  -- directory, and a team/own scope, a reporting audience, a role or an email can
+  -- never open it, because none of those are capability or scope grants.
+  -- Project CRUD/assignment keeps its own stricter guard
+  -- (direct_entry_assert_project_admin = entry_admin + all scope).
+  if not exists (
+    select 1
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = p_app_user_id
+       and s.scope_kind = 'all'
+       and s.valid_from <= v_today
+       and (s.valid_to is null or v_today < s.valid_to)
+  ) then
+    raise exception 'worker directory requires all scope' using errcode = '42501';
+  end if;
+  if not (
+    public.direct_entry_has_capability(p_app_user_id, 'entry_admin')
+    or public.direct_entry_has_capability(p_app_user_id, 'change_review')
+  ) then
+    raise exception 'worker directory requires a reviewer or admin capability'
+      using errcode = '42501';
+  end if;
   return jsonb_build_object(
     'scope', 'all',
     'recruiter_ids', '[]'::jsonb,
@@ -160,8 +184,9 @@ revoke all on function public.direct_entry_worker_directory_audience(uuid, uuid,
   from public, anon, authenticated, service_role;
 comment on function public.direct_entry_worker_directory_audience(uuid, uuid, text, text) is
   'P2.5-W03 internal audience guard for the worker directory: resolves recruited/managed/all from '
-  'the verified recruiter link, the effective project-manager assignment, or entry_admin + all '
-  'scope. created_by_user_id is never an audience. Revoked from every role.';
+  'the verified recruiter link, the effective project-manager assignment, or an effective all scope '
+  'grant combined with entry_admin or change_review. Reporting audience, role and email never grant '
+  'access. created_by_user_id is never an audience. Revoked from every role.';
 
 -- -----------------------------------------------------------------------------
 -- 2. The directory page itself.
@@ -426,6 +451,19 @@ begin
   -- change-request audience/read/withdraw policy is still open.
   if v_source not like '%''propose_change'', false%' then
     raise exception 'P2.5-W03 must keep propose_change false until W04 closes the policy';
+  end if;
+
+  -- R1 policy lock: the all audience must keep BOTH bundles. Dropping
+  -- change_review would silently force the Accounting/BoD reviewer bundle to take
+  -- entry_admin (which T0 forbids), and dropping entry_admin would break Admin.
+  select pg_get_functiondef(p.oid) into v_source
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.oid =
+       'public.direct_entry_worker_directory_audience(uuid, uuid, text, text)'::regprocedure;
+  if v_source not like '%''entry_admin''%' or v_source not like '%''change_review''%' then
+    raise exception
+      'P2.5-W03 all audience must accept entry_admin or change_review together with all scope';
   end if;
 
   raise notice 'P2.5-W03 migration self-check OK (worker directory audience + page projection)';

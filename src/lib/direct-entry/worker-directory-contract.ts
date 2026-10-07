@@ -2,8 +2,9 @@
  * P2.5-W03 - Hop dong worker directory (recruiter / project / all).
  *
  * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
- * Authority (mapping actor, recruiter link, assignment hieu luc, entry_admin@all)
- * do RPC public.direct_entry_list_workers quyet dinh - client/khong tin client.
+ * Authority (mapping actor, recruiter link, assignment hieu luc, hoac all scope +
+ * entry_admin/change_review) do RPC public.direct_entry_list_workers quyet dinh -
+ * client khong bao gio tu khai identity/capability/scope.
  *
  * Fail-closed: dung key, dung kieu, khong fallback [], 0, false; khong type assertion.
  * allowed_actions la tin hieu authority duy nhat cua row do server sinh; UI khong tu suy

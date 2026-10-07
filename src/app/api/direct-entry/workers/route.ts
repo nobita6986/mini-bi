@@ -3,8 +3,9 @@ import "server-only";
 /**
  * P2.5-W03 - GET /api/direct-entry/workers
  *
- * Worker directory theo audience DB-authoritative (recruiter / project manager /
- * entry_admin@all) voi keyset pagination va allowed_actions do server sinh.
+ * Worker directory theo audience DB-authoritative (recruiter / current project manager /
+ * all scope + entry_admin hoac change_review) voi keyset pagination va allowed_actions
+ * do server sinh.
  * Gate DIRECT_ENTRY_API_ENABLED chay TRUOC khi parse query, tao session hay repository.
  */
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";

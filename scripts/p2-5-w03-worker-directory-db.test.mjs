@@ -7,7 +7,8 @@
  *     uploader (created_by) is NOT a recruiter;
  *   * project audience  = effective project-manager assignment, several managers
  *     included, cross-project denied, out-of-scope project refused;
- *   * all audience      = entry_admin + effective all scope only;
+ *   * all audience      = an effective all scope grant AND (entry_admin OR
+ *     change_review); the reporting audience and a team/own scope never open it;
  *   * keyset pagination and every filter are server-side and bounded;
  *   * payment is capability-gated and masked; raw PII is never returned;
  *   * allowed_actions is server-supplied and propose_change stays false until W04.
@@ -39,6 +40,7 @@ const MGR_A_AUTH = uuid(32), MGR_A_APP = uuid(42);
 const MGR_B_AUTH = uuid(33), MGR_B_APP = uuid(43);
 const UPLOADER_AUTH = uuid(34), UPLOADER_APP = uuid(44);
 const PLAIN_AUTH = uuid(35), PLAIN_APP = uuid(45);
+const REVIEWER_AUTH = uuid(36), REVIEWER_APP = uuid(46);
 
 async function buildDb() {
   const db = new PGlite();
@@ -58,7 +60,8 @@ async function buildDb() {
 async function seed(db) {
   entrySeq = 0;
   for (const [auth, app] of [[ADMIN_AUTH, ADMIN_APP], [MGR_A_AUTH, MGR_A_APP],
-    [MGR_B_AUTH, MGR_B_APP], [UPLOADER_AUTH, UPLOADER_APP], [PLAIN_AUTH, PLAIN_APP]]) {
+    [MGR_B_AUTH, MGR_B_APP], [UPLOADER_AUTH, UPLOADER_APP], [PLAIN_AUTH, PLAIN_APP],
+    [REVIEWER_AUTH, REVIEWER_APP]]) {
     await db.query("insert into auth.users (id) values ($1)", [auth]);
     await db.query(
       "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
@@ -70,7 +73,7 @@ async function seed(db) {
   await db.query(
     "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
     " values ($1,'all','2020-01-01')", [ADMIN_APP]);
-  for (const app of [MGR_A_APP, MGR_B_APP, UPLOADER_APP, PLAIN_APP]) {
+  for (const app of [MGR_A_APP, MGR_B_APP, UPLOADER_APP, PLAIN_APP, REVIEWER_APP]) {
     await db.query(
       "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
       " values ($1,'entry_create','2020-01-01')", [app]);
@@ -206,6 +209,24 @@ async function grantCapability(db, app, capability) {
     " values ($1,$2,'2020-01-01')", [app, capability]);
 }
 
+async function grantScope(db, app, scopeKind, teamId = null) {
+  await db.query(
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
+    " values ($1,$2,$3,'2020-01-01')", [app, scopeKind, teamId]);
+}
+
+async function hasCapability(db, app, capability) {
+  const res = await db.query(
+    "select public.direct_entry_has_capability($1::uuid,$2::text) as ok", [app, capability]);
+  return res.rows[0].ok;
+}
+
+async function reportingAudience(db, auth, app) {
+  const res = await db.query(
+    "select public.direct_entry_reporting_resolve_audience($1::uuid,$2::uuid) as data", [auth, app]);
+  return res.rows[0].data;
+}
+
 async function assignManager(db, { project, recruiter, key }) {
   const version = await currentProjectVersion(db, project);
   await db.query(
@@ -316,7 +337,7 @@ test("W03: recruiter, uploader and project manager are three different audiences
     await assert.rejects(
       () => listWorkers(db, { auth: UPLOADER_AUTH, app: UPLOADER_APP, scope: "all" }),
       (error) => error.code === "42501",
-      "all audience needs entry_admin + all scope");
+      "the all audience needs a reviewer capability and an all scope grant");
   } finally {
     await db.close();
   }
@@ -380,32 +401,100 @@ test("W03: project audience follows the effective assignment, several managers i
 });
 
 // ---------------------------------------------------------------------------
-// 3. All audience: DB-authoritative capability + scope, never inferred.
+// 3. All audience policy (P2.5-W03-R1): an effective all scope AND one of the
+//    reviewer/admin capabilities. The reporting audience, a team/own scope, an
+//    uploader identity or a recruiter link never open it.
 // ---------------------------------------------------------------------------
-test("W03: the all audience needs the entry_admin capability and an all scope grant", async () => {
+test("W03-R1: the all audience accepts entry_admin or change_review, always with all scope", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    await addWorker(db, { project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01" });
+    await addWorker(db, {
+      project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01",
+      payment: { state: "provided", account_number: "012345678901", bank_id: null,
+        account_holder_name: "Synthetic Holder" },
+    });
     await addWorker(db, { project: PROJ_B, recruiter: REC_B, workDate: "2026-10-02" });
+    const ALL_CODES = ["hrp-2026-300001", "hrp-2026-300002"];
 
-    const all = await listWorkers(db, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" });
-    assert.deepEqual(codes(all.items), ["hrp-2026-300001", "hrp-2026-300002"]);
+    // 1. entry_admin + all -> allow (Admin / project administrator).
+    assert.deepEqual(codes((await listWorkers(db, {
+      auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" })).items), ALL_CODES);
 
-    // entry_admin without the all scope is not enough.
+    // 2. change_review + all -> allow (Accounting / BoD reviewer bundle), and the
+    //    reviewer bundle must NOT need entry_admin to open the directory.
+    await grantCapability(db, REVIEWER_APP, "change_review");
+    await grantScope(db, REVIEWER_APP, "all");
+    assert.equal(await hasCapability(db, REVIEWER_APP, "entry_admin"), false);
+    const reviewerPage = await listWorkers(db, {
+      auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" });
+    assert.deepEqual(codes(reviewerPage.items), ALL_CODES);
+
+    // 3. entry_admin without an all scope -> deny.
     await grantCapability(db, MGR_A_APP, "entry_admin");
     await assert.rejects(
       () => listWorkers(db, { auth: MGR_A_AUTH, app: MGR_A_APP, scope: "all" }),
       (error) => error.code === "42501",
       "entry_admin without an all scope grant is refused");
-    // A reporting-style team scope is NOT an approval/directory capability.
-    await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
-      " values ($1,'team',$2,'2020-01-01')", [MGR_A_APP, TEAM]);
+
+    // 4. change_review without an all scope -> deny.
+    await grantCapability(db, PLAIN_APP, "change_review");
     await assert.rejects(
-      () => listWorkers(db, { auth: MGR_A_AUTH, app: MGR_A_APP, scope: "all" }),
+      () => listWorkers(db, { auth: PLAIN_AUTH, app: PLAIN_APP, scope: "all" }),
       (error) => error.code === "42501",
-      "a team scope never opens the directory");
+      "change_review without an all scope grant is refused");
+
+    // 5. all scope but neither capability -> deny, even though the W05A reporting
+    //    audience for the same actor resolves to all. Reporting is not a directory
+    //    grant, and this actor is also the uploader of both rows.
+    await grantScope(db, UPLOADER_APP, "all");
+    const reporting = await reportingAudience(db, UPLOADER_AUTH, UPLOADER_APP);
+    assert.equal(reporting.audience, "all",
+      "the reporting audience really is all for this actor");
+    assert.equal(await hasCapability(db, UPLOADER_APP, "entry_admin"), false);
+    assert.equal(await hasCapability(db, UPLOADER_APP, "change_review"), false);
+    await assert.rejects(
+      () => listWorkers(db, { auth: UPLOADER_AUTH, app: UPLOADER_APP, scope: "all" }),
+      (error) => error.code === "42501",
+      "all scope plus the reporting audience never opens the directory");
+
+    // 6. a team or own scope never substitutes for all, even with a capability.
+    await grantCapability(db, MGR_B_APP, "entry_admin");
+    await grantScope(db, MGR_B_APP, "team", TEAM);
+    await assert.rejects(
+      () => listWorkers(db, { auth: MGR_B_AUTH, app: MGR_B_APP, scope: "all" }),
+      (error) => error.code === "42501",
+      "entry_admin + team scope is not an all audience");
+    await grantScope(db, PLAIN_APP, "own");
+    await assert.rejects(
+      () => listWorkers(db, { auth: PLAIN_AUTH, app: PLAIN_APP, scope: "all" }),
+      (error) => error.code === "42501",
+      "change_review + own scope is not an all audience");
+
+    // 7. payment/PII stay independently capability-gated for the all audience.
+    const paidRow = (page) =>
+      page.items.find((item) => item.employee_code === "hrp-2026-300001");
+    const withoutGrant = paidRow(await listWorkers(db, {
+      auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" }));
+    assert.equal(withoutGrant.payment, null);
+    assert.deepEqual(
+      [withoutGrant.allowed_actions.view_payment, withoutGrant.allowed_actions.view_pii],
+      [false, false],
+      "the directory audience never implies payment_view/pii_view");
+    await grantCapability(db, REVIEWER_APP, "payment_view");
+    const withPayment = paidRow(await listWorkers(db, {
+      auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" }));
+    assert.equal(withPayment.payment.account_number, "••••••••8901");
+    assert.equal(withPayment.allowed_actions.view_payment, true);
+    assert.equal(withPayment.allowed_actions.view_pii, false,
+      "payment_view does not imply pii_view");
+    await grantCapability(db, REVIEWER_APP, "pii_view");
+    const withPii = paidRow(await listWorkers(db, {
+      auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" }));
+    assert.equal(withPii.allowed_actions.view_pii, true);
+    for (const leaked of ["national_id", "date_of_birth", "address", "phone", "worker_details"]) {
+      assert.equal(leaked in withPii, false, leaked + " must never be in a directory row");
+    }
   } finally {
     await db.close();
   }
