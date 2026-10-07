@@ -81,6 +81,35 @@ export function parseDDMMToIso(value: string): string {
 }
 
 /**
+ * P3-W07C-R6-R1: vong doi "settlement" cua editor ngay.
+ *
+ * Truoc day editor dat co settled = true va khong bao gio reset, nen component dai
+ * han (mobile card, drawer, change request) chi commit duoc MOT lan.
+ *
+ * Quy tac: mot luot tuong tac bat dau bang focus hoac thao tac go; sau khi settle
+ * (Enter/blur) thi luot do khong commit lai nua (chan double-commit Enter -> blur).
+ * Escape mo lai luot moi ma khong commit.
+ */
+export type DdmmSettleAction = "focus" | "edit" | "settle" | "escape";
+export type DdmmSettleState = { settled: boolean };
+
+export const DDMM_SETTLE_IDLE: DdmmSettleState = Object.freeze({ settled: false });
+
+export function reduceDdmmSettle(
+  state: DdmmSettleState,
+  action: DdmmSettleAction,
+): DdmmSettleState {
+  if (action === "settle") return state.settled ? state : { settled: true };
+  // focus / edit / escape: mo lai kha nang commit cho luot tuong tac ke tiep.
+  return state.settled ? { settled: false } : state;
+}
+
+/** Chi settle khi luot tuong tac hien tai chua settle (chan Enter -> blur). */
+export function canDdmmSettle(state: DdmmSettleState): boolean {
+  return !state.settled;
+}
+
+/**
  * P3-W07C-R6: quyet dinh commit cho editor ngay dang text DD/MM/YYYY.
  *
  * Chi commit khi chuoi nguoi dung nhap parse duoc thanh ngay hop le. Chuoi sai

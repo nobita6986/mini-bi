@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog, Dialog } from "radix-ui";
 
+import { hcmTodayDate } from "@/lib/direct-entry/change-request-proposal-builders";
+
 import {
   CHANGE_REQUEST_STATE_LABELS,
   normalizeReason,
@@ -101,11 +103,12 @@ export function DirectEntryChangeRequestReviewer({
   const lastRequestId = useRef<string | null>(null);
   // Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger; ghi lai nut da mo dialog.
   const openerRef = useRef<HTMLElement | null>(null);
-  const catalogDates = useRef<Set<string>>(new Set());
 
   const formatField = useCallback(
     (entry: ProposerEntryProjection, field: string, value: string): string | null => {
-      const catalog = catalogFor(entry.first_work_date);
+      // P3-W07C-R6-R1: nhan Du an / Nguoi tuyen lay tu catalog HIEN TAI (actor-scoped),
+      // khong theo first_work_date cua ban ghi.
+      const catalog = catalogFor(hcmTodayDate());
       if (field === "project_id") return catalogProjectLabel(catalog, value);
       if (field === "recruiter_id") return catalogRecruiterLabel(catalog, value);
       if (field === "labor_type") return LABOR_TYPE_LABELS[value] ?? null;
@@ -114,14 +117,10 @@ export function DirectEntryChangeRequestReviewer({
     [catalogFor],
   );
 
-  // Bank id -> nhan catalog cho moi ngay hieu luc da tai; khong giai duoc thi fail-closed.
+  // Bank id -> nhan catalog tu catalog hien tai; khong giai duoc thi fail-closed.
   const bankLabelFromCatalog = useCallback((bankId: string): string | null => {
-    for (const date of catalogDates.current) {
-      const catalog = catalogFor(date);
-      const found = catalog?.banks.find((bank) => bank.bank_id === bankId);
-      if (found) return found.display_name;
-    }
-    return null;
+    const catalog = catalogFor(hcmTodayDate());
+    return catalog?.banks.find((bank) => bank.bank_id === bankId)?.display_name ?? null;
   }, [catalogFor]);
 
   useEffect(() => {
@@ -166,7 +165,6 @@ export function DirectEntryChangeRequestReviewer({
         }
         const entries = new Map<string, ProposerEntryProjection>();
         const contexts = new Map<string, EntrySensitiveContext>();
-        const dates = new Set<string>();
         for (const item of detail.items) {
           const response = await fetch(
             "/api/direct-entry/entries/" + encodeURIComponent(item.entry_id),
@@ -181,11 +179,10 @@ export function DirectEntryChangeRequestReviewer({
           // server da redact theo capability nen field khong duoc phep coi nhu KHONG CO.
           const context = slice ? projectEntrySensitiveContext(slice.entry) : null;
           if (context) contexts.set(entry.entry_id, context);
-          dates.add(entry.first_work_date);
         }
-        await Promise.all([...dates].map((date) => ensureCatalog(date).catch(() => null)));
+        // P3-W07C-R6-R1: khong tai catalog theo first_work_date cua tung ban ghi.
+        await ensureCatalog(hcmTodayDate()).catch(() => null);
         if (cancelled) return;
-        catalogDates.current = dates;
         setModel(buildReviewerViewModel({
           detail, entries, format: formatField, contexts, bankLabel: bankLabelFromCatalog,
         }));

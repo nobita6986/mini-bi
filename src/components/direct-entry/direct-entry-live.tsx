@@ -683,9 +683,9 @@ export function DirectEntryLive() {
           throw new Error("DRAFTS_UNAVAILABLE");
         }
         const mapped = draftPayload.map(draftRowFromProjection);
-        const neededDates = [...new Set(mapped.map(({ firstWorkDate }) => firstWorkDate))]
-          .filter((date) => date !== today);
-        await Promise.all(neededDates.map(ensureCatalog));
+        // P3-W07C-R6-R1: da xoa date-set + Promise.all(map(ensureCatalog)) theo ngay
+        // cua tung ban nhap. Chi con catalog ngay HCM cua trang (currentCatalog);
+        // khong con request catalog nao phat sinh tu first_work_date cua row.
         if (cancelled) return;
         setRows(mapped);
         setCatalogs((current) => ({ ...current, [today]: catalog }));

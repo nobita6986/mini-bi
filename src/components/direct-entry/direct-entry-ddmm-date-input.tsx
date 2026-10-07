@@ -13,8 +13,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
+  DDMM_SETTLE_IDLE,
+  canDdmmSettle,
   decideDdmmCommit,
   formatDateToDDMM,
+  reduceDdmmSettle,
+  type DdmmSettleAction,
+  type DdmmSettleState,
 } from "@/lib/direct-entry/direct-entry-date-format";
 
 export const DDMM_DATE_PLACEHOLDER = "DD/MM/YYYY";
@@ -46,12 +51,15 @@ export function DdmmDateInput(props: DdmmDateInputProps) {
   }
   useEffect(() => { if (autoFocus) inputRef.current?.focus(); }, [autoFocus]);
 
-  // Enter co the commit roi editor unmount => blur chay lai. Chan commit lan hai.
-  const settled = useRef(false);
+  // Chan double-commit Enter -> blur, nhung van cho phep commit o luot ke tiep.
+  const settle = useRef<DdmmSettleState>(DDMM_SETTLE_IDLE);
+  const dispatchSettle = (action: DdmmSettleAction) => {
+    settle.current = reduceDdmmSettle(settle.current, action);
+  };
 
   const commit = (): void => {
-    if (settled.current) return;
-    settled.current = true;
+    if (!canDdmmSettle(settle.current)) return;
+    dispatchSettle("settle");
     const decision = decideDdmmCommit(draft, value);
     if (!decision.ok) {
       // Ngay sai/rong: KHONG ghi de gia tri cu; tra hien thi ve gia tri dang luu.
@@ -79,6 +87,7 @@ export function DdmmDateInput(props: DdmmDateInputProps) {
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      dispatchSettle("escape");
       setDraft(formatDateToDDMM(value));
       onClose?.(false);
     }
@@ -94,7 +103,8 @@ export function DdmmDateInput(props: DdmmDateInputProps) {
       aria-label={ariaLabel}
       disabled={disabled}
       value={draft}
-      onChange={(event) => setDraft(event.currentTarget.value)}
+      onChange={(event) => { dispatchSettle("edit"); setDraft(event.currentTarget.value); }}
+      onFocus={() => { dispatchSettle("focus"); }}
       onKeyDown={onKeyDown}
       onBlur={commit}
     />

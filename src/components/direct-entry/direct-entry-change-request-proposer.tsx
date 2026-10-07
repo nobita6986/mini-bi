@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog, Dialog } from "radix-ui";
 
+import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import {
   buildProposerItems,
@@ -211,8 +212,9 @@ export function DirectEntryChangeRequestProposer({
           const context = slice ? projectEntrySensitiveContext(slice.entry) : null;
           if (context) loadedContexts[entry.entry_id] = context;
         }
-        await Promise.all([...new Set(loaded.map((item) => item.first_work_date))]
-          .map((date) => ensureCatalog(date).catch(() => null)));
+        // P3-W07C-R6-R1: khong tai catalog theo first_work_date cua tung ban nhap.
+        // Chi catalog ngay HCM cua trang duoc bao dam.
+        await ensureCatalog(hcmTodayDate()).catch(() => null);
         if (cancelled) return;
         setEntries(loaded);
         setContexts(loadedContexts);
@@ -264,12 +266,11 @@ export function DirectEntryChangeRequestProposer({
 
   const activeBankIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const entry of entries) {
-      const catalog = catalogFor(entry.first_work_date);
-      for (const bank of catalog?.banks ?? []) ids.add(bank.bank_id);
-    }
+    // P3-W07C-R6-R1: bank id lay tu catalog HIEN TAI (actor-scoped); khong con
+    // phu thuoc first_work_date cua tung ban nhap.
+    for (const bank of catalogFor(hcmTodayDate())?.banks ?? []) ids.add(bank.bank_id);
     return ids;
-  }, [catalogFor, entries]);
+  }, [catalogFor]);
 
   const singleEntry = useMemo(
     () => entries.find((entry) => entry.entry_id === singleEntryId) ?? null,
@@ -500,7 +501,9 @@ export function DirectEntryChangeRequestProposer({
 
             {kind === "ENTRY_FIELD" && entryState === "ready" && entries.map((entry) => {
               const isSelected = selected.includes(entry.entry_id);
-              const catalog = catalogFor(entry.first_work_date);
+              // P3-W07C-R6-R1: doi ngay trong change request khong doi catalog
+              // Du an / Nguoi tuyen; dung catalog hien tai (actor-scoped).
+              const catalog = catalogFor(hcmTodayDate());
               const baseline = baselineOf(entry);
               const draft = drafts[entry.entry_id] ?? baseline;
               return (
@@ -532,14 +535,11 @@ export function DirectEntryChangeRequestProposer({
                       </div>
                       <div className={styles.field}>
                         <label htmlFor={"cr-date-" + entry.entry_id}>Ngày đầu tiên đi làm</label>
-                        <input
-                          id={"cr-date-" + entry.entry_id}
-                          type="date"
-                          aria-label={"Ngày đầu tiên đi làm của " + entry.employee_code}
+                        {/* P3-W07C-R6-R1: DD/MM/YYYY bat buoc, khong dung type="date". */}
+                        <DdmmDateInput
+                          ariaLabel={"Ngày đầu tiên đi làm của " + entry.employee_code}
                           value={draft.first_work_date}
-                          onChange={(event) => editEntry(entry.entry_id, {
-                            first_work_date: event.target.value,
-                          })}
+                          onCommit={(iso) => editEntry(entry.entry_id, { first_work_date: iso })}
                         />
                       </div>
                       <div className={styles.field}>
@@ -708,7 +708,7 @@ export function DirectEntryChangeRequestProposer({
                         onChange={(event) => setPaymentDraft({ ...paymentDraft,
                           bank_id: event.target.value || null })}>
                         <option value="">Chọn ngân hàng</option>
-                        {(catalogFor(singleEntry.first_work_date)?.banks ?? []).map((bank) => (
+                        {(catalogFor(hcmTodayDate())?.banks ?? []).map((bank) => (
                           <option key={bank.bank_id} value={bank.bank_id}>{bank.display_name}</option>
                         ))}
                       </select>
