@@ -9,6 +9,7 @@ const own = readFileSync(new URL("./own-dashboard-view.tsx", HERE), "utf8");
 const filters = readFileSync(new URL("./dashboard-filters.tsx", HERE), "utf8");
 const page = readFileSync(new URL("../../app/dashboard/page.tsx", HERE), "utf8");
 const server = readFileSync(new URL("../../lib/reporting/p2-w04a-reporting-server.ts", HERE), "utf8");
+const audienceProjection = readFileSync(new URL("../../lib/reporting/p3-w05a-audience.ts", HERE), "utf8");
 
 const SCOPED_VIEWS = ["team-dashboard-view.tsx", "own-dashboard-view.tsx"];
 const SCOPED_SOURCES = [team, own];
@@ -52,9 +53,9 @@ test("W06C: the reporting read path fails closed when the audience payload is un
 });
 
 test("W06C: the team scope label stays inclusive when several teams are in scope", () => {
-  assert.match(server, /audienceTeamScopeCount\(payload\.audience\)/);
-  assert.match(server, /resolveAudienceScopeLabel\(audience, /);
-  assert.ok(server.includes("const scopedAudience: ReportingAudience"), "the inclusive label must be applied");
+  assert.match(server, /resolveReportingAudienceProjection\(payload\.audience\)/);
+  assert.match(audienceProjection, /resolveAudienceScopeLabel\(audience, audienceTeamScopeCount\(value\)\)/);
+  assert.match(audienceProjection, /return \{\s*kind: audience\.kind,\s*label:/);
   assert.match(team, /view\.scopeLabel|view\.scopeNote/);
 });
 
