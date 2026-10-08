@@ -323,9 +323,11 @@ async function main() {
       !bankFields.includes("worker-display-name") && !bankFields.includes("worker-target-status"),
       bankFields);
     await key(send, "Escape", "Escape", 27);
+    const focusRestored = await waitFor(send,
+      "!window.__p25r5a.dialogOpen() && " +
+      "window.__p25r5a.focusText() === 'Đề xuất thay đổi'");
     record("Escape closes the drawer and returns focus to the trigger",
-      await waitFor(send, "!window.__p25r5a.dialogOpen()") &&
-      (await api(send, "focusText()")) === "Đề xuất thay đổi", await api(send, "focusText()"));
+      focusRestored, await api(send, "focusText()"));
 
     await button(send, 'window.__p25r5a.clickRowButton("Người lao động quản lý 01", "Sửa trực tiếp")',
       "open privileged correction drawer");

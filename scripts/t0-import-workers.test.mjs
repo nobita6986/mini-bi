@@ -67,8 +67,9 @@ async function buildDb(ledger = IMPORT_REQUIRED_MIGRATIONS) {
 
 async function insertActor(db, auth, app, email, capabilities, scopeKinds) {
   await db.query("insert into auth.users (id, email) values ($1,$2)", [auth, email]);
-  await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
-    " values ($1,$2,true)", [app, auth]);
+  await db.query("insert into public.direct_entry_app_users" +
+    " (app_user_id, auth_subject, enabled, display_name) values ($1,$2,true,$3)",
+    [app, auth, email.split("@")[0]]);
   for (const capability of capabilities) {
     await db.query("insert into public.direct_entry_capability_grants" +
       " (app_user_id, capability, valid_from) values ($1,$2,'2020-01-01')", [app, capability]);
