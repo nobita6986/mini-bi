@@ -503,13 +503,21 @@ export async function resolveRows(client, rows, uploaders) {
 export async function preflightAuthority(client, rows) {
   const errors = [];
   for (const row of rows) {
+    const access = await client.query(
+      "select public.direct_entry_actor_can_access_project($1::uuid,$2::text) as ok",
+      [row.uploader.app_user_id, row.project_id]);
+    if (access.rows[0]?.ok !== true) {
+      // Guard 1 cua wrapper canonical: project access.
+      errors.push(issue("UPLOADER_PROJECT_ACCESS_DENIED", row.sourceRowId));
+      continue;
+    }
     try {
+      // Guard 2: create authority (manager assignment hoac legacy bundle).
       await client.query(
         "select public.direct_entry_create_authority($1::uuid,$2::uuid,$3::text,$4::date) as kind",
         [row.uploader.auth_subject, row.uploader.app_user_id, row.project_id, row.first_work_date]);
-    } catch (error) {
-      const classified = classifyDatabaseError(error);
-      errors.push(issue(classified.code, row.sourceRowId));
+    } catch {
+      errors.push(issue("UPLOADER_CREATE_AUTHORITY_DENIED", row.sourceRowId));
     }
   }
   return { errors };

@@ -36,8 +36,11 @@ function uuid(n) {
 }
 
 const TEAM = uuid(11);
-const PROJ_A = "t0_proj_a", PROJ_B = "t0_proj_b";
-const REC_A = "Rec A", REC_B = "Rec B";
+const PROJ_A = "t0_proj_a", PROJ_B = "t0_proj_b", PROJ_C = "t0_proj_c", PROJ_D = "t0_proj_d";
+const REC_A = "Rec A", REC_B = "Rec B", REC_C = "Rec C", REC_D = "Rec D";
+const UP3_AUTH = uuid(35), UP3_APP = uuid(45);
+const UP4_AUTH = uuid(36), UP4_APP = uuid(46);
+const UP3_LOGIN = "t0-pm-future@example.test", UP4_LOGIN = "t0-pm-expired@example.test";
 const OPS_AUTH = uuid(31), OPS_APP = uuid(41);
 const UP_AUTH = uuid(32), UP_APP = uuid(42);
 const UP2_AUTH = uuid(33), UP2_APP = uuid(43);
@@ -75,11 +78,12 @@ async function insertActor(db, auth, app, email, capabilities, scopeKinds) {
 async function seed(db) {
   await db.query("insert into public.teams (team_id, code, display_name)" +
     " values ($1,'T0OPS','Team T0 Ops')", [TEAM]);
-  for (const [project, name] of [[PROJ_A, "T0 Project A"], [PROJ_B, "T0 Project B"]]) {
+  for (const [project, name] of [[PROJ_A, "T0 Project A"], [PROJ_B, "T0 Project B"],
+    [PROJ_C, "T0 Project C"], [PROJ_D, "T0 Project D"]]) {
     await db.query("insert into public.direct_entry_projects (project_id, display_name)" +
       " values ($1,$2)", [project, name]);
   }
-  for (const name of [REC_A, REC_B]) {
+  for (const name of [REC_A, REC_B, REC_C, REC_D]) {
     await db.query("insert into public.recruiters (recruiter_id, display_name) values" +
       " (gen_random_uuid(),$1)", [name]);
     await db.query("insert into public.recruiter_provider_memberships" +
@@ -92,21 +96,44 @@ async function seed(db) {
       [name, TEAM]);
   }
   await insertActor(db, OPS_AUTH, OPS_APP, OPERATOR_LOGIN, ["entry_admin"], ["all"]);
-  // Business uploaders: legacy create bundle (own + all) so the canonical create path allows them.
-  await insertActor(db, UP_AUTH, UP_APP, UPLOADER_LOGIN,
-    ["entry_create", "submission_create"], ["own", "all"]);
+  // Business uploaders are project managers: lifecycle capabilities only, NO scope grant, so the
+  // legacy create path cannot authorise them - authority comes from the assignment.
+  await insertActor(db, UP_AUTH, UP_APP, UPLOADER_LOGIN, ["entry_create", "submission_create"], []);
   await insertActor(db, UP2_AUTH, UP2_APP, UPLOADER2_LOGIN,
-    ["entry_create", "submission_create"], ["own", "all"]);
+    ["entry_create", "submission_create"], []);
+  await assignProject(db, { project: PROJ_A, recruiterName: REC_A, app: UP_APP });
+  await assignProject(db, { project: PROJ_B, recruiterName: REC_B, app: UP2_APP });
+  // Negative fixtures: future and expired assignments on project A.
+  await insertActor(db, UP3_AUTH, UP3_APP, UP3_LOGIN, ["entry_create", "submission_create"], []);
+  await insertActor(db, UP4_AUTH, UP4_APP, UP4_LOGIN, ["entry_create", "submission_create"], []);
+  // Each negative fixture lives on its own project: the canonical assignment guard forbids
+  // overlapping intervals on one project, and a single assignment per project is a valid seed.
+  await assignProject(db, { project: PROJ_C, recruiterName: REC_C, app: UP3_APP,
+    validFrom: "2027-01-01" });
+  await assignProject(db, { project: PROJ_D, recruiterName: REC_D, app: UP4_APP,
+    validFrom: "2020-01-01", validTo: "2020-06-01" });
   // Manager of project B only, no legacy bundle and no all scope.
   await insertActor(db, MGR_AUTH, MGR_APP, MGR_LOGIN, ["change_request_create"], []);
-  await db.query("insert into public.direct_entry_project_manager_assignments" +
-    " (project_id, manager_recruiter_id, valid_from)" +
-    " select $1, recruiter_id, '2020-01-01' from public.recruiters where display_name = $2",
-    [PROJ_B, REC_B]);
+  // MGR keeps a verified link but NO assignment: the negative fixture for "no project access".
   await db.query("insert into public.direct_entry_app_user_recruiter_links" +
     " (app_user_id, recruiter_id, verified, valid_from)" +
     " select $1, recruiter_id, true, '2020-01-01' from public.recruiters where display_name = $2",
     [MGR_APP, REC_B]);
+}
+
+/** Assignment + verified link, seeded trong mot lan (valid_to di kem revoked_at). */
+async function assignProject(db, { project, recruiterName, app, validFrom = "2020-01-01",
+  validTo = null }) {
+  await db.query("insert into public.direct_entry_project_manager_assignments" +
+    " (project_id, manager_recruiter_id, valid_from, valid_to, revoked_at)" +
+    " select $1, recruiter_id, $3::date, $4::date," +
+    " case when $4::date is null then null else now() end" +
+    " from public.recruiters where display_name = $2",
+    [project, recruiterName, validFrom, validTo]);
+  await db.query("insert into public.direct_entry_app_user_recruiter_links" +
+    " (app_user_id, recruiter_id, verified, valid_from)" +
+    " select $1, recruiter_id, true, '2020-01-01' from public.recruiters where display_name = $2",
+    [app, recruiterName]);
 }
 
 function clientOf(db, override = null) {
@@ -167,22 +194,42 @@ function assertNoLeak(payload, extra = []) {
   }
 }
 
-test("R5B-R2: worker_details carries exactly the canonical keys (mutation-checked)", () => {
-  const { rows } = validateManifest([{
+test("R5B-R2: worker_details is a canonical subset and never carries display_name", () => {
+  const base = {
     source_row_id: "1", uploader_login: UPLOADER_LOGIN, project_id: PROJ_A,
     first_work_date: "2026-10-01", display_name: "T0 Worker", national_id: CCCD,
     provider_type: "hrp", recruiter_code: REC_A, labor_type: "TEMPORARY", target_state: "DRAFT",
-    gender: "MALE", date_of_birth_text: "1990-01-01", address: "T0 address", phone: "0900000000",
-  }]);
-  assert.equal(rows.length, 1);
-  const contract = toContractRow({ ...rows[0], project_id: PROJ_A, recruiter_id: uuid(99) });
-  assert.deepEqual(Object.keys(contract.worker_details).sort(), [...IMPORT_WORKER_DETAIL_KEYS].sort());
-  // Mutation check: display_name inside worker_details must break the contract assertion.
-  const mutated = { ...contract, worker_details: { ...contract.worker_details,
-    display_name: "T0 Worker" } };
-  assert.notDeepEqual(Object.keys(mutated.worker_details).sort(),
-    [...IMPORT_WORKER_DETAIL_KEYS].sort());
-  assert.equal(contract.display_name, "T0 Worker");
+  };
+  const minimal = toContractRow({ ...validateManifest([base]).rows[0], project_id: PROJ_A,
+    recruiter_id: uuid(99) });
+  const minimalKeys = Object.keys(minimal.worker_details);
+  assert.ok(minimalKeys.every((key) => IMPORT_WORKER_DETAIL_KEYS.includes(key)),
+    "every key must be canonical");
+  assert.equal(minimalKeys.includes("display_name"), false, "display_name is top-level only");
+  assert.equal(minimal.display_name, "T0 Worker");
+  for (const key of ["national_id", "date_of_birth", "address", "phone"]) {
+    assert.ok(minimalKeys.includes(key), key + " must always be present");
+  }
+  assert.equal(minimalKeys.includes("national_id_issued_at"), false,
+    "a blank optional field stays absent");
+
+  const full = toContractRow({ ...validateManifest([{ ...base, gender: "MALE",
+    date_of_birth_text: "1990-01-01", national_id_issued_at_text: "2020-06-01",
+    national_id_issued_place: "Noi cap", address: "T0 address", phone: "0900000000" }]).rows[0],
+    project_id: PROJ_A, recruiter_id: uuid(99) });
+  assert.deepEqual(Object.keys(full.worker_details).sort(),
+    [...IMPORT_WORKER_DETAIL_KEYS].sort(), "the full optional set equals the allowlist");
+  assert.equal(full.worker_details.gender.value, "MALE");
+  assert.equal(full.worker_details.national_id_issued_at.value, "2020-06-01");
+  assert.equal(full.worker_details.national_id.value, CCCD, "leading zero preserved as text");
+
+  // Mutation check: display_name or an unknown key inside worker_details must fail the rule.
+  for (const injected of [{ display_name: "T0 Worker" }, { nickname: "T0" }]) {
+    const mutated = { ...full, worker_details: { ...full.worker_details, ...injected } };
+    assert.equal(Object.keys(mutated.worker_details)
+      .every((key) => IMPORT_WORKER_DETAIL_KEYS.includes(key)), false,
+    "mutation must be detected: " + Object.keys(injected)[0]);
+  }
 });
 
 test("R5B-R2: deterministic keys are unique per chunk and per transition", () => {
@@ -342,19 +389,28 @@ test("R5B-R2: authority, expired assignment, episode rules and postcheck failure
       "nobody@example.test"), dependenciesFor(db).deps);
     assert.equal(noAccount.code, "OPERATOR_NOT_FOUND");
 
-    // Expired assignment fixture is seeded validly (valid_to + revoked_at in one statement).
-    await db.query("update public.direct_entry_project_manager_assignments" +
-      " set valid_from = '2020-01-01', valid_to = '2020-06-01', revoked_at = now()," +
-      " revoked_reason_text = 'T0 fixture expiry'" +
-      " where project_id = $1", [PROJ_B]).catch(async () => {
-      await db.query("update public.direct_entry_project_manager_assignments" +
-        " set valid_from = '2020-01-01', valid_to = '2020-06-01', revoked_at = now()" +
-        " where project_id = $1", [PROJ_B]);
-    });
-    const expired = await runImport(await optionsFor(await manifestFile([row()]), BATCH_A, "check",
-      MGR_LOGIN), dependenciesFor(db).deps);
-    assert.equal(expired.code, "OPERATOR_NOT_AUTHORIZED");
+    // Negative fixtures: legacy-bundle actor without assignment, then PM outside/future/expired.
+    for (const [label, uploaderLogin, code, project] of [
+      ["uploader without assignment", MGR_LOGIN, "UPLOADER_PROJECT_ACCESS_DENIED", PROJ_A],
+      ["PM future assignment", UP3_LOGIN, "UPLOADER_PROJECT_ACCESS_DENIED", PROJ_C],
+    ]) {
+      const deniedRow = await runImport(
+        await optionsFor(await manifestFile([row({ uploader_login: uploaderLogin,
+          project_id: project })]), BATCH_A, "check"), dependenciesFor(db).deps);
+      assert.equal(deniedRow.code, code, label + " got " + deniedRow.code);
+      assert.equal(await entryCount(db), 0, label + " must leave zero residue");
+      assertNoLeak(deniedRow);
+    }
+    // Expired assignment (valid_to + revoked_at seeded together): project D uploader denied.
+    const expired = await runImport(await optionsFor(
+      await manifestFile([row({ uploader_login: UP4_LOGIN, project_id: PROJ_D,
+        recruiter_code: REC_D })]), BATCH_A, "check"), dependenciesFor(db).deps);
+    assert.equal(expired.code, "UPLOADER_PROJECT_ACCESS_DENIED", "got " + expired.code);
     assert.equal(await entryCount(db), 0);
+    // The correct-project PM is allowed: the same row with the project-A uploader passes.
+    const allowed = await runImport(await optionsFor(await manifestFile([row()]), BATCH_A, "check"),
+      dependenciesFor(db).deps);
+    assert.equal(allowed.ok, true, JSON.stringify(allowed));
 
     // Active episode blocks a rehire, canonical OFF allows a new episode with a new code.
     const first = await runImport(await optionsFor(await manifestFile([row()]), BATCH_A),

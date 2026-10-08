@@ -131,7 +131,9 @@ export async function runImport(options, dependencies = {}) {
     const authority = await preflightAuthority(client, referenceResolution.rows);
     if (authority.errors.length > 0) {
       await client.query("rollback");
-      return { ok: false, code: "AUTHORITY_DENIED", mode: options.mode, ledger,
+      const distinct = authority.errors.every((item) =>
+        item.code === authority.errors[0].code) ? authority.errors[0].code : "AUTHORITY_DENIED";
+      return { ok: false, code: distinct, mode: options.mode, ledger,
         errors: sanitizedIssues(authority.errors) };
     }
     const context = { batchId: options.batchId, fingerprint: source.fingerprint,
