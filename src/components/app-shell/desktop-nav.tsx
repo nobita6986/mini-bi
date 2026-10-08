@@ -1,29 +1,37 @@
+"use client";
+
 /**
- * DesktopNav — Server Component.
+ * DesktopNav — Client Component.
  * Hiển thị navigation bar ngang (compact) trong header.
  * Ẩn trên mobile (md breakpoint) — mobile dùng Sheet ở MobileNav.
  *
- * Nhận danh sách đã được lọc tại AppShell.
- * Không tự filter path; active state dựa vào `activePath` prop.
+ * P2.5-W06A-R1: active state duoc tinh tu usePathname() (co che pathname nho
+ * nhat cua App Router) + findEntryByPath (longest-prefix), thay vi nhan
+ * currentPath tu layout (layout khong biet route con).
+ *
+ * Nhan danh sach da duoc loc tai AppShell; khong tu filter path, khong tu
+ * quyet dinh visibility.
  */
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
+import { findEntryByPath } from "@/lib/navigation/registry";
 import type { NavEntry } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
 
 export function DesktopNav({
-  activePath,
   items,
 }: {
-  activePath: string;
   items: ReadonlyArray<NavEntry>;
 }) {
+  const pathname = usePathname();
+  const active = findEntryByPath(pathname);
   return (
     <nav aria-label="Điều hướng chính" className="ml-2 hidden items-center gap-1 md:flex">
       {items.map((entry) => {
         const Icon = entry.icon;
-        const isActive = activePath === entry.path || activePath.startsWith(entry.path + "/");
+        const isActive = active?.id === entry.id;
         return (
           <Link
             key={entry.id}

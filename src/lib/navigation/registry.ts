@@ -16,6 +16,7 @@
 
 import type { ComponentType, SVGProps } from "react";
 import {
+  Building2,
   ClipboardList,
   LayoutDashboard,
   type LucideIcon,
@@ -45,7 +46,8 @@ export type NavCapability =
   | "hrp"
   | "entry_own"
   | "entry_team"
-  | "entry_admin";
+  | "entry_admin"
+  | "project_admin";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -115,7 +117,29 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     capability: "entry_admin",
     visibility: { desktop: true, mobile: true },
   },
+  {
+    id: "project-operations",
+    label: "Dự án",
+    path: "/direct-entry/projects",
+    description:
+      "P2.5-W06A: quản lý dự án (tạo, đổi tên, ngừng/kích hoạt) và gán/thu hồi " +
+      "quản lý dự án. Capability 'project_admin' ánh xạ projectAdminNavPredicate " +
+      "(entry_admin ∧ effective all scope) đúng DB W02; chỉ là metadata hiển thị — " +
+      "quyền thật do RPC admin enforce.",
+    icon: Building2,
+    status: "current",
+    capability: "project_admin",
+    visibility: { desktop: true, mobile: true },
+  },
 ];
+
+/**
+ * P2.5-W06A: moi route thuoc khu vực Direct Entry (ke ca /direct-entry/projects)
+ * deu bi gate boi cung flag DIRECT_ENTRY_UI_ENABLED.
+ */
+export function isDirectEntryRoute(entry: NavEntry): boolean {
+  return entry.path === "/direct-entry" || entry.path.startsWith("/direct-entry/");
+}
 
 /** Chỉ các entry hiện hành (status = 'current'). */
 export const CURRENT_NAV_ENTRIES: ReadonlyArray<NavEntry> = NAV_ENTRIES.filter(
@@ -128,7 +152,7 @@ export function entriesForViewport(
   directEntryEnabled: boolean,
 ): ReadonlyArray<NavEntry> {
   return CURRENT_NAV_ENTRIES.filter((entry) =>
-    entry.visibility[viewport] && (entry.id !== "direct-entry" || directEntryEnabled)
+    entry.visibility[viewport] && (!isDirectEntryRoute(entry) || directEntryEnabled)
   );
 }
 
@@ -163,15 +187,27 @@ export function filterEntriesForActor(input: {
 }): ReadonlyArray<NavEntry> {
   return CURRENT_NAV_ENTRIES.filter((entry) => {
     if (!entry.visibility[input.viewport]) return false;
-    if (entry.id === "direct-entry" && !input.directEntryEnabled) return false;
+    if (isDirectEntryRoute(entry) && !input.directEntryEnabled) return false;
     return input.decide(entry);
   });
 }
 
 /**
  * Tìm entry theo path — dùng cho highlight "active" trong App Shell.
- * Trả về undefined nếu path không thuộc registry (vd. landing page `/`).
+ * Exact match thang; neu khong co, tra entry co path la prefix dai nhat
+ * (de /direct-entry/projects highlight "Dự án", khong phai "Nhập liệu").
+ * Tra undefined neu path khong thuoc registry (vd. landing page `/`).
  */
 export function findEntryByPath(path: string): NavEntry | undefined {
-  return CURRENT_NAV_ENTRIES.find((e) => e.path === path);
+  for (const entry of CURRENT_NAV_ENTRIES) {
+    if (path === entry.path) return entry;
+  }
+  let best: NavEntry | undefined;
+  for (const entry of CURRENT_NAV_ENTRIES) {
+    if (path.startsWith(entry.path + "/") &&
+        (!best || entry.path.length > best.path.length)) {
+      best = entry;
+    }
+  }
+  return best;
 }

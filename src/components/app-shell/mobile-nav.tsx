@@ -20,9 +20,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Dialog } from "radix-ui";
-import { ClipboardList, LayoutDashboard, Menu, X } from "lucide-react";
+import { Building2, ClipboardList, LayoutDashboard, Menu, X } from "lucide-react";
 
+import { findEntryByPath } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
 
 type MobileNavItem = { id: string; label: string; path: string };
@@ -30,16 +32,17 @@ type MobileNavItem = { id: string; label: string; path: string };
 const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
   "direct-entry": ClipboardList,
+  "project-operations": Building2,
 } as const;
 
 export function MobileNav({
-  activePath,
   items,
 }: {
-  activePath: string;
   items: ReadonlyArray<MobileNavItem>;
 }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const active = findEntryByPath(pathname);
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -97,7 +100,7 @@ export function MobileNav({
             {items.map((entry) => {
               const Icon = NAV_ICONS[entry.id];
               if (!Icon) throw new Error(`Missing mobile navigation icon for "${entry.id}"`);
-              const isActive = activePath === entry.path || activePath.startsWith(entry.path + "/");
+              const isActive = active?.id === entry.id;
               return (
                 <Link
                   key={entry.id}

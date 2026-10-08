@@ -17,5 +17,5 @@ import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 export default async function DirectEntryLayout({ children }: { children: ReactNode }) {
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const actor = await resolveNavActorForAppShell({ directEntryEnabled });
-  return <AppShell currentPath="/direct-entry" actor={actor}>{children}</AppShell>;
+  return <AppShell actor={actor}>{children}</AppShell>;
 }

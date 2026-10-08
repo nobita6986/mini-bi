@@ -20,6 +20,7 @@ const {
   decideNavEntryVisibility,
   directEntryNavPredicate,
   adminAuthorityNavPredicate,
+  projectAdminNavPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -53,6 +54,19 @@ test("adminAuthorityNavPredicate: phải có đủ 3 capability + scope 'all'", 
     adminAuthorityNavPredicate(makeActor(allCaps, [{ kind: "team", reference: "t" }])),
     false,
   );
+});
+
+test("F5: projectAdminNavPredicate = entry_admin + all scope, KHONG can 2 token kia", () => {
+  // DB W02 (direct_entry_assert_project_admin) chi can entry_admin + all scope.
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "all", reference: "all" }])), true);
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"],
+    [{ kind: "all", reference: "all" }])), true, "them 2 token khong anh huong");
+  // entry_own/entry_team KHONG duoc render page roi moi cho API 403.
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_own"], [{ kind: "all", reference: "all" }])), false);
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_team"], [{ kind: "all", reference: "all" }])), false);
+  // entry_admin nhung KHONG co scope all => fail.
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "team", reference: "t" }])), false);
+  assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [])), false);
 });
 
 test("resolveNavCapabilityPredicate: token không xác định fail-closed", () => {
@@ -165,7 +179,7 @@ test("filterEntriesForActor: actor null → chỉ Dashboard (fail-closed cho Dir
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
-test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry", () => {
+test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry + Dự án", () => {
   const ownerActor = makeActor(
     ["entry_admin", "recruiter_master_manage", "team_master_manage"],
     [{ kind: "all", reference: "all" }],
@@ -176,7 +190,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboa
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  assert.deepEqual(result.map((e) => e.id).sort(), ["dashboard", "direct-entry"]);
+  // P2.5-W06A: owner (admin authority đủ 3 token) thấy thêm entry Dự án.
+  assert.deepEqual(result.map((e) => e.id).sort(),
+    ["dashboard", "direct-entry", "project-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -191,8 +207,9 @@ test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù 
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
+  // P2.5-W06A chỉ THÊM một entry vào registry hiện có; không registry thứ hai.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["dashboard", "direct-entry"]);
+  assert.deepEqual(ids, ["dashboard", "direct-entry", "project-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============

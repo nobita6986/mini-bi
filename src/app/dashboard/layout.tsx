@@ -28,5 +28,5 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const actor = await resolveNavActorForAppShell({ directEntryEnabled });
-  return <AppShell currentPath="/dashboard" actor={actor}>{children}</AppShell>;
+  return <AppShell actor={actor}>{children}</AppShell>;
 }

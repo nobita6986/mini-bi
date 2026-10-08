@@ -51,7 +51,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 53, "the inventory includes P2.5-W03 #53 after P2.5-W02 #51");
+  assert.equal(names.length, 54, "the inventory includes P2.5-W03 #53 after P2.5-W02 #51");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }

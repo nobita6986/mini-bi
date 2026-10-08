@@ -60,6 +60,16 @@ export const adminAuthorityNavPredicate: NavCapabilityPredicate = (actor) => {
   );
 };
 
+/**
+ * P2.5-W06A-R1: Project Operations authority chinh xac theo DB W02
+ * (direct_entry_assert_project_admin) = entry_admin + effective all scope.
+ * KHONG yeu cau recruiter_master_manage/team_master_manage (RPC W02 khong yeu cau).
+ * Dung CHUNG cho nav visibility va page decision.
+ */
+export const projectAdminNavPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("entry_admin") &&
+  actor.scopes.some((scope) => scope.kind === "all");
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -69,6 +79,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   entry_own: directEntryNavPredicate,
   entry_team: directEntryNavPredicate,
   entry_admin: directEntryNavPredicate,
+  project_admin: projectAdminNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */
