@@ -38,7 +38,9 @@ import {
   reviewDecisionState,
   STALE_REVIEW_MESSAGE,
   UNSUPPORTED_REVIEW_MESSAGE,
+  reviewerUnsupportedMessage,
   unsupportedReviewerViewModel,
+  type ReviewerUnsupportedReason,
   type ReviewerViewModel,
 } from "@/lib/direct-entry/change-request-reviewer";
 import {
@@ -165,6 +167,9 @@ export function DirectEntryChangeRequestReviewer({
         }
         const entries = new Map<string, ProposerEntryProjection>();
         const contexts = new Map<string, EntrySensitiveContext>();
+        // Phan loai dung nguyen nhan khi khong doc duoc entry, de dialog bao dung taxonomy
+        // thay vi nhan chung "can phien ban giao dien hoac quyen xem khac".
+        let entryFailure: ReviewerUnsupportedReason | null = null;
         for (const item of detail.items) {
           const response = await fetch(
             "/api/direct-entry/entries/" + encodeURIComponent(item.entry_id),
@@ -173,12 +178,27 @@ export function DirectEntryChangeRequestReviewer({
           const body = await readJson(response);
           const slice = projectionSlice(body, ENTRY_KEYS);
           const entry = slice ? projectProposerEntry(slice.entry) : null;
-          if (!response.ok || !entry || entry.entry_id !== item.entry_id) continue;
+          if (!response.ok) {
+            entryFailure ??= (response.status === 403 || response.status === 404)
+              ? "ENTRY_DENIED"
+              : "ENTRY_UNAVAILABLE";
+            continue;
+          }
+          if (!entry || entry.entry_id !== item.entry_id) {
+            entryFailure ??= "ENTRY";
+            continue;
+          }
           entries.set(entry.entry_id, entry);
           // Ngu canh nhay cam (worker_details/payment/employment_status) strict-project rieng;
           // server da redact theo capability nen field khong duoc phep coi nhu KHONG CO.
           const context = slice ? projectEntrySensitiveContext(slice.entry) : null;
           if (context) contexts.set(entry.entry_id, context);
+        }
+        if (entryFailure !== null && entries.size < detail.items.length) {
+          if (cancelled) return;
+          setModel(unsupportedReviewerViewModel(requestId, entryFailure));
+          setLoadState("ready");
+          return;
         }
         // P3-W07C-R6-R1: khong tai catalog theo first_work_date cua tung ban ghi.
         await ensureCatalog(hcmTodayDate()).catch(() => null);
@@ -316,8 +336,9 @@ export function DirectEntryChangeRequestReviewer({
               </div>
 
               {model?.kind === "unsupported" && (
-                <p className={styles.notice} data-testid="reviewer-unsupported">
-                  {UNSUPPORTED_REVIEW_MESSAGE}
+                <p className={styles.notice} data-testid="reviewer-unsupported"
+                  data-reason={model.reason}>
+                  {reviewerUnsupportedMessage(model.reason)}
                 </p>
               )}
 

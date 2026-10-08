@@ -41,10 +41,15 @@ test("detail duoc strict-project va map ngay sang view model an toan", () => {
   assert.match(reviewer, /unsupportedReviewerViewModel\(requestId, "PROPOSAL"\)/);
 });
 
-test("de xuat khong ho tro chi hien nhan chung va khong co hanh dong quyet dinh", () => {
+test("de xuat khong ho tro hien dung taxonomy va khong co hanh dong quyet dinh", () => {
   assert.match(reviewer, /data-testid="reviewer-unsupported"/);
-  assert.match(reviewer, /\{UNSUPPORTED_REVIEW_MESSAGE\}/);
+  // P2.5 hotfix: copy theo tung ly do fail-closed thay vi mot nhan chung mo ho.
+  assert.match(reviewer, /data-reason=\{model\.reason\}/);
+  assert.match(reviewer, /\{reviewerUnsupportedMessage\(model\.reason\)\}/);
   assert.match(helper, /UNSUPPORTED_REVIEW_MESSAGE =\s*\n\s*"Yêu cầu này cần phiên bản giao diện hoặc quyền xem khác\."/);
+  assert.match(helper, /export function reviewerUnsupportedMessage/);
+  assert.match(helper, /"ENTRY_DENIED"/);
+  assert.match(helper, /"ENTRY_UNAVAILABLE"/);
   assert.match(reviewer, /const canDecide = loadState === "ready" && model\?\.kind === "reviewable";/);
   assert.match(reviewer, /onCloseAutoFocus=\{/);
   assert.match(reviewer, /opener\.focus\(\)/);

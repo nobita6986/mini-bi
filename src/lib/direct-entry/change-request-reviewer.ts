@@ -92,10 +92,45 @@ export type ReviewerUnsupportedReason =
   | "TARGET_KIND"
   | "PROPOSAL"
   | "ENTRY"
+  /** Doc entry tra 403/404: thieu quyen doc ho so da gui (khac voi loi tam thoi). */
+  | "ENTRY_DENIED"
+  /** Doc entry tra 5xx/timeout: loi tam thoi, thu lai duoc. */
+  | "ENTRY_UNAVAILABLE"
   | "CATALOG"
   | "WORKER"
   | "PAYMENT"
   | "STATUS";
+
+/**
+ * Copy CHINH XAC theo tung ly do fail-closed, sanitized (khong UUID/raw DB/raw payload).
+ * Truoc day moi ly do deu hien mot nhan chung "can phien ban giao dien hoac quyen xem khac",
+ * khien loi thieu quyen doc ho so bi bao mo ho. Giu nguyen UNSUPPORTED_REVIEW_MESSAGE lam
+ * fallback cho ly do khong xac dinh.
+ */
+export function reviewerUnsupportedMessage(reason: ReviewerUnsupportedReason): string {
+  if (reason === "ENTRY_DENIED") {
+    return "Bạn chưa có quyền đọc dữ liệu hiện tại của hồ sơ đã gửi để đối chiếu đề xuất này.";
+  }
+  if (reason === "ENTRY_UNAVAILABLE") {
+    return "Không tải được dữ liệu hiện tại của hồ sơ. Vui lòng thử lại.";
+  }
+  if (reason === "ENTRY") return "Không tìm thấy dòng hồ sơ tương ứng với yêu cầu thay đổi.";
+  if (reason === "STATUS") return "Không đọc được trạng thái làm việc hiện tại của hồ sơ.";
+  if (reason === "WORKER") {
+    return "Cần quyền xem thông tin cá nhân người lao động để đối chiếu đề xuất này.";
+  }
+  if (reason === "PAYMENT") return "Đề xuất thông tin tài khoản ngân hàng không đọc được.";
+  if (reason === "CATALOG") {
+    return "Không giải được danh mục dự án/người tuyển để hiển thị đề xuất.";
+  }
+  if (reason === "PROPOSAL") return "Đề xuất không đọc được với phiên bản giao diện hiện tại.";
+  if (reason === "TARGET_KIND") return "Loại yêu cầu thay đổi này chưa được hỗ trợ.";
+  if (reason === "NOT_DECIDABLE") {
+    return "Bạn không có quyền quyết định yêu cầu thay đổi này.";
+  }
+  if (reason === "STATE") return "Yêu cầu thay đổi không còn ở trạng thái chờ duyệt.";
+  return UNSUPPORTED_REVIEW_MESSAGE;
+}
 
 export type ReviewerViewModel =
   | { kind: "reviewable"; request_id: string; version: number; items: ReviewerItemView[] }
