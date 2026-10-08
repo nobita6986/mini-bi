@@ -41,6 +41,9 @@ const REC_A = "Rec A", REC_B = "Rec B", REC_C = "Rec C", REC_D = "Rec D";
 const UP3_AUTH = uuid(35), UP3_APP = uuid(45);
 const UP4_AUTH = uuid(36), UP4_APP = uuid(46);
 const UP3_LOGIN = "t0-pm-future@example.test", UP4_LOGIN = "t0-pm-expired@example.test";
+const UP5_AUTH = uuid(37), UP5_APP = uuid(47);
+const UP5_LOGIN = "t0-pm-no-own-scope@example.test";
+const STATUS_AUTH = uuid(38), STATUS_APP = uuid(48);
 const OPS_AUTH = uuid(31), OPS_APP = uuid(41);
 const UP_AUTH = uuid(32), UP_APP = uuid(42);
 const UP2_AUTH = uuid(33), UP2_APP = uuid(43);
@@ -98,9 +101,19 @@ async function seed(db) {
   await insertActor(db, OPS_AUTH, OPS_APP, OPERATOR_LOGIN, ["entry_admin"], ["all"]);
   // Business uploaders are project managers: lifecycle capabilities only, NO scope grant, so the
   // legacy create path cannot authorise them - authority comes from the assignment.
-  await insertActor(db, UP_AUTH, UP_APP, UPLOADER_LOGIN, ["entry_create", "submission_create"], []);
+  // Uploaders are real PMs: assignment gives project authority. The lifecycle capability
+  // submission_create plus exactly ONE effective own scope is the real contract of
+  // direct_entry_transition_submission (never granted by the operator).
+  await insertActor(db, UP_AUTH, UP_APP, UPLOADER_LOGIN, ["entry_create", "submission_create"],
+    ["own"]);
   await insertActor(db, UP2_AUTH, UP2_APP, UPLOADER2_LOGIN,
-    ["entry_create", "submission_create"], []);
+    ["entry_create", "submission_create"], ["own"]);
+  // Negative fixture: PM of project A with the lifecycle capability but NO own scope.
+  await insertActor(db, UP5_AUTH, UP5_APP, UP5_LOGIN, ["entry_create", "submission_create"], []);
+  await assignProject(db, { project: PROJ_A, recruiterName: REC_C, app: UP5_APP });
+  // Status fixture: separate canonical actor for closing an episode (not the importer flow).
+  await insertActor(db, STATUS_AUTH, STATUS_APP, "t0-status-admin@example.test",
+    ["employment_status.apply", "entry_admin"], ["all"]);
   await assignProject(db, { project: PROJ_A, recruiterName: REC_A, app: UP_APP });
   await assignProject(db, { project: PROJ_B, recruiterName: REC_B, app: UP2_APP });
   // Negative fixtures: future and expired assignments on project A.
@@ -330,8 +343,12 @@ test("R5B-R2: check rollback, apply commit, SUBMITTED transitions and zero resid
   const db = await buildDb();
   try {
     await seed(db);
+    // Two SUBMITTED rows share one uploader + target_state -> ONE chunk -> ONE submission and
+    // exactly two transitions (not four); the DRAFT row is a second chunk that never transitions.
     const mixed = await manifestFile([
       row({ source_row_id: "1", target_state: "SUBMITTED" }),
+      row({ source_row_id: "3", target_state: "SUBMITTED", national_id: "123123123123",
+        display_name: "T0 Worker Three" }),
       row({ source_row_id: "2", uploader_login: UPLOADER2_LOGIN, project_id: PROJ_B,
         recruiter_code: REC_B, national_id: OTHER_CCCD, display_name: "T0 Worker Two" }),
     ]);
@@ -339,18 +356,22 @@ test("R5B-R2: check rollback, apply commit, SUBMITTED transitions and zero resid
     assert.equal(check.ok, true, JSON.stringify(check));
     assert.equal(check.committed, false);
     assert.equal(check.groups, 2);
-    assert.equal(check.transitions, 2, "one submission transitions twice");
+    assert.equal(check.chunks, 2);
+    assert.equal(check.transitions, 2, "one submission transitions exactly twice");
     assert.equal(await entryCount(db), 0, "check mode rolls back");
 
     const apply = await runImport(await optionsFor(mixed, BATCH_A), dependenciesFor(db).deps);
     assert.equal(apply.ok, true, JSON.stringify(apply));
-    assert.equal(await entryCount(db), 2);
+    assert.equal(await entryCount(db), 3);
+    assert.equal(apply.transitions, 2);
+    assert.equal(Number((await db.query("select count(*)::int as n from" +
+      " public.direct_entry_submissions")).rows[0].n), 2, "one submission per chunk");
     const states = (await db.query("select s.state, count(*)::int as n from public.direct_entries e" +
       " join public.direct_entry_submissions s on s.submission_id = e.submission_id" +
       " group by 1 order by 1")).rows;
-    assert.deepEqual(states, [{ state: "DRAFT", n: 1 }, { state: "SUBMITTED", n: 1 }]);
+    assert.deepEqual(states, [{ state: "DRAFT", n: 1 }, { state: "SUBMITTED", n: 2 }]);
     assert.equal(Number((await db.query("select count(*)::int as n from" +
-      " public.direct_entry_employment_status_events")).rows[0].n), 2);
+      " public.direct_entry_employment_status_events")).rows[0].n), 3);
 
     // Partial failure: one bad row fails the whole batch with zero residue.
     const bad = await manifestFile([row({ source_row_id: "1", national_id: "111111111111" }),
@@ -358,7 +379,26 @@ test("R5B-R2: check rollback, apply commit, SUBMITTED transitions and zero resid
     const failed = await runImport(await optionsFor(bad, BATCH_B), dependenciesFor(db).deps);
     assert.equal(failed.ok, false);
     assert.equal(failed.code, "REFERENCE_NOT_RESOLVED");
-    assert.equal(await entryCount(db), 2, "no partial write");
+    assert.equal(await entryCount(db), 3, "no partial write");
+
+    // PM of the right project but without the own scope: the create runs, the transition is
+    // denied, and the OUTER transaction rolls everything back (entries, reason, operator audit).
+    const auditBefore = Number((await db.query("select count(*)::int as n from" +
+      " public.direct_entry_audit_events where action = 't0_worker_import'")).rows[0].n);
+    const reasonsBefore = Number((await db.query("select count(*)::int as n from" +
+      " public.direct_entry_restricted_reasons")).rows[0].n);
+    const noOwnScope = await runImport(await optionsFor(await manifestFile([row({
+      uploader_login: UP5_LOGIN, target_state: "SUBMITTED", national_id: "456456456456" })]),
+      BATCH_B), dependenciesFor(db).deps);
+    assert.equal(noOwnScope.code, "AUTHORITY_DENIED", "got " + noOwnScope.code);
+    assert.equal(await entryCount(db), 3, "transition failure rolls the batch back");
+    assert.equal(Number((await db.query("select count(*)::int as n from" +
+      " public.direct_entry_audit_events where action = 't0_worker_import'")).rows[0].n),
+    auditBefore, "no operator audit residue");
+    assert.equal(Number((await db.query("select count(*)::int as n from" +
+      " public.direct_entry_restricted_reasons")).rows[0].n), reasonsBefore,
+    "no reason residue");
+    assertNoLeak(noOwnScope, ["456456456456"]);
     assertNoLeak(failed, ["111111111111", "222222222222", "t0_missing_project"]);
 
     // Ledger gate fails closed in both modes.
@@ -434,7 +474,7 @@ test("R5B-R2: authority, expired assignment, episode rules and postcheck failure
     // Canonical status path closes the episode (uploader actor, DRAFT submission, reason, OCC).
     await db.query("select public.direct_entry_apply_employment_status(" +
       "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::date,$7::text,$8::text,$9::text)",
-      [UP_AUTH, UP_APP, created.id, Number(created.version), "OFF", "2026-10-05", "T0 leave",
+      [STATUS_AUTH, STATUS_APP, created.id, Number(created.version), "OFF", "2026-10-05", "T0 leave",
         "T0 canonical leave", deterministicUuid("t0-test-off", created.id)]);
     const rehire = await runImport(await optionsFor(await manifestFile([row({ source_row_id: "9" })]),
       BATCH_B), dependenciesFor(db).deps);
@@ -464,7 +504,7 @@ test("R5B-R2: authority, expired assignment, episode rules and postcheck failure
     assert.deepEqual(failing.acceptance.problems, [
       { code: "POSTCHECK_STATUS_NOT_ON", source_row_id: "20", severity: "error" },
     ]);
-    assert.equal(await entryCount(db), 2, "postcheck failure leaves zero residue");
+    assert.equal(await entryCount(db), 3, "postcheck failure leaves zero residue");
     assertNoLeak(failing, ["333333333333"]);
   } finally {
     await db.close();

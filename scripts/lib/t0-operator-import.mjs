@@ -550,27 +550,32 @@ export async function openBatchAudit(client, context) {
   await client.query(
     "insert into public.direct_entry_audit_events (auth_subject, app_user_id, action, capability," +
     " resource_ref, scope_kind, outcome, reason_id, changed_fields)" +
-    " values ($1::uuid,$2::uuid,$3,$4,$5,'all','APPLIED',$6::uuid,$7)",
+    " values ($1::uuid,$2::uuid,$3,$4,$5,'all','APPLIED',$6::uuid,$7::text[])",
     [context.operator.auth_subject, context.operator.app_user_id, IMPORT_ACTION,
-      "entry_admin", context.batchId, reasonId, ["batch_id", "fingerprint"]]);
+      "entry_admin", context.batchId, reasonId, "{batch_id,fingerprint}"]);
   return { auditCount: 1, reasonId, replayed: false };
 }
 
 export async function executeImportPlan(client, plan, context) {
+  const submissions = [];
   const entryIds = [];
   const employeeCodes = [];
-  const submissions = [];
   for (const chunk of plan) {
     const created = await client.query(
       "select public.direct_entry_create_full_profile_batch_v2(" +
       "$1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text) as data",
       [chunk.uploader.auth_subject, chunk.uploader.app_user_id, IMPORT_CONTRACT_VERSION,
         JSON.stringify(chunk.payload), chunk.idempotencyKey]);
+    // Projection canonical cua create: khong join them de lay version/submission.
     const data = created.rows[0]?.data ?? null;
     const ids = Array.isArray(data?.entry_ids) ? data.entry_ids : null;
     const codes = Array.isArray(data?.employee_codes) ? data.employee_codes : null;
-    if (ids === null || codes === null || ids.length !== chunk.rows.length ||
-        codes.length !== ids.length ||
+    const submissionId = typeof data?.submission_id === "string" ? data.submission_id : null;
+    const version = typeof data?.version === "number" ? data.version : null;
+    const replayed = typeof data?.replayed === "boolean" ? data.replayed : false;
+    if (ids === null || codes === null || submissionId === null || !UUID.test(submissionId) ||
+        version === null || !Number.isInteger(version) || version < 1 ||
+        ids.length !== chunk.rows.length || codes.length !== ids.length ||
         !ids.every((value) => typeof value === "string" && UUID.test(value)) ||
         !codes.every((value) => typeof value === "string" && EMPLOYEE_CODE.test(value))) {
       throw new ImportValidationError("RPC_RESULT_INVALID");
@@ -578,32 +583,37 @@ export async function executeImportPlan(client, plan, context) {
     for (const [index, entryId] of ids.entries()) {
       entryIds.push(entryId);
       employeeCodes.push(codes[index]);
-      submissions.push({ entryId, uploader: chunk.uploader, targetState: chunk.targetState });
     }
+    // Mot create chunk = dung MOT submission record.
+    submissions.push({ chunk, submissionId, version, targetState: chunk.targetState,
+      replayed, entryIds: ids });
   }
-  let transitionCount = 0;
+  let transitions = 0;
   for (const item of submissions) {
     if (item.targetState !== "SUBMITTED") continue;
-    const found = await client.query(
-      "select submission_id::text as submission_id, version from public.direct_entries e" +
-      " join public.direct_entry_submissions s on s.submission_id = e.submission_id" +
-      " where e.entry_id = $1::uuid", [item.entryId]);
-    const submissionId = found.rows[0]?.submission_id;
-    const version = Number(found.rows[0]?.version ?? 0);
-    if (typeof submissionId !== "string" || !UUID.test(submissionId) || version < 1) {
+    // DRAFT -> REVIEW bang version cua create, REVIEW -> SUBMITTED bang version cua REVIEW.
+    const review = await client.query(
+      "select public.direct_entry_transition_submission(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
+      [item.chunk.uploader.auth_subject, item.chunk.uploader.app_user_id, item.submissionId,
+        item.version, "REVIEW",
+        deterministicUuid("t0-import-transition", context.batchId, item.submissionId, "REVIEW")]);
+    const reviewVersion = review.rows[0]?.data?.version;
+    if (typeof reviewVersion !== "number" || !Number.isInteger(reviewVersion) ||
+        reviewVersion <= item.version) {
       throw new ImportValidationError("RPC_RESULT_INVALID");
     }
-    // Hai transition dung HAI idempotency key khac nhau (derive tu submission + target).
-    for (const [state, expectedVersion] of [["REVIEW", version], ["SUBMITTED", version + 1]]) {
-      await client.query(
-        "select public.direct_entry_transition_submission(" +
-        "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text)",
-        [item.uploader.auth_subject, item.uploader.app_user_id, submissionId, expectedVersion,
-          state, deterministicUuid("t0-import-transition", context.batchId, submissionId, state)]);
-      transitionCount += 1;
-    }
+    transitions += 1;
+    await client.query(
+      "select public.direct_entry_transition_submission(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
+      [item.chunk.uploader.auth_subject, item.chunk.uploader.app_user_id, item.submissionId,
+        reviewVersion, "SUBMITTED",
+        deterministicUuid("t0-import-transition", context.batchId, item.submissionId, "SUBMITTED")]);
+    transitions += 1;
   }
-  return { entryIds, employeeCodes, submissions, transitionCount, plan };
+  return { entryIds, employeeCodes, submissions, transitionCount: transitions,
+    chunkCount: plan.length, plan };
 }
 
 const POSTCHECK_SQL = "select e.entry_id::text as entry_id, e.employee_code, e.project_id," +
@@ -624,9 +634,13 @@ export async function postcheckImport(client, execution, rows, context) {
   let statusOn = 0;
   let metadata = 0;
   let audit = 0;
+  const owner = new Map();
+  for (const item of execution.submissions) {
+    for (const entryId of item.entryIds) owner.set(entryId, item);
+  }
   for (const [index, entryId] of execution.entryIds.entries()) {
     const row = rows[index];
-    const item = execution.submissions[index];
+    const item = owner.get(entryId);
     const found = await client.query(POSTCHECK_SQL, [entryId]);
     const entry = found.rows[0];
     if (entry === undefined || entry.deleted_at !== null) {

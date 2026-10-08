@@ -1,16 +1,16 @@
-# P2.5-HF-R5B-R3 - canonical authority preflight + PM uploader fixture (partially green)
+# P2.5-HF-R5B-R4 - final importer closure (RED, not accepted)
 
-Base b3d193f377a28c12964af6d694e4274bf542985c -> final (this commit); fast-forward, no amend/rebase/force-push, no migration, no new doc, no dependency. Local = remote, worktree clean.
+Base 992bba35d08998781b41aaaaf5631b82259419c6 -> final (this commit); fast-forward only, no amend/rebase/force-push, no migration/dependency/RPC/capability/doc added. Local = remote, worktree clean.
 
 ## Before -> after (this round)
-- FIX 1 done: preflightAuthority now proves BOTH guards the real v2 wrapper uses - direct_entry_actor_can_access_project first, then direct_entry_create_authority - and returns distinct safe codes UPLOADER_PROJECT_ACCESS_DENIED / UPLOADER_CREATE_AUTHORITY_DENIED (CLI surfaces the distinct code; no raw message, no identity).
-- FIX 2 done in the fixture: uploaders A/B are project managers (verified app-user/recruiter link + effective assignment on project A/B), lifecycle capabilities only and NO scope grant and no entry_admin, so the legacy path cannot authorise them; technical operator stays entry_admin + all. Negative fixtures: legacy-bundle actor with own scope but no assignment, PM with future assignment (own project), PM with expired assignment (valid_to + revoked_at seeded in one statement, own project). Each negative fixture lives on its own project because the canonical guard forbids overlapping intervals.
-- FIX 3 done: worker_details assertion is a canonical-subset rule - every key must be in IMPORT_WORKER_DETAIL_KEYS, display_name is never inside, national_id/date_of_birth/address/phone always present, blank optional stays absent, a full optional row equals the allowlist exactly, and injecting display_name or an unknown key fails the regression (mutation check).
-- Importer suite: 3/6 -> 4/6 (the uploader != operator / created_by = uploader / single reason + single operator audit test now passes, which is the core evidence for FINDINGS 2 and 3).
+- Root cause 1 (partially addressed): executeImportPlan no longer runs the ambiguous join query; it now consumes the create projection (entry_ids, employee_codes, submission_id, version, replayed) with strict validation, and treats ONE create chunk as ONE submission; transitions are DRAFT->REVIEW (expected_version = create version) then REVIEW->SUBMITTED (expected_version = the version returned by REVIEW), each with its own deterministic key derived from batch + submission_id + target state. Two SUBMITTED rows in one chunk therefore transition once, not twice.
+- postcheck now maps each entry to the submission that owns it (owner map from execution.submissions).
+- Fixture follows the real lifecycle contract: uploaders stay real PMs (verified link + effective assignment, no entry_admin, no all scope) and gain submission_create plus exactly ONE effective own scope; a new negative fixture is a PM of the right project WITHOUT the own scope; a separate STATUS_ADMIN actor (employment_status.apply + entry_admin + all) now performs the canonical OFF step, so the uploader never holds employment_status.apply.
+- New regressions added: two SUBMITTED rows -> one submission and exactly two transitions; DRAFT chunk never transitions; PM without own scope -> AUTHORITY_DENIED with zero residue (entries, reason and operator audit unchanged); status fixture uses its own actor.
+- Batch audit insert now passes changed_fields as a text[] literal (array-parameter hazard).
 
-## Still red (no PASS claimed)
-- check/apply/SUBMITTED test: IMPORT_FAILED (unexpected SQLSTATE) - the DRAFT->REVIEW->SUBMITTED transition path for a PM uploader without scope grants still fails; expected version/key handling or the required lifecycle capability needs one more pass.
-- authority test: raw "capability denied" escapes from the canonical status RPC used to close the episode (the uploader actor lacks employment_status.apply); the fixture must either run that step as the technical operator or hold the lifecycle capability.
-- pnpm test:t0-import is therefore RED on this branch and remains wired into pnpm test; do not use this branch to import data.
-- Not run this round (blast radius limited by budget): focused #57-#61 DB suites, lint, git diff --check, db:migrate --offline - R2 evidence for those still holds.
+## Still red - do not use this branch
+- pnpm test:t0-import is 3/6. The DRAFT-only path (no transition at all) now fails with IMPORT_FAILED (unknown SQLSTATE), so the remaining fault is NOT the transition contract: it is inside the create projection / batch-audit sequence in runImport. Next step is to surface the raw SQLSTATE once (one diagnostic run) and fix that single call, then re-run.
+- Because this round changed the execution plan, the earlier R3 evidence is superseded; the focused #57-#61 DB suites, lint, git diff --check and db:migrate --offline were NOT run in this round.
+- test:t0-import remains wired into pnpm test, so the branch is RED.
 - No Production import, no migration apply, no deploy, no main push.
