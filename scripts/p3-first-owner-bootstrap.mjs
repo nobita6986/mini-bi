@@ -18,6 +18,19 @@ const AUTH_TABLES = [
   "direct_entry_audit_events",
 ];
 
+/**
+ * P2.5-HF-R5: direct_entry_app_users.display_name is NOT NULL and canonical.
+ * The owner account display name is the login label (the part before "@" of the
+ * verified email). A blank label fails closed - no placeholder, no UUID.
+ */
+function displayNameFromEmail(email) {
+  const displayName = String(email ?? "").split("@")[0].trim();
+  if (displayName.length < 1 || displayName.length > 256) {
+    throw new Error("DISPLAY_NAME_INVALID");
+  }
+  return displayName;
+}
+
 function fail(code) {
   const error = new Error(code);
   error.code = code;
@@ -310,9 +323,9 @@ export async function runBootstrap({ client, email, apply = false, capabilities 
       if (!appUserId) {
         const inserted = await one(
           client,
-          `insert into public.direct_entry_app_users (auth_subject, enabled)
-           values ($1::uuid, true) returning app_user_id`,
-          [before.authSubject],
+          `insert into public.direct_entry_app_users (auth_subject, enabled, display_name)
+           values ($1::uuid, true, $2::text) returning app_user_id`,
+          [before.authSubject, displayNameFromEmail(email)],
         );
         appUserId = inserted.app_user_id;
       } else if (!before.enabled) {

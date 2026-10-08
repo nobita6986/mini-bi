@@ -131,6 +131,31 @@ test("missing authentication, disabled actor, and repository failures deny close
   }), { ok: false, reason: "ACTOR_MAPPING_MISSING" });
 });
 
+test("P2.5-HF-R5: a malformed display_name fails the actor projection closed", async () => {
+  const malformed = [
+    undefined, null, "", "   ", " padded", "padded ", "x".repeat(257), 42, {}, [],
+  ];
+  for (const bad of malformed) {
+    const person = structuredClone(fixture.staff);
+    if (bad === undefined) delete person.record.display_name;
+    else person.record.display_name = bad;
+    const result = await resolveActor({
+      session: {
+        auth_subject: person.auth_subject,
+        provider: "supabase",
+        authenticated_at: null,
+      },
+      repository: repositoryFor(person),
+      at: timestamp,
+    });
+    assert.equal(result.ok, false, "must reject: " + JSON.stringify(bad));
+    assert.equal(result.reason, "ACTOR_REPOSITORY_INVALID", JSON.stringify(bad));
+  }
+  const actor = await actorFor(fixture.staff);
+  assert.equal(actor.display_name, "Synthetic Staff");
+  assert.equal(JSON.stringify(actor).includes("@"), false, "no email may leak");
+});
+
 test("an ordinary staff member can create and act only in own scope", async () => {
   const actor = await actorFor(fixture.staff);
   assert.equal(authorizeDirectEntry({
@@ -209,14 +234,17 @@ test("ID equality never links recruiter and app user without a verified effectiv
   assert.equal(actor.self_recruiter_suggestion, null);
   assert.equal(resolveSelfRecruiterSuggestion({
     app_user_id: fixture.staff.record.app_user_id,
+    display_name: "Synthetic Account",
     date: "2026-10-02",
     links: [],
   }).kind, "none");
   assert.equal(resolveSelfRecruiterSuggestion({
     app_user_id: fixture.staff.record.app_user_id,
+    display_name: "Synthetic Account",
     date: "2026-10-02",
     links: [{
       app_user_id: fixture.staff.record.app_user_id,
+      display_name: "Synthetic Account",
       recruiter_id: fixture.staff.record.app_user_id,
       verified: false,
       valid_from: "2026-01-01",

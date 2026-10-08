@@ -51,7 +51,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 61, "the inventory includes P2.5-HF-R2 #60 after P2.5-HF-R1 #59, P2.5-HF #58 and the initial-ON #57 policies");
+  assert.equal(names.length, 62, "the inventory includes P2.5-HF-R2 #60 after P2.5-HF-R1 #59, P2.5-HF #58 and the initial-ON #57 policies");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }
@@ -83,7 +83,7 @@ async function seedFixture(db) {
     [AUTH_OWN_NO_LINK, APP_OWN_NO_LINK],
   ]) {
     await db.query("insert into auth.users (id) values ($1)", [auth]);
-    await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [app, auth]);
+    await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [app, auth]);
   }
 
   for (const [team, code, name] of [[TEAM_A, "TEAM_A", "Team Alpha"], [TEAM_B, "TEAM_B", "Team Beta"], [TEAM_C, "TEAM_C", "Team Gamma"]]) {

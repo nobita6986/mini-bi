@@ -5,6 +5,7 @@
     "record": {
       "auth_subject": "00000000-0000-4000-8000-000000001001",
       "app_user_id": "00000000-0000-4000-8000-000000000001",
+      "display_name": "Synthetic Staff",
       "enabled": true,
       "capabilities": [
         "entry_create",
@@ -23,6 +24,7 @@
     "record": {
       "auth_subject": "00000000-0000-4000-8000-000000001002",
       "app_user_id": "00000000-0000-4000-8000-000000000002",
+      "display_name": "Synthetic Leader",
       "enabled": true,
       "capabilities": [
         "entry_team",
@@ -60,6 +62,7 @@
     "record": {
       "auth_subject": "00000000-0000-4000-8000-000000001003",
       "app_user_id": "00000000-0000-4000-8000-000000000003",
+      "display_name": "Synthetic Kế toán",
       "enabled": true,
       "capabilities": [
         "change_review",
@@ -84,6 +87,7 @@
     "record": {
       "auth_subject": "00000000-0000-4000-8000-000000001004",
       "app_user_id": "00000000-0000-4000-8000-000000000004",
+      "display_name": "Synthetic Admin",
       "enabled": true,
       "capabilities": [
         "entry_create",
@@ -124,6 +128,7 @@
     "record": {
       "auth_subject": "00000000-0000-4000-8000-000000001005",
       "app_user_id": "00000000-0000-4000-8000-000000000005",
+      "display_name": "Synthetic Disabled",
       "enabled": false,
       "capabilities": [
         "entry_admin"

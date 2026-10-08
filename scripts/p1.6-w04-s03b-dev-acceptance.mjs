@@ -103,7 +103,7 @@ async function seed(client) {
     fixture.authSubject, fixture.deniedAuthSubject,
   ]);
   await client.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject) values ($1, $2), ($3, $4)",
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name) values ($1, $2, 'Synthetic Account'), ($3, $4)",
     [fixture.appUserId, fixture.authSubject, fixture.deniedAppUserId, fixture.deniedAuthSubject],
   );
   await client.query(

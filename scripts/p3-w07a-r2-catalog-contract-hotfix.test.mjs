@@ -55,8 +55,9 @@ async function buildDatabase() {
   }
   await db.query("insert into auth.users(id) values ($1::uuid)", [HRP_AUTH]);
   await db.query(
-    "insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled)" +
-    " values ($1::uuid, $2::uuid, true)",
+    "insert into public.direct_entry_app_users" +
+    " (app_user_id, auth_subject, enabled, display_name)" +
+    " values ($1::uuid, $2::uuid, true, 'Synthetic Account')",
     [HRP_APP_USER, HRP_AUTH],
   );
   await db.query(

@@ -17,6 +17,7 @@ import "./p3-w08a-session-revocation-cache.test.mjs";
 const actor = {
   auth_subject: "auth-subject-must-not-leak",
   app_user_id: "app-user-1",
+  display_name: "Synthetic Account",
   enabled: true,
   capabilities: ["entry_create"],
   scopes: [{ kind: "own", reference: "app-user-1", valid_from: "0001-01-01", valid_to: null }],
@@ -100,6 +101,7 @@ test("login verifies returned auth id and returns only the minimal actor project
     ok: true,
     actor: {
       app_user_id: actor.app_user_id,
+      display_name: "Synthetic Account",
       capabilities: actor.capabilities,
       scopes: actor.scopes,
       self_recruiter_suggestion: actor.self_recruiter_suggestion,

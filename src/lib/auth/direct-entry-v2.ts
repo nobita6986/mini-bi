@@ -50,6 +50,8 @@ export type SessionIdentity = {
 export type DirectEntryActor = {
   auth_subject: string;
   app_user_id: string;
+  /** P2.5-HF-R5: canonical, server-resolved account display name. */
+  display_name: string;
   enabled: boolean;
   capabilities: readonly Capability[];
   scopes: readonly EffectiveScope[];
@@ -75,6 +77,7 @@ export type TeamScopeGrant = {
 export type ActorAuthorizationRecord = {
   auth_subject: unknown;
   app_user_id: unknown;
+  display_name: unknown;
   enabled: unknown;
   capabilities: unknown;
   recruiter_links: unknown;
@@ -398,6 +401,7 @@ async function resolveActorInternal(input: {
     actor: {
       auth_subject: input.session.auth_subject,
       app_user_id: appUserId,
+      display_name: record.display_name as string,
       enabled: true,
       capabilities: record.capabilities as Capability[],
       scopes,
@@ -418,6 +422,7 @@ function isValidAuthorizationRecord(
 ): value is ActorAuthorizationRecord & {
   auth_subject: string;
   app_user_id: string;
+  display_name: string;
   enabled: boolean;
   capabilities: Capability[];
   recruiter_links: ExplicitRecruiterLink[];
@@ -428,6 +433,7 @@ function isValidAuthorizationRecord(
   if (!isRecord(value)) return false;
   return UUID.test(String(value.auth_subject)) &&
     UUID.test(String(value.app_user_id)) &&
+    isCanonicalDisplayName(value.display_name) &&
     typeof value.enabled === "boolean" &&
     Array.isArray(value.capabilities) &&
     value.capabilities.every((capability) =>
@@ -442,6 +448,17 @@ function isValidAuthorizationRecord(
     value.team_scope_grants.every(isTeamScopeGrant) &&
     Array.isArray(value.all_scope_grants) &&
     value.all_scope_grants.every(isAllScopeGrant);
+}
+
+/**
+ * P2.5-HF-R5 - canonical display name contract: a trimmed string of 1..256
+ * characters. Anything else fails closed (no fallback, no UUID, no email).
+ */
+function isCanonicalDisplayName(value: unknown): value is string {
+  return typeof value === "string" &&
+    value === value.trim() &&
+    value.length >= 1 &&
+    value.length <= 256;
 }
 
 function isValidTimestamp(value: string): boolean {
