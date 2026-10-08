@@ -9,11 +9,13 @@ import {
   buildUnassignRequest,
   candidateLabel,
   classifyResponse,
+  executeProjectRequest,
   filterProjects,
   mutationProjectVersion,
   parseCandidatesResponse,
   parseDetailResponse,
   parseListResponse,
+  paginateProjects,
   projectStatusLabel,
   splitAssignments,
   validatePendingAssignments,
@@ -83,6 +85,103 @@ test("danh sach: tim theo ma/ten va loc trang thai ma khong doi authority", () =
   assert.deepEqual(filterProjects(projects, "", "active"), [projects[0]]);
   assert.deepEqual(filterProjects(projects, "", "inactive"), [projects[1]]);
   assert.deepEqual(filterProjects(projects, "không có", "all"), []);
+});
+
+test("phan trang client giu du ket qua sau khi loc va kep trang hop le", () => {
+  const projects = Array.from({ length: 25 }, (_, index) => ({ project_id: "p" + index }));
+  const page = paginateProjects(projects, 2, 10);
+  assert.deepEqual(page.items, projects.slice(10, 20));
+  assert.equal(page.page, 2);
+  assert.equal(page.pageCount, 3);
+  assert.equal(page.from, 11);
+  assert.equal(page.to, 20);
+  assert.equal(page.total, 25);
+  assert.equal(paginateProjects(projects, 9, 10).page, 3);
+  assert.deepEqual(paginateProjects([], 2, 10), {
+    items: [], page: 1, pageCount: 1, from: 0, to: 0, total: 0,
+  });
+});
+
+test("cac hanh dong UI tao dung request va xu ly success/conflict qua executor", async () => {
+  async function send(url, method, request, status = 200, payload = { ok: true }) {
+    const calls = [];
+    const result = await executeProjectRequest(url, method, request, KEY,
+      async (requestUrl, init) => {
+        calls.push({ url: requestUrl, ...init });
+        return { status, json: async () => payload };
+      });
+    return { calls, result };
+  }
+
+  const create = await send("/api/direct-entry/projects", "POST", buildCreateRequest({
+    projectId: "p-new", displayName: "Tên mới", reason: "khởi tạo", idempotencyKey: KEY,
+  }));
+  assert.deepEqual(JSON.parse(create.calls[0].body), {
+    project_id: "p-new", display_name: "Tên mới", reason: "khởi tạo", idempotency_key: KEY,
+  });
+  assert.equal(create.calls[0].method, "POST");
+  assert.equal(create.calls[0].headers["idempotency-key"], KEY);
+  assert.equal(create.result.outcome.kind, "applied");
+
+  const rename = await send("/api/direct-entry/projects/p1", "PATCH", buildRenameRequest({
+    displayName: "Tên sau", reason: "đổi tên", expectedVersion: 7, idempotencyKey: KEY,
+  }));
+  assert.deepEqual(JSON.parse(rename.calls[0].body), {
+    display_name: "Tên sau", reason: "đổi tên", expected_version: 7, idempotency_key: KEY,
+  });
+  assert.equal(rename.result.outcome.kind, "applied");
+
+  for (const active of [true, false]) {
+    const result = await send("/api/direct-entry/projects/p1/active", "POST",
+      buildSetActiveRequest({ active, reason: "cập nhật trạng thái", expectedVersion: 8,
+        idempotencyKey: KEY }));
+    assert.deepEqual(JSON.parse(result.calls[0].body), {
+      active, reason: "cập nhật trạng thái", expected_version: 8, idempotency_key: KEY,
+    });
+    assert.equal(result.result.outcome.kind, "applied");
+  }
+
+  const assign = await send("/api/direct-entry/projects/p1/managers", "POST", buildAssignRequest({
+    managerRecruiterId: RECRUITER, validFrom: "2026-10-08", reason: "phân công",
+    expectedProjectVersion: 9, idempotencyKey: KEY,
+  }));
+  assert.deepEqual(JSON.parse(assign.calls[0].body), {
+    manager_recruiter_id: RECRUITER, valid_from: "2026-10-08", reason: "phân công",
+    expected_project_version: 9, idempotency_key: KEY,
+  });
+  assert.equal(assign.result.outcome.kind, "applied");
+
+  const unassign = await send("/api/direct-entry/projects/p1/managers/" + ASSIGNMENT, "POST",
+    buildUnassignRequest({ reason: "thu hồi", expectedVersion: 4,
+      expectedProjectVersion: 10, idempotencyKey: KEY }));
+  assert.deepEqual(JSON.parse(unassign.calls[0].body), {
+    reason: "thu hồi", expected_version: 4, expected_project_version: 10,
+    idempotency_key: KEY,
+  });
+  assert.equal(unassign.result.outcome.kind, "applied");
+
+  const conflict = await send("/api/direct-entry/projects/p1", "PATCH", buildRenameRequest({
+    displayName: "Tên khác", reason: "đổi tên", expectedVersion: 7, idempotencyKey: KEY,
+  }), 409, { ok: false, code: "PROJECT_CONFLICT", message: "raw database error" });
+  assert.equal(conflict.result.outcome.kind, "reload-required");
+  assert.match(conflict.result.outcome.message, /tải lại/i);
+  assert.equal(conflict.result.outcome.message.includes("raw database error"), false);
+
+  const staleAssignment = await send("/api/direct-entry/projects/p1/managers/" + ASSIGNMENT,
+    "POST", buildUnassignRequest({ reason: "thu hồi", expectedVersion: 3,
+      expectedProjectVersion: 10, idempotencyKey: KEY }), 409,
+    { ok: false, code: "PROJECT_CONFLICT" });
+  assert.equal(staleAssignment.result.outcome.kind, "reload-required");
+
+  let invalidFetchCount = 0;
+  const invalid = await executeProjectRequest("/api/direct-entry/projects/p1", "PATCH",
+    buildRenameRequest({ displayName: "  ", reason: "đổi tên", expectedVersion: 7,
+      idempotencyKey: KEY }), KEY, async () => {
+      invalidFetchCount += 1;
+      return { status: 200, json: async () => ({ ok: true }) };
+    });
+  assert.equal(invalid.outcome.kind, "invalid");
+  assert.equal(invalidFetchCount, 0, "validation fails before sending an API request");
 });
 
 test("gan nhieu quan ly: chan trung lap va du lieu sai", () => {

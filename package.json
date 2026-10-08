@@ -61,6 +61,7 @@
     "test:p2.5-w02": "node --test scripts/p2-5-w02-multi-manager-authority-db.test.mjs scripts/p2-5-w02-r1-project-authority-occ-db.test.mjs",
     "test:p2.5-w03": "node --conditions=react-server --test src/lib/direct-entry/worker-directory-contract.test.mjs src/lib/direct-entry/worker-directory-repository.test.mjs src/lib/direct-entry/worker-directory-api.test.mjs src/app/api/direct-entry/worker-directory-route.test.mjs scripts/p2-5-w03-worker-directory-db.test.mjs",
     "test:p2.5-w06a": "node --test scripts/p2-5-w06a-r2-manager-candidates-db.test.mjs",
+    "test:p2.5-hf-r4-browser": "node scripts/p2-5-hf-r4-project-operations-browser-acceptance.mjs",
     "test:p2.5-hf-create-rehire": "node --test scripts/p2-5-hf-worker-create-rehire-db.test.mjs",
     "test:p2.5-hf-r1": "node --conditions=react-server --test scripts/p2-5-hf-r1-episode-status-and-lookup-db.test.mjs src/lib/direct-entry/worker-episode-lookup.test.mjs",
     "test:p2.5-hf-r3": "node --conditions=react-server --test scripts/p2-5-hf-r3-worker-full-correction-db.test.mjs src/lib/direct-entry/privileged-edit.test.mjs",
