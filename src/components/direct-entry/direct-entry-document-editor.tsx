@@ -22,8 +22,6 @@ type Props = {
 const REASON_MAX_LENGTH = 4000;
 
 const DOCUMENT_TYPES: readonly { value: DocumentType; label: string }[] = [
-  { value: "CCCD_FRONT", label: "CCCD mặt trước" },
-  { value: "CCCD_BACK", label: "CCCD mặt sau" },
   { value: "EMPLOYMENT_CONTRACT", label: "Hợp đồng" },
 ];
 const MIME_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
@@ -82,7 +80,7 @@ export function DirectEntryDocumentEditor({
 }: Props) {
   const [documents, setDocuments] = useState<DocumentDetailSummary[]>([]);
   const [loadError, setLoadError] = useState(false);
-  const [documentType, setDocumentType] = useState<DocumentType>("CCCD_FRONT");
+  const documentType: DocumentType = "EMPLOYMENT_CONTRACT";
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<"idle" | "uploading" | "queued" | "error" | "conflict">("idle");
   const [message, setMessage] = useState("");
@@ -303,30 +301,24 @@ export function DirectEntryDocumentEditor({
           </label>
         )}
         <label className={styles.field}>
-          <span>Loại tài liệu</span>
-          <select
-            value={documentType}
-            disabled={!canEdit || !entryId || state === "uploading"}
-            onChange={(event) => {
-              const next = event.currentTarget.value;
-              const selected = DOCUMENT_TYPES.find(({ value }) => value === next);
-              if (selected) {
-                setDocumentType(selected.value);
-                pendingKey.current = null;
-              }
-            }}
-          >
-            {DOCUMENT_TYPES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span>Chọn hoặc thay tệp (JPEG, PNG, PDF · tối đa 10 MiB)</span>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,application/pdf"
-            disabled={!canEdit || !entryId || state === "uploading"}
-            onChange={(event) => selectFile(event.currentTarget.files?.[0] ?? null)}
-          />
+          <span>Hợp đồng lao động (JPEG, PNG, PDF · tối đa 10 MiB)</span>
+          <span className={styles.filePickerControl}>
+            <input
+              id={`employment-contract-file-${rowId}`}
+              className={styles.filePickerInput}
+              type="file"
+              aria-label="Chọn tệp hợp đồng lao động"
+              accept="image/jpeg,image/png,application/pdf"
+              disabled={!canEdit || !entryId || state === "uploading"}
+              onChange={(event) => {
+                selectFile(event.currentTarget.files?.[0] ?? null);
+                event.currentTarget.value = "";
+              }}
+            />
+            <span className={styles.filePickerButton} aria-hidden="true">
+              {file ? "Chọn lại tệp" : "Chọn tệp"}
+            </span>
+          </span>
         </label>
         {file && <p className={styles.documentStatus}>
           Đã chọn tệp · {formatSize(file.size)} · {file.type || "không rõ loại"}

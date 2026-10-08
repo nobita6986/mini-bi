@@ -163,9 +163,12 @@ test("H06-10 Hồ sơ NLĐ mo theo entry_id (khong theo row index/ho ten/CCCD)",
   assert.match(documents, /<DirectEntryCccdManager[\s\S]{0,400}row=\{row\}/);
   // Document editor mount theo entryId.
   assert.match(documents, /entryId=\{row\.entryId\}/);
-  // Document drawer su dung DirectEntryCccdManager (CCCD_FRONT/BACK) va DirectEntryDocumentEditor (3 loai).
+  // Document drawer su dung mot modal; CCCD manager la content, contract editor chi xu ly hop dong.
   assert.match(documents, /<DirectEntryCccdManager/);
   assert.match(documents, /<DirectEntryDocumentEditor/);
+  assert.equal((documents.match(/<Dialog\.Root\b/g) ?? []).length, 1,
+    "khong tao modal CCCD long ben trong documents dialog");
+  assert.doesNotMatch(manager, /<Dialog\.(?:Root|Portal|Overlay|Content)/);
 });
 
 /* ----- 11. Khong dung row index/name/CCCD de mo ho so ----- */
@@ -184,9 +187,12 @@ test("H06-11 khong dung row index/name/CCCD de mo ho so", () => {
 
 /* ----- 12. Reuse DirectEntryCccdManager + DirectEntryDocumentEditor ----- */
 test("H06-12 reuse DirectEntryCccdManager va DirectEntryDocumentEditor", () => {
-  // Trong documents dialog phai reference ca hai.
+  // Trong mot documents dialog phai reference ca hai.
   assert.match(documents, /\bDirectEntryCccdManager\b/);
   assert.match(documents, /\bDirectEntryDocumentEditor\b/);
+  assert.equal((documents.match(/<Dialog\.Root\b/g) ?? []).length, 1);
+  assert.doesNotMatch(manager, /<Dialog\.(?:Root|Portal|Overlay|Content)/);
+  assert.match(docEditor, /const documentType: DocumentType = "EMPLOYMENT_CONTRACT"/);
   // CCCD manager khong them API upload moi (transport/runner giu nguyen).
   assert.match(manager, /createCccdTransport/);
   assert.match(manager, /runCccdUpload/);

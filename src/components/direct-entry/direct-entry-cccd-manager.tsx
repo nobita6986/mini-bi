@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Dialog } from "radix-ui";
 
 import {
   CCCD_DOCUMENT_TYPES,
@@ -39,7 +38,6 @@ const EMPTY_SLOT: SlotInput = { blob: null, sizeBytes: 0, mimeType: "", error: n
 
 type Props = {
   row: LiveDraftRow | null;
-  onOpenChange(open: boolean): void;
   /** entry_own + document_upload + dong dang o trang thai sua duoc (REVIEW/SUBMITTED => read-only). */
   canEdit: boolean;
   canView: boolean;
@@ -77,7 +75,6 @@ function isAllowedMime(value: string): boolean {
 
 export function DirectEntryCccdManager({
   row,
-  onOpenChange,
   canEdit,
   canView,
   requireReason,
@@ -274,126 +271,127 @@ export function DirectEntryCccdManager({
   );
   const selectedTypes = CCCD_DOCUMENT_TYPES.filter((type) => slots[type].blob !== null);
 
-  const open = row !== null && entryId !== null;
+  if (row === null || entryId === null) return null;
+
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={styles.drawerOverlay} />
-        {open && row && (
-          <Dialog.Content className={styles.cccdDialog} data-testid="cccd-dialog"
-            aria-describedby="cccd-manager-description">
-            <Dialog.Title className={styles.drawerTitle}>Quản lý hồ sơ CCCD</Dialog.Title>
-            <Dialog.Description id="cccd-manager-description" className={styles.drawerDescription}>
-              Dòng {row.employeeCode || "chưa có mã"} · {row.workerName || "chưa có họ tên"}. Tệp chỉ
-              được gửi tới kho lưu trữ; hệ thống không hiển thị tên tệp, đường dẫn hay khóa lưu trữ.
-            </Dialog.Description>
-            <div className={styles.drawerFields}>
-              {!canView && <p className={styles.documentStatus}>Trạng thái hồ sơ được ẩn theo quyền truy cập.</p>}
-              {canView && loadState === "loading" && <p className={styles.documentStatus} aria-live="polite">Đang tải trạng thái hồ sơ…</p>}
-              {canView && loadState === "error" && (
-                <div className={styles.documentError} role="alert">
-                  Không tải được trạng thái hồ sơ.
-                  <button type="button" className={styles.secondaryButton} onClick={() => void reload()}>
-                    Tải lại trạng thái
-                  </button>
-                </div>
-              )}
-              {canView && detail !== null && (
-                <p className={styles.documentStatus} data-testid="cccd-progress" aria-live="polite">
-                  Tiến độ: <strong>{cccdProgressLabel(detail.documents)}</strong>
-                </p>
-              )}
-              {!canEdit && (
-                <p className={styles.drawerLockNotice} role="status">
-                  Dòng này không ở bản nháp nên hồ sơ chỉ xem được; mọi thay đổi phải đi qua
-                  yêu cầu thay đổi hiện hữu.
-                </p>
-              )}
-              {requireReason && (
-                <label className={styles.field}>
-                  <span>Lý do thay thế tài liệu</span>
-                  <textarea aria-label="Lý do thay thế tài liệu" rows={3} maxLength={REASON_MAX_LENGTH}
-                    disabled={!canEdit || busy}
-                    value={reason}
-                    onChange={(event) => setReason(event.currentTarget.value)} />
-                </label>
-              )}
-              {CCCD_DOCUMENT_TYPES.map((documentType) => {
-                const slot = slots[documentType];
-                const result = results[documentType];
-                const complete = completion[documentType];
-                return (
-                  <section className={styles.cccdSlot} key={documentType}
-                    aria-label={CCCD_SLOT_LABELS[documentType]}>
-                    <h3 className={styles.documentTitle}>{CCCD_SLOT_LABELS[documentType]}</h3>
-                    <p className={styles.documentStatus} data-testid={"cccd-slot-" + documentType}>
-                      {complete ? "Đã hoàn tất" : "Chưa hoàn tất"}
-                    </p>
-                    <label className={styles.field}>
-                      <span>Chọn tệp (JPEG, PNG, PDF · tối đa 10 MiB)</span>
-                      <input
-                        type="file"
-                        aria-label={"Chọn tệp cho " + CCCD_SLOT_LABELS[documentType]}
-                        accept="image/jpeg,image/png,application/pdf"
-                        disabled={!canEdit || busy || detail === null}
-                        onChange={(event) => {
-                          selectFile(documentType, event.currentTarget.files?.[0] ?? null);
-                          event.currentTarget.value = "";
-                        }}
-                      />
-                    </label>
-                    {slot.blob && (
-                      <p className={styles.documentStatus}>
-                        Đã chọn tệp · {formatSize(slot.sizeBytes)} · {slot.mimeType || "không rõ loại"}
-                      </p>
-                    )}
-                    {slot.error && <p className={styles.documentError} role="alert">{slot.error}</p>}
-                    {result && (
-                      <p className={result.status === "failed" ? styles.documentError : styles.documentStatus}
-                        role={result.status === "failed" ? "alert" : "status"}>
-                        {result.status === "complete"
-                          ? "Máy chủ đã xác nhận tài liệu hoàn tất."
-                          : result.status === "pending"
-                            ? friendlyError(result.code)
-                            : friendlyError(result.code)}
-                      </p>
-                    )}
-                    {result?.status === "failed" && result.retryable && slot.blob && (
-                      <button type="button" className={styles.secondaryButton} disabled={busy}
-                        data-testid={"cccd-retry-" + documentType}
-                        onClick={() => void upload([documentType])}>
-                        Thử lại {CCCD_SLOT_LABELS[documentType]}
-                      </button>
-                    )}
-                  </section>
-                );
-              })}
-              {message !== "" && (
-                <p className={styles.documentStatus} role="status" data-testid="cccd-message">{message}</p>
-              )}
-            </div>
-            <div className={styles.drawerActions}>
-              <Dialog.Close asChild>
-                <button type="button" className={styles.secondaryButton}>Đóng</button>
-              </Dialog.Close>
-              <button type="button" className={styles.secondaryButton} disabled={busy}
-                onClick={() => void reload()}>
-                Tải lại trạng thái
-              </button>
-              <button
-                type="button"
-                className={styles.primaryButton}
-                data-testid="cccd-upload"
-                disabled={!canEdit || busy || detail === null || selectedTypes.length === 0}
-                onClick={() => void upload(selectedTypes)}
-              >
-                {busy ? "Đang gửi…" : "Tải lên " + selectedTypes.length + " mặt"}
-              </button>
-            </div>
-          </Dialog.Content>
+    <section className={styles.documentSection} data-testid="cccd-manager"
+      aria-labelledby={`cccd-manager-${rowId}`}>
+      <h3 className={styles.documentTitle} id={`cccd-manager-${rowId}`}>CCCD hai mặt</h3>
+      <p className={styles.documentStatus}>
+        Chọn ảnh hoặc PDF cho từng mặt CCCD. Tệp chỉ được gửi tới kho lưu trữ an toàn.
+      </p>
+      <div className={styles.drawerFields}>
+        {!canView && <p className={styles.documentStatus}>Trạng thái hồ sơ được ẩn theo quyền truy cập.</p>}
+        {canView && loadState === "loading" && (
+          <p className={styles.documentStatus} aria-live="polite">
+            Đang tải trạng thái hồ sơ… Bạn vẫn có thể chọn tệp trong lúc chờ.
+          </p>
         )}
-      </Dialog.Portal>
-    </Dialog.Root>
+        {canView && loadState === "error" && (
+          <div className={styles.documentError} role="alert">
+            Không tải được trạng thái hồ sơ.
+            <button type="button" className={styles.secondaryButton} onClick={() => void reload()}>
+              Tải lại trạng thái
+            </button>
+          </div>
+        )}
+        {canView && detail !== null && (
+          <p className={styles.documentStatus} data-testid="cccd-progress" aria-live="polite">
+            Tiến độ: <strong>{cccdProgressLabel(detail.documents)}</strong>
+          </p>
+        )}
+        {!canEdit && (
+          <p className={styles.drawerLockNotice} role="status">
+            Dòng này không ở bản nháp nên hồ sơ chỉ xem được; mọi thay đổi phải đi qua
+            yêu cầu thay đổi hiện hữu.
+          </p>
+        )}
+        {requireReason && (
+          <label className={styles.field}>
+            <span>Lý do thay thế tài liệu</span>
+            <textarea aria-label="Lý do thay thế tài liệu" rows={3} maxLength={REASON_MAX_LENGTH}
+              disabled={!canEdit || busy}
+              value={reason}
+              onChange={(event) => setReason(event.currentTarget.value)} />
+          </label>
+        )}
+        {CCCD_DOCUMENT_TYPES.map((documentType) => {
+          const slot = slots[documentType];
+          const result = results[documentType];
+          const complete = completion[documentType];
+          return (
+            <section className={styles.cccdSlot} key={documentType}
+              aria-label={CCCD_SLOT_LABELS[documentType]}>
+              <h3 className={styles.documentTitle}>{CCCD_SLOT_LABELS[documentType]}</h3>
+              <p className={styles.documentStatus} data-testid={"cccd-slot-" + documentType}>
+                {complete ? "Đã hoàn tất" : "Chưa hoàn tất"}
+              </p>
+              <label className={styles.field}>
+                <span>Chọn tệp (JPEG, PNG, PDF · tối đa 10 MiB)</span>
+                <span className={styles.filePickerControl}>
+                  <input
+                    id={"cccd-file-" + documentType + "-" + rowId}
+                    className={styles.filePickerInput}
+                    type="file"
+                    aria-label={"Chọn tệp cho " + CCCD_SLOT_LABELS[documentType]}
+                    accept="image/jpeg,image/png,application/pdf"
+                    disabled={!canEdit || busy}
+                    onChange={(event) => {
+                      selectFile(documentType, event.currentTarget.files?.[0] ?? null);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <span className={styles.filePickerButton} aria-hidden="true">
+                    {slot.blob ? "Chọn lại tệp" : "Chọn tệp"}
+                  </span>
+                </span>
+              </label>
+              {slot.blob && (
+                <p className={styles.documentStatus}>
+                  Đã chọn tệp · {formatSize(slot.sizeBytes)} · {slot.mimeType || "không rõ loại"}
+                </p>
+              )}
+              {slot.error && <p className={styles.documentError} role="alert">{slot.error}</p>}
+              {result && (
+                <p className={result.status === "failed" ? styles.documentError : styles.documentStatus}
+                  role={result.status === "failed" ? "alert" : "status"}>
+                  {result.status === "complete"
+                    ? "Máy chủ đã xác nhận tài liệu hoàn tất."
+                    : result.status === "pending"
+                      ? friendlyError(result.code)
+                      : friendlyError(result.code)}
+                </p>
+              )}
+              {result?.status === "failed" && result.retryable && slot.blob && (
+                <button type="button" className={styles.secondaryButton} disabled={busy}
+                  data-testid={"cccd-retry-" + documentType}
+                  onClick={() => void upload([documentType])}>
+                  Thử lại {CCCD_SLOT_LABELS[documentType]}
+                </button>
+              )}
+            </section>
+          );
+        })}
+        {message !== "" && (
+          <p className={styles.documentStatus} role="status" data-testid="cccd-message">{message}</p>
+        )}
+      </div>
+      <div className={styles.drawerActions}>
+        <button type="button" className={styles.secondaryButton} disabled={busy}
+          onClick={() => void reload()}>
+          Tải lại trạng thái
+        </button>
+        <button
+          type="button"
+          className={styles.primaryButton}
+          data-testid="cccd-upload"
+          disabled={!canEdit || busy || detail === null || selectedTypes.length === 0}
+          onClick={() => void upload(selectedTypes)}
+        >
+          {busy ? "Đang gửi…" : "Tải lên " + selectedTypes.length + " mặt"}
+        </button>
+      </div>
+    </section>
   );
 }
 

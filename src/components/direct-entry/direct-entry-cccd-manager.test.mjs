@@ -7,6 +7,8 @@ function source(relative) {
 }
 
 const manager = source("./direct-entry-cccd-manager.tsx");
+const workerDocuments = source("./direct-entry-worker-documents.tsx");
+const documentEditor = source("./direct-entry-document-editor.tsx");
 const live = source("./direct-entry-live.tsx");
 const grid = source("./direct-entry-spreadsheet-grid.tsx");
 const columns = source("../../lib/direct-entry/direct-entry-grid-columns.ts");
@@ -106,6 +108,10 @@ test("cache trong memory theo entry version, cap nhat sau upload/finalize; khong
 test("hai slot CCCD: chon mot hoac hai mat, JPEG/PNG/PDF toi da 10 MiB, SHA-256 tu bytes", () => {
   assert.match(manager, /CCCD_DOCUMENT_TYPES\.map/);
   assert.match(manager, /accept="image\/jpeg,image\/png,application\/pdf"/);
+  assert.match(manager, /className=\{styles\.filePickerButton\} aria-hidden="true">[\s\S]*?Chọn tệp/);
+  assert.match(manager, /disabled=\{!canEdit \|\| busy\}/,
+    "file chooser stays available while the detail projection is loading");
+  assert.match(manager, /Bạn vẫn có thể chọn tệp trong lúc chờ/);
   assert.match(manager, /CCCD_MAX_BYTES/);
   assert.match(manager, /CCCD_MIME_TYPES/);
   assert.match(manager, /sha256HexFromBytes\(await slot\.blob\.arrayBuffer\(\)\)/);
@@ -134,7 +140,14 @@ test("read-only khi dong khong o ban nhap; khong noi vao change-request API", ()
   assert.match(live, /canEditDocuments=\{documentsRow !== null/);
   assert.match(live, /entry_own[\s\S]{0,200}\|\|[\s\S]{0,200}entry_admin/);
   assert.match(live, /capabilities\.includes\("document_upload"\) && isRowEditable\(documentsRow, submissions\)\}/);
-  assert.match(manager, /disabled=\{!canEdit \|\| busy \|\| detail === null \|\| selectedTypes\.length === 0\}/);
+  assert.match(manager, /disabled=\{!canEdit \|\| busy \|\| detail === null \|\| selectedTypes\.length === 0\}/,
+    "upload remains locked until detail is loaded and a file is selected");
+  const fileInputStart = manager.indexOf('id={"cccd-file-');
+  const fileInputEnd = manager.indexOf("onChange=", fileInputStart);
+  const fileInput = manager.slice(fileInputStart, fileInputEnd);
+  assert.match(fileInput, /disabled=\{!canEdit \|\| busy\}/);
+  assert.doesNotMatch(fileInput, /detail === null/,
+    "file selection itself does not wait on detail loading");
   assert.match(manager, /Dòng này không ở bản nháp nên hồ sơ chỉ xem được/);
   assert.equal(manager.includes("change-request"), false);
   assert.equal(manager.includes("changeRequest"), false);
@@ -142,6 +155,18 @@ test("read-only khi dong khong o ban nhap; khong noi vao change-request API", ()
   // reason boundary hien huu duoc tai su dung, khong tu them truong moi.
   assert.match(transport, /body\.reason = input\.reason/);
   assert.doesNotMatch(transport, /change_request|changeRequest/);
+});
+
+test("worker document flow uses one dialog and keeps CCCD and contract uploads separate", () => {
+  assert.equal((workerDocuments.match(/<Dialog\.Root\b/g) ?? []).length, 1,
+    "one modal owns the entire worker document flow");
+  assert.doesNotMatch(manager, /<Dialog\.(?:Root|Portal|Overlay|Content)/,
+    "CCCD manager renders content only, with no nested modal");
+  assert.match(workerDocuments, /<DirectEntryCccdManager[\s\S]*?row=\{row\}/);
+  assert.match(documentEditor, /const documentType: DocumentType = "EMPLOYMENT_CONTRACT"/);
+  assert.doesNotMatch(documentEditor, /Loại tài liệu/,
+    "the contract widget cannot upload duplicate CCCD types");
+  assert.match(documentEditor, /className=\{styles\.filePickerButton\} aria-hidden="true">[\s\S]*?Chọn tệp/);
 });
 
 test("khong ro ri filename/PII/checksum/storage key/bucket/signed URL ra UI hay log", () => {

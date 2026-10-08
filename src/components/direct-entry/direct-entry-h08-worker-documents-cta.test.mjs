@@ -18,6 +18,10 @@ const css = readFileSync(
   new URL("./direct-entry-shell.module.css", import.meta.url), "utf8");
 const documents = readFileSync(
   new URL("./direct-entry-worker-documents.tsx", import.meta.url), "utf8");
+const manager = readFileSync(
+  new URL("./direct-entry-cccd-manager.tsx", import.meta.url), "utf8");
+const documentEditor = readFileSync(
+  new URL("./direct-entry-document-editor.tsx", import.meta.url), "utf8");
 
 /* ----- 1. Persisted + document_view → nut enabled, dialog mo theo entry_id ----- */
 test("H08-1 persisted + document_view: nut Hồ sơ NLĐ enabled, mở theo entry_id", () => {
@@ -221,7 +225,11 @@ test("H08-14 documents dialog mount theo entry_id, khong auto-reload", () => {
   assert.match(documents, /const open = row !== null && row\.entryId !== null/);
   // CCCD manager va Document editor mount theo entryId.
   assert.match(documents, /<DirectEntryCccdManager[\s\S]{0,400}row=\{row\}/);
+  assert.equal((documents.match(/<Dialog\.Root\b/g) ?? []).length, 1,
+    "worker documents chi co mot dialog, khong co overlay CCCD chong len");
+  assert.doesNotMatch(manager, /<Dialog\.(?:Root|Portal|Overlay|Content)/);
   assert.match(documents, /entryId=\{row\.entryId\}/);
+  assert.match(documentEditor, /const documentType: DocumentType = "EMPLOYMENT_CONTRACT"/);
 });
 
 /* ----- 15. Mobile persisted card (existing H06) van mo documents dialog ----- */

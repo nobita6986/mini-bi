@@ -3,16 +3,16 @@
 /**
  * P1.7-H06: hop thoai "Hồ sơ NLĐ" mo theo dong dang chon.
  *
- * - CCCD (mat truoc/sau) -> tai su dung `DirectEntryCccdManager` nguyen trang.
+ * - Một Radix dialog duy nhất chứa CCCD (hai mặt) và hợp đồng lao động.
+ * - `DirectEntryCccdManager` chỉ render nội dung CCCD, không mở dialog lồng nhau.
  * - Hop dong lao dong (EMPLOYMENT_CONTRACT) -> tai su dung `DirectEntryDocumentEditor`
- *   voi `documentType` mac dinh la EMPLOYMENT_CONTRACT (nguoi dung co the doi loai
- *   neu muon nhung mac dinh la hop dong).
+ *   chỉ cho loại Hợp đồng lao động để không tạo upload CCCD trùng lặp.
  * - Khong tu tao API upload moi; khong them migration; khong doi R2/bucket/profile.
  * - Khong goi entry detail cho tung row khi load (chi mot GET khi mo dialog).
  * - Khong luu file vao localStorage/sessionStorage; khong log PII hoac signed URL.
  * - Mo khoa theo `entry_id` server-issued, khong phu thuoc row index/ho ten/CCCD.
  */
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { Dialog } from "radix-ui";
 
 import { DirectEntryCccdManager } from "@/components/direct-entry/direct-entry-cccd-manager";
@@ -46,15 +46,13 @@ export function DirectEntryWorkerDocuments({
   onCccdStatus,
 }: Props) {
   const open = row !== null && row.entryId !== null;
-  // EMPLOYMENT_CONTRACT mac dinh; nguoi dung co the chuyen qua CCCD neu muon
-  // trong cung widget DirectEntryDocumentEditor (no da ho tro 3 loai).
+  // CCCD và hợp đồng dùng hai phần riêng, nhưng cùng nằm trong một dialog.
   const handleCccdStatus = useCallback(
     (entryId: string, entryVersion: number,
       documents: readonly import("@/lib/direct-entry/cccd-document-pair").CccdDocumentSummary[]) =>
       onCccdStatus(entryId, entryVersion, documents),
     [onCccdStatus],
   );
-  const [employmentOpen] = useState(true);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -82,23 +80,20 @@ export function DirectEntryWorkerDocuments({
               <DirectEntryCccdManager
                 key={`cccd-${row.entryId ?? "none"}`}
                 row={row}
-                onOpenChange={() => undefined}
                 canEdit={canEditDocuments}
                 canView={canViewDocuments}
                 onStatus={handleCccdStatus}
                 onEntryVersionChange={onEntryVersionChange}
               />
-              {employmentOpen && (
-                <DirectEntryDocumentEditor
-                  key={`contract-${row.entryId ?? "none"}`}
-                  entryId={row.entryId}
-                  entryVersion={row.entryVersion}
-                  rowId={row.rowId}
-                  canEdit={canEditDocuments}
-                  canView={canViewDocuments}
-                  onEntryVersionChange={onEntryVersionChange}
-                />
-              )}
+              <DirectEntryDocumentEditor
+                key={`contract-${row.entryId ?? "none"}`}
+                entryId={row.entryId}
+                entryVersion={row.entryVersion}
+                rowId={row.rowId}
+                canEdit={canEditDocuments}
+                canView={canViewDocuments}
+                onEntryVersionChange={onEntryVersionChange}
+              />
             </div>
             <div className={styles.drawerActions}>
               <Dialog.Close asChild>
