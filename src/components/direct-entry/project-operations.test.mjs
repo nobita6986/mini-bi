@@ -79,7 +79,8 @@ test("W06A-R2: manager selector tim/chon theo ten/ma, khong hien UUID tho", () =
 test("W06A-R2: assignment tuong lai tach rieng va co thu hoi", () => {
   assert.match(source, /view\.future/);
   assert.match(source, /Sắp hiệu lực/);
-  assert.match(source, /Bắt đầu /);
+  assert.match(source, /Sắp hiệu lực từ /);
+  assert.match(source, /Đã thu hồi/);
 });
 
 test("xung dot OCC => bat buoc tai lai, KHONG ghi de ngam", () => {
@@ -100,9 +101,8 @@ test("client khong gui actor/capability/scope/role", () => {
     assert.equal(new RegExp("\\b" + field + "\\s*:").test(source), false,
       "client khong duoc gui key " + field);
   }
-  // Body gui len chi den tu builder da validate trong model.
-  assert.match(source, /JSON\.stringify\(request\.body\)/);
-  assert.match(source, /if \(!request\.ok\)/);
+  assert.match(source, /return executeProjectRequest\(url, method, request, key\)/);
+  assert.match(model, /if \(!request\.ok\)/);
 });
 
 test("a11y + keyboard parity", () => {
@@ -115,6 +115,11 @@ test("a11y + keyboard parity", () => {
   assert.match(source, /<label htmlFor/, "moi input co label that");
   assert.match(source, /onSubmit=\{/, "ho tro Enter de gui form");
   assert.match(source, /type="submit"/);
+  assert.match(source, /aria-activedescendant/);
+  assert.match(source, /role="listbox"/);
+  assert.match(source, /event\.key === "ArrowDown"/);
+  assert.match(source, /onOpenAutoFocus/);
+  assert.match(source, /tabIndex=\{-1\}/);
 });
 
 test("mobile parity: bang cuon ngang va layout responsive", () => {
@@ -130,7 +135,9 @@ test("hotfix UI: chi dung token theme that, modal co nen dac va dung z-index", (
   }
   assert.match(source, /Dialog\.Overlay className="[^"]*z-40[^"]*bg-black/);
   assert.match(source, /Dialog\.Content[\s\S]{0,300}z-50[\s\S]{0,300}bg-surface/);
-  assert.match(source, /max-h-\[calc\(100vh-2rem\)\]/);
+  assert.match(source, /safe-area-inset-top/);
+  assert.match(source, /max-h-\[min\(90dvh,48rem\)\]/);
+  assert.match(source, /sticky bottom-0/);
 });
 
 test("hotfix action: tai detail thanh cong roi moi mo rename/active", () => {
@@ -146,10 +153,12 @@ test("hotfix action: tai detail thanh cong roi moi mo rename/active", () => {
 });
 
 test("hotfix mutation: loi mang khong lam nut bi ket va loi hien trong modal", () => {
-  assert.match(source, /async function send[\s\S]{0,1500}catch[\s\S]{0,500}Không kết nối được/);
+  assert.match(model, /catch[\s\S]{0,250}Không kết nối được/);
   assert.match(source, /notice && dialog\.kind === "none"/);
   assert.match(source, /Dialog\.Content[\s\S]{0,1200}\{notice \? \(/);
   assert.match(source, /busy \? "Đang xử lý…" : submitLabel/);
+  assert.match(source, /disabled=\{busy \|\| locked\}/);
+  assert.match(source, /if \(conflict\) return \{ outcome: \{ kind: "reload-required"/);
 });
 
 test("hotfix feature coverage: xem, doi ten, active, gan, thu hoi va lich su deu co UI", () => {
@@ -158,7 +167,29 @@ test("hotfix feature coverage: xem, doi ten, active, gan, thu hoi va lich su deu
     assert.ok(source.includes(label), "thieu tinh nang UI: " + label);
   }
   assert.match(source, /filterProjects\(projects, projectSearch, statusFilter\)/);
+  assert.match(source, /paginateProjects\(visibleProjects, projectPage\)/);
+  assert.match(source, /aria-label="Phân trang danh sách dự án"/);
   assert.match(source, /type="date"/);
+});
+
+test("button to dialog wiring covers create, detail, rename, active, assign, and revoke", () => {
+  assert.match(source, /onClick=\{\(\) => openDialog\(\{ kind: "create" \}\)\}/);
+  assert.match(source, /openProjectAction\(project, "view"\)/);
+  assert.match(source, /openProjectAction\(project, "rename"\)/);
+  assert.match(source, /openProjectAction\(project, "set-active"\)/);
+  assert.match(source, /onClick=\{\(\) => openDialog\(\{ kind: "assign" \}\)\}/);
+  assert.match(source, /openDialog\(\{ kind: "unassign", assignment \}\)/);
+  for (const action of ["submitCreate", "submitRename", "submitSetActive", "submitAssign", "submitUnassign"]) {
+    assert.ok(source.includes(action), "missing dialog submit handler: " + action);
+  }
+  assert.match(source, /async function afterSuccess[\s\S]{0,180}await loadList\(\)/);
+});
+
+test("conflict stays locked until both authoritative reloads succeed", () => {
+  assert.match(source, /const detailReloaded = detail \? \(await loadDetail\(detail\.project_id\)\) !== null : true/);
+  assert.match(source, /const listReloaded = await loadList\(\)/);
+  assert.match(source, /if \(detailReloaded && listReloaded\) setConflict\(null\)/);
+  assert.match(source, /locked=\{conflict !== null\}/);
 });
 
 test("page boundary: gate flag truoc + dung project admin decision (F5)", () => {

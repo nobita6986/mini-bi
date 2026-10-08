@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -48,6 +49,28 @@ test("listProjects dung direct_entry_list_projects_admin + project payload 8 key
   assert.equal(f.calls[0].args.p_auth_subject, ACTOR.auth_subject);
   assert.equal(result.ok, true);
   assert.equal(result.data.projects[0].active_assignment_count, 1);
+});
+
+test("project list endpoint returns every project without a server page bound", async () => {
+  const migration = readFileSync(new URL(
+    "../../../supabase/migrations/20261008110000_p2_5_w02_multi_manager_project_authority.sql",
+    import.meta.url), "utf8");
+  const start = migration.indexOf("create or replace function public.direct_entry_list_projects_admin(");
+  const bodyStart = migration.indexOf("as $$", start) + "as $$".length;
+  const bodyEnd = migration.indexOf("\n$$;", bodyStart);
+  assert.ok(start >= 0 && bodyStart >= "as $$".length && bodyEnd > bodyStart);
+  const functionBody = migration.slice(bodyStart, bodyEnd);
+  assert.match(functionBody, /from public\.direct_entry_projects p/);
+  assert.match(functionBody, /jsonb_agg\(/);
+  assert.doesNotMatch(functionBody, /\b(?:limit|offset)\b/i);
+
+  const projects = Array.from({ length: 150 }, (_, index) => ({
+    ...PROJECT, project_id: "project-" + String(index).padStart(3, "0"),
+  }));
+  const f = repoWith({ authorization_date: "2026-10-07", include_inactive: true, projects });
+  const result = await f.repo.listProjects({ ...ACTOR, include_inactive: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.projects.length, projects.length);
 });
 
 test("getProject dung direct_entry_get_project_admin tra MASTER row (khong assignments)", async () => {

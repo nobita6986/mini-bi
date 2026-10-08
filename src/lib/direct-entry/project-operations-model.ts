@@ -316,6 +316,40 @@ export function classifyResponse(status: number, payload: unknown): Outcome {
   return { kind: "unavailable", message: "Hệ thống tạm thời không khả dụng. Vui lòng thử lại." };
 }
 
+export async function executeProjectRequest(
+  url: string,
+  method: "POST" | "PATCH",
+  request: RequestResult,
+  idempotencyKey: string,
+  fetcher: typeof fetch = fetch,
+): Promise<{ outcome: Outcome; payload: unknown }> {
+  if (!request.ok) {
+    return { outcome: { kind: "invalid", message: request.message }, payload: null };
+  }
+  try {
+    const response = await fetcher(url, {
+      method,
+      headers: { "content-type": "application/json", "idempotency-key": idempotencyKey },
+      body: JSON.stringify(request.body),
+    });
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    return { outcome: classifyResponse(response.status, payload), payload };
+  } catch {
+    return {
+      outcome: {
+        kind: "unavailable",
+        message: "Không kết nối được tới hệ thống. Vui lòng thử lại.",
+      },
+      payload: null,
+    };
+  }
+}
+
 /* ---------- view ---------- */
 
 /**
@@ -402,4 +436,26 @@ export function filterProjects(
     return project.project_id.toLocaleLowerCase("vi").includes(needle) ||
       project.display_name.toLocaleLowerCase("vi").includes(needle);
   });
+}
+
+export function paginateProjects<T>(
+  projects: readonly T[],
+  requestedPage: number,
+  pageSize = 12,
+): { items: T[]; page: number; pageCount: number; from: number; to: number; total: number } {
+  const safePageSize = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : 12;
+  const pageCount = Math.max(1, Math.ceil(projects.length / safePageSize));
+  const page = Number.isSafeInteger(requestedPage)
+    ? Math.min(Math.max(1, requestedPage), pageCount)
+    : 1;
+  const start = (page - 1) * safePageSize;
+  const items = projects.slice(start, start + safePageSize);
+  return {
+    items,
+    page,
+    pageCount,
+    from: projects.length === 0 ? 0 : start + 1,
+    to: Math.min(start + items.length, projects.length),
+    total: projects.length,
+  };
 }
