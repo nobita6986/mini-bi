@@ -8,9 +8,6 @@ import { resolveActor } from "../src/lib/auth/direct-entry-v2.ts";
 const foundationPath = new URL("../supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql", import.meta.url);
 const correctionPath = new URL("../supabase/migrations/20261003170000_p1_6_w03_submission_noop_guard.sql", import.meta.url);
 const migrationPath = new URL("../supabase/migrations/20261003180000_p1_6_w04_s03a_actor_context.sql", import.meta.url);
-// P2.5-HF-R5 adds direct_entry_app_users.display_name and returns it from the
-// actor context RPC, so this contract test also applies #62.
-const identityPath = new URL("../supabase/migrations/20261008220000_p2_5_hf_session_identity_header.sql", import.meta.url);
 
 const authSubject = "91000000-0000-4000-8000-000000000001";
 const appUserId = "92000000-0000-4000-8000-000000000001";
@@ -29,15 +26,14 @@ async function createDatabase() {
   await db.exec(await readFile(foundationPath, "utf8"));
   await db.exec(await readFile(correctionPath, "utf8"));
   await db.exec(await readFile(migrationPath, "utf8"));
-  await db.exec(await readFile(identityPath, "utf8"));
   return db;
 }
 
 async function seedActor(db, { enabled = true } = {}) {
   await db.exec(`
     insert into auth.users (id) values ('${authSubject}');
-    insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)
-      values ('${appUserId}', '${authSubject}', ${enabled}, 'Synthetic S03A');
+    insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)
+      values ('${appUserId}', '${authSubject}', ${enabled});
     insert into public.teams (team_id, code, display_name)
       values ('${teamId}', 'S03A-SYNTH', 'Synthetic Team');
     insert into public.direct_entry_scope_grants
@@ -70,11 +66,8 @@ test("actor context RPC returns only resolver inputs and resolves stable identit
     const context = rows[0].context;
     assert.deepEqual(Object.keys(context).sort(), [
       "all_scope_grants", "app_user_id", "auth_subject", "capabilities",
-      "display_name", "enabled", "recruiter_links", "team_scope_grants", "teams",
+      "enabled", "recruiter_links", "team_scope_grants", "teams",
     ]);
-    // P2.5-HF-R5: the canonical display name is resolved server-side; the RPC
-    // never returns an email or login metadata.
-    assert.equal(context.display_name, "Synthetic S03A");
     assert.equal(context.app_user_id, appUserId);
     assert.deepEqual(context.capabilities, ["entry_create"]);
     assert.deepEqual(context.team_scope_grants, [{

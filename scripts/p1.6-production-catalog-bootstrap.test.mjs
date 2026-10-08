@@ -37,9 +37,8 @@ async function database() {
     [ACTOR.auth_subject],
   );
   await db.query(
-    "insert into public.direct_entry_app_users" +
-    " (app_user_id, auth_subject, enabled, display_name)" +
-    " values ($1::uuid, $2::uuid, true, 'Synthetic Account')",
+    "insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled)" +
+    " values ($1::uuid, $2::uuid, true)",
     [ACTOR.app_user_id, ACTOR.auth_subject],
   );
   for (const capability of REQUIRED_CAPABILITIES) {
@@ -182,7 +181,7 @@ test("57 migrations apply from scratch and expose only the approved RPC boundary
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
   // W05A #48, W07C-R7 #49, W07E #50, W02 #51, W03 #52, W04 #53,
   // W06A #54, W05 #55, W05-R1 #56, initial-ON #57, P2.5-HF #58, P2.5-HF-R1 #59 and P2.5-HF-R2 #60.
-  assert.equal(names.length, 62,
+  assert.equal(names.length, 61,
     "the migrations directory contains P2.5-HF after the initial-ON policy");
 
   const acl = await db.query(

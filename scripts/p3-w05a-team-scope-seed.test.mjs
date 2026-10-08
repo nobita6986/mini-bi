@@ -31,7 +31,7 @@ async function seedLeader(db, i, opts = {}) {
   const withMembership = opts.withMembership !== false;
   const teamActive = opts.teamActive !== false;
   await db.query("insert into auth.users (id) values ($1)", [auth]);
-  await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [app, auth]);
+  await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [app, auth]);
   await db.query("insert into public.teams (team_id, code, display_name, active) values ($1,$2,$3,$4)", [team, "TEAM_" + i, "Team " + i, teamActive]);
   await db.query("insert into public.recruiters (recruiter_id, display_name, personnel_position) values ($1,$2,'TEAM_LEADER')", [rec, "Leader " + i]);
   await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1,'hrp','2020-01-01')", [rec]);

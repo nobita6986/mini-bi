@@ -52,7 +52,7 @@ async function reportingBaseline(client) {
 async function seedFixture(client) {
   await client.query("insert into auth.users (id) values ($1)", [fixture.authSubject]);
   await client.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name) values ($1, $2, 'Synthetic Account')",
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject) values ($1, $2)",
     [fixture.appUserId, fixture.authSubject],
   );
   await client.query(

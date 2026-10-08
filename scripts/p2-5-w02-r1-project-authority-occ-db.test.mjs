@@ -56,10 +56,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 62, "the ledger carries 62 migrations after P2.5-HF-R3 #62");
-  assert.equal(names[names.length - (12)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (10)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (11)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 61, "the ledger carries 61 migrations after P2.5-HF-R3 #61");
+  assert.equal(names[names.length - 11], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - 9], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - 10], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
@@ -68,8 +68,8 @@ async function seed(db) {
     [MGR_B_AUTH, MGR_B_APP], [MGR_C_AUTH, MGR_C_APP]]) {
     await db.query("insert into auth.users (id) values ($1)", [auth]);
     await db.query(
-      "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
-      " values ($1,$2,true,'Synthetic Account')", [app, auth]);
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
+      " values ($1,$2,true)", [app, auth]);
   }
   for (const capability of ["entry_admin", "change_request_create", "entry_create"]) {
     await db.query(
@@ -896,7 +896,7 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 62,
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 61,
     "the repository ledger contains #1 through #57; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no

@@ -48,7 +48,7 @@ async function seedFixture(db) {
   await db.query("insert into auth.users (id) values ($1)",
     ["10000000-0000-4000-8000-000000000001"]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name) values ($1, $2, 'Synthetic Account')",
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject) values ($1, $2)",
     ["20000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000001"],
   );
   await db.query("insert into public.teams (team_id, code, display_name) values ($1, $2, $3)",
@@ -307,8 +307,8 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 62);
-  assert.equal(names[names.length - (2)],
+  assert.equal(names.length, 61);
+  assert.equal(names[names.length - 1],
     "20261008210000_p2_5_hf_r3_worker_full_correction.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",

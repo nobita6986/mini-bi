@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 62, "P2.5-HF-R3 #62 appends after P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
+  assert.equal(totalCount, 61, "P2.5-HF-R3 #61 appends after P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -119,21 +119,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
     insert into auth.users(id) values
       ('${IDS.auth}'), ('${IDS.readAuth}'), ('${IDS.teamAuth}'), ('${IDS.paymentAuth}'),
       ('${IDS.outsideAuth}'), ('${IDS.disabledAuth}'), ('${IDS.projectManagerAuth}');
-    do $hf_r5_seed$
-    begin
-      if exists (select 1 from information_schema.columns
-                  where table_schema='public' and table_name='direct_entry_app_users'
-                    and column_name='display_name') then
-        insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled, display_name) values
-      ('${IDS.user}', '${IDS.auth}', true, 'Synthetic User'),
-      ('${IDS.readUser}', '${IDS.readAuth}', true, 'Synthetic Reader'),
-      ('${IDS.teamUser}', '${IDS.teamAuth}', true, 'Synthetic Team'),
-      ('${IDS.paymentUser}', '${IDS.paymentAuth}', true, 'Synthetic Payment'),
-      ('${IDS.outsideUser}', '${IDS.outsideAuth}', true, 'Synthetic Outside'),
-      ('${IDS.disabledUser}', '${IDS.disabledAuth}', false, 'Synthetic Disabled'),
-      ('${IDS.projectManagerUser}', '${IDS.projectManagerAuth}', true, 'Synthetic Manager');
-      else
-        insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled) values
+    insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled) values
       ('${IDS.user}', '${IDS.auth}', true),
       ('${IDS.readUser}', '${IDS.readAuth}', true),
       ('${IDS.teamUser}', '${IDS.teamAuth}', true),
@@ -141,9 +127,6 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
       ('${IDS.outsideUser}', '${IDS.outsideAuth}', true),
       ('${IDS.disabledUser}', '${IDS.disabledAuth}', false),
       ('${IDS.projectManagerUser}', '${IDS.projectManagerAuth}', true);
-      end if;
-    end
-    $hf_r5_seed$;
     insert into public.teams(team_id, code, display_name)
       values ('${IDS.team}', 'I04C3-SYNTH', 'Synthetic I04C3 Team'),
              ('${IDS.outsideTeam}', 'I04C3-OUTSIDE', 'Synthetic outside team');

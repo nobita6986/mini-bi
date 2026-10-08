@@ -22,8 +22,8 @@ async function database() {
 test("initial employment status policy is migration #57 and patches every creation path", async () => {
   const { db, names } = await database();
   try {
-    assert.equal(names.length, 62);
-    assert.equal(names.at(-6), MIGRATION);
+    assert.equal(names.length, 61);
+    assert.equal(names.at(-5), MIGRATION);
     const result = await db.query(`
       select p.proname, p.prosrc
         from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -52,8 +52,8 @@ test("status trigger accepts ON as the first append-only event at first_work_dat
   try {
     await db.exec(`
       insert into auth.users(id) values ('10000000-0000-4000-8000-000000000001');
-      insert into public.direct_entry_app_users(app_user_id,auth_subject, display_name) values
-        ('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001', 'Synthetic Account');
+      insert into public.direct_entry_app_users(app_user_id,auth_subject) values
+        ('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001');
       insert into public.direct_entry_projects(project_id,display_name) values
         ('initial_on_project','Initial ON project');
       insert into public.teams(team_id,code,display_name) values

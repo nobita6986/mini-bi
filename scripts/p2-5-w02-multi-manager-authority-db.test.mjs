@@ -78,10 +78,10 @@ async function migratedDb(untilName = null) {
 
 async function buildDb() {
   const { db, names } = await migratedDb(null);
-  assert.equal(names.length, 62, "the ledger carries 62 migrations after P2.5-HF-R3 #62");
-  assert.equal(names[names.length - (12)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (10)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (11)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 61, "the ledger carries 61 migrations after P2.5-HF-R3 #61");
+  assert.equal(names[names.length - 11], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - 9], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - 10], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
@@ -91,18 +91,10 @@ async function seedActors(db) {
     [MGR_C_AUTH, MGR_C_APP], [REC_AUTH, REC_APP], [CREATOR_AUTH, CREATOR_APP],
     [MGR_NO_SCOPE_AUTH, MGR_NO_SCOPE_APP],
   ];
-  // P2.5-HF-R5: display_name exists from #62; the PRE_W02 partial ledger must
-  // keep working without it.
-  const hasDisplayName = (await db.query(
-    "select 1 from information_schema.columns where table_schema='public'" +
-    " and table_name='direct_entry_app_users' and column_name='display_name'",
-  )).rows.length > 0;
   for (const [auth, app] of actors) {
     await db.query("insert into auth.users (id) values ($1)", [auth]);
     await db.query(
-      hasDisplayName
-        ? "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')"
-        : "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled) values ($1,$2,true)",
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)",
       [app, auth]);
   }
   // entry_admin + all scope: the explicit project-administration bundle.

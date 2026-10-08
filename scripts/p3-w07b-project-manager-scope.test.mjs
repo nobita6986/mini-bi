@@ -26,15 +26,15 @@ async function database() {
   // P2-W04B adds migration #44 (cutoff rebaseline 2026-10-06) on top of
   // the W07B #43. P2-W04B is #44, W07C-R2 is #45, W07C-R3 is #46, P2-W04C is
   // #47, W05A #48, W07C-R7 #49, W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(names.length, 62);
+  assert.equal(names.length, 61);
   for (const name of names) {
     await db.exec(await readFile(path.resolve("supabase/migrations", name), "utf8"));
   }
   await db.exec(`
     insert into auth.users(id) values ('${IDS.managerAuth}'), ('${IDS.adminAuth}');
-    insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled, display_name) values
-      ('${IDS.managerUser}', '${IDS.managerAuth}', true, 'Synthetic Manager'),
-      ('${IDS.adminUser}', '${IDS.adminAuth}', true, 'Synthetic Admin');
+    insert into public.direct_entry_app_users(app_user_id, auth_subject, enabled) values
+      ('${IDS.managerUser}', '${IDS.managerAuth}', true),
+      ('${IDS.adminUser}', '${IDS.adminAuth}', true);
     insert into public.teams(team_id, code, display_name) values
       ('${IDS.team}', 'W07B', 'W07B Team');
     insert into public.recruiters(recruiter_id, display_name, personnel_code) values

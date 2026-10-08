@@ -90,7 +90,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 62, "the ledger carries 62 migrations after P2.5-HF-R3 #62 #58");
+  assert.equal(names.length, 61, "the ledger carries 61 migrations after P2.5-HF-R3 #61 #58");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }
@@ -98,7 +98,7 @@ async function buildDb() {
 async function seedBase(db) {
   await db.query("insert into auth.users (id) values ($1)", [AUTH_ALL]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')",
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)",
     [APP_ALL, AUTH_ALL]);
   await db.query(
     "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +

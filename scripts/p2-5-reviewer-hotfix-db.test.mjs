@@ -41,7 +41,7 @@ async function buildDb() {
 async function insertActor(db, auth, app, capabilities, scopeKind = null) {
   await db.query("insert into auth.users (id) values ($1)", [auth]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')",
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)",
     [app, auth]);
   for (const capability of capabilities) {
     await db.query(
