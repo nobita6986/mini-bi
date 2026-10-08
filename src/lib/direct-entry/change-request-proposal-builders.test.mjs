@@ -8,6 +8,7 @@ import {
   buildWorkerDetailsProposal,
   buildWorkStatusProposal,
   hcmTodayDate,
+  projectWorkerDetailsForProposal,
   proposalErrorMessage,
   workerDetailsFromForm,
   workerFormFromDetails,
@@ -19,15 +20,18 @@ const TODAY = "2026-10-20";
 function worker(overrides = {}) {
   return {
     display_name: "Nguyen Van Synthetic",
+    gender: { state: "provided", value: "MALE" },
     date_of_birth: { state: "provided", value: "1990-01-02" },
     national_id: OPTIONAL,
+    national_id_issued_at: { state: "omitted" },
+    national_id_issued_place: { state: "provided", value: "Ha Noi" },
     address: OPTIONAL,
     phone: OPTIONAL,
     ...overrides,
   };
 }
 
-test("worker_details proposal: du 5 field, chi khi co thay doi, optional-state dung nghia", () => {
+test("worker_details proposal: preserves canonical profile fields while editing supported fields", () => {
   const baseline = worker();
   const unchanged = buildWorkerDetailsProposal(baseline, workerFormFromDetails(baseline));
   assert.deepEqual(unchanged, { ok: false, code: "WORKER_UNCHANGED" });
@@ -38,9 +42,23 @@ test("worker_details proposal: du 5 field, chi khi co thay doi, optional-state d
   assert.equal(built.ok, true);
   const proposal = built.proposal.worker_details;
   assert.deepEqual(Object.keys(proposal).sort(),
-    ["address", "date_of_birth", "display_name", "national_id", "phone"]);
+    ["address", "date_of_birth", "display_name", "gender", "national_id",
+      "national_id_issued_at", "national_id_issued_place", "phone"]);
   assert.deepEqual(proposal.phone, { state: "provided", value: "0900000000" });
   assert.deepEqual(proposal.national_id, { state: "unknown" });
+  assert.deepEqual(proposal.gender, baseline.gender);
+  assert.deepEqual(proposal.national_id_issued_at, baseline.national_id_issued_at);
+  assert.deepEqual(proposal.national_id_issued_place, baseline.national_id_issued_place);
+
+  assert.deepEqual(projectWorkerDetailsForProposal(baseline), baseline);
+  assert.equal(projectWorkerDetailsForProposal({
+    display_name: { present: true },
+    date_of_birth: { state: "provided" },
+    national_id: { state: "provided" },
+    address: { state: "provided" },
+    phone: { state: "provided" },
+  }), null, "redacted presence/state data must never become a mutable worker proposal");
+  assert.equal(projectWorkerDetailsForProposal({ ...baseline, private_extra: "forbidden" }), null);
 
   const blankProvided = workerFormFromDetails(baseline);
   blankProvided.national_id = { state: "provided", text: "" };
@@ -55,8 +73,10 @@ test("worker_details proposal: du 5 field, chi khi co thay doi, optional-state d
 
   const badDate = workerFormFromDetails(baseline);
   badDate.date_of_birth = { state: "provided", text: "31/02/1990" };
-  assert.deepEqual(buildWorkerDetailsProposal(baseline, badDate),
-    { ok: false, code: "WORKER_INVALID" });
+  const freeDate = buildWorkerDetailsProposal(baseline, badDate);
+  assert.equal(freeDate.ok, true,
+    "DOB remains ordinary source text under the current worker-details contract");
+  assert.equal(freeDate.proposal.worker_details.date_of_birth.value, "31/02/1990");
   assert.match(proposalErrorMessage("WORKER_UNAVAILABLE"), /quyền xem thông tin cá nhân/);
 });
 

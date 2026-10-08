@@ -68,12 +68,18 @@ import {
   allowedWorkStatusTargets,
   hcmTodayDate,
   proposalErrorMessage,
+  projectWorkerDetailsForProposal,
   workerFormFromDetails,
   WORKER_FORM_FIELDS,
   type WorkerFieldForm,
   type WorkerForm,
 } from "@/lib/direct-entry/change-request-proposal-builders";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
+import {
+  OPTIONAL_STATE_LABELS,
+  PAYMENT_STATE_LABELS,
+  WORKER_FIELD_LABELS,
+} from "@/lib/direct-entry/change-request-read-projection";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import { projectPaymentInput, type PaymentState } from "@/lib/direct-entry/payment-contract";
 import type { WorkerDetails, WorkerStatus } from "@/lib/contracts/direct-entry-v1";
@@ -86,16 +92,23 @@ type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: Pag
 type Notice = { kind: "success" | "error"; message: string };
 
 const tabClass =
-  "inline-flex h-10 items-center rounded-md px-3 text-sm font-medium focus-visible:ring-2 " +
-  "focus-visible:ring-ring/40";
+  "inline-flex min-h-11 items-center rounded-md px-3 text-sm font-medium outline-none " +
+  "focus-visible:ring-2 focus-visible:ring-ring/40";
 const buttonClass =
-  "inline-flex h-10 items-center justify-center rounded-md border border-input px-3 text-sm " +
-  "font-medium focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50";
+  "inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface " +
+  "px-3 text-sm font-medium text-foreground outline-none hover:bg-muted/10 " +
+  "focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
 const primaryClass =
-  "inline-flex h-10 items-center justify-center rounded-md bg-primary px-3 text-sm " +
-  "font-medium text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring/40 " +
-  "disabled:opacity-50";
-const inputClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
+  "inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-3 text-sm " +
+  "font-medium text-on-primary outline-none hover:bg-primary/90 focus-visible:ring-2 " +
+  "focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+const inputClass =
+  "min-h-11 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground " +
+  "outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed " +
+  "disabled:bg-muted/10 disabled:text-muted";
+const errorClass =
+  "rounded-md border border-red-500/40 bg-red-50 p-3 text-sm text-red-700 " +
+  "dark:bg-red-950/40 dark:text-red-300";
 
 async function readJson(response: Response): Promise<unknown> {
   try {
@@ -361,7 +374,7 @@ export function WorkerOperations({
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-4">
       <header className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold">Người lao động</h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-muted">
           Tra cứu theo đúng quan hệ của bạn. Quyền đề xuất thay đổi do hệ thống quyết định.
         </p>
       </header>
@@ -378,7 +391,7 @@ export function WorkerOperations({
             aria-controls={"workers-panel-" + value}
             tabIndex={tab === value ? 0 : -1}
             className={tabClass + (tab === value
-              ? " border-b-2 border-primary text-foreground" : " text-muted-foreground")}
+              ? " border-b-2 border-primary text-foreground" : " text-muted")}
             onClick={() => selectTab(value, false)}
             onKeyDown={(event) => onTabKeyDown(event, index)}
           >
@@ -389,7 +402,7 @@ export function WorkerOperations({
 
       {conflict ? (
         <div role="alert"
-          className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          className={"flex flex-col gap-2 " + errorClass}>
           <span>{conflict}</span>
           <button type="button" className={buttonClass} onClick={() => void reload()}>
             Tải lại dữ liệu
@@ -400,7 +413,7 @@ export function WorkerOperations({
       {notice ? (
         <p role={notice.kind === "error" ? "alert" : "status"}
           className={notice.kind === "error"
-            ? "rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+            ? errorClass
             : "rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300"}>
           {notice.message}
         </p>
@@ -413,7 +426,7 @@ export function WorkerOperations({
         className="flex flex-col gap-3"
         aria-busy={activePage.state === "loading"}
       >
-        <p className="text-sm text-muted-foreground">{WORKER_OPERATIONS_TAB_HINTS[tab]}</p>
+        <p className="text-sm text-muted">{WORKER_OPERATIONS_TAB_HINTS[tab]}</p>
 
         {tab === "uploader" ? null : (
           <div className="flex flex-col gap-1 sm:max-w-xs">
@@ -440,7 +453,7 @@ export function WorkerOperations({
         {activePage.state === "error" || activePage.state === "denied" ||
          activePage.state === "unavailable" ? (
           <div role="alert"
-            className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+            className={"flex flex-col gap-2 " + errorClass}>
             <span>{activePage.message ?? "Không tải được danh sách trong quan hệ này."}</span>
             <button type="button" className={buttonClass} onClick={() => void reload()}>
               Thử lại
@@ -589,7 +602,7 @@ function WorkerTable({
                 <td className="p-3">
                   {workerStatusLabel(row.employment_status)}
                   {bank ? (
-                    <div className="mt-1 text-xs text-muted-foreground">
+                    <div className="mt-1 text-xs text-muted">
                       <span className="font-medium">{BANK_ACCOUNT_SECTION_LABEL}: </span>
                       {(bank.accountNumber ?? "chưa có") + " · " + (bank.bankId ?? "chưa có") +
                         " · " + (bank.accountHolder ?? "chưa có")}
@@ -601,7 +614,7 @@ function WorkerTable({
                     <span className="rounded bg-muted/20 px-2 py-1">{pendingRequestLabel(row)}</span>
                   ) : null}
                   {lastDecisionLabel(row) ? (
-                    <div className="mt-1 text-muted-foreground">{lastDecisionLabel(row)}</div>
+                    <div className="mt-1 text-muted">{lastDecisionLabel(row)}</div>
                   ) : null}
                 </td>
                 <td className="p-3">
@@ -610,7 +623,7 @@ function WorkerTable({
                       Đề xuất thay đổi
                     </button>
                   ) : (
-                    <span className="text-xs text-muted-foreground">{cta.message}</span>
+                    <span className="text-xs text-muted">{cta.message}</span>
                   )}
                 </td>
               </tr>
@@ -635,6 +648,8 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
   try {
     const response = await fetch(API + "/entries/" + encodeURIComponent(entryId), {
       headers: { accept: "application/json" },
+      cache: "no-store",
+      credentials: "same-origin",
     });
     if (response.status !== 200) return null;
     const body = await readJson(response);
@@ -643,8 +658,7 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
     if (typeof entry !== "object" || entry === null) return null;
     const row = entry as Record<string, unknown>;
     if (typeof row.version !== "number") return null;
-    const details = typeof row.worker_details === "object" && row.worker_details !== null
-      ? row.worker_details as WorkerDetails : null;
+    const details = projectWorkerDetailsForProposal(row.worker_details);
     const status = typeof row.employment_status === "object" && row.employment_status !== null
       ? row.employment_status as Record<string, unknown> : null;
     const payment = typeof row.payment === "object" && row.payment !== null
@@ -702,6 +716,7 @@ function ProposeDrawer({
         if (!active) return;
         setBaseline(value);
         setLoading(false);
+        setEffectiveDate(hcmTodayDate());
         if (value?.workerDetails) setWorkerForm(workerFormFromDetails(value.workerDetails));
         if (value?.payment) {
           setPaymentState(value.payment.state);
@@ -723,8 +738,11 @@ function ProposeDrawer({
     let proposal: Record<string, unknown> | null = null;
     let targetKind: "ENTRY_FIELD" | "PAYMENT" | "WORK_STATUS" = "ENTRY_FIELD";
     if (target === "WORKER") {
-      if (workerForm === null) { setMessage("Chưa đọc được thông tin người lao động."); return; }
-      const built = buildWorkerDetailsProposal(baseline.workerDetails as WorkerDetails, workerForm);
+      if (workerForm === null || baseline.workerDetails === null) {
+        setMessage("Chưa đọc được thông tin người lao động.");
+        return;
+      }
+      const built = buildWorkerDetailsProposal(baseline.workerDetails, workerForm);
       if (!built.ok) { setMessage(proposalErrorMessage(built.code)); return; }
       proposal = built.proposal;
       targetKind = "ENTRY_FIELD";
@@ -756,7 +774,7 @@ function ProposeDrawer({
       targetKind = "WORK_STATUS";
     }
     const item = buildChangeRequestItem({
-      entryId: row.entry_id, expectedVersion: row.entry_version,
+      entryId: row.entry_id, expectedVersion: baseline.version,
       targetKind, proposal: proposal as Record<string, unknown>,
     });
     if (item === null) { setMessage("Đề xuất không hợp lệ."); return; }
@@ -784,144 +802,182 @@ function ProposeDrawer({
   return (
     <Dialog.Root open={row !== null} onOpenChange={(open) => { if (!open && !busy) onOpenChange(false); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 max-h-[90vh] w-[min(94vw,36rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border bg-card p-4 shadow-lg">
-          <form className="flex flex-col gap-3"
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)]
+            w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2
+            overflow-hidden rounded-2xl border border-border bg-surface text-foreground shadow-2xl
+            outline-none"
+        >
+          <form className="flex min-h-0 w-full flex-col"
             onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-            <Dialog.Title className="text-base font-medium">Đề xuất thay đổi</Dialog.Title>
-            <Dialog.Description className="text-sm text-muted-foreground">
-              {row === null ? "" : row.display_name + " · " + row.employee_code}
-            </Dialog.Description>
-            <p className="text-xs text-muted-foreground">
-              Mã người lao động, dự án, ngày đầu tiên, người tuyển và loại hình lao động là
-              trường được bảo vệ: chỉ xem, không đề xuất thay đổi. Tên người lao động giữ nguyên.
-            </p>
-            {loading ? (
-              <p role="status" className="text-sm text-blue-700 dark:text-blue-300">
-                Đang tải dữ liệu…
-              </p>
-            ) : null}
-            {!loading && baseline === null ? (
-              <p role="alert" className="text-sm text-destructive">
-                Không đọc được dữ liệu hiện tại của dòng này.
-              </p>
-            ) : null}
+            <header className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
+              <Dialog.Title className="text-lg font-semibold">Đề xuất thay đổi</Dialog.Title>
+              <Dialog.Description className="mt-1 text-sm text-muted">
+                {row === null ? "" : row.display_name + " · " + row.employee_code}
+              </Dialog.Description>
+            </header>
 
-            <div className="flex flex-col gap-1">
-              <label htmlFor="propose-target" className="text-sm font-medium">Nội dung đề xuất</label>
-              <select id="propose-target" className={inputClass} value={target}
-                onChange={(event) => setTarget(event.target.value as WorkerProposeTarget)}>
-                {WORKER_PROPOSE_TARGETS.map((value) => (
-                  <option key={value} value={value}>{WORKER_PROPOSE_TARGET_LABELS[value]}</option>
-                ))}
-              </select>
-            </div>
-
-            {target === "WORKER" && workerForm !== null ? (
-              <>
-                {WORKER_FORM_FIELDS.map((field) => (
-                  <div key={field} className="flex flex-col gap-1">
-                    <label htmlFor={"worker-" + field} className="text-sm font-medium">{field}</label>
-                    <div className="flex gap-2">
-                      <select id={"worker-" + field + "-state"} className={inputClass}
-                        value={workerForm[field].state}
-                        onChange={(event) => setWorkerForm({
-                          ...workerForm,
-                          [field]: { ...workerForm[field],
-                            state: event.target.value as WorkerFieldForm["state"] },
-                        })}>
-                        <option value="provided">Có giá trị</option>
-                        <option value="omitted">Bỏ trống</option>
-                        <option value="unknown">Không rõ</option>
-                        <option value="intentionally_blank">Chủ ý để trống</option>
-                      </select>
-                      <input id={"worker-" + field} className={inputClass}
-                        value={workerForm[field].text}
-                        onChange={(event) => setWorkerForm({
-                          ...workerForm,
-                          [field]: { ...workerForm[field], text: event.target.value },
-                        })} />
-                    </div>
-                  </div>
-                ))}
-                <p className="text-xs text-muted-foreground">
-                  Tên người lao động: {workerForm.display_name} (giữ nguyên)
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+              <p className="rounded-md border border-border bg-muted/10 p-3 text-xs text-muted">
+                Mã người lao động, dự án, ngày đầu tiên, người tuyển và loại hình lao động là
+                trường được bảo vệ: chỉ xem, không đề xuất thay đổi. Tên người lao động giữ nguyên.
+              </p>
+              {loading ? (
+                <p role="status" className="rounded-md border border-blue-500/30 bg-blue-50 p-3 text-sm
+                  text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                  Đang tải dữ liệu…
                 </p>
-              </>
-            ) : null}
+              ) : null}
+              {!loading && baseline === null ? (
+                <p role="alert" className={errorClass}>
+                  Không đọc được dữ liệu hiện tại của dòng này. Vui lòng đóng và thử lại.
+                </p>
+              ) : null}
 
-            {target === "PAYMENT" ? (
-              <>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="bank-state" className="text-sm font-medium">Trạng thái thông tin tài khoản ngân hàng</label>
-                  <select id="bank-state" className={inputClass} value={paymentState}
-                    onChange={(event) => setPaymentState(event.target.value as PaymentState)}>
-                    <option value="omitted">Bỏ trống</option>
-                    <option value="unknown">Không rõ</option>
-                    <option value="intentionally_blank">Chủ ý để trống</option>
-                    <option value="provided">Có giá trị</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="bank-account" className="text-sm font-medium">Số tài khoản</label>
-                  <input id="bank-account" className={inputClass} value={accountNumber}
-                    onChange={(event) => setAccountNumber(event.target.value)} />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="bank-id" className="text-sm font-medium">Ngân hàng</label>
-                  <input id="bank-id" className={inputClass} value={bankId}
-                    onChange={(event) => setBankId(event.target.value)} />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="bank-holder" className="text-sm font-medium">Tên chủ tài khoản</label>
-                  <input id="bank-holder" className={inputClass} value={accountHolder}
-                    onChange={(event) => setAccountHolder(event.target.value)} />
-                </div>
-              </>
-            ) : null}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="propose-target" className="text-sm font-medium">Nội dung đề xuất</label>
+                <select id="propose-target" className={inputClass} value={target}
+                  disabled={loading || baseline === null}
+                  onChange={(event) => { setTarget(event.target.value as WorkerProposeTarget); setMessage(null); }}>
+                  {WORKER_PROPOSE_TARGETS.map((value) => (
+                    <option key={value} value={value}>{WORKER_PROPOSE_TARGET_LABELS[value]}</option>
+                  ))}
+                </select>
+              </div>
 
-            {target === "WORK_STATUS" ? (
-              <>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="worker-target-status" className="text-sm font-medium">Trạng thái làm việc mới</label>
-                  <select id="worker-target-status" className={inputClass} value={targetStatus}
-                    onChange={(event) => setTargetStatus(event.target.value)}>
-                    <option value="">Chọn trạng thái</option>
-                    {allowedWorkStatusTargets(baseline?.status ?? null).map((status) => (
-                      <option key={status} value={status}>{workerStatusLabel(status)}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="worker-effective-date" className="text-sm font-medium">Ngày hiệu lực</label>
-                  <input id="worker-effective-date" className={inputClass} value={effectiveDate}
-                    placeholder={baseline?.effectiveDate ?? row?.first_work_date ?? ""}
-                    onChange={(event) => setEffectiveDate(event.target.value)} />
-                </div>
-                {targetStatus === "OFF" ? (
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="worker-leave-reason" className="text-sm font-medium">Lý do nghỉ</label>
-                    <input id="worker-leave-reason" className={inputClass} value={leaveReason}
-                      onChange={(event) => setLeaveReason(event.target.value)} />
+              {target === "WORKER" && workerForm !== null ? (
+                <>
+                  {WORKER_FORM_FIELDS.map((field) => (
+                    <div key={field} className="flex flex-col gap-1.5">
+                      <label htmlFor={"worker-" + field} className="text-sm font-medium">
+                        {WORKER_FIELD_LABELS[field]}
+                      </label>
+                      <div className="grid gap-2 sm:grid-cols-[11rem_1fr]">
+                        <select id={"worker-" + field + "-state"} className={inputClass}
+                          aria-label={"Trạng thái " + WORKER_FIELD_LABELS[field]}
+                          value={workerForm[field].state}
+                          onChange={(event) => {
+                            const state = event.target.value as WorkerFieldForm["state"];
+                            setWorkerForm({
+                              ...workerForm,
+                              [field]: { state, text: state === "provided" ? workerForm[field].text : "" },
+                            });
+                          }}>
+                          <option value="provided">Có giá trị</option>
+                          <option value="omitted">{OPTIONAL_STATE_LABELS.omitted}</option>
+                          <option value="unknown">{OPTIONAL_STATE_LABELS.unknown}</option>
+                          <option value="intentionally_blank">{OPTIONAL_STATE_LABELS.intentionally_blank}</option>
+                        </select>
+                        <input id={"worker-" + field} className={inputClass}
+                          aria-label={WORKER_FIELD_LABELS[field] + " người lao động"}
+                          disabled={workerForm[field].state !== "provided"}
+                          value={workerForm[field].text}
+                          onChange={(event) => setWorkerForm({
+                            ...workerForm,
+                            [field]: { state: "provided", text: event.target.value },
+                          })} />
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted">
+                    Tên người lao động: {workerForm.display_name} (giữ nguyên)
+                  </p>
+                </>
+              ) : null}
+
+              {target === "PAYMENT" ? (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="bank-state" className="text-sm font-medium">
+                      Trạng thái thông tin tài khoản ngân hàng
+                    </label>
+                    <select id="bank-state" className={inputClass} value={paymentState}
+                      onChange={(event) => setPaymentState(event.target.value as PaymentState)}>
+                      <option value="omitted">{PAYMENT_STATE_LABELS.omitted}</option>
+                      <option value="unknown">{PAYMENT_STATE_LABELS.unknown}</option>
+                      <option value="intentionally_blank">{PAYMENT_STATE_LABELS.intentionally_blank}</option>
+                      <option value="provided">{PAYMENT_STATE_LABELS.provided}</option>
+                    </select>
                   </div>
-                ) : null}
-              </>
-            ) : null}
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="bank-account" className="text-sm font-medium">Số tài khoản</label>
+                    <input id="bank-account" className={inputClass} value={accountNumber}
+                      disabled={paymentState !== "provided"}
+                      onChange={(event) => setAccountNumber(event.target.value)} />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="bank-id" className="text-sm font-medium">Ngân hàng</label>
+                    <input id="bank-id" className={inputClass} value={bankId}
+                      disabled={paymentState !== "provided"}
+                      onChange={(event) => setBankId(event.target.value)} />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="bank-holder" className="text-sm font-medium">Tên chủ tài khoản</label>
+                    <input id="bank-holder" className={inputClass} value={accountHolder}
+                      disabled={paymentState !== "provided"}
+                      onChange={(event) => setAccountHolder(event.target.value)} />
+                  </div>
+                </>
+              ) : null}
 
-            <div className="flex flex-col gap-1">
-              <label htmlFor={reasonId} className="text-sm font-medium">Lý do đề xuất</label>
-              <textarea id={reasonId} required aria-required="true"
-                className="min-h-20 w-full rounded-md border border-input bg-background p-3 text-sm"
-                value={reason} onChange={(event) => setReason(event.target.value)} />
+              {target === "WORK_STATUS" ? (
+                <>
+                  <p className="text-sm text-muted">
+                    Trạng thái hiện tại: <strong className="text-foreground">
+                      {workerStatusLabel(baseline?.status ?? row?.employment_status ?? null)}
+                    </strong>
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-target-status" className="text-sm font-medium">
+                      Trạng thái làm việc mới
+                    </label>
+                    <select id="worker-target-status" className={inputClass} value={targetStatus}
+                      disabled={loading || baseline?.status == null}
+                      onChange={(event) => { setTargetStatus(event.target.value); setMessage(null); }}>
+                      <option value="">Chọn trạng thái</option>
+                      {allowedWorkStatusTargets(baseline?.status ?? null).map((status) => (
+                        <option key={status} value={status}>{workerStatusLabel(status)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-effective-date" className="text-sm font-medium">Ngày hiệu lực</label>
+                    <input id="worker-effective-date" type="date" className={inputClass}
+                      min={baseline?.effectiveDate ?? row?.first_work_date ?? undefined}
+                      max={hcmTodayDate()} value={effectiveDate}
+                      disabled={loading || baseline === null}
+                      onChange={(event) => setEffectiveDate(event.target.value)} />
+                  </div>
+                  {targetStatus === "OFF" ? (
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="worker-leave-reason" className="text-sm font-medium">Lý do nghỉ</label>
+                      <input id="worker-leave-reason" className={inputClass} value={leaveReason}
+                        required aria-required="true"
+                        onChange={(event) => setLeaveReason(event.target.value)} />
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={reasonId} className="text-sm font-medium">Lý do đề xuất</label>
+                <textarea id={reasonId} required aria-required="true"
+                  className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
+                    text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  value={reason} onChange={(event) => setReason(event.target.value)} />
+              </div>
+              {message ? <p role="alert" className={errorClass}>{message}</p> : null}
             </div>
-            {message ? <p role="alert" className="text-sm text-destructive">{message}</p> : null}
-            <div className="flex justify-end gap-2">
+
+            <footer className="flex shrink-0 justify-end gap-2 border-t border-border bg-surface px-4 py-3 sm:px-5">
               <button type="button" className={buttonClass} disabled={busy}
                 onClick={() => onOpenChange(false)}>Huỷ</button>
-              <button type="submit" className={primaryClass} disabled={busy} aria-busy={busy}>
+              <button type="submit" className={primaryClass}
+                disabled={busy || loading || baseline === null} aria-busy={busy}>
                 Gửi đề xuất
               </button>
-            </div>
+            </footer>
           </form>
         </Dialog.Content>
       </Dialog.Portal>

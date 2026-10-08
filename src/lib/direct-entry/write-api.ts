@@ -10,14 +10,14 @@ import {
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import type { DirectEntryRepository, DraftCatalog } from "./write-repository.ts";
-import { projectPaymentProjection } from "./payment-contract.ts";
+import { PAYMENT_STATES, projectPaymentProjection } from "./payment-contract.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROW_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "worker", "recruiter_id", "labor_type",
 ]);
-const WORKER_KEYS = new Set([
+const BATCH_WORKER_KEYS = new Set([
   "display_name", "date_of_birth", "national_id", "address", "phone",
 ]);
 
@@ -48,7 +48,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isWorkerDetails(value: unknown): value is WorkerDetails {
-  if (!isRecord(value) || Object.keys(value).some((key) => !WORKER_KEYS.has(key)) ||
+  if (!isRecord(value) || Object.keys(value).some((key) => !BATCH_WORKER_KEYS.has(key)) ||
       typeof value.display_name !== "string") return false;
   return ["date_of_birth", "national_id", "address", "phone"].every((key) => {
     const field = value[key];
@@ -236,14 +236,83 @@ const ENTRY_UUID = UUID;
 const ENTRY_KEYS = new Set([
   "entry_id", "submission_id", "project_id", "first_work_date", "employee_code",
   "worker_details", "recruiter_id", "team_id", "provider_type", "labor_type",
-  "version", "scope_kind", "payment", "employment_status", "documents",
+  "general_note", "version", "scope_kind", "payment", "employment_status", "documents",
 ]);
-const WORKER_PROJECTION_KEYS = new Set(WORKER_KEYS);
+const WORKER_PROJECTION_KEYS = new Set([
+  "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
+  "national_id_issued_place", "address", "phone",
+]);
 const STATUS_KEYS = new Set(["status", "effective_date", "version"]);
 const DOCUMENT_KEYS = new Set([
   "document_id", "document_type", "version", "size_bytes", "mime_type",
   "upload_status", "scan_status", "validation_status", "created_at", "updated_at",
 ]);
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const present = Object.keys(value);
+  return present.length === keys.length && present.every((key) => keys.includes(key));
+}
+
+/**
+ * RPC read_projection co hai shape worker_details: canonical khi co pii_view, hoac shape
+ * redacted chi con presence/state. Ca hai deu la output tin cay cua DB va phai qua boundary;
+ * UI chi duoc lap proposal worker_details tu shape canonical.
+ */
+function isWorkerReadProjection(value: unknown): boolean {
+  if (!isRecord(value) || Object.keys(value).some((key) => !WORKER_PROJECTION_KEYS.has(key))) {
+    return false;
+  }
+  if (typeof value.display_name === "string") {
+    return validateWorkerDetails(value as WorkerDetails).length === 0;
+  }
+  if (!isRecord(value.display_name) ||
+      !hasExactKeys(value, [...WORKER_PROJECTION_KEYS]) ||
+      !hasExactKeys(value.display_name, ["present"]) ||
+      typeof value.display_name.present !== "boolean") return false;
+  return Object.entries(value).every(([key, field]) => {
+    if (key === "display_name") return true;
+    return isRecord(field) && hasExactKeys(field, ["state"]) &&
+      (field.state === null || ["provided", "omitted", "unknown", "intentionally_blank"]
+        .includes(String(field.state)));
+  });
+}
+
+function isGeneralNoteReadProjection(value: unknown): boolean {
+  if (value === null || typeof value === "string") return true;
+  return isRecord(value) && hasExactKeys(value, ["present"]) && value.present === true;
+}
+
+/** Current R4 RPC may return bank_name text in addition to the older catalog bank_id shape. */
+function isPaymentReadProjection(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isRecord(value)) return false;
+  if (!("bank_name" in value)) return projectPaymentProjection(value) !== null;
+  if (!hasExactKeys(value, [
+    "state", "account_number", "bank_id", "bank_name", "account_holder_name", "version",
+  ]) || !(PAYMENT_STATES as readonly unknown[]).includes(value.state) ||
+      typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
+      (value.account_number !== null && typeof value.account_number !== "string") ||
+      (value.bank_id !== null && typeof value.bank_id !== "string") ||
+      (value.bank_name !== null && typeof value.bank_name !== "string") ||
+      (value.account_holder_name !== null && typeof value.account_holder_name !== "string")) {
+    return false;
+  }
+  const state = value.state as (typeof PAYMENT_STATES)[number];
+  const accountNumber = value.account_number as string | null;
+  const bankId = value.bank_id as string | null;
+  const bankName = value.bank_name as string | null;
+  const holder = value.account_holder_name as string | null;
+  if (state !== "provided") {
+    return accountNumber === null && bankId === null && bankName === null && holder === null;
+  }
+  const cleanText = (text: string | null, max: number) => text === null ||
+    (text.trim().length >= 1 && text.trim().length <= max && !/[\u0000-\u001F\u007F]/.test(text));
+  return (accountNumber !== null || bankName !== null || holder !== null) &&
+    (accountNumber === null || (accountNumber.length >= 1 && accountNumber.length <= 64 &&
+      !/[\u0000-\u001F\u007F]/.test(accountNumber))) &&
+    (bankId === null || /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(bankId)) &&
+    cleanText(bankName, 256) && cleanText(holder, 256);
+}
 
 export function projectEntry(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value) || Object.keys(value).some((key) => !ENTRY_KEYS.has(key)) ||
@@ -252,8 +321,7 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       !isRealCalendarDate(value.first_work_date) ||
       typeof value.employee_code !== "string" ||
       validateEmployeeCode(value.employee_code, value.first_work_date).length > 0 ||
-      typeof value.worker_details !== "object" ||
-      value.worker_details === null || Array.isArray(value.worker_details) ||
+      !isWorkerReadProjection(value.worker_details) ||
       typeof value.recruiter_id !== "string" || !ENTRY_UUID.test(value.recruiter_id) ||
       typeof value.team_id !== "string" || !ENTRY_UUID.test(value.team_id) ||
       (value.provider_type !== "hrp" && value.provider_type !== "vendor") ||
@@ -261,27 +329,16 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
       (value.scope_kind !== "own" && value.scope_kind !== "team" &&
         value.scope_kind !== "all" && value.scope_kind !== "project") ||
-      (value.payment !== null && !projectPaymentProjection(value.payment)) ||
+      !isGeneralNoteReadProjection(value.general_note) ||
+      !isPaymentReadProjection(value.payment) ||
       !isRecord(value.employment_status) ||
       !Array.isArray(value.documents)) return null;
-  const worker = value.worker_details as Record<string, unknown>;
-  if (Object.keys(worker).some((key) => !WORKER_PROJECTION_KEYS.has(key)) ||
-      Object.entries(worker).some(([key, field]) => {
-        if (key === "display_name") return typeof field !== "string";
-        if (!isRecord(field) || !["provided", "omitted", "unknown", "intentionally_blank"].includes(
-          String(field.state),
-        )) return true;
-        const provided = field.state === "provided";
-        return Object.keys(field).length !== (provided ? 2 : 1) ||
-          Object.keys(field).some((fieldKey) => fieldKey !== "state" && fieldKey !== "value") ||
-          (provided && typeof field.value !== "string");
-      })) {
-    return null;
-  }
   const status = value.employment_status as Record<string, unknown>;
   if (Object.keys(status).some((key) => !STATUS_KEYS.has(key)) ||
-      typeof status.status !== "string" || typeof status.effective_date !== "string" ||
-      !Number.isSafeInteger(status.version)) return null;
+      !["UNCONFIRMED", "ON", "OFF"].includes(String(status.status)) ||
+      typeof status.effective_date !== "string" || !isRealCalendarDate(status.effective_date) ||
+      typeof status.version !== "number" || !Number.isSafeInteger(status.version) ||
+      status.version < 1) return null;
   if (value.documents.some((document) => !isRecord(document) ||
       Object.keys(document).some((key) => !DOCUMENT_KEYS.has(key)) ||
       typeof document.document_id !== "string" || !UUID.test(document.document_id) ||

@@ -81,7 +81,7 @@ test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () =>
   assert.match(source, /relationDenialIsEmpty\(scope, response\.status\)/);
   assert.match(source, /items: \[\], next_cursor: null, has_more: false/);
   assert.match(source, /0 người lao động trong quan hệ này\./);
-  assert.match(source, /text-destructive/);
+  assert.match(source, /text-red-700/);
   assert.match(source, /text-emerald-700/);
   // Moi tab giu page state rieng.
   assert.match(source, /workerPages\[scope as WorkerScopeTab\]/);
@@ -130,6 +130,30 @@ test("W06: a11y - filter co label, dialog focus/escape khong mutation", () => {
   assert.match(source, /onSubmit=\{/);
   assert.match(source, /required aria-required="true"/);
   assert.match(source, /if \(!open && !busy\) onOpenChange\(false\)/);
+});
+
+test("W06 hotfix: modal opaque, correctly layered, scroll body only, theme tokens are real", () => {
+  assert.match(source, /Dialog\.Overlay className="fixed inset-0 z-40 bg-black\/50"/);
+  assert.match(source, /z-50 flex max-h-\[calc\(100dvh-2rem\)\]/);
+  assert.match(source, /overflow-hidden rounded-2xl border border-border bg-surface/);
+  assert.match(source, /min-h-0 flex-1 space-y-4 overflow-y-auto/);
+  assert.match(source, /<footer className="flex shrink-0/);
+  for (const invalidToken of [
+    "bg-card", "border-input", "text-primary-foreground", "text-muted-foreground",
+    "text-destructive", "bg-destructive",
+  ]) {
+    assert.equal(source.includes(invalidToken), false, "unsupported theme token: " + invalidToken);
+  }
+});
+
+test("W06 hotfix: status choices use loaded baseline and a bounded native date input", () => {
+  assert.match(source, /allowedWorkStatusTargets\(baseline\?\.status \?\? null\)/);
+  assert.match(source, /projectWorkerDetailsForProposal\(row\.worker_details\)/);
+  assert.match(source, /expectedVersion: baseline\.version/);
+  assert.match(source, /id="worker-effective-date" type="date"/);
+  assert.match(source, /min=\{baseline\?\.effectiveDate/);
+  assert.match(source, /max=\{hcmTodayDate\(\)\}/);
+  assert.match(source, /setEffectiveDate\(hcmTodayDate\(\)\)/);
 });
 
 test("W06: mobile - bang cuon ngang, min-width, khong hover-only action", () => {

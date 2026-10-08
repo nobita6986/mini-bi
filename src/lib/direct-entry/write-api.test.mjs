@@ -239,11 +239,21 @@ test("read validates UUID before session and keeps the restricted projection", a
     project_id: "project_synthetic_01",
     first_work_date: "2026-10-15",
     employee_code: "hrp-2026-000001",
-    worker_details: {},
+    worker_details: {
+      display_name: "Nguyen Thi Ngoc Anh",
+      gender: { state: "provided", value: "FEMALE" },
+      date_of_birth: { state: "provided", value: "8/6/2005" },
+      national_id: { state: "provided", value: "013050393450" },
+      national_id_issued_at: { state: "omitted" },
+      national_id_issued_place: { state: "omitted" },
+      address: { state: "provided", value: "Thanh Hoa" },
+      phone: { state: "provided", value: "0976039982" },
+    },
     recruiter_id: validRow.recruiter_id,
     team_id: "94000000-0000-4000-8000-000000000001",
     provider_type: "hrp",
     labor_type: "TEMPORARY",
+    general_note: null,
     version: 1,
     scope_kind: "own",
     payment: null,
@@ -267,6 +277,46 @@ test("read validates UUID before session and keeps the restricted projection", a
   const projectManagerResponse = await getDirectEntryEntry(entryId, "true", deps);
   assert.equal(projectManagerResponse.status, 200,
     "a project-manager-scoped draft projection is a valid server response");
+
+  deps.repository.readEntry = async () => ({
+    ok: true,
+    data: {
+      ...projection,
+      worker_details: {
+        display_name: { present: true },
+        gender: { state: "provided" },
+        date_of_birth: { state: "provided" },
+        national_id: { state: "provided" },
+        national_id_issued_at: { state: "omitted" },
+        national_id_issued_place: { state: "omitted" },
+        address: { state: "provided" },
+        phone: { state: "provided" },
+      },
+      general_note: { present: true },
+      payment: { state: "provided", account_number: "••••••••3450", version: 1 },
+    },
+  });
+  const redactedResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(redactedResponse.status, 200,
+    "the DB-authoritative redacted PII/payment projection remains readable");
+
+  deps.repository.readEntry = async () => ({
+    ok: true,
+    data: {
+      ...projection,
+      payment: {
+        state: "provided",
+        account_number: "000123456789",
+        bank_id: null,
+        bank_name: "Ngân hàng tra cứu",
+        account_holder_name: "NGUYEN THI NGOC ANH",
+        version: 1,
+      },
+    },
+  });
+  const r4PaymentResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(r4PaymentResponse.status, 200,
+    "the current R4 bank-name projection is accepted without dropping the text value");
 
   deps.repository.readEntry = async () => ({ ok: false, kind: "denied" });
   const denied = await getDirectEntryEntry(entryId, "true", deps);

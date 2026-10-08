@@ -80,6 +80,22 @@ export type WorkerForm = {
   phone: WorkerFieldForm;
 };
 
+const WORKER_DETAILS_KEYS = new Set([
+  "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
+  "national_id_issued_place", "address", "phone",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Chỉ canonical PII shape mới được đưa vào form; redacted presence/state vẫn dùng cho status. */
+export function projectWorkerDetailsForProposal(value: unknown): WorkerDetails | null {
+  if (!isRecord(value) || Object.keys(value).some((key) => !WORKER_DETAILS_KEYS.has(key)) ||
+      validateWorkerDetails(value as WorkerDetails).length > 0) return null;
+  return value as WorkerDetails;
+}
+
 export const WORKER_FORM_FIELDS: readonly (keyof Omit<WorkerForm, "display_name">)[] =
   ["date_of_birth", "national_id", "address", "phone"];
 
@@ -129,9 +145,17 @@ export function buildWorkerDetailsProposal(
 ): ProposalBuildResult {
   const details = workerDetailsFromForm(form);
   if (!details) return { ok: false, code: "WORKER_INVALID" };
-  if (validateWorkerDetails(details).length > 0) return { ok: false, code: "WORKER_INVALID" };
-  if (!workerDetailsChanged(baseline, details)) return { ok: false, code: "WORKER_UNCHANGED" };
-  return { ok: true, proposal: { worker_details: details } };
+  const candidate: WorkerDetails = {
+    ...details,
+    ...(baseline.gender === undefined ? {} : { gender: baseline.gender }),
+    ...(baseline.national_id_issued_at === undefined
+      ? {} : { national_id_issued_at: baseline.national_id_issued_at }),
+    ...(baseline.national_id_issued_place === undefined
+      ? {} : { national_id_issued_place: baseline.national_id_issued_place }),
+  };
+  if (validateWorkerDetails(candidate).length > 0) return { ok: false, code: "WORKER_INVALID" };
+  if (!workerDetailsChanged(baseline, candidate)) return { ok: false, code: "WORKER_UNCHANGED" };
+  return { ok: true, proposal: { worker_details: candidate } };
 }
 
 /** Proposal PAYMENT: dung dung 4 field contract, bank phai nam trong catalog dang hoat dong. */
