@@ -26,19 +26,23 @@ create function public.direct_entry_hf_r3_replace_proc_source(
 as $$
 declare
   v_source text; v_definition text; v_next text; v_count integer;
+  v_expected text; v_replacement text;
 begin
   if p_expected is null or length(p_expected) = 0 or p_expected_count < 1 then
     raise exception 'P2.5-HF-R3 invalid source patch specification';
   end if;
-  select p.prosrc into v_source from pg_proc p where p.oid = p_signature;
+  select replace(p.prosrc, chr(13), '') into v_source from pg_proc p where p.oid = p_signature;
   if v_source is null then raise exception 'P2.5-HF-R3 source function not found: %', p_signature; end if;
-  v_count := (length(v_source) - length(replace(v_source, p_expected, ''))) / length(p_expected);
+  v_expected := replace(p_expected, chr(13), '');
+  v_replacement := replace(p_replacement, chr(13), '');
+  v_count := (length(v_source) - length(replace(v_source, v_expected, ''))) / length(v_expected);
   if v_count <> p_expected_count then
     raise exception 'P2.5-HF-R3 expected % exact source fragment(s), found % in %, starting with: %',
       p_expected_count, v_count, p_signature, left(p_expected, 96);
   end if;
-  v_next := replace(v_source, p_expected, p_replacement);
-  select pg_get_functiondef(p.oid) into v_definition from pg_proc p where p.oid = p_signature;
+  v_next := replace(v_source, v_expected, v_replacement);
+  select replace(pg_get_functiondef(p.oid), chr(13), '') into v_definition
+    from pg_proc p where p.oid = p_signature;
   if length(v_definition) - length(replace(v_definition, v_source, '')) <> length(v_source) then
     raise exception 'P2.5-HF-R3 could not reconstruct function definition: %', p_signature;
   end if;
