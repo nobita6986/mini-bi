@@ -112,6 +112,7 @@ test("repository logs only sanitized denial diagnostics", async () => {
     });
     assert.deepEqual(warnings, [["[direct-entry] full-profile denied", {
       category: "CREATE_AUTHORITY",
+      message_fingerprint: "c3d7d71c3933397c41a0f85c813108b2adfb332ff49887ad4adacea5d59fcceb",
       contract_version: "worker-profile/1.1",
       row_count: 2,
       distinct_project_count: 2,

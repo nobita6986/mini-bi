@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import type { FullProfilePayload } from "./full-profile-contract.ts";
 
 type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
@@ -63,6 +65,7 @@ function logDeniedBatch(error: { message?: string }, payload: FullProfilePayload
     : SAFE_DENIAL_CATEGORIES[error.message] ?? "UNKNOWN";
   console.warn("[direct-entry] full-profile denied", {
     category,
+    message_fingerprint: createHash("sha256").update(error.message ?? "").digest("hex"),
     contract_version: payload.contract_version,
     row_count: rows.length,
     distinct_project_count: new Set(rows.map((row) => row.project_id)).size,
