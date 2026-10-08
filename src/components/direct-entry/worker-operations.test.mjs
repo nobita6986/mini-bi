@@ -74,11 +74,15 @@ test("W06-R2: review payload di qua projectChangeRequestListPage, khong cast raw
   assert.equal(/as ChangeRequestListItem\[\]/.test(source), false, "khong cast raw payload");
 });
 
-test("W06-R2: 403 chi la loi CUC BO trong tab, khong thao ca trang", () => {
+test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () => {
   // Khong con nhanh return <AccessDenied /> trong component (chi con o page boundary).
   assert.equal(/return <AccessDenied \/>/.test(source), false);
   assert.equal(/return <TemporaryUnavailable \/>/.test(source), false);
-  assert.match(source, /state: "denied", message: workerListErrorMessage\(403\)/);
+  assert.match(source, /relationDenialIsEmpty\(scope, response\.status\)/);
+  assert.match(source, /items: \[\], next_cursor: null, has_more: false/);
+  assert.match(source, /0 người lao động trong quan hệ này\./);
+  assert.match(source, /text-destructive/);
+  assert.match(source, /text-emerald-700/);
   // Moi tab giu page state rieng.
   assert.match(source, /workerPages\[scope as WorkerScopeTab\]/);
   assert.match(source, /submissionPage\.state/);

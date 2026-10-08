@@ -56,8 +56,6 @@ function jsonRequest(body, headers = {}) {
     body: JSON.stringify(body),
   });
 }
-const SAME_ORIGIN_GET = { headers: { origin: "https://app.test", host: "app.test",
-  "sec-fetch-site": "same-origin" } };
 const LIST_OK = { ok: true, data: { authorization_date: "2026-10-07", include_inactive: true,
   projects: [PROJECT] } };
 
@@ -205,21 +203,24 @@ test("assign/unassign dung du hai version OCC va reason; assign tra project_vers
   assert.equal(unassignInput.expected_project_version, 4);
 });
 
-test("read routes: list include_inactive; get dung getProjectDetail + chan project_id rong", async () => {
+test("read routes: GET khong can Origin; list/get van resolve session va repository", async () => {
   const d = deps(LIST_OK);
-  await listProjectsAdmin(new Request("https://app.test/x?include_inactive=false", SAME_ORIGIN_GET),
-    "true", d.dependencies);
+  const listed = await listProjectsAdmin(
+    new Request("https://app.test/x?include_inactive=false"), "true", d.dependencies);
+  assert.equal(listed.status, 200, "browser GET khong gui Origin van phai doc duoc");
   assert.equal(d.calls.rpc[0][1].include_inactive, false);
 
   const d2 = deps({ ok: true, data: { master: PROJECT, assignments: { authorization_date: "2026-10-07",
     project_id: "p1", project_version: 3, project_active: true, include_history: true,
     active_assignment_count: 0, assignments: [] } } });
-  await getProjectAdmin(new Request("https://app.test/x", SAME_ORIGIN_GET), "p1", "true", d2.dependencies);
+  const detailed = await getProjectAdmin(
+    new Request("https://app.test/x"), "p1", "true", d2.dependencies);
+  assert.equal(detailed.status, 200);
   assert.equal(d2.calls.rpc[0][0], "getDetail", "detail dung getProjectDetail (get + list assignments)");
   assert.equal(d2.calls.rpc[0][1].project_id, "p1");
 
   const d3 = deps({ ok: true, data: {} });
-  const bad = await getProjectAdmin(new Request("https://app.test/x", SAME_ORIGIN_GET), "   ", "true",
+  const bad = await getProjectAdmin(new Request("https://app.test/x"), "   ", "true",
     d3.dependencies);
   assert.equal(bad.status, 400);
   assert.equal(d3.calls.rpc.length, 0);
@@ -231,7 +232,7 @@ test("candidate list: gate truoc, actor tu session, search parsed", async () => 
   ] } };
   const d = deps(candidates);
   const res = await listManagerCandidatesAdmin(
-    new Request("https://app.test/x?search=vinh", SAME_ORIGIN_GET), "true", d.dependencies);
+    new Request("https://app.test/x?search=vinh"), "true", d.dependencies);
   assert.equal(res.status, 200);
   const [kind, input] = d.calls.rpc[0];
   assert.equal(kind, "candidates");
@@ -249,7 +250,7 @@ test("candidate list: search vuot gioi han bi tu choi sanitized", async () => {
   const d = deps({ ok: true, data: { candidates: [] } });
   const long = "x".repeat(257);
   const res = await listManagerCandidatesAdmin(
-    new Request("https://app.test/x?search=" + encodeURIComponent(long), SAME_ORIGIN_GET), "true", d.dependencies);
+    new Request("https://app.test/x?search=" + encodeURIComponent(long)), "true", d.dependencies);
   assert.equal(res.status, 400);
   assert.equal((await res.json()).code, "PROJECT_INVALID");
   assert.equal(d.calls.rpc.length, 0, "khong goi repository khi search qua dai");

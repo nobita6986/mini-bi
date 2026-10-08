@@ -126,9 +126,16 @@ export function projectAdminErrorResponse(kind: string, notFoundCode = "PROJECT_
   return fail("PROJECT_UNAVAILABLE", 500);
 }
 
-/** Gate + CSRF dung chung cho moi route. */
-function preflight(request: Request, flag: string | undefined): Response | null {
+/** Read routes chi can feature gate; browser GET khong bat buoc gui Origin. */
+function readPreflight(flag: string | undefined): Response | null {
   if (flag !== "true") return fail("NOT_FOUND", 404);
+  return null;
+}
+
+/** Mutation routes bat buoc feature gate + same-origin/CSRF. */
+function mutationPreflight(request: Request, flag: string | undefined): Response | null {
+  const gated = readPreflight(flag);
+  if (gated) return gated;
   const origin = checkSameOriginRequest({
     origin: request.headers.get("origin"),
     host: request.headers.get("host"),
@@ -270,7 +277,7 @@ async function runMutation<T>(
 export async function listProjectsAdmin(
   request: Request, flag: string | undefined, dependencies: ProjectAdminDependencies,
 ): Promise<Response> {
-  const blocked = preflight(request, flag);
+  const blocked = readPreflight(flag);
   if (blocked) return blocked;
   const actor = await resolveTrustedActor(dependencies);
   if (!actor.ok) return actor.response;
@@ -290,7 +297,7 @@ export async function listProjectsAdmin(
 export async function listManagerCandidatesAdmin(
   request: Request, flag: string | undefined, dependencies: ProjectAdminDependencies,
 ): Promise<Response> {
-  const blocked = preflight(request, flag);
+  const blocked = readPreflight(flag);
   if (blocked) return blocked;
   const actor = await resolveTrustedActor(dependencies);
   if (!actor.ok) return actor.response;
@@ -313,7 +320,7 @@ export async function getProjectAdmin(
   request: Request, projectId: string, flag: string | undefined,
   dependencies: ProjectAdminDependencies,
 ): Promise<Response> {
-  const blocked = preflight(request, flag);
+  const blocked = readPreflight(flag);
   if (blocked) return blocked;
   const id = resourceId(projectId);
   if (!id) return fail("PROJECT_INVALID", 400);
@@ -335,7 +342,7 @@ async function mutationPipeline(
   run: (actor: TrustedActor, value: never) => Promise<{ ok: true; data: unknown } | { ok: false; kind: string }>,
   logMessage: string,
 ): Promise<Response> {
-  const blocked = preflight(request, flag);
+  const blocked = mutationPreflight(request, flag);
   if (blocked) return blocked;
   const body = await readMutationBody(request);
   if (!body.ok) return body.response;

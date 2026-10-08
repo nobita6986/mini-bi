@@ -36,6 +36,7 @@ import {
   parseWorkerPageResponse,
   pendingRequestLabel,
   proposeCta,
+  relationDenialIsEmpty,
   requestRowKey,
   requestsQuery,
   resetTabPage,
@@ -82,6 +83,7 @@ const API = "/api/direct-entry";
 type WorkerScopeTab = "recruited" | "managed" | "all";
 type Incoming<T> = { items: readonly T[]; next_cursor: string | null; has_more: boolean };
 type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: PageState; message: string | null };
+type Notice = { kind: "success" | "error"; message: string };
 
 const tabClass =
   "inline-flex h-10 items-center rounded-md px-3 text-sm font-medium focus-visible:ring-2 " +
@@ -128,7 +130,7 @@ export function WorkerOperations({
     useState<TabPage<SubmissionReadItem>>(emptyTabPage);
   const [requestPage, setRequestPage] =
     useState<TabPage<ChangeRequestListItem>>(emptyTabPage);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
@@ -161,7 +163,12 @@ export function WorkerOperations({
     const response = await fetch(API + "/workers" + workersQuery({ scope, status, cursor }),
       { headers: { accept: "application/json" } });
     const payload = await readJson(response);
-    if (response.status !== 200) return httpFailure(response.status);
+    if (response.status !== 200) {
+      if (relationDenialIsEmpty(scope, response.status)) {
+        return { ok: true, page: { items: [], next_cursor: null, has_more: false } };
+      }
+      return httpFailure(response.status);
+    }
     const parsed = parseWorkerPageResponse(payload, { scope, page_size: WORKER_PAGE_SIZE });
     if (parsed === null) return { ok: false, state: "error", message: workerListErrorMessage(200) };
     return { ok: true, page: { items: parsed.items, next_cursor: parsed.next_cursor,
@@ -334,14 +341,14 @@ export function WorkerOperations({
       setBusyRequestId(null);
       if (response.status === 409) { setConflict(WORKER_CONFLICT_MESSAGE); return; }
       if (response.status !== 200 && response.status !== 201) {
-        setNotice("Không rút được yêu cầu thay đổi.");
+        setNotice({ kind: "error", message: "Không rút được yêu cầu thay đổi." });
         return;
       }
-      setNotice("Đã rút yêu cầu thay đổi.");
+      setNotice({ kind: "success", message: "Đã rút yêu cầu thay đổi." });
       await reloadRequestPage();
     } catch {
       setBusyRequestId(null);
-      setNotice("Không rút được yêu cầu thay đổi.");
+      setNotice({ kind: "error", message: "Không rút được yêu cầu thay đổi." });
     }
   }
 
@@ -381,7 +388,8 @@ export function WorkerOperations({
       </div>
 
       {conflict ? (
-        <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+        <div role="alert"
+          className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           <span>{conflict}</span>
           <button type="button" className={buttonClass} onClick={() => void reload()}>
             Tải lại dữ liệu
@@ -390,7 +398,12 @@ export function WorkerOperations({
       ) : null}
 
       {notice ? (
-        <p role="alert" className="rounded-md border border-input p-3 text-sm">{notice}</p>
+        <p role={notice.kind === "error" ? "alert" : "status"}
+          className={notice.kind === "error"
+            ? "rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+            : "rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300"}>
+          {notice.message}
+        </p>
       ) : null}
 
       <section
@@ -416,16 +429,18 @@ export function WorkerOperations({
         )}
 
         {activePage.state === "loading" || activePage.state === "idle" ? (
-          <p role="status" className="text-sm text-muted-foreground">Đang tải dữ liệu…</p>
+          <p role="status" className="text-sm text-blue-700 dark:text-blue-300">Đang tải dữ liệu…</p>
         ) : null}
         {activePage.state === "empty" ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            Không có người lao động nào trong quan hệ này.
+          <p role="status"
+            className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+            0 người lao động trong quan hệ này.
           </p>
         ) : null}
         {activePage.state === "error" || activePage.state === "denied" ||
          activePage.state === "unavailable" ? (
-          <div role="alert" className="flex flex-col gap-2 text-sm">
+          <div role="alert"
+            className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
             <span>{activePage.message ?? "Không tải được danh sách trong quan hệ này."}</span>
             <button type="button" className={buttonClass} onClick={() => void reload()}>
               Thử lại
@@ -474,7 +489,9 @@ export function WorkerOperations({
         catalogFor={catalogFor}
         ensureCatalog={ensureCatalog}
         onOpenChange={(open) => { if (!open) setDrawerRow(null); }}
-        onDone={(message) => { setNotice(message); setDrawerRow(null); void reload(); }}
+        onDone={(message) => {
+          setNotice({ kind: "success", message }); setDrawerRow(null); void reload();
+        }}
         onConflict={() => { setDrawerRow(null); setConflict(WORKER_CONFLICT_MESSAGE); }}
       />
 
@@ -485,7 +502,7 @@ export function WorkerOperations({
           catalogFor={catalogFor}
           ensureCatalog={ensureCatalog}
           onDecided={(message) => {
-            setNotice(message);
+            setNotice({ kind: "success", message });
             setReviewRequest(null);
             void reloadRequestPage();
           }}
@@ -779,9 +796,15 @@ function ProposeDrawer({
               Mã người lao động, dự án, ngày đầu tiên, người tuyển và loại hình lao động là
               trường được bảo vệ: chỉ xem, không đề xuất thay đổi. Tên người lao động giữ nguyên.
             </p>
-            {loading ? <p role="status" className="text-sm">Đang tải dữ liệu…</p> : null}
+            {loading ? (
+              <p role="status" className="text-sm text-blue-700 dark:text-blue-300">
+                Đang tải dữ liệu…
+              </p>
+            ) : null}
             {!loading && baseline === null ? (
-              <p role="alert" className="text-sm">Không đọc được dữ liệu hiện tại của dòng này.</p>
+              <p role="alert" className="text-sm text-destructive">
+                Không đọc được dữ liệu hiện tại của dòng này.
+              </p>
             ) : null}
 
             <div className="flex flex-col gap-1">
@@ -891,7 +914,7 @@ function ProposeDrawer({
                 className="min-h-20 w-full rounded-md border border-input bg-background p-3 text-sm"
                 value={reason} onChange={(event) => setReason(event.target.value)} />
             </div>
-            {message ? <p role="alert" className="text-sm">{message}</p> : null}
+            {message ? <p role="alert" className="text-sm text-destructive">{message}</p> : null}
             <div className="flex justify-end gap-2">
               <button type="button" className={buttonClass} disabled={busy}
                 onClick={() => onOpenChange(false)}>Huỷ</button>

@@ -29,6 +29,7 @@ import {
   parseWorkerPageResponse,
   pendingRequestLabel,
   proposeCta,
+  relationDenialIsEmpty,
   tabScope,
   visibleWorkerTabs,
   workerDenialMessage,
@@ -247,6 +248,13 @@ test("W06: copy tu choi sanitized, khong lo UUID/raw DB", () => {
     const message = workerListErrorMessage(status);
     assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}/i.test(message), false);
   }
+});
+
+test("W06-R3: audience ca nhan khong ton tai hien 0, scope all van fail-closed", () => {
+  assert.equal(relationDenialIsEmpty("recruited", 403), true);
+  assert.equal(relationDenialIsEmpty("managed", 403), true);
+  assert.equal(relationDenialIsEmpty("all", 403), false);
+  assert.equal(relationDenialIsEmpty("managed", 500), false);
 });
 
 test("W06: pending/last decision doc tu server data", () => {

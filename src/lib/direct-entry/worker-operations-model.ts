@@ -369,6 +369,18 @@ export function workerListErrorMessage(status: number): string {
   return "Không tải được danh sách. Vui lòng thử lại.";
 }
 
+/**
+ * Hai audience ca nhan co the khong ton tai voi actor hien tai (khong co recruiter
+ * link / khong duoc gan quan ly du an). Do la tap ket qua rong, khong phai loi quyen
+ * can hien cho nguoi dung. Scope `all` van giu 403 fail-closed.
+ */
+export function relationDenialIsEmpty(
+  scope: WorkerDirectoryScope,
+  status: number,
+): boolean {
+  return status === 403 && (scope === "recruited" || scope === "managed");
+}
+
 /** Chi hien CTA khi row do server tra propose_change; khong bao gio tu suy quyen. */
 export function rowsWithProposeCta(
   rows: readonly WorkerDirectoryRow[],
