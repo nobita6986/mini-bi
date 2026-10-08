@@ -90,7 +90,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 62, "the ledger carries 62 migrations after P2.5-HF-R3 #62 #58");
+  assert.equal(names.length, 63, "the ledger carries 63 migrations after P2.5-HF-R6 #63");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }

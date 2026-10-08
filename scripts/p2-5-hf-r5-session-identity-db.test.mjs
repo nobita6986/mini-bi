@@ -41,10 +41,10 @@ async function freshDb() {
   return db;
 }
 
-test("HF-R5: #62 appends as the last migration and a fresh ledger applies clean", async () => {
+test("HF-R5: #62 stays immediately before R6 and a fresh ledger applies clean", async () => {
   const names = await ledgerNames();
-  assert.equal(names[names.length - 1], HF_R5, "#62 must be the last migration");
-  assert.equal(names.length, 62);
+  assert.equal(names[names.length - 2], HF_R5, "#62 must stay immediately before #63");
+  assert.equal(names.length, 63);
   const db = await freshDb();
   try {
     await applyUpTo(db, names);

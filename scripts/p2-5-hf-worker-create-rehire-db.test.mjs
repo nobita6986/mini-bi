@@ -1,5 +1,5 @@
 /**
- * P2.5-HF - worker create authority + CCCD rehire (DB regression, PGlite, 58 ledger).
+ * P2.5-HF - worker create authority + CCCD rehire (DB regression, PGlite).
  *
  * Proves the hotfix contract at the DB boundary:
  *   * creation authority is the effective project-manager assignment on the row's
@@ -24,6 +24,7 @@ const HF_MIGRATION = "20261008180000_p2_5_hf_worker_create_and_rehire.sql";
 const INITIAL_ON_MIGRATION = "20261008170000_p2_5_initial_employment_status_on.sql";
 const R2_MIGRATION = "20261008200000_p2_5_hf_r2_cccd_canonicalization_guard.sql";
 const R3_MIGRATION = "20261008210000_p2_5_hf_r3_worker_full_correction.sql";
+const R6_MIGRATION = "20261008230000_p2_5_hf_r6_manager_initial_status.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -52,11 +53,12 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 62, "the ledger carries 62 migrations after P2.5-HF-R3 #62");
-  assert.equal(names[names.length - (2)], R3_MIGRATION, "P2.5-HF-R3 appends as #61");
-  assert.equal(names[names.length - (3)], R2_MIGRATION, "P2.5-HF-R2 appends as #60");
-  assert.equal(names[names.length - (5)], HF_MIGRATION, "P2.5-HF appends as #58");
-  assert.equal(names[names.length - (6)], INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
+  assert.equal(names.length, 63, "the ledger carries 63 migrations after P2.5-HF-R6 #63");
+  assert.equal(names.at(-1), R6_MIGRATION, "P2.5-HF-R6 appends as #63");
+  assert.equal(names.at(-3), R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.at(-4), R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.at(-6), HF_MIGRATION, "P2.5-HF remains #58");
+  assert.equal(names.at(-7), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
   return db;
 }
 
@@ -360,6 +362,62 @@ test("HF: manager outside the project, wrong assignment state and non-managers a
         (error) => error.code === "42501", label);
     }
     assert.deepEqual(await residue(db), before, "a refused create leaves no residue");
+  } finally {
+    await db.close();
+  }
+});
+
+test("HF-R6: assigned manager may create an explicit OFF profile without a global status capability", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const manager = await createBatchV2(db, {
+      rows: [batchRow({
+        date: "2026-10-01",
+        cccd: "121212121212",
+        name: "HF Manager Historical",
+        payment: { state: "provided", bank_name: "Text Bank" },
+        employment: {
+          initial_status: "OFF",
+          leave_date: "2026-10-07",
+          leave_reason_text: "Synthetic historical departure",
+        },
+      })],
+      key: "hf-r6-manager-off",
+      auth: MGR_A_AUTH,
+      app: MGR_A_APP,
+    });
+    const history = await db.query(
+      "select status, version from public.direct_entry_employment_status_events" +
+      " where entry_id = $1::uuid order by version",
+      [manager.entry_ids[0]],
+    );
+    assert.deepEqual(history.rows, [
+      { status: "ON", version: 1 },
+      { status: "OFF", version: 2 },
+    ]);
+
+    const before = await residue(db);
+    await assert.rejects(
+      () => createBatchV2(db, {
+        rows: [batchRow({
+          date: "2026-10-01",
+          cccd: "131313131313",
+          name: "HF Legacy Explicit Off",
+          employment: {
+            initial_status: "OFF",
+            leave_date: "2026-10-07",
+            leave_reason_text: "Synthetic legacy departure",
+          },
+        })],
+        key: "hf-r6-legacy-off",
+        auth: UPLOADER_AUTH,
+        app: UPLOADER_APP,
+      }),
+      (error) => error.code === "42501",
+      "legacy/global create path still requires employment_status.apply",
+    );
+    assert.deepEqual(await residue(db), before, "the refused legacy row leaves zero residue");
   } finally {
     await db.close();
   }
