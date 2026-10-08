@@ -274,3 +274,57 @@ test("W06: reviewer UI dung authority backend (can_decide), khong suy tu role cl
     assert.equal(reviewer.includes(forbidden), false, "reviewer khong duoc suy quyen tu " + forbidden);
   }
 });
+
+test("HF-R5A: loi tai them phai duoc bao cho nguoi dung, khong duoc im lang", () => {
+  // Truoc R5A: httpFailure tra message null cho 5xx/network nen failLoad giu state "ready"
+  // voi message null => khong co gi hien ra sau khi bam "Tai them".
+  assert.equal(/state: "unavailable", message: null/.test(source), false);
+  assert.equal(source.includes("message: null"), false, "khong con nhanh nao bo trong message");
+  assert.match(source, /message: WORKER_LOAD_FAILED_MESSAGE/);
+  assert.match(source, /activePage.state === "ready" && activePage.message !== null/);
+  assert.match(source, /requestPage.state === "ready" && requestPage.message !== null/);
+  assert.match(source, /<span>{activePage.message}<\/span>/);
+});
+
+test("HF-R5A: catalog bi tu choi (403) la gioi han quyen, khong phai loi he thong", () => {
+  assert.match(source, /const CATALOG_DENIED = "CATALOG_DENIED"/);
+  assert.match(source, /const CATALOG_UNAVAILABLE = "CATALOG_UNAVAILABLE"/);
+  assert.match(source, /result.status === 403\) throw new Error\(CATALOG_DENIED\)/);
+  assert.match(source, /filterCatalogState === "denied" \? \(/);
+  assert.match(source, /filterCatalogState === "unavailable" \? \(/);
+  // Denied dung mau thong tin (sky) + role=status; unavailable dung loi do (role=alert).
+  assert.match(source, /role="status" className=\{infoClass\}>[\s\S]{0,220}không có quyền đọc danh mục/);
+  assert.match(source, /role="alert" className=\{errorClass\}>[\s\S]{0,120}Không tải được danh mục/);
+  // Drawer nhan cung mot su that: fail-closed tren gia tri hien tai, khong tu suy quyen.
+  assert.match(source, /catalogDenied={filterCatalogState === "denied"}/);
+  assert.match(source, /catalogDenied: boolean/);
+  assert.match(source, /entryCatalog === undefined && catalogDenied/);
+  assert.match(source, /disabled=\{loading \|\| entryCatalog === undefined\}/);
+});
+
+test("HF-R5A: dong drawer phai tra focus ve dung nut da mo", () => {
+  // Radix Dialog chi tu tra focus khi co Dialog.Trigger; drawer nay mo bang state nen
+  // phai tu ghi nho nut mo (cung cach reviewer dang dung).
+  assert.match(source, /const drawerOpenerRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(source, /onClick=\{\(event\) => onPropose\(row, event\.currentTarget\)\}/);
+  assert.match(source, /onClick=\{\(event\) => onCorrect\(row, event\.currentTarget\)\}/);
+  assert.match(source, /openerRef: \{ current: HTMLElement \| null \}/);
+  assert.match(source, /onCloseAutoFocus=\{\(event\) => \{[\s\S]{0,220}opener\.isConnected[\s\S]{0,120}opener\.focus\(\)/);
+  assert.match(source, /openerRef=\{drawerOpenerRef\}/);
+});
+
+test("HF-R5A-R1: moi duong network rejection dung canonical message, khong con null", () => {
+  assert.equal(/failLoad\([^)]*\bnull\b/.test(source), false, "khong con failLoad voi message null");
+  assert.equal(source.includes(String.fromCharCode(34) + "unavailable" + String.fromCharCode(34) + ", null"),
+    false, "khong con nhanh nao bo trong message");
+  // Hai duong initial rejection (submissions + requests) dung CUNG mot canonical message.
+  assert.equal((source.match(/failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)/g) ?? []).length, 2);
+  assert.match(source, /setSubmissionPage\(\(page\) => failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)\)/);
+  assert.match(source, /setRequestPage\(\(page\) => failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)\)/);
+  // Khong tao message/helper thu hai.
+  assert.equal(/const [A-Z_]*LOAD_FAILED[A-Z_]* = "/.test(source), false);
+  // Giu rows da tai + co retry trong ca hai red alert.
+  assert.equal((source.match(/onClick=\{\(\) => void reload\(\)\}/g) ?? []).length >= 2, true);
+  assert.match(source, /onClick=\{\(\) => void reloadRequestPage\(\)\}/);
+  assert.equal((source.match(/Thử lại/g) ?? []).length >= 3, true);
+});

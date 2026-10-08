@@ -46,6 +46,7 @@ import {
   updateWorkerDirectoryFilter,
   visibleWorkerTabs,
   workerListErrorMessage,
+  WORKER_LOAD_FAILED_MESSAGE,
   workerRowKey,
   workerStatusLabel,
   workersQuery,
@@ -116,6 +117,10 @@ const errorClass =
 const infoClass =
   "rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-800 " +
   "dark:bg-sky-950/40 dark:text-sky-200";
+/** P2.5-HF-R5A: 403 (khong co quyen doc danh muc) KHAC 5xx/network (loi that). */
+const CATALOG_DENIED = "CATALOG_DENIED";
+const CATALOG_UNAVAILABLE = "CATALOG_UNAVAILABLE";
+
 const successClass =
   "rounded-md border border-emerald-500/40 bg-emerald-50 p-3 text-sm text-emerald-800 " +
   "dark:bg-emerald-950/40 dark:text-emerald-300";
@@ -130,7 +135,7 @@ async function readJson(response: Response): Promise<unknown> {
 
 function httpFailure(status: number): FetchOutcome<never> {
   if (status === 403) return { ok: false, state: "denied", message: workerListErrorMessage(403) };
-  if (status >= 500) return { ok: false, state: "unavailable", message: null };
+  if (status >= 500) return { ok: false, state: "unavailable", message: workerListErrorMessage(500) };
   return { ok: false, state: "error", message: workerListErrorMessage(status) };
 }
 
@@ -150,7 +155,8 @@ export function WorkerOperations({
     () => initialWorkerTab(actor, canSeeAllWorkers));
   const [filters, setFilters] = useState<WorkerDirectoryFilters>(
     { status: "", projectId: "", recruiterId: "" });
-  const [filterCatalogUnavailable, setFilterCatalogUnavailable] = useState(false);
+  const [filterCatalogState, setFilterCatalogState] =
+    useState<"loading" | "ready" | "denied" | "unavailable">("loading");
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
     () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), all: emptyTabPage() }));
   const [submissionPage, setSubmissionPage] =
@@ -165,6 +171,8 @@ export function WorkerOperations({
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  /** Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger. */
+  const drawerOpenerRef = useRef<HTMLElement | null>(null);
   const filterId = useId();
   const projectFilterId = useId();
   const recruiterFilterId = useId();
@@ -179,10 +187,12 @@ export function WorkerOperations({
     return fetch(API + "/catalog?effective_date=" + encodeURIComponent(date), {
       headers: { accept: "application/json" },
     })
-      .then((response) => readJson(response))
-      .then((body) => {
-        const parsed = parseDirectEntryCatalogResponse(body, date);
-        if (parsed === null) throw new Error("CATALOG_UNAVAILABLE");
+      .then(async (response) => ({ status: response.status, body: await readJson(response) }))
+      .then((result) => {
+        if (result.status === 403) throw new Error(CATALOG_DENIED);
+        const parsed = result.status === 200
+          ? parseDirectEntryCatalogResponse(result.body, date) : null;
+        if (parsed === null) throw new Error(CATALOG_UNAVAILABLE);
         setCatalogs((current) => ({ ...current, [date]: parsed }));
         return parsed;
       });
@@ -192,8 +202,11 @@ export function WorkerOperations({
     if (tab === "uploader" || filterCatalog !== undefined) return;
     let active = true;
     ensureCatalog(today).then(
-      () => { if (active) setFilterCatalogUnavailable(false); },
-      () => { if (active) setFilterCatalogUnavailable(true); },
+      () => { if (active) setFilterCatalogState("ready"); },
+      (error: unknown) => {
+        if (active) setFilterCatalogState(
+          error instanceof Error && error.message === CATALOG_DENIED ? "denied" : "unavailable");
+      },
     );
     return () => { active = false; };
   }, [tab, filterCatalog, ensureCatalog, today]);
@@ -278,7 +291,7 @@ export function WorkerOperations({
   const reloadRequestPage = useCallback(async (): Promise<void> => {
     setRequestPage(resetTabPage());
     const outcome = await fetchRequests(null).catch(
-      () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
+      () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
     applyRequestPage(outcome, false);
   }, [fetchRequests, applyRequestPage]);
 
@@ -289,13 +302,13 @@ export function WorkerOperations({
     if (tab === "uploader") {
       fetchSubmissions(null).then(
         (outcome) => { if (active) applySubmissionPage(outcome, false); },
-        () => { if (active) setSubmissionPage((page) => failLoad(page, "unavailable", null)); },
+        () => { if (active) setSubmissionPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
       );
     } else {
       const scope = tab as WorkerScopeTab;
       fetchWorkers(scope, filters, null).then(
         (outcome) => { if (active) applyWorkerPage(scope, outcome, false); },
-        () => { if (active) applyWorkerPage(scope, { ok: false, state: "unavailable", message: null }, false); },
+        () => { if (active) applyWorkerPage(scope, { ok: false, state: "unavailable", message: WORKER_LOAD_FAILED_MESSAGE }, false); },
       );
     }
     return () => { active = false; };
@@ -306,7 +319,7 @@ export function WorkerOperations({
     let active = true;
     fetchRequests(null).then(
       (outcome) => { if (active) applyRequestPage(outcome, false); },
-      () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", null)); },
+      () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
     );
     return () => { active = false; };
   }, [canReview, fetchRequests, applyRequestPage]);
@@ -321,7 +334,7 @@ export function WorkerOperations({
     if (page.cursor === null || !page.hasMore) return;
     setBusyRequestId("more");
     const outcome = await fetcher(page.cursor).catch(
-      () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
+      () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
     setBusyRequestId(null);
     if (!isCurrent()) return;
     apply(outcome, true);
@@ -358,14 +371,14 @@ export function WorkerOperations({
     if (tab === "uploader") {
       setSubmissionPage(resetTabPage());
       applySubmissionPage(await fetchSubmissions(null).catch(
-        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE })), false);
     } else {
       const scope = tab as WorkerScopeTab;
       workerQueryGeneration.current += 1;
       const generation = workerQueryGeneration.current;
       setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
       const outcome = await fetchWorkers(scope, filters, null).catch(
-        () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
       if (generation === workerQueryGeneration.current) applyWorkerPage(scope, outcome, false);
     }
     if (canReview) {
@@ -460,6 +473,14 @@ export function WorkerOperations({
       ) : null}
 
       {/* P2.5-HF-R3: hang doi "Yeu cau thay doi" dat TRUOC danh sach NLD. */}
+      {canReview && requestPage.state === "ready" && requestPage.message !== null ? (
+        <div role="alert" className={"flex flex-col gap-2 " + errorClass}>
+          <span>{requestPage.message}</span>
+          <button type="button" className={buttonClass} onClick={() => void reloadRequestPage()}>
+            Thử lại
+          </button>
+        </div>
+      ) : null}
       {canReview ? (
         <DirectEntryChangeRequestList
           state={requestPage.state === "ready" || requestPage.state === "empty"
@@ -526,12 +547,18 @@ export function WorkerOperations({
                 </>
               ) : null}
             </div>
-            {filterCatalog === undefined && !filterCatalogUnavailable ? (
+            {filterCatalog === undefined && filterCatalogState === "loading" ? (
               <p role="status" className="text-sm text-blue-700 dark:text-blue-300">
                 Đang tải bộ lọc dự án và người tuyển…
               </p>
             ) : null}
-            {filterCatalogUnavailable ? (
+            {filterCatalogState === "denied" ? (
+              <p role="status" className={infoClass}>
+                Vai trò hiện tại không có quyền đọc danh mục dự án và người tuyển, nên chỉ lọc được
+                theo trạng thái làm việc. Đây là giới hạn quyền, không phải lỗi hệ thống.
+              </p>
+            ) : null}
+            {filterCatalogState === "unavailable" ? (
               <p role="alert" className={errorClass}>
                 Không tải được danh mục dự án và người tuyển. Bộ lọc trạng thái vẫn hoạt động.
               </p>
@@ -558,6 +585,16 @@ export function WorkerOperations({
           </div>
         ) : null}
 
+        {/* P2.5-HF-R5A: "Tai them" loi thi GIU rows da tai va phai BAO cho nguoi dung. */}
+        {activePage.state === "ready" && activePage.message !== null ? (
+          <div role="alert" className={"flex flex-col gap-2 " + errorClass}>
+            <span>{activePage.message}</span>
+            <button type="button" className={buttonClass} onClick={() => void reload()}>
+              Thử lại
+            </button>
+          </div>
+        ) : null}
+
         {tab === "uploader" && submissionPage.state === "ready" ? (
           <>
             <SubmissionTable submissions={submissionPage.items} />
@@ -570,8 +607,16 @@ export function WorkerOperations({
           <>
             <WorkerTable rows={workerPage.items}
               canPrivilegedEdit={canPrivilegedEditWorkers}
-              onPropose={(row) => { setDrawerMode("proposal"); setDrawerRow(row); }}
-              onCorrect={(row) => { setDrawerMode("correction"); setDrawerRow(row); }} />
+              onPropose={(row, opener) => {
+                drawerOpenerRef.current = opener;
+                setDrawerMode("proposal");
+                setDrawerRow(row);
+              }}
+              onCorrect={(row, opener) => {
+                drawerOpenerRef.current = opener;
+                setDrawerMode("correction");
+                setDrawerRow(row);
+              }} />
             <LoadMore state={workerPage.state} hasMore={workerPage.hasMore}
               busy={busyRequestId === "more"}
               onLoadMore={() => void loadMore(workerPage, (cursor) =>
@@ -586,6 +631,8 @@ export function WorkerOperations({
         key={drawerRow === null ? "none" : drawerRow.entry_id + ":" + drawerMode}
         row={drawerRow}
         mode={drawerMode}
+        openerRef={drawerOpenerRef}
+        catalogDenied={filterCatalogState === "denied"}
         catalogFor={catalogFor}
         ensureCatalog={ensureCatalog}
         onOpenChange={(open) => { if (!open) setDrawerRow(null); }}
@@ -658,8 +705,9 @@ function WorkerTable({
 }: {
   rows: readonly WorkerDirectoryRow[];
   canPrivilegedEdit: boolean;
-  onPropose: (row: WorkerDirectoryRow) => void;
-  onCorrect: (row: WorkerDirectoryRow) => void;
+  /** P2.5-HF-R5A: nhan kem nut da bam de tra focus khi dong drawer. */
+  onPropose: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
+  onCorrect: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -710,12 +758,14 @@ function WorkerTable({
                   {cta.show || canPrivilegedEdit ? (
                     <div className="flex flex-col items-start gap-2">
                       {cta.show ? (
-                        <button type="button" className={primaryClass} onClick={() => onPropose(row)}>
+                        <button type="button" className={primaryClass}
+                          onClick={(event) => onPropose(row, event.currentTarget)}>
                           Đề xuất thay đổi
                         </button>
                       ) : null}
                       {canPrivilegedEdit ? (
-                        <button type="button" className={buttonClass} onClick={() => onCorrect(row)}>
+                        <button type="button" className={buttonClass}
+                          onClick={(event) => onCorrect(row, event.currentTarget)}>
                           Sửa trực tiếp
                         </button>
                       ) : null}
@@ -798,10 +848,13 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
 }
 
 function ProposeDrawer({
-  row, mode, catalogFor, ensureCatalog, onOpenChange, onDone, onConflict,
+  row, mode, openerRef, catalogDenied, catalogFor, ensureCatalog, onOpenChange, onDone, onConflict,
 }: {
   row: WorkerDirectoryRow | null;
   mode: "proposal" | "correction";
+  openerRef: { current: HTMLElement | null };
+  /** True khi catalog bi tu choi (403) — gap #2 da biet; copy phai la gioi han quyen, khong phai loi. */
+  catalogDenied: boolean;
   catalogFor: (date: string) => DraftCatalog | undefined;
   ensureCatalog: (date: string) => Promise<DraftCatalog>;
   onOpenChange: (open: boolean) => void;
@@ -994,6 +1047,13 @@ function ProposeDrawer({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
         <Dialog.Content
+          onCloseAutoFocus={(event) => {
+            const opener = openerRef.current;
+            if (opener && opener.isConnected) {
+              event.preventDefault();
+              opener.focus();
+            }
+          }}
           className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)]
             w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2
             overflow-hidden rounded-2xl border border-border bg-surface text-foreground shadow-2xl
@@ -1162,7 +1222,13 @@ function ProposeDrawer({
                       <option value="TEMPORARY">Thời vụ</option>
                     </select>
                   </div>
-                  {entryCatalog === undefined ? (
+                  {!loading && entryCatalog === undefined && catalogDenied ? (
+                    <p role="status" className={infoClass}>
+                      Vai trò hiện tại không có quyền đọc danh mục nên chỉ giữ được dự án và người
+                      tuyển hiện tại; không thể chọn giá trị mới.
+                    </p>
+                  ) : null}
+                  {!loading && entryCatalog === undefined && !catalogDenied ? (
                     <p role="alert" className={errorClass}>
                       Không tải được danh mục hiện có. Không thể chọn dự án hoặc người tuyển mới.
                     </p>

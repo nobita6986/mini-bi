@@ -36,6 +36,7 @@ import {
   workerDenialMessage,
   workerListErrorMessage,
   workerStatusLabel,
+  WORKER_LOAD_FAILED_MESSAGE,
   updateWorkerDirectoryFilter,
 } from "./worker-operations-model.ts";
 
@@ -287,6 +288,28 @@ test("W06: copy tu choi sanitized, khong lo UUID/raw DB", () => {
     const message = workerListErrorMessage(status);
     assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}/i.test(message), false);
   }
+});
+
+test("HF-R5A: moi loi tai du lieu deu co copy sanitized, khong bao gio im lang", () => {
+  // Truoc R5A: 5xx/network tra message null => "Tai them" that bai khong hien gi.
+  for (const status of [500, 502, 503, 504]) {
+    assert.equal(workerListErrorMessage(status), WORKER_LOAD_FAILED_MESSAGE);
+  }
+  assert.ok(WORKER_LOAD_FAILED_MESSAGE.length > 0);
+  assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}/i.test(WORKER_LOAD_FAILED_MESSAGE), false);
+  // Tai them that bai: GIU rows da tai (state ready) nhung VAN phai co message cho UI bao.
+  const loaded = applyPage(emptyTabPage(), {
+    items: [{ id: "a" }], next_cursor: "n", has_more: true,
+  }, (item) => item.id, false);
+  assert.equal(loaded.state, "ready");
+  const failed = failLoad(loaded, "unavailable", WORKER_LOAD_FAILED_MESSAGE);
+  assert.equal(failed.state, "ready");
+  assert.deepEqual(failed.items, [{ id: "a" }]);
+  assert.equal(failed.message, WORKER_LOAD_FAILED_MESSAGE);
+  // Trang dau that bai: khong co du lieu thi giu nguyen state loi, van co message.
+  const emptyFailure = failLoad(emptyTabPage(), "unavailable", WORKER_LOAD_FAILED_MESSAGE);
+  assert.equal(emptyFailure.state, "unavailable");
+  assert.equal(emptyFailure.message, WORKER_LOAD_FAILED_MESSAGE);
 });
 
 test("W06-R3: audience ca nhan khong ton tai hien 0, scope all van fail-closed", () => {

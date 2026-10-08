@@ -210,3 +210,12 @@ test("model la noi duy nhat build request va khong chua truong quyen", () => {
   assert.match(model, /export function buildSetActiveRequest/);
   assert.equal(/deactivate/i.test(model), false, "khong co duong tat deactivate rieng");
 });
+
+test("HF-R5A: nhan quan ly khong bao gio hien UUID, ke ca dang rut gon", () => {
+  // Truoc R5A: managerLabel tra ve "Quan ly . " + uuid.slice(0, 8) khi chua tra duoc ten.
+  assert.equal(source.includes("recruiterId.slice(0, 8)"), false,
+    "khong duoc hien UUID rut gon trong nhan nguoi dung");
+  assert.ok(source.includes("Quản lý dự án (chưa tra được tên)"),
+    "nhan du phong phai la nhan nghiep vu trung tinh");
+  assert.equal(/candidateLabels\[recruiterId\][^;]{0,80}\.slice\(/.test(source), false);
+});
