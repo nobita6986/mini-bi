@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * P2.5-HF-R5B - T0 operator worker importer CLI.
+ * P2.5-HF-R5B - T0 operator worker importer CLI (.xlsx/.csv -> canonical RPC).
  *
- * --check : validate + chay dung transaction/RPC cua apply roi rollback (khong ghi gi).
- * --apply : chi commit khi confirmation token dung.
+ * --check : validate + chay dung execution plan cua apply roi rollback.
+ * --apply : chi commit khi confirmation token (SHA-256 day du cua file nguon) dung.
  * Token duoc kiem tra TRUOC khi load DB config / mo connection.
- * Khong migration, khong UI, khong DML truc tiep tren canonical data: chi canonical RPC.
+ * Technical operator chi xuat hien trong batch audit; created_by la uploader nghiep vu.
  */
 import path from "node:path";
 import process from "node:process";
@@ -19,13 +19,17 @@ import {
   classifyDatabaseError,
   confirmationToken,
   executeImportPlan,
+  openBatchAudit,
   postcheckImport,
-  readImportManifest,
+  preflightAuthority,
+  readImportSource,
   resolveOperator,
-  safeManifestSummary,
+  resolveRows,
+  resolveUploaders,
   sanitizedIssues,
-  validateManifestRows,
+  validateManifest,
   validateOperatorOptions,
+  IMPORT_REQUIRED_COLUMNS,
 } from "./lib/t0-operator-import.mjs";
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
@@ -66,39 +70,38 @@ function sanitizedFailure(error) {
   return classifyDatabaseError(error);
 }
 
-/** Tra ve payload an toan (counts/ma loi); dependencies cho phep test tiem config/client. */
 export async function runImport(options, dependencies = {}) {
   const parsedArgs = validateOperatorOptions(options);
   if (!parsedArgs.ok) {
     return { ok: false, code: "OPERATOR_INPUT_INVALID", problems: parsedArgs.problems };
   }
-
-  let manifest;
+  let source;
   try {
-    manifest = await readImportManifest(path.resolve(options.input));
+    source = await readImportSource(path.resolve(options.input));
   } catch (error) {
     return { ok: false, code: sanitizedFailure(error).code };
   }
-  const expectedToken = confirmationToken(manifest.fingerprint);
-  if (options.mode === "apply" && options.confirm !== expectedToken) {
+  const token = confirmationToken(source.fingerprint);
+  if (options.mode === "apply" && options.confirm !== token) {
     // Chua doc config, chua mo connection nao.
-    return { ok: false, code: "CONFIRMATION_REQUIRED", fingerprint: manifest.fingerprint,
-      confirmation_token: expectedToken };
+    return { ok: false, code: "CONFIRMATION_REQUIRED", fingerprint: source.fingerprint,
+      confirmation_token: token };
   }
-
-  const local = validateManifestRows(manifest.rows);
-  const summary = safeManifestSummary(local.rows, local.errors, local.warnings);
-  summary.target_state = manifest.targetState;
+  for (const column of IMPORT_REQUIRED_COLUMNS) {
+    if (!source.header.includes(column)) {
+      return { ok: false, code: "MANIFEST_COLUMNS_INVALID", missing: [column] };
+    }
+  }
+  const local = validateManifest(source.records);
   if (local.errors.length > 0) {
     return { ok: false, code: "MANIFEST_INVALID", mode: options.mode,
-      fingerprint: manifest.fingerprint, summary, errors: sanitizedIssues(local.errors) };
+      fingerprint: source.fingerprint, rows: local.rows.length,
+      errors: sanitizedIssues(local.errors) };
   }
 
-  const config = dependencies.loadConfig
-    ? await dependencies.loadConfig()
+  const config = dependencies.loadConfig ? await dependencies.loadConfig()
     : await loadSupabaseConfig();
-  const client = dependencies.createClient
-    ? dependencies.createClient(config)
+  const client = dependencies.createClient ? dependencies.createClient(config)
     : new Client({ connectionString: config.databaseUrl, ssl: buildSslOptions(),
       connectionTimeoutMillis: 10000 });
   await client.query("begin");
@@ -106,45 +109,64 @@ export async function runImport(options, dependencies = {}) {
     const ledger = await checkMigrationLedger(client);
     if (ledger.required_pending > 0) {
       await client.query("rollback");
-      return { ok: false, code: "MIGRATION_LEDGER_PENDING", mode: options.mode,
-        fingerprint: manifest.fingerprint, ledger };
+      return { ok: false, code: "MIGRATION_LEDGER_PENDING", mode: options.mode, ledger };
     }
     const operator = await resolveOperator(client, parsedArgs.operator);
-    if (operator === null) {
+    if (!operator.ok) {
       await client.query("rollback");
-      return { ok: false, code: "OPERATOR_NOT_FOUND", mode: options.mode, ledger };
+      return { ok: false, code: operator.code, mode: options.mode, ledger };
     }
-    const context = { batchId: options.batchId, fingerprint: manifest.fingerprint, operator,
-      reason: parsedArgs.reason, targetState: manifest.targetState };
-    const plan = buildImportPlan(local.rows, options.batchId);
+    const uploaderResolution = await resolveUploaders(client, local.rows);
+    if (uploaderResolution.errors.length > 0) {
+      await client.query("rollback");
+      return { ok: false, code: "UPLOADER_NOT_FOUND", mode: options.mode, ledger,
+        errors: sanitizedIssues(uploaderResolution.errors) };
+    }
+    const referenceResolution = await resolveRows(client, local.rows, uploaderResolution.uploaders);
+    if (referenceResolution.errors.length > 0) {
+      await client.query("rollback");
+      return { ok: false, code: "REFERENCE_NOT_RESOLVED", mode: options.mode, ledger,
+        errors: sanitizedIssues(referenceResolution.errors) };
+    }
+    const authority = await preflightAuthority(client, referenceResolution.rows);
+    if (authority.errors.length > 0) {
+      await client.query("rollback");
+      return { ok: false, code: "AUTHORITY_DENIED", mode: options.mode, ledger,
+        errors: sanitizedIssues(authority.errors) };
+    }
+    const context = { batchId: options.batchId, fingerprint: source.fingerprint,
+      operator: operator.operator, reason: parsedArgs.reason };
+    const plan = buildImportPlan(referenceResolution.rows, options.batchId);
+    const audit = await openBatchAudit(client, context);
     const execution = await executeImportPlan(client, plan, context);
-    const acceptance = await postcheckImport(client, execution, local.rows);
+    const ordered = plan.flatMap((chunk) => chunk.rows);
+    const acceptance = await postcheckImport(client, execution, ordered, context);
     if (!acceptance.ok) {
       await client.query("rollback");
-      return { ok: false, code: "POSTCHECK_FAILED", mode: options.mode, summary, ledger,
+      return { ok: false, code: "POSTCHECK_FAILED", mode: options.mode,
         acceptance: { problems: sanitizedIssues(acceptance.problems) } };
     }
-    if (options.mode === "apply") {
-      await client.query("commit");
-    } else {
-      await client.query("rollback");
-    }
+    if (options.mode === "apply") await client.query("commit");
+    else await client.query("rollback");
     return {
       ok: true,
       mode: options.mode,
       committed: options.mode === "apply",
-      target_state: manifest.targetState,
-      fingerprint: manifest.fingerprint,
-      summary,
+      fingerprint: source.fingerprint,
+      rows: ordered.length,
+      groups: new Set(plan.map((chunk) => chunk.uploaderLogin + "|" + chunk.targetState)).size,
+      chunks: plan.length,
+      transitions: execution.transitionCount,
       ledger,
-      checks: { rows: acceptance.status_on, status_on: acceptance.status_on,
-        metadata: acceptance.metadata, audit: acceptance.audit },
+      batch_audit: { count: audit.auditCount, replayed: audit.replayed },
+      checks: { status_on: acceptance.status_on, metadata: acceptance.metadata,
+        audit: acceptance.audit, operator_audit: acceptance.operator_audit },
     };
   } catch (error) {
     try {
       await client.query("rollback");
     } catch {
-      // rollback loi thi van bao ma loi an toan ben duoi
+      // rollback loi thi van bao ma an toan ben duoi
     }
     return { ok: false, code: sanitizedFailure(error).code, mode: options.mode };
   } finally {

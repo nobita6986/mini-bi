@@ -1,21 +1,16 @@
-# P2.5-HF-R5B-R1 - operator import completion (partial)
+# P2.5-HF-R5B-R2 - operator import completion (RED, not accepted)
 
-Branch feature/p2-5-hf-r5b-t0-operator-import-rebaseline, preflight HEAD local = remote = 6c9559d09a8efea366706290c899c9570f0ff5da, worktree clean, fast-forward follow-up only, no migration added.
+Base 9379f67567766ae9544ee18506a0ca5ee3c961a7 -> final (this commit); branch feature/p2-5-hf-r5b-t0-operator-import-rebaseline; fast-forward, no amend/rebase/force-push, no migration, no new doc.
 
-## Green now
-- scripts/t0-import-workers.test.mjs: 8/8 pass (was 3/8). Root cause of BATCH_INVALID was FINDING 1: display_name was inside worker_details; it is now only a top-level contract row field and worker_details carries the 7 canonical keys.
-- FINDING 5 (partially): the expired-assignment fixture now seeds a validly closed assignment (valid_to + revoked_at in one statement); the canonical OFF -> rehire regression still uses the create/status RPC path (no direct INSERT of status events).
-- Gates: pnpm test 1701 tests / 1701 pass / 0 fail; build, lint 0 errors, docs:check 6/6, secrets:check, git diff --check, db:migrate --offline = 61 valid. Relevant #57-#61 DB suites 24/24.
-- test:t0-import script registered once and wired once into the canonical pnpm test chain.
+## Implemented this round (code)
+- scripts/lib/t0-operator-import.mjs: manifest .csv/.xlsx (exceljs lazy import, text cells keep leading zeros), canonical column set per import_data_byT0.md, per-row target_state, canonical CMT/CCCD rejection (no silent normalization), reason screening (8..400, control chars, email, UUID, 9/12-digit like) before any connection, deterministicUuid per uploader+target_state chunk and per transition, uploader resolution (enabled app user) + reference resolution (project/recruiter by projection), canonical create-authority preflight, batch advisory lock + one restricted reason + one immutable t0_worker_import audit (actor = technical operator, scope all, APPLIED), fingerprint conflict -> BATCH_ID_REUSED_WITH_DIFFERENT_SOURCE, postcheck (status ON, single status event, metadata, created_by = uploader, operator audit count/reference).
+- scripts/t0-import-workers.mjs: --check/--apply/--input/--batch-id/--operator/--reason/--confirm, token = PREFIX + full SHA-256 of the source file checked before config load, one outer transaction, check mode runs the same plan then rolls back.
 
-## Not done (no PASS claimed)
-- FINDING 2 uploader: manifest still uses a single "uploader" hint that is not resolved to a business account, rows are not grouped per uploader, created_by is not the business uploader, and there is no operator batch audit row.
-- FINDING 3 audit: no restricted-reason/operator-batch-audit pair per batch beyond what the canonical create RPC already writes; reason PII screening is limited to length.
-- FINDING 4 deterministic keys: one batch UUID is still used for the create RPC and both submission transitions; per-uploader chunk and per-transition deterministic keys are not derived from the ccbfaad helper.
-- Acceptance extras not written: exact worker_details key assertion, uploader != operator, operator audit count = 1, multi-uploader/multi-submission key separation, same batch + different fingerprint conflict, mutation-check for the BATCH_INVALID regression.
+## Test state (NOT green - no PASS claimed)
+- scripts/t0-import-workers.test.mjs rewritten for CSV: 2/6 pass.
+- Failing: (a) exact-key assertion is too strict - optional national_id_issued_at/place are absent when blank (keys are a subset of the canonical set, display_name never present); (b) AUTHORITY_DENIED from direct_entry_create_authority for a legacy-bundle uploader holding entry_create+submission_create with own+all scope - the canonical helper rejects that combination; the remaining two tests fail on the same preflight.
 
-## Evidence
-- Uploader/operator mapping today: one --operator login (resolved server-side by auth email / app_user_id / auth_subject) drives the whole batch; the manifest "uploader" field is not used.
-- Audit evidence today: only the canonical create audit per entry; no single immutable batch audit.
-- Typecheck was re-run after build to avoid the LayoutProps false negative.
-- No Production import, no migration apply, no deploy, no main merge.
+## Blockers for T0
+- Need the exact ownership rule of direct_entry_create_authority for a legacy create actor (which scope-grant combination it accepts) before the uploader fixture can pass; then re-run and finish the red assertions.
+- Until then: pnpm test:t0-import is RED on this branch and test:t0-import remains wired into pnpm test (from R1). Do not treat this branch as importable.
+- No Production import, no migration apply, no deploy, no main merge. R1 evidence (8/8 on the old JSON manifest, #57-#61 DB suites 24/24, full pnpm test 1701/1701) is superseded by this round's payload change.
