@@ -29,7 +29,7 @@ const migrations = await createMigratedDatabase();
 const db = migrations.db;
 
 // W07C-R7 #49, W07E #50, P2.5-W02 #51, P2.5-W03 #52.
-assert.equal(migrations.migrationNames.length, 54);
+assert.equal(migrations.migrationNames.length, 55);
 pass("from-scratch apply 49 migration local trong PGlite (khong dung shared DB)");
 
 const fixture = await seedChangeRequestFixture(db);
@@ -48,15 +48,11 @@ assert.equal(ownById.get(requests.withdrawn).can_withdraw, false);
 assert.equal(ownById.get(requests.approved).can_withdraw, false);
 pass("proposer thay 6/6 request cua minh; can_withdraw chi o PENDING; proposer KHONG tu co quyen review");
 
+// P2.5-W05 (#55): reviewer audience = change_review + effective all scope, so the
+// C01-R2 team scope is no longer a reviewer audience.
 const team = await listChangeRequests(db, ACTORS.reviewer, { pageSize: 50 });
-const teamIds = team.data.requests.map((item) => item.request_id);
-assert.equal(teamIds.length, 5);
-assert.equal(teamIds.includes(requests.multi), false);
-for (const item of team.data.requests) {
-  assert.equal(item.can_withdraw, false);
-  assert.equal(item.can_decide, item.state === "PENDING");
-}
-pass("reviewer team scope thay 5/6; request nhieu entry fail-closed vi thieu scope o mot item");
+assert.deepEqual(team.data.requests, []);
+pass("reviewer team scope thay 0/6: W05 doi hoi change_review + all scope");
 
 const allScope = await listChangeRequests(db, ACTORS.reviewerAll, { pageSize: 50 });
 assert.equal(allScope.data.requests.length, 6);
@@ -66,12 +62,14 @@ assert.deepEqual(noCapability.data.requests, []);
 assert.deepEqual(outsider.data.requests, []);
 pass("reviewerAll (scope all) thay 6/6; thieu change_review hoac ngoai scope thi khong thay request nao");
 
-const detail = await readChangeRequest(db, ACTORS.reviewer, requests.single);
+const detail = await readChangeRequest(db, ACTORS.reviewerAll, requests.single);
 assert.equal(detail.error, null);
 assert.equal(detail.data.state, "PENDING");
 assert.equal(detail.data.can_decide, true);
 assert.equal(detail.data.can_withdraw, false);
-assert.deepEqual(detail.data.items[0].proposal, { labor_type: "PERMANENT" });
+// P2.5-W04 rebaselined ENTRY_FIELD proposals to the full worker_details object, so
+// the reviewer with pii_view sees that payload (presence-only without pii_view).
+assert.equal(typeof detail.data.items[0].proposal.worker_details.display_name, "string");
 assert.deepEqual(Object.keys(detail.data.items[0]).sort(), [
   "entry_id", "expected_version", "proposal", "target_kind",
 ]);
@@ -135,12 +133,16 @@ const serializedList = JSON.stringify(full.data);
 const serializedDetail = JSON.stringify(detail.data);
 for (const forbidden of [
   "reason", "idempotency", "auth_subject", "app_user_id", "proposer_user_id",
-  "decided_by_user_id", "audit", "revision", "account_number", "national_id", "created_by_user_id",
+  "decided_by_user_id", "audit", "revision", "account_number", "created_by_user_id",
 ]) {
   assert.equal(serializedList.includes(forbidden), false, "list: " + forbidden);
   assert.equal(serializedDetail.includes(forbidden), false, "detail: " + forbidden);
 }
-pass("khong lo reason/idempotency/audit/revision/identity/PII trong list hoac detail");
+// PII keys reach this reviewer only through their granted pii_view; the
+// presence-only projection for a reviewer without pii_view is asserted in
+// p1.6-s04c-policy-closure-db.test.mjs.
+assert.equal(serializedDetail.includes("national_id"), true);
+pass("khong lo reason/idempotency/audit/revision/identity trong list hoac detail");
 
 const before = await db.query(
   "select count(*)::int as teams from public.teams");

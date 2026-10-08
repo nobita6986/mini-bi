@@ -194,15 +194,10 @@ async function runReads(client, before) {
   for (const name of ["withdrawn", "approved", "rejected"]) assert.equal(byId.get(requests[name]).can_withdraw, false);
   pass("proposer sees own 6/6; can_withdraw only when PENDING; proposer holding change_review still cannot decide");
 
+  // P2.5-W05 (#55): the reviewer audience is change_review + effective all scope.
   const team = await listChangeRequests(db, ACTORS.reviewer, { pageSize: 50 });
-  const teamIds = team.data.requests.map((item) => item.request_id);
-  assert.equal(teamIds.length, 5);
-  assert.equal(teamIds.includes(requests.multi), false);
-  for (const item of team.data.requests) {
-    assert.equal(item.can_withdraw, false);
-    assert.equal(item.can_decide, item.state === "PENDING");
-  }
-  pass("team reviewer sees 5/6; multi-entry request hidden when one item is out of scope; can_decide only for PENDING");
+  assert.deepEqual(team.data.requests, []);
+  pass("team-scoped actor sees 0/6: W05 requires change_review + all scope for review");
 
   const all = await listChangeRequests(db, ACTORS.reviewerAll, { pageSize: 50 });
   assert.equal(all.data.requests.filter((item) => ours.has(item.request_id)).length, 6);
@@ -210,7 +205,7 @@ async function runReads(client, before) {
   assert.deepEqual((await listChangeRequests(db, ACTORS.outsider, { pageSize: 50 })).data.requests, []);
   pass("scope-all reviewer sees 6/6; missing capability or out-of-scope actor sees nothing");
 
-  const detail = await readChangeRequest(db, ACTORS.reviewer, requests.single);
+  const detail = await readChangeRequest(db, ACTORS.reviewerAll, requests.single);
   assert.equal(detail.error, null);
   assert.deepEqual([detail.data.state, detail.data.can_decide, detail.data.can_withdraw], ["PENDING", true, false]);
   assert.deepEqual(Object.keys(detail.data.items[0]).sort(), ["entry_id", "expected_version", "proposal", "target_kind"]);

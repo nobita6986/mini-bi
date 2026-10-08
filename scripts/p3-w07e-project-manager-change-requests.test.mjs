@@ -95,7 +95,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
   const migrated = await createMigratedDatabase();
   const db = migrated.db;
   try {
-    assert.equal(migrated.migrationNames.length, 54);
+    assert.equal(migrated.migrationNames.length, 55);
     const initialWorkerDetails = worker("S02B worker1");
     initialWorkerDetails.date_of_birth = { state: "provided", value: "01/01/2000" };
     initialWorkerDetails.national_id = { state: "provided", value: "000000000000" };

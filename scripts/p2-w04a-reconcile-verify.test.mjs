@@ -307,9 +307,9 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 54);
+  assert.equal(names.length, 55);
   assert.equal(names[names.length - 1],
-    "20261008130000_p2_5_w04_project_manager_change_request_policy.sql");
+    "20261008150000_p2_5_w05_review_authority.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );

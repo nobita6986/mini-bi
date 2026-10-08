@@ -17,6 +17,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const W06A_MIGRATION = "20261008140000_p2_5_w06a_manager_candidates.sql";
+const W05_MIGRATION = "20261008150000_p2_5_w05_review_authority.sql";
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
   " create schema auth; create table auth.users (id uuid primary key);";
@@ -63,8 +64,9 @@ async function candidates(db, auth, app, search) {
 
 test("P2.5-W06A-R2: migration #54 applies over #1-#53", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 54);
-  assert.equal(names[names.length - 1], W06A_MIGRATION);
+  assert.equal(names.length, 55);
+  assert.equal(names[names.length - 2], W06A_MIGRATION);
+  assert.equal(names[names.length - 1], W05_MIGRATION);
   await db.close();
 });
 

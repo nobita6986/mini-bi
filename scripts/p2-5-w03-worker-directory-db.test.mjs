@@ -11,7 +11,8 @@
  *     change_review); the reporting audience and a team/own scope never open it;
  *   * keyset pagination and every filter are server-side and bounded;
  *   * payment is capability-gated and masked; raw PII is never returned;
- *   * allowed_actions is server-supplied and propose_change stays false until W04.
+ *   * allowed_actions is server-supplied; propose_change follows the W04 assignment
+ *     authority (P2.5-W05 #55 replaced the PROPOSE_PENDING_W04_POLICY placeholder).
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -52,9 +53,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 54, "the ledger carries 53 migrations after P2.5-W03");
-  assert.equal(names[names.length - 2], W04_MIGRATION, "W03 appends as #52");
-  assert.equal(names[names.length - 4], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names.length, 55, "the ledger carries 55 migrations after P2.5-W05");
+  assert.equal(names[names.length - 3], W04_MIGRATION, "W03 follows W04 #53");
+  assert.equal(names[names.length - 4], W03_MIGRATION, "W03 is #52");
+  assert.equal(names[names.length - 5], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 
@@ -641,32 +643,39 @@ test("W03: payment is masked and gated by payment_view; raw PII is never project
 // ---------------------------------------------------------------------------
 // 6. allowed_actions is server-supplied; propose_change stays closed until W04.
 // ---------------------------------------------------------------------------
-test("W03: allowed_actions is server-supplied and propose_change stays false until W04", async () => {
+test("W03: allowed_actions is server-supplied and follows the assignment authority", async () => {
   const db = await buildDb();
   try {
     await seed(db);
     await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
     const entry = await addWorker(db, { project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01" });
 
-    for (const [auth, app, scope] of [
-      [MGR_A_AUTH, MGR_A_APP, "managed"],
-      [MGR_A_AUTH, MGR_A_APP, "recruited"],
-      [ADMIN_AUTH, ADMIN_APP, "all"],
-    ]) {
-      const page = await listWorkers(db, { auth, app, scope });
+    // P2.5-W05 (#55): the row action is the W04 server authority, so a current
+    // project manager may propose and nobody else may.
+    for (const scope of ["managed", "recruited"]) {
+      const page = await listWorkers(db, { scope });
       for (const row of page.items) {
         assert.deepEqual(row.allowed_actions, {
           view: true,
           view_pii: false,
           view_payment: false,
-          propose_change: false,
-          propose_change_code: "PROPOSE_PENDING_W04_POLICY",
-        }, scope + " must not advertise propose_change before W04");
+          propose_change: true,
+          propose_change_code: null,
+        }, scope + " must advertise propose_change for the assigned manager");
       }
     }
+    const admin = await listWorkers(db, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" });
+    for (const row of admin.items) {
+      assert.deepEqual(row.allowed_actions, {
+        view: true,
+        view_pii: false,
+        view_payment: false,
+        propose_change: false,
+        propose_change_code: "NOT_PROJECT_MANAGER",
+      }, "a non-manager must get the stable denial, never a placeholder");
+    }
 
-    // The project manager is still reported as data, so W04 can flip the action
-    // without a contract change.
+    // is_project_manager remains the same predicate the action is derived from.
     const managed = await listWorkers(db, { scope: "managed" });
     assert.equal(managed.items[0].is_project_manager, true);
     assert.equal(managed.items[0].entry_id, entry);

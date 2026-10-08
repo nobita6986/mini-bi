@@ -28,7 +28,7 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 54);
+  assert.equal(migrations.migrationNames.length, 55);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
@@ -90,17 +90,18 @@ test("proposer sees own requests with withdraw rights only while pending", async
   for (const item of page.requests) assert.equal(item.can_decide, false, item.request_id);
 });
 
-test("reviewer visibility needs change_review plus scope on every item", async () => {
+test("reviewer visibility needs change_review plus an effective all scope", async () => {
+  // P2.5-W05 (#55): the reviewer audience is capability change_review plus an
+  // effective all scope grant, so the C01-R2 team-scoped reviewer no longer sees the
+  // queue. The all-scope reviewer keeps seeing every request.
   const teamReviewer = await listChangeRequests(db, ACTORS.reviewer, { pageSize: 50 });
-  const visible = teamReviewer.data.requests.map((item) => item.request_id);
-  assert.equal(visible.includes(requests.multi), false, "multi entry request must fail closed");
-  assert.equal(visible.length, 5);
-  for (const item of teamReviewer.data.requests) {
+  assert.deepEqual(teamReviewer.data.requests, [], "a team scope is not a reviewer audience");
+  const allReviewer = await listChangeRequests(db, ACTORS.reviewerAll, { pageSize: 50 });
+  assert.equal(allReviewer.data.requests.length, 6);
+  for (const item of allReviewer.data.requests) {
     assert.equal(item.can_withdraw, false, item.request_id);
     assert.equal(item.can_decide, item.state === "PENDING", item.request_id);
   }
-  const allReviewer = await listChangeRequests(db, ACTORS.reviewerAll, { pageSize: 50 });
-  assert.equal(allReviewer.data.requests.length, 6);
   const noCapability = await listChangeRequests(db, ACTORS.reviewerNoCapability, { pageSize: 50 });
   assert.deepEqual(noCapability.data.requests, []);
   const outsider = await listChangeRequests(db, ACTORS.outsider, { pageSize: 50 });
@@ -112,11 +113,14 @@ test("detail returns the same not-found code for unknown and out-of-scope reques
     "d1000000-0000-4000-8000-0000000000ff");
   const outOfScope = await readChangeRequest(db, ACTORS.outsider, requests.single);
   const hiddenMulti = await readChangeRequest(db, ACTORS.reviewer, requests.multi);
+  const hiddenTeam = await readChangeRequest(db, ACTORS.reviewer, requests.single);
   assert.equal(unknown.error.code, "P0002");
   assert.equal(outOfScope.error.code, "P0002");
   assert.equal(hiddenMulti.error.code, "P0002");
+  assert.equal(hiddenTeam.error.code, "P0002",
+    "P2.5-W05: a team-scoped reviewer cannot read the detail either");
   assert.equal(unknown.error.message, outOfScope.error.message);
-  const ok = await readChangeRequest(db, ACTORS.reviewer, requests.single);
+  const ok = await readChangeRequest(db, ACTORS.reviewerAll, requests.single);
   assert.equal(ok.error, null);
   assert.deepEqual(Object.keys(ok.data).sort(), [
     "can_decide", "can_withdraw", "created_at", "items", "request_id", "state", "version",
@@ -124,8 +128,13 @@ test("detail returns the same not-found code for unknown and out-of-scope reques
   assert.deepEqual(Object.keys(ok.data.items[0]).sort(), [
     "entry_id", "expected_version", "proposal", "target_kind",
   ]);
-  assert.deepEqual(ok.data.items[0].proposal, { worker_details: { present: true } });
-  assert.equal(JSON.stringify(ok.data).includes("S02B"), false);
+  // ACTORS.reviewerAll holds pii_view, so the reviewer sees the proposal payload;
+  // the presence-only projection for a reviewer WITHOUT pii_view stays asserted in
+  // p1.6-s04c-policy-closure-db.test.mjs (POLICY_ACTORS.entryOnly).
+  assert.equal(typeof ok.data.items[0].proposal.worker_details.display_name, "string");
+  for (const leaked of ["idempotency_key", "checksum_sha256", "storage_key"]) {
+    assert.equal(JSON.stringify(ok.data).includes(leaked), false, leaked + " must never leak");
+  }
 });
 
 test("keyset pagination is deterministic without duplicates or gaps", async () => {
