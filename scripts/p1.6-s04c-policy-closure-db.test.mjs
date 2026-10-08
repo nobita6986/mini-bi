@@ -70,7 +70,7 @@ test("from-scratch apply covers the policy closure migration and its ACLs", asyn
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 55);
+  assert.equal(migrations.migrationNames.length, 56);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(
@@ -163,14 +163,11 @@ test("worker_details requires pii_view for both approve and reject", async () =>
   assert.equal(await revisionCount(db, entries.pii.entry_id), revisionsBefore);
 });
 
-test("PAYMENT requires payment_view and payment_edit", async () => {
+test("PAYMENT requires payment_view (P2.5-W05-R1: never payment_edit)", async () => {
   const withoutView = await decide(db, POLICY_ACTORS.entryOnly, requests.payment,
     "approve", 1, "S03B3R1 denied payment view", "s03b3r1_payment_view");
   assert.equal(withoutView.error.code, "42501");
-  const withoutEdit = await decide(db, POLICY_ACTORS.paymentView, requests.payment,
-    "approve", 1, "S03B3R1 denied payment edit", "s03b3r1_payment_edit");
-  assert.equal(withoutEdit.error.code, "42501");
-  const deniedReject = await decide(db, POLICY_ACTORS.paymentView, requests.payment,
+  const deniedReject = await decide(db, POLICY_ACTORS.entryOnly, requests.payment,
     "reject", 1, "S03B3R1 denied payment reject", "s03b3r1_payment_reject");
   assert.equal(deniedReject.error.code, "42501", "reject cung phai theo capability matrix");
   assert.equal((await entryRow(db, entries.payment.entry_id)).version, 1);
@@ -178,17 +175,19 @@ test("PAYMENT requires payment_view and payment_edit", async () => {
   // Guard o tang apply: helper khong the bi goi thieu quyen tu duong khac.
   const reasonId = (await db.query(
     "select public.direct_entry_reason($1::uuid,$2::text) as id",
-    [POLICY_ACTORS.paymentView.app_user_id, "S03B3R1 direct apply probe"])).rows[0].id;
-  const direct = await applyChangeItem(db, POLICY_ACTORS.paymentView, requests.payment,
+    [POLICY_ACTORS.entryOnly.app_user_id, "S03B3R1 direct apply probe"])).rows[0].id;
+  const direct = await applyChangeItem(db, POLICY_ACTORS.entryOnly, requests.payment,
     entries.payment.entry_id, "PAYMENT", PAYMENT_PROPOSAL, reasonId);
   assert.equal(direct.error.code, "42501");
+  assert.equal((await entryRow(db, entries.payment.entry_id)).version, 1);
 });
 
-test("WORK_STATUS requires employment_status.apply", async () => {
-  const denied = await decide(db, POLICY_ACTORS.entryOnly, requests.status,
-    "approve", 1, "S03B3R1 denied status", "s03b3r1_status_denied");
-  assert.equal(denied.error.code, "42501");
-  assert.equal((await entryRow(db, entries.status.entry_id)).version, 1);
+test("WORK_STATUS needs change_review only (P2.5-W05-R1: not employment_status.apply)", async () => {
+  // entryOnly deliberately holds change_review + all scope WITHOUT the apply-side token.
+  const approved = await decide(db, POLICY_ACTORS.entryOnly, requests.status,
+    "approve", 1, "S03B3R1 status approved", "s03b3r1_status_approved");
+  assert.equal(approved.error, null, json(approved.error));
+  assert.equal((await entryRow(db, entries.status.entry_id)).version, 2);
 });
 
 test("mixed request thieu dung mot capability thi khong item nao duoc ap dung", async () => {
@@ -222,15 +221,12 @@ test("reviewer du capability thi quyet dinh thanh cong cho tung target kind", as
   assert.equal(pii.data.state, "APPROVED");
   assert.equal((await entryRow(db, entries.pii.entry_id)).version, 2);
 
-  const payment = await decide(db, POLICY_ACTORS.paymentFull, requests.payment,
+  // P2.5-W05-R1: paymentView holds change_review + payment_view and deliberately NO
+  // payment_edit, so this also proves the reviewer never needs the apply-side token.
+  const payment = await decide(db, POLICY_ACTORS.paymentView, requests.payment,
     "approve", 1, "S03B3R1 payment approved", "s03b3r1_payment_approved");
   assert.equal(payment.error, null, json(payment.error));
   assert.equal((await entryRow(db, entries.payment.entry_id)).version, 2);
-
-  const status = await decide(db, POLICY_ACTORS.allCapabilities, requests.status,
-    "approve", 1, "S03B3R1 status approved", "s03b3r1_status_approved");
-  assert.equal(status.error, null, json(status.error));
-
 });
 
 test("OCC va idempotency khong hoi quy", async () => {

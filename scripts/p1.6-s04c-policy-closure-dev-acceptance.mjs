@@ -254,17 +254,18 @@ async function runAcceptance(client, reportingBefore) {
     ["worker_details thieu pii_view (approve)", POLICY_ACTORS.entryOnly, requests.pii, "approve"],
     ["worker_details thieu pii_view (reject)", POLICY_ACTORS.entryOnly, requests.pii, "reject"],
     ["PAYMENT thieu payment_view", POLICY_ACTORS.entryOnly, requests.payment, "approve"],
-    ["PAYMENT thieu payment_edit", POLICY_ACTORS.paymentView, requests.payment, "approve"],
-    ["WORK_STATUS thieu employment_status.apply", POLICY_ACTORS.entryOnly, requests.status, "approve"],
     ["mixed thieu dung mot capability", POLICY_ACTORS.paymentView, requests.mixed, "approve"],
   ];
+  // P2.5-W05-R1: PAYMENT needs only payment_view and WORK_STATUS only change_review, so
+  // the apply-side tokens (payment_edit / employment_status.apply) are no longer part of
+  // the review matrix and are deliberately absent from the negative list.
   for (const [label, actor, requestId, decision] of negative) {
     const outcome = await attempt(client, () => decideRpc(client, actor, requestId, decision, 1,
       "S03B3R1 DEV " + label, key("denied")));
     assert.equal(outcome.error?.code, "42501", label + " :: " + json(outcome.error));
     assert.equal(outcome.error.message.includes("capability denied"), true, label);
   }
-  const directApply = await attempt(client, () => applyItemRpc(client, POLICY_ACTORS.paymentView,
+  const directApply = await attempt(client, () => applyItemRpc(client, POLICY_ACTORS.entryOnly,
     requests.payment, entries.payment.entry_id, "PAYMENT", PAYMENT_PROPOSAL));
   assert.equal(directApply.error?.code, "42501", "apply-level guard :: " + json(directApply.error));
   assert.equal((await requestRow(client, requests.payment)).state, "PENDING");
@@ -272,7 +273,7 @@ async function runAcceptance(client, reportingBefore) {
   assert.equal((await entryRow(client, entries.nonPiiApprove.entry_id)).employee_code,
     seeded.codes.nonPiiApprove, "mixed request khong duoc ap dung mot phan");
   assert.equal(await revisionCount(client, entries.pii.entry_id), revisionsBefore);
-  pass("policy matrix tu choi 6 truong hop + guard o tang apply (khong partial apply)");
+  pass("policy matrix tu choi 4 truong hop + guard o tang apply (khong partial apply)");
 
   // 2. Self-review van bi cam.
   const selfReview = await attempt(client, () => decideRpc(client, ACTORS.proposer, requests.occ,

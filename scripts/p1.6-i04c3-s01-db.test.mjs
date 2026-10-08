@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 55, "P2.5-W05 appends as #55 after P2.5-W06A #54");
+  assert.equal(totalCount, 56, "P2.5-W05-R1 appends as #56 after P2.5-W05 #55");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);

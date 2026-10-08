@@ -64,9 +64,9 @@ async function candidates(db, auth, app, search) {
 
 test("P2.5-W06A-R2: migration #54 applies over #1-#53", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 55);
-  assert.equal(names[names.length - 2], W06A_MIGRATION);
-  assert.equal(names[names.length - 1], W05_MIGRATION);
+  assert.equal(names.length, 56);
+  assert.equal(names[names.length - 3], W06A_MIGRATION);
+  assert.equal(names[names.length - 2], W05_MIGRATION);
   await db.close();
 });
 

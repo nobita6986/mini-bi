@@ -23,6 +23,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const W05_MIGRATION = "20261008150000_p2_5_w05_review_authority.sql";
+const W05_R1_MIGRATION = "20261008160000_p2_5_w05_r1_review_capability_matrix.sql";
 const W06A_MIGRATION = "20261008140000_p2_5_w06a_manager_candidates.sql";
 
 const AUTH_PROLOGUE =
@@ -44,6 +45,7 @@ const REV_TEAM_AUTH = uuid(35), REV_TEAM_APP = uuid(45);
 const REV_OWN_AUTH = uuid(36), REV_OWN_APP = uuid(46);
 const REV_NONE_AUTH = uuid(37), REV_NONE_APP = uuid(47);
 const ALL_NO_CAP_AUTH = uuid(38), ALL_NO_CAP_APP = uuid(48);
+const REV_BUNDLE_AUTH = uuid(39), REV_BUNDLE_APP = uuid(49);
 
 async function buildDb() {
   const db = new PGlite();
@@ -54,9 +56,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 55, "the ledger carries 55 migrations after P2.5-W05");
-  assert.equal(names[names.length - 1], W05_MIGRATION, "W05 appends as #55");
-  assert.equal(names[names.length - 2], W06A_MIGRATION, "W05 follows W06A #54");
+  assert.equal(names.length, 56, "the ledger carries 56 migrations after P2.5-W05-R1");
+  assert.equal(names[names.length - 1], W05_R1_MIGRATION, "W05-R1 appends as #56");
+  assert.equal(names[names.length - 2], W05_MIGRATION, "W05-R1 follows W05 #55");
+  assert.equal(names[names.length - 3], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
   return db;
 }
 
@@ -110,6 +113,10 @@ async function seed(db) {
   await insertActor(db, REV_OWN_AUTH, REV_OWN_APP, ["change_review", "pii_view"], "own");
   await insertActor(db, REV_NONE_AUTH, REV_NONE_APP, ["change_review"], null);
   await insertActor(db, ALL_NO_CAP_AUTH, ALL_NO_CAP_APP, [], "all");
+  // The W05 reviewer bundle exactly: change_review + pii_view + payment_view at all scope,
+  // with no apply-side and no export token.
+  await insertActor(db, REV_BUNDLE_AUTH, REV_BUNDLE_APP,
+    ["change_review", "pii_view", "payment_view"], "all");
 
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
@@ -175,7 +182,8 @@ async function addEntry(db, {
   return { entry, submission };
 }
 
-async function propose(db, { entry, expectedVersion = 1, key, auth = PM_AUTH, app = PM_APP }) {
+async function propose(db, { entry, expectedVersion = 1, key, auth = PM_AUTH, app = PM_APP,
+  targetKind = "ENTRY_FIELD", proposal = null }) {
   // display_name is protected (W04): a worker_details proposal must carry the stored
   // one, so read it instead of guessing.
   const stored = (await db.query(
@@ -184,10 +192,10 @@ async function propose(db, { entry, expectedVersion = 1, key, auth = PM_AUTH, ap
   const res = await db.query(
     "select public.direct_entry_create_change_request($1::uuid,$2::uuid,$3::jsonb,$4::text,$5::text) as data",
     [auth, app,
-      JSON.stringify([{ entry_id: entry, target_kind: "ENTRY_FIELD", expected_version: expectedVersion,
+      JSON.stringify([{ entry_id: entry, target_kind: targetKind, expected_version: expectedVersion,
         // worker_details is replaced as a whole validated object (the entry check
         // requires every key), with display_name unchanged.
-        proposal: { worker_details: { display_name: stored,
+        proposal: proposal ?? { worker_details: { display_name: stored,
           date_of_birth: { state: "unknown" }, national_id: { state: "unknown" },
           address: { state: "provided", value: "W05 proposed address" },
           phone: { state: "unknown" } } } }]),
@@ -538,6 +546,167 @@ test("W05: directory propose_change follows the assignment, not the placeholder"
       () => page(REV_NONE_AUTH, REV_NONE_APP, "all"),
       (error) => error.code === "42501",
       "no all scope means no directory page");
+  } finally {
+    await db.close();
+  }
+});
+// ---------------------------------------------------------------------------
+// 6. R1 matrix: the reviewer bundle decides every opened target kind.
+// ---------------------------------------------------------------------------
+test("W05-R1: the reviewer bundle decides ENTRY_FIELD, PAYMENT and WORK_STATUS without apply tokens", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const entryField = await addEntry(db, { workDate: "2026-10-01" });
+    const payment = await addEntry(db, { workDate: "2026-10-02" });
+    const status = await addEntry(db, { workDate: "2026-10-03" });
+    const documentEntry = await addEntry(db, { workDate: "2026-10-04" });
+
+    // A WORK_STATUS proposal needs a real status history to transition from.
+    const reasonId = (await db.query(
+      "insert into public.direct_entry_restricted_reasons (actor_user_id, reason_text)" +
+      " values ($1,'W05-R1 initial status') returning reason_id::text as id",
+      [UPLOADER_APP])).rows[0].id;
+    await db.query(
+      "insert into public.direct_entry_employment_status_events" +
+      " (entry_id, status, effective_date, version, actor_user_id, reason_id)" +
+      " values ($1,'UNCONFIRMED','2026-10-03'::date,1,$2,$3)",
+      [status.entry, UPLOADER_APP, reasonId]);
+
+    const bundleCapabilities = (await db.query(
+      "select array_agg(capability order by capability) as caps from" +
+      " public.direct_entry_capability_grants where app_user_id = $1::uuid", [REV_BUNDLE_APP])).rows[0].caps;
+    assert.deepEqual(bundleCapabilities, ["change_review", "payment_view", "pii_view"],
+      "the deciding reviewer holds exactly the W05 bundle");
+
+    // ENTRY_FIELD with worker_details: change_review + pii_view (in the bundle).
+    const entryRequest = await propose(db, { entry: entryField.entry, key: "w05r1-entry" });
+    const entryApproved = await decide(db, { requestId: entryRequest.request_id,
+      auth: REV_BUNDLE_AUTH, app: REV_BUNDLE_APP, key: "w05r1-entry-approve" });
+    assert.equal(entryApproved.state, "APPROVED");
+
+    // PAYMENT: change_review + payment_view, no payment_edit anywhere in the bundle.
+    const paymentRequest = await propose(db, { entry: payment.entry, key: "w05r1-payment",
+      targetKind: "PAYMENT", proposal: { state: "provided", account_number: "012345678901",
+        bank_id: null, account_holder_name: "W05-R1 Holder" } });
+    const paymentApproved = await decide(db, { requestId: paymentRequest.request_id,
+      auth: REV_BUNDLE_AUTH, app: REV_BUNDLE_APP, key: "w05r1-payment-approve" });
+    assert.equal(paymentApproved.state, "APPROVED");
+    const storedPayment = await db.query(
+      "select state, account_number, version from public.direct_entry_payments" +
+      " where entry_id = $1::uuid", [payment.entry]);
+    assert.deepEqual(storedPayment.rows[0],
+      { state: "provided", account_number: "012345678901", version: 1 },
+      "the approval engine applied the payment without a payment_edit holder");
+
+    // WORK_STATUS: change_review only, no employment_status.apply anywhere in the bundle.
+    const statusRequest = await propose(db, { entry: status.entry, key: "w05r1-status",
+      targetKind: "WORK_STATUS", proposal: { status: "OFF", effective_date: "2026-10-04",
+        leave_reason: "W05-R1 synthetic leave" } });
+    const statusApproved = await decide(db, { requestId: statusRequest.request_id,
+      auth: REV_BUNDLE_AUTH, app: REV_BUNDLE_APP, key: "w05r1-status-approve" });
+    assert.equal(statusApproved.state, "APPROVED");
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_employment_status_events" +
+      " where entry_id = $1::uuid and status = 'OFF'", [status.entry]), 1);
+
+    // Missing capabilities still deny per target kind, and the denial is evaluated
+    // before the request state so nothing is mutated.
+    const probeRequest = await propose(db, { entry: payment.entry, expectedVersion: 2,
+      key: "w05r1-probe", targetKind: "PAYMENT",
+      proposal: { state: "unknown", account_number: null, bank_id: null, account_holder_name: null } });
+    const noChangeReview = await decide(db, { requestId: probeRequest.request_id,
+      auth: ALL_NO_CAP_AUTH, app: ALL_NO_CAP_APP, key: "w05r1-no-cap" }).catch((error) => error);
+    assert.equal(noChangeReview.code, "42501", "all scope without change_review is refused");
+    const noAllScope = await decide(db, { requestId: probeRequest.request_id,
+      auth: REV_TEAM_AUTH, app: REV_TEAM_APP, key: "w05r1-no-scope" }).catch((error) => error);
+    assert.equal(noAllScope.code, "42501", "change_review without all scope is refused");
+    const noPaymentView = await decide(db, { requestId: probeRequest.request_id,
+      auth: REV_ALL_AUTH, app: REV_ALL_APP, key: "w05r1-no-pv" }).catch((error) => error);
+    assert.equal(noPaymentView.code, "42501",
+      "an all-scope reviewer without payment_view cannot decide a PAYMENT item");
+    const probeState = await db.query(
+      "select state, version from public.direct_entry_change_requests where request_id = $1::uuid",
+      [probeRequest.request_id]);
+    assert.deepEqual(probeState.rows[0], { state: "PENDING", version: 1 },
+      "every refused reviewer leaves the request untouched");
+
+    // worker_details still needs pii_view: an all-scope reviewer without it is denied.
+    await db.query(
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
+      " values ($1,'all','2020-01-01')", [REV_NONE_APP]);
+    const noPiiViewRequest = await propose(db, { entry: entryField.entry, expectedVersion: 2,
+      key: "w05r1-no-pii" });
+    const noPiiView = await decide(db, { requestId: noPiiViewRequest.request_id,
+      auth: REV_NONE_AUTH, app: REV_NONE_APP, key: "w05r1-no-pii-approve" }).catch((error) => error);
+    assert.equal(noPiiView.code, "42501",
+      "an all-scope reviewer without pii_view cannot decide a worker_details item");
+
+    // DOCUMENT stays closed to the W05 lane: the target cannot even be proposed, and the
+    // matrix keeps its own document capabilities for any legacy item.
+    await assert.rejects(
+      () => propose(db, { entry: documentEntry.entry, key: "w05r1-document",
+        targetKind: "DOCUMENT", proposal: { document_type: "EMPLOYMENT_CONTRACT",
+          idempotency_key: "w05r1-doc", checksum_sha256: "a".repeat(64), size_bytes: 2048,
+          mime_type: "application/pdf" } }),
+      (error) => error.code === "23514" || error.code === "42501",
+      "a DOCUMENT proposal is refused by policy");
+    const matrixSource = (await db.query(
+      "select p.prosrc as src from pg_proc p" +
+      " where p.oid = 'public.direct_entry_change_request_required_capabilities(uuid)'::regprocedure"
+    )).rows[0].src;
+    assert.equal(matrixSource.includes("document_view"), true,
+      "DOCUMENT keeps its existing capability requirement");
+    assert.equal(matrixSource.includes("document_upload"), true);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. R1 finding 2: an unappliable worker_details is refused at CREATE.
+// ---------------------------------------------------------------------------
+test("W05-R1: an unappliable worker_details proposal is refused before any request exists", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const { entry } = await addEntry(db, {});
+    const stored = (await db.query(
+      "select worker_details from public.direct_entries where entry_id = $1::uuid",
+      [entry])).rows[0].worker_details;
+    const before = await snapshot(db);
+
+    for (const [index, workerDetails] of [
+      { gender: "MALE" },
+      { ...stored, national_id: { state: "provided" } },
+      { ...stored, nope: 1 },
+      { ...stored, phone: "0900000000" },
+    ].entries()) {
+      await assert.rejects(
+        () => propose(db, { entry, key: "w05r1-bad-" + index,
+          proposal: { worker_details: workerDetails } }),
+        (error) => error.code === "22023",
+        "proposal " + index + " must be refused at CREATE");
+    }
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_change_requests"), 0,
+    "no request row may survive a refused proposal");
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_change_request_items"), 0);
+    assert.deepEqual(await snapshot(db), before,
+      "a refused proposal leaves no reason, idempotency, audit or version trace");
+
+    // The canonical shape is accepted and stays appliable end to end.
+    const request = await propose(db, { entry, key: "w05r1-good",
+      proposal: { worker_details: { ...stored, address: { state: "provided",
+        value: "W05-R1 canonical address" } } } });
+    const approved = await decide(db, { requestId: request.request_id,
+      auth: REV_BUNDLE_AUTH, app: REV_BUNDLE_APP, key: "w05r1-good-approve" });
+    assert.equal(approved.state, "APPROVED");
+    const applied = (await db.query(
+      "select version, worker_details->'address'->>'value' as address" +
+      " from public.direct_entries where entry_id = $1::uuid", [entry])).rows[0];
+    assert.deepEqual(applied, { version: 2, address: "W05-R1 canonical address" });
   } finally {
     await db.close();
   }
