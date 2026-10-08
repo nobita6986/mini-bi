@@ -19,6 +19,7 @@ import {
   Building2,
   ClipboardList,
   LayoutDashboard,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -129,6 +130,19 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Building2,
     status: "current",
     capability: "project_admin",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "worker-operations",
+    label: "Người lao động",
+    path: "/direct-entry/workers",
+    description:
+      "P2.5-W06: tra cứu người lao động theo ba quan hệ — hồ sơ bạn đã nhập, người bạn " +
+      "tuyển, và người thuộc dự án bạn đang quản lý. CTA đề xuất thay đổi do server " +
+      "allowed_actions quyết định; created_by/recruiter_id không tạo quyền.",
+    icon: Users,
+    status: "current",
+    capability: "entry_admin",
     visibility: { desktop: true, mobile: true },
   },
 ];

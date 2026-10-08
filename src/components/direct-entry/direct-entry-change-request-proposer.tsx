@@ -82,7 +82,7 @@ type ProposerTargetKind = "ENTRY_FIELD" | "WORKER" | "PAYMENT" | "WORK_STATUS";
 const PROPOSER_KIND_LABELS: Readonly<Record<ProposerTargetKind, string>> = Object.freeze({
   ENTRY_FIELD: "Thông tin dòng nhập liệu",
   WORKER: "Thông tin cá nhân người lao động",
-  PAYMENT: "Thông tin thanh toán",
+  PAYMENT: "Thông tin tài khoản ngân hàng",
   WORK_STATUS: "Trạng thái làm việc",
 });
 
@@ -459,7 +459,7 @@ export function DirectEntryChangeRequestProposer({
           <Dialog.Title className={styles.drawerTitle}>Yêu cầu thay đổi</Dialog.Title>
           <Dialog.Description id="change-request-proposer-description" className={styles.drawerDescription}>
             Đề xuất thay đổi cho đợt đã gửi chính thức: thông tin dòng nhập liệu, thông tin cá
-            nhân người lao động, thông tin thanh toán và trạng thái làm việc. Quyền quyết định cuối
+            nhân người lao động, thông tin tài khoản ngân hàng và trạng thái làm việc. Quyền quyết định cuối
             cùng do hệ thống kiểm tra khi duyệt.
           </Dialog.Description>
 
@@ -674,10 +674,10 @@ export function DirectEntryChangeRequestProposer({
             {kind === "PAYMENT" && singleEntry !== null && entryState === "ready" && (
               <div className={styles.proposerFields}>
                 <div className={styles.field}>
-                  <label htmlFor="payment-state">Trạng thái thông tin thanh toán</label>
+                  <label htmlFor="payment-state">Trạng thái thông tin tài khoản ngân hàng</label>
                   <select
                     id="payment-state"
-                    aria-label="Trạng thái thông tin thanh toán"
+                    aria-label="Trạng thái thông tin tài khoản ngân hàng"
                     value={paymentDraft.state}
                     onChange={(event) => {
                       const state = event.target.value as PaymentState;
