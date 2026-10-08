@@ -48,6 +48,29 @@ const SAFE_ERROR_ALIASES: Record<string, string> = {
   worker_episode_reopen_forbidden: "WORKER_EPISODE_REOPEN_FORBIDDEN",
 };
 
+const SAFE_DENIAL_CATEGORIES: Readonly<Record<string, string>> = Object.freeze({
+  "PROJECT_SCOPE_DENIED": "PROJECT_SCOPE",
+  "worker create authority denied": "CREATE_AUTHORITY",
+  "entry creation own scope denied": "OWN_SCOPE",
+  "actor mapping denied": "ACTOR_MAPPING",
+  "capability denied": "CAPABILITY",
+});
+
+function logDeniedBatch(error: { message?: string }, payload: FullProfilePayload): void {
+  const rows = payload.rows;
+  const category = error.message === undefined
+    ? "UNKNOWN"
+    : SAFE_DENIAL_CATEGORIES[error.message] ?? "UNKNOWN";
+  console.warn("[direct-entry] full-profile denied", {
+    category,
+    contract_version: payload.contract_version,
+    row_count: rows.length,
+    distinct_project_count: new Set(rows.map((row) => row.project_id)).size,
+    payment_row_count: rows.filter((row) => row.payment !== null).length,
+    employment_row_count: rows.filter((row) => row.employment !== null).length,
+  });
+}
+
 function safeInvalidCode(message: string | undefined): string {
   if (message === undefined) return "BATCH_INVALID";
   const alias = SAFE_ERROR_ALIASES[message];
@@ -89,6 +112,7 @@ export function createFullProfileRepository(rpc?: Rpc) {
           p_rows: input.payload.rows,
           p_idempotency_key: input.idempotency_key,
         });
+        if (error?.code === "42501") logDeniedBatch(error, input.payload);
         return error ? classify(error) : { ok: true, data };
       } catch {
         console.error("[direct-entry] full-profile batch RPC failed");
