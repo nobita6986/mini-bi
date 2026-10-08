@@ -50,9 +50,9 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 58, "the ledger carries 58 migrations after P2.5-HF");
-  assert.equal(names[names.length - 1], HF_MIGRATION, "P2.5-HF appends as #58");
-  assert.equal(names[names.length - 2], INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
+  assert.equal(names.length, 59, "the ledger carries 59 migrations after P2.5-HF-R1 #59");
+  assert.equal(names[names.length - 2], HF_MIGRATION, "P2.5-HF appends as #58");
+  assert.equal(names[names.length - 3], INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
   return db;
 }
 
@@ -476,19 +476,30 @@ test("HF: the rehire lookup returns the minimum fields and refuses non-managers"
     await seedEpisode(db, { cccd: "300000000000", name: "HF Lookup", project: PROJ_B,
       date: "2026-03-05", status: "ON" });
 
-    const lookup = async (auth, app) => (await db.query(
-      "select public.direct_entry_lookup_worker_episodes($1::uuid,$2::uuid,$3::text,$4::text,$5::text) as data",
-      [auth, app, PROJ_A, "HF Lookup", "300000000000"])).rows[0].data;
+    const LOOKUP = "select public.direct_entry_lookup_worker_episodes(" +
+      "$1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::int,$7::int) as data";
+    const lookup = async (auth, app, query = {}) => (await db.query(LOOKUP, [
+      auth, app, query.project ?? PROJ_A, query.name ?? null, query.cccd ?? null,
+      query.pageSize ?? 20, query.offset ?? 0,
+    ])).rows[0].data;
 
-    const manager = await lookup(MGR_A_AUTH, MGR_A_APP);
-    assert.equal(manager.episode_count, 2, "history is visible across projects");
-    assert.equal(manager.active_episode_exists, true);
-    assert.equal(manager.rehire_allowed, false);
-    assert.deepEqual(Object.keys(manager.episodes[0]).sort(), [
+    const manager = await lookup(MGR_A_AUTH, MGR_A_APP, { cccd: "300000000000" });
+    assert.equal(manager.match, "national_id");
+    assert.equal(manager.workers.length, 1, "the exact CCCD resolves to one worker");
+    const worker = manager.workers[0];
+    assert.equal(worker.episode_count, 2, "history is visible across projects");
+    assert.equal(worker.active_episode_exists, true);
+    assert.equal(worker.rehire_allowed, false);
+    assert.deepEqual(Object.keys(worker).sort(), [
+      "active_episode_exists", "display_name", "employee_code", "episode_count",
+      "episodes", "rehire_allowed",
+    ]);
+    assert.deepEqual(Object.keys(worker.episodes[0]).sort(), [
       "display_name", "employee_code", "entry_id", "first_work_date", "latest_status",
       "project_display", "project_id",
     ]);
-    const serialized = JSON.stringify(manager);
+    // The match literal is the only place the words "national_id" may appear.
+    const serialized = JSON.stringify(manager.workers);
     for (const forbidden of ["300000000000", "1990-01-01", "HF address", "0900000000",
       "account_number", "bank_name", "national_id", "date_of_birth", "phone"]) {
       assert.equal(serialized.includes(forbidden), false, forbidden + " must never leak");
@@ -500,17 +511,16 @@ test("HF: the rehire lookup returns the minimum fields and refuses non-managers"
       ["uploader", UPLOADER_AUTH, UPLOADER_APP],
       ["recruiter", RECRUITER_AUTH, RECRUITER_APP],
     ]) {
-      await assert.rejects(() => lookup(auth, app), (error) => error.code === "42501", label);
+      await assert.rejects(() => lookup(auth, app, { cccd: "300000000000" }),
+        (error) => error.code === "42501", label);
     }
     // The all-scope administrator may look up too.
-    const admin = await lookup(ADMIN_AUTH, ADMIN_APP);
-    assert.equal(admin.episode_count, 2);
+    const admin = await lookup(ADMIN_AUTH, ADMIN_APP, { cccd: "300000000000" });
+    assert.equal(admin.workers[0].episode_count, 2);
     assert.notEqual(a.entryId, null);
-    // Name and CCCD must both be supplied.
+    // At least one lookup key is required; R1 accepts name-only or CCCD-only.
     await assert.rejects(
-      () => lookup(MGR_A_AUTH, MGR_A_APP).then(() => db.query(
-        "select public.direct_entry_lookup_worker_episodes($1::uuid,$2::uuid,$3::text,$4::text,$5::text) as data",
-        [MGR_A_AUTH, MGR_A_APP, PROJ_A, "HF Lookup", "  "])),
+      () => lookup(MGR_A_AUTH, MGR_A_APP, {}),
       (error) => error.code === "22023");
   } finally {
     await db.close();

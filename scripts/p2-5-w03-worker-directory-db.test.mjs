@@ -53,10 +53,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 58, "the ledger carries 58 migrations after P2.5-HF");
-  assert.equal(names[names.length - 6], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - 7], W03_MIGRATION, "W03 is #52");
-  assert.equal(names[names.length - 8], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names.length, 59, "the ledger carries 59 migrations after P2.5-HF-R1 #59");
+  assert.equal(names[names.length - 7], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - 8], W03_MIGRATION, "W03 is #52");
+  assert.equal(names[names.length - 9], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 

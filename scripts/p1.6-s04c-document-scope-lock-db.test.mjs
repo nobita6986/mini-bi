@@ -96,7 +96,7 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrationNames.length, 58);
+  assert.equal(migrationNames.length, 59);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -173,6 +173,6 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // P2.5-W06A (#54) adds one service-role-only manager-candidate RPC.
   // P2.5-W05 (#55) adds one internal scope reader and one service-role-only
   // reviewer-bundle reader.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [117, 59, 58]);
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [118, 59, 59]);
   await db.close();
 });

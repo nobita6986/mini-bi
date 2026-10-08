@@ -286,6 +286,9 @@ test("P3-W07C REGRESSION: Postgres check/range/unique errors forward safe code, 
     ["22023", "PROFILE_DATE_INVALID", "PROFILE_DATE_INVALID"],
     ["22008", "PROFILE_DATE_INVALID", "PROFILE_DATE_INVALID"],
     ["23505", "NATIONAL_ID_DUPLICATE", "NATIONAL_ID_DUPLICATE"],
+    // P2.5-HF-R1: the repository already renamed the episode guard messages.
+    ["23505", "WORKER_ACTIVE_EPISODE_EXISTS", "WORKER_ACTIVE_EPISODE_EXISTS"],
+    ["23505", "WORKER_EPISODE_REOPEN_FORBIDDEN", "WORKER_EPISODE_REOPEN_FORBIDDEN"],
   ];
   for (const [pgCode, message, expectedClientCode] of cases) {
     const dependencies = deps({

@@ -38,6 +38,23 @@ function serviceRoleRpc(): Rpc {
   return async (name, args) => (await client).rpc(name, args);
 }
 
+/**
+ * P2.5-HF-R1: a raw DB message never reaches the client. The episode guards raise 23505 with a
+ * machine message, which is translated here into the public code below; anything unmapped falls
+ * back to BATCH_INVALID. No public code and no log line carries the CCCD.
+ */
+const SAFE_ERROR_ALIASES: Record<string, string> = {
+  worker_active_episode_exists: "WORKER_ACTIVE_EPISODE_EXISTS",
+  worker_episode_reopen_forbidden: "WORKER_EPISODE_REOPEN_FORBIDDEN",
+};
+
+function safeInvalidCode(message: string | undefined): string {
+  if (message === undefined) return "BATCH_INVALID";
+  const alias = SAFE_ERROR_ALIASES[message];
+  if (alias !== undefined) return alias;
+  return SAFE_INVALID_CODES.has(message) ? message : "BATCH_INVALID";
+}
+
 function classify(error: { code?: string; message?: string }): FullProfileRepositoryResult {
   if (error.code === "42501") return { ok: false, kind: "denied" };
   if (error.code === "40001" ||
@@ -45,16 +62,10 @@ function classify(error: { code?: string; message?: string }): FullProfileReposi
     return { ok: false, kind: "conflict" };
   }
   if (error.code === "22023" || error.code === "22008" || error.code === "23514") {
-    const code = error.message && SAFE_INVALID_CODES.has(error.message)
-      ? error.message
-      : "BATCH_INVALID";
-    return { ok: false, kind: "invalid", code };
+    return { ok: false, kind: "invalid", code: safeInvalidCode(error.message) };
   }
   if (error.code === "23505") {
-    const code = error.message && SAFE_INVALID_CODES.has(error.message)
-      ? error.message
-      : "BATCH_INVALID";
-    return { ok: false, kind: "invalid", code };
+    return { ok: false, kind: "invalid", code: safeInvalidCode(error.message) };
   }
   return { ok: false, kind: "unavailable" };
 }
