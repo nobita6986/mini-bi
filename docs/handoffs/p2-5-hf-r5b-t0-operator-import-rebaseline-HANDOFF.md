@@ -1,16 +1,19 @@
-# P2.5-HF-R5B-R4 - final importer closure (RED, not accepted)
+# P2.5-HF-R5B-R5 - importer defects closed (targeted green, canonical chain still failing)
 
-Base 992bba35d08998781b41aaaaf5631b82259419c6 -> final (this commit); fast-forward only, no amend/rebase/force-push, no migration/dependency/RPC/capability/doc added. Local = remote, worktree clean.
+Base cbe0de8d54e3d93196e753002f0983b9559ced56 -> final (this commit); fast-forward only, no amend/rebase/force-push; no migration, RPC, capability, dependency, framework or new document. Local = remote, worktree clean.
 
-## Before -> after (this round)
-- Root cause 1 (partially addressed): executeImportPlan no longer runs the ambiguous join query; it now consumes the create projection (entry_ids, employee_codes, submission_id, version, replayed) with strict validation, and treats ONE create chunk as ONE submission; transitions are DRAFT->REVIEW (expected_version = create version) then REVIEW->SUBMITTED (expected_version = the version returned by REVIEW), each with its own deterministic key derived from batch + submission_id + target state. Two SUBMITTED rows in one chunk therefore transition once, not twice.
-- postcheck now maps each entry to the submission that owns it (owner map from execution.submissions).
-- Fixture follows the real lifecycle contract: uploaders stay real PMs (verified link + effective assignment, no entry_admin, no all scope) and gain submission_create plus exactly ONE effective own scope; a new negative fixture is a PM of the right project WITHOUT the own scope; a separate STATUS_ADMIN actor (employment_status.apply + entry_admin + all) now performs the canonical OFF step, so the uploader never holds employment_status.apply.
-- New regressions added: two SUBMITTED rows -> one submission and exactly two transitions; DRAFT chunk never transitions; PM without own scope -> AUTHORITY_DENIED with zero residue (entries, reason and operator audit unchanged); status fixture uses its own actor.
-- Batch audit insert now passes changed_fields as a text[] literal (array-parameter hazard).
+## Fixes applied (T0's three)
+1. postcheckImport now reads the owner-map shape correctly: item.chunk.uploader.app_user_id (was item.uploader.app_user_id) - this was the IMPORT_FAILED / TypeError root cause.
+2. The postcheck-failure case uses a brand new batch UUID (BATCH_C) that never appears elsewhere in the suite, so fingerprint/batch-reuse protection is untouched.
+3. The residue assertion no longer hard-codes an entry count: it snapshots entriesBeforePostcheck and asserts the count is unchanged after POSTCHECK_FAILED.
 
-## Still red - do not use this branch
-- pnpm test:t0-import is 3/6. The DRAFT-only path (no transition at all) now fails with IMPORT_FAILED (unknown SQLSTATE), so the remaining fault is NOT the transition contract: it is inside the create projection / batch-audit sequence in runImport. Next step is to surface the raw SQLSTATE once (one diagnostic run) and fix that single call, then re-run.
-- Because this round changed the execution plan, the earlier R3 evidence is superseded; the focused #57-#61 DB suites, lint, git diff --check and db:migrate --offline were NOT run in this round.
-- test:t0-import remains wired into pnpm test, so the branch is RED.
+## Evidence
+- pnpm test:t0-import / node --test scripts/t0-import-workers.test.mjs: 6/6 PASS (0 fail).
+- Kept regressions: same batch + same source replays without duplicating rows/submissions/reason/operator audit; same batch + different fingerprint -> BATCH_ID_REUSED_WITH_DIFFERENT_SOURCE before any mutation; check-mode rollback and apply commit; one submission per create chunk with exactly two transitions for SUBMITTED; uploader is created_by while the technical operator owns only the batch audit/reason; authority negative matrix (no assignment, future, expired, missing own scope) and OFF->rehire via the canonical status actor; postcheck rollback; no PII/UUID/email/CCCD/raw reason/raw DB message in output.
+- Focused DB suites #57-#61: 24 tests / 24 pass / 0 fail.
+- typecheck, lint (0 errors), build, docs:check 6/6, secrets:check, git diff --check, db:migrate --offline = 61 valid: all green.
+
+## Blocker (why PASS is not claimed)
+- Full pnpm test exits 1 while every reported test passes (446 tests / 446 pass / 0 fail), i.e. a lane in the canonical chain fails as a command, not as a test - the importer lane's pnpm script emits no test summary either. Next step: run the lane command once with unfiltered output to capture its stderr/exit path, then fix the script wiring (or the lane ordering) and re-run pnpm test.
+- Until then test:t0-import stays wired in pnpm test and the branch is not fully green: do not import with it yet.
 - No Production import, no migration apply, no deploy, no main push.

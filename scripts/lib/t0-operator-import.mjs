@@ -650,7 +650,7 @@ export async function postcheckImport(client, execution, rows, context) {
     if (entry.employee_code !== execution.employeeCodes[index]) {
       problems.push(issue("POSTCHECK_EMPLOYEE_CODE_MISMATCH", row.sourceRowId));
     }
-    if (entry.created_by_user_id !== item.uploader.app_user_id) {
+    if (entry.created_by_user_id !== item.chunk.uploader.app_user_id) {
       problems.push(issue("POSTCHECK_CREATED_BY_NOT_UPLOADER", row.sourceRowId));
     }
     if (entry.latest_status !== "ON") {

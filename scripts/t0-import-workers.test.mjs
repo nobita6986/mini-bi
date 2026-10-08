@@ -19,6 +19,7 @@ import {
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const BATCH_A = "00000000-0000-4000-8000-000000009001";
 const BATCH_B = "00000000-0000-4000-8000-000000009002";
+const BATCH_C = "00000000-0000-4000-8000-000000009003";
 const OPERATOR_LOGIN = "t0-ops@example.test";
 const UPLOADER_LOGIN = "t0-uploader@example.test";
 const UPLOADER2_LOGIN = "t0-uploader-two@example.test";
@@ -497,14 +498,17 @@ test("R5B-R2: authority, expired assignment, episode rules and postcheck failure
       }
       return result;
     };
+    const entriesBeforePostcheck = await entryCount(db);
     const failing = await runImport(await optionsFor(await manifestFile([
-      row({ source_row_id: "20", national_id: "333333333333" })]), BATCH_A),
+      row({ source_row_id: "20", national_id: "333333333333" })]), BATCH_C),
       dependenciesFor(db, override).deps);
     assert.equal(failing.code, "POSTCHECK_FAILED");
     assert.deepEqual(failing.acceptance.problems, [
       { code: "POSTCHECK_STATUS_NOT_ON", source_row_id: "20", severity: "error" },
     ]);
-    assert.equal(await entryCount(db), 3, "postcheck failure leaves zero residue");
+    assert.equal(await entryCount(db), entriesBeforePostcheck,
+      "postcheck failure leaves zero residue");
+    assert.equal(entriesBeforePostcheck > 0, true);
     assertNoLeak(failing, ["333333333333"]);
   } finally {
     await db.close();
