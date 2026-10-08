@@ -63,8 +63,16 @@ export async function createMigratedDatabase() {
 
 async function insertActor(db, actor, capabilities, scopeKind, teamId) {
   await db.query("insert into auth.users(id) values ($1)", [actor.auth_subject]);
+  // P2.5-HF-R5: display_name exists from #62; earlier partial ledgers
+  // (historical contract tests) must keep working without it.
+  const hasDisplayName = (await db.query(
+    "select 1 from information_schema.columns where table_schema='public'" +
+    " and table_name='direct_entry_app_users' and column_name='display_name'",
+  )).rows.length > 0;
   await db.query(
-    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled) values ($1,$2,true)",
+    hasDisplayName
+      ? "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')"
+      : "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled) values ($1,$2,true)",
     [actor.app_user_id, actor.auth_subject],
   );
   for (const capability of capabilities) {

@@ -42,7 +42,7 @@ function worker(displayName) {
 async function seedProjectManager(db) {
   await db.query("insert into auth.users(id) values ($1)", [PROJECT_MANAGER.auth_subject]);
   await db.query(
-    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled) values ($1,$2,true)",
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')",
     [PROJECT_MANAGER.app_user_id, PROJECT_MANAGER.auth_subject],
   );
   await db.query(
@@ -95,7 +95,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
   const migrated = await createMigratedDatabase();
   const db = migrated.db;
   try {
-    assert.equal(migrated.migrationNames.length, 61);
+    assert.equal(migrated.migrationNames.length, 62);
     const initialWorkerDetails = worker("S02B worker1");
     initialWorkerDetails.date_of_birth = { state: "provided", value: "01/01/2000" };
     initialWorkerDetails.national_id = { state: "provided", value: "000000000000" };

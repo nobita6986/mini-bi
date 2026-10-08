@@ -126,7 +126,7 @@ async function assertDatabaseBoundary(client) {
 async function insertActor(client, actor, capabilities, ownScope) {
   await client.query("insert into auth.users(id) values ($1)", [actor.auth_subject]);
   await client.query(
-    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled) values ($1,$2,true)",
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')",
     [actor.app_user_id, actor.auth_subject],
   );
   for (const capability of capabilities) {

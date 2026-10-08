@@ -44,7 +44,7 @@ async function seedBase(db) {
     [APP_OWNB1, AUTH_OWNB1], [APP_NOLINK, AUTH_NOLINK], [APP_PM, AUTH_PM],
   ];
   for (const [app, auth] of apps) {
-    await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [app, auth]);
+    await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [app, auth]);
   }
   await db.query("insert into public.teams (team_id, code, display_name) values ($1,'TEAM_A','Team A')", [TEAM_A]);
   await db.query("insert into public.teams (team_id, code, display_name) values ($1,'TEAM_B','Team B')", [TEAM_B]);
@@ -314,7 +314,7 @@ test("R1: scope effectiveness follows the HCM authorization date (not UTC)", asy
     await seedBase(db);
     const auth = uuid(91); const app = uuid(92);
     await db.query("insert into auth.users (id) values ($1)", [auth]);
-    await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [app, auth]);
+    await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [app, auth]);
 
     // grant valid from HCM tomorrow => not yet effective => own (empty)
     await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,(select public.direct_entry_authorization_date() + 1))", [app, TEAM_A]);
