@@ -71,8 +71,10 @@ test("HF-R3: nhan trang thai du an va nut khong doi nghia", () => {
   assert.match(projects, /\{projectStatusLabel\(active\)\}/);
   assert.equal(projectStatusLabel(true), "Đang hoạt động");
   assert.equal(projectStatusLabel(false), "Đã ngừng");
-  // Nut khong bi disable boi quyen: chi chan khi dang co thao tac khac chay.
-  assert.match(projects, /disabled=\{projectActionId !== null\}/);
+  // Nút không suy quyền ở client; chỉ khóa khi đang thao tác, có conflict,
+  // hoặc đang tải lại authoritative state.
+  assert.match(projects,
+    /disabled=\{projectActionId !== null \|\| conflict !== null \|\| reloadBusy\}/);
   assert.equal(/disabled=\{!canManage/.test(projects), false);
 });
 

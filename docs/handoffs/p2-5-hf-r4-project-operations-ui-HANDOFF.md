@@ -15,7 +15,7 @@ Branch: `codex/p2-5-hf-r4-project-operations-ui`. No Production apply/deploy or 
 
 - `pnpm test:p2.5-w06a`: 4/4; `pnpm test:server`: 214/214; `pnpm test:app-nav-02a`: 92/92.
 - `pnpm test`, `pnpm build`, post-build `pnpm typecheck`, and `git diff --check`: pass.
-- `pnpm test:p2.5-hf-r4-browser`: 45/45 synthetic-fetch Chrome interactions pass against the production component.
+- `pnpm test:p2.5-hf-r4-browser`: 47/47 synthetic-fetch Chrome interactions pass against the production component.
 - `pnpm lint`: pass with 12 pre-existing warnings, 0 errors.
 - `pnpm db:migrate --offline`: 61 migrations valid; no database access.
 
