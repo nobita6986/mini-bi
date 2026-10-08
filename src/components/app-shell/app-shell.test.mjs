@@ -53,7 +53,7 @@ test("app-shell lọc nav theo feature flag + capability predicate tại request
   // Mobile viewport trong filterEntriesForActor.
   assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]{0,200}viewport:\s*"mobile"[\s\S]{0,400}\}/);
   assert.match(appShellSource, /decideNavEntryVisibility\(/);
-  assert.match(appShellSource, /<DesktopNav items=\{desktopItems\}/);
+  assert.match(appShellSource, /<DesktopNav\s+items=\{desktopItems/);
   assert.match(appShellSource, /items=\{mobileItems\.map\(/);
   // F6: active label duoc tinh client-side, khong con currentPath server.
   assert.match(appShellSource, /<ActivePageLabel \/>/);
@@ -164,12 +164,22 @@ test("desktop-nav.tsx: link active có aria-current='page'", () => {
 });
 
 test("desktop-nav nhận các entry đã filter từ AppShell, không tự quyết định visibility", () => {
-  assert.ok(desktopNavSource.includes("items: ReadonlyArray<NavEntry>"));
+  assert.ok(desktopNavSource.includes("items: ReadonlyArray<DesktopNavItem>"));
   assert.ok(!desktopNavSource.includes("entriesForViewport"));
   assert.ok(desktopNavSource.includes('from "@/lib/navigation/registry"'));
   // Không hard-code label cũ (Pipeline Check) hay mới trong component.
   assert.ok(!desktopNavSource.includes("Pipeline check"));
   assert.ok(!desktopNavSource.includes("Nhập liệu trực tiếp"));
+});
+
+test("desktop nav client boundary only receives serializable fields; icons stay local", () => {
+  assert.match(
+    appShellSource,
+    /<DesktopNav\s+items=\{desktopItems\.map\(\(\{ id, label, path \}\) => \(\{ id, label, path \}\)\)\}\s*\/>/
+  );
+  assert.ok(!desktopNavSource.includes("NavEntry"), "client nav must not accept registry entries with component icons");
+  assert.ok(desktopNavSource.includes('"project-operations": Building2'));
+  assert.ok(desktopNavSource.includes('"direct-entry": ClipboardList'));
 });
 
 test("mobile-nav nhận danh sách server-filtered, dùng usePathname, không đọc env", () => {

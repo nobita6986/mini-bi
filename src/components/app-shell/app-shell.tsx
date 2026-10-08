@@ -121,7 +121,9 @@ export async function AppShell({
           </Link>
 
           {/* Desktop nav — ẩn trên mobile */}
-          <DesktopNav items={desktopItems} />
+          <DesktopNav
+            items={desktopItems.map(({ id, label, path }) => ({ id, label, path }))}
+          />
 
           {/* Spacer */}
           <div className="flex-1" />

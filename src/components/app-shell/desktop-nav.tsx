@@ -15,22 +15,31 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Building2, ClipboardList, LayoutDashboard } from "lucide-react";
 
 import { findEntryByPath } from "@/lib/navigation/registry";
-import type { NavEntry } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
+
+type DesktopNavItem = { id: string; label: string; path: string };
+
+const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
+  dashboard: LayoutDashboard,
+  "direct-entry": ClipboardList,
+  "project-operations": Building2,
+} as const;
 
 export function DesktopNav({
   items,
 }: {
-  items: ReadonlyArray<NavEntry>;
+  items: ReadonlyArray<DesktopNavItem>;
 }) {
   const pathname = usePathname();
   const active = findEntryByPath(pathname);
   return (
     <nav aria-label="Điều hướng chính" className="ml-2 hidden items-center gap-1 md:flex">
       {items.map((entry) => {
-        const Icon = entry.icon;
+        const Icon = NAV_ICONS[entry.id];
+        if (!Icon) throw new Error(`Missing desktop navigation icon for "${entry.id}"`);
         const isActive = active?.id === entry.id;
         return (
           <Link
