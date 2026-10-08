@@ -64,6 +64,7 @@
     "test:p2.5-hf-r4-browser": "node scripts/p2-5-hf-r4-project-operations-browser-acceptance.mjs",
     "test:p2.5-hf-create-rehire": "node --test scripts/p2-5-hf-worker-create-rehire-db.test.mjs",
     "test:p2.5-hf-r1": "node --conditions=react-server --test scripts/p2-5-hf-r1-episode-status-and-lookup-db.test.mjs src/lib/direct-entry/worker-episode-lookup.test.mjs",
+    "test:t0-import": "node --test scripts/t0-import-workers.test.mjs",
     "test:p2.5-hf-r3": "node --conditions=react-server --test scripts/p2-5-hf-r3-worker-full-correction-db.test.mjs src/lib/direct-entry/privileged-edit.test.mjs",
     "test:p2.5-hf-r2": "node --test scripts/p2-5-hf-r2-cccd-canonicalization-db.test.mjs src/lib/contracts/national-id.test.mjs",
     "test:p2.5-w05": "node --test scripts/p2-5-w05-review-authority-db.test.mjs",
