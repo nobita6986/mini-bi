@@ -1603,7 +1603,7 @@ export function DirectEntryLive() {
         // Chi clear staged rows sau khi server xac nhan bang projection hop le.
         setStagedModel(createSpreadsheetRowModel());
         setStagedValidationTriggered(false);
-        setStagedMessageWithTone("Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.", "success");
+        setStagedMessageWithTone("Đã lưu thành công " + result.entryIds.length + " hồ sơ người lao động.", "success");
         await reloadDrafts();
         // Map lai selection: chi giu persisted row co entry_id trung khop;
         // KHONG doan theo row index/ho ten/CCCD.

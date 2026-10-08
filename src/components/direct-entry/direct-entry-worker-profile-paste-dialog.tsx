@@ -500,7 +500,7 @@ export function DirectEntryWorkerProfilePasteDialog({
         setExpandedRows([]);
         setSubmitMessageKind("saved");
         setSubmitMessage(
-          "Đã lưu " + result.entryIds.length + " dòng bằng một yêu cầu atomic duy nhất.",
+          "Đã lưu thành công " + result.entryIds.length + " hồ sơ người lao động.",
         );
         onSaved?.(result, preview.rows);
         return;
