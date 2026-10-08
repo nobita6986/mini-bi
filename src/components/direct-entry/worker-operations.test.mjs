@@ -82,10 +82,33 @@ test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () =>
   assert.match(source, /items: \[\], next_cursor: null, has_more: false/);
   assert.match(source, /0 người lao động trong quan hệ này\./);
   assert.match(source, /text-red-700/);
-  assert.match(source, /text-emerald-700/);
+  // P2.5-HF-R3: trang thai "khong co du lieu" la THONG TIN (mau rieng), khong dung xanh la
+  // (de khong bi doc thanh "thanh cong") va khong dung do (danh rieng cho loi).
+  assert.match(source, /const infoClass =/);
+  assert.match(source, /text-sky-800/);
+  assert.match(source, /<p role="status" className=\{infoClass\}>/);
+  assert.equal(/border-emerald-500\/30 bg-emerald-500\/10/.test(source), false,
+    "empty state khong con dung nen xanh la");
   // Moi tab giu page state rieng.
   assert.match(source, /workerPages\[scope as WorkerScopeTab\]/);
   assert.match(source, /submissionPage\.state/);
+});
+
+test("P2.5-HF-R3: hang doi Yeu cau thay doi nam TRUOC danh sach NLD", () => {
+  const requests = source.indexOf("<DirectEntryChangeRequestList");
+  const panel = source.indexOf("role=\"tabpanel\"");
+  assert.ok(requests !== -1 && panel !== -1);
+  assert.ok(requests < panel, "change-request queue phai render truoc danh sach NLD");
+  // Khong gia lap hang doi yeu cau thay doi DU AN: chi mot danh sach duy nhat.
+  assert.equal((source.match(/<DirectEntryChangeRequestList/g) ?? []).length, 1);
+});
+
+test("P2.5-HF-R3: khong con cau hua ve quyen pham vi toan bo", () => {
+  const model = readFileSync(
+    new URL("../../lib/direct-entry/worker-operations-model.ts", import.meta.url), "utf8");
+  assert.equal(model.includes("chỉ admin và BoD/Kế toán có quyền phạm vi toàn bộ"), false);
+  assert.equal(/có quyền phạm vi toàn bộ/.test(model), false);
+  assert.match(model, /all: "Toàn bộ người lao động đã gửi\."/);
 });
 
 test("W06-R2: initial tab tu actor projection server-side", () => {

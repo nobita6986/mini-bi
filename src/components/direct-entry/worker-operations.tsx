@@ -109,6 +109,13 @@ const inputClass =
 const errorClass =
   "rounded-md border border-red-500/40 bg-red-50 p-3 text-sm text-red-700 " +
   "dark:bg-red-950/40 dark:text-red-300";
+/** Thong tin/huong dan: mau khac han voi loi (do) va voi thanh cong (xanh la). */
+const infoClass =
+  "rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-800 " +
+  "dark:bg-sky-950/40 dark:text-sky-200";
+const successClass =
+  "rounded-md border border-emerald-500/40 bg-emerald-50 p-3 text-sm text-emerald-800 " +
+  "dark:bg-emerald-950/40 dark:text-emerald-300";
 
 async function readJson(response: Response): Promise<unknown> {
   try {
@@ -412,11 +419,25 @@ export function WorkerOperations({
 
       {notice ? (
         <p role={notice.kind === "error" ? "alert" : "status"}
-          className={notice.kind === "error"
-            ? errorClass
-            : "rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300"}>
+          className={notice.kind === "error" ? errorClass : successClass}>
           {notice.message}
         </p>
+      ) : null}
+
+      {/* P2.5-HF-R3: hang doi "Yeu cau thay doi" dat TRUOC danh sach NLD. */}
+      {canReview ? (
+        <DirectEntryChangeRequestList
+          state={requestPage.state === "ready" || requestPage.state === "empty"
+            ? "ready" : requestPage.state === "loading" || requestPage.state === "idle"
+              ? "loading" : "error"}
+          message={requestPage.message ?? ""}
+          requests={requestPage.items}
+          hasMore={requestPage.hasMore}
+          busyRequestId={busyRequestId}
+          onLoadMore={() => void loadMore(requestPage, fetchRequests, applyRequestPage)}
+          onWithdraw={(request) => { void withdrawRequest(request); }}
+          onReview={(request) => setReviewRequest(request)}
+        />
       ) : null}
 
       <section
@@ -442,11 +463,10 @@ export function WorkerOperations({
         )}
 
         {activePage.state === "loading" || activePage.state === "idle" ? (
-          <p role="status" className="text-sm text-blue-700 dark:text-blue-300">Đang tải dữ liệu…</p>
+          <p role="status" className={infoClass}>Đang tải dữ liệu…</p>
         ) : null}
         {activePage.state === "empty" ? (
-          <p role="status"
-            className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+          <p role="status" className={infoClass}>
             0 người lao động trong quan hệ này.
           </p>
         ) : null}
@@ -480,21 +500,6 @@ export function WorkerOperations({
           </>
         ) : null}
       </section>
-
-      {canReview ? (
-        <DirectEntryChangeRequestList
-          state={requestPage.state === "ready" || requestPage.state === "empty"
-            ? "ready" : requestPage.state === "loading" || requestPage.state === "idle"
-              ? "loading" : "error"}
-          message={requestPage.message ?? ""}
-          requests={requestPage.items}
-          hasMore={requestPage.hasMore}
-          busyRequestId={busyRequestId}
-          onLoadMore={() => void loadMore(requestPage, fetchRequests, applyRequestPage)}
-          onWithdraw={(request) => { void withdrawRequest(request); }}
-          onReview={(request) => setReviewRequest(request)}
-        />
-      ) : null}
 
       <ProposeDrawer
         key={drawerRow === null ? "none" : drawerRow.entry_id}
