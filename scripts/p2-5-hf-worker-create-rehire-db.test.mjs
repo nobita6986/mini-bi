@@ -25,6 +25,7 @@ const INITIAL_ON_MIGRATION = "20261008170000_p2_5_initial_employment_status_on.s
 const R2_MIGRATION = "20261008200000_p2_5_hf_r2_cccd_canonicalization_guard.sql";
 const R3_MIGRATION = "20261008210000_p2_5_hf_r3_worker_full_correction.sql";
 const R6_MIGRATION = "20261008230000_p2_5_hf_r6_manager_initial_status.sql";
+const R7_MIGRATION = "20261008240000_p2_5_hf_r7_deferred_submission_trigger_boundary.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -53,12 +54,13 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 63, "the ledger carries 63 migrations after P2.5-HF-R6 #63");
-  assert.equal(names.at(-1), R6_MIGRATION, "P2.5-HF-R6 appends as #63");
-  assert.equal(names.at(-3), R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names.at(-4), R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names.at(-6), HF_MIGRATION, "P2.5-HF remains #58");
-  assert.equal(names.at(-7), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
+  assert.equal(names.length, 64, "the ledger carries 64 migrations after P2.5-HF-R7 #64");
+  assert.equal(names.at(-1), R7_MIGRATION, "P2.5-HF-R7 appends as #64");
+  assert.equal(names.at(-2), R6_MIGRATION, "P2.5-HF-R6 remains #63");
+  assert.equal(names.at(-4), R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.at(-5), R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.at(-7), HF_MIGRATION, "P2.5-HF remains #58");
+  assert.equal(names.at(-8), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
   return db;
 }
 
@@ -451,6 +453,48 @@ test("HF: a mixed-project batch is refused whole, and the Admin path is unchange
       [admin.entry_ids[0]]);
     assert.deepEqual(payment.rows[0],
       { account_number: "012345678901", bank_name: "Synthetic Bank" });
+  } finally {
+    await db.close();
+  }
+});
+
+test("HF-R7: service_role can commit a valid batch through the deferred submission trigger", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const boundary = await db.query(
+      "select p.prosecdef as security_definer," +
+      " has_function_privilege('service_role', p.oid, 'EXECUTE') as service_execute," +
+      " has_table_privilege('service_role','public.direct_entry_submissions','SELECT,INSERT,UPDATE,DELETE')" +
+      " as service_table_access" +
+      " from pg_proc p where p.oid=" +
+      " 'public.direct_entry_require_nonempty_submission()'::regprocedure",
+    );
+    assert.deepEqual(boundary.rows[0], {
+      security_definer: true,
+      service_execute: false,
+      service_table_access: false,
+    });
+
+    await db.exec("begin; set local role service_role;");
+    let created;
+    try {
+      created = await createBatchV2(db, {
+        rows: [batchRow({ cccd: null, name: "HF Deferred Commit" })],
+        key: "hf-r7-deferred-commit",
+        auth: MGR_A_AUTH,
+        app: MGR_A_APP,
+      });
+      await db.exec("commit");
+    } catch (error) {
+      await db.exec("rollback");
+      throw error;
+    }
+
+    assert.equal(created.entry_ids.length, 1);
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_submissions"), 1,
+    "the real COMMIT, not a rollback-only probe, completes under service_role");
   } finally {
     await db.close();
   }

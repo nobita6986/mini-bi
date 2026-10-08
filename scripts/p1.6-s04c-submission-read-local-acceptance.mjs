@@ -28,7 +28,7 @@ function pass(label) {
 const migrations = await createMigratedDatabase();
 const db = migrations.db;
 // W07C-R7 #49, W07E #50, P2.5-W02 #51, P2.5-W03 #52.
-assert.equal(migrations.migrationNames.length, 63);
+assert.equal(migrations.migrationNames.length, 64);
 pass("from-scratch apply 49 migration local trong PGlite (khong dung shared DB, khong network)");
 
 for (const signature of [
