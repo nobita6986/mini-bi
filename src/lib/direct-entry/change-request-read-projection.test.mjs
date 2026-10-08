@@ -32,14 +32,24 @@ function worker(overrides = {}) {
 
 test("worker_details FULL duoc strict-project, presence-only khong bi coi la full", () => {
   assert.deepEqual(projectWorkerDetails(worker()), worker());
+  const complete = worker({
+    gender: { state: "provided", value: "FEMALE" },
+    national_id_issued_at: { state: "provided", value: "15/01/2020" },
+    national_id_issued_place: { state: "provided", value: "Bộ Công An" },
+  });
+  assert.deepEqual(projectWorkerDetails(complete), complete,
+    "review projection must retain every editable canonical profile field");
   assert.equal(isPresenceOnlyWorkerDetails({ present: true }), true);
   assert.equal(isPresenceOnlyWorkerDetails({ present: false }), false);
   assert.equal(projectWorkerDetails({ present: true }), null);
   assert.equal(projectWorkerDetails(worker({ extra: 1 })), null);
   assert.equal(projectWorkerDetails(worker({ phone: { state: "provided" } })), null);
   assert.equal(projectWorkerDetails(worker({ phone: { state: "provided", value: "" } })), null);
-  assert.equal(projectWorkerDetails(worker({ date_of_birth: { state: "provided", value: "31/02/1990" } })),
-    null);
+  assert.deepEqual(
+    projectWorkerDetails(worker({ date_of_birth: { state: "provided", value: "31/02/1990" } })),
+    worker({ date_of_birth: { state: "provided", value: "31/02/1990" } }),
+    "DOB remains bounded source text under the current canonical contract",
+  );
   assert.equal(projectWorkerDetails(worker({ date_of_birth: { state: "provided", value: "1990-01-02", x: 1 } })),
     null);
   assert.equal(projectWorkerDetails(worker({ display_name: "   " })), null);
@@ -54,6 +64,15 @@ test("workerDetailsRows chi hien field thuc su thay doi", () => {
   assert.deepEqual(rows[0], { field: "display_name", label: "Họ tên",
     before: "Nguyen Van Synthetic", after: "Tran Thi Synthetic" });
   assert.deepEqual(workerDetailsRows(worker(), worker()), []);
+
+  const extendedBefore = worker({ gender: { state: "provided", value: "MALE" },
+    national_id_issued_at: { state: "omitted" },
+    national_id_issued_place: { state: "provided", value: "Hà Nội" } });
+  const extendedAfter = worker({ gender: { state: "provided", value: "FEMALE" },
+    national_id_issued_at: { state: "provided", value: "01/02/2020" },
+    national_id_issued_place: { state: "provided", value: "Bộ Công An" } });
+  assert.deepEqual(workerDetailsRows(extendedBefore, extendedAfter).map((row) => row.label),
+    ["Giới tính", "Ngày cấp", "Nơi cấp"]);
 });
 
 test("PAYMENT read projection: FULL khac MASKED, giu so 0 dau, khong reconstruct", () => {

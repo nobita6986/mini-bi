@@ -152,7 +152,7 @@ test("W06 hotfix: status choices use loaded baseline and a bounded native date i
   assert.match(source, /expectedVersion: baseline\.version/);
   assert.match(source, /id="worker-effective-date" type="date"/);
   assert.match(source, /min=\{baseline\?\.effectiveDate/);
-  assert.match(source, /max=\{hcmTodayDate\(\)\}/);
+  assert.match(source, /max=\{today\}/);
   assert.match(source, /setEffectiveDate\(hcmTodayDate\(\)\)/);
 });
 
@@ -216,6 +216,23 @@ test("W06-R1: propose drawer gom WORKER + PAYMENT + WORK_STATUS bang builder hie
   assert.match(source, /giữ nguyên/);
   // Khong co DOCUMENT/CCCD.
   assert.equal(/DOCUMENT|CCCD/.test(source), false);
+});
+
+test("W06 hotfix: proposal preloads full profile and keeps protected placement read-only", () => {
+  assert.match(source, /Dữ liệu hiện tại được nạp sẵn/);
+  assert.match(source, /Hồ sơ hiện tại/);
+  assert.match(source, /WORKER_FORM_FIELDS\.map/);
+  assert.match(source, /field === "gender"/);
+  for (const label of [
+    "Mã người lao động", "Dự án", "Ngày bắt đầu làm việc", "Người tuyển / Vendor",
+    "Loại hình lao động", "Trạng thái làm việc",
+  ]) {
+    assert.ok(source.includes(label), "missing current-profile label: " + label);
+  }
+  assert.match(source, /id="worker-display-name"[\s\S]{0,160}disabled/);
+  assert.match(source, /<select id="bank-id"/);
+  assert.match(source, /catalog\?\.banks/);
+  assert.match(source, /useState<WorkerProposeTarget>\("WORKER"\)/);
 });
 
 test("W06-R1: reviewer khong co CTA sua truc tiep hay lap proposal", () => {

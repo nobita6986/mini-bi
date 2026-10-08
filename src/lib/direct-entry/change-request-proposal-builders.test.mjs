@@ -31,12 +31,15 @@ function worker(overrides = {}) {
   };
 }
 
-test("worker_details proposal: preserves canonical profile fields while editing supported fields", () => {
+test("worker_details proposal: preloads and edits the complete canonical worker profile", () => {
   const baseline = worker();
   const unchanged = buildWorkerDetailsProposal(baseline, workerFormFromDetails(baseline));
   assert.deepEqual(unchanged, { ok: false, code: "WORKER_UNCHANGED" });
 
   const form = workerFormFromDetails(baseline);
+  form.gender = { state: "provided", text: "FEMALE" };
+  form.national_id_issued_at = { state: "provided", text: "15/01/2020" };
+  form.national_id_issued_place = { state: "provided", text: "Bộ Công An" };
   form.phone = { state: "provided", text: "0900000000" };
   const built = buildWorkerDetailsProposal(baseline, form);
   assert.equal(built.ok, true);
@@ -46,9 +49,11 @@ test("worker_details proposal: preserves canonical profile fields while editing 
       "national_id_issued_at", "national_id_issued_place", "phone"]);
   assert.deepEqual(proposal.phone, { state: "provided", value: "0900000000" });
   assert.deepEqual(proposal.national_id, { state: "unknown" });
-  assert.deepEqual(proposal.gender, baseline.gender);
-  assert.deepEqual(proposal.national_id_issued_at, baseline.national_id_issued_at);
-  assert.deepEqual(proposal.national_id_issued_place, baseline.national_id_issued_place);
+  assert.deepEqual(proposal.gender, { state: "provided", value: "FEMALE" });
+  assert.deepEqual(proposal.national_id_issued_at,
+    { state: "provided", value: "15/01/2020" });
+  assert.deepEqual(proposal.national_id_issued_place,
+    { state: "provided", value: "Bộ Công An" });
 
   assert.deepEqual(projectWorkerDetailsForProposal(baseline), baseline);
   assert.equal(projectWorkerDetailsForProposal({
@@ -71,6 +76,11 @@ test("worker_details proposal: preserves canonical profile fields while editing 
   assert.deepEqual(buildWorkerDetailsProposal(baseline, badName),
     { ok: false, code: "WORKER_INVALID" });
 
+  const badGender = workerFormFromDetails(baseline);
+  badGender.gender = { state: "intentionally_blank", text: "" };
+  assert.deepEqual(buildWorkerDetailsProposal(baseline, badGender),
+    { ok: false, code: "WORKER_INVALID" });
+
   const badDate = workerFormFromDetails(baseline);
   badDate.date_of_birth = { state: "provided", text: "31/02/1990" };
   const freeDate = buildWorkerDetailsProposal(baseline, badDate);
@@ -78,6 +88,16 @@ test("worker_details proposal: preserves canonical profile fields while editing 
     "DOB remains ordinary source text under the current worker-details contract");
   assert.equal(freeDate.proposal.worker_details.date_of_birth.value, "31/02/1990");
   assert.match(proposalErrorMessage("WORKER_UNAVAILABLE"), /quyền xem thông tin cá nhân/);
+
+  const legacyBaseline = worker({ gender: undefined, national_id_issued_at: undefined,
+    national_id_issued_place: undefined });
+  const legacyForm = workerFormFromDetails(legacyBaseline);
+  legacyForm.phone = { state: "provided", text: "0911111111" };
+  const legacyProposal = buildWorkerDetailsProposal(legacyBaseline, legacyForm);
+  assert.equal(legacyProposal.ok, true);
+  assert.equal("gender" in legacyProposal.proposal.worker_details, false);
+  assert.equal("national_id_issued_at" in legacyProposal.proposal.worker_details, false);
+  assert.equal("national_id_issued_place" in legacyProposal.proposal.worker_details, false);
 });
 
 test("PAYMENT proposal: dung 4 field, bank phai active, giu so 0 dau", () => {

@@ -638,10 +638,11 @@ function WorkerTable({
 type EntryBaseline = {
   version: number;
   workerDetails: WorkerDetails | null;
+  providerType: "hrp" | "vendor" | null;
   status: WorkerStatus | null;
   effectiveDate: string | null;
   payment: { state: PaymentState; account_number: string | null; bank_id: string | null;
-    account_holder_name: string | null } | null;
+    bank_name: string | null; account_holder_name: string | null } | null;
 };
 
 async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
@@ -666,6 +667,8 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
     return {
       version: row.version,
       workerDetails: details,
+      providerType: row.provider_type === "hrp" || row.provider_type === "vendor"
+        ? row.provider_type : null,
       status: status && typeof status.status === "string" ? status.status as WorkerStatus : null,
       effectiveDate: status && typeof status.effective_date === "string"
         ? status.effective_date : null,
@@ -673,6 +676,7 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
         state: payment.state as PaymentState,
         account_number: typeof payment.account_number === "string" ? payment.account_number : null,
         bank_id: typeof payment.bank_id === "string" ? payment.bank_id : null,
+        bank_name: typeof payment.bank_name === "string" ? payment.bank_name : null,
         account_holder_name: typeof payment.account_holder_name === "string"
           ? payment.account_holder_name : null,
       },
@@ -698,7 +702,7 @@ function ProposeDrawer({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const [target, setTarget] = useState<WorkerProposeTarget>("WORK_STATUS");
+  const [target, setTarget] = useState<WorkerProposeTarget>("WORKER");
   const [workerForm, setWorkerForm] = useState<WorkerForm | null>(null);
   const [paymentState, setPaymentState] = useState<PaymentState>("omitted");
   const [accountNumber, setAccountNumber] = useState("");
@@ -707,6 +711,8 @@ function ProposeDrawer({
   const [targetStatus, setTargetStatus] = useState("");
   const [effectiveDate, setEffectiveDate] = useState("");
   const [leaveReason, setLeaveReason] = useState("");
+  const today = hcmTodayDate();
+  const catalog = catalogFor(today);
 
   useEffect(() => {
     if (row === null) return;
@@ -727,9 +733,12 @@ function ProposeDrawer({
       },
       () => { if (active) { setBaseline(null); setLoading(false); } },
     );
-    void ensureCatalog(hcmTodayDate()).catch(() => undefined);
     return () => { active = false; };
-  }, [row, ensureCatalog]);
+  }, [row]);
+
+  useEffect(() => {
+    if (row !== null) void ensureCatalog(today).catch(() => undefined);
+  }, [row, ensureCatalog, today]);
 
   async function submit(): Promise<void> {
     if (row === null || baseline === null) return;
@@ -747,10 +756,14 @@ function ProposeDrawer({
       proposal = built.proposal;
       targetKind = "ENTRY_FIELD";
     } else if (target === "PAYMENT") {
-      const catalog = catalogFor(hcmTodayDate());
       const activeBankIds = new Set((catalog?.banks ?? []).map((bank) => bank.bank_id));
       const built = buildPaymentProposal({
-        baseline: baseline.payment === null ? null : projectPaymentInput(baseline.payment, activeBankIds),
+        baseline: baseline.payment === null ? null : projectPaymentInput({
+          state: baseline.payment.state,
+          account_number: baseline.payment.account_number,
+          bank_id: baseline.payment.bank_id,
+          account_holder_name: baseline.payment.account_holder_name,
+        }, activeBankIds),
         draft: { state: paymentState, account_number: accountNumber === "" ? null : accountNumber,
           bank_id: bankId === "" ? null : bankId,
           account_holder_name: accountHolder === "" ? null : accountHolder },
@@ -767,7 +780,7 @@ function ProposeDrawer({
         status: targetStatus as WorkerStatus,
         effectiveDate: effectiveDate === "" ? (baseline.effectiveDate ?? row.first_work_date) : effectiveDate,
         leaveReason,
-        today: hcmTodayDate(),
+        today,
       });
       if (!built.ok) { setMessage(proposalErrorMessage(built.code)); return; }
       proposal = built.proposal;
@@ -811,17 +824,56 @@ function ProposeDrawer({
         >
           <form className="flex min-h-0 w-full flex-col"
             onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-            <header className="shrink-0 border-b border-border px-4 py-4 sm:px-5">
-              <Dialog.Title className="text-lg font-semibold">Đề xuất thay đổi</Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-muted">
-                {row === null ? "" : row.display_name + " · " + row.employee_code}
-              </Dialog.Description>
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border
+              bg-surface px-4 py-4 sm:px-5">
+              <div>
+                <Dialog.Title className="text-xl font-semibold">Đề xuất thay đổi</Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-muted">
+                  Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần đổi rồi nhập lý do để gửi duyệt.
+                </Dialog.Description>
+              </div>
+              <button type="button" aria-label="Đóng đề xuất" disabled={busy}
+                className="inline-flex size-10 shrink-0 items-center justify-center rounded-full
+                  border border-border bg-surface text-xl text-muted hover:bg-muted/10
+                  hover:text-foreground focus-visible:outline-none focus-visible:ring-2
+                  focus-visible:ring-ring/40 disabled:opacity-50"
+                onClick={() => onOpenChange(false)}>×</button>
             </header>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
-              <p className="rounded-md border border-border bg-muted/10 p-3 text-xs text-muted">
-                Mã người lao động, dự án, ngày đầu tiên, người tuyển và loại hình lao động là
-                trường được bảo vệ: chỉ xem, không đề xuất thay đổi. Tên người lao động giữ nguyên.
+              {row !== null ? (
+                <section aria-labelledby="proposal-current-profile"
+                  className="rounded-xl border border-border bg-muted/10 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 id="proposal-current-profile" className="font-semibold">Hồ sơ hiện tại</h3>
+                    <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs
+                      font-medium text-muted">Phiên bản {baseline?.version ?? row.entry_version}</span>
+                  </div>
+                  <dl className="mt-3 grid gap-x-5 gap-y-3 text-sm sm:grid-cols-2">
+                    {[
+                      ["Họ và tên", row.display_name],
+                      ["Mã người lao động", row.employee_code],
+                      ["Dự án", row.project_display],
+                      ["Ngày bắt đầu làm việc", row.first_work_date],
+                      ["Người tuyển / Vendor", row.recruiter_display],
+                      ["HRP/Vendor", baseline?.providerType === "hrp" ? "HRP"
+                        : baseline?.providerType === "vendor" ? "Vendor" : "—"],
+                      ["Loại hình lao động", row.labor_type === "TEMPORARY" ? "Thời vụ" : "Chính thức"],
+                      ["Trạng thái làm việc", workerStatusLabel(baseline?.status ?? row.employment_status)],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-muted">{label}</dt>
+                        <dd className="mt-0.5 break-words font-medium text-foreground">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ) : null}
+              <p className="rounded-md border border-blue-500/30 bg-blue-50 p-3 text-sm text-blue-700
+                dark:bg-blue-950/40 dark:text-blue-300">
+                Mã người lao động, dự án, ngày bắt đầu, người tuyển, loại hình lao động và họ tên
+                là trường được bảo vệ — chỉ xem. Những trường được phép sửa bên dưới luôn bắt đầu từ
+                dữ liệu đang lưu, không cần nhập lại từ đầu.
               </p>
               {loading ? (
                 <p role="status" className="rounded-md border border-blue-500/30 bg-blue-50 p-3 text-sm
@@ -847,7 +899,18 @@ function ProposeDrawer({
               </div>
 
               {target === "WORKER" && workerForm !== null ? (
-                <>
+                <section aria-labelledby="worker-profile-fields" className="space-y-4 rounded-xl
+                  border border-border p-4">
+                  <div>
+                    <h3 id="worker-profile-fields" className="font-semibold">Thông tin người lao động</h3>
+                    <p className="mt-1 text-xs text-muted">Chỉnh trên giá trị hiện tại.</p>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-display-name" className="text-sm font-medium">Họ và tên</label>
+                    <input id="worker-display-name" className={inputClass} disabled
+                      value={workerForm.display_name} readOnly />
+                    <p className="text-xs text-muted">Họ tên giữ nguyên; đây là trường được bảo vệ.</p>
+                  </div>
                   {WORKER_FORM_FIELDS.map((field) => (
                     <div key={field} className="flex flex-col gap-1.5">
                       <label htmlFor={"worker-" + field} className="text-sm font-medium">
@@ -867,23 +930,41 @@ function ProposeDrawer({
                           <option value="provided">Có giá trị</option>
                           <option value="omitted">{OPTIONAL_STATE_LABELS.omitted}</option>
                           <option value="unknown">{OPTIONAL_STATE_LABELS.unknown}</option>
-                          <option value="intentionally_blank">{OPTIONAL_STATE_LABELS.intentionally_blank}</option>
+                           {field === "gender" ? null : (
+                             <option value="intentionally_blank">
+                               {OPTIONAL_STATE_LABELS.intentionally_blank}
+                             </option>
+                           )}
                         </select>
-                        <input id={"worker-" + field} className={inputClass}
-                          aria-label={WORKER_FIELD_LABELS[field] + " người lao động"}
-                          disabled={workerForm[field].state !== "provided"}
-                          value={workerForm[field].text}
-                          onChange={(event) => setWorkerForm({
-                            ...workerForm,
-                            [field]: { state: "provided", text: event.target.value },
-                          })} />
+                        {field === "gender" ? (
+                          <select id="worker-gender" className={inputClass}
+                            aria-label="Giới tính người lao động"
+                            disabled={workerForm.gender.state !== "provided"}
+                            value={workerForm.gender.text}
+                            onChange={(event) => setWorkerForm({ ...workerForm,
+                              gender: { state: "provided", text: event.target.value } })}>
+                            <option value="">Chọn giới tính</option>
+                            <option value="FEMALE">Nữ</option>
+                            <option value="MALE">Nam</option>
+                            <option value="OTHER">Khác</option>
+                          </select>
+                        ) : (
+                          <input id={"worker-" + field} className={inputClass}
+                            aria-label={WORKER_FIELD_LABELS[field] + " người lao động"}
+                            inputMode={field === "national_id" || field === "phone" ? "numeric" : undefined}
+                            placeholder={field === "date_of_birth" || field === "national_id_issued_at"
+                              ? "DD/MM/YYYY" : undefined}
+                            disabled={workerForm[field].state !== "provided"}
+                            value={workerForm[field].text}
+                            onChange={(event) => setWorkerForm({
+                              ...workerForm,
+                              [field]: { state: "provided", text: event.target.value },
+                            })} />
+                        )}
                       </div>
                     </div>
                   ))}
-                  <p className="text-xs text-muted">
-                    Tên người lao động: {workerForm.display_name} (giữ nguyên)
-                  </p>
-                </>
+                </section>
               ) : null}
 
               {target === "PAYMENT" ? (
@@ -908,9 +989,17 @@ function ProposeDrawer({
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="bank-id" className="text-sm font-medium">Ngân hàng</label>
-                    <input id="bank-id" className={inputClass} value={bankId}
+                    <select id="bank-id" className={inputClass} value={bankId}
                       disabled={paymentState !== "provided"}
-                      onChange={(event) => setBankId(event.target.value)} />
+                      onChange={(event) => setBankId(event.target.value)}>
+                      <option value="">Chọn ngân hàng</option>
+                      {bankId !== "" && !(catalog?.banks ?? []).some((bank) => bank.bank_id === bankId) ? (
+                        <option value={bankId}>{baseline?.payment?.bank_name ?? "Ngân hàng hiện tại"}</option>
+                      ) : null}
+                      {(catalog?.banks ?? []).map((bank) => (
+                        <option key={bank.bank_id} value={bank.bank_id}>{bank.display_name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="bank-holder" className="text-sm font-medium">Tên chủ tài khoản</label>
@@ -945,7 +1034,7 @@ function ProposeDrawer({
                     <label htmlFor="worker-effective-date" className="text-sm font-medium">Ngày hiệu lực</label>
                     <input id="worker-effective-date" type="date" className={inputClass}
                       min={baseline?.effectiveDate ?? row?.first_work_date ?? undefined}
-                      max={hcmTodayDate()} value={effectiveDate}
+                      max={today} value={effectiveDate}
                       disabled={loading || baseline === null}
                       onChange={(event) => setEffectiveDate(event.target.value)} />
                   </div>

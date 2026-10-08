@@ -55,10 +55,13 @@ export const OPTIONAL_STATE_LABELS: Readonly<Record<OptionalState, string>> = Ob
 
 export const WORKER_FIELD_LABELS = Object.freeze({
   display_name: "Họ tên",
+  gender: "Giới tính",
   date_of_birth: "Ngày sinh",
-  national_id: "Số định danh",
+  national_id: "Số CMT/CCCD",
+  national_id_issued_at: "Ngày cấp",
+  national_id_issued_place: "Nơi cấp",
   address: "Địa chỉ",
-  phone: "Điện thoại",
+  phone: "Số điện thoại",
 });
 
 export type WorkerFieldName = keyof typeof WORKER_FIELD_LABELS;
@@ -114,23 +117,45 @@ export function isPresenceOnlyWorkerDetails(value: unknown): boolean {
   return isRecord(value) && Object.keys(value).length === 1 && value.present === true;
 }
 
-/** Strict-project worker_details FULL (chi khi du 5 field hop le theo contract W01). */
+/** Strict-project canonical worker_details, gồm 5 field gốc và 3 field hồ sơ mở rộng. */
 export function projectWorkerDetails(value: unknown): WorkerDetails | null {
-  if (!isRecord(value) || Object.keys(value).length !== 5) return null;
+  if (!isRecord(value)) return null;
   if (!hasOnlyKeys(value, Object.keys(WORKER_FIELD_LABELS))) return null;
+  for (const required of ["display_name", "date_of_birth", "national_id", "address", "phone"]) {
+    if (!(required in value)) return null;
+  }
   if (typeof value.display_name !== "string") return null;
   const dateOfBirth = projectOptionalValue(value.date_of_birth, isValidFreeDate);
   const nationalId = projectOptionalValue(value.national_id,
     (input) => input.length >= 1 && input.length <= 64);
+  const gender = value.gender === undefined ? undefined : projectOptionalValue(value.gender,
+    (input) => input === "MALE" || input === "FEMALE" || input === "OTHER");
+  const issuedAt = value.national_id_issued_at === undefined ? undefined
+    : projectOptionalValue(value.national_id_issued_at, isValidFreeDate);
+  const issuedPlace = value.national_id_issued_place === undefined ? undefined
+    : projectOptionalValue(value.national_id_issued_place,
+      (input) => input.trim().length >= 1 && input.length <= 256);
   const address = projectOptionalValue(value.address,
     (input) => input.length >= 1 && input.length <= 1024);
   const phone = projectOptionalValue(value.phone,
     (input) => input.length >= 1 && input.length <= 64);
-  if (!dateOfBirth || !nationalId || !address || !phone) return null;
+  if (!dateOfBirth || !nationalId || !address || !phone ||
+      (value.gender !== undefined && !gender) ||
+      (value.national_id_issued_at !== undefined && !issuedAt) ||
+      (value.national_id_issued_place !== undefined && !issuedPlace)) return null;
   const details: WorkerDetails = {
     display_name: value.display_name,
+    ...(value.gender === undefined ? {} : {
+      gender: gender as OptionalValue<"MALE" | "FEMALE" | "OTHER">,
+    }),
     date_of_birth: dateOfBirth,
     national_id: nationalId,
+    ...(value.national_id_issued_at === undefined ? {} : {
+      national_id_issued_at: issuedAt as OptionalValue<string>,
+    }),
+    ...(value.national_id_issued_place === undefined ? {} : {
+      national_id_issued_place: issuedPlace as OptionalValue<string>,
+    }),
     address,
     phone,
   };
@@ -249,8 +274,12 @@ export function workerDetailsRows(before: WorkerDetails, after: WorkerDetails): 
       }
       continue;
     }
-    const beforeText = optionalValueText(before[field]);
-    const afterText = optionalValueText(after[field]);
+    const beforeValue = before[field];
+    const afterValue = after[field];
+    const beforeText = beforeValue === undefined ? OPTIONAL_STATE_LABELS.omitted
+      : optionalValueText(beforeValue);
+    const afterText = afterValue === undefined ? OPTIONAL_STATE_LABELS.omitted
+      : optionalValueText(afterValue);
     if (beforeText !== afterText) {
       rows.push({ field, label: WORKER_FIELD_LABELS[field], before: beforeText, after: afterText });
     }

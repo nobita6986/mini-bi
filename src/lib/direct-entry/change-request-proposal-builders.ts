@@ -74,8 +74,11 @@ export type WorkerFieldForm = { state: OptionalState | "provided"; text: string 
 
 export type WorkerForm = {
   display_name: string;
+  gender: WorkerFieldForm;
   date_of_birth: WorkerFieldForm;
   national_id: WorkerFieldForm;
+  national_id_issued_at: WorkerFieldForm;
+  national_id_issued_place: WorkerFieldForm;
   address: WorkerFieldForm;
   phone: WorkerFieldForm;
 };
@@ -97,9 +100,11 @@ export function projectWorkerDetailsForProposal(value: unknown): WorkerDetails |
 }
 
 export const WORKER_FORM_FIELDS: readonly (keyof Omit<WorkerForm, "display_name">)[] =
-  ["date_of_birth", "national_id", "address", "phone"];
+  ["gender", "date_of_birth", "national_id", "national_id_issued_at",
+    "national_id_issued_place", "address", "phone"];
 
-function formFromOptional(value: OptionalValue<string>): WorkerFieldForm {
+function formFromOptional(value: OptionalValue<string> | undefined): WorkerFieldForm {
+  if (value === undefined) return { state: "omitted", text: "" };
   return value.state === "provided" ? { state: "provided", text: value.value } : {
     state: value.state, text: "",
   };
@@ -108,8 +113,11 @@ function formFromOptional(value: OptionalValue<string>): WorkerFieldForm {
 export function workerFormFromDetails(details: WorkerDetails): WorkerForm {
   return {
     display_name: details.display_name,
+    gender: formFromOptional(details.gender),
     date_of_birth: formFromOptional(details.date_of_birth),
     national_id: formFromOptional(details.national_id),
+    national_id_issued_at: formFromOptional(details.national_id_issued_at),
+    national_id_issued_place: formFromOptional(details.national_id_issued_place),
     address: formFromOptional(details.address),
     phone: formFromOptional(details.phone),
   };
@@ -124,35 +132,45 @@ function optionalFromForm(value: WorkerFieldForm): OptionalValue<string> | null 
 
 /** Doi form sang WorkerDetails; tra null khi mot field optional o trang thai provided nhung rong. */
 export function workerDetailsFromForm(form: WorkerForm): WorkerDetails | null {
+  const gender = optionalFromForm(form.gender);
   const dateOfBirth = optionalFromForm(form.date_of_birth);
   const nationalId = optionalFromForm(form.national_id);
+  const nationalIdIssuedAt = optionalFromForm(form.national_id_issued_at);
+  const nationalIdIssuedPlace = optionalFromForm(form.national_id_issued_place);
   const address = optionalFromForm(form.address);
   const phone = optionalFromForm(form.phone);
-  if (!dateOfBirth || !nationalId || !address || !phone) return null;
+  if (!gender || !dateOfBirth || !nationalId || !nationalIdIssuedAt ||
+      !nationalIdIssuedPlace || !address || !phone) return null;
+  if (gender.state === "intentionally_blank" ||
+      (gender.state === "provided" &&
+       gender.value !== "MALE" && gender.value !== "FEMALE" && gender.value !== "OTHER")) {
+    return null;
+  }
   return {
     display_name: form.display_name.trim(),
+    gender: gender as OptionalValue<"MALE" | "FEMALE" | "OTHER">,
     date_of_birth: dateOfBirth,
     national_id: nationalId,
+    national_id_issued_at: nationalIdIssuedAt,
+    national_id_issued_place: nationalIdIssuedPlace,
     address,
     phone,
   };
 }
 
-/** Proposal worker_details: thay the TOAN BO 5 field (contract yeu cau du shape), chi khi co doi. */
+/** Proposal worker_details: thay the toan bo canonical profile, chi khi co thay doi. */
 export function buildWorkerDetailsProposal(
   baseline: WorkerDetails,
   form: WorkerForm,
 ): ProposalBuildResult {
   const details = workerDetailsFromForm(form);
   if (!details) return { ok: false, code: "WORKER_INVALID" };
-  const candidate: WorkerDetails = {
-    ...details,
-    ...(baseline.gender === undefined ? {} : { gender: baseline.gender }),
-    ...(baseline.national_id_issued_at === undefined
-      ? {} : { national_id_issued_at: baseline.national_id_issued_at }),
-    ...(baseline.national_id_issued_place === undefined
-      ? {} : { national_id_issued_place: baseline.national_id_issued_place }),
-  };
+  const candidate: WorkerDetails = { ...details };
+  for (const field of [
+    "gender", "national_id_issued_at", "national_id_issued_place",
+  ] as const) {
+    if (baseline[field] === undefined && form[field].state === "omitted") delete candidate[field];
+  }
   if (validateWorkerDetails(candidate).length > 0) return { ok: false, code: "WORKER_INVALID" };
   if (!workerDetailsChanged(baseline, candidate)) return { ok: false, code: "WORKER_UNCHANGED" };
   return { ok: true, proposal: { worker_details: candidate } };
