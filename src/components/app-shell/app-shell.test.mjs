@@ -11,6 +11,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import { CURRENT_NAV_ENTRIES } from "../../lib/navigation/registry.ts";
+
 const appShellSource = readFileSync(new URL("./app-shell.tsx", import.meta.url), "utf8");
 const mobileNavSource = readFileSync(new URL("./mobile-nav.tsx", import.meta.url), "utf8");
 const desktopNavSource = readFileSync(new URL("./desktop-nav.tsx", import.meta.url), "utf8");
@@ -180,6 +182,15 @@ test("desktop nav client boundary only receives serializable fields; icons stay 
   assert.ok(!desktopNavSource.includes("NavEntry"), "client nav must not accept registry entries with component icons");
   assert.ok(desktopNavSource.includes('"project-operations": Building2'));
   assert.ok(desktopNavSource.includes('"direct-entry": ClipboardList'));
+});
+
+test("desktop/mobile nav have a local icon for every current registry entry", () => {
+  for (const entry of CURRENT_NAV_ENTRIES) {
+    const escapedId = entry.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const mapping = new RegExp(`["']?${escapedId}["']?\\s*:`);
+    assert.match(desktopNavSource, mapping, `desktop icon missing for ${entry.id}`);
+    assert.match(mobileNavSource, mapping, `mobile icon missing for ${entry.id}`);
+  }
 });
 
 test("mobile-nav nhận danh sách server-filtered, dùng usePathname, không đọc env", () => {
