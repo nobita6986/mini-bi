@@ -1,6 +1,6 @@
 # P2.5-W06A-R2 - Close manager operations UX (rebaselined)
 
-Status: `P2.5-W06A-R2-R1_LOCAL_PASS`. Base `origin/main@b4a75ab` (W04 T1C #53). Branch `feature/p2-5-w06a-r2`. No Production apply, no deploy, no main push, no rebase/amend/cherry-pick of pushed branches.
+Status: `P2.5-W06A-R2-R1_LOCAL_PASS`. Base `origin/main@b4a75ab` (W04 T1C #53). Branch `feature/p2-5-w06a-r2`. No Production apply/deploy; no rebase/amend/cherry-pick or history rewrite of pushed branches.
 
 ## R2-R1 delta (bounds fix)
 
@@ -17,7 +17,7 @@ Status: `P2.5-W06A-R2-R1_LOCAL_PASS`. Base `origin/main@b4a75ab` (W04 T1C #53). 
 
 ## Tests
 
-`test:p2.5-w06a` 3 (candidate authority deny no-scope; active+verified-only + search; no auth/user/PII) · `test:server` 203 · `test:app-nav-02a` 89 · model 3-way split + candidate label · component source (combobox, no raw UUID, future section) · API candidate (gate first, actor from session). typecheck 0, lint 0 errors, build 0, `git diff --check` clean.
+`test:p2.5-w06a` 4/4 · `test:server` 204/204 · `test:app-nav-02a` 89/89 · `docs:check` 6/6 · model 3-way split + candidate label · component source (combobox, no raw UUID, future section) · API candidate (gate first, actor from session; oversized search rejected before repository) · DB bound regression (150 eligible → deterministic 100). typecheck 0, lint 0 errors, build 0, `git diff --check` clean.
 
 ## Remaining blocker
 
