@@ -57,11 +57,11 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 57, "the ledger carries 57 migrations after the initial-ON policy");
-  assert.equal(names[names.length - 1], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
-  assert.equal(names[names.length - 2], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
-  assert.equal(names[names.length - 3], W05_MIGRATION, "W05-R1 follows W05 #55");
-  assert.equal(names[names.length - 4], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
+  assert.equal(names.length, 58, "the ledger carries 58 migrations after P2.5-HF");
+  assert.equal(names[names.length - 2], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
+  assert.equal(names[names.length - 3], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
+  assert.equal(names[names.length - 4], W05_MIGRATION, "W05-R1 follows W05 #55");
+  assert.equal(names[names.length - 5], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
   return db;
 }
 

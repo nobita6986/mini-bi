@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 57, "the initial-ON policy appends as #57 after P2.5-W05-R1 #56");
+  assert.equal(totalCount, 58, "P2.5-HF appends as #58 after the initial-ON policy #57");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -603,9 +603,9 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // P2.5-W05 (#55) adds one internal scope reader and one service-role-only
     // reviewer-bundle reader. Nothing is reachable by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 114,
-      service_role: 58,
-      internal: 56,
+      total: 117,
+      service_role: 59,
+      internal: 58,
       exposed_internal: 0,
     });
   } finally {
@@ -997,12 +997,17 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
     );
     assert.equal(noPayment.entry_ids.length, 1);
     const beforePaymentDenied = await count(db, "direct_entries");
-    await assert.rejects(
-      rpc(db, [row(302, { payment: { state: "unknown" } })],
-        "91600000-0000-4000-8000-000000000120"),
-      (error) => error.code === "42501",
+    // P2.5-HF: this fixture actor holds an effective project-manager assignment on the
+    // row's project, so the creation authority is the assignment and the payment
+    // capabilities are no longer required to record bank text at creation. A
+    // non-manager actor is still refused by the authority guard (asserted in
+    // scripts/p2-5-hf-worker-create-rehire-db.test.mjs).
+    const managerBankText = await rpc(
+      db, [row(302, { payment: { state: "unknown" } })],
+      "91600000-0000-4000-8000-000000000120",
     );
-    assert.equal(await count(db, "direct_entries"), beforePaymentDenied);
+    assert.equal(managerBankText.entry_ids.length, 1);
+    assert.equal(await count(db, "direct_entries"), beforePaymentDenied + 1);
     await db.exec(`
       insert into public.direct_entry_capability_grants
         (app_user_id, capability, valid_from) values

@@ -180,9 +180,9 @@ test("57 migrations apply from scratch and expose only the approved RPC boundary
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
   // W05A #48, W07C-R7 #49, W07E #50, W02 #51, W03 #52, W04 #53,
-  // W06A #54, W05 #55, W05-R1 #56 and initial-ON #57.
-  assert.equal(names.length, 57,
-    "the migrations directory contains the initial-ON policy after the 56-migration baseline");
+  // W06A #54, W05 #55, W05-R1 #56, initial-ON #57 and P2.5-HF #58.
+  assert.equal(names.length, 58,
+    "the migrations directory contains P2.5-HF after the initial-ON policy");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +
