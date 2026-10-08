@@ -57,7 +57,6 @@ test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projec
 
 test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi tab/filter", () => {
   assert.match(source, /applyPage\(/);
-  assert.match(source, /beginLoad/);
   assert.match(source, /failLoad\(/);
   assert.match(source, /resetTabPage\(\)/);
   assert.match(source, /hasMore=\{/);
@@ -160,6 +159,20 @@ test("W06-R1: review queue tai su dung list/reviewer hien co, chi khi canReview"
   assert.match(source, /onReview=\{/);
   // Khong nhung editor Direct Entry.
   assert.equal(/DirectEntryLive|DirectEntryShell|DirectEntrySpreadsheetGrid/.test(source), false);
+});
+
+test("W06-R2: approve/reject reloads the authoritative review queue", () => {
+  assert.match(source, /const reloadRequestPage = useCallback\(async \(\): Promise<void> =>/);
+  assert.match(source, /onDecided=\{\(message\) => \{[\s\S]*?void reloadRequestPage\(\);[\s\S]*?\}\}/);
+  assert.doesNotMatch(
+    source,
+    /onDecided=\{[\s\S]*?items:\s*requestPage\.items[\s\S]*?\}\}/,
+    "decision callback must not re-apply the stale pre-decision page",
+  );
+});
+
+test("W06-R2: selecting the active tab does not reset it without triggering a fetch", () => {
+  assert.match(source, /function selectTab\([\s\S]*?if \(next === tab\) \{[\s\S]*?return;[\s\S]*?\}/);
 });
 
 test("W06-R1: propose drawer gom WORKER + PAYMENT + WORK_STATUS bang builder hien co", () => {

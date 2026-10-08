@@ -1,6 +1,6 @@
 # P2.5-W06-R2 - Runtime access + pagination
 
-Status: `P2.5-W06-R2_LOCAL_PASS_AWAITING_T0_REVIEW`. Base `origin/main@32fa36ce72697fe7a799f4c41cd50012205543c4`; parent `0e2cbbaf7c7ddb71f6b43bdd2f3fd37a7113dbf3`. Branch `feature/p2-5-w06-worker-operations-ui`. No migration/backend contract, no Production apply, no deploy, no merge main.
+Status: `P2.5-W06-R2_T0_REVIEW_CLOSED`. Base `origin/main@32fa36ce72697fe7a799f4c41cd50012205543c4`; parent `0e2cbbaf7c7ddb71f6b43bdd2f3fd37a7113dbf3`. Branch `feature/p2-5-w06-worker-operations-ui`. No migration/backend contract or Production apply.
 
 ## Delta
 
@@ -28,7 +28,7 @@ Status: `P2.5-W06-R2_LOCAL_PASS_AWAITING_T0_REVIEW`. Base `origin/main@32fa36ce7
 
 ## Tests
 
-`test:p2.5-w06` 38/38 (model 19 + component 19) — gom regression hanh vi moi: initial tab theo actor, append 2 page khong trung/khong sot, reset cursor khi doi tab/filter, load-more loi giu page, query khong mang cursor cu, malformed envelope/next_cursor fail-closed, review payload qua projector. 0e2cbba khong co cac helper nay nen assertion that bai that su.
+`test:p2.5-w06` 40/40 (model 19 + component 21) — gom regression hanh vi moi: initial tab theo actor, append 2 page khong trung/khong sot, reset cursor khi doi tab/filter, load-more loi giu page, query khong mang cursor cu, malformed envelope/next_cursor fail-closed, review payload qua projector, decision reload queue authoritative va click lai active tab khong ket o loading. 0e2cbba khong co cac helper nay nen assertion that bai that su.
 `test:server` 204/204 · `test:app-nav-02a` 91/91 · `test:p2.5-w03` 22/22 · `test:p2.5-w05` 7/7 · typegen+typecheck 0 · lint 0 errors (13 warnings) · build 0 · `git diff --check` clean.
 
 ## Blocker

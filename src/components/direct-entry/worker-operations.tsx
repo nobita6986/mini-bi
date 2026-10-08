@@ -27,7 +27,6 @@ import {
   WORKER_REQUEST_PAGE_SIZE,
   applyPage,
   bankAccountSummary,
-  beginLoad,
   emptyTabPage,
   failLoad,
   initialWorkerTab,
@@ -224,6 +223,13 @@ export function WorkerOperations({
       : failLoad(page, outcome.state, outcome.message));
   }, []);
 
+  const reloadRequestPage = useCallback(async (): Promise<void> => {
+    setRequestPage(resetTabPage());
+    const outcome = await fetchRequests(null).catch(
+      () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
+    applyRequestPage(outcome, false);
+  }, [fetchRequests, applyRequestPage]);
+
   /* ---------- effect: page 1 cho tab hien tai (moi tab doc lap) ---------- */
 
   useEffect(() => {
@@ -268,6 +274,10 @@ export function WorkerOperations({
   }
 
   function selectTab(next: WorkerOperationsTab, focus = true) {
+    if (next === tab) {
+      if (focus) tabRefs.current[tabs.indexOf(next)]?.focus();
+      return;
+    }
     setStatusFilter("");
     if (next === "uploader") setSubmissionPage(resetTabPage());
     else setWorkerPages((pages) => ({ ...pages, [next as WorkerScopeTab]: resetTabPage() }));
@@ -309,8 +319,7 @@ export function WorkerOperations({
         () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
     }
     if (canReview) {
-      applyRequestPage(await fetchRequests(null).catch(
-        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+      await reloadRequestPage();
     }
   }
 
@@ -329,8 +338,7 @@ export function WorkerOperations({
         return;
       }
       setNotice("Đã rút yêu cầu thay đổi.");
-      applyRequestPage(await fetchRequests(null).catch(
-        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+      await reloadRequestPage();
     } catch {
       setBusyRequestId(null);
       setNotice("Không rút được yêu cầu thay đổi.");
@@ -476,9 +484,11 @@ export function WorkerOperations({
           onOpenChange={(open) => { if (!open) setReviewRequest(null); }}
           catalogFor={catalogFor}
           ensureCatalog={ensureCatalog}
-          onDecided={(message) => { setNotice(message); setReviewRequest(null);
-            applyRequestPage({ ok: true, page: { items: requestPage.items,
-              next_cursor: requestPage.cursor, has_more: requestPage.hasMore } }, false); }}
+          onDecided={(message) => {
+            setNotice(message);
+            setReviewRequest(null);
+            void reloadRequestPage();
+          }}
           onConflict={(message) => { setConflict(message); setReviewRequest(null); }}
         />
       ) : null}
