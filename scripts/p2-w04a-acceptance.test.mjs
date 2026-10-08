@@ -39,7 +39,7 @@ async function seedFixture(db) {
   await db.query("insert into auth.users (id) values ($1)",
     ["10000000-0000-4000-8000-000000000001"]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject) values ($1, $2)",
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name) values ($1, $2, 'Synthetic Account')",
     ["20000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000001"],
   );
   await db.query("insert into public.teams (team_id, code, display_name) values ($1, $2, $3)",
@@ -677,7 +677,7 @@ test("R1 acceptance: dimension options view emits DE-only dimensions (project/re
     const deAuthSubject = "10000000-0000-4000-8000-0000000000de";
     await db.query("insert into auth.users (id) values ($1) on conflict do nothing", [deAuthSubject]);
     await db.query(
-      "insert into public.direct_entry_app_users (app_user_id, auth_subject) values ($1, $2) on conflict do nothing",
+      "insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name) values ($1, $2, 'Synthetic Account') on conflict do nothing",
       [deAppUserId, deAuthSubject]
     );
     for (const cap of ["entry_create", "submission_create", "entry_own"]) {

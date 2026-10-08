@@ -47,8 +47,11 @@ function failure(code: string, status: number): Response {
 }
 
 function actorProjection(actor: DirectEntryActor) {
+  // P2.5-HF-R5: display_name is the only identity field added for the header.
+  // Email, auth_subject and login metadata are never projected.
   return {
     app_user_id: actor.app_user_id,
+    display_name: actor.display_name,
     capabilities: actor.capabilities,
     scopes: actor.scopes,
     self_recruiter_suggestion: actor.self_recruiter_suggestion,

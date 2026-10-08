@@ -51,6 +51,19 @@ const HRP_CAPABILITIES = Object.freeze([
 const CONFIRM = "P3_W07B_ACCESS_APPLY";
 const UNASSIGNED_PROJECTS = Object.freeze(["AP", "TSCO"]);
 
+/**
+ * P2.5-HF-R5: direct_entry_app_users.display_name is NOT NULL and canonical.
+ * The bootstrap login label (for example "tuannh.td") is the account display
+ * name; a blank label fails closed instead of inventing a placeholder.
+ */
+function displayNameFor(accountId) {
+  const displayName = String(accountId ?? "").trim();
+  if (displayName.length < 1 || displayName.length > 256) {
+    throw new Error("DISPLAY_NAME_INVALID");
+  }
+  return displayName;
+}
+
 function emailFor(accountId) {
   return `${accountId}@hrpartner.vn`;
 }
@@ -104,11 +117,12 @@ async function applyPublicMappings(client, authUsersByEmail, recruiterByCode) {
       const authUser = authUsersByEmail.get(emailFor(accountId));
       if (!authUser) throw new Error("AUTH_USER_MISSING_AFTER_CREATE");
       const appUser = (await client.query(
-        `insert into public.direct_entry_app_users(auth_subject, enabled)
-         values ($1::uuid, true)
-         on conflict (auth_subject) do update set enabled = true
+        `insert into public.direct_entry_app_users(auth_subject, enabled, display_name)
+         values ($1::uuid, true, $2::text)
+         on conflict (auth_subject) do update
+           set enabled = true, display_name = excluded.display_name
          returning app_user_id`,
-        [authUser.id],
+        [authUser.id, displayNameFor(accountId)],
       )).rows[0];
       for (const capability of HRP_CAPABILITIES) {
         await client.query(

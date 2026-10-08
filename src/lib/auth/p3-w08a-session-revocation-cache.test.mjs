@@ -60,6 +60,7 @@ function source(relative) {
 const baseActor = {
   auth_subject: "00000000-0000-4000-8000-000000000001",
   app_user_id: "00000000-0000-4000-8000-000000000010",
+  display_name: "Synthetic Account",
   enabled: true,
   capabilities: ["entry_create", "entry_own"],
   scopes: [{
@@ -81,6 +82,7 @@ function fullRecord(overrides = {}) {
   return {
     auth_subject: "00000000-0000-4000-8000-000000000001",
     app_user_id: "00000000-0000-4000-8000-000000000010",
+    display_name: "Synthetic Account",
     enabled: true,
     capabilities: ["entry_create", "entry_own"],
     recruiter_links: [],
@@ -239,6 +241,7 @@ test("W08A B.4: account switching (A -> B) — only B's actor is in the next res
   const actorB = {
     ...structuredClone(baseActor),
     app_user_id: "00000000-0000-4000-8000-0000000000b1",
+    display_name: "Synthetic Account",
     capabilities: ["change_review"],
     self_recruiter_suggestion: "rcr_b",
     scopes: [{
@@ -684,6 +687,7 @@ test("W08A F.1: /api/auth/session after a real Supabase UNAUTHENTICATED returns 
 const actorBForConcurrency = {
   ...structuredClone(baseActor),
   app_user_id: "00000000-0000-4000-8000-0000000000b1",
+  display_name: "Synthetic Account",
   capabilities: ["change_review"],
   self_recruiter_suggestion: "rcr_b",
   scopes: [{
@@ -751,6 +755,7 @@ test("W08A G.1: concurrent A and B requests resolve in parallel without crossing
           "B repository saw A's auth subject");
         return fullRecord({
           app_user_id: actorBForConcurrency.app_user_id,
+          display_name: "Synthetic Account",
           capabilities: ["change_review"],
           self_recruiter_suggestion: "rcr_b",
         });

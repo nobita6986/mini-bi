@@ -59,19 +59,19 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 61, "the ledger carries 61 migrations after P2.5-HF-R3 #61");
-  assert.equal(names[names.length - 5], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
-  assert.equal(names[names.length - 6], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
-  assert.equal(names[names.length - 7], W05_MIGRATION, "W05-R1 follows W05 #55");
-  assert.equal(names[names.length - 8], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
+  assert.equal(names.length, 62, "the ledger carries 62 migrations after P2.5-HF-R3 #62");
+  assert.equal(names[names.length - (6)], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
+  assert.equal(names[names.length - (7)], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
+  assert.equal(names[names.length - (8)], W05_MIGRATION, "W05-R1 follows W05 #55");
+  assert.equal(names[names.length - (9)], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
   return db;
 }
 
 async function insertActor(db, auth, app, capabilities, scopeKind = null, teamId = null) {
   await db.query("insert into auth.users (id) values ($1)", [auth]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
-    " values ($1,$2,true)", [app, auth]);
+    "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
+    " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   for (const capability of capabilities) {
     await db.query(
       "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
