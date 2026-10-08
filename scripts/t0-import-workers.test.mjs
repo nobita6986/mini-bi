@@ -344,8 +344,10 @@ test("R5B: authority and ledger gates fail closed with zero residue", async () =
     assert.equal(await entryCount(db), 0);
 
     // Expired assignment is not effective either.
+    // Seed a validly closed assignment (valid_to + revoked_at together, per constraint).
     await db.query("update public.direct_entry_project_manager_assignments" +
-      " set valid_from = '2020-01-01', valid_to = '2020-06-01' where project_id = $1", [PROJ_B]);
+      " set valid_from = '2020-01-01', valid_to = '2020-06-01', revoked_at = now()" +
+      " where project_id = $1", [PROJ_B]);
     const expired = await runImport(managerOptions, dependenciesFor(db).deps);
     assert.equal(expired.code, "AUTHORITY_DENIED");
     assert.equal(await entryCount(db), 0);

@@ -186,8 +186,8 @@ export function validateManifestRows(rawRows) {
     if (gender !== "" && !["MALE", "FEMALE", "OTHER"].includes(gender)) {
       errors.push(issue("ROW_GENDER_INVALID", sourceRowId));
     }
+    // worker_details chi chua cac key canonical; display_name nam o top-level contract row.
     const workerDetails = {
-      display_name: displayName,
       date_of_birth: optionalValue(raw.date_of_birth),
       national_id: { state: "provided", value: nationalId },
       address: optionalValue(raw.address),
