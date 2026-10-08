@@ -1,5 +1,6 @@
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
+import { isCanonicalNationalId } from "../contracts/national-id.ts";
 
 export const WORKER_PROFILE_CONTRACT_VERSION = "worker-profile/1.0" as const;
 export const SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION = "worker-profile/1.1" as const;
@@ -8,7 +9,7 @@ export const FULL_PROFILE_MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CATALOG_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const DIGITS = /^\d+$/;
+// P2.5-HF-R2: CMT/CCCD theo dung quy tac canonical dung chung (xem contracts/national-id.ts).
 const ROOT_KEYS = new Set(["contract_version", "rows"]);
 const ROW_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
@@ -173,9 +174,7 @@ function normalizeWorker(value: unknown, path: string, issues: ContractIssue[]) 
   } else if (gender.value.state === "provided") {
     gender.value = { state: "provided", value: gender.value.value.trim().toUpperCase() };
   }
-  if (nationalId.value.state === "provided" &&
-      (!DIGITS.test(nationalId.value.value) ||
-        ![9, 12].includes(nationalId.value.value.length))) {
+  if (nationalId.value.state === "provided" && !isCanonicalNationalId(nationalId.value.value)) {
     issues.push({ code: "NATIONAL_ID_INVALID", path: `${path}.national_id` });
   }
   if (issuedPlace.value.state === "provided" &&

@@ -3,6 +3,7 @@ import {
   isWithinInterval,
   normalizeReportingKey,
 } from "../analytics/identity/identity-shared.mjs";
+import { isCanonicalNationalId } from "./national-id.ts";
 import type {
   ProviderMembership,
   RecruiterIdentity,
@@ -458,7 +459,9 @@ export function validateWorkerDetails(worker: WorkerDetails): ValidationIssue[] 
         value === "MALE" || value === "FEMALE" || value === "OTHER"
       )) ||
     !validOptional(worker.date_of_birth, isValidFreeDate) ||
-    !validOptional(worker.national_id, (value) => typeof value === "string" && value.length <= 64) ||
+    // P2.5-HF-R2: CMT/CCCD dung mot quy tac canonical duy nhat (chi ASCII digits, 9 hoac 12
+    // ky tu, giu so 0 dau). Ky tu dinh dang bi tu choi ngay tai contract, khong doi DB tu choi.
+    !validOptional(worker.national_id, isCanonicalNationalId) ||
     (worker.national_id_issued_at !== undefined &&
       !validOptional(worker.national_id_issued_at, isValidFreeDate)) ||
     (worker.national_id_issued_place !== undefined &&

@@ -9,9 +9,9 @@
  * "intentionally_blank" vi UI chua cho nguoi dung chon ro.
  */
 import type { LaborType } from "../contracts/direct-entry-v1.ts";
+import { NATIONAL_ID_DIGIT_LENGTHS, isCanonicalNationalId } from "../contracts/national-id.ts";
 import {
   foldPasteToken,
-  isDigitStringOfLength,
   isFormulaLikeCell,
   normalizePasteDate,
   PASTE_MAX_ROWS,
@@ -35,7 +35,8 @@ export type Gender = (typeof GENDER_VALUES)[number];
 export const EMPLOYMENT_STATUS_VALUES = ["UNCONFIRMED", "ON", "OFF"] as const;
 export type EmploymentStatus = (typeof EMPLOYMENT_STATUS_VALUES)[number];
 
-export const NATIONAL_ID_LENGTHS = [9, 12] as const;
+/** P2.5-HF-R2: do dai nghiep vu lay tu quy tac canonical dung chung. */
+export const NATIONAL_ID_LENGTHS = NATIONAL_ID_DIGIT_LENGTHS;
 
 export type WorkerProfileOptional<T> =
   | { state: "provided"; value: T }
@@ -317,7 +318,7 @@ function buildRow(
   if (nationalIdRaw !== undefined && nationalIdRaw !== "") {
     if (isFormulaLikeCell(nationalIdRaw)) {
       fail(context, "PASTE_FORMULA_CELL", "national_id");
-    } else if (!isDigitStringOfLength(nationalIdRaw, NATIONAL_ID_LENGTHS)) {
+    } else if (!isCanonicalNationalId(nationalIdRaw)) {
       fail(context, "PASTE_NATIONAL_ID_INVALID", "national_id");
     } else {
       nationalId = provided(nationalIdRaw);

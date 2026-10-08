@@ -22,6 +22,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const R1_MIGRATION = "20261008190000_p2_5_hf_r1_episode_status_guard_and_lookup_boundary.sql";
+const R2_MIGRATION = "20261008200000_p2_5_hf_r2_cccd_canonicalization_guard.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -49,8 +50,9 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 59, "the ledger carries 59 migrations after P2.5-HF-R1 #59");
-  assert.equal(names[names.length - 1], R1_MIGRATION, "P2.5-HF-R1 appends as #59");
+  assert.equal(names.length, 60, "the ledger carries 60 migrations after P2.5-HF-R2 #60");
+  assert.equal(names[names.length - 1], R2_MIGRATION, "P2.5-HF-R2 appends as #60");
+  assert.equal(names[names.length - 2], R1_MIGRATION, "P2.5-HF-R1 appends as #59");
   return db;
 }
 
