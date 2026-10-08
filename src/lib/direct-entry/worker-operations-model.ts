@@ -71,6 +71,12 @@ export function canReviewChangeRequests(input: {
     input.capabilities.includes("change_review");
 }
 
+export function canDirectlyCorrectWorkers(input: WorkerOperationsActor | null): boolean {
+  return input !== null && input.scopes.some((scope) => scope.kind === "all") &&
+    input.capabilities.some((capability) =>
+      capability === "entry_admin" || capability === "entry_privileged_edit");
+}
+
 /** Propose targets duoc policy cho phep (khong co DOCUMENT/CCCD). */
 export const WORKER_PROPOSE_TARGETS = ["WORKER", "PAYMENT", "WORK_STATUS"] as const;
 export type WorkerProposeTarget = (typeof WORKER_PROPOSE_TARGETS)[number];
@@ -268,6 +274,24 @@ export function resetTabPage<T>(): TabPage<T> {
   return { items: [], cursor: null, hasMore: false, state: "loading", message: null };
 }
 
+export type WorkerDirectoryFilters = {
+  status: string;
+  projectId: string;
+  recruiterId: string;
+};
+
+export function updateWorkerDirectoryFilter<T>(input: {
+  page: TabPage<T>;
+  filters: WorkerDirectoryFilters;
+  field: keyof WorkerDirectoryFilters;
+  value: string;
+}): { page: TabPage<T>; filters: WorkerDirectoryFilters } {
+  return {
+    page: resetTabPage<T>(),
+    filters: { ...input.filters, [input.field]: input.value },
+  };
+}
+
 /** Bat dau tai. append=true (tai them) GIU items da co. */
 export function beginLoad<T>(page: TabPage<T>, append: boolean): TabPage<T> {
   return append
@@ -317,10 +341,16 @@ export function failLoad<T>(
 }
 
 export function workersQuery(input: {
-  scope: WorkerDirectoryScope; status: string; cursor: string | null;
+  scope: WorkerDirectoryScope;
+  status: string;
+  projectId?: string;
+  recruiterId?: string;
+  cursor: string | null;
 }): string {
   let query = "?scope=" + input.scope + "&page_size=" + String(WORKER_PAGE_SIZE);
   if (input.status !== "") query += "&employment_status=" + encodeURIComponent(input.status);
+  if (input.projectId) query += "&project_id=" + encodeURIComponent(input.projectId);
+  if (input.recruiterId) query += "&recruiter_id=" + encodeURIComponent(input.recruiterId);
   if (input.cursor !== null) query += "&cursor=" + encodeURIComponent(input.cursor);
   return query;
 }

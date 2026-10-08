@@ -50,7 +50,7 @@ test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projec
   assert.match(source, /tabScope\(tab\)/);
   assert.match(source, /parseSubmissionPageResponse/);
   assert.match(source, /parseWorkerPageResponse/);
-  assert.match(source, /workersQuery\(\{ scope, status, cursor \}\)/);
+  assert.match(source, /workersQuery\(\{[\s\S]{0,80}scope, \.\.\.workerFilters, cursor/);
   assert.match(source, /submissionsQuery\(cursor\)/);
   assert.match(source, /requestsQuery\(cursor\)/);
 });
@@ -108,7 +108,6 @@ test("W06: khong hien UUID tho trong UI", () => {
   // entry_id chi duoc dung lam React key, khong bao gio render thanh noi dung.
   assert.equal(/>\{row\.entry_id\}</.test(source), false, "khong render entry_id");
   assert.equal(/>\{row\.recruiter_id\}</.test(source), false, "khong render recruiter_id");
-  assert.equal(/row\.recruiter_id/.test(source), false, "khong dung recruiter_id de hien thi");
   // UUID chi xuat hien trong key={...} (khong phai text) hoac duong dan API.
   const rendered = source.match(/>\{[^}]*\.(entry_id|recruiter_id|request_id|submission_id)[^}]*\}</g) ?? [];
   assert.deepEqual(rendered, [], "khong render UUID tho");
@@ -171,7 +170,7 @@ test("W06: page boundary cung flag + actor resolver nhu /direct-entry", () => {
   assert.match(page, /canReview=\{canReview\}/);
   assert.match(page, /case "NOT_FOUND":[\s\S]{0,40}notFound\(\)/);
   assert.match(page, /redirect\("\/login\?next=\/direct-entry\/workers"\)/);
-  assert.match(page, /case "ALLOW":[\s\S]{0,600}<WorkerOperations/);
+  assert.match(page, /case "ALLOW":[\s\S]{0,800}<WorkerOperations/);
 });
 
 test("W06: nav entry 'worker-operations' duoc dang ky trong registry hien co", () => {
@@ -203,22 +202,25 @@ test("W06-R2: selecting the active tab does not reset it without triggering a fe
   assert.match(source, /function selectTab\([\s\S]*?if \(next === tab\) \{[\s\S]*?return;[\s\S]*?\}/);
 });
 
-test("W06-R1: propose drawer gom WORKER + PAYMENT + WORK_STATUS bang builder hien co", () => {
-  assert.match(source, /buildWorkerDetailsProposal/);
+test("W06-R1: proposal drawer reuses ENTRY_FIELD, PAYMENT and WORK_STATUS builders", () => {
+  assert.match(source, /buildEntryFieldProposal/);
   assert.match(source, /buildPaymentProposal/);
   assert.match(source, /buildWorkStatusProposal/);
   assert.match(source, /buildChangeRequestItem/);
   assert.match(source, /WORKER_PROPOSE_TARGETS\.map/);
   // Khong tu viet lai validation song song.
   assert.equal(/validateWorkerDetails\(/.test(source), false, "dung builder, khong lap validator");
-  // Protected fields read-only + display_name giu nguyen.
-  assert.match(source, /trường được bảo vệ/);
-  assert.match(source, /giữ nguyên/);
+  assert.match(source, /workerEntryFormFromBaseline/);
+  assert.match(source, /worker-employee-code/);
+  assert.match(source, /worker-project/);
+  assert.match(source, /worker-first-work-date/);
+  assert.match(source, /worker-recruiter/);
+  assert.match(source, /worker-labor-type/);
   // Khong co DOCUMENT/CCCD.
   assert.equal(/DOCUMENT|CCCD/.test(source), false);
 });
 
-test("W06 hotfix: proposal preloads full profile and keeps protected placement read-only", () => {
+test("HF-R4: proposal preloads and exposes each ENTRY_FIELD value", () => {
   assert.match(source, /Dữ liệu hiện tại được nạp sẵn/);
   assert.match(source, /Hồ sơ hiện tại/);
   assert.match(source, /WORKER_FORM_FIELDS\.map/);
@@ -229,17 +231,18 @@ test("W06 hotfix: proposal preloads full profile and keeps protected placement r
   ]) {
     assert.ok(source.includes(label), "missing current-profile label: " + label);
   }
-  assert.match(source, /id="worker-display-name"[\s\S]{0,160}disabled/);
+  assert.match(source, /id="worker-display-name"[\s\S]{0,180}value=\{entryForm\.workerDetails\.display_name\}/);
   assert.match(source, /<select id="bank-id"/);
   assert.match(source, /catalog\?\.banks/);
   assert.match(source, /useState<WorkerProposeTarget>\("WORKER"\)/);
 });
 
-test("W06-R1: reviewer khong co CTA sua truc tiep hay lap proposal", () => {
-  // CTA chi xuat hien trong WorkerTable theo cta.show; reviewer khong co nhanh rieng.
-  const buttons = source.match(/>\s*Đề xuất thay đổi\s*<\/button>/g) ?? [];
-  assert.equal(buttons.length, 1, "chi mot CTA de xuat, dieu khien boi allowed_actions");
-  assert.equal(/Sửa trực tiếp|direct edit|privileged/i.test(source), false);
+test("HF-R4: direct correction UI is gated by the server capability projection", () => {
+  assert.match(source, /canPrivilegedEditWorkers\?: boolean/);
+  assert.match(source, /canPrivilegedEdit=\{canPrivilegedEditWorkers\}/);
+  assert.match(source, /canPrivilegedEdit \? \(/);
+  assert.match(source, /\/privileged-edit/);
+  assert.match(page, /canPrivilegedEditWorkers=\{canPrivilegedEditWorkers\}/);
 });
 
 test("W06: reviewer UI dung authority backend (can_decide), khong suy tu role client", () => {

@@ -4,6 +4,7 @@ import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denie
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { WorkerOperations } from "@/components/direct-entry/worker-operations";
 import { decideWorkerOperationsPageAccess } from "@/lib/auth/direct-entry-page-access";
+import { canDirectlyCorrectWorkers } from "@/lib/direct-entry/worker-operations-model";
 import {
   workerOperationsAllScopePredicate,
   workerOperationsReviewPredicate,
@@ -45,6 +46,7 @@ export default async function WorkerOperationsPage() {
       const canSeeAllWorkers = projection !== null &&
         workerOperationsAllScopePredicate(projection);
       const canReview = projection !== null && workerOperationsReviewPredicate(projection);
+      const canPrivilegedEditWorkers = canDirectlyCorrectWorkers(projection);
       // Chi truyen capabilities + scope kind: khong lo auth_subject/app_user_id/PII.
       const actorProjection = projection === null ? null : {
         capabilities: [...projection.capabilities],
@@ -54,6 +56,7 @@ export default async function WorkerOperationsPage() {
         <WorkerOperations
           canSeeAllWorkers={canSeeAllWorkers}
           canReview={canReview}
+          canPrivilegedEditWorkers={canPrivilegedEditWorkers}
           actor={actorProjection}
         />
       );
