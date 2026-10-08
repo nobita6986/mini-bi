@@ -1,21 +1,19 @@
 "use client";
 
 /**
- * P2.5-W06-R1 - Worker Operations UI.
+ * P2.5-W06-R2 - Worker Operations UI.
  *
- * Bon view KHONG tron quyen: "Tôi đã nhập" (submission API, chi tra cuu),
- * "Người tôi tuyển" (scope=recruited), "Dự án tôi quản lý" (scope=managed),
- * "Toàn bộ NLĐ" (scope=all — chi khi server projection xac nhan entry_admin|change_review + all).
+ * Bon view KHONG tron quyen. Moi tab giu page state rieng: 403 cua mot audience chi la
+ * loi CUC BO trong tab do, khong thao ca trang/review queue/tab khac.
  *
- * Review queue dung lai DirectEntryChangeRequestList/Reviewer (authority W05 backend).
- * Moi CTA de xuat chi render khi server tra allowed_actions.propose_change === true.
+ * Pagination: projectSubmissionListPage / projectWorkerDirectoryPage /
+ * projectChangeRequestListPage; append dedupe theo stable id; doi tab/filter reset cursor.
+ * CTA de xuat chi render khi server tra allowed_actions.propose_change === true.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
 
-import { AccessDenied } from "@/components/auth/access-denied";
-import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import {
@@ -23,23 +21,41 @@ import {
   WORKER_CONFLICT_MESSAGE,
   WORKER_OPERATIONS_TAB_HINTS,
   WORKER_OPERATIONS_TAB_LABELS,
+  WORKER_PAGE_SIZE,
   WORKER_PROPOSE_TARGETS,
   WORKER_PROPOSE_TARGET_LABELS,
+  WORKER_REQUEST_PAGE_SIZE,
+  applyPage,
   bankAccountSummary,
-  isWorkerOperationsTab,
+  beginLoad,
+  emptyTabPage,
+  failLoad,
+  initialWorkerTab,
   lastDecisionLabel,
+  parseChangeRequestPageResponse,
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
   pendingRequestLabel,
   proposeCta,
+  requestRowKey,
+  requestsQuery,
+  resetTabPage,
+  submissionRowKey,
+  submissionsQuery,
   tabScope,
   visibleWorkerTabs,
   workerListErrorMessage,
+  workerRowKey,
   workerStatusLabel,
+  workersQuery,
+  type PageState,
+  type TabPage,
+  type WorkerOperationsActor,
   type WorkerOperationsTab,
   type WorkerProposeTarget,
 } from "@/lib/direct-entry/worker-operations-model";
 import type {
+  ChangeRequestListItem,
   SubmissionReadItem,
   WorkerDirectoryRow,
 } from "@/lib/direct-entry/worker-operations-model";
@@ -61,19 +77,12 @@ import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-resp
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import { projectPaymentInput, type PaymentState } from "@/lib/direct-entry/payment-contract";
 import type { WorkerDetails, WorkerStatus } from "@/lib/contracts/direct-entry-v1";
-import type { ChangeRequestListItem } from "@/lib/direct-entry/change-request-read-contract";
 
 const API = "/api/direct-entry";
-const PAGE_SIZE = 25;
-const REQUEST_PAGE_SIZE = 20;
 
-type ViewState = "loading" | "ready" | "empty" | "denied" | "unavailable" | "error";
-type LoadResult = {
-  state: ViewState;
-  notice?: string;
-  workers?: WorkerDirectoryRow[];
-  submissions?: SubmissionReadItem[];
-};
+type WorkerScopeTab = "recruited" | "managed" | "all";
+type Incoming<T> = { items: readonly T[]; next_cursor: string | null; has_more: boolean };
+type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: PageState; message: string | null };
 
 const tabClass =
   "inline-flex h-10 items-center rounded-md px-3 text-sm font-medium focus-visible:ring-2 " +
@@ -95,30 +104,34 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+function httpFailure(status: number): FetchOutcome<never> {
+  if (status === 403) return { ok: false, state: "denied", message: workerListErrorMessage(403) };
+  if (status >= 500) return { ok: false, state: "unavailable", message: null };
+  return { ok: false, state: "error", message: workerListErrorMessage(status) };
+}
+
 export function WorkerOperations({
-  initialTab = "uploader",
   canSeeAllWorkers = false,
   canReview = false,
+  actor = null,
 }: {
-  initialTab?: WorkerOperationsTab;
   canSeeAllWorkers?: boolean;
   canReview?: boolean;
+  actor?: WorkerOperationsActor | null;
 }) {
   const tabs = visibleWorkerTabs(canSeeAllWorkers);
   const [tab, setTab] = useState<WorkerOperationsTab>(
-    isWorkerOperationsTab(initialTab) && tabs.includes(initialTab) ? initialTab : "uploader",
-  );
-  const [state, setState] = useState<ViewState>("loading");
-  const [workers, setWorkers] = useState<WorkerDirectoryRow[]>([]);
-  const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
+    () => initialWorkerTab(actor, canSeeAllWorkers));
   const [statusFilter, setStatusFilter] = useState("");
+  const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
+    () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), all: emptyTabPage() }));
+  const [submissionPage, setSubmissionPage] =
+    useState<TabPage<SubmissionReadItem>>(emptyTabPage);
+  const [requestPage, setRequestPage] =
+    useState<TabPage<ChangeRequestListItem>>(emptyTabPage);
   const [notice, setNotice] = useState<string | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
-  const [requests, setRequests] = useState<ChangeRequestListItem[]>([]);
-  const [requestsState, setRequestsState] =
-    useState<"loading" | "ready" | "error">("loading");
-  const [requestsMessage, setRequestsMessage] = useState("");
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
@@ -134,131 +147,141 @@ export function WorkerOperations({
     })
       .then((response) => readJson(response))
       .then((body) => {
-        const catalog = parseDirectEntryCatalogResponse(body, date);
-        if (catalog === null) throw new Error("CATALOG_UNAVAILABLE");
-        setCatalogs((current) => ({ ...current, [date]: catalog }));
-        return catalog;
+        const parsed = parseDirectEntryCatalogResponse(body, date);
+        if (parsed === null) throw new Error("CATALOG_UNAVAILABLE");
+        setCatalogs((current) => ({ ...current, [date]: parsed }));
+        return parsed;
       });
   }, [catalogs]);
 
-  const fetchList = useCallback(async (
-    nextTab: WorkerOperationsTab, status: string,
-  ): Promise<LoadResult> => {
-    const nextScope = tabScope(nextTab);
-    const headers = { accept: "application/json" };
-    if (nextScope === null) {
-      const response = await fetch(API + "/submissions?page_size=" + String(PAGE_SIZE), { headers });
-      if (response.status === 403) return { state: "denied" };
-      if (response.status >= 500) return { state: "unavailable" };
-      const parsed = parseSubmissionPageResponse(await readJson(response), { page_size: PAGE_SIZE });
-      if (response.status !== 200 || parsed === null) return { state: "error" };
-      return { state: parsed.items.length === 0 ? "empty" : "ready",
-        submissions: parsed.items, workers: [] };
-    }
-    let url = API + "/workers?scope=" + nextScope + "&page_size=" + String(PAGE_SIZE);
-    if (status !== "") url += "&employment_status=" + encodeURIComponent(status);
-    const response = await fetch(url, { headers });
-    if (response.status === 403) return { state: "denied" };
-    if (response.status >= 500) return { state: "unavailable" };
-    if (response.status === 400) return { state: "error", notice: workerListErrorMessage(400) };
-    const parsed = parseWorkerPageResponse(await readJson(response), {
-      scope: nextScope, page_size: PAGE_SIZE,
-    });
-    if (response.status !== 200 || parsed === null) return { state: "error" };
-    return { state: parsed.items.length === 0 ? "empty" : "ready",
-      workers: parsed.items, submissions: [] };
+  /* ---------- fetchers (khong setState) ---------- */
+
+  const fetchWorkers = useCallback(async (
+    scope: WorkerScopeTab, status: string, cursor: string | null,
+  ): Promise<FetchOutcome<WorkerDirectoryRow>> => {
+    const response = await fetch(API + "/workers" + workersQuery({ scope, status, cursor }),
+      { headers: { accept: "application/json" } });
+    const payload = await readJson(response);
+    if (response.status !== 200) return httpFailure(response.status);
+    const parsed = parseWorkerPageResponse(payload, { scope, page_size: WORKER_PAGE_SIZE });
+    if (parsed === null) return { ok: false, state: "error", message: workerListErrorMessage(200) };
+    return { ok: true, page: { items: parsed.items, next_cursor: parsed.next_cursor,
+      has_more: parsed.has_more } };
   }, []);
 
-  const applyResult = useCallback((result: LoadResult) => {
-    if (result.workers !== undefined) setWorkers(result.workers);
-    if (result.submissions !== undefined) setSubmissions(result.submissions);
-    setNotice(result.notice ?? null);
-    setState(result.state);
-  }, [setNotice, setState, setSubmissions, setWorkers]);
+  const fetchSubmissions = useCallback(async (
+    cursor: string | null,
+  ): Promise<FetchOutcome<SubmissionReadItem>> => {
+    const response = await fetch(API + "/submissions" + submissionsQuery(cursor),
+      { headers: { accept: "application/json" } });
+    const payload = await readJson(response);
+    if (response.status !== 200) return httpFailure(response.status);
+    const parsed = parseSubmissionPageResponse(payload, { page_size: WORKER_PAGE_SIZE });
+    if (parsed === null) return { ok: false, state: "error", message: workerListErrorMessage(200) };
+    return { ok: true, page: { items: parsed.items, next_cursor: parsed.next_cursor,
+      has_more: parsed.has_more } };
+  }, []);
 
-  const load = useCallback(async (nextTab: WorkerOperationsTab, status: string) => {
-    try {
-      applyResult(await fetchList(nextTab, status));
-    } catch {
-      setState("unavailable");
-    }
-  }, [applyResult, fetchList]);
+  const fetchRequests = useCallback(async (
+    cursor: string | null,
+  ): Promise<FetchOutcome<ChangeRequestListItem>> => {
+    const response = await fetch(API + "/change-requests" + requestsQuery(cursor),
+      { headers: { accept: "application/json" } });
+    const payload = await readJson(response);
+    if (response.status !== 200) return httpFailure(response.status);
+    const parsed = parseChangeRequestPageResponse(payload, { page_size: WORKER_REQUEST_PAGE_SIZE });
+    if (parsed === null) return { ok: false, state: "error", message: workerListErrorMessage(200) };
+    return { ok: true, page: { items: parsed.requests, next_cursor: parsed.next_cursor,
+      has_more: parsed.has_more } };
+  }, []);
+
+  /* ---------- appliers ---------- */
+
+  const applyWorkerPage = useCallback((
+    scope: WorkerScopeTab, outcome: FetchOutcome<WorkerDirectoryRow>, append: boolean,
+  ) => {
+    setWorkerPages((pages) => ({
+      ...pages,
+      [scope]: outcome.ok
+        ? applyPage(pages[scope], outcome.page, workerRowKey, append)
+        : failLoad(pages[scope], outcome.state, outcome.message),
+    }));
+  }, []);
+
+  const applySubmissionPage = useCallback((
+    outcome: FetchOutcome<SubmissionReadItem>, append: boolean,
+  ) => {
+    setSubmissionPage((page) => outcome.ok
+      ? applyPage(page, outcome.page, submissionRowKey, append)
+      : failLoad(page, outcome.state, outcome.message));
+  }, []);
+
+  const applyRequestPage = useCallback((
+    outcome: FetchOutcome<ChangeRequestListItem>, append: boolean,
+  ) => {
+    setRequestPage((page) => outcome.ok
+      ? applyPage(page, outcome.page, requestRowKey, append)
+      : failLoad(page, outcome.state, outcome.message));
+  }, []);
+
+  /* ---------- effect: page 1 cho tab hien tai (moi tab doc lap) ---------- */
 
   useEffect(() => {
     let active = true;
-    fetchList(tab, statusFilter).then(
-      (result) => { if (active) applyResult(result); },
-      () => { if (active) setState("unavailable"); },
-    );
-    return () => { active = false; };
-  }, [fetchList, tab, statusFilter, applyResult]);
-
-  const fetchRequests = useCallback(async (): Promise<{
-    ok: boolean; items: ChangeRequestListItem[] | null;
-  }> => {
-    const response = await fetch(
-      API + "/change-requests?page_size=" + String(REQUEST_PAGE_SIZE),
-      { headers: { accept: "application/json" } });
-    const body = await readJson(response);
-    const record = typeof body === "object" && body !== null
-      ? body as Record<string, unknown> : null;
-    const items = record && Array.isArray(record.requests)
-      ? record.requests as ChangeRequestListItem[] : null;
-    return { ok: response.status === 200 && items !== null, items };
-  }, []);
-
-  const applyRequests = useCallback((result: {
-    ok: boolean; items: ChangeRequestListItem[] | null;
-  }) => {
-    if (!result.ok || result.items === null) { setRequestsState("error"); setRequestsMessage(""); return; }
-    setRequests(result.items);
-    setRequestsMessage("");
-    setRequestsState("ready");
-  }, []);
-
-  const loadRequests = useCallback(async () => {
-    try {
-      applyRequests(await fetchRequests());
-    } catch {
-      setRequestsState("error");
+    if (tab === "uploader") {
+      fetchSubmissions(null).then(
+        (outcome) => { if (active) applySubmissionPage(outcome, false); },
+        () => { if (active) setSubmissionPage((page) => failLoad(page, "unavailable", null)); },
+      );
+    } else {
+      const scope = tab as WorkerScopeTab;
+      fetchWorkers(scope, statusFilter, null).then(
+        (outcome) => { if (active) applyWorkerPage(scope, outcome, false); },
+        () => { if (active) applyWorkerPage(scope, { ok: false, state: "unavailable", message: null }, false); },
+      );
     }
-  }, [applyRequests, fetchRequests]);
+    return () => { active = false; };
+  }, [tab, statusFilter, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
 
   useEffect(() => {
     if (!canReview) return;
     let active = true;
-    fetchRequests().then(
-      (result) => { if (active) applyRequests(result); },
-      () => { if (active) setRequestsState("error"); },
+    fetchRequests(null).then(
+      (outcome) => { if (active) applyRequestPage(outcome, false); },
+      () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", null)); },
     );
     return () => { active = false; };
-  }, [canReview, fetchRequests, applyRequests]);
+  }, [canReview, fetchRequests, applyRequestPage]);
 
-  async function withdrawRequest(request: ChangeRequestListItem): Promise<void> {
-    setBusyRequestId(request.request_id);
-    try {
-      const response = await fetch(
-        API + "/change-requests/" + encodeURIComponent(request.request_id) + "/withdraw",
-        { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ expected_version: request.version, idempotency_key: crypto.randomUUID() }) });
-      setBusyRequestId(null);
-      if (response.status === 409) { setConflict(WORKER_CONFLICT_MESSAGE); return; }
-      if (response.status !== 200 && response.status !== 201) {
-        setNotice("Không rút được yêu cầu thay đổi.");
-        return;
-      }
-      setNotice("Đã rút yêu cầu thay đổi.");
-      await loadRequests();
-    } catch {
-      setBusyRequestId(null);
-      setNotice("Không rút được yêu cầu thay đổi.");
-    }
+  /* ---------- load more ---------- */
+
+  async function loadMore<T>(
+    page: TabPage<T>, fetcher: (cursor: string | null) => Promise<FetchOutcome<T>>,
+    apply: (outcome: FetchOutcome<T>, append: boolean) => void,
+  ): Promise<void> {
+    if (page.cursor === null || !page.hasMore) return;
+    setBusyRequestId("more");
+    const outcome = await fetcher(page.cursor).catch(
+      () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
+    setBusyRequestId(null);
+    apply(outcome, true);
   }
 
   function selectTab(next: WorkerOperationsTab, focus = true) {
-    setTab(next);
     setStatusFilter("");
+    if (next === "uploader") setSubmissionPage(resetTabPage());
+    else setWorkerPages((pages) => ({ ...pages, [next as WorkerScopeTab]: resetTabPage() }));
+    setTab(next);
     if (focus) tabRefs.current[tabs.indexOf(next)]?.focus();
+  }
+
+  function changeFilter(value: string) {
+    setStatusFilter(value);
+    const scope = tabScope(tab);
+    if (scope !== null && scope !== undefined && scope !== "recruited" && scope !== "managed" && scope !== "all") return;
+    if (scope !== null && scope !== undefined) {
+      setWorkerPages((pages) => ({ ...pages, [scope as WorkerScopeTab]: resetTabPage() }));
+    }
   }
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number): void {
@@ -275,12 +298,49 @@ export function WorkerOperations({
 
   async function reload(): Promise<void> {
     setConflict(null);
-    await load(tab, statusFilter);
-    if (canReview) await loadRequests();
+    if (tab === "uploader") {
+      setSubmissionPage(resetTabPage());
+      applySubmissionPage(await fetchSubmissions(null).catch(
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+    } else {
+      const scope = tab as WorkerScopeTab;
+      setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
+      applyWorkerPage(scope, await fetchWorkers(scope, statusFilter, null).catch(
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+    }
+    if (canReview) {
+      applyRequestPage(await fetchRequests(null).catch(
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+    }
   }
 
-  if (state === "denied") return <AccessDenied />;
-  if (state === "unavailable") return <TemporaryUnavailable />;
+  async function withdrawRequest(request: ChangeRequestListItem): Promise<void> {
+    setBusyRequestId(request.request_id);
+    try {
+      const response = await fetch(
+        API + "/change-requests/" + encodeURIComponent(request.request_id) + "/withdraw",
+        { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ expected_version: request.version,
+            idempotency_key: crypto.randomUUID() }) });
+      setBusyRequestId(null);
+      if (response.status === 409) { setConflict(WORKER_CONFLICT_MESSAGE); return; }
+      if (response.status !== 200 && response.status !== 201) {
+        setNotice("Không rút được yêu cầu thay đổi.");
+        return;
+      }
+      setNotice("Đã rút yêu cầu thay đổi.");
+      applyRequestPage(await fetchRequests(null).catch(
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+    } catch {
+      setBusyRequestId(null);
+      setNotice("Không rút được yêu cầu thay đổi.");
+    }
+  }
+
+  const scope = tabScope(tab);
+  const workerPage = scope === null ? null : workerPages[scope as WorkerScopeTab];
+  const activePage: { state: PageState; message: string | null } =
+    workerPage ?? submissionPage;
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-4">
@@ -302,7 +362,8 @@ export function WorkerOperations({
             aria-selected={tab === value}
             aria-controls={"workers-panel-" + value}
             tabIndex={tab === value ? 0 : -1}
-            className={tabClass + (tab === value ? " border-b-2 border-primary text-foreground" : " text-muted-foreground")}
+            className={tabClass + (tab === value
+              ? " border-b-2 border-primary text-foreground" : " text-muted-foreground")}
             onClick={() => selectTab(value, false)}
             onKeyDown={(event) => onTabKeyDown(event, index)}
           >
@@ -329,7 +390,7 @@ export function WorkerOperations({
         id={"workers-panel-" + tab}
         aria-labelledby={"workers-tab-" + tab}
         className="flex flex-col gap-3"
-        aria-busy={state === "loading"}
+        aria-busy={activePage.state === "loading"}
       >
         <p className="text-sm text-muted-foreground">{WORKER_OPERATIONS_TAB_HINTS[tab]}</p>
 
@@ -337,7 +398,7 @@ export function WorkerOperations({
           <div className="flex flex-col gap-1 sm:max-w-xs">
             <label htmlFor={filterId} className="text-sm font-medium">Trạng thái làm việc</label>
             <select id={filterId} className={inputClass} value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}>
+              onChange={(event) => changeFilter(event.target.value)}>
               <option value="">Tất cả</option>
               {WORKER_EMPLOYMENT_STATUSES.map((status) => (
                 <option key={status} value={status}>{workerStatusLabel(status)}</option>
@@ -346,37 +407,54 @@ export function WorkerOperations({
           </div>
         )}
 
-        {state === "loading" ? (
+        {activePage.state === "loading" || activePage.state === "idle" ? (
           <p role="status" className="text-sm text-muted-foreground">Đang tải dữ liệu…</p>
         ) : null}
-        {state === "empty" ? (
+        {activePage.state === "empty" ? (
           <p role="status" className="text-sm text-muted-foreground">
             Không có người lao động nào trong quan hệ này.
           </p>
         ) : null}
-        {state === "error" ? (
+        {activePage.state === "error" || activePage.state === "denied" ||
+         activePage.state === "unavailable" ? (
           <div role="alert" className="flex flex-col gap-2 text-sm">
-            <span>Không tải được danh sách.</span>
-            <button type="button" className={buttonClass} onClick={() => void reload()}>Thử lại</button>
+            <span>{activePage.message ?? "Không tải được danh sách trong quan hệ này."}</span>
+            <button type="button" className={buttonClass} onClick={() => void reload()}>
+              Thử lại
+            </button>
           </div>
         ) : null}
 
-        {state === "ready" && tab === "uploader" ? (
-          <SubmissionTable submissions={submissions} />
+        {tab === "uploader" && submissionPage.state === "ready" ? (
+          <>
+            <SubmissionTable submissions={submissionPage.items} />
+            <LoadMore state={submissionPage.state} hasMore={submissionPage.hasMore}
+              busy={busyRequestId === "more"}
+              onLoadMore={() => void loadMore(submissionPage, fetchSubmissions, applySubmissionPage)} />
+          </>
         ) : null}
-        {state === "ready" && tab !== "uploader" ? (
-          <WorkerTable rows={workers} onPropose={(row) => setDrawerRow(row)} />
+        {workerPage !== null && workerPage.state === "ready" ? (
+          <>
+            <WorkerTable rows={workerPage.items} onPropose={(row) => setDrawerRow(row)} />
+            <LoadMore state={workerPage.state} hasMore={workerPage.hasMore}
+              busy={busyRequestId === "more"}
+              onLoadMore={() => void loadMore(workerPage, (cursor) =>
+                fetchWorkers(tab as WorkerScopeTab, statusFilter, cursor), (outcome, append) =>
+                applyWorkerPage(tab as WorkerScopeTab, outcome, append))} />
+          </>
         ) : null}
       </section>
 
       {canReview ? (
         <DirectEntryChangeRequestList
-          state={requestsState}
-          message={requestsMessage}
-          requests={requests}
-          hasMore={false}
+          state={requestPage.state === "ready" || requestPage.state === "empty"
+            ? "ready" : requestPage.state === "loading" || requestPage.state === "idle"
+              ? "loading" : "error"}
+          message={requestPage.message ?? ""}
+          requests={requestPage.items}
+          hasMore={requestPage.hasMore}
           busyRequestId={busyRequestId}
-          onLoadMore={() => { void loadRequests(); }}
+          onLoadMore={() => void loadMore(requestPage, fetchRequests, applyRequestPage)}
           onWithdraw={(request) => { void withdrawRequest(request); }}
           onReview={(request) => setReviewRequest(request)}
         />
@@ -398,11 +476,27 @@ export function WorkerOperations({
           onOpenChange={(open) => { if (!open) setReviewRequest(null); }}
           catalogFor={catalogFor}
           ensureCatalog={ensureCatalog}
-          onDecided={(message) => { setNotice(message); setReviewRequest(null); void loadRequests(); }}
+          onDecided={(message) => { setNotice(message); setReviewRequest(null);
+            applyRequestPage({ ok: true, page: { items: requestPage.items,
+              next_cursor: requestPage.cursor, has_more: requestPage.hasMore } }, false); }}
           onConflict={(message) => { setConflict(message); setReviewRequest(null); }}
         />
       ) : null}
     </main>
+  );
+}
+
+function LoadMore({
+  state, hasMore, busy, onLoadMore,
+}: { state: PageState; hasMore: boolean; busy: boolean; onLoadMore: () => void }) {
+  if (!hasMore) return null;
+  return (
+    <div className="flex justify-center">
+      <button type="button" className={buttonClass} disabled={busy || state === "loading"}
+        onClick={onLoadMore}>
+        Tải thêm
+      </button>
+    </div>
   );
 }
 
@@ -532,7 +626,8 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
       version: row.version,
       workerDetails: details,
       status: status && typeof status.status === "string" ? status.status as WorkerStatus : null,
-      effectiveDate: status && typeof status.effective_date === "string" ? status.effective_date : null,
+      effectiveDate: status && typeof status.effective_date === "string"
+        ? status.effective_date : null,
       payment: payment === null ? null : {
         state: payment.state as PaymentState,
         account_number: typeof payment.account_number === "string" ? payment.account_number : null,

@@ -7,9 +7,23 @@ import {
   WORKER_OPERATIONS_TAB_LABELS,
   WORKER_PROPOSE_TARGETS,
   WORKER_PROPOSE_TARGET_LABELS,
+  appendUnique,
+  applyPage,
   bankAccountSummary,
+  beginLoad,
   canReviewChangeRequests,
+  emptyTabPage,
+  failLoad,
+  initialWorkerTab,
   isWorkerOperationsTab,
+  parseChangeRequestPageResponse,
+  requestRowKey,
+  requestsQuery,
+  resetTabPage,
+  submissionRowKey,
+  submissionsQuery,
+  workerRowKey,
+  workersQuery,
   lastDecisionLabel,
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
@@ -71,6 +85,124 @@ test("W06-R1: review queue chi khi change_review + all scope", () => {
   assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "all" }] }), true);
 });
 
+test("W06-R2: helper phan trang ton tai (0e2cbba khong co -> test that bai that su)", () => {
+  // Cac ham nay duoc them o R2; o 0e2cbba khong ton tai nen assertion se fail.
+  for (const fn of [initialWorkerTab, applyPage, beginLoad, failLoad, resetTabPage, emptyTabPage,
+    appendUnique, workersQuery, submissionsQuery, requestsQuery, workerRowKey, submissionRowKey,
+    requestRowKey, parseChangeRequestPageResponse]) {
+    assert.equal(typeof fn, "function");
+  }
+});
+
+test("W06-R2: initial tab tu actor projection — reviewer vao thang scope=all", () => {
+  const all = [{ kind: "all" }];
+  // Reviewer bundle toi thieu + all => "all" (khong roi vao uploader).
+  assert.equal(initialWorkerTab({ capabilities: ["change_review", "pii_view", "payment_view"], scopes: all }, true), "all");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "all");
+  // PM-only (change_request_create, khong phai entry actor) => "managed".
+  assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), "managed");
+  // entry_* thong thuong => "uploader".
+  assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), "uploader");
+  assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), "uploader");
+  // Reviewer nhung server KHONG cho scope=all => khong duoc vao "all".
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, false), "uploader");
+  assert.equal(initialWorkerTab(null, true), "uploader");
+});
+
+test("W06-R2: append page dedupe theo stable id, khong trung/khong sot", () => {
+  const page1 = { items: [row(), row({ entry_id: "22222222-2222-4222-8222-222222222222" })],
+    next_cursor: "20261008120000000000:11111111-1111-4111-8111-111111111111", has_more: true };
+  const after1 = applyPage(emptyTabPage(), page1, workerRowKey, false);
+  assert.equal(after1.items.length, 2);
+  assert.equal(after1.hasMore, true);
+  assert.equal(after1.cursor, page1.next_cursor);
+  assert.equal(after1.state, "ready");
+  // Page 2 lap lai row dau + them row moi => khong trung, khong sot.
+  const page2 = { items: [row(), row({ entry_id: "33333333-3333-4333-8333-333333333333" })],
+    next_cursor: null, has_more: false };
+  const after2 = applyPage(after1, page2, workerRowKey, true);
+  assert.equal(after2.items.length, 3);
+  assert.deepEqual(after2.items.map(workerRowKey), [
+    row().entry_id, "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333"]);
+  assert.equal(after2.hasMore, false);
+  assert.equal(after2.cursor, null);
+  // Khong append => thay the hoan toan.
+  const replaced = applyPage(after2, page2, workerRowKey, false);
+  assert.equal(replaced.items.length, 2);
+});
+
+test("W06-R2: doi tab/filter reset cursor; beginLoad(append) giu items", () => {
+  const loaded = applyPage(emptyTabPage(), { items: [row()],
+    next_cursor: "20261008120000000000:11111111-1111-4111-8111-111111111111", has_more: true },
+    workerRowKey, false);
+  const reset = resetTabPage();
+  assert.deepEqual(reset.items, []);
+  assert.equal(reset.cursor, null);
+  assert.equal(reset.hasMore, false);
+  assert.equal(reset.state, "loading");
+  assert.equal(beginLoad(loaded, true).items.length, 1, "tai them giu items");
+  assert.equal(beginLoad(loaded, true).cursor, loaded.cursor);
+  assert.equal(beginLoad(loaded, false).items.length, 0, "tai lai xoa items");
+  assert.equal(beginLoad(loaded, false).cursor, null);
+});
+
+test("W06-R2: loi khi tai KHONG xoa page da tai thanh cong", () => {
+  const loaded = applyPage(emptyTabPage(), { items: [row()], next_cursor: null, has_more: false },
+    workerRowKey, false);
+  const failed = failLoad(loaded, "error", "loi tam thoi");
+  assert.equal(failed.items.length, 1, "giu du lieu da tai");
+  assert.equal(failed.state, "ready");
+  assert.equal(failed.message, "loi tam thoi");
+  // Page rong thi giu trang thai loi.
+  const emptyFailed = failLoad(emptyTabPage(), "denied", "khong co quyen");
+  assert.equal(emptyFailed.state, "denied");
+  assert.equal(emptyFailed.items.length, 0);
+});
+
+test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)", () => {
+  assert.equal(workersQuery({ scope: "recruited", status: "", cursor: null }),
+    "?scope=recruited&page_size=25");
+  assert.equal(workersQuery({ scope: "all", status: "ON", cursor: "c1" }),
+    "?scope=all&page_size=25&employment_status=ON&cursor=c1");
+  assert.equal(submissionsQuery(null), "?page_size=25");
+  assert.equal(submissionsQuery("c2"), "?page_size=25&cursor=c2");
+  assert.equal(requestsQuery(null), "?page_size=20");
+  assert.equal(requestsQuery("c3"), "?page_size=20&cursor=c3");
+  assert.equal(workersQuery({ scope: "managed", status: "", cursor: null }).includes("cursor"), false);
+});
+
+test("W06-R2: review payload phai qua projectChangeRequestListPage, fail-closed", () => {
+  const valid = { ok: true, requests: [{
+    request_id: REQUEST, state: "PENDING", version: 2,
+    created_at: "2026-10-01T00:00:00.000000Z", item_count: 1, entry_ids: [ENTRY],
+    can_withdraw: false, can_decide: true }],
+    page_size: 20, has_more: false, next_cursor: null };
+  const parsed = parseChangeRequestPageResponse(valid, { page_size: 20 });
+  assert.equal(parsed.requests.length, 1);
+  assert.equal(parsed.requests[0].can_decide, true);
+  // Malformed envelope / item / cursor => null (khong cast raw).
+  assert.equal(parseChangeRequestPageResponse({ ok: false }, { page_size: 20 }), null);
+  assert.equal(parseChangeRequestPageResponse({ ok: true, requests: [{}], page_size: 20,
+    has_more: false, next_cursor: null }, { page_size: 20 }), null);
+  assert.equal(parseChangeRequestPageResponse({ ok: true, requests: [], page_size: 20,
+    has_more: true, next_cursor: null }, { page_size: 20 }), null, "has_more phai co cursor");
+  assert.equal(parseChangeRequestPageResponse({ ok: true, requests: [], page_size: 20,
+    has_more: false, next_cursor: "raw" }, { page_size: 20 }), null, "cursor sai dinh dang");
+  assert.equal(parseChangeRequestPageResponse({ ok: true, requests: [], page_size: 20,
+    has_more: false }, { page_size: 20 }), null, "thieu next_cursor");
+});
+
+test("W06-R2: malformed worker/submission envelope fail-closed", () => {
+  assert.equal(parseWorkerPageResponse({ ok: true, items: [], scope: "all", page_size: 25,
+    has_more: true, next_cursor: null, authorization_date: AUTH },
+    { scope: "all", page_size: 25 }), null, "has_more phai co cursor");
+  assert.equal(parseWorkerPageResponse({ ok: true, items: [], scope: "all", page_size: 25,
+    has_more: false, next_cursor: null }, { scope: "all", page_size: 25 }), null,
+    "thieu authorization_date");
+  assert.equal(parseSubmissionPageResponse({ ok: true, items: [], page_size: 25,
+    has_more: true, next_cursor: null }, { page_size: 25 }), null);
+});
 test("W06-R1: propose targets chi gom WORKER/PAYMENT/WORK_STATUS (khong DOCUMENT/CCCD)", () => {
   assert.deepEqual([...WORKER_PROPOSE_TARGETS], ["WORKER", "PAYMENT", "WORK_STATUS"]);
   for (const target of WORKER_PROPOSE_TARGETS) {

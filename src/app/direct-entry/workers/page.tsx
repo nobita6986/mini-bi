@@ -45,10 +45,16 @@ export default async function WorkerOperationsPage() {
       const canSeeAllWorkers = projection !== null &&
         workerOperationsAllScopePredicate(projection);
       const canReview = projection !== null && workerOperationsReviewPredicate(projection);
+      // Chi truyen capabilities + scope kind: khong lo auth_subject/app_user_id/PII.
+      const actorProjection = projection === null ? null : {
+        capabilities: [...projection.capabilities],
+        scopes: projection.scopes.map((scope) => ({ kind: scope.kind })),
+      };
       return (
         <WorkerOperations
           canSeeAllWorkers={canSeeAllWorkers}
           canReview={canReview}
+          actor={actorProjection}
         />
       );
     }

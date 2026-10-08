@@ -20,6 +20,11 @@ import {
   type SubmissionReadItem,
   type SubmissionReadListPage,
 } from "./submission-read-contract.ts";
+import {
+  projectChangeRequestListPage,
+  type ChangeRequestListItem,
+  type ChangeRequestListPage,
+} from "./change-request-read-contract.ts";
 
 export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "all"] as const;
 export type WorkerOperationsTab = (typeof WORKER_OPERATIONS_TABS)[number];
@@ -209,6 +214,154 @@ export function parseSubmissionPageResponse(
 export const WORKER_CONFLICT_MESSAGE =
   "Dữ liệu đã thay đổi ở nơi khác. Vui lòng tải lại trước khi tiếp tục.";
 
+/* ---------- W06-R2: initial tab tu actor projection (server) ---------- */
+
+export type WorkerOperationsActor = {
+  capabilities: readonly string[];
+  scopes: readonly { kind: string }[];
+};
+
+/**
+ * Chon tab BAN DAU tu actor projection server-side. Chi la lua chon UI ban dau;
+ * API/RPC van la authority. Reviewer toi thieu mo thang "Toan bo NLD" thay vi
+ * roi vao uploader (submissions 403 => ca trang AccessDenied o 0e2cbba).
+ */
+export function initialWorkerTab(
+  actor: WorkerOperationsActor | null,
+  canSeeAllWorkers: boolean,
+): WorkerOperationsTab {
+  if (actor === null) return "uploader";
+  const onlyScopeAll = actor.scopes.some((scope) => scope.kind === "all");
+  if (onlyScopeAll && (actor.capabilities.includes("entry_admin") ||
+      actor.capabilities.includes("change_review")) && canSeeAllWorkers) {
+    return "all";
+  }
+  const isEntryActor = actor.capabilities.some((capability) =>
+    ["entry_own", "entry_team", "entry_admin"].includes(capability));
+  if (!isEntryActor && actor.capabilities.includes("change_request_create")) return "managed";
+  return "uploader";
+}
+
+/* ---------- W06-R2: pagination (page state thuan) ---------- */
+
+export const WORKER_PAGE_SIZE = 25;
+export const WORKER_REQUEST_PAGE_SIZE = 20;
+
+export type PageState =
+  | "idle" | "loading" | "ready" | "empty" | "denied" | "unavailable" | "error";
+
+export type TabPage<T> = {
+  items: readonly T[];
+  cursor: string | null;
+  hasMore: boolean;
+  state: PageState;
+  /** Thong bao cuc bo cua tab; 403 chi anh huong tab nay, khong thao ca trang. */
+  message: string | null;
+};
+
+export function emptyTabPage<T>(): TabPage<T> {
+  return { items: [], cursor: null, hasMore: false, state: "idle", message: null };
+}
+
+/** Doi tab/doi filter: reset items + cursor — khong mang cursor cua scope cu. */
+export function resetTabPage<T>(): TabPage<T> {
+  return { items: [], cursor: null, hasMore: false, state: "loading", message: null };
+}
+
+/** Bat dau tai. append=true (tai them) GIU items da co. */
+export function beginLoad<T>(page: TabPage<T>, append: boolean): TabPage<T> {
+  return append
+    ? { ...page, state: "loading", message: null }
+    : { items: [], cursor: null, hasMore: false, state: "loading", message: null };
+}
+
+/** Append theo stable id, khong trung/khong sot. */
+export function appendUnique<T>(
+  current: readonly T[],
+  incoming: readonly T[],
+  keyOf: (item: T) => string,
+): T[] {
+  const seen = new Set(current.map(keyOf));
+  const next = [...current];
+  for (const item of incoming) {
+    const key = keyOf(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(item);
+  }
+  return next;
+}
+
+export function applyPage<T>(
+  page: TabPage<T>,
+  incoming: { items: readonly T[]; next_cursor: string | null; has_more: boolean },
+  keyOf: (item: T) => string,
+  append: boolean,
+): TabPage<T> {
+  const items = append ? appendUnique(page.items, incoming.items, keyOf) : [...incoming.items];
+  return {
+    items,
+    cursor: incoming.next_cursor,
+    hasMore: incoming.has_more,
+    state: items.length === 0 ? "empty" : "ready",
+    message: null,
+  };
+}
+
+/** Loi khi tai: neu da co items thi GIU page da tai thanh cong. */
+export function failLoad<T>(
+  page: TabPage<T>, state: PageState, message: string | null,
+): TabPage<T> {
+  if (page.items.length > 0) return { ...page, state: "ready", message };
+  return { ...page, state, message };
+}
+
+export function workersQuery(input: {
+  scope: WorkerDirectoryScope; status: string; cursor: string | null;
+}): string {
+  let query = "?scope=" + input.scope + "&page_size=" + String(WORKER_PAGE_SIZE);
+  if (input.status !== "") query += "&employment_status=" + encodeURIComponent(input.status);
+  if (input.cursor !== null) query += "&cursor=" + encodeURIComponent(input.cursor);
+  return query;
+}
+
+export function submissionsQuery(cursor: string | null): string {
+  let query = "?page_size=" + String(WORKER_PAGE_SIZE);
+  if (cursor !== null) query += "&cursor=" + encodeURIComponent(cursor);
+  return query;
+}
+
+export function requestsQuery(cursor: string | null): string {
+  let query = "?page_size=" + String(WORKER_REQUEST_PAGE_SIZE);
+  if (cursor !== null) query += "&cursor=" + encodeURIComponent(cursor);
+  return query;
+}
+
+export function workerRowKey(row: WorkerDirectoryRow): string {
+  return row.entry_id;
+}
+export function submissionRowKey(item: SubmissionReadItem): string {
+  return item.submission_id;
+}
+export function requestRowKey(item: ChangeRequestListItem): string {
+  return item.request_id;
+}
+
+export function parseChangeRequestPageResponse(
+  payload: unknown,
+  expected: { page_size: number },
+): ChangeRequestListPage | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const body = payload as Record<string, unknown>;
+  if (body.ok !== true) return null;
+  const slice: Record<string, unknown> = {};
+  for (const key of ["requests", "page_size", "has_more", "next_cursor"]) {
+    if (!(key in body)) return null;
+    slice[key] = body[key];
+  }
+  return projectChangeRequestListPage(slice, expected);
+}
+
 export function workerListErrorMessage(status: number): string {
   if (status === 401) return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
   if (status === 403) return "Bạn không có quyền xem danh sách này.";
@@ -223,4 +376,9 @@ export function rowsWithProposeCta(
   return rows.filter((row) => proposeCta(row).show);
 }
 
-export type { SubmissionReadItem, WorkerDirectoryPage, WorkerDirectoryRow };
+export type {
+  ChangeRequestListItem,
+  SubmissionReadItem,
+  WorkerDirectoryPage,
+  WorkerDirectoryRow,
+};

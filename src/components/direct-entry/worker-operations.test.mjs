@@ -46,13 +46,51 @@ test("W06: CTA de xuat chi render khi server propose_change; khong disable", () 
   }
 });
 
-test("W06: uploader tab dung submission API, recruited/managed dung directory scope", () => {
-  assert.match(source, /tabScope\(nextTab\)/);
-  assert.match(source, /nextScope === null/);
-  assert.match(source, /\/submissions\?page_size=/);
-  assert.match(source, /\/workers\?scope=/);
+test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projector that", () => {
+  assert.match(source, /tabScope\(tab\)/);
   assert.match(source, /parseSubmissionPageResponse/);
   assert.match(source, /parseWorkerPageResponse/);
+  assert.match(source, /workersQuery\(\{ scope, status, cursor \}\)/);
+  assert.match(source, /submissionsQuery\(cursor\)/);
+  assert.match(source, /requestsQuery\(cursor\)/);
+});
+
+test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi tab/filter", () => {
+  assert.match(source, /applyPage\(/);
+  assert.match(source, /beginLoad/);
+  assert.match(source, /failLoad\(/);
+  assert.match(source, /resetTabPage\(\)/);
+  assert.match(source, /hasMore=\{/);
+  assert.match(source, /Tải thêm/);
+  assert.match(source, /loadMore\(/);
+  assert.match(source, /workerRowKey|submissionRowKey|requestRowKey/);
+  // Doi tab/filter reset page cua scope tuong ung.
+  assert.match(source, /setWorkerPages\(\(pages\) => \(\{ \.\.\.pages, \[next as WorkerScopeTab\]: resetTabPage\(\) \}\)\)/);
+  assert.match(source, /setSubmissionPage\(resetTabPage\(\)\)/);
+});
+
+test("W06-R2: review payload di qua projectChangeRequestListPage, khong cast raw", () => {
+  assert.match(source, /parseChangeRequestPageResponse/);
+  assert.match(source, /parsed\.requests/);
+  assert.equal(/as ChangeRequestListItem\[\]/.test(source), false, "khong cast raw payload");
+});
+
+test("W06-R2: 403 chi la loi CUC BO trong tab, khong thao ca trang", () => {
+  // Khong con nhanh return <AccessDenied /> trong component (chi con o page boundary).
+  assert.equal(/return <AccessDenied \/>/.test(source), false);
+  assert.equal(/return <TemporaryUnavailable \/>/.test(source), false);
+  assert.match(source, /state: "denied", message: workerListErrorMessage\(403\)/);
+  // Moi tab giu page state rieng.
+  assert.match(source, /workerPages\[scope as WorkerScopeTab\]/);
+  assert.match(source, /submissionPage\.state/);
+});
+
+test("W06-R2: initial tab tu actor projection server-side", () => {
+  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers\)/);
+  assert.match(source, /actor\?: WorkerOperationsActor \| null/);
+  assert.equal(/app_user_id|auth_subject/.test(source.split("\n")
+    .filter((line) => !/^\s*(\*|\/\/)/.test(line)).join("\n")), false,
+  "khong nhan auth_subject/app_user_id tu client");
 });
 
 test("W06: pending/last decision + conflict/reload tu server version", () => {
