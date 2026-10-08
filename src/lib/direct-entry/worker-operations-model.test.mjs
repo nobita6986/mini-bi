@@ -5,7 +5,10 @@ import {
   BANK_ACCOUNT_SECTION_LABEL,
   WORKER_OPERATIONS_TABS,
   WORKER_OPERATIONS_TAB_LABELS,
+  WORKER_PROPOSE_TARGETS,
+  WORKER_PROPOSE_TARGET_LABELS,
   bankAccountSummary,
+  canReviewChangeRequests,
   isWorkerOperationsTab,
   lastDecisionLabel,
   parseSubmissionPageResponse,
@@ -13,6 +16,7 @@ import {
   pendingRequestLabel,
   proposeCta,
   tabScope,
+  visibleWorkerTabs,
   workerDenialMessage,
   workerListErrorMessage,
   workerStatusLabel,
@@ -43,16 +47,38 @@ function page(items) {
     next_cursor: null, authorization_date: AUTH };
 }
 
-test("W06: ba tab khong tron quan he, chi recruited/managed dung directory", () => {
-  assert.deepEqual([...WORKER_OPERATIONS_TABS], ["uploader", "recruited", "managed"]);
+test("W06-R1: bon view khong tron quan he; scope=all chi khi server cho phep", () => {
+  assert.deepEqual([...WORKER_OPERATIONS_TABS], ["uploader", "recruited", "managed", "all"]);
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.uploader, "Tôi đã nhập");
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.recruited, "Người tôi tuyển");
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.managed, "Dự án tôi quản lý");
+  assert.equal(WORKER_OPERATIONS_TAB_LABELS.all, "Toàn bộ NLĐ");
   assert.equal(tabScope("uploader"), null);
   assert.equal(tabScope("recruited"), "recruited");
   assert.equal(tabScope("managed"), "managed");
+  assert.equal(tabScope("all"), "all");
   assert.equal(isWorkerOperationsTab("recruited"), true);
-  assert.equal(isWorkerOperationsTab("all"), false, "khong nhan scope all tu UI");
+  // "all" chi duoc OFFER khi server projection xac nhan.
+  assert.deepEqual([...visibleWorkerTabs(false)], ["uploader", "recruited", "managed"]);
+  assert.deepEqual([...visibleWorkerTabs(true)], ["uploader", "recruited", "managed", "all"]);
+});
+
+test("W06-R1: review queue chi khi change_review + all scope", () => {
+  assert.equal(canReviewChangeRequests(null), false);
+  assert.equal(canReviewChangeRequests({ capabilities: [], scopes: [{ kind: "all" }] }), false,
+    "all scope thieu capability => khong mo");
+  assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "team" }] }), false);
+  assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "all" }] }), true);
+});
+
+test("W06-R1: propose targets chi gom WORKER/PAYMENT/WORK_STATUS (khong DOCUMENT/CCCD)", () => {
+  assert.deepEqual([...WORKER_PROPOSE_TARGETS], ["WORKER", "PAYMENT", "WORK_STATUS"]);
+  for (const target of WORKER_PROPOSE_TARGETS) {
+    const label = WORKER_PROPOSE_TARGET_LABELS[target];
+    assert.ok(label.length > 0);
+    assert.equal(/thanh toán|chi tiền|giao dịch|CCCD|tài liệu/i.test(label), false, label);
+  }
+  assert.equal(WORKER_PROPOSE_TARGET_LABELS.PAYMENT, "Thông tin tài khoản ngân hàng");
 });
 
 test("W06: CTA chi hien khi server tra propose_change=true; nguoc lai VANG MAT", () => {

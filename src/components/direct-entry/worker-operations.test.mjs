@@ -25,7 +25,8 @@ test("W06: ba tab khong tron quan he + tablist keyboard arrow/Home/End", () => {
   assert.match(source, /role="tablist"/);
   assert.match(source, /role="tab"/);
   assert.match(source, /role="tabpanel"/);
-  assert.match(source, /WORKER_OPERATIONS_TABS\.map/);
+  assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers\)/);
+  assert.match(source, /tabs\.map\(/);
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
     assert.ok(source.includes(key), "thieu keyboard " + key);
   }
@@ -98,16 +99,51 @@ test("W06: mobile - bang cuon ngang, min-width, khong hover-only action", () => 
 
 test("W06: page boundary cung flag + actor resolver nhu /direct-entry", () => {
   assert.match(page, /isDirectEntryUiEnabled\(process\.env\.DIRECT_ENTRY_UI_ENABLED\)/);
-  assert.match(page, /decideDirectEntryPageAccess/);
+  assert.match(page, /decideWorkerOperationsPageAccess/);
+  assert.match(page, /workerOperationsAllScopePredicate/);
+  assert.match(page, /workerOperationsReviewPredicate/);
+  assert.match(page, /canSeeAllWorkers=\{canSeeAllWorkers\}/);
+  assert.match(page, /canReview=\{canReview\}/);
   assert.match(page, /case "NOT_FOUND":[\s\S]{0,40}notFound\(\)/);
   assert.match(page, /redirect\("\/login\?next=\/direct-entry\/workers"\)/);
-  assert.match(page, /case "ALLOW":[\s\S]{0,80}<WorkerOperations \/>/);
+  assert.match(page, /case "ALLOW":[\s\S]{0,600}<WorkerOperations/);
 });
 
 test("W06: nav entry 'worker-operations' duoc dang ky trong registry hien co", () => {
   assert.match(registry, /id: "worker-operations"/);
   assert.match(registry, /path: "\/direct-entry\/workers"/);
   assert.match(registry, /label: "Người lao động"/);
+});
+
+test("W06-R1: review queue tai su dung list/reviewer hien co, chi khi canReview", () => {
+  assert.match(source, /DirectEntryChangeRequestList/);
+  assert.match(source, /DirectEntryChangeRequestReviewer/);
+  assert.match(source, /\{canReview \? \(/);
+  assert.match(source, /onReview=\{/);
+  // Khong nhung editor Direct Entry.
+  assert.equal(/DirectEntryLive|DirectEntryShell|DirectEntrySpreadsheetGrid/.test(source), false);
+});
+
+test("W06-R1: propose drawer gom WORKER + PAYMENT + WORK_STATUS bang builder hien co", () => {
+  assert.match(source, /buildWorkerDetailsProposal/);
+  assert.match(source, /buildPaymentProposal/);
+  assert.match(source, /buildWorkStatusProposal/);
+  assert.match(source, /buildChangeRequestItem/);
+  assert.match(source, /WORKER_PROPOSE_TARGETS\.map/);
+  // Khong tu viet lai validation song song.
+  assert.equal(/validateWorkerDetails\(/.test(source), false, "dung builder, khong lap validator");
+  // Protected fields read-only + display_name giu nguyen.
+  assert.match(source, /trường được bảo vệ/);
+  assert.match(source, /giữ nguyên/);
+  // Khong co DOCUMENT/CCCD.
+  assert.equal(/DOCUMENT|CCCD/.test(source), false);
+});
+
+test("W06-R1: reviewer khong co CTA sua truc tiep hay lap proposal", () => {
+  // CTA chi xuat hien trong WorkerTable theo cta.show; reviewer khong co nhanh rieng.
+  const buttons = source.match(/>\s*Đề xuất thay đổi\s*<\/button>/g) ?? [];
+  assert.equal(buttons.length, 1, "chi mot CTA de xuat, dieu khien boi allowed_actions");
+  assert.equal(/Sửa trực tiếp|direct edit|privileged/i.test(source), false);
 });
 
 test("W06: reviewer UI dung authority backend (can_decide), khong suy tu role client", () => {

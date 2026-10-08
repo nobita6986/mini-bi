@@ -48,7 +48,8 @@ export type NavCapability =
   | "entry_own"
   | "entry_team"
   | "entry_admin"
-  | "project_admin";
+  | "project_admin"
+  | "worker_operations";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -142,7 +143,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
       "allowed_actions quyết định; created_by/recruiter_id không tạo quyền.",
     icon: Users,
     status: "current",
-    capability: "entry_admin",
+    capability: "worker_operations",
     visibility: { desktop: true, mobile: true },
   },
 ];

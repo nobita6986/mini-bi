@@ -70,6 +70,38 @@ export const projectAdminNavPredicate: NavCapabilityPredicate = (actor) =>
   actor.capabilities.includes("entry_admin") &&
   actor.scopes.some((scope) => scope.kind === "all");
 
+/**
+ * P2.5-W06-R1: Worker Operations audience.
+ *
+ * Mo surface khi actor la mot trong:
+ *  - (entry_admin | change_review) + effective all scope  → admin / BoD-Ke toan reviewer
+ *  - change_request_create                                 → nguoi de xuat (PM qua assignment)
+ *  - entry_own | entry_team | entry_admin                  → audience uploader hien huu
+ * Reporting audience=all ma thieu capability KHONG mo (fail-closed).
+ */
+export const WORKER_OPERATIONS_ALL_CAPABILITIES: readonly Capability[] = [
+  "entry_admin",
+  "change_review",
+];
+
+/** scope=all tab + review queue: (entry_admin | change_review) + effective all scope. */
+export const workerOperationsAllScopePredicate: NavCapabilityPredicate = (actor) =>
+  actor.scopes.some((scope) => scope.kind === "all") &&
+  actor.capabilities.some((capability) =>
+    WORKER_OPERATIONS_ALL_CAPABILITIES.includes(capability));
+
+/** Reviewer queue: change_review + effective all scope (khop W05 #55). */
+export const workerOperationsReviewPredicate: NavCapabilityPredicate = (actor) =>
+  actor.scopes.some((scope) => scope.kind === "all") &&
+  actor.capabilities.includes("change_review");
+
+export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
+  if (workerOperationsAllScopePredicate(actor)) return true;
+  if (actor.capabilities.includes("change_request_create")) return true;
+  return actor.capabilities.some((capability) =>
+    DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
+};
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -80,6 +112,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   entry_team: directEntryNavPredicate,
   entry_admin: directEntryNavPredicate,
   project_admin: projectAdminNavPredicate,
+  worker_operations: workerOperationsNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */

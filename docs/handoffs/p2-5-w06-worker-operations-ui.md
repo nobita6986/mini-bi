@@ -1,29 +1,29 @@
-# P2.5-W06 - Worker Operations UI
+# P2.5-W06-R1 - Reviewer access, all-workers view and full proposer
 
-Status: `P2.5-W06_LOCAL_PASS`. Base `origin/main@32fa36ce72697fe7a799f4c41cd50012205543c4` (W02 #51 · W03 #52 · W04 #53 · W06A #54 · W05 #55 · W05-R1 #56). Branch `feature/p2-5-w06-worker-operations-ui`. No migration/schema/RPC, no Production apply, no deploy, no main merge.
+Status: `P2.5-W06-R1_LOCAL_PASS_AWAITING_T0_REVIEW`. Base `origin/main@32fa36ce72697fe7a799f4c41cd50012205543c4`; parent `6cc2b5626e5764e318d2aed9117c70f61a0fba1c`. Branch `feature/p2-5-w06-worker-operations-ui`. No migration (contract #52-#56 du), no Production apply, no deploy, no merge main.
 
 ## Delta
 
-- Route `/direct-entry/workers` + nav entry `worker-operations` (cùng flag/actor resolver/access decision như `/direct-entry`). Không sửa W06A ngoài entry nav.
-- `worker-operations-model.ts` (thuần): 3 tab không trộn quan hệ — `uploader` (submission API, chỉ tra cứu), `recruited`/`managed` (worker directory `scope=recruited|managed`); `proposeCta` đọc `allowed_actions.propose_change`; copy từ chối sanitized; nhãn pending/last-decision; `BANK_ACCOUNT_SECTION_LABEL`; parse fail-closed.
-- `worker-operations.tsx`: tablist ARIA + Arrow/Home/End, filter có label, bảng read-only cuộn ngang (min-w), pending/last-decision chip, CTA **chỉ render khi server `propose_change === true`** (không có CTA disabled/ẩn hover), drawer Radix (focus trap + Escape không mutation) gửi đề xuất WORK_STATUS qua `POST /api/direct-entry/change-requests` bằng builder hiện hữu, 409 → conflict + tải lại.
-- Copy nghiệp vụ: `PAYMENT` → "Thông tin tài khoản ngân hàng" (proposer + row); không mô tả thanh toán/chi tiền/giao dịch.
-- Không hiển thị UUID thô: dùng `display_name`/`recruiter_display`/`project_display`; `entry_id` chỉ làm React key.
+- **F1 - shared authority**: `workerOperationsNavPredicate` (entry_admin|change_review + all, hoac change_request_create, hoac entry_own|entry_team|entry_admin) + `workerOperationsAllScopePredicate` / `workerOperationsReviewPredicate` trong `registry-capability.ts`; nav entry doi sang capability `worker_operations`; `decideWorkerOperationsPageAccess` dung CUNG predicate voi nav. Reviewer (change_review + all) vao duoc; reporting audience=all thieu capability bi tu choi; entry_own/entry_team van nhu cu.
+- **F2 - all workers + review queue**: tab "Toàn bộ NLĐ" (`scope=all`) chi duoc offer khi server actor projection xac nhan (entry_admin|change_review)+all, RPC W03 van enforce; section review queue tai su dung `DirectEntryChangeRequestList` + `DirectEntryChangeRequestReviewer` (authority W05, `can_decide` server) voi catalog cache hien co; khong nhung Direct Entry editor.
+- **F3 - proposer targets**: drawer gom 3 target dung builder hien co — `buildWorkerDetailsProposal` (complete canonical worker_details, display_name giu nguyen, 5 protected field read-only), `buildPaymentProposal` (nhan "Thông tin tài khoản ngân hàng"), `buildWorkStatusProposal` (giu nguyen leave reason/date/OCC). Khong co DOCUMENT/CCCD; khong lap validation song song.
 
-## Acceptance trước → sau
+## Access matrix (thuc te)
 
-| Trước | Sau |
-| --- | --- |
-| Chưa có worker operations surface | `/workers` với 3 quan hệ tách biệt, cùng AppShell/nav |
-| Bộ chọn/CTA chưa có | CTA đề xuất do server `allowed_actions` quyết định; không suy quyền client |
-| Copy "thanh toán" | "Thông tin tài khoản ngân hàng" |
-| Nav 3 entry | Nav 4 entry (rebaseline test nav) |
+| Actor | Nav/page | scope=all tab | review queue | CTA de xuat |
+| --- | --- | --- | --- | --- |
+| Uploader (entry_own/team) | allow | khong | khong | chi khi `allowed_actions=true` |
+| Recruiter (verified link) | allow (qua entry/change_request_create) | khong | khong | read-only (`NOT_PROJECT_MANAGER`) |
+| PM (assignment hieu luc) | allow | khong | khong | `allowed_actions=true` tren row SUBMITTED |
+| Admin (entry_admin + all) | allow | co | khong | theo row |
+| Reviewer (change_review + all) | allow | co | co | khong (chi xem/duyet) |
+| all scope thieu capability | deny | - | - | - |
 
 ## Gates
 
-`test:p2.5-w06` 21/21 (model 9 + component source 12) · `test:app-nav-02a` 90/90 · `test:server` 204/204 · typegen+typecheck 0 · lint 0 errors (13 pre-existing warnings) · build 0 · `git diff --check` clean. Không chạy lại full canonical DB regression (không chạm backend).
+`test:p2.5-w06` 26/26 (model 11 + component source 15) · `test:app-nav-02a` 91/91 · `test:server` 204/204 · `test:p2.5-w03` 22/22 · `test:p2.5-w05` 7/7 · `test:p2.5-w06a` 4/4 · typegen+typecheck 0 · lint 0 errors (12 pre-existing warnings) · build 0 · `git diff --check` clean.
 
 ## Blocker
 
-- Reviewer queue UI tái dùng nguyên `direct-entry-change-request-{list,reviewer}` trên `/direct-entry` (authority W05 backend `can_decide`); chưa nhúng vào `/workers` để tránh mở rộng scope.
-- Production sequencing #50-#56 vẫn thuộc T0.
+- Khong co blocker backend: contract #52-#56 du cho ca ba finding.
+- Production sequencing #50-#56 van thuoc T0.

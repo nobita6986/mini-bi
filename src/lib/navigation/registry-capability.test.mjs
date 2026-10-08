@@ -21,6 +21,9 @@ const {
   directEntryNavPredicate,
   adminAuthorityNavPredicate,
   projectAdminNavPredicate,
+  workerOperationsAllScopePredicate,
+  workerOperationsNavPredicate,
+  workerOperationsReviewPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -67,6 +70,32 @@ test("F5: projectAdminNavPredicate = entry_admin + all scope, KHONG can 2 token 
   // entry_admin nhung KHONG co scope all => fail.
   assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "team", reference: "t" }])), false);
   assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [])), false);
+});
+
+test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", () => {
+  const all = [{ kind: "all", reference: "all" }];
+  // Reviewer bundle toi thieu + all.
+  assert.equal(workerOperationsNavPredicate(makeActor(["change_review", "pii_view", "payment_view"], all)), true);
+  // Admin entry_admin + all.
+  assert.equal(workerOperationsNavPredicate(makeActor(["entry_admin"], all)), true);
+  // Nguoi de xuat / PM.
+  assert.equal(workerOperationsNavPredicate(makeActor(["change_request_create"], [{ kind: "own" }])), true);
+  // Uploader hien huu.
+  assert.equal(workerOperationsNavPredicate(makeActor(["entry_own"], [{ kind: "own" }])), true);
+  assert.equal(workerOperationsNavPredicate(makeActor(["entry_team"], [{ kind: "team" }])), true);
+  // Reporting audience=all nhung thieu capability => KHONG mo.
+  assert.equal(workerOperationsNavPredicate(makeActor([], all)), false);
+  // Reviewer thieu all scope => khong mo.
+  assert.equal(workerOperationsNavPredicate(makeActor(["change_review"], [{ kind: "team" }])), false);
+  // scope=all tab / review queue.
+  assert.equal(workerOperationsAllScopePredicate(makeActor(["entry_admin"], all)), true);
+  assert.equal(workerOperationsAllScopePredicate(makeActor(["change_review"], all)), true);
+  assert.equal(workerOperationsAllScopePredicate(makeActor(["entry_own"], all)), false);
+  assert.equal(workerOperationsAllScopePredicate(makeActor(["entry_admin"], [{ kind: "team" }])), false);
+  assert.equal(workerOperationsReviewPredicate(makeActor(["change_review"], all)), true);
+  assert.equal(workerOperationsReviewPredicate(makeActor(["entry_admin"], all)), false,
+    "admin khong tu dong la reviewer");
+  assert.equal(workerOperationsReviewPredicate(makeActor(["change_review"], [{ kind: "own" }])), false);
 });
 
 test("resolveNavCapabilityPredicate: token không xác định fail-closed", () => {
@@ -156,9 +185,9 @@ test("filterEntriesForActor: reader (no capability) → chỉ Dashboard", () => 
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
-test("filterEntriesForActor: reviewer (no entry_*) → chỉ Dashboard", () => {
-  // Theo matrix P3-C01 §2.2: reviewer có change_review + document_view nhưng
-  // KHÔNG có entry_own | entry_team | entry_admin.
+test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Người lao động", () => {
+  // P2.5-W06-R1: reviewer bundle + effective all scope duoc vao Worker Operations
+  // (nhung KHONG duoc vao Direct Entry editor: khong co entry_own|entry_team|entry_admin).
   const reviewerActor = makeActor(["change_review", "document_view"]);
   const result = filterEntriesForActor({
     viewport: "mobile",
@@ -166,7 +195,10 @@ test("filterEntriesForActor: reviewer (no entry_*) → chỉ Dashboard", () => {
     actor: reviewerActor,
     decide: decideFor(reviewerActor, "mobile"),
   });
-  assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
+  assert.deepEqual(result.map((e) => e.id), ["dashboard", "worker-operations"]);
+  // Reviewer KHONG thay entry Direct Entry / Du an.
+  assert.equal(result.some((e) => e.id === "direct-entry"), false);
+  assert.equal(result.some((e) => e.id === "project-operations"), false);
 });
 
 test("filterEntriesForActor: actor null → chỉ Dashboard (fail-closed cho Direct Entry)", () => {
