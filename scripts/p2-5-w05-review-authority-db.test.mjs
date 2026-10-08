@@ -11,6 +11,8 @@
  *     payment_edit + employment_status.apply + entry_privileged_edit + entry_admin at
  *     all scope, with values/version/audit unchanged; the approval engine is the only
  *     path that applies to canonical data, and DRAFT keeps working;
+ *     P2.5-HF-R3 changes exactly one of those paths on purpose: the privileged correction
+ *     path may now target a SUBMITTED entry (see the dedicated R3 test at the end);
  *   * the W03 worker directory now serves allowed_actions.propose_change from the W04
  *     assignment authority instead of the PROPOSE_PENDING_W04_POLICY placeholder.
  */
@@ -57,11 +59,11 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 60, "the ledger carries 60 migrations after P2.5-HF-R2 #60");
-  assert.equal(names[names.length - 4], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
-  assert.equal(names[names.length - 5], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
-  assert.equal(names[names.length - 6], W05_MIGRATION, "W05-R1 follows W05 #55");
-  assert.equal(names[names.length - 7], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
+  assert.equal(names.length, 61, "the ledger carries 61 migrations after P2.5-HF-R3 #61");
+  assert.equal(names[names.length - 5], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
+  assert.equal(names[names.length - 6], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
+  assert.equal(names[names.length - 7], W05_MIGRATION, "W05-R1 follows W05 #55");
+  assert.equal(names[names.length - 8], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
   return db;
 }
 
@@ -372,12 +374,6 @@ test("W05: every direct mutation path is denied on SUBMITTED with zero residue",
         "select public.direct_entry_correct_latest_status($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::integer,$6::text,$7::date,$8::text,$9::text,$10::text)",
         [ADMIN_AUTH, ADMIN_APP, submitted.entry, 1, 2, "ON", "2026-10-01", null,
           "W05 forged correction", "w05-probe-correct"]],
-      ["privileged_edit",
-        "select public.direct_entry_privileged_edit($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::jsonb,$6::text,$7::text)",
-        [ADMIN_AUTH, ADMIN_APP, submitted.entry, 1,
-          JSON.stringify({ worker_details: { display_name: "W05 Worker 1",
-            address: { state: "provided", value: "W05 forged address" } } }),
-          "W05 forged edit", "w05-probe-edit"]],
       ["transition_submission",
         "select public.direct_entry_transition_submission($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text)",
         [ADMIN_AUTH, ADMIN_APP, submitted.submission, 3, "DRAFT", "w05-probe-transition"]],
@@ -386,6 +382,9 @@ test("W05: every direct mutation path is denied on SUBMITTED with zero residue",
       await assert.rejects(() => db.query(sql, params),
         (error) => error.code === "42501", label + " must be denied on SUBMITTED");
     }
+    // P2.5-HF-R3 deliberately opens ONE of these paths for Admin/BoD on SUBMITTED data.
+    // It is asserted in its own test at the end of this file so the residue checks above
+    // keep describing the paths that stay closed.
 
     // Draft-only RPCs cannot reach a SUBMITTED row either.
     for (const [label, sql, params] of [
@@ -709,6 +708,48 @@ test("W05-R1: an unappliable worker_details proposal is refused before any reque
       "select version, worker_details->'address'->>'value' as address" +
       " from public.direct_entries where entry_id = $1::uuid", [entry])).rows[0];
     assert.deepEqual(applied, { version: 2, address: "W05-R1 canonical address" });
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// P2.5-HF-R3: the privileged correction path is the deliberate exception.
+// ---------------------------------------------------------------------------
+test("R3: the privileged correction path applies to SUBMITTED while the other paths stay closed", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const editorAuth = uuid(60), editorApp = uuid(61);
+    await insertActor(db, editorAuth, editorApp, ["entry_privileged_edit"], "all");
+    const entryRef = await addEntry(db, {});
+    const version = (await db.query(
+      "select version from public.direct_entries where entry_id = $1::uuid",
+      [entryRef.entry])).rows[0].version;
+    // A DRAFT-only path is still refused, so the exception is specific.
+    await assert.rejects(
+      () => db.query(
+        "select public.direct_entry_update_payment(" +
+        "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::integer,$6::jsonb,$7::text,$8::text)",
+        [editorAuth, editorApp, entryRef.entry, version, 1,
+          JSON.stringify({ state: "unknown" }), "R3 payment", "w05-r3-payment"]),
+      (error) => error.code === "42501",
+      "the payment path stays change-request only on SUBMITTED");
+    const edited = await db.query(
+      "select public.direct_entry_privileged_edit(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::jsonb,$6::text,$7::text) as data",
+      [editorAuth, editorApp, entryRef.entry, version,
+        JSON.stringify({ labor_type: "PERMANENT" }), "R3 correction", "w05-r3-edit"]);
+    assert.equal(edited.rows[0].data.version, version + 1);
+    assert.deepEqual((await db.query(
+      "select labor_type, version from public.direct_entries where entry_id = $1::uuid",
+      [entryRef.entry])).rows, [{ labor_type: "PERMANENT", version: version + 1 }]);
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_revisions where entry_id = $1::uuid",
+      [entryRef.entry]), 1);
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_audit_events where resource_ref = $1",
+      [entryRef.entry]), 1);
   } finally {
     await db.close();
   }
