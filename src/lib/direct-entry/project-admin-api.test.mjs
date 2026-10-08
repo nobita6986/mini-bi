@@ -245,3 +245,12 @@ test("candidate list: gate truoc, actor tu session, search parsed", async () => 
   assert.equal(off.status, 404);
   assert.equal(g.calls.rpc.length, 0);
 });
+test("candidate list: search vuot gioi han bi tu choi sanitized", async () => {
+  const d = deps({ ok: true, data: { candidates: [] } });
+  const long = "x".repeat(257);
+  const res = await listManagerCandidatesAdmin(
+    new Request("https://app.test/x?search=" + encodeURIComponent(long), SAME_ORIGIN_GET), "true", d.dependencies);
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).code, "PROJECT_INVALID");
+  assert.equal(d.calls.rpc.length, 0, "khong goi repository khi search qua dai");
+});

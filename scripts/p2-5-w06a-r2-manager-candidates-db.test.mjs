@@ -96,3 +96,30 @@ test("candidate list: only active + verified-link recruiters, searchable, no aut
   assert.equal(none.candidates.length, 0);
   await db.close();
 });
+test("bounds: >100 eligible candidates return at most 100 in stable order", async () => {
+  const { db } = await migratedDb();
+  await db.query("insert into auth.users (id) values ($1)", [ADMIN_AUTH]);
+  await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [ADMIN_APP, ADMIN_AUTH]);
+  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from) values ($1,'entry_admin','2020-01-01')", [ADMIN_APP]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from) values ($1,'all','2020-01-01')", [ADMIN_APP]);
+  // 150 active recruiters, each with one verified link from a distinct app_user.
+  for (let i = 0; i < 150; i += 1) {
+    const rec = uuid(200 + i);
+    const au = uuid(1000 + i);
+    const auth = uuid(2000 + i);
+    const name = "Candidate " + String(i).padStart(3, "0");
+    await db.query("insert into public.recruiters (recruiter_id, display_name, personnel_code, active) values ($1,$2,$3,true)", [rec, name, "code-" + String(i).padStart(3, "0")]);
+    await db.query("insert into auth.users (id) values ($1)", [auth]);
+    await db.query("insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled) values ($1,$2,true)", [au, auth]);
+    await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [au, rec]);
+  }
+  const all = await candidates(db, ADMIN_AUTH, ADMIN_APP, null);
+  assert.equal(all.candidates.length, 100, "must cap at 100");
+  assert.equal(all.candidates[0].display_name, "Candidate 000");
+  assert.equal(all.candidates[99].display_name, "Candidate 099");
+  // stable order by display_name then recruiter_id.
+  for (let i = 1; i < all.candidates.length; i += 1) {
+    assert.ok(all.candidates[i - 1].display_name < all.candidates[i].display_name);
+  }
+  await db.close();
+});

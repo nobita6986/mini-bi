@@ -22,6 +22,8 @@ import type { ProjectAdminRepository } from "./project-admin-repository.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const REASON_MAX = 4000;
+/** Gioi han do dai search cho bo chon candidate (display_name/personnel_code toi da 256). */
+const SEARCH_MAX = 256;
 /** Giong dung check constraint cua public.direct_entry_projects.project_id (defense in depth). */
 const PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
@@ -293,6 +295,7 @@ export async function listManagerCandidatesAdmin(
   const actor = await resolveTrustedActor(dependencies);
   if (!actor.ok) return actor.response;
   const raw = new URL(request.url).searchParams.get("search");
+  if (raw !== null && raw.length > SEARCH_MAX) return fail("PROJECT_INVALID", 400);
   const search = raw !== null && raw.trim() !== "" ? raw.trim() : null;
   try {
     const result = await dependencies.repository.listManagerCandidates({

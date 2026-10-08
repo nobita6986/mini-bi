@@ -1,6 +1,12 @@
 # P2.5-W06A-R2 - Close manager operations UX (rebaselined)
 
-Status: `P2.5-W06A-R2_LOCAL_PASS`. Base `origin/main@b4a75ab` (W04 T1C #53). Branch `feature/p2-5-w06a-r2`. No Production apply, no deploy, no main push, no rebase/amend/cherry-pick of pushed branches.
+Status: `P2.5-W06A-R2-R1_LOCAL_PASS`. Base `origin/main@b4a75ab` (W04 T1C #53). Branch `feature/p2-5-w06a-r2`. No Production apply, no deploy, no main push, no rebase/amend/cherry-pick of pushed branches.
+
+## R2-R1 delta (bounds fix)
+
+- Migration #54: `LIMIT 100` now applies to candidate rows BEFORE `jsonb_agg` (stable order by display_name, recruiter_id) — was previously a no-op after aggregation.
+- API `listManagerCandidatesAdmin`: `SEARCH_MAX = 256`; an over-long `search` returns sanitized `PROJECT_INVALID` (400) before the repository call.
+- Regressions: DB test with 150 eligible candidates proves exactly 100 returned in deterministic order; API test proves over-long search is rejected with no RPC call.
 
 ## Delta (on top of W06A-R1 ported from b1452f0)
 

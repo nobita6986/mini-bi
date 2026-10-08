@@ -23,29 +23,33 @@ declare
   v_candidates jsonb;
 begin
   perform public.direct_entry_assert_project_admin(p_auth_subject, p_app_user_id);
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'recruiter_id', r.recruiter_id,
-    'display_name', r.display_name,
-    'personnel_code', r.personnel_code,
-    'personnel_position', r.personnel_position
-  ) order by r.display_name, r.recruiter_id), '[]'::jsonb)
+  select coalesce(jsonb_agg(t.candidate order by t.display_name, t.recruiter_id), '[]'::jsonb)
     into v_candidates
-    from public.recruiters r
-   where r.active
-     and exists (
-       select 1
-         from public.direct_entry_app_user_recruiter_links l
-        where l.recruiter_id = r.recruiter_id
-          and l.verified
-          and l.valid_from <= public.direct_entry_authorization_date()
-          and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to)
-     )
-     and (
-       p_search is null or btrim(p_search) = ''
-       or r.display_name ilike '%' || btrim(p_search) || '%'
-       or coalesce(r.personnel_code, '') ilike '%' || btrim(p_search) || '%'
-     )
-   limit 100;
+    from (
+      select r.display_name, r.recruiter_id, jsonb_build_object(
+        'recruiter_id', r.recruiter_id,
+        'display_name', r.display_name,
+        'personnel_code', r.personnel_code,
+        'personnel_position', r.personnel_position
+      ) as candidate
+        from public.recruiters r
+       where r.active
+         and exists (
+           select 1
+             from public.direct_entry_app_user_recruiter_links l
+            where l.recruiter_id = r.recruiter_id
+              and l.verified
+              and l.valid_from <= public.direct_entry_authorization_date()
+              and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to)
+         )
+         and (
+           p_search is null or btrim(p_search) = ''
+           or r.display_name ilike '%' || btrim(p_search) || '%'
+           or coalesce(r.personnel_code, '') ilike '%' || btrim(p_search) || '%'
+         )
+       order by r.display_name, r.recruiter_id
+       limit 100
+    ) t;
   return jsonb_build_object('candidates', v_candidates);
 end;
 $$;
