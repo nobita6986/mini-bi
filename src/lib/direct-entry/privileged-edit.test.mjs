@@ -209,3 +209,14 @@ test("R3: a successful edit returns only the identity and the new version", asyn
     idempotency_key: "00000000-0000-4000-8000-000000000900",
   });
 });
+
+test("R4: repository authorization denial remains an HTTP 403", async () => {
+  const deps = dependencies({
+    async edit() {
+      return { ok: false, kind: "denied", code: "PRIVILEGED_EDIT_DENIED" };
+    },
+  });
+  const response = await privilegedEditEntry(request(), entryId, "true", deps);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { ok: false, code: "PRIVILEGED_EDIT_DENIED" });
+});

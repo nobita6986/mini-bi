@@ -83,6 +83,19 @@ export type WorkerForm = {
   phone: WorkerFieldForm;
 };
 
+export type WorkerEntryFieldBaseline = {
+  project_id: string;
+  first_work_date: string;
+  employee_code: string;
+  recruiter_id: string;
+  labor_type: "TEMPORARY" | "PERMANENT";
+  worker_details: WorkerDetails;
+};
+
+export type WorkerEntryFieldForm = Omit<WorkerEntryFieldBaseline, "worker_details"> & {
+  workerDetails: WorkerForm;
+};
+
 const WORKER_DETAILS_KEYS = new Set([
   "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
   "national_id_issued_place", "address", "phone",
@@ -120,6 +133,19 @@ export function workerFormFromDetails(details: WorkerDetails): WorkerForm {
     national_id_issued_place: formFromOptional(details.national_id_issued_place),
     address: formFromOptional(details.address),
     phone: formFromOptional(details.phone),
+  };
+}
+
+export function workerEntryFormFromBaseline(
+  baseline: WorkerEntryFieldBaseline,
+): WorkerEntryFieldForm {
+  return {
+    project_id: baseline.project_id,
+    first_work_date: baseline.first_work_date,
+    employee_code: baseline.employee_code,
+    recruiter_id: baseline.recruiter_id,
+    labor_type: baseline.labor_type,
+    workerDetails: workerFormFromDetails(baseline.worker_details),
   };
 }
 
@@ -174,6 +200,44 @@ export function buildWorkerDetailsProposal(
   if (validateWorkerDetails(candidate).length > 0) return { ok: false, code: "WORKER_INVALID" };
   if (!workerDetailsChanged(baseline, candidate)) return { ok: false, code: "WORKER_UNCHANGED" };
   return { ok: true, proposal: { worker_details: candidate } };
+}
+
+export function buildEntryFieldProposal(input: {
+  entryId: string;
+  expectedVersion: number;
+  baseline: WorkerEntryFieldBaseline;
+  form: WorkerEntryFieldForm;
+}): ProposalBuildResult {
+  const details = buildWorkerDetailsProposal(input.baseline.worker_details, input.form.workerDetails);
+  if (!details.ok && details.code !== "WORKER_UNCHANGED") return details;
+  const fullDetails = details.ok
+    ? details.proposal.worker_details as WorkerDetails
+    : input.baseline.worker_details;
+  const fullProposal = {
+    project_id: input.form.project_id,
+    first_work_date: input.form.first_work_date,
+    employee_code: input.form.employee_code,
+    worker_details: fullDetails,
+    recruiter_id: input.form.recruiter_id,
+    labor_type: input.form.labor_type,
+  };
+  const validated = buildChangeRequestItem({
+    entryId: input.entryId,
+    expectedVersion: input.expectedVersion,
+    targetKind: "ENTRY_FIELD",
+    proposal: fullProposal,
+  });
+  if (validated === null) return { ok: false, code: "WORKER_INVALID" };
+
+  const proposal: Record<string, unknown> = {};
+  for (const field of [
+    "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
+  ] as const) {
+    if (input.form[field] !== input.baseline[field]) proposal[field] = input.form[field];
+  }
+  if (details.ok) proposal.worker_details = details.proposal.worker_details;
+  if (Object.keys(proposal).length === 0) return { ok: false, code: "WORKER_UNCHANGED" };
+  return { ok: true, proposal };
 }
 
 /** Proposal PAYMENT: dung dung 4 field contract, bank phai nam trong catalog dang hoat dong. */

@@ -11,6 +11,7 @@ import {
   applyPage,
   bankAccountSummary,
   beginLoad,
+  canDirectlyCorrectWorkers,
   canReviewChangeRequests,
   emptyTabPage,
   failLoad,
@@ -35,6 +36,7 @@ import {
   workerDenialMessage,
   workerListErrorMessage,
   workerStatusLabel,
+  updateWorkerDirectoryFilter,
 } from "./worker-operations-model.ts";
 
 const AUTH = "2026-10-08";
@@ -84,6 +86,20 @@ test("W06-R1: review queue chi khi change_review + all scope", () => {
     "all scope thieu capability => khong mo");
   assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "team" }] }), false);
   assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "all" }] }), true);
+});
+
+test("HF-R4: direct correction visibility uses only privileged capability plus all scope", () => {
+  assert.equal(canDirectlyCorrectWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), true);
+  assert.equal(canDirectlyCorrectWorkers({
+    capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }],
+  }), true);
+  assert.equal(canDirectlyCorrectWorkers({
+    capabilities: ["entry_privileged_edit"], scopes: [{ kind: "team" }],
+  }), false);
+  assert.equal(canDirectlyCorrectWorkers({
+    capabilities: ["change_review"], scopes: [{ kind: "all" }], role: "admin",
+  }), false);
+  assert.equal(canDirectlyCorrectWorkers(null), false);
 });
 
 test("W06-R2: helper phan trang ton tai (0e2cbba khong co -> test that bai that su)", () => {
@@ -171,6 +187,29 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
   assert.equal(requestsQuery(null), "?page_size=20");
   assert.equal(requestsQuery("c3"), "?page_size=20&cursor=c3");
   assert.equal(workersQuery({ scope: "managed", status: "", cursor: null }).includes("cursor"), false);
+});
+
+test("HF-R4: project and recruiter filters stay server-side and reset the page cursor", () => {
+  const loaded = applyPage(emptyTabPage(), {
+    items: [row()], next_cursor: "20261008120000000000:11111111-1111-4111-8111-111111111111",
+    has_more: true,
+  }, workerRowKey, false);
+  const changed = updateWorkerDirectoryFilter({
+    page: loaded,
+    filters: { status: "ON", projectId: "old-project", recruiterId: RECRUITER },
+    field: "projectId",
+    value: "new-project",
+  });
+  assert.deepEqual(changed.filters, {
+    status: "ON", projectId: "new-project", recruiterId: RECRUITER,
+  });
+  assert.deepEqual(changed.page, {
+    items: [], cursor: null, hasMore: false, state: "loading", message: null,
+  });
+  assert.equal(workersQuery({ scope: "managed", ...changed.filters,
+    cursor: "next:cursor" }),
+  "?scope=managed&page_size=25&employment_status=ON&project_id=new-project&recruiter_id=" +
+    RECRUITER + "&cursor=next%3Acursor");
 });
 
 test("W06-R2: review payload phai qua projectChangeRequestListPage, fail-closed", () => {

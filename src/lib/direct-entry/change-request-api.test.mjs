@@ -6,6 +6,10 @@ import {
   decideChangeRequest,
   withdrawChangeRequest,
 } from "./change-request-api.ts";
+import {
+  buildEntryFieldProposal,
+  workerEntryFormFromBaseline,
+} from "./change-request-proposal-builders.ts";
 
 const actor = {
   auth_subject: "91000000-0000-4000-8000-000000000001",
@@ -160,6 +164,56 @@ test("valid create uses only the server actor and returns the exact projection",
     ],
     reason: "Synthetic change reason",
     idempotency_key: idempotencyKey,
+  });
+});
+
+test("full-field ENTRY_FIELD builder output reaches create API with reason, OCC and idempotency", async () => {
+  const baseline = {
+    project_id: "project-old",
+    first_work_date: "2026-10-01",
+    employee_code: "hrp-2026-000001",
+    recruiter_id: "22222222-2222-4222-8222-222222222222",
+    labor_type: "PERMANENT",
+    worker_details: {
+      display_name: "Nguyen Van Synthetic",
+      gender: { state: "provided", value: "MALE" },
+      date_of_birth: { state: "provided", value: "1990-01-02" },
+      national_id: { state: "unknown" },
+      national_id_issued_at: { state: "omitted" },
+      national_id_issued_place: { state: "provided", value: "Ha Noi" },
+      address: { state: "unknown" },
+      phone: { state: "unknown" },
+    },
+  };
+  const form = workerEntryFormFromBaseline(baseline);
+  form.project_id = "project-new";
+  form.first_work_date = "2026-10-02";
+  form.employee_code = "hrp-2026-000002";
+  form.recruiter_id = "33333333-3333-4333-8333-333333333333";
+  form.labor_type = "TEMPORARY";
+  form.workerDetails.display_name = "Nguyen Van Corrected";
+  form.workerDetails.phone = { state: "provided", text: "0900000000" };
+  const built = buildEntryFieldProposal({ entryId: entryA, expectedVersion: 7, baseline, form });
+  assert.equal(built.ok, true);
+  const item = {
+    entry_id: entryA,
+    target_kind: "ENTRY_FIELD",
+    expected_version: 7,
+    proposal: built.proposal,
+  };
+  const reason = "Điều chỉnh theo hồ sơ đã xác minh";
+  const key = "full-field-proposal-idempotency";
+  const deps = dependencies();
+  const response = await createChangeRequest(request(createBody({
+    items: [item], reason, idempotency_key: key,
+  })), "true", deps);
+  assert.equal(response.status, 200);
+  assert.deepEqual(deps.calls[0].input, {
+    auth_subject: actor.auth_subject,
+    app_user_id: actor.app_user_id,
+    items: [item],
+    reason,
+    idempotency_key: key,
   });
 });
 

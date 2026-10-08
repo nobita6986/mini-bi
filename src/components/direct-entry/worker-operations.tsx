@@ -43,6 +43,7 @@ import {
   submissionRowKey,
   submissionsQuery,
   tabScope,
+  updateWorkerDirectoryFilter,
   visibleWorkerTabs,
   workerListErrorMessage,
   workerRowKey,
@@ -52,6 +53,7 @@ import {
   type TabPage,
   type WorkerOperationsActor,
   type WorkerOperationsTab,
+  type WorkerDirectoryFilters,
   type WorkerProposeTarget,
 } from "@/lib/direct-entry/worker-operations-model";
 import type {
@@ -62,17 +64,18 @@ import type {
 import { WORKER_EMPLOYMENT_STATUSES } from "@/lib/direct-entry/worker-directory-contract.ts";
 import {
   buildChangeRequestItem,
+  buildEntryFieldProposal,
   buildPaymentProposal,
-  buildWorkerDetailsProposal,
   buildWorkStatusProposal,
   allowedWorkStatusTargets,
   hcmTodayDate,
   proposalErrorMessage,
   projectWorkerDetailsForProposal,
-  workerFormFromDetails,
+  workerEntryFormFromBaseline,
   WORKER_FORM_FIELDS,
   type WorkerFieldForm,
-  type WorkerForm,
+  type WorkerEntryFieldBaseline,
+  type WorkerEntryFieldForm,
 } from "@/lib/direct-entry/change-request-proposal-builders";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
 import {
@@ -134,16 +137,20 @@ function httpFailure(status: number): FetchOutcome<never> {
 export function WorkerOperations({
   canSeeAllWorkers = false,
   canReview = false,
+  canPrivilegedEditWorkers = false,
   actor = null,
 }: {
   canSeeAllWorkers?: boolean;
   canReview?: boolean;
+  canPrivilegedEditWorkers?: boolean;
   actor?: WorkerOperationsActor | null;
 }) {
   const tabs = visibleWorkerTabs(canSeeAllWorkers);
   const [tab, setTab] = useState<WorkerOperationsTab>(
     () => initialWorkerTab(actor, canSeeAllWorkers));
-  const [statusFilter, setStatusFilter] = useState("");
+  const [filters, setFilters] = useState<WorkerDirectoryFilters>(
+    { status: "", projectId: "", recruiterId: "" });
+  const [filterCatalogUnavailable, setFilterCatalogUnavailable] = useState(false);
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
     () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), all: emptyTabPage() }));
   const [submissionPage, setSubmissionPage] =
@@ -153,11 +160,17 @@ export function WorkerOperations({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
+  const [drawerMode, setDrawerMode] = useState<"proposal" | "correction">("proposal");
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const filterId = useId();
+  const projectFilterId = useId();
+  const recruiterFilterId = useId();
+  const workerQueryGeneration = useRef(0);
+  const today = hcmTodayDate();
+  const filterCatalog = catalogs[today];
 
   const catalogFor = useCallback((date: string) => catalogs[date], [catalogs]);
   const ensureCatalog = useCallback((date: string): Promise<DraftCatalog> => {
@@ -175,12 +188,24 @@ export function WorkerOperations({
       });
   }, [catalogs]);
 
+  useEffect(() => {
+    if (tab === "uploader" || filterCatalog !== undefined) return;
+    let active = true;
+    ensureCatalog(today).then(
+      () => { if (active) setFilterCatalogUnavailable(false); },
+      () => { if (active) setFilterCatalogUnavailable(true); },
+    );
+    return () => { active = false; };
+  }, [tab, filterCatalog, ensureCatalog, today]);
+
   /* ---------- fetchers (khong setState) ---------- */
 
   const fetchWorkers = useCallback(async (
-    scope: WorkerScopeTab, status: string, cursor: string | null,
+    scope: WorkerScopeTab, workerFilters: WorkerDirectoryFilters, cursor: string | null,
   ): Promise<FetchOutcome<WorkerDirectoryRow>> => {
-    const response = await fetch(API + "/workers" + workersQuery({ scope, status, cursor }),
+    const response = await fetch(API + "/workers" + workersQuery({
+      scope, ...workerFilters, cursor,
+    }),
       { headers: { accept: "application/json" } });
     const payload = await readJson(response);
     if (response.status !== 200) {
@@ -268,13 +293,13 @@ export function WorkerOperations({
       );
     } else {
       const scope = tab as WorkerScopeTab;
-      fetchWorkers(scope, statusFilter, null).then(
+      fetchWorkers(scope, filters, null).then(
         (outcome) => { if (active) applyWorkerPage(scope, outcome, false); },
         () => { if (active) applyWorkerPage(scope, { ok: false, state: "unavailable", message: null }, false); },
       );
     }
     return () => { active = false; };
-  }, [tab, statusFilter, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
+  }, [tab, filters, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
 
   useEffect(() => {
     if (!canReview) return;
@@ -291,12 +316,14 @@ export function WorkerOperations({
   async function loadMore<T>(
     page: TabPage<T>, fetcher: (cursor: string | null) => Promise<FetchOutcome<T>>,
     apply: (outcome: FetchOutcome<T>, append: boolean) => void,
+    isCurrent: () => boolean = () => true,
   ): Promise<void> {
     if (page.cursor === null || !page.hasMore) return;
     setBusyRequestId("more");
     const outcome = await fetcher(page.cursor).catch(
       () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
     setBusyRequestId(null);
+    if (!isCurrent()) return;
     apply(outcome, true);
   }
 
@@ -305,19 +332,44 @@ export function WorkerOperations({
       if (focus) tabRefs.current[tabs.indexOf(next)]?.focus();
       return;
     }
-    setStatusFilter("");
+    workerQueryGeneration.current += 1;
+    setFilters({ status: "", projectId: "", recruiterId: "" });
     if (next === "uploader") setSubmissionPage(resetTabPage());
     else setWorkerPages((pages) => ({ ...pages, [next as WorkerScopeTab]: resetTabPage() }));
     setTab(next);
     if (focus) tabRefs.current[tabs.indexOf(next)]?.focus();
   }
 
-  function changeFilter(value: string) {
-    setStatusFilter(value);
+  function changeFilter(field: keyof WorkerDirectoryFilters, value: string) {
     const scope = tabScope(tab);
-    if (scope !== null && scope !== undefined && scope !== "recruited" && scope !== "managed" && scope !== "all") return;
-    if (scope !== null && scope !== undefined) {
-      setWorkerPages((pages) => ({ ...pages, [scope as WorkerScopeTab]: resetTabPage() }));
+    if (scope === null) return;
+    workerQueryGeneration.current += 1;
+    const next = updateWorkerDirectoryFilter({
+      page: workerPages[scope], filters, field, value,
+    });
+    setFilters(next.filters);
+    setWorkerPages((pages) => ({ ...pages, [scope]: next.page }));
+  }
+
+  const workerPageGeneration = workerQueryGeneration.current;
+
+  async function reload(): Promise<void> {
+    setConflict(null);
+    if (tab === "uploader") {
+      setSubmissionPage(resetTabPage());
+      applySubmissionPage(await fetchSubmissions(null).catch(
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
+    } else {
+      const scope = tab as WorkerScopeTab;
+      workerQueryGeneration.current += 1;
+      const generation = workerQueryGeneration.current;
+      setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
+      const outcome = await fetchWorkers(scope, filters, null).catch(
+        () => ({ ok: false as const, state: "unavailable" as PageState, message: null }));
+      if (generation === workerQueryGeneration.current) applyWorkerPage(scope, outcome, false);
+    }
+    if (canReview) {
+      await reloadRequestPage();
     }
   }
 
@@ -331,23 +383,6 @@ export function WorkerOperations({
     if (next < 0) return;
     event.preventDefault();
     selectTab(tabs[next]);
-  }
-
-  async function reload(): Promise<void> {
-    setConflict(null);
-    if (tab === "uploader") {
-      setSubmissionPage(resetTabPage());
-      applySubmissionPage(await fetchSubmissions(null).catch(
-        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
-    } else {
-      const scope = tab as WorkerScopeTab;
-      setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
-      applyWorkerPage(scope, await fetchWorkers(scope, statusFilter, null).catch(
-        () => ({ ok: false as const, state: "unavailable" as PageState, message: null })), false);
-    }
-    if (canReview) {
-      await reloadRequestPage();
-    }
   }
 
   async function withdrawRequest(request: ChangeRequestListItem): Promise<void> {
@@ -450,16 +485,58 @@ export function WorkerOperations({
         <p className="text-sm text-muted">{WORKER_OPERATIONS_TAB_HINTS[tab]}</p>
 
         {tab === "uploader" ? null : (
-          <div className="flex flex-col gap-1 sm:max-w-xs">
-            <label htmlFor={filterId} className="text-sm font-medium">Trạng thái làm việc</label>
-            <select id={filterId} className={inputClass} value={statusFilter}
-              onChange={(event) => changeFilter(event.target.value)}>
-              <option value="">Tất cả</option>
-              {WORKER_EMPLOYMENT_STATUSES.map((status) => (
-                <option key={status} value={status}>{workerStatusLabel(status)}</option>
-              ))}
-            </select>
-          </div>
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="flex flex-col gap-1">
+                <label htmlFor={filterId} className="text-sm font-medium">Trạng thái làm việc</label>
+                <select id={filterId} className={inputClass} value={filters.status}
+                  onChange={(event) => changeFilter("status", event.target.value)}>
+                  <option value="">Tất cả</option>
+                  {WORKER_EMPLOYMENT_STATUSES.map((status) => (
+                    <option key={status} value={status}>{workerStatusLabel(status)}</option>
+                  ))}
+                </select>
+              </div>
+              {filterCatalog ? (
+                <>
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={projectFilterId} className="text-sm font-medium">Dự án</label>
+                    <select id={projectFilterId} className={inputClass} value={filters.projectId}
+                      onChange={(event) => changeFilter("projectId", event.target.value)}>
+                      <option value="">Tất cả dự án</option>
+                      {filterCatalog.projects.map((project) => (
+                        <option key={project.project_id} value={project.project_id}>
+                          {project.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={recruiterFilterId} className="text-sm font-medium">Người tuyển</label>
+                    <select id={recruiterFilterId} className={inputClass} value={filters.recruiterId}
+                      onChange={(event) => changeFilter("recruiterId", event.target.value)}>
+                      <option value="">Tất cả người tuyển</option>
+                      {filterCatalog.recruiters.map((recruiter) => (
+                        <option key={recruiter.recruiter_id} value={recruiter.recruiter_id}>
+                          {recruiter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              ) : null}
+            </div>
+            {filterCatalog === undefined && !filterCatalogUnavailable ? (
+              <p role="status" className="text-sm text-blue-700 dark:text-blue-300">
+                Đang tải bộ lọc dự án và người tuyển…
+              </p>
+            ) : null}
+            {filterCatalogUnavailable ? (
+              <p role="alert" className={errorClass}>
+                Không tải được danh mục dự án và người tuyển. Bộ lọc trạng thái vẫn hoạt động.
+              </p>
+            ) : null}
+          </>
         )}
 
         {activePage.state === "loading" || activePage.state === "idle" ? (
@@ -491,19 +568,24 @@ export function WorkerOperations({
         ) : null}
         {workerPage !== null && workerPage.state === "ready" ? (
           <>
-            <WorkerTable rows={workerPage.items} onPropose={(row) => setDrawerRow(row)} />
+            <WorkerTable rows={workerPage.items}
+              canPrivilegedEdit={canPrivilegedEditWorkers}
+              onPropose={(row) => { setDrawerMode("proposal"); setDrawerRow(row); }}
+              onCorrect={(row) => { setDrawerMode("correction"); setDrawerRow(row); }} />
             <LoadMore state={workerPage.state} hasMore={workerPage.hasMore}
               busy={busyRequestId === "more"}
               onLoadMore={() => void loadMore(workerPage, (cursor) =>
-                fetchWorkers(tab as WorkerScopeTab, statusFilter, cursor), (outcome, append) =>
-                applyWorkerPage(tab as WorkerScopeTab, outcome, append))} />
+                fetchWorkers(tab as WorkerScopeTab, filters, cursor), (outcome, append) =>
+                applyWorkerPage(tab as WorkerScopeTab, outcome, append),
+              () => workerQueryGeneration.current === workerPageGeneration)} />
           </>
         ) : null}
       </section>
 
       <ProposeDrawer
-        key={drawerRow === null ? "none" : drawerRow.entry_id}
+        key={drawerRow === null ? "none" : drawerRow.entry_id + ":" + drawerMode}
         row={drawerRow}
+        mode={drawerMode}
         catalogFor={catalogFor}
         ensureCatalog={ensureCatalog}
         onOpenChange={(open) => { if (!open) setDrawerRow(null); }}
@@ -572,10 +654,12 @@ function SubmissionTable({ submissions }: { submissions: readonly SubmissionRead
 }
 
 function WorkerTable({
-  rows, onPropose,
+  rows, canPrivilegedEdit, onPropose, onCorrect,
 }: {
   rows: readonly WorkerDirectoryRow[];
+  canPrivilegedEdit: boolean;
   onPropose: (row: WorkerDirectoryRow) => void;
+  onCorrect: (row: WorkerDirectoryRow) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -623,10 +707,19 @@ function WorkerTable({
                   ) : null}
                 </td>
                 <td className="p-3">
-                  {cta.show ? (
-                    <button type="button" className={primaryClass} onClick={() => onPropose(row)}>
-                      Đề xuất thay đổi
-                    </button>
+                  {cta.show || canPrivilegedEdit ? (
+                    <div className="flex flex-col items-start gap-2">
+                      {cta.show ? (
+                        <button type="button" className={primaryClass} onClick={() => onPropose(row)}>
+                          Đề xuất thay đổi
+                        </button>
+                      ) : null}
+                      {canPrivilegedEdit ? (
+                        <button type="button" className={buttonClass} onClick={() => onCorrect(row)}>
+                          Sửa trực tiếp
+                        </button>
+                      ) : null}
+                    </div>
                   ) : (
                     <span className="text-xs text-muted">{cta.message}</span>
                   )}
@@ -642,6 +735,11 @@ function WorkerTable({
 
 type EntryBaseline = {
   version: number;
+  projectId: string;
+  firstWorkDate: string;
+  employeeCode: string;
+  recruiterId: string;
+  laborType: "TEMPORARY" | "PERMANENT";
   workerDetails: WorkerDetails | null;
   providerType: "hrp" | "vendor" | null;
   status: WorkerStatus | null;
@@ -663,7 +761,10 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
     const entry = (body as Record<string, unknown>).entry;
     if (typeof entry !== "object" || entry === null) return null;
     const row = entry as Record<string, unknown>;
-    if (typeof row.version !== "number") return null;
+    if (typeof row.version !== "number" || typeof row.project_id !== "string" ||
+        typeof row.first_work_date !== "string" || typeof row.employee_code !== "string" ||
+        typeof row.recruiter_id !== "string" ||
+        (row.labor_type !== "TEMPORARY" && row.labor_type !== "PERMANENT")) return null;
     const details = projectWorkerDetailsForProposal(row.worker_details);
     const status = typeof row.employment_status === "object" && row.employment_status !== null
       ? row.employment_status as Record<string, unknown> : null;
@@ -671,6 +772,11 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
       ? row.payment as Record<string, unknown> : null;
     return {
       version: row.version,
+      projectId: row.project_id,
+      firstWorkDate: row.first_work_date,
+      employeeCode: row.employee_code,
+      recruiterId: row.recruiter_id,
+      laborType: row.labor_type,
       workerDetails: details,
       providerType: row.provider_type === "hrp" || row.provider_type === "vendor"
         ? row.provider_type : null,
@@ -692,9 +798,10 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
 }
 
 function ProposeDrawer({
-  row, catalogFor, ensureCatalog, onOpenChange, onDone, onConflict,
+  row, mode, catalogFor, ensureCatalog, onOpenChange, onDone, onConflict,
 }: {
   row: WorkerDirectoryRow | null;
+  mode: "proposal" | "correction";
   catalogFor: (date: string) => DraftCatalog | undefined;
   ensureCatalog: (date: string) => Promise<DraftCatalog>;
   onOpenChange: (open: boolean) => void;
@@ -708,7 +815,7 @@ function ProposeDrawer({
   const [message, setMessage] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [target, setTarget] = useState<WorkerProposeTarget>("WORKER");
-  const [workerForm, setWorkerForm] = useState<WorkerForm | null>(null);
+  const [entryForm, setEntryForm] = useState<WorkerEntryFieldForm | null>(null);
   const [paymentState, setPaymentState] = useState<PaymentState>("omitted");
   const [accountNumber, setAccountNumber] = useState("");
   const [bankId, setBankId] = useState("");
@@ -718,6 +825,8 @@ function ProposeDrawer({
   const [leaveReason, setLeaveReason] = useState("");
   const today = hcmTodayDate();
   const catalog = catalogFor(today);
+  const entryCatalogDate = entryForm?.first_work_date;
+  const entryCatalog = catalogFor(entryCatalogDate ?? today);
 
   useEffect(() => {
     if (row === null) return;
@@ -728,7 +837,17 @@ function ProposeDrawer({
         setBaseline(value);
         setLoading(false);
         setEffectiveDate(hcmTodayDate());
-        if (value?.workerDetails) setWorkerForm(workerFormFromDetails(value.workerDetails));
+        if (value?.workerDetails) {
+          const entryBaseline: WorkerEntryFieldBaseline = {
+            project_id: value.projectId,
+            first_work_date: value.firstWorkDate,
+            employee_code: value.employeeCode,
+            recruiter_id: value.recruiterId,
+            labor_type: value.laborType,
+            worker_details: value.workerDetails,
+          };
+          setEntryForm(workerEntryFormFromBaseline(entryBaseline));
+        }
         if (value?.payment) {
           setPaymentState(value.payment.state);
           setAccountNumber(value.payment.account_number ?? "");
@@ -745,21 +864,74 @@ function ProposeDrawer({
     if (row !== null) void ensureCatalog(today).catch(() => undefined);
   }, [row, ensureCatalog, today]);
 
+  useEffect(() => {
+    if (row !== null && entryCatalogDate) {
+      void ensureCatalog(entryCatalogDate).catch(() => undefined);
+    }
+  }, [row, entryCatalogDate, ensureCatalog]);
+
   async function submit(): Promise<void> {
     if (row === null || baseline === null) return;
     const trimmed = reason.trim();
     if (trimmed === "") { setMessage("Lý do là bắt buộc."); return; }
     let proposal: Record<string, unknown> | null = null;
     let targetKind: "ENTRY_FIELD" | "PAYMENT" | "WORK_STATUS" = "ENTRY_FIELD";
-    if (target === "WORKER") {
-      if (workerForm === null || baseline.workerDetails === null) {
+    if (mode === "correction" || target === "WORKER") {
+      if (entryForm === null || baseline.workerDetails === null) {
         setMessage("Chưa đọc được thông tin người lao động.");
         return;
       }
-      const built = buildWorkerDetailsProposal(baseline.workerDetails, workerForm);
+      const entryBaseline: WorkerEntryFieldBaseline = {
+        project_id: baseline.projectId,
+        first_work_date: baseline.firstWorkDate,
+        employee_code: baseline.employeeCode,
+        recruiter_id: baseline.recruiterId,
+        labor_type: baseline.laborType,
+        worker_details: baseline.workerDetails,
+      };
+      const built = buildEntryFieldProposal({
+        entryId: row.entry_id,
+        expectedVersion: baseline.version,
+        baseline: entryBaseline,
+        form: entryForm,
+      });
       if (!built.ok) { setMessage(proposalErrorMessage(built.code)); return; }
       proposal = built.proposal;
       targetKind = "ENTRY_FIELD";
+      if (mode === "correction") {
+        setBusy(true);
+        try {
+          const response = await fetch(API + "/entries/" + encodeURIComponent(row.entry_id) +
+            "/privileged-edit", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "idempotency-key": crypto.randomUUID(),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              expected_entry_version: baseline.version,
+              patch: built.proposal,
+              reason: trimmed,
+            }),
+          });
+          setBusy(false);
+          if (response.status === 409) { onConflict(); return; }
+          if (response.status === 403) {
+            setMessage("Bạn không còn quyền sửa trực tiếp hồ sơ này.");
+            return;
+          }
+          if (response.status !== 200) {
+            setMessage("Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.");
+            return;
+          }
+          onDone("Đã lưu chỉnh sửa trực tiếp có ghi nhận lý do.");
+        } catch {
+          setBusy(false);
+          setMessage("Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.");
+        }
+        return;
+      }
     } else if (target === "PAYMENT") {
       const activeBankIds = new Set((catalog?.banks ?? []).map((bank) => bank.bank_id));
       const built = buildPaymentProposal({
@@ -832,9 +1004,13 @@ function ProposeDrawer({
             <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border
               bg-surface px-4 py-4 sm:px-5">
               <div>
-                <Dialog.Title className="text-xl font-semibold">Đề xuất thay đổi</Dialog.Title>
+                <Dialog.Title className="text-xl font-semibold">
+                  {mode === "correction" ? "Sửa trực tiếp hồ sơ" : "Đề xuất thay đổi"}
+                </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-muted">
-                  Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần đổi rồi nhập lý do để gửi duyệt.
+                  {mode === "correction"
+                    ? "Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần sửa và nhập lý do."
+                    : "Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần đổi rồi nhập lý do để gửi duyệt."}
                 </Dialog.Description>
               </div>
               <button type="button" aria-label="Đóng đề xuất" disabled={busy}
@@ -873,12 +1049,11 @@ function ProposeDrawer({
                     ))}
                   </dl>
                 </section>
-              ) : null}
+      ) : null}
               <p className="rounded-md border border-blue-500/30 bg-blue-50 p-3 text-sm text-blue-700
                 dark:bg-blue-950/40 dark:text-blue-300">
-                Mã người lao động, dự án, ngày bắt đầu, người tuyển, loại hình lao động và họ tên
-                là trường được bảo vệ — chỉ xem. Những trường được phép sửa bên dưới luôn bắt đầu từ
-                dữ liệu đang lưu, không cần nhập lại từ đầu.
+                Các giá trị hiện tại được nạp sẵn. Chỉ nội dung đã thay đổi mới được gửi; dữ liệu khác
+                giữ nguyên theo hồ sơ đang lưu.
               </p>
               {loading ? (
                 <p role="status" className="rounded-md border border-blue-500/30 bg-blue-50 p-3 text-sm
@@ -892,18 +1067,20 @@ function ProposeDrawer({
                 </p>
               ) : null}
 
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="propose-target" className="text-sm font-medium">Nội dung đề xuất</label>
-                <select id="propose-target" className={inputClass} value={target}
-                  disabled={loading || baseline === null}
-                  onChange={(event) => { setTarget(event.target.value as WorkerProposeTarget); setMessage(null); }}>
-                  {WORKER_PROPOSE_TARGETS.map((value) => (
-                    <option key={value} value={value}>{WORKER_PROPOSE_TARGET_LABELS[value]}</option>
-                  ))}
-                </select>
-              </div>
+              {mode === "proposal" ? (
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="propose-target" className="text-sm font-medium">Nội dung đề xuất</label>
+                  <select id="propose-target" className={inputClass} value={target}
+                    disabled={loading || baseline === null}
+                    onChange={(event) => { setTarget(event.target.value as WorkerProposeTarget); setMessage(null); }}>
+                    {WORKER_PROPOSE_TARGETS.map((value) => (
+                      <option key={value} value={value}>{WORKER_PROPOSE_TARGET_LABELS[value]}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
 
-              {target === "WORKER" && workerForm !== null ? (
+              {(mode === "correction" || target === "WORKER") && entryForm !== null ? (
                 <section aria-labelledby="worker-profile-fields" className="space-y-4 rounded-xl
                   border border-border p-4">
                   <div>
@@ -912,10 +1089,84 @@ function ProposeDrawer({
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="worker-display-name" className="text-sm font-medium">Họ và tên</label>
-                    <input id="worker-display-name" className={inputClass} disabled
-                      value={workerForm.display_name} readOnly />
-                    <p className="text-xs text-muted">Họ tên giữ nguyên; đây là trường được bảo vệ.</p>
+                    <input id="worker-display-name" className={inputClass}
+                      value={entryForm.workerDetails.display_name}
+                      onChange={(event) => setEntryForm({ ...entryForm,
+                        workerDetails: { ...entryForm.workerDetails, display_name: event.target.value } })} />
                   </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-employee-code" className="text-sm font-medium">
+                      Mã người lao động
+                    </label>
+                    <input id="worker-employee-code" className={inputClass}
+                      value={entryForm.employee_code}
+                      onChange={(event) => setEntryForm({ ...entryForm,
+                        employee_code: event.target.value })} />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-project" className="text-sm font-medium">Dự án</label>
+                    <select id="worker-project" className={inputClass} value={entryForm.project_id}
+                      disabled={loading || entryCatalog === undefined}
+                      onChange={(event) => setEntryForm({ ...entryForm, project_id: event.target.value })}>
+                      {entryCatalog?.projects.some((project) =>
+                        project.project_id === entryForm.project_id) ? null : (
+                        <option value={entryForm.project_id}>
+                          {(row?.project_display ?? "Dự án hiện tại") + " (hiện tại)"}
+                        </option>
+                      )}
+                      {(entryCatalog?.projects ?? []).map((project) => (
+                        <option key={project.project_id} value={project.project_id}>
+                          {project.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-first-work-date" className="text-sm font-medium">
+                      Ngày bắt đầu làm việc
+                    </label>
+                    <input id="worker-first-work-date" type="date" className={inputClass}
+                      value={entryForm.first_work_date}
+                      onChange={(event) => setEntryForm({ ...entryForm,
+                        first_work_date: event.target.value })} />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-recruiter" className="text-sm font-medium">
+                      Người tuyển
+                    </label>
+                    <select id="worker-recruiter" className={inputClass} value={entryForm.recruiter_id}
+                      disabled={loading || entryCatalog === undefined}
+                      onChange={(event) => setEntryForm({ ...entryForm,
+                        recruiter_id: event.target.value })}>
+                      {entryCatalog?.recruiters.some((recruiter) =>
+                        recruiter.recruiter_id === entryForm.recruiter_id) ? null : (
+                        <option value={entryForm.recruiter_id}>
+                          {(row?.recruiter_display ?? "Người tuyển hiện tại") + " (hiện tại)"}
+                        </option>
+                      )}
+                      {(entryCatalog?.recruiters ?? []).map((recruiter) => (
+                        <option key={recruiter.recruiter_id} value={recruiter.recruiter_id}>
+                          {recruiter.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="worker-labor-type" className="text-sm font-medium">
+                      Loại hình lao động
+                    </label>
+                    <select id="worker-labor-type" className={inputClass} value={entryForm.labor_type}
+                      onChange={(event) => setEntryForm({ ...entryForm,
+                        labor_type: event.target.value as WorkerEntryFieldForm["labor_type"] })}>
+                      <option value="PERMANENT">Chính thức</option>
+                      <option value="TEMPORARY">Thời vụ</option>
+                    </select>
+                  </div>
+                  {entryCatalog === undefined ? (
+                    <p role="alert" className={errorClass}>
+                      Không tải được danh mục hiện có. Không thể chọn dự án hoặc người tuyển mới.
+                    </p>
+                  ) : null}
                   {WORKER_FORM_FIELDS.map((field) => (
                     <div key={field} className="flex flex-col gap-1.5">
                       <label htmlFor={"worker-" + field} className="text-sm font-medium">
@@ -924,12 +1175,16 @@ function ProposeDrawer({
                       <div className="grid gap-2 sm:grid-cols-[11rem_1fr]">
                         <select id={"worker-" + field + "-state"} className={inputClass}
                           aria-label={"Trạng thái " + WORKER_FIELD_LABELS[field]}
-                          value={workerForm[field].state}
+                          value={entryForm.workerDetails[field].state}
                           onChange={(event) => {
                             const state = event.target.value as WorkerFieldForm["state"];
-                            setWorkerForm({
-                              ...workerForm,
-                              [field]: { state, text: state === "provided" ? workerForm[field].text : "" },
+                            setEntryForm({
+                              ...entryForm,
+                              workerDetails: {
+                                ...entryForm.workerDetails,
+                                [field]: { state, text: state === "provided"
+                                  ? entryForm.workerDetails[field].text : "" },
+                              },
                             });
                           }}>
                           <option value="provided">Có giá trị</option>
@@ -944,10 +1199,11 @@ function ProposeDrawer({
                         {field === "gender" ? (
                           <select id="worker-gender" className={inputClass}
                             aria-label="Giới tính người lao động"
-                            disabled={workerForm.gender.state !== "provided"}
-                            value={workerForm.gender.text}
-                            onChange={(event) => setWorkerForm({ ...workerForm,
-                              gender: { state: "provided", text: event.target.value } })}>
+                            disabled={entryForm.workerDetails.gender.state !== "provided"}
+                            value={entryForm.workerDetails.gender.text}
+                            onChange={(event) => setEntryForm({ ...entryForm,
+                              workerDetails: { ...entryForm.workerDetails,
+                                gender: { state: "provided", text: event.target.value } } })}>
                             <option value="">Chọn giới tính</option>
                             <option value="FEMALE">Nữ</option>
                             <option value="MALE">Nam</option>
@@ -959,11 +1215,14 @@ function ProposeDrawer({
                             inputMode={field === "national_id" || field === "phone" ? "numeric" : undefined}
                             placeholder={field === "date_of_birth" || field === "national_id_issued_at"
                               ? "DD/MM/YYYY" : undefined}
-                            disabled={workerForm[field].state !== "provided"}
-                            value={workerForm[field].text}
-                            onChange={(event) => setWorkerForm({
-                              ...workerForm,
-                              [field]: { state: "provided", text: event.target.value },
+                            disabled={entryForm.workerDetails[field].state !== "provided"}
+                            value={entryForm.workerDetails[field].text}
+                            onChange={(event) => setEntryForm({
+                              ...entryForm,
+                              workerDetails: {
+                                ...entryForm.workerDetails,
+                                [field]: { state: "provided", text: event.target.value },
+                              },
                             })} />
                         )}
                       </div>
@@ -972,7 +1231,7 @@ function ProposeDrawer({
                 </section>
               ) : null}
 
-              {target === "PAYMENT" ? (
+              {mode === "proposal" && target === "PAYMENT" ? (
                 <>
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="bank-state" className="text-sm font-medium">
@@ -1015,7 +1274,7 @@ function ProposeDrawer({
                 </>
               ) : null}
 
-              {target === "WORK_STATUS" ? (
+              {mode === "proposal" && target === "WORK_STATUS" ? (
                 <>
                   <p className="text-sm text-muted">
                     Trạng thái hiện tại: <strong className="text-foreground">
@@ -1055,8 +1314,11 @@ function ProposeDrawer({
               ) : null}
 
               <div className="flex flex-col gap-1.5">
-                <label htmlFor={reasonId} className="text-sm font-medium">Lý do đề xuất</label>
+                <label htmlFor={reasonId} className="text-sm font-medium">
+                  {mode === "correction" ? "Lý do chỉnh sửa" : "Lý do đề xuất"}
+                </label>
                 <textarea id={reasonId} required aria-required="true"
+                  maxLength={mode === "correction" ? 1000 : 4000}
                   className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
                     text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                   value={reason} onChange={(event) => setReason(event.target.value)} />
@@ -1069,7 +1331,7 @@ function ProposeDrawer({
                 onClick={() => onOpenChange(false)}>Huỷ</button>
               <button type="submit" className={primaryClass}
                 disabled={busy || loading || baseline === null} aria-busy={busy}>
-                Gửi đề xuất
+                {mode === "correction" ? "Lưu chỉnh sửa trực tiếp" : "Gửi đề xuất"}
               </button>
             </footer>
           </form>

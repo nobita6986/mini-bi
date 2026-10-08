@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   allowedWorkStatusTargets,
   buildChangeRequestItem,
+  buildEntryFieldProposal,
   buildPaymentProposal,
   buildWorkerDetailsProposal,
   buildWorkStatusProposal,
@@ -11,6 +12,7 @@ import {
   projectWorkerDetailsForProposal,
   proposalErrorMessage,
   workerDetailsFromForm,
+  workerEntryFormFromBaseline,
   workerFormFromDetails,
 } from "./change-request-proposal-builders.ts";
 
@@ -98,6 +100,56 @@ test("worker_details proposal: preloads and edits the complete canonical worker 
   assert.equal("gender" in legacyProposal.proposal.worker_details, false);
   assert.equal("national_id_issued_at" in legacyProposal.proposal.worker_details, false);
   assert.equal("national_id_issued_place" in legacyProposal.proposal.worker_details, false);
+});
+
+test("ENTRY_FIELD proposal preloads every #61 field and emits only changed keys", () => {
+  const baseline = {
+    project_id: "project-old",
+    first_work_date: "2026-10-01",
+    employee_code: "hrp-2026-000001",
+    recruiter_id: "22222222-2222-4222-8222-222222222222",
+    labor_type: "PERMANENT",
+    worker_details: worker(),
+  };
+  const form = workerEntryFormFromBaseline(baseline);
+  assert.equal(form.project_id, baseline.project_id);
+  assert.equal(form.first_work_date, baseline.first_work_date);
+  assert.equal(form.employee_code, baseline.employee_code);
+  assert.equal(form.recruiter_id, baseline.recruiter_id);
+  assert.equal(form.labor_type, baseline.labor_type);
+  assert.deepEqual(form.workerDetails, workerFormFromDetails(baseline.worker_details));
+  assert.deepEqual(buildEntryFieldProposal({ entryId: "c1000000-0000-4000-8000-00000000000a",
+    expectedVersion: 8, baseline, form }), { ok: false, code: "WORKER_UNCHANGED" });
+
+  form.project_id = "project-new";
+  form.first_work_date = "2026-10-02";
+  form.employee_code = "hrp-2026-000002";
+  form.recruiter_id = "33333333-3333-4333-8333-333333333333";
+  form.labor_type = "TEMPORARY";
+  form.workerDetails.display_name = "Nguyen Van Updated";
+  form.workerDetails.phone = { state: "provided", text: "0900000000" };
+  const built = buildEntryFieldProposal({
+    entryId: "c1000000-0000-4000-8000-00000000000a", expectedVersion: 8, baseline, form,
+  });
+  assert.equal(built.ok, true);
+  assert.deepEqual(Object.keys(built.proposal).sort(), [
+    "employee_code", "first_work_date", "labor_type", "project_id", "recruiter_id",
+    "worker_details",
+  ]);
+  assert.equal(built.proposal.worker_details.display_name, "Nguyen Van Updated");
+  assert.deepEqual(built.proposal.worker_details.phone, { state: "provided", value: "0900000000" });
+
+  const item = buildChangeRequestItem({ entryId: "c1000000-0000-4000-8000-00000000000a",
+    expectedVersion: 8, targetKind: "ENTRY_FIELD", proposal: built.proposal });
+  assert.equal(item.entry_id, "c1000000-0000-4000-8000-00000000000a");
+  assert.equal(item.expected_version, 8);
+  assert.equal(item.target_kind, "ENTRY_FIELD");
+  assert.deepEqual(buildEntryFieldProposal({
+    entryId: item.entry_id,
+    expectedVersion: 8,
+    baseline,
+    form: { ...workerEntryFormFromBaseline(baseline), labor_type: "TEMPORARY" },
+  }), { ok: true, proposal: { labor_type: "TEMPORARY" } });
 });
 
 test("PAYMENT proposal: dung 4 field, bank phai active, giu so 0 dau", () => {
