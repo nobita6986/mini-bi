@@ -29,6 +29,8 @@ let failLoadMore = false;
 let catalogDenied = false;
 let catalogMode = "ready";
 let conflictNext = false;
+let failSubmissions = false;
+let failRequests = false;
 
 function row(index: number, name?: string): Row {
   return {
@@ -149,20 +151,43 @@ if (typeof window !== "undefined") {
       return workerPage(url.searchParams.get("scope") ?? "", url.searchParams.get("cursor"));
     }
     if (url.pathname === "/api/direct-entry/submissions") {
+      // P2.5-HF-R5A-R1: loi mang that (fetch reject) de phu dung nhanh .catch cua component.
+      if (failSubmissions) throw new TypeError("Failed to fetch");
+      const submissionCursor = url.searchParams.get("cursor");
+      if (submissionCursor !== null) {
+        return json({ ok: true,
+          items: [{ submission_id: "b1000000-0000-4000-8000-000000000002", state: "DRAFT",
+            version: 1, entry_count: 2, created_at: "2026-10-04T08:00:00.000000Z",
+            updated_at: "2026-10-04T08:05:00.000000Z", submitted_at: null,
+            allowed_transitions: ["REVIEW"], project_scoped: false }],
+          page_size: 25, has_more: false, next_cursor: null });
+      }
       return json({ ok: true,
         items: [{ submission_id: "b1000000-0000-4000-8000-000000000001", state: "SUBMITTED",
           version: 2, entry_count: 3, created_at: "2026-10-04T09:00:00.000000Z",
           updated_at: "2026-10-04T09:05:00.000000Z", submitted_at: "2026-10-04T09:06:00.000000Z",
           allowed_transitions: [], project_scoped: false }],
-        page_size: 25, has_more: false, next_cursor: null });
+        page_size: 25, has_more: true,
+        next_cursor: "20261004090100000000:b1000000-0000-4000-8000-000000000002" });
     }
     if (url.pathname === "/api/direct-entry/change-requests" && method === "GET") {
+      if (failRequests) throw new TypeError("Failed to fetch");
+      if (url.searchParams.get("cursor") !== null) {
+        return json({ ok: true,
+          requests: [{ request_id: "d1000000-0000-4000-8000-000000000002", state: "PENDING",
+            version: 1, created_at: "2026-10-03T09:00:00.000000Z", item_count: 1,
+            entry_ids: ["c1000000-0000-4000-8000-000000000002"],
+            can_withdraw: false, can_decide: true }],
+          page_size: 20, has_more: false, next_cursor: null });
+      }
       return json({ ok: true,
         requests: [{ request_id: "d1000000-0000-4000-8000-000000000001", state: "PENDING",
           version: 2, created_at: "2026-10-03T10:00:00.000000Z", item_count: 1,
           entry_ids: ["c1000000-0000-4000-8000-000000000001"],
-          can_withdraw: true, can_decide: true }],
-        page_size: 20, has_more: false, next_cursor: null });
+          // Contract: mot yeu cau khong the vua rut duoc vua duyet duoc.
+          can_withdraw: true, can_decide: false }],
+        page_size: 20, has_more: true,
+        next_cursor: "20261008100400000000:d1000000-0000-4000-8000-000000000002" });
     }
     if (url.pathname === "/api/direct-entry/catalog") {
       const effectiveDate = url.searchParams.get("effective_date") ?? "";
@@ -190,6 +215,32 @@ if (typeof window !== "undefined") {
     clearCalls: () => { calls.length = 0; },
     denyScope: (scope: string | null) => { denyScope = scope; },
     failNextLoadMore: () => { failLoadMore = true; },
+    failSubmissions: () => { failSubmissions = true; },
+    allowSubmissions: () => { failSubmissions = false; },
+    failRequests: () => { failRequests = true; },
+    allowRequests: () => { failRequests = false; },
+    queueText: () => {
+      const heading = document.getElementById("direct-entry-change-requests-heading");
+      return heading?.closest<HTMLElement>("section")?.innerText ?? "";
+    },
+    queueCards: () => {
+      const heading = document.getElementById("direct-entry-change-requests-heading");
+      return heading?.closest<HTMLElement>("section")?.querySelectorAll("li").length ?? 0;
+    },
+    alertTexts: () => Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]'),
+      (alert) => alert.innerText.trim()),
+    alertHasButton: (label: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]'))
+        .some((alert) => Array.from(alert.querySelectorAll<HTMLElement>("button"))
+          .some((button) => button.innerText.trim() === label)),
+    clickAlertButton: (label: string) => {
+      for (const alert of Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]'))) {
+        const button = Array.from(alert.querySelectorAll<HTMLElement>("button"))
+          .find((item) => item.innerText.trim() === label);
+        if (button) { button.click(); return true; }
+      }
+      return false;
+    },
     setCatalogDenied: (value: boolean) => { catalogDenied = value; },
     setCatalogError: (value: boolean) => { catalogMode = value ? "error" : "ready"; },
     conflictNext: () => { conflictNext = true; },

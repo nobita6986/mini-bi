@@ -386,8 +386,7 @@ async function main() {
     await api(send, "remount()");
     record("a failing catalog is still a red error",
       await waitFor(send, "window.__p25r5a.listRowTexts().length === 25") &&
-      (await api(send, "errorText()")).some((text) =>
-        text.includes("Không tải được danh mục dự án và người tuyển")) &&
+      await waitFor(send, "window.__p25r5a.errorText().some((text) => text.includes('Không tải được danh mục dự án và người tuyển'))") &&
       (await api(send, "alertClassNames()")).some((name) => name.includes("border-red-500")),
       await api(send, "errorText()"));
 
@@ -401,6 +400,54 @@ async function main() {
       (await api(send, "bodyText()")).includes("Đề xuất thay đổi") &&
       !(await api(send, "bodyText()")).includes("Sửa trực tiếp"));
 
+    // P2.5-HF-R5A-R1: khong con duong network rejection nao im lang.
+    await api(send, 'clickTab("Tôi đã nhập")');
+    record("uploader relation keeps its rows when the next page request fails",
+      await waitFor(send, "window.__p25r5a.listRowTexts().length === 1") &&
+      await api(send, "failSubmissions()") === undefined &&
+      await api(send, 'clickButton("Tải thêm")') &&
+      await waitFor(send, "window.__p25r5a.alertTexts().some((t) => t.includes('Không tải được danh sách. Vui lòng thử lại.'))") &&
+      (await api(send, "listRowTexts()")).length === 1 &&
+      await api(send, 'alertHasButton("Thử lại")'),
+      await api(send, "alertTexts()"));
+    await api(send, "clearCalls()");
+    await api(send, "allowSubmissions()");
+    await api(send, 'clickAlertButton("Thử lại")');
+    record("retry from the retained-rows failure reloads the relation",
+      await waitFor(send, "window.__p25r5a.alertTexts().length === 0") &&
+      (await api(send, "listRowTexts()")).length === 1 &&
+      (await api(send, "calls()")).some((call) => call.method === "GET" &&
+        call.url.startsWith("/api/direct-entry/submissions")),
+      (await api(send, "calls()")).map((call) => call.url));
+    await api(send, 'clickTab("Toàn bộ NLĐ")');
+    await waitFor(send, "window.__p25r5a.listRowTexts().length > 0");
+    await api(send, "failSubmissions()");
+    await api(send, 'clickTab("Tôi đã nhập")');
+    await api(send, "allowSubmissions()");
+    record("initial rejection without rows shows the sanitized message, not a blank page",
+      await waitFor(send, "window.__p25r5a.alertTexts().some((t) => t.startsWith('Không tải được danh sách. Vui lòng thử lại.'))") &&
+      (await api(send, "tabLabels()")).length === 4 &&
+      (await api(send, "queueText()")).length > 0 &&
+      await api(send, 'alertHasButton("Thử lại")'),
+      await api(send, "alertTexts()"));
+    await api(send, "clearCalls()");
+    await api(send, "failRequests()");
+    const queueBeforeFailure = await api(send, "queueCards()");
+    record("review queue keeps its rows when the older-requests refresh fails",
+      await api(send, 'clickButton("Tải thêm yêu cầu cũ hơn")') &&
+      await waitFor(send, "window.__p25r5a.alertTexts().some((t) => t.includes('Không tải được danh sách. Vui lòng thử lại.'))") &&
+      (await api(send, "queueCards()")) === queueBeforeFailure &&
+      (await api(send, "queueText()")).includes("Yêu cầu thay đổi") &&
+      !(await api(send, "queueText()")).includes("()"),
+      { before: queueBeforeFailure, after: await api(send, "queueCards()"),
+        alerts: await api(send, "alertTexts()") });
+    await api(send, "remount()");
+    record("initial queue rejection reports the sanitized message instead of empty parentheses",
+      await waitFor(send, "window.__p25r5a.queueText().includes('Không tải được danh sách yêu cầu thay đổi')") &&
+      (await api(send, "queueText()")).includes("Không tải được danh sách. Vui lòng thử lại.") &&
+      !(await api(send, "queueText()")).includes("()") &&
+      (await api(send, "queueCards()")) === 0,
+      await api(send, "queueText()"));
     await setViewport(send, 1280, 900);
     record("desktop layout has no horizontal overflow",
       await waitFor(send, "document.documentElement.scrollWidth <= window.innerWidth + 1"));

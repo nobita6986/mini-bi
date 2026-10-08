@@ -302,7 +302,7 @@ export function WorkerOperations({
     if (tab === "uploader") {
       fetchSubmissions(null).then(
         (outcome) => { if (active) applySubmissionPage(outcome, false); },
-        () => { if (active) setSubmissionPage((page) => failLoad(page, "unavailable", null)); },
+        () => { if (active) setSubmissionPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
       );
     } else {
       const scope = tab as WorkerScopeTab;
@@ -319,7 +319,7 @@ export function WorkerOperations({
     let active = true;
     fetchRequests(null).then(
       (outcome) => { if (active) applyRequestPage(outcome, false); },
-      () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", null)); },
+      () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
     );
     return () => { active = false; };
   }, [canReview, fetchRequests, applyRequestPage]);
@@ -474,7 +474,12 @@ export function WorkerOperations({
 
       {/* P2.5-HF-R3: hang doi "Yeu cau thay doi" dat TRUOC danh sach NLD. */}
       {canReview && requestPage.state === "ready" && requestPage.message !== null ? (
-        <p role="alert" className={errorClass}>{requestPage.message}</p>
+        <div role="alert" className={"flex flex-col gap-2 " + errorClass}>
+          <span>{requestPage.message}</span>
+          <button type="button" className={buttonClass} onClick={() => void reloadRequestPage()}>
+            Thử lại
+          </button>
+        </div>
       ) : null}
       {canReview ? (
         <DirectEntryChangeRequestList
@@ -582,7 +587,12 @@ export function WorkerOperations({
 
         {/* P2.5-HF-R5A: "Tai them" loi thi GIU rows da tai va phai BAO cho nguoi dung. */}
         {activePage.state === "ready" && activePage.message !== null ? (
-          <p role="alert" className={errorClass}>{activePage.message}</p>
+          <div role="alert" className={"flex flex-col gap-2 " + errorClass}>
+            <span>{activePage.message}</span>
+            <button type="button" className={buttonClass} onClick={() => void reload()}>
+              Thử lại
+            </button>
+          </div>
         ) : null}
 
         {tab === "uploader" && submissionPage.state === "ready" ? (

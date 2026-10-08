@@ -283,7 +283,7 @@ test("HF-R5A: loi tai them phai duoc bao cho nguoi dung, khong duoc im lang", ()
   assert.match(source, /message: WORKER_LOAD_FAILED_MESSAGE/);
   assert.match(source, /activePage.state === "ready" && activePage.message !== null/);
   assert.match(source, /requestPage.state === "ready" && requestPage.message !== null/);
-  assert.match(source, /role="alert" className={errorClass}>{activePage.message}/);
+  assert.match(source, /<span>{activePage.message}<\/span>/);
 });
 
 test("HF-R5A: catalog bi tu choi (403) la gioi han quyen, khong phai loi he thong", () => {
@@ -311,4 +311,20 @@ test("HF-R5A: dong drawer phai tra focus ve dung nut da mo", () => {
   assert.match(source, /openerRef: \{ current: HTMLElement \| null \}/);
   assert.match(source, /onCloseAutoFocus=\{\(event\) => \{[\s\S]{0,220}opener\.isConnected[\s\S]{0,120}opener\.focus\(\)/);
   assert.match(source, /openerRef=\{drawerOpenerRef\}/);
+});
+
+test("HF-R5A-R1: moi duong network rejection dung canonical message, khong con null", () => {
+  assert.equal(/failLoad\([^)]*\bnull\b/.test(source), false, "khong con failLoad voi message null");
+  assert.equal(source.includes(String.fromCharCode(34) + "unavailable" + String.fromCharCode(34) + ", null"),
+    false, "khong con nhanh nao bo trong message");
+  // Hai duong initial rejection (submissions + requests) dung CUNG mot canonical message.
+  assert.equal((source.match(/failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)/g) ?? []).length, 2);
+  assert.match(source, /setSubmissionPage\(\(page\) => failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)\)/);
+  assert.match(source, /setRequestPage\(\(page\) => failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)\)/);
+  // Khong tao message/helper thu hai.
+  assert.equal(/const [A-Z_]*LOAD_FAILED[A-Z_]* = "/.test(source), false);
+  // Giu rows da tai + co retry trong ca hai red alert.
+  assert.equal((source.match(/onClick=\{\(\) => void reload\(\)\}/g) ?? []).length >= 2, true);
+  assert.match(source, /onClick=\{\(\) => void reloadRequestPage\(\)\}/);
+  assert.equal((source.match(/Thử lại/g) ?? []).length >= 3, true);
 });
