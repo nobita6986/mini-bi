@@ -37,7 +37,7 @@ test("co du cac trang thai loading/empty/error/denied", () => {
 
 test("ly do la bat buoc o moi dialog thay doi", () => {
   assert.match(source, /aria-required="true"/);
-  assert.match(source, /<textarea[\s\S]{0,200}required/);
+  assert.match(source, /<textarea[\s\S]*?required aria-required="true"/);
   assert.match(source, /Bắt buộc cho mọi thao tác thay đổi/);
   for (const kind of ["create", "rename", "set-active", "assign", "unassign"]) {
     assert.ok(source.includes('kind: "' + kind + '"'), "thieu dialog " + kind);
@@ -121,6 +121,44 @@ test("mobile parity: bang cuon ngang va layout responsive", () => {
   assert.match(source, /overflow-x-auto/);
   assert.match(source, /sm:flex-row/);
   assert.match(source, /min-w-\[/);
+});
+
+test("hotfix UI: chi dung token theme that, modal co nen dac va dung z-index", () => {
+  for (const invalid of ["bg-card", "border-input", "text-primary-foreground",
+    "text-muted-foreground", "bg-background", "border-destructive", "bg-destructive"]) {
+    assert.equal(source.includes(invalid), false, "token khong ton tai: " + invalid);
+  }
+  assert.match(source, /Dialog\.Overlay className="[^"]*z-40[^"]*bg-black/);
+  assert.match(source, /Dialog\.Content[\s\S]{0,300}z-50[\s\S]{0,300}bg-surface/);
+  assert.match(source, /max-h-\[calc\(100vh-2rem\)\]/);
+});
+
+test("hotfix action: tai detail thanh cong roi moi mo rename/active", () => {
+  assert.match(source, /const loaded = await loadDetail\(project\.project_id\)/);
+  assert.match(source, /if \(!loaded\)[\s\S]{0,300}return/);
+  assert.match(source, /action === "rename"[\s\S]{0,180}loaded\.display_name/);
+  assert.match(source, /action === "set-active"[\s\S]{0,180}!loaded\.project_active/);
+  assert.match(source, /detailState === "error"[\s\S]{0,500}Thử lại/);
+  assert.match(source, /void loadCandidates\(""\)/,
+    "candidate labels nap nen, khong chan nut Xem/Doi ten");
+  assert.equal(/await loadCandidates\(""\)/.test(source), false,
+    "khong duoc bat project action cho candidate endpoint");
+});
+
+test("hotfix mutation: loi mang khong lam nut bi ket va loi hien trong modal", () => {
+  assert.match(source, /async function send[\s\S]{0,1500}catch[\s\S]{0,500}Không kết nối được/);
+  assert.match(source, /notice && dialog\.kind === "none"/);
+  assert.match(source, /Dialog\.Content[\s\S]{0,1200}\{notice \? \(/);
+  assert.match(source, /busy \? "Đang xử lý…" : submitLabel/);
+});
+
+test("hotfix feature coverage: xem, doi ten, active, gan, thu hoi va lich su deu co UI", () => {
+  for (const label of ["Xem quản lý", "Đổi tên", "Ngừng", "Kích hoạt", "Gán quản lý",
+    "Thu hồi phân công", "Đang phụ trách", "Sắp hiệu lực", "Lịch sử phân công"]) {
+    assert.ok(source.includes(label), "thieu tinh nang UI: " + label);
+  }
+  assert.match(source, /filterProjects\(projects, projectSearch, statusFilter\)/);
+  assert.match(source, /type="date"/);
 });
 
 test("page boundary: gate flag truoc + dung project admin decision (F5)", () => {

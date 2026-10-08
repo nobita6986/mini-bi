@@ -9,6 +9,7 @@ import {
   buildUnassignRequest,
   candidateLabel,
   classifyResponse,
+  filterProjects,
   mutationProjectVersion,
   parseCandidatesResponse,
   parseDetailResponse,
@@ -70,6 +71,18 @@ test("ngung/kich hoat: CHI doi co active, khong co RPC rieng", () => {
   assert.equal(on.body.active, true);
   assert.equal(projectStatusLabel(true), "Đang hoạt động");
   assert.equal(projectStatusLabel(false), "Đã ngừng");
+});
+
+test("danh sach: tim theo ma/ten va loc trang thai ma khong doi authority", () => {
+  const projects = [
+    { project_id: "jahwa", display_name: "Công ty Jahwa Vina", active: true, version: 1 },
+    { project_id: "compal", display_name: "Compal Việt Nam", active: false, version: 2 },
+  ];
+  assert.deepEqual(filterProjects(projects, "JAH", "all"), [projects[0]]);
+  assert.deepEqual(filterProjects(projects, "việt nam", "all"), [projects[1]]);
+  assert.deepEqual(filterProjects(projects, "", "active"), [projects[0]]);
+  assert.deepEqual(filterProjects(projects, "", "inactive"), [projects[1]]);
+  assert.deepEqual(filterProjects(projects, "không có", "all"), []);
 });
 
 test("gan nhieu quan ly: chan trung lap va du lieu sai", () => {

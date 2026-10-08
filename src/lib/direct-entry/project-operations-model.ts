@@ -382,3 +382,24 @@ export function candidateLabel(candidate: ManagerCandidate): string {
 export function projectStatusLabel(active: boolean): string {
   return active ? "Đang hoạt động" : "Đã ngừng";
 }
+
+export type ProjectStatusFilter = "all" | "active" | "inactive";
+
+/**
+ * Bộ lọc chỉ phục vụ trình bày. Danh sách và quyền vẫn do RPC quản trị dự án
+ * quyết định; client không dùng bộ lọc này để suy diễn quyền.
+ */
+export function filterProjects(
+  projects: readonly ProjectView[],
+  query: string,
+  status: ProjectStatusFilter,
+): ProjectView[] {
+  const needle = query.trim().toLocaleLowerCase("vi");
+  return projects.filter((project) => {
+    if (status === "active" && !project.active) return false;
+    if (status === "inactive" && project.active) return false;
+    if (needle === "") return true;
+    return project.project_id.toLocaleLowerCase("vi").includes(needle) ||
+      project.display_name.toLocaleLowerCase("vi").includes(needle);
+  });
+}

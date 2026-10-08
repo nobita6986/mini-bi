@@ -12,7 +12,19 @@
  *   KHONG ghi de ngam.
  */
 
-import { useCallback, useEffect, useId, useState } from "react";
+import {
+  Building2,
+  History,
+  Pencil,
+  Plus,
+  Power,
+  RefreshCw,
+  Search,
+  UserPlus,
+  UsersRound,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
 
 import { AccessDenied } from "@/components/auth/access-denied";
@@ -25,6 +37,7 @@ import {
   buildUnassignRequest,
   candidateLabel,
   classifyResponse,
+  filterProjects,
   mutationProjectVersion,
   newIdempotencyKey,
   parseCandidatesResponse,
@@ -38,6 +51,7 @@ import {
   type Outcome,
   type PendingAssignment,
   type ProjectDetailView,
+  type ProjectStatusFilter,
   type ProjectView,
   type RequestResult,
 } from "@/lib/direct-entry/project-operations-model";
@@ -45,6 +59,8 @@ import {
 const API = "/api/direct-entry/projects";
 
 type ViewState = "loading" | "ready" | "empty" | "denied" | "unavailable" | "error";
+type DetailState = "idle" | "loading" | "ready" | "error";
+type CandidateState = "idle" | "loading" | "ready" | "error";
 
 type DialogState =
   | { kind: "none" }
@@ -55,13 +71,24 @@ type DialogState =
   | { kind: "unassign"; assignment: AssignmentView };
 
 const buttonClass =
-  "inline-flex h-10 items-center justify-center rounded-md border border-input px-3 text-sm " +
-  "font-medium focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50";
+  "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border " +
+  "bg-surface px-3 text-sm font-medium text-foreground shadow-sm transition-colors " +
+  "hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 " +
+  "disabled:cursor-not-allowed disabled:opacity-50";
 const primaryClass =
-  "inline-flex h-10 items-center justify-center rounded-md bg-primary px-3 text-sm " +
-  "font-medium text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring/40 " +
-  "disabled:opacity-50";
-const inputClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
+  "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm " +
+  "font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary/90 " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 " +
+  "disabled:cursor-not-allowed disabled:opacity-50";
+const dangerClass =
+  "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-500 " +
+  "bg-surface px-3 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50 " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 " +
+  "disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/40";
+const inputClass =
+  "h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground " +
+  "placeholder:text-muted focus:border-primary focus:outline-none focus-visible:ring-2 " +
+  "focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60";
 
 function Field({
   id, label, hint, children,
@@ -70,7 +97,7 @@ function Field({
     <div className="flex flex-col gap-1">
       <label htmlFor={id} className="text-sm font-medium">{label}</label>
       {children}
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
+      {hint ? <span className="text-xs text-muted">{hint}</span> : null}
     </div>
   );
 }
@@ -97,6 +124,9 @@ export function ProjectOperations() {
   const [state, setState] = useState<ViewState>("loading");
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [detail, setDetail] = useState<ProjectDetailView | null>(null);
+  const [detailState, setDetailState] = useState<DetailState>("idle");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectActionId, setProjectActionId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -110,26 +140,53 @@ export function ProjectOperations() {
   const [managerId, setManagerId] = useState("");
   const [validFrom, setValidFrom] = useState("");
   const [candidates, setCandidates] = useState<ManagerCandidate[]>([]);
+  const [candidateLabels, setCandidateLabels] = useState<Record<string, string>>({});
+  const [candidateState, setCandidateState] = useState<CandidateState>("idle");
   const [candidateSearch, setCandidateSearch] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ProjectStatusFilter>("all");
+  const detailSectionRef = useRef<HTMLElement>(null);
+  const detailRequestRef = useRef(0);
+  const candidateRequestRef = useRef(0);
 
   const loadCandidates = useCallback(async (search: string) => {
+    const requestId = ++candidateRequestRef.current;
+    setCandidateState("loading");
     try {
       const query = search.trim() === "" ? "" : "?search=" + encodeURIComponent(search.trim());
       const response = await fetch("/api/direct-entry/manager-candidates" + query, {
         headers: { accept: "application/json" },
       });
-      if (response.status !== 200) { setCandidates([]); return; }
+      if (requestId !== candidateRequestRef.current) return;
+      if (response.status !== 200) {
+        setCandidates([]);
+        setCandidateState("error");
+        return;
+      }
       const parsed = parseCandidatesResponse(await readJson(response));
-      setCandidates(parsed ?? []);
+      if (requestId !== candidateRequestRef.current) return;
+      if (parsed === null) {
+        setCandidates([]);
+        setCandidateState("error");
+        return;
+      }
+      setCandidates(parsed);
+      setCandidateLabels((current) => {
+        const next = { ...current };
+        for (const candidate of parsed) next[candidate.recruiter_id] = candidateLabel(candidate);
+        return next;
+      });
+      setCandidateState("ready");
     } catch {
+      if (requestId !== candidateRequestRef.current) return;
       setCandidates([]);
+      setCandidateState("error");
     }
   }, []);
 
   const managerLabel = useCallback((recruiterId: string): string => {
-    const candidate = candidates.find((c) => c.recruiter_id === recruiterId);
-    return candidate ? candidateLabel(candidate) : "Quản lý dự án";
-  }, [candidates]);
+    return candidateLabels[recruiterId] ?? "Quản lý dự án";
+  }, [candidateLabels]);
 
   /**
    * Ap ket qua list vao state. Chi duoc goi tu callback BAT DONG BO
@@ -153,18 +210,61 @@ export function ProjectOperations() {
     }
   }, [applyListResult]);
 
-  const loadDetail = useCallback(async (id: string) => {
+  const loadDetail = useCallback(async (id: string): Promise<ProjectDetailView | null> => {
+    const requestId = ++detailRequestRef.current;
+    setSelectedProjectId(id);
+    setDetailState("loading");
+    setDetail(null);
     try {
       const response = await fetch(API + "/" + encodeURIComponent(id), {
         headers: { accept: "application/json" },
       });
-      if (response.status !== 200) { setDetail(null); return; }
-      setDetail(parseDetailResponse(await readJson(response)));
-      await loadCandidates("");
+      if (requestId !== detailRequestRef.current) return null;
+      if (response.status !== 200) {
+        setDetailState("error");
+        return null;
+      }
+      const parsed = parseDetailResponse(await readJson(response));
+      if (requestId !== detailRequestRef.current) return null;
+      if (parsed === null) {
+        setDetailState("error");
+        return null;
+      }
+      setDetail(parsed);
+      setDetailState("ready");
+      // Tên quản lý được bổ sung nền; không bắt nút Xem/Đổi tên phải chờ
+      // endpoint candidate vốn không cần thiết cho project master.
+      void loadCandidates("");
+      return parsed;
     } catch {
-      setDetail(null);
+      if (requestId === detailRequestRef.current) setDetailState("error");
+      return null;
     }
   }, [loadCandidates]);
+
+  async function openProjectAction(
+    project: ProjectView,
+    action: "view" | "rename" | "set-active",
+  ) {
+    setNotice(null);
+    setProjectActionId(project.project_id);
+    const loaded = await loadDetail(project.project_id);
+    setProjectActionId(null);
+    if (!loaded) {
+      setNotice("Không tải được dữ liệu dự án. Vui lòng thử lại.");
+      detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
+    if (action === "rename") {
+      openDialog({ kind: "rename" }, { displayName: loaded.display_name });
+      return;
+    }
+    if (action === "set-active") {
+      openDialog({ kind: "set-active", active: !loaded.project_active });
+      return;
+    }
+    detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 
   // Nap lan dau: state chi duoc cap nhat trong callback cua promise (khong
   // setState dong bo trong effect body).
@@ -212,13 +312,23 @@ export function ProjectOperations() {
       const outcome: Outcome = { kind: "invalid", message: request.message };
       return { outcome, payload: null };
     }
-    const response = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json", "idempotency-key": key },
-      body: JSON.stringify(request.body),
-    });
-    const payload = await readJson(response);
-    return { outcome: classifyResponse(response.status, payload), payload };
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: { "content-type": "application/json", "idempotency-key": key },
+        body: JSON.stringify(request.body),
+      });
+      const payload = await readJson(response);
+      return { outcome: classifyResponse(response.status, payload), payload };
+    } catch {
+      return {
+        outcome: {
+          kind: "unavailable",
+          message: "Không kết nối được tới hệ thống. Vui lòng thử lại.",
+        },
+        payload: null,
+      };
+    }
   }
 
   async function afterSuccess(projectIdToRefresh: string | null) {
@@ -285,7 +395,12 @@ export function ProjectOperations() {
       if (!applyOutcome(outcome)) { setBusy(false); await afterSuccess(detail.project_id); return; }
       // OCC dung project_version (khong phai version = assignment version).
       const next = mutationProjectVersion(payload);
-      if (next === null) { setBusy(false); await afterSuccess(detail.project_id); return; }
+      if (next === null) {
+        setNotice("Phản hồi từ hệ thống không hợp lệ. Dữ liệu đã được tải lại để đối soát.");
+        setBusy(false);
+        await afterSuccess(detail.project_id);
+        return;
+      }
       version = next;
     }
     setBusy(false);
@@ -318,8 +433,11 @@ export function ProjectOperations() {
     setValidFrom("");
     setDisplayName(seed && seed.displayName ? seed.displayName : "");
     setCandidateSearch("");
-    setCandidates([]);
-    if (next.kind === "assign") void loadCandidates("");
+    if (next.kind === "assign") {
+      setCandidates([]);
+      setCandidateState("loading");
+      void loadCandidates("");
+    }
     setDialog(next);
   }
 
@@ -327,195 +445,246 @@ export function ProjectOperations() {
   if (state === "unavailable") return <TemporaryUnavailable />;
 
   const view = detail ? splitAssignments(detail.assignments) : { current: [], future: [], history: [] };
+  const visibleProjects = filterProjects(projects, projectSearch, statusFilter);
+  const activeCount = projects.filter((project) => project.active).length;
+  const assignedCount = detail?.active_assignment_count ?? 0;
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-4">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Quản lý dự án</h1>
-          <p className="text-sm text-muted-foreground">
-            Tạo, đổi tên, ngừng/kích hoạt dự án và gán quản lý dự án.
-          </p>
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6">
+      <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 p-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
+              Danh mục vận hành
+            </p>
+            <h1 className="mt-1 text-2xl font-bold text-foreground">Quản lý dự án</h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted">
+              Tạo và cập nhật dự án, theo dõi phân công hiện tại, lịch sắp hiệu lực và lịch sử quản lý.
+            </p>
+          </div>
+          <button type="button" className={primaryClass} onClick={() => openDialog({ kind: "create" })}>
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            Tạo dự án
+          </button>
         </div>
-        <button type="button" className={primaryClass} onClick={() => openDialog({ kind: "create" })}>
-          Tạo dự án
-        </button>
+        <dl className="mt-5 grid gap-3 sm:grid-cols-3">
+          <SummaryMetric label="Tổng dự án" value={projects.length} />
+          <SummaryMetric label="Đang hoạt động" value={activeCount} tone="success" />
+          <SummaryMetric label="Đã ngừng" value={projects.length - activeCount} tone="muted" />
+        </dl>
       </header>
 
       {conflict ? (
-        <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+        <div role="alert" className="flex flex-col gap-3 rounded-xl border border-amber-400 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
           <span>{conflict}</span>
           <button type="button" className={buttonClass} onClick={() => void reloadAfterConflict()}>
+            <RefreshCw aria-hidden="true" className="h-4 w-4" />
             Tải lại dữ liệu
           </button>
         </div>
       ) : null}
 
-      {notice ? (
-        <p role="alert" className="rounded-md border border-input p-3 text-sm">{notice}</p>
+      {notice && dialog.kind === "none" ? (
+        <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-800 dark:bg-red-950/30 dark:text-red-200">
+          {notice}
+        </p>
       ) : null}
 
-      <section aria-labelledby="project-list-heading" className="rounded-lg border" aria-busy={state === "loading"}>
-        <h2 id="project-list-heading" className="border-b p-3 text-base font-medium">
-          Danh sách dự án
-        </h2>
-        {state === "loading" ? (
-          <p className="p-3 text-sm text-muted-foreground" role="status">Đang tải dữ liệu…</p>
-        ) : null}
-        {state === "empty" ? (
-          <p className="p-3 text-sm text-muted-foreground" role="status">
-            Chưa có dự án nào. Hãy tạo dự án đầu tiên.
-          </p>
-        ) : null}
-        {state === "error" ? (
-          <div className="flex flex-col gap-2 p-3 text-sm" role="alert">
-            <span>Không tải được danh sách dự án.</span>
-            <button type="button" className={buttonClass}
-              onClick={() => { setNotice(null); setState("loading"); void loadList(); }}>
-              Thử lại
-            </button>
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <section aria-labelledby="project-list-heading"
+          className="min-w-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm"
+          aria-busy={state === "loading"}>
+          <div className="border-b border-border p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 id="project-list-heading" className="text-base font-semibold">Danh sách dự án</h2>
+                <p className="mt-0.5 text-xs text-muted">Chọn dự án để xem và quản lý phân công.</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[minmax(13rem,1fr)_10rem]">
+                <label className="relative block">
+                  <span className="sr-only">Tìm dự án</span>
+                  <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted" />
+                  <input className={inputClass + " pl-9"} value={projectSearch}
+                    placeholder="Tìm theo mã hoặc tên…"
+                    onChange={(event) => setProjectSearch(event.target.value)} />
+                </label>
+                <label>
+                  <span className="sr-only">Lọc trạng thái</span>
+                  <select className={inputClass} value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value as ProjectStatusFilter)}>
+                    <option value="all">Tất cả</option>
+                    <option value="active">Đang hoạt động</option>
+                    <option value="inactive">Đã ngừng</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
-        ) : null}
-        {state === "ready" || state === "empty" ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] border-collapse text-sm">
-              <caption className="sr-only">Danh sách dự án và trạng thái</caption>
-              <thead>
-                <tr className="border-b text-left">
-                  <th scope="col" className="p-3">Mã dự án</th>
-                  <th scope="col" className="p-3">Tên dự án</th>
-                  <th scope="col" className="p-3">Trạng thái</th>
-                  <th scope="col" className="p-3">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((project) => (
-                  <tr key={project.project_id} className="border-b last:border-0">
-                    <td className="p-3 font-mono text-xs">{project.project_id}</td>
-                    <td className="p-3">{project.display_name}</td>
-                    <td className="p-3">{projectStatusLabel(project.active)}</td>
-                    <td className="flex flex-wrap gap-2 p-3">
-                      <button type="button" className={buttonClass}
-                        onClick={() => { void loadDetail(project.project_id); }}>
-                        Xem quản lý
-                      </button>
-                      <button type="button" className={buttonClass}
-                        onClick={() => { void loadDetail(project.project_id).then(() =>
-                          openDialog({ kind: "rename" }, { displayName: project.display_name })); }}>
-                        Đổi tên
-                      </button>
-                      <button type="button" className={buttonClass}
-                        onClick={() => { void loadDetail(project.project_id).then(() =>
-                          openDialog({ kind: "set-active", active: !project.active })); }}>
-                        {project.active ? "Ngừng hoạt động" : "Kích hoạt"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="project-detail-heading" className="rounded-lg border">
-        <h2 id="project-detail-heading" className="border-b p-3 text-base font-medium">
-          Quản lý dự án hiện tại
-        </h2>
-        {!detail ? (
-          <p className="p-3 text-sm text-muted-foreground">
-            Chọn &quot;Xem quản lý&quot; ở một dự án để xem phân công.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-4 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm">
-                <span className="font-medium">{detail.display_name}</span>
-                {" · "}
-                <span className="font-mono text-xs">{detail.project_id}</span>
-                {" — "}
-                {projectStatusLabel(detail.project_active)}
-                {" — phiên bản "}
-                <span data-testid="project-version">{detail.project_version}</span>
-              </p>
-              <button type="button" className={primaryClass}
-                onClick={() => openDialog({ kind: "assign" })}>
-                Gán quản lý
+          {state === "loading" ? (
+            <p className="p-5 text-sm text-muted" role="status">Đang tải dữ liệu…</p>
+          ) : null}
+          {state === "error" ? (
+            <div className="flex flex-col gap-3 p-5 text-sm" role="alert">
+              <span className="font-medium text-red-700 dark:text-red-300">Không tải được danh sách dự án.</span>
+              <button type="button" className={buttonClass}
+                onClick={() => { setNotice(null); setState("loading"); void loadList(); }}>
+                <RefreshCw aria-hidden="true" className="h-4 w-4" />
+                Thử lại
               </button>
             </div>
+          ) : null}
+          {state === "ready" || state === "empty" ? (
+            <div className="max-h-[46rem] overflow-x-auto overflow-y-auto">
+              <table className="w-full min-w-[760px] border-collapse text-sm">
+                <caption className="sr-only">Danh sách dự án và trạng thái</caption>
+                <thead className="sticky top-0 z-10 bg-surface text-left text-xs uppercase tracking-wide text-muted shadow-[0_1px_0_var(--border)]">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">Dự án</th>
+                    <th scope="col" className="px-4 py-3">Trạng thái</th>
+                    <th scope="col" className="px-4 py-3 text-right">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleProjects.map((project) => {
+                    const actionBusy = projectActionId === project.project_id;
+                    const selected = selectedProjectId === project.project_id;
+                    return (
+                      <tr key={project.project_id}
+                        className={(selected ? "bg-primary/5 " : "") + "border-b border-border/70 last:border-0"}>
+                        <td className="px-4 py-3">
+                          <span className="block font-semibold text-foreground">{project.display_name}</span>
+                          <span className="mt-0.5 block font-mono text-xs text-muted">{project.project_id}</span>
+                        </td>
+                        <td className="px-4 py-3"><ProjectStatusBadge active={project.active} /></td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button type="button" className={buttonClass} disabled={projectActionId !== null}
+                              onClick={() => { void openProjectAction(project, "view"); }}>
+                              {actionBusy ? <RefreshCw aria-hidden="true" className="h-4 w-4 animate-spin" /> :
+                                <UsersRound aria-hidden="true" className="h-4 w-4" />}
+                              Xem quản lý
+                            </button>
+                            <button type="button" className={buttonClass} disabled={projectActionId !== null}
+                              onClick={() => { void openProjectAction(project, "rename"); }}>
+                              <Pencil aria-hidden="true" className="h-4 w-4" />
+                              Đổi tên
+                            </button>
+                            <button type="button" className={project.active ? dangerClass : buttonClass}
+                              disabled={projectActionId !== null}
+                              onClick={() => { void openProjectAction(project, "set-active"); }}>
+                              <Power aria-hidden="true" className="h-4 w-4" />
+                              {project.active ? "Ngừng" : "Kích hoạt"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visibleProjects.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-10 text-center text-sm text-muted">
+                        {projects.length === 0
+                          ? "Chưa có dự án nào. Hãy tạo dự án đầu tiên."
+                          : "Không có dự án phù hợp với bộ lọc."}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </section>
 
-            <h3 className="text-sm font-medium">Đang phụ trách ({view.current.length})</h3>
-            {view.current.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Chưa có quản lý nào đang phụ trách.</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {view.current.map((assignment) => (
-                  <li key={assignment.assignment_id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                    <span className="font-medium">{managerLabel(assignment.manager_recruiter_id)}</span>
-                    <span className="text-muted-foreground">
-                      {"Từ " + assignment.valid_from + " · phiên bản " + String(assignment.version)}
-                    </span>
-                    <button type="button" className={buttonClass}
-                      onClick={() => openDialog({ kind: "unassign", assignment })}>
-                      Thu hồi
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <h3 className="text-sm font-medium">Sắp hiệu lực ({view.future.length})</h3>
-            {view.future.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Chưa có phân công nào chờ ngày bắt đầu.</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {view.future.map((assignment) => (
-                  <li key={assignment.assignment_id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                    <span className="font-medium">{managerLabel(assignment.manager_recruiter_id)}</span>
-                    <span className="text-muted-foreground">
-                      {"Bắt đầu " + assignment.valid_from}
-                    </span>
-                    <button type="button" className={buttonClass}
-                      onClick={() => openDialog({ kind: "unassign", assignment })}>
-                      Thu hồi
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <h3 className="text-sm font-medium">Lịch sử phân công ({view.history.length})</h3>
-            {view.history.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Chưa có lịch sử phân công.</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {view.history.map((assignment) => (
-                  <li key={assignment.assignment_id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                    <span className="font-medium">{managerLabel(assignment.manager_recruiter_id)}</span>
-                    <span className="text-muted-foreground">
-                      {assignment.valid_from + " → " + (assignment.valid_to ?? "chưa hiệu lực")}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+        <section ref={detailSectionRef} aria-labelledby="project-detail-heading"
+          className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm xl:sticky xl:top-4">
+          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">Phân công</p>
+              <h2 id="project-detail-heading" className="text-base font-semibold">Quản lý dự án</h2>
+            </div>
+            {detail ? (
+              <span className="rounded-full bg-muted/10 px-2.5 py-1 text-xs font-medium text-muted">
+                {assignedCount} hiệu lực
+              </span>
+            ) : null}
           </div>
-        )}
-      </section>
+          {detailState === "idle" ? (
+            <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+              <Building2 aria-hidden="true" className="h-9 w-9 text-muted" />
+              <p className="text-sm text-muted">Chọn “Xem quản lý” để mở đầy đủ phân công của dự án.</p>
+            </div>
+          ) : null}
+          {detailState === "loading" ? (
+            <p className="flex items-center gap-2 p-5 text-sm text-muted" role="status">
+              <RefreshCw aria-hidden="true" className="h-4 w-4 animate-spin" />
+              Đang tải phân công…
+            </p>
+          ) : null}
+          {detailState === "error" ? (
+            <div className="flex flex-col gap-3 p-5 text-sm" role="alert">
+              <span className="font-medium text-red-700 dark:text-red-300">Không tải được dữ liệu quản lý dự án.</span>
+              {selectedProjectId ? (
+                <button type="button" className={buttonClass}
+                  onClick={() => { void loadDetail(selectedProjectId); }}>
+                  <RefreshCw aria-hidden="true" className="h-4 w-4" />
+                  Thử lại
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {detailState === "ready" && detail ? (
+            <div className="flex max-h-[42rem] flex-col gap-4 overflow-y-auto p-4">
+              <div>
+                <p className="font-semibold text-foreground">{detail.display_name}</p>
+                <p className="mt-0.5 font-mono text-xs text-muted">{detail.project_id}</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <ProjectStatusBadge active={detail.project_active} />
+                  <span className="text-xs text-muted">Phiên bản <span data-testid="project-version">{detail.project_version}</span></span>
+                </div>
+              </div>
+              <button type="button" className={primaryClass} onClick={() => openDialog({ kind: "assign" })}>
+                <UserPlus aria-hidden="true" className="h-4 w-4" />
+                Gán quản lý
+              </button>
+              <AssignmentGroup title="Đang phụ trách" assignments={view.current}
+                empty="Chưa có quản lý nào đang phụ trách." icon="current"
+                managerLabel={managerLabel}
+                onRevoke={(assignment) => openDialog({ kind: "unassign", assignment })} />
+              <AssignmentGroup title="Sắp hiệu lực" assignments={view.future}
+                empty="Chưa có phân công nào chờ ngày bắt đầu." icon="future"
+                managerLabel={managerLabel}
+                onRevoke={(assignment) => openDialog({ kind: "unassign", assignment })} />
+              <AssignmentGroup title="Lịch sử phân công" assignments={view.history}
+                empty="Chưa có lịch sử phân công." icon="history"
+                managerLabel={managerLabel} />
+            </div>
+          ) : null}
+        </section>
+      </div>
 
       <Dialog.Root open={dialog.kind !== "none"}
         onOpenChange={(open) => { if (!open && !busy) closeDialog(); }}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-[min(94vw,32rem)] -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-card p-4 shadow-lg">
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px]" />
+          <Dialog.Content
+            className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[min(94vw,36rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-surface p-5 text-foreground shadow-2xl outline-none">
+            <Dialog.Close asChild>
+              <button type="button" aria-label="Đóng hộp thoại"
+                className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full text-muted hover:bg-muted/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                disabled={busy}>
+                <X aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </Dialog.Close>
+            {notice ? (
+              <p role="alert" className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 pr-10 text-sm font-medium text-red-800 dark:bg-red-950/30 dark:text-red-200">
+                {notice}
+              </p>
+            ) : null}
             {dialog.kind === "create" ? (
-              <form className="flex flex-col gap-3"
+              <form className="flex flex-col gap-4"
                 onSubmit={(event) => { event.preventDefault(); void submitCreate(); }}>
-                <Dialog.Title className="text-base font-medium">Tạo dự án</Dialog.Title>
-                <Dialog.Description className="text-sm text-muted-foreground">
+                <Dialog.Title className="pr-10 text-lg font-semibold">Tạo dự án</Dialog.Title>
+                <Dialog.Description className="text-sm text-muted">
                   Mã dự án không thể đổi sau khi tạo.
                 </Dialog.Description>
                 <Field id="project-id" label="Mã dự án">
@@ -532,10 +701,10 @@ export function ProjectOperations() {
             ) : null}
 
             {dialog.kind === "rename" ? (
-              <form className="flex flex-col gap-3"
+              <form className="flex flex-col gap-4"
                 onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
-                <Dialog.Title className="text-base font-medium">Đổi tên dự án</Dialog.Title>
-                <Dialog.Description className="text-sm text-muted-foreground">
+                <Dialog.Title className="pr-10 text-lg font-semibold">Đổi tên dự án</Dialog.Title>
+                <Dialog.Description className="text-sm text-muted">
                   {"Phiên bản hiện tại: " + String(detail ? detail.project_version : 0)}
                 </Dialog.Description>
                 <Field id="rename-name" label="Tên dự án">
@@ -548,13 +717,15 @@ export function ProjectOperations() {
             ) : null}
 
             {dialog.kind === "set-active" ? (
-              <form className="flex flex-col gap-3"
+              <form className="flex flex-col gap-4"
                 onSubmit={(event) => { event.preventDefault(); void submitSetActive(dialog.active); }}>
-                <Dialog.Title className="text-base font-medium">
+                <Dialog.Title className="pr-10 text-lg font-semibold">
                   {dialog.active ? "Kích hoạt dự án" : "Ngừng hoạt động dự án"}
                 </Dialog.Title>
-                <Dialog.Description className="text-sm text-muted-foreground">
-                  {"Phiên bản hiện tại: " + String(detail ? detail.project_version : 0)}
+                <Dialog.Description className="text-sm text-muted">
+                  {dialog.active
+                    ? "Dự án sẽ xuất hiện trở lại trong các danh mục đang hoạt động."
+                    : "Dự án được giữ nguyên lịch sử và có thể kích hoạt lại sau này."}
                 </Dialog.Description>
                 <ReasonField id={reasonId} value={reason} onChange={setReason} />
                 <DialogActions busy={busy} onCancel={closeDialog}
@@ -563,10 +734,10 @@ export function ProjectOperations() {
             ) : null}
 
             {dialog.kind === "assign" ? (
-              <form className="flex flex-col gap-3"
+              <form className="flex flex-col gap-4"
                 onSubmit={(event) => { event.preventDefault(); void submitAssign(); }}>
-                <Dialog.Title className="text-base font-medium">Gán quản lý dự án</Dialog.Title>
-                <Dialog.Description className="text-sm text-muted-foreground">
+                <Dialog.Title className="pr-10 text-lg font-semibold">Gán quản lý dự án</Dialog.Title>
+                <Dialog.Description className="text-sm text-muted">
                   Các phân công được xử lý lần lượt; nếu một bước lỗi, hãy tải lại để xem phần đã áp dụng.
                 </Dialog.Description>
                 <Field id="manager-search" label="Tìm quản lý (tên hoặc mã)"
@@ -578,11 +749,15 @@ export function ProjectOperations() {
                       setManagerId("");
                       void loadCandidates(event.target.value);
                     }} />
+                  {candidateState === "loading" ? (
+                    <span className="text-xs text-muted" role="status">Đang tìm tài khoản quản lý…</span>
+                  ) : null}
                   {candidates.length > 0 ? (
-                    <ul id="manager-candidate-list" aria-label="Danh sách ứng viên" className="flex max-h-48 flex-col gap-0.5 overflow-y-auto rounded border text-sm">
+                    <ul id="manager-candidate-list" aria-label="Danh sách ứng viên"
+                      className="flex max-h-48 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-surface p-1 text-sm shadow-sm">
                       {candidates.map((candidate) => (
                         <li key={candidate.recruiter_id}>
-                          <button type="button" className="w-full px-2 py-1.5 text-left hover:bg-muted/10"
+                          <button type="button" className="w-full rounded-md px-2 py-2 text-left hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                             onClick={() => {
                               setManagerId(candidate.recruiter_id);
                               setCandidateSearch(candidateLabel(candidate));
@@ -595,18 +770,26 @@ export function ProjectOperations() {
                       ))}
                     </ul>
                   ) : null}
+                  {candidateState === "ready" && candidates.length === 0 && candidateSearch.trim() !== "" ? (
+                    <span className="text-xs text-muted">Không tìm thấy tài khoản phù hợp.</span>
+                  ) : null}
+                  {candidateState === "error" ? (
+                    <span className="text-xs font-medium text-red-700 dark:text-red-300">
+                      Không tải được danh sách quản lý. Hãy thử tìm lại.
+                    </span>
+                  ) : null}
                   {managerId ? (
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
                       Đã chọn: {managerLabel(managerId)}
                     </span>
                   ) : null}
                 </Field>
-                <Field id="manager-from" label="Hiệu lực từ" hint="Định dạng YYYY-MM-DD">
-                  <input id="manager-from" className={inputClass} value={validFrom}
+                <Field id="manager-from" label="Hiệu lực từ">
+                  <input id="manager-from" type="date" className={inputClass} value={validFrom}
                     onChange={(event) => setValidFrom(event.target.value)} />
                 </Field>
                 <button type="button" className={buttonClass}
-                  disabled={!managerId}
+                  disabled={!managerId || !validFrom}
                   onClick={() => {
                     setPending([...pending, { managerRecruiterId: managerId, validFrom }]);
                     setManagerId("");
@@ -617,7 +800,7 @@ export function ProjectOperations() {
                 <ul aria-label="Danh sách quản lý sẽ gán" className="flex flex-col gap-1 text-sm">
                   {pending.map((row, index) => (
                     <li key={row.managerRecruiterId + String(index)}
-                      className="flex items-center justify-between gap-2 rounded border p-2">
+                      className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/5 p-2">
                       <span>{managerLabel(row.managerRecruiterId) + " · " + row.validFrom}</span>
                       <button type="button" className={buttonClass}
                         onClick={() => setPending(pending.filter((_, i) => i !== index))}>
@@ -632,14 +815,14 @@ export function ProjectOperations() {
             ) : null}
 
             {dialog.kind === "unassign" ? (
-              <form className="flex flex-col gap-3"
+              <form className="flex flex-col gap-4"
                 onSubmit={(event) => {
                   event.preventDefault();
                   void submitUnassign(dialog.assignment);
                 }}>
-                <Dialog.Title className="text-base font-medium">Thu hồi phân công</Dialog.Title>
-                <Dialog.Description className="text-sm text-muted-foreground">
-                  {"Quản lý: " + dialog.assignment.manager_recruiter_id}
+                <Dialog.Title className="pr-10 text-lg font-semibold">Thu hồi phân công</Dialog.Title>
+                <Dialog.Description className="text-sm text-muted">
+                  {"Quản lý: " + managerLabel(dialog.assignment.manager_recruiter_id)}
                 </Dialog.Description>
                 <ReasonField id={reasonId} value={reason} onChange={setReason} />
                 <DialogActions busy={busy} onCancel={closeDialog} submitLabel="Thu hồi" />
@@ -657,7 +840,8 @@ function ReasonField({
 }: { id: string; value: string; onChange: (next: string) => void }) {
   return (
     <Field id={id} label="Lý do" hint="Bắt buộc cho mọi thao tác thay đổi.">
-      <textarea id={id} className="min-h-20 w-full rounded-md border border-input bg-background p-3 text-sm"
+      <textarea id={id}
+        className="min-h-24 w-full rounded-lg border border-border bg-surface p-3 text-sm text-foreground placeholder:text-muted focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         required aria-required="true" value={value}
         onChange={(event) => onChange(event.target.value)} />
     </Field>
@@ -668,13 +852,103 @@ function DialogActions({
   busy, onCancel, submitLabel,
 }: { busy: boolean; onCancel: () => void; submitLabel: string }) {
   return (
-    <div className="flex justify-end gap-2">
+    <div className="mt-1 flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
       <button type="button" className={buttonClass} onClick={onCancel} disabled={busy}>
         Huỷ
       </button>
       <button type="submit" className={primaryClass} disabled={busy} aria-busy={busy}>
-        {submitLabel}
+        {busy ? <RefreshCw aria-hidden="true" className="h-4 w-4 animate-spin" /> : null}
+        {busy ? "Đang xử lý…" : submitLabel}
       </button>
     </div>
+  );
+}
+
+function SummaryMetric({
+  label,
+  value,
+  tone = "primary",
+}: {
+  label: string;
+  value: number;
+  tone?: "primary" | "success" | "muted";
+}) {
+  const toneClass = tone === "success"
+    ? "text-emerald-700 dark:text-emerald-300"
+    : tone === "muted" ? "text-muted" : "text-primary";
+  return (
+    <div className="rounded-xl border border-border bg-surface/80 px-4 py-3 shadow-sm">
+      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dd className={"mt-1 text-2xl font-bold " + toneClass}>{value}</dd>
+    </div>
+  );
+}
+
+function ProjectStatusBadge({ active }: { active: boolean }) {
+  return (
+    <span className={
+      "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " +
+      (active
+        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200")
+    }>
+      {projectStatusLabel(active)}
+    </span>
+  );
+}
+
+function AssignmentGroup({
+  title,
+  assignments,
+  empty,
+  icon,
+  managerLabel,
+  onRevoke,
+}: {
+  title: string;
+  assignments: AssignmentView[];
+  empty: string;
+  icon: "current" | "future" | "history";
+  managerLabel: (recruiterId: string) => string;
+  onRevoke?: (assignment: AssignmentView) => void;
+}) {
+  const Icon = icon === "history" ? History : UsersRound;
+  return (
+    <section className="rounded-xl border border-border bg-muted/5 p-3">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Icon aria-hidden="true" className="h-4 w-4 text-primary" />
+        {title}
+        <span className="ml-auto rounded-full bg-surface px-2 py-0.5 text-xs text-muted shadow-sm">
+          {assignments.length}
+        </span>
+      </h3>
+      {assignments.length === 0 ? (
+        <p className="mt-3 text-sm text-muted">{empty}</p>
+      ) : (
+        <ul className="mt-3 flex flex-col gap-2">
+          {assignments.map((assignment) => (
+            <li key={assignment.assignment_id}
+              className="rounded-lg border border-border bg-surface p-3 text-sm shadow-sm">
+              <span className="block font-semibold text-foreground">
+                {managerLabel(assignment.manager_recruiter_id)}
+              </span>
+              <span className="mt-1 block text-xs text-muted">
+                {assignment.valid_to !== null
+                  ? assignment.valid_from + " → " + assignment.valid_to
+                  : assignment.effective
+                    ? "Hiệu lực từ " + assignment.valid_from
+                    : "Bắt đầu " + assignment.valid_from}
+              </span>
+              {onRevoke ? (
+                <button type="button" className={dangerClass + " mt-3 w-full"}
+                  onClick={() => onRevoke(assignment)}>
+                  Thu hồi phân công
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
