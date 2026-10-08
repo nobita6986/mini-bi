@@ -42,7 +42,7 @@ export const WORKER_OPERATIONS_TAB_HINTS: Readonly<Record<WorkerOperationsTab, s
     uploader: "Hồ sơ bạn đã nhập. Chỉ để tra cứu — không tạo quyền đề xuất thay đổi.",
     recruited: "Người lao động có người tuyển là bạn (theo mã người tuyển trên hồ sơ).",
     managed: "Người lao động thuộc dự án bạn đang quản lý (theo phân công còn hiệu lực).",
-    all: "Toàn bộ người lao động đã gửi (chỉ admin và BoD/Kế toán có quyền phạm vi toàn bộ).",
+    all: "Toàn bộ người lao động đã gửi.",
   });
 
 /** Chi recruited/managed dung worker directory; uploader dung submission API. */

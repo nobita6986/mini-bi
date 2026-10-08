@@ -66,7 +66,7 @@
     "test:p2.5-hf-r3": "node --conditions=react-server --test scripts/p2-5-hf-r3-worker-full-correction-db.test.mjs src/lib/direct-entry/privileged-edit.test.mjs",
     "test:p2.5-hf-r2": "node --test scripts/p2-5-hf-r2-cccd-canonicalization-db.test.mjs src/lib/contracts/national-id.test.mjs",
     "test:p2.5-w05": "node --test scripts/p2-5-w05-review-authority-db.test.mjs",
-    "test:p2.5-w06": "node --test src/lib/direct-entry/worker-operations-model.test.mjs src/components/direct-entry/worker-operations.test.mjs",
+    "test:p2.5-w06": "node --test src/lib/direct-entry/worker-operations-model.test.mjs src/components/direct-entry/worker-operations.test.mjs src/components/direct-entry/p2-5-hf-r3-worker-project-interaction.test.mjs",
     "test:p2.5-status-default": "node --test scripts/p2-5-initial-employment-status-on-db.test.mjs src/lib/direct-entry/live-controller.test.mjs",
     "test:p2.5-reviewer-hotfix": "node --test scripts/p2-5-reviewer-hotfix-db.test.mjs scripts/p2-5-accounting-project-admin-provision.test.mjs",
     "test:p2-de-dim-hotfix": "node --test scripts/p2-de-reporting-dimension-hotfix-db.test.mjs scripts/p2-de-reporting-dimension-hotfix-safety.test.mjs",
