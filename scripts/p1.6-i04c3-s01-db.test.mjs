@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 56, "P2.5-W05-R1 appends as #56 after P2.5-W05 #55");
+  assert.equal(totalCount, 57, "the initial-ON policy appends as #57 after P2.5-W05-R1 #56");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -299,6 +299,14 @@ test("migration #39 generates employee codes transactionally and replays idempot
     const first = await generatedRpc(db, rows, key);
     assert.deepEqual(first.employee_codes, ["hrp-2020-000001", "hrp-2020-000002"]);
     assert.equal(first.replayed, false);
+    const initialStatuses = await db.query(
+      "select status, version from public.direct_entry_employment_status_events where entry_id=any($1::uuid[]) order by entry_id, version",
+      [first.entry_ids],
+    );
+    assert.deepEqual(initialStatuses.rows, [
+      { status: "ON", version: 1 },
+      { status: "ON", version: 1 },
+    ]);
     const counter = await db.query(
       "select last_sequence from public.direct_entry_employee_code_counters where employee_year=2020",
     );
@@ -816,7 +824,7 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
       { state: "redacted", present: true });
     assert.deepEqual(teamFirst.profile.general_note,
       { state: "redacted", present: true });
-    assert.equal(teamFirst.profile.employment.status, "UNCONFIRMED");
+    assert.equal(teamFirst.profile.employment.status, "ON");
     assert.deepEqual(teamFirst.profile.employment.leave_date, { state: "omitted" });
     assert.deepEqual(teamOff.profile.employment.leave_reason_text,
       { state: "redacted", present: true });

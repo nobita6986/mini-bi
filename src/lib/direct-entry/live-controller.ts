@@ -104,7 +104,7 @@ export function newDraftRow(rowId: string, firstWorkDate: string): LiveDraftRow 
     teamDisplayName: "",
     projectDisplayName: "",
     recruiterDisplayName: "",
-    employmentStatus: "UNCONFIRMED",
+    employmentStatus: "ON",
     profile: {
       contract_version: "worker-profile/1.0",
       worker_details: {

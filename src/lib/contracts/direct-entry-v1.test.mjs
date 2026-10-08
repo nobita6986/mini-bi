@@ -77,6 +77,11 @@ test("contract is versioned and fixtures pass the direct-entry validator", () =>
   assert.equal(validateEntry({ entry, ...validationContext }).ok, true);
   assert.equal(validateEntry({ entry: null, ...validationContext }).issues[0].code, "ENTRY_INVALID");
   assert.equal(entry.employment_events[0].status, "UNCONFIRMED");
+  const initiallyOn = {
+    ...entry,
+    employment_events: [{ ...entry.employment_events[0], status: "ON" }],
+  };
+  assert.equal(validateEntry({ entry: initiallyOn, ...validationContext }).ok, true);
 });
 
 test("DOB and CCCD issue date are bounded text, not parsed dates", () => {

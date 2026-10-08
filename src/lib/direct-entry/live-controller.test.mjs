@@ -62,6 +62,7 @@ test("persisted IDs, versions and fields hydrate from server; unsaved rows use t
   assert.equal(persisted.state, "clean");
   assert.deepEqual(persisted.profile, projection.profile);
   const unsaved = newDraftRow("local-temp-1", "2026-10-15");
+  assert.equal(unsaved.employmentStatus, "ON");
   assert.equal(unsaved.entryId, null);
   assert.equal(stableLiveDraftKey(unsaved), "local-temp-1");
   assert.equal(stableLiveDraftKey(persisted), projection.entry_id);

@@ -519,7 +519,7 @@ export function validateEntry(input: {
   if (
     !Array.isArray(entry.employment_events) ||
     entry.employment_events.length === 0 ||
-    entry.employment_events[0]?.status !== "UNCONFIRMED"
+    !["UNCONFIRMED", "ON"].includes(entry.employment_events[0]?.status ?? "")
   ) {
     issues.push({ code: "INITIAL_STATUS_REQUIRED", path: "employment_events" });
   } else if (input.today !== undefined && !isRealCalendarDate(input.today)) {

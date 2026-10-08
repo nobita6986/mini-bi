@@ -53,10 +53,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 56, "the ledger carries 56 migrations after P2.5-W05-R1");
-  assert.equal(names[names.length - 4], W04_MIGRATION, "W03 follows W04 #53");
-  assert.equal(names[names.length - 5], W03_MIGRATION, "W03 is #52");
-  assert.equal(names[names.length - 6], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names.length, 57, "the ledger carries 57 migrations after the initial-ON policy");
+  assert.equal(names[names.length - 5], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - 6], W03_MIGRATION, "W03 is #52");
+  assert.equal(names[names.length - 7], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 
@@ -188,8 +188,9 @@ async function addWorker(db, {
 }
 
 /**
- * Employment status history. The first event must be UNCONFIRMED at
- * first_work_date; later events are ON/OFF transitions (OFF carries a leave date).
+ * Employment status history. The first event may be legacy UNCONFIRMED or the
+ * current ON default at first_work_date; later events are ON/OFF transitions
+ * (OFF carries a leave date).
  */
 async function setEmploymentHistory(db, entry, steps) {
   const reasonId = await syntheticReason(db, "synthetic status reason");

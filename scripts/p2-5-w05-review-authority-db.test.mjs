@@ -24,6 +24,7 @@ import { PGlite } from "@electric-sql/pglite";
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const W05_MIGRATION = "20261008150000_p2_5_w05_review_authority.sql";
 const W05_R1_MIGRATION = "20261008160000_p2_5_w05_r1_review_capability_matrix.sql";
+const STATUS_DEFAULT_MIGRATION = "20261008170000_p2_5_initial_employment_status_on.sql";
 const W06A_MIGRATION = "20261008140000_p2_5_w06a_manager_candidates.sql";
 
 const AUTH_PROLOGUE =
@@ -56,10 +57,11 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 56, "the ledger carries 56 migrations after P2.5-W05-R1");
-  assert.equal(names[names.length - 1], W05_R1_MIGRATION, "W05-R1 appends as #56");
-  assert.equal(names[names.length - 2], W05_MIGRATION, "W05-R1 follows W05 #55");
-  assert.equal(names[names.length - 3], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
+  assert.equal(names.length, 57, "the ledger carries 57 migrations after the initial-ON policy");
+  assert.equal(names[names.length - 1], STATUS_DEFAULT_MIGRATION, "initial-ON appends as #57");
+  assert.equal(names[names.length - 2], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
+  assert.equal(names[names.length - 3], W05_MIGRATION, "W05-R1 follows W05 #55");
+  assert.equal(names[names.length - 4], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
   return db;
 }
 

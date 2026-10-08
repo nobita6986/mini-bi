@@ -176,14 +176,13 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("50 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("57 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
-  // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); the appended
-  // W05A is #48; W07C-R7 is #49; W07E is #50; P2.5-W02 #51; P2.5-W03 #52;
-  // P2.5-W04 #53; P2.5-W06A #54; P2.5-W05 appends as #55.
-  assert.equal(names.length, 56,
-    "the migrations directory now carries 56 files (P2.5-W05-R1 appended after P2.5-W05)");
+  // W05A #48, W07C-R7 #49, W07E #50, W02 #51, W03 #52, W04 #53,
+  // W06A #54, W05 #55, W05-R1 #56 and initial-ON #57.
+  assert.equal(names.length, 57,
+    "the migrations directory contains the initial-ON policy after the 56-migration baseline");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +

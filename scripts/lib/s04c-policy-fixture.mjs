@@ -177,8 +177,8 @@ export async function seedPolicyEntries(db, suffix) {
   await db.query(toReview.sql, toReview.values);
   const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", suffix + "_s");
   await db.query(toSubmitted.sql, toSubmitted.values);
-  // create_batch da tao san event UNCONFIRMED dung ngay vao lam (trigger cua DB),
-  // nen WORK_STATUS proposal chi can la mot transition hop le tu UNCONFIRMED.
+  // New batches start ON; the status proposal below is a valid transition from
+  // that server-created baseline (legacy UNCONFIRMED remains accepted).
   const refreshed = await db.query(
     "select e.entry_id, e.version from public.direct_entries e where e.entry_id = any($1::uuid[])",
     [Object.values(entries).map((entry) => entry.entry_id)]);

@@ -1,5 +1,5 @@
 /**
- * P2.5-W06A-R2 - manager-candidate projection regression (DB, PGlite #1-#54).
+ * P2.5-W06A-R2 - manager-candidate projection regression (DB, PGlite #1-#57).
  *
  * - candidate list is service-role-only and requires entry_admin + all scope;
  * - only ACTIVE recruiters with a VERIFIED effective account link are listed
@@ -62,11 +62,11 @@ async function candidates(db, auth, app, search) {
   return res.rows[0].data;
 }
 
-test("P2.5-W06A-R2: migration #54 applies over #1-#53", async () => {
+test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 57-migration ledger", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 56);
-  assert.equal(names[names.length - 3], W06A_MIGRATION);
-  assert.equal(names[names.length - 2], W05_MIGRATION);
+  assert.equal(names.length, 57);
+  assert.equal(names[names.length - 4], W06A_MIGRATION);
+  assert.equal(names[names.length - 3], W05_MIGRATION);
   await db.close();
 });
 

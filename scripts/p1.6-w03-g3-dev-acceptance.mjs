@@ -1285,18 +1285,13 @@ async function runLifecycleAndStatusProbes() {
       "select status,effective_date,version,supersedes_event_id from public.direct_entry_employment_status_events where entry_id=$1 order by version",
       [entry],
     );
-    assert.equal(initial.rows[0].status, "UNCONFIRMED");
+    assert.equal(initial.rows[0].status, "ON");
     const startVersion = await entryVersion(entry);
-    const on = await serviceRpc(
-      "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'ON',$5::date,null,$6,$7) as result",
-      [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, startVersion,
-        "2020-01-18", `${manifest.namespace} status reason`, idempotencyKey("STATUS_ON")],
-    );
     await expectDenied(
       "status no-op denied",
       async () => serviceRpc(
         "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'ON','2020-01-18',null,$5,$6) as result",
-        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, on.entry_version,
+        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, startVersion,
           `${manifest.namespace} reason`, idempotencyKey("STATUS_NOOP")],
       ),
       /invalid employment status transition/i,
@@ -1305,7 +1300,7 @@ async function runLifecycleAndStatusProbes() {
       "status before first work date denied",
       async () => serviceRpc(
         "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'OFF','2020-01-14','leave',$5,$6) as result",
-        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, on.entry_version,
+        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, startVersion,
           `${manifest.namespace} reason`, idempotencyKey("STATUS_BEFORE_START")],
       ),
       /status effective date is outside the allowed interval/i,
@@ -1314,7 +1309,7 @@ async function runLifecycleAndStatusProbes() {
       "future status effective date denied",
       async () => serviceRpc(
         "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'OFF','2999-01-01','leave',$5,$6) as result",
-        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, on.entry_version,
+        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, startVersion,
           `${manifest.namespace} reason`, idempotencyKey("STATUS_FUTURE")],
       ),
       /status transition date must be current or backdated to latest status/i,
@@ -1323,14 +1318,14 @@ async function runLifecycleAndStatusProbes() {
       "OFF leave reason trim validation enforced",
       async () => serviceRpc(
         "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'OFF','2020-01-18','   ',$5,$6) as result",
-        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, on.entry_version,
+        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, startVersion,
           `${manifest.namespace} reason`, idempotencyKey("STATUS_EMPTY_LEAVE")],
       ),
       /leave reason|status event|employment_status_events/i,
     );
     const off = await serviceRpc(
       "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'OFF','2020-01-18','Synthetic leave',$5,$6) as result",
-      [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, on.entry_version,
+      [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, startVersion,
         `${manifest.namespace} reason`, idempotencyKey("STATUS_OFF")],
     );
     const backdated = await serviceRpc(
@@ -1339,7 +1334,7 @@ async function runLifecycleAndStatusProbes() {
         `${manifest.namespace} reason`, idempotencyKey("STATUS_BACKDATED_ON")],
     );
     const correction = await serviceRpc(
-      "select public.direct_entry_correct_latest_status($1,$2,$3,$4,4,'OFF','2020-01-18','Synthetic corrected leave',$5,$6) as result",
+      "select public.direct_entry_correct_latest_status($1,$2,$3,$4,3,'OFF','2020-01-18','Synthetic corrected leave',$5,$6) as result",
       [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry, backdated.entry_version,
         `${manifest.namespace} correction`, idempotencyKey("STATUS_CORRECTION")],
     );
@@ -1347,18 +1342,17 @@ async function runLifecycleAndStatusProbes() {
       "select event_id,status,version,supersedes_event_id from public.direct_entry_employment_status_events where entry_id=$1 order by version",
       [entry],
     );
-    assert.equal(events.rows.length, 5);
+    assert.equal(events.rows.length, 4);
     assert.equal(events.rows[1].supersedes_event_id, null);
-    assert.equal(events.rows[2].status, "OFF");
+    assert.equal(events.rows[1].status, "OFF");
+    assert.equal(events.rows[2].status, "ON");
     assert.equal(events.rows[2].supersedes_event_id, null);
-    assert.equal(events.rows[3].status, "ON");
-    assert.equal(events.rows[3].supersedes_event_id, null);
-    assert.equal(events.rows[4].supersedes_event_id, events.rows[3].event_id);
+    assert.equal(events.rows[3].supersedes_event_id, events.rows[2].event_id);
     assert.equal(correction.status, "OFF");
     await expectDenied(
       "status correction cannot supersede an older non-latest event",
       () => serviceRpc(
-        "select public.direct_entry_correct_latest_status($1,$2,$3,$4,3,'ON','2020-01-18',null,$5,$6)",
+        "select public.direct_entry_correct_latest_status($1,$2,$3,$4,2,'ON','2020-01-18',null,$5,$6)",
         [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entry,
           correction.entry_version, `${manifest.namespace} stale correction`,
           idempotencyKey("STATUS_CORRECT_OLD_EVENT")],
