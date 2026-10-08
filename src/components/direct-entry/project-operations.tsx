@@ -195,7 +195,10 @@ export function ProjectOperations() {
   }, []);
 
   const managerLabel = useCallback((recruiterId: string): string => {
-    return candidateLabels[recruiterId] ?? "Quản lý · " + recruiterId.slice(0, 8);
+    // P2.5-HF-R5A: khong bao gio hien UUID (ke ca rut gon) cho nguoi dung. Khi khong
+    // tra duoc ten (quan ly khong con trong danh sach ung vien hop le), dung nhan nghiep vu
+    // trung tinh; khong suy dien danh tinh tu id.
+    return candidateLabels[recruiterId] ?? "Quản lý dự án (chưa tra được tên)";
   }, [candidateLabels]);
 
   /**

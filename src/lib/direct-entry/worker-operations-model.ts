@@ -392,11 +392,17 @@ export function parseChangeRequestPageResponse(
   return projectChangeRequestListPage(slice, expected);
 }
 
+/**
+ * P2.5-HF-R5A: moi loi tai du lieu (5xx, mang, envelope sai) PHAI co copy sanitized.
+ * Truoc day nhanh 5xx/network tra message null nen "Tai them" that bai khong hien gi.
+ */
+export const WORKER_LOAD_FAILED_MESSAGE = "Không tải được danh sách. Vui lòng thử lại.";
+
 export function workerListErrorMessage(status: number): string {
   if (status === 401) return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
   if (status === 403) return "Bạn không có quyền xem danh sách này.";
   if (status === 400) return "Bộ lọc không hợp lệ. Vui lòng kiểm tra lại.";
-  return "Không tải được danh sách. Vui lòng thử lại.";
+  return WORKER_LOAD_FAILED_MESSAGE;
 }
 
 /**
