@@ -7,7 +7,9 @@ T0-VPS là một đầu việc hạ tầng độc lập với T0 sản phẩm hi
 1. Chuyển Vercel thành môi trường **Production Demo** tại `https://bi-demo.hrpartner.vn`; giữ nguyên Supabase/config hiện tại, chỉ đổi domain và các URL allowlist bắt buộc đi kèm domain.
 2. Dựng môi trường **Production Publish** trên VPS tại tên miền chính xác do Owner cung cấp sau (`bi.hrp...` hiện chưa phải FQDN hoàn chỉnh).
 3. Tách Supabase: Production Demo giữ project hiện tại; Production Publish dùng project/database/Auth keys/service-role key mới, độc lập.
-4. Bàn giao lại runbook đủ để T0 sản phẩm tự deploy và rollback các bản vá tiếp theo trên VPS.
+4. Production Publish chỉ mang dữ liệu nhân sự HRP/Vendor, tài khoản, phân quyền, danh mục và dự án; không mang 19 hồ sơ người lao động hiện có.
+5. Production Publish nhận tài liệu vào thư mục riêng trên VPS; n8n sẽ chuyển tiếp lên R2 ở giai đoạn sau.
+6. Bàn giao lại runbook đủ để T0 sản phẩm tự deploy và rollback các bản vá tiếp theo trên VPS.
 
 T0-VPS **không** tự thay đổi nghiệp vụ/RBAC, không merge feature ngoài phạm vi portability/deployment, không chạy browser UAT và không quyết định thay Owner về dữ liệu thật. Mọi browser/UAT do Owner trực tiếp thực hiện.
 
@@ -38,7 +40,8 @@ bi-demo.hrpartner.vn
   -> reverse proxy trên VPS
   -> một Next.js Node/Docker instance
   -> Supabase Production Publish mới, độc lập
-  -> R2 Publish riêng được khuyến nghị; chờ Owner chốt
+  -> thư mục upload riêng ngoài repo/web root
+  -> n8n chuyển file sang R2 sau khi Owner kích hoạt
 ```
 
 Không đổi DNS Production hiện tại trước khi VPS, Supabase Production Publish mới, backup và rollback đều đạt gate. “Production Demo” không phải sandbox công khai: do giữ database hiện tại, nó vẫn phải được bảo vệ như môi trường chứa dữ liệu thật.
@@ -59,13 +62,25 @@ T0-VPS phải chọn **một** mô hình sau khi có thông số VPS:
 
 Không dùng static export vì ứng dụng có API routes, session và server runtime.
 
-### F2 — R2 đang phụ thuộc metadata riêng của Vercel
+### F2 — Publish đổi từ browser-to-R2 sang VPS local spool
 
-`src/lib/direct-entry/r2-document-storage.ts` hiện chỉ chọn môi trường Production khi `VERCEL_ENV === "production"`; nếu biến này vắng, nó chọn preview. VPS không tự cung cấp `VERCEL_ENV`.
+Vercel Production Demo giữ nguyên đường upload hiện tại: browser nhận presigned URL và gửi thẳng lên R2. Production Publish không dùng đường này; file được gửi tới API trên VPS và ghi vào một thư mục spool riêng, sau đó n8n chuyển sang R2 khi Owner kích hoạt.
 
-Trước go-live phải có một commit portability được review để chọn môi trường bằng contract trung lập, fail-closed (ví dụ biến server-only có allowlist `production-demo|production-publish`). Không dùng `VERCEL_ENV=production` như giải pháp lâu dài. Thay đổi này phải giữ nguyên hành vi Vercel Production Demo, có unit test cho thiếu/sai/mismatch bucket và không in credential.
+Đây là thay đổi application/storage contract, không chỉ cấu hình hạ tầng. T0-VPS phải tạo adapter server-side fail-closed theo deployment tier, giữ nguyên adapter R2 của Vercel và thêm adapter local-spool cho Publish. Không dùng `VERCEL_ENV=production` để giả lập VPS.
 
-Vercel hiện chạy ở target Production nên đang chọn `hrp-bi-product`; chỉ đổi domain không tự tách storage. Khuyến nghị Production Publish dùng bucket riêng và copy object có kiểm chứng để tránh hai database độc lập cùng ghi vào một kho hồ sơ. Nếu Owner chọn dùng chung R2, T0-VPS phải ghi rõ rủi ro cross-environment và có approval riêng. CORS phải là allowlist origin chính xác, không wildcard. Trình duyệt upload bằng presigned URL nên CORS là gate chức năng, không chỉ là cấu hình phụ: https://developers.cloudflare.com/r2/buckets/cors/
+Local upload bắt buộc:
+
+- Thư mục nằm ngoài repo, `.next`, `public` và web root; mặc định đề xuất trên Linux là `/var/lib/hrp-bi/uploads`, nhưng T0-VPS chốt theo OS thực tế.
+- Chỉ service account ứng dụng và account n8n được đọc/ghi theo least privilege; không public directory listing/static serving.
+- Tên file trên đĩa là opaque ID, không dùng tên file gốc/CCCD/tên NLĐ; chống path traversal và symlink escape.
+- Giữ validate size/MIME/magic bytes hiện tại; ghi vào temp file, `fsync` khi phù hợp rồi atomic rename trước khi DB đánh dấu `LOCAL_READY`.
+- DB lưu provider/state/opaque key/checksum/size; không lưu absolute path ra response hoặc audit log.
+- n8n xử lý idempotent theo document version + checksum: `LOCAL_READY -> TRANSFERRING -> R2_READY`; retry không tạo object/version trùng.
+- Chỉ xóa local sau khi R2 HEAD/checksum xác nhận và qua retention window; lỗi chuyển giữ file và trạng thái retryable.
+- Có disk quota/free-space alert, backup, cleanup cho file temp/orphan và stop-upload threshold trước khi đầy ổ.
+- Download trước khi n8n chuyển phải đi qua API có authorization; sau khi `R2_READY` dùng adapter R2. UI không được biết storage backend.
+
+T0-VPS phải viết rõ contract n8n (input directory/manifest, destination bucket/prefix, checksum, retry, dead-letter, retention), nhưng không kích hoạt workflow thay Owner. R2 đích cho Publish cần được chốt trước khi n8n bật; CORS chỉ cần nếu browser tương tác trực tiếp với R2 sau này: https://developers.cloudflare.com/r2/buckets/cors/
 
 ### F3 — Supabase project mới làm đổi biên Auth
 
@@ -92,6 +107,22 @@ Sau thời điểm tách, hai database sẽ phân kỳ. T0-VPS phải ghi timest
 
 Việc Production Publish dùng project riêng phù hợp với hướng dẫn tách môi trường của Supabase: https://supabase.com/docs/guides/deployment/managing-environments
 
+### F5 — Production Publish không mang 19 hồ sơ người lao động
+
+Owner đã chốt: chỉ chuyển dữ liệu nền vận hành như nhân sự HRP/Vendor, tài khoản Auth/app-user, recruiter link, capability/scope, project-manager assignment, team/provider, dự án và các catalog cần thiết. Không chuyển 19 hồ sơ người lao động hiện có.
+
+Nếu dùng clone/restore toàn database để bảo toàn Auth ID, việc loại dữ liệu NLĐ chỉ được thực hiện **trên Supabase Publish đích**, trong một transaction/script có review; tuyệt đối không xóa ở Supabase hiện tại của Vercel. `19` là expected count do Owner cung cấp, không phải lệnh xóa mù.
+
+T0-VPS phải inventory dependency graph bắt đầu từ `direct_entry_candidates` và xử lý toàn bộ dữ liệu phụ thuộc của 19 hồ sơ: submission/entry payload, payment, employment-status events, document metadata/objects, revisions, change requests, restricted reasons, idempotency và audit records có PII hoặc resource reference tương ứng. Không được chỉ xóa 19 root rows rồi để lại PII hoặc orphan.
+
+Gate sau purge trên target:
+
+- source Vercel vẫn giữ nguyên count/checksum;
+- target có `0` hồ sơ NLĐ và `0` worker-document metadata/object tham chiếu;
+- target giữ đúng counts/mapping của HRP/Vendor accounts, recruiter links, grants/scopes, projects, assignments, teams/providers và catalog đã duyệt;
+- mọi FK/invariant/preflight pass; không in PII trong evidence;
+- purge script idempotent hoặc fail nếu expected source count không đúng 19.
+
 ## 5. Input T0-VPS phải nhận từ Owner
 
 Không tiến hành mutation trước khi có đủ:
@@ -102,9 +133,9 @@ Không tiến hành mutation trước khi có đủ:
 - SSH port, chính sách `sudo`, firewall hiện hữu.
 - DNS provider và quyền quản trị record; TTL hiện tại của các record liên quan.
 - Supabase Production Demo là project hiện tại; cần organization/region/plan cho Production Publish và xác nhận dùng clone/physical backup hay logical migration.
-- Phạm vi dữ liệu cần chuyển, maintenance window, thời gian giữ project cũ và tiêu chí xóa/sanitize.
+- Owner đã chốt loại 19 hồ sơ NLĐ khỏi target; còn cần T0-VPS lập allowlist bảng/dữ liệu nền được giữ và trình review trước purge.
 - RPO/RTO, backup retention và nơi giữ bản backup mã hóa.
-- Chốt R2 Publish dùng bucket mới (khuyến nghị) hay dùng chung bucket hiện tại; nếu tách thì chốt copy object/CORS/retention. Owner thao tác secret.
+- Chốt đường dẫn local upload, dung lượng/quota/retention, backup và service account n8n; chốt R2 đích/prefix cho workflow sau. Owner thao tác secret và tự kích hoạt n8n.
 - Chốt Production Demo còn cho phép ghi sau cutover hay chuyển read-only/hạn chế tài khoản.
 - Cơ chế deploy mong muốn: Docker Compose hay Node/systemd, sau khi đối chiếu tài nguyên VPS.
 
@@ -121,10 +152,11 @@ Không tiến hành mutation trước khi có đủ:
 ### Wave VPS-1 — portability và đóng gói
 
 1. Tạo branch riêng từ baseline main mới nhất do T0 sản phẩm công bố tại lúc bắt đầu.
-2. Sửa R2 environment contract khỏi phụ thuộc Vercel; cập nhật `.env.example` chỉ với placeholder.
-3. Tạo gói deploy đã chọn. Image/artifact phải gắn commit SHA; không deploy bằng `git pull` mù.
-4. Reverse proxy phải giữ đúng `Host` và `X-Forwarded-Proto=https`, giới hạn request, có timeout phù hợp và không cache response riêng tư.
-5. Chạy full source gates; không chạy browser UAT thay Owner.
+2. Thêm deployment-tier/storage adapter: Vercel giữ R2 direct, VPS dùng local spool; cập nhật `.env.example` chỉ với placeholder.
+3. Thêm schema/state machine và API upload/download server-side cần thiết; không trả filesystem path ra client.
+4. Tạo gói deploy đã chọn. Image/artifact phải gắn commit SHA; không deploy bằng `git pull` mù.
+5. Reverse proxy phải giữ đúng `Host` và `X-Forwarded-Proto=https`, giới hạn request body phù hợp ceiling tài liệu, có timeout phù hợp và không cache response riêng tư.
+6. Chạy full source gates; không chạy browser UAT thay Owner.
 
 ### Wave VPS-2 — Supabase Production Publish mới
 
@@ -132,17 +164,20 @@ Không tiến hành mutation trước khi có đủ:
 2. Tạo backup nguồn có timestamp/checksum và kiểm chứng restore trên target.
 3. Chọn clone/restore hoặc logical migration theo plan; kiểm soát external jobs để tránh chạy hai lần.
 4. Bảo toàn Auth user IDs hoặc cung cấp mapping có kiểm toán; xác minh `auth_subject` không orphan.
-5. Cấu hình lại Auth Site URL/redirect URLs bằng FQDN Production chính xác; dùng exact production URL.
-6. Cấu hình lại API keys và server secrets trên VPS; không copy service-role key giữa projects.
-7. Chứng minh ledger đúng source hiện hành và mọi preflight nghiệp vụ đều xanh.
+5. Chạy target-only purge đã review: expected 19 hồ sơ NLĐ, toàn bộ dữ liệu phụ thuộc và PII worker-domain về 0; source không đổi.
+6. Cấu hình lại Auth Site URL/redirect URLs bằng FQDN Production chính xác; dùng exact production URL.
+7. Cấu hình lại API keys và server secrets trên VPS; không copy service-role key giữa projects.
+8. Chứng minh ledger đúng source hiện hành, dữ liệu nền allowlist đủ và mọi preflight nghiệp vụ đều xanh.
 
 ### Wave VPS-3 — dựng VPS song song
 
 1. Harden OS tối thiểu: cập nhật bảo mật, SSH key-only nếu khả thi, firewall chỉ mở SSH/80/443, time sync, log rotation.
 2. Cài runtime/container engine đã chốt; đặt env file ngoài repo, mode/owner tối thiểu.
 3. Dựng service trên loopback/internal network; reverse proxy terminate TLS.
-4. Có health/status command, restart policy, disk/log monitoring và backup job.
-5. Smoke server/API/auth/R2 bằng host tạm hoặc override DNS nội bộ. Browser UAT chờ Owner.
+4. Mount thư mục upload persistent ngoài release, cấp quyền tối thiểu cho app/n8n; release/rollback không xóa file.
+5. Có health/status command, restart policy, disk/free-space/log monitoring và backup job.
+6. Smoke server/API/auth/local upload/download bằng host tạm hoặc override DNS nội bộ. Browser UAT chờ Owner.
+7. Chuẩn bị n8n transfer contract và dry-run bằng file giả; không kích hoạt workflow Production thay Owner.
 
 ### Wave VPS-4 — đổi Vercel thành Production Demo
 
@@ -155,7 +190,7 @@ Không tiến hành mutation trước khi có đủ:
 ### Wave VPS-5 — Production cutover
 
 1. Freeze ghi trong maintenance window nếu migration dữ liệu yêu cầu.
-2. Chụp backup cuối, đồng bộ delta, chạy preflight/read-only reconciliation.
+2. Chụp backup cuối, đồng bộ dữ liệu nền cho phép, chạy target-only worker purge và preflight/read-only reconciliation.
 3. Xác minh TLS/health VPS trước bằng host override hoặc tên tạm.
 4. Hạ TTL có kiểm soát, đổi DNS Production sang VPS, theo dõi cả old/new endpoint trong thời gian lan truyền.
 5. Owner chạy browser/UAT Production; T0-VPS chỉ hỗ trợ log/status không chứa PII.
@@ -172,7 +207,8 @@ T0-VPS bàn giao các mục dưới đây, không kèm secret value:
 - Lệnh deploy theo exact SHA, health/status/log và rollback.
 - Quy trình backup/restore và kết quả restore drill gần nhất.
 - Supabase project reference **đã che phần nhạy cảm nếu cần**, migration procedure và ledger query.
-- R2 bucket/environment/CORS verification procedure.
+- Local upload path, mount/owner/mode/quota/free-space threshold, backup/restore và orphan cleanup procedure.
+- n8n contract: service account, state transitions, checksum/idempotency, R2 destination, retry/dead-letter/retention; không bàn giao secret value.
 - DNS provider/record/TTL hiện hành và rollback record.
 - Artifact hoặc release registry, checksum và retention.
 - Known limitations, alert contacts và lần rotate secret kế tiếp.
@@ -188,8 +224,10 @@ Tất cả phải PASS trước khi đóng bàn giao:
 - Supabase Production Demo hiện tại và Production Publish mới có project refs/keys/DB endpoints khác nhau.
 - Ledger target khớp source; 0 pending/mismatch sau apply có kiểm soát.
 - Auth count/mapping/grants/scopes/project assignments đối chiếu bằng counts, không in danh tính.
+- Source vẫn có đúng baseline NLĐ; target có 0 hồ sơ NLĐ/PII/document residue sau khi loại expected 19 roots.
 - Đăng nhập/đổi mật khẩu/đăng xuất/session refresh đạt ở đúng environment.
-- R2 environment resolver chọn đúng policy đã được Owner duyệt; presigned upload/download đạt; CORS chỉ exact origin.
+- Vercel R2 upload không đổi; VPS local upload/download đạt, opaque path không lộ, restart/redeploy không mất file.
+- n8n dry-run chứng minh checksum/idempotency/retry/retention; workflow thật chỉ Owner kích hoạt.
 - Production Demo không thể ghi vào Supabase Production Publish; chính sách writable/read-only của Demo được ghi rõ.
 - VPS port app không public; HTTPS hợp lệ; reverse proxy truyền đúng scheme/host.
 - Restart service không mất cấu hình; reboot VPS tự phục hồi service.
@@ -205,8 +243,10 @@ T0-VPS dừng và báo Owner/T0 sản phẩm nếu gặp một trong các điề
 - Chưa có Supabase Production riêng; Vercel và VPS vẫn trỏ cùng project.
 - Production Demo và Publish vô tình dùng chung Supabase project/key/DB endpoint.
 - Auth migration làm đổi `auth_subject` nhưng chưa có mapping/reconciliation.
+- Target purge thấy source count khác 19, còn worker PII/residue, hoặc làm giảm dữ liệu nền ngoài allowlist.
 - Chưa có backup đã kiểm chứng hoặc chưa có rollback.
-- R2 resolver/bucket/CORS không chứng minh đúng môi trường.
+- Thư mục upload nằm trong repo/web root, lộ path/tên thật, thiếu quota/backup hoặc không persistent qua deploy.
+- n8n không có checksum/idempotency/state/retry contract hoặc cần T0-VPS tự kích hoạt thay Owner.
 - Migration ledger/checksum mismatch.
 - Cần in/copy secret qua chat, commit hoặc log.
 
@@ -229,6 +269,15 @@ Bạn là T0-VPS, độc lập với T0 sản phẩm. Mục tiêu là đổi Ver
 Demo tại bi-demo.hrpartner.vn, giữ nguyên Supabase hiện tại, và dựng Production
 Publish trên VPS với một Supabase project mới, độc lập.
 
+Production Publish chỉ giữ dữ liệu nền HRP/Vendor/account/quyền/dự án/danh mục;
+không mang 19 hồ sơ người lao động. Nếu clone để bảo toàn Auth ID, chỉ purge trên
+target bằng script transaction có expected-count=19 và dependency/PII residue checks;
+không mutation Supabase Vercel.
+
+VPS nhận tài liệu vào local persistent spool ngoài repo/web root. T0-VPS thiết kế
+adapter, state machine và contract n8n idempotent để Owner tự kích hoạt chuyển R2
+sau; không tự bật workflow n8n.
+
 Trước hết chỉ thực hiện Wave VPS-0 discovery/read-only theo tài liệu:
 docs/handoffs/t0-vps-environment-split-and-production-deployment.md
 
@@ -244,12 +293,13 @@ không echo/copy nội dung. Phải báo rõ input còn thiếu.
 Đầu ra Wave VPS-0:
 1) inventory counts/booleans và tên cấu hình không có secret;
 2) topology được đề xuất theo thông số VPS;
-3) kế hoạch migration sang Supabase Production Publish bảo toàn auth_subject;
-4) kế hoạch R2/CORS và portability fix cho VERCEL_ENV;
+3) kế hoạch migration sang Supabase Production Publish bảo toàn auth_subject và
+   target-only purge đúng 19 hồ sơ NLĐ cùng toàn bộ dependent PII;
+4) thiết kế local upload spool + adapter + n8n-to-R2 contract;
 5) cutover/rollback timeline;
 6) danh sách input/approval cần Owner;
 7) handoff ngắn cho T0 sản phẩm để T0 này giữ khả năng deploy/rollback về sau.
 
-Không claim PASS nếu chưa có backup/restore drill, tách DB thật, R2 đúng môi trường,
-Owner UAT và rollback evidence.
+Không claim PASS nếu chưa có backup/restore drill, tách DB thật, target worker
+residue=0, local upload persistence/quota, n8n dry-run, Owner UAT và rollback evidence.
 ```
