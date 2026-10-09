@@ -4,7 +4,7 @@
 
 - Branch: `feature/p3-1-w04-a1-a2-admin-personnel-ui`.
 - Base `origin/main`: `f9d77c690a8430c53248daf4b1ebd5216fdcd6bb`.
-- Final implementation/source SHA: `ef483ca927c17715514fec07921e5d70bdeb50b4`; commit handoff được tạo riêng sau đó.
+- Final implementation/source SHA after T0 R1: `d3dfc305d2bfe4fdb6b27fa4655a15a226472298`; commit handoff được tạo riêng sau đó.
 - Base có 70 migrations; migration cuối là `20261009060000_p3_1_w01c_b_team_membership.sql`.
 - Không thêm migration, dependency hoặc API backend. UI chỉ gọi W01B API hiện có.
 - Chỉ triển khai Admin shell/navigation và Personnel catalog. Không triển khai Membership UI, Team UI, Leader UI, Vendor, Labor Type hoặc Access Admin.
@@ -66,7 +66,7 @@ Không suy quyền từ role, email, `personnel_position` hay client state. Acto
 
 ## Tests và gates
 
-- `test:p3-1-w04-a1-a2`: 142 pass; authority/nav/page-access, one-entry/subnav, strict personnel projection/query/body, OCC/idempotency và structural UI/API checks. Lane được đăng ký đúng một lần trong `package.json` và canonical `pnpm test`.
+- `test:p3-1-w04-a1-a2`: 145 pass after T0 R1; authority/nav/page-access, one-entry/subnav, strict personnel projection/query/body, OCC/idempotency, dialog error visibility, dismissible conflict lock and authoritative 404 handling, plus structural UI/API checks. Lane được đăng ký đúng một lần trong `package.json` và canonical `pnpm test`.
 - `test:p3-1-w01a-capability-contract`: pass; 23 capability tokens.
 - `test:p3-1-w01b-personnel`: pass.
 - Các nav, AppShell và Direct Entry page-access regression được chạy trong focused lane.
@@ -74,6 +74,14 @@ Không suy quyền từ role, email, `personnel_position` hay client state. Acto
 - `pnpm exec next typegen`, `pnpm typecheck`, `pnpm build`: pass. Production build xác nhận routes `/admin` và `/admin/catalog/personnel`.
 - `pnpm lint`: 0 errors; 14 warnings cũ ở file không thuộc thay đổi của task.
 - `pnpm docs:check`: 6/6 pass; `pnpm secrets:check`: pass, 1,613 file được quét; `pnpm db:migrate -- --offline`: 70/70 valid, không truy cập database; `git diff --check`: pass.
+
+### T0 R1 UX follow-up
+
+- Mutation errors (invalid, denied, unauthenticated, not found) are displayed as an accessible alert inside the open dialog.
+- OCC conflict dialogs can be dismissed. Entity locks and retryable authoritative reload controls remain available outside the dialog; conflict state is keyed by entity so resolving one conflict does not release another.
+- An authoritative detail `404` is treated as a no-longer-available record: its mutation lock is cleared and the list reloads. `403`, other non-success responses, transport errors and malformed projections retain the lock and expose a retryable reload error.
+- Replaced the mixed-language message with Vietnamese-only copy.
+- R1 gates: focused lane 145/145 pass, `pnpm typecheck`, targeted ESLint, `pnpm build`, and `git diff --check` pass. Full canonical suite was run and passed before the R1 follow-up; it was not rerun after R1.
 
 ## Còn lại và ranh giới
 
