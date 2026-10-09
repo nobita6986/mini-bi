@@ -19,7 +19,7 @@ const timestamp = fixture.as_of;
 const resourceRef = "00000000-0000-4000-8000-00000000a001";
 
 test("authorization hardening is versioned", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.2");
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.3");
 });
 
 function repositoryFor(person) {

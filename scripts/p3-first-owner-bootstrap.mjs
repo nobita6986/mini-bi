@@ -297,8 +297,8 @@ async function inspectSubject(client, email, today, capabilities) {
 export async function runBootstrap({ client, email, apply = false, capabilities = CAPABILITIES }) {
   if (!EMAIL_SCHEMA.safeParse(email).success ||
       !Array.isArray(capabilities) ||
-      capabilities.length !== 21 ||
-      new Set(capabilities).size !== 21) {
+      capabilities.length !== CAPABILITIES.length ||
+      new Set(capabilities).size !== capabilities.length) {
     fail("BOOTSTRAP_INPUT_INVALID");
   }
   const migrationCount = (await readMigrations(MIGRATION_DIR)).length;

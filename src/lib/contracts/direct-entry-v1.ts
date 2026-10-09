@@ -155,7 +155,9 @@ export type Capability =
   | "team_master_manage"
   | "pii_view"
   | "pii_export"
-  | "audit_view";
+  | "audit_view"
+  | "catalog_master_manage"
+  | "team_manager_assign";
 
 export type ValidationIssue = { code: string; path: string };
 export type ValidationResult =
