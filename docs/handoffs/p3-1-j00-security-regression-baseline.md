@@ -1,6 +1,6 @@
 # P3.1-J00 — Security matrix and migration blast-radius baseline
 
-> Status: `P3_1_J00_SECURITY_BASELINE_COMPLETE_AWAITING_T0`
+> Status: `P3_1_J00_R2_SECURITY_BASELINE_PASS_AWAITING_T0`
 > Base: `origin/main@7a8aa40a7a2604c76ab4c522a9050bdedfa7b2e2` (66 migrations). Design-only baseline: no source, migration, dependency, Production query or deploy in this task.
 > Inputs: `docs/P3.1.md`, `docs/handoffs/p3-1-c01-catalog-policy-survey.md`, `C:\CodeApp\P2-P3-R00_REUSE_CAPABILITY_SURVEY.md`, and the current auth/catalog/project migrations + test lanes on main.
 
@@ -20,14 +20,14 @@
 | E10 | `20261008000000` `direct_entry_input_catalog` | Vendor recruiters already project `provider_type='vendor'`, `team_id=null`, `team_display_name=null`; labor type is not yet a catalog projection. |
 | E12 | `20261002170000_p1_6_direct_entry_foundation.sql:77-83` | `direct_entry_capability_grants.capability` carries an inline **CHECK over exactly the 21 tokens**. An unknown token is rejected by PostgreSQL with **SQLSTATE 23514** — grants are *not* free-form text. W01A (#67) must drop/recreate this constraint as 23 tokens while preserving all 21 existing tokens and every existing grant row. |
 | E13 | `20261002170000_p1_6_direct_entry_foundation.sql:220` vs E12 | Two different CHECKs on two different columns: the **capability** CHECK is W01A (#67); the **`labor_type`** CHECK is W02C — the two must not be bundled. |
-| E11 | `package.json` lanes | Reusable today: `test:p2.5-w02`, `test:p2.5-w02` (R1 OCC), `test:p2.5-w06a`, `test:p2.5-w05`, `test:p2.5-reviewer-hotfix`, `test:p2.5-w03`, `test:p3-w07b-project-scope`, `test:p3-w05a`, `test:p3-w07a-r4`. No P3.1 lane exists. |
+| E11 | `package.json:62` lane `test:p2.5-w02` | One lane only — `node --test` runs **both** `scripts/p2-5-w02-multi-manager-authority-db.test.mjs` **and** `scripts/p2-5-w02-r1-project-authority-occ-db.test.mjs`; there is **no** separate `test:p2.5-w02-r1` lane. Also reusable today: `test:p2.5-w06a`, `test:p2.5-w05`, `test:p2.5-reviewer-hotfix`, `test:p2.5-w03`, `test:p3-w07b-project-scope`, `test:p3-w05a`, `test:p3-w07a-r4`. No P3.1 lane exists. |
 
 ## 2. Blast radius of the capability expansion (21 to 23)
 
 | Surface | Exact location | Required change on the contract bump | Risk if missed |
 |---|---|---|---|
 | DB CHECK constraints | **Capability**: inline CHECK over 21 tokens at `direct_entry_capability_grants.capability` (E12). **Labor type**: `labor_type in ('TEMPORARY','PERMANENT')` (E6) | W01A (#67) drops/recreates the capability CHECK as 23 tokens, keeping all 21 existing tokens and every grant row intact; an unknown token stays rejected with SQLSTATE 23514. The labor-type CHECK is a **separate W02C** migration, not part of the capability bump | Shipping the tokens only in TypeScript leaves every grant insert failing with 23514; bundling the labor-type change into #67 breaks the single-purpose contract bump |
-| TypeScript unions / registries | `CAPABILITIES` (E1) + `Capability` (E3) + `LaborType` (E7) | Add both tokens to **both** copies and `OUTSOURCED` to `LaborType`; keep the two lists identical | v1/v2 drift — the exact defect the C01-R2 matrix retracted |
+| TypeScript unions / registries | `CAPABILITIES` (E1) + `Capability` (E3) → **W01A**; `LaborType` (E7) → **W02C** | **W01A only** adds `catalog_master_manage` and `team_manager_assign` to **both** capability registries/unions and keeps the two lists identical. **W02C — separately and later —** adds `OUTSOURCED` to `LaborType` and updates its validators. W01A changes no labor type | v1/v2 drift — the exact defect the C01-R2 matrix retracted; or a labor-type change smuggled into the single-purpose W01A contract bump |
 | Auth contract version | `DIRECT_ENTRY_AUTH_CONTRACT_VERSION` (E1) + its assertion in `direct-entry-v2.test.mjs:22` | Bump to `1.3` and update the assertion | Old sessions/actors claim a contract they no longer satisfy |
 | Actor / session projections | `direct-entry-v2.ts` `isValidAuthorizationRecord`, `auth-session-core.ts` `actorProjection` | No shape change needed: capabilities are already a validated array; confirm unknown tokens still fail closed | A malformed/unknown token silently widening an actor |
 | Bootstrap / provisioning fixtures | `p3-first-owner-bootstrap.mjs:300` (E2), `p2-5-accounting-project-admin-provision.mjs` (E5), `p3-w07b-access-bootstrap.mjs`, `p3-w07a-catalog-bootstrap.mjs` | **W01A** updates the owner bootstrap 21 → 23 and the *desired* Accounting plan/tests to `catalog_master_manage` (code + tests only — no Production grant change). **W02** performs the actual Accounting transition (grant new → verify → revoke `entry_admin`) as one controlled, rollbackable step | Owner bootstrap fails closed on the 23-token registry; Accounting is switched before the guards support the new token, or left holding both authorities |
