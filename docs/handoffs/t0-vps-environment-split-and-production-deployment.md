@@ -50,15 +50,19 @@ Không đổi DNS Production hiện tại trước khi VPS, Supabase Production 
 
 ### F1 — ứng dụng self-host được nhưng chưa có gói VPS
 
-Repo đã có `build`/`start` cho Node server, nhưng chưa có Dockerfile, Compose, systemd, nginx/Caddy hay runbook deploy. Next.js hỗ trợ đầy đủ khi chạy Node hoặc Docker và khuyến nghị đặt reverse proxy trước server:
+Repo đã có `build`/`start` cho Node server, nhưng chưa có Dockerfile, Compose, reverse proxy config hay runbook deploy. Owner đã chọn **Docker Compose** vì cùng VPS sẽ chạy thêm n8n sau này. Next.js hỗ trợ đầy đủ khi chạy Docker và khuyến nghị đặt reverse proxy trước server:
 
 - https://nextjs.org/docs/app/getting-started/deploying
 - https://nextjs.org/docs/app/guides/self-hosting
 
-T0-VPS phải chọn **một** mô hình sau khi có thông số VPS:
+Topology đã chốt:
 
-- Khuyến nghị mặc định cho một VPS: Docker image cố định theo commit SHA + Compose + reverse proxy.
-- Phương án nhẹ hơn khi Docker không phù hợp: Node LTS + pnpm + systemd + reverse proxy.
+- `hrp-bi` là một Compose project riêng.
+- `n8n` sau này là một Compose project riêng, version/volume/restart độc lập; không nhét n8n vào image hoặc Compose lifecycle của BI.
+- Reverse proxy là lớp edge riêng, chỉ lớp này public port 80/443; app BI và n8n chỉ ở private Docker network.
+- Image BI được pin theo exact Git SHA/digest; không dùng mutable `latest` làm bằng chứng release.
+- Secrets nằm ngoài image/repo; server-only secrets inject lúc chạy.
+- `NEXT_PUBLIC_SUPABASE_*` được Next.js nhúng khi build, nên Vercel và VPS có thể tạo hai artifact khác nhau nhưng phải từ cùng source SHA; artifact VPS build với public config của Supabase Publish.
 
 Không dùng static export vì ứng dụng có API routes, session và server runtime.
 
@@ -68,7 +72,7 @@ Vercel Production Demo và Production Publish đều giữ đường upload hi�
 
 Invariant phát hành:
 
-- Vercel và VPS lấy source từ cùng `main`, cùng commit SHA và cùng artifact/source contract.
+- Vercel và VPS lấy source từ cùng `main`, cùng commit SHA và cùng build contract; artifact được build riêng vì public Supabase config khác nhau.
 - Không cherry-pick một storage implementation chỉ vào VPS, không giữ branch VPS dài hạn, không sửa trực tiếp code trên máy chủ.
 - Ngoài khác biệt hạ tầng bắt buộc (domain/DNS/TLS và Vercel so với VPS runtime), khác biệt ứng dụng duy nhất là bộ biến Supabase trỏ tới hai project khác nhau.
 - R2 account/bucket/credential, feature flags và các cấu hình nghiệp vụ khác phải có cùng effective value. Vercel tự cấp `VERCEL_ENV=production`; VPS đặt cùng giá trị để resolver hiện tại có hành vi tương đương.
@@ -136,7 +140,7 @@ Không tiến hành mutation trước khi có đủ:
 - Cấp R2 server credentials cho VPS theo quy trình secret, thêm exact CORS origin cho FQDN Publish và giữ origin Demo; không log giá trị. Local upload/n8n vẫn hoãn.
 - Lập sanitized env-manifest diff: chỉ các biến Supabase/project-specific được phép khác; platform metadata và domain được ghi riêng, mọi feature flag/R2/business config phải tương đương.
 - Chốt Production Demo còn cho phép ghi sau cutover hay chuyển read-only/hạn chế tài khoản.
-- Cơ chế deploy mong muốn: Docker Compose hay Node/systemd, sau khi đối chiếu tài nguyên VPS.
+- Docker Compose đã được chọn; T0-VPS vẫn phải inventory CPU/RAM/disk để đặt resource limit, log rotation và xác nhận đủ headroom cho n8n sau này.
 
 ## 6. Trình tự thực thi
 
@@ -152,9 +156,10 @@ Không tiến hành mutation trước khi có đủ:
 
 1. Tạo branch riêng từ baseline main mới nhất do T0 sản phẩm công bố tại lúc bắt đầu.
 2. Không làm storage adapter/local upload/n8n trong wave này; dùng nguyên R2 adapter hiện tại và không tạo source delta chỉ dành cho VPS.
-3. Tạo gói deploy đã chọn. Image/artifact phải gắn commit SHA; không deploy bằng `git pull` mù.
-4. Reverse proxy phải giữ đúng `Host` và `X-Forwarded-Proto=https`, giới hạn request, có timeout phù hợp và không cache response riêng tư.
-5. Chạy full source gates; không chạy browser UAT thay Owner.
+3. Thêm Dockerfile multi-stage, `.dockerignore`, Compose service/healthcheck và release metadata theo exact SHA; mọi source delta phải review/merge `main` và giữ Vercel build xanh.
+4. Build public Supabase variables cho Publish vào image; inject server secrets lúc runtime, không bake secret vào layer/build log.
+5. Reverse proxy phải giữ đúng `Host` và `X-Forwarded-Proto=https`, giới hạn request, có timeout phù hợp và không cache response riêng tư.
+6. Chạy full source gates và container smoke/restart; không chạy browser UAT thay Owner.
 
 ### Wave VPS-2 — Supabase Production Publish mới
 
@@ -170,10 +175,11 @@ Không tiến hành mutation trước khi có đủ:
 ### Wave VPS-3 — dựng VPS song song
 
 1. Harden OS tối thiểu: cập nhật bảo mật, SSH key-only nếu khả thi, firewall chỉ mở SSH/80/443, time sync, log rotation.
-2. Cài runtime/container engine đã chốt; đặt env file ngoài repo, mode/owner tối thiểu.
-3. Dựng service trên loopback/internal network; reverse proxy terminate TLS. Đặt effective `VERCEL_ENV=production` để dùng đúng R2 contract hiện tại.
-4. Có health/status command, restart policy, disk/free-space/log monitoring và backup job.
-5. Smoke server/API/auth/R2 config bằng host tạm hoặc override DNS nội bộ; xác minh VPS resolve Production bucket và CORS exact origin. Browser upload/UAT chờ Owner.
+2. Cài Docker Engine + Compose plugin từ nguồn chính thức; đặt env file ngoài repo, mode/owner tối thiểu.
+3. Dựng `hrp-bi` Compose project trên private network; không publish trực tiếp port app ra Internet.
+4. Dựng/kết nối reverse proxy edge để terminate TLS và route vào app. Đặt effective `VERCEL_ENV=production` để dùng đúng R2 contract hiện tại.
+5. Có health/status command, pinned image, restart policy, resource limit, disk/free-space/Docker-log monitoring và backup job.
+6. Smoke server/API/auth/R2 config bằng host tạm hoặc override DNS nội bộ; xác minh VPS resolve Production bucket và CORS exact origin. Browser upload/UAT chờ Owner.
 
 ### Wave VPS-4 — đổi Vercel thành Production Demo
 
@@ -200,7 +206,7 @@ T0-VPS bàn giao các mục dưới đây, không kèm secret value:
 - OS/runtime versions; repo/release path.
 - Tên service/container/Compose project và reverse-proxy config path.
 - Env file/secret-store path, owner/mode và danh sách tên biến.
-- Lệnh deploy theo exact SHA, health/status/log và rollback.
+- Lệnh Docker build/pull/deploy theo exact SHA, Compose health/status/log và rollback image digest.
 - Quy trình backup/restore và kết quả restore drill gần nhất.
 - Supabase project reference **đã che phần nhạy cảm nếu cần**, migration procedure và ledger query.
 - R2 bucket/CORS/config verification và quy trình rotate credential; local upload/n8n được ghi rõ là deferred.
@@ -226,7 +232,8 @@ Tất cả phải PASS trước khi đóng bàn giao:
 - Vercel và VPS cùng dùng R2 adapter hiện tại; VPS resolve đúng `hrp-bi-product`, presigned upload/download đạt và CORS chỉ cho exact origins.
 - Production Demo không thể ghi vào Supabase Production Publish; chính sách writable/read-only của Demo được ghi rõ.
 - VPS port app không public; HTTPS hợp lệ; reverse proxy truyền đúng scheme/host.
-- Restart service không mất cấu hình; reboot VPS tự phục hồi service.
+- Container restart/recreate và reboot VPS không mất cấu hình; service tự phục hồi.
+- BI Compose project độc lập với n8n project dự kiến; thao tác deploy/rollback BI không stop/remove volume hoặc container n8n.
 - Backup có checksum và restore drill đạt trên nơi disposable.
 - Rollback app và DNS được diễn tập hoặc dry-run có bằng chứng.
 - Owner xác nhận browser/UAT riêng cho Demo và Production.
@@ -242,6 +249,7 @@ T0-VPS dừng và báo Owner/T0 sản phẩm nếu gặp một trong các điề
 - Target purge thấy source count khác 19, còn worker PII/residue, hoặc làm giảm dữ liệu nền ngoài allowlist.
 - Chưa có backup đã kiểm chứng hoặc chưa có rollback.
 - Có VPS-only branch/source delta, code sửa trực tiếp trên server hoặc hai môi trường không truy vết được về cùng main commit.
+- BI và n8n bị đóng chung một image/Compose lifecycle, app port public trực tiếp, hoặc deploy dùng mutable image không truy được SHA.
 - T0-VPS tự triển khai local upload/n8n trong wave đầu dù Owner đã hoãn.
 - VPS không resolve đúng Production R2 bucket, thiếu server credential hoặc CORS không khớp exact Production Publish origin.
 - Migration ledger/checksum mismatch.
@@ -280,6 +288,11 @@ phải merge main rồi mới cấu hình backend khác nhau theo env.
 Ngoài domain/DNS/TLS và runtime platform bắt buộc, khác biệt cấu hình ứng dụng duy
 nhất tạm thời là Supabase project/URL/keys/DB connection. R2, feature flags và mọi
 business config phải có cùng effective value; xuất sanitized env-diff làm evidence.
+
+Docker Compose là deployment target đã chốt. BI và n8n là hai Compose project độc
+lập dùng chung reverse proxy edge; không đóng chung image/lifecycle. Image BI phải
+pin exact Git SHA/digest. Do NEXT_PUBLIC_SUPABASE_* được inline lúc build, artifact
+VPS được build riêng với public config Supabase Publish nhưng từ cùng source SHA.
 
 Trước hết chỉ thực hiện Wave VPS-0 discovery/read-only theo tài liệu:
 docs/handoffs/t0-vps-environment-split-and-production-deployment.md
