@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 67, "P3.1-W01A #67 appends after P3-W07A-R3 #66, P2.5-HF-R7 #64, R6 #63, session identity #62, P2.5-HF-R3 #61, P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
+  assert.equal(totalCount, 68, "P3.1-W01B #68 appends after P3.1-W01A #67, P3-W07A-R3 #66, P2.5-HF-R7 #64, R6 #63, session identity #62, P2.5-HF-R3 #61, P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -620,10 +620,16 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // P2.5-W05 (#55) adds one internal scope reader and one service-role-only
     // reviewer-bundle reader. P3-W07A-R3 (#65) adds three internal helpers;
     // nothing is reachable by anon/authenticated.
+    // P3.1-W01B (#68) adds six internal helpers (the catalog-operator guard, the
+    // personnel row lock/OCC guard, the personnel snapshot, the shared personnel
+    // admin projection, the personnel revision writer and the personnel version
+    // bump) plus five service-role-only personnel-catalog RPCs
+    // (list/get/create/update/set-active). Nothing is reachable by
+    // anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 125,
-      service_role: 60,
-      internal: 65,
+      total: 136,
+      service_role: 65,
+      internal: 71,
       exposed_internal: 0,
     });
   } finally {
