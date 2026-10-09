@@ -78,10 +78,10 @@ async function migratedDb(untilName = null) {
 
 async function buildDb() {
   const { db, names } = await migratedDb(null);
-  assert.equal(names.length, 69, "the ledger carries 69 migrations through P3.1-W01C-A #69");
-  assert.equal(names[names.length - (19)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (17)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (18)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 70, "the ledger carries 70 migrations through P3.1-W01C-B #70");
+  assert.equal(names[names.length - (20)], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - (18)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (19)], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 

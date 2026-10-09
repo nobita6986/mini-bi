@@ -56,10 +56,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 69, "the ledger carries 69 migrations through P3.1-W01C-A #69");
-  assert.equal(names[names.length - (19)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (17)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (18)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 70, "the ledger carries 70 migrations through P3.1-W01C-B #70");
+  assert.equal(names[names.length - (20)], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - (18)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (19)], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
@@ -896,7 +896,7 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 69,
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 70,
     "the repository ledger contains #1 through #68; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
