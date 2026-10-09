@@ -1,19 +1,20 @@
-# P2-W07-R2 - Windows restore drill lifecycle (fix landed, drill still red)
+# P2-W07-R3 - local disposable restore/rollback drill: P2_W07_R3_LOCAL_PASS_AWAITING_T0_REVIEW
 
-Branch feature/p2-w07-r1-restore-rollback-drill. Base a7fcfbb4203822826bcc24ad23e9306855210530 -> final (this commit). Fast-forward only; no Production DB, no browser/UAT, no deploy, no new migration, no dependency.
+Branch feature/p2-w07-r1-restore-rollback-drill. Base 4c6df467a68cdb9f3bfd0de612f626e0f8d4fbde -> final (this commit). Fast-forward only; no Production DB, no browser/UAT, no deploy, no new migration, no dependency, no sub-agent.
 
-## Root cause before -> after
-- Before: spawnSync(pg_ctl start) inherited the parent stdout/stderr pipe on Windows, so the drill hung after PostgreSQL was listening; the harness killed it and left a disposable instance on port 55432 plus a temp data dir.
-- After: pg_ctl start/stop now run with stdio "ignore" (server log still goes to the temp -l file), every child command has a finite timeout (initdb 180s, others 300s, pg_ctl 60s), the script fails closed with PORT_IN_USE if port 55432 is already listening, and stop/remove run in finally for both the success and the failure path. Nothing outside the disposable dataDir is touched.
+## T0 fixes 1-5 landed in scripts/p2-w07-restore-rollback-drill.mjs
+1. SEED: every uuid column written from a concatenation is cast ::uuid; auth.users.id seeds 101..103 so it matches auth_subject; app_user_id stays 201..203; canonical display_name kept.
+2. Employment history is canonical: all 12 synthetic episodes open with ON v1 at effective_date = first_work_date, and a subset (6) appends OFF v2 with leave_date + a synthetic reason. Inserts only - no update, no trigger bypass.
+3. The invariant probe now targets an episode whose LATEST status is ON (lateral order by version desc limit 1), and psql runs with -v VERBOSITY=verbose so the assertion needs the parsed SQLSTATE 23505 AND worker_active_episode_exists.
+4. ok: true is now gated: migrations_applied = 65, ledger_count = 65, ledger_match, fingerprint_match, objects_match, invariant_enforced_on_target, rollback_fingerprint_match, cleanup_removed must all hold; otherwise exit 1 with code DRILL_ASSERTION_FAILED + failed_gates, never a raw DB message.
+5. Diagnostics: step at the real catch (initdb|start|create-source|create-target|migration:<file>|seed|dump|restore|fingerprint|invariant|rollback|cleanup) plus parsed sqlstate; the port check now fails closed (PORT_IN_USE / PORT_CHECK_FAILED); finally stops through its own dataDir whenever PG_VERSION exists; no PID kill, port 5432 untouched.
 
-## Verified this round
-- The drill no longer hangs: two consecutive runs returned a JSON result within the time budget instead of being killed.
-- Cleanup is proven after both runs: port 55432 has no listener and no p2-w07-drill-* directory remains in %TEMP% (cleanup_removed: true).
-- Fixture: synthetic app users now seed a canonical display_name (required by current migrations); no historical migration was touched.
-- Invariant check no longer accepts "any exception": it now requires psql to fail with SQLSTATE 23505 AND worker_active_episode_exists.
-- Lifecycle + fixture + invariant changes and step/sqlstate diagnostics are in scripts/p2-w07-restore-rollback-drill.mjs (syntax-checked with node --check).
+## Evidence - local disposable drill, two consecutive runs
+- Run 1 exit 0, all eight gates true: timing_ms dump 383 / restore 821 / rollback_drop_and_restore 1838 (wall 29.4s).
+- Run 2 exit 0, all eight gates true: timing_ms dump 465 / restore 794 / rollback_drop_and_restore 1460 (wall 28.8s).
+- After each run: port 55432 listeners = 0, p2-w07-drill-* dirs in %TEMP% = 0.
+- Mutation-check: probe pinned to an OFF-latest episode -> invariant_enforced_on_target false, ok false, code DRILL_ASSERTION_FAILED, exit 1; dropping VERBOSITY=verbose -> same. Script restored byte-identical (sha256 unchanged) and the drill is green again.
+- Gates all exit 0: pnpm test (47 runner invocations, 1810/1810 pass, 0 fail), next typegen, typecheck, lint (0 errors / 14 warnings), build, docs:check (6/6), secrets:check, db:migrate --offline (65 migrations, no DB access), git diff --check.
 
-## Still red - no PASS claimed (P2_W07_R2_LOCAL_PASS_AWAITING_T0_REVIEW not reached)
-- Both runs ended in { ok: false, code: "psql_FAILED" } with no green JSON, so there is no restore/rollback evidence yet: migrations_applied, ledger_match, fingerprint_match, objects_match, invariant_enforced_on_target and timings are NOT measured.
-- The failing psql step is still unidentified: the diagnostic patch that should surface "step" and "sqlstate" in the error report did not take effect (the report still shows only code + cleanup_removed), so the next action is to add that field at the exact catch site and re-run - one run should then name the failing migration file or seed step.
-- No Production RPO/RTO is claimed or measured; local drill timings do not exist yet and must never be extrapolated to Production.
+## Scope limit
+This is a LOCAL disposable restore drill on a throwaway initdb instance. Production RPO is NOT measured, and these local wall-clock numbers are not a Production RTO.
