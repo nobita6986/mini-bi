@@ -55,6 +55,8 @@ type MutationIntent = {
   retryState: "ready" | "retry";
 };
 
+type ConflictEntry = { intent: MutationIntent; error: string | null };
+
 const EMPTY_FORM: PersonnelForm = {
   personnelCode: "",
   displayName: "",
@@ -95,10 +97,9 @@ export function PersonnelCatalogManager() {
   const [formError, setFormError] = useState<string | null>(null);
   const [mutationMessage, setMutationMessage] = useState<string | null>(null);
   const [pendingIntent, setPendingIntent] = useState<MutationIntent | null>(null);
-  const [conflictIntent, setConflictIntent] = useState<MutationIntent | null>(null);
+  const [conflictIntents, setConflictIntents] = useState<ReadonlyMap<string, ConflictEntry>>(new Map());
   const [busy, setBusy] = useState(false);
   const [conflictLocks, setConflictLocks] = useState<ReadonlySet<string>>(new Set());
-  const [reloadError, setReloadError] = useState<string | null>(null);
 
   useEffect(() => {
     const listQuery = buildPersonnelListQuery({ search, includeInactive, page });
@@ -167,7 +168,6 @@ export function PersonnelCatalogManager() {
   const startCreate = () => {
     setForm(EMPTY_FORM);
     setFormError(null);
-    setReloadError(null);
     setDialog({ kind: "create" });
   };
 
@@ -180,19 +180,22 @@ export function PersonnelCatalogManager() {
       reason: "",
     });
     setFormError(null);
-    setReloadError(null);
     setDialog({ kind: "edit", personnel });
   };
 
   const startActiveChange = (personnel: AdminPersonnel, active: boolean) => {
     setForm({ ...EMPTY_FORM, reason: "" });
     setFormError(null);
-    setReloadError(null);
     setDialog({ kind: "active", personnel, active });
   };
 
   const reloadConflictedEntity = useCallback(async (intent: MutationIntent) => {
-    setReloadError(null);
+    setConflictIntents((current) => {
+      const next = new Map(current);
+      const entry = next.get(intent.lockId);
+      if (entry) next.set(intent.lockId, { ...entry, error: null });
+      return next;
+    });
     setBusy(true);
     try {
       if (intent.recruiterId) {
@@ -200,6 +203,20 @@ export function PersonnelCatalogManager() {
           `/api/admin/catalog/personnel/${encodeURIComponent(intent.recruiterId)}`,
           { method: "GET", cache: "no-store", headers: { Accept: "application/json" } },
         );
+        if (response.status === 404) {
+          setConflictLocks((current) => setPersonnelConflictLock(current, intent.lockId, false));
+          setConflictIntents((current) => {
+            const next = new Map(current);
+            next.delete(intent.lockId);
+            return next;
+          });
+          setMutationMessage("Hồ sơ nhân sự không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật.");
+          setPendingIntent(null);
+          setDialog(null);
+          setListState({ kind: "loading" });
+          setReloadToken((value) => value + 1);
+          return;
+        }
         if (response.status !== 200) throw new Error("reload");
         const personnel = projectPersonnelItem(await response.json());
         if (!personnel) throw new Error("reload");
@@ -235,15 +252,28 @@ export function PersonnelCatalogManager() {
         }
       }
       setConflictLocks((current) => setPersonnelConflictLock(current, intent.lockId, false));
-      setReloadError(null);
-      setMutationMessage("ข้อมูล mới nhất đã được tải. Bạn có thể bắt đầu thao tác mới.");
+      setConflictIntents((current) => {
+        const next = new Map(current);
+        next.delete(intent.lockId);
+        return next;
+      });
+      setMutationMessage("Đã tải dữ liệu mới nhất. Bạn có thể bắt đầu thao tác mới.");
       setPendingIntent(null);
-      setConflictIntent(null);
       setDialog(null);
       setListState({ kind: "loading" });
       setReloadToken((value) => value + 1);
     } catch {
-      setReloadError("Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.");
+      setConflictIntents((current) => {
+        const next = new Map(current);
+        const entry = next.get(intent.lockId);
+        if (entry) {
+          next.set(intent.lockId, {
+            ...entry,
+            error: "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.",
+          });
+        }
+        return next;
+      });
     } finally {
       setBusy(false);
     }
@@ -287,7 +317,7 @@ export function PersonnelCatalogManager() {
       }
       if (outcome.kind === "conflict") {
         setPendingIntent(null);
-        setConflictIntent(intent);
+        setConflictIntents((current) => new Map(current).set(intent.lockId, { intent, error: null }));
         setConflictLocks((current) => setPersonnelConflictLock(current, intent.lockId, true));
         setMutationMessage(messageForOutcome(outcome));
         return;
@@ -296,8 +326,9 @@ export function PersonnelCatalogManager() {
         setPendingIntent({ ...intent, retryState: "retry" });
       } else {
         setPendingIntent(null);
+        setFormError(messageForOutcome(outcome));
       }
-      setMutationMessage(messageForOutcome(outcome));
+      setMutationMessage(outcome.kind === "unavailable" ? messageForOutcome(outcome) : null);
     } finally {
       setBusy(false);
     }
@@ -400,17 +431,18 @@ export function PersonnelCatalogManager() {
   const pageCount = list
     ? Math.min(1000, Math.max(1, Math.ceil(list.total / Math.max(1, list.page_size))))
     : 1;
-  const isConflictLocked = dialog === null
-    ? false
+  const dialogLockId = dialog === null
+    ? null
     : dialog.kind === "create"
-      ? conflictLocks.has("create")
-      : conflictLocks.has(dialog.personnel.recruiter_id);
+      ? "create"
+      : dialog.personnel.recruiter_id;
+  const isConflictLocked = dialogLockId !== null && conflictLocks.has(dialogLockId);
 
   return (
     <Dialog.Root
       open={dialog !== null}
       onOpenChange={(open) => {
-        if (!open && !busy && !conflictIntent) setDialog(null);
+        if (!open && !busy) setDialog(null);
       }}
     >
     <div className="space-y-6">
@@ -455,7 +487,7 @@ export function PersonnelCatalogManager() {
                   <button
                     type="button"
                     aria-label="Đóng hộp thoại"
-                    disabled={busy || isConflictLocked}
+                    disabled={busy}
                     className="inline-flex size-10 shrink-0 items-center justify-center rounded-md border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                   >
                     <span aria-hidden="true">×</span>
@@ -476,12 +508,14 @@ export function PersonnelCatalogManager() {
                   </button>
                 </Alert>
               ) : null}
-              {isConflictLocked && conflictIntent ? (
+              {Array.from(conflictIntents.values(), ({ intent, error }) => (
                 <ConflictReload
-                  message={reloadError}
-                  onReload={() => void reloadConflictedEntity(conflictIntent)}
+                  key={intent.lockId}
+                  message={error}
+                  busy={busy}
+                  onReload={() => void reloadConflictedEntity(intent)}
                 />
-              ) : null}
+              ))}
 
               {dialog?.kind === "active" ? (
                 <div className="mt-5 space-y-4">
@@ -497,7 +531,7 @@ export function PersonnelCatalogManager() {
                     {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
                     <div className="flex flex-wrap justify-end gap-2">
                       <Dialog.Close asChild>
-                        <button type="button" disabled={busy || isConflictLocked} className="min-h-11 rounded-md border border-border px-4 text-sm">
+                        <button type="button" disabled={busy} className="min-h-11 rounded-md border border-border px-4 text-sm">
                           Hủy
                         </button>
                       </Dialog.Close>
@@ -570,7 +604,7 @@ export function PersonnelCatalogManager() {
                   {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
                   <div className="flex flex-wrap justify-end gap-2">
                     <Dialog.Close asChild>
-                      <button type="button" disabled={busy || isConflictLocked} className="min-h-11 rounded-md border border-border px-4 text-sm">
+                      <button type="button" disabled={busy} className="min-h-11 rounded-md border border-border px-4 text-sm">
                         Hủy
                       </button>
                     </Dialog.Close>
@@ -601,6 +635,17 @@ export function PersonnelCatalogManager() {
             Thử lại thao tác
           </button>
         </Alert>
+      ) : null}
+
+      {dialog === null ? (
+        Array.from(conflictIntents.values(), ({ intent, error }) => (
+          <ConflictReload
+            key={intent.lockId}
+            message={error}
+            busy={busy}
+            onReload={() => void reloadConflictedEntity(intent)}
+          />
+        ))
       ) : null}
 
       {mutationMessage ? <Alert tone="info" title="Trạng thái thao tác">{mutationMessage}</Alert> : null}
@@ -835,12 +880,16 @@ function ReasonField({ value, onChange }: { value: string; onChange(value: strin
   );
 }
 
-function ConflictReload({ message, onReload }: { message: string | null; onReload(): void }) {
+function ConflictReload({ message, busy, onReload }: {
+  message: string | null;
+  busy: boolean;
+  onReload(): void;
+}) {
   return (
     <Alert tone="warning" title="Thao tác đang bị khóa do xung đột phiên bản">
       <p>{message ?? "Tải lại hồ sơ có thẩm quyền trước khi bắt đầu thao tác mới."}</p>
-      <button type="button" onClick={onReload} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">
-        Tải lại hồ sơ
+      <button type="button" onClick={onReload} disabled={busy} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium disabled:opacity-50">
+        {busy ? "Đang tải…" : "Tải lại hồ sơ"}
       </button>
     </Alert>
   );
