@@ -119,7 +119,8 @@ test("a foreign existing app user blocks a new first-owner mapping", async () =>
   await addAuthUser(db);
   await addAuthUser(db, { id: OTHER_SUBJECT, email: "other@example.invalid" });
   await db.query(
-    "insert into public.direct_entry_app_users (auth_subject, enabled) values ($1::uuid, true)",
+    "insert into public.direct_entry_app_users (auth_subject, enabled, display_name)" +
+      " values ($1::uuid, true, 'Synthetic Foreign Owner')",
     [OTHER_SUBJECT],
   );
   await assert.rejects(run(db), { code: "FIRST_OWNER_BOOTSTRAP_CONFLICT" });
@@ -135,23 +136,27 @@ test("first apply grants canonical capabilities and own/all scopes; replay is id
   assert.equal(applied.outcome, "APPLIED");
   assert.equal(applied.appUserMappings, 1);
   assert.equal(applied.enabled, true);
-  assert.equal(applied.effectiveCapabilityCount, 21);
+  assert.equal(applied.effectiveCapabilityCount, CAPABILITIES.length);
   assert.equal(applied.effectiveOwnScopeCount, 1);
   assert.equal(applied.effectiveAllScopeCount, 1);
   assert.equal(applied.effectiveTeamScopeCount, 0);
   assert.deepEqual(applied.actorContext, {
     enabled: true,
-    capabilityCount: 21,
+    capabilityCount: CAPABILITIES.length,
     ownScope: true,
     allScope: true,
     teamScopeCount: 0,
   });
   assert.equal(applied.bootstrapAuditEventsWritten, 0);
-  assert.deepEqual(await counts(db), { mappings: 1, capabilities: 21, scopes: 2, audits: 0 });
+  assert.deepEqual(await counts(db), {
+    mappings: 1, capabilities: CAPABILITIES.length, scopes: 2, audits: 0,
+  });
 
   const replay = await run(db, { apply: true, email: "SYNTHETIC-OWNER@EXAMPLE.INVALID" });
   assert.equal(replay.outcome, "ALREADY_BOOTSTRAPPED");
-  assert.deepEqual(await counts(db), { mappings: 1, capabilities: 21, scopes: 2, audits: 0 });
+  assert.deepEqual(await counts(db), {
+    mappings: 1, capabilities: CAPABILITIES.length, scopes: 2, audits: 0,
+  });
   const checked = await run(db);
   assert.equal(checked.outcome, "ALREADY_BOOTSTRAPPED");
   assert.equal(checked.securityBoundaryUnchanged, true);
@@ -181,14 +186,24 @@ test("failed grant insert rolls the complete bootstrap transaction back", async 
   await db.close();
 });
 
-test("canonical capability vocabulary matches immutable schema vocabulary", async () => {
-  const sql = await readFile(
-    path.join(MIGRATION_DIR, "20261002170000_p1_6_direct_entry_foundation.sql"),
-    "utf8",
+test("canonical capability vocabulary matches the effective schema vocabulary", async () => {
+  // P3.1-W01A: the vocabulary is append-only, so parity is checked against the schema the whole
+  // migration stack actually produces instead of the frozen foundation file or a fixed count.
+  const db = await database();
+  const { rows } = await db.query(
+    `select pg_get_constraintdef(c.oid) as definition
+       from pg_constraint c
+       join pg_class t on t.oid = c.conrelid
+       join pg_namespace n on n.oid = t.relnamespace
+      where n.nspname = 'public'
+        and t.relname = 'direct_entry_capability_grants'
+        and c.contype = 'c'
+        and c.conname = 'direct_entry_capability_grants_capability_check'`,
   );
-  const check = sql.match(/capability text not null check \(capability in \(([\s\S]*?)\)\)/);
-  assert.ok(check, "capability CHECK constraint must exist");
-  const schemaCapabilities = [...check[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
-  assert.equal(CAPABILITIES.length, 21);
+  assert.equal(rows.length, 1, "capability CHECK constraint must exist");
+  const schemaCapabilities = [...String(rows[0].definition).matchAll(/'([^']+)'::text/g)]
+    .map((match) => match[1]);
+  assert.ok(schemaCapabilities.length > 0);
   assert.deepEqual([...schemaCapabilities].sort(), [...CAPABILITIES].sort());
+  await db.close();
 });

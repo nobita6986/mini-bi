@@ -5,7 +5,7 @@ import {
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.2" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.3" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -29,6 +29,11 @@ export const CAPABILITIES = [
   "pii_export",
   "audit_view",
   "entry_restore",
+  // P3.1-W01A contract foundation. Both tokens are declared here so the DB/TypeScript vocabulary
+  // parity stays exact; neither one grants Direct Entry page access, project-admin authority or
+  // the full-Admin triple on its own.
+  "catalog_master_manage",
+  "team_manager_assign",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -170,6 +175,8 @@ const REASON_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "recruiter_master_manage",
   "team_master_manage",
   "entry_restore",
+  "catalog_master_manage",
+  "team_manager_assign",
 ]);
 const VERSION_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "entry_admin",
@@ -180,11 +187,18 @@ const VERSION_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "recruiter_master_manage",
   "team_master_manage",
   "entry_restore",
+  "catalog_master_manage",
+  "team_manager_assign",
 ]);
 const REQUIRED_SCOPE_KIND: Partial<Record<AuthorizationAction, ScopeKind>> = {
   entry_own: "own",
   entry_team: "team",
   entry_admin: "all",
+  // catalog_master_manage is an all-scope catalog-operator authority; team_manager_assign is a
+  // team-scope leader authority. An 'all' scope grant never substitutes for the required 'team'
+  // scope of team_manager_assign and vice versa.
+  catalog_master_manage: "all",
+  team_manager_assign: "team",
 };
 const FORBIDDEN_CLIENT_FIELDS = new Set([
   "authsubject",
