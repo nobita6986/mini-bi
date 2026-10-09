@@ -65,12 +65,33 @@ function mutateMigration(sql) {
         "if p_operation = 'designate' and not v_team.active then",
         "if false then");
     case "reserved-team":
-      return replaceOnce(sql,
-        "if v_team.code = '__system_vendor__' then",
-        "if false then").replace(
+      return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
+        replaceOnce(body,
+          "if v_team.code = '__system_vendor__' then",
+          "if false then")).replace(
         "\ncommit;",
         "\nalter table public.direct_entry_scope_grants disable trigger direct_entry_no_vendor_team_scope;\n\ncommit;",
       );
+    case "postcondition-team-count":
+      return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
+        replaceOnce(body,
+          "if v_post_team_assignment_count <> 1\n       or v_post_target_team_assignment_count <> 1 then",
+          "if false then"));
+    case "postcondition-one-team":
+      return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
+        replaceOnce(body,
+          "if v_post_target_assignment_count <> 1\n       or v_post_target_team_assignment_count <> 1 then",
+          "if false then"));
+    case "postcondition-coextensive":
+      return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
+        replaceOnce(body,
+          "or v_post_coextensive_capability_count <> 1 then",
+          "or false then"));
+    case "postcondition-scope-coextensive":
+      return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
+        replaceOnce(body,
+          "or v_post_coextensive_scope_count <> 1",
+          "or false"));
     case "same-team-membership":
       return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
         replaceOnce(body,
@@ -317,6 +338,38 @@ async function teamState(team, actorIds = []) {
   };
 }
 
+async function replacementSnapshot(team, actorIds, authorityActor, idempotencyKey) {
+  const snapshots = {
+    version: "select version from public.teams where team_id=$1::uuid",
+    assignments: "select assignment_id,leader_app_user_id,leader_recruiter_id,valid_from::text,valid_to::text"
+      + " from public.direct_entry_team_leader_assignments where team_id=$1::uuid order by assignment_id",
+    scopes: "select grant_id,app_user_id,team_id,valid_from::text,valid_to::text"
+      + " from public.direct_entry_scope_grants where app_user_id=any($1::uuid[])"
+      + " and scope_kind='team' order by grant_id",
+    capabilities: "select grant_id,app_user_id,valid_from::text,valid_to::text"
+      + " from public.direct_entry_capability_grants where app_user_id=any($1::uuid[])"
+      + " and capability='team_manager_assign' order by grant_id",
+    reasons: "select reason_id,actor_user_id,reason_text"
+      + " from public.direct_entry_restricted_reasons where actor_user_id=$1::uuid order by reason_id",
+    revisions: "select revision_id,version,actor_user_id,action,before_snapshot,after_snapshot"
+      + " from public.direct_entry_team_leader_revisions where team_id=$1::uuid order by version",
+    audit: "select event_id,app_user_id,action,capability,resource_ref,outcome,reason_id,leader_revision_id"
+      + " from public.direct_entry_audit_events where resource_ref=$1 order by event_id",
+    idempotency: "select idempotency_id,app_user_id,action,idempotency_key,request_hash,result"
+      + " from public.direct_entry_rpc_idempotency where app_user_id=$1::uuid"
+      + " and idempotency_key=$2 order by idempotency_id",
+  };
+  const result = {};
+  for (const [key, sql] of Object.entries(snapshots)) {
+    const values = ["scopes", "capabilities"].includes(key)
+      ? [actorIds]
+      : key === "reasons" ? [authorityActor.app]
+        : key === "idempotency" ? [authorityActor.app, idempotencyKey] : [team];
+    result[key] = (await db.query(sql, values)).rows;
+  }
+  return result;
+}
+
 async function addTeam(team, code, active = true) {
   await db.query(
     "insert into public.teams(team_id,code,display_name,active)"
@@ -361,6 +414,66 @@ async function installFailureTrigger(table, operation) {
       + " for each row execute function public.test_fail_leader_write()");
 }
 
+async function installPostconditionProbe() {
+  await db.exec(`
+    create or replace function public.test_leader_postcondition_probe()
+    returns trigger language plpgsql as $$
+    declare
+      v_mode text := current_setting('test.leader_postcondition', true);
+    begin
+      if tg_table_name = 'direct_entry_team_leader_assignments' then
+        if v_mode = 'team-count'
+           and coalesce(current_setting('test.leader_postcondition_nested', true), '') <> 'on' then
+          perform set_config('test.leader_postcondition_nested', 'on', true);
+          insert into public.direct_entry_team_leader_assignments
+            (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
+          values (new.team_id, '11000000-0000-4000-8000-000000002001'::uuid,
+                  new.leader_recruiter_id, new.valid_from - 1);
+          perform set_config('test.leader_postcondition_nested', '', true);
+        elsif v_mode = 'one-team'
+              and coalesce(current_setting('test.leader_postcondition_nested', true), '') <> 'on' then
+          perform set_config('test.leader_postcondition_nested', 'on', true);
+          insert into public.direct_entry_team_leader_assignments
+            (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
+          values ('95000000-0000-4000-8000-0000000000a2'::uuid,
+                  new.leader_app_user_id, new.leader_recruiter_id, new.valid_from - 1);
+          perform set_config('test.leader_postcondition_nested', '', true);
+        elsif v_mode = 'missing-team-leader' then
+          return null;
+        end if;
+      elsif tg_table_name = 'direct_entry_scope_grants'
+            and v_mode = 'scope-coextensive' then
+        new.valid_to := new.valid_from + 1;
+      elsif tg_table_name = 'direct_entry_capability_grants'
+            and v_mode = 'coextensive' then
+        new.valid_to := new.valid_from + 1;
+      end if;
+      return new;
+    end;
+    $$;
+  `);
+  await db.exec(`
+    create trigger test_leader_postcondition_probe
+      before insert on public.direct_entry_team_leader_assignments
+      for each row execute function public.test_leader_postcondition_probe();
+    create trigger test_leader_postcondition_probe
+      before insert on public.direct_entry_capability_grants
+      for each row execute function public.test_leader_postcondition_probe();
+    create trigger test_leader_postcondition_probe
+      before insert on public.direct_entry_scope_grants
+      for each row execute function public.test_leader_postcondition_probe();
+  `);
+}
+
+async function dropPostconditionProbe() {
+  await db.exec(`
+    drop trigger test_leader_postcondition_probe on public.direct_entry_team_leader_assignments;
+    drop trigger test_leader_postcondition_probe on public.direct_entry_capability_grants;
+    drop trigger test_leader_postcondition_probe on public.direct_entry_scope_grants;
+    drop function public.test_leader_postcondition_probe();
+  `);
+}
+
 test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read lifecycle", async () => {
   const state = await createDatabase();
   db = state.db;
@@ -384,6 +497,9 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     scopes: [{ team: null }],
   });
   const catalog = await addActor(2, {
+    capabilities: ["catalog_master_manage"], scopes: [{ team: null }],
+  });
+  const accountingOperator = await addActor(9, {
     capabilities: ["catalog_master_manage"], scopes: [{ team: null }],
   });
   const entryAdminOnly = await addActor(3, {
@@ -455,7 +571,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   }), "22023");
 
   const nextLeader = await freshCandidate({ position: "STAFF" });
-  const replacement = await withRole("service_role", () => designate(catalog, TEAM_A, nextLeader, {
+  const replacement = await withRole("service_role", () => designate(accountingOperator, TEAM_A, nextLeader, {
     date: today, version: 2, key: "replace-a",
   }));
   assert.equal(replacement.change, "replace");
@@ -474,7 +590,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   audit = (await db.query(
     "select capability,scope_kind,action from public.direct_entry_audit_events"
       + " where app_user_id=$1::uuid and leader_revision_id=$2::uuid",
-    [catalog.app, replacement.revision_id])).rows[0];
+    [accountingOperator.app, replacement.revision_id])).rows[0];
   assert.deepEqual(audit, {
     capability: "catalog_master_manage", scope_kind: "all", action: "team_leader_replace",
   });
@@ -558,7 +674,34 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const reservedCandidate = await freshCandidate({
     memberships: [reservedTeamId], bypassIntervalGuards: true,
   });
-  await deny(designate(fullAdmin, reservedTeamId, reservedCandidate, { key: "reserved-team" }));
+  const reservedBefore = await teamState(reservedTeamId, [reservedCandidate.app]);
+  await deny(designate(fullAdmin, reservedTeamId, reservedCandidate, {
+    key: "reserved-team-designate",
+  }), "23514");
+  await deny(revoke(fullAdmin, reservedTeamId, {
+    key: "reserved-team-revoke",
+  }), "23514");
+  assert.deepEqual(await teamState(reservedTeamId, [reservedCandidate.app]), reservedBefore);
+
+  await installPostconditionProbe();
+  for (const [index, mode] of [
+    "team-count", "one-team", "coextensive", "scope-coextensive", "missing-team-leader",
+  ].entries()) {
+    const team = uuid(60000 + index);
+    await addTeam(team, `POSTCONDITION_${mode.toUpperCase()}`);
+    const candidate = await freshCandidate({ memberships: [team] });
+    const before = await teamState(team, [candidate.app]);
+    await db.query("select set_config('test.leader_postcondition',$1,false)", [mode]);
+    await assert.rejects(designate(fullAdmin, team, candidate, {
+      key: `postcondition-${mode}`,
+    }), (error) => error.code === "55000", `${mode} postcondition must fail closed`);
+    await db.query("select set_config('test.leader_postcondition','',false)");
+    await db.query("select set_config('test.leader_postcondition_nested','',false)");
+    assert.deepEqual(await teamState(team, [candidate.app]), before, `${mode} postcondition rolled back`);
+    assert.equal(await countRows("direct_entry_team_leader_assignments",
+      "leader_app_user_id=$1::uuid", [candidate.app]), 0);
+  }
+  await dropPostconditionProbe();
 
   const wrongTeamCandidate = await freshCandidate({ memberships: [TEAM_B] });
   await deny(designate(fullAdmin, TEAM_A, wrongTeamCandidate, {
@@ -807,6 +950,58 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     await db.exec(`drop trigger test_leader_write_failure on public.${table}`);
     assert.deepEqual(await teamState(injectedTeam, [candidate.app]), before, `${table} failure rolled back`);
   }
+  for (const table of [
+    "direct_entry_capability_grants",
+    "direct_entry_team_leader_revisions",
+    "direct_entry_audit_events",
+    "direct_entry_rpc_idempotency",
+  ]) {
+    const replacementTeam = uuid(70000 + nextActorId);
+    const key = `replacement-injection-${table}`;
+    await addTeam(replacementTeam, `REPLACEMENT_FAIL_${table}`);
+    const outgoingLeader = await freshCandidate({ memberships: [replacementTeam] });
+    const incomingLeader = await freshCandidate({ memberships: [replacementTeam] });
+    await designate(fullAdmin, replacementTeam, outgoingLeader, {
+      date: PAST, key: `replacement-seed-${table}`,
+    });
+    const actorIds = [outgoingLeader.app, incomingLeader.app];
+    const before = await replacementSnapshot(replacementTeam, actorIds, fullAdmin, key);
+    await installFailureTrigger(table, table === "direct_entry_rpc_idempotency" ? "update" : "insert or update");
+    await db.query("select set_config('test.leader_write_fail',$1,false)", [table]);
+    await deny(designate(fullAdmin, replacementTeam, incomingLeader, {
+      date: today, version: 2, key,
+    }), "P0001");
+    await db.query("select set_config('test.leader_write_fail','',false)");
+    await db.exec(`drop trigger test_leader_write_failure on public.${table}`);
+    assert.deepEqual(
+      await replacementSnapshot(replacementTeam, actorIds, fullAdmin, key),
+      before,
+      `${table} replacement failure rolled back every row`,
+    );
+    assert.equal(await effectiveRows("direct_entry_scope_grants", outgoingLeader.app, replacementTeam), 1);
+    assert.equal(await effectiveRows("direct_entry_capability_grants", outgoingLeader.app), 1);
+    assert.equal(await effectiveRows("direct_entry_scope_grants", incomingLeader.app, replacementTeam), 0);
+    assert.equal(await effectiveRows("direct_entry_capability_grants", incomingLeader.app), 0);
+    const stillOutgoing = await db.query(
+      "select count(*)::int as n from public.direct_entry_team_leader_assignments"
+        + " where team_id=$1::uuid and leader_app_user_id=$2::uuid"
+        + " and valid_from <= $3::date and (valid_to is null or $3::date < valid_to)",
+      [replacementTeam, outgoingLeader.app, today]);
+    assert.equal(stillOutgoing.rows[0].n, 1);
+    assert.equal(await countRows("direct_entry_team_leader_assignments",
+      "team_id=$1::uuid and leader_app_user_id=$2::uuid",
+      [replacementTeam, incomingLeader.app]), 0);
+
+    const recovered = await designate(fullAdmin, replacementTeam, incomingLeader, {
+      date: today, version: 2, key,
+    });
+    assert.equal(recovered.change, "replace");
+    assert.equal(recovered.version, 3);
+    assert.equal(await effectiveRows("direct_entry_scope_grants", outgoingLeader.app, replacementTeam), 0);
+    assert.equal(await effectiveRows("direct_entry_capability_grants", outgoingLeader.app), 0);
+    assert.equal(await effectiveRows("direct_entry_scope_grants", incomingLeader.app, replacementTeam), 1);
+    assert.equal(await effectiveRows("direct_entry_capability_grants", incomingLeader.app), 1);
+  }
   await db.exec("drop function public.test_fail_leader_write()");
 
   const functionRows = (await db.query(`
@@ -829,6 +1024,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     assert.equal(rows[0].service_exec, true);
     assert.ok(rows[0].source.includes("direct_entry_assert_catalog_operator"));
     assert.equal(rows[0].source.includes("personnel_position"), false);
+    assert.equal(rows[0].source.includes("direct_entry_system_vendor_team_id"), false);
   }
   assert.deepEqual(
     functionRows.find((row) => row.proname === WRITE_RPCS[0]).argnames,
@@ -846,6 +1042,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   assert.equal(internal.config, "search_path=pg_catalog, public");
   assert.equal(internal.public_exec || internal.anon_exec
     || internal.authenticated_exec || internal.service_exec, false);
+  assert.equal(internal.source.includes("direct_entry_system_vendor_team_id"), false);
   assert.equal(functionRows.filter((row) => row.proname.startsWith("direct_entry_assert_team_leader")).length, 1);
   assert.equal(await db.query(
     "select to_regprocedure('public.direct_entry_assert_team_leader_authority(uuid,uuid,uuid)')"

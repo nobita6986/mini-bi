@@ -898,6 +898,20 @@ declare
   v_lock_key text;
   v_scope_grant_count integer;
   v_capability_grant_count integer;
+  v_post_team_assignment_count integer;
+  v_post_target_team_assignment_count integer;
+  v_post_target_assignment_count integer;
+  v_post_scope_count integer;
+  v_post_target_team_scope_count integer;
+  v_post_capability_count integer;
+  v_post_coextensive_scope_count integer;
+  v_post_coextensive_capability_count integer;
+  v_post_outgoing_assignment_count integer;
+  v_post_outgoing_scope_count integer;
+  v_post_outgoing_capability_count integer;
+  v_post_closed_assignment_count integer;
+  v_post_closed_scope_count integer;
+  v_post_closed_capability_count integer;
 begin
   if p_operation not in ('designate', 'revoke') then
     raise exception 'invalid team leader operation' using errcode = '22023';
@@ -929,7 +943,7 @@ begin
     raise exception 'team not found' using errcode = 'P0002';
   end if;
   if v_team.code = '__system_vendor__' then
-    raise exception 'reserved team cannot have a leader' using errcode = '42501';
+    raise exception 'reserved team cannot have a leader' using errcode = '23514';
   end if;
 
   v_idempotency_action := case p_operation
@@ -1259,6 +1273,169 @@ begin
     v_change := 'revoke';
   end if;
 
+  if p_operation = 'designate' then
+    select count(*) filter (where a.team_id = p_team_id)::int,
+           count(*) filter (
+             where a.team_id = p_team_id
+               and a.leader_app_user_id = p_target_leader_app_user_id
+           )::int,
+           count(*) filter (
+             where a.leader_app_user_id = p_target_leader_app_user_id
+           )::int
+      into v_post_team_assignment_count, v_post_target_team_assignment_count,
+           v_post_target_assignment_count
+      from public.direct_entry_team_leader_assignments a
+     where a.valid_from <= p_effective_date
+       and (a.valid_to is null or p_effective_date < a.valid_to)
+       and (a.valid_to is null or a.valid_to > a.valid_from);
+
+    if v_post_team_assignment_count <> 1
+       or v_post_target_team_assignment_count <> 1 then
+      raise exception 'team leader mutation postcondition failed' using errcode = '55000';
+    end if;
+    if v_post_target_assignment_count <> 1
+       or v_post_target_team_assignment_count <> 1 then
+      raise exception 'team leader mutation postcondition failed' using errcode = '55000';
+    end if;
+
+    select count(*)::int,
+           count(*) filter (where s.team_id = p_team_id)::int
+      into v_post_scope_count, v_post_target_team_scope_count
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = p_target_leader_app_user_id
+       and s.scope_kind = 'team'
+       and s.valid_from <= p_effective_date
+       and (s.valid_to is null or p_effective_date < s.valid_to)
+       and (s.valid_to is null or s.valid_to > s.valid_from);
+    select count(*)::int into v_post_capability_count
+      from public.direct_entry_capability_grants g
+     where g.app_user_id = p_target_leader_app_user_id
+       and g.capability = 'team_manager_assign'
+       and g.valid_from <= p_effective_date
+       and (g.valid_to is null or p_effective_date < g.valid_to)
+       and (g.valid_to is null or g.valid_to > g.valid_from);
+    select count(*)::int into v_post_coextensive_scope_count
+      from public.direct_entry_team_leader_assignments a
+      join public.direct_entry_scope_grants s
+        on s.app_user_id = a.leader_app_user_id
+       and s.scope_kind = 'team'
+       and s.team_id = a.team_id
+       and s.valid_from = a.valid_from
+       and s.valid_to is not distinct from a.valid_to
+     where a.team_id = p_team_id
+       and a.leader_app_user_id = p_target_leader_app_user_id
+       and a.valid_from = p_effective_date
+       and a.valid_from <= p_effective_date
+       and (a.valid_to is null or p_effective_date < a.valid_to)
+       and (a.valid_to is null or a.valid_to > a.valid_from)
+       and s.valid_from <= p_effective_date
+       and (s.valid_to is null or p_effective_date < s.valid_to)
+       and (s.valid_to is null or s.valid_to > s.valid_from);
+    select count(*)::int into v_post_coextensive_capability_count
+      from public.direct_entry_team_leader_assignments a
+      join public.direct_entry_capability_grants g
+        on g.app_user_id = a.leader_app_user_id
+       and g.capability = 'team_manager_assign'
+       and g.valid_from = a.valid_from
+       and g.valid_to is not distinct from a.valid_to
+     where a.team_id = p_team_id
+       and a.leader_app_user_id = p_target_leader_app_user_id
+       and a.valid_from = p_effective_date
+       and a.valid_from <= p_effective_date
+       and (a.valid_to is null or p_effective_date < a.valid_to)
+       and (a.valid_to is null or a.valid_to > a.valid_from)
+       and g.valid_from <= p_effective_date
+       and (g.valid_to is null or p_effective_date < g.valid_to)
+       and (g.valid_to is null or g.valid_to > g.valid_from);
+    if v_post_scope_count <> 1 or v_post_target_team_scope_count <> 1
+       or v_post_capability_count <> 1
+       or v_post_coextensive_scope_count <> 1
+       or v_post_coextensive_capability_count <> 1 then
+      raise exception 'team leader mutation postcondition failed' using errcode = '55000';
+    end if;
+
+    if v_old_count = 1 then
+      select count(*)::int into v_post_outgoing_assignment_count
+        from public.direct_entry_team_leader_assignments a
+       where a.team_id = p_team_id
+         and a.leader_app_user_id = v_old.leader_app_user_id
+         and a.valid_from <= p_effective_date
+         and (a.valid_to is null or p_effective_date < a.valid_to)
+         and (a.valid_to is null or a.valid_to > a.valid_from);
+      select count(*)::int into v_post_outgoing_scope_count
+        from public.direct_entry_scope_grants s
+       where s.app_user_id = v_old.leader_app_user_id
+         and s.scope_kind = 'team' and s.team_id = p_team_id
+         and s.valid_from <= p_effective_date
+         and (s.valid_to is null or p_effective_date < s.valid_to)
+         and (s.valid_to is null or s.valid_to > s.valid_from);
+      select count(*)::int into v_post_outgoing_capability_count
+        from public.direct_entry_capability_grants g
+       where g.app_user_id = v_old.leader_app_user_id
+         and g.capability = 'team_manager_assign'
+         and g.valid_from <= p_effective_date
+         and (g.valid_to is null or p_effective_date < g.valid_to)
+         and (g.valid_to is null or g.valid_to > g.valid_from);
+      select count(*)::int into v_post_closed_assignment_count
+        from public.direct_entry_team_leader_assignments a
+       where a.assignment_id = v_old.assignment_id
+         and a.valid_to = p_effective_date;
+      select count(*)::int into v_post_closed_scope_count
+        from public.direct_entry_scope_grants s
+       where s.grant_id = v_scope_grant_id and s.valid_to = p_effective_date;
+      select count(*)::int into v_post_closed_capability_count
+        from public.direct_entry_capability_grants g
+       where g.grant_id = v_capability_grant_id and g.valid_to = p_effective_date;
+      if v_post_outgoing_assignment_count <> 0
+         or v_post_outgoing_scope_count <> 0
+         or v_post_outgoing_capability_count <> 0
+         or v_post_closed_assignment_count <> 1
+         or v_post_closed_scope_count <> 1
+         or v_post_closed_capability_count <> 1 then
+        raise exception 'team leader mutation postcondition failed' using errcode = '55000';
+      end if;
+    end if;
+  else
+    select count(*)::int into v_post_team_assignment_count
+      from public.direct_entry_team_leader_assignments a
+     where a.team_id = p_team_id
+       and a.valid_from <= p_effective_date
+       and (a.valid_to is null or p_effective_date < a.valid_to)
+       and (a.valid_to is null or a.valid_to > a.valid_from);
+    select count(*)::int into v_post_outgoing_scope_count
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = v_old.leader_app_user_id
+       and s.scope_kind = 'team' and s.team_id = p_team_id
+       and s.valid_from <= p_effective_date
+       and (s.valid_to is null or p_effective_date < s.valid_to)
+       and (s.valid_to is null or s.valid_to > s.valid_from);
+    select count(*)::int into v_post_outgoing_capability_count
+      from public.direct_entry_capability_grants g
+     where g.app_user_id = v_old.leader_app_user_id
+       and g.capability = 'team_manager_assign'
+       and g.valid_from <= p_effective_date
+       and (g.valid_to is null or p_effective_date < g.valid_to)
+       and (g.valid_to is null or g.valid_to > g.valid_from);
+    select count(*)::int into v_post_closed_assignment_count
+      from public.direct_entry_team_leader_assignments a
+     where a.assignment_id = v_old.assignment_id
+       and a.valid_to = p_effective_date;
+    select count(*)::int into v_post_closed_scope_count
+      from public.direct_entry_scope_grants s
+     where s.grant_id = v_scope_grant_id and s.valid_to = p_effective_date;
+    select count(*)::int into v_post_closed_capability_count
+      from public.direct_entry_capability_grants g
+     where g.grant_id = v_capability_grant_id and g.valid_to = p_effective_date;
+    if v_post_team_assignment_count <> 0
+       or v_post_outgoing_scope_count <> 0
+       or v_post_outgoing_capability_count <> 0
+       or v_post_closed_assignment_count <> 1
+       or v_post_closed_scope_count <> 1
+       or v_post_closed_capability_count <> 1 then
+      raise exception 'team leader mutation postcondition failed' using errcode = '55000';
+    end if;
+  end if;
+
   update public.teams t
      set version = t.version + 1
    where t.team_id = p_team_id
@@ -1433,6 +1610,10 @@ begin
       into v_prosecdef, v_config, v_public_exec, v_anon_exec,
            v_authenticated_exec, v_service_exec, v_source
       from pg_proc p where p.oid = v_signature::regprocedure;
+    if v_source like '%direct_entry_system_vendor_team_id%' then
+      raise exception 'reserved-team creator must not be called by mutation function %', v_signature
+        using errcode = '55000';
+    end if;
     if not v_prosecdef or v_config <> 'search_path=pg_catalog, public' then
       raise exception 'team-leader function definer/search_path drift: %', v_signature
         using errcode = '55000';
