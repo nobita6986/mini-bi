@@ -113,11 +113,20 @@ begin
       raise exception 'P3-W07A-R4 reserved Vendor team has team scope grants' using errcode = '55000';
     end if;
 
+    -- The real reporting contract must never emit a team dimension. The legacy
+    -- reporting_dimension_options_v01 view has no team dimension at all, so it
+    -- cannot prove anything about the reserved team and is not used here.
     select count(*) into v_bad
-      from public.reporting_dimension_options_v01 o
-     where o.dimension = 'team' and o.display = 'Vendor';
+      from public.direct_entry_reporting_dimension_options_v01 o
+     where o.dimension = 'team';
     if v_bad <> 0 then
-      raise exception 'P3-W07A-R4 reserved Vendor team leaked into the business team dimension' using errcode = '55000';
+      raise exception 'P3-W07A-R4 reporting dimension options emitted a team dimension' using errcode = '55000';
+    end if;
+    select count(*) into v_bad
+      from public.direct_entry_reporting_dimension_options_v01 o
+     where o.key = v_reserved::text;
+    if v_bad <> 0 then
+      raise exception 'P3-W07A-R4 reserved Vendor team id appeared as a reporting option' using errcode = '55000';
     end if;
   end if;
 end

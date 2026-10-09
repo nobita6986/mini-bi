@@ -85,7 +85,8 @@ async function seed(db, { reservedTeamId }) {
     insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)
       values ('${APP_ALL}','all','2020-01-01');
     insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from) values
-      ('${APP_TEAM}','entry_team','2020-01-01'), ('${APP_ALL}','entry_admin','2020-01-01');
+      ('${APP_TEAM}','entry_team','2020-01-01'),
+      ('${APP_ALL}','entry_admin','2020-01-01'), ('${APP_ALL}','entry_create','2020-01-01');
   `);
 
   const groups = [
@@ -241,10 +242,38 @@ test("P3-W07A-R4: #66 appends last and the historical Vendor rows are corrected"
     assert.equal(allAfter.has(E_VENDOR_DELETED), false,
       "a soft-deleted row stays outside the reporting row set for every audience");
 
-    // Reserved team stays hidden and still rejects membership / team scope.
+    // Reserved team stays hidden from the two real read contracts and still
+    // rejects membership / team scope. The legacy
+    // reporting_dimension_options_v01 view has no team dimension at all, so it
+    // is deliberately NOT used as hidden-team evidence.
+    const catalog = (await db.query(
+      "select public.direct_entry_input_catalog($1::uuid,$2::uuid,public.direct_entry_authorization_date()) as v",
+      [AUTH_ALL, APP_ALL])).rows[0].v;
+    const vendorRows = (catalog.recruiters ?? []).filter((r) => r.provider_type === "vendor");
+    assert.ok(vendorRows.length >= 1, "the Vendor recruiter is still listed in the catalog");
+    const vendorRow = vendorRows.find((r) => r.recruiter_id === REC_VENDOR);
+    assert.ok(vendorRow, "the exact Vendor recruiter is present");
+    assert.equal(vendorRow.team_id, null, "a Vendor recruiter has no business team");
+    assert.equal(vendorRow.team_display_name, null, "a Vendor recruiter has no team display name");
+    for (const r of catalog.recruiters ?? []) {
+      assert.notEqual(r.team_id, reserved, "the reserved team is never a business-team option");
+      assert.notEqual(r.team_display_name, "Vendor", "the reserved team label never appears as a team option");
+    }
+    assert.equal(JSON.stringify(catalog).includes("__system_vendor__"), false,
+      "the reserved team code never reaches the catalog payload");
+
     assert.equal((await db.query(
-      "select count(*)::int as n from public.reporting_dimension_options_v01" +
-      " where dimension='team' and display='Vendor'")).rows[0].n, 0);
+      "select count(*)::int as n from public.direct_entry_reporting_dimension_options_v01" +
+      " where dimension='team'")).rows[0].n, 0,
+      "the real reporting contract emits no team dimension");
+    assert.equal((await db.query(
+      "select count(*)::int as n from public.direct_entry_reporting_dimension_options_v01" +
+      " where key = $1", [reserved])).rows[0].n, 0,
+      "the reserved team id is never a reporting option key");
+    assert.ok((await db.query(
+      "select count(*)::int as n from public.direct_entry_reporting_dimension_options_v01" +
+      " where dimension='provider' and display='Vendor'")).rows[0].n >= 1,
+      "a submitted Vendor row still yields a provider='Vendor' option");
     await assert.rejects(
       db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
         " values ($1,$2,'2020-01-01')", [REC_HRP, reserved]),
@@ -262,21 +291,42 @@ test("P3-W07A-R4: #66 appends last and the historical Vendor rows are corrected"
   }
 });
 
-test("P3-W07A-R4: a non-canonical reserved row fails the whole migration", async () => {
+test("P3-W07A-R4: a non-canonical reserved row aborts the migration with real rows untouched", async () => {
   const names = await ledger();
   const db = new PGlite();
   try {
     await db.exec(AUTH_PROLOGUE);
     await upTo(db, names, R4);
-    await db.query("select public.direct_entry_system_vendor_team_id()");
-    await db.exec("update public.teams set active = false where code = '__system_vendor__'");
+
+    // The reserved row exists first, then is made non-canonical: the preflight
+    // must reject before the UPDATE can move anything.
+    const reserved = (await db.query(
+      "select public.direct_entry_system_vendor_team_id() as id")).rows[0].id;
+    await seed(db, { reservedTeamId: reserved });
+    await db.exec("update public.teams set active = false where team_id = '" + reserved + "'");
+
+    const beforeVersions = await versions(db);
+    assert.equal(beforeVersions.get(E_VENDOR_DRAFT).team_id, TEAM);
+    assert.equal(beforeVersions.get(E_VENDOR_SUBMITTED).team_id, TEAM);
+    assert.equal(beforeVersions.get(E_HRP).team_id, TEAM);
+
     await assert.rejects(applyR4(db), /P3-W07A-R4 reserved Vendor team row is not canonical/);
     try { await db.exec("rollback"); } catch { /* the aborted transaction is expected */ }
 
-    const { rows } = await db.query(
-      "select count(*)::int as n from public.direct_entries where provider_type='vendor'");
-    assert.equal(rows[0].n, 0, "no partial data change after the rollback");
-    assert.equal(await auditCount(db), 0, "no audit event after the rollback");
+    const after = await versions(db);
+    // A real Vendor row was pending a backfill: if the canonical preflight were
+    // dropped, or the UPDATE ran before it, these rows and versions would move.
+    assert.equal(after.get(E_VENDOR_DRAFT).team_id, TEAM, "Vendor stays on the business team");
+    assert.equal(after.get(E_VENDOR_SUBMITTED).team_id, TEAM, "Vendor stays on the business team");
+    assert.equal(after.get(E_VENDOR_DRAFT).version, beforeVersions.get(E_VENDOR_DRAFT).version);
+    assert.equal(after.get(E_VENDOR_SUBMITTED).version, beforeVersions.get(E_VENDOR_SUBMITTED).version);
+    assert.equal(after.get(E_HRP).team_id, TEAM, "the HRP control row is unchanged");
+    assert.equal(after.get(E_HRP).version, beforeVersions.get(E_HRP).version);
+    assert.equal(await auditCount(db), 0, "no backfill audit event is written");
+    assert.equal((await db.query(
+      "select count(*)::int as n from public.direct_entries" +
+      " where provider_type='vendor' and team_id not in ($1,$2)",
+      [TEAM, reserved])).rows[0].n, 0, "no Vendor row moved to another team");
   } finally {
     await db.close();
   }
