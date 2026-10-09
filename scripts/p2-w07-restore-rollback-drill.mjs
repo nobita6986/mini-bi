@@ -41,9 +41,11 @@ if (BIN === null) {
 const exe = (name) => path.join(BIN, process.platform === "win32" ? name + ".exe" : name);
 
 function run(name, args, options = {}) {
-  const result = spawnSync(exe(name), args, { encoding: "utf8", ...options });
+  const result = spawnSync(exe(name), args, { encoding: "utf8", timeout: 300000, ...options });
   if (result.status !== 0 && options.allowFailure !== true) {
-    throw new Error(name + "_FAILED");
+    const failure = new Error(name + "_FAILED");
+    failure.stderr = result.stderr;
+    throw failure;
   }
   return result;
 }
@@ -55,6 +57,7 @@ const logFile = path.join(work, "server.log");
 const psqlBase = ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "-v", "ON_ERROR_STOP=1"];
 const psql = (db, args) => run("psql", [...psqlBase, "-d", db, ...args]);
 const started = { value: false };
+let step = "init";
 let report = { ok: false, code: "DRILL_NOT_STARTED" };
 
 const PROLOGUE = [
@@ -76,9 +79,9 @@ const SEED = [
   " select recruiter_id,'00000000-0000-4000-8000-000000000101','2020-01-01' from public.recruiters;",
   "insert into auth.users (id, email) select ('00000000-0000-4000-8000-' || lpad(n::text,12,'0')),"
   + " 'synthetic' || n || '@example.invalid' from generate_series(201,203) as n;",
-  "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
+  "insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)" +
   " select ('00000000-0000-4000-8000-' || lpad(n::text,12,'0'))," +
-  " ('00000000-0000-4000-8000-' || lpad((n - 100)::text,12,'0')), true" +
+  " ('00000000-0000-4000-8000-' || lpad((n - 100)::text,12,'0')), 'Synthetic Operator ' || n, true" +
   " from generate_series(201,203) as n;",
   "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
   " select app_user_id,'entry_admin','2020-01-01' from public.direct_entry_app_users;",
@@ -146,6 +149,7 @@ function applyMigrations(db, migrations) {
     " checksum text, applied_at timestamptz default now())"]);
   psql(db, ["-c", PROLOGUE]);
   for (const migration of migrations) {
+    step = "migration:" + migration.name;
     const file = path.join(work, migration.name + ".sql");
     writeFileSync(file, migration.sql, "utf8");
     psql(db, ["-f", file]);
@@ -183,46 +187,56 @@ function objectCounts(db) {
 }
 
 function invariantHeld(db) {
-  // Hai episode active tren cung mot CCCD phai bi guard #58-#60 tu choi.
-  const result = psql(db, ["-t", "-A", "-c",
-    "do $$ begin" +
-    " insert into public.direct_entries (entry_id, submission_id, candidate_id," +
-    " created_by_user_id, project_id, first_work_date, employee_code, worker_details," +
-    " recruiter_id, team_id, provider_type, labor_type)" +
-    " select gen_random_uuid(), submission_id, candidate_id, created_by_user_id, project_id," +
-    " '2026-10-02'::date, 'hrp-2026-999999', worker_details, recruiter_id, team_id," +
-    " provider_type, labor_type from public.direct_entries" +
-    " where worker_details->'national_id'->>'value' in (select worker_details->'national_id'->>'value'" +
-    " from public.direct_entries e join public.direct_entry_employment_status_events st" +
-    " on st.entry_id = e.entry_id where st.status = 'ON' limit 1) limit 1;" +
-    " raise exception 'INVARIANT_NOT_ENFORCED';" +
-    " exception when others then" +
-    " if sqlerrm = 'INVARIANT_NOT_ENFORCED' then raise; else return; end if;" +
-    " end $$;"]);
-  return result.status === 0;
+  // Invariant #58-#60: episode active thu hai cho cung CCCD phai bi tu choi dung ma loi.
+  const sql = [
+    'insert into public.direct_entries (entry_id, submission_id, candidate_id,'
+    , ' created_by_user_id, project_id, first_work_date, employee_code, worker_details,'
+    , ' recruiter_id, team_id, provider_type, labor_type)'
+    , " select gen_random_uuid(), submission_id, candidate_id, created_by_user_id, project_id,"
+    , " '2026-10-02'::date, 'hrp-2026-999999', worker_details, recruiter_id, team_id,"
+    , " provider_type, labor_type from public.direct_entries where worker_details->'national_id'->>'value'"
+    , " in (select worker_details->'national_id'->>'value' from public.direct_entries e"
+    , " join public.direct_entry_employment_status_events st on st.entry_id = e.entry_id"
+    , " where st.status = 'ON' limit 1) limit 1"
+  ].join('');
+  const result = run('psql', [...psqlBase, '-d', db, '-c', sql], { allowFailure: true });
+  const stderr = String(result.stderr ?? '');
+  return result.status !== 0 && stderr.includes('23505') &&
+    stderr.includes('worker_active_episode_exists');
 }
 
 try {
-  run("initdb", ["-D", dataDir, "-U", USER, "-A", "trust", "-E", "UTF8", "--no-sync"]);
+  const portCheck = spawnSync("powershell", ["-NoProfile", "-Command",
+    "if ((Get-NetTCPConnection -LocalPort " + PORT + " -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0) { 'BUSY' } else { 'FREE' }"],
+    { encoding: "utf8", timeout: 30000 });
+  if (String(portCheck.stdout ?? "").includes("BUSY")) {
+    throw new Error("PORT_IN_USE");
+  }
+  run("initdb", ["-D", dataDir, "-U", USER, "-A", "trust", "-E", "UTF8", "--no-sync"],
+    { timeout: 180000 });
   run("pg_ctl", ["-D", dataDir, "-l", logFile, "-o",
     "-p " + PORT + " -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off", "-w",
-    "start"]);
+    "start"], { stdio: "ignore", timeout: 60000 });
   started.value = true;
   run("createdb", ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "drill_src"]);
   run("createdb", ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "drill_tgt"]);
 
   const migrations = ledgerInput();
   applyMigrations("drill_src", migrations);
+  step = "seed";
   psql("drill_src", ["-c", SEED]);
 
+  step = "fingerprint:source";
   const sourceFingerprint = fingerprint("drill_src");
   const sourceObjects = objectCounts("drill_src");
 
+  step = "dump";
   const dumpStart = Date.now();
   run("pg_dump", ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "-Fc", "-f", dumpFile,
     "drill_src"]);
   const dumpMs = Date.now() - dumpStart;
 
+  step = "restore";
   const restoreStart = Date.now();
   run("pg_restore", ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "-d", "drill_tgt",
     dumpFile]);
@@ -237,6 +251,7 @@ try {
     "select count(*) || ':' || coalesce(md5(string_agg(version || ':' || checksum, '|'" +
     " order by version)), '') from public.schema_migrations"]);
 
+  step = "rollback";
   const rollbackStart = Date.now();
   run("dropdb", ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "drill_tgt"]);
   run("createdb", ["-h", "127.0.0.1", "-p", String(PORT), "-U", USER, "drill_tgt"]);
@@ -263,7 +278,7 @@ try {
 } finally {
   if (started.value) {
     try {
-      run("pg_ctl", ["-D", dataDir, "-m", "fast", "-w", "stop"]);
+      run("pg_ctl", ["-D", dataDir, "-m", "fast", "-w", "stop"], { stdio: "ignore", timeout: 60000 });
     } catch {
       // instance tam thoi: bo qua loi stop
     }
