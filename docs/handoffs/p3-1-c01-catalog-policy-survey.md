@@ -1,6 +1,6 @@
 # P3.1-C01 — Catalog administration policy survey (decision memo)
 
-> Status: `P3_1_C01_CATALOG_POLICY_SURVEY_COMPLETE_AWAITING_T0_LOCK`
+> Status: `P3_1_C01_CATALOG_POLICY_SURVEY_REVIEWED_AND_LOCKED_BY_T0`
 > Base: `origin/main@1cdc97b4093dd08b3091609f4bd6c63288e7e720` (66 migrations). Read-only survey: no migration, RPC, API, UI, dependency or Production mutation in this task.
 > Sources: `docs/P3.1.md` (locked plan), `docs/P3.md`, `C:\CodeApp\P2-P3-R00_REUSE_CAPABILITY_SURVEY.md`, and the current migrations/RPC/grants on main. `docs/P2.5.md` is not tracked in the checkout; the P2.5 lane was read from its migrations/handoffs instead.
 
@@ -51,7 +51,7 @@ Revocation closes the intervals; historical team-attribution and assignment hist
 
 ### 2.4 Leader cardinality
 
-**Recommendation: at most one active primary team leader per team; additional leaders permitted only as explicitly designated co-leaders if T0 wants them.** Evidence: E8's seed enforces exactly one verified link and one effective membership per leader and refuses any baseline other than 7 leaders, and no schema expresses "primary vs secondary" (E7 is a single-valued display attribute). Trade-off: a single-leader rule is trivially expressible (unique effective leader per team) and matches the current dashboard semantics, but blocks a team with two rotating leaders; a many-leader rule needs no schema change (leader authority is a capability+scope, not a column) yet makes "who owns the roster" ambiguous and multiplies the revocation surface. **T0/Owner decision required.**
+**Survey recommendation: at most one active primary team leader per team.** Evidence: E8's seed enforces exactly one verified link and one effective membership per leader and refuses any baseline other than 7 leaders, and no schema expresses "primary vs secondary" (E7 is a single-valued display attribute). Trade-off: a single-leader rule is trivially expressible (unique effective leader per team) and matches the current dashboard semantics, but blocks a team with two rotating leaders; a many-leader rule needs no schema change (leader authority is a capability+scope, not a column) yet makes "who owns the roster" ambiguous and multiplies the revocation surface. T0 accepted the one-active-leader rule in §5.
 
 ### 2.5 Projections that must be team-scoped
 
@@ -61,8 +61,8 @@ Must filter by the leader's effective team: manager-candidate list (`direct_entr
 
 - **Target manager changes team:** existing assignment rows are never rewritten; list/candidate eligibility and unassign authority follow the manager's *current* effective team at authorization time. A leader who loses the manager from their team loses the ability to unassign that assignment.
 - **Leader revoked:** `team_manager_assign` and `team` scope intervals end together; the leader immediately loses list/assign/unassign and Team Dashboard scope; history stays.
-- **Future-dated / expired assignment:** future rows are listable but not "effective" (no runtime authority until `valid_from`); expired rows are history. Neither grants authority, and unassign must target an *effective* assignment (as today, E5/E6).
-- **Project inactive:** assign/unassign rejected (`project is not active`, E6); candidate listing still allowed for active projects only.
+- **Future-dated / expired assignment (T0 correction):** a future open row grants no runtime authority but may be cancelled; canonical unassign closes it with `valid_to = valid_from`. An already closed row remains history and replays as the existing no-op result.
+- **Project inactive (T0 correction):** assign is denied, but unassign remains allowed so an open assignment can always be revoked. The current unassign RPC locks the project/version but does not require `active=true`; W02 must preserve that safety property.
 - **Self-assignment:** allowed only when the leader is also an eligible effective member of that team.
 
 ### 2.7 Audit
@@ -77,7 +77,7 @@ Reuse unchanged: `direct_entry_assign_project_manager`, `_unassign_project_manag
 
 Persist the stable keys `TEMPORARY`, `PERMANENT`, `OUTSOURCED` (display `Thời vụ`, `Chính thức`, `Gia công`). Required changes: widen the DB check (E9) and `direct_entry_reporting_employment_key` mapping; extend the TS `LaborType` union and `LABOR_TYPE_INVALID` validator (E10); add one catalog row source + active-value projection; switch Direct Entry input, Excel/CSV import+template and filters to consume that projection; unknown/inactive values fail closed on write while historical rows stay readable. `Gia công` must not imply Vendor, provider membership or team.
 
-## 3. Migration sequencing from slot #67 (planned, not created)
+## 3. Migration sequencing from slot #67 (survey proposal, superseded by T0 lock)
 
 1. `#67` — CAPABILITY CONTRACT BUMP: add `catalog_master_manage` + `team_manager_assign` to the TS registry and the DB/FE parity test; no behaviour change.
 2. `#68` — CATALOG GUARD SPLIT: two-path project guard + `direct_entry_assert_team_manager_assign`; no RPC semantics change yet.
@@ -85,7 +85,7 @@ Persist the stable keys `TEMPORARY`, `PERMANENT`, `OUTSOURCED` (display `Thời 
 4. `#70` — VENDOR LIFECYCLE RPCs (W02).
 5. `#71` — LABOR-TYPE CATALOG + active-value projection + consumer switch (W02).
 6. `#72` — ACCOUNT/GRANT/LINK admin backend, Admin-only (W03).
-Each migration append-only after #66; no #1–#66 edit.
+Each migration is append-only after #66; no #1–#66 edit. T0 accepted the logical order but did not reserve #68–#72 as a fixed one-file-per-wave layout. Slot #67 owns the capability/policy foundation; later slots are allocated one reviewed work item at a time.
 
 ## 4. Minimum allowed/denied matrix for W01/W02/W03/W04/J01
 
@@ -99,19 +99,19 @@ Each migration append-only after #66; no #1–#66 edit.
 | Vendor create/rename/set-active | allow | allow | deny | W02 |
 | Labor-type add/rename/order/deactivate | allow | allow | deny | W02 |
 | Account enable/disable, grants/scopes, recruiter links | allow | **deny** | deny | W03/W05 |
-| `entry_restore` | allow | deny by default | deny | W03 |
+| `entry_restore` | allow | deny | deny | W03 |
 | Audit projection | all | catalog/worker events | own mutations | W03/W04 |
 | Browser direct RPC call for another team | — | — | **deny server-side** | W04/J01 |
 | Any mutation without reason/OCC/idempotency | deny | deny | deny | W01–W03 |
 
-## 5. Remaining decisions for T0/Owner
+## 5. T0 decisions locked on 2026-10-09
 
-1. **Token names** — accept `catalog_master_manage` + `team_manager_assign` (and the resulting 23-token contract) or choose different exact strings.
-2. **Leader cardinality** — one active leader per team, or many (§2.4).
-3. **Accounting + `entry_restore`** — the P3.1 plan leaves this conditional; default in this memo is **deny**.
-4. **`OUTSOURCED` ordering/labels** — confirm stable keys and Vietnamese display strings, and whether Admin/Accounting may rename the *label* of `TEMPORARY`/`PERMANENT` (keys stay immutable).
-5. **Vendor lifecycle data contract** — which fields are editable at go-live (display name only vs code/vendor_id).
-6. **Migration split** — accept the six-step sequence in §3, or merge steps 1–2.
+1. **Tokens:** accepted exactly `catalog_master_manage` + `team_manager_assign`; shared contract becomes 23 tokens and bumps version.
+2. **Leader cardinality:** at most one active leader per team; no co-leader semantics in P3.1.
+3. **Accounting + `entry_restore`:** denied; Admin-only.
+4. **Labor types:** seeded order `TEMPORARY=10`, `PERMANENT=20`, `OUTSOURCED=30`; display labels may be renamed/reordered, keys are immutable after creation.
+5. **Vendor lifecycle:** immutable `vendor_id`; mutable `display_name` and `active`; create canonical recruiter/provider representation atomically; never create team membership or erase history.
+6. **Migration split:** accept the logical dependency order, but allocate append-only slots per reviewed work item rather than promising exactly six files. #67 is the capability/policy foundation.
 
 ## 6. Boundary
 
