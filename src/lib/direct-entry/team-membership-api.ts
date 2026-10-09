@@ -19,6 +19,7 @@ import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { readBoundedJson } from "./write-api.ts";
+import { parseIsoDate } from "./direct-entry-date-format.ts";
 import type { TeamMembershipRepository } from "./team-membership-repository.ts";
 import type { MembershipState } from "./team-membership-contract.ts";
 
@@ -62,8 +63,15 @@ function uuid(value: unknown): string | null {
 function version(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
+/**
+ * ISO date-only field. The regex is only a shape pre-filter: calendar validity is
+ * checked by the shared pure parser (Date.UTC over numeric parts, never
+ * new Date("YYYY-MM-DD")), so 2026-02-30, 2026-13-01 and 2026-00-10 are rejected at
+ * the request boundary before the session or the repository is touched.
+ */
 function day(value: unknown): string | null {
-  return typeof value === "string" && DATE.test(value) ? value : null;
+  if (typeof value !== "string" || !DATE.test(value)) return null;
+  return parseIsoDate(value) === null ? null : value;
 }
 /** Absent query value -> the documented default; anything outside 1..max is rejected. */
 function pageNumber(value: string | null, fallback: number, max: number): number | null {

@@ -50,6 +50,7 @@ const HRP_D = "93000000-0000-4000-8000-0000000000ba";
 const HRP_E = "93000000-0000-4000-8000-0000000000bb";
 const HRP_F = "93000000-0000-4000-8000-0000000000bc";
 const HRP_G = "93000000-0000-4000-8000-0000000000bd";
+const HRP_H = "93000000-0000-4000-8000-0000000000be";
 
 const VENDOR_ID = "vendor.w01cb";
 const PROJECT_ID = "membership_proj";
@@ -229,12 +230,14 @@ for (const [recruiterId, displayName, active] of [
   [HRP_E, "Synthetic HRP E", true],
   [HRP_F, "Synthetic HRP F", true],
   [HRP_G, "Synthetic HRP G", true],
+  [HRP_H, "Synthetic HRP H", true],
 ]) {
   await db.query(
     "insert into public.recruiters (recruiter_id, display_name, active, version)"
     + " values ($1::uuid, $2, $3, 1)", [recruiterId, displayName, active]);
 }
-for (const recruiterId of [HRP_A, HRP_B, INACTIVE, ENTRY_SUBJECT, HRP_C, HRP_D, HRP_E, HRP_F, HRP_G]) {
+for (const recruiterId of [HRP_A, HRP_B, INACTIVE, ENTRY_SUBJECT, HRP_C, HRP_D, HRP_E, HRP_F, HRP_G,
+  HRP_H]) {
   await db.query(
     "insert into public.recruiter_provider_memberships"
     + " (recruiter_id, provider_type, valid_from, valid_to, vendor_id)"
@@ -793,52 +796,155 @@ test("the three reads are disjoint, bounded and exactly projected", async () => 
   }
 });
 
-test("zero-length scope, capability and membership rows are inert for every predicate", async () => {
-  const capabilityOnly = { auth: "10000000-0000-4000-8000-0000000000d9",
+test("only the membership interval accepts a zero-length marker; scope and capability stay strict", async () => {
+  // FIX R1: #70 must not open the scope/capability schema ahead of W01D. A raw
+  // zero-length scope or capability interval is still rejected with 23514 exactly as
+  // it was before #70, so the authority predicates keep their pre-W01C-B semantics.
+  const markerActor = { auth: "10000000-0000-4000-8000-0000000000d9",
     app: "20000000-0000-4000-8000-0000000000d9" };
-  const scopeOnly = { auth: "10000000-0000-4000-8000-0000000000da",
-    app: "20000000-0000-4000-8000-0000000000da" };
-  for (const actor of [capabilityOnly, scopeOnly]) {
-    await db.query("insert into auth.users (id) values ($1::uuid)", [actor.auth]);
-    await db.query("insert into public.direct_entry_app_users"
-      + " (app_user_id, auth_subject, enabled, display_name) values ($1::uuid, $2::uuid, true, $3)",
-    [actor.app, actor.auth, "Synthetic Marker Actor"]);
+  await addActor(db, { ...markerActor, display_name: "Synthetic Marker Actor" });
+
+  await assert.rejects(
+    db.query("insert into public.direct_entry_capability_grants"
+      + " (app_user_id, capability, valid_from, valid_to) values ($1::uuid,"
+      + " 'catalog_master_manage', '2026-01-01', '2026-01-01')", [markerActor.app]),
+    (error) => error.code === "23514", "a zero-length capability interval stays rejected");
+  await assert.rejects(
+    db.query("insert into public.direct_entry_scope_grants"
+      + " (app_user_id, scope_kind, valid_from, valid_to) values ($1::uuid, 'all',"
+      + " '2026-01-01', '2026-01-01')", [markerActor.app]),
+    (error) => error.code === "23514", "a zero-length scope interval stays rejected");
+
+  const definitions = (await db.query(
+    "select c.conname, pg_get_constraintdef(c.oid) as definition from pg_constraint c"
+    + " where c.conname in ('direct_entry_scope_grants_check',"
+    + " 'direct_entry_capability_grants_check')")).rows;
+  assert.equal(definitions.length, 2);
+  for (const row of definitions) {
+    assert.equal(row.definition.includes(">="), false, row.conname + " must stay strict");
+    assert.equal(row.definition.includes(">"), true, row.conname);
   }
-  // A zero-length capability interval grants nothing.
-  await db.query("insert into public.direct_entry_capability_grants"
-    + " (app_user_id, capability, valid_from, valid_to) values ($1::uuid, 'catalog_master_manage',"
-    + " '2026-01-01', '2026-01-01')", [capabilityOnly.app]);
-  // A zero-length all-scope interval grants nothing.
-  await db.query("insert into public.direct_entry_capability_grants"
-    + " (app_user_id, capability, valid_from) values ($1::uuid, 'catalog_master_manage', '2020-01-01')",
-  [scopeOnly.app]);
-  await db.query("insert into public.direct_entry_scope_grants"
-    + " (app_user_id, scope_kind, valid_from, valid_to) values ($1::uuid, 'all', '2026-01-01',"
-    + " '2026-01-01')", [scopeOnly.app]);
+  const membershipCheck = (await db.query(
+    "select pg_get_constraintdef(c.oid) as definition from pg_constraint c"
+    + " where c.conname = 'recruiter_team_memberships_check'")).rows[0].definition;
+  assert.equal(membershipCheck.includes(">="), true,
+    "the membership interval is the one CHECK #70 relaxes");
 
-  const capabilityEffective = (await db.query(
-    "select public.direct_entry_has_capability($1::uuid, 'catalog_master_manage') as effective",
-    [capabilityOnly.app])).rows[0].effective;
-  assert.equal(capabilityEffective, false, "a zero-length capability is never effective");
-  const scopeEffective = (await db.query(
-    "select public.direct_entry_has_capability($1::uuid, 'catalog_master_manage') as effective",
-    [scopeOnly.app])).rows[0].effective;
-  assert.equal(scopeEffective, true, "the capability itself is effective");
+  // The pre-existing effective predicate still authorises a normal operator, so the
+  // scope/capability behaviour is unchanged rather than merely un-tested.
+  const operator = { auth: "10000000-0000-4000-8000-0000000000db",
+    app: "20000000-0000-4000-8000-0000000000db" };
+  await addActor(db, { ...operator, display_name: "Synthetic Predicate Operator",
+    capabilities: ["catalog_master_manage"], scopes: ["all"] });
+  const authorised = await rpc(db, "direct_entry_list_team_membership_current", {
+    p_auth_subject: operator.auth, p_app_user_id: operator.app, p_page: 1, p_page_size: 25,
+  });
+  assert.equal(sortedKeys(authorised), ["authorization_date", "memberships", "page", "page_size",
+    "total"].sort().join(","));
 
-  for (const actor of [capabilityOnly, scopeOnly]) {
-    const error = await rpcError(db, "direct_entry_list_team_membership_current", {
-      p_auth_subject: actor.auth, p_app_user_id: actor.app, p_page: 1, p_page_size: 25,
-    });
-    assert.equal(error.code, "42501", "the guard must deny with an inert interval");
-  }
-
-  // No cancellation marker in the whole table is effective on any date.
+  // Membership markers exist (written by the audited RPC) and none is ever effective.
+  const markerCount = (await db.query(
+    "select count(*)::int as n from public.recruiter_team_memberships"
+    + " where valid_to is not null and valid_to = valid_from")).rows[0].n;
+  assert.equal(markerCount > 0, true, "the audited RPC writes cancellation markers");
   const effectiveMarkers = (await db.query(
     "select count(*)::int as n from public.recruiter_team_memberships"
     + " where valid_to is not null and valid_to = valid_from"
     + " and valid_from <= public.direct_entry_authorization_date()"
     + " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)")).rows[0].n;
   assert.equal(effectiveMarkers, 0, "a cancellation marker is effective on no date");
+});
+
+test("closing an existing membership stays possible after creation eligibility is gone", async () => {
+  // FIX R1: revocation must not depend on creation eligibility. Each subject below
+  // holds an OPEN membership that was created while it was eligible, and is then made
+  // ineligible in one of the three ways T0 named.
+  const subjectVersion = async (recruiterId) => recruiterVersion(db, recruiterId);
+
+  // 1. An inactive person with an open membership.
+  const inactiveVersion = await subjectVersion(HRP_E);
+  const inactiveOpen = (await db.query(
+    "select count(*)::int as n from public.recruiter_team_memberships"
+    + " where recruiter_id = $1::uuid and valid_to is null", [HRP_E])).rows[0].n;
+  assert.equal(inactiveOpen, 1, "the prefix condition is an open membership");
+  await db.query("update public.recruiters set active = false where recruiter_id = $1::uuid", [HRP_E]);
+
+  // 2. An HRP provider membership that has since expired.
+  const expiredVersion = await subjectVersion(HRP_F);
+  await db.query("update public.recruiter_provider_memberships set valid_to = '2021-01-01'"
+    + " where recruiter_id = $1::uuid and provider_type = 'hrp'", [HRP_F]);
+
+  // 3. A provider that has since switched to Vendor, with a legacy business membership.
+  const vendorVersion = await subjectVersion(HRP_H);
+  await assign(db, CATALOG, { recruiter: HRP_H, team: TEAM_A, from: PAST, version: vendorVersion,
+    key: KEY("90") });
+  const legacyVersion = await subjectVersion(HRP_H);
+  await db.query("update public.recruiter_provider_memberships set provider_type = 'vendor',"
+    + " vendor_id = $2 where recruiter_id = $1::uuid and provider_type = 'hrp'",
+  [HRP_H, VENDOR_ID]);
+
+  const cases = [
+    [HRP_E, "inactive person", await subjectVersion(HRP_E)],
+    [HRP_F, "expired HRP provider", expiredVersion],
+    [HRP_H, "provider switched to Vendor", legacyVersion],
+  ];
+  let caseIndex = 0;
+  for (const [recruiter, label, version] of cases) {
+    caseIndex += 1;
+    const suffix = String(caseIndex);
+    // assign and move are creation paths and must still deny.
+    const assignError = await rpcError(db, "direct_entry_assign_team_membership", {
+      p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: recruiter,
+      p_team_id: TEAM_B, p_valid_from: "2026-06-01", p_expected_version: version,
+      p_reason: REASON, p_idempotency_key: KEY("f" + suffix),
+    });
+    assert.equal(assignError.code, "P0002", label + " assign");
+    const moveError = await rpcError(db, "direct_entry_move_team_membership", {
+      p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: recruiter,
+      p_team_id: TEAM_B, p_valid_from: "2026-06-01", p_expected_version: version,
+      p_reason: REASON, p_idempotency_key: KEY("b" + suffix),
+    });
+    assert.equal(moveError.code, "P0002", label + " move");
+
+    // A stale version is still rejected without residue on the close path too.
+    const beforeStale = await counts(db);
+    const stale = await rpcError(db, "direct_entry_unassign_team_membership", {
+      p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: recruiter,
+      p_valid_to: "2026-06-01", p_expected_version: version + 7, p_reason: REASON,
+      p_idempotency_key: KEY("c" + suffix),
+    });
+    assert.equal(stale.code, "40001", label + " stale close");
+    assert.deepEqual(await counts(db), beforeStale, label + " stale close residue");
+
+    // Closing the open membership succeeds, without creating anything or re-dating.
+    const openBefore = (await db.query(
+      "select membership_id, team_id, valid_from::text as valid_from from"
+      + " public.recruiter_team_memberships where recruiter_id = $1::uuid and valid_to is null",
+      [recruiter])).rows;
+    assert.equal(openBefore.length, 1, label + " has exactly one open membership");
+    const closed = await unassign(db, CATALOG, { recruiter, to: "2026-06-01", version,
+      key: KEY("d" + suffix) });
+    assert.equal(closed.change, "UNASSIGN", label);
+    assert.equal(closed.membership_id, openBefore[0].membership_id, label + " closes the same row");
+    assert.equal(closed.team_id, openBefore[0].team_id, label + " never changes the team");
+    assert.equal(closed.valid_from, openBefore[0].valid_from, label + " never re-dates valid_from");
+    assert.equal(closed.valid_to, "2026-06-01", label);
+    assert.equal(closed.recruiter_version, version + 1, label + " one version bump");
+
+    const after = (await db.query(
+      "select count(*)::int as n from public.recruiter_team_memberships"
+      + " where recruiter_id = $1::uuid", [recruiter])).rows[0].n;
+    assert.equal(after, (await db.query(
+      "select count(*)::int as n from public.recruiter_team_memberships"
+      + " where recruiter_id = $1::uuid and valid_to is not null", [recruiter])).rows[0].n,
+    label + " creates no new membership row");
+  }
+
+  // The inactive subject was never re-activated by closing its membership.
+  const inactiveRow = (await db.query(
+    "select active from public.recruiters where recruiter_id = $1::uuid", [HRP_E])).rows[0];
+  assert.equal(inactiveRow.active, false, "unassign never re-activates a person");
+  assert.equal(inactiveVersion >= 1 && expiredVersion >= 1, true);
 });
 
 test("migration #70 is appended once and migrations #1-#69 are untouched", async () => {
