@@ -3,7 +3,8 @@
  * P2-W07-R1 - restore/rollback drill tren PostgreSQL dung mot lan (disposable).
  *
  * Khong cham Production: khoi tao mot instance PostgreSQL tam thoi trong thu muc temp
- * (initdb + trust auth + port rieng), ap du 65 migration, seed fixture TONG HOP, dump bang
+ * (initdb + trust auth + port rieng), ap dung toan bo migration hien hanh trong
+ * supabase/migrations (inventory dong, khong khoa cung so luong), seed fixture TONG HOP, dump bang
  * pg_dump -Fc, restore sang database thu hai, so sanh ledger/checksum, schema objects,
  * fingerprint du lieu va invariant episode, roi do thoi gian rollback (drop + restore lai).
  * Khong in connection string, secret, PII, CCCD, email hay UUID nguoi dung.
@@ -299,6 +300,7 @@ try {
   const rollbackFingerprint = fingerprint("drill_tgt");
 
   report = {
+    source_migration_count: migrations.length,
     migrations_applied: migrations.length,
     ledger_count: Number(ledger.stdout.trim().split(":")[0]),
     ledger_match: ledger.stdout.trim() === ledgerTarget.stdout.trim(),
@@ -336,12 +338,22 @@ try {
 }
 
 // Mot gate do luong sai thi drill KHONG duoc phep bao ok: true.
-const EXPECTED_MIGRATIONS = 65;
-const GATES = ["migrations_applied", "ledger_count", "ledger_match", "fingerprint_match",
-  "objects_match", "invariant_enforced_on_target", "rollback_fingerprint_match", "cleanup_removed"];
-const gatePassed = (name) => name === "migrations_applied" || name === "ledger_count"
-  ? report[name] === EXPECTED_MIGRATIONS
-  : report[name] === true;
+// So luong migration KHONG duoc khoa cung: source_migration_count lay tu inventory cua chinh
+// lan chay nay (ledgerInput doc supabase/migrations), nen baseline #66 tro di van dung.
+const GATES = ["source_migration_count", "migrations_applied", "ledger_count", "ledger_match",
+  "fingerprint_match", "objects_match", "invariant_enforced_on_target",
+  "rollback_fingerprint_match", "cleanup_removed"];
+const inventoryCounted = Number.isInteger(report.source_migration_count) &&
+  report.source_migration_count > 0;
+const gatePassed = (name) => {
+  if (name === "source_migration_count") {
+    return inventoryCounted;
+  }
+  if (name === "migrations_applied" || name === "ledger_count") {
+    return inventoryCounted && report[name] === report.source_migration_count;
+  }
+  return report[name] === true;
+};
 
 if (failure === null) {
   const failedGates = GATES.filter((name) => !gatePassed(name));
