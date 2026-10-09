@@ -96,7 +96,7 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrationNames.length, 68);
+  assert.equal(migrationNames.length, 69);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -179,6 +179,10 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // bump) plus five service-role-only personnel-catalog RPCs
   // (list/get/create/update/set-active). Nothing is reachable by
   // anon/authenticated.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [136, 65, 71]);
+  // P3.1-W01C-A (#69) adds five internal helpers (the fixed team snapshot, the
+  // shared team admin projection, the team row lock/OCC guard, the team revision
+  // writer and the team version bump) plus five service-role-only team master RPCs
+  // (list/get/create/update/set-active). Nothing is reachable by anon/authenticated.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [146, 70, 76]);
   await db.close();
 });

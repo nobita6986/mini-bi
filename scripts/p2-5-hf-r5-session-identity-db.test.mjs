@@ -43,8 +43,8 @@ async function freshDb() {
 
 test("HF-R5: #62 stays immediately before R6 and a fresh ledger applies clean", async () => {
   const names = await ledgerNames();
-  assert.equal(names[names.length - (7)], HF_R5, "#62 must stay immediately before #63");
-  assert.equal(names.length, 68);
+  assert.equal(names[names.length - (8)], HF_R5, "#62 must stay immediately before #63");
+  assert.equal(names.length, 69);
   const db = await freshDb();
   try {
     await applyUpTo(db, names);
