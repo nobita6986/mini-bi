@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { postDirectEntryBatch, getDirectEntryEntry } from "./write-api.ts";
+import { postDirectEntryBatch, getDirectEntryEntry, projectEntry } from "./write-api.ts";
 import { createDirectEntryWriteRepository } from "./write-repository.ts";
 
 const repositorySource = readFileSync(new URL("./write-repository.ts", import.meta.url), "utf8");
@@ -260,6 +260,21 @@ test("read validates UUID before session and keeps the restricted projection", a
     employment_status: { status: "UNCONFIRMED", effective_date: "2026-10-15", version: 1 },
     documents: [],
   };
+  const completedDocument = {
+    document_id: "a3000000-0000-4000-8000-000000000001",
+    document_type: "CCCD_FRONT",
+    version: 1,
+    size_bytes: 1024,
+    mime_type: "application/pdf",
+    upload_status: "READY",
+    scan_status: "NOT_REQUIRED",
+    validation_status: "VALIDATED",
+  };
+  assert.ok(projectEntry({ ...projection, documents: [completedDocument] }));
+  const legacyDocument = { ...completedDocument };
+  delete legacyDocument.validation_status;
+  assert.equal(projectEntry({ ...projection, documents: [legacyDocument] }), null,
+    "document detail fails closed unless the validation status required by the UI is present");
   deps.repository.readEntry = async (input) => {
     deps.calls.push(input);
     return { ok: true, data: projection };

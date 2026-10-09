@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 64, "P2.5-HF-R7 #64 appends after R6 #63, session identity #62, P2.5-HF-R3 #61, P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
+  assert.equal(totalCount, 65, "P3-W07A-R3 #65 appends after P2.5-HF-R7 #64, R6 #63, session identity #62, P2.5-HF-R3 #61, P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -156,7 +156,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
     insert into public.recruiter_provider_memberships
       (recruiter_id, provider_type, valid_from)
       values ('${IDS.recruiter}', 'hrp', '2020-01-01'),
-             ('${IDS.noTeamRecruiter}', 'vendor', '2020-01-01');
+              ('${IDS.noTeamRecruiter}', 'hrp', '2020-01-01');
     insert into public.recruiter_team_memberships
       (recruiter_id, team_id, valid_from)
       values ('${IDS.recruiter}', '${IDS.team}', '2020-01-01'),
@@ -618,11 +618,12 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // P2.5-W04 (#53) adds two service-role-only worker_details guards; P2.5-W06A
     // (#54) adds one service-role-only manager-candidate RPC.
     // P2.5-W05 (#55) adds one internal scope reader and one service-role-only
-    // reviewer-bundle reader. Nothing is reachable by anon/authenticated.
+    // reviewer-bundle reader. P3-W07A-R3 (#65) adds three internal helpers;
+    // nothing is reachable by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 122,
+      total: 125,
       service_role: 60,
-      internal: 62,
+      internal: 65,
       exposed_internal: 0,
     });
   } finally {

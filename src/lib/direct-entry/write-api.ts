@@ -347,7 +347,8 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       typeof document.size_bytes !== "number" || !Number.isSafeInteger(document.size_bytes) ||
       typeof document.mime_type !== "string" ||
       typeof document.upload_status !== "string" ||
-      typeof document.scan_status !== "string")) return null;
+      typeof document.scan_status !== "string" ||
+      typeof document.validation_status !== "string")) return null;
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, child]));
 }
 

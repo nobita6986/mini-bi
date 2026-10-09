@@ -84,7 +84,11 @@ export async function resolveActor(
     };
   }
   const actor = session.actor.actor;
-  if (!actor.capabilities.includes(capability)) return { ok: false, response: fail("DOCUMENT_DENIED", 403) };
+  const canUploadDraftAsProjectManager = capability === "document_upload" &&
+    actor.capabilities.includes("change_request_create");
+  if (!actor.capabilities.includes(capability) && !canUploadDraftAsProjectManager) {
+    return { ok: false, response: fail("DOCUMENT_DENIED", 403) };
+  }
   return { ok: true, auth_subject: actor.auth_subject, app_user_id: actor.app_user_id };
 }
 

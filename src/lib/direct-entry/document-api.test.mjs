@@ -103,6 +103,26 @@ test("claimed MIME, size, type, idempotency and capability are checked before mu
   assert.equal((await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "false", off)).status, 404);
 });
 
+test("project-manager capability reaches the upload RPC while download remains separately gated", async () => {
+  const manager = deps({ capabilities: ["change_request_create"] });
+  const reserved = await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "true", manager);
+  assert.equal(reserved.status, 201);
+  assert.deepEqual(manager.log.db.map((call) => call[0]), ["reserve"]);
+
+  const finalized = await finalizeDirectEntryDocument(
+    finalizeReq(), entryId, documentId, "true", deps({ capabilities: ["change_request_create"] }),
+  );
+  assert.equal(finalized.status, 200);
+
+  const noAuthority = deps({ capabilities: ["entry_own"] });
+  assert.equal((await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "true", noAuthority)).status, 403);
+  assert.deepEqual(noAuthority.log.db, []);
+
+  const managerCannotDownload = deps({ capabilities: ["change_request_create"], repo: readyContext });
+  assert.equal((await downloadDirectEntryDocument(downloadReq(), entryId, documentId, "true", managerCannotDownload)).status, 403);
+  assert.deepEqual(managerCannotDownload.log.storage, []);
+});
+
 test("reservation replay and conflicts map without leaking and do not re-sign finished uploads", async () => {
   const conflict = deps({ repo: { async reserveDocumentUpload() { return { ok: false, kind: "conflict" }; } } });
   assert.equal((await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "true", conflict)).status, 409);

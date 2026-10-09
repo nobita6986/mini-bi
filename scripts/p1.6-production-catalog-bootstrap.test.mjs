@@ -177,13 +177,13 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("57 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("65 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
   // W05A #48, W07C-R7 #49, W07E #50, W02 #51, W03 #52, W04 #53,
-  // W06A #54, W05 #55, W05-R1 #56, initial-ON #57, P2.5-HF #58, P2.5-HF-R1 #59 and P2.5-HF-R2 #60.
-  assert.equal(names.length, 64,
-    "the migrations directory contains P2.5-HF after the initial-ON policy");
+  // W06A #54, W05 #55, W05-R1 #56, initial-ON #57, P2.5-HF #58 through R7 #64, and P3-W07A-R3 #65.
+  assert.equal(names.length, 65,
+    "the migrations directory contains P3-W07A-R3 after the P2.5-HF chain");
 
   const acl = await db.query(
     "select c.relrowsecurity, c.relforcerowsecurity," +
