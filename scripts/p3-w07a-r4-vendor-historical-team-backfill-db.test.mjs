@@ -164,10 +164,10 @@ async function auditCount(db) {
   return rows[0].n;
 }
 
-test("P3-W07A-R4: #66 is followed by P3.1-W01A #67 and the historical Vendor rows are corrected", async () => {
+test("P3-W07A-R4: #66 is followed by P3.1-W01A #67 and P3.1-W01B #68, and the historical Vendor rows are corrected", async () => {
   const names = await ledger();
-  assert.equal(names.length, 67, "ledger carries 67 migrations");
-  assert.equal(names[names.length - (2)], R4, "P3.1-W01A #67 appends after P3-W07A-R4 #66");
+  assert.equal(names.length, 68, "ledger carries 68 migrations");
+  assert.equal(names[names.length - (3)], R4, "P3.1-W01A #67 and P3.1-W01B #68 append after P3-W07A-R4 #66");
 
   const db = new PGlite();
   try {

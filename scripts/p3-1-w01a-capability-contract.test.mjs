@@ -150,9 +150,10 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   assert.ok(names.includes(NEW_MIGRATION), "migration #67 must exist");
   assert.ok(NEW_MIGRATION > FOUNDATION_MIGRATION, "migration #67 must sort after the foundation");
 
-  // No historical migration was edited to know about the new tokens.
+  // No historical migration was edited to know about the new tokens. Migrations
+  // appended AFTER #67 may legitimately consume the vocabulary.
   for (const name of names) {
-    if (name === NEW_MIGRATION) continue;
+    if (name >= NEW_MIGRATION) continue;
     const sql = await readMigration(name);
     for (const token of NEW_TOKENS) {
       assert.equal(sql.includes(token), false, token + " must not appear in " + name);

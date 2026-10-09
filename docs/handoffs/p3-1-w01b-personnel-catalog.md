@@ -1,0 +1,19 @@
+# P3.1-W01B - personnel catalog backend: P3_1_W01B_LOCAL_PASS_AWAITING_T0_REVIEW
+
+Branch feature/p3-1-w01b-personnel-catalog. Base origin/main 6e8c5c61f4d62c5dacd5699a202dd09cb28b6aff -> final (this commit). Fast-forward only; no Production query/apply, no deploy, no browser/UAT, no new dependency, no sub-agent, no W01C/W01D/W02 work.
+
+## Delta
+- NEW supabase/migrations/20261009040000_p3_1_w01b_personnel_catalog.sql (#68, append-only; migrations #1-#67 untouched): one reusable SECURITY DEFINER guard direct_entry_assert_catalog_operator accepting legacy Full Admin (entry_admin + recruiter_master_manage + team_master_manage) OR catalog_master_manage, both requiring effective all scope, and returning the authority actually used so audit never mislabels it; five admin RPCs (list/get/create/update/set-active); a new append-only direct_entry_personnel_revisions table (forced RLS, revoked from every role, immutable trigger) plus an audit personnel_revision_id link; six internal helpers revoked from every role; a closing self-check for guard shape, ACL, forced RLS, immutability and W01A 23-token parity.
+- Reuse only: recruiters, recruiter_provider_memberships, restricted reasons, RPC idempotency and the existing audit/revision patterns. create writes exactly one recruiter plus exactly one HRP provider membership (explicit valid_from, vendor_id null) and no account, link, team membership, capability or scope; personnel with zero team membership stay in the admin catalog. Existing Production grants were neither read nor changed, and p2-5-accounting-project-admin-provision.mjs was not touched.
+- Server layer, no UI: personnel-catalog-contract.ts (strict fail-closed projections), personnel-catalog-repository.ts (the 5 canonical RPCs, SQLSTATE -> sanitized kinds), personnel-catalog-api.ts and three /api/admin/catalog/personnel routes (feature gate, same-origin, bounded JSON, recursive client-authority rejection, session-only actor, no-store, sanitized error taxonomy, no raw DB message).
+- Ledger bookkeeping: migration-count guards bumped 67 -> 68 and the derived function inventory 125/60/65 -> 136/65/71 (30 files), following the convention used for #66 and #67; the W01A append-only scan now only inspects migrations that sort before #67, because #68 legitimately consumes the vocabulary. No lane was removed or duplicated; test:p3-1-w01b-personnel is registered exactly once.
+- Authorization runs before input validation in all three mutations, so a denied actor always gets 42501 and never an input-shape oracle.
+
+## Evidence
+- Focused lanes green: pnpm test:p3-1-w01b-personnel 26/26 pass, pnpm test:p3-1-w01a-capability-contract 9/9 pass.
+- DB acceptance covers the guard allow/deny matrix (entry_admin@all alone, catalog token without all scope, leader, staff, disabled, mismatched and unmapped actors all 42501), create shape and no-side-effect proof, canonical duplicate code 23505, unassigned visibility, bounded search/paging, update OCC with immutable recruiter_id and provider history, TEAM_LEADER position granting nothing, soft set-active with history kept, revision/audit authority labelling, idempotent replay and reused-key conflict, zero-residue rollback on audit or revision failure, projection leak checks, ACL/RLS/EXECUTE and W01A parity.
+- Mutation-check: loosening the guard so entry_admin@all alone passes -> 1 red; dropping the all-scope requirement -> 1 red; dropping the create revision invariant -> 4 red. The migration was restored byte-identical and the lane is green again.
+- Gates all exit 0: pnpm test (50 lanes, 1847/1847 pass, 0 fail), next typegen, typecheck, lint (0 errors / 14 pre-existing warnings), build, docs:check (6/6), secrets:check, db:migrate -- --offline = 68 migration(s) valid, git diff --check.
+
+## Scope limit
+Backend only: no team membership, leader lifecycle, project guard, Vendor, labor type, account/grant/link or UI work; no Production grant or apply in this task.
