@@ -62,7 +62,9 @@ export function DirectEntryWorkerDocuments({
             data-testid="worker-documents-dialog"
             aria-describedby="worker-documents-description">
             <div className={styles.documentsDialogHeader}>
-              <Dialog.Title className={styles.drawerTitle}>Hồ sơ NLĐ</Dialog.Title>
+              <Dialog.Title className={styles.drawerTitle}>
+                Hồ sơ NLĐ — {row.workerName || row.employeeCode || "chưa rõ tên"}
+              </Dialog.Title>
               <Dialog.Close asChild>
                 <button type="button" className={styles.secondaryButton}>Đóng</button>
               </Dialog.Close>

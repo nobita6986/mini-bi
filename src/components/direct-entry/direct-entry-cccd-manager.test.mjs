@@ -136,10 +136,12 @@ test("retry rieng mat loi, khong optimistic READY, ghi ro khi chua reload duoc",
 
 test("read-only khi dong khong o ban nhap; khong noi vao change-request API", () => {
   // P1.7-H06 + H08: read-only check chuyen sang documents dialog; canEditDocuments
-  // chap nhan ca entry_own lan entry_admin + document_upload + submission lock.
+  // chap nhan capability uploader cu hoac PM assigned tren dong DRAFT; server
+  // van giu submission lock va kiem tra assignment/owner doc lap.
   assert.match(live, /canEditDocuments=\{documentsRow !== null/);
   assert.match(live, /entry_own[\s\S]{0,200}\|\|[\s\S]{0,200}entry_admin/);
-  assert.match(live, /capabilities\.includes\("document_upload"\) && isRowEditable\(documentsRow, submissions\)\}/);
+  assert.match(live, /isRowEditable\(documentsRow, submissions\)[\s\S]{0,250}capabilities\.includes\("change_request_create"\)/);
+  assert.match(live, /canViewDocuments=\{capabilities\.includes\("document_view"\) \|\|/);
   assert.match(manager, /disabled=\{!canEdit \|\| busy \|\| detail === null \|\| selectedTypes\.length === 0\}/,
     "upload remains locked until detail is loaded and a file is selected");
   const fileInputStart = manager.indexOf('id={"cccd-file-');

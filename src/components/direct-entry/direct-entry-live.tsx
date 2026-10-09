@@ -304,6 +304,7 @@ export function DirectEntryLive() {
   const inFlight = useRef(new Set<string>());
   const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
   const submissionsRef = useRef<SubmissionReadItem[]>([]);
+  const submissionLoadRequestRef = useRef(0);
   const [submissionListState, setSubmissionListState] = useState<"loading" | "ready" | "error">("loading");
   const [submissionListMessage, setSubmissionListMessage] = useState("");
   const [submissionHasMore, setSubmissionHasMore] = useState(false);
@@ -403,6 +404,7 @@ export function DirectEntryLive() {
   }, [submissions]);
 
   const loadSubmissions = useCallback(async (mode: "replace" | "append") => {
+    const requestId = ++submissionLoadRequestRef.current;
     setSubmissionListState("loading");
     try {
       const params = new URLSearchParams({ page_size: String(SUBMISSION_PAGE_SIZE) });
@@ -417,6 +419,7 @@ export function DirectEntryLive() {
         { page_size: SUBMISSION_PAGE_SIZE },
       );
       if (!response.ok || !page) throw new Error("SUBMISSIONS_UNAVAILABLE");
+      if (requestId !== submissionLoadRequestRef.current) return;
       setSubmissions((current) => {
         if (mode === "replace") return page.items;
         const seen = new Set(current.map((item) => item.submission_id));
@@ -427,6 +430,7 @@ export function DirectEntryLive() {
       setSubmissionListState("ready");
       setSubmissionListMessage("");
     } catch (cause) {
+      if (requestId !== submissionLoadRequestRef.current) return;
       setSubmissionListState("error");
       setSubmissionListMessage(cause instanceof Error ? cause.message : "SUBMISSIONS_UNAVAILABLE");
     }
@@ -1604,7 +1608,11 @@ export function DirectEntryLive() {
         setStagedModel(createSpreadsheetRowModel());
         setStagedValidationTriggered(false);
         setStagedMessageWithTone("Đã lưu thành công " + result.entryIds.length + " hồ sơ người lao động.", "success");
-        await reloadDrafts();
+        // The newly created row belongs to a newly created DRAFT submission.
+        // Refresh both projections before resolving selection: document upload
+        // stays fail-closed unless isRowEditable can confirm that submission is
+        // DRAFT, and the list loaded at page entry cannot contain this batch.
+        await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
         // Map lai selection: chi giu persisted row co entry_id trung khop;
         // KHONG doan theo row index/ho ten/CCCD.
         if (selectedClientRowId !== null) {
@@ -1629,7 +1637,7 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [reloadDrafts, selectedClientRowId, setStagedModel, setStagedMessageWithTone, stagedValidation]);
+  }, [loadSubmissions, reloadDrafts, selectedClientRowId, setStagedModel, setStagedMessageWithTone, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -1840,20 +1848,28 @@ export function DirectEntryLive() {
               // row editable. Truoc day, `canEditDocs` chi nhan `entry_own`
               // nen user co `entry_admin` bi loai khoi ca edit path (sau do
               // canOpenReadOnly cuu nhung phai co `document_view`).
-              const canViewDocs = capabilities.includes("document_view");
               // P1.7-H08: lookup LiveDraftRow tu selected (SpreadsheetGridRow)
               // de isRowEditable co submissionId. selected.clientRowId =
               // rowId (persisted) cho row da luu.
               const selectedLiveRow = selectedIsPersisted
                 ? rows.find((row) => row.rowId === selected.clientRowId) ?? null
                 : null;
+              const selectedDraftEditable = selectedLiveRow !== null
+                && isRowEditable(selectedLiveRow, submissions);
+              // Assigned project managers may open and upload documents only
+              // for their own DRAFT rows. This is a UI affordance; the server
+              // independently checks owner + effective project assignment.
+              const canManageDraftDocuments = selectedDraftEditable
+                && capabilities.includes("change_request_create");
+              const canViewDocs = capabilities.includes("document_view")
+                || canManageDraftDocuments;
               const canEditDocsFromCta = canViewDocs
                 && selectedHasEntryId
-                && capabilities.includes("document_upload")
-                && (capabilities.includes("entry_own") ||
-                  capabilities.includes("entry_admin"))
-                && (selectedLiveRow !== null
-                  && isRowEditable(selectedLiveRow, submissions));
+                && ((capabilities.includes("document_upload")
+                  && (capabilities.includes("entry_own") ||
+                    capabilities.includes("entry_admin")))
+                  || canManageDraftDocuments)
+                && selectedDraftEditable;
               // P1.7-H08: `canOpenWorkerDocuments` la gate chinh cho nut
               // "Ho so NLD". Chi can `document_view` + entry_id. Thieu
               // quyen upload chi dan den dialog read-only, KHONG chan mo.
@@ -2236,9 +2252,13 @@ export function DirectEntryLive() {
         row={documentsRow}
         onOpenChange={(open) => { if (!open) setDocumentsRowId(null); }}
         canEditDocuments={documentsRow !== null &&
-          (capabilities.includes("entry_own") || capabilities.includes("entry_admin")) &&
-          capabilities.includes("document_upload") && isRowEditable(documentsRow, submissions)}
-        canViewDocuments={capabilities.includes("document_view")}
+          isRowEditable(documentsRow, submissions) &&
+          ((capabilities.includes("entry_own") || capabilities.includes("entry_admin")) &&
+            capabilities.includes("document_upload") ||
+            capabilities.includes("change_request_create"))}
+        canViewDocuments={capabilities.includes("document_view") ||
+          (documentsRow !== null && isRowEditable(documentsRow, submissions) &&
+            capabilities.includes("change_request_create"))}
         onCccdStatus={setCccdStatus}
         onEntryVersionChange={onPaymentEntryVersionChange}
       />

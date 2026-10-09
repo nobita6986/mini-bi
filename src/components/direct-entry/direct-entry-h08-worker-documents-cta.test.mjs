@@ -129,6 +129,24 @@ test("H08-8 post-save: selectionAfterSaveEntryId resolve sang persisted row", ()
   assert.match(live, /persisted: row\.entryId !== null/);
 });
 
+/* ----- 8a. Sau khi tao draft, refresh submission projection truoc CTA ----- */
+test("H08-8a post-save refreshes submissions before enabling draft document upload", () => {
+  const saveSuccess = live.match(
+    /if \(result\.kind === "saved"\) \{[\s\S]{0,1800}?await Promise\.all\(\[reloadDrafts\(\), loadSubmissions\("replace"\)\]\);[\s\S]{0,500}?setSelectionAfterSaveEntryId\(expectedEntryId\)/,
+  );
+  assert.ok(saveSuccess,
+    "after save, reload the draft and its DRAFT submission before restoring the selected entry");
+  assert.match(live, /const submissionLoadRequestRef = useRef\(0\)/);
+  assert.equal(
+    (live.match(/requestId !== submissionLoadRequestRef\.current/g) ?? []).length,
+    2,
+    "older initial submission reads must not overwrite the post-save refresh",
+  );
+  // The button is kept disabled unless the submission state is known; the
+  // fix refreshes that server projection instead of weakening this gate.
+  assert.match(live, /isRowEditable\(documentsRow, submissions\)/);
+});
+
 /* ----- 9. CSS class contextualActionHint: inline hint hien thi canh button group ----- */
 test("H08-9 CSS inline hint: co class contextualActionHint voi min-height canh button", () => {
   // Class phai co min-height 44px de canh voi button (44px) theo design system.
@@ -262,5 +280,20 @@ test("H08-17 chi co document_view (khong entry_own/admin, khong document_upload)
   // manager va document editor co canEdit=false (read-only).
   assert.match(live, /const canOpenWorkerDocuments = canViewDocs && selectedHasEntryId/);
   // canViewDocuments prop truyen vao dialog.
-  assert.match(live, /canViewDocuments=\{capabilities\.includes\("document_view"\)\}/);
+  assert.match(live, /canViewDocuments=\{capabilities\.includes\("document_view"\) \|\|/);
+});
+
+test("H09 assigned project manager can open/upload DRAFT documents only", () => {
+  assert.match(live, /const selectedDraftEditable = selectedLiveRow !== null[\s\S]{0,120}isRowEditable\(selectedLiveRow, submissions\)/);
+  assert.match(live, /const canManageDraftDocuments = selectedDraftEditable[\s\S]{0,100}capabilities\.includes\("change_request_create"\)/);
+  assert.match(live, /\|\| canManageDraftDocuments\)\s*&& selectedDraftEditable/);
+  assert.match(live, /isRowEditable\(documentsRow, submissions\)[\s\S]{0,250}capabilities\.includes\("change_request_create"\)/);
+  assert.match(live, /canViewDocuments=\{capabilities\.includes\("document_view"\) \|\|[\s\S]{0,220}change_request_create/);
+  assert.match(live, /if \(!canViewDocs\) return;/,
+    "client affordance remains subordinate to server-side document authorization");
+});
+
+test("H09 documents drawer identifies the worker by name", () => {
+  assert.match(documents, /<Dialog\.Title[^>]*>[\s\S]{0,180}Hồ sơ NLĐ — \{row\.workerName \|\| row\.employeeCode \|\| "chưa rõ tên"\}/);
+  assert.match(documents, /Đang mở hồ sơ của/);
 });
