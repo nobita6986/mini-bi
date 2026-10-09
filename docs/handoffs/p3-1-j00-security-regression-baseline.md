@@ -18,17 +18,19 @@
 | E8 | `20261008000000_p3_w07a_...sql:72` / `20261008080000_p3_w05a_...sql:649` | `personnel_position` is display-only; leader `team` scope exists only as a fail-closed seed — **no runtime designate/revoke, no one-leader-per-team constraint**. |
 | E9 | `src/lib/navigation/registry-capability.ts:5,65` | Nav comments still say "21 token" and describe the admin predicate as `entry_admin` + all scope — both must be re-baselined. |
 | E10 | `20261008000000` `direct_entry_input_catalog` | Vendor recruiters already project `provider_type='vendor'`, `team_id=null`, `team_display_name=null`; labor type is not yet a catalog projection. |
+| E12 | `20261002170000_p1_6_direct_entry_foundation.sql:77-83` | `direct_entry_capability_grants.capability` carries an inline **CHECK over exactly the 21 tokens**. An unknown token is rejected by PostgreSQL with **SQLSTATE 23514** — grants are *not* free-form text. W01A (#67) must drop/recreate this constraint as 23 tokens while preserving all 21 existing tokens and every existing grant row. |
+| E13 | `20261002170000_p1_6_direct_entry_foundation.sql:220` vs E12 | Two different CHECKs on two different columns: the **capability** CHECK is W01A (#67); the **`labor_type`** CHECK is W02C — the two must not be bundled. |
 | E11 | `package.json` lanes | Reusable today: `test:p2.5-w02`, `test:p2.5-w02` (R1 OCC), `test:p2.5-w06a`, `test:p2.5-w05`, `test:p2.5-reviewer-hotfix`, `test:p2.5-w03`, `test:p3-w07b-project-scope`, `test:p3-w05a`, `test:p3-w07a-r4`. No P3.1 lane exists. |
 
 ## 2. Blast radius of the capability expansion (21 to 23)
 
 | Surface | Exact location | Required change on the contract bump | Risk if missed |
 |---|---|---|---|
-| DB CHECK constraints | `labor_type in ('TEMPORARY','PERMANENT')` (E6); vendor/project check constraints | New migration widens the labor-type check to three stable keys; capability tokens themselves have **no** CHECK — grants are free-form text, so a token typo would be silently accepted | A new capability can be granted that no predicate reads; `OUTSOURCED` writes fail at the DB |
+| DB CHECK constraints | **Capability**: inline CHECK over 21 tokens at `direct_entry_capability_grants.capability` (E12). **Labor type**: `labor_type in ('TEMPORARY','PERMANENT')` (E6) | W01A (#67) drops/recreates the capability CHECK as 23 tokens, keeping all 21 existing tokens and every grant row intact; an unknown token stays rejected with SQLSTATE 23514. The labor-type CHECK is a **separate W02C** migration, not part of the capability bump | Shipping the tokens only in TypeScript leaves every grant insert failing with 23514; bundling the labor-type change into #67 breaks the single-purpose contract bump |
 | TypeScript unions / registries | `CAPABILITIES` (E1) + `Capability` (E3) + `LaborType` (E7) | Add both tokens to **both** copies and `OUTSOURCED` to `LaborType`; keep the two lists identical | v1/v2 drift — the exact defect the C01-R2 matrix retracted |
 | Auth contract version | `DIRECT_ENTRY_AUTH_CONTRACT_VERSION` (E1) + its assertion in `direct-entry-v2.test.mjs:22` | Bump to `1.3` and update the assertion | Old sessions/actors claim a contract they no longer satisfy |
 | Actor / session projections | `direct-entry-v2.ts` `isValidAuthorizationRecord`, `auth-session-core.ts` `actorProjection` | No shape change needed: capabilities are already a validated array; confirm unknown tokens still fail closed | A malformed/unknown token silently widening an actor |
-| Bootstrap / provisioning fixtures | `p3-first-owner-bootstrap.mjs:300` (E2), `p2-5-accounting-project-admin-provision.mjs` (E5), `p3-w07b-access-bootstrap.mjs`, `p3-w07a-catalog-bootstrap.mjs` | Owner bootstrap 21 → 23; Accounting plan switches from `entry_admin` to `catalog_master_manage` **and revokes `entry_admin`** | Owner bootstrap fails closed; Accounting keeps broad admin authority |
+| Bootstrap / provisioning fixtures | `p3-first-owner-bootstrap.mjs:300` (E2), `p2-5-accounting-project-admin-provision.mjs` (E5), `p3-w07b-access-bootstrap.mjs`, `p3-w07a-catalog-bootstrap.mjs` | **W01A** updates the owner bootstrap 21 → 23 and the *desired* Accounting plan/tests to `catalog_master_manage` (code + tests only — no Production grant change). **W02** performs the actual Accounting transition (grant new → verify → revoke `entry_admin`) as one controlled, rollbackable step | Owner bootstrap fails closed on the 23-token registry; Accounting is switched before the guards support the new token, or left holding both authorities |
 | Navigation predicates / comments | `registry-capability.ts:5,65` (E9) | Re-baseline the comment and add catalog/leader predicates only after the tokens exist | UI hidden/shown on a stale predicate; docs claim authority that is gone |
 | Exact-token / count / parity tests | `direct-entry-v2.test.mjs` (version, capability set), any `length !== 21` assertion | Update count + parity; add an explicit "no unknown token" case | Green suite that proves the wrong contract |
 | Canonical package test registration | `package.json` `test` chain | Register each new P3.1 lane **exactly once** | Lane silently unrun (the failure mode already seen in this repo) |
@@ -49,7 +51,7 @@
 | Capability / scope grants | allow | deny | deny | deny | deny | deny |
 | App-user ↔ recruiter links | allow | deny | deny | deny | deny | deny |
 | `entry_restore` | allow | **deny** | deny | deny | deny | deny |
-| Audit explorer | full | catalog/worker events only | own assignment mutations | own worker scope | deny | deny |
+| Audit explorer | bounded full audit | catalog + worker events per policy (no security-admin audit) | **own manager-assignment events only**, surfaced inside project operations — no global audit explorer | **deny** in P3.1 | **deny** in P3.1 | deny |
 | Direct Entry write / submit | per existing capability | unchanged | unchanged | assignment-scoped | own scope | deny |
 
 Undefined actor categories (disabled, missing mapping, ambiguous recruiter link, ambiguous team membership) mirror the existing repository reasons and must fail closed **before** any catalog path is evaluated.
@@ -74,8 +76,8 @@ No new fixture framework is needed: PGlite + the existing migration ledger, acto
 
 **W01 (personnel / team / leader)**
 1. Assign → move → unassign membership keeps half-open intervals and never rewrites history.
-2. **One active leader per team**: a second designation is rejected; revoke-then-designate succeeds.
-3. Designation writes `team` scope + `team_manager_assign` in one transaction; a failure at any step leaves zero residue (no scope, no capability, no audit).
+2. **Leader replacement is one atomic mutation**: designating a new leader for a team that already has one, in the same transaction, closes the outgoing leader's `team` scope and `team_manager_assign` intervals **and** opens the incoming leader's, carrying one reason, one OCC check, one idempotency key and one immutable audit trail. The post-state never has two effective leaders and never has a gap where the team is unintentionally leaderless.
+3. **Designation `team` scope + `team_manager_assign` write atomically**; a failure at any step (scope, capability, audit, idempotency) rolls the whole replacement back with zero residue — no half-closed outgoing interval, no half-open incoming one. A separate, explicitly-invoked **revoke** path is still required so a team may be temporarily leaderless, and revoke must not create a replacement.
 4. Revocation removes both intervals immediately and the leader loses list/assign/detail on the next call.
 5. Designation fails closed for: disabled app user, no verified link, ambiguous link, no membership, membership in a different team, inactive team.
 6. `personnel_position='TEAM_LEADER'` alone grants nothing.
@@ -89,15 +91,16 @@ No new fixture framework is needed: PGlite + the existing migration ledger, acto
 12. Vendor create/rename/set-active keeps history resolvable, never creates a team membership, and `vendor_id` is immutable.
 13. Labor-type catalog: three seeded keys with orders 10/20/30, keys immutable, label rename allowed, deactivate removes it from new writes but historical rows still read.
 14. `OUTSOURCED` accepted by Direct Entry create, change request, import/template and filters; unknown key fails closed; `Gia công` implies no Vendor/team/provider.
+14b. **Accounting capability transition (controlled):** after W02, Accounting holds `catalog_master_manage@all` and **no** `entry_admin`; catalog/project operations still succeed; the transition is idempotent, rollbackable, and a partly-applied run leaves the account with its original working authority (never both tokens long-term, never neither).
 
 **W03 (accounts / grants / links)**
 15. Admin-only enable/disable, grant/scope interval mutation, recruiter-link change; Accounting and leader denied on every one of them.
 16. `entry_restore` Admin-only; Accounting denied (locked rule).
 17. Stale-session revocation follows the W08A behaviour after disable/revoke.
-18. Audit projection is bounded and redacts PII/free text; ids only where policy allows.
+18. Audit projection is bounded and redacts PII/free text; ids only where policy allows. Separate cases: Full Admin sees the bounded full audit; Accounting sees catalog + worker events only and **no** security-admin audit; a team leader sees **only own manager-assignment events**, inside project operations, and **cannot open a global audit explorer**; project manager and ordinary staff are **denied** the audit explorer in P3.1.
 
 **W04/W05 (non-browser structural)**
-19. Nav predicates: leader sees catalog/project-assignment entries only with the narrow tokens; Accounting sees catalog entries and **no** security-admin entry; no client-side authority inference.
+19. Nav predicates (settled expectation): a **team leader does not see the `/admin` catalog navigation at all**, and sees the **existing `/direct-entry/projects`** entry only when it holds `team_manager_assign` **and** an effective `team` scope. **Accounting sees exactly one top-level `/admin` entry** plus the existing project-operations entry. Security-admin pages stay Admin-only. No client-side authority inference anywhere.
 20. Component-level: reason + OCC conflict + idempotency replay messaging; own-team-only candidate rendering; mobile/a11y attributes present.
 21. No duplicate validation framework: UI reuses the server contract projections.
 
@@ -120,9 +123,12 @@ No email, user UUID, recruiter UUID, worker name, CCCD, storage key or raw datab
 
 ## 7. Risks / blockers
 
-- **R1 (blocker for W02):** Accounting currently holds `entry_admin@all` (E5). Until that grant is revoked and replaced by `catalog_master_manage`, Accounting bypasses every catalog boundary and the J01 denied cases cannot pass. W01/W02 must include an explicit revoke + regression.
+- **R1 (sequenced transition, not a blanket bypass):** Accounting currently holds `entry_admin@all` because P2.5 project operations needed it (E5). That is **broader than the C01 catalog-operator contract**, but it is **not** full Admin (the triple also needs `recruiter_master_manage` and `team_master_manage`) and it does **not** bypass every catalog boundary — the project and catalog RPCs still evaluate their own guard on every call.
+  - **W01A (#67):** add the capability contract (tokens + DB CHECK 21→23 + desired-provisioning code and tests). It must **not** revoke or apply any Production grant and must **not** make Accounting lose project operations.
+  - **W02:** only after the project/catalog guards accept `catalog_master_manage`, switch Accounting over as **one controlled transition**: grant the new token → verify the new authority works → revoke `entry_admin` → regression. It must be performable with rollback, must not open a window where Accounting loses project operations, and must not leave both authorities held long-term.
+  - Production preflight must measure the **count of Accounting / non-full-Admin accounts still holding `entry_admin@all`** so the transition is observable before and after W02.
 - **R2 (blocker for the contract bump):** the owner bootstrap hard-asserts 21 capabilities (E2); the bump must update it in the same change or the owner account cannot be provisioned.
-- **R3:** two independent capability lists (E1/E3) plus nav comments (E9) drift easily; the parity test must be explicit, not incidental.
+- **R3:** there are now **three** token definitions that must agree — the DB CHECK (E12), `CAPABILITIES` (E1) and the v1 `Capability` union (E3), plus the nav comment (E9). A token added in TypeScript but not in the CHECK fails at the first grant insert with 23514; the parity test must be explicit, not incidental.
 - **R4:** `OUTSOURCED` spans DB CHECK, TS union, import/template, filters and reporting mapping (E6/E7) — a partial rollout leaves historical rows unreadable or new writes rejected.
 - **R5:** one-active-leader-per-team has no schema today (E8); enforcing it needs a unique effective-interval guarantee plus a decide-then-revoke path, otherwise a team can end up with zero or two leaders.
 - **R6:** unassign-after-project-deactivation and future-assignment cancellation must not resurrect the historical team-attribution rewrite that W07C-R7 already retired.
