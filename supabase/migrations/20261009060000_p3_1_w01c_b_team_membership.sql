@@ -14,14 +14,20 @@
 -- entry_admin or catalog_master_manage - never a role name, an email or
 -- personnel_position.
 --
--- Interval model: half-open [valid_from, valid_to). #70 relaxes the three existing
--- interval CHECKs from 'valid_to > valid_from' to 'valid_to >= valid_from' so a
--- ZERO-LENGTH interval can exist as a first-class cancellation marker: it is never
--- effective on any date, it is never deleted and its valid_from is never rewritten.
--- Because an empty daterange never overlaps another range, a marker coexists with
--- the replacement interval that starts the same day; the membership uniqueness
--- constraint therefore becomes a partial unique index that ignores markers.
--- Only the audited mutation RPCs may write a marker (transaction-local flag).
+-- Interval model: half-open [valid_from, valid_to). #70 relaxes exactly ONE interval
+-- CHECK, recruiter_team_memberships_check, from 'valid_to > valid_from' to
+-- 'valid_to >= valid_from' so a ZERO-LENGTH membership interval can exist as a
+-- first-class cancellation marker: it is never effective on any date, it is never
+-- deleted and its valid_from is never rewritten. Because an empty daterange never
+-- overlaps another range, a marker coexists with the replacement interval that
+-- starts the same day; the membership uniqueness constraint therefore becomes a
+-- partial unique index that ignores markers. Only the audited membership mutation
+-- RPCs may write a marker (transaction-local flag).
+--
+-- The scope and capability interval CHECKs are deliberately NOT touched here: a
+-- zero-length scope/capability marker belongs to W01D, where it is introduced
+-- atomically with the leader designate/revoke RPCs, their marker guards and their
+-- audit, so the authority schema is never opened ahead of the code that uses it.
 --
 -- Aggregate root: public.recruiters. One mutation = exactly one version bump on the
 -- locked recruiter row, one immutable membership revision with a fixed six-key
@@ -43,24 +49,31 @@ alter table public.recruiter_team_memberships
   add constraint recruiter_team_memberships_check
   check (valid_to is null or valid_to >= valid_from);
 
-alter table public.direct_entry_scope_grants
-  drop constraint direct_entry_scope_grants_check;
-alter table public.direct_entry_scope_grants
-  add constraint direct_entry_scope_grants_check
-  check (valid_to is null or valid_to >= valid_from);
-
-alter table public.direct_entry_capability_grants
-  drop constraint direct_entry_capability_grants_check;
-alter table public.direct_entry_capability_grants
-  add constraint direct_entry_capability_grants_check
-  check (valid_to is null or valid_to >= valid_from);
-
 comment on constraint recruiter_team_memberships_check on public.recruiter_team_memberships is
-  'P3.1-W01C-B: half-open [valid_from, valid_to). valid_to = valid_from is a cancellation marker: inert on every date, kept, never re-dated.';
-comment on constraint direct_entry_scope_grants_check on public.direct_entry_scope_grants is
-  'P3.1-W01C-B: valid_to = valid_from is accepted as an inert zero-length interval; every effective-date predicate ignores it. No W01C-B RPC writes scope grants.';
-comment on constraint direct_entry_capability_grants_check on public.direct_entry_capability_grants is
-  'P3.1-W01C-B: valid_to = valid_from is accepted as an inert zero-length interval; every effective-date predicate ignores it. No W01C-B RPC writes capability grants.';
+  'P3.1-W01C-B: half-open [valid_from, valid_to). valid_to = valid_from is a cancellation marker: inert on every date, kept, never re-dated. Scope and capability intervals keep the pre-W01C-B strict rule.';
+
+-- The scope and capability interval CHECKs stay exactly as #1..#69 shipped them
+-- (valid_to > valid_from). Re-asserted here so a later drift is caught immediately.
+do $$
+declare
+  v_name text;
+  v_definition text;
+begin
+  foreach v_name in array array[
+    'direct_entry_scope_grants_check', 'direct_entry_capability_grants_check'
+  ] loop
+    select pg_get_constraintdef(c.oid) into v_definition
+      from pg_constraint c
+     where c.conname = v_name
+       and c.conrelid in ('public.direct_entry_scope_grants'::regclass,
+                          'public.direct_entry_capability_grants'::regclass);
+    if v_definition is null or v_definition like '%>=%' then
+      raise exception 'scope/capability interval CHECK must stay strict until W01D'
+        using errcode = '55000';
+    end if;
+  end loop;
+end;
+$$;
 
 -- Membership uniqueness must ignore inert markers, otherwise a cancellation
 -- marker would block the replacement interval that starts on the same date.
@@ -226,7 +239,50 @@ $$;
 revoke all on function public.direct_entry_lock_membership_subject(uuid, integer)
   from public, anon, authenticated, service_role;
 comment on function public.direct_entry_lock_membership_subject(uuid, integer) is
-  'P3.1-W01C-B internal guard: SELECT ... FOR UPDATE on the recruiter aggregate root, active + canonical effective HRP provider membership required (P0002 otherwise), expected-version check (40001 on mismatch). Revoked from every role.';
+  'P3.1-W01C-B internal guard for ASSIGN and MOVE: SELECT ... FOR UPDATE on the recruiter aggregate root, active + canonical effective HRP provider membership required (P0002 otherwise), expected-version check (40001 on mismatch). Creating new authority is stricter than closing it, so this helper is deliberately NOT used by unassign. Revoked from every role.';
+
+-- Closing an existing membership is a revocation-shaped operation, not a creation:
+-- it must stay reachable exactly when the person is inactive, their HRP provider
+-- membership has expired or is missing, or their provider has switched to Vendor -
+-- otherwise stale authority could never be withdrawn. This helper therefore locks
+-- the recruiter aggregate root and enforces OCC only. It never writes a membership,
+-- never changes a team, never re-dates valid_from and never re-activates the person.
+create or replace function public.direct_entry_lock_membership_close_target(
+  p_recruiter_id uuid,
+  p_expected_version integer
+)
+returns public.recruiters
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_recruiter public.recruiters;
+begin
+  if p_recruiter_id is null then
+    raise exception 'recruiter required' using errcode = '22023';
+  end if;
+  if p_expected_version is null or p_expected_version < 1 then
+    raise exception 'expected recruiter version required' using errcode = '22023';
+  end if;
+
+  select r.* into v_recruiter
+    from public.recruiters r
+   where r.recruiter_id = p_recruiter_id
+   for update;
+  if not found then
+    raise exception 'membership subject not found' using errcode = 'P0002';
+  end if;
+  if v_recruiter.version <> p_expected_version then
+    raise exception 'recruiter version conflict' using errcode = '40001';
+  end if;
+  return v_recruiter;
+end;
+$$;
+revoke all on function public.direct_entry_lock_membership_close_target(uuid, integer)
+  from public, anon, authenticated, service_role;
+comment on function public.direct_entry_lock_membership_close_target(uuid, integer) is
+  'P3.1-W01C-B internal guard for UNASSIGN/CANCEL: SELECT ... FOR UPDATE on the recruiter aggregate root plus the expected-version check (40001 on mismatch, P0002 when absent). Eligibility is intentionally not required, so an inactive person, an expired or missing HRP membership, or a provider switched to Vendor can still have their open membership closed. Revoked from every role.';
 
 -- The target team must exist and be active. The reserved Vendor system team passes
 -- this check and is then rejected by the #65 trigger with 23514, so the reserved
@@ -1012,10 +1068,10 @@ begin
     return v_prior;
   end if;
 
-  v_subject := public.direct_entry_lock_membership_subject(p_recruiter_id, p_expected_version);
-
-  -- No target-team check on purpose: an existing membership in a team that has
-  -- since become inactive stays readable and must remain closable.
+  -- Close-only lock: revocation must stay possible for a person who is no longer an
+  -- eligible creation subject. No target-team check either: an existing membership in
+  -- a team that has since become inactive stays readable and must remain closable.
+  v_subject := public.direct_entry_lock_membership_close_target(p_recruiter_id, p_expected_version);
   select m.* into v_open
     from public.recruiter_team_memberships m
    where m.recruiter_id = p_recruiter_id
@@ -1094,7 +1150,7 @@ revoke all on function public.direct_entry_unassign_team_membership(uuid, uuid, 
 grant execute on function public.direct_entry_unassign_team_membership(uuid, uuid, uuid, date, integer, text, text)
   to service_role;
 comment on function public.direct_entry_unassign_team_membership(uuid, uuid, uuid, date, integer, text, text) is
-  'P3.1-W01C-B mutation: closes the open interval without creating a replacement. Closing on the interval start date leaves an inert cancellation marker. service_role only; catalog operator + all scope required.';
+  'P3.1-W01C-B mutation: closes the open interval without creating a replacement, so it never writes a membership, never changes a team, never re-dates valid_from and never re-activates the person. It stays reachable for an inactive recruiter or a missing/expired/Vendor provider membership, because revocation must not depend on creation eligibility. Closing on the interval start date leaves an inert cancellation marker. service_role only; catalog operator + all scope required.';
 
 -- -----------------------------------------------------------------------------
 -- 7. Self-check: interval foundation, guards, revision contract and ACL.
@@ -1111,6 +1167,7 @@ declare
   ];
   v_helpers text[] := array[
     'public.direct_entry_lock_membership_subject(uuid,integer)',
+    'public.direct_entry_lock_membership_close_target(uuid,integer)',
     'public.direct_entry_assert_membership_target_team(uuid)',
     'public.direct_entry_membership_attribution_conflict(uuid,date,uuid)',
     'public.direct_entry_team_membership_snapshot(uuid,uuid,date,date,integer,text)',
@@ -1129,9 +1186,7 @@ begin
   -- Interval foundation: the three CHECKs accept a zero-length interval, the old
   -- membership uniqueness constraint is replaced by a marker-excluding index.
   foreach v_name in array array[
-    'recruiter_team_memberships_check',
-    'direct_entry_scope_grants_check',
-    'direct_entry_capability_grants_check'
+    'recruiter_team_memberships_check'
   ] loop
     select pg_get_constraintdef(c.oid) into v_check
       from pg_constraint c

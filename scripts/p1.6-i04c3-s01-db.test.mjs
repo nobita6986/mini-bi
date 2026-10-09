@@ -630,16 +630,19 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // shared team admin projection, the team row lock/OCC guard, the team revision
     // writer and the team version bump) plus five service-role-only team master RPCs
     // (list/get/create/update/set-active). Nothing is reachable by anon/authenticated.
-    // P3.1-W01C-B (#70) adds nine internal helpers (the membership subject lock/OCC
+    // P3.1-W01C-B-R1 (#70) adds a tenth internal helper for the revocation path (the
+  // close-only recruiter lock/OCC guard), so the package keeps creation and closing
+  // authorities separate without adding any service-role surface.
+  // P3.1-W01C-B (#70) adds nine internal helpers (the membership subject lock/OCC
     // guard, the target-team guard, the attribution guard, the fixed six-key snapshot,
     // the shared membership projection, the revision writer, the version bump and the
     // two membership write triggers) plus six service-role-only membership RPCs
     // (current/scheduled/history reads and assign/move/unassign). Nothing is reachable
     // by anon/authenticated.
     assert.deepEqual(result.rows[0], {
-      total: 161,
+      total: 162,
       service_role: 76,
-      internal: 85,
+      internal: 86,
       exposed_internal: 0,
     });
   } finally {
