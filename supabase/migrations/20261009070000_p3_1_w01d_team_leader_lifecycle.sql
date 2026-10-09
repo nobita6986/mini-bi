@@ -1611,7 +1611,7 @@ begin
            v_authenticated_exec, v_service_exec, v_source
       from pg_proc p where p.oid = v_signature::regprocedure;
     if v_source like '%direct_entry_system_vendor_team_id%' then
-      raise exception 'reserved-team creator must not be called by mutation function %', v_signature
+      raise exception 'reserved-team creator reference is forbidden in team-leader functions'
         using errcode = '55000';
     end if;
     if not v_prosecdef or v_config <> 'search_path=pg_catalog, public' then
@@ -1678,6 +1678,10 @@ begin
       into v_prosecdef, v_config, v_public_exec, v_anon_exec,
            v_authenticated_exec, v_service_exec, v_source
       from pg_proc p where p.oid = v_signature::regprocedure;
+    if v_source like '%direct_entry_system_vendor_team_id%' then
+      raise exception 'reserved-team creator reference is forbidden in team-leader functions'
+        using errcode = '55000';
+    end if;
     if not v_prosecdef or v_config <> 'search_path=pg_catalog, public' then
       raise exception 'team-leader mutation definer/search_path drift: %', v_signature
         using errcode = '55000';

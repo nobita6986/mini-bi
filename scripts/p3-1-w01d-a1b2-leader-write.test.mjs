@@ -72,6 +72,9 @@ function mutateMigration(sql) {
         "\ncommit;",
         "\nalter table public.direct_entry_scope_grants disable trigger direct_entry_no_vendor_team_scope;\n\ncommit;",
       );
+    case "reserved-helper-reference":
+      return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
+        `\n  -- dormant reference: public.direct_entry_system_vendor_team_id()\n${body}`);
     case "postcondition-team-count":
       return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
         replaceOnce(body,
