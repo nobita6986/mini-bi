@@ -13,7 +13,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { parseImportArgs, runImport } from "./t0-import-workers.mjs";
 import {
   IMPORT_REQUIRED_MIGRATIONS, IMPORT_WORKER_DETAIL_KEYS, buildImportPlan, deterministicUuid,
-  readImportSource, validateManifest, toContractRow,
+  readImportSource, resolveRows, validateManifest, toContractRow,
 } from "./lib/t0-operator-import.mjs";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -49,6 +49,42 @@ const OPS_AUTH = uuid(31), OPS_APP = uuid(41);
 const UP_AUTH = uuid(32), UP_APP = uuid(42);
 const UP2_AUTH = uuid(33), UP2_APP = uuid(43);
 const MGR_AUTH = uuid(34), MGR_APP = uuid(44);
+
+test("R5B-R2: required migration ledger names exist in the repository", async () => {
+  const names = new Set((await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")));
+  for (const required of IMPORT_REQUIRED_MIGRATIONS) {
+    assert.equal(names.has(required), true, `missing required migration ${required}`);
+  }
+});
+
+test("R5B-R2: recruiter reference resolves canonical personnel code and vendor id", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await db.query("update public.recruiters set personnel_code='rec-a-code'" +
+      " where display_name=$1", [REC_A]);
+    await db.query("insert into public.vendors (vendor_id, display_name)" +
+      " values ('vendor-code','Vendor Code')");
+    await db.query("insert into public.recruiters (recruiter_id, display_name)" +
+      " values ($1,'Vendor Recruiter')", [uuid(91)]);
+    await db.query("insert into public.recruiter_provider_memberships" +
+      " (recruiter_id, provider_type, vendor_id, valid_from)" +
+      " values ($1,'vendor','vendor-code','2020-01-01')", [uuid(91)]);
+    const uploader = { app_user_id: UP_APP, auth_subject: UP_AUTH };
+    const rows = [
+      { sourceRowId: "personnel", uploaderLogin: UPLOADER_LOGIN, projectRef: PROJ_A,
+        recruiterRef: "rec-a-code", provider_type: "hrp", first_work_date: "2026-10-01" },
+      { sourceRowId: "vendor", uploaderLogin: UPLOADER_LOGIN, projectRef: PROJ_A,
+        recruiterRef: "vendor-code", provider_type: "vendor", first_work_date: "2026-10-01" },
+    ];
+    const resolved = await resolveRows(db, rows, new Map([[UPLOADER_LOGIN, uploader]]));
+    assert.deepEqual(resolved.errors, []);
+    assert.equal(resolved.rows.length, 2);
+    assert.notEqual(resolved.rows[0].recruiter_id, resolved.rows[1].recruiter_id);
+  } finally {
+    await db.close();
+  }
+});
 
 async function buildDb(ledger = IMPORT_REQUIRED_MIGRATIONS) {
   const db = new PGlite();

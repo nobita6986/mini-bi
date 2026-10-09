@@ -20,7 +20,7 @@ export const IMPORT_ACTION = "t0_worker_import";
 export const IMPORT_REQUIRED_MIGRATIONS = Object.freeze([
   "20261008170000_p2_5_initial_employment_status_on.sql",
   "20261008180000_p2_5_hf_worker_create_and_rehire.sql",
-  "20261008190000_p2_5_hf_r1_episode_status_and_lookup_boundary.sql",
+  "20261008190000_p2_5_hf_r1_episode_status_guard_and_lookup_boundary.sql",
   "20261008200000_p2_5_hf_r2_cccd_canonicalization_guard.sql",
   "20261008210000_p2_5_hf_r3_worker_full_correction.sql",
 ]);
@@ -473,8 +473,16 @@ export async function resolveUploaders(client, rows) {
 
 const PROJECT_SQL = "select project_id from public.direct_entry_projects" +
   " where active and (project_id = $1 or display_name = $1)";
-const RECRUITER_SQL = "select recruiter_id::text as recruiter_id from public.recruiters" +
-  " where active and (display_name = $1 or recruiter_id::text = $1)";
+const RECRUITER_SQL = "select distinct r.recruiter_id::text as recruiter_id" +
+  " from public.recruiters r" +
+  " join public.recruiter_provider_memberships m on m.recruiter_id = r.recruiter_id" +
+  " left join public.vendors v on v.vendor_id = m.vendor_id" +
+  " where r.active and m.provider_type = $2" +
+  " and m.valid_from <= $3::date and (m.valid_to is null or $3::date < m.valid_to)" +
+  " and (r.display_name = $1 or r.recruiter_id::text = $1" +
+  " or lower(public.recruitment_dimension_key(coalesce(r.personnel_code, ''))) =" +
+  "    lower(public.recruitment_dimension_key($1))" +
+  " or ($2 = 'vendor' and (m.vendor_id = $1 or v.display_name = $1)))";
 
 /** Resolve project/recruiter bang projection hien co; identity trong manifest khong duoc tin. */
 export async function resolveRows(client, rows, uploaders) {
@@ -488,7 +496,8 @@ export async function resolveRows(client, rows, uploaders) {
       errors.push(issue("PROJECT_NOT_RESOLVED", row.sourceRowId));
       continue;
     }
-    const recruiter = await client.query(RECRUITER_SQL, [row.recruiterRef]);
+    const recruiter = await client.query(RECRUITER_SQL,
+      [row.recruiterRef, row.provider_type, row.first_work_date]);
     if (recruiter.rows.length !== 1) {
       errors.push(issue("RECRUITER_NOT_RESOLVED", row.sourceRowId));
       continue;
