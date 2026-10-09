@@ -504,12 +504,13 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
     "direct_entry_team_leader_marker",
     "direct_entry_team_leader_projection",
     "direct_entry_team_leader_snapshot",
+    "direct_entry_transition_legacy_team_leaders",
   ]);
-  assert.equal(fullInventory.total - inventoryBefore.total, 10);
-  assert.equal(fullInventory.service - inventoryBefore.service, 5);
-  assert.equal(fullInventory.internal - inventoryBefore.internal, 5);
+  assert.equal(fullInventory.total - inventoryBefore.total, 11);
+  assert.equal(fullInventory.service - inventoryBefore.service, 4);
+  assert.equal(fullInventory.internal - inventoryBefore.internal, 7);
   assert.equal(fullInventory.total, fullInventory.service + fullInventory.internal);
-  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total} total / ${inventoryBefore.service} service / ${inventoryBefore.internal} internal; #71 ${fullInventory.total} / ${fullInventory.service} / ${fullInventory.internal} (A1b2 adds 1 internal helper and 2 service-role RPCs).`);
+  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total} total / ${inventoryBefore.service} service / ${inventoryBefore.internal} internal; #71 ${fullInventory.total} / ${fullInventory.service} / ${fullInventory.internal} (A1b1/A1b2 add five service-role RPCs and five internal helpers; A1b3 adds one internal transition helper and moves the revoked legacy seed from service to internal).`);
 
   db.close();
 });

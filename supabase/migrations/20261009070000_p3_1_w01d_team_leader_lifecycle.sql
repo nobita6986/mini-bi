@@ -1,13 +1,9 @@
 -- =============================================================================
 -- P3.1-W01D - Team leader lifecycle: schema foundation (#71, append-only).
 --
--- Scope: open the authority schema for the leader lifecycle without shipping the
--- mutation code. This migration ONLY widens the two scope/capability interval
--- CHECKs, converts their uniqueness to marker-excluding partial indexes, and adds
--- the leader assignment + revision tables, the cancellation-marker guard, the two
--- bounded helpers (fixed eight-key snapshot + shared projection) and the audit
--- link. The designate / replace / revoke RPCs and the legacy transition belong to
--- A1b, which appends them inside this same migration before integration.
+-- Scope: open and transition the leader lifecycle in this migration. The legacy
+-- scope rows remain unchanged; canonical assignments and capabilities begin at
+-- the controlled transition date.
 --
 -- Interval model: half-open [valid_from, valid_to). This migration widens exactly
 -- TWO interval CHECKs - direct_entry_scope_grants_check and
@@ -124,7 +120,7 @@ revoke all on table public.direct_entry_team_leader_assignments
   from public, anon, authenticated, service_role;
 
 comment on table public.direct_entry_team_leader_assignments is
-  'P3.1-W01D leader assignment history (half-open interval, cancellation markers kept). At most one open leader per team and one open leadership per app user. Written only inside the service-role leader RPCs added by A1b.';
+  'P3.1-W01D leader assignment history (half-open interval, cancellation markers kept). At most one open leader per team and one open leadership per app user. Written by the service-role leader RPCs and the controlled migration transition.';
 
 -- -----------------------------------------------------------------------------
 -- 4. Write guard: zero-length cancellation markers on the three tables.
@@ -189,7 +185,7 @@ revoke all on table public.direct_entry_team_leader_revisions
   from public, anon, authenticated, service_role;
 
 comment on table public.direct_entry_team_leader_revisions is
-  'P3.1-W01D append-only team leader revision history (fixed eight-key snapshot + actor + action + team version), written only inside the service-role leader RPCs added by A1b. Never updated, never deleted, never backfilled.';
+  'P3.1-W01D append-only team leader revision history (fixed eight-key snapshot + optional system actor + action + team version). Never updated or deleted.';
 comment on column public.direct_entry_team_leader_revisions.version is
   'The public.teams.version produced by this leader mutation. unique (team_id, version) makes the leader version sequence auditable.';
 
@@ -1565,6 +1561,408 @@ grant execute on function public.direct_entry_revoke_team_leader(uuid, uuid, uui
 comment on function public.direct_entry_revoke_team_leader(uuid, uuid, uuid, date, integer, text, text) is
   'P3.1-W01D service-role mutation: close the current or scheduled leader, matching team scope and team_manager_assign capability, including on inactive teams, using team-version OCC, reason, idempotency, revision and immutable audit.';
 
+-- -----------------------------------------------------------------------------
+-- Controlled transition from legacy W05A team scopes to canonical leaders.
+-- All candidates are validated before the first persistent write. The temporary
+-- inventory is rebuilt on every invocation, so replay with no legacy candidates
+-- is a genuine no-op.
+-- -----------------------------------------------------------------------------
+create or replace function public.direct_entry_transition_legacy_team_leaders(
+  p_transition_date date
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_candidate record;
+  v_transition_date date := public.direct_entry_authorization_date();
+  v_candidate_count integer;
+  v_scope_count integer;
+  v_link_count integer;
+  v_verified_link_count integer;
+  v_provider_count integer;
+  v_hrp_provider_count integer;
+  v_membership_count integer;
+  v_matching_membership_count integer;
+  v_app_user_enabled boolean;
+  v_recruiter_active boolean;
+  v_team public.teams;
+  v_auth_subject uuid;
+  v_assignment_id uuid;
+  v_revision_id uuid;
+  v_team_version integer;
+  v_post_team_assignment_count integer;
+  v_post_actor_assignment_count integer;
+  v_post_actor_scope_count integer;
+  v_post_scope_count integer;
+  v_post_capability_count integer;
+  v_post_coextensive_count integer;
+  v_scope_only_count integer;
+  v_capability_only_count integer;
+begin
+  if p_transition_date is null or p_transition_date <> v_transition_date then
+    raise exception 'legacy team-leader transition date mismatch' using errcode = '55000';
+  end if;
+
+  create temporary table if not exists direct_entry_legacy_leader_inventory (
+    app_user_id uuid not null,
+    team_id uuid not null,
+    scope_grant_id uuid not null,
+    scope_valid_from date not null,
+    scope_valid_to date,
+    recruiter_id uuid,
+    auth_subject uuid,
+    primary key (scope_grant_id)
+  ) on commit drop;
+  truncate table pg_temp.direct_entry_legacy_leader_inventory;
+
+  insert into pg_temp.direct_entry_legacy_leader_inventory
+    (app_user_id, team_id, scope_grant_id, scope_valid_from, scope_valid_to)
+  select s.app_user_id, s.team_id, s.grant_id, s.valid_from, s.valid_to
+    from public.direct_entry_scope_grants s
+   where s.scope_kind = 'team'
+     and s.valid_from <= v_transition_date
+     and (s.valid_to is null or v_transition_date < s.valid_to)
+     and (s.valid_to is null or s.valid_to > s.valid_from)
+     and not exists (
+       select 1
+         from public.direct_entry_capability_grants g
+        where g.app_user_id = s.app_user_id
+          and g.capability = 'team_manager_assign'
+          and g.valid_from <= v_transition_date
+          and (g.valid_to is null or v_transition_date < g.valid_to)
+          and (g.valid_to is null or g.valid_to > g.valid_from)
+     );
+
+  select count(*)::int into v_candidate_count
+    from pg_temp.direct_entry_legacy_leader_inventory;
+
+  if exists (
+    select 1 from pg_temp.direct_entry_legacy_leader_inventory
+     group by app_user_id having count(*) <> 1
+  ) or exists (
+    select 1 from pg_temp.direct_entry_legacy_leader_inventory
+     group by team_id having count(*) <> 1
+  ) then
+    raise exception 'legacy team-leader inventory is ambiguous' using errcode = '42501';
+  end if;
+
+  -- Lock each aggregate before validating or writing any persistent state.
+  perform t.team_id
+    from public.teams t
+    join pg_temp.direct_entry_legacy_leader_inventory i on i.team_id = t.team_id
+   order by t.team_id
+   for update of t;
+
+  if v_candidate_count > 0 then
+    for v_candidate in
+      select * from pg_temp.direct_entry_legacy_leader_inventory
+       order by team_id, app_user_id
+    loop
+    select u.enabled, u.auth_subject
+      into v_app_user_enabled, v_auth_subject
+      from public.direct_entry_app_users u
+     where u.app_user_id = v_candidate.app_user_id
+     for update;
+    if not found or not coalesce(v_app_user_enabled, false) or v_auth_subject is null then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+
+    select count(*)::int,
+           count(*) filter (where l.verified)::int,
+           (array_agg(l.recruiter_id order by l.recruiter_id))[1]
+      into v_link_count, v_verified_link_count, v_candidate.recruiter_id
+      from public.direct_entry_app_user_recruiter_links l
+     where l.app_user_id = v_candidate.app_user_id
+       and l.valid_from <= v_transition_date
+       and (l.valid_to is null or v_transition_date < l.valid_to)
+       and (l.valid_to is null or l.valid_to > l.valid_from);
+    if v_link_count <> 1 or v_verified_link_count <> 1
+       or v_candidate.recruiter_id is null then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+    update pg_temp.direct_entry_legacy_leader_inventory
+       set auth_subject = v_auth_subject,
+           recruiter_id = v_candidate.recruiter_id
+     where scope_grant_id = v_candidate.scope_grant_id;
+
+    select r.active into v_recruiter_active
+      from public.recruiters r
+     where r.recruiter_id = v_candidate.recruiter_id
+     for update;
+    if not found or not coalesce(v_recruiter_active, false) then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+
+    perform m.membership_id
+      from public.recruiter_provider_memberships m
+     where m.recruiter_id = v_candidate.recruiter_id
+     order by m.membership_id
+     for update;
+    select count(*)::int,
+           count(*) filter (
+             where m.provider_type = 'hrp' and m.vendor_id is null
+           )::int
+      into v_provider_count, v_hrp_provider_count
+      from public.recruiter_provider_memberships m
+     where m.recruiter_id = v_candidate.recruiter_id
+       and m.valid_from <= v_transition_date
+       and (m.valid_to is null or v_transition_date < m.valid_to)
+       and (m.valid_to is null or m.valid_to > m.valid_from);
+    if v_provider_count <> 1 or v_hrp_provider_count <> 1 then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+
+    perform m.membership_id
+      from public.recruiter_team_memberships m
+     where m.recruiter_id = v_candidate.recruiter_id
+     order by m.membership_id
+     for update;
+    select count(*)::int,
+           count(*) filter (where m.team_id = v_candidate.team_id)::int
+      into v_membership_count, v_matching_membership_count
+      from public.recruiter_team_memberships m
+     where m.recruiter_id = v_candidate.recruiter_id
+       and m.valid_from <= v_transition_date
+       and (m.valid_to is null or v_transition_date < m.valid_to)
+       and (m.valid_to is null or m.valid_to > m.valid_from);
+    if v_membership_count <> 1 or v_matching_membership_count <> 1 then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+
+    select t.* into v_team
+      from public.teams t
+     where t.team_id = v_candidate.team_id;
+    if not found or not v_team.active or v_team.code = '__system_vendor__' then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+
+    select count(*)::int into v_scope_count
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = v_candidate.app_user_id
+       and s.scope_kind = 'team'
+       and s.valid_from <= v_transition_date
+       and (s.valid_to is null or v_transition_date < s.valid_to)
+       and (s.valid_to is null or s.valid_to > s.valid_from);
+    if v_scope_count <> 1
+       or exists (
+         select 1 from public.direct_entry_scope_grants s
+          where s.app_user_id = v_candidate.app_user_id
+            and s.scope_kind = 'team'
+            and s.grant_id <> v_candidate.scope_grant_id
+            and (s.valid_to is null or s.valid_to > s.valid_from)
+            and daterange(s.valid_from, s.valid_to, '[)')
+                && daterange(v_transition_date, null, '[)')
+       )
+       or exists (
+         select 1 from public.direct_entry_capability_grants g
+          where g.app_user_id = v_candidate.app_user_id
+            and g.capability = 'team_manager_assign'
+            and (g.valid_to is null or g.valid_to > g.valid_from)
+            and daterange(g.valid_from, g.valid_to, '[)')
+                && daterange(v_transition_date, null, '[)')
+       )
+       or exists (
+         select 1 from public.direct_entry_team_leader_assignments a
+          where (a.team_id = v_candidate.team_id
+                 or a.leader_app_user_id = v_candidate.app_user_id)
+            and (a.valid_to is null or a.valid_to > a.valid_from)
+            and daterange(a.valid_from, a.valid_to, '[)')
+                && daterange(v_transition_date, null, '[)')
+       ) then
+      raise exception 'legacy team-leader candidate is invalid' using errcode = '42501';
+    end if;
+  end loop;
+
+  -- No persistent writes occur until every candidate above has passed validation.
+  for v_candidate in
+    select * from pg_temp.direct_entry_legacy_leader_inventory
+     order by team_id, app_user_id
+  loop
+    update public.teams t
+       set version = t.version + 1
+     where t.team_id = v_candidate.team_id
+    returning t.version into v_team_version;
+
+    insert into public.direct_entry_team_leader_assignments
+      (team_id, leader_app_user_id, leader_recruiter_id, valid_from, valid_to)
+    values
+      (v_candidate.team_id, v_candidate.app_user_id, v_candidate.recruiter_id,
+       v_transition_date, v_candidate.scope_valid_to)
+    returning assignment_id into v_assignment_id;
+
+    insert into public.direct_entry_capability_grants
+      (app_user_id, capability, valid_from, valid_to)
+    values
+      (v_candidate.app_user_id, 'team_manager_assign', v_transition_date,
+       v_candidate.scope_valid_to);
+
+    select count(*) filter (
+             where a.team_id = v_candidate.team_id
+               and a.leader_app_user_id = v_candidate.app_user_id
+               and a.leader_recruiter_id = v_candidate.recruiter_id
+           )::int,
+           count(*)::int
+      into v_post_team_assignment_count, v_post_actor_assignment_count
+      from public.direct_entry_team_leader_assignments a
+     where a.valid_from <= v_transition_date
+       and (a.valid_to is null or v_transition_date < a.valid_to)
+       and (a.valid_to is null or a.valid_to > a.valid_from)
+       and (a.team_id = v_candidate.team_id or a.leader_app_user_id = v_candidate.app_user_id);
+
+    select count(*)::int,
+           count(*) filter (
+             where s.team_id = v_candidate.team_id
+           )::int
+      into v_post_actor_scope_count, v_post_scope_count
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = v_candidate.app_user_id
+       and s.scope_kind = 'team'
+       and s.valid_from <= v_transition_date
+       and (s.valid_to is null or v_transition_date < s.valid_to)
+       and (s.valid_to is null or s.valid_to > s.valid_from);
+
+    select count(*) filter (
+             where g.capability = 'team_manager_assign'
+           )::int
+      into v_post_capability_count
+      from public.direct_entry_capability_grants g
+     where g.app_user_id = v_candidate.app_user_id
+       and g.valid_from <= v_transition_date
+       and (g.valid_to is null or v_transition_date < g.valid_to)
+       and (g.valid_to is null or g.valid_to > g.valid_from);
+
+    select count(*)::int into v_post_coextensive_count
+      from public.direct_entry_team_leader_assignments a
+      join public.direct_entry_capability_grants g
+        on g.app_user_id = a.leader_app_user_id
+       and g.capability = 'team_manager_assign'
+       and g.valid_from = v_transition_date
+       and g.valid_to is not distinct from v_candidate.scope_valid_to
+     where a.assignment_id = v_assignment_id
+       and a.valid_from = v_transition_date
+       and a.valid_to is not distinct from v_candidate.scope_valid_to;
+
+    if v_post_team_assignment_count <> 1
+       or v_post_actor_assignment_count <> 1
+       or v_post_actor_scope_count <> 1
+       or v_post_scope_count <> 1
+       or v_post_capability_count <> 1
+       or v_post_coextensive_count <> 1 then
+      raise exception 'legacy team-leader transition postcondition failed' using errcode = '55000';
+    end if;
+
+    select count(*)::int into v_scope_count
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = v_candidate.app_user_id
+       and s.scope_kind = 'team'
+       and s.team_id = v_candidate.team_id
+       and s.grant_id = v_candidate.scope_grant_id
+       and s.valid_from = v_candidate.scope_valid_from
+       and s.valid_to is not distinct from v_candidate.scope_valid_to;
+    if v_scope_count <> 1 then
+      raise exception 'legacy team-leader transition postcondition failed' using errcode = '55000';
+    end if;
+
+    perform public.direct_entry_assert_team_leader_read_authority(
+      v_candidate.auth_subject, v_candidate.app_user_id, v_candidate.team_id
+    );
+
+    insert into public.direct_entry_team_leader_revisions
+      (team_id, version, actor_user_id, action, before_snapshot, after_snapshot)
+    values
+      (v_candidate.team_id, v_team_version, null, 'transition', null,
+       public.direct_entry_team_leader_snapshot(
+         v_candidate.team_id, v_candidate.app_user_id, v_candidate.recruiter_id,
+         v_transition_date, v_candidate.scope_valid_to, null, v_team_version, 'transition'
+       ))
+    returning revision_id into v_revision_id;
+
+    insert into public.direct_entry_audit_events
+      (auth_subject, app_user_id, action, capability, resource_ref, scope_kind,
+       scope_team_id, outcome, reason_id, changed_fields, leader_revision_id)
+    values
+      (null, null, 'team_leader_legacy_transition', 'team_manager_assign',
+       v_candidate.team_id::text, 'team', v_candidate.team_id, 'APPLIED', null,
+       array['team_leader_assignment', 'team_scope', 'team_manager_assign'],
+       v_revision_id);
+    end loop;
+  else
+    null;
+  end if;
+
+  select count(*)::int into v_scope_only_count
+    from public.direct_entry_scope_grants s
+   where s.scope_kind = 'team'
+     and s.valid_from <= v_transition_date
+     and (s.valid_to is null or v_transition_date < s.valid_to)
+     and (s.valid_to is null or s.valid_to > s.valid_from)
+     and not exists (
+       select 1 from public.direct_entry_capability_grants g
+        where g.app_user_id = s.app_user_id
+          and g.capability = 'team_manager_assign'
+          and g.valid_from <= v_transition_date
+          and (g.valid_to is null or v_transition_date < g.valid_to)
+          and (g.valid_to is null or g.valid_to > g.valid_from)
+     );
+  select count(*)::int into v_capability_only_count
+    from public.direct_entry_capability_grants g
+   where g.capability = 'team_manager_assign'
+     and g.valid_from <= v_transition_date
+     and (g.valid_to is null or v_transition_date < g.valid_to)
+     and (g.valid_to is null or g.valid_to > g.valid_from)
+     and not exists (
+       select 1 from public.direct_entry_scope_grants s
+        where s.app_user_id = g.app_user_id
+          and s.scope_kind = 'team'
+          and s.valid_from <= v_transition_date
+          and (s.valid_to is null or v_transition_date < s.valid_to)
+          and (s.valid_to is null or s.valid_to > s.valid_from)
+     );
+  if v_scope_only_count <> 0 or v_capability_only_count <> 0
+     or exists (
+       select 1 from public.direct_entry_team_leader_assignments a
+        where a.valid_from <= v_transition_date
+          and (a.valid_to is null or v_transition_date < a.valid_to)
+          and (a.valid_to is null or a.valid_to > a.valid_from)
+        group by a.team_id having count(*) > 1
+     )
+     or exists (
+       select 1 from public.direct_entry_team_leader_assignments a
+        where a.valid_from <= v_transition_date
+          and (a.valid_to is null or v_transition_date < a.valid_to)
+          and (a.valid_to is null or a.valid_to > a.valid_from)
+        group by a.leader_app_user_id having count(*) > 1
+     )
+     or exists (
+       select 1 from public.direct_entry_scope_grants s
+        where s.scope_kind = 'team'
+          and s.valid_from <= v_transition_date
+          and (s.valid_to is null or v_transition_date < s.valid_to)
+          and (s.valid_to is null or s.valid_to > s.valid_from)
+        group by s.app_user_id having count(*) > 1
+     ) then
+    raise exception 'legacy team-leader transition postcondition failed' using errcode = '55000';
+  end if;
+
+  drop table pg_temp.direct_entry_legacy_leader_inventory;
+  return v_candidate_count;
+end;
+$$;
+revoke all on function public.direct_entry_transition_legacy_team_leaders(date)
+  from public, anon, authenticated, service_role;
+comment on function public.direct_entry_transition_legacy_team_leaders(date) is
+  'P3.1-W01D internal all-or-nothing transition of validated legacy team scopes to canonical leader assignment/capability intervals at the transition date. Revoked from every role.';
+
+revoke all on function public.direct_entry_seed_team_scope_grants()
+  from public, anon, authenticated, service_role;
+
+select public.direct_entry_transition_legacy_team_leaders(
+  public.direct_entry_authorization_date()
+);
+
 -- Extend the self-check to cover the sole authority resolver and three read RPCs.
 do $$
 declare
@@ -1716,6 +2114,44 @@ begin
 
   if to_regprocedure('public.direct_entry_assert_team_leader_authority(uuid,uuid,uuid)') is not null then
     raise exception 'second team-leader authority resolver is forbidden' using errcode = '55000';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  v_signature regprocedure := 'public.direct_entry_transition_legacy_team_leaders(date)'::regprocedure;
+  v_source text;
+  v_prosecdef boolean;
+  v_config text;
+begin
+  select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), ''),
+         pg_get_functiondef(p.oid)
+    into v_prosecdef, v_config, v_source
+    from pg_proc p
+   where p.oid = v_signature;
+  if v_source is null
+     or not v_prosecdef
+     or v_config <> 'search_path=pg_catalog, public'
+     or has_function_privilege('public', v_signature, 'EXECUTE')
+     or has_function_privilege('anon', v_signature, 'EXECUTE')
+     or has_function_privilege('authenticated', v_signature, 'EXECUTE')
+     or has_function_privilege('service_role', v_signature, 'EXECUTE')
+     or v_source like '%personnel_position%'
+     or v_source like '%direct_entry_seed_team_scope_grants%' then
+    raise exception 'legacy team-leader transition helper security drift' using errcode = '55000';
+  end if;
+  if to_regprocedure('public.direct_entry_seed_team_scope_grants()') is null
+     or has_function_privilege(
+       'public', 'public.direct_entry_seed_team_scope_grants()'::regprocedure, 'EXECUTE')
+     or has_function_privilege(
+       'anon', 'public.direct_entry_seed_team_scope_grants()'::regprocedure, 'EXECUTE')
+     or has_function_privilege(
+       'authenticated', 'public.direct_entry_seed_team_scope_grants()'::regprocedure, 'EXECUTE')
+     or has_function_privilege(
+       'service_role', 'public.direct_entry_seed_team_scope_grants()'::regprocedure, 'EXECUTE') then
+    raise exception 'legacy team-scope seed must remain present and non-executable'
+      using errcode = '55000';
   end if;
 end;
 $$;

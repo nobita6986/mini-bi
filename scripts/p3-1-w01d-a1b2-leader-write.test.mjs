@@ -19,6 +19,7 @@ const TEAM_LEGACY = "95000000-0000-4000-8000-0000000000a6";
 const VENDOR_ID = "vendor.a1b2";
 const PAST = "2020-01-01";
 const FAR_FUTURE = "2099-01-01";
+const LEGACY_SCOPE_START = "2010-01-01";
 const WRITE_RPCS = [
   "direct_entry_designate_team_leader",
   "direct_entry_revoke_team_leader",
@@ -49,9 +50,70 @@ function mutateFunctionBody(sql, name, mutation) {
     + sql.slice(bodyEnd);
 }
 
-function mutateMigration(sql) {
-  if (!MUTATION) return sql;
-  switch (MUTATION) {
+function injectBeforeTransition(sql, statements) {
+  return replaceOnce(sql,
+    "select public.direct_entry_transition_legacy_team_leaders(\n"
+      + "  public.direct_entry_authorization_date()\n"
+      + ");",
+    `${statements}\n\nselect public.direct_entry_transition_legacy_team_leaders(\n`
+      + "  public.direct_entry_authorization_date()\n"
+      + ");");
+}
+
+function injectTransitionFailure(sql, table) {
+  return injectBeforeTransition(sql, `
+create function public.test_transition_injected_failure()
+returns trigger language plpgsql as $transition$
+begin
+  raise exception 'injected transition failure' using errcode = 'P0001';
+end;
+$transition$;
+create trigger test_transition_injected_failure
+  before insert on public.${table}
+  for each row execute function public.test_transition_injected_failure();
+`);
+}
+
+function injectTransitionAssignmentConflict(sql, otherTeam) {
+  return injectBeforeTransition(sql, `
+create function public.test_transition_assignment_conflict()
+returns trigger language plpgsql as $transition$
+begin
+  if coalesce(current_setting('test.transition_assignment_nested', true), '') <> 'on' then
+    perform set_config('test.transition_assignment_nested', 'on', true);
+    insert into public.direct_entry_team_leader_assignments
+      (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
+    values ('${otherTeam}'::uuid, new.leader_app_user_id, new.leader_recruiter_id,
+            new.valid_from - 1);
+    perform set_config('test.transition_assignment_nested', '', true);
+  end if;
+  return new;
+end;
+$transition$;
+create trigger test_transition_assignment_conflict
+  before insert on public.direct_entry_team_leader_assignments
+  for each row execute function public.test_transition_assignment_conflict();
+`);
+}
+
+function injectTransitionConflict(sql, fixture, otherTeam, conflict) {
+  const insert = conflict === "same-team"
+    ? `insert into public.direct_entry_team_leader_assignments
+         (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
+       values ('${fixture.team}'::uuid, '${fixture.app}'::uuid,
+               '${fixture.recruiter}'::uuid,
+               public.direct_entry_authorization_date() - 1);`
+    : `insert into public.direct_entry_team_leader_assignments
+         (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
+       values ('${otherTeam}'::uuid, '${fixture.app}'::uuid,
+               '${fixture.recruiter}'::uuid,
+               public.direct_entry_authorization_date() - 1);`;
+  return injectBeforeTransition(sql, insert);
+}
+
+function mutateMigration(sql, mutation = MUTATION) {
+  if (!mutation) return sql;
+  switch (mutation) {
     case "bypass-authority":
       assert.equal(sql.split(
         "v_authority := public.direct_entry_assert_catalog_operator(p_auth_subject, p_app_user_id);",
@@ -75,6 +137,84 @@ function mutateMigration(sql) {
     case "reserved-helper-reference":
       return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
         `\n  -- dormant reference: public.direct_entry_system_vendor_team_id()\n${body}`);
+    case "transition-hardcoded-inventory":
+      return mutateFunctionBody(sql, "direct_entry_transition_legacy_team_leaders", (body) =>
+        replaceOnce(body,
+          "select count(*)::int into v_candidate_count\n"
+            + "    from pg_temp.direct_entry_legacy_leader_inventory;",
+          "select count(*)::int into v_candidate_count\n"
+            + "    from pg_temp.direct_entry_legacy_leader_inventory;\n"
+            + "  if v_candidate_count <> 7 then\n"
+            + "    raise exception 'legacy inventory count mismatch' using errcode = '42501';\n"
+            + "  end if;"));
+    case "transition-backdated-capability":
+      return mutateFunctionBody(sql, "direct_entry_transition_legacy_team_leaders", (body) =>
+        replaceOnce(body,
+          "(v_candidate.app_user_id, 'team_manager_assign', v_transition_date,\n"
+            + "       v_candidate.scope_valid_to);",
+          "(v_candidate.app_user_id, 'team_manager_assign', v_candidate.scope_valid_from,\n"
+            + "       v_candidate.scope_valid_to);"));
+    case "transition-mutate-before-validate":
+      return mutateFunctionBody(sql, "direct_entry_transition_legacy_team_leaders", (body) =>
+        replaceOnce(body,
+          "  for v_candidate in\n    select * from pg_temp.direct_entry_legacy_leader_inventory",
+          "  insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)\n"
+            + "  select app_user_id, 'team_manager_assign', v_transition_date\n"
+            + "    from pg_temp.direct_entry_legacy_leader_inventory;\n"
+            + "  for v_candidate in\n"
+            + "    select * from pg_temp.direct_entry_legacy_leader_inventory"));
+    case "transition-skip-assignment":
+      return mutateFunctionBody(sql, "direct_entry_transition_legacy_team_leaders", (body) =>
+        replaceOnce(body,
+          "    insert into public.direct_entry_team_leader_assignments\n"
+            + "      (team_id, leader_app_user_id, leader_recruiter_id, valid_from, valid_to)",
+          "    if false then\n"
+            + "      insert into public.direct_entry_team_leader_assignments\n"
+            + "        (team_id, leader_app_user_id, leader_recruiter_id, valid_from, valid_to)")
+          .replace(
+            "    returning assignment_id into v_assignment_id;\n",
+            "    returning assignment_id into v_assignment_id;\n    end if;\n",
+          ));
+    case "transition-skip-postcondition":
+      return mutateFunctionBody(sql, "direct_entry_transition_legacy_team_leaders", (body) => {
+        const withoutActorCount = replaceOnce(body,
+          "       or v_post_actor_assignment_count <> 1\n",
+          "");
+        const withoutTeamCount = replaceOnce(withoutActorCount,
+            "or exists (\n       select 1 from public.direct_entry_team_leader_assignments a\n"
+              + "        where a.valid_from <= v_transition_date\n"
+              + "          and (a.valid_to is null or v_transition_date < a.valid_to)\n"
+              + "          and (a.valid_to is null or a.valid_to > a.valid_from)\n"
+              + "        group by a.team_id having count(*) > 1\n"
+              + "     )\n",
+            "");
+        return replaceOnce(withoutTeamCount,
+            "or exists (\n       select 1 from public.direct_entry_team_leader_assignments a\n"
+              + "        where a.valid_from <= v_transition_date\n"
+              + "          and (a.valid_to is null or v_transition_date < a.valid_to)\n"
+              + "          and (a.valid_to is null or a.valid_to > a.valid_from)\n"
+              + "        group by a.leader_app_user_id having count(*) > 1\n"
+              + "     )\n",
+            "");
+      });
+    case "transition-skip-seed-revoke":
+      return replaceOnce(sql,
+        "revoke all on function public.direct_entry_seed_team_scope_grants()\n"
+          + "  from public, anon, authenticated, service_role;",
+        "-- mutation: seed ACL revoke omitted");
+    case "transition-skip-replay":
+      return mutateFunctionBody(sql, "direct_entry_transition_legacy_team_leaders", (body) =>
+        replaceOnce(body,
+          "else\n    null;\n  end if;",
+          "else\n"
+            + "    update public.teams t set version = t.version + 1\n"
+            + "     where exists (\n"
+            + "       select 1 from public.direct_entry_team_leader_assignments a\n"
+            + "        where a.team_id = t.team_id\n"
+            + "          and a.valid_from <= v_transition_date\n"
+            + "          and (a.valid_to is null or v_transition_date < a.valid_to)\n"
+            + "     );\n"
+            + "  end if;"));
     case "postcondition-team-count":
       return mutateFunctionBody(sql, "direct_entry_apply_team_leader_mutation", (body) =>
         replaceOnce(body,
@@ -148,7 +288,55 @@ async function inventory(db) {
   return rows[0];
 }
 
-async function createDatabase() {
+async function seedLegacyTransition(db, count) {
+  const fixtures = [];
+  for (let index = 1; index <= count; index++) {
+    const team = `97000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    const auth = `98000000-0000-4000-8000-${String(index * 3).padStart(12, "0")}`;
+    const app = `98000000-0000-4000-8000-${String(index * 3 + 1).padStart(12, "0")}`;
+    const recruiter = `98000000-0000-4000-8000-${String(index * 3 + 2).padStart(12, "0")}`;
+    await db.query("insert into auth.users(id) values ($1::uuid)", [auth]);
+    await db.query(
+      "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)"
+        + " values ($1::uuid,$2::uuid,true,'Legacy transition fixture')",
+      [app, auth]);
+    await db.query(
+      "insert into public.teams(team_id,code,display_name,active) values ($1::uuid,$2,$2,true)",
+      [team, `LEGACY_TRANSITION_${index}`]);
+    await db.query(
+      "insert into public.recruiters(recruiter_id,display_name,personnel_position,active)"
+        + " values ($1::uuid,'Legacy transition fixture','STAFF',true)",
+      [recruiter]);
+    await db.query(
+      "insert into public.recruiter_provider_memberships"
+        + "(recruiter_id,provider_type,valid_from) values ($1::uuid,'hrp',$2::date)",
+      [recruiter, LEGACY_SCOPE_START]);
+    await db.query(
+      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)"
+        + " values ($1::uuid,$2::uuid,$3::date)",
+      [recruiter, team, LEGACY_SCOPE_START]);
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links"
+        + "(app_user_id,recruiter_id,verified,valid_from)"
+        + " values ($1::uuid,$2::uuid,true,$3::date)",
+      [app, recruiter, LEGACY_SCOPE_START]);
+    const scope = await db.query(
+      "insert into public.direct_entry_scope_grants"
+        + "(app_user_id,scope_kind,team_id,valid_from)"
+        + " values ($1::uuid,'team',$2::uuid,$3::date) returning grant_id",
+      [app, team, LEGACY_SCOPE_START]);
+    const scopeSnapshot = await db.query(
+      "select to_jsonb(s) as row from public.direct_entry_scope_grants s where grant_id=$1::uuid",
+      [scope.rows[0].grant_id]);
+    fixtures.push({
+      team, auth, app, recruiter, scopeGrant: scope.rows[0].grant_id,
+      scopeSnapshot: scopeSnapshot.rows[0].row,
+    });
+  }
+  return fixtures;
+}
+
+async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
@@ -168,15 +356,504 @@ async function createDatabase() {
     await db.exec(local.toString("utf8"));
   }
   const baseline = await inventory(db);
-  await db.exec(mutateMigration(migrations.at(-1).sql));
-  return { db, names, baseline, migrations };
+  const transitionFixtures = await seedLegacyTransition(db, legacyCount);
+  if (applyLatest) await db.exec(mutateMigration(migrations.at(-1).sql));
+  return { db, names, baseline, migrations, transitionFixtures };
+}
+
+async function assertTransitionFixtures(database, fixtures, transitionDate) {
+  for (const fixture of fixtures) {
+    const scope = await database.query(
+      "select to_jsonb(s) as row from public.direct_entry_scope_grants s"
+        + " where grant_id=$1::uuid",
+      [fixture.scopeGrant]);
+    assert.deepEqual(scope.rows[0].row, fixture.scopeSnapshot);
+    const leader = await database.query(
+      "select assignment_id::text,leader_app_user_id::text,leader_recruiter_id::text,"
+        + "valid_from::text,valid_to::text from public.direct_entry_team_leader_assignments"
+        + " where team_id=$1::uuid",
+      [fixture.team]);
+    assert.equal(leader.rows.length, 1);
+    assert.deepEqual({
+      leader_app_user_id: leader.rows[0].leader_app_user_id,
+      leader_recruiter_id: leader.rows[0].leader_recruiter_id,
+      valid_from: leader.rows[0].valid_from,
+      valid_to: leader.rows[0].valid_to,
+    }, {
+      leader_app_user_id: fixture.app,
+      leader_recruiter_id: fixture.recruiter,
+      valid_from: transitionDate,
+      valid_to: null,
+    });
+    const capability = await database.query(
+      "select valid_from::text,valid_to::text from public.direct_entry_capability_grants"
+        + " where app_user_id=$1::uuid and capability='team_manager_assign'",
+      [fixture.app]);
+    assert.deepEqual(capability.rows, [{ valid_from: transitionDate, valid_to: null }]);
+    assert.equal((await database.query(
+      "select version from public.teams where team_id=$1::uuid", [fixture.team],
+    )).rows[0].version, 2);
+
+    const revisions = await database.query(
+      "select revision_id::text,actor_user_id,action,version,before_snapshot,after_snapshot"
+        + " from public.direct_entry_team_leader_revisions where team_id=$1::uuid",
+      [fixture.team]);
+    assert.equal(revisions.rows.length, 1);
+    assert.equal(revisions.rows[0].actor_user_id, null);
+    assert.equal(revisions.rows[0].action, "transition");
+    assert.equal(revisions.rows[0].version, 2);
+    assert.equal(revisions.rows[0].before_snapshot, null);
+    assert.deepEqual(Object.keys(revisions.rows[0].after_snapshot).sort(), SNAPSHOT_KEYS);
+    assert.equal(revisions.rows[0].after_snapshot.change, "transition");
+    assert.equal(revisions.rows[0].after_snapshot.valid_from, transitionDate);
+
+    const audit = await database.query(
+      "select auth_subject,app_user_id,action,capability,resource_ref,scope_kind,"
+        + "scope_team_id::text,outcome,reason_id,changed_fields,leader_revision_id::text"
+        + " from public.direct_entry_audit_events where leader_revision_id in ("
+        + "select revision_id from public.direct_entry_team_leader_revisions where team_id=$1::uuid)",
+      [fixture.team]);
+    assert.equal(audit.rows.length, 1);
+    assert.deepEqual({
+      auth_subject: null,
+      app_user_id: null,
+      action: "team_leader_legacy_transition",
+      capability: "team_manager_assign",
+      resource_ref: fixture.team,
+      scope_kind: "team",
+      scope_team_id: fixture.team,
+      outcome: "APPLIED",
+      reason_id: null,
+      changed_fields: ["team_leader_assignment", "team_scope", "team_manager_assign"],
+    }, Object.fromEntries(Object.entries(audit.rows[0])
+      .filter(([key]) => key !== "leader_revision_id")));
+    assert.equal(audit.rows[0].leader_revision_id, revisions.rows[0].revision_id);
+    assert.equal((await database.query(
+      "select public.direct_entry_assert_team_leader_read_authority("
+        + "$1::uuid,$2::uuid,$3::uuid)::text as team",
+      [fixture.auth, fixture.app, fixture.team])).rows[0].team, fixture.team);
+  }
+
+  const mismatchCounts = await database.query(`
+    select
+      (select count(*)::int from public.direct_entry_scope_grants s
+        where s.scope_kind='team'
+          and s.valid_from <= $1::date
+          and (s.valid_to is null or $1::date < s.valid_to)
+          and (s.valid_to is null or s.valid_to > s.valid_from)
+          and not exists (
+            select 1 from public.direct_entry_capability_grants g
+             where g.app_user_id=s.app_user_id
+               and g.capability='team_manager_assign'
+               and g.valid_from <= $1::date
+               and (g.valid_to is null or $1::date < g.valid_to)
+               and (g.valid_to is null or g.valid_to > g.valid_from)
+          )) as scope_without_capability,
+      (select count(*)::int from public.direct_entry_capability_grants g
+        where g.capability='team_manager_assign'
+          and g.valid_from <= $1::date
+          and (g.valid_to is null or $1::date < g.valid_to)
+          and (g.valid_to is null or g.valid_to > g.valid_from)
+          and not exists (
+            select 1 from public.direct_entry_scope_grants s
+             where s.app_user_id=g.app_user_id and s.scope_kind='team'
+               and s.valid_from <= $1::date
+               and (s.valid_to is null or $1::date < s.valid_to)
+               and (s.valid_to is null or s.valid_to > s.valid_from)
+          )) as capability_without_scope
+  `, [transitionDate]);
+  assert.deepEqual(mismatchCounts.rows[0], {
+    scope_without_capability: 0,
+    capability_without_scope: 0,
+  });
+
+  const beforeReplay = await database.query(`
+    select
+      (select jsonb_agg(to_jsonb(t) order by t.team_id)
+         from public.teams t where t.team_id = any($1::uuid[])) as teams,
+      (select jsonb_agg(to_jsonb(a) order by a.team_id)
+         from public.direct_entry_team_leader_assignments a
+        where a.team_id = any($1::uuid[])) as assignments,
+      (select jsonb_agg(to_jsonb(g) order by g.app_user_id)
+         from public.direct_entry_capability_grants g
+        where g.app_user_id = any($2::uuid[]) and g.capability='team_manager_assign') as capabilities,
+      (select jsonb_agg(to_jsonb(r) order by r.team_id)
+         from public.direct_entry_team_leader_revisions r
+        where r.team_id = any($1::uuid[])) as revisions,
+      (select jsonb_agg(to_jsonb(e) order by e.scope_team_id)
+         from public.direct_entry_audit_events e
+        where e.scope_team_id = any($1::uuid[])
+          and e.action='team_leader_legacy_transition') as audits
+  `, [fixtures.map((item) => item.team), fixtures.map((item) => item.app)]);
+  assert.equal((await database.query(
+    "select public.direct_entry_transition_legacy_team_leaders($1::date) as count",
+    [transitionDate])).rows[0].count, 0);
+  const afterReplay = await database.query(`
+    select
+      (select jsonb_agg(to_jsonb(t) order by t.team_id)
+         from public.teams t where t.team_id = any($1::uuid[])) as teams,
+      (select jsonb_agg(to_jsonb(a) order by a.team_id)
+         from public.direct_entry_team_leader_assignments a
+        where a.team_id = any($1::uuid[])) as assignments,
+      (select jsonb_agg(to_jsonb(g) order by g.app_user_id)
+         from public.direct_entry_capability_grants g
+        where g.app_user_id = any($2::uuid[]) and g.capability='team_manager_assign') as capabilities,
+      (select jsonb_agg(to_jsonb(r) order by r.team_id)
+         from public.direct_entry_team_leader_revisions r
+        where r.team_id = any($1::uuid[])) as revisions,
+      (select jsonb_agg(to_jsonb(e) order by e.scope_team_id)
+         from public.direct_entry_audit_events e
+        where e.scope_team_id = any($1::uuid[])
+          and e.action='team_leader_legacy_transition') as audits
+  `, [fixtures.map((item) => item.team), fixtures.map((item) => item.app)]);
+  assert.deepEqual(afterReplay.rows, beforeReplay.rows);
+}
+
+async function expectMigrationFailure(database, sql, code) {
+  let failure;
+  try {
+    await database.exec(sql);
+  } catch (error) {
+    failure = error;
+  }
+  if (failure) await database.exec("rollback");
+  assert.ok(failure, `migration must fail with SQLSTATE ${code}`);
+  assert.equal(failure.code, code, `migration must fail with SQLSTATE ${code}`);
+}
+
+async function assertTransitionRolledBack(
+  database, fixture, expectedTeam = fixture.team, expectedCapabilityCount = 0,
+) {
+  assert.deepEqual((await database.query(
+    "select app_user_id::text,team_id::text,valid_from::text,valid_to::text"
+      + " from public.direct_entry_scope_grants where grant_id=$1::uuid",
+    [fixture.scopeGrant])).rows[0], {
+    app_user_id: fixture.app,
+    team_id: expectedTeam,
+    valid_from: LEGACY_SCOPE_START,
+    valid_to: null,
+  });
+  assert.equal((await database.query(
+    "select count(*)::int as count from public.direct_entry_capability_grants"
+      + " where app_user_id=$1::uuid and capability='team_manager_assign'",
+    [fixture.app])).rows[0].count, expectedCapabilityCount);
+  assert.equal((await database.query(
+    "select version from public.teams where team_id=$1::uuid", [expectedTeam])).rows[0].version, 1);
+  assert.equal((await database.query(
+    "select to_regclass('public.direct_entry_team_leader_assignments') is null as absent,"
+      + " to_regclass('public.direct_entry_team_leader_revisions') is null as revisions_absent",
+  )).rows[0].absent, true);
+  assert.equal((await database.query(
+    "select to_regclass('public.direct_entry_team_leader_revisions') is null as absent",
+  )).rows[0].absent, true);
+  assert.equal((await database.query(
+    "select count(*)::int as count from public.direct_entry_audit_events"
+      + " where action='team_leader_legacy_transition' and resource_ref=$1",
+    [expectedTeam])).rows[0].count, 0);
+  assert.equal((await database.query(
+    "select count(*)::int as count from public.direct_entry_rpc_idempotency"
+      + " where action='team_leader_legacy_transition'")).rows[0].count, 0);
+  assert.equal((await database.query(
+    "select has_function_privilege('service_role',"
+      + " 'public.direct_entry_seed_team_scope_grants()'::regprocedure,'EXECUTE') as granted",
+  )).rows[0].granted, true);
+}
+
+async function assertTransitionAtomicity() {
+  const state = await createDatabase(1, { applyLatest: false });
+  const database = state.db;
+  const [fixture] = state.transitionFixtures;
+  const baseSql = mutateMigration(state.migrations.at(-1).sql);
+  try {
+    const otherTeam = "99000000-0000-4000-8000-000000000001";
+    await database.query(
+      "insert into public.teams(team_id,code,display_name,active)"
+        + " values ($1::uuid,'TRANSITION_OTHER','Transition other',true)",
+      [otherTeam]);
+    const rejectCandidate = async (setup, cleanup, code = "42501") => {
+      await setup();
+      await expectMigrationFailure(database, baseSql, code);
+      await assertTransitionRolledBack(database, fixture);
+      await cleanup();
+    };
+
+    await database.query(
+      "update public.direct_entry_app_users set enabled=false where app_user_id=$1::uuid",
+      [fixture.app]);
+    await expectMigrationFailure(database,
+      injectTransitionFailure(baseSql, "direct_entry_capability_grants"), "42501");
+    await assertTransitionRolledBack(database, fixture);
+    await database.query(
+      "update public.direct_entry_app_users set enabled=true where app_user_id=$1::uuid",
+      [fixture.app]);
+
+    const recruiterId = fixture.recruiter;
+    await rejectCandidate(
+      () => database.query("update public.recruiters set active=false where recruiter_id=$1::uuid",
+        [recruiterId]),
+      () => database.query("update public.recruiters set active=true where recruiter_id=$1::uuid",
+        [recruiterId]));
+    await rejectCandidate(
+      () => database.query("update public.teams set active=false where team_id=$1::uuid",
+        [fixture.team]),
+      () => database.query("update public.teams set active=true where team_id=$1::uuid",
+        [fixture.team]));
+
+    await rejectCandidate(
+      () => database.query(
+        "delete from public.direct_entry_app_user_recruiter_links where app_user_id=$1::uuid",
+        [fixture.app]),
+      () => database.query(
+        "insert into public.direct_entry_app_user_recruiter_links"
+          + "(app_user_id,recruiter_id,verified,valid_from)"
+          + " values ($1::uuid,$2::uuid,true,$3::date)",
+        [fixture.app, recruiterId, LEGACY_SCOPE_START]));
+
+    const duplicateRecruiter = "99000000-0000-4000-8000-000000000002";
+    await database.query(
+      "insert into public.recruiters(recruiter_id,display_name,active)"
+        + " values ($1::uuid,'Ambiguous link fixture',true)",
+      [duplicateRecruiter]);
+    await database.query(
+      "alter table public.direct_entry_app_user_recruiter_links disable trigger all");
+    await database.query(
+      "insert into public.direct_entry_app_user_recruiter_links"
+        + "(app_user_id,recruiter_id,verified,valid_from)"
+        + " values ($1::uuid,$2::uuid,true,$3::date)",
+      [fixture.app, duplicateRecruiter, LEGACY_SCOPE_START]);
+    await database.query(
+      "alter table public.direct_entry_app_user_recruiter_links enable trigger all");
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture);
+    await database.query(
+      "delete from public.direct_entry_app_user_recruiter_links"
+        + " where app_user_id=$1::uuid and recruiter_id=$2::uuid",
+      [fixture.app, duplicateRecruiter]);
+    await database.query(
+      "delete from public.recruiters where recruiter_id=$1::uuid", [duplicateRecruiter]);
+
+    await rejectCandidate(
+      () => database.query(
+        "update public.direct_entry_app_user_recruiter_links"
+          + " set valid_to=public.direct_entry_authorization_date()"
+          + " where app_user_id=$1::uuid",
+        [fixture.app]),
+      () => database.query(
+        "update public.direct_entry_app_user_recruiter_links set valid_to=null"
+          + " where app_user_id=$1::uuid",
+        [fixture.app]));
+    await rejectCandidate(
+      () => database.query(
+        "update public.direct_entry_app_user_recruiter_links set valid_from=$2::date"
+          + " where app_user_id=$1::uuid",
+        [fixture.app, FAR_FUTURE]),
+      () => database.query(
+        "update public.direct_entry_app_user_recruiter_links set valid_from=$2::date"
+          + " where app_user_id=$1::uuid",
+        [fixture.app, LEGACY_SCOPE_START]));
+
+    await rejectCandidate(
+      () => database.query(
+        "update public.recruiter_provider_memberships"
+          + " set valid_to=public.direct_entry_authorization_date()"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId]),
+      () => database.query(
+        "update public.recruiter_provider_memberships set valid_to=null"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId]));
+    await rejectCandidate(
+      () => database.query(
+        "update public.recruiter_provider_memberships set valid_from=$2::date"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, FAR_FUTURE]),
+      () => database.query(
+        "update public.recruiter_provider_memberships set valid_from=$2::date"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, LEGACY_SCOPE_START]));
+
+    const vendorId = "vendor.transition";
+    await database.query(
+      "insert into public.vendors(vendor_id,display_name) values ($1,'Transition fixture')",
+      [vendorId]);
+    await rejectCandidate(
+      () => database.query(
+        "update public.recruiter_provider_memberships"
+          + " set provider_type='vendor',vendor_id=$2"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, vendorId]),
+      () => database.query(
+        "update public.recruiter_provider_memberships"
+          + " set provider_type='hrp',vendor_id=null where recruiter_id=$1::uuid",
+        [recruiterId]));
+    await database.query(
+      "alter table public.recruiter_provider_memberships disable trigger all");
+    await database.query(
+      "insert into public.recruiter_provider_memberships"
+        + "(recruiter_id,provider_type,vendor_id,valid_from)"
+        + " values ($1::uuid,'vendor',$2,$3::date)",
+      [recruiterId, vendorId, PAST]);
+    await database.query(
+      "alter table public.recruiter_provider_memberships enable trigger all");
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture);
+    await database.query(
+      "delete from public.recruiter_provider_memberships"
+        + " where recruiter_id=$1::uuid and provider_type='vendor'",
+      [recruiterId]);
+
+    await rejectCandidate(
+      () => database.query(
+        "delete from public.recruiter_team_memberships where recruiter_id=$1::uuid",
+        [recruiterId]),
+      () => database.query(
+        "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)"
+          + " values ($1::uuid,$2::uuid,$3::date)",
+        [recruiterId, fixture.team, LEGACY_SCOPE_START]));
+    await database.query(
+      "alter table public.recruiter_team_memberships disable trigger all");
+    await database.query(
+      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)"
+        + " values ($1::uuid,$2::uuid,$3::date)",
+      [recruiterId, otherTeam, "2010-01-02"]);
+    await database.query(
+      "alter table public.recruiter_team_memberships enable trigger all");
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture);
+    await database.query(
+      "delete from public.recruiter_team_memberships"
+        + " where recruiter_id=$1::uuid and team_id=$2::uuid",
+      [recruiterId, otherTeam]);
+    await rejectCandidate(
+      () => database.query(
+        "update public.recruiter_team_memberships set valid_to="
+          + "public.direct_entry_authorization_date() where recruiter_id=$1::uuid",
+        [recruiterId]),
+      () => database.query(
+        "update public.recruiter_team_memberships set valid_to=null where recruiter_id=$1::uuid",
+        [recruiterId]));
+    await rejectCandidate(
+      () => database.query(
+        "update public.recruiter_team_memberships set valid_from=$2::date"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, FAR_FUTURE]),
+      () => database.query(
+        "update public.recruiter_team_memberships set valid_from=$2::date"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, LEGACY_SCOPE_START]));
+
+    await rejectCandidate(
+      () => database.query(
+        "update public.recruiter_team_memberships set team_id=$2::uuid"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, otherTeam]),
+      () => database.query(
+        "update public.recruiter_team_memberships set team_id=$2::uuid"
+          + " where recruiter_id=$1::uuid",
+        [recruiterId, fixture.team]));
+
+    await database.query(
+      "insert into public.direct_entry_scope_grants"
+        + "(app_user_id,scope_kind,team_id,valid_from)"
+        + " values ($1::uuid,'team',$2::uuid,$3::date)",
+      [fixture.app, otherTeam, LEGACY_SCOPE_START]);
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture);
+    await database.query(
+      "delete from public.direct_entry_scope_grants where app_user_id=$1::uuid and team_id=$2::uuid",
+      [fixture.app, otherTeam]);
+
+    await database.query(
+      "insert into public.direct_entry_scope_grants"
+        + "(app_user_id,scope_kind,team_id,valid_from)"
+        + " values ($1::uuid,'team',$2::uuid,$3::date)",
+      [fixture.app, otherTeam, FAR_FUTURE]);
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture);
+    await database.query(
+      "delete from public.direct_entry_scope_grants where app_user_id=$1::uuid and team_id=$2::uuid",
+      [fixture.app, otherTeam]);
+
+    await database.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)"
+        + " values ($1::uuid,'team_manager_assign',$2::date)",
+      [fixture.app, FAR_FUTURE]);
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture, fixture.team, 1);
+    await database.query(
+      "delete from public.direct_entry_capability_grants"
+        + " where app_user_id=$1::uuid and capability='team_manager_assign'",
+      [fixture.app]);
+
+    await database.query(
+      "insert into public.vendors(vendor_id,display_name) values ('vendor.reserved-transition','Reserved')");
+    const reservedTeam = (await database.query(
+      "select public.direct_entry_system_vendor_team_id()::text as id")).rows[0].id;
+    await database.query(
+      "alter table public.direct_entry_scope_grants"
+        + " disable trigger direct_entry_no_vendor_team_scope");
+    await database.query(
+      "alter table public.recruiter_team_memberships"
+        + " disable trigger direct_entry_no_vendor_recruiter_team_membership");
+    await database.query(
+      "update public.direct_entry_scope_grants set team_id=$2::uuid"
+        + " where grant_id=$1::uuid",
+      [fixture.scopeGrant, reservedTeam]);
+    await database.query(
+      "update public.recruiter_team_memberships set team_id=$2::uuid"
+        + " where recruiter_id=$1::uuid",
+      [recruiterId, reservedTeam]);
+    await database.query(
+      "alter table public.direct_entry_scope_grants"
+        + " enable trigger direct_entry_no_vendor_team_scope");
+    await database.query(
+      "alter table public.recruiter_team_memberships"
+        + " enable trigger direct_entry_no_vendor_recruiter_team_membership");
+    await expectMigrationFailure(database, baseSql, "42501");
+    await assertTransitionRolledBack(database, fixture, reservedTeam);
+    await database.query(
+      "update public.direct_entry_scope_grants set team_id=$2::uuid"
+        + " where grant_id=$1::uuid",
+      [fixture.scopeGrant, fixture.team]);
+    await database.query(
+      "update public.recruiter_team_memberships set team_id=$2::uuid"
+        + " where recruiter_id=$1::uuid",
+      [recruiterId, fixture.team]);
+
+    for (const table of [
+      "direct_entry_team_leader_assignments",
+      "direct_entry_capability_grants",
+      "direct_entry_team_leader_revisions",
+      "direct_entry_audit_events",
+    ]) {
+      await expectMigrationFailure(database, injectTransitionFailure(baseSql, table), "P0001");
+      await assertTransitionRolledBack(database, fixture);
+    }
+
+    for (const conflict of ["same-team", "cross-team"]) {
+      await expectMigrationFailure(database,
+        injectTransitionConflict(baseSql, fixture, otherTeam, conflict), "42501");
+      await assertTransitionRolledBack(database, fixture);
+    }
+
+    const beforeCorruption = injectTransitionAssignmentConflict(baseSql, otherTeam);
+    await expectMigrationFailure(database, beforeCorruption, "55000");
+    await assertTransitionRolledBack(database, fixture);
+
+    const result = await database.exec(mutateMigration(state.migrations.at(-1).sql));
+    assert.ok(result);
+    const transitionDate = (await database.query(
+      "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+    await assertTransitionFixtures(database, [fixture], transitionDate);
+  } finally {
+    await database.close();
+  }
 }
 
 let db;
 let today;
 let nextActorId = 50;
 let reservedTeamId;
-
 async function addActor(id, { enabled = true, capabilities = [], scopes = [] } = {}) {
   const actor = { auth: uuid(1000 + id), app: uuid(2000 + id) };
   await db.query("insert into auth.users(id) values ($1::uuid)", [actor.auth]);
@@ -478,13 +1155,17 @@ async function dropPostconditionProbe() {
 }
 
 test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read lifecycle", async () => {
-  const state = await createDatabase();
+  const state = await createDatabase(3);
   db = state.db;
   const names = state.names;
   const inventoryBefore = state.baseline;
   const allMigrations = state.migrations;
   assert.equal(names.length, 71);
   assert.equal(names.at(-1), MIGRATION_71);
+  today = (await db.query(
+    "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+  assert.equal(state.transitionFixtures.length, 3);
+  await assertTransitionFixtures(db, state.transitionFixtures, today);
 
   await addTeam(TEAM_A, "TEAM_A");
   await addTeam(TEAM_B, "TEAM_B");
@@ -528,8 +1209,6 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const unmapped = { auth: uuid(900000), app: uuid(900001) };
   await db.query("insert into auth.users(id) values ($1::uuid)", [unmapped.auth]);
 
-  today = (await db.query(
-    "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
   const initialLeader = await freshCandidate({ position: "TEAM_LEADER" });
   const initialKey = "designate-51";
   const initial = await withRole("service_role", () => designate(fullAdmin, TEAM_A, initialLeader, {
@@ -643,7 +1322,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     [catalog.auth, catalog.app, TEAM_B])).rows[0].result;
   assert.ok(historyRead.leaders.some((row) => row.valid_from === FAR_FUTURE
     && row.valid_to === FAR_FUTURE && row.state === "HISTORY"));
-  assert.equal((await db.query(
+  assert.deepEqual((await db.query(
     "select public.direct_entry_list_team_leaders_scheduled($1::uuid,$2::uuid,$3::uuid) as result",
     [catalog.auth, catalog.app, TEAM_B])).rows[0].result.total, 0);
   assert.equal((await db.query(
@@ -1046,6 +1725,40 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   assert.equal(internal.public_exec || internal.anon_exec
     || internal.authenticated_exec || internal.service_exec, false);
   assert.equal(internal.source.includes("direct_entry_system_vendor_team_id"), false);
+  const transition = functionRows.find(
+    (row) => row.proname === "direct_entry_transition_legacy_team_leaders");
+  assert.ok(transition);
+  assert.equal(transition.prosecdef, true);
+  assert.equal(transition.config, "search_path=pg_catalog, public");
+  assert.equal(transition.public_exec || transition.anon_exec
+    || transition.authenticated_exec || transition.service_exec, false);
+  assert.equal(transition.source.includes("personnel_position"), false);
+  assert.equal(transition.source.includes("direct_entry_seed_team_scope_grants"), false);
+  assert.deepEqual((await db.query(
+    "select to_regprocedure('public.direct_entry_seed_team_scope_grants()') is not null as exists,"
+      + " has_function_privilege('service_role',"
+      + " 'public.direct_entry_seed_team_scope_grants()'::regprocedure,'EXECUTE') as service_exec,"
+      + " has_function_privilege('anon',"
+      + " 'public.direct_entry_seed_team_scope_grants()'::regprocedure,'EXECUTE') as anon_exec,"
+      + " has_function_privilege('authenticated',"
+      + " 'public.direct_entry_seed_team_scope_grants()'::regprocedure,'EXECUTE') as authenticated_exec,"
+      + " has_function_privilege('public',"
+      + " 'public.direct_entry_seed_team_scope_grants()'::regprocedure,'EXECUTE') as public_exec",
+  )).rows[0], {
+    exists: true, service_exec: false, anon_exec: false,
+    authenticated_exec: false, public_exec: false,
+  });
+  assert.equal((allMigrations.at(-1).sql.match(
+    /^\s*select public\.direct_entry_transition_legacy_team_leaders\(/gm) ?? []).length, 1);
+  assert.doesNotMatch(allMigrations.at(-1).sql,
+    /select\s+public\.direct_entry_seed_team_scope_grants\s*\(/i);
+  const seedMigrationIndex = names.findIndex((name) => name === "20261008080000_p3_w05a_actor_scoped_reporting.sql");
+  assert.ok(seedMigrationIndex >= 0);
+  for (const migration of allMigrations.slice(seedMigrationIndex + 1)) {
+    assert.doesNotMatch(migration.sql,
+      /^\s*select\s+public\.direct_entry_seed_team_scope_grants\s*\(/im,
+      `no later migration calls the legacy seed: ${migration.name}`);
+  }
   assert.equal(functionRows.filter((row) => row.proname.startsWith("direct_entry_assert_team_leader")).length, 1);
   assert.equal(await db.query(
     "select to_regprocedure('public.direct_entry_assert_team_leader_authority(uuid,uuid,uuid)')"
@@ -1092,19 +1805,20 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     "direct_entry_team_leader_marker",
     "direct_entry_team_leader_projection",
     "direct_entry_team_leader_snapshot",
+    "direct_entry_transition_legacy_team_leaders",
   ]);
   const inventoryAfter = await inventory(db);
   assert.deepEqual(
     [inventoryAfter.total, inventoryAfter.service, inventoryAfter.internal],
-    [172, 81, 91],
+    [173, 80, 93],
   );
   assert.deepEqual(
     [inventoryAfter.total - inventoryBefore.total,
       inventoryAfter.service - inventoryBefore.service,
       inventoryAfter.internal - inventoryBefore.internal],
-    [10, 5, 5],
+    [11, 4, 7],
   );
-  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total}/${inventoryBefore.service}/${inventoryBefore.internal}; #71 ${inventoryAfter.total}/${inventoryAfter.service}/${inventoryAfter.internal}. A1b2 adds one internal helper and two service-role RPCs.`);
+  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total}/${inventoryBefore.service}/${inventoryBefore.internal}; #71 ${inventoryAfter.total}/${inventoryAfter.service}/${inventoryAfter.internal}. A1b2 adds one internal helper and two service-role RPCs; A1b3 adds one internal transition helper.`);
 
   const roleDeniedTarget = await freshCandidate({ memberships: [TEAM_C] });
   await withRole("authenticated", async () => {
@@ -1113,4 +1827,5 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     }), "42501");
   });
   await db.close();
+  await assertTransitionAtomicity();
 });
