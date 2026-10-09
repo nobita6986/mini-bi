@@ -796,10 +796,10 @@ test("the three reads are disjoint, bounded and exactly projected", async () => 
   }
 });
 
-test("only the membership interval accepts a zero-length marker; scope and capability stay strict", async () => {
-  // FIX R1: #70 must not open the scope/capability schema ahead of W01D. A raw
-  // zero-length scope or capability interval is still rejected with 23514 exactly as
-  // it was before #70, so the authority predicates keep their pre-W01C-B semantics.
+test("zero-length markers stay guarded after W01D widens scope and capability", async () => {
+  // W01D (#71) widens the two grant interval CHECKs from ">" to ">=" and adds the
+  // marker trigger, so a raw zero-length scope/capability write is still rejected
+  // with 23514 exactly as it was before #70 — now by the marker guard, not the CHECK.
   const markerActor = { auth: "10000000-0000-4000-8000-0000000000d9",
     app: "20000000-0000-4000-8000-0000000000d9" };
   await addActor(db, { ...markerActor, display_name: "Synthetic Marker Actor" });
@@ -821,14 +821,13 @@ test("only the membership interval accepts a zero-length marker; scope and capab
     + " 'direct_entry_capability_grants_check')")).rows;
   assert.equal(definitions.length, 2);
   for (const row of definitions) {
-    assert.equal(row.definition.includes(">="), false, row.conname + " must stay strict");
-    assert.equal(row.definition.includes(">"), true, row.conname);
+    assert.equal(row.definition.includes(">="), true, row.conname + " is widened by W01D #71");
   }
   const membershipCheck = (await db.query(
     "select pg_get_constraintdef(c.oid) as definition from pg_constraint c"
     + " where c.conname = 'recruiter_team_memberships_check'")).rows[0].definition;
   assert.equal(membershipCheck.includes(">="), true,
-    "the membership interval is the one CHECK #70 relaxes");
+    "the membership interval keeps the W01C-B >= rule");
 
   // The pre-existing effective predicate still authorises a normal operator, so the
   // scope/capability behaviour is unchanged rather than merely un-tested.
