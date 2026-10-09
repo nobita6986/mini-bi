@@ -44,7 +44,7 @@ export type PersonnelCatalogRepository = {
     Promise<PersonnelCatalogOutcome<AdminPersonnel>>;
   createPersonnel(input: AdminActorRef & {
     expected_version: number; personnel_code: string; display_name: string;
-    personnel_position: PersonnelPosition; valid_from: string | null;
+    personnel_position: PersonnelPosition; valid_from: string;
     reason: string; idempotency_key: string;
   }): Promise<PersonnelCatalogOutcome<AdminPersonnelCreateResult>>;
   updatePersonnel(input: AdminActorRef & {
