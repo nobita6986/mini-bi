@@ -494,19 +494,22 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   const fullInventory = await inventory(db);
   const addedNames = [...allInventoryNames].filter((name) => !oldInventoryNames.has(name)).sort();
   assert.deepEqual(addedNames, [
+    "direct_entry_apply_team_leader_mutation",
     "direct_entry_assert_team_leader_read_authority",
+    "direct_entry_designate_team_leader",
     "direct_entry_list_team_leader_history",
     "direct_entry_list_team_leaders_current",
     "direct_entry_list_team_leaders_scheduled",
+    "direct_entry_revoke_team_leader",
     "direct_entry_team_leader_marker",
     "direct_entry_team_leader_projection",
     "direct_entry_team_leader_snapshot",
   ]);
-  assert.equal(fullInventory.total - inventoryBefore.total, 7);
-  assert.equal(fullInventory.service - inventoryBefore.service, 3);
-  assert.equal(fullInventory.internal - inventoryBefore.internal, 4);
+  assert.equal(fullInventory.total - inventoryBefore.total, 10);
+  assert.equal(fullInventory.service - inventoryBefore.service, 5);
+  assert.equal(fullInventory.internal - inventoryBefore.internal, 5);
   assert.equal(fullInventory.total, fullInventory.service + fullInventory.internal);
-  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total} total / ${inventoryBefore.service} service / ${inventoryBefore.internal} internal; #71 ${fullInventory.total} / ${fullInventory.service} / ${fullInventory.internal}.`);
+  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total} total / ${inventoryBefore.service} service / ${inventoryBefore.internal} internal; #71 ${fullInventory.total} / ${fullInventory.service} / ${fullInventory.internal} (A1b2 adds 1 internal helper and 2 service-role RPCs).`);
 
   db.close();
 });

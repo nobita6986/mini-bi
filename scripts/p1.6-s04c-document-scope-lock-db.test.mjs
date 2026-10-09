@@ -194,8 +194,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // P3.1-W01D-A1a (#71) adds three internal helpers (the leader marker guard,
   // the fixed eight-key leader snapshot and the bounded leader projection).
   // A1b1 adds one internal read-authority resolver and three service-role-only
-  // current/scheduled/history reads. The measured inventory is 169 total,
-  // 79 service-role executable and 90 internal; nothing is exposed to anon/authenticated.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [169, 79, 90]);
+  // current/scheduled/history reads and two leader write RPCs. The measured
+  // inventory is 172 total, 81 service-role executable and 91 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [172, 81, 91]);
   await db.close();
 });

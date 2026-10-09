@@ -642,11 +642,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // P3.1-W01D-A1a (#71) adds three internal helpers (the leader marker guard,
     // the fixed eight-key leader snapshot and the bounded leader projection).
     // A1b1 adds the internal leader-read resolver plus three service-role-only
-    // leader reads. The final inventory is 169 total / 79 service-role / 90 internal.
+    // leader reads and two writes. The measured inventory is 172 total / 81 service-role / 91 internal.
     assert.deepEqual(result.rows[0], {
-      total: 169,
-      service_role: 79,
-      internal: 90,
+      total: 172,
+      service_role: 81,
+      internal: 91,
       exposed_internal: 0,
     });
   } finally {

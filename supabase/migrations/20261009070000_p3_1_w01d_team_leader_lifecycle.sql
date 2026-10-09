@@ -842,6 +842,552 @@ grant execute on function public.direct_entry_list_team_leader_history(uuid, uui
 comment on function public.direct_entry_list_team_leader_history(uuid, uuid, uuid, text, integer, integer) is
   'P3.1-W01D bounded read: historical leader assignments including zero-length cancellation markers. service_role only; catalog operator or own-team leader authority required.';
 
+-- -----------------------------------------------------------------------------
+-- 9. Atomic leader designate/replace and revoke mutations.
+-- -----------------------------------------------------------------------------
+create or replace function public.direct_entry_apply_team_leader_mutation(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid,
+  p_target_leader_app_user_id uuid,
+  p_effective_date date,
+  p_expected_version integer,
+  p_reason text,
+  p_idempotency_key text,
+  p_operation text,
+  p_authority text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_team public.teams;
+  v_old public.direct_entry_team_leader_assignments%rowtype;
+  v_new public.direct_entry_team_leader_assignments%rowtype;
+  v_old_count integer := 0;
+  v_candidate_user_enabled boolean;
+  v_link_count integer;
+  v_verified_link_count integer;
+  v_recruiter_id uuid;
+  v_recruiter_active boolean;
+  v_provider_count integer;
+  v_hrp_provider_count integer;
+  v_membership_count integer;
+  v_matching_membership_count integer;
+  v_scope_count integer;
+  v_capability_count integer;
+  v_scope_grant_id uuid;
+  v_capability_grant_id uuid;
+  v_idempotency_action text;
+  v_prior_hash text;
+  v_change text;
+  v_prior jsonb;
+  v_result jsonb;
+  v_request_hash text;
+  v_reason_id uuid;
+  v_revision_id uuid;
+  v_team_version integer;
+  v_before jsonb;
+  v_after jsonb;
+  v_changed_fields text[] := array[
+    'team_leader_assignment', 'team_scope', 'team_manager_assign'
+  ];
+  v_actor_ids uuid[];
+  v_lock_key text;
+  v_scope_grant_count integer;
+  v_capability_grant_count integer;
+begin
+  if p_operation not in ('designate', 'revoke') then
+    raise exception 'invalid team leader operation' using errcode = '22023';
+  end if;
+  if (p_operation = 'designate') <> (p_target_leader_app_user_id is not null) then
+    raise exception 'target leader does not match operation' using errcode = '22023';
+  end if;
+  if p_team_id is null then
+    raise exception 'team required' using errcode = '22023';
+  end if;
+  if p_effective_date is null then
+    raise exception 'effective date required' using errcode = '22023';
+  end if;
+  if p_expected_version is null or p_expected_version < 1 then
+    raise exception 'expected team version required' using errcode = '22023';
+  end if;
+  if p_reason is null or length(btrim(p_reason)) not between 1 and 4000 then
+    raise exception 'reason required' using errcode = '22023';
+  end if;
+  if p_idempotency_key is null or length(p_idempotency_key) not between 1 and 128 then
+    raise exception 'idempotency key required' using errcode = '22023';
+  end if;
+
+  select t.* into v_team
+    from public.teams t
+   where t.team_id = p_team_id
+   for update;
+  if not found then
+    raise exception 'team not found' using errcode = 'P0002';
+  end if;
+  if v_team.code = '__system_vendor__' then
+    raise exception 'reserved team cannot have a leader' using errcode = '42501';
+  end if;
+
+  v_idempotency_action := case p_operation
+    when 'designate' then 'team_leader_designate'
+    else 'team_leader_revoke'
+  end;
+  v_request_hash := public.direct_entry_payload_hash(jsonb_build_object(
+    'team_id', p_team_id,
+    'target_leader_app_user_id', p_target_leader_app_user_id,
+    'effective_date', p_effective_date,
+    'expected_version', p_expected_version,
+    'reason', p_reason
+  ));
+  select i.request_hash, i.result
+    into v_prior_hash, v_prior
+    from public.direct_entry_rpc_idempotency i
+   where i.app_user_id = p_app_user_id
+     and i.action = v_idempotency_action
+     and i.idempotency_key = p_idempotency_key;
+  if found then
+    if v_prior_hash <> v_request_hash then
+      raise exception 'idempotency key reused with different input' using errcode = '22023';
+    end if;
+    if v_prior is null then
+      raise exception 'completed idempotency result is missing' using errcode = '55000';
+    end if;
+    return v_prior;
+  end if;
+
+  -- The team row is already locked; compare its OCC token before locking any
+  -- leader account/grant rows. The read-only idempotency lookup above preserves
+  -- exact replay semantics for a request whose original version is now stale.
+  if v_team.version <> p_expected_version then
+    raise exception 'team version conflict' using errcode = '40001';
+  end if;
+  if p_operation = 'designate' and not v_team.active then
+    raise exception 'target team is inactive' using errcode = '23514';
+  end if;
+
+  select count(*)::int into v_old_count
+    from public.direct_entry_team_leader_assignments a
+   where a.team_id = p_team_id
+     and (a.valid_to is null or a.valid_to > a.valid_from)
+     and daterange(a.valid_from, a.valid_to, '[)')
+         && daterange(p_effective_date, null, '[)');
+  if v_old_count > 1 then
+    raise exception 'team leader assignment is ambiguous' using errcode = '42501';
+  end if;
+  if v_old_count = 1 then
+    select a.* into v_old
+      from public.direct_entry_team_leader_assignments a
+     where a.team_id = p_team_id
+       and (a.valid_to is null or a.valid_to > a.valid_from)
+       and daterange(a.valid_from, a.valid_to, '[)')
+           && daterange(p_effective_date, null, '[)')
+     order by a.valid_from, a.assignment_id
+     limit 1;
+    if v_old.valid_from > p_effective_date then
+      raise exception 'future team leader must be cancelled at its start date'
+        using errcode = '23514';
+    end if;
+  elsif p_operation = 'revoke' then
+    raise exception 'no leader assignment to revoke' using errcode = '22023';
+  end if;
+  if p_operation = 'designate'
+     and v_old_count = 1
+     and v_old.leader_app_user_id = p_target_leader_app_user_id then
+    raise exception 'leader is already assigned to this team' using errcode = '23514';
+  end if;
+
+  v_actor_ids := array_remove(array[
+    case when v_old_count = 1 then v_old.leader_app_user_id end,
+    p_target_leader_app_user_id
+  ]::uuid[], null);
+
+  -- App-user and grant row locks follow a stable UUID order after the team OCC root.
+  perform u.app_user_id
+    from public.direct_entry_app_users u
+   where u.app_user_id = any(v_actor_ids)
+   order by u.app_user_id
+   for update;
+  if p_operation = 'designate' then
+    select u.enabled into v_candidate_user_enabled
+      from public.direct_entry_app_users u
+     where u.app_user_id = p_target_leader_app_user_id;
+    if not found or not coalesce(v_candidate_user_enabled, false) then
+      raise exception 'target leader account is not enabled' using errcode = '42501';
+    end if;
+  end if;
+  perform s.grant_id
+    from public.direct_entry_scope_grants s
+   where s.app_user_id = any(v_actor_ids)
+     and s.scope_kind = 'team'
+   order by s.app_user_id, s.grant_id
+   for update;
+  perform g.grant_id
+    from public.direct_entry_capability_grants g
+   where g.app_user_id = any(v_actor_ids)
+     and g.capability = 'team_manager_assign'
+   order by g.app_user_id, g.grant_id
+   for update;
+
+  -- Acquire the same interval keys used by the canonical link/scope/capability
+  -- overlap trigger, in stable order, before identity validation or interval writes.
+  for v_lock_key in
+    select distinct key
+      from unnest(array[
+        case when v_old_count = 1 then
+          'capability:' || v_old.leader_app_user_id::text || ':team_manager_assign' end,
+        case when v_old_count = 1 then
+          'scope:' || v_old.leader_app_user_id::text || ':team:' || p_team_id::text end,
+        case when p_operation = 'designate' then
+          'capability:' || p_target_leader_app_user_id::text || ':team_manager_assign' end,
+        case when p_operation = 'designate' then
+          'scope:' || p_target_leader_app_user_id::text || ':team:' || p_team_id::text end,
+        case when p_operation = 'designate' then
+          'recruiter-link:' || p_target_leader_app_user_id::text end
+      ]) as keys(key)
+     where key is not null
+     order by key
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
+  end loop;
+
+  if p_operation = 'designate' then
+    perform l.link_id
+      from public.direct_entry_app_user_recruiter_links l
+     where l.app_user_id = p_target_leader_app_user_id
+     order by l.link_id
+     for update;
+    select count(*)::int,
+           count(*) filter (where l.verified)::int,
+           (array_agg(l.recruiter_id order by l.link_id))[1]
+      into v_link_count, v_verified_link_count, v_recruiter_id
+      from public.direct_entry_app_user_recruiter_links l
+     where l.app_user_id = p_target_leader_app_user_id
+       and l.valid_from <= p_effective_date
+       and (l.valid_to is null or p_effective_date < l.valid_to)
+       and (l.valid_to is null or l.valid_to > l.valid_from);
+    if v_link_count <> 1 or v_verified_link_count <> 1 or v_recruiter_id is null then
+      raise exception 'target leader requires exactly one verified recruiter link'
+        using errcode = '42501';
+    end if;
+
+    select r.active into v_recruiter_active
+      from public.recruiters r
+     where r.recruiter_id = v_recruiter_id
+     for update;
+    if not found or not coalesce(v_recruiter_active, false) then
+      raise exception 'target recruiter is not active' using errcode = '42501';
+    end if;
+
+    for v_lock_key in
+      select key
+        from unnest(array[
+          'provider:' || v_recruiter_id::text,
+          'team-membership:' || v_recruiter_id::text
+        ]) as keys(key)
+       order by key
+    loop
+      perform pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
+    end loop;
+
+    perform m.membership_id
+      from public.recruiter_provider_memberships m
+     where m.recruiter_id = v_recruiter_id
+     order by m.membership_id
+     for update;
+    select count(*)::int,
+           count(*) filter (
+             where m.provider_type = 'hrp' and m.vendor_id is null
+           )::int
+      into v_provider_count, v_hrp_provider_count
+      from public.recruiter_provider_memberships m
+     where m.recruiter_id = v_recruiter_id
+       and m.valid_from <= p_effective_date
+       and (m.valid_to is null or p_effective_date < m.valid_to)
+       and (m.valid_to is null or m.valid_to > m.valid_from);
+    if v_provider_count <> 1 or v_hrp_provider_count <> 1 then
+      raise exception 'target recruiter requires exactly one effective HRP provider'
+        using errcode = '42501';
+    end if;
+
+    perform m.membership_id
+      from public.recruiter_team_memberships m
+     where m.recruiter_id = v_recruiter_id
+     order by m.membership_id
+     for update;
+    select count(*)::int,
+           count(*) filter (where m.team_id = p_team_id)::int
+      into v_membership_count, v_matching_membership_count
+      from public.recruiter_team_memberships m
+     where m.recruiter_id = v_recruiter_id
+       and m.valid_from <= p_effective_date
+       and (m.valid_to is null or p_effective_date < m.valid_to)
+       and (m.valid_to is null or m.valid_to > m.valid_from);
+    if v_membership_count <> 1 or v_matching_membership_count <> 1 then
+      raise exception 'target recruiter must have exactly one effective membership in the target team'
+        using errcode = '42501';
+    end if;
+
+    if exists (
+      select 1
+        from public.direct_entry_team_leader_assignments a
+       where a.leader_app_user_id = p_target_leader_app_user_id
+         and a.team_id <> p_team_id
+         and (a.valid_to is null or a.valid_to > a.valid_from)
+         and daterange(a.valid_from, a.valid_to, '[)')
+             && daterange(p_effective_date, null, '[)')
+    ) then
+      raise exception 'target leader is assigned or scheduled for another team'
+        using errcode = '42501';
+    end if;
+
+    if exists (
+      select 1
+        from public.direct_entry_scope_grants s
+       where s.app_user_id = p_target_leader_app_user_id
+         and s.scope_kind = 'team'
+         and (s.valid_to is null or s.valid_to > s.valid_from)
+         and daterange(s.valid_from, s.valid_to, '[)')
+             && daterange(p_effective_date, null, '[)')
+    ) or exists (
+      select 1
+        from public.direct_entry_capability_grants g
+       where g.app_user_id = p_target_leader_app_user_id
+         and g.capability = 'team_manager_assign'
+         and (g.valid_to is null or g.valid_to > g.valid_from)
+         and daterange(g.valid_from, g.valid_to, '[)')
+             && daterange(p_effective_date, null, '[)')
+    ) then
+      raise exception 'target leader has pre-existing leader authority intervals'
+        using errcode = '42501';
+    end if;
+  end if;
+
+  v_prior := public.direct_entry_idempotency_begin(
+    p_app_user_id, v_idempotency_action, p_idempotency_key, v_request_hash
+  );
+  if v_prior is not null then
+    return v_prior;
+  end if;
+
+  if v_old_count = 1 then
+    perform a.assignment_id
+      from public.direct_entry_team_leader_assignments a
+     where a.assignment_id = v_old.assignment_id
+     for update;
+
+    select count(*)::int, (array_agg(s.grant_id order by s.grant_id))[1]
+      into v_scope_count, v_scope_grant_id
+      from public.direct_entry_scope_grants s
+     where s.app_user_id = v_old.leader_app_user_id
+       and s.scope_kind = 'team'
+       and s.team_id = p_team_id
+       and s.valid_from = v_old.valid_from
+       and s.valid_to is not distinct from v_old.valid_to
+       and (s.valid_to is null or s.valid_to > s.valid_from);
+    select count(*)::int, (array_agg(g.grant_id order by g.grant_id))[1]
+      into v_capability_count, v_capability_grant_id
+      from public.direct_entry_capability_grants g
+     where g.app_user_id = v_old.leader_app_user_id
+       and g.capability = 'team_manager_assign'
+       and g.valid_from = v_old.valid_from
+       and g.valid_to is not distinct from v_old.valid_to
+       and (g.valid_to is null or g.valid_to > g.valid_from);
+    if v_scope_count <> 1 or v_capability_count <> 1 then
+      raise exception 'legacy leader assignment, scope, and capability intervals do not match'
+        using errcode = '42501';
+    end if;
+    if exists (
+      select 1
+        from public.direct_entry_scope_grants s
+       where s.app_user_id = v_old.leader_app_user_id
+         and s.scope_kind = 'team'
+         and (s.valid_to is null or s.valid_to > s.valid_from)
+         and daterange(s.valid_from, s.valid_to, '[)')
+             && daterange(p_effective_date, null, '[)')
+         and s.grant_id <> v_scope_grant_id
+    ) or exists (
+      select 1
+        from public.direct_entry_capability_grants g
+       where g.app_user_id = v_old.leader_app_user_id
+         and g.capability = 'team_manager_assign'
+         and (g.valid_to is null or g.valid_to > g.valid_from)
+         and daterange(g.valid_from, g.valid_to, '[)')
+             && daterange(p_effective_date, null, '[)')
+         and g.grant_id <> v_capability_grant_id
+    ) then
+      raise exception 'outgoing leader has ambiguous future authority intervals'
+        using errcode = '42501';
+    end if;
+  end if;
+
+  if v_old_count = 1 then
+    if p_effective_date = v_old.valid_from then
+      perform set_config('direct_entry.team_leader_marker', 'on', true);
+    end if;
+    update public.direct_entry_team_leader_assignments
+       set valid_to = p_effective_date
+     where assignment_id = v_old.assignment_id;
+    update public.direct_entry_scope_grants
+       set valid_to = p_effective_date
+     where grant_id = v_scope_grant_id;
+    update public.direct_entry_capability_grants
+       set valid_to = p_effective_date
+     where grant_id = v_capability_grant_id;
+  end if;
+
+  if p_operation = 'designate' then
+    insert into public.direct_entry_team_leader_assignments
+      (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
+    values
+      (p_team_id, p_target_leader_app_user_id, v_recruiter_id, p_effective_date)
+    returning * into v_new;
+    insert into public.direct_entry_scope_grants
+      (app_user_id, scope_kind, team_id, valid_from)
+    values
+      (p_target_leader_app_user_id, 'team', p_team_id, p_effective_date);
+    insert into public.direct_entry_capability_grants
+      (app_user_id, capability, valid_from)
+    values
+      (p_target_leader_app_user_id, 'team_manager_assign', p_effective_date);
+    v_change := case when v_old_count = 1 then 'replace' else 'designate' end;
+  else
+    v_new := v_old;
+    v_change := 'revoke';
+  end if;
+
+  update public.teams t
+     set version = t.version + 1
+   where t.team_id = p_team_id
+  returning t.version into v_team_version;
+  if v_team_version is null then
+    raise exception 'team not found' using errcode = 'P0002';
+  end if;
+
+  if v_old_count = 1 then
+    v_before := public.direct_entry_team_leader_snapshot(
+      p_team_id, v_old.leader_app_user_id, v_old.leader_recruiter_id,
+      v_old.valid_from, v_old.valid_to, null, v_team.version, v_change
+    );
+  end if;
+  if p_operation = 'designate' then
+    v_after := public.direct_entry_team_leader_snapshot(
+      p_team_id, v_new.leader_app_user_id, v_new.leader_recruiter_id,
+      v_new.valid_from, v_new.valid_to,
+      case when v_old_count = 1 then v_old.leader_recruiter_id end,
+      v_team_version, v_change
+    );
+  else
+    v_after := public.direct_entry_team_leader_snapshot(
+      p_team_id, v_old.leader_app_user_id, v_old.leader_recruiter_id,
+      v_old.valid_from, p_effective_date, null, v_team_version, v_change
+    );
+  end if;
+
+  v_reason_id := public.direct_entry_reason(p_app_user_id, p_reason);
+  insert into public.direct_entry_team_leader_revisions
+    (team_id, version, actor_user_id, action, before_snapshot, after_snapshot)
+  values
+    (p_team_id, v_team_version, p_app_user_id, v_change, v_before, v_after)
+  returning revision_id into v_revision_id;
+
+  insert into public.direct_entry_audit_events
+    (auth_subject, app_user_id, action, capability, resource_ref, scope_kind,
+     outcome, reason_id, changed_fields, leader_revision_id)
+  values
+    (p_auth_subject, p_app_user_id, 'team_leader_' || v_change, p_authority,
+     p_team_id::text, 'all', 'APPLIED', v_reason_id, v_changed_fields, v_revision_id);
+
+  v_result := jsonb_build_object(
+    'team_id', p_team_id,
+    'assignment_id', v_new.assignment_id,
+    'leader_app_user_id', v_new.leader_app_user_id,
+    'leader_recruiter_id', v_new.leader_recruiter_id,
+    'valid_from', v_new.valid_from,
+    'valid_to', case when p_operation = 'revoke' then p_effective_date else v_new.valid_to end,
+    'version', v_team_version,
+    'revision_id', v_revision_id,
+    'change', v_change
+  );
+  perform public.direct_entry_idempotency_finish(
+    p_app_user_id, v_idempotency_action, p_idempotency_key, v_result
+  );
+  return v_result;
+end;
+$$;
+revoke all on function public.direct_entry_apply_team_leader_mutation(uuid, uuid, uuid, uuid, date, integer, text, text, text, text)
+  from public, anon, authenticated, service_role;
+comment on function public.direct_entry_apply_team_leader_mutation(uuid, uuid, uuid, uuid, date, integer, text, text, text, text) is
+  'P3.1-W01D internal atomic leader lifecycle implementation. Caller supplies only the authority returned directly by the canonical catalog-operator guard; revoked from every role.';
+
+create or replace function public.direct_entry_designate_team_leader(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid,
+  p_leader_app_user_id uuid,
+  p_effective_date date,
+  p_expected_version integer,
+  p_reason text,
+  p_idempotency_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_authority text;
+begin
+  v_authority := public.direct_entry_assert_catalog_operator(p_auth_subject, p_app_user_id);
+  return public.direct_entry_apply_team_leader_mutation(
+    p_auth_subject, p_app_user_id, p_team_id, p_leader_app_user_id,
+    p_effective_date, p_expected_version, p_reason, p_idempotency_key,
+    'designate', v_authority
+  );
+end;
+$$;
+revoke all on function public.direct_entry_designate_team_leader(uuid, uuid, uuid, uuid, date, integer, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_designate_team_leader(uuid, uuid, uuid, uuid, date, integer, text, text)
+  to service_role;
+comment on function public.direct_entry_designate_team_leader(uuid, uuid, uuid, uuid, date, integer, text, text) is
+  'P3.1-W01D service-role mutation: designate or atomically replace a validated HRP team leader, team scope and team_manager_assign capability using team-version OCC, reason, idempotency, revision and immutable audit.';
+
+create or replace function public.direct_entry_revoke_team_leader(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid,
+  p_effective_date date,
+  p_expected_version integer,
+  p_reason text,
+  p_idempotency_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_authority text;
+begin
+  v_authority := public.direct_entry_assert_catalog_operator(p_auth_subject, p_app_user_id);
+  return public.direct_entry_apply_team_leader_mutation(
+    p_auth_subject, p_app_user_id, p_team_id, null,
+    p_effective_date, p_expected_version, p_reason, p_idempotency_key,
+    'revoke', v_authority
+  );
+end;
+$$;
+revoke all on function public.direct_entry_revoke_team_leader(uuid, uuid, uuid, date, integer, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_revoke_team_leader(uuid, uuid, uuid, date, integer, text, text)
+  to service_role;
+comment on function public.direct_entry_revoke_team_leader(uuid, uuid, uuid, date, integer, text, text) is
+  'P3.1-W01D service-role mutation: close the current or scheduled leader, matching team scope and team_manager_assign capability, including on inactive teams, using team-version OCC, reason, idempotency, revision and immutable audit.';
+
 -- Extend the self-check to cover the sole authority resolver and three read RPCs.
 do $$
 declare
@@ -916,6 +1462,76 @@ begin
       end if;
     end if;
   end loop;
+end;
+$$;
+
+do $$
+declare
+  v_signature text;
+  v_source text;
+  v_count integer;
+  v_prosecdef boolean;
+  v_config text;
+  v_public_exec boolean;
+  v_anon_exec boolean;
+  v_authenticated_exec boolean;
+  v_service_exec boolean;
+  v_guard_position integer;
+  v_validation_position integer;
+begin
+  foreach v_signature in array array[
+    'public.direct_entry_apply_team_leader_mutation(uuid,uuid,uuid,uuid,date,integer,text,text,text,text)',
+    'public.direct_entry_designate_team_leader(uuid,uuid,uuid,uuid,date,integer,text,text)',
+    'public.direct_entry_revoke_team_leader(uuid,uuid,uuid,date,integer,text,text)'
+  ] loop
+    select count(*)::int into v_count from pg_proc p where p.oid = v_signature::regprocedure;
+    if v_count <> 1 then
+      raise exception 'missing team-leader mutation function %', v_signature using errcode = '55000';
+    end if;
+    select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), ''),
+           has_function_privilege('public', p.oid, 'EXECUTE'),
+           has_function_privilege('anon', p.oid, 'EXECUTE'),
+           has_function_privilege('authenticated', p.oid, 'EXECUTE'),
+           has_function_privilege('service_role', p.oid, 'EXECUTE'),
+           pg_get_functiondef(p.oid)
+      into v_prosecdef, v_config, v_public_exec, v_anon_exec,
+           v_authenticated_exec, v_service_exec, v_source
+      from pg_proc p where p.oid = v_signature::regprocedure;
+    if not v_prosecdef or v_config <> 'search_path=pg_catalog, public' then
+      raise exception 'team-leader mutation definer/search_path drift: %', v_signature
+        using errcode = '55000';
+    end if;
+    if v_signature = 'public.direct_entry_apply_team_leader_mutation(uuid,uuid,uuid,uuid,date,integer,text,text,text,text)' then
+      if v_public_exec or v_anon_exec or v_authenticated_exec or v_service_exec then
+        raise exception 'internal team-leader mutation must be revoked from every role'
+          using errcode = '55000';
+      end if;
+    else
+      if v_public_exec or v_anon_exec or v_authenticated_exec or not v_service_exec then
+        raise exception 'team-leader mutation RPC must be service-role-only: %', v_signature
+          using errcode = '55000';
+      end if;
+      if v_source not like '%direct_entry_assert_catalog_operator%' then
+        raise exception 'team-leader mutation RPC must call canonical catalog guard: %', v_signature
+          using errcode = '55000';
+      end if;
+      v_guard_position := position('direct_entry_assert_catalog_operator' in v_source);
+      v_validation_position := position('direct_entry_apply_team_leader_mutation' in v_source);
+      if v_guard_position = 0 or v_validation_position = 0
+         or v_guard_position >= v_validation_position then
+        raise exception 'team-leader mutation authorization must precede input validation: %', v_signature
+          using errcode = '55000';
+      end if;
+    end if;
+    if v_source like '%personnel_position%' then
+      raise exception 'team-leader mutation authority must not read personnel_position: %', v_signature
+        using errcode = '55000';
+    end if;
+  end loop;
+
+  if to_regprocedure('public.direct_entry_assert_team_leader_authority(uuid,uuid,uuid)') is not null then
+    raise exception 'second team-leader authority resolver is forbidden' using errcode = '55000';
+  end if;
 end;
 $$;
 
