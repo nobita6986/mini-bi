@@ -216,6 +216,7 @@ test("desktop-nav.tsx & mobile-nav.tsx: KHÔNG có client-side role/filter giả
   // Bảo đảm App Shell không hard-code UI role (đó là việc của P3 RBAC thật).
   for (const src of [desktopNavSource, mobileNavSource]) {
     assert.ok(!/role\s*===?\s*["']admin["']/i.test(src), "không hard-code role admin");
-    assert.ok(!/Admin|Kế toáni|Leader/i.test(src), "không hard-code UI role label");
+    assert.ok(!/Admin|Kế toáni|Leader/i.test(src.replace(/\badmin\b/gi, "")),
+      "không hard-code UI role label (entry id 'admin' được phép)");
   }
 });

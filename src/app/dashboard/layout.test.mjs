@@ -52,10 +52,10 @@ test("dashboard/layout.tsx: truyền actor projection tối thiểu cho AppShell
   assert.equal(/headerActions/.test(codeOnly), false,
     "P3-W06A: dashboard layout KHÔNG truyền headerActions (đã ẩn AI)");
   // P3-W06A Scope A: truyền actor projection tối thiểu vào AppShell.
-  // P3-W06A R1: resolver wrap boi React `cache()` (request-scoped) va nhan
-  // flag `directEntryEnabled` de tranh query thua khi UI off.
+  // Resolver remains request-scoped and resolves the actor for the Admin
+  // entry independently of the Direct Entry UI flag.
   assert.match(dashboardLayout, /import\s*\{[^}]*resolveNavActorForAppShell[^}]*\}\s*from\s*["']@\/lib\/navigation\/resolve-nav-actor/);
-  assert.match(dashboardLayout, /await resolveNavActorForAppShell\(\s*\{\s*directEntryEnabled\s*\}\s*\)/);
+  assert.match(dashboardLayout, /await resolveNavActorForAppShell\(\s*\{\s*directEntryEnabled,\s*adminNavigationEnabled:\s*true,?\s*\}\s*\)/);
   assert.match(dashboardLayout, /actor=\{actor\}/);
 });
 

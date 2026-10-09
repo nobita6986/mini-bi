@@ -21,12 +21,15 @@ import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
  * P3-W06A R1: `resolveNavActorForAppShell` duoc wrap boi React `cache()`
  * (request-scoped) → cung `ActorResolution` voi `DashboardPage` o duoi
  * (page goi cung function `resolveActorForRequest`, cache hit, khong co
- * 2 getUser + 2 RPC). Khi Direct Entry UI flag off, layout tra ve
- * `actor = null` luon (tranh query thua).
+ * 2 getUser + 2 RPC). Admin nav can actor projection ngay ca khi Direct
+ * Entry UI flag off; resolver van bo qua query neu ca hai surface deu off.
  */
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
-  const actor = await resolveNavActorForAppShell({ directEntryEnabled });
+  const actor = await resolveNavActorForAppShell({
+    directEntryEnabled,
+    adminNavigationEnabled: true,
+  });
   return <AppShell actor={actor}>{children}</AppShell>;
 }

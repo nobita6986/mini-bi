@@ -5,7 +5,9 @@
  * Khong nhan actor/capability/scope tu client; API/DB van la authority.
  */
 import type { ActorResolution } from "./direct-entry-v2";
+import type { NavCapabilityPredicate } from "../navigation/registry-capability.ts";
 import {
+  adminAreaNavPredicate,
   projectAdminNavPredicate,
   workerOperationsNavPredicate,
 } from "../navigation/registry-capability.ts";
@@ -17,6 +19,39 @@ export type DirectEntryPageDecision =
   | "TEMPORARY_UNAVAILABLE"
   | "ACCESS_DENIED"
   | "ALLOW";
+
+function decideCapabilityPageAccess(input: {
+  actor: ActorResolution | null;
+  allowed: NavCapabilityPredicate;
+}): DirectEntryPageDecision {
+  const actor = input.actor;
+  if (!actor) return "TEMPORARY_UNAVAILABLE";
+  if (!actor.ok) {
+    if (actor.reason === "UNAUTHENTICATED") return "REDIRECT_LOGIN";
+    if (actor.reason === "ACTOR_MAPPING_MISSING" || actor.reason === "ACTOR_DISABLED") {
+      return "ACCOUNT_UNAVAILABLE";
+    }
+    return "TEMPORARY_UNAVAILABLE";
+  }
+  return input.allowed(actor.actor) ? "ALLOW" : "ACCESS_DENIED";
+}
+
+/** Server page gate for /admin; not coupled to the Direct Entry UI flag. */
+export function decideAdminAreaAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: adminAreaNavPredicate,
+  });
+}
+
+/** Separate direct-URL gate for the implemented Personnel catalog page. */
+export function decidePersonnelCatalogPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideAdminAreaAccess(input);
+}
 
 const ENTRY_CAPABILITIES = ["entry_own", "entry_team", "entry_admin"] as const;
 

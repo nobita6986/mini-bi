@@ -20,10 +20,8 @@
  * page goi `resolveActorForRequest()` de lay `ActorResolution` day du cho
  * route access decision. Ca hai cung share cache key (request-scoped).
  *
- * `resolveNavActorForAppShell` nhan them flag `directEntryEnabled` de
- * tranh query actor khi UI flag off (Direct Entry layout khong can actor
- * cho nav: `filterEntriesForActor` da filter Direct Entry ra, Dashboard
- * capability "any" luon hien).
+ * Dashboard may opt into resolving the minimal nav actor for Admin even if
+ * Direct Entry UI is disabled; direct-entry layouts retain the old skip.
  */
 
 import "server-only";
@@ -66,16 +64,17 @@ export const resolveActorForRequest = cache(
  * khoi projection de giam PII surface (P3-C01 R2 chu truong).
  *
  * - Tra ve `null` neu actor resolution fail (UNAUTHENTICATED, ...) hoac
- *   `directEntryEnabled === false` (tranh query thua khi UI flag off).
+ *   ca Direct Entry va Admin nav deu khong duoc yeu cau.
  * - Tra ve projection neu actor OK.
  * - Cung dung React cache nhu `resolveActorForRequest` de tranh duplicate
  *   getUser + repository resolution.
  */
 export const resolveNavActorForAppShell = cache(
-  async (input: { directEntryEnabled: boolean }): Promise<NavActorProjection | null> => {
-    if (!input.directEntryEnabled) {
-      // P3-W06A R1 yeu cau 9: tranh actor query thua khi UI flag off.
-      // Direct Entry nav entry da bi filter boi flag; Dashboard luon hien.
+  async (input: {
+    directEntryEnabled: boolean;
+    adminNavigationEnabled?: boolean;
+  }): Promise<NavActorProjection | null> => {
+    if (!input.directEntryEnabled && !input.adminNavigationEnabled) {
       return null;
     }
     const actor = await resolveActorForRequest();

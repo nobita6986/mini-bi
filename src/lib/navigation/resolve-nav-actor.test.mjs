@@ -76,22 +76,21 @@ test("Gap1-4: NavActorProjection KHONG chua app_user_id (PII hygiene)", () => {
   assert.ok(/scopes:/.test(typeBody));
 });
 
-test("Gap1-5: resolveNavActorForAppShell nhan flag directEntryEnabled de tranh query thua khi UI off", () => {
+test("Gap1-5: nav actor query khi Direct Entry hoặc Admin navigation cần thiết", () => {
   assert.match(
     resolveNavActor,
-    /resolveNavActorForAppShell\s*=\s*cache\(\s*async\s*\(\s*input:\s*\{\s*directEntryEnabled:\s*boolean\s*\}\s*\)/,
+    /resolveNavActorForAppShell\s*=\s*cache\(\s*async\s*\(\s*input:\s*\{\s*directEntryEnabled:\s*boolean;\s*adminNavigationEnabled\?:\s*boolean;\s*\}\s*\)/,
   );
-  // Phai co branch skip khi !directEntryEnabled.
-  assert.match(resolveNavActor, /if\s*\(\s*!input\.directEntryEnabled\s*\)/);
+  assert.match(resolveNavActor, /if\s*\(\s*!input\.directEntryEnabled\s*&&\s*!input\.adminNavigationEnabled\s*\)/);
   assert.match(resolveNavActor, /return\s+null/);
 });
 
 // ===== Group 2: layout files share same resolver =====
 
-test("Gap1-6: dashboard/layout.tsx goi resolveNavActorForAppShell({directEntryEnabled})", () => {
+test("Gap1-6: dashboard/layout.tsx resolves nav actor for Admin even when Direct Entry UI is off", () => {
   assert.match(
     dashboardLayout,
-    /await resolveNavActorForAppShell\(\s*\{\s*directEntryEnabled\s*\}\s*\)/,
+    /await resolveNavActorForAppShell\(\s*\{\s*directEntryEnabled,\s*adminNavigationEnabled:\s*true,?\s*\}\s*\)/,
   );
 });
 

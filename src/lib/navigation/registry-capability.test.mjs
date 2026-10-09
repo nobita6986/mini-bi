@@ -20,6 +20,9 @@ const {
   decideNavEntryVisibility,
   directEntryNavPredicate,
   adminAuthorityNavPredicate,
+  adminAreaNavPredicate,
+  adminSecurityNavPredicate,
+  catalogOperatorNavPredicate,
   projectAdminNavPredicate,
   workerOperationsAllScopePredicate,
   workerOperationsNavPredicate,
@@ -57,6 +60,21 @@ test("adminAuthorityNavPredicate: phải có đủ 3 capability + scope 'all'", 
     adminAuthorityNavPredicate(makeActor(allCaps, [{ kind: "team", reference: "t" }])),
     false,
   );
+});
+
+test("Admin area: catalog operator OR Full Admin triple + effective all", () => {
+  const full = makeActor(
+    ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+    [{ kind: "all", reference: "all" }],
+  );
+  const accounting = makeActor(["catalog_master_manage"], [{ kind: "all", reference: "all" }]);
+  assert.equal(adminSecurityNavPredicate(full), true);
+  assert.equal(catalogOperatorNavPredicate(accounting), true);
+  assert.equal(adminAreaNavPredicate(full), true);
+  assert.equal(adminAreaNavPredicate(accounting), true);
+  assert.equal(adminAreaNavPredicate(makeActor(["catalog_master_manage"], [{ kind: "team", reference: "t" }])), false);
+  assert.equal(adminAreaNavPredicate(makeActor(["entry_admin"], [{ kind: "all", reference: "all" }])), false);
+  assert.equal(adminAreaNavPredicate(makeActor(["team_manager_assign"], [{ kind: "all", reference: "all" }])), false);
 });
 
 test("F5: projectAdminNavPredicate = entry_admin + all scope, KHONG can 2 token kia", () => {
@@ -222,9 +240,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboa
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // P2.5-W06A: owner (admin authority đủ 3 token) thấy thêm entry Dự án.
+  // Full Admin thấy Admin cùng với các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["dashboard", "direct-entry", "project-operations", "worker-operations"]);
+    ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -238,10 +256,21 @@ test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù 
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
+test("Admin catalog navigation remains available when Direct Entry UI is disabled", () => {
+  const accounting = makeActor(["catalog_master_manage"], [{ kind: "all", reference: "all" }]);
+  const result = filterEntriesForActor({
+    viewport: "desktop",
+    directEntryEnabled: false,
+    actor: accounting,
+    decide: decideFor(accounting, "desktop"),
+  });
+  assert.deepEqual(result.map((entry) => entry.id), ["dashboard", "admin"]);
+});
+
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
-  // P2.5-W06A chỉ THÊM một entry vào registry hiện có; không registry thứ hai.
+  // Admin is added to the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["dashboard", "direct-entry", "project-operations", "worker-operations"]);
+  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============

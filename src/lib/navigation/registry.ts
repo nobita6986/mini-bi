@@ -9,7 +9,7 @@
  * Không phải authorization: `capability` chỉ là metadata, không thay thế RBAC.
  * P3 sẽ thay thế `capability` bằng check thật từ session/role.
  *
- * Hiện tại chỉ render 2 entry (Dashboard, Direct Entry).
+ * Current entries are filtered by viewport, feature availability and actor capability.
  * Pipeline Check (Google Sheets → n8n) đã được dự án loại bỏ và không còn
  * là product feature; route cũ vẫn được redirect server-side về /dashboard.
  */
@@ -19,6 +19,7 @@ import {
   Building2,
   ClipboardList,
   LayoutDashboard,
+  ShieldCheck,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -28,11 +29,13 @@ export type NavStatus = "current" | "planned";
 
 /**
  * Capability metadata cho P3. Hiện tại CHỈ là khai báo tĩnh;
- * filter thật sẽ do P3 thực hiện từ session. Chưa filter ở App Shell.
+ *   predicate thuần lọc theo actor đã resolve.
  *
  * - "any": mọi phiên đều có thể thấy.
  * - "owner" | "finance" | "hrp": token kế thừa từ W04 navigation
  *   (giữ tương thích ngược cho entry dự định mở rộng về sau).
+ * - "admin_area": catalog operator (catalog_master_manage + effective all)
+ *   hoặc Full Admin triple + effective all.
  * - "entry_own" | "entry_team" | "entry_admin": token lấy từ capability set
  *   của Direct Entry (src/lib/contracts/direct-entry-v1.ts). Direct Entry
  *   có thể được truy cập bởi bất kỳ trong ba actor trên, nên metadata
@@ -49,6 +52,7 @@ export type NavCapability =
   | "entry_team"
   | "entry_admin"
   | "project_admin"
+  | "admin_area"
   | "worker_operations";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
@@ -77,7 +81,7 @@ export type NavEntry = {
   /**
    * Capability metadata cho P3 (chưa filter thật).
    * - "any" → ai cũng có.
-   * - token khác → metadata-only; P3 sẽ đối chiếu session.
+   * - token khác → P3 đối chiếu session đã resolve.
    */
   capability: NavCapability;
   /** Visibility cho desktop + mobile. */
@@ -144,6 +148,16 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Users,
     status: "current",
     capability: "worker_operations",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "admin",
+    label: "Quản trị",
+    path: "/admin",
+    description: "Quản lý danh mục nhân sự và các thiết lập quản trị được cấp quyền.",
+    icon: ShieldCheck,
+    status: "current",
+    capability: "admin_area",
     visibility: { desktop: true, mobile: true },
   },
 ];

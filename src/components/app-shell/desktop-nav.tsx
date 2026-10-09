@@ -15,7 +15,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ClipboardList, LayoutDashboard, Users } from "lucide-react";
+import { Building2, ClipboardList, LayoutDashboard, ShieldCheck, Users } from "lucide-react";
 
 import { findEntryByPath } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "direct-entry": ClipboardList,
   "project-operations": Building2,
   "worker-operations": Users,
+  admin: ShieldCheck,
 } as const;
 
 export function DesktopNav({

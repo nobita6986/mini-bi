@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  adminAreaNavPredicate,
+  adminSecurityNavPredicate,
+  catalogOperatorNavPredicate,
+  decideNavEntryVisibility,
+} from "../navigation/registry-capability.ts";
+import { CURRENT_NAV_ENTRIES } from "../navigation/registry.ts";
+import { ADMIN_SECTIONS, visibleAdminSections } from "./admin-navigation.ts";
+
+const fullAdmin = {
+  capabilities: ["entry_admin", "recruiter_master_manage", "team_master_manage"],
+  scopes: [{ kind: "all" }],
+};
+const accountingCatalog = {
+  capabilities: ["catalog_master_manage"],
+  scopes: [{ kind: "all" }],
+};
+
+test("Admin authority predicate: Full Admin and Accounting catalog operator allow", () => {
+  assert.equal(adminSecurityNavPredicate(fullAdmin), true);
+  assert.equal(catalogOperatorNavPredicate(accountingCatalog), true);
+  assert.equal(adminAreaNavPredicate(fullAdmin), true);
+  assert.equal(adminAreaNavPredicate(accountingCatalog), true);
+});
+
+test("Admin authority predicate fails closed without effective all or canonical capability", () => {
+  assert.equal(adminAreaNavPredicate({ capabilities: ["catalog_master_manage"], scopes: [{ kind: "team" }] }), false);
+  assert.equal(adminAreaNavPredicate({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), false);
+  assert.equal(adminAreaNavPredicate({ capabilities: ["team_manager_assign"], scopes: [{ kind: "all" }] }), false);
+  assert.equal(adminAreaNavPredicate({ capabilities: [], scopes: [{ kind: "all" }] }), false);
+});
+
+test("one top-level /admin entry is independently authorized and is not a Direct Entry route", () => {
+  const entries = CURRENT_NAV_ENTRIES.filter((entry) => entry.path === "/admin");
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].id, "admin");
+  assert.equal(entries[0].capability, "admin_area");
+  assert.equal(decideNavEntryVisibility({
+    capabilityKey: entries[0].capability,
+    actor: accountingCatalog,
+    viewport: "desktop",
+    entryVisibleInViewport: true,
+  }), true);
+  assert.equal(decideNavEntryVisibility({
+    capabilityKey: entries[0].capability,
+    actor: null,
+    viewport: "desktop",
+    entryVisibleInViewport: true,
+  }), false);
+});
+
+test("Admin internal navigation exposes only the implemented Personnel section", () => {
+  assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
+    { id: "personnel", href: "/admin/catalog/personnel" },
+  ]);
+  assert.deepEqual(visibleAdminSections(accountingCatalog), ADMIN_SECTIONS);
+  assert.deepEqual(visibleAdminSections({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), []);
+});

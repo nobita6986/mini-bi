@@ -2,7 +2,7 @@
  * P3-W06A — Capability projection cho navigation.
  *
  * Nguyên tắc (P2-P3 R00 §Reuse matrix + P3-C01 §2.1/§2.1a):
- * - Tái sử dụng `CAPABILITIES` từ src/lib/auth/direct-entry-v2.ts (21 token).
+ * - Tái sử dụng `CAPABILITIES` từ src/lib/auth/direct-entry-v2.ts (23 token).
  * - Tái sử dụng `DirectEntryActor` shape từ cùng module (đã được `actorProjection`
  *   trong auth-session-core.ts sanitize trước khi lộ ra client).
  * - Không tạo role engine mới: mỗi entry khai báo `capability` metadata
@@ -11,10 +11,9 @@
  * - Direct Entry nav entry có `capability: "entry_admin"` đại diện cho
  *   "một trong entry_own | entry_team | entry_admin" (registry.ts giải thích).
  *   T1A biến metadata tĩnh đó thành pure predicate resolve từ session thật.
- * - Admin authority rule (P3-C01 §2.1a) là AND của `entry_admin` ∧
- *   `recruiter_master_manage` ∧ `team_master_manage`. Hiện P3 chỉ cần
- *   Direct Entry nav visibility — admin nav entry chưa được đăng ký; nếu
- *   sau này thêm, predicate tương ứng sẽ là adminAuthorityPredicate() ở đây.
+ * - Full Admin authority rule (P3-C01 §2.1a) là AND của `entry_admin` ∧
+ *   `recruiter_master_manage` ∧ `team_master_manage` cùng effective all scope.
+ * - Catalog operator authority yêu cầu `catalog_master_manage` cùng effective all scope.
  *
  * Tách thành file riêng để:
  * - test thuần với `node:test` (registry.ts chỉ phụ thuộc React, file này thuần).
@@ -59,6 +58,18 @@ export const adminAuthorityNavPredicate: NavCapabilityPredicate = (actor) => {
     actor.capabilities.includes(required)
   );
 };
+
+/** Narrow catalog authority shared by Admin and Accounting. */
+export const catalogOperatorNavPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("catalog_master_manage") &&
+  actor.scopes.some((scope) => scope.kind === "all");
+
+/** Security administration remains limited to the canonical Full Admin triple. */
+export const adminSecurityNavPredicate = adminAuthorityNavPredicate;
+
+/** Admin area is available to catalog operators or Full Admin. */
+export const adminAreaNavPredicate: NavCapabilityPredicate = (actor) =>
+  catalogOperatorNavPredicate(actor) || adminSecurityNavPredicate(actor);
 
 /**
  * P2.5-W06A-R1: Project Operations authority chinh xac theo DB W02
@@ -106,6 +117,7 @@ export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
   owner: adminAuthorityNavPredicate,
+  admin_area: adminAreaNavPredicate,
   finance: () => false, // P3 chưa có entry finance; fail-closed.
   hrp: directEntryNavPredicate,
   entry_own: directEntryNavPredicate,

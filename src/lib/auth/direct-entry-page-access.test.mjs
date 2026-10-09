@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decideDirectEntryPageAccess } from "./direct-entry-page-access.ts";
+import {
+  decideAdminAreaAccess,
+  decideDirectEntryPageAccess,
+  decidePersonnelCatalogPageAccess,
+} from "./direct-entry-page-access.ts";
 
 function actor(capabilities) {
   return {
@@ -58,5 +62,36 @@ test("output union la gioi han va exhaustive", () => {
       "NOT_FOUND", "REDIRECT_LOGIN", "ACCOUNT_UNAVAILABLE",
       "TEMPORARY_UNAVAILABLE", "ACCESS_DENIED", "ALLOW",
     ].includes(value), value);
+  }
+});
+
+test("Admin route decisions use all-scope catalog operator OR canonical Full Admin", () => {
+  const fullAdmin = {
+    ...actor(["entry_admin", "recruiter_master_manage", "team_master_manage"]),
+    actor: {
+      ...actor(["entry_admin", "recruiter_master_manage", "team_master_manage"]).actor,
+      scopes: [{ kind: "all", reference: "all", valid_from: "2026-01-01", valid_to: null }],
+    },
+  };
+  const accounting = {
+    ...actor(["catalog_master_manage"]),
+    actor: {
+      ...actor(["catalog_master_manage"]).actor,
+      scopes: [{ kind: "all", reference: "all", valid_from: "2026-01-01", valid_to: null }],
+    },
+  };
+  for (const decide of [decideAdminAreaAccess, decidePersonnelCatalogPageAccess]) {
+    assert.equal(decide({ actor: fullAdmin }), "ALLOW");
+    assert.equal(decide({ actor: accounting }), "ALLOW");
+    assert.equal(decide({ actor: actor(["catalog_master_manage"]) }), "ACCESS_DENIED");
+    assert.equal(decide({ actor: actor(["entry_admin"]) }), "ACCESS_DENIED");
+    assert.equal(decide({ actor: actor(["team_manager_assign"]) }), "ACCESS_DENIED");
+    assert.equal(decide({ actor: actor(["entry_own"]) }), "ACCESS_DENIED");
+    assert.equal(decide({ actor: actor(["entry_team"]) }), "ACCESS_DENIED");
+    assert.equal(decide({ actor: actor(["change_request_create"]) }), "ACCESS_DENIED");
+    assert.equal(decide({ actor: { ok: false, reason: "ACTOR_DISABLED" } }), "ACCOUNT_UNAVAILABLE");
+    assert.equal(decide({ actor: { ok: false, reason: "ACTOR_MAPPING_MISSING" } }), "ACCOUNT_UNAVAILABLE");
+    assert.equal(decide({ actor: { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" } }), "TEMPORARY_UNAVAILABLE");
+    assert.equal(decide({ actor: { ok: false, reason: "AMBIGUOUS_RECRUITER_LINK" } }), "TEMPORARY_UNAVAILABLE");
   }
 });
