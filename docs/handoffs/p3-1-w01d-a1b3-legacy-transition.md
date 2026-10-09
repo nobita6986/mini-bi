@@ -12,6 +12,8 @@ Only after the full candidate set passes validation does the transition lock eac
 
 Each transitioned team receives one version bump, one fixed eight-key revision with action/change `transition`, and one system migration audit event with null human actor, action `team_leader_legacy_transition`, outcome `APPLIED`, capability `team_manager_assign`, scope kind `team`, and only the opaque team reference. No user identity or PII is written to the audit event.
 
+The transition preserves the legacy `team` scope, so its audit `changed_fields` contains only `team_leader_assignment` and `team_manager_assign`; it does not claim that the scope changed.
+
 Runtime postconditions check assignment/scope/capability cardinality and date alignment, the unchanged legacy scope row, canonical read-resolver acceptance, zero scope-only and capability-only authority, and no actor leading multiple teams or team having multiple leaders. All failures raise a generic fail-closed error in the same migration transaction. A replay sees an empty inventory and creates no assignment, capability, revision, audit event, or version bump.
 
 ## Evidence
@@ -21,7 +23,7 @@ Runtime postconditions check assignment/scope/capability cardinality and date al
 - Invalid/ambiguous links, provider identities, memberships, teams, scopes and leader assignments abort the complete transition. Failure injection at assignment, capability, revision and audit writes leaves zero residue; invalid candidate tests also verify the legacy scope and all other persistent state remain unchanged.
 - The existing `direct_entry_seed_team_scope_grants()` function remains present and is not dropped. Migration #71 revokes `EXECUTE` from `public`, `anon`, `authenticated` and `service_role`; its closing self-check verifies presence and the complete revoked ACL. No later migration or source test calls the legacy seed.
 - The migration helper is internal `SECURITY DEFINER`, pins `search_path = pg_catalog, public`, is revoked from all roles, and does not read `personnel_position`. Migration #71 invokes it once with the canonical authorization date.
-- Measured Direct Entry inventory: #70 **162 total / 76 service-role executable / 86 internal**; #71 **173 / 80 / 93**. A1b1 adds one internal read resolver and three service-role read RPCs; A1b2 adds one internal mutation helper and two service-role write RPCs; A1b3 adds one internal transition helper. Revoking the legacy seed's service-role grant moves that existing function from the service-role inventory to the internal inventory. The migration ledger remains **71**; there is no #72.
+- Measured Direct Entry inventory before the A1b3-R1 candidate addition: #70 **162 total / 76 service-role executable / 86 internal**; A1b3 original #71 **173 / 80 / 93**. See the R1 delta handoff for the measured candidate-RPC inventory. The migration ledger remains **71**; there is no #72.
 - Migrations #1–#70 are byte-identical to the base. Migration #71 SHA-256 before and after the mutation probes: `85A71FA4CAF541F1E0AF8045F5201FD68078B3A9FA8FBFF8AAB555D2DE0F6D7A` (identical).
 
 ## Mutation sensitivity

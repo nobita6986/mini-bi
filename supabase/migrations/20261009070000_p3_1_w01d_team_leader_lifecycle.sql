@@ -612,7 +612,7 @@ begin
   select count(*)::int into v_total
     from public.direct_entry_team_leader_assignments a
     join public.teams t on t.team_id = a.team_id
-    join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+    join public.recruiters r on r.recruiter_id = a.leader_recruiter_id
    where t.code <> '__system_vendor__'
      and a.valid_from <= public.direct_entry_authorization_date()
      and (a.valid_to is null or public.direct_entry_authorization_date() < a.valid_to)
@@ -623,15 +623,15 @@ begin
        v_search is null
        or t.display_name ilike '%' || v_search || '%'
        or t.code ilike '%' || v_search || '%'
-       or u.display_name ilike '%' || v_search || '%'
+       or r.display_name ilike '%' || v_search || '%'
      );
 
   select coalesce(jsonb_agg(entry.projection), '[]'::jsonb) into v_leaders
     from (
-      select public.direct_entry_team_leader_projection(a, t.display_name, u.display_name) as projection
+      select public.direct_entry_team_leader_projection(a, t.display_name, r.display_name) as projection
         from public.direct_entry_team_leader_assignments a
         join public.teams t on t.team_id = a.team_id
-        join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+        join public.recruiters r on r.recruiter_id = a.leader_recruiter_id
        where t.code <> '__system_vendor__'
          and a.valid_from <= public.direct_entry_authorization_date()
          and (a.valid_to is null or public.direct_entry_authorization_date() < a.valid_to)
@@ -642,7 +642,7 @@ begin
            v_search is null
            or t.display_name ilike '%' || v_search || '%'
            or t.code ilike '%' || v_search || '%'
-           or u.display_name ilike '%' || v_search || '%'
+           or r.display_name ilike '%' || v_search || '%'
          )
        order by t.display_name, a.assignment_id
        limit v_page_size offset (v_page - 1) * v_page_size
@@ -699,7 +699,7 @@ begin
   select count(*)::int into v_total
     from public.direct_entry_team_leader_assignments a
     join public.teams t on t.team_id = a.team_id
-    join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+    join public.recruiters r on r.recruiter_id = a.leader_recruiter_id
    where t.code <> '__system_vendor__'
      and a.valid_from > public.direct_entry_authorization_date()
      and (a.valid_to is null or a.valid_to > a.valid_from)
@@ -709,15 +709,15 @@ begin
        v_search is null
        or t.display_name ilike '%' || v_search || '%'
        or t.code ilike '%' || v_search || '%'
-       or u.display_name ilike '%' || v_search || '%'
+       or r.display_name ilike '%' || v_search || '%'
      );
 
   select coalesce(jsonb_agg(entry.projection), '[]'::jsonb) into v_leaders
     from (
-      select public.direct_entry_team_leader_projection(a, t.display_name, u.display_name) as projection
+      select public.direct_entry_team_leader_projection(a, t.display_name, r.display_name) as projection
         from public.direct_entry_team_leader_assignments a
         join public.teams t on t.team_id = a.team_id
-        join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+        join public.recruiters r on r.recruiter_id = a.leader_recruiter_id
        where t.code <> '__system_vendor__'
          and a.valid_from > public.direct_entry_authorization_date()
          and (a.valid_to is null or a.valid_to > a.valid_from)
@@ -727,7 +727,7 @@ begin
            v_search is null
            or t.display_name ilike '%' || v_search || '%'
            or t.code ilike '%' || v_search || '%'
-           or u.display_name ilike '%' || v_search || '%'
+           or r.display_name ilike '%' || v_search || '%'
          )
        order by a.valid_from, a.assignment_id
        limit v_page_size offset (v_page - 1) * v_page_size
@@ -784,7 +784,7 @@ begin
   select count(*)::int into v_total
     from public.direct_entry_team_leader_assignments a
     join public.teams t on t.team_id = a.team_id
-    join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+    join public.recruiters r on r.recruiter_id = a.leader_recruiter_id
    where t.code <> '__system_vendor__'
      and (
        a.valid_to = a.valid_from
@@ -796,15 +796,15 @@ begin
        v_search is null
        or t.display_name ilike '%' || v_search || '%'
        or t.code ilike '%' || v_search || '%'
-       or u.display_name ilike '%' || v_search || '%'
+       or r.display_name ilike '%' || v_search || '%'
      );
 
   select coalesce(jsonb_agg(entry.projection), '[]'::jsonb) into v_leaders
     from (
-      select public.direct_entry_team_leader_projection(a, t.display_name, u.display_name) as projection
+      select public.direct_entry_team_leader_projection(a, t.display_name, r.display_name) as projection
         from public.direct_entry_team_leader_assignments a
         join public.teams t on t.team_id = a.team_id
-        join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+        join public.recruiters r on r.recruiter_id = a.leader_recruiter_id
        where t.code <> '__system_vendor__'
          and (
            a.valid_to = a.valid_from
@@ -816,7 +816,7 @@ begin
            v_search is null
            or t.display_name ilike '%' || v_search || '%'
            or t.code ilike '%' || v_search || '%'
-           or u.display_name ilike '%' || v_search || '%'
+           or r.display_name ilike '%' || v_search || '%'
          )
        order by a.valid_from desc, a.assignment_id desc
        limit v_page_size offset (v_page - 1) * v_page_size
@@ -837,6 +837,151 @@ grant execute on function public.direct_entry_list_team_leader_history(uuid, uui
   to service_role;
 comment on function public.direct_entry_list_team_leader_history(uuid, uuid, uuid, text, integer, integer) is
   'P3.1-W01D bounded read: historical leader assignments including zero-length cancellation markers. service_role only; catalog operator or own-team leader authority required.';
+
+create or replace function public.direct_entry_list_team_leader_candidates(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid,
+  p_search text default null,
+  p_page integer default 1,
+  p_page_size integer default 25
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_today date := public.direct_entry_authorization_date();
+  v_search text;
+  v_page integer := coalesce(p_page, 1);
+  v_page_size integer := coalesce(p_page_size, 25);
+  v_total integer;
+  v_candidates jsonb;
+begin
+  perform public.direct_entry_assert_catalog_operator(p_auth_subject, p_app_user_id);
+
+  if p_team_id is null or not exists (
+    select 1 from public.teams t
+     where t.team_id = p_team_id
+       and t.active
+       and t.code <> '__system_vendor__'
+  ) then
+    raise exception 'team leader candidates unavailable' using errcode = 'P0002';
+  end if;
+  if p_search is not null and length(btrim(p_search)) > 256 then
+    raise exception 'invalid team leader candidate search' using errcode = '22023';
+  end if;
+  if v_page < 1 or v_page > 1000 then
+    raise exception 'invalid page' using errcode = '22023';
+  end if;
+  if v_page_size < 1 or v_page_size > 100 then
+    raise exception 'invalid page size' using errcode = '22023';
+  end if;
+  v_search := nullif(btrim(coalesce(p_search, '')), '');
+
+  with eligible as (
+    select u.app_user_id, links.recruiter_id, r.display_name, r.personnel_code
+      from public.direct_entry_app_users u
+      cross join lateral (
+        select count(*)::int as link_count,
+               count(*) filter (where l.verified)::int as verified_link_count,
+               (array_agg(l.recruiter_id order by l.link_id)
+                 filter (where l.verified))[1] as recruiter_id
+          from public.direct_entry_app_user_recruiter_links l
+         where l.app_user_id = u.app_user_id
+           and l.valid_from <= v_today
+           and (l.valid_to is null or v_today < l.valid_to)
+           and (l.valid_to is null or l.valid_to > l.valid_from)
+      ) links
+      join public.recruiters r on r.recruiter_id = links.recruiter_id
+      cross join lateral (
+        select count(*)::int as provider_count,
+               count(*) filter (
+                 where m.provider_type = 'hrp' and m.vendor_id is null
+               )::int as hrp_count
+          from public.recruiter_provider_memberships m
+         where m.recruiter_id = r.recruiter_id
+           and m.valid_from <= v_today
+           and (m.valid_to is null or v_today < m.valid_to)
+           and (m.valid_to is null or m.valid_to > m.valid_from)
+      ) providers
+      cross join lateral (
+        select count(*)::int as membership_count,
+               count(*) filter (where m.team_id = p_team_id)::int as target_count
+          from public.recruiter_team_memberships m
+         where m.recruiter_id = r.recruiter_id
+           and m.valid_from <= v_today
+           and (m.valid_to is null or v_today < m.valid_to)
+           and (m.valid_to is null or m.valid_to > m.valid_from)
+      ) memberships
+     where u.enabled
+       and r.active
+       and links.link_count = 1
+       and links.verified_link_count = 1
+       and providers.provider_count = 1
+       and providers.hrp_count = 1
+       and memberships.membership_count = 1
+       and memberships.target_count = 1
+       and not exists (
+         select 1 from public.direct_entry_team_leader_assignments a
+          where a.leader_app_user_id = u.app_user_id
+            and (a.valid_to is null or a.valid_to > a.valid_from)
+            and daterange(a.valid_from, a.valid_to, '[)')
+                && daterange(v_today, null, '[)')
+       )
+       and not exists (
+         select 1 from public.direct_entry_scope_grants s
+          where s.app_user_id = u.app_user_id
+            and s.scope_kind = 'team'
+            and (s.valid_to is null or s.valid_to > s.valid_from)
+            and daterange(s.valid_from, s.valid_to, '[)')
+                && daterange(v_today, null, '[)')
+       )
+       and not exists (
+         select 1 from public.direct_entry_capability_grants g
+          where g.app_user_id = u.app_user_id
+            and g.capability = 'team_manager_assign'
+            and (g.valid_to is null or g.valid_to > g.valid_from)
+            and daterange(g.valid_from, g.valid_to, '[)')
+                && daterange(v_today, null, '[)')
+       )
+  ), filtered as (
+    select * from eligible
+     where v_search is null
+        or display_name ilike '%' || v_search || '%'
+        or coalesce(personnel_code, '') ilike '%' || v_search || '%'
+  ), page_rows as (
+    select * from filtered
+     order by display_name, app_user_id
+     limit v_page_size offset (v_page - 1) * v_page_size
+  )
+  select (select count(*)::int from filtered),
+         coalesce((
+           select jsonb_agg(jsonb_build_object(
+             'app_user_id', app_user_id,
+             'display_name', display_name,
+             'personnel_code', personnel_code
+           ) order by display_name, app_user_id)
+             from page_rows
+         ), '[]'::jsonb)
+    into v_total, v_candidates;
+
+  return jsonb_build_object(
+    'authorization_date', v_today,
+    'page', v_page,
+    'page_size', v_page_size,
+    'total', v_total,
+    'candidates', v_candidates
+  );
+end;
+$$;
+revoke all on function public.direct_entry_list_team_leader_candidates(uuid, uuid, uuid, text, integer, integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_list_team_leader_candidates(uuid, uuid, uuid, text, integer, integer)
+  to service_role;
+comment on function public.direct_entry_list_team_leader_candidates(uuid, uuid, uuid, text, integer, integer) is
+  'P3.1-W01D bounded catalog-operator read for eligible team-leader candidates. Returns only app_user_id, display_name and personnel_code; service_role only.';
 
 -- -----------------------------------------------------------------------------
 -- 9. Atomic leader designate/replace and revoke mutations.
@@ -1886,7 +2031,7 @@ begin
     values
       (null, null, 'team_leader_legacy_transition', 'team_manager_assign',
        v_candidate.team_id::text, 'team', v_candidate.team_id, 'APPLIED', null,
-       array['team_leader_assignment', 'team_scope', 'team_manager_assign'],
+       array['team_leader_assignment', 'team_manager_assign'],
        v_revision_id);
     end loop;
   else
@@ -2153,6 +2298,68 @@ begin
     raise exception 'legacy team-scope seed must remain present and non-executable'
       using errcode = '55000';
   end if;
+end;
+$$;
+
+do $$
+declare
+  v_signature regprocedure :=
+    'public.direct_entry_list_team_leader_candidates(uuid,uuid,uuid,text,integer,integer)'::regprocedure;
+  v_source text;
+  v_prosecdef boolean;
+  v_config text;
+  v_guard_position integer;
+  v_validation_position integer;
+  v_read_signature regprocedure;
+  v_read_source text;
+begin
+  select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), ''),
+         pg_get_functiondef(p.oid)
+    into v_prosecdef, v_config, v_source
+    from pg_proc p
+   where p.oid = v_signature;
+  v_guard_position := position('direct_entry_assert_catalog_operator' in v_source);
+  v_validation_position := position('if p_team_id is null' in v_source);
+  if v_source is null
+     or not v_prosecdef
+     or v_config <> 'search_path=pg_catalog, public'
+     or has_function_privilege('public', v_signature, 'EXECUTE')
+     or has_function_privilege('anon', v_signature, 'EXECUTE')
+     or has_function_privilege('authenticated', v_signature, 'EXECUTE')
+     or not has_function_privilege('service_role', v_signature, 'EXECUTE')
+     or v_guard_position = 0
+     or v_validation_position = 0
+     or v_guard_position >= v_validation_position
+     or v_source not like '%__system_vendor__%'
+     or v_source not like '%t.active%'
+     or v_source not like '%errcode = ''P0002''%'
+     or v_source like '%direct_entry_assert_team_leader_read_authority%'
+     or v_source like '%personnel_position%'
+     or v_source not like '%r.display_name%'
+     or v_source like '%''recruiter_id'', recruiter_id%'
+     or v_source not like '%order by display_name, app_user_id%'
+     or v_source not like '%''app_user_id''%'
+     or v_source not like '%''display_name''%'
+     or v_source not like '%''personnel_code''%' then
+    raise exception 'team-leader candidate RPC security contract failed'
+      using errcode = '55000';
+  end if;
+
+  foreach v_read_signature in array array[
+    'public.direct_entry_list_team_leaders_current(uuid,uuid,uuid,text,integer,integer)'::regprocedure,
+    'public.direct_entry_list_team_leaders_scheduled(uuid,uuid,uuid,text,integer,integer)'::regprocedure,
+    'public.direct_entry_list_team_leader_history(uuid,uuid,uuid,text,integer,integer)'::regprocedure
+  ] loop
+    select pg_get_functiondef(v_read_signature) into v_read_source;
+    if v_read_source not like '%join public.recruiters r on r.recruiter_id = a.leader_recruiter_id%'
+       or v_read_source not like '%r.display_name ilike%'
+       or v_read_source like '%direct_entry_app_users%'
+       or v_read_source like '%direct_entry_app_user_recruiter_links%'
+       or v_read_source like '%u.display_name%' then
+      raise exception 'leader history must use the persisted personnel identity'
+        using errcode = '55000';
+    end if;
+  end loop;
 end;
 $$;
 

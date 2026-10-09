@@ -213,6 +213,9 @@ async function rpc(name, actor, { team = null, search = null, page = 1, pageSize
   return rows[0].payload;
 }
 
+const candidateList = (actor, options = {}) =>
+  rpc("direct_entry_list_team_leader_candidates", actor, options);
+
 async function denial(name, actor, options = {}, expected = "42501") {
   try {
     await rpc(name, actor, options);
@@ -221,6 +224,15 @@ async function denial(name, actor, options = {}, expected = "42501") {
     return;
   }
   assert.fail("expected denied leader read");
+}
+
+async function withRole(role, callback) {
+  await db.exec(`set role ${role}`);
+  try {
+    return await callback();
+  } finally {
+    await db.exec("reset role");
+  }
 }
 
 async function addAssignment(team, actor, recruiter, from, to = null) {
@@ -287,6 +299,16 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   const inactiveLeader = await addLeader(9, { team: TEAM_INACTIVE });
   await addAssignment(TEAM_INACTIVE, inactiveLeader, inactiveLeader.recruiter,
     "2024-01-01", "2025-01-01");
+  await db.query(
+    "update public.direct_entry_app_users set display_name = 'Changed Account History' where app_user_id = $1::uuid",
+    [inactiveLeader.app]);
+  await db.query(
+    "update public.recruiters set display_name = 'Persisted Recruiter History' where recruiter_id = $1::uuid",
+    [inactiveLeader.recruiter]);
+  await db.query(
+    "update public.direct_entry_app_user_recruiter_links set valid_to = '2025-01-01'"
+      + " where app_user_id = $1::uuid and recruiter_id = $2::uuid",
+    [inactiveLeader.app, inactiveLeader.recruiter]);
   const vendorActor = await addActor(10);
   const vendorRecruiter = await addRecruiter(10, { provider: "hrp", team: null });
   await addAssignment(reservedTeam, vendorActor, vendorRecruiter, PAST);
@@ -308,6 +330,14 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   assert.deepEqual(reservedFilter.leaders, []);
   assert.ok(!JSON.stringify(currentCatalog).includes(RESERVED));
   assert.equal((await history(catalog, { team: TEAM_INACTIVE })).total, 1);
+  const persistedHistory = await history(catalog, {
+    team: TEAM_INACTIVE, search: "Persisted Recruiter History",
+  });
+  assert.equal(persistedHistory.total, 1);
+  assert.equal(persistedHistory.leaders[0].leader_display_name, "Persisted Recruiter History");
+  assert.equal((await history(catalog, {
+    team: TEAM_INACTIVE, search: "Changed Account History",
+  })).total, 0);
 
   const own = await current(leaderA);
   assert.ok(own.leaders.length > 0);
@@ -407,6 +437,150 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   await addAssignment(TEAM_A, multiAssignment, multiAssignment.recruiter, "2021-01-01");
   await denial("direct_entry_list_team_leaders_current", multiAssignment);
 
+  const candidateA = await addLeader(30, {
+    capability: false, scope: false, assignment: false,
+  });
+  const candidateB = await addLeader(31, {
+    capability: false, scope: false, assignment: false,
+  });
+  const candidateC = await addLeader(32, {
+    capability: false, scope: false, assignment: false,
+  });
+  await db.query(
+    "update public.recruiters set display_name = case recruiter_id"
+      + " when $1::uuid then 'Alpha Candidate' when $2::uuid then 'Bravo Candidate'"
+      + " when $3::uuid then 'Charlie Candidate' end,"
+      + " personnel_code = case recruiter_id when $1::uuid then 'C-001'"
+      + " when $2::uuid then 'C-002' when $3::uuid then 'C-003' end"
+      + " where recruiter_id = any($4::uuid[])",
+    [candidateA.recruiter, candidateB.recruiter, candidateC.recruiter,
+      [candidateA.recruiter, candidateB.recruiter, candidateC.recruiter]]);
+  await db.query(
+    "update public.direct_entry_app_users set display_name = 'Unrelated Account Name'"
+      + " where app_user_id = any($1::uuid[])",
+    [[candidateA.app, candidateB.app, candidateC.app]]);
+
+  const disabledCandidate = await addLeader(33, {
+    enabled: false, capability: false, scope: false, assignment: false,
+  });
+  const unlinkedCandidate = await addLeader(34, {
+    link: false, capability: false, scope: false, assignment: false,
+  });
+  const inactiveCandidate = await addLeader(35, {
+    activeRecruiter: false, capability: false, scope: false, assignment: false,
+  });
+  const vendorCandidate = await addLeader(36, {
+    provider: "vendor", membershipTeam: null,
+    capability: false, scope: false, assignment: false,
+  });
+  const mismatchedCandidate = await addLeader(37, {
+    membershipTeam: TEAM_B, capability: false, scope: false, assignment: false,
+  });
+  const multipleLinkCandidate = await addLeader(38, {
+    capability: false, scope: false, assignment: false,
+  });
+  await db.exec("alter table public.direct_entry_app_user_recruiter_links disable trigger direct_entry_recruiter_link_no_overlap");
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links"
+      + "(app_user_id,recruiter_id,verified,valid_from) values ($1::uuid,$2::uuid,true,$3::date)",
+    [multipleLinkCandidate.app, candidateA.recruiter, PAST]);
+  await db.exec("alter table public.direct_entry_app_user_recruiter_links enable trigger direct_entry_recruiter_link_no_overlap");
+  const multipleProviderCandidate = await addLeader(39, {
+    capability: false, scope: false, assignment: false,
+  });
+  await db.exec("alter table public.recruiter_provider_memberships disable trigger direct_entry_provider_membership_no_overlap");
+  await db.query(
+    "insert into public.recruiter_provider_memberships"
+      + "(recruiter_id,provider_type,vendor_id,valid_from) values ($1::uuid,'vendor',$2,$3::date)",
+    [multipleProviderCandidate.recruiter, VENDOR_ID, "2021-01-01"]);
+  await db.exec("alter table public.recruiter_provider_memberships enable trigger direct_entry_provider_membership_no_overlap");
+  const multipleMembershipCandidate = await addLeader(40, {
+    capability: false, scope: false, assignment: false,
+  });
+  await db.exec("alter table public.recruiter_team_memberships disable trigger direct_entry_team_membership_no_overlap");
+  await db.query(
+    "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)"
+      + " values ($1::uuid,$2::uuid,'2021-01-01')",
+    [multipleMembershipCandidate.recruiter, TEAM_B]);
+  await db.exec("alter table public.recruiter_team_memberships enable trigger direct_entry_team_membership_no_overlap");
+  const capabilityCandidate = await addLeader(41, {
+    scope: false, assignment: false,
+  });
+  const scheduledScopeCandidate = await addLeader(42, {
+    capability: false, scope: false, assignment: false,
+  });
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)"
+      + " values ($1::uuid,'team',$2::uuid,$3::date)",
+    [scheduledScopeCandidate.app, TEAM_A, FUTURE]);
+  const scheduledCapabilityCandidate = await addLeader(43, {
+    capability: false, scope: false, assignment: false,
+  });
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)"
+      + " values ($1::uuid,'team_manager_assign',$2::date)",
+    [scheduledCapabilityCandidate.app, FUTURE]);
+  const scheduledAssignmentCandidate = await addLeader(44, {
+    capability: false, scope: false, assignment: false,
+  });
+  await addAssignment(TEAM_B, scheduledAssignmentCandidate, scheduledAssignmentCandidate.recruiter, FUTURE);
+
+  const candidateEnvelope = await candidateList(catalog, { team: TEAM_A, pageSize: 2 });
+  assert.equal(candidateEnvelope.total, 3);
+  assert.equal(candidateEnvelope.page, 1);
+  assert.equal(candidateEnvelope.page_size, 2);
+  const candidateKeys = ["app_user_id", "display_name", "personnel_code"].sort();
+  assert.ok(candidateEnvelope.candidates.every((row) =>
+    Object.keys(row).sort().join(",") === candidateKeys.join(",")));
+  assert.deepEqual(candidateEnvelope.candidates.map((row) => row.display_name),
+    ["Alpha Candidate", "Bravo Candidate"]);
+  assert.deepEqual((await candidateList(admin, { team: TEAM_A })).candidates,
+    (await candidateList(catalog, { team: TEAM_A, pageSize: 25 })).candidates);
+  assert.deepEqual((await candidateList(catalog, {
+    team: TEAM_A, page: 2, pageSize: 2,
+  })).candidates.map((row) => row.display_name), ["Charlie Candidate"]);
+  assert.equal((await candidateList(catalog, {
+    team: TEAM_A, search: "C-002",
+  })).total, 1);
+  assert.equal((await candidateList(catalog, {
+    team: TEAM_A, search: "C-002",
+  })).candidates[0].app_user_id, candidateB.app);
+  assert.equal((await candidateList(catalog, {
+    team: TEAM_A, search: "Alpha Candidate",
+  })).candidates[0].app_user_id, candidateA.app);
+  assert.equal((await candidateList(catalog, {
+    team: TEAM_A, search: "Unrelated Account Name",
+  })).total, 0);
+  for (const actor of [
+    leaderA, leaderB, disabledCandidate, unlinkedCandidate, inactiveCandidate,
+    vendorCandidate, mismatchedCandidate, multipleLinkCandidate,
+    multipleProviderCandidate, multipleMembershipCandidate, capabilityCandidate,
+    scheduledScopeCandidate, scheduledCapabilityCandidate, scheduledAssignmentCandidate,
+  ]) {
+    assert.equal((await candidateList(catalog, { team: TEAM_A })).candidates
+      .some((row) => row.app_user_id === actor.app), false);
+  }
+  await assert.rejects(candidateList(entryAdminOnly, {
+    team: TEAM_A, page: 0,
+  }), (error) => error.code === "42501");
+  await assert.rejects(candidateList(leaderA, { team: TEAM_A }),
+    (error) => error.code === "42501");
+  await assert.rejects(candidateList(catalog, { team: TEAM_INACTIVE }),
+    (error) => error.code === "P0002");
+  await assert.rejects(candidateList(catalog, { team: reservedTeam }),
+    (error) => error.code === "P0002");
+  await assert.rejects(candidateList(catalog, { team: UNKNOWN_TEAM }),
+    (error) => error.code === "P0002");
+  await assert.rejects(candidateList(catalog, { team: TEAM_A, pageSize: 101 }),
+    (error) => error.code === "22023");
+  await withRole("authenticated", async () => {
+    await assert.rejects(candidateList(catalog, { team: TEAM_A }),
+      (error) => error.code === "42501");
+  });
+  await withRole("service_role", async () => {
+    assert.equal((await candidateList(catalog, { team: TEAM_A })).total, 3);
+  });
+
   const allCurrent = await current(catalog);
   const allScheduled = await scheduled(catalog);
   const allHistory = await history(catalog);
@@ -476,15 +650,29 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   assert.equal(resolverRows[0].source.includes("personnel_position"), false);
   assert.equal(await db.query(`select to_regprocedure($1) is null as absent`,
     ["public.direct_entry_assert_team_leader_authority(uuid,uuid,uuid)"]).then((r) => r.rows[0].absent), true);
-  for (const name of RPC_NAMES) {
+  for (const name of [...RPC_NAMES, "direct_entry_list_team_leader_candidates"]) {
     const rows = functionRows.filter((row) => row.proname === name);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].prosecdef, true);
     assert.equal(rows[0].config, "search_path=pg_catalog, public");
     assert.equal(rows[0].public_exec || rows[0].anon_exec || rows[0].auth_exec, false);
     assert.equal(rows[0].service_exec, true);
-    assert.ok(rows[0].source.includes(RESERVED));
-    assert.equal(rows[0].source.includes("direct_entry_system_vendor_team_id"), false);
+    if (name !== "direct_entry_list_team_leader_candidates") {
+      assert.ok(rows[0].source.includes(RESERVED));
+      assert.equal(rows[0].source.includes("direct_entry_system_vendor_team_id"), false);
+      assert.ok(rows[0].source.includes(
+        "join public.recruiters r on r.recruiter_id = a.leader_recruiter_id"));
+      assert.ok(rows[0].source.includes("r.display_name ilike"));
+      assert.equal(rows[0].source.includes("direct_entry_app_users"), false);
+      assert.equal(rows[0].source.includes("direct_entry_app_user_recruiter_links"), false);
+    } else {
+      assert.ok(rows[0].source.includes("direct_entry_assert_catalog_operator"));
+      assert.equal(rows[0].source.includes("direct_entry_assert_team_leader_read_authority"), false);
+      assert.equal(rows[0].source.includes("personnel_position"), false);
+      assert.ok(rows[0].source.includes(RESERVED));
+      assert.ok(rows[0].source.includes("r.display_name"));
+      assert.equal(rows[0].source.includes("'recruiter_id', recruiter_id"), false);
+    }
   }
 
   const { rows: grantVocabulary } = await db.query(
@@ -497,6 +685,7 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
     "direct_entry_apply_team_leader_mutation",
     "direct_entry_assert_team_leader_read_authority",
     "direct_entry_designate_team_leader",
+    "direct_entry_list_team_leader_candidates",
     "direct_entry_list_team_leader_history",
     "direct_entry_list_team_leaders_current",
     "direct_entry_list_team_leaders_scheduled",
@@ -506,11 +695,11 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
     "direct_entry_team_leader_snapshot",
     "direct_entry_transition_legacy_team_leaders",
   ]);
-  assert.equal(fullInventory.total - inventoryBefore.total, 11);
-  assert.equal(fullInventory.service - inventoryBefore.service, 4);
+  assert.equal(fullInventory.total - inventoryBefore.total, 12);
+  assert.equal(fullInventory.service - inventoryBefore.service, 5);
   assert.equal(fullInventory.internal - inventoryBefore.internal, 7);
   assert.equal(fullInventory.total, fullInventory.service + fullInventory.internal);
-  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total} total / ${inventoryBefore.service} service / ${inventoryBefore.internal} internal; #71 ${fullInventory.total} / ${fullInventory.service} / ${fullInventory.internal} (A1b1/A1b2 add five service-role RPCs and five internal helpers; A1b3 adds one internal transition helper and moves the revoked legacy seed from service to internal).`);
+  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total} total / ${inventoryBefore.service} service / ${inventoryBefore.internal} internal; #71 ${fullInventory.total} / ${fullInventory.service} / ${fullInventory.internal} (A1b1/A1b2/A1b3 add six service-role RPCs and six internal helpers; revoking the legacy seed moves one existing function from service to internal).`);
 
   db.close();
 });

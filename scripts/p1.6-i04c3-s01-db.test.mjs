@@ -643,12 +643,12 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // the fixed eight-key leader snapshot and the bounded leader projection).
     // A1b1 adds the internal read-authority resolver and three service-role-only
     // leader reads; A1b2 adds the internal mutation helper and two service-role-only
-    // leader writes. A1b3 adds one internal transition helper and revokes the old
-    // seed's service-role grant, moving it into the internal inventory. The
-    // measured inventory is 173 total / 80 service-role / 93 internal.
+    // leader writes. A1b3 adds the internal transition helper and candidate RPC,
+    // then revokes the old seed's service-role grant, moving it into the internal
+    // inventory. The measured inventory is 174 total / 81 service-role / 93 internal.
     assert.deepEqual(result.rows[0], {
-      total: 173,
-      service_role: 80,
+      total: 174,
+      service_role: 81,
       internal: 93,
       exposed_internal: 0,
     });

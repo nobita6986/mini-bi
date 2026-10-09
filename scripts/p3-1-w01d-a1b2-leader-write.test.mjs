@@ -424,7 +424,7 @@ async function assertTransitionFixtures(database, fixtures, transitionDate) {
       scope_team_id: fixture.team,
       outcome: "APPLIED",
       reason_id: null,
-      changed_fields: ["team_leader_assignment", "team_scope", "team_manager_assign"],
+      changed_fields: ["team_leader_assignment", "team_manager_assign"],
     }, Object.fromEntries(Object.entries(audit.rows[0])
       .filter(([key]) => key !== "leader_revision_id")));
     assert.equal(audit.rows[0].leader_revision_id, revisions.rows[0].revision_id);
@@ -1785,11 +1785,16 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     "direct_entry_list_team_leaders_current",
     "direct_entry_list_team_leaders_scheduled",
     "direct_entry_list_team_leader_history",
+    "direct_entry_list_team_leader_candidates",
   ]) {
     const row = functionRows.find((fn) => fn.proname === name);
     assert.ok(row && row.prosecdef && row.config === "search_path=pg_catalog, public");
     assert.equal(row.public_exec || row.anon_exec || row.authenticated_exec, false);
     assert.equal(row.service_exec, true);
+    if (name === "direct_entry_list_team_leader_candidates") {
+      assert.ok(row.source.includes("direct_entry_assert_catalog_operator"));
+      assert.equal(row.source.includes("direct_entry_assert_team_leader_read_authority"), false);
+    }
   }
   const oldNames = expectedDirectEntryFunctions(allMigrations.slice(0, -1));
   const allNames = expectedDirectEntryFunctions(allMigrations);
@@ -1798,6 +1803,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     "direct_entry_apply_team_leader_mutation",
     "direct_entry_assert_team_leader_read_authority",
     "direct_entry_designate_team_leader",
+    "direct_entry_list_team_leader_candidates",
     "direct_entry_list_team_leader_history",
     "direct_entry_list_team_leaders_current",
     "direct_entry_list_team_leaders_scheduled",
@@ -1810,15 +1816,15 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const inventoryAfter = await inventory(db);
   assert.deepEqual(
     [inventoryAfter.total, inventoryAfter.service, inventoryAfter.internal],
-    [173, 80, 93],
+    [174, 81, 93],
   );
   assert.deepEqual(
     [inventoryAfter.total - inventoryBefore.total,
       inventoryAfter.service - inventoryBefore.service,
       inventoryAfter.internal - inventoryBefore.internal],
-    [11, 4, 7],
+    [12, 5, 7],
   );
-  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total}/${inventoryBefore.service}/${inventoryBefore.internal}; #71 ${inventoryAfter.total}/${inventoryAfter.service}/${inventoryAfter.internal}. A1b2 adds one internal helper and two service-role RPCs; A1b3 adds one internal transition helper.`);
+  console.log(`Direct Entry function inventory: #70 ${inventoryBefore.total}/${inventoryBefore.service}/${inventoryBefore.internal}; #71 ${inventoryAfter.total}/${inventoryAfter.service}/${inventoryAfter.internal}. A1b1/A1b2/A1b3 add six service-role RPCs and six internal helpers; revoking the legacy seed moves one existing function from service to internal.`);
 
   const roleDeniedTarget = await freshCandidate({ memberships: [TEAM_C] });
   await withRole("authenticated", async () => {

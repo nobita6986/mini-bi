@@ -196,9 +196,9 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // A1b1 adds one internal read-authority resolver and three service-role-only
   // current/scheduled/history reads; A1b2 adds one internal mutation helper and
   // two service-role-only leader write RPCs. A1b3 adds one internal transition
-  // helper and revokes the old seed's service-role grant, moving that existing
-  // function into the internal inventory. The measured inventory is 173 total,
-  // 80 service-role executable and 93 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [173, 80, 93]);
+  // helper and a service-role candidate RPC, and revokes the old seed's grant,
+  // moving that function into the internal inventory. Measured: 174 total,
+  // 81 service-role executable and 93 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [174, 81, 93]);
   await db.close();
 });
