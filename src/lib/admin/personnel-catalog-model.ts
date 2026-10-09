@@ -230,6 +230,14 @@ export function setPersonnelConflictLock(
   return next;
 }
 
+export function personnelConflictsForDialog<T>(
+  conflicts: ReadonlyMap<string, T>,
+  lockId: string | null,
+): T[] {
+  const conflict = lockId === null ? undefined : conflicts.get(lockId);
+  return conflict === undefined ? [] : [conflict];
+}
+
 export function newPersonnelIntentKey(): string {
   return newIdempotencyKey();
 }

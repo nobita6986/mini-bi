@@ -12,6 +12,7 @@ import {
   projectPersonnelList,
   projectPersonnelListForQuery,
   projectPersonnelMutation,
+  personnelConflictsForDialog,
   setPersonnelConflictLock,
 } from "./personnel-catalog-model.ts";
 
@@ -181,4 +182,20 @@ test("conflict locks remain until an explicit successful authoritative unlock", 
   assert.equal(initial.has("entity-1"), false);
   const unlocked = setPersonnelConflictLock(locked, "entity-1", false);
   assert.equal(unlocked.has("entity-1"), false);
+});
+
+test("dialog conflict selection isolates entity B from entity A", () => {
+  const conflicts = new Map([
+    ["personnel-A", { lockId: "personnel-A", error: "A reload failed" }],
+    ["personnel-B", { lockId: "personnel-B", error: null }],
+  ]);
+
+  assert.deepEqual(personnelConflictsForDialog(conflicts, "personnel-B"), [
+    { lockId: "personnel-B", error: null },
+  ]);
+  assert.deepEqual(personnelConflictsForDialog(conflicts, "personnel-A"), [
+    { lockId: "personnel-A", error: "A reload failed" },
+  ]);
+  assert.deepEqual(personnelConflictsForDialog(conflicts, null), []);
+  assert.deepEqual(personnelConflictsForDialog(conflicts, "personnel-C"), []);
 });

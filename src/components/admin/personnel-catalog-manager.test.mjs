@@ -41,6 +41,7 @@ test("mutation errors stay visible in the dialog and an OCC conflict can be dism
   assert.match(source, /if \(!open && !busy\) setDialog\(null\)/);
   assert.match(source, /dialog === null \? \(\s*Array\.from\(conflictIntents\.values\(\)/);
   assert.match(source, /setConflictLocks\(\(current\) => setPersonnelConflictLock\(current, intent\.lockId, true\)\)/);
+  assert.match(source, /personnelConflictsForDialog\(conflictIntents, dialogLockId\)\.map/);
   assert.match(source, /if \(response\.status === 404\)/);
   assert.match(source, /next\.delete\(intent\.lockId\)/);
   assert.match(source, /không còn tồn tại hoặc không còn khả dụng/i);

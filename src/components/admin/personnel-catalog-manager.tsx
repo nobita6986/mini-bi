@@ -14,6 +14,7 @@ import {
   buildPersonnelUpdateRequest,
   classifyPersonnelMutation,
   newPersonnelIntentKey,
+  personnelConflictsForDialog,
   projectPersonnelItem,
   projectPersonnelListForQuery,
   setPersonnelConflictLock,
@@ -508,7 +509,7 @@ export function PersonnelCatalogManager() {
                   </button>
                 </Alert>
               ) : null}
-              {Array.from(conflictIntents.values(), ({ intent, error }) => (
+              {personnelConflictsForDialog(conflictIntents, dialogLockId).map(({ intent, error }) => (
                 <ConflictReload
                   key={intent.lockId}
                   message={error}
