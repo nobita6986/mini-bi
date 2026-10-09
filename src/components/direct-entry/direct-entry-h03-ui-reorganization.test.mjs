@@ -42,15 +42,16 @@ test("header has five approved actions and no legacy paste or technical label", 
   assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
 });
 
-test("grid renders immediately before collapsed submission and change-request panels", () => {
-  const gridSection = live.indexOf("<section className={styles.gridSection}");
-  const gridComponent = live.indexOf("<DirectEntrySpreadsheetGrid", gridSection);
-  const submissionPanel = live.indexOf("<details className={styles.secondaryPanel}", gridComponent);
+test("collapsed submission and change-request panels render immediately before the grid", () => {
+  const submissionPanel = live.indexOf("<details className={styles.secondaryPanel}");
   const submissionList = live.indexOf("<DirectEntrySubmissionList", submissionPanel);
   const changePanel = live.indexOf("<details className={styles.secondaryPanel}", submissionPanel + 1);
-  assert.ok(gridSection > 0 && gridComponent > gridSection);
-  assert.ok(submissionPanel > gridComponent && submissionList > submissionPanel);
+  const changeList = live.indexOf("<DirectEntryChangeRequestList", changePanel);
+  const gridSection = live.indexOf("<section className={styles.gridSection}", changeList);
+  const gridComponent = live.indexOf("<DirectEntrySpreadsheetGrid", gridSection);
+  assert.ok(submissionPanel > 0 && submissionList > submissionPanel);
   assert.ok(changePanel > submissionList);
+  assert.ok(changeList > changePanel && gridSection > changeList && gridComponent > gridSection);
   assert.match(live, /<summary>Đợt nhập liệu \(\{submissions\.length\}\)<\/summary>/);
   assert.match(live, /<summary>Yêu cầu thay đổi \(\{changeRequests\.length\}\)<\/summary>/);
   assert.doesNotMatch(live, /<details className=\{styles\.secondaryPanel\}[^>]*\bopen\b/);

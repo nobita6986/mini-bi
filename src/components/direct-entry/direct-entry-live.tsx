@@ -1824,6 +1824,35 @@ export function DirectEntryLive() {
 
       {loadState === "ready" && (
         <>
+          <details className={styles.secondaryPanel}>
+            <summary>Đợt nhập liệu ({submissions.length})</summary>
+            <DirectEntrySubmissionList
+              state={submissionListState}
+              message={submissionListMessage}
+              submissions={submissions}
+              hasMore={submissionHasMore}
+              busySubmissionId={busySubmissionId}
+              blockedSubmissionIds={blockedSubmissionIds}
+              onLoadMore={() => void loadSubmissions("append")}
+              onTransition={(input) => void runTransition(input)}
+              onRequestChange={(submission) => setProposerSubmission(submission)}
+              onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
+            />
+          </details>
+          <details className={styles.secondaryPanel}>
+            <summary>Yêu cầu thay đổi ({changeRequests.length})</summary>
+            {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
+            <DirectEntryChangeRequestList
+              state={changeRequestListState}
+              message={changeRequestListMessage}
+              requests={changeRequests}
+              hasMore={changeRequestHasMore}
+              busyRequestId={busyChangeRequestId}
+              onLoadMore={() => void loadChangeRequests("append")}
+              onWithdraw={(request) => void withdrawChangeRequest(request)}
+              onReview={(request) => setReviewRequest(request)}
+            />
+          </details>
           <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
             {(() => {
               /**
@@ -2001,36 +2030,6 @@ export function DirectEntryLive() {
             />
           </section>
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}
-
-          <details className={styles.secondaryPanel}>
-            <summary>Đợt nhập liệu ({submissions.length})</summary>
-            <DirectEntrySubmissionList
-              state={submissionListState}
-              message={submissionListMessage}
-              submissions={submissions}
-              hasMore={submissionHasMore}
-              busySubmissionId={busySubmissionId}
-              blockedSubmissionIds={blockedSubmissionIds}
-              onLoadMore={() => void loadSubmissions("append")}
-              onTransition={(input) => void runTransition(input)}
-              onRequestChange={(submission) => setProposerSubmission(submission)}
-              onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
-            />
-          </details>
-          <details className={styles.secondaryPanel}>
-            <summary>Yêu cầu thay đổi ({changeRequests.length})</summary>
-            {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
-            <DirectEntryChangeRequestList
-              state={changeRequestListState}
-              message={changeRequestListMessage}
-              requests={changeRequests}
-              hasMore={changeRequestHasMore}
-              busyRequestId={busyChangeRequestId}
-              onLoadMore={() => void loadChangeRequests("append")}
-              onWithdraw={(request) => void withdrawChangeRequest(request)}
-              onReview={(request) => setReviewRequest(request)}
-            />
-          </details>
           <DirectEntrySubmittedDocumentManager
             submission={manageDocumentsSubmission}
             onOpenChange={(next) => { if (!next) setManageDocumentsSubmission(null); }}
