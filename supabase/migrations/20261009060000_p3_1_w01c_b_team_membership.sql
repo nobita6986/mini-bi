@@ -1183,8 +1183,8 @@ declare
   v_tokens integer;
   v_check text;
 begin
-  -- Interval foundation: the three CHECKs accept a zero-length interval, the old
-  -- membership uniqueness constraint is replaced by a marker-excluding index.
+  -- Interval foundation: only the membership CHECK accepts a zero-length interval;
+  -- the old membership uniqueness constraint is replaced by a marker-excluding index.
   foreach v_name in array array[
     'recruiter_team_memberships_check'
   ] loop
@@ -1313,4 +1313,3 @@ end;
 $$;
 
 commit;
-
