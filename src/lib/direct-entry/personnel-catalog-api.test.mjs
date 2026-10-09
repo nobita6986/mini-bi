@@ -65,7 +65,7 @@ function jsonRequest(body, path = "/api/admin/catalog/personnel", headers = {}) 
   });
 }
 const CREATE_BODY = { expected_version: 0, personnel_code: "nv.one",
-  display_name: "Synthetic Person", personnel_position: "STAFF", valid_from: null,
+  display_name: "Synthetic Person", personnel_position: "STAFF", valid_from: "2026-01-05",
   reason: "Synthetic reason", idempotency_key: KEY };
 const UPDATE_BODY = { expected_version: 2, personnel_code: "nv.one",
   display_name: "Synthetic Person", personnel_position: "STAFF",
@@ -139,6 +139,14 @@ test("content-type, body and client authority fields are rejected before session
 
 test("request projections are strict about keys, values and OCC", () => {
   assert.equal(personnelCatalogCreateRequest(CREATE_BODY).ok, true);
+  // FIX R1: valid_from is explicit and required - never coalesced to the server date.
+  for (const validFrom of [null, undefined, "", "09/10/2026", "2026-1-5"]) {
+    assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, valid_from: validFrom }).ok,
+      false, JSON.stringify(validFrom));
+  }
+  const withoutValidFrom = { ...CREATE_BODY };
+  delete withoutValidFrom.valid_from;
+  assert.equal(personnelCatalogCreateRequest(withoutValidFrom).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, expected_version: 1 }).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, personnel_code: "has space" }).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, personnel_position: "LEAD" }).ok, false);
@@ -157,6 +165,17 @@ test("request projections are strict about keys, values and OCC", () => {
 
   const query = personnelCatalogListQuery(new URL("https://app.test/x?search=%20abc%20&page=2&page_size=10&include_inactive=false"));
   assert.deepEqual(query.ok && query.value, { search: "abc", include_inactive: false, page: 2, page_size: 10 });
+  // FIX R1: only absent, "true" and "false" are accepted; anything else is a 400
+  // instead of a silent default to true.
+  for (const value of ["", "1", "0", "TRUE", "False", "yes", "null"]) {
+    const invalid = personnelCatalogListQuery(
+      new URL("https://app.test/x?include_inactive=" + encodeURIComponent(value)));
+    assert.equal(invalid.ok, false, JSON.stringify(value));
+  }
+  assert.equal(personnelCatalogListQuery(new URL("https://app.test/x")).ok &&
+    personnelCatalogListQuery(new URL("https://app.test/x")).value.include_inactive, true);
+  assert.equal(personnelCatalogListQuery(new URL("https://app.test/x?include_inactive=true")).ok &&
+    personnelCatalogListQuery(new URL("https://app.test/x?include_inactive=true")).value.include_inactive, true);
   for (const search of ["?page=0", "?page_size=0", "?page_size=101", "?page=abc", "?search=" + "x".repeat(257)]) {
     assert.equal(personnelCatalogListQuery(new URL("https://app.test/x" + search)).ok, false, search);
   }
@@ -174,6 +193,16 @@ test("the session actor is the only actor source and unauthenticated callers get
   const actorUnavailable = await listPersonnelCatalog(new Request("https://app.test/x"), "true", unavailable.dependencies);
   assert.equal(actorUnavailable.status, 403);
   assert.equal((await actorUnavailable.json()).code, "ACTOR_NOT_AVAILABLE");
+
+  const strict = deps({ ok: true, data: LIST });
+  for (const value of ["yes", "1", "TRUE", ""]) {
+    const blocked = await listPersonnelCatalog(
+      new Request("https://app.test/x?include_inactive=" + encodeURIComponent(value)), "true",
+      strict.dependencies);
+    assert.equal(blocked.status, 400, value);
+    assert.equal((await blocked.json()).code, "PERSONNEL_INVALID", value);
+  }
+  assert.equal(strict.calls.rpc.length, 0, "an invalid boolean never reaches the repository");
 
   const d = deps({ ok: true, data: LIST });
   const res = await listPersonnelCatalog(
@@ -290,12 +319,12 @@ test("repository maps SQLSTATE to sanitized kinds and calls the canonical RPCs",
 
   assert.deepEqual(await repository.createPersonnel({ ...ACTOR, expected_version: 0,
     personnel_code: "nv.one", display_name: "Synthetic Person", personnel_position: "STAFF",
-    valid_from: null, reason: "Synthetic reason", idempotency_key: KEY }),
+    valid_from: "2026-01-05", reason: "Synthetic reason", idempotency_key: KEY }),
   { ok: true, data: CREATE });
   assert.deepEqual(calls[2], ["direct_entry_create_personnel",
     { p_auth_subject: ACTOR.auth_subject, p_app_user_id: ACTOR.app_user_id, p_expected_version: 0,
       p_personnel_code: "nv.one", p_display_name: "Synthetic Person",
-      p_personnel_position: "STAFF", p_valid_from: null, p_reason: "Synthetic reason",
+      p_personnel_position: "STAFF", p_valid_from: "2026-01-05", p_reason: "Synthetic reason",
       p_idempotency_key: KEY }]);
 
   assert.deepEqual(await repository.updatePersonnel({ ...ACTOR, recruiter_id: RECRUITER,

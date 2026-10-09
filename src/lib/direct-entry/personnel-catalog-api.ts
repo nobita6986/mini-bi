@@ -171,7 +171,14 @@ export function personnelCatalogListQuery(url: URL): Parsed<ListPersonnelQuery> 
     return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
   }
   const search = rawSearch !== null && rawSearch.trim() !== "" ? rawSearch.trim() : null;
-  const include_inactive = url.searchParams.get("include_inactive") !== "false";
+  // Chi chap nhan absent | "true" | "false". Gia tri khac la 400, khong bao gio
+  // am tham mac dinh thanh true.
+  const rawIncludeInactive = url.searchParams.get("include_inactive");
+  if (rawIncludeInactive !== null && rawIncludeInactive !== "true"
+      && rawIncludeInactive !== "false") {
+    return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
+  }
+  const include_inactive = rawIncludeInactive !== "false";
   const page = pageNumber(url.searchParams.get("page"), 1, 1000);
   const page_size = pageNumber(url.searchParams.get("page_size"), 1, 100);
   if (page === null || page_size === null) {
@@ -182,7 +189,7 @@ export function personnelCatalogListQuery(url: URL): Parsed<ListPersonnelQuery> 
 
 export type CreatePersonnelRequest = {
   expected_version: 0; personnel_code: string; display_name: string;
-  personnel_position: PersonnelPosition; valid_from: string | null;
+  personnel_position: PersonnelPosition; valid_from: string;
   reason: string; idempotency_key: string;
 };
 export function personnelCatalogCreateRequest(body: unknown): Parsed<CreatePersonnelRequest> {
@@ -195,12 +202,13 @@ export function personnelCatalogCreateRequest(body: unknown): Parsed<CreatePerso
   const personnel_code = code(value.personnel_code);
   const display_name = text(value.display_name, NAME_MAX);
   const personnel_position = position(value.personnel_position);
-  const valid_from = value.valid_from === null ? null : day(value.valid_from);
+  const valid_from = day(value.valid_from);
   const reason = text(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
-  // create mo mot aggregate moi: expected_version phai dung bang 0.
+  // create mo mot aggregate moi: expected_version phai dung bang 0. valid_from la
+  // bat buoc va tuong minh - khong bao gio coalesce sang authorization date.
   if (expected_version !== 0 || !personnel_code || !display_name || !personnel_position ||
-      !reason || !idempotency_key || (value.valid_from !== null && !valid_from)) {
+      !valid_from || !reason || !idempotency_key) {
     return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
   }
   return { ok: true, value: { expected_version: 0, personnel_code, display_name,

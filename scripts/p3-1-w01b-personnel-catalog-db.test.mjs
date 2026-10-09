@@ -29,6 +29,10 @@ const STAFF = { auth: "10000000-0000-4000-8000-0000000000a6", app: "20000000-000
 const DISABLED_ADMIN = { auth: "10000000-0000-4000-8000-0000000000a7", app: "20000000-0000-4000-8000-0000000000a7" };
 const TEAM_ID = "94000000-0000-4000-8000-0000000000b1";
 const MISSING_APP = "20000000-0000-4000-8000-0000000000ff";
+const VENDOR_ID = "vendor.w01b.r1";
+const VENDOR_RECRUITER = "93000000-0000-4000-8000-0000000000c1";
+const NO_MEMBERSHIP_RECRUITER = "93000000-0000-4000-8000-0000000000c2";
+const EXPIRED_HRP_RECRUITER = "93000000-0000-4000-8000-0000000000c3";
 const REASON = "Synthetic personnel catalog reason";
 const KEY = (suffix) => "30000000-0000-4000-8000-0000000000" + suffix;
 
@@ -122,7 +126,7 @@ async function counts(db) {
   return rows[0];
 }
 
-async function createPersonnel(db, actor, { code, name, position = "STAFF", validFrom = null, key = KEY("c1"), reason = REASON, expected = 0 }) {
+async function createPersonnel(db, actor, { code, name, position = "STAFF", validFrom = "2026-01-05", key = KEY("c1"), reason = REASON, expected = 0 }) {
   return rpc(db, "direct_entry_create_personnel", {
     p_auth_subject: actor.auth,
     p_app_user_id: actor.app,
@@ -141,11 +145,47 @@ await db.exec("insert into public.teams (team_id, code, display_name) values ('"
   + TEAM_ID + "', 'SYNTH', 'Synthetic Team')");
 await seedActors(db);
 
+// FIX R1 fixtures: a real active Vendor with its own Vendor recruiter and an
+// effective Vendor provider membership, plus two HRP-boundary controls (a
+// recruiter with no provider membership at all and one whose HRP membership
+// already expired). None of them belong to the W01B personnel catalog.
+await db.exec("insert into public.vendors (vendor_id, display_name, active) values ('"
+  + VENDOR_ID + "', 'Synthetic Vendor R1', true)");
+for (const [recruiterId, displayName] of [
+  [VENDOR_RECRUITER, "Synthetic Vendor Recruiter"],
+  [NO_MEMBERSHIP_RECRUITER, "Synthetic No Membership"],
+  [EXPIRED_HRP_RECRUITER, "Synthetic Expired HRP"],
+]) {
+  await db.query(
+    "insert into public.recruiters (recruiter_id, display_name, active, version)"
+    + " values ($1::uuid, $2, true, 1)", [recruiterId, displayName]);
+}
+await db.query(
+  "insert into public.recruiter_provider_memberships"
+  + " (recruiter_id, provider_type, valid_from, vendor_id)"
+  + " values ($1::uuid, 'vendor', '2026-01-01', $2)",
+  [VENDOR_RECRUITER, VENDOR_ID]);
+await db.query(
+  "insert into public.recruiter_provider_memberships"
+  + " (recruiter_id, provider_type, valid_from, valid_to, vendor_id)"
+  + " values ($1::uuid, 'hrp', '2020-01-01', '2021-01-01', null)",
+  [EXPIRED_HRP_RECRUITER]);
+
 const ITEM_KEYS = ["recruiter_id", "display_name", "personnel_code", "personnel_position",
   "active", "version", "hrp_valid_from", "revision_count"];
 
 function sortedKeys(value) {
   return Object.keys(value).sort().join(",");
+}
+
+/** FIX R1: one fixed revision schema - exactly these six keys, for every action. */
+const SNAPSHOT_KEYS = ["active", "display_name", "personnel_code", "personnel_position",
+  "recruiter_id", "version"].sort();
+
+function assertSnapshotShape(snapshot, label) {
+  assert.ok(snapshot, label + " snapshot must exist");
+  assert.deepEqual(Object.keys(snapshot).sort(), SNAPSHOT_KEYS, label + " snapshot key set");
+  assert.equal("hrp_valid_from" in snapshot, false, label + " snapshot carries no provider history");
 }
 
 test("catalog operator guard allows exactly the two authority paths", async () => {
@@ -183,7 +223,7 @@ test("guard denies entry_admin@all alone, missing all scope, leader, staff, disa
     const createError = await rpcError(db, "direct_entry_create_personnel", {
       p_auth_subject: actor.auth, p_app_user_id: actor.app, p_expected_version: 0,
       p_personnel_code: "denied." + label.length, p_display_name: "Denied Actor",
-      p_personnel_position: "STAFF", p_valid_from: null, p_reason: REASON,
+      p_personnel_position: "STAFF", p_valid_from: "2026-01-05", p_reason: REASON,
       p_idempotency_key: KEY("d2"),
     });
     assert.equal(createError.code, "42501", label + " create must be denied");
@@ -236,11 +276,15 @@ test("create writes exactly one recruiter and one HRP provider membership, and n
   assert.equal(revision[0].version, 1);
   assert.equal(revision[0].before_snapshot, null);
   assert.equal(revision[0].has_reason, true);
-  assert.equal(revision[0].after_snapshot.recruiter_id, result.recruiter_id);
-  assert.equal(revision[0].after_snapshot.hrp_valid_from, "2026-01-05");
-  assert.deepEqual(Object.keys(revision[0].after_snapshot).sort(),
-    ["active", "display_name", "hrp_valid_from", "personnel_code", "personnel_position",
-      "recruiter_id", "version"]);
+  assertSnapshotShape(revision[0].after_snapshot, "create after");
+  assert.deepEqual(revision[0].after_snapshot, {
+    recruiter_id: result.recruiter_id,
+    display_name: "Synthetic Personnel One",
+    personnel_code: "nv.w01b.01",
+    personnel_position: "STAFF",
+    active: true,
+    version: 1,
+  });
 
   const audit = (await db.query(
     "select action, capability, scope_kind, outcome, changed_fields, resource_ref,"
@@ -262,7 +306,7 @@ test("create rejects a non-zero expected version and a non-canonical personnel c
   const wrongVersion = await rpcError(db, "direct_entry_create_personnel", {
     p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 1,
     p_personnel_code: "nv.w01b.bad", p_display_name: "Bad", p_personnel_position: "STAFF",
-    p_valid_from: null, p_reason: REASON, p_idempotency_key: KEY("02"),
+    p_valid_from: "2026-01-05", p_reason: REASON, p_idempotency_key: KEY("02"),
   });
   assert.equal(wrongVersion.code, "22023");
 
@@ -270,7 +314,7 @@ test("create rejects a non-zero expected version and a non-canonical personnel c
     const error = await rpcError(db, "direct_entry_create_personnel", {
       p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
       p_personnel_code: code, p_display_name: "Bad", p_personnel_position: "STAFF",
-      p_valid_from: null, p_reason: REASON, p_idempotency_key: KEY("03"),
+      p_valid_from: "2026-01-05", p_reason: REASON, p_idempotency_key: KEY("03"),
     });
     assert.equal(error.code, "22023", "code shape " + JSON.stringify(code));
   }
@@ -279,7 +323,7 @@ test("create rejects a non-zero expected version and a non-canonical personnel c
     const error = await rpcError(db, "direct_entry_create_personnel", {
       p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
       p_personnel_code: "nv.w01b.pos", p_display_name: "Bad", p_personnel_position: position,
-      p_valid_from: null, p_reason: REASON, p_idempotency_key: KEY("04"),
+      p_valid_from: "2026-01-05", p_reason: REASON, p_idempotency_key: KEY("04"),
     });
     assert.equal(error.code, "22023", "position " + JSON.stringify(position));
   }
@@ -295,13 +339,13 @@ test("duplicate personnel codes are rejected atomically on the canonical rule", 
   const exact = await rpcError(db, "direct_entry_create_personnel", {
     p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
     p_personnel_code: "nv.w01b.dup", p_display_name: "Duplicate", p_personnel_position: "STAFF",
-    p_valid_from: null, p_reason: REASON, p_idempotency_key: KEY("06"),
+    p_valid_from: "2026-01-05", p_reason: REASON, p_idempotency_key: KEY("06"),
   });
   assert.equal(exact.code, "23505");
   const caseVariant = await rpcError(db, "direct_entry_create_personnel", {
     p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
     p_personnel_code: "NV.W01B.DUP", p_display_name: "Duplicate Case", p_personnel_position: "STAFF",
-    p_valid_from: null, p_reason: REASON, p_idempotency_key: KEY("07"),
+    p_valid_from: "2026-01-05", p_reason: REASON, p_idempotency_key: KEY("07"),
   });
   assert.equal(caseVariant.code, "23505");
   assert.deepEqual(await counts(db), before, "duplicate create leaves zero residue");
@@ -319,7 +363,7 @@ test("unassigned personnel stay visible in the admin catalog with bounded search
   assert.equal(list.personnel.length, 1);
   assert.equal(sortedKeys(list.personnel[0]), ITEM_KEYS.slice().sort().join(","));
   assert.equal(list.personnel[0].personnel_code, "nv.w01b.unassigned");
-  assert.equal(list.personnel[0].hrp_valid_from, list.authorization_date);
+  assert.equal(list.personnel[0].hrp_valid_from, "2026-01-05");
   assert.equal(list.personnel[0].revision_count, 1);
   const teamMemberships = (await db.query(
     "select count(*)::int as n from public.recruiter_team_memberships where recruiter_id = $1::uuid",
@@ -416,9 +460,24 @@ test("update honours OCC and keeps recruiter_id plus provider history immutable"
     "select before_snapshot, after_snapshot, version from public.direct_entry_personnel_revisions"
     + " where recruiter_id = $1::uuid order by version desc limit 1", [created.recruiter_id])).rows[0];
   assert.equal(revision.version, updated.version);
-  assert.equal(revision.before_snapshot.display_name, "Synthetic Update Base");
-  assert.equal(revision.after_snapshot.display_name, "Synthetic Update Renamed");
-  assert.equal(revision.after_snapshot.version, updated.version);
+  assertSnapshotShape(revision.before_snapshot, "update before");
+  assertSnapshotShape(revision.after_snapshot, "update after");
+  assert.deepEqual(revision.before_snapshot, {
+    recruiter_id: created.recruiter_id,
+    display_name: "Synthetic Update Base",
+    personnel_code: "nv.w01b.upd",
+    personnel_position: "STAFF",
+    active: true,
+    version: created.version,
+  });
+  assert.deepEqual(revision.after_snapshot, {
+    recruiter_id: created.recruiter_id,
+    display_name: "Synthetic Update Renamed",
+    personnel_code: "nv.w01b.upd2",
+    personnel_position: "TEAM_LEADER",
+    active: true,
+    version: updated.version,
+  });
 
   const noChange = await rpcError(db, "direct_entry_update_personnel", {
     p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: created.recruiter_id,
@@ -522,6 +581,19 @@ test("set-active is a soft state change that never deletes or rewrites history",
     + " order by version", [created.recruiter_id])).rows.map((r) => r.version);
   assert.deepEqual(revisions, [1, 2, 3], "every mutation appended exactly one revision");
 
+  const setActiveRevisions = (await db.query(
+    "select version, before_snapshot, after_snapshot from public.direct_entry_personnel_revisions"
+    + " where recruiter_id = $1::uuid and version > 1 order by version",
+    [created.recruiter_id])).rows;
+  assert.equal(setActiveRevisions.length, 2);
+  for (const row of setActiveRevisions) {
+    assertSnapshotShape(row.before_snapshot, "set-active before v" + row.version);
+    assertSnapshotShape(row.after_snapshot, "set-active after v" + row.version);
+    assert.equal(row.before_snapshot.active, row.version === 2);
+    assert.equal(row.after_snapshot.active, row.version === 3);
+    assert.equal(row.after_snapshot.version, row.version);
+  }
+
   const audit = (await db.query(
     "select capability, changed_fields from public.direct_entry_audit_events"
     + " where resource_ref = $1 and action = 'personnel_set_active' order by created_at desc limit 1",
@@ -559,10 +631,7 @@ test("audit records the authority actually exercised and reasons stay restricted
   for (const row of snapshots) {
     for (const snapshot of [row.before_snapshot, row.after_snapshot]) {
       if (snapshot === null) continue;
-      for (const key of Object.keys(snapshot)) {
-        assert.ok(["recruiter_id", "display_name", "personnel_code", "personnel_position",
-          "active", "version", "hrp_valid_from"].includes(key), "unexpected snapshot key " + key);
-      }
+      assertSnapshotShape(snapshot, "audited");
     }
   }
 });
@@ -581,7 +650,7 @@ test("idempotent replay returns the same result and a reused key with different 
   const conflict = await rpcError(db, "direct_entry_create_personnel", {
     p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
     p_personnel_code: "nv.w01b.idem", p_display_name: "Different Payload",
-    p_personnel_position: "STAFF", p_valid_from: null, p_reason: REASON,
+    p_personnel_position: "STAFF", p_valid_from: "2026-01-05", p_reason: REASON,
     p_idempotency_key: KEY("30"),
   });
   assert.equal(conflict.code, "22023");
@@ -613,7 +682,7 @@ test("a failing audit or revision write rolls the whole mutation back", async ()
     const error = await rpcError(db, "direct_entry_create_personnel", {
       p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
       p_personnel_code: "nv.w01b.rollback1", p_display_name: "Rollback One",
-      p_personnel_position: "STAFF", p_valid_from: null, p_reason: REASON,
+      p_personnel_position: "STAFF", p_valid_from: "2026-01-05", p_reason: REASON,
       p_idempotency_key: KEY("40"),
     });
     assert.equal(error.code, "23514");
@@ -631,7 +700,7 @@ test("a failing audit or revision write rolls the whole mutation back", async ()
     const error = await rpcError(db, "direct_entry_create_personnel", {
       p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
       p_personnel_code: "nv.w01b.rollback2", p_display_name: "Rollback Two",
-      p_personnel_position: "STAFF", p_valid_from: null, p_reason: REASON,
+      p_personnel_position: "STAFF", p_valid_from: "2026-01-05", p_reason: REASON,
       p_idempotency_key: KEY("41"),
     });
     assert.equal(error.code, "23514");
@@ -688,7 +757,7 @@ test("service-role only EXECUTE, revoked helpers, forced RLS and immutability", 
   const helpers = [
     "public.direct_entry_assert_catalog_operator(uuid,uuid)",
     "public.direct_entry_lock_personnel(uuid,integer)",
-    "public.direct_entry_personnel_snapshot(public.recruiters,date)",
+    "public.direct_entry_personnel_snapshot(public.recruiters)",
     "public.direct_entry_personnel_admin_projection(public.recruiters,date,integer)",
     "public.direct_entry_write_personnel_revision(uuid,integer,uuid,uuid,jsonb,jsonb)",
     "public.direct_entry_bump_personnel_version(uuid,uuid,uuid,jsonb,jsonb)",
@@ -750,4 +819,123 @@ test("migration #68 is appended once and the W01A 23-token vocabulary is unchang
     "select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace"
     + " where n.nspname = 'public' and p.proname like '%personnel%'");
   assert.equal(functionRows[0].n, 10, "the personnel surface is exactly the reviewed set");
+});
+
+test("the admin personnel catalog excludes Vendor recruiters from list, count and detail", async () => {
+  const list = await rpc(db, "direct_entry_list_personnel_admin", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
+    p_search: "Synthetic Vendor Recruiter", p_include_inactive: true,
+    p_page: 1, p_page_size: 25,
+  });
+  assert.equal(list.total, 0, "a Vendor recruiter is never counted");
+  assert.equal(list.personnel.length, 0, "a Vendor recruiter is never listed");
+
+  const all = await rpc(db, "direct_entry_list_personnel_admin", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
+    p_include_inactive: true, p_page: 1, p_page_size: 100,
+  });
+  const ids = all.personnel.map((row) => row.recruiter_id);
+  for (const excluded of [VENDOR_RECRUITER, NO_MEMBERSHIP_RECRUITER, EXPIRED_HRP_RECRUITER]) {
+    assert.equal(ids.includes(excluded), false, "excluded recruiter " + excluded);
+  }
+
+  const detail = await rpcError(db, "direct_entry_get_personnel_admin", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
+    p_recruiter_id: VENDOR_RECRUITER,
+  });
+  assert.equal(detail.code, "P0002");
+
+  // An HRP person with no team membership is still part of the catalog.
+  const unassigned = await rpc(db, "direct_entry_list_personnel_admin", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
+    p_search: "nv.w01b.unassigned", p_include_inactive: true, p_page: 1, p_page_size: 25,
+  });
+  assert.equal(unassigned.total, 1);
+  const teamMemberships = (await db.query(
+    "select count(*)::int as n from public.recruiter_team_memberships where recruiter_id = $1::uuid",
+    [unassigned.personnel[0].recruiter_id])).rows[0].n;
+  assert.equal(teamMemberships, 0);
+});
+
+test("Vendor and non-HRP recruiters are rejected with zero residue and unchanged rows", async () => {
+  const rowsBefore = (await db.query(
+    "select * from public.recruiters where recruiter_id = any($1::uuid[]) order by recruiter_id",
+    [[VENDOR_RECRUITER, NO_MEMBERSHIP_RECRUITER, EXPIRED_HRP_RECRUITER]])).rows;
+  const membershipsBefore = (await db.query(
+    "select * from public.recruiter_provider_memberships"
+    + " where recruiter_id = any($1::uuid[]) order by recruiter_id, valid_from",
+    [[VENDOR_RECRUITER, EXPIRED_HRP_RECRUITER]])).rows;
+  const vendorBefore = (await db.query(
+    "select * from public.vendors where vendor_id = $1", [VENDOR_ID])).rows[0];
+  const before = await counts(db);
+
+  for (const recruiterId of [VENDOR_RECRUITER, NO_MEMBERSHIP_RECRUITER, EXPIRED_HRP_RECRUITER]) {
+    const read = await rpcError(db, "direct_entry_get_personnel_admin", {
+      p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: recruiterId,
+    });
+    assert.equal(read.code, "P0002", "get " + recruiterId);
+
+    const update = await rpcError(db, "direct_entry_update_personnel", {
+      p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: recruiterId,
+      p_expected_version: 1, p_display_name: "Hijacked", p_personnel_code: "nv.hijack",
+      p_personnel_position: "STAFF", p_reason: REASON, p_idempotency_key: KEY("70"),
+    });
+    assert.equal(update.code, "P0002", "update " + recruiterId);
+
+    const active = await rpcError(db, "direct_entry_set_personnel_active", {
+      p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_recruiter_id: recruiterId,
+      p_active: false, p_expected_version: 1, p_reason: REASON, p_idempotency_key: KEY("71"),
+    });
+    assert.equal(active.code, "P0002", "set-active " + recruiterId);
+  }
+
+  assert.deepEqual(await counts(db), before,
+    "no revision, audit, reason or idempotency residue after the rejections");
+  assert.deepEqual((await db.query(
+    "select * from public.recruiters where recruiter_id = any($1::uuid[]) order by recruiter_id",
+    [[VENDOR_RECRUITER, NO_MEMBERSHIP_RECRUITER, EXPIRED_HRP_RECRUITER]])).rows, rowsBefore,
+    "recruiter rows are byte/value equivalent");
+  assert.deepEqual((await db.query(
+    "select * from public.recruiter_provider_memberships"
+    + " where recruiter_id = any($1::uuid[]) order by recruiter_id, valid_from",
+    [[VENDOR_RECRUITER, EXPIRED_HRP_RECRUITER]])).rows, membershipsBefore,
+    "provider memberships are byte/value equivalent");
+  assert.deepEqual((await db.query(
+    "select * from public.vendors where vendor_id = $1", [VENDOR_ID])).rows[0], vendorBefore,
+    "Vendor history is untouched");
+  assert.equal((await db.query(
+    "select count(*)::int as n from public.direct_entry_personnel_revisions"
+    + " where recruiter_id = any($1::uuid[])",
+    [[VENDOR_RECRUITER, NO_MEMBERSHIP_RECRUITER, EXPIRED_HRP_RECRUITER]])).rows[0].n, 0);
+});
+
+test("create requires an explicit valid_from and never invents a provider start date", async () => {
+  const before = await counts(db);
+  const missing = await rpcError(db, "direct_entry_create_personnel", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
+    p_personnel_code: "nv.w01b.validfrom", p_display_name: "Missing Valid From",
+    p_personnel_position: "STAFF", p_valid_from: null, p_reason: REASON,
+    p_idempotency_key: KEY("60"),
+  });
+  assert.equal(missing.code, "22023");
+  assert.equal(missing.message, "provider valid from required");
+
+  const future = await rpcError(db, "direct_entry_create_personnel", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
+    p_personnel_code: "nv.w01b.future", p_display_name: "Future Valid From",
+    p_personnel_position: "STAFF", p_valid_from: "2999-01-01", p_reason: REASON,
+    p_idempotency_key: KEY("61"),
+  });
+  assert.equal(future.code, "22023");
+
+  const malformed = await rpcError(db, "direct_entry_create_personnel", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app, p_expected_version: 0,
+    p_personnel_code: "nv.w01b.malformed", p_display_name: "Malformed Valid From",
+    p_personnel_position: "STAFF", p_valid_from: "not-a-date", p_reason: REASON,
+    p_idempotency_key: KEY("62"),
+  });
+  // The API layer additionally enforces strict YYYY-MM-DD before the RPC is reached.
+  assert.ok(malformed, "a malformed date must fail");
+  assert.deepEqual(await counts(db), before,
+    "invalid valid_from leaves zero residue and creates no provider membership");
 });

@@ -139,9 +139,22 @@ begin
     raise exception 'expected personnel version required' using errcode = '22023';
   end if;
 
+  -- HRP boundary: W01B manages HRP personnel only. A Vendor recruiter, or any
+  -- recruiter without a canonical effective HRP provider membership, is simply not
+  -- found here, so update/set-active fail closed with P0002 before touching a row.
   select r.* into v_recruiter
     from public.recruiters r
    where r.recruiter_id = p_recruiter_id
+     and exists (
+       select 1
+         from public.recruiter_provider_memberships m
+        where m.recruiter_id = r.recruiter_id
+          and m.provider_type = 'hrp'
+          and m.vendor_id is null
+          and m.valid_from <= public.direct_entry_authorization_date()
+          and (m.valid_to is null
+               or public.direct_entry_authorization_date() < m.valid_to)
+     )
    for update;
   if not found then
     raise exception 'personnel not found' using errcode = 'P0002';
@@ -155,41 +168,34 @@ $$;
 revoke all on function public.direct_entry_lock_personnel(uuid, integer)
   from public, anon, authenticated, service_role;
 comment on function public.direct_entry_lock_personnel(uuid, integer) is
-  'P3.1-W01B internal guard: SELECT ... FOR UPDATE on the recruiter row plus fail-closed expected-version check (40001 on mismatch, P0002 when absent). Revoked from every role.';
+  'P3.1-W01B internal guard: SELECT ... FOR UPDATE on the recruiter row plus fail-closed expected-version check (40001 on mismatch, P0002 when absent). It also enforces the HRP boundary: a Vendor recruiter or a recruiter without a canonical effective HRP provider membership is P0002, so no mutation can touch it. Revoked from every role.';
 
--- Contract business fields only: identity, catalog attributes, active flag, OCC
--- version and - for create - the HRP provider valid_from that must be proven.
+-- One FIXED revision schema: exactly these six business keys, for every action.
+-- The shape never varies, so create/update/set-active revisions are comparable
+-- key-by-key. hrp_valid_from deliberately stays OUT of the revision: it belongs to
+-- the create mutation result and the admin projections, never to revision history.
 create or replace function public.direct_entry_personnel_snapshot(
-  p_recruiter public.recruiters,
-  p_hrp_valid_from date default null
+  p_recruiter public.recruiters
 )
 returns jsonb
-language plpgsql
+language sql
 stable
 security definer
 set search_path = pg_catalog, public
 as $$
-declare
-  v_snapshot jsonb;
-begin
-  v_snapshot := jsonb_build_object(
+  select jsonb_build_object(
     'recruiter_id', p_recruiter.recruiter_id,
     'display_name', p_recruiter.display_name,
     'personnel_code', p_recruiter.personnel_code,
     'personnel_position', p_recruiter.personnel_position,
     'active', p_recruiter.active,
     'version', p_recruiter.version
-  );
-  if p_hrp_valid_from is not null then
-    v_snapshot := v_snapshot || jsonb_build_object('hrp_valid_from', to_jsonb(p_hrp_valid_from));
-  end if;
-  return v_snapshot;
-end;
+  )
 $$;
-revoke all on function public.direct_entry_personnel_snapshot(public.recruiters, date)
+revoke all on function public.direct_entry_personnel_snapshot(public.recruiters)
   from public, anon, authenticated, service_role;
-comment on function public.direct_entry_personnel_snapshot(public.recruiters, date) is
-  'P3.1-W01B internal projection of one recruiter row: recruiter_id, display_name, personnel_code, personnel_position, active, version (+ hrp_valid_from when supplied). No auth, email, grant, scope or raw reason. Revoked from every role.';
+comment on function public.direct_entry_personnel_snapshot(public.recruiters) is
+  'P3.1-W01B internal projection of one recruiter row: exactly recruiter_id, display_name, personnel_code, personnel_position, active and version. No provider history, auth, email, grant, scope or raw reason, and no conditional key. Revoked from every role.';
 
 create or replace function public.direct_entry_write_personnel_revision(
   p_recruiter_id uuid,
@@ -326,9 +332,22 @@ begin
     raise exception 'invalid page size' using errcode = '22023';
   end if;
 
+  -- HRP boundary: this catalog is exactly the recruiters holding a canonical
+  -- effective HRP provider membership (provider_type = 'hrp', vendor_id is null).
+  -- Vendor recruiters are never counted here, and a team membership is not required.
   select count(*)::int into v_total
     from public.recruiters r
    where (v_include_inactive or r.active)
+     and exists (
+       select 1
+         from public.recruiter_provider_memberships m
+        where m.recruiter_id = r.recruiter_id
+          and m.provider_type = 'hrp'
+          and m.vendor_id is null
+          and m.valid_from <= public.direct_entry_authorization_date()
+          and (m.valid_to is null
+               or public.direct_entry_authorization_date() < m.valid_to)
+     )
      and (
        v_search is null
        or r.display_name ilike '%' || v_search || '%'
@@ -351,6 +370,7 @@ begin
             from public.recruiter_provider_memberships m
            where m.recruiter_id = r.recruiter_id
              and m.provider_type = 'hrp'
+             and m.vendor_id is null
              and m.valid_from <= public.direct_entry_authorization_date()
              and (m.valid_to is null
                   or public.direct_entry_authorization_date() < m.valid_to)
@@ -363,6 +383,16 @@ begin
            where v.recruiter_id = r.recruiter_id
         ) rev on true
        where (v_include_inactive or r.active)
+         and exists (
+           select 1
+             from public.recruiter_provider_memberships m
+            where m.recruiter_id = r.recruiter_id
+              and m.provider_type = 'hrp'
+              and m.vendor_id is null
+              and m.valid_from <= public.direct_entry_authorization_date()
+              and (m.valid_to is null
+                   or public.direct_entry_authorization_date() < m.valid_to)
+         )
          and (
            v_search is null
            or r.display_name ilike '%' || v_search || '%'
@@ -416,6 +446,7 @@ begin
         from public.recruiter_provider_memberships m
        where m.recruiter_id = r.recruiter_id
          and m.provider_type = 'hrp'
+         and m.vendor_id is null
          and m.valid_from <= public.direct_entry_authorization_date()
          and (m.valid_to is null
               or public.direct_entry_authorization_date() < m.valid_to)
@@ -427,7 +458,17 @@ begin
         from public.direct_entry_personnel_revisions v
        where v.recruiter_id = r.recruiter_id
     ) rev on true
-   where r.recruiter_id = p_recruiter_id;
+   where r.recruiter_id = p_recruiter_id
+     and exists (
+       select 1
+         from public.recruiter_provider_memberships m
+        where m.recruiter_id = r.recruiter_id
+          and m.provider_type = 'hrp'
+          and m.vendor_id is null
+          and m.valid_from <= public.direct_entry_authorization_date()
+          and (m.valid_to is null
+               or public.direct_entry_authorization_date() < m.valid_to)
+     );
 
   if v_personnel is null then
     raise exception 'personnel not found' using errcode = 'P0002';
@@ -493,7 +534,13 @@ begin
     raise exception 'personnel position is invalid' using errcode = '22023';
   end if;
   v_position := p_personnel_position;
-  v_valid_from := coalesce(p_valid_from, public.direct_entry_authorization_date());
+  -- FIX R1: the contract carries an EXPLICIT valid_from. It is never coalesced to
+  -- the authorization date, so a missing value fails validation with zero residue
+  -- instead of silently inventing a provider start date.
+  if p_valid_from is null then
+    raise exception 'provider valid from required' using errcode = '22023';
+  end if;
+  v_valid_from := p_valid_from;
   if v_valid_from > public.direct_entry_authorization_date() then
     raise exception 'provider valid from is in the future' using errcode = '22023';
   end if;
@@ -541,7 +588,7 @@ begin
 
   v_revision_id := public.direct_entry_write_personnel_revision(
     v_recruiter.recruiter_id, v_recruiter.version, p_app_user_id, v_reason_id,
-    null, public.direct_entry_personnel_snapshot(v_recruiter, v_valid_from)
+    null, public.direct_entry_personnel_snapshot(v_recruiter)
   );
 
   insert into public.direct_entry_audit_events
@@ -840,7 +887,7 @@ declare
   v_helpers text[] := array[
     'public.direct_entry_assert_catalog_operator(uuid,uuid)',
     'public.direct_entry_lock_personnel(uuid,integer)',
-    'public.direct_entry_personnel_snapshot(public.recruiters,date)',
+    'public.direct_entry_personnel_snapshot(public.recruiters)',
     'public.direct_entry_personnel_admin_projection(public.recruiters,date,integer)',
     'public.direct_entry_write_personnel_revision(uuid,integer,uuid,uuid,jsonb,jsonb)',
     'public.direct_entry_bump_personnel_version(uuid,uuid,uuid,jsonb,jsonb)'
