@@ -191,9 +191,11 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // two membership write triggers) plus six service-role-only membership RPCs
   // (current/scheduled/history reads and assign/move/unassign). Nothing is reachable
   // by anon/authenticated.
-  // P3.1-W01D-A1a1 (#71) adds three internal helpers (the leader marker guard,
-  // the fixed eight-key leader snapshot and the bounded leader projection) with
-  // no service-role surface. Nothing is reachable by anon/authenticated.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [165, 76, 89]);
+  // P3.1-W01D-A1a (#71) adds three internal helpers (the leader marker guard,
+  // the fixed eight-key leader snapshot and the bounded leader projection).
+  // A1b1 adds one internal read-authority resolver and three service-role-only
+  // current/scheduled/history reads. The measured inventory is 169 total,
+  // 79 service-role executable and 90 internal; nothing is exposed to anon/authenticated.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [169, 79, 90]);
   await db.close();
 });

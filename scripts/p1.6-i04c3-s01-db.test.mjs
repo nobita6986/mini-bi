@@ -639,13 +639,14 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // two membership write triggers) plus six service-role-only membership RPCs
     // (current/scheduled/history reads and assign/move/unassign). Nothing is reachable
     // by anon/authenticated.
-    // P3.1-W01D-A1a1 (#71) adds three internal helpers (the leader marker guard,
-    // the fixed eight-key leader snapshot and the bounded leader projection) with
-    // no service-role surface. Nothing is reachable by anon/authenticated.
+    // P3.1-W01D-A1a (#71) adds three internal helpers (the leader marker guard,
+    // the fixed eight-key leader snapshot and the bounded leader projection).
+    // A1b1 adds the internal leader-read resolver plus three service-role-only
+    // leader reads. The final inventory is 169 total / 79 service-role / 90 internal.
     assert.deepEqual(result.rows[0], {
-      total: 165,
-      service_role: 76,
-      internal: 89,
+      total: 169,
+      service_role: 79,
+      internal: 90,
       exposed_internal: 0,
     });
   } finally {

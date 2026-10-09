@@ -897,7 +897,7 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
   assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 71,
-    "the repository ledger contains #1 through #68; Production status is verified separately");
+    "the repository ledger contains #1 through #71; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
   // grouped-apply mode that could make the two files atomic.

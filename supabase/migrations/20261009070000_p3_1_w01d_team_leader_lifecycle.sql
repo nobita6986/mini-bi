@@ -439,4 +439,484 @@ begin
 end;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- 8. Read authority and three bounded leader reads.
+-- -----------------------------------------------------------------------------
+create or replace function public.direct_entry_assert_team_leader_read_authority(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_today date := public.direct_entry_authorization_date();
+  v_scope_count integer;
+  v_scope_team_id uuid;
+  v_link_count integer;
+  v_link_recruiter_id uuid;
+  v_provider_count integer;
+  v_hrp_provider_count integer;
+  v_membership_count integer;
+  v_matching_membership_count integer;
+  v_assignment_count integer;
+  v_catalog_operator boolean := false;
+begin
+  if p_auth_subject is null or p_app_user_id is null then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  perform public.direct_entry_assert_actor_mapping(p_auth_subject, p_app_user_id);
+
+  begin
+    perform public.direct_entry_assert_catalog_operator(p_auth_subject, p_app_user_id);
+    v_catalog_operator := true;
+  exception
+    when insufficient_privilege then
+      null;
+  end;
+
+  if v_catalog_operator then
+    -- A supplied filter remains a filter even when stale, inactive, or reserved:
+    -- the RPC query returns no matching business rows rather than widening scope.
+    return p_team_id;
+  end if;
+
+  if not public.direct_entry_has_capability(p_app_user_id, 'team_manager_assign') then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  select count(*)::int, (array_agg(s.team_id))[1] into v_scope_count, v_scope_team_id
+    from public.direct_entry_scope_grants s
+   where s.app_user_id = p_app_user_id
+     and s.scope_kind = 'team'
+     and s.valid_from <= v_today
+     and (s.valid_to is null or v_today < s.valid_to)
+     and (s.valid_to is null or s.valid_to > s.valid_from);
+
+  if v_scope_count <> 1 or v_scope_team_id is null then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  if p_team_id is not null and p_team_id <> v_scope_team_id then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  if not exists (
+    select 1 from public.teams t
+     where t.team_id = v_scope_team_id
+       and t.active
+       and t.code <> '__system_vendor__'
+  ) then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  select count(*)::int, (array_agg(l.recruiter_id))[1] into v_link_count, v_link_recruiter_id
+    from public.direct_entry_app_user_recruiter_links l
+   where l.app_user_id = p_app_user_id
+     and l.verified
+     and l.valid_from <= v_today
+     and (l.valid_to is null or v_today < l.valid_to)
+     and (l.valid_to is null or l.valid_to > l.valid_from);
+
+  if v_link_count <> 1 or v_link_recruiter_id is null then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  if not exists (
+    select 1 from public.recruiters r
+     where r.recruiter_id = v_link_recruiter_id
+       and r.active
+  ) then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  select count(*)::int,
+         count(*) filter (where m.provider_type = 'hrp' and m.vendor_id is null)::int
+    into v_provider_count, v_hrp_provider_count
+    from public.recruiter_provider_memberships m
+   where m.recruiter_id = v_link_recruiter_id
+     and m.valid_from <= v_today
+     and (m.valid_to is null or v_today < m.valid_to)
+     and (m.valid_to is null or m.valid_to > m.valid_from);
+
+  if v_provider_count <> 1 or v_hrp_provider_count <> 1 then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  select count(*)::int,
+         count(*) filter (where m.team_id = v_scope_team_id)::int
+    into v_membership_count, v_matching_membership_count
+    from public.recruiter_team_memberships m
+   where m.recruiter_id = v_link_recruiter_id
+     and m.valid_from <= v_today
+     and (m.valid_to is null or v_today < m.valid_to)
+     and (m.valid_to is null or m.valid_to > m.valid_from);
+
+  if v_membership_count <> 1 or v_matching_membership_count <> 1 then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  select count(*)::int into v_assignment_count
+    from public.direct_entry_team_leader_assignments a
+   where a.leader_app_user_id = p_app_user_id
+     and a.leader_recruiter_id = v_link_recruiter_id
+     and a.team_id = v_scope_team_id
+     and a.valid_from <= v_today
+     and (a.valid_to is null or v_today < a.valid_to)
+     and (a.valid_to is null or a.valid_to > a.valid_from);
+
+  if v_assignment_count <> 1 then
+    raise exception 'team leader read authority denied' using errcode = '42501';
+  end if;
+
+  return v_scope_team_id;
+end;
+$$;
+revoke all on function public.direct_entry_assert_team_leader_read_authority(uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+comment on function public.direct_entry_assert_team_leader_read_authority(uuid, uuid, uuid) is
+  'P3.1-W01D sole internal read-authority resolver: canonical catalog-operator guard or exact-one effective leader identity, provider, membership, scope and assignment. Revoked from every role.';
+
+create or replace function public.direct_entry_list_team_leaders_current(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid default null,
+  p_search text default null,
+  p_page integer default 1,
+  p_page_size integer default 25
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_effective_team_id uuid := public.direct_entry_assert_team_leader_read_authority(p_auth_subject, p_app_user_id, p_team_id);
+  v_search text;
+  v_page integer := coalesce(p_page, 1);
+  v_page_size integer := coalesce(p_page_size, 25);
+  v_total integer;
+  v_leaders jsonb;
+begin
+  if p_search is not null and length(btrim(p_search)) > 256 then
+    raise exception 'invalid team leader search' using errcode = '22023';
+  end if;
+  v_search := nullif(btrim(coalesce(p_search, '')), '');
+  if v_page < 1 or v_page > 1000 then
+    raise exception 'invalid page' using errcode = '22023';
+  end if;
+  if v_page_size < 1 or v_page_size > 100 then
+    raise exception 'invalid page size' using errcode = '22023';
+  end if;
+
+  select count(*)::int into v_total
+    from public.direct_entry_team_leader_assignments a
+    join public.teams t on t.team_id = a.team_id
+    join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+   where t.code <> '__system_vendor__'
+     and a.valid_from <= public.direct_entry_authorization_date()
+     and (a.valid_to is null or public.direct_entry_authorization_date() < a.valid_to)
+     and (a.valid_to is null or a.valid_to > a.valid_from)
+     and (v_effective_team_id is null or a.team_id = v_effective_team_id)
+     and (p_team_id is null or a.team_id = p_team_id)
+     and (
+       v_search is null
+       or t.display_name ilike '%' || v_search || '%'
+       or t.code ilike '%' || v_search || '%'
+       or u.display_name ilike '%' || v_search || '%'
+     );
+
+  select coalesce(jsonb_agg(entry.projection), '[]'::jsonb) into v_leaders
+    from (
+      select public.direct_entry_team_leader_projection(a, t.display_name, u.display_name) as projection
+        from public.direct_entry_team_leader_assignments a
+        join public.teams t on t.team_id = a.team_id
+        join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+       where t.code <> '__system_vendor__'
+         and a.valid_from <= public.direct_entry_authorization_date()
+         and (a.valid_to is null or public.direct_entry_authorization_date() < a.valid_to)
+         and (a.valid_to is null or a.valid_to > a.valid_from)
+         and (v_effective_team_id is null or a.team_id = v_effective_team_id)
+         and (p_team_id is null or a.team_id = p_team_id)
+         and (
+           v_search is null
+           or t.display_name ilike '%' || v_search || '%'
+           or t.code ilike '%' || v_search || '%'
+           or u.display_name ilike '%' || v_search || '%'
+         )
+       order by t.display_name, a.assignment_id
+       limit v_page_size offset (v_page - 1) * v_page_size
+    ) entry;
+
+  return jsonb_build_object(
+    'authorization_date', public.direct_entry_authorization_date(),
+    'page', v_page,
+    'page_size', v_page_size,
+    'total', v_total,
+    'leaders', v_leaders
+  );
+end;
+$$;
+revoke all on function public.direct_entry_list_team_leaders_current(uuid, uuid, uuid, text, integer, integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_list_team_leaders_current(uuid, uuid, uuid, text, integer, integer)
+  to service_role;
+comment on function public.direct_entry_list_team_leaders_current(uuid, uuid, uuid, text, integer, integer) is
+  'P3.1-W01D bounded read: leaders effective at the authorization date. service_role only; catalog operator or own-team leader authority required.';
+
+create or replace function public.direct_entry_list_team_leaders_scheduled(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid default null,
+  p_search text default null,
+  p_page integer default 1,
+  p_page_size integer default 25
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_effective_team_id uuid := public.direct_entry_assert_team_leader_read_authority(p_auth_subject, p_app_user_id, p_team_id);
+  v_search text;
+  v_page integer := coalesce(p_page, 1);
+  v_page_size integer := coalesce(p_page_size, 25);
+  v_total integer;
+  v_leaders jsonb;
+begin
+  if p_search is not null and length(btrim(p_search)) > 256 then
+    raise exception 'invalid team leader search' using errcode = '22023';
+  end if;
+  v_search := nullif(btrim(coalesce(p_search, '')), '');
+  if v_page < 1 or v_page > 1000 then
+    raise exception 'invalid page' using errcode = '22023';
+  end if;
+  if v_page_size < 1 or v_page_size > 100 then
+    raise exception 'invalid page size' using errcode = '22023';
+  end if;
+
+  select count(*)::int into v_total
+    from public.direct_entry_team_leader_assignments a
+    join public.teams t on t.team_id = a.team_id
+    join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+   where t.code <> '__system_vendor__'
+     and a.valid_from > public.direct_entry_authorization_date()
+     and (a.valid_to is null or a.valid_to > a.valid_from)
+     and (v_effective_team_id is null or a.team_id = v_effective_team_id)
+     and (p_team_id is null or a.team_id = p_team_id)
+     and (
+       v_search is null
+       or t.display_name ilike '%' || v_search || '%'
+       or t.code ilike '%' || v_search || '%'
+       or u.display_name ilike '%' || v_search || '%'
+     );
+
+  select coalesce(jsonb_agg(entry.projection), '[]'::jsonb) into v_leaders
+    from (
+      select public.direct_entry_team_leader_projection(a, t.display_name, u.display_name) as projection
+        from public.direct_entry_team_leader_assignments a
+        join public.teams t on t.team_id = a.team_id
+        join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+       where t.code <> '__system_vendor__'
+         and a.valid_from > public.direct_entry_authorization_date()
+         and (a.valid_to is null or a.valid_to > a.valid_from)
+         and (v_effective_team_id is null or a.team_id = v_effective_team_id)
+         and (p_team_id is null or a.team_id = p_team_id)
+         and (
+           v_search is null
+           or t.display_name ilike '%' || v_search || '%'
+           or t.code ilike '%' || v_search || '%'
+           or u.display_name ilike '%' || v_search || '%'
+         )
+       order by a.valid_from, a.assignment_id
+       limit v_page_size offset (v_page - 1) * v_page_size
+    ) entry;
+
+  return jsonb_build_object(
+    'authorization_date', public.direct_entry_authorization_date(),
+    'page', v_page,
+    'page_size', v_page_size,
+    'total', v_total,
+    'leaders', v_leaders
+  );
+end;
+$$;
+revoke all on function public.direct_entry_list_team_leaders_scheduled(uuid, uuid, uuid, text, integer, integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_list_team_leaders_scheduled(uuid, uuid, uuid, text, integer, integer)
+  to service_role;
+comment on function public.direct_entry_list_team_leaders_scheduled(uuid, uuid, uuid, text, integer, integer) is
+  'P3.1-W01D bounded read: leaders scheduled to become effective in the future. service_role only; catalog operator or own-team leader authority required.';
+
+create or replace function public.direct_entry_list_team_leader_history(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid default null,
+  p_search text default null,
+  p_page integer default 1,
+  p_page_size integer default 25
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_effective_team_id uuid := public.direct_entry_assert_team_leader_read_authority(p_auth_subject, p_app_user_id, p_team_id);
+  v_search text;
+  v_page integer := coalesce(p_page, 1);
+  v_page_size integer := coalesce(p_page_size, 25);
+  v_total integer;
+  v_leaders jsonb;
+begin
+  if p_search is not null and length(btrim(p_search)) > 256 then
+    raise exception 'invalid team leader search' using errcode = '22023';
+  end if;
+  v_search := nullif(btrim(coalesce(p_search, '')), '');
+  if v_page < 1 or v_page > 1000 then
+    raise exception 'invalid page' using errcode = '22023';
+  end if;
+  if v_page_size < 1 or v_page_size > 100 then
+    raise exception 'invalid page size' using errcode = '22023';
+  end if;
+
+  select count(*)::int into v_total
+    from public.direct_entry_team_leader_assignments a
+    join public.teams t on t.team_id = a.team_id
+    join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+   where t.code <> '__system_vendor__'
+     and (
+       a.valid_to = a.valid_from
+       or a.valid_to is not null and a.valid_to <= public.direct_entry_authorization_date()
+     )
+     and (v_effective_team_id is null or a.team_id = v_effective_team_id)
+     and (p_team_id is null or a.team_id = p_team_id)
+     and (
+       v_search is null
+       or t.display_name ilike '%' || v_search || '%'
+       or t.code ilike '%' || v_search || '%'
+       or u.display_name ilike '%' || v_search || '%'
+     );
+
+  select coalesce(jsonb_agg(entry.projection), '[]'::jsonb) into v_leaders
+    from (
+      select public.direct_entry_team_leader_projection(a, t.display_name, u.display_name) as projection
+        from public.direct_entry_team_leader_assignments a
+        join public.teams t on t.team_id = a.team_id
+        join public.direct_entry_app_users u on u.app_user_id = a.leader_app_user_id
+       where t.code <> '__system_vendor__'
+         and (
+           a.valid_to = a.valid_from
+           or a.valid_to is not null and a.valid_to <= public.direct_entry_authorization_date()
+         )
+         and (v_effective_team_id is null or a.team_id = v_effective_team_id)
+         and (p_team_id is null or a.team_id = p_team_id)
+         and (
+           v_search is null
+           or t.display_name ilike '%' || v_search || '%'
+           or t.code ilike '%' || v_search || '%'
+           or u.display_name ilike '%' || v_search || '%'
+         )
+       order by a.valid_from desc, a.assignment_id desc
+       limit v_page_size offset (v_page - 1) * v_page_size
+    ) entry;
+
+  return jsonb_build_object(
+    'authorization_date', public.direct_entry_authorization_date(),
+    'page', v_page,
+    'page_size', v_page_size,
+    'total', v_total,
+    'leaders', v_leaders
+  );
+end;
+$$;
+revoke all on function public.direct_entry_list_team_leader_history(uuid, uuid, uuid, text, integer, integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_list_team_leader_history(uuid, uuid, uuid, text, integer, integer)
+  to service_role;
+comment on function public.direct_entry_list_team_leader_history(uuid, uuid, uuid, text, integer, integer) is
+  'P3.1-W01D bounded read: historical leader assignments including zero-length cancellation markers. service_role only; catalog operator or own-team leader authority required.';
+
+-- Extend the self-check to cover the sole authority resolver and three read RPCs.
+do $$
+declare
+  v_signature text;
+  v_source text;
+  v_count integer;
+  v_resolver_count integer;
+  v_prosecdef boolean;
+  v_config text;
+  v_public_exec boolean;
+  v_anon_exec boolean;
+  v_authenticated_exec boolean;
+  v_service_exec boolean;
+begin
+  if to_regprocedure('public.direct_entry_assert_team_leader_authority(uuid,uuid,uuid)') is not null then
+    raise exception 'duplicate team-leader authority alias exists' using errcode = '55000';
+  end if;
+  select count(*)::int into v_resolver_count
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname like 'direct_entry_assert_team_leader%';
+  if v_resolver_count <> 1 then
+    raise exception 'exactly one team-leader authority resolver must exist'
+      using errcode = '55000';
+  end if;
+
+  foreach v_signature in array array[
+    'public.direct_entry_assert_team_leader_read_authority(uuid,uuid,uuid)',
+    'public.direct_entry_list_team_leaders_current(uuid,uuid,uuid,text,integer,integer)',
+    'public.direct_entry_list_team_leaders_scheduled(uuid,uuid,uuid,text,integer,integer)',
+    'public.direct_entry_list_team_leader_history(uuid,uuid,uuid,text,integer,integer)'
+  ] loop
+    select count(*)::int into v_count from pg_proc p where p.oid = v_signature::regprocedure;
+    if v_count <> 1 then
+      raise exception 'missing team-leader read function %', v_signature using errcode = '55000';
+    end if;
+    select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), ''),
+           has_function_privilege('public', p.oid, 'EXECUTE'),
+           has_function_privilege('anon', p.oid, 'EXECUTE'),
+           has_function_privilege('authenticated', p.oid, 'EXECUTE'),
+           has_function_privilege('service_role', p.oid, 'EXECUTE'),
+           pg_get_functiondef(p.oid)
+      into v_prosecdef, v_config, v_public_exec, v_anon_exec,
+           v_authenticated_exec, v_service_exec, v_source
+      from pg_proc p where p.oid = v_signature::regprocedure;
+    if not v_prosecdef or v_config <> 'search_path=pg_catalog, public' then
+      raise exception 'team-leader function definer/search_path drift: %', v_signature
+        using errcode = '55000';
+    end if;
+
+    if v_signature = 'public.direct_entry_assert_team_leader_read_authority(uuid,uuid,uuid)' then
+      if v_public_exec or v_anon_exec or v_authenticated_exec or v_service_exec then
+        raise exception 'team leader resolver must be revoked from every role'
+          using errcode = '55000';
+      end if;
+      if v_source like '%personnel_position%' then
+        raise exception 'team leader resolver must not read personnel_position'
+          using errcode = '55000';
+      end if;
+    else
+      if v_public_exec or v_anon_exec or v_authenticated_exec or not v_service_exec then
+        raise exception 'team-leader read RPC must be service-role-only: %', v_signature
+          using errcode = '55000';
+      end if;
+      if v_source not like '%__system_vendor__%' then
+        raise exception 'reserved-team filter missing from %', v_signature
+          using errcode = '55000';
+      end if;
+      if v_source like '%direct_entry_system_vendor_team_id%' then
+        raise exception 'reserved-team creator must not be called by read RPC %', v_signature
+          using errcode = '55000';
+      end if;
+    end if;
+  end loop;
+end;
+$$;
+
 commit;
