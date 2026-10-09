@@ -1,6 +1,6 @@
 # P3.1-W01B-S0 — Personnel backend security and review baseline
 
-> Status: `P3_1_W01B_SECURITY_REVIEW_BASELINE_PASS_AWAITING_T0`
+> Status: `P3_1_W01B_S0_R1_SECURITY_REVIEW_BASELINE_PASS_AWAITING_T0`
 > Base: `origin/main@6e8c5c61f4d62c5dacd5699a202dd09cb28b6aff` — ledger 67 migrations, #67 = P3.1-W01A capability contract. Branch `audit/p3-1-w01b-personnel-security-baseline`, worktree `C:\CodeApp\BI-p3-1-w01b-security-baseline`.
 > Purpose: read-only security/review baseline so T0 can review T1B's W01B personnel-catalog backend. No implementation, migration, RPC, API, runtime test, package script or dependency is written here — only this memo.
 > Review object: T1B branch `feature/p3-1-w01b-personnel-catalog` (same base SHA). Uncommitted working files are deliberately not audited here; this memo fixes the contract they are measured against.
@@ -64,12 +64,13 @@ Both deny rows above are non-negotiable: `entry_admin@all` alone is the **Accoun
 | `personnel_code` mandatory for new rows | Enforced by the create RPC (btrim 1-64, normalized-unique). The **column stays nullable** so legacy NULL rows remain readable — a table `NOT NULL` would fail against live data. | E2 |
 | `personnel_code` uniqueness | Must reuse the same normalization as the partial unique index; a duplicate raises 23505 and leaves no residue. | E2 |
 | Create contract | `expected_version = 0` for create (no OCC on a non-existent row); every update requires `expected_version >= 1` and the current version, mismatch -> **40001**. | task lock; E1 |
-| Create writes exactly two rows | One `recruiters` row **and** one `recruiter_provider_memberships` row with `provider_type='hrp'`, an **explicit** `valid_from` (never a DB default), `valid_to` NULL. | E1/E3 |
+| Create writes exactly two **business/data rows** | One `recruiters` row **and** one `recruiter_provider_memberships` row with `provider_type='hrp'`, an **explicit** `valid_from` (never a DB default), `valid_to` NULL. The count is scoped to business/data rows only: the same transaction additionally writes the contract-mandated restricted-reason, idempotency, revision and audit rows, so the transaction's total row count is larger — that is expected and does not contradict this invariant. | E1/E3 |
 | Zero account/team/grant residue | Create must not insert into `direct_entry_app_user_recruiter_links`, `recruiter_team_memberships`, `direct_entry_capability_grants` or `direct_entry_scope_grants`. | E4/E6/E7 |
 | Unassigned personnel readable | Zero team memberships is valid and the row must appear in the admin catalog (the Direct Entry catalog excludes it — E17). | E4/E17 |
 | `personnel_position` is display-only | Changing it to `TEAM_LEADER` creates no capability, no scope and no leader status; the W05A seed (E18) is not invoked. | E2/E18 |
-| Update never rewrites identity or history | `recruiter_id` is immutable; the original HRP membership row is never updated, closed or re-dated by a personnel update; only `display_name`, `personnel_code`, `personnel_position`, `active`, `version` are mutable. | E1/E3 |
-| Deactivate = `active = false` | No hard delete exists or may be added: FKs are `on delete restrict` (5 references to `recruiters`, `foundation.sql:31,42,53,65,217`), tables are force-RLS with no DML grant (E15), and deactivation must not close or delete the HRP membership history. | E1/E3/E15 |
+| Update is field-scoped | `direct_entry_update_personnel` may change **only** `display_name`, `personnel_code` and `personnel_position`; `active` must never appear in its payload or its mutation surface. `recruiter_id` is immutable and the original HRP membership row is never updated, closed or re-dated by a personnel update. | E1/E3 |
+| `active` has a dedicated mutation path | `active` changes **only** through `direct_entry_set_personnel_active` (API `/active`), which carries the same reason + `expected_version` + idempotency + revision + audit contract as every other mutation. No generic update may reach it. | E1/E3/E15 |
+| Deactivation never deletes | Deactivate sets `active = false` through the dedicated set-active path only, and must not close or delete the HRP membership history. No hard delete exists or may be added: FKs are `on delete restrict` (5 references to `recruiters`, `foundation.sql:31,42,53,65,217`) and the tables are force-RLS with no DML grant (E15). | E1/E3/E15 |
 | Membership intervals stay DB-guarded | Any membership row written by W01B remains subject to the non-overlap trigger; W01B must not disable or bypass it. | E5 |
 
 ## 4. Mutation atomicity and audit requirements (C)
@@ -81,7 +82,7 @@ Both deny rows above are non-negotiable: `entry_admin@all` alone is the **Accoun
 | Replay semantics | Same key + same payload hash -> return the stored result verbatim, no second mutation. Same key + different payload -> **22023 before any mutation**. | E12 |
 | Failure residue = zero | A failure at reason, revision, audit or idempotency must roll back the entity row, the membership row, the reason row, the revision row, the audit row **and** the idempotency key row (all inside the same transaction). | E12 |
 | Revision contract | Before/after snapshots are **bounded catalog snapshots** (identity, display name, personnel code, position, active, version) and version-stamped by the writer, following `direct_entry_project_snapshot` (`W02:464-483`) and `direct_entry_bump_project_version` (`W02:517+`); `unique (entity, version)`; immutable trigger; never backfilled. | E14 |
-| Audit content | `action`, the **actual** capability (`catalog_master_manage` for the catalog operator, the Admin triple's real capability for Admin), `scope_kind='all'`, `scope_team_id = null`, `outcome`, `reason_id`, `changed_fields`, revision FK. Never `entry_admin` when the actor held only the catalog token. | E9/E13 |
+| Audit content — one row per mutation, bound to the acting path | Every personnel mutation writes exactly one audit row whose authority columns are determined by the path that authorised it: **Full Admin** -> `capability='entry_admin'`, `scope_kind='all'`, `scope_team_id IS NULL`; **catalog operator** -> `capability='catalog_master_manage'`, `scope_kind='all'`, `scope_team_id IS NULL`. Both paths also carry `action`, `outcome`, `reason_id`, `changed_fields` and the revision FK. A row carrying the other path's capability is a defect (mislabeled authority or swapped path), and no third label such as a scope-specific value may be invented. | E9/E13 |
 | Snapshot must not leak | No `auth_subject`, no email, no `app_user_id`, no grant rows, no raw reason text, no raw DB error inside before/after snapshots or `changed_fields`. | E11/E13 |
 
 ## 5. Required API / DB projections (D)
@@ -90,6 +91,7 @@ Both deny rows above are non-negotiable: `entry_admin@all` alone is the **Accoun
 |---|---|
 | DB list RPC | One service-role `security definer` function declared as `create or replace function public.direct_entry_...` (E20 naming), `set search_path = pg_catalog, public`, `revoke all ... from public, anon, authenticated, service_role` then `grant execute ... to service_role` only (E15). Bounded list: hard `limit` (existing precedents: `limit 100` in `W06A:51` and `p_limit not between 1 and 500` in `foundation.sql:3206`), deterministic `order by`, search over `display_name`/`personnel_code` with a length-bounded search string (<=256 as in `project-admin-api.ts:26`), filter by `active`, `personnel_position` and assigned/unassigned state. |
 | DB detail RPC | Same guard; returns the bounded entity snapshot plus the effective HRP membership summary and team-assignment state. Read-only: no grants, no links, no audit internals. |
+| Mutation surfaces | Personnel has two distinct mutation surfaces and neither may serve the other's fields: `direct_entry_update_personnel` (only `display_name`, `personnel_code`, `personnel_position`) and `direct_entry_set_personnel_active` (only `active`), exposed through the personnel route and the `/active` route respectively. Both require reason + `expected_version` + idempotency and both write revision + audit. |
 | Mutation result | Entity id + new `version` + `revision_id` + created/updated discriminator, mirroring `W02:1141-1148`. |
 | Forbidden in every projection | `auth_subject`, email, `app_user_id`, link ids, capability/scope grant rows, raw reason text, raw database message (E19 taxonomy: `..._DENIED` 403, `..._NOT_FOUND` 404, `..._CONFLICT` 409, `..._INVALID` 400, `..._UNAVAILABLE` 500). |
 | Browser route | Feature-gated (`DIRECT_ENTRY_API_ENABLED`), same-origin for mutations, bounded JSON, authority scan, and the actor **only** from `getDirectEntryActor` — never from body or header (E19). |
@@ -109,19 +111,20 @@ Both deny rows above are non-negotiable: `entry_admin@all` alone is the **Accoun
 | T7 | Leader / PM / staff / ambiguous identity | 42501 |
 | T8 | Client body contains actor/capability/scope/role (any depth) | 400 `CLIENT_AUTHORITY_FIELD_FORBIDDEN`, no RPC call |
 | T9 | Missing/empty/oversized reason | 22023, zero residue |
-| T10 | Stale `expected_version` on update | 40001, row unchanged |
+| T10 | Stale `expected_version` on update or on set-active | 40001, row unchanged |
 | T11 | Create with `expected_version <> 0` | rejected before mutation |
 | T12 | Same key + same payload replay | identical stored result, no second entity/revision/audit row |
 | T13 | Same key + different payload | 22023 **before** mutation; entity count unchanged |
 | T14 | Failure after the entity insert (reason/revision/audit path) | full rollback: entity, membership, reason, revision, audit, idempotency rows all absent |
 | T15 | Duplicate normalized `personnel_code` | 23505, zero residue |
-| T16 | Update `display_name` / `personnel_code` / `personnel_position` / `active` | version +1 per mutation; HRP membership `valid_from`/`valid_to` unchanged; identity unchanged |
+| T16 | Update `display_name` / `personnel_code` / `personnel_position` | version +1 per mutation; `active` unchanged; HRP membership `valid_from`/`valid_to` unchanged; identity unchanged |
 | T17 | Position changed to `TEAM_LEADER` | no capability grant, no scope grant, no link, no leader status |
-| T18 | Deactivate | `active=false`; membership history intact; row still readable in the admin catalog; no delete |
+| T18 | Deactivate through `direct_entry_set_personnel_active` (API `/active`) | `active=false`; version +1; membership history intact; row still readable in the admin catalog; no delete |
 | T19 | Unassigned personnel (zero team memberships) | present in the admin catalog list; absent from `direct_entry_input_catalog` (E17) |
 | T20 | Legacy row with `personnel_code IS NULL` | readable and updatable-to-canonical without violating the partial index |
 | T21 | Anonymous / authenticated role calls the RPC directly | permission denied (`anon`/`authenticated` never hold EXECUTE) |
 | T22 | Any projection response | contains none of: `auth_subject`, email, `app_user_id`, grant rows, reason text, raw DB message |
+| T23 | Generic update payload carries `active`, or the update RPC is asked to change it | rejected before mutation (400 / 22023); `active` and `version` unchanged |
 
 ## 7. Mutation-check matrix (making green assertions go red)
 
@@ -134,7 +137,7 @@ Each row must be demonstrated by temporarily breaking the source, observing the 
 | "Idempotent replay" | Asserting only "no second row" passes even when the replay returns a different payload or re-runs side effects. | Assert byte-equality with the first result; mutate the stored result once and require the equality assertion to fail. |
 | "Conflict before mutation" | Asserting only that 22023 is raised passes even if the mutation already ran. | Assert entity/revision/audit counts are unchanged after T13. |
 | "Zero residue on failure" | Asserting only the raised SQLSTATE passes when rows persist. | Count every affected table before/after a forced mid-transaction failure (T14). |
-| "Audit written" | Asserting `outcome='APPLIED'` passes while `capability`/`scope_kind` are wrong — exactly the mislabeling C01 2.7 forbids. | Assert the audit row's `capability` equals the actor's real token and `scope_kind='all'`, `scope_team_id IS NULL`; make the guard write `entry_admin` -> must fail. |
+| "Audit authority recorded" | Asserting `outcome='APPLIED'` passes while `capability`/`scope_kind` are wrong, and a single-actor test cannot detect a **swap** between the two authority paths (both are `all` scope, so a swapped label still looks plausible). | Run the **same** mutation once as Full Admin and once as the catalog operator; assert row A has `capability='entry_admin'` and row B has `capability='catalog_master_manage'`, both with `scope_kind='all'` and `scope_team_id IS NULL`. Then swap the two literals in the RPC (or write one path's capability for the other) -> the assertion must fail for exactly one of the two rows. |
 | "OCC enforced" | A no-op update returns success without incrementing the version, so a stale-version test can still pass once. | Assert version increments by exactly 1 per mutation and that the immediately repeated same-version call fails 40001 (T10/T16). |
 | "Unassigned personnel listed" | A suite that always seeds a team membership never covers the unassigned case. | Call the admin list with the membership removed (T19); if the list reuses `direct_entry_input_catalog`, the row disappears and the test must fail. |
 | "No PII leak" | A projection test asserting a few expected keys passes while extra keys ride along. | Assert the **exact** key set of the response (no superset) and scan the serialized response for `auth_subject`/`app_user_id`/`reason_text`. |
@@ -146,10 +149,11 @@ Each row must be demonstrated by temporarily breaking the source, observing the 
 
 - [ ] **#68 only**: the new migration is append-only, numbered #68, and contains **only** W01B personnel-catalog scope. #1-#67 byte-identical.
 - [ ] **Boundary**: no team-membership mutation, no leader designate/revoke, no project/Vendor/labor-type change, no account/grant/link change, no UI, no Production grant transition, no `entry_restore`.
-- [ ] **Guard**: a catalog-operator predicate exists that requires `catalog_master_manage` **and** an effective `all` scope, is revoked from every role, and is **not** implemented by repointing `direct_entry_assert_project_admin` (E9, 12 call sites) — if the shared guard is extended inside #68, T0 must treat it as a W02-scope change.
+- [ ] **Guard**: W01B owns a **separate** catalog-operator predicate requiring `catalog_master_manage` **and** an effective `all` scope, revoked from every role (L2). #68 must not modify, extend or repoint `direct_entry_assert_project_admin` (E9, 12 call sites) — any change to that shared guard inside #68 is out of W01B scope and must be rejected.
 - [ ] **Contract**: the 23-token capability CHECK untouched; both tokens already exist (E7); no token added or removed; contract version unchanged from `direct-entry-auth/1.3`.
-- [ ] **Create**: `expected_version = 0`, one recruiter + one HRP membership with explicit `valid_from`, zero residue in links/team-memberships/capability-grants/scope-grants.
-- [ ] **Update/deactivate**: identity and provider history immutable; `version` +1 per mutation with fail-closed OCC; deactivate only flips `active`; no delete path added.
+- [ ] **Create**: `expected_version = 0`, exactly two business/data rows (one recruiter + one HRP membership with explicit `valid_from`) plus the contract-mandated reason/idempotency/revision/audit rows, and zero residue in links/team-memberships/capability-grants/scope-grants.
+- [ ] **Update (field-scoped)**: `direct_entry_update_personnel` touches only `display_name`, `personnel_code` and `personnel_position`; `active` is absent from its payload and surface; identity and provider history immutable; `version` +1 per mutation with fail-closed OCC.
+- [ ] **Set-active (separate path)**: `active` changes only through `direct_entry_set_personnel_active` / API `/active` with the same reason + `expected_version` + idempotency + revision + audit contract; no delete path added.
 - [ ] **Integrity**: reason, OCC, idempotency (same-hash replay / different-hash 22023), revision and audit inside one transaction; failure leaves zero residue; snapshots bounded and free of auth/email/grant/reason data.
 - [ ] **Projections**: service-role only, fixed `search_path`, forced RLS re-asserted, bounded list/search/paging, no PII, no raw DB message, response key set exact.
 - [ ] **API**: route gated, same-origin for mutations, client authority fields rejected, actor from the server session only.
@@ -157,7 +161,7 @@ Each row must be demonstrated by temporarily breaking the source, observing the 
 - [ ] **Gates**: `git diff --check`, `pnpm docs:check`, `pnpm secrets:check`, focused lane green, and no new dependency.
 - [ ] **Environment**: no Production query/apply, no deploy, no browser/Playwright/CUA/UAT (Owner-only). Status only after T0 review.
 
-## 9. Risks / blockers
+## 9. Risks / locked checkpoints
 
 **Pre-existing limitations — not W01B defects, but they change what its tests can prove**
 
@@ -167,14 +171,18 @@ Each row must be demonstrated by temporarily breaking the source, observing the 
 - P4: the W06A candidate search does not escape `%`/`_` (section 7) — if the personnel search copies that pattern, the limitation is inherited, bounded only by the hard `limit`.
 - P5: 19 ledger-count assertions and 33 positional guards (E20) fail the moment #68 lands; the rebaseline is mechanical but must stay exact.
 
-**W01B blockers / decisions T0 must resolve before accepting the implementation**
+**Locked implementation checkpoints / review risks**
 
-- B1: **No personnel administration RPC exists at all** (E16), so the entire W01B surface is new; there is no earlier contract to diff against and no runtime precedent for "create with `expected_version = 0`" anywhere in the migrations — T0 must lock that create contract explicitly, because `direct_entry_lock_project` requires `>= 1` (`W02:439-441`) and nothing today accepts 0.
-- B2: **Guard placement.** C01 2.2 recommended splitting `direct_entry_assert_project_admin` into a two-path guard, but that function has 12 call sites across 4 migrations (E9), all in W02/W06A/HF scope. If #68 is "W01B personnel catalog only", W01B needs its **own** catalog-operator guard and must leave the project guard alone; the reverse choice is a scope expansion T0 must authorise explicitly.
-- B3: **Personnel revision table does not exist** (E14). W01B must define its snapshot shape and the never-backfilled rule before the migration is reviewed, otherwise the one-shape invariant (`W02:116-120`) is renegotiated by accident.
-- B4: **`personnel_code` cannot become `NOT NULL`** — Production carries legacy recruiter rows with NULL codes (E2 and the W07A bootstrap path). Mandatory-for-new-rows is an RPC rule; migration-level enforcement would break live data.
-- B5: **No current contract for the personnel read projection.** Direct Entry's catalog (E17) is eligibility-shaped, not administration-shaped; the bounded admin list/detail contract (section 5) must be locked together with W01B, otherwise W04 invents it client-side.
-- B6: **Cross-wave coupling.** W01C/W02 (team membership, leader lifecycle, team-scoped project-manager assignment) remain unbuilt; W01B must not pre-empt them by widening the capability CHECK, adding leader semantics to `personnel_position`, or wiring `team_manager_assign` anywhere.
+These six decisions are **locked**; they are not open questions. T0 uses them as the review criteria for T1B's W01B implementation.
+
+- L1 — **Create contract is locked**: `expected_version = 0` is mandatory on create. This has no precedent in the existing migrations (`direct_entry_lock_project` requires `>= 1`, `W02:439-441`), so the checkpoint is that W01B implements it explicitly and rejects any other value (T11), not that the value is re-decided.
+- L2 — **Guard placement is locked**: W01B creates its **own** catalog-operator guard (canonical predicate `catalog_master_manage` + effective `all` scope, revoked from every role). #68 must **not** modify, extend or repoint `direct_entry_assert_project_admin` (E9, 12 call sites across 4 migrations); the shared project guard stays untouched.
+- L3 — **Personnel revision history is locked**: W01B has a dedicated, immutable personnel revision history with a bounded snapshot, `unique (entity, version)`, an immutable-change trigger and never-backfilled semantics (E14, `W02:116-120`). The checkpoint is that the implemented table and snapshot match that shape.
+- L4 — **`personnel_code` nullability is locked**: the column stays **nullable** in the schema so legacy rows with NULL codes keep reading (E2 and the W07A bootstrap path), while the create contract makes it **mandatory for every new row**. No `NOT NULL` enforcement may be added.
+- L5 — **Admin list/get projection is locked as a separate bounded contract**: it must read **unassigned** personnel and must **not** reuse `direct_entry_input_catalog` (E17), which is eligibility-shaped. Bounded search/paging/filter per section 5.
+- L6 — **Scope boundary is locked**: W01B contains **no** team-membership mutation, **no** leader lifecycle, **no** project, Vendor or labor-type change, and **no** Accounting Production grant transition.
+
+**Conclusion:** within the scope of this memo there is **no open blocker and no open decision**. Every item above is a locked criterion for reviewing T1B's implementation; the risks that remain are the pre-existing limitations P1-P5, which are properties of the current schema and harness rather than unresolved W01B questions. No separate T0 decision is required before the review.
 
 ## Boundary
 
