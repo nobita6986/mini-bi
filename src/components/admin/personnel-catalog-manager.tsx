@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
+import { PersonnelTeamMembershipManager } from "@/components/admin/personnel-team-membership-manager";
 import {
   buildPersonnelCreateRequest,
   buildPersonnelListQuery,
@@ -94,6 +95,8 @@ export function PersonnelCatalogManager() {
   const [page, setPage] = useState(1);
   const [reloadToken, setReloadToken] = useState(0);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [membershipPersonnel, setMembershipPersonnel] = useState<AdminPersonnel | null>(null);
+  const membershipTrigger = useRef<HTMLButtonElement | null>(null);
   const [form, setForm] = useState<PersonnelForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [mutationMessage, setMutationMessage] = useState<string | null>(null);
@@ -438,6 +441,24 @@ export function PersonnelCatalogManager() {
       ? "create"
       : dialog.personnel.recruiter_id;
   const isConflictLocked = dialogLockId !== null && conflictLocks.has(dialogLockId);
+  const updateMembershipConflictLock = useCallback((recruiterId: string, locked: boolean) => {
+    setConflictLocks((current) => setPersonnelConflictLock(current, recruiterId, locked));
+  }, []);
+  const updateReloadedPersonnel = useCallback((personnel: AdminPersonnel) => {
+    setListState((current) => current.kind === "loaded"
+      ? {
+          ...current,
+          list: {
+            ...current.list,
+            personnel: current.list.personnel.map((row) =>
+              row.recruiter_id === personnel.recruiter_id ? personnel : row),
+          },
+        }
+      : current);
+    setMembershipPersonnel((current) => current?.recruiter_id === personnel.recruiter_id
+      ? personnel
+      : current);
+  }, []);
 
   return (
     <Dialog.Root
@@ -787,6 +808,16 @@ export function PersonnelCatalogManager() {
                                 {personnel.active ? "Ngừng hoạt động" : "Kích hoạt"}
                               </button>
                             </Dialog.Trigger>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                membershipTrigger.current = event.currentTarget;
+                                setMembershipPersonnel(personnel);
+                              }}
+                              className="min-h-10 rounded-md border border-border px-3 text-xs font-medium"
+                            >
+                              Quản lý nhóm
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -825,6 +856,20 @@ export function PersonnelCatalogManager() {
           )
         ) : null}
       </Card>
+      <PersonnelTeamMembershipManager
+        personnel={membershipPersonnel}
+        onClose={() => {
+          setMembershipPersonnel(null);
+          window.requestAnimationFrame(() => membershipTrigger.current?.focus());
+        }}
+        onOpen={(selectedPersonnel, trigger) => {
+          membershipTrigger.current = trigger;
+          setMembershipPersonnel(selectedPersonnel);
+        }}
+        onConflictLock={updateMembershipConflictLock}
+        onPersonnelReloaded={updateReloadedPersonnel}
+        onPersonnelUnavailable={reloadList}
+      />
     </div>
     </Dialog.Root>
   );
