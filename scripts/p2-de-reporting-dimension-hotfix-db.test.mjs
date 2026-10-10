@@ -90,8 +90,14 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 72, "the ledger carries 72 migrations through W02-A #72");
-  for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  assert.equal(names.length, 73, "the ledger carries alias hotfix #73 after W02-A #72");
+  assert.equal(names.at(-1), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  // This is the regression for the earlier one-off P2 repair. Apply the
+  // pre-hotfix ledger so its defect fixture remains reproducible; #73 has its
+  // own focused lane and prevents this shape from being created again.
+  for (const name of names.slice(0, -1)) {
+    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  }
   return db;
 }
 

@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 72, "W02-A #72 appends after W01D #71 and earlier migrations");
+  assert.equal(totalCount, 73, "W02-A #72 appends after W01D #71 and earlier migrations");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -646,11 +646,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // leader writes. A1b3 adds the internal transition helper and candidate RPC,
     // then revokes the old seed's service-role grant, moving it into the internal
     // inventory. W02-A adds one private authority selector. The measured inventory
-    // is 176 total / 81 service-role / 95 internal.
+    // is 177 total / 81 service-role / 96 internal.
     assert.deepEqual(result.rows[0], {
-      total: 176,
+      total: 177,
       service_role: 81,
-      internal: 95,
+      internal: 96,
       exposed_internal: 0,
     });
   } finally {

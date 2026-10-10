@@ -148,10 +148,10 @@ async function assertPriorMigrationsUnchanged(names) {
     .sort()
     .map((name) => path.basename(name));
   assert.equal(baseline.length, 71, "reviewed base inventory is exactly #1-#71");
-  assert.equal(names.length, 72, "working ledger contains exactly one appended migration");
-  assert.deepEqual(names.slice(0, 71), baseline, "#72 is the sole ledger delta");
-  assert.equal(names.at(-2), MIGRATION_71);
-  assert.equal(names.at(-1), MIGRATION_72);
+  assert.equal(names.length, 73, "working ledger carries W02-A #72 and alias hotfix #73");
+  assert.deepEqual(names.slice(0, 71), baseline, "migrations #1-#71 remain the baseline");
+  assert.equal(names.at(-3), MIGRATION_71);
+  assert.equal(names.at(-2), MIGRATION_72);
   for (const name of baseline) {
     const relative = `supabase/migrations/${name}`;
     const tracked = execFileSync("git", ["show", `${BASE_COMMIT}:${relative}`], {
@@ -444,9 +444,9 @@ test("P3.1-W02A: append-only ledger, source and baseline identity guards", async
 
 test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutations", async () => {
   const { db, names, inventory } = await buildDb();
-  assert.equal(names.length, 72);
-  assert.equal(names.at(-1), MIGRATION_72);
-  assert.equal(names.at(-2), MIGRATION_71);
+  assert.equal(names.length, 73);
+  assert.equal(names.at(-2), MIGRATION_72);
+  assert.equal(names.at(-3), MIGRATION_71);
   assert.ok(inventory.total > 0);
   const actors = await seed(db);
   const {

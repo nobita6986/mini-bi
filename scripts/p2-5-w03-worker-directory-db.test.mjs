@@ -1,6 +1,6 @@
 /**
  * P2.5-W03 - worker directory server projection (DB regression, PGlite over the
- * 72-migration ledger).
+ * 73-migration ledger).
  *
  * Proves the P2.5 section 4.1 read model at the DB boundary:
  *   * recruiter audience = verified/effective app-user -> recruiter link, and the
@@ -53,10 +53,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 72, "the ledger carries 72 migrations through W02-A #72");
-  assert.equal(names[names.length - (20)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (21)], W03_MIGRATION, "W03 is #52");
-  assert.equal(names[names.length - (22)], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names.length, 73, "the ledger carries 72 migrations through W02-A #72");
+  assert.equal(names[names.length - (21)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (22)], W03_MIGRATION, "W03 is #52");
+  assert.equal(names[names.length - (23)], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 

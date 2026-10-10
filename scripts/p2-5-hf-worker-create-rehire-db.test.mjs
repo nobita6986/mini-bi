@@ -55,14 +55,14 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 72, "the ledger carries 72 migrations after W02-A #72");
-  assert.equal(names.at(-8), VENDOR_DOCUMENT_MIGRATION, "P3-W07A-R3 remains #65");
-  assert.equal(names.at(-9), R7_MIGRATION, "P2.5-HF-R7 remains #64");
-  assert.equal(names.at(-10), R6_MIGRATION, "P2.5-HF-R6 remains #63");
-  assert.equal(names.at(-12), R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names.at(-13), R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names.at(-15), HF_MIGRATION, "P2.5-HF remains #58");
-  assert.equal(names.at(-16), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
+  assert.equal(names.length, 73, "the ledger carries 72 migrations after W02-A #72");
+  assert.equal(names.at(-9), VENDOR_DOCUMENT_MIGRATION, "P3-W07A-R3 remains #65");
+  assert.equal(names.at(-10), R7_MIGRATION, "P2.5-HF-R7 remains #64");
+  assert.equal(names.at(-11), R6_MIGRATION, "P2.5-HF-R6 remains #63");
+  assert.equal(names.at(-13), R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.at(-14), R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.at(-16), HF_MIGRATION, "P2.5-HF remains #58");
+  assert.equal(names.at(-17), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
   return db;
 }
 
