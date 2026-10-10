@@ -2043,20 +2043,6 @@ export function DirectEntryLive() {
                 </>
               );
             })()}
-            <div className={styles.spreadsheetActions}>
-              <button type="button" className={styles.secondaryButton}
-                data-testid="add-rows-batch"
-                onClick={addStagedRows}
-                disabled={loadState !== "ready" || !canAddStagedRows(stagedModel)}>
-                Thêm dòng
-              </button>
-              <button type="button" className={styles.primaryButton}
-                data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
-                disabled={loadState !== "ready" || stagedBusy}
-                aria-busy={stagedBusy}>
-                Lưu các dòng hợp lệ
-              </button>
-            </div>
             {stagedRejection !== "" && (
               <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
             )}
@@ -2091,6 +2077,22 @@ export function DirectEntryLive() {
               onSelectedClientRowChange={setSelectedClientRowId}
               zoomLevel={directEntryGridZoomLevel}
               onZoomChange={setDirectEntryGridZoomLevel}
+              toolbarActions={
+                <>
+                  <button type="button" className={styles.secondaryButton}
+                    data-testid="add-rows-batch"
+                    onClick={addStagedRows}
+                    disabled={loadState !== "ready" || !canAddStagedRows(stagedModel)}>
+                    Thêm dòng
+                  </button>
+                  <button type="button" className={styles.primaryButton}
+                    data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
+                    disabled={loadState !== "ready" || stagedBusy}
+                    aria-busy={stagedBusy}>
+                    Lưu các dòng hợp lệ
+                  </button>
+                </>
+              }
             />
           </section>
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}

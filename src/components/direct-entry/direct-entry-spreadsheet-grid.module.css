@@ -49,7 +49,7 @@
   font-weight: 600;
 }
 
-.toolbar button {
+.toolbar > span:not(.zoomControls) button {
   min-height: 34px;
   padding: 0 12px;
   border: 1px solid var(--border, #d4d4d8);
@@ -58,9 +58,28 @@
   cursor: pointer;
 }
 
-.toolbar button:disabled {
+.toolbar > span:not(.zoomControls) button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.toolbarActions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.toolbarActions > button {
+  box-sizing: border-box;
+  min-height: 35px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .viewport {

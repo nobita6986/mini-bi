@@ -16,7 +16,7 @@
  */
 import {
   memo, useCallback, useEffect, useMemo, useRef, useState,
-  type ClipboardEvent, type KeyboardEvent,
+  type ClipboardEvent, type KeyboardEvent, type ReactNode,
 } from "react";
 import {
   DataGrid,
@@ -170,6 +170,7 @@ export type DirectEntrySpreadsheetGridProps = {
    */
   zoomLevel?: number;
   onZoomChange?(level: number): void;
+  toolbarActions?: ReactNode;
 };
 
 const PROVIDER_OPTIONS = ["hrp", "vendor"] as const;
@@ -625,7 +626,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
     onProviderTypeChange,
     notice, canUndo, onUndo, saveMessage, saveTone,
     selectedClientRowId, onSelectedClientRowChange,
-    zoomLevel, onZoomChange,
+    zoomLevel, onZoomChange, toolbarActions,
   } = props;
 
   // P3-W07C-R1 zoom: chi chap nhan cac muc co dinh; mac dinh 100.
@@ -954,6 +955,9 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
             role={saveTone === "error" ? "alert" : "status"}>
             {saveMessage}
           </span>
+        )}
+        {toolbarActions !== undefined && (
+          <div className={styles.toolbarActions}>{toolbarActions}</div>
         )}
       </div>
       <div className={styles.viewport}>

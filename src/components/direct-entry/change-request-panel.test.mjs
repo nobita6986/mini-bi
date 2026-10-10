@@ -7,6 +7,8 @@ const submissions = readFileSync(new URL("./direct-entry-submission-list.tsx", i
 const workers = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("./direct-entry-compact-panel.tsx", import.meta.url), "utf8");
+const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
+const gridCss = readFileSync(new URL("./direct-entry-spreadsheet-grid.module.css", import.meta.url), "utf8");
 const css = readFileSync(new URL("./direct-entry-shell.module.css", import.meta.url), "utf8");
 const compactStyles = css.slice(css.indexOf(".compactPanel"), css.indexOf("@media (min-width: 640px)"));
 
@@ -104,14 +106,31 @@ test("mobile hides both Excel CTAs and keeps quick-add visible without changing 
   assert.doesNotMatch(live, /window\.innerWidth|matchMedia\(/);
 });
 
-test("spreadsheet actions remain unique and outside the header without changing callbacks", () => {
+test("spreadsheet actions live once at the end of the grid toolbar", () => {
   const header = live.slice(live.indexOf("<header className={styles.header}>"),
     live.indexOf("</header>", live.indexOf("<header className={styles.header}>")));
+  const toolbarStart = grid.indexOf("<div className={styles.toolbar}>");
+  const toolbarEnd = grid.indexOf('<div className={styles.viewport}>', toolbarStart);
+  const toolbar = grid.slice(toolbarStart, toolbarEnd);
   assert.equal((live.match(/data-testid="add-rows-batch"/g) ?? []).length, 1);
   assert.equal((live.match(/data-testid="spreadsheet-save"/g) ?? []).length, 1);
   assert.doesNotMatch(header, /data-testid="add-rows-batch"|data-testid="spreadsheet-save"/);
-  assert.match(live, /<div className=\{styles\.spreadsheetActions\}>[\s\S]*?data-testid="add-rows-batch"[\s\S]*?data-testid="spreadsheet-save"/);
+  assert.doesNotMatch(live, /styles\.spreadsheetActions/);
+  assert.match(live, /toolbarActions=\{\s*<>[\s\S]*?data-testid="add-rows-batch"[\s\S]*?data-testid="spreadsheet-save"[\s\S]*?<\/>\s*\}/);
+  assert.ok(toolbarStart >= 0 && toolbarEnd > toolbarStart);
+  assert.ok(toolbar.indexOf("styles.zoomControls") < toolbar.indexOf("data-testid=\"spreadsheet-paste-notice\""));
+  assert.ok(toolbar.indexOf("data-testid=\"spreadsheet-save-message\"") < toolbar.indexOf("styles.toolbarActions"));
+  assert.match(toolbar, /<div className=\{styles\.toolbarActions\}>\s*\{toolbarActions\}\s*<\/div>/);
+  assert.match(gridCss, /\.toolbarActions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*margin-left:\s*auto/s);
+  assert.match(gridCss, /\.toolbarActions > button\s*\{[^}]*min-height:\s*35px;[^}]*padding:\s*0 10px;[^}]*white-space:\s*nowrap;/s);
+  assert.match(live, /className=\{styles\.secondaryButton\}\s*data-testid="add-rows-batch"\s*onClick=\{addStagedRows\}\s*disabled=\{loadState !== "ready" \|\| !canAddStagedRows\(stagedModel\)\}/);
+  assert.match(live, /className=\{styles\.primaryButton\}\s*data-testid="spreadsheet-save" onClick=\{\(\) => void onStagedSave\(\)\}\s*disabled=\{loadState !== "ready" \|\| stagedBusy\}\s*aria-busy=\{stagedBusy\}/);
+  assert.match(grid, /data-testid="spreadsheet-undo" onClick=\{onUndo\}/);
+  assert.match(grid, /data-testid="spreadsheet-paste-notice"/);
+  assert.match(grid, /data-testid="spreadsheet-error-summary"/);
+  assert.match(grid, /data-testid="spreadsheet-header-issues"/);
+  assert.match(grid, /data-testid="spreadsheet-save-message"/);
   assert.match(live, /onClick=\{addStagedRows\}/);
   assert.match(live, /onClick=\{\(\) => void onStagedSave\(\)\}/);
-  assert.match(live, /<DirectEntrySpreadsheetGrid/);
+  assert.match(live, /<DirectEntrySpreadsheetGrid[\s\S]*?toolbarActions=/);
 });
