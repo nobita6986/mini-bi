@@ -1,6 +1,6 @@
 # P3.1-W03-S0-R6 — Account, Grant, Scope, Link, Audit, Restore access/security rebaseline (T0 R6 corrections)
 
-> Status: `P3_1_W03_S0_R6_REVIEW_BLOCKED_R6_REQUIRED` (R5 was returned by T0 with six logic blockers; R6 is the next pass on the same branch)
+> Status: `P3_1_W03_S0_R6_ACCESS_SECURITY_REBASELINE_PASS_AWAITING_T0` (R6 rebaseline complete; the 6 T0 R5 logic blockers are corrected; awaiting T0 acceptance of R6)
 > Base: `origin/main@1189c8a77decbecec0b402b72f428cb0525b460d`. R1 commit `60ecb5654cd0b06503a17250d8be08f30306ac77`; R2 commit `16469e7a4d54738c34c013f50156e1182019f50a`; R3 commit `840c817b7833fff401b18271c0a3adb2169df615`; R4 commit `36b73fedb5d224d9e5e0669619ccab973990f731`; R5 commit `069ac75fc9d6cfb89c12cf2bfcb0201fd20824e3`; this R6 commit is a follow-up fast-forward on the same branch. Ledger 71 migrations; #71 = `20261009070000_p3_1_w01d_team_leader_lifecycle.sql` is last; #72 does not exist. Worktree `C:\CodeApp\BI-p3-1-w03-s0-r1-access-security-rebaseline`; branch `audit/p3-1-w03-s0-r1-access-security-rebaseline`.
 > Lane: T1C read-only survey / security review. No source, migration, `package.json`, dependency, `docs/P3.1.md` or other code change. No Production query/apply/deploy, no browser/Playwright/CUA/UAT. Exactly one documentation file changed: this memo.
 
