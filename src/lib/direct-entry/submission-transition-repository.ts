@@ -8,7 +8,8 @@
  */
 import "server-only";
 
-import { projectSubmissionTransitionResult } from "./submission-transition-contract.ts";
+import { projectSubmissionTransitionConfirmedResult,
+  projectSubmissionTransitionResult } from "./submission-transition-contract.ts";
 import type {
   SubmissionState,
   SubmissionTransitionResult,
@@ -23,13 +24,21 @@ type ActorRef = { auth_subject: string; app_user_id: string };
 
 export type SubmissionTransitionOutcome<T = SubmissionTransitionResult> =
   | { ok: true; data: T }
-  | { ok: false; kind: "conflict" | "denied" | "invalid" | "not-found" | "unavailable" };
+  | { ok: false; kind:
+      | "conflict" | "denied" | "invalid" | "not-found" | "unavailable"
+      | "duplicate-confirmation" };
 
 export type SubmissionTransitionInput = ActorRef & {
   submission_id: string;
   expected_version: number;
   target_state: SubmissionState;
   idempotency_key: string;
+  /**
+   * P3.1-HF-R1: acknowledgement bat buoc khi DRAFT -> REVIEW con conflict. Co cap nay thi
+   * repository goi entry point da xac nhan va server tu kiem tra lai tap conflict.
+   */
+  duplicate_cccd_fingerprint?: string;
+  duplicate_cccd_count?: number;
 };
 
 export type SubmissionTransitionRepository = {
@@ -80,19 +89,43 @@ export function createSubmissionTransitionRepository(
   return {
     async transitionSubmission(input) {
       try {
-        const { data, error } = await callRpc("direct_entry_transition_submission", {
-          p_auth_subject: input.auth_subject,
-          p_app_user_id: input.app_user_id,
-          p_submission_id: input.submission_id,
-          p_expected_version: input.expected_version,
-          p_target_state: input.target_state,
-          p_idempotency_key: input.idempotency_key,
-        });
-        if (error) return { ok: false, kind: classifySubmissionTransitionError(error) };
-        const projection = projectSubmissionTransitionResult(data, {
+        const acknowledged = typeof input.duplicate_cccd_fingerprint === "string" &&
+          typeof input.duplicate_cccd_count === "number";
+        const { data, error } = acknowledged
+          ? await callRpc("direct_entry_transition_submission_duplicate_cccd_confirmed", {
+              p_auth_subject: input.auth_subject,
+              p_app_user_id: input.app_user_id,
+              p_submission_id: input.submission_id,
+              p_expected_version: input.expected_version,
+              p_target_state: input.target_state,
+              p_idempotency_key: input.idempotency_key,
+              p_ack_fingerprint: input.duplicate_cccd_fingerprint,
+              p_ack_conflict_count: input.duplicate_cccd_count,
+            })
+          : await callRpc("direct_entry_transition_submission", {
+              p_auth_subject: input.auth_subject,
+              p_app_user_id: input.app_user_id,
+              p_submission_id: input.submission_id,
+              p_expected_version: input.expected_version,
+              p_target_state: input.target_state,
+              p_idempotency_key: input.idempotency_key,
+            });
+        if (error) {
+          // P3.1-HF-R1: tap conflict CCCD da doi giua preflight va confirm => xac nhan lai.
+          // Duoc nhan dien truoc classifier de khong mo rong union dung chung cua cac module khac.
+          if (error.code === "22023" &&
+              error.message === "duplicate cccd acknowledgement required") {
+            return { ok: false, kind: "duplicate-confirmation" };
+          }
+          return { ok: false, kind: classifySubmissionTransitionError(error) };
+        }
+        const expected = {
           submission_id: input.submission_id,
           expected_version: input.expected_version,
-        });
+        };
+        const projection = acknowledged
+          ? projectSubmissionTransitionConfirmedResult(data, expected)
+          : projectSubmissionTransitionResult(data, expected);
         return projection ? { ok: true, data: projection } : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] submission transition RPC failed");

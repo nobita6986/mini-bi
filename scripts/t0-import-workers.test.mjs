@@ -468,10 +468,19 @@ test("R5B-R2: authority, expired assignment, episode rules and postcheck failure
     assert.equal(created.status, "ON", "R1: new profile starts ON without an extra event");
     assert.equal(Number(created.events), 1);
     assert.equal(created.national_id, CCCD, "leading zero preserved");
-    const blocked = await runImport(await optionsFor(await manifestFile([row({ source_row_id: "9" })]),
-      BATCH_B), dependenciesFor(db).deps);
-    assert.equal(blocked.code, "ACTIVE_EPISODE_EXISTS");
-    assert.equal(await entryCount(db), 1);
+    // P3.1-HF: a second live episode for the same CCCD imports as a new row instead of
+    // raising ACTIVE_EPISODE_EXISTS.
+    const secondEpisode = await runImport(await optionsFor(
+      await manifestFile([row({ source_row_id: "9" })]), BATCH_B), dependenciesFor(db).deps);
+    assert.equal(secondEpisode.ok, true, JSON.stringify(secondEpisode));
+    assert.equal(await entryCount(db), 2, "the second live episode is a new row");
+    const second = (await db.query("select e.entry_id::text as id, e.employee_code," +
+      " (select st.status from public.direct_entry_employment_status_events st" +
+      "   where st.entry_id = e.entry_id order by st.version desc limit 1) as status" +
+      " from public.direct_entries e where e.entry_id <> $1::uuid", [created.id])).rows[0];
+    assert.ok(second, "the second episode row exists");
+    assert.equal(second.status, "ON");
+    assert.notEqual(second.employee_code, created.employee_code);
 
     // Canonical status path closes the episode (uploader actor, DRAFT submission, reason, OCC).
     await db.query("select public.direct_entry_apply_employment_status(" +
@@ -486,10 +495,15 @@ test("R5B-R2: authority, expired assignment, episode rules and postcheck failure
       "   where st.entry_id = e.entry_id order by st.version desc limit 1) as status" +
       " from public.direct_entries e")).rows;
     const old = rows.find((item) => item.id === created.id);
-    const fresh = rows.find((item) => item.id !== created.id);
     assert.equal(old.status, "OFF");
-    assert.notEqual(fresh.employee_code, old.employee_code);
-    assert.equal(fresh.status, "ON");
+    // P3.1-HF: a duplicate CCCD leaves more than one live episode, so every live row must be
+    // ON with its own employee code instead of assuming exactly one fresh episode.
+    const live = rows.filter((item) => item.id !== created.id);
+    assert.ok(live.length >= 1, "at least one live episode remains");
+    for (const item of live) {
+      assert.notEqual(item.employee_code, old.employee_code);
+      assert.equal(item.status, "ON");
+    }
 
     // Postcheck failure rolls the batch back.
     const override = async (sql, params, inner) => {

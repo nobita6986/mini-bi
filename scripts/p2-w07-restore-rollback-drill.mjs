@@ -6,7 +6,8 @@
  * (initdb + trust auth + port rieng), ap dung toan bo migration hien hanh trong
  * supabase/migrations (inventory dong, khong khoa cung so luong), seed fixture TONG HOP, dump bang
  * pg_dump -Fc, restore sang database thu hai, so sanh ledger/checksum, schema objects,
- * fingerprint du lieu va invariant episode, roi do thoi gian rollback (drop + restore lai).
+ * fingerprint du lieu va hop dong duplicate CCCD (P3.1-HF: episode thu hai duoc ghi, bao cao
+ * chi doc la mat duy nhat bao trung), roi do thoi gian rollback (drop + restore lai).
  * Khong in connection string, secret, PII, CCCD, email hay UUID nguoi dung.
  */
 import { spawnSync } from "node:child_process";
@@ -208,9 +209,12 @@ function objectCounts(db) {
   return { tables, indexes, triggers, functions, constraints };
 }
 
-function invariantHeld(db) {
-  // Invariant #58-#60: episode active thu hai cho cung CCCD phai bi tu choi dung ma loi.
-  const sql = [
+function duplicateEpisodeAllowed(db) {
+  // P3.1-HF: #58-#60 (episode active thu hai cho cung CCCD phai bi tu choi dung ma loi) da
+  // duoc go bo. Drill vi vay phai chung minh dung revision moi: mot episode thu hai cho cung
+  // CCCD duoc GHI. Probe khong de lai du lieu: ca cau lenh nam trong mot transaction roi
+  // rollback, nen psql chi tra ve trang thai 0 khi insert thanh cong.
+  const sql = 'begin; ' + [
     'insert into public.direct_entries (entry_id, submission_id, candidate_id,'
     , ' created_by_user_id, project_id, first_work_date, employee_code, worker_details,'
     , ' recruiter_id, team_id, provider_type, labor_type)'
@@ -220,12 +224,18 @@ function invariantHeld(db) {
     , ' from public.direct_entries s'
     , ' join lateral (select st.status from public.direct_entry_employment_status_events st'
     , '   where st.entry_id = s.entry_id order by st.version desc limit 1) latest on true'
-    , " where latest.status = 'ON' limit 1"
-  ].join('');
+    , " where latest.status = 'ON' limit 1;"
+  ].join('') + ' rollback;';
   const result = run('psql', [...psqlBase, '-d', db, '-c', sql], { allowFailure: true });
   const stderr = String(result.stderr ?? '');
-  return result.status !== 0 && sqlState({ stderr }) === '23505' &&
-    stderr.includes('worker_active_episode_exists');
+  return result.status === 0 && sqlState({ stderr }) === null;
+}
+
+function reportFunctionPresent(db) {
+  // Cung revision do: bao cao duplicate CCCD chi doc phai co mat tren ban restore.
+  const result = psql(db, ['-t', '-A', '-c',
+    "select count(*) from pg_proc where proname = 'direct_entry_duplicate_cccd_report'"]);
+  return result.stdout.trim() === '1';
 }
 
 try {
@@ -285,8 +295,9 @@ try {
     "select count(*) || ':' || coalesce(md5(string_agg(version || ':' || checksum, '|'" +
     " order by version)), '') from public.schema_migrations"]);
 
-  step = "invariant";
-  const invariantEnforced = invariantHeld("drill_tgt");
+  step = "duplicate-cccd";
+  const duplicateAllowed = duplicateEpisodeAllowed("drill_tgt");
+  const reportPresent = reportFunctionPresent("drill_tgt");
 
   step = "rollback";
   const rollbackStart = Date.now();
@@ -308,7 +319,8 @@ try {
     fingerprint_tables: sourceFingerprint.tables,
     objects_match: JSON.stringify(sourceObjects) === JSON.stringify(targetObjects),
     objects: sourceObjects,
-    invariant_enforced_on_target: invariantEnforced,
+    duplicate_episode_allowed_on_target: duplicateAllowed,
+    report_function_present_on_target: reportPresent,
     rollback_fingerprint_match: rollbackFingerprint.digest === sourceFingerprint.digest,
     timing_ms: { dump: dumpMs, restore: restoreMs, rollback_drop_and_restore: rollbackMs },
   };
@@ -341,7 +353,8 @@ try {
 // So luong migration KHONG duoc khoa cung: source_migration_count lay tu inventory cua chinh
 // lan chay nay (ledgerInput doc supabase/migrations), nen baseline #66 tro di van dung.
 const GATES = ["source_migration_count", "migrations_applied", "ledger_count", "ledger_match",
-  "fingerprint_match", "objects_match", "invariant_enforced_on_target",
+  "fingerprint_match", "objects_match", "duplicate_episode_allowed_on_target",
+  "report_function_present_on_target",
   "rollback_fingerprint_match", "cleanup_removed"];
 const inventoryCounted = Number.isInteger(report.source_migration_count) &&
   report.source_migration_count > 0;

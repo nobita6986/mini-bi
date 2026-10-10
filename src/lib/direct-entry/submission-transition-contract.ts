@@ -34,6 +34,19 @@ export const SUBMISSION_TRANSITION_REQUEST_KEYS = [
   "idempotency_key",
 ] as const;
 
+/**
+ * P3.1-HF-R1: dang request thu hai, chi hop le khi target la REVIEW. Cap fingerprint + count
+ * phai di cung nhau va duoc server doi chieu lai voi tap conflict authoritative; mot boolean
+ * "confirmed" don le khong bao gio duoc chap nhan.
+ */
+export const SUBMISSION_TRANSITION_ACK_REQUEST_KEYS = [
+  "expected_version",
+  "target_state",
+  "idempotency_key",
+  "duplicate_cccd_fingerprint",
+  "duplicate_cccd_count",
+] as const;
+
 /** RPC direct_entry_transition_submission tra ve dung ba truong nay (khong co reused/submitted_at). */
 export const SUBMISSION_TRANSITION_RESULT_KEYS = [
   "submission_id",
@@ -42,6 +55,16 @@ export const SUBMISSION_TRANSITION_RESULT_KEYS = [
 ] as const;
 
 export const MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+
+/** P3.1-HF-R1: fingerprint la sha256 hex 64 ky tu, count nam trong 1..1000. */
+export const MAX_ACK_CONFLICT_COUNT = 1000;
+export const SUBMISSION_TRANSITION_CONFIRMED_RESULT_KEYS = [
+  "status",
+  "submission_id",
+  "state",
+  "version",
+] as const;
+const ACK_FINGERPRINT = /^[0-9a-f]{64}$/;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -161,6 +184,8 @@ export type SubmissionTransitionRequest = {
   expected_version: number;
   target_state: SubmissionState;
   idempotency_key: string;
+  duplicate_cccd_fingerprint?: string;
+  duplicate_cccd_count?: number;
 };
 
 export type SubmissionTransitionRequestProjection =
@@ -176,7 +201,8 @@ export function projectSubmissionTransitionRequest(
   if (forbidden) {
     return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN", field: forbidden.field };
   }
-  if (!hasExactKeys(value, SUBMISSION_TRANSITION_REQUEST_KEYS)) {
+  const withAcknowledgement = hasExactKeys(value, SUBMISSION_TRANSITION_ACK_REQUEST_KEYS);
+  if (!withAcknowledgement && !hasExactKeys(value, SUBMISSION_TRANSITION_REQUEST_KEYS)) {
     return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
   }
   const { expected_version: expectedVersion, target_state: targetState, idempotency_key: key } = value;
@@ -189,12 +215,35 @@ export function projectSubmissionTransitionRequest(
   if (key.trim() === "" || hasControlCharacter(key)) {
     return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
   }
+  if (!withAcknowledgement) {
+    return {
+      ok: true,
+      value: {
+        expected_version: expectedVersion,
+        target_state: targetState,
+        idempotency_key: key,
+      },
+    };
+  }
+  // Acknowledgement chi co nghia cho DRAFT -> REVIEW (server kiem tra lai trang thai that).
+  if (targetState !== "REVIEW") return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
+  const fingerprint = value.duplicate_cccd_fingerprint;
+  const count = value.duplicate_cccd_count;
+  if (typeof fingerprint !== "string" || !ACK_FINGERPRINT.test(fingerprint)) {
+    return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
+  }
+  if (typeof count !== "number" || !Number.isSafeInteger(count) ||
+      count < 1 || count > MAX_ACK_CONFLICT_COUNT) {
+    return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
+  }
   return {
     ok: true,
     value: {
       expected_version: expectedVersion,
       target_state: targetState,
       idempotency_key: key,
+      duplicate_cccd_fingerprint: fingerprint,
+      duplicate_cccd_count: count,
     },
   };
 }
@@ -226,4 +275,23 @@ export function projectSubmissionTransitionResult(
     state: value.state,
     version: value.version,
   };
+}
+
+/**
+ * P3.1-HF-R1: ket qua cua entry point da xac nhan. Dung bon key, status phai la "applied", va
+ * ba truong con lai duoc doi chieu nhu ket qua thuong (dung submission, version = expected + 1).
+ */
+export function projectSubmissionTransitionConfirmedResult(
+  value: unknown,
+  expected: { submission_id: string; expected_version: number },
+): SubmissionTransitionResult | null {
+  if (!isRecord(value) ||
+      !hasExactKeys(value, SUBMISSION_TRANSITION_CONFIRMED_RESULT_KEYS)) {
+    return null;
+  }
+  if (value.status !== "applied") return null;
+  return projectSubmissionTransitionResult(
+    { submission_id: value.submission_id, state: value.state, version: value.version },
+    expected,
+  );
 }

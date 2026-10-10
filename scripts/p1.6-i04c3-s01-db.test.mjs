@@ -96,7 +96,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 73, "W02-A #72 appends after W01D #71 and earlier migrations");
+  assert.equal(totalCount, 74,
+    "the P3.1-HF duplicate-CCCD report #74 appends after alias hotfix #73");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -645,12 +646,21 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // leader reads; A1b2 adds the internal mutation helper and two service-role-only
     // leader writes. A1b3 adds the internal transition helper and candidate RPC,
     // then revokes the old seed's service-role grant, moving it into the internal
-    // inventory. W02-A adds one private authority selector. The measured inventory
-    // is 177 total / 81 service-role / 96 internal.
+    // inventory. W02-A adds one private authority selector. P3.1-HF (#74) adds one
+    // internal reader gate (direct_entry_assert_duplicate_cccd_reader), one internal
+    // source-rewrite helper (direct_entry_hf_replace_proc_source) and the
+    // service-role-only duplicate-CCCD report RPC, while dropping the retired
+    // direct_entry_guard_active_episode, so nothing is reachable by
+    // anon/authenticated. P3.1-HF-R1 (still the same, unmerged #74) adds two internal
+    // helpers (direct_entry_submission_duplicate_cccd_state and
+    // direct_entry_transition_submission_apply) and two service-role-only RPCs (the
+    // duplicate preflight and the acknowledged transition), and re-creates the legacy
+    // six-argument transition as a thin wrapper over the shared body. The measured
+    // inventory is 183 total / 84 service-role / 99 internal.
     assert.deepEqual(result.rows[0], {
-      total: 177,
-      service_role: 81,
-      internal: 96,
+      total: 183,
+      service_role: 84,
+      internal: 99,
       exposed_internal: 0,
     });
   } finally {
@@ -941,6 +951,8 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
       ]) assert.equal(revision.snapshots.includes(secret), false);
     }
 
+    // P3.1-HF: the business-level duplicate-CCCD refusals are gone, so one batch may repeat a
+    // CCCD and a new episode may reuse a CCCD that already exists for the same project.
     const duplicateRows = [
       row(10, { worker_details: {
         ...row(10).worker_details,
@@ -951,18 +963,26 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
         national_id: { state: "provided", value: "123456789" },
       } }),
     ];
-    const countBeforeReject = await count(db, "direct_entries");
-    await assert.rejects(
-      rpc(db, duplicateRows, "91600000-0000-4000-8000-000000000102"),
-      (error) => error.code === "22023",
+    const countBeforeDuplicateAttempts = await count(db, "direct_entries");
+    const duplicateResult = await rpc(
+      db, duplicateRows, "91600000-0000-4000-8000-000000000102",
     );
-    await assert.rejects(
-      rpc(db, [row(20, { worker_details: {
+    assert.equal(duplicateResult.replayed, false);
+    assert.equal(duplicateResult.entry_ids.length, 2);
+    const duplicateNationalIds = await db.query(
+      "select count(*)::integer as n from public.direct_entries " +
+      "where entry_id = any($1::uuid[]) " +
+      "and worker_details->'national_id'->>'value' = '123456789'",
+      [duplicateResult.entry_ids],
+    );
+    assert.equal(duplicateNationalIds.rows[0].n, 2);
+    const reusedCccd = await rpc(
+      db, [row(20, { worker_details: {
         ...row(20).worker_details,
         national_id: { state: "provided", value: "001234567890" },
-      } })], "91600000-0000-4000-8000-000000000113"),
-      (error) => error.code === "23505",
+      } })], "91600000-0000-4000-8000-000000000113",
     );
+    assert.equal(reusedCccd.entry_ids.length, 1);
     await assert.rejects(
       rpc(db, [row(1)], "91600000-0000-4000-8000-000000000103"),
       (error) => error.code === "23505",
@@ -1008,7 +1028,7 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
       } })], "91600000-0000-4000-8000-000000000106"),
       (error) => error.code === "22023",
     );
-    assert.equal(await count(db, "direct_entries"), countBeforeReject);
+    assert.equal(await count(db, "direct_entries"), countBeforeDuplicateAttempts + 3);
 
     const phoneDuplicates = [
       row(15, { worker_details: {

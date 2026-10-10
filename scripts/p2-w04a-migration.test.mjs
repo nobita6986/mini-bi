@@ -28,8 +28,11 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
   try {
     // W04B (#44) stays immediately after W07B; W07C-R2 (#45), W07C-R3 (#46),
     // P2-W04C (#47), W05A (#48), W07C-R7 (#49), W07E (#50), P2.5-W02 (#51),
-    // P2.5-W03 (#52).
-    assert.equal(migrationNames.length, 73);
+    // P2.5-W03 (#52), W04 #53, W06A #54, W05 #55, W05-R1 #56, initial-ON #57,
+    // the P2.5-HF chain #58 through #64, P3-W07A-R3 #65, P3-W07A-R4 #66,
+    // P3.1-W01A #67, W01B #68, W01C-A #69, W01C-B #70, W01D-A1a #71, W02-A #72,
+    // alias hotfix #73 and the P3.1-HF duplicate-CCCD report #74.
+    assert.equal(migrationNames.length, 74);
     assert.equal(
       migrationNames[47],
       "20261008080000_p3_w05a_actor_scoped_reporting.sql",
@@ -221,8 +224,10 @@ async function seedW04aFixture(db) {
   await db.query("insert into auth.users (id) values ($1)",
     ["10000000-0000-4000-8000-000000000001"]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject) values ($1, $2)",
-    ["20000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000001"],
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)" +
+    " values ($1, $2, true, $3)",
+    ["20000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000001",
+      "W04A Synthetic Admin"],
   );
   await db.query("insert into public.teams (team_id, code, display_name) values ($1, $2, $3)",
     ["94000000-0000-4000-8000-000000000001", "W04A-SYNTH", "W04A team"]);
@@ -334,7 +339,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // Later main migrations (W05A, W07C-R7, W07E, P2.5-W02 and P2.5-W03) are present
   // after W04B in the source inventory; this test skipped applying only W04B.
-  assert.equal(names.length, 73);
+  assert.equal(names.length, 74);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

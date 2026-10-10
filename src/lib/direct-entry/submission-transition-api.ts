@@ -101,7 +101,9 @@ export async function transitionSubmission(
       return fail("ACTOR_NOT_AVAILABLE", 403);
     }
 
-    // 8. Repository/RPC voi actor do server suy ra.
+    // 8. Repository/RPC voi actor do server suy ra. Hai dang request duoc phep:
+    //    * 3 key  -> duong cu (DRAFT -> REVIEW khong conflict, REVIEW -> DRAFT, SUBMITTED);
+    //    * 5 key  -> entry point da xac nhan, server se tu kiem tra lai tap conflict.
     const result = await dependencies.repository.transitionSubmission({
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,
@@ -109,11 +111,21 @@ export async function transitionSubmission(
       expected_version: parsed.value.expected_version,
       target_state: parsed.value.target_state,
       idempotency_key: parsed.value.idempotency_key,
+      ...(parsed.value.duplicate_cccd_fingerprint === undefined
+        ? {}
+        : {
+            duplicate_cccd_fingerprint: parsed.value.duplicate_cccd_fingerprint,
+            duplicate_cccd_count: parsed.value.duplicate_cccd_count,
+          }),
     });
     if (!result.ok) {
       if (result.kind === "denied") return fail("SUBMISSION_DENIED", 403);
       if (result.kind === "not-found") return fail("SUBMISSION_NOT_FOUND", 404);
       if (result.kind === "conflict") return fail("SUBMISSION_CONFLICT", 409);
+      if (result.kind === "duplicate-confirmation") {
+        // Tap conflict da thay doi: khong submit, client phai preflight lai va xac nhan lai.
+        return fail("DUPLICATE_CCCD_CONFIRMATION_REQUIRED", 409);
+      }
       if (result.kind === "invalid") return fail("SUBMISSION_TRANSITION_INVALID", 400);
       console.error("[direct-entry] submission transition unavailable");
       return fail("SUBMISSION_UNAVAILABLE", 500);
