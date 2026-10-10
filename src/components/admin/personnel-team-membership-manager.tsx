@@ -633,7 +633,10 @@ export function PersonnelTeamMembershipManager({
                       <label htmlFor="membership-team" className="block text-sm font-medium">
                         Nhóm đang hoạt động <span aria-hidden="true">*</span>
                         <select id="membership-team" required value={form.teamId}
-                          onChange={(event) => setActiveForm((value) => ({ ...value, teamId: event.currentTarget.value }))}
+                          onChange={(event) => {
+                            const teamId = event.currentTarget.value;
+                            setActiveForm((value) => ({ ...value, teamId }));
+                          }}
                           disabled={teamState.kind !== "loaded" || activeListLock}
                           className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3">
                           <option value="">Chọn nhóm</option>
@@ -656,13 +659,19 @@ export function PersonnelTeamMembershipManager({
                         : "Có hiệu lực từ ngày"} <span aria-hidden="true">*</span>
                       <input id="membership-effective-date" type="date" required value={form.date}
                         readOnly={operation.kind === "close" && operation.cancelScheduled}
-                        onChange={(event) => setActiveForm((value) => ({ ...value, date: event.currentTarget.value }))}
+                        onChange={(event) => {
+                          const date = event.currentTarget.value;
+                          setActiveForm((value) => ({ ...value, date }));
+                        }}
                         className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3" />
                     </label>
                     <label htmlFor="membership-reason" className="block text-sm font-medium">
                       Lý do <span aria-hidden="true">*</span>
                       <textarea id="membership-reason" required maxLength={4000} rows={3} value={form.reason}
-                        onChange={(event) => setActiveForm((value) => ({ ...value, reason: event.currentTarget.value }))}
+                        onChange={(event) => {
+                          const reason = event.currentTarget.value;
+                          setActiveForm((value) => ({ ...value, reason }));
+                        }}
                         className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2" />
                     </label>
                     {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}

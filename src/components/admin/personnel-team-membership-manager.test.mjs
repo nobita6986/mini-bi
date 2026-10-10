@@ -64,6 +64,16 @@ test("successful mutation reloads authoritative detail and each separate list; f
   assert.match(personnelManager, /membershipTrigger\.current\?\.focus\(\)/);
 });
 
+test("membership form captures DOM values before the queued React state updater runs", () => {
+  assert.doesNotMatch(
+    component,
+    /setActiveForm\(\(value\) => \(\{[^}]*event\.currentTarget\.value/s,
+  );
+  assert.match(component, /const teamId = event\.currentTarget\.value;[\s\S]*teamId \}\)\);/);
+  assert.match(component, /const date = event\.currentTarget\.value;[\s\S]*date \}\)\);/);
+  assert.match(component, /const reason = event\.currentTarget\.value;[\s\S]*reason \}\)\);/);
+});
+
 test("inactive personnel can still close membership, while assign and move require active personnel", () => {
   assert.match(component, /onMove=\{personnel\.active && \(state === "CURRENT" \|\| state === "SCHEDULED"\)/);
   assert.match(component, /onClose=\{state === "CURRENT"/);
