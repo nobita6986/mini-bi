@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 70, "P3.1-W01C-B #70 appends after P3.1-W01C-A #69, P3.1-W01B #68, P3.1-W01A #67, P3-W07A-R3 #66, P2.5-HF-R7 #64, R6 #63, session identity #62, P2.5-HF-R3 #61, P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
+  assert.equal(totalCount, 71, "P3.1-W01D-A1a1 #71 appends after P3.1-W01C-B #70, P3.1-W01C-A #69, P3.1-W01B #68, P3.1-W01A #67, P3-W07A-R3 #66, P2.5-HF-R7 #64, R6 #63, session identity #62, P2.5-HF-R3 #61, P2.5-HF-R2 #60, P2.5-HF-R1 #59, P2.5-HF #58 and initial-ON #57");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -639,10 +639,17 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // two membership write triggers) plus six service-role-only membership RPCs
     // (current/scheduled/history reads and assign/move/unassign). Nothing is reachable
     // by anon/authenticated.
+    // P3.1-W01D-A1a (#71) adds three internal helpers (the leader marker guard,
+    // the fixed eight-key leader snapshot and the bounded leader projection).
+    // A1b1 adds the internal read-authority resolver and three service-role-only
+    // leader reads; A1b2 adds the internal mutation helper and two service-role-only
+    // leader writes. A1b3 adds the internal transition helper and candidate RPC,
+    // then revokes the old seed's service-role grant, moving it into the internal
+    // inventory. The measured inventory is 174 total / 81 service-role / 93 internal.
     assert.deepEqual(result.rows[0], {
-      total: 162,
-      service_role: 76,
-      internal: 86,
+      total: 174,
+      service_role: 81,
+      internal: 93,
       exposed_internal: 0,
     });
   } finally {
