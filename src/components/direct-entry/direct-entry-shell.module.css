@@ -188,13 +188,6 @@
   align-items: center;
 }
 
-.spreadsheetActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0 0 12px;
-}
-
 /* P1.7-H08: inline explanation trong contextual bar khi nut khong the
    render. Hien thi trong cung group de giu alignment va khong tao
    dead button. Color muted de phan biet voi action chinh. */
@@ -818,10 +811,6 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .spreadsheetActions {
-    flex-direction: column;
   }
 
   .gridSection {
