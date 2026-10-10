@@ -52,9 +52,10 @@ test("one top-level /admin entry is independently authorized and is not a Direct
   }), false);
 });
 
-test("Admin internal navigation exposes only the implemented Personnel section", () => {
+test("Admin internal navigation exposes Personnel and Teams exactly once", () => {
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
     { id: "personnel", href: "/admin/catalog/personnel" },
+    { id: "teams", href: "/admin/catalog/teams" },
   ]);
   assert.deepEqual(visibleAdminSections(accountingCatalog), ADMIN_SECTIONS);
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), []);

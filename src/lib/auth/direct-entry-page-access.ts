@@ -53,6 +53,13 @@ export function decidePersonnelCatalogPageAccess(input: {
   return decideAdminAreaAccess(input);
 }
 
+/** Separate direct-URL gate for the implemented Team catalog page. */
+export function decideTeamCatalogPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideAdminAreaAccess(input);
+}
+
 const ENTRY_CAPABILITIES = ["entry_own", "entry_team", "entry_admin"] as const;
 
 export function decideDirectEntryPageAccess(input: {
