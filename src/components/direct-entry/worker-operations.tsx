@@ -490,6 +490,7 @@ export function WorkerOperations({
           requests={requestPage.items}
           hasMore={requestPage.hasMore}
           busyRequestId={busyRequestId}
+          compact
           onLoadMore={() => void loadMore(requestPage, fetchRequests, applyRequestPage)}
           onWithdraw={(request) => { void withdrawRequest(request); }}
           onReview={(request) => setReviewRequest(request)}

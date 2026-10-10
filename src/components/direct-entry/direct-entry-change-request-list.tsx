@@ -26,6 +26,7 @@ export type ChangeRequestListProps = {
   requests: readonly ChangeRequestListItem[];
   hasMore: boolean;
   busyRequestId: string | null;
+  compact?: boolean;
   onLoadMore: () => void;
   onWithdraw: (request: ChangeRequestListItem) => void;
   onReview: (request: ChangeRequestListItem) => void;
@@ -38,12 +39,13 @@ function canReviewChangeRequest(
   return request.state === "PENDING" && request.can_decide === true;
 }
 
-export function DirectEntryChangeRequestList({
+function ChangeRequestListContent({
   state,
   message,
   requests,
   hasMore,
   busyRequestId,
+  compact = false,
   onLoadMore,
   onWithdraw,
   onReview,
@@ -51,12 +53,17 @@ export function DirectEntryChangeRequestList({
   const [pendingWithdraw, setPendingWithdraw] = useState<ChangeRequestListItem | null>(null);
 
   return (
-    <section className={styles.submissionSection} aria-labelledby="direct-entry-change-requests-heading">
+    <section
+      className={compact ? styles.changeRequestContent : styles.submissionSection}
+      aria-labelledby="direct-entry-change-requests-heading"
+    >
       <div className={styles.submissionHead}>
         <div>
-          <h2 id="direct-entry-change-requests-heading" className={styles.submissionTitle}>
-            Yêu cầu thay đổi
-          </h2>
+          {!compact && (
+            <h2 id="direct-entry-change-requests-heading" className={styles.submissionTitle}>
+              Yêu cầu thay đổi
+            </h2>
+          )}
           <p className={styles.submissionHint}>
             Yêu cầu thay đổi áp dụng cho đợt đã gửi chính thức. Người đề xuất rút được yêu cầu khi
             còn chờ duyệt; người có quyền duyệt mở “Xem xét” để đối chiếu và quyết định.
@@ -81,23 +88,26 @@ export function DirectEntryChangeRequestList({
           "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi."}
       </div>
 
-      <ul className={styles.submissionList}>
+      <ul className={compact ? styles.changeRequestList : styles.submissionList}>
         {requests.map((request) => {
           const busy = busyRequestId === request.request_id;
           return (
-            <li key={request.request_id} className={styles.submissionCard}>
+            <li
+              key={request.request_id}
+              className={compact ? styles.changeRequestCard : styles.submissionCard}
+            >
               <div className={styles.submissionCardTop}>
                 <strong>{CHANGE_REQUEST_STATE_LABELS[request.state]}</strong>
                 <span className={styles.submissionRef} title="Mã kỹ thuật rút gọn">
                   Mã {shortRef(request.request_id)}
                 </span>
               </div>
-              <dl className={styles.submissionMeta}>
+              <dl className={compact ? styles.changeRequestMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{request.item_count}</dd></div>
                 <div><dt>Tạo lúc</dt><dd>{formatHcmDateTime(request.created_at)}</dd></div>
                 <div><dt>Phiên bản</dt><dd>{request.version}</dd></div>
               </dl>
-              <div className={styles.submissionActions}>
+              <div className={compact ? styles.changeRequestActions : styles.submissionActions}>
                 {canWithdrawChangeRequest(request) && (
                   <button
                     type="button"
@@ -167,5 +177,28 @@ export function DirectEntryChangeRequestList({
         </AlertDialog.Portal>
       </AlertDialog.Root>
     </section>
+  );
+}
+
+export function DirectEntryChangeRequestList(props: ChangeRequestListProps) {
+  if (!props.compact) return <ChangeRequestListContent {...props} />;
+
+  const pendingCount = props.requests.filter((request) => request.state === "PENDING").length;
+  const hasError = props.state === "error" || props.message !== "";
+
+  return (
+    <details className={styles.changeRequestPanel}>
+      <summary className={styles.changeRequestSummary}>
+        <h2 id="direct-entry-change-requests-heading" className={styles.changeRequestTitle}>
+          Yêu cầu thay đổi
+        </h2>
+        <span>{props.requests.length} đã tải</span>
+        {pendingCount > 0 && <span>{pendingCount} đang chờ xử lý</span>}
+        {hasError && <span className={styles.changeRequestError}>Không tải được</span>}
+        {props.state === "loading" && <span role="status">Đang tải…</span>}
+        <span className={styles.changeRequestToggle}>Mở / thu gọn</span>
+      </summary>
+      <ChangeRequestListContent {...props} compact />
+    </details>
   );
 }
