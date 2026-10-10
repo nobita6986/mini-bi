@@ -35,8 +35,9 @@ test("AppShell remains the single global home for HR Partner brand and ThemeSele
   const src = readFileSync(appShellPath, "utf8");
   assert.ok(src.includes("<span>HR Partner</span>"), "AppShell must retain the global brand");
   assert.ok(src.includes('import { ThemeSelector } from "@/components/dashboard/theme-selector"'));
-  assert.ok(src.includes("<ThemeSelector />"), "AppShell must retain the global theme selector");
-  assert.equal(src.split("<ThemeSelector />").length - 1, 1, "AppShell must render one ThemeSelector");
+  assert.ok(src.includes('<div className="hidden md:block">'), "desktop selector must be hidden below md");
+  assert.ok(src.includes("<ThemeSelector />"), "AppShell must retain the desktop theme selector");
+  assert.equal(src.split("<ThemeSelector />").length - 1, 1, "AppShell must render one desktop ThemeSelector");
   assert.ok(src.includes('src="/brand/hrpartner-logo.png"'));
   assert.ok(src.includes('alt="HR Partner"'));
   assert.ok(src.includes("width={2166}") && src.includes("height={1706}"));
@@ -73,17 +74,44 @@ test("dashboard hero keeps its identity/timestamp and renders the existing compa
   assert.ok(src.includes("showKpis ?"));
 });
 
-test("theme selector is portaled above the dashboard and keeps keyboard/dismiss behavior", () => {
+test("theme selector uses shared state, unique IDs, compact trigger and safe drawer portal", () => {
   const src = readFileSync(themeSelectorPath, "utf8");
-  assert.ok(src.includes("createPortal(") && src.includes("document.body"));
-  assert.ok(src.includes('className="fixed z-[100]'));
+  const nav = readFileSync(join(repoRoot, "src", "components", "app-shell", "mobile-nav.tsx"), "utf8");
+  const provider = readFileSync(join(repoRoot, "src", "lib", "theme", "theme-provider.tsx"), "utf8");
+  const triggerStart = src.lastIndexOf("<button", src.indexOf("ref={btnRef}"));
+  const triggerEnd = src.indexOf("</button>", triggerStart);
+  const trigger = src.slice(triggerStart, triggerEnd + "</button>".length);
+  assert.ok(src.includes("createPortal(") && src.includes("portalContainer ?? document.body"));
+  assert.ok(src.includes('(compact ? "z-[50]" : "z-[100]")'));
   assert.ok(src.includes("max-h-[calc(100dvh-1rem)]"));
+  assert.ok(src.includes("max-w-[calc(100vw-1rem)]"));
+  assert.ok(src.includes("window.innerHeight") && src.includes("window.innerWidth"));
+  assert.ok(src.includes("const menuId = useId()"));
+  assert.ok(src.includes("aria-controls={menuId}") && src.includes("id={menuId}"));
+  assert.ok(!src.includes('id="theme-menu"'), "separate instances must not duplicate a fixed DOM id");
+  assert.ok(src.includes("compact?: boolean"));
+  assert.match(src, /const \{ themeId, setTheme \} = useTheme\(\)/);
+  assert.equal((trigger.match(/<CurrentSwatches \/>/g) ?? []).length, 1);
+  assert.doesNotMatch(trigger, /<span[^>]*>\s*(?:Màu giao diện|▾|▸)/);
+  assert.doesNotMatch(trigger, /Chevron|Arrow/);
+  assert.ok(src.includes('aria-label="Chọn màu giao diện"'));
+  assert.ok(src.includes("compact ? undefined : \"Màu giao diện\""));
+  assert.ok(src.includes("h-11 w-11"), "compact touch target is at least 44 by 44");
+  assert.match(src, /\["var\(--primary\)", "var\(--secondary\)", "var\(--accent\)"\]/);
+  assert.match(src, /<span className="flex items-center gap-0\.5" aria-hidden>/);
+  assert.ok(src.includes("focus-visible:ring-2"));
+  assert.ok(src.includes("setTheme(t.id)") && src.includes("THEMES.map"));
+  assert.ok(src.includes("changeOpen(false)") && src.includes("btnRef.current?.focus()"));
+  assert.ok(src.includes("onOpenChange?.(next)"));
+  assert.match(nav, /<ThemeSelector\s+compact\s+portalContainer=\{dialogContent\}/);
+  assert.ok(nav.includes("const [dialogContent, setDialogContent]"));
+  assert.ok(provider.includes("THEME_STORAGE_KEY") && provider.includes("localStorage.setItem"));
+  assert.ok(provider.includes("applyThemeToDom(themeId, mode)"));
+  assert.ok(provider.includes("tokensToCssVars(theme, mode)"));
   assert.ok(src.includes('e.key === "Escape"'));
   assert.ok(src.includes('e.key !== "ArrowDown" && e.key !== "ArrowUp"'));
   assert.ok(src.includes('[role="radio"][aria-checked="true"]') && src.includes("?.focus()"));
   assert.ok(src.includes('document.addEventListener("mousedown", onDown)'));
-  assert.ok(src.includes('aria-label="Chọn màu giao diện"'),
-    "swatch-only trigger must retain an accessible name");
   assert.ok(!src.includes("<span>Màu giao diện</span>"),
     "compact trigger must not render the visual label");
   assert.ok(!src.includes('{open ? "▾" : "▸"}'),

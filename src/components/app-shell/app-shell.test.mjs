@@ -97,6 +97,25 @@ test("app-shell.tsx: re-export ThemeSelector hiện có (không phá W05 R1)", (
   );
 });
 
+test("theme selector chỉ nằm ở desktop header trong breakpoint md trở lên", () => {
+  assert.match(appShellSource, /<div className="hidden md:block">\s*<ThemeSelector \/>\s*<\/div>/);
+  assert.equal((appShellSource.match(/<ThemeSelector/g) ?? []).length, 1);
+  assert.match(appShellSource, /<UserSessionControl \/>/);
+});
+
+test("mobile theme selector là mục cuối drawer sau toàn bộ nav links", () => {
+  const navEnd = mobileNavSource.indexOf("</nav>");
+  const selector = mobileNavSource.indexOf("<ThemeSelector\n              compact");
+  const footer = mobileNavSource.lastIndexOf('className="mt-auto flex justify-end border-t border-border pt-3"');
+  const contentEnd = mobileNavSource.indexOf("</Dialog.Content>");
+  assert.ok(navEnd > -1 && selector > navEnd && footer > navEnd && selector < contentEnd);
+  assert.match(mobileNavSource, /<nav[^>]*className="flex min-h-0 flex-1[^"]*overflow-y-auto"/);
+  assert.match(mobileNavSource, /w-72 max-w-\[85vw\]/);
+  assert.match(mobileNavSource, /h-10 shrink-0/);
+  assert.match(mobileNavSource, /onEscapeKeyDown=\{\(event\) => \{\s*if \(themePickerOpen\) event\.preventDefault\(\)/);
+  assert.match(mobileNavSource, /onOpenChange=\{setThemePickerOpen\}/);
+});
+
 test("mobile-nav.tsx: là Client Component với 'use client' ở đầu file", () => {
   assert.ok(
     /^\s*"use client"/.test(mobileNavSource),

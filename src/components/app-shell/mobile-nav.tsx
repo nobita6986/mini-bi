@@ -26,6 +26,7 @@ import { Building2, ClipboardList, LayoutDashboard, Menu, ShieldCheck, Users, X 
 
 import { findEntryByPath } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
+import { ThemeSelector } from "@/components/dashboard/theme-selector";
 
 type MobileNavItem = { id: string; label: string; path: string };
 
@@ -43,11 +44,19 @@ export function MobileNav({
   items: ReadonlyArray<MobileNavItem>;
 }) {
   const [open, setOpen] = useState(false);
+  const [dialogContent, setDialogContent] = useState<HTMLDivElement | null>(null);
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
   const pathname = usePathname();
   const active = findEntryByPath(pathname);
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setThemePickerOpen(false);
+      }}
+    >
       {/* Trigger chỉ hiện trên mobile (md:hidden) */}
       <Dialog.Trigger asChild>
         <button
@@ -73,6 +82,10 @@ export function MobileNav({
           )}
         />
         <Dialog.Content
+          ref={setDialogContent}
+          onEscapeKeyDown={(event) => {
+            if (themePickerOpen) event.preventDefault();
+          }}
           id="mobile-nav-sheet"
           aria-describedby={undefined}
           className={cn(
@@ -98,7 +111,7 @@ export function MobileNav({
             </Dialog.Close>
           </div>
 
-          <nav aria-label="Điều hướng chính (di động)" className="flex flex-col gap-1">
+          <nav aria-label="Điều hướng chính (di động)" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
             {items.map((entry) => {
               const Icon = NAV_ICONS[entry.id];
               if (!Icon) throw new Error(`Missing mobile navigation icon for "${entry.id}"`);
@@ -110,7 +123,7 @@ export function MobileNav({
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => setOpen(false)}
                   className={cn(
-                    "inline-flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium",
+                    "inline-flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                     isActive
                       ? "bg-primary/10 text-foreground"
@@ -125,6 +138,13 @@ export function MobileNav({
           </nav>
 
           <Dialog.Title className="sr-only">Menu điều hướng chính</Dialog.Title>
+          <div className="mt-auto flex justify-end border-t border-border pt-3">
+            <ThemeSelector
+              compact
+              portalContainer={dialogContent}
+              onOpenChange={setThemePickerOpen}
+            />
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
