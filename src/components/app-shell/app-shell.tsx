@@ -137,8 +137,10 @@ export async function AppShell({
           {/* Session control — login/logout UX (route/RPC van la authority) */}
           <UserSessionControl />
 
-          {/* Theme selector — giữ nguyên như W05 R1 */}
-          <ThemeSelector />
+          {/* Desktop theme selector — mobile dùng footer trong drawer. */}
+          <div className="hidden md:block">
+            <ThemeSelector />
+          </div>
         </div>
 
         {/* Active page label — phụ trợ a11y cho screen-reader */}

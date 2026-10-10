@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useTheme } from "@/lib/theme/theme-provider";
@@ -28,12 +28,25 @@ function CurrentSwatches() {
   );
 }
 
-export function ThemeSelector() {
+export function ThemeSelector({
+  compact = false,
+  portalContainer,
+  onOpenChange,
+}: {
+  compact?: boolean;
+  portalContainer?: HTMLElement | null;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const { themeId, setTheme } = useTheme();
+  const menuId = useId();
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const changeOpen = useCallback((next: boolean) => {
+    setOpen(next);
+    onOpenChange?.(next);
+  }, [onOpenChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -51,27 +64,19 @@ export function ThemeSelector() {
     };
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (!btnRef.current?.contains(target) && !listRef.current?.contains(target)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        btnRef.current?.focus();
-      }
+      if (!btnRef.current?.contains(target) && !listRef.current?.contains(target)) changeOpen(false);
     };
     positionMenu();
     listRef.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')?.focus();
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
     window.addEventListener("resize", positionMenu);
     window.addEventListener("scroll", positionMenu, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", positionMenu);
       window.removeEventListener("scroll", positionMenu, true);
     };
-  }, [open]);
+  }, [changeOpen, open]);
 
   function focusIndex(i: number) {
     const nodes = listRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
@@ -81,6 +86,13 @@ export function ThemeSelector() {
   }
 
   function onListKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      changeOpen(false);
+      btnRef.current?.focus();
+      return;
+    }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
     const nodes = listRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
@@ -97,12 +109,12 @@ export function ThemeSelector() {
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-controls="theme-menu"
+        aria-controls={menuId}
         aria-label="Chọn màu giao diện"
-        title="Màu giao diện"
+        title={compact ? undefined : "Màu giao diện"}
         onClick={() => {
           if (open) {
-            setOpen(false);
+            changeOpen(false);
             return;
           }
           const trigger = btnRef.current?.getBoundingClientRect();
@@ -112,22 +124,29 @@ export function ThemeSelector() {
               left: Math.max(8, Math.min(trigger.right - 256, window.innerWidth - 264)),
             });
           }
-          setOpen(true);
+          changeOpen(true);
         }}
-        className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        className={
+          compact
+            ? "inline-flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface p-0 text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            : "inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        }
       >
         <CurrentSwatches />
       </button>
 
       {open ? createPortal(
         <div
-          id="theme-menu"
+          id={menuId}
           ref={listRef}
           role="radiogroup"
           aria-label="Màu giao diện"
           onKeyDown={onListKeyDown}
           style={{ top: menuPosition.top, left: menuPosition.left }}
-          className="fixed z-[100] max-h-[calc(100dvh-1rem)] w-64 overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg"
+          className={
+            "fixed max-h-[calc(100dvh-1rem)] w-64 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-lg " +
+            (compact ? "z-[50]" : "z-[100]")
+          }
         >
           {THEMES.map((t) => {
             const selected = t.id === themeId;
@@ -139,7 +158,7 @@ export function ThemeSelector() {
                 aria-checked={selected}
                 onClick={() => {
                   setTheme(t.id);
-                  setOpen(false);
+                  changeOpen(false);
                   btnRef.current?.focus();
                 }}
                 className={
@@ -154,7 +173,7 @@ export function ThemeSelector() {
             );
           })}
         </div>,
-        document.body,
+        portalContainer ?? document.body,
       ) : null}
     </div>
   );
