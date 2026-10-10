@@ -62,18 +62,21 @@ async function candidates(db, auth, app, search) {
   return res.rows[0].data;
 }
 
-test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 57-migration ledger", async () => {
+test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 72-migration ledger", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 71);
-  assert.equal(names[names.length - (18)], W06A_MIGRATION);
-  assert.equal(names[names.length - (17)], W05_MIGRATION);
+  assert.equal(names.length, 72);
+  assert.equal(names[names.length - (19)], W06A_MIGRATION);
+  assert.equal(names[names.length - (18)], W05_MIGRATION);
   await db.close();
 });
 
 test("candidate list requires entry_admin + all scope (deny no-scope)", async () => {
   const { db } = await migratedDb();
   await seed(db);
-  await assert.rejects(() => candidates(db, NO_SCOPE_AUTH, NO_SCOPE_APP, null), /42501|scope/i);
+  await assert.rejects(
+    () => candidates(db, NO_SCOPE_AUTH, NO_SCOPE_APP, null),
+    (error) => error.code === "42501",
+  );
   await db.close();
 });
 

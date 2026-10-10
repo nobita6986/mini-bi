@@ -14,7 +14,8 @@ const AID = "77777777-7777-4777-8777-777777777777";
 const TS = "2026-10-01T00:00:00+00:00";
 
 const PROJECT = { project_id: "du-an-01", display_name: "Công ty ABC", active: true, version: 3,
-  created_at: TS, updated_at: TS, revision_count: 2, active_assignment_count: 1 };
+  created_at: TS, updated_at: TS, revision_count: 2, active_assignment_count: 1,
+  can_manage_project_master: true, can_assign_managers: true };
 const ASSIGNMENT = { assignment_id: AID, project_id: "du-an-01", project_version: 3,
   manager_recruiter_id: RID, valid_from: "2026-10-01", valid_to: null, effective: true,
   version: 1, revoked_at: null, created_at: TS, updated_at: TS };
@@ -40,7 +41,7 @@ test("SQLSTATE -> kind, fail-closed voi ma la", () => {
   assert.equal(classifyProjectAdminError({}), "unavailable");
 });
 
-test("listProjects dung direct_entry_list_projects_admin + project payload 8 key", async () => {
+test("listProjects dung direct_entry_list_projects_admin + project payload 10 key", async () => {
   const f = repoWith({ authorization_date: "2026-10-07", include_inactive: false,
     projects: [PROJECT] });
   const result = await f.repo.listProjects({ ...ACTOR, include_inactive: false });

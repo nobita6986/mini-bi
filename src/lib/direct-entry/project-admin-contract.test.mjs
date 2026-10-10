@@ -32,6 +32,7 @@ const TS = "2026-10-01T00:00:00+00:00";
 const PROJECT = {
   project_id: "du-an-01", display_name: "Công ty ABC", active: true, version: 3,
   created_at: TS, updated_at: TS, revision_count: 2, active_assignment_count: 1,
+  can_manage_project_master: true, can_assign_managers: true,
 };
 const ASSIGNMENT = {
   assignment_id: AID, project_id: "du-an-01", project_version: 3,
@@ -44,6 +45,8 @@ test("projectAdminProject di qua payload list_projects_admin / get_project_admin
   assert.equal(projected?.project_id, "du-an-01");
   assert.equal(projected?.active_assignment_count, 1);
   assert.equal(projected?.revision_count, 2);
+  assert.equal(projected?.can_manage_project_master, true);
+  assert.equal(projected?.can_assign_managers, true);
   // nullable timestamp: created_at co the null (project chua co revision).
   assert.deepEqual(projectAdminProject({ ...PROJECT, created_at: null, updated_at: null }),
     { ...PROJECT, created_at: null, updated_at: null });
@@ -54,6 +57,8 @@ test("projectAdminProject fail-closed: thieu/thua key, sai kieu, timestamp sai",
   const missing = { ...PROJECT };
   delete missing.active_assignment_count;
   assert.equal(projectAdminProject(missing), null, "thieu key => null");
+  assert.equal(projectAdminProject({ ...PROJECT, can_manage_project_master: 0 }), null);
+  assert.equal(projectAdminProject({ ...PROJECT, can_assign_managers: "true" }), null);
   assert.equal(projectAdminProject({ ...PROJECT, version: 3.5 }), null);
   assert.equal(projectAdminProject({ ...PROJECT, revision_count: -1 }), null, "count am => null");
   assert.equal(projectAdminProject({ ...PROJECT, created_at: 42 }), null, "timestamp khong phai string/null => null");

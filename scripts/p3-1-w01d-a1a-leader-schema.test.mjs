@@ -1,7 +1,7 @@
 /**
  * P3.1-W01D-A1a2 - Team leader lifecycle schema foundation (#71) DB regression.
  *
- * Applies all 71 migrations from scratch in PGlite and asserts the 30 items of the
+ * Applies all 72 migrations from scratch in PGlite and asserts the 30 items of the
  * A1a2 contract: append-only ledger, the two widened grant interval CHECKs, the
  * marker-excluding partial unique indexes, the assignment/revision table shapes,
  * forced RLS and deny-by-default ACL, the three internal helpers, marker write
@@ -27,6 +27,7 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const NEW_MIGRATION = "20261009070000_p3_1_w01d_team_leader_lifecycle.sql";
 const PREVIOUS_MIGRATION = "20261009060000_p3_1_w01c_b_team_membership.sql";
+const W02A_MIGRATION = "20261009080000_p3_1_w02a_team_leader_project_manager_authority.sql";
 
 const TEAM_A = "94000000-0000-4000-8000-0000000000a1";
 const TEAM_B = "94000000-0000-4000-8000-0000000000a2";
@@ -104,10 +105,11 @@ await db.query(
 // ---------------------------------------------------------------------------
 // Assertions 1-2: ledger inventory and append-only discipline.
 // ---------------------------------------------------------------------------
-test("assertions 1-2: 71 migrations, #71 last, and #71 is append-only", async () => {
+test("assertions 1-2: 72 migrations, #71 stays append-only, and #72 is W02-A", async () => {
   const names = await readMigrationNames();
-  assert.equal(names.length, 71, "the ledger carries exactly 71 migrations");
-  assert.equal(names[names.length - 1], NEW_MIGRATION, "#71 is the last migration");
+  assert.equal(names.length, 72, "the ledger carries exactly 72 migrations");
+  assert.equal(names[70], NEW_MIGRATION, "#71 remains the W01D migration");
+  assert.equal(names.at(-1), W02A_MIGRATION, "#72 is the W02-A migration");
   assert.equal(names.filter((name) => name.startsWith("20261009070000")).length, 1,
     "exactly one migration occupies the #71 slot");
   assert.equal(names.filter((name) => name.startsWith("20261009060000")).length, 1,

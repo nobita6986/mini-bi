@@ -281,14 +281,20 @@ test("parse response: fail-closed khi shape sai", () => {
   assert.equal(parseListResponse(null), null);
   assert.equal(parseListResponse({ ok: false }), null);
   assert.equal(parseListResponse({ ok: true, list: { projects: [{}] } }), null);
-  assert.deepEqual(parseListResponse({ ok: true, list: { projects: [
+  assert.equal(parseListResponse({ ok: true, list: { projects: [
     { project_id: "p1", display_name: "A", active: true, version: 2 },
-  ] } }), [{ project_id: "p1", display_name: "A", active: true, version: 2 }]);
+  ] } }), null, "server flags are required, never inferred client-side");
+  assert.deepEqual(parseListResponse({ ok: true, list: { projects: [
+    { project_id: "p1", display_name: "A", active: true, version: 2,
+      can_manage_project_master: false, can_assign_managers: true },
+  ] } }), [{ project_id: "p1", display_name: "A", active: true, version: 2,
+    can_manage_project_master: false, can_assign_managers: true }]);
 
   // F4: detail co shape moi { master, assignments } (get + list assignments).
   assert.equal(parseDetailResponse({ ok: true, detail: { master: {} } }), null);
   const detail = parseDetailResponse({ ok: true, detail: {
-    master: { project_id: "p1", display_name: "Dự án 01", active: true, version: 2 },
+    master: { project_id: "p1", display_name: "Dự án 01", active: true, version: 2,
+      can_manage_project_master: false, can_assign_managers: true },
     assignments: { authorization_date: "2026-10-07", project_id: "p1", project_version: 2,
       project_active: true, include_history: true, active_assignment_count: 1,
       assignments: [{ assignment_id: ASSIGNMENT, project_id: "p1", project_version: 2,
@@ -298,6 +304,8 @@ test("parse response: fail-closed khi shape sai", () => {
   assert.equal(detail.assignments.length, 1);
   assert.equal(detail.display_name, "Dự án 01");
   assert.equal(detail.project_version, 2);
+  assert.equal(detail.can_manage_project_master, false);
+  assert.equal(detail.can_assign_managers, true);
 });
 
 test("F3: mutationProjectVersion doc project_version, KHONG dung assignment version", () => {
