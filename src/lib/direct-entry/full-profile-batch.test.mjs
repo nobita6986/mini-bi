@@ -610,11 +610,16 @@ test("busy chan double submit va thong bao loi duoc lam sach", () => {
 
   for (const code of ["FULL_PROFILE_NETWORK", "FULL_PROFILE_PROJECTION_INVALID",
     "BATCH_UNAVAILABLE", "IDEMPOTENCY_CONFLICT", "BATCH_INVALID", "UNAUTHENTICATED",
-    "ACTOR_DENIED", "NOT_FOUND", "BANK_NOT_ACTIVE", "PAYMENT_DETAILS_INVALID"]) {
+    "ACTOR_DENIED", "NOT_FOUND", "BANK_NOT_ACTIVE", "PAYMENT_DETAILS_INVALID",
+    "WORKER_ACTIVE_EPISODE_EXISTS", "WORKER_EPISODE_REOPEN_FORBIDDEN"]) {
     const message = fullProfileErrorMessage(code);
     assert.equal(message.includes(code), false, code);
     assert.ok(message.length > 0, code);
   }
+  assert.match(fullProfileErrorMessage("WORKER_ACTIVE_EPISODE_EXISTS"),
+    /CCCD.*hồ sơ làm việc đang hoạt động/);
+  assert.match(fullProfileErrorMessage("WORKER_EPISODE_REOPEN_FORBIDDEN"),
+    /Không thể mở lại hồ sơ đã kết thúc/);
   assert.match(fullProfileErrorMessage("SOME_UNKNOWN_CODE"), /Không lưu được nhóm dòng/);
 
   const source = readFileSync(new URL("./full-profile-batch.ts", import.meta.url), "utf8");

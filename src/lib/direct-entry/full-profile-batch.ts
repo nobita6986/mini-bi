@@ -514,6 +514,10 @@ const MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   PROJECT_NOT_ACTIVE: "Dự án không còn hoạt động trong danh mục.",
   RECRUITER_NOT_ACTIVE: "Người tuyển không còn hoạt động trong danh mục.",
   RECRUITER_MEMBERSHIP_INVALID: "Người tuyển chưa có team/provider hợp lệ cho ngày bắt đầu làm việc.",
+  WORKER_ACTIVE_EPISODE_EXISTS:
+    "CCCD đã có hồ sơ làm việc đang hoạt động. Hãy kết thúc hồ sơ cũ trước khi tạo đợt làm việc mới.",
+  WORKER_EPISODE_REOPEN_FORBIDDEN:
+    "Không thể mở lại hồ sơ đã kết thúc. Hãy tạo một đợt làm việc mới.",
   OFF_REQUIRES_DATE_AND_REASON: "Tình trạng đã nghỉ phải có ngày nghỉ và ghi chú hợp lệ.",
   PASTE_VALUE_FORMAT: "Định dạng giá trị không hợp lệ.",
 });
