@@ -6,11 +6,20 @@ import {
   buildMembershipListQuery,
   buildTeamCatalogListQuery,
   buildUnassignMembershipRequest,
+  beginMembershipReload,
+  canAssignMembership,
   classifyMembershipMutation,
+  finishMembershipReload,
   MEMBERSHIP_PAGE_SIZE,
+  membershipNeedsAttention,
+  membershipWorkflowEntry,
+  membershipWorkflowLocked,
   newMembershipIntentKey,
+  patchMembershipWorkflowEntry,
   projectActiveTeams,
   projectMembershipList,
+  recordMembershipIntent,
+  recordMembershipOutcome,
   setMembershipConflictLock,
   TEAM_PAGE_SIZE,
 } from "./team-membership-model.ts";
@@ -19,6 +28,28 @@ const RECRUITER_A = "80fd8d2a-f45a-4596-9ebd-213fb6246041";
 const RECRUITER_B = "23f30a23-347e-4d25-b90d-41335643f9f7";
 const TEAM_A = "61f2d564-a685-4fb2-ae5e-d76b33c77240";
 const KEY = "91f6f4f5-5d32-4e59-8243-e1f8333dc801";
+const personnel = (recruiter_id, display_name) => ({
+  recruiter_id,
+  display_name,
+  personnel_code: null,
+  personnel_position: null,
+  active: true,
+  version: 4,
+  hrp_valid_from: null,
+  revision_count: 1,
+});
+
+function intent(recruiterId = RECRUITER_A) {
+  return {
+    url: `/api/admin/catalog/personnel/${recruiterId}/team-memberships/${TEAM_A}`,
+    body: { valid_from: "2026-10-09", expected_version: 4, reason: "Điều chỉnh", idempotency_key: KEY },
+    idempotencyKey: KEY,
+    operation: "assign",
+    recruiterId,
+    personnel: personnel(recruiterId, recruiterId === RECRUITER_A ? "Nhân sự A" : "Nhân sự B"),
+    retry: false,
+  };
+}
 
 function membership(state = "CURRENT", recruiter_id = RECRUITER_A) {
   return {
@@ -239,4 +270,94 @@ test("new mutation intent receives a fresh key while a retry keeps its original 
   });
   assert.equal(first.ok && first.request.idempotencyKey, firstKey);
   assert.equal(changed.ok && changed.request.idempotencyKey, changedIntentKey);
+});
+
+test("applied mutations stay locked after partial reload and unlock only after detail plus all lists load", () => {
+    const original = intent();
+    let workflow = recordMembershipIntent(new Map(), original);
+    workflow = recordMembershipOutcome(workflow, original, { kind: "applied", membership: {} });
+    assert.equal(membershipWorkflowLocked(membershipWorkflowEntry(workflow, RECRUITER_A)), true);
+    assert.equal(membershipWorkflowEntry(workflow, RECRUITER_A).reloadRequired, true);
+
+    workflow = beginMembershipReload(workflow, RECRUITER_A);
+    const partial = finishMembershipReload(workflow, RECRUITER_A, {
+      detail: "loaded",
+      listsLoaded: false,
+    });
+    workflow = partial.workflow;
+    const retained = membershipWorkflowEntry(workflow, RECRUITER_A);
+    assert.equal(membershipWorkflowLocked(retained), true);
+    assert.match(retained.reloadError, /Khóa vẫn được giữ/);
+    assert.equal(membershipNeedsAttention(retained), true);
+
+    const complete = finishMembershipReload(workflow, RECRUITER_A, {
+      detail: "loaded",
+      listsLoaded: true,
+    });
+    assert.equal(complete.complete, true);
+    assert.equal(membershipWorkflowLocked(membershipWorkflowEntry(complete.workflow, RECRUITER_A)), false);
+    assert.equal(membershipWorkflowEntry(complete.workflow, RECRUITER_A), null);
+});
+
+test("personnel detail 404 removes only that recruiter's stale reload lock", () => {
+    const original = intent();
+    const locked = recordMembershipOutcome(
+      recordMembershipIntent(new Map(), original),
+      original,
+      { kind: "applied", membership: {} },
+    );
+    const missing = finishMembershipReload(locked, RECRUITER_A, {
+      detail: "not-found",
+      listsLoaded: false,
+    });
+    assert.equal(missing.missing, true);
+    assert.equal(membershipWorkflowEntry(missing.workflow, RECRUITER_A), null);
+    assert.equal(membershipWorkflowEntry(locked, RECRUITER_B), null);
+});
+
+test("pending intent is hidden from B and reopening A retains its exact retry request", () => {
+    const original = { ...intent(), retry: true };
+    const workflow = recordMembershipIntent(new Map(), original);
+    assert.equal(membershipWorkflowEntry(workflow, RECRUITER_B), null);
+    assert.deepEqual(membershipWorkflowEntry(workflow, RECRUITER_A).pendingIntent, original);
+    const reopenedA = membershipWorkflowEntry(workflow, RECRUITER_A).pendingIntent;
+    assert.equal(reopenedA.url, original.url);
+    assert.deepEqual(reopenedA.body, original.body);
+    assert.equal(reopenedA.idempotencyKey, original.idempotencyKey);
+});
+
+test("conflict from A retry remains visible and locked when B is the active personnel", () => {
+    const original = { ...intent(), retry: true };
+    const withPending = recordMembershipIntent(new Map(), original);
+    const afterConflict = recordMembershipOutcome(withPending, original, {
+      kind: "conflict",
+      message: "Hồ sơ đã thay đổi.",
+    });
+    const entryA = membershipWorkflowEntry(afterConflict, RECRUITER_A);
+    assert.equal(membershipWorkflowEntry(afterConflict, RECRUITER_B), null);
+    assert.equal(entryA.reloadRequired, true);
+    assert.equal(entryA.pendingIntent, null);
+    assert.equal(membershipNeedsAttention(entryA), true);
+    assert.equal(membershipWorkflowLocked(entryA), true);
+});
+
+test("assign is enabled only after current and scheduled lists both load empty", () => {
+    const loadedEmpty = { kind: "loaded", list: { memberships: [] } };
+    assert.equal(canAssignMembership({ kind: "loading" }, loadedEmpty), false);
+    assert.equal(canAssignMembership(loadedEmpty, { kind: "error" }), false);
+    assert.equal(canAssignMembership(loadedEmpty, loadedEmpty), true);
+});
+
+test("presentation errors and messages are scoped to their personnel", () => {
+    const a = personnel(RECRUITER_A, "Nhân sự A");
+    let workflow = patchMembershipWorkflowEntry(new Map(), a, {
+      message: "Thông báo A",
+      formError: "Lỗi A",
+    });
+    assert.equal(membershipWorkflowEntry(workflow, RECRUITER_B), null);
+    const b = personnel(RECRUITER_B, "Nhân sự B");
+    workflow = patchMembershipWorkflowEntry(workflow, b, { message: "Thông báo B", formError: null });
+    assert.equal(membershipWorkflowEntry(workflow, RECRUITER_A).message, "Thông báo A");
+    assert.equal(membershipWorkflowEntry(workflow, RECRUITER_A).formError, "Lỗi A");
+    assert.equal(membershipWorkflowEntry(workflow, RECRUITER_B).message, "Thông báo B");
 });

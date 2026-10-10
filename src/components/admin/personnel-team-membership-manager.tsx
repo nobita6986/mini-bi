@@ -12,16 +12,25 @@ import {
   buildMembershipListQuery,
   buildTeamCatalogListQuery,
   buildUnassignMembershipRequest,
+  beginMembershipReload,
+  canAssignMembership,
   classifyMembershipMutation,
+  finishMembershipReload,
+  membershipNeedsAttention,
+  membershipWorkflowEntry,
+  membershipWorkflowLocked,
   MEMBERSHIP_PAGE_SIZE,
   newMembershipIntentKey,
+  patchMembershipWorkflowEntry,
   projectActiveTeams,
   projectMembershipList,
-  setMembershipConflictLock,
+  recordMembershipIntent,
+  recordMembershipOutcome,
   type AdminTeam,
   type AdminTeamMembership,
   type AdminTeamMembershipList,
-  type MembershipMutationOutcome,
+  type MembershipIntent,
+  type MembershipWorkflow,
 } from "@/lib/admin/team-membership-model";
 import {
   projectPersonnelItem,
@@ -50,16 +59,8 @@ type Operation =
   | { kind: "move"; currentTeamId: string; expectedVersion: number }
   | { kind: "close"; membership: AdminTeamMembership; cancelScheduled: boolean };
 
-type MutationIntent = {
-  url: string;
-  body: Record<string, unknown>;
-  idempotencyKey: string;
-  operation: "assign" | "move" | "unassign";
-  recruiterId: string;
-  retry: boolean;
-};
-
-type Conflict = { personnel: AdminPersonnel; error: string | null };
+type ScopedOperation = { recruiterId: string; value: Operation };
+type ScopedForm = { recruiterId: string; value: typeof EMPTY_FORM };
 
 const STATES: readonly MembershipState[] = ["CURRENT", "SCHEDULED", "HISTORY"];
 const INITIAL_LISTS: MembershipLists = {
@@ -112,10 +113,6 @@ async function readMembershipList(
   }
 }
 
-function outcomeMessage(outcome: Exclude<MembershipMutationOutcome, { kind: "applied" }>): string {
-  return outcome.message;
-}
-
 function statusDescription(kind: Exclude<ReadState<unknown>, { kind: "loaded" | "loading" }>["kind"]): string {
   if (kind === "unauthenticated") return "Phiên đăng nhập không còn hiệu lực.";
   if (kind === "denied") return "Bạn không có quyền xem dữ liệu nhóm.";
@@ -137,27 +134,52 @@ export function PersonnelTeamMembershipManager({
   onOpen(personnel: AdminPersonnel, trigger: HTMLButtonElement): void;
   onConflictLock(recruiterId: string, locked: boolean): void;
   onPersonnelReloaded(personnel: AdminPersonnel): void;
-  onPersonnelUnavailable(): void;
+  onPersonnelUnavailable(recruiterId: string): void;
 }) {
   const [lists, setLists] = useState<MembershipLists>(INITIAL_LISTS);
   const [listsRecruiterId, setListsRecruiterId] = useState<string | null>(null);
   const [pages, setPages] = useState<MembershipPages>(INITIAL_PAGES);
   const [teamState, setTeamState] = useState<TeamState>({ kind: "idle" });
-  const [operation, setOperation] = useState<Operation | null>(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [pendingIntent, setPendingIntent] = useState<MutationIntent | null>(null);
+  const [operationState, setOperationState] = useState<ScopedOperation | null>(null);
+  const [formState, setFormState] = useState<ScopedForm | null>(null);
   const [busy, setBusy] = useState(false);
-  const [conflicts, setConflicts] = useState<ReadonlyMap<string, Conflict>>(new Map());
-  const [locks, setLocks] = useState<ReadonlySet<string>>(new Set());
+  const [workflow, setWorkflow] = useState<MembershipWorkflow>(new Map());
   const generation = useRef(0);
   const recruiterId = personnel?.recruiter_id;
   const visibleLists = listsRecruiterId === recruiterId ? lists : INITIAL_LISTS;
   const visiblePages = listsRecruiterId === recruiterId ? pages : INITIAL_PAGES;
+  const operation = operationState && operationState.recruiterId === recruiterId ? operationState.value : null;
+  const form = formState && formState.recruiterId === recruiterId ? formState.value : EMPTY_FORM;
+  const activeEntry = personnel ? membershipWorkflowEntry(workflow, personnel.recruiter_id) : null;
+  const formError = activeEntry?.formError ?? null;
+  const message = activeEntry?.message ?? null;
+  const pendingIntent = activeEntry?.pendingIntent ?? null;
+  const activeConflict = activeEntry?.reloadRequired
+    ? { personnel: activeEntry.personnel, error: activeEntry.reloadError }
+    : undefined;
+  const locked = personnel ? membershipWorkflowLocked(activeEntry) : false;
+  const otherAttentionEntries = Array.from(workflow.entries())
+    .filter(([id, entry]) => id !== recruiterId && membershipNeedsAttention(entry));
+
+  const setActiveWorkflow = useCallback((patch: Parameters<typeof patchMembershipWorkflowEntry>[2]) => {
+    if (!personnel) return;
+    setWorkflow((current) => patchMembershipWorkflowEntry(current, personnel, patch));
+  }, [personnel]);
+
+  const setActiveForm = useCallback((update: (value: typeof EMPTY_FORM) => typeof EMPTY_FORM) => {
+    if (!recruiterId) return;
+    setFormState((current) => ({
+      recruiterId,
+      value: update(current?.recruiterId === recruiterId ? current.value : EMPTY_FORM),
+    }));
+  }, [recruiterId]);
+
+  const setActiveOperation = (value: Operation | null) => {
+    if (!recruiterId) return;
+    setOperationState(value ? { recruiterId, value } : null);
+  };
 
   const lockEntity = useCallback((recruiterId: string, locked: boolean) => {
-    setLocks((current) => setMembershipConflictLock(current, recruiterId, locked));
     onConflictLock(recruiterId, locked);
   }, [onConflictLock]);
 
@@ -237,7 +259,7 @@ export function PersonnelTeamMembershipManager({
   const refreshAuthoritative = useCallback(async (
     recruiterId: string,
     requestGeneration: number,
-  ): Promise<{ complete: boolean; missing: boolean }> => {
+  ): Promise<{ detail: "loaded" | "not-found" | "failed"; listsLoaded: boolean }> => {
     setListsRecruiterId(null);
     setLists({ CURRENT: { kind: "loading" }, SCHEDULED: { kind: "loading" }, HISTORY: { kind: "loading" } });
     setPages(INITIAL_PAGES);
@@ -261,7 +283,7 @@ export function PersonnelTeamMembershipManager({
     })();
     const listPromise = Promise.all(STATES.map((state) => readMembershipList(recruiterId, state, 1)));
     const [detail, results] = await Promise.all([detailPromise, listPromise]);
-    if (generation.current !== requestGeneration) return { complete: false, missing: false };
+    if (generation.current !== requestGeneration) return { detail: "failed", listsLoaded: false };
     const nextLists: MembershipLists = {
       CURRENT: results[0]!,
       SCHEDULED: results[1]!,
@@ -276,59 +298,44 @@ export function PersonnelTeamMembershipManager({
         SCHEDULED: { kind: "not-found" },
         HISTORY: { kind: "not-found" },
       });
-      onPersonnelUnavailable();
-      return { complete: false, missing: true };
+      return { detail: "not-found", listsLoaded: false };
     }
-    const complete = detail.kind === "loaded" && results.every((result) => result.kind === "loaded");
-    return { complete, missing: false };
-  }, [onPersonnelReloaded, onPersonnelUnavailable]);
+    return {
+      detail: detail.kind === "loaded" ? "loaded" : "failed",
+      listsLoaded: results.every((result) => result.kind === "loaded"),
+    };
+  }, [onPersonnelReloaded]);
 
   const reloadConflictedPersonnel = useCallback(async (recruiterId: string) => {
-    const conflict = conflicts.get(recruiterId);
-    if (!conflict) return;
-    setConflicts((current) => new Map(current).set(recruiterId, { ...conflict, error: null }));
+    const entry = membershipWorkflowEntry(workflow, recruiterId);
+    if (!entry?.reloadRequired) return;
+    setWorkflow((current) => beginMembershipReload(current, recruiterId));
     setBusy(true);
     const requestGeneration = generation.current;
     try {
       const result = await refreshAuthoritative(recruiterId, requestGeneration);
       if (generation.current !== requestGeneration) return;
-      if (result.missing) {
-        setConflicts((current) => {
-          const next = new Map(current);
-          next.delete(recruiterId);
-          return next;
-        });
+      setWorkflow((current) => finishMembershipReload(current, recruiterId, result).workflow);
+      if (result.detail === "not-found") {
         lockEntity(recruiterId, false);
-        setMessage("Hồ sơ không còn tồn tại hoặc không còn khả dụng.");
+        onPersonnelUnavailable(recruiterId);
         return;
       }
-      if (!result.complete) throw new Error("authoritative reload incomplete");
-      setConflicts((current) => {
-        const next = new Map(current);
-        next.delete(recruiterId);
-        return next;
-      });
-      lockEntity(recruiterId, false);
-      setMessage("Đã tải lại hồ sơ và cả ba nhóm membership.");
-    } catch {
-      setConflicts((current) => {
-        const next = new Map(current);
-        const entry = next.get(recruiterId);
-        if (entry) next.set(recruiterId, {
-          ...entry,
-          error: "Không tải đủ dữ liệu có thẩm quyền. Khóa vẫn được giữ; hãy thử lại.",
-        });
-        return next;
-      });
+      if (result.detail === "loaded" && result.listsLoaded) {
+        lockEntity(recruiterId, false);
+      }
     } finally {
       setBusy(false);
     }
-  }, [conflicts, lockEntity, refreshAuthoritative]);
+  }, [lockEntity, onPersonnelUnavailable, refreshAuthoritative, workflow]);
 
-  const sendIntent = useCallback(async (intent: MutationIntent) => {
+  const sendIntent = useCallback(async (intent: MembershipIntent) => {
     setBusy(true);
-    setFormError(null);
-    setMessage(null);
+    lockEntity(intent.recruiterId, true);
+    setWorkflow((current) => patchMembershipWorkflowEntry(current, intent.personnel, {
+      formError: null,
+      message: null,
+    }));
     let response: Response;
     try {
       response = await fetch(intent.url, {
@@ -342,8 +349,10 @@ export function PersonnelTeamMembershipManager({
         body: JSON.stringify(intent.body),
       });
     } catch {
-      setPendingIntent({ ...intent, retry: true });
-      setFormError("Không nhận được phản hồi. Có thể thử lại cùng thao tác và khóa.");
+      setWorkflow((current) => recordMembershipOutcome(current, intent, {
+        kind: "unavailable",
+        message: "Không nhận được phản hồi. Có thể thử lại cùng thao tác và khóa.",
+      }));
       setBusy(false);
       return;
     }
@@ -359,75 +368,72 @@ export function PersonnelTeamMembershipManager({
       intent.recruiterId,
       intent.operation,
     );
+    setWorkflow((current) => recordMembershipOutcome(current, intent, outcome));
     if (outcome.kind === "conflict") {
-      setPendingIntent(null);
-      if (personnel?.recruiter_id === intent.recruiterId) {
-        setConflicts((current) => new Map(current).set(intent.recruiterId, {
-          personnel,
-          error: null,
-        }));
-      }
       lockEntity(intent.recruiterId, true);
-      setFormError(outcome.message);
+      setOperationState((current) => current?.recruiterId === intent.recruiterId ? null : current);
+      setFormState((current) => current?.recruiterId === intent.recruiterId ? null : current);
       setBusy(false);
       return;
     }
     if (outcome.kind !== "applied") {
-      setPendingIntent(outcome.kind === "unavailable" ? { ...intent, retry: true } : null);
-      setFormError(outcomeMessage(outcome));
+      if (outcome.kind !== "unavailable") lockEntity(intent.recruiterId, false);
       setBusy(false);
       return;
     }
-
-    setPendingIntent(null);
-    setOperation(null);
-    setForm(EMPTY_FORM);
+    lockEntity(intent.recruiterId, true);
+    setWorkflow((current) => beginMembershipReload(current, intent.recruiterId));
+    setOperationState((current) => current?.recruiterId === intent.recruiterId ? null : current);
+    setFormState((current) => current?.recruiterId === intent.recruiterId ? null : current);
     const requestGeneration = generation.current;
     const refresh = await refreshAuthoritative(intent.recruiterId, requestGeneration);
-    if (generation.current === requestGeneration && !refresh.complete) {
-      setMessage("Thay đổi đã được ghi nhận nhưng chưa tải đủ dữ liệu mới nhất. Hãy thử tải lại.");
+    if (generation.current === requestGeneration) {
+      setWorkflow((current) => finishMembershipReload(current, intent.recruiterId, refresh).workflow);
+      if (refresh.detail === "not-found") {
+        lockEntity(intent.recruiterId, false);
+        onPersonnelUnavailable(intent.recruiterId);
+      } else if (refresh.detail === "loaded" && refresh.listsLoaded) {
+        lockEntity(intent.recruiterId, false);
+      }
     }
     setBusy(false);
-  }, [lockEntity, personnel, refreshAuthoritative]);
+  }, [lockEntity, onPersonnelUnavailable, refreshAuthoritative]);
 
   const startAssign = () => {
-    if (!personnel) return;
-    setOperation({ kind: "assign" });
-    setForm(EMPTY_FORM);
-    setFormError(null);
-    setMessage(null);
+    if (!personnel || !canAssignMembership(visibleLists.CURRENT, visibleLists.SCHEDULED) || locked) return;
+    setActiveOperation({ kind: "assign" });
+    setActiveForm(() => EMPTY_FORM);
+    setActiveWorkflow({ formError: null, message: null });
     ensureTeams();
   };
 
   const startMove = (membership: AdminTeamMembership) => {
-    setOperation({
+    setActiveOperation({
       kind: "move",
       currentTeamId: membership.team_id,
       expectedVersion: membership.recruiter_version,
     });
-    setForm(EMPTY_FORM);
-    setFormError(null);
-    setMessage(null);
+    setActiveForm(() => EMPTY_FORM);
+    setActiveWorkflow({ formError: null, message: null });
     ensureTeams();
   };
 
   const startClose = (membership: AdminTeamMembership, cancelScheduled: boolean) => {
-    setOperation({ kind: "close", membership, cancelScheduled });
-    setForm({ ...EMPTY_FORM, date: cancelScheduled ? membership.valid_from : "" });
-    setFormError(null);
-    setMessage(null);
+    setActiveOperation({ kind: "close", membership, cancelScheduled });
+    setActiveForm(() => ({ ...EMPTY_FORM, date: cancelScheduled ? membership.valid_from : "" }));
+    setActiveWorkflow({ formError: null, message: null });
   };
 
   const submitOperation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setFormError(null);
+    setActiveWorkflow({ formError: null });
     if (!personnel || !operation) return;
-    if (locks.has(personnel.recruiter_id)) {
-      setFormError("Hồ sơ đang bị khóa cho đến khi tải lại dữ liệu có thẩm quyền.");
+    if (locked) {
+      setActiveWorkflow({ formError: "Hồ sơ đang bị khóa cho đến khi tải lại dữ liệu có thẩm quyền." });
       return;
     }
     if (pendingIntent) {
-      setFormError("Thao tác trước chưa có kết quả xác nhận. Hãy thử lại thao tác đó.");
+      setActiveWorkflow({ formError: "Thao tác trước chưa có kết quả xác nhận. Hãy thử lại thao tác đó." });
       return;
     }
     const idempotencyKey = newMembershipIntentKey();
@@ -449,29 +455,27 @@ export function PersonnelTeamMembershipManager({
           move: operation.kind === "move",
         });
     if (!request.ok) {
-      setFormError(request.message);
+      setActiveWorkflow({ formError: request.message });
       return;
     }
-    const intent: MutationIntent = {
+    const intent: MembershipIntent = {
       ...request.request,
       operation: operation.kind === "close" ? "unassign" : operation.kind,
       recruiterId: personnel.recruiter_id,
+      personnel,
       retry: false,
     };
-    setPendingIntent(intent);
+    setWorkflow((current) => recordMembershipIntent(current, intent));
     void sendIntent(intent);
   };
 
-  const activeConflict = personnel ? conflicts.get(personnel.recruiter_id) : undefined;
-  const current = visibleLists.CURRENT.kind === "loaded" ? visibleLists.CURRENT.list : null;
-  const scheduled = visibleLists.SCHEDULED.kind === "loaded" ? visibleLists.SCHEDULED.list : null;
-  const hasOpenMembership = Boolean(current?.memberships.length || scheduled?.memberships.length);
-  const activeListLock = personnel ? locks.has(personnel.recruiter_id) : false;
+  const canAssign = canAssignMembership(visibleLists.CURRENT, visibleLists.SCHEDULED);
+  const activeListLock = locked;
   const closeDialog = () => {
     if (busy) return;
-    setOperation(null);
-    setForm(EMPTY_FORM);
-    setFormError(null);
+    setOperationState((value) => value?.recruiterId === recruiterId ? null : value);
+    setFormState((value) => value?.recruiterId === recruiterId ? null : value);
+    setActiveWorkflow({ message: null, formError: null });
     onClose();
   };
 
@@ -510,10 +514,22 @@ export function PersonnelTeamMembershipManager({
                 </Dialog.Close>
               </header>
 
+              {otherAttentionEntries.length > 0 ? (
+                <div className="mt-4">
+                  <Alert tone="warning" title="Có hồ sơ khác cần xử lý">
+                    <p>Đóng cửa sổ này để mở lại đúng hồ sơ và tiếp tục thao tác đang chờ.</p>
+                    <button type="button" disabled={busy} onClick={closeDialog}
+                      className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">
+                      Đóng cửa sổ
+                    </button>
+                  </Alert>
+                </div>
+              ) : null}
+
               {activeConflict ? (
                 <div className="mt-4">
                   <Alert tone="warning" title="Thao tác đang bị khóa do xung đột phiên bản">
-                    <p>{activeConflict.error ?? "Tải lại hồ sơ và ba nhóm membership trước khi tiếp tục."}</p>
+                    <p>{activeConflict.error ?? "Tải lại hồ sơ và cả ba nhóm phân công trước khi tiếp tục."}</p>
                     <button type="button" disabled={busy}
                       onClick={() => void reloadConflictedPersonnel(personnel.recruiter_id)}
                       className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium disabled:opacity-50">
@@ -527,7 +543,11 @@ export function PersonnelTeamMembershipManager({
                 <div className="mt-4">
                   <Alert tone="warning" title="Thao tác chưa có kết quả xác nhận">
                     <p>Thử lại đúng thao tác này bằng cùng khóa idempotency.</p>
-                    <button type="button" disabled={busy} onClick={() => void sendIntent(pendingIntent)}
+                    <button type="button" disabled={busy || pendingIntent.recruiterId !== personnel.recruiter_id}
+                      onClick={() => {
+                        setWorkflow((current) => recordMembershipIntent(current, pendingIntent));
+                        void sendIntent(pendingIntent);
+                      }}
                       className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">
                       Thử lại thao tác
                     </button>
@@ -536,15 +556,15 @@ export function PersonnelTeamMembershipManager({
               ) : null}
 
               <div className="mt-5 flex flex-wrap gap-2">
-                {!hasOpenMembership ? (
-                  <button type="button" disabled={!personnel.active || activeListLock}
+                {canAssign && personnel.active ? (
+                  <button type="button" disabled={activeListLock}
                     onClick={startAssign}
                     className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
                     Gán nhóm
                   </button>
                 ) : null}
-                {!personnel.active && !hasOpenMembership ? (
-                  <p className="self-center text-sm text-muted">Hồ sơ ngừng hoạt động; chỉ có thể xem lịch sử hoặc đóng membership hiện có.</p>
+                {!personnel.active && canAssign ? (
+                  <p className="self-center text-sm text-muted">Hồ sơ ngừng hoạt động; chỉ có thể xem lịch sử hoặc đóng phân công hiện có.</p>
                 ) : null}
               </div>
 
@@ -613,7 +633,7 @@ export function PersonnelTeamMembershipManager({
                       <label htmlFor="membership-team" className="block text-sm font-medium">
                         Nhóm đang hoạt động <span aria-hidden="true">*</span>
                         <select id="membership-team" required value={form.teamId}
-                          onChange={(event) => setForm((value) => ({ ...value, teamId: event.currentTarget.value }))}
+                          onChange={(event) => setActiveForm((value) => ({ ...value, teamId: event.currentTarget.value }))}
                           disabled={teamState.kind !== "loaded" || activeListLock}
                           className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3">
                           <option value="">Chọn nhóm</option>
@@ -636,18 +656,18 @@ export function PersonnelTeamMembershipManager({
                         : "Có hiệu lực từ ngày"} <span aria-hidden="true">*</span>
                       <input id="membership-effective-date" type="date" required value={form.date}
                         readOnly={operation.kind === "close" && operation.cancelScheduled}
-                        onChange={(event) => setForm((value) => ({ ...value, date: event.currentTarget.value }))}
+                        onChange={(event) => setActiveForm((value) => ({ ...value, date: event.currentTarget.value }))}
                         className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3" />
                     </label>
                     <label htmlFor="membership-reason" className="block text-sm font-medium">
                       Lý do <span aria-hidden="true">*</span>
                       <textarea id="membership-reason" required maxLength={4000} rows={3} value={form.reason}
-                        onChange={(event) => setForm((value) => ({ ...value, reason: event.currentTarget.value }))}
+                        onChange={(event) => setActiveForm((value) => ({ ...value, reason: event.currentTarget.value }))}
                         className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2" />
                     </label>
                     {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
                     <div className="flex flex-wrap justify-end gap-2">
-                      <button type="button" disabled={busy} onClick={() => setOperation(null)}
+                      <button type="button" disabled={busy} onClick={() => setActiveOperation(null)}
                         className="min-h-11 rounded-md border border-border px-4 text-sm">Hủy thao tác</button>
                       <button type="submit"
                         disabled={busy || activeListLock || pendingIntent !== null ||
@@ -666,12 +686,16 @@ export function PersonnelTeamMembershipManager({
         </Dialog.Root>
       ) : null}
 
-      {personnel === null && conflicts.size > 0 ? (
-        <section aria-label="Membership cần tải lại" className="space-y-3">
-          {Array.from(conflicts, ([recruiterId, conflict]) => (
-            <Alert key={recruiterId} tone="warning" title="Membership đang bị khóa">
-              <p>{conflict.personnel.display_name}: tải lại dữ liệu có thẩm quyền trước khi thao tác.</p>
-              <button type="button" onClick={(event) => onOpen(conflict.personnel, event.currentTarget)}
+      {personnel === null && Array.from(workflow.values()).some(membershipNeedsAttention) ? (
+        <section aria-label="Phân công cần xử lý" className="space-y-3">
+          {Array.from(workflow.entries())
+            .filter(([, entry]) => membershipNeedsAttention(entry))
+            .map(([pendingRecruiterId, entry]) => (
+            <Alert key={pendingRecruiterId} tone="warning" title="Phân công cần xử lý">
+              <p>{entry.personnel.display_name}: {entry.pendingIntent
+                ? "thao tác chưa có kết quả xác nhận; hãy mở lại hồ sơ để thử lại cùng khóa."
+                : "cần tải lại dữ liệu có thẩm quyền trước khi thao tác."}</p>
+              <button type="button" onClick={(event) => onOpen(entry.personnel, event.currentTarget)}
                 className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">
                 Mở quản lý nhóm
               </button>
@@ -712,14 +736,14 @@ function MembershipSection({
     <Card>
       <CardHeader
         title={stateLabel(state)}
-        description={list ? `${list.total} membership` : "Dữ liệu được tải riêng theo từng trạng thái."}
+        description={list ? `${list.total} mục phân công` : "Dữ liệu được tải riêng theo từng trạng thái."}
       />
       {readState.kind === "loading" ? <p role="status" className="py-5 text-sm">Đang tải {stateLabel(state).toLowerCase()}…</p> : null}
       {readState.kind === "unauthenticated" || readState.kind === "denied" ||
         readState.kind === "not-found" || readState.kind === "unavailable" ? (
           <div className="space-y-3">
             <Alert tone={readState.kind === "denied" || readState.kind === "unauthenticated" ? "error" : "warning"}
-              title="Không thể đọc membership">
+              title="Không thể đọc dữ liệu phân công">
               {statusDescription(readState.kind)}
             </Alert>
             <button type="button" onClick={onRetry} disabled={disabled}
@@ -728,13 +752,13 @@ function MembershipSection({
         ) : null}
       {readState.kind === "error" ? (
         <div className="space-y-3">
-          <ErrorState title="Phản hồi membership không hợp lệ" detail="Không hiển thị dữ liệu một phần." />
+          <ErrorState title="Phản hồi dữ liệu phân công không hợp lệ" detail="Không hiển thị dữ liệu một phần." />
           <button type="button" onClick={onRetry} disabled={disabled}
             className="min-h-10 rounded-md border border-border px-3 text-sm">Thử tải lại</button>
         </div>
       ) : null}
       {list ? list.memberships.length === 0 ? (
-        <EmptyState title={`Chưa có membership ${stateLabel(state).toLowerCase()}.`} />
+        <EmptyState title={`Chưa có mục phân công ${stateLabel(state).toLowerCase()}.`} />
       ) : (
         <>
           <div role="region" aria-label={`Bảng ${stateLabel(state).toLowerCase()}`} tabIndex={0}

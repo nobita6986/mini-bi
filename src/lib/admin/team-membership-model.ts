@@ -12,6 +12,7 @@ import {
   type AdminTeamList,
 } from "../direct-entry/team-catalog-contract.ts";
 import { parseIsoDate } from "../direct-entry/direct-entry-date-format.ts";
+import type { AdminPersonnel } from "../direct-entry/personnel-catalog-contract.ts";
 import {
   newIdempotencyKey,
   validateReason,
@@ -175,6 +176,171 @@ export type MembershipMutationOutcome =
   | { kind: "not-found"; message: string }
   | { kind: "invalid"; message: string }
   | { kind: "unavailable"; message: string };
+
+export type MembershipIntent = MembershipMutationRequest & {
+  operation: "assign" | "move" | "unassign";
+  recruiterId: string;
+  personnel: AdminPersonnel;
+  retry: boolean;
+};
+
+export type MembershipWorkflowEntry = {
+  personnel: AdminPersonnel;
+  pendingIntent: MembershipIntent | null;
+  reloadRequired: boolean;
+  reloadError: string | null;
+  message: string | null;
+  formError: string | null;
+};
+
+export type MembershipWorkflow = ReadonlyMap<string, MembershipWorkflowEntry>;
+
+export function membershipWorkflowEntry(
+  workflow: MembershipWorkflow,
+  recruiterId: string,
+): MembershipWorkflowEntry | null {
+  return workflow.get(recruiterId) ?? null;
+}
+
+export function membershipWorkflowLocked(entry: MembershipWorkflowEntry | null): boolean {
+  return entry !== null && (entry.pendingIntent !== null || entry.reloadRequired);
+}
+
+function updateMembershipWorkflow(
+  workflow: MembershipWorkflow,
+  recruiterId: string,
+  update: (entry: MembershipWorkflowEntry) => MembershipWorkflowEntry,
+  personnel: AdminPersonnel,
+): Map<string, MembershipWorkflowEntry> {
+  const next = new Map(workflow);
+  const current = next.get(recruiterId) ?? {
+    personnel,
+    pendingIntent: null,
+    reloadRequired: false,
+    reloadError: null,
+    message: null,
+    formError: null,
+  };
+  next.set(recruiterId, update(current));
+  return next;
+}
+
+export function patchMembershipWorkflowEntry(
+  workflow: MembershipWorkflow,
+  personnel: AdminPersonnel,
+  patch: Partial<MembershipWorkflowEntry>,
+): Map<string, MembershipWorkflowEntry> {
+  return updateMembershipWorkflow(
+    workflow,
+    personnel.recruiter_id,
+    (entry) => ({ ...entry, ...patch, personnel }),
+    personnel,
+  );
+}
+
+export function recordMembershipIntent(
+  workflow: MembershipWorkflow,
+  intent: MembershipIntent,
+): Map<string, MembershipWorkflowEntry> {
+  return updateMembershipWorkflow(workflow, intent.recruiterId, (entry) => ({
+    ...entry,
+    personnel: intent.personnel,
+    pendingIntent: intent,
+    message: null,
+    formError: null,
+  }), intent.personnel);
+}
+
+export function recordMembershipOutcome(
+  workflow: MembershipWorkflow,
+  intent: MembershipIntent,
+  outcome: MembershipMutationOutcome,
+): Map<string, MembershipWorkflowEntry> {
+  return updateMembershipWorkflow(workflow, intent.recruiterId, (entry) => {
+    if (outcome.kind === "applied") {
+      return {
+        ...entry,
+        pendingIntent: null,
+        reloadRequired: true,
+        reloadError: null,
+        message: "Đã lưu thay đổi. Cần tải lại dữ liệu có thẩm quyền.",
+        formError: null,
+      };
+    }
+    if (outcome.kind === "conflict") {
+      return {
+        ...entry,
+        pendingIntent: null,
+        reloadRequired: true,
+        reloadError: null,
+        message: null,
+        formError: outcome.message,
+      };
+    }
+    if (outcome.kind === "unavailable") {
+      return {
+        ...entry,
+        pendingIntent: { ...intent, retry: true },
+        message: null,
+        formError: outcome.message,
+      };
+    }
+    return { ...entry, pendingIntent: null, message: null, formError: outcome.message };
+  }, intent.personnel);
+}
+
+export function beginMembershipReload(
+  workflow: MembershipWorkflow,
+  recruiterId: string,
+): Map<string, MembershipWorkflowEntry> {
+  const current = workflow.get(recruiterId);
+  if (!current) return new Map(workflow);
+  return updateMembershipWorkflow(workflow, recruiterId, (entry) => ({
+    ...entry,
+    reloadRequired: true,
+    reloadError: null,
+  }), current.personnel);
+}
+
+export function finishMembershipReload(
+  workflow: MembershipWorkflow,
+  recruiterId: string,
+  result: { detail: "loaded" | "not-found" | "failed"; listsLoaded: boolean },
+): { workflow: Map<string, MembershipWorkflowEntry>; missing: boolean; complete: boolean } {
+  const current = workflow.get(recruiterId);
+  if (result.detail === "not-found") {
+    const next = new Map(workflow);
+    next.delete(recruiterId);
+    return { workflow: next, missing: true, complete: false };
+  }
+  if (result.detail === "loaded" && result.listsLoaded) {
+    const next = new Map(workflow);
+    next.delete(recruiterId);
+    return { workflow: next, missing: false, complete: true };
+  }
+  if (!current) {
+    return { workflow: new Map(workflow), missing: false, complete: false };
+  }
+  const next = updateMembershipWorkflow(workflow, recruiterId, (entry) => ({
+    ...entry,
+    reloadRequired: true,
+    reloadError: "Không tải đủ dữ liệu có thẩm quyền. Khóa vẫn được giữ; hãy thử tải lại.",
+    message: null,
+  }), current.personnel);
+  return { workflow: next, missing: false, complete: false };
+}
+
+export function membershipNeedsAttention(entry: MembershipWorkflowEntry): boolean {
+  return entry.pendingIntent !== null || entry.reloadRequired;
+}
+
+export function canAssignMembership(
+  current: { kind: string; list?: { memberships: readonly unknown[] } },
+  scheduled: { kind: string; list?: { memberships: readonly unknown[] } },
+): boolean {
+  return current.kind === "loaded" && current.list?.memberships.length === 0 &&
+    scheduled.kind === "loaded" && scheduled.list?.memberships.length === 0;
+}
 
 export function classifyMembershipMutation(
   status: number,

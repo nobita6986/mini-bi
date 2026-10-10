@@ -40,23 +40,26 @@ test("mutations use canonical methods, headers, versioned strict requests and no
   assert.match(component, /method: "POST"/);
   assert.match(component, /"Idempotency-Key": intent\.idempotencyKey/);
   assert.match(component, /const idempotencyKey = newMembershipIntentKey\(\)/);
-  assert.match(component, /onClick=\{\(\) => void sendIntent\(pendingIntent\)\}/);
+  assert.match(component, /recordMembershipIntent\(current, pendingIntent\)/);
+  assert.match(component, /const intent: MembershipIntent/);
   assert.match(component, /body: JSON\.stringify\(intent\.body\)/);
   assert.match(component, /classifyMembershipMutation/);
   assert.match(component, /expectedVersion: operation\.kind === "move" \? operation\.expectedVersion : personnel\.version/);
   assert.match(component, /expectedVersion: operation\.membership\.recruiter_version/);
   assert.match(component, /if \(outcome\.kind === "conflict"\)/);
-  assert.match(component, /if \(locks\.has\(personnel\.recruiter_id\)\)/);
+  assert.match(component, /membershipWorkflowLocked\(activeEntry\)/);
   assert.doesNotMatch(component, /supabase|\.rpc\(|createClient\(|from\(["']recruiter_team_memberships/i);
 });
 
-test("successful mutation reloads authoritative detail and each separate list; failed OCC reload retains lock", () => {
+test("successful mutation reloads authoritative detail and each separate list; failed reload retains lock", () => {
   assert.match(component, /refreshAuthoritative\(intent\.recruiterId, requestGeneration\)/);
   assert.match(component, /projectPersonnelItem\(await response\.json\(\)\)/);
   assert.match(component, /Promise\.all\(STATES\.map\(\(state\) => readMembershipList\(recruiterId, state, 1\)\)\)/);
-  assert.match(component, /if \(!result\.complete\) throw new Error/);
-  assert.match(component, /Không tải đủ dữ liệu có thẩm quyền\. Khóa vẫn được giữ/);
+  assert.match(component, /finishMembershipReload\(current, intent\.recruiterId, refresh\)/);
+  assert.match(component, /finishMembershipReload\(current, recruiterId, result\)/);
+  assert.match(component, /finishMembershipReload/);
   assert.match(component, /lockEntity\(recruiterId, false\)/);
+  assert.match(component, /onPersonnelUnavailable\(recruiterId\)/);
   assert.match(component, /onCloseAutoFocus=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(personnelManager, /membershipTrigger\.current\?\.focus\(\)/);
 });
@@ -76,4 +79,15 @@ test("UI never displays technical UUIDs and retains accessible state and personn
   assert.doesNotMatch(component, /<td[^>]*>\s*\{membership\.(membership_id|team_id)\}/);
   assert.match(personnelManager, /Quản lý nhóm/);
   assert.doesNotMatch(personnelManager, /label="Mật khẩu"|label="Tài khoản đăng nhập"|label="Nhóm"/i);
+});
+
+test("assignment is fail-closed and user-facing copy uses Vietnamese terminology", () => {
+  assert.match(component, /canAssignMembership\(visibleLists\.CURRENT, visibleLists\.SCHEDULED\)/);
+  assert.match(component, /\{canAssign && personnel\.active \?/);
+  assert.match(component, /otherAttentionEntries/);
+  assert.match(component, /Đóng cửa sổ này để mở lại đúng hồ sơ/);
+  const visibleLabels = Array.from(component.matchAll(/\b(?:title|description|aria-label)="([^"]*)"/gi),
+    (match) => match[1]);
+  assert.doesNotMatch(visibleLabels.join("\n"), /\bmembership\b/i);
+  assert.doesNotMatch(component, /(?:title|description|aria-label)=\{`[^`]*\bmembership\b/i);
 });

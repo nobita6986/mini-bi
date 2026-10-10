@@ -89,3 +89,38 @@ remains Owner-only.
 - W04-B: Leader UI, dependent on W01D.
 - Membership UI does not include Team administration, Leader UI, Vendor/Labor
   Type, or Access Administration.
+
+## R1 delta — recruiter-scoped state and reload recovery
+
+R1 changes only the client-side workflow and its tests; W01B/W01C APIs, contracts,
+migrations, and dependencies remain unchanged.
+
+- R1 base: `289538a4c4b3ba84f6386d2435cb5e60501d2705`.
+- R1 final SHA: reported in the T1A completion message for this branch.
+- `src/lib/admin/team-membership-model.ts` now models pending intent, messages,
+  errors, and reload-required locks by recruiter ID. An applied result or OCC
+  conflict keeps that recruiter locked until the authoritative personnel detail
+  and CURRENT, SCHEDULED, and HISTORY lists all reload successfully. Partial
+  reload failure retains the lock and retry path; detail 404 clears the stale
+  workflow, closes only that personnel dialog, and refreshes the Personnel list.
+- The manager retains an uncertain request's exact URL, body, and
+  Idempotency-Key for retry. A different personnel dialog cannot see or retry
+  that request. Other pending/conflicted personnel are represented by a
+  recruiter-named reopen action when the dialog is closed; while another dialog
+  is open, a generic notice directs the user to close it rather than exposing
+  another recruiter's request there.
+- Assign is rendered only for active personnel after both CURRENT and SCHEDULED
+  lists have loaded successfully and are empty. Form, operation, team selection,
+  message, and error presentation are scoped/reset by recruiter; authoritative
+  row versions remain the sole source for move/close/cancel.
+- Visible copy uses Vietnamese “phân công” terminology; technical identifiers
+  retain their existing code/API names.
+- R1 focused lane: 21/21; W04-A1/A2 lane: 146/146; W01C-B: 34/34; W01C-A:
+  25/25; W01B: 29/29. Full-suite and build/type/lint/documentation/security/
+  offline-migration gates: `pnpm test` 2089/2089 across 57 summaries;
+  `pnpm exec next typegen`, `pnpm typecheck`, and `pnpm build` pass; `pnpm lint`
+  has 0 errors and 15 existing warnings; `pnpm docs:check` 6/6;
+  `pnpm secrets:check` passes (1632 files); `pnpm db:migrate -- --offline`
+  validates 71 migrations; `git diff --check` passes.
+- No browser, Playwright, CUA, or Owner UAT was run. Owner-only browser UAT is
+  still pending.

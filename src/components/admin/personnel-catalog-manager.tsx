@@ -868,7 +868,10 @@ export function PersonnelCatalogManager() {
         }}
         onConflictLock={updateMembershipConflictLock}
         onPersonnelReloaded={updateReloadedPersonnel}
-        onPersonnelUnavailable={reloadList}
+        onPersonnelUnavailable={(recruiterId) => {
+          setMembershipPersonnel((current) => current?.recruiter_id === recruiterId ? null : current);
+          reloadList();
+        }}
       />
     </div>
     </Dialog.Root>
