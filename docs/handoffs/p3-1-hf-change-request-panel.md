@@ -1,0 +1,11 @@
+# P3.1-HF — Compact/Collapsible Change Request Panel
+
+- **Base SHA:** `f9c11073168fca06646cfa7326d63bc6cadc7936`.
+- **Final implementation SHA:** `2488986f6fb1551f3334009beb879a9d7efa9374` (the following commit contains only this handoff).
+- **Behavior:** Worker Operations now renders its existing single Change Request list inside a default-collapsed native `<details>` panel. Its keyboard-operable summary shows the loaded count, pending count when nonzero, loading state, and sanitized “Không tải được” status. Disclosure state is uncontrolled DOM state, so list prop updates do not reset it and toggling does not fetch.
+- **Cards:** narrow screens use one column, tablet/desktop two, and wide layouts three. Metadata uses a compact grid; actions remain at the card bottom. Styles are scoped to Change Requests and do not alter the submission list.
+- **Reuse and invariants:** reused the existing list, status projection, short references, server-projected withdraw/review guards, load-more callback, and Radix withdrawal confirmation. Direct Entry Live keeps its existing outer details panel and default list markup. API, authority, ordering, filters, worker table, backend, and pagination behavior are unchanged.
+- **Files changed:** `package.json`; `src/components/direct-entry/change-request-panel.test.mjs`; `src/components/direct-entry/direct-entry-change-request-list.tsx`; `src/components/direct-entry/direct-entry-shell.module.css`; `src/components/direct-entry/worker-operations.tsx`.
+- **Regression:** focused change-request panel lane 57/57; worker operations, proposer/withdraw, reviewer, and Direct Entry Live panel regressions passed. All eight required mutation probes were killed, restored byte-identically, and followed by a green focused lane.
+- **Gates:** canonical `pnpm test` 2,342/2,342 across 64 test programs; `next typegen`, typecheck, lint, build, docs (6/6), secrets, offline migration validation (73), and `git diff --check` passed. Targeted ESLint reported 0 warnings; full lint reported 0 errors and 15 existing warnings in unrelated files.
+- No dependency, backend, migration, production query/apply, deployment, or browser/Playwright/CUA/UAT was performed. Migration ledger remains at 73.
