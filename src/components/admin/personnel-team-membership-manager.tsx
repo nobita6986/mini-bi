@@ -524,7 +524,13 @@ export function PersonnelTeamMembershipManager({
                 </div>
               ) : null}
 
-              {activeConflict ? (
+              {activeConflict && busy ? (
+                <div className="mt-4" role="status">
+                  <Alert tone="info" title="Đang cập nhật danh sách">
+                    {message ?? "Đang tải lại hồ sơ và các phân công…"}
+                  </Alert>
+                </div>
+              ) : activeConflict ? (
                 <div className="mt-4">
                   <Alert tone="warning" title="Cần tải lại dữ liệu trước khi tiếp tục">
                     {formError ? <p>{formError}</p> : null}
@@ -537,7 +543,7 @@ export function PersonnelTeamMembershipManager({
                   </Alert>
                 </div>
               ) : null}
-              {message ? <div className="mt-4" role="status"><Alert tone="info" title="Trạng thái">{message}</Alert></div> : null}
+              {message && !activeConflict ? <div className="mt-4" role="status"><Alert tone="info" title="Trạng thái">{message}</Alert></div> : null}
               {pendingIntent?.retry ? (
                 <div className="mt-4">
                   <Alert tone="warning" title="Thao tác chưa có kết quả xác nhận">
@@ -630,8 +636,9 @@ export function PersonnelTeamMembershipManager({
                   <form onSubmit={submitOperation} className="space-y-4">
                     {operation.kind === "move" && operation.validTo ? (
                       <p className="text-sm text-muted">
-                        Phân công này kết thúc vào {formatDate(operation.validTo)}. Nhóm mới chỉ có hiệu lực
-                        đến trước ngày đó; hãy chọn ngày chuyển sớm hơn ngày kết thúc.
+                        Phân công hiện tại kết thúc trước ngày {formatDate(operation.validTo)}.
+                        Chọn ngày chuyển trong khoảng còn hiệu lực. Phân công mới không có ngày kết thúc,
+                        cho đến khi chuyển nhóm hoặc bỏ gán tiếp theo; lịch khác trùng thời gian sẽ bị từ chối.
                       </p>
                     ) : null}
                     {operation.kind !== "close" ? (
@@ -654,7 +661,7 @@ export function PersonnelTeamMembershipManager({
                     ) : (
                       <p className="text-sm">
                         {operation.cancelScheduled
-                          ? "Lịch sẽ được hủy bằng cách ghi nhận ngày kết thúc bằng ngày bắt đầu; lịch sử kiểm toán vẫn được giữ."
+                          ? "Lịch chưa có hiệu lực sẽ được hủy. Nếu đây là lịch chuyển nhóm, phân công trước đó sẽ tiếp tục không có ngày kết thúc khi nhóm cũ còn hợp lệ và không trùng lịch khác. Lịch sử vẫn được giữ."
                           : `Nhóm: ${operation.membership.team_display_name}. Hồ sơ vẫn được giữ; không có dữ liệu nào bị xóa.`}
                       </p>
                     )}
@@ -791,8 +798,8 @@ function MembershipSection({
                   <tr key={membership.membership_id}>
                     <th scope="row" className="px-3 py-3 font-medium">{membership.team_display_name}</th>
                     <td className="px-3 py-3">{formatDate(membership.valid_from)}</td>
-                    <td className="px-3 py-3">{formatDate(membership.valid_to)}</td>
-                    <td className="px-3 py-3">{stateLabel(membership.state)}</td>
+                    <td className="px-3 py-3">{membership.valid_to ? formatDate(membership.valid_to) : "Chưa có ngày kết thúc"}</td>
+                    <td className="px-3 py-3">{membership.valid_to === membership.valid_from ? "Đã hủy lịch" : stateLabel(membership.state)}</td>
                     {state !== "HISTORY" ? (
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">

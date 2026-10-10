@@ -5,6 +5,16 @@ import test from "node:test";
 const component = readFileSync(new URL("./personnel-team-membership-manager.tsx", import.meta.url), "utf8");
 const personnelManager = readFileSync(new URL("./personnel-catalog-manager.tsx", import.meta.url), "utf8");
 
+test("successful refresh is informational, warnings are reserved for stopped reloads", () => {
+  assert.match(component, /activeConflict && busy \?/);
+  assert.match(component, /tone="info" title="Đang cập nhật danh sách"/);
+  assert.match(component, /message && !activeConflict/);
+  assert.match(component, /Chưa có ngày kết thúc/);
+  assert.match(component, /membership\.valid_to === membership\.valid_from \? "Đã hủy lịch"/);
+  assert.match(component, /Phân công mới không có ngày kết thúc/);
+  assert.doesNotMatch(component, /Nhóm mới chỉ có hiệu lực/);
+});
+
 test("technical counters are hidden while finite move dates and OCC remain intact", () => {
   for (const file of ["./personnel-catalog-manager.tsx", "./team-catalog-manager.tsx", "./team-leader-manager.tsx",
     "../direct-entry/worker-operations.tsx", "../direct-entry/project-operations.tsx",

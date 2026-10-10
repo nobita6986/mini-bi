@@ -287,7 +287,7 @@ test("applied mutations stay locked after partial reload and unlock only after d
     workflow = partial.workflow;
     const retained = membershipWorkflowEntry(workflow, RECRUITER_A);
     assert.equal(membershipWorkflowLocked(retained), true);
-    assert.match(retained.reloadError, /Khóa vẫn được giữ/);
+    assert.match(retained.reloadError, /Hãy tải lại trước khi tiếp tục/);
     assert.equal(membershipNeedsAttention(retained), true);
 
     const complete = finishMembershipReload(workflow, RECRUITER_A, {
@@ -313,6 +313,19 @@ test("personnel detail 404 removes only that recruiter's stale reload lock", () 
     assert.equal(missing.missing, true);
     assert.equal(membershipWorkflowEntry(missing.workflow, RECRUITER_A), null);
     assert.equal(membershipWorkflowEntry(locked, RECRUITER_B), null);
+});
+
+test("save feedback distinguishes refreshing from failure without unlocking early", () => {
+  const original = intent();
+  const saved = recordMembershipOutcome(recordMembershipIntent(new Map(), original), original, { kind: "applied", membership: {} });
+  assert.equal(membershipWorkflowEntry(saved, RECRUITER_A).message, "Đã lưu thay đổi. Đang cập nhật danh sách…");
+  assert.equal(membershipWorkflowLocked(membershipWorkflowEntry(saved, RECRUITER_A)), true);
+  const failed = finishMembershipReload(saved, RECRUITER_A, { detail: "loaded", listsLoaded: false });
+  assert.equal(membershipWorkflowEntry(failed.workflow, RECRUITER_A).message, null);
+  assert.match(membershipWorkflowEntry(failed.workflow, RECRUITER_A).reloadError, /Hãy tải lại trước khi tiếp tục/);
+  assert.equal(membershipWorkflowLocked(membershipWorkflowEntry(failed.workflow, RECRUITER_A)), true);
+  const done = finishMembershipReload(failed.workflow, RECRUITER_A, { detail: "loaded", listsLoaded: true });
+  assert.equal(membershipWorkflowLocked(membershipWorkflowEntry(done.workflow, RECRUITER_A)), false);
 });
 
 test("pending intent is hidden from B and reopening A retains its exact retry request", () => {

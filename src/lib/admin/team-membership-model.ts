@@ -263,7 +263,7 @@ export function recordMembershipOutcome(
         pendingIntent: null,
         reloadRequired: true,
         reloadError: null,
-        message: "Đã lưu thay đổi. Cần tải lại dữ liệu có thẩm quyền.",
+        message: "Đã lưu thay đổi. Đang cập nhật danh sách…",
         formError: null,
       };
     }
@@ -324,7 +324,7 @@ export function finishMembershipReload(
   const next = updateMembershipWorkflow(workflow, recruiterId, (entry) => ({
     ...entry,
     reloadRequired: true,
-    reloadError: "Không tải đủ dữ liệu có thẩm quyền. Khóa vẫn được giữ; hãy thử tải lại.",
+    reloadError: "Chưa tải đủ hồ sơ và các phân công. Hãy tải lại trước khi tiếp tục.",
     message: null,
   }), current.personnel);
   return { workflow: next, missing: false, complete: false };

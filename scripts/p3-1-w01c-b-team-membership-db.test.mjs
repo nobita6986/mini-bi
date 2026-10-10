@@ -272,6 +272,8 @@ test("finite current membership remains movable after a future move is cancelled
     await assign(db, CATALOG, { recruiter, from: PAST, key: "finite-assign" });
     await move(db, CATALOG, { recruiter, from: "2099-10-31", key: "finite-schedule" });
     await unassign(db, CATALOG, { recruiter, to: "2099-10-31", version: 3, key: "finite-cancel" });
+    // Recreate the finite predecessor left by the released #77 cancellation path.
+    await db.query("update public.recruiter_team_memberships set valid_to='2099-10-31' where recruiter_id=$1 and valid_from=$2", [recruiter, PAST]);
     const before = await counts(db);
     await expectMutationError(() => move(db, CATALOG, { recruiter, team: TEAM_B, from: "2099-10-30", version: 3,
       key: "finite-stale" }), "40001");
@@ -279,12 +281,12 @@ test("finite current membership remains movable after a future move is cancelled
 
     const request = { recruiter, team: TEAM_B, from: "2099-10-30", version: 4, key: "finite-retry" };
     const result = await move(db, CATALOG, request);
-    assert.equal(result.valid_to, "2099-10-31", "moving must not reopen the cancelled future authority");
+    assert.equal(result.valid_to, null, "an explicit new move starts an open-ended assignment");
     assert.equal(result.recruiter_version, 5);
     const rows = (await db.query("select team_id,valid_from::text,valid_to::text from public.recruiter_team_memberships where recruiter_id=$1 order by valid_from", [recruiter])).rows;
     assert.deepEqual(rows, [
       { team_id: TEAM_A, valid_from: PAST, valid_to: "2099-10-30" },
-      { team_id: TEAM_B, valid_from: "2099-10-30", valid_to: "2099-10-31" },
+      { team_id: TEAM_B, valid_from: "2099-10-30", valid_to: null },
       { team_id: TEAM_B, valid_from: "2099-10-31", valid_to: "2099-10-31" },
     ]);
     const revision = (await db.query("select before_snapshot,after_snapshot from public.direct_entry_team_membership_revisions where revision_id=$1", [result.revision_id])).rows[0];
@@ -295,9 +297,9 @@ test("finite current membership remains movable after a future move is cancelled
     assert.equal(after.revisions, before.revisions + 1);
     assert.deepEqual(await move(db, CATALOG, request), result);
     assert.deepEqual(await counts(db), after, "replay is exact and writes nothing");
-    await expectMutationError(() => move(db, CATALOG, { recruiter, team: TEAM_A, from: "2099-10-31", version: 5,
-      key: "finite-after-end" }), "22023");
-    assert.deepEqual(await counts(db), after, "end boundary cannot extend authority");
+    const next = await move(db, CATALOG, { recruiter, team: TEAM_A, from: "2099-11-01", version: 5,
+      key: "after-cancelled-date" });
+    assert.equal(next.valid_to, null, "the cancelled date does not limit subsequent moves");
   } finally { await db.exec("rollback"); }
 });
 
@@ -310,6 +312,134 @@ test("finite move excludes historical rows and markers on every date", async () 
     await expectMutationError(() => move(db, CATALOG, { recruiter: HRP_H, from: "2026-01-15", version: 3,
       key: "history-move" }), "22023");
     assert.deepEqual(await counts(db), before);
+  } finally { await db.exec("rollback"); }
+});
+
+test("finite schedules left by the earlier hotfix can be cancelled without reopening history", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", key: "finite-close-assign" });
+    await db.query("update public.recruiter_team_memberships set valid_to='2099-10-31' where recruiter_id=$1", [HRP_H]);
+    const request = { recruiter: HRP_H, to: "2099-10-30", version: 2, key: "finite-close-cancel" };
+    const result = await unassign(db, CATALOG, request);
+    assert.equal(result.change, "CANCEL");
+    assert.equal(result.valid_from, result.valid_to);
+    const after = await counts(db);
+    assert.deepEqual(await unassign(db, CATALOG, request), result);
+    assert.deepEqual(await counts(db), after);
+    await expectMutationError(() => unassign(db, CATALOG, { ...request, version: 3, key: "marker-again" }), "22023");
+    assert.deepEqual(await counts(db), after);
+  } finally { await db.exec("rollback"); }
+});
+
+test("an open-ended successor cannot overwrite another finite future schedule", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "overlap-assign" });
+    await unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-31", key: "overlap-end" });
+    await db.query("insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,valid_to) values($1,$2,'2099-11-01','2099-12-01')", [HRP_H, TEAM_B]);
+    const before = await counts(db);
+    const intervals = (await db.query("select * from public.recruiter_team_memberships where recruiter_id=$1 order by valid_from", [HRP_H])).rows;
+    await expectMutationError(() => move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", version: 3, key: "overlap-move" }), "23P01");
+    assert.deepEqual(await counts(db), before);
+    assert.deepEqual((await db.query("select * from public.recruiter_team_memberships where recruiter_id=$1 order by valid_from", [HRP_H])).rows, intervals);
+  } finally { await db.exec("rollback"); }
+});
+
+test("cancelling a future move restores its predecessor atomically with both snapshots and exact replay", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "restore-assign" });
+    await move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", key: "restore-move" });
+    // #77 could have stored a bounded successor; the same cancellation must repair the chain.
+    await db.query("update public.recruiter_team_memberships set valid_to='2099-10-31' where recruiter_id=$1 and valid_from='2099-10-30'", [HRP_H]);
+    const before = await counts(db);
+    const request = { recruiter: HRP_H, to: "2099-10-30", version: 3, key: "restore-cancel" };
+    await expectMutationError(() => unassign(db, CATALOG, { ...request, version: 2, key: "restore-stale" }), "40001");
+    assert.deepEqual(await counts(db), before);
+    const result = await unassign(db, CATALOG, request);
+    assert.equal(result.change, "CANCEL");
+    assert.equal(result.valid_from, result.valid_to);
+    assert.equal(result.recruiter_version, 4);
+    const rows = (await db.query("select team_id,valid_from::text,valid_to::text from public.recruiter_team_memberships where recruiter_id=$1 order by valid_from", [HRP_H])).rows;
+    assert.deepEqual(rows, [
+      { team_id: TEAM_A, valid_from: PAST, valid_to: null },
+      { team_id: TEAM_B, valid_from: "2099-10-30", valid_to: "2099-10-30" },
+    ]);
+    const revision = (await db.query("select before_snapshot,after_snapshot from public.direct_entry_team_membership_revisions where revision_id=$1", [result.revision_id])).rows[0];
+    assert.equal(revision.before_snapshot.restored_membership.valid_to, "2099-10-30");
+    assert.equal(revision.after_snapshot.restored_membership.valid_to, null);
+    assert.equal(revision.after_snapshot.valid_to, "2099-10-30");
+    const after = await counts(db);
+    assert.equal(after.audits, before.audits + 1);
+    assert.equal(after.revisions, before.revisions + 1);
+    assert.deepEqual(await unassign(db, CATALOG, request), result);
+    assert.deepEqual(await counts(db), after);
+  } finally { await db.exec("rollback"); }
+});
+
+test("restoration rejects an inactive previous team without cancelling or writing residue", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "inactive-restore-assign" });
+    await move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", key: "inactive-restore-move" });
+    await db.query("update public.teams set active=false where team_id=$1", [TEAM_A]);
+    const before = await counts(db);
+    await expectMutationError(() => unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-30", version: 3, key: "inactive-restore-cancel" }), "23514");
+    assert.deepEqual(await counts(db), before);
+    assert.equal((await db.query("select valid_to from public.recruiter_team_memberships where recruiter_id=$1 and valid_from='2099-10-30'", [HRP_H])).rows[0].valid_to, null);
+  } finally { await db.exec("rollback"); }
+});
+
+test("restoration cannot reactivate an inactive recruiter", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "inactive-person-assign" });
+    await move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", key: "inactive-person-move" });
+    await db.query("update public.recruiters set active=false where recruiter_id=$1", [HRP_H]);
+    const before = await counts(db);
+    await expectMutationError(() => unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-30", version: 3, key: "inactive-person-cancel" }), "P0002");
+    assert.deepEqual(await counts(db), before);
+  } finally { await db.exec("rollback"); }
+});
+
+test("cancelling a standalone future assignment never restores an unrelated adjacent interval", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "unrelated-assign" });
+    await unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-30", key: "unrelated-close" });
+    await assign(db, CATALOG, { recruiter: HRP_H, team: TEAM_B, from: "2099-10-30", version: 3, key: "standalone-future" });
+    const result = await unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-30", version: 4, key: "standalone-cancel" });
+    assert.equal(result.change, "CANCEL");
+    assert.equal((await db.query("select valid_to::text from public.recruiter_team_memberships where recruiter_id=$1 and valid_from=$2", [HRP_H, PAST])).rows[0].valid_to, "2099-10-30");
+  } finally { await db.exec("rollback"); }
+});
+
+test("same-date replacement cancellation restores the original predecessor, not a cancelled marker", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "chain-assign" });
+    await move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", key: "chain-move" });
+    await move(db, CATALOG, { recruiter: HRP_H, team: TEAM_A, from: "2099-10-30", version: 3, key: "chain-replace" });
+    await unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-30", version: 4, key: "chain-cancel" });
+    const rows = (await db.query("select valid_from::text,valid_to::text from public.recruiter_team_memberships where recruiter_id=$1 order by valid_from", [HRP_H])).rows;
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows[0], { valid_from: PAST, valid_to: null });
+    assert.ok(rows.slice(1).every(r => r.valid_from === r.valid_to));
+  } finally { await db.exec("rollback"); }
+});
+
+test("cancellation never overwrites another scheduled assignment during restoration", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "restore-overlap-assign" });
+    await move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", key: "restore-overlap-move" });
+    await db.query("update public.recruiter_team_memberships set valid_to='2099-10-31' where recruiter_id=$1 and valid_from='2099-10-30'", [HRP_H]);
+    await db.query("insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,valid_to) values($1,$2,'2099-11-01','2099-12-01')", [HRP_H, TEAM_B]);
+    const before = await counts(db);
+    await expectMutationError(() => unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-30", version: 3, key: "restore-overlap-cancel" }), "23P01");
+    assert.deepEqual(await counts(db), before);
+    assert.equal((await db.query("select valid_to::text from public.recruiter_team_memberships where recruiter_id=$1 and valid_from='2099-10-30'", [HRP_H])).rows[0].valid_to, "2099-10-31");
   } finally { await db.exec("rollback"); }
 });
 
