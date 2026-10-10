@@ -10,10 +10,13 @@ import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-e
 import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
-import { DirectEntrySubmissionList } from "@/components/direct-entry/direct-entry-submission-list";
+import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
+  type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
+import { projectDuplicateCccdPreflight } from "@/lib/direct-entry/submission-duplicate-cccd-contract";
+import type { DuplicateCccdPreflight } from "@/lib/direct-entry/submission-duplicate-cccd-contract";
 import {
   acceptDraftCreate,
   acceptDraftUpdate,
@@ -40,7 +43,6 @@ import {
   resolveIntentKey,
   shortRef,
   transitionErrorMessage,
-  type SubmissionAction,
   type TransitionIntentKeyState,
 } from "@/lib/direct-entry/submission-lifecycle";
 import { parseWorkerProfilePaste } from "@/lib/direct-entry/worker-profile-paste";
@@ -447,11 +449,14 @@ export function DirectEntryLive() {
     setRows((current) => mergeReloadedDrafts(current, serverRows));
   }, []);
 
-  const runTransition = useCallback(async (input: {
-    submission: SubmissionReadItem;
-    action: SubmissionAction;
-  }) => {
-    const { submission, action } = input;
+  /**
+   * P3.1-HF-R1: tra ve "applied" | "duplicate-changed" | "failed" de danh sach submission biet
+   * co phai preflight lai khi server bao tap conflict da thay doi.
+   */
+  const runTransition = useCallback(async (
+    input: SubmissionTransitionRequest,
+  ): Promise<TransitionOutcome> => {
+    const { submission, action, acknowledgement } = input;
     const submissionId = submission.submission_id;
     const intent = submissionId + ":" + action.target_state;
     const resolved = resolveIntentKey(
@@ -471,19 +476,33 @@ export function DirectEntryLive() {
             "Content-Type": "application/json",
             "Idempotency-Key": resolved.key,
           },
-          body: JSON.stringify({
-            expected_version: submission.version,
-            target_state: action.target_state,
-            idempotency_key: resolved.key,
-          }),
+          body: JSON.stringify(acknowledgement === undefined
+            ? {
+                expected_version: submission.version,
+                target_state: action.target_state,
+                idempotency_key: resolved.key,
+              }
+            : {
+                expected_version: submission.version,
+                target_state: action.target_state,
+                idempotency_key: resolved.key,
+                duplicate_cccd_fingerprint: acknowledgement.fingerprint,
+                duplicate_cccd_count: acknowledgement.count,
+              }),
         },
       );
       const body = await readJson(response);
       if (response.status === 409) {
         intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
-        setLifecycleMessage(transitionErrorMessage(409));
+        // Tap conflict CCCD da thay doi (hoac version da doi): khong submit.
+        const conflictChanged = typeof body === "object" && body !== null &&
+          !Array.isArray(body) &&
+          (body as { code?: unknown }).code === "DUPLICATE_CCCD_CONFIRMATION_REQUIRED";
+        setLifecycleMessage(conflictChanged
+          ? "Danh sách CCCD trùng vừa thay đổi. Vui lòng kiểm tra lại và xác nhận."
+          : transitionErrorMessage(409));
         await loadSubmissions("replace");
-        return;
+        return conflictChanged ? "duplicate-changed" : "failed";
       }
       if (response.ok) {
         const updated = projectSubmissionTransitionResult(
@@ -493,7 +512,7 @@ export function DirectEntryLive() {
         if (!updated) {
           // 2xx nhung projection khong doc duoc: ket qua khong xac dinh => giu key de thu lai.
           setLifecycleMessage(transitionErrorMessage(500));
-          return;
+          return "failed";
         }
         intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
         setSubmissions((current) => current.map((item) =>
@@ -520,26 +539,72 @@ export function DirectEntryLive() {
         }
         await loadSubmissions("replace");
         lifecycleStatusRef.current?.focus();
-        return;
+        return "applied";
       }
       const status = response.status;
       if (status >= 500) {
         // Loi phia may chu: giu idempotency key de nut thu lai dung cung intent.
         setLifecycleMessage(transitionErrorMessage(status));
-        return;
+        return "failed";
       }
       intentKeys.current.set(submissionId, clearIntentKey(resolved.state, intent));
       setLifecycleMessage(transitionErrorMessage(status));
       if (status === 401 || status === 403 || status === 404) {
         await loadSubmissions("replace");
       }
+      return "failed";
     } catch {
       // Network uncertainty: giu key de lan thu lai cua CUNG intent khong tao tac dong thu hai.
       setLifecycleMessage(transitionErrorMessage(0));
+      return "failed";
     } finally {
       setBusySubmissionId(null);
     }
   }, [loadSubmissions, reloadDrafts]);
+
+  /**
+   * P3.1-HF-R1: preflight read-only truoc khi trinh duyet. Tra ve null (va da bao loi cho nguoi
+   * dung) khi server tu choi hoac response khong projection duoc - khi do KHONG mo modal nao.
+   */
+  const preflightDuplicateCccd = useCallback(async (
+    submission: SubmissionReadItem,
+  ): Promise<DuplicateCccdPreflight | null> => {
+    const submissionId = submission.submission_id;
+    try {
+      const response = await fetch(
+        "/api/direct-entry/submissions/" + encodeURIComponent(submissionId) +
+          "/duplicate-cccd-preflight",
+        { cache: "no-store", credentials: "same-origin" },
+      );
+      const body = await readJson(response);
+      if (!response.ok) {
+        setLifecycleMessage(transitionErrorMessage(response.status));
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          await loadSubmissions("replace");
+        }
+        return null;
+      }
+      const record = typeof body === "object" && body !== null && !Array.isArray(body)
+        ? body as Record<string, unknown>
+        : {};
+      const preflight = projectDuplicateCccdPreflight({
+        submission_id: record.submission_id,
+        version: record.version,
+        fingerprint: record.fingerprint,
+        conflict_count: record.conflict_count,
+        conflicts: record.conflicts,
+      }, { submission_id: submissionId });
+      if (!preflight) {
+        // 2xx nhung khong projection duoc: fail-closed, khong hien thi du lieu khong ro nguon.
+        setLifecycleMessage(transitionErrorMessage(500));
+        return null;
+      }
+      return preflight;
+    } catch {
+      setLifecycleMessage(transitionErrorMessage(0));
+      return null;
+    }
+  }, [loadSubmissions]);
 
   const loadChangeRequests = useCallback(async (mode: "replace" | "append") => {
     setChangeRequestListState("loading");
@@ -1834,7 +1899,8 @@ export function DirectEntryLive() {
               busySubmissionId={busySubmissionId}
               blockedSubmissionIds={blockedSubmissionIds}
               onLoadMore={() => void loadSubmissions("append")}
-              onTransition={(input) => void runTransition(input)}
+              onPreflight={preflightDuplicateCccd}
+              onTransition={(input) => runTransition(input)}
               onRequestChange={(submission) => setProposerSubmission(submission)}
               onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
             />

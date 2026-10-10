@@ -26,8 +26,31 @@
 --   * entry_privileged_edit (BoD) at effective all scope.
 -- The report is masked (last 4 digits only), bounded (page size <= 100), deterministic
 -- (stable order) and read-only: it never rewrites, merges or repairs a profile and it never
--- returns a raw entry/worker UUID. The writer-side duplicate contract of every caller
--- (repository, API and UI) is unchanged for every other code.
+-- returns a raw entry/worker UUID.
+--
+-- P3.1-HF-R1 extends this same migration (still unmerged and unapplied) with the ONE place
+-- where a duplicate is surfaced to the user: the DRAFT -> REVIEW transition.
+--   * every save path (create, update, paste, import, full profile, autosave, save draft,
+--     rehire) stays completely silent about duplicates: nothing was added there;
+--   * public.direct_entry_submission_duplicate_cccd_preflight(auth, app, submission) is a
+--     read-only, stable RPC that reports the masked, bounded and deterministic conflict set
+--     of that draft plus a fingerprint that is derived from immutable entry ids and the
+--     canonical latest employment status only - never from a CCCD, a name or a project;
+--   * public.direct_entry_transition_submission_duplicate_cccd_confirmed(...) re-derives the
+--     set inside the transition transaction, compares it with the acknowledgement the client
+--     echoed back and only then applies DRAFT -> REVIEW. A stale, forged or missing
+--     acknowledgement raises before any write, so the submission stays DRAFT with no audit
+--     event, no revision, no version bump and no idempotency row;
+--   * public.direct_entry_transition_submission keeps its six-argument signature and its
+--     behaviour for every other transition (REVIEW -> DRAFT, REVIEW -> SUBMITTED, DRAFT ->
+--     DRAFT no-op), but the DRAFT -> REVIEW it performs now refuses while a conflict exists,
+--     so no caller, legacy overload or direct RPC call can bypass the acknowledgement.
+-- The conflict predicate is the canonical one: latest status of the other episode by
+-- version desc, `coalesce(..., 'UNCONFIRMED')`, kept only when it is ON or UNCONFIRMED, so an
+-- OFF episode is never reported. Same project, same recruiter, same team, the same submission
+-- and the same first work date are all irrelevant: only the canonical CCCD and the immutable
+-- entry id decide, the row itself is excluded by entry id, and a soft-deleted or non-canonical
+-- national id is never a conflict.
 
 begin;
 
@@ -532,8 +555,630 @@ begin
 end;
 $p3_1_hf$;
 
--- The report is a read surface beside the worker directory: its ACL is fixed above
--- (revoked from public/anon/authenticated, granted to service_role) and the masked
--- projection is the only CCCD information it can emit. No writer-side contract, TS
--- type, API route or UI contract is changed by this migration.
+-- ---------------------------------------------------------------------------
+-- 7. P3.1-HF-R1 - the duplicate-CCCD acknowledgement on DRAFT -> REVIEW.
+--
+-- 7a. One source of truth for "which existing profiles does this draft conflict with".
+--
+-- Read-only, stable and internal: it is revoked from every role at the end of this
+-- section and only the two public entry points below (both revoked from clients)
+-- call it. The fingerprint hashes immutable entry ids plus the canonical latest
+-- status only, so it carries no CCCD, no name, no project and no UUID; the
+-- projection is masked to the last four digits and bounded to 20 conflicts.
+-- ---------------------------------------------------------------------------
+do $p3_1_hf_confirmation$
+declare
+  v_source text;
+begin
+  create or replace function public.direct_entry_submission_duplicate_cccd_state(
+    p_submission_id uuid
+  )
+  returns jsonb
+  language sql
+  stable
+  security definer
+  set search_path = pg_catalog, public
+  as $state$
+    with draft as (
+      select e.entry_id,
+             e.first_work_date,
+             nullif(btrim(coalesce(e.worker_details->>'display_name', '')), '') as display_name,
+             public.direct_entry_canonical_national_id(
+               e.worker_details->'national_id'->>'value'
+             ) as cccd
+        from public.direct_entries e
+       where e.submission_id = p_submission_id
+         and e.deleted_at is null
+         and e.worker_details->'national_id'->>'state' = 'provided'
+    ),
+    conflicting as (
+      select d.entry_id as draft_entry_id,
+             d.display_name as draft_display_name,
+             d.first_work_date as draft_first_work_date,
+             o.entry_id as other_entry_id,
+             o.first_work_date as other_first_work_date,
+             o.project_id as other_project_id,
+             public.direct_entry_canonical_national_id(
+               o.worker_details->'national_id'->>'value'
+             ) as other_cccd,
+             coalesce((
+               select st.status
+                 from public.direct_entry_employment_status_events st
+                where st.entry_id = o.entry_id
+                order by st.version desc
+                limit 1
+             ), 'UNCONFIRMED') as latest_status
+        from draft d
+        join public.direct_entries o
+          on o.deleted_at is null
+         and o.entry_id <> d.entry_id
+         and o.worker_details->'national_id'->>'state' = 'provided'
+         and public.direct_entry_canonical_national_id(
+               o.worker_details->'national_id'->>'value'
+             ) = d.cccd
+       where public.direct_entry_is_canonical_national_id(d.cccd)
+    ),
+    live_conflict as (
+      select c.*
+        from conflicting c
+       where c.latest_status in ('ON', 'UNCONFIRMED')
+    ),
+    ordered as (
+      select c.*,
+             left(encode(sha256(convert_to(
+               c.draft_entry_id::text || ':' || c.other_entry_id::text, 'UTF8'
+             )), 'hex'), 12) as conflict_ref
+        from live_conflict c
+    )
+    select jsonb_build_object(
+      'conflict_count', (select count(*)::int from ordered),
+      'fingerprint', encode(sha256(convert_to(coalesce((
+        select string_agg(
+                 o.draft_entry_id::text || '|' || o.other_entry_id::text || '|' || o.latest_status,
+                 ','
+                 order by o.draft_entry_id, o.other_entry_id, o.latest_status
+               )
+          from ordered o
+      ), ''), 'UTF8')), 'hex'),
+      'conflicts', coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'conflict_ref', i.conflict_ref,
+                 'draft_display_name', i.draft_display_name,
+                 'project_display', i.project_display,
+                 'employment_status', i.latest_status,
+                 'cccd_last4', i.cccd_last4
+               ) order by i.draft_first_work_date, i.draft_entry_id,
+                          i.other_first_work_date, i.other_entry_id)
+          from (
+            select o.draft_entry_id,
+                   o.other_entry_id,
+                   o.draft_first_work_date,
+                   o.other_first_work_date,
+                   o.conflict_ref,
+                   o.draft_display_name,
+                   o.latest_status,
+                   right(o.other_cccd, 4) as cccd_last4,
+                   pj.display_name as project_display
+              from ordered o
+              left join public.direct_entry_projects pj on pj.project_id = o.other_project_id
+             order by o.draft_first_work_date, o.draft_entry_id,
+                      o.other_first_work_date, o.other_entry_id
+             limit 20
+          ) i
+      ), '[]'::jsonb)
+    );
+  $state$;
+  revoke all on function public.direct_entry_submission_duplicate_cccd_state(uuid)
+    from public, anon, authenticated, service_role;
+  comment on function public.direct_entry_submission_duplicate_cccd_state(uuid) is
+    'P3.1-HF-R1 internal (revoked from every role): the canonical duplicate-CCCD conflict set of one draft submission. Matches on the canonical national id of the draft entries against every other non-deleted provided profile - across projects, recruiters, teams, submissions and episodes - keeping only profiles whose latest employment status event (order by version desc) is ON or UNCONFIRMED, with a missing event falling back to UNCONFIRMED as the canonical storage default; OFF profiles are never reported. The row itself is excluded by immutable entry id, the projection is masked (cccd_last4) and bounded (20 items) and the deterministic fingerprint is built from entry ids and status only.';
+
+  -- -------------------------------------------------------------------------
+  -- 7b. The preflight: read-only, bounded, deterministic - it never mutates.
+  --
+  -- Exactly the authority of the transition it precedes: actor mapping, the
+  -- submission creator and one live own scope grant. An unauthorized actor is
+  -- refused before the conflict set is read, so a denial can never be mistaken
+  -- for "no conflict", and only a DRAFT submission is ever inspected.
+  -- -------------------------------------------------------------------------
+  create or replace function public.direct_entry_submission_duplicate_cccd_preflight(
+    p_auth_subject uuid,
+    p_app_user_id uuid,
+    p_submission_id uuid
+  )
+  returns jsonb
+  language plpgsql
+  stable
+  security definer
+  set search_path = pg_catalog, public
+  as $preflight$
+  declare
+    v_submission public.direct_entry_submissions%rowtype;
+    v_own_scope_count integer;
+    v_state jsonb;
+  begin
+    perform public.direct_entry_assert_actor(
+      p_auth_subject, p_app_user_id, 'submission_create'
+    );
+    select * into v_submission
+      from public.direct_entry_submissions
+     where submission_id = p_submission_id;
+    if not found then
+      raise exception 'submission not found' using errcode = 'P0002';
+    end if;
+    if v_submission.created_by_user_id <> p_app_user_id then
+      raise exception 'submission scope denied' using errcode = '42501';
+    end if;
+    select count(*) into v_own_scope_count
+      from public.direct_entry_scope_grants g
+     where g.app_user_id = p_app_user_id
+       and g.scope_kind = 'own'
+       and g.team_id is null
+       and g.valid_from <= public.direct_entry_authorization_date()
+       and (g.valid_to is null or public.direct_entry_authorization_date() < g.valid_to);
+    if v_own_scope_count <> 1 then
+      raise exception 'submission own scope denied' using errcode = '42501';
+    end if;
+    if v_submission.state <> 'DRAFT' then
+      raise exception 'submission is not a draft' using errcode = '22023';
+    end if;
+
+    v_state := public.direct_entry_submission_duplicate_cccd_state(p_submission_id);
+    return jsonb_build_object(
+      'submission_id', p_submission_id,
+      'version', v_submission.version,
+      'fingerprint', v_state->'fingerprint',
+      'conflict_count', v_state->'conflict_count',
+      'conflicts', v_state->'conflicts'
+    );
+  end;
+  $preflight$;
+  revoke all on function public.direct_entry_submission_duplicate_cccd_preflight(uuid, uuid, uuid)
+    from public, anon, authenticated, service_role;
+  grant execute on function public.direct_entry_submission_duplicate_cccd_preflight(uuid, uuid, uuid)
+    to service_role;
+  comment on function public.direct_entry_submission_duplicate_cccd_preflight(uuid, uuid, uuid) is
+    'P3.1-HF-R1 read-only preflight for DRAFT -> REVIEW: same actor/creator/own-scope authority as direct_entry_transition_submission, then the masked conflict set of that draft (last four digits, at most 20 items, deterministic order) plus the authoritative submission version and the acknowledgement fingerprint. It writes nothing: no audit event, no revision, no version bump and no idempotency row.';
+
+  -- -------------------------------------------------------------------------
+  -- 7c. The one transition body. Both public entry points delegate to it.
+  --
+  -- direct_entry_transition_submission (six arguments, signature unchanged)
+  -- passes a null acknowledgement, so the DRAFT -> REVIEW it performs raises
+  -- 22023 'duplicate cccd acknowledgement required' while a conflict exists: the
+  -- legacy signature and every legacy overload are structurally unable to bypass
+  -- the acknowledgement. direct_entry_transition_submission_duplicate_cccd_confirmed
+  -- passes the values the client echoed back, which are compared against the
+  -- conflict set re-derived INSIDE this transaction and after the submission row
+  -- lock, so a stale, forged or missing acknowledgement raises before any write.
+  -- Everything else - actor mapping, creator, own scope, OCC, no-op guard,
+  -- non-empty guard, revision, audit and idempotency - is the body that was
+  -- already installed, byte for byte.
+  -- -------------------------------------------------------------------------
+  create or replace function public.direct_entry_transition_submission_apply(
+    p_auth_subject uuid,
+    p_app_user_id uuid,
+    p_submission_id uuid,
+    p_expected_version integer,
+    p_target_state text,
+    p_idempotency_key text,
+    p_ack_fingerprint text,
+    p_ack_conflict_count integer
+  )
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = pg_catalog, public
+  as $apply$
+  declare
+    v_submission public.direct_entry_submissions%rowtype;
+    v_own_scope_count integer;
+    v_prior_result jsonb;
+    v_result jsonb;
+    v_request_hash text;
+    v_reason_id uuid;
+    v_submission_revision_id uuid;
+    v_before jsonb;
+    v_state jsonb;
+    v_conflict_count integer;
+    v_acknowledged boolean := false;
+  begin
+    if p_idempotency_key is null or length(p_idempotency_key) not between 1 and 128 then
+      raise exception 'invalid idempotency key' using errcode = '22023';
+    end if;
+    perform public.direct_entry_assert_actor(
+      p_auth_subject, p_app_user_id, 'submission_create'
+    );
+    select * into v_submission
+      from public.direct_entry_submissions
+     where submission_id = p_submission_id
+     for update;
+    if not found then
+      raise exception 'submission not found' using errcode = 'P0002';
+    end if;
+    if v_submission.created_by_user_id <> p_app_user_id then
+      raise exception 'submission scope denied' using errcode = '42501';
+    end if;
+    select count(*) into v_own_scope_count
+      from public.direct_entry_scope_grants g
+     where g.app_user_id = p_app_user_id
+       and g.scope_kind = 'own'
+       and g.team_id is null
+       and g.valid_from <= public.direct_entry_authorization_date()
+       and (g.valid_to is null or public.direct_entry_authorization_date() < g.valid_to);
+    if v_own_scope_count <> 1 then
+      raise exception 'submission own scope denied' using errcode = '42501';
+    end if;
+    v_request_hash := encode(
+      sha256(convert_to(concat_ws('|', p_submission_id::text, p_expected_version::text, p_target_state), 'UTF8')),
+      'hex'
+    );
+    v_prior_result := public.direct_entry_idempotency_begin(
+      p_app_user_id, 'submission_transition', p_idempotency_key, v_request_hash
+    );
+    if v_prior_result is not null then return v_prior_result; end if;
+    if p_expected_version is null or p_expected_version <> v_submission.version then
+      raise exception 'submission version conflict' using errcode = '40001';
+    end if;
+    if p_target_state = v_submission.state then
+      raise exception 'submission transition cannot be a no-op' using errcode = '22023';
+    end if;
+    if not exists (
+      select 1 from public.direct_entries e
+       where e.submission_id = p_submission_id and e.deleted_at is null
+    ) then
+      raise exception 'submission must contain at least one entry' using errcode = '23514';
+    end if;
+
+    -- P3.1-HF-R1: only DRAFT -> REVIEW is gated, and only while a conflict exists.
+    -- The conflict set is re-derived here, inside the transition transaction and after
+    -- the submission row lock, so the acknowledgement can never be replayed against a
+    -- different set. A missing, stale or forged acknowledgement raises 22023 before the
+    -- first write: the submission stays DRAFT, the version is untouched, no revision and
+    -- no APPLIED audit event are written and the idempotency row of this call is rolled
+    -- back with the rest of the transaction.
+    if v_submission.state = 'DRAFT' and p_target_state = 'REVIEW' then
+      v_state := public.direct_entry_submission_duplicate_cccd_state(p_submission_id);
+      v_conflict_count := (v_state->>'conflict_count')::int;
+      if v_conflict_count > 0 then
+        if p_ack_fingerprint is null
+           or p_ack_fingerprint <> (v_state->>'fingerprint')
+           or p_ack_conflict_count is null
+           or p_ack_conflict_count <> v_conflict_count then
+          raise exception 'duplicate cccd acknowledgement required' using errcode = '22023';
+        end if;
+        v_acknowledged := true;
+      end if;
+    end if;
+    v_before := jsonb_build_object(
+      'state', v_submission.state, 'version', v_submission.version,
+      'submitted_at', v_submission.submitted_at
+    );
+    update public.direct_entry_submissions
+       set state = p_target_state,
+           version = version + 1
+     where submission_id = p_submission_id;
+    -- The acknowledgement is recorded as a short code plus the conflict count and twelve
+    -- fingerprint characters only: never a CCCD, a worker name, a project name or the
+    -- conflict projection itself.
+    v_reason_id := public.direct_entry_reason(
+      p_app_user_id,
+      case
+        when v_acknowledged then
+          'Submission state transition (duplicate CCCD acknowledged x'
+            || v_conflict_count::text || ' fp=' || left(p_ack_fingerprint, 12) || ')'
+        else 'Submission state transition'
+      end
+    );
+    insert into public.direct_entry_submission_revisions (
+      submission_id, version, actor_user_id, reason_id, before_snapshot, after_snapshot
+    ) values (
+      p_submission_id, v_submission.version + 1, p_app_user_id, v_reason_id, v_before,
+      jsonb_build_object(
+        'state', p_target_state, 'version', v_submission.version + 1,
+        'submitted_at', case when p_target_state = 'SUBMITTED' then now() else null end
+      )
+    ) returning revision_id into v_submission_revision_id;
+    insert into public.direct_entry_audit_events (
+      auth_subject, app_user_id, action, capability, resource_ref,
+      scope_kind, scope_team_id, outcome, reason_id, submission_revision_id, changed_fields
+    ) values (
+      p_auth_subject, p_app_user_id, 'submission_transition', 'submission_create',
+      p_submission_id::text, 'own', null, 'APPLIED', v_reason_id,
+      v_submission_revision_id,
+      array['state', 'version']
+    );
+    v_result := jsonb_build_object(
+      'submission_id', p_submission_id,
+      'state', p_target_state,
+      'version', v_submission.version + 1
+    );
+    perform public.direct_entry_idempotency_finish(
+      p_app_user_id, 'submission_transition', p_idempotency_key, v_result
+    );
+    return v_result;
+  end;
+  $apply$;
+  revoke all on function public.direct_entry_transition_submission_apply(
+    uuid, uuid, uuid, integer, text, text, text, integer
+  ) from public, anon, authenticated, service_role;
+  comment on function public.direct_entry_transition_submission_apply(
+    uuid, uuid, uuid, integer, text, text, text, integer
+  ) is
+    'P3.1-HF-R1 internal (revoked from every role): the single transition body behind both public entry points. It keeps the actor/creator/own-scope authority, OCC, no-op guard, non-empty guard, revision, APPLIED audit and idempotency of the previous body, and adds one rule - DRAFT -> REVIEW is refused with 22023 while the canonical duplicate-CCCD conflict set of the draft is non-empty and the acknowledgement (fingerprint plus count) does not match the set re-derived inside this transaction.';
+
+  -- -------------------------------------------------------------------------
+  -- 7d. The two public entry points.
+  --
+  -- The legacy signature is re-created as a thin wrapper over the body above: same
+  -- name, same six arguments, same ACL, so no existing caller changes - while the
+  -- DRAFT -> REVIEW it performs now honours the acknowledgement rule, which is why
+  -- no legacy caller, overload or direct RPC call can bypass it. The confirmed
+  -- entry point only accepts a REVIEW target plus a well-formed acknowledgement and
+  -- hands the same body those values.
+  -- -------------------------------------------------------------------------
+  create or replace function public.direct_entry_transition_submission(
+    p_auth_subject uuid,
+    p_app_user_id uuid,
+    p_submission_id uuid,
+    p_expected_version integer,
+    p_target_state text,
+    p_idempotency_key text
+  )
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = pg_catalog, public
+  as $legacy$
+  begin
+    return public.direct_entry_transition_submission_apply(
+      p_auth_subject, p_app_user_id, p_submission_id, p_expected_version,
+      p_target_state, p_idempotency_key, null, null
+    );
+  end;
+  $legacy$;
+  revoke all on function public.direct_entry_transition_submission(
+    uuid, uuid, uuid, integer, text, text
+  ) from public, anon, authenticated, service_role;
+  grant execute on function public.direct_entry_transition_submission(
+    uuid, uuid, uuid, integer, text, text
+  ) to service_role;
+
+  create or replace function public.direct_entry_transition_submission_duplicate_cccd_confirmed(
+    p_auth_subject uuid,
+    p_app_user_id uuid,
+    p_submission_id uuid,
+    p_expected_version integer,
+    p_target_state text,
+    p_idempotency_key text,
+    p_ack_fingerprint text,
+    p_ack_conflict_count integer
+  )
+  returns jsonb
+  language plpgsql
+  security definer
+  set search_path = pg_catalog, public
+  as $confirmed$
+  declare
+    v_result jsonb;
+  begin
+    if p_target_state is distinct from 'REVIEW' then
+      raise exception 'duplicate cccd acknowledgement needs the review target'
+        using errcode = '22023';
+    end if;
+    if p_ack_fingerprint is null or p_ack_fingerprint !~ '^[0-9a-f]{64}$' then
+      raise exception 'duplicate cccd acknowledgement is malformed' using errcode = '22023';
+    end if;
+    if p_ack_conflict_count is null or p_ack_conflict_count < 1
+       or p_ack_conflict_count > 1000 then
+      raise exception 'duplicate cccd acknowledgement is malformed' using errcode = '22023';
+    end if;
+    v_result := public.direct_entry_transition_submission_apply(
+      p_auth_subject, p_app_user_id, p_submission_id, p_expected_version,
+      p_target_state, p_idempotency_key, p_ack_fingerprint, p_ack_conflict_count
+    );
+    return jsonb_build_object('status', 'applied') || v_result;
+  end;
+  $confirmed$;
+  revoke all on function public.direct_entry_transition_submission_duplicate_cccd_confirmed(
+    uuid, uuid, uuid, integer, text, text, text, integer
+  ) from public, anon, authenticated, service_role;
+  grant execute on function public.direct_entry_transition_submission_duplicate_cccd_confirmed(
+    uuid, uuid, uuid, integer, text, text, text, integer
+  ) to service_role;
+  comment on function public.direct_entry_transition_submission_duplicate_cccd_confirmed(
+    uuid, uuid, uuid, integer, text, text, text, integer
+  ) is
+    'P3.1-HF-R1 entry point for a DRAFT -> REVIEW the user acknowledged: REVIEW target only, fingerprint must be 64 lowercase hex characters and the count must be at least one, then the internal body re-derives the conflict set and compares it with the acknowledgement before it writes. Returns {status: applied, submission_id, state, version}. It grants no authority the legacy signature did not grant: actor, creator, own scope, OCC and idempotency all stay enforced by the body.';
+
+  -- -------------------------------------------------------------------------
+  -- 7e. Install-time self-check (data free: this migration installs on an empty
+  -- database and on production alike).
+  -- -------------------------------------------------------------------------
+  -- 7e-1. The internal state helper: source of truth, read-only, masked, bounded,
+  -- self-exclusion by immutable entry id, and unreachable from every client role.
+  select p.prosrc into v_source
+    from pg_proc p
+   where p.oid = 'public.direct_entry_submission_duplicate_cccd_state(uuid)'::regprocedure;
+  if v_source is null then
+    raise exception 'P3.1-HF-R1 the duplicate conflict state function is missing';
+  end if;
+  if v_source ~* '(insert into|update public|delete from|for update|advisory_xact_lock|truncate)' then
+    raise exception 'P3.1-HF-R1 the duplicate conflict state function is not read-only';
+  end if;
+  if position('right(' in v_source) = 0
+     or position(chr(39) || 'cccd_last4' || chr(39) in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the duplicate conflict set is not masked';
+  end if;
+  if position(chr(39) || 'entry_id' || chr(39) in v_source) > 0
+     or position(chr(39) || 'worker_id' || chr(39) in v_source) > 0 then
+    raise exception 'P3.1-HF-R1 the duplicate conflict set projects a raw UUID';
+  end if;
+  if position('entry_id <> d.entry_id' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the duplicate conflict set does not exclude the row itself';
+  end if;
+  if position('order by st.version desc' in v_source) = 0
+     or position('in (''ON'', ''UNCONFIRMED'')' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the canonical latest-status predicate changed';
+  end if;
+  if position('), ''UNCONFIRMED'')' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the missing-status fallback is not UNCONFIRMED';
+  end if;
+  if coalesce((
+    select p.provolatile from pg_proc p
+     where p.oid = 'public.direct_entry_submission_duplicate_cccd_state(uuid)'::regprocedure
+  ), 'v') <> 's' then
+    raise exception 'P3.1-HF-R1 the duplicate conflict state function is not STABLE';
+  end if;
+  if exists (
+    select 1 from pg_proc p
+     where p.oid = 'public.direct_entry_submission_duplicate_cccd_state(uuid)'::regprocedure
+       and (has_function_privilege('anon', p.oid, 'EXECUTE')
+            or has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            or has_function_privilege('service_role', p.oid, 'EXECUTE'))
+  ) then
+    raise exception 'P3.1-HF-R1 the duplicate conflict state function is reachable from a client role';
+  end if;
+
+  -- 7e-2. Both public entry points exist, are definers with a pinned search_path,
+  -- and only service_role may call them; the internal body stays unreachable.
+  if not exists (
+    select 1 from pg_proc p
+     where p.oid = 'public.direct_entry_submission_duplicate_cccd_preflight(uuid,uuid,uuid)'::regprocedure
+       and p.prosecdef
+       and p.provolatile = 's'
+       and p.proconfig @> array['search_path=pg_catalog, public']
+       and not has_function_privilege('anon', p.oid, 'EXECUTE')
+       and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+       and has_function_privilege('service_role', p.oid, 'EXECUTE')
+       and not exists (
+         select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+       )
+  ) then
+    raise exception 'P3.1-HF-R1 the duplicate preflight security boundary is wrong';
+  end if;
+  if not exists (
+    select 1 from pg_proc p
+     where p.oid = 'public.direct_entry_transition_submission_duplicate_cccd_confirmed(uuid,uuid,uuid,integer,text,text,text,integer)'::regprocedure
+       and p.prosecdef
+       and p.provolatile = 'v'
+       and p.proconfig @> array['search_path=pg_catalog, public']
+       and not has_function_privilege('anon', p.oid, 'EXECUTE')
+       and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+       and has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'P3.1-HF-R1 the confirmed transition security boundary is wrong';
+  end if;
+  if exists (
+    select 1 from pg_proc p
+     where p.oid = 'public.direct_entry_transition_submission_apply(uuid,uuid,uuid,integer,text,text,text,integer)'::regprocedure
+       and (has_function_privilege('anon', p.oid, 'EXECUTE')
+            or has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            or has_function_privilege('service_role', p.oid, 'EXECUTE'))
+  ) then
+    raise exception 'P3.1-HF-R1 the internal transition body is reachable from a client role';
+  end if;
+
+  -- 7e-3. The acknowledgement rule lives in the shared body, and the legacy
+  -- six-argument signature cannot apply a transition on its own any more: it only
+  -- delegates, so a direct or legacy call to DRAFT -> REVIEW is refused while a
+  -- conflict exists.
+  select p.prosrc into v_source
+    from pg_proc p
+   where p.oid = 'public.direct_entry_transition_submission_apply(uuid,uuid,uuid,integer,text,text,text,integer)'::regprocedure;
+  if v_source is null
+     or position('duplicate cccd acknowledgement required' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the acknowledgement refusal is missing from the transition body';
+  end if;
+  if position('direct_entry_submission_duplicate_cccd_state' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the transition body does not re-derive the conflict set';
+  end if;
+  if position('v_submission.state = ''DRAFT'' and p_target_state = ''REVIEW''' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the acknowledgement rule does not own DRAFT -> REVIEW only';
+  end if;
+  select p.prosrc into v_source
+    from pg_proc p
+   where p.oid = 'public.direct_entry_transition_submission(uuid,uuid,uuid,integer,text,text)'::regprocedure;
+  if v_source is null then
+    raise exception 'P3.1-HF-R1 the legacy transition signature disappeared';
+  end if;
+  if position('direct_entry_transition_submission_apply' in v_source) = 0 then
+    raise exception 'P3.1-HF-R1 the legacy signature no longer delegates to the shared body';
+  end if;
+  if position('update public.direct_entry_submissions' in v_source) > 0
+     or position('set state = p_target_state' in v_source) > 0
+     or position('direct_entry_idempotency_finish' in v_source) > 0 then
+    raise exception 'P3.1-HF-R1 the legacy signature still applies a transition by itself';
+  end if;
+  if not exists (
+    select 1 from pg_proc p
+     where p.oid = 'public.direct_entry_transition_submission(uuid,uuid,uuid,integer,text,text)'::regprocedure
+       and p.prosecdef
+       and p.provolatile = 'v'
+       and p.proconfig @> array['search_path=pg_catalog, public']
+       and not has_function_privilege('anon', p.oid, 'EXECUTE')
+       and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+       and has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'P3.1-HF-R1 the legacy transition security boundary changed';
+  end if;
+
+  -- 7e-4. Behaviour, data free: an unmapped actor is refused by the preflight, the
+  -- confirmed entry point accepts only the REVIEW target with a well-formed
+  -- acknowledgement, and the shared body refuses an unmapped actor before it reads
+  -- a submission. Nobody can mistake a denial for "no duplicate".
+  begin
+    perform public.direct_entry_submission_duplicate_cccd_preflight(
+      '00000000-0000-4000-8000-0000000000b1'::uuid,
+      '00000000-0000-4000-8000-0000000000b2'::uuid,
+      '00000000-0000-4000-8000-0000000000b3'::uuid
+    );
+    raise exception 'P3.1-HF-R1 the preflight accepted an unmapped actor';
+  exception
+    when others then
+      if position('P3.1-HF-R1' in sqlerrm) > 0 then
+        raise;
+      end if;
+  end;
+  begin
+    perform public.direct_entry_transition_submission_duplicate_cccd_confirmed(
+      '00000000-0000-4000-8000-0000000000b4'::uuid,
+      '00000000-0000-4000-8000-0000000000b5'::uuid,
+      '00000000-0000-4000-8000-0000000000b6'::uuid,
+      1, 'SUBMITTED', 'hf_confirmation_install_check',
+      repeat('a', 64), 1
+    );
+    raise exception 'P3.1-HF-R1 the confirmed entry point accepted a non-review target';
+  exception
+    when others then
+      if position('P3.1-HF-R1' in sqlerrm) > 0 then
+        raise;
+      end if;
+  end;
+  begin
+    perform public.direct_entry_transition_submission_apply(
+      '00000000-0000-4000-8000-0000000000b7'::uuid,
+      '00000000-0000-4000-8000-0000000000b8'::uuid,
+      '00000000-0000-4000-8000-0000000000b9'::uuid,
+      1, 'REVIEW', 'hf_confirmation_install_check_2', null, null
+    );
+    raise exception 'P3.1-HF-R1 the shared transition body accepted an unmapped actor';
+  exception
+    when others then
+      if position('P3.1-HF-R1' in sqlerrm) > 0 then
+        raise;
+      end if;
+  end;
+end;
+$p3_1_hf_confirmation$;
+
+-- The duplicate report stays a read surface beside the worker directory: its ACL is
+-- fixed above (revoked from public/anon/authenticated, granted to service_role) and
+-- the masked projection is the only CCCD information it can emit.
+--
+-- P3.1-HF-R1 adds one acknowledgement contract to this same migration - the preflight
+-- RPC, the confirmed transition RPC and the shared body beside the unchanged legacy
+-- signature - and that contract is the only writer-side behaviour this migration
+-- touches: every save path stays silent about duplicates.
 commit;

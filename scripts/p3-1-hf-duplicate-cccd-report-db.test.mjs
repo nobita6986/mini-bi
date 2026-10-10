@@ -692,12 +692,21 @@ test("P3.1-HF: the report is service_role-only and the internal guard is revoked
       "select count(*) from pg_proc where oid = 'public.direct_entry_assert_duplicate_cccd_reader" +
       "(uuid,uuid)'::regprocedure and prorettype = 'text'::regtype and provolatile = 's'"), 1);
 
-    // Report la ham doc duy nhat: khong co ban "sua trung" / "merge" nao duoc cai them.
-    assert.equal(await count(db,
-      "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace" +
+    // P3.1-HF-R1: the names that carry "duplicate" are exactly the report, its internal
+    // reader guard and the three functions of the DRAFT -> REVIEW acknowledgement contract.
+    // Nothing else may claim the name: there is still no "merge" / "repair" / "fix" surface.
+    const duplicateNames = (await db.query(
+      "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace" +
       " where n.nspname = 'public' and p.prokind = 'f'" +
-      " and p.proname like '%duplicate%'"), 2,
-    "chi report va guard noi bo duoc mang ten duplicate");
+      " and p.proname like '%duplicate%' order by p.proname")).rows
+      .map((row) => row.proname);
+    assert.deepEqual(duplicateNames, [
+      "direct_entry_assert_duplicate_cccd_reader",
+      "direct_entry_duplicate_cccd_report",
+      "direct_entry_submission_duplicate_cccd_preflight",
+      "direct_entry_submission_duplicate_cccd_state",
+      "direct_entry_transition_submission_duplicate_cccd_confirmed",
+    ], "chi report, guard va contract xac nhan duoc mang ten duplicate");
   } finally {
     await db.close();
   }

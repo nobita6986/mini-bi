@@ -201,8 +201,11 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // project-operation authority selector/lock helper plus the internal recruiter
   // alias trigger helper. P3.1-HF (#74) adds one internal reader gate, one internal
   // source-rewrite helper and the service-role-only duplicate-CCCD report RPC, and
-  // drops the retired episode guard. Measured: 179 total, 82 service-role executable
-  // and 97 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [179, 82, 97]);
+  // drops the retired episode guard. P3.1-HF-R1 (same, unmerged #74) adds two internal
+  // helpers (the duplicate conflict-state source of truth and the shared transition
+  // body) and two service-role-only RPCs (the duplicate preflight and the acknowledged
+  // transition), and turns the legacy six-argument transition into a wrapper over that
+  // body. Measured: 183 total, 84 service-role executable and 99 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [183, 84, 99]);
   await db.close();
 });

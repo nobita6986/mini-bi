@@ -651,12 +651,16 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // source-rewrite helper (direct_entry_hf_replace_proc_source) and the
     // service-role-only duplicate-CCCD report RPC, while dropping the retired
     // direct_entry_guard_active_episode, so nothing is reachable by
-    // anon/authenticated. The measured inventory is 179 total / 82 service-role
-    // / 97 internal.
+    // anon/authenticated. P3.1-HF-R1 (still the same, unmerged #74) adds two internal
+    // helpers (direct_entry_submission_duplicate_cccd_state and
+    // direct_entry_transition_submission_apply) and two service-role-only RPCs (the
+    // duplicate preflight and the acknowledged transition), and re-creates the legacy
+    // six-argument transition as a thin wrapper over the shared body. The measured
+    // inventory is 183 total / 84 service-role / 99 internal.
     assert.deepEqual(result.rows[0], {
-      total: 179,
-      service_role: 82,
-      internal: 97,
+      total: 183,
+      service_role: 84,
+      internal: 99,
       exposed_internal: 0,
     });
   } finally {
