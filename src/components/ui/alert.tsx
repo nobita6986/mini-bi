@@ -10,9 +10,14 @@ const TONE_CLASSES: Record<AlertTone, string> = {
   error: "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100",
 };
 
-export function Alert({ tone = "info", title, children }: { tone?: AlertTone; title: string; children?: ReactNode }) {
+export function Alert({ tone = "info", title, children, role = "status" }: {
+  tone?: AlertTone;
+  title: string;
+  children?: ReactNode;
+  role?: "alert" | "status";
+}) {
   return (
-    <div role="status" className={cn("rounded-md border px-4 py-3 text-sm", TONE_CLASSES[tone])}>
+    <div role={role} className={cn("rounded-md border px-4 py-3 text-sm", TONE_CLASSES[tone])}>
       <p className="font-medium">{title}</p>
       {children ? <div className="mt-1 [&>p]:mt-1">{children}</div> : null}
     </div>
