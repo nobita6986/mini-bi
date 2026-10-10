@@ -10,6 +10,10 @@ export const ADMIN_SECTIONS = [
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
 
+export function isAdminSectionActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export function visibleAdminSections(actor: NavActorProjection | null) {
   return actor && adminAreaNavPredicate(actor) ? ADMIN_SECTIONS : [];
 }
