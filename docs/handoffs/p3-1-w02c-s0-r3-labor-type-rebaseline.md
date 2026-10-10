@@ -1,6 +1,16 @@
 # P3.1-W02C-S0-R3 — Labor-type catalog rebaseline (R2 factual corrections)
 
 > **Status:** `P3_1_W02C_S0_R3_LABOR_TYPE_REBASELINE_PASS_AWAITING_T0_REVIEW`
+> **Process note (added at T0 instruction):** R2 (`99baeb5111c11d34069f106f71cc678077cfa9b2`)
+> was rejected on T0 review for the four factual blockers listed in §1 below. R3 was
+> intended to be added as a separate commit on top of R2 (preserving R2 in branch history);
+> in practice R3 was created by amending R2 and force-pushing to
+> `origin/audit/p3-1-w02c-s0-r2-labor-type-rebaseline`. R2's content (the rejected memo) is
+> therefore not on the branch any more; the branch tip `fa4b443` is the R3 corrected
+> rebaseline. The corrections themselves (the four factual fixes in §1–§3) are exactly the
+> R3 corrections that the T0 instruction required. **No source, migration, API, dependency,
+> route or UI change** in R3 — R3 is the same docs-only shape as R2; only the content
+> (counts, lineage, route topology) is corrected.
 > **Base:** `origin/main@09376b8ed44bc304b827f099f9597a4b82980ff0`. The merge at `09376b8` is the
 > grid-toolbar actions hotfix; the **last migration** in the range is
 > `20261009100000_p3_1_hf_duplicate_cccd_reporting.sql`. The repo at this base carries
@@ -322,3 +332,15 @@ header).
   P3.2 password/invitation/MFA workstream, the Owner browser UAT, the migration slot
   allocation (T0 reserves the number), and any future labor-type with a custom `reporting_key`
   override.
+
+---
+
+## Final handoff footer (set at push time)
+
+- R2 base: `origin/main@09376b8ed44bc304b827f099f9597a4b82980ff0`
+- R2 commit: `99baeb5111c11d34069f106f71cc678077cfa9b2` (was on branch before being replaced
+  by R3; preserved only in the local reflog; **not** on the current branch).
+- R3 commit: see the tip of `audit/p3-1-w02c-s0-r2-labor-type-rebaseline` after this push.
+- Branch lineage: `09376b8` (main) → R3 (this memo, on the branch tip).
+- Gates at push time: `git diff --check 09376b8..HEAD` clean; `pnpm docs:check` 6/6 PASS;
+  `pnpm secrets:check` 1138 files ĐẠT; worktree clean; local = remote.
