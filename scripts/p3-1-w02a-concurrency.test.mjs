@@ -88,7 +88,7 @@ async function applyMigrations(client) {
       + " create schema auth; create table auth.users (id uuid primary key);",
   );
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 74, "the test applies the complete 74-migration ledger");
+  assert.equal(names.length, 75, "the test applies the complete 75-migration ledger");
   for (const name of names) {
     await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }

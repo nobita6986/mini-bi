@@ -96,8 +96,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 74,
-    "the P3.1-HF duplicate-CCCD report #74 appends after alias hotfix #73");
+  assert.equal(totalCount, 75,
+    "the P3.1-HF duplicate-CCCD report #74 and the W02-B vendor lifecycle #75 append after alias hotfix #73");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -658,9 +658,9 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // six-argument transition as a thin wrapper over the shared body. The measured
     // inventory is 183 total / 84 service-role / 99 internal.
     assert.deepEqual(result.rows[0], {
-      total: 183,
-      service_role: 84,
-      internal: 99,
+      total: 194,
+      service_role: 89,
+      internal: 105,
       exposed_internal: 0,
     });
   } finally {

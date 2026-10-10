@@ -1,6 +1,6 @@
 /**
  * P2.5-W02-R1 - project master OCC, revisions and the W07E #50 safety guard
- * (DB regression, PGlite over the 74-migration ledger).
+ * (DB regression, PGlite over the 75-migration ledger).
  *
  * Closes the three findings of the T0 R1 review of P2.5-W02:
  *   F1 real OCC: assign/unassign no longer use an "expected active assignment
@@ -56,10 +56,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 74, "the ledger carries the P3.1-HF duplicate-CCCD report at #74");
-  assert.equal(names[names.length - (24)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (22)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (23)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 75, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (25)], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - (23)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (24)], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
@@ -896,8 +896,8 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 74,
-    "the repository ledger contains #1 through #74; Production status is verified separately");
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 75,
+    "the repository ledger contains #1 through #75; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
   // grouped-apply mode that could make the two files atomic.
