@@ -11,6 +11,7 @@ import { expectedDirectEntryFunctions } from "./lib/direct-entry-inventory.mjs";
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const MIGRATION_71 = "20261009070000_p3_1_w01d_team_leader_lifecycle.sql";
+const LEGACY_SCOPE_HOTFIX = "20261009120000_p3_1_hf_legacy_team_leader_scope.sql";
 const TEAM_A = "95000000-0000-4000-8000-0000000000a1";
 const TEAM_B = "95000000-0000-4000-8000-0000000000a2";
 const TEAM_C = "95000000-0000-4000-8000-0000000000a3";
@@ -29,6 +30,7 @@ const SNAPSHOT_KEYS = [
   "valid_to", "previous_leader_recruiter_id", "version", "change",
 ].sort();
 const MUTATION = process.env.LEADER_WRITE_MUTATION;
+const LEGACY_SCOPE_MUTATION = process.env.LEGACY_SCOPE_HOTFIX_MUTATION;
 
 function uuid(value) {
   return "11000000-0000-4000-8000-" + String(value).padStart(12, "0");
@@ -277,6 +279,30 @@ commit;`);
   }
 }
 
+function mutateLegacyScopeHotfix(sql, mutation = LEGACY_SCOPE_MUTATION) {
+  if (!mutation) return sql;
+  switch (mutation) {
+    case "restore-exact-scope-start":
+      return replaceOnce(replaceOnce(sql,
+        "v_scope_after constant text := $after$\n"
+          + "       and s.valid_from <= v_old.valid_from",
+        "v_scope_after constant text := $after$\n"
+          + "       and s.valid_from = v_old.valid_from"),
+        "or v_source not like '%and s.valid_from <= v_old.valid_from%'\n"
+          + "     or v_source like '%and s.valid_from = v_old.valid_from%'",
+        "or v_source not like '%and s.valid_from = v_old.valid_from%'\n"
+          + "     or v_source like '%and s.valid_from <= v_old.valid_from%'");
+    case "misclassify-state-as-denied":
+      return replaceOnce(sql,
+        "raise exception 'leader authority interval state conflict'\n"
+          + "        using errcode = '23514';",
+        "raise exception 'leader authority interval state conflict'\n"
+          + "        using errcode = '42501';");
+    default:
+      throw new Error(`unknown legacy-scope hotfix mutation: ${mutation}`);
+  }
+}
+
 async function inventory(db) {
   const { rows } = await db.query(`
     select count(*)::int as total,
@@ -340,14 +366,15 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 75);
-  assert.equal(names.at(-5), MIGRATION_71);
+  assert.equal(names.length, 76);
+  assert.equal(names.at(-6), MIGRATION_71);
+  assert.equal(names.at(-1), LEGACY_SCOPE_HOTFIX);
   assert.equal(names.some((name) => name.startsWith("202610100")), false);
   const migrations = await Promise.all(names.map(async (name) => ({
     name,
     sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
   })));
-  for (const name of names.slice(0, -5)) {
+  for (const name of names.slice(0, -6)) {
     const file = path.join(MIGRATION_DIR, name);
     const local = await readFile(file);
     const trackedPath = path.relative(ROOT, file).replaceAll("\\", "/");
@@ -357,7 +384,7 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   }
   const baseline = await inventory(db);
   const transitionFixtures = await seedLegacyTransition(db, legacyCount);
-  if (applyLatest) await db.exec(mutateMigration(migrations.at(-5).sql));
+  if (applyLatest) await db.exec(mutateMigration(migrations.at(-6).sql));
   return { db, names, baseline, migrations, transitionFixtures };
 }
 
@@ -563,7 +590,7 @@ async function assertTransitionAtomicity() {
   const state = await createDatabase(1, { applyLatest: false });
   const database = state.db;
   const [fixture] = state.transitionFixtures;
-  const baseSql = mutateMigration(state.migrations.at(-5).sql);
+  const baseSql = mutateMigration(state.migrations.at(-6).sql);
   try {
     const otherTeam = "99000000-0000-4000-8000-000000000001";
     await database.query(
@@ -840,7 +867,7 @@ async function assertTransitionAtomicity() {
     await expectMigrationFailure(database, beforeCorruption, "55000");
     await assertTransitionRolledBack(database, fixture);
 
-    const result = await database.exec(mutateMigration(state.migrations.at(-5).sql));
+    const result = await database.exec(mutateMigration(state.migrations.at(-6).sql));
     assert.ok(result);
     const transitionDate = (await database.query(
       "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
@@ -1159,13 +1186,15 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   db = state.db;
   const names = state.names;
   const inventoryBefore = state.baseline;
-  const allMigrations = state.migrations.slice(0, -4);
-  assert.equal(names.length, 75);
-  assert.equal(names.at(-5), MIGRATION_71);
+  const allMigrations = state.migrations.slice(0, -5);
+  assert.equal(names.length, 76);
+  assert.equal(names.at(-6), MIGRATION_71);
+  assert.equal(names.at(-1), LEGACY_SCOPE_HOTFIX);
   today = (await db.query(
     "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
   assert.equal(state.transitionFixtures.length, 3);
   await assertTransitionFixtures(db, state.transitionFixtures, today);
+  await db.exec(mutateLegacyScopeHotfix(state.migrations.at(-1).sql));
 
   await addTeam(TEAM_A, "TEAM_A");
   await addTeam(TEAM_B, "TEAM_B");
@@ -1208,6 +1237,43 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   });
   const unmapped = { auth: uuid(900000), app: uuid(900001) };
   await db.query("insert into auth.users(id) values ($1::uuid)", [unmapped.auth]);
+
+  const hotfixDate = (await db.query(
+    "select (public.direct_entry_authorization_date() + 1)::text as value",
+  )).rows[0].value;
+  const transitionedForReplace = state.transitionFixtures[0];
+  const transitionReplacement = await freshCandidate({
+    memberships: [transitionedForReplace.team],
+  });
+  const transitionReplaceVersion = (await db.query(
+    "select version from public.teams where team_id=$1::uuid",
+    [transitionedForReplace.team],
+  )).rows[0].version;
+  const transitionReplacementResult = await designate(
+    fullAdmin, transitionedForReplace.team, transitionReplacement,
+    { date: hotfixDate, version: transitionReplaceVersion, key: "legacy-prefix-replace" },
+  );
+  assert.equal(transitionReplacementResult.change, "replace");
+  assert.deepEqual((await db.query(
+    "select valid_from::text,valid_to::text from public.direct_entry_scope_grants"
+      + " where grant_id=$1::uuid",
+    [transitionedForReplace.scopeGrant],
+  )).rows, [{ valid_from: LEGACY_SCOPE_START, valid_to: hotfixDate }]);
+
+  const transitionedForRevoke = state.transitionFixtures[1];
+  const transitionRevokeVersion = (await db.query(
+    "select version from public.teams where team_id=$1::uuid",
+    [transitionedForRevoke.team],
+  )).rows[0].version;
+  const transitionRevokeResult = await revoke(fullAdmin, transitionedForRevoke.team, {
+    date: hotfixDate, version: transitionRevokeVersion, key: "legacy-prefix-revoke",
+  });
+  assert.equal(transitionRevokeResult.change, "revoke");
+  assert.deepEqual((await db.query(
+    "select valid_from::text,valid_to::text from public.direct_entry_scope_grants"
+      + " where grant_id=$1::uuid",
+    [transitionedForRevoke.scopeGrant],
+  )).rows, [{ valid_from: LEGACY_SCOPE_START, valid_to: hotfixDate }]);
 
   const initialLeader = await freshCandidate({ position: "TEAM_LEADER" });
   const initialKey = "designate-51";
@@ -1501,10 +1567,10 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const legacyIncoming = await freshCandidate({ memberships: [TEAM_LEGACY] });
   await deny(designate(fullAdmin, TEAM_LEGACY, legacyIncoming, {
     version: legacyVersion, key: "legacy-mismatch-replace",
-  }));
+  }), "23514");
   await deny(revoke(fullAdmin, TEAM_LEGACY, {
     version: legacyVersion, key: "legacy-mismatch-revoke",
-  }));
+  }), "23514");
   assert.deepEqual(await teamState(TEAM_LEGACY, [legacyLeader.app]), legacyBefore);
 
   const badGrantTeam = "95000000-0000-4000-8000-0000000000aa";
@@ -1527,7 +1593,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const badGrantBefore = await teamState(badGrantTeam, [badGrantLeader.app]);
   await deny(revoke(fullAdmin, badGrantTeam, {
     version: 1, key: "expired-outgoing-scope",
-  }));
+  }), "23514");
   assert.deepEqual(await teamState(badGrantTeam, [badGrantLeader.app]), badGrantBefore);
 
   const inactiveTeamCandidate = await freshCandidate({ memberships: [TEAM_INACTIVE] });
