@@ -58,8 +58,11 @@ Docs 6/6, secrets scan and offline validation of 77 migrations passed.
 The canonical 68-lane chain was resumed after updating one changed-copy assertion
 and ledger offsets. Lanes 1–67 passed; the final Vendor lane's only remaining
 failure was its clean-migration-worktree check seeing the new untracked #77.
-That lane must be rerun after committing, before release. Production dry-run
-confirmed #1–#76 applied with matching checksums and only #77 pending.
+After implementation commit `8e59744`, the Vendor lane rerun passed 25/25 with
+a clean migration worktree. All 68 canonical lanes therefore passed across the
+initial and resumed runs (not one uninterrupted `pnpm test` invocation).
+Production dry-run confirmed #1–#76 applied with matching checksums and only #77
+pending. Production apply and deployment are verified separately at release.
 
 ## Owner UAT
 
