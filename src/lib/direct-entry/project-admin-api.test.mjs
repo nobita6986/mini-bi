@@ -21,7 +21,8 @@ const REV = "99999999-9999-4999-8999-999999999999";
 const TS = "2026-10-01T00:00:00+00:00";
 
 const PROJECT = { project_id: "p1", display_name: "Công ty ABC", active: true, version: 3,
-  created_at: TS, updated_at: TS, revision_count: 2, active_assignment_count: 1 };
+  created_at: TS, updated_at: TS, revision_count: 2, active_assignment_count: 1,
+  can_manage_project_master: true, can_assign_managers: true };
 const CREATE = { project_id: "p1", display_name: "Công ty ABC", active: true, version: 1,
   revision_id: REV, created: true };
 const MUTATION = { project_id: "p1", display_name: "Công ty ABC", active: true, version: 4,

@@ -21,6 +21,8 @@ export type ProjectView = {
   display_name: string;
   active: boolean;
   version: number;
+  can_manage_project_master: boolean;
+  can_assign_managers: boolean;
 };
 
 export type AssignmentView = {
@@ -46,6 +48,8 @@ export type ProjectDetailView = {
   project_active: boolean;
   active_assignment_count: number;
   assignments: AssignmentView[];
+  can_manage_project_master: boolean;
+  can_assign_managers: boolean;
 };
 
 export type RequestResult =
@@ -88,10 +92,14 @@ export function parseProject(value: unknown): ProjectView | null {
   const display_name = asText(row.display_name);
   const active = asBool(row.active);
   const version = asCount(row.version);
-  if (project_id === null || display_name === null || active === null || version === null) {
+  const can_manage_project_master = asBool(row.can_manage_project_master);
+  const can_assign_managers = asBool(row.can_assign_managers);
+  if (project_id === null || display_name === null || active === null || version === null ||
+      can_manage_project_master === null || can_assign_managers === null) {
     return null;
   }
-  return { project_id, display_name, active, version };
+  return { project_id, display_name, active, version,
+    can_manage_project_master, can_assign_managers };
 }
 
 export function parseAssignment(value: unknown): AssignmentView | null {
@@ -144,10 +152,13 @@ export function parseDetailResponse(payload: unknown): ProjectDetailView | null 
   const project_id = asText(master.project_id);
   const display_name = asText(master.display_name);
   const masterVersion = asCount(master.version);
+  const can_manage_project_master = asBool(master.can_manage_project_master);
+  const can_assign_managers = asBool(master.can_assign_managers);
   const project_version = asCount(block.project_version);
   const project_active = asBool(block.project_active);
   const active_assignment_count = asCount(block.active_assignment_count);
   if (project_id === null || display_name === null || masterVersion === null ||
+      can_manage_project_master === null || can_assign_managers === null ||
       project_version === null || project_active === null || active_assignment_count === null) {
     return null;
   }
@@ -160,6 +171,7 @@ export function parseDetailResponse(payload: unknown): ProjectDetailView | null 
   return {
     project_id, display_name, version: masterVersion, project_version,
     project_active, active_assignment_count, assignments,
+    can_manage_project_master, can_assign_managers,
   };
 }
 

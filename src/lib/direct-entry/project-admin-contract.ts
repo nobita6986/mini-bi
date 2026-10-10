@@ -1,11 +1,12 @@
 /**
  * P2.5-W06A-R1 - Strict projections cho Project Operations admin RPC.
  *
- * Payload dung chinh xac theo migration #51
- * (20261008110000_p2_5_w02_multi_manager_project_authority.sql):
- * - list_projects_admin / get_project_admin tra 8 key master row:
+ * Payload dung chinh xac theo migration #51, extended by migration #72 with
+ * server-projected Project Operations authority:
+ * - list_projects_admin / get_project_admin tra 10 key master row:
  *     project_id, display_name, active, version, created_at, updated_at,
- *     revision_count, active_assignment_count.
+ *     revision_count, active_assignment_count, can_manage_project_master,
+ *     can_assign_managers.
  * - list_project_manager_assignments tra detail assignment (11 key moi row).
  *
  * Server la authority: moi projection FAIL-CLOSED. Thieu/thua key, sai kieu
@@ -22,6 +23,8 @@ export type AdminProject = {
   updated_at: string | null;
   revision_count: number;
   active_assignment_count: number;
+  can_manage_project_master: boolean;
+  can_assign_managers: boolean;
 };
 
 export type AdminAssignment = {
@@ -107,12 +110,13 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 }
 
 const PROJECT_KEYS = ["project_id", "display_name", "active", "version",
-  "created_at", "updated_at", "revision_count", "active_assignment_count"] as const;
+  "created_at", "updated_at", "revision_count", "active_assignment_count",
+  "can_manage_project_master", "can_assign_managers"] as const;
 const ASSIGNMENT_KEYS = ["assignment_id", "project_id", "project_version",
   "manager_recruiter_id", "valid_from", "valid_to", "effective", "version",
   "revoked_at", "created_at", "updated_at"] as const;
 
-/** Master row 8 key (list item + get_project_admin). */
+/** Master row 10 key (list item + get_project_admin). */
 export function projectAdminProject(value: unknown): AdminProject | null {
   if (!isRecord(value) || !exactKeys(value, PROJECT_KEYS)) return null;
   const project_id = str(value.project_id);
@@ -123,13 +127,16 @@ export function projectAdminProject(value: unknown): AdminProject | null {
   const updated_at = nullableStr(value.updated_at);
   const revision_count = int(value.revision_count);
   const active_assignment_count = int(value.active_assignment_count);
+  const can_manage_project_master = bool(value.can_manage_project_master);
+  const can_assign_managers = bool(value.can_assign_managers);
   if (project_id === null || display_name === null || active === null || version === null ||
       created_at === undefined || updated_at === undefined ||
-      revision_count === null || active_assignment_count === null) {
+      revision_count === null || active_assignment_count === null ||
+      can_manage_project_master === null || can_assign_managers === null) {
     return null;
   }
   return { project_id, display_name, active, version, created_at, updated_at,
-    revision_count, active_assignment_count };
+    revision_count, active_assignment_count, can_manage_project_master, can_assign_managers };
 }
 
 export function projectAdminAssignment(value: unknown): AdminAssignment | null {
