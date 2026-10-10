@@ -7,6 +7,7 @@ import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
+import { TeamLeaderManager } from "@/components/admin/team-leader-manager";
 import {
   buildTeamCreateRequest,
   buildTeamListQuery,
@@ -87,6 +88,8 @@ export function TeamCatalogManager() {
   const [conflictIntents, setConflictIntents] = useState<ReadonlyMap<string, ConflictEntry>>(new Map());
   const [busy, setBusy] = useState(false);
   const [conflictLocks, setConflictLocks] = useState<ReadonlySet<string>>(new Set());
+  const [leaderLocks, setLeaderLocks] = useState<ReadonlySet<string>>(new Set());
+  const [leaderTeam, setLeaderTeam] = useState<AdminTeam | null>(null);
 
   useEffect(() => {
     const listQuery = buildTeamListQuery({ search, includeInactive, page });
@@ -143,6 +146,23 @@ export function TeamCatalogManager() {
     setListState({ kind: "loading" });
     setReloadToken((value) => value + 1);
   };
+
+  const onLeaderLockChange = useCallback((teamId: string, locked: boolean) => {
+    setLeaderLocks((current) => setTeamConflictLock(current, teamId, locked));
+  }, []);
+
+  const onLeaderTeamReloaded = useCallback((team: AdminTeam) => {
+    setListState((current) => current.kind === "loaded"
+      ? {
+          ...current,
+          list: {
+            ...current.list,
+            teams: current.list.teams.map((row) => row.team_id === team.team_id ? team : row),
+          },
+        }
+      : current);
+    setLeaderTeam((current) => current?.team_id === team.team_id ? team : current);
+  }, []);
 
   const changeForm = useCallback(<K extends keyof TeamForm>(field: K, value: TeamForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -371,7 +391,7 @@ export function TeamCatalogManager() {
         retryState: "ready",
       };
     } else if (dialog.kind === "edit") {
-      if (conflictLocks.has(dialog.team.team_id)) {
+      if (conflictLocks.has(dialog.team.team_id) || leaderLocks.has(dialog.team.team_id)) {
         setFormError("Nhóm đang bị khóa cho đến khi tải lại dữ liệu có thẩm quyền.");
         return;
       }
@@ -395,7 +415,7 @@ export function TeamCatalogManager() {
         retryState: "ready",
       };
     } else {
-      if (conflictLocks.has(dialog.team.team_id)) {
+      if (conflictLocks.has(dialog.team.team_id) || leaderLocks.has(dialog.team.team_id)) {
         setFormError("Nhóm đang bị khóa cho đến khi tải lại dữ liệu có thẩm quyền.");
         return;
       }
@@ -435,6 +455,22 @@ export function TeamCatalogManager() {
   const isConflictLocked = dialogLockId !== null && conflictLocks.has(dialogLockId);
 
   return (
+    <>
+      <TeamLeaderManager
+        team={leaderTeam}
+        teamOperationLocked={leaderTeam !== null &&
+          (busy || conflictLocks.has(leaderTeam.team_id) ||
+            (pendingIntent !== null && pendingIntent.lockId === leaderTeam.team_id))}
+        onClose={() => setLeaderTeam(null)}
+        onTeamReloaded={onLeaderTeamReloaded}
+        onTeamUnavailable={(teamId) => {
+          setLeaderTeam(null);
+          setListState({ kind: "loading" });
+          setReloadToken((value) => value + 1);
+          setLeaderLocks((current) => setTeamConflictLock(current, teamId, false));
+        }}
+        onLockChange={onLeaderLockChange}
+      />
     <Dialog.Root
       open={dialog !== null}
       onOpenChange={(open) => {
@@ -713,7 +749,7 @@ export function TeamCatalogManager() {
                                 <button
                                   type="button"
                                   onClick={() => startEdit(team)}
-                                  disabled={busy || conflictLocks.has(team.team_id) ||
+                                  disabled={busy || conflictLocks.has(team.team_id) || leaderLocks.has(team.team_id) ||
                                     (pendingIntent !== null && pendingIntent.lockId !== team.team_id)}
                                   className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                                 >
@@ -724,13 +760,22 @@ export function TeamCatalogManager() {
                                 <button
                                   type="button"
                                   onClick={() => startActiveChange(team, !team.active)}
-                                  disabled={busy || conflictLocks.has(team.team_id) ||
+                                  disabled={busy || conflictLocks.has(team.team_id) || leaderLocks.has(team.team_id) ||
                                     (pendingIntent !== null && pendingIntent.lockId !== team.team_id)}
                                   className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                                 >
                                   {team.active ? "Ngừng hoạt động" : "Kích hoạt"}
                                 </button>
                               </Dialog.Trigger>
+                              <button
+                                type="button"
+                                onClick={() => setLeaderTeam(team)}
+                                disabled={busy || conflictLocks.has(team.team_id) ||
+                                  (pendingIntent !== null && pendingIntent.lockId === team.team_id)}
+                                className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
+                              >
+                                Trưởng nhóm
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -771,6 +816,7 @@ export function TeamCatalogManager() {
         </Card>
       </div>
     </Dialog.Root>
+    </>
   );
 }
 
