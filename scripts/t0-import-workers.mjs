@@ -104,6 +104,7 @@ export async function runImport(options, dependencies = {}) {
   const client = dependencies.createClient ? dependencies.createClient(config)
     : new Client({ connectionString: config.databaseUrl, ssl: buildSslOptions(),
       connectionTimeoutMillis: 10000 });
+  if (typeof client.connect === "function") await client.connect();
   await client.query("begin");
   try {
     const ledger = await checkMigrationLedger(client);
