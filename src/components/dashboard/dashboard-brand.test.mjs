@@ -82,6 +82,12 @@ test("theme selector is portaled above the dashboard and keeps keyboard/dismiss 
   assert.ok(src.includes('e.key !== "ArrowDown" && e.key !== "ArrowUp"'));
   assert.ok(src.includes('[role="radio"][aria-checked="true"]') && src.includes("?.focus()"));
   assert.ok(src.includes('document.addEventListener("mousedown", onDown)'));
+  assert.ok(src.includes('aria-label="Chọn màu giao diện"'),
+    "swatch-only trigger must retain an accessible name");
+  assert.ok(!src.includes("<span>Màu giao diện</span>"),
+    "compact trigger must not render the visual label");
+  assert.ok(!src.includes('{open ? "▾" : "▸"}'),
+    "compact trigger must contain only the three color swatches");
   assert.equal(src.split("<ThemeSelector").length - 1, 0, "ThemeSelector source must not nest another selector");
 });
 

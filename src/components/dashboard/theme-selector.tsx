@@ -98,6 +98,8 @@ export function ThemeSelector() {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls="theme-menu"
+        aria-label="Chọn màu giao diện"
+        title="Màu giao diện"
         onClick={() => {
           if (open) {
             setOpen(false);
@@ -115,8 +117,6 @@ export function ThemeSelector() {
         className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
       >
         <CurrentSwatches />
-        <span>Màu giao diện</span>
-        <span aria-hidden className="text-muted">{open ? "▾" : "▸"}</span>
       </button>
 
       {open ? createPortal(
