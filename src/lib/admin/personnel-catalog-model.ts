@@ -158,7 +158,7 @@ export function buildPersonnelUpdateRequest(input: {
   const failure = validatePersonnelCode(input.personnelCode) ?? validateName(input.displayName)
     ?? (validatePosition(input.personnelPosition) ? null : "Vị trí nhân sự không hợp lệ.")
     ?? validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản không hợp lệ."
+      ? "Dữ liệu chưa hợp lệ. Vui lòng tải lại."
       : null) ?? validateReason(input.reason)
     ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
@@ -184,7 +184,7 @@ export function buildPersonnelSetActiveRequest(input: {
   const failure = typeof input.active !== "boolean"
     ? "Trạng thái không hợp lệ."
     : validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản không hợp lệ."
+      ? "Dữ liệu chưa hợp lệ. Vui lòng tải lại."
       : null) ?? validateReason(input.reason) ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return {

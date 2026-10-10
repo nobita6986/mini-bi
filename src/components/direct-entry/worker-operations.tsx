@@ -1088,8 +1088,6 @@ function ProposeDrawer({
                   className="rounded-xl border border-border bg-muted/10 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 id="proposal-current-profile" className="font-semibold">Hồ sơ hiện tại</h3>
-                    <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs
-                      font-medium text-muted">Phiên bản {baseline?.version ?? row.entry_version}</span>
                   </div>
                   <dl className="mt-3 grid gap-x-5 gap-y-3 text-sm sm:grid-cols-2">
                     {[

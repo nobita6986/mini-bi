@@ -109,7 +109,6 @@ function ChangeRequestListContent({
               <dl className={compact ? styles.compactMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{request.item_count}</dd></div>
                 <div><dt>Tạo lúc</dt><dd>{formatHcmDateTime(request.created_at)}</dd></div>
-                <div><dt>Phiên bản</dt><dd>{request.version}</dd></div>
               </dl>
               <div className={compact ? styles.compactActions : styles.submissionActions}>
                 {canWithdrawChangeRequest(request) && (

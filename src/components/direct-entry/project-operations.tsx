@@ -672,7 +672,6 @@ export function ProjectOperations() {
                 <p className="mt-0.5 font-mono text-xs text-muted">{detail.project_id}</p>
                 <div className="mt-2 flex items-center gap-2">
                   <ProjectStatusBadge active={detail.project_active} />
-                  <span className="text-xs text-muted">Phiên bản <span data-testid="project-version">{detail.project_version}</span></span>
                 </div>
               </div>
               <button type="button" className={primaryClass}
@@ -749,7 +748,7 @@ export function ProjectOperations() {
                 onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
                 <Dialog.Title className="pr-10 text-lg font-semibold">Đổi tên dự án</Dialog.Title>
                 <Dialog.Description className="text-sm text-muted">
-                  {"Phiên bản hiện tại: " + String(detail ? detail.project_version : 0)}
+                  Nhập tên mới và lý do thay đổi.
                 </Dialog.Description>
                 <Field id="rename-name" label="Tên dự án">
                   <input ref={focusDialogInput} id="rename-name" className={inputClass}

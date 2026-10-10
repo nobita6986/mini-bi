@@ -513,7 +513,7 @@ export function TeamCatalogManager() {
                         dialog?.active ? "Kích hoạt nhóm" : "Ngừng hoạt động nhóm"}
                   </Dialog.Title>
                   <Dialog.Description id="team-dialog-description" className="mt-1 text-sm text-muted">
-                    Mọi thay đổi cần có lý do và được kiểm tra theo phiên bản hiện hành.
+                    Mọi thay đổi cần có lý do. Dữ liệu được kiểm tra lại trước khi lưu.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -596,12 +596,6 @@ export function TeamCatalogManager() {
                       required
                       onChange={(value) => changeForm("displayName", value)}
                     />
-                    {dialog?.kind === "edit" ? (
-                      <div className="text-sm">
-                        <span className="font-medium text-foreground">Phiên bản hiện tại</span>
-                        <p className="mt-2 tabular-nums text-muted">{dialog.team.version}</p>
-                      </div>
-                    ) : null}
                   </div>
                   <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
                   {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
@@ -732,7 +726,6 @@ export function TeamCatalogManager() {
                         <th scope="col" className="px-3 py-3 font-semibold">Nhóm</th>
                         <th scope="col" className="px-3 py-3 font-semibold">Mã nhóm</th>
                         <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
-                        <th scope="col" className="px-3 py-3 font-semibold">Phiên bản</th>
                         <th scope="col" className="px-3 py-3 font-semibold">Thao tác</th>
                       </tr>
                     </thead>
@@ -742,7 +735,6 @@ export function TeamCatalogManager() {
                           <th scope="row" className="px-3 py-3 font-medium">{team.display_name}</th>
                           <td className="px-3 py-3">{team.code}</td>
                           <td className="px-3 py-3"><ActiveBadge active={team.active} /></td>
-                          <td className="px-3 py-3 tabular-nums">{team.version}</td>
                           <td className="px-3 py-3">
                             <div className="flex flex-wrap gap-2">
                               <Dialog.Trigger asChild>
@@ -901,7 +893,7 @@ function ConflictReload({ message, busy, onReload }: {
   onReload(): void;
 }) {
   return (
-    <Alert tone="warning" title="Thao tác đang bị khóa do xung đột phiên bản">
+    <Alert tone="warning" title="Dữ liệu đã thay đổi. Cần tải lại trước khi tiếp tục.">
       <p>{message ?? "Tải lại nhóm có thẩm quyền trước khi bắt đầu thao tác mới."}</p>
       <button type="button" onClick={onReload} disabled={busy} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium disabled:opacity-50">
         {busy ? "Đang tải…" : "Tải lại nhóm"}

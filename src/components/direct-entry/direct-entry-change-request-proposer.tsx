@@ -517,7 +517,7 @@ export function DirectEntryChangeRequestProposer({
                     />
                     <span>
                       <strong>{entry.employee_code}</strong>
-                      {" · "}{entry.first_work_date}{" · phiên bản "}{entry.expected_version}
+                      {" · "}{entry.first_work_date}
                     </span>
                   </label>
                   {isSelected && (
@@ -612,7 +612,7 @@ export function DirectEntryChangeRequestProposer({
                     />
                     <span>
                       <strong>{entry.employee_code}</strong>
-                      {" · "}{entry.first_work_date}{" · phiên bản "}{entry.expected_version}
+                      {" · "}{entry.first_work_date}
                     </span>
                   </label>
                 ))}

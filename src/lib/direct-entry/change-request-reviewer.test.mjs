@@ -357,7 +357,7 @@ test("trang thai ket qua va thong bao deu bam theo intent, khong lo ma ky thuat"
   assert.match(reviewDecisionMessage("approve", "d1000000"), /Đã duyệt yêu cầu thay đổi/);
   assert.match(reviewDecisionMessage("reject", "d1000000"), /Đã từ chối yêu cầu thay đổi/);
   assert.match(reviewerErrorMessage(403), /quyền quyết định/);
-  assert.match(reviewerErrorMessage(409), /Phiên bản đã thay đổi/);
+  assert.match(reviewerErrorMessage(409), /Dữ liệu đã thay đổi/);
   assert.match(reviewerErrorMessage(400), /không hợp lệ/);
   const generic = reviewerErrorMessage(0);
   assert.equal(/CHANGE_REQUEST_|RPC|SQL|pg_/.test(generic), false, generic);

@@ -230,7 +230,7 @@ export function DirectEntryDocumentEditor({
       if (typeof finalized.payload.entry_version === "number") nextVersion = finalized.payload.entry_version;
       onEntryVersionChange(rowId, nextVersion);
       setState("queued");
-      setMessage("Đã kiểm tra định dạng và ghi nhận phiên bản tài liệu.");
+      setMessage("Đã kiểm tra định dạng và ghi nhận tài liệu.");
       await loadDocuments();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "DOCUMENT_UPLOAD_FAILED";
@@ -267,7 +267,7 @@ export function DirectEntryDocumentEditor({
                     <strong>{label}:</strong> {complete ? "Đã hoàn tất" : "Chưa hoàn tất"}
                     {versionsForType.map((document) => (
                       <span className={styles.documentVersion} key={document.document_id}>
-                        Phiên bản {document.version} · {formatSize(document.size_bytes)} ·{" "}
+                        Bản tải lên {document.version} · {formatSize(document.size_bytes)} ·{" "}
                         {statusLabel(document.upload_status)} / {statusLabel(document.validation_status)}
                         {document.upload_status === "READY" && document.validation_status === "VALIDATED" && (
                           <>

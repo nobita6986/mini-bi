@@ -284,6 +284,6 @@ export function keepLocalDraft(row: LiveDraftRow): LiveDraftRow {
     state: "dirty",
     pendingWrite: null,
     conflictCopy: null,
-    message: "Bản đang sửa được giữ; phiên bản mới nhất đã được xác nhận. Bấm lưu để gửi lại.",
+    message: "Nội dung đang nhập được giữ; dữ liệu mới nhất đã được xác nhận. Bấm lưu để gửi lại.",
   };
 }

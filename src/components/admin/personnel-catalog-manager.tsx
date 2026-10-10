@@ -502,7 +502,7 @@ export function PersonnelCatalogManager() {
                         dialog?.active ? "Kích hoạt hồ sơ" : "Ngừng hoạt động hồ sơ"}
                   </Dialog.Title>
                   <Dialog.Description id="personnel-dialog-description" className="mt-1 text-sm text-muted">
-                    Mọi thay đổi cần có lý do và được kiểm tra theo phiên bản hiện hành.
+                    Mọi thay đổi cần có lý do. Dữ liệu được kiểm tra lại trước khi lưu.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -615,12 +615,7 @@ export function PersonnelCatalogManager() {
                         required
                         onChange={(value) => changeForm("validFrom", value)}
                       />
-                    ) : (
-                      <div className="text-sm">
-                        <span className="font-medium text-foreground">Phiên bản hiện tại</span>
-                        <p className="mt-2 text-muted">{dialog?.kind === "edit" ? dialog.personnel.version : "—"}</p>
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                   <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
                   {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
@@ -762,7 +757,6 @@ export function PersonnelCatalogManager() {
                       <th scope="col" className="px-3 py-3 font-semibold">Nhân sự</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Vị trí</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
-                      <th scope="col" className="px-3 py-3 font-semibold">Phiên bản</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Hiệu lực HRP</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Thao tác</th>
                     </tr>
@@ -784,7 +778,6 @@ export function PersonnelCatalogManager() {
                             {personnel.active ? "Đang hoạt động" : "Ngừng hoạt động"}
                           </span>
                         </td>
-                        <td className="px-3 py-3 tabular-nums">{personnel.version}</td>
                         <td className="px-3 py-3">{formatHrpDate(personnel.hrp_valid_from)}</td>
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap gap-2">
@@ -935,7 +928,7 @@ function ConflictReload({ message, busy, onReload }: {
   onReload(): void;
 }) {
   return (
-    <Alert tone="warning" title="Thao tác đang bị khóa do xung đột phiên bản">
+    <Alert tone="warning" title="Dữ liệu đã thay đổi. Cần tải lại trước khi tiếp tục.">
       <p>{message ?? "Tải lại hồ sơ có thẩm quyền trước khi bắt đầu thao tác mới."}</p>
       <button type="button" onClick={onReload} disabled={busy} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium disabled:opacity-50">
         {busy ? "Đang tải…" : "Tải lại hồ sơ"}

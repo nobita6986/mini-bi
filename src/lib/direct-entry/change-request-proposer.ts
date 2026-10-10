@@ -191,7 +191,7 @@ export function proposerErrorMessage(code: ProposerErrorCode): string {
   if (code === "NO_ENTRY") return "Chọn ít nhất một dòng để đề xuất thay đổi.";
   if (code === "DUPLICATE_ENTRY") return "Mỗi dòng chỉ được chọn một lần.";
   if (code === "NO_CHANGE") return "Mỗi dòng được chọn phải có ít nhất một thay đổi.";
-  if (code === "ENTRY_VERSION_INVALID") return "Phiên bản dòng không hợp lệ; hãy tải lại trang.";
+  if (code === "ENTRY_VERSION_INVALID") return "Dữ liệu dòng chưa hợp lệ; hãy tải lại trang.";
   return "Yêu cầu thay đổi không hợp lệ.";
 }
 
@@ -200,7 +200,7 @@ export function changeRequestErrorMessage(status: number): string {
   if (status === 401) return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
   if (status === 403) return "Bạn không còn quyền thực hiện thao tác này.";
   if (status === 404) return "Không tìm thấy dòng hoặc yêu cầu thay đổi.";
-  if (status === 409) return "Phiên bản đã thay đổi ở nơi khác. Dữ liệu vừa được tải lại.";
+  if (status === 409) return "Dữ liệu đã thay đổi ở nơi khác và vừa được tải lại.";
   return "Không gửi được yêu cầu thay đổi. Vui lòng thử lại.";
 }
 

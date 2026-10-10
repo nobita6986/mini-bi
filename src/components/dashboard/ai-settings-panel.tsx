@@ -502,7 +502,6 @@ export function AiSettingsPanel() {
                         <DetailRow label="Host">{config.sanitized_host || "—"}</DetailRow>
                         <DetailRow label="Model">{config.model || "—"}</DetailRow>
                         <DetailRow label="Vân tay khoá">{shortFingerprint(config.key_fingerprint)}</DetailRow>
-                        <DetailRow label="Phiên bản">{String(config.version)}</DetailRow>
                         <DetailRow label="Trạng thái">{statusLabel(config.status)}</DetailRow>
                         <DetailRow label="Xác minh lúc">{formatTimestamp(config.verified_at)}</DetailRow>
                         <DetailRow label="Kiểm tra gần nhất">{formatTimestamp(config.last_tested_at)}</DetailRow>
@@ -667,7 +666,7 @@ export function AiSettingsPanel() {
                           disabled={busy}
                           className={inputClass}
                         />
-                        <p className="text-xs text-muted">Phiên bản mới sẽ cần kiểm tra kết nối lại trước khi kích hoạt.</p>
+                        <p className="text-xs text-muted">Cấu hình mới sẽ cần kiểm tra kết nối lại trước khi kích hoạt.</p>
                         <button type="button" disabled={!canRotate} onClick={handleRotate} className={secondaryButtonClass}>
                           <RefreshCw className="h-4 w-4" />
                           Xoay khoá

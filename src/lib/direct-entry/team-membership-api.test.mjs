@@ -8,6 +8,7 @@ import {
   teamMembershipAssignRequest,
   teamMembershipListQuery,
   teamMembershipUnassignRequest,
+  teamMembershipErrorResponse,
   unassignTeamMembership,
 } from "./team-membership-api.ts";
 import {
@@ -19,6 +20,7 @@ import {
   classifyTeamMembershipError,
   createTeamMembershipRepository,
 } from "./team-membership-repository.ts";
+import { classifyMembershipMutation } from "../admin/team-membership-model.ts";
 
 const ACTOR = { auth_subject: "11111111-1111-4111-8111-111111111111",
   app_user_id: "22222222-2222-4222-8222-222222222222" };
@@ -30,6 +32,28 @@ const REV = "99999999-9999-4999-8999-999999999999";
 const OTHER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MEMBERSHIP = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const DAY = "2026-02-01";
+
+test("membership failures retain safe, distinct reasons from database through UI", async () => {
+  const cases = [
+    ["40001", "recruiter version conflict", 409, "MEMBERSHIP_CONFLICT", "Hồ sơ đã thay đổi"],
+    ["23P01", "effective interval overlaps", 409, "MEMBERSHIP_OVERLAP", "Lịch phân công bị trùng"],
+    ["22023", "membership already targets this team", 400, "MEMBERSHIP_SAME_TEAM", "đã được phân công vào nhóm này"],
+    ["22023", "no open membership to move", 409, "MEMBERSHIP_NOT_MOVABLE", "Không có phân công"],
+    ["22023", "move date precedes the open membership", 400, "MEMBERSHIP_DATE_BEFORE_START", "không được trước ngày bắt đầu"],
+    ["23514", "membership change would rewrite worker attribution", 400, "MEMBERSHIP_ATTRIBUTION_CONFLICT", "lịch sử tuyển dụng"],
+  ];
+  for (const [code, message, status, safeCode, copy] of cases) {
+    const response = teamMembershipErrorResponse(classifyTeamMembershipError({ code, message }));
+    const body = await response.json();
+    assert.equal(response.status, status);
+    assert.deepEqual(body, { ok: false, code: safeCode });
+    const outcome = classifyMembershipMutation(status, body, RECRUITER, "move");
+    assert.ok(outcome.message.includes(copy));
+    assert.equal(outcome.message.includes(message), false);
+  }
+  assert.equal(classifyMembershipMutation(400, { ok: false, code: "RAW_DB_ERROR" }, RECRUITER, "move").message,
+    "Thông tin gửi lên không hợp lệ.");
+});
 
 const ITEM = { membership_id: MEMBERSHIP, recruiter_id: RECRUITER, team_id: TEAM,
   team_display_name: "Synthetic Team", valid_from: "2026-01-01", valid_to: null,
@@ -302,7 +326,7 @@ test("an invalid recruiter path id is rejected before session", async () => {
 
 test("repository maps SQLSTATE to sanitized kinds and calls the canonical RPCs", async () => {
   assert.equal(classifyTeamMembershipError({ code: "40001" }), "conflict");
-  assert.equal(classifyTeamMembershipError({ code: "23P01" }), "conflict");
+  assert.equal(classifyTeamMembershipError({ code: "23P01" }), "overlap");
   assert.equal(classifyTeamMembershipError({ code: "23505" }), "conflict");
   assert.equal(classifyTeamMembershipError({ code: "42501" }), "denied");
   assert.equal(classifyTeamMembershipError({ code: "P0002" }), "not-found");
@@ -368,5 +392,5 @@ test("repository maps SQLSTATE to sanitized kinds and calls the canonical RPCs",
   }));
   assert.deepEqual(await overlap.assignMembership({ ...ACTOR, recruiter_id: RECRUITER,
     team_id: TEAM, valid_from: DAY, expected_version: 1, reason: "r", idempotency_key: KEY }),
-  { ok: false, kind: "conflict" });
+  { ok: false, kind: "overlap" });
 });

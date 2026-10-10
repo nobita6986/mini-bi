@@ -116,7 +116,7 @@ export function buildCccdUploadPlan(input: {
   }
   if (!Number.isSafeInteger(input.entryVersion) || input.entryVersion < 1) {
     return { ok: false, errors: [{ documentType: null,
-      message: "Phiên bản dòng không hợp lệ; hãy tải lại trạng thái mới." }] };
+      message: "Dữ liệu dòng chưa hợp lệ; hãy tải lại trạng thái mới." }] };
   }
   if (input.files.length < 1) {
     return { ok: false, errors: [{ documentType: null, message: "Chưa chọn tệp nào." }] };

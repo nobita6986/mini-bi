@@ -187,7 +187,6 @@ export function DirectEntrySubmissionList({
               <dl className={compact ? styles.compactMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{submission.entry_count}</dd></div>
                 <div><dt>Cập nhật</dt><dd>{formatHcmDateTime(submission.updated_at)}</dd></div>
-                <div><dt>Phiên bản</dt><dd>{submission.version}</dd></div>
               </dl>
               {terminal && (
                 <p className={styles.submissionTerminalNote}>
@@ -256,8 +255,7 @@ export function DirectEntrySubmissionList({
                 {pending.action.confirm_description}
               </AlertDialog.Description>
               <p className={styles.submissionHint}>
-                {SUBMISSION_STATE_LABELS[pending.submission.state]} · {pending.submission.entry_count} dòng · phiên bản {" "}
-                {pending.submission.version}
+                {SUBMISSION_STATE_LABELS[pending.submission.state]} · {pending.submission.entry_count} dòng
               </p>
               <div className={styles.drawerActions}>
                 <AlertDialog.Cancel asChild>

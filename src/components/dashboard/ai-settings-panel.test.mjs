@@ -90,7 +90,7 @@ test("S04-P7: config summary sanitized + Badge semantic + advanced actions", () 
   assert.ok(source.includes("shortFingerprint") && source.includes(".slice(0, 8)"), "vân tay khoá rút gọn");
   assert.ok(source.includes("Badge"), "có Badge semantic");
   assert.ok(source.includes("Xoay API key"), "có disclosure Xoay API key");
-  assert.ok(source.includes("Phiên bản mới sẽ cần kiểm tra kết nối lại"), "rotate yêu cầu verify lại");
+  assert.ok(source.includes("Cấu hình mới sẽ cần kiểm tra kết nối lại"), "rotate yêu cầu verify lại");
   assert.ok(source.includes("Tắt cấu hình AI?"), "disable dùng AlertDialog");
   assert.ok(source.includes("Báo cáo AI sẽ fail-closed"), "disable nêu fail-closed");
   assert.ok(!source.includes("window.confirm"), "không dùng window.confirm");

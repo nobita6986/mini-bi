@@ -443,7 +443,6 @@ export function TeamLeaderManager({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-muted">
                   {team.active ? "Nhóm đang hoạt động" : "Nhóm ngừng hoạt động"}
-                  {" · "}Phiên bản {team.version}
                 </p>
                 <button type="button" onClick={startDesignation}
                   disabled={!team.active || !readReady || workflow.phase !== "idle" || teamOperationLocked}

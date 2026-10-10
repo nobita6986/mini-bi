@@ -276,7 +276,7 @@ function stateText(state: LiveDraftRow["state"]): string {
     dirty: "Có thay đổi chưa lưu",
     saving: "Đang lưu",
     saved: "Đã lưu thành công",
-    conflict: "Xung đột phiên bản",
+    conflict: "Dữ liệu đã thay đổi",
     error: "Lỗi lưu",
   }[state];
 }
@@ -2621,8 +2621,7 @@ export function DirectEntryLive() {
                   <div className={styles.conflictBox} role="alert">
                     {selectedRow.conflictCopy
                       ? <>
-                        <strong>Có phiên bản mới trên máy chủ.</strong>
-                        <span>Phiên bản đang sửa: {selectedRow.entryVersion}; máy chủ: {selectedRow.conflictCopy.version}.</span>
+                        <strong>Dữ liệu trên máy chủ đã thay đổi. Hãy đối chiếu trước khi lưu lại.</strong>
                         <span>Khác biệt: {changedDraftFields(
                           editableFields(selectedRow),
                           selectedRow.conflictCopy.fields,

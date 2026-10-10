@@ -214,7 +214,7 @@ export function validateDate(value: string): string | null {
 export function validateVersion(value: number): string | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? null
-    : "Phiên bản không hợp lệ.";
+    : "Dữ liệu chưa hợp lệ. Vui lòng tải lại.";
 }
 
 /* ---------- build request ---------- */

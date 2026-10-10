@@ -135,6 +135,11 @@ async function resolveTrustedActor(
 
 /** Taxonomy sanitized: khong bao gio forward raw DB message. */
 export function teamMembershipErrorResponse(kind: string): Response {
+  if (kind === "overlap") return fail("MEMBERSHIP_OVERLAP", 409);
+  if (kind === "already-team") return fail("MEMBERSHIP_SAME_TEAM", 400);
+  if (kind === "no-membership") return fail("MEMBERSHIP_NOT_MOVABLE", 409);
+  if (kind === "date-before") return fail("MEMBERSHIP_DATE_BEFORE_START", 400);
+  if (kind === "attribution") return fail("MEMBERSHIP_ATTRIBUTION_CONFLICT", 400);
   if (kind === "denied") return fail("MEMBERSHIP_DENIED", 403);
   if (kind === "not-found") return fail("MEMBERSHIP_NOT_FOUND", 404);
   if (kind === "conflict") return fail("MEMBERSHIP_CONFLICT", 409);

@@ -171,7 +171,7 @@ export function pendingRequestLabel(
 ): string | null {
   return row.pending_request === null
     ? null
-    : "Đang chờ duyệt yêu cầu thay đổi (phiên bản " + String(row.pending_request.version) + ")";
+    : "Đang chờ duyệt yêu cầu thay đổi";
 }
 
 export function lastDecisionLabel(

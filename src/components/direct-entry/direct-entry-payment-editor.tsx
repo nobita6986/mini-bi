@@ -109,7 +109,7 @@ function statusLabel(status: string): string {
     case "saving": return "Đang lưu thông tin thanh toán…";
     case "saved": return "Đã lưu thông tin thanh toán";
     case "error": return "Lỗi lưu thông tin thanh toán";
-    case "conflict": return "Xung đột phiên bản thanh toán";
+    case "conflict": return "Thông tin thanh toán đã thay đổi";
     default: return "Thông tin thanh toán đã lưu";
   }
 }
@@ -238,9 +238,9 @@ export function DirectEntryPaymentEditor({
         setStatus("conflict");
         try {
           setConflictCopy(await loadSnapshot());
-          setMessage("Máy chủ đã đổi phiên bản. Chọn bản server hoặc giữ local trước khi lưu lại.");
+          setMessage("Dữ liệu đã thay đổi. Chọn dữ liệu trên máy chủ hoặc giữ nội dung đang nhập trước khi lưu lại.");
         } catch {
-          setMessage("Xung đột phiên bản; không tải được bản server để đối chiếu.");
+          setMessage("Dữ liệu đã thay đổi; không tải được dữ liệu trên máy chủ để đối chiếu.");
         }
         return;
       }
@@ -300,7 +300,7 @@ export function DirectEntryPaymentEditor({
     onEntryVersionChange(rowId, conflictCopy.entryVersion);
     setConflictCopy(null);
     setStatus("dirty");
-    setMessage("Bản local được giữ; phiên bản mới đã nạp. Chỉ cập nhật khi bấm lưu lại.");
+    setMessage("Nội dung đang nhập được giữ; dữ liệu mới đã nạp. Chỉ cập nhật khi bấm lưu lại.");
   }, [conflictCopy, onEntryVersionChange, rowId]);
 
   const retryConflictLoad = useCallback(async () => {
@@ -455,11 +455,10 @@ export function DirectEntryPaymentEditor({
       )}
       {status === "conflict" && (
         <div className={styles.paymentConflict} role="alert">
-          <strong>Xung đột phiên bản; dữ liệu local chưa được ghi đè.</strong>
+          <strong>Dữ liệu đã thay đổi; nội dung đang nhập được giữ nguyên.</strong>
           {message && <span>{message}</span>}
           {conflictCopy
             ? <>
-              <span>Phiên bản dòng: {Math.max(currentEntryVersion ?? 0, entryVersion ?? 0)}; bản server: {conflictCopy.entryVersion}.</span>
               <button type="button" className={styles.secondaryButton} onClick={applyServer}>
                 Tải bản server
               </button>

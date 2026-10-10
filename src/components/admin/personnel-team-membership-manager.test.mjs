@@ -5,6 +5,21 @@ import test from "node:test";
 const component = readFileSync(new URL("./personnel-team-membership-manager.tsx", import.meta.url), "utf8");
 const personnelManager = readFileSync(new URL("./personnel-catalog-manager.tsx", import.meta.url), "utf8");
 
+test("technical counters are hidden while finite move dates and OCC remain intact", () => {
+  for (const file of ["./personnel-catalog-manager.tsx", "./team-catalog-manager.tsx", "./team-leader-manager.tsx",
+    "../direct-entry/worker-operations.tsx", "../direct-entry/project-operations.tsx",
+    "../direct-entry/direct-entry-change-request-list.tsx", "../direct-entry/direct-entry-submission-list.tsx"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /Phiên bản/);
+  }
+  assert.doesNotMatch(component, /Phiên bản hồ sơ|xung đột phiên bản/);
+  assert.match(component, /expectedVersion: membership\.recruiter_version/);
+  assert.match(component, /validTo: membership\.valid_to/);
+  assert.match(component, /operation\.kind === "move" && operation\.validTo/);
+  assert.match(component, /formatDate\(operation\.validTo\)/);
+  assert.match(component, /formError \? <p>\{formError\}<\/p>/);
+});
+
 test("membership API reads only after opening one selected personnel and never preloads per row", () => {
   assert.match(component, /if \(!personnel\) return;/);
   assert.match(component, /Promise\.all\(STATES\.map\(\(state\) => readMembershipList\(recruiterId, state, 1\)\)\)/);

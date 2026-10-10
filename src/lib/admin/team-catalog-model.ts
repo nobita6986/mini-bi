@@ -180,7 +180,7 @@ export function buildTeamUpdateRequest(input: {
 }): RequestResult {
   const failure = validateDisplayName(input.displayName)
     ?? validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản không hợp lệ."
+      ? "Dữ liệu chưa hợp lệ. Vui lòng tải lại."
       : null)
     ?? validateReason(input.reason)
     ?? validateUuid(input.idempotencyKey);
@@ -205,7 +205,7 @@ export function buildTeamSetActiveRequest(input: {
   const failure = typeof input.active !== "boolean"
     ? "Trạng thái không hợp lệ."
     : validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản không hợp lệ."
+      ? "Dữ liệu chưa hợp lệ. Vui lòng tải lại."
       : null) ?? validateReason(input.reason)
     ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };

@@ -56,7 +56,7 @@ type TeamState =
 
 type Operation =
   | { kind: "assign" }
-  | { kind: "move"; currentTeamId: string; expectedVersion: number }
+  | { kind: "move"; currentTeamId: string; expectedVersion: number; validTo: string | null }
   | { kind: "close"; membership: AdminTeamMembership; cancelScheduled: boolean };
 
 type ScopedOperation = { recruiterId: string; value: Operation };
@@ -412,6 +412,7 @@ export function PersonnelTeamMembershipManager({
       kind: "move",
       currentTeamId: membership.team_id,
       expectedVersion: membership.recruiter_version,
+      validTo: membership.valid_to,
     });
     setActiveForm(() => EMPTY_FORM);
     setActiveWorkflow({ formError: null, message: null });
@@ -502,9 +503,6 @@ export function PersonnelTeamMembershipManager({
                     {personnel.display_name}
                     {personnel.personnel_code ? ` · ${personnel.personnel_code}` : ""}
                   </Dialog.Description>
-                  <p className="mt-1 text-xs text-muted">
-                    Phiên bản hồ sơ hiện tại: {personnel.version}
-                  </p>
                 </div>
                 <Dialog.Close asChild>
                   <button type="button" aria-label="Đóng quản lý nhóm" disabled={busy}
@@ -528,7 +526,8 @@ export function PersonnelTeamMembershipManager({
 
               {activeConflict ? (
                 <div className="mt-4">
-                  <Alert tone="warning" title="Thao tác đang bị khóa do xung đột phiên bản">
+                  <Alert tone="warning" title="Cần tải lại dữ liệu trước khi tiếp tục">
+                    {formError ? <p>{formError}</p> : null}
                     <p>{activeConflict.error ?? "Tải lại hồ sơ và cả ba nhóm phân công trước khi tiếp tục."}</p>
                     <button type="button" disabled={busy}
                       onClick={() => void reloadConflictedPersonnel(personnel.recruiter_id)}
@@ -594,7 +593,7 @@ export function PersonnelTeamMembershipManager({
                     title={operation.kind === "assign" ? "Gán nhóm"
                       : operation.kind === "move" ? "Chuyển nhóm"
                         : operation.cancelScheduled ? "Hủy lịch gán nhóm" : "Bỏ gán nhóm"}
-                    description="Lý do bắt buộc. Mọi thay đổi được kiểm tra theo phiên bản hồ sơ hiện hành."
+                    description="Lý do bắt buộc. Dữ liệu được kiểm tra lại trước khi lưu thay đổi."
                   />
                   {operation.kind !== "close" ? (
                     <div className="mb-4">
@@ -629,6 +628,12 @@ export function PersonnelTeamMembershipManager({
                     </div>
                   ) : null}
                   <form onSubmit={submitOperation} className="space-y-4">
+                    {operation.kind === "move" && operation.validTo ? (
+                      <p className="text-sm text-muted">
+                        Phân công này kết thúc vào {formatDate(operation.validTo)}. Nhóm mới chỉ có hiệu lực
+                        đến trước ngày đó; hãy chọn ngày chuyển sớm hơn ngày kết thúc.
+                      </p>
+                    ) : null}
                     {operation.kind !== "close" ? (
                       <label htmlFor="membership-team" className="block text-sm font-medium">
                         Nhóm đang hoạt động <span aria-hidden="true">*</span>

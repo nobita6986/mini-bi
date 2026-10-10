@@ -256,6 +256,77 @@ await db.query(
   + " (recruiter_id, provider_type, valid_from, valid_to, vendor_id)"
   + " values ($1::uuid, 'vendor', '2020-01-01', null, $2)", [VENDOR_RECRUITER, VENDOR_ID]);
 
+async function expectMutationError(operation, code) {
+  await db.exec("savepoint expected_failure");
+  try {
+    await assert.rejects(operation, (error) => error.code === code);
+  } finally {
+    await db.exec("rollback to savepoint expected_failure; release savepoint expected_failure");
+  }
+}
+
+test("finite current membership remains movable after a future move is cancelled", async () => {
+  await db.exec("begin");
+  try {
+    const recruiter = HRP_H;
+    await assign(db, CATALOG, { recruiter, from: PAST, key: "finite-assign" });
+    await move(db, CATALOG, { recruiter, from: "2099-10-31", key: "finite-schedule" });
+    await unassign(db, CATALOG, { recruiter, to: "2099-10-31", version: 3, key: "finite-cancel" });
+    const before = await counts(db);
+    await expectMutationError(() => move(db, CATALOG, { recruiter, team: TEAM_B, from: "2099-10-30", version: 3,
+      key: "finite-stale" }), "40001");
+    assert.deepEqual(await counts(db), before, "stale data leaves no residue");
+
+    const request = { recruiter, team: TEAM_B, from: "2099-10-30", version: 4, key: "finite-retry" };
+    const result = await move(db, CATALOG, request);
+    assert.equal(result.valid_to, "2099-10-31", "moving must not reopen the cancelled future authority");
+    assert.equal(result.recruiter_version, 5);
+    const rows = (await db.query("select team_id,valid_from::text,valid_to::text from public.recruiter_team_memberships where recruiter_id=$1 order by valid_from", [recruiter])).rows;
+    assert.deepEqual(rows, [
+      { team_id: TEAM_A, valid_from: PAST, valid_to: "2099-10-30" },
+      { team_id: TEAM_B, valid_from: "2099-10-30", valid_to: "2099-10-31" },
+      { team_id: TEAM_B, valid_from: "2099-10-31", valid_to: "2099-10-31" },
+    ]);
+    const revision = (await db.query("select before_snapshot,after_snapshot from public.direct_entry_team_membership_revisions where revision_id=$1", [result.revision_id])).rows[0];
+    assert.equal(revision.before_snapshot.valid_to, "2099-10-31");
+    assert.equal(revision.after_snapshot.valid_to, result.valid_to);
+    const after = await counts(db);
+    assert.equal(after.audits, before.audits + 1);
+    assert.equal(after.revisions, before.revisions + 1);
+    assert.deepEqual(await move(db, CATALOG, request), result);
+    assert.deepEqual(await counts(db), after, "replay is exact and writes nothing");
+    await expectMutationError(() => move(db, CATALOG, { recruiter, team: TEAM_A, from: "2099-10-31", version: 5,
+      key: "finite-after-end" }), "22023");
+    assert.deepEqual(await counts(db), after, "end boundary cannot extend authority");
+  } finally { await db.exec("rollback"); }
+});
+
+test("finite move excludes historical rows and markers on every date", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "history-assign" });
+    await unassign(db, CATALOG, { recruiter: HRP_H, to: "2026-02-01", key: "history-close" });
+    const before = await counts(db);
+    await expectMutationError(() => move(db, CATALOG, { recruiter: HRP_H, from: "2026-01-15", version: 3,
+      key: "history-move" }), "22023");
+    assert.deepEqual(await counts(db), before);
+  } finally { await db.exec("rollback"); }
+});
+
+test("finite move regression detects the original open-ended-only implementation", async () => {
+  await db.exec("begin");
+  try {
+    await assign(db, CATALOG, { recruiter: HRP_H, key: "mutant-assign" });
+    await unassign(db, CATALOG, { recruiter: HRP_H, to: "2099-10-31", key: "mutant-close" });
+    const source = await readFile(path.join(MIGRATION_DIR, NEW_MIGRATION), "utf8");
+    const original = source.slice(source.indexOf("create or replace function public.direct_entry_move_team_membership("),
+      source.indexOf("revoke all on function public.direct_entry_move_team_membership("));
+    await db.exec(original);
+    await expectMutationError(() => move(db, CATALOG, { recruiter: HRP_H, from: "2099-10-30", version: 3,
+      key: "mutant-move" }), "22023");
+  } finally { await db.exec("rollback"); }
+});
+
 test("assigning an eligible HRP person opens one interval with one revision and one audit", async () => {
   const before = await counts(db);
   const version = await recruiterVersion(db, HRP_A);

@@ -117,7 +117,7 @@ export function buildAssignMembershipRequest(input: {
   if (url === null) return { ok: false, message: "Hồ sơ hoặc nhóm không hợp lệ." };
   const failure = (parseIsoDate(input.validFrom) ? null : "Ngày hiệu lực không hợp lệ.")
     ?? validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản hồ sơ không hợp lệ."
+      ? "Dữ liệu hồ sơ chưa hợp lệ. Vui lòng tải lại."
       : null)
     ?? validateReason(input.reason)
     ?? validateUuid(input.idempotencyKey);
@@ -148,7 +148,7 @@ export function buildUnassignMembershipRequest(input: {
   if (url === null) return { ok: false, message: "Hồ sơ không hợp lệ." };
   const failure = (parseIsoDate(input.validTo) ? null : "Ngày kết thúc không hợp lệ.")
     ?? validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản hồ sơ không hợp lệ."
+      ? "Dữ liệu hồ sơ chưa hợp lệ. Vui lòng tải lại."
       : null)
     ?? validateReason(input.reason)
     ?? validateUuid(input.idempotencyKey);
@@ -365,6 +365,12 @@ export function classifyMembershipMutation(
   if (status === 401) return { kind: "unauthenticated", message: "Phiên đăng nhập không còn hiệu lực." };
   if (status === 403) return { kind: "denied", message: "Bạn không có quyền quản lý nhóm của hồ sơ này." };
   if (status === 404) return { kind: "not-found", message: "Hồ sơ hoặc nhóm không còn khả dụng." };
+  const code = isRecord(payload) && payload.ok === false ? payload.code : null;
+  if (status === 409 && code === "MEMBERSHIP_OVERLAP") return { kind: "conflict", message: "Lịch phân công bị trùng. Hãy tải lại và kiểm tra các phân công đã lên lịch." };
+  if (status === 409 && code === "MEMBERSHIP_NOT_MOVABLE") return { kind: "conflict", message: "Không có phân công có thể thay đổi vào ngày đã chọn. Hãy tải lại và kiểm tra ngày bắt đầu, kết thúc." };
+  if (status === 400 && code === "MEMBERSHIP_SAME_TEAM") return { kind: "invalid", message: "Nhân sự đã được phân công vào nhóm này. Hãy chọn nhóm khác." };
+  if (status === 400 && code === "MEMBERSHIP_DATE_BEFORE_START") return { kind: "invalid", message: "Ngày thay đổi không được trước ngày bắt đầu của phân công cần thay đổi." };
+  if (status === 400 && code === "MEMBERSHIP_ATTRIBUTION_CONFLICT") return { kind: "invalid", message: "Ngày thay đổi ảnh hưởng đến lịch sử tuyển dụng đã ghi nhận. Hãy chọn ngày khác." };
   if (status === 409) return { kind: "conflict", message: "Hồ sơ đã thay đổi. Tải lại dữ liệu trước khi tiếp tục." };
   if (status === 400 || status === 422) return { kind: "invalid", message: "Thông tin gửi lên không hợp lệ." };
   return { kind: "unavailable", message: "Dịch vụ hiện chưa khả dụng." };

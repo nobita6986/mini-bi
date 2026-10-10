@@ -116,7 +116,7 @@ export function buildTeamLeaderDesignation(input: MutationInput & {
   const failure = validateUuid(input.teamId) ?? validateUuid(input.leaderAppUserId) ??
     (parseIsoDate(input.effectiveDate) ? null : "Ngày hiệu lực không hợp lệ.") ??
     validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản nhóm không hợp lệ."
+      ? "Dữ liệu nhóm chưa hợp lệ. Vui lòng tải lại."
       : null) ?? validateReason(input.reason) ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return {
@@ -142,7 +142,7 @@ export function buildTeamLeaderRevocation(input: MutationInput): {
   const failure = validateUuid(input.teamId) ??
     (parseIsoDate(input.effectiveDate) ? null : "Ngày hiệu lực không hợp lệ.") ??
     validateVersion(input.expectedVersion) ?? (input.expectedVersion < 1
-      ? "Phiên bản nhóm không hợp lệ."
+      ? "Dữ liệu nhóm chưa hợp lệ. Vui lòng tải lại."
       : null) ?? validateReason(input.reason) ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return {
