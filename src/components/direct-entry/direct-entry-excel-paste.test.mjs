@@ -19,11 +19,11 @@ test("legacy paste dialog remains reviewable but is not wired into the live tool
   const actions = live.slice(start, end);
   assert.match(actions, /Tải file Excel mẫu/);
   assert.match(actions, /Nhập file Excel/);
-  assert.match(actions, /Thêm dòng/);
-  // P1.7-H05: them nut "Thêm nhanh NLĐ" rieng voi "Thêm dòng".
   assert.match(actions, /Thêm nhanh NLĐ/);
-  assert.match(actions, /Lưu các dòng hợp lệ/);
-  assert.equal((actions.match(/<button\b/g) ?? []).length, 5);
+  assert.equal((actions.match(/<button\b/g) ?? []).length, 3);
+  assert.doesNotMatch(actions, /Thêm dòng|Lưu các dòng hợp lệ/);
+  assert.match(live, /data-testid="add-rows-batch"/);
+  assert.match(live, /data-testid="spreadsheet-save"/);
   assert.doesNotMatch(live, /Dán từ Excel|Dán hồ sơ từ Excel|Ctrl\+V/);
   assert.doesNotMatch(live, /DirectEntryExcelPasteDialog|DirectEntryWorkerProfilePasteDialog/);
   assert.match(dialog, /<Dialog\.Trigger asChild>\{trigger\}<\/Dialog\.Trigger>/);

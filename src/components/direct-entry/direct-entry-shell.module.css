@@ -38,20 +38,6 @@
   display: none;
 }
 
-.secondaryPanel {
-  margin-top: 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.secondaryPanel summary {
-  min-height: 40px;
-  align-content: center;
-  color: var(--foreground);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-}
-
 .header {
   display: flex;
   align-items: center;
@@ -64,6 +50,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.quickAddButton {
+  display: none;
+}
+
+.excelButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .legacyImportTools {
@@ -190,6 +186,13 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.spreadsheetActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 12px;
 }
 
 /* P1.7-H08: inline explanation trong contextual bar khi nut khong the
@@ -807,6 +810,20 @@
     width: 100%;
   }
 
+  .excelButton {
+    display: none;
+  }
+
+  .liveHeaderActions > .quickAddButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .spreadsheetActions {
+    flex-direction: column;
+  }
+
   .gridSection {
     display: none;
   }
@@ -973,14 +990,16 @@
   min-height: 38px;
 }
 
-.changeRequestPanel {
+.compactPanel {
+  display: block;
   min-width: 0;
+  margin: 12px 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
 }
 
-.changeRequestSummary {
+.compactSummary {
   box-sizing: border-box;
   display: flex;
   min-height: 52px;
@@ -993,48 +1012,69 @@
   cursor: pointer;
   font-size: 14px;
   font-weight: 600;
+  list-style: none;
 }
 
-.changeRequestSummary:focus-visible {
+.compactSummary::-webkit-details-marker {
+  display: none;
+}
+
+.compactSummary:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
-.changeRequestTitle {
-  margin: 0;
+.compactHeading {
   font-size: 16px;
 }
 
-.changeRequestContent {
-  display: flex;
+.compactContent {
   min-width: 0;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 14px 14px;
+  padding: 8px 12px 12px;
 }
 
-.changeRequestToggle {
+.compactToggle {
   margin-left: auto;
   color: var(--muted);
   white-space: nowrap;
 }
 
-.changeRequestError {
+.compactCloseLabel,
+.compactPanel[open] .compactOpenLabel {
+  display: none;
+}
+
+.compactPanel[open] .compactCloseLabel {
+  display: inline;
+}
+
+.compactError {
   color: var(--destructive, #b42318);
 }
 
-.changeRequestList {
+.compactListSection {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compactListSection .notice {
+  margin: 0;
+}
+
+.compactList {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 10px;
   min-width: 0;
   margin: 0;
-  padding: 0 14px 14px;
+  padding: 0;
   list-style: none;
 }
 
-.changeRequestCard {
+.compactCard {
   box-sizing: border-box;
   display: flex;
   height: 100%;
@@ -1047,7 +1087,7 @@
   padding: 12px 14px;
 }
 
-.changeRequestMeta {
+.compactMeta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px 12px;
@@ -1055,43 +1095,43 @@
   margin: 0;
 }
 
-.changeRequestMeta > div,
-.changeRequestMeta dt,
-.changeRequestMeta dd {
+.compactMeta > div,
+.compactMeta dt,
+.compactMeta dd {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.changeRequestMeta dt {
+.compactMeta dt {
   color: var(--muted);
   font-size: 12px;
 }
 
-.changeRequestMeta dd {
+.compactMeta dd {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
 }
 
-.changeRequestActions {
+.compactActions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: auto;
 }
 
-.changeRequestActions > button {
+.compactActions > button {
   min-height: 44px;
 }
 
 @media (min-width: 640px) {
-  .changeRequestList {
+  .compactList {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (min-width: 1200px) {
-  .changeRequestList {
+  .compactList {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { AlertDialog } from "radix-ui";
 
+import { DirectEntryCompactPanel } from "@/components/direct-entry/direct-entry-compact-panel";
 import {
   canWithdrawChangeRequest,
   CHANGE_REQUEST_STATE_LABELS,
@@ -54,8 +55,9 @@ function ChangeRequestListContent({
 
   return (
     <section
-      className={compact ? styles.changeRequestContent : styles.submissionSection}
-      aria-labelledby="direct-entry-change-requests-heading"
+      className={compact ? styles.compactListSection : styles.submissionSection}
+      aria-labelledby={compact ? undefined : "direct-entry-change-requests-heading"}
+      aria-label={compact ? "Danh sách yêu cầu thay đổi" : undefined}
     >
       <div className={styles.submissionHead}>
         <div>
@@ -64,10 +66,12 @@ function ChangeRequestListContent({
               Yêu cầu thay đổi
             </h2>
           )}
-          <p className={styles.submissionHint}>
-            Yêu cầu thay đổi áp dụng cho đợt đã gửi chính thức. Người đề xuất rút được yêu cầu khi
-            còn chờ duyệt; người có quyền duyệt mở “Xem xét” để đối chiếu và quyết định.
-          </p>
+          {!compact && (
+            <p className={styles.submissionHint}>
+              Yêu cầu thay đổi áp dụng cho đợt đã gửi chính thức. Người đề xuất rút được yêu cầu khi
+              còn chờ duyệt; người có quyền duyệt mở “Xem xét” để đối chiếu và quyết định.
+            </p>
+          )}
         </div>
         {hasMore && (
           <button
@@ -88,13 +92,13 @@ function ChangeRequestListContent({
           "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi."}
       </div>
 
-      <ul className={compact ? styles.changeRequestList : styles.submissionList}>
+      <ul className={compact ? styles.compactList : styles.submissionList}>
         {requests.map((request) => {
           const busy = busyRequestId === request.request_id;
           return (
             <li
               key={request.request_id}
-              className={compact ? styles.changeRequestCard : styles.submissionCard}
+              className={compact ? styles.compactCard : styles.submissionCard}
             >
               <div className={styles.submissionCardTop}>
                 <strong>{CHANGE_REQUEST_STATE_LABELS[request.state]}</strong>
@@ -102,12 +106,12 @@ function ChangeRequestListContent({
                   Mã {shortRef(request.request_id)}
                 </span>
               </div>
-              <dl className={compact ? styles.changeRequestMeta : styles.submissionMeta}>
+              <dl className={compact ? styles.compactMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{request.item_count}</dd></div>
                 <div><dt>Tạo lúc</dt><dd>{formatHcmDateTime(request.created_at)}</dd></div>
                 <div><dt>Phiên bản</dt><dd>{request.version}</dd></div>
               </dl>
-              <div className={compact ? styles.changeRequestActions : styles.submissionActions}>
+              <div className={compact ? styles.compactActions : styles.submissionActions}>
                 {canWithdrawChangeRequest(request) && (
                   <button
                     type="button"
@@ -184,21 +188,14 @@ export function DirectEntryChangeRequestList(props: ChangeRequestListProps) {
   if (!props.compact) return <ChangeRequestListContent {...props} />;
 
   const pendingCount = props.requests.filter((request) => request.state === "PENDING").length;
-  const hasError = props.state === "error" || props.message !== "";
-
   return (
-    <details className={styles.changeRequestPanel}>
-      <summary className={styles.changeRequestSummary}>
-        <h2 id="direct-entry-change-requests-heading" className={styles.changeRequestTitle}>
-          Yêu cầu thay đổi
-        </h2>
-        <span>{props.requests.length} đã tải</span>
-        {pendingCount > 0 && <span>{pendingCount} đang chờ xử lý</span>}
-        {hasError && <span className={styles.changeRequestError}>Không tải được</span>}
-        {props.state === "loading" && <span role="status">Đang tải…</span>}
-        <span className={styles.changeRequestToggle}>Mở / thu gọn</span>
-      </summary>
+    <DirectEntryCompactPanel
+      title="Yêu cầu thay đổi"
+      loadedCount={props.requests.length}
+      badges={[{ count: pendingCount, label: "đang chờ xử lý" }]}
+      state={props.state}
+    >
       <ChangeRequestListContent {...props} compact />
-    </details>
+    </DirectEntryCompactPanel>
   );
 }
