@@ -2,7 +2,7 @@
 
 ## Status
 
-`P3_1_HF_LEGACY_TEAM_LEADER_SCOPE_LOCAL_PASS_AWAITING_T0_PRODUCTION_APPLY`
+`P3_1_HF_LEGACY_TEAM_LEADER_SCOPE_PRODUCTION_APPLIED_AWAITING_OWNER_UAT`
 
 ## Incident
 
@@ -67,3 +67,15 @@ migrations in ledger order, verify #75 and #76 are recorded, verify the helper
 contains the covering-scope predicate and `23514` taxonomy, then perform Owner
 UAT through the existing Team Catalog UI. No automated Production mutation is
 part of this hotfix.
+
+## T0 closeout
+
+- The implementation migration was merged to `main` before Production apply.
+- Production dry-run found #75 and #76 pending with all earlier checksums
+  matching.
+- T0 applied #75 then #76 transactionally; the ledger now contains 76 applied
+  migrations and #76 is newest.
+- Read-only post-check confirmed the covering-scope predicate, `23514` state
+  taxonomy, unchanged helper ACL posture, and all five Vendor catalog RPCs.
+- No automated Production leader mutation was executed. Owner UAT remains the
+  only outstanding gate.
