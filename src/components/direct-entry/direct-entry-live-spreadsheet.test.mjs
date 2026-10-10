@@ -147,7 +147,7 @@ test("spreadsheet is the only live desktop grid and profile hydration is passed 
   assert.match(live, /setDocumentsRowId\(persisted\.rowId\)/);
   assert.match(live, /selectedClientRowId=\{selectedClientRowId\}/);
   assert.match(live, /onSelectedClientRowChange=\{setSelectedClientRowId\}/);
-  assert.ok(live.indexOf("<details className={styles.secondaryPanel}") < live.indexOf("<DirectEntrySpreadsheetGrid"));
+  assert.ok(live.indexOf("<DirectEntrySubmissionList") < live.indexOf("<DirectEntrySpreadsheetGrid"));
   assert.ok(live.indexOf("<DirectEntrySubmissionList") < live.indexOf("<DirectEntrySpreadsheetGrid"));
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /maxRows: liveDraftRows \+ 100/);

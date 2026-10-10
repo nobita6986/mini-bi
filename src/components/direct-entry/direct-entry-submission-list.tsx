@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { AlertDialog } from "radix-ui";
 
+import { DirectEntryCompactPanel } from "@/components/direct-entry/direct-entry-compact-panel";
 import {
   actionsForSubmission,
   formatHcmDateTime,
@@ -39,6 +40,7 @@ export type SubmissionListProps = {
   hasMore: boolean;
   busySubmissionId: string | null;
   blockedSubmissionIds: ReadonlySet<string>;
+  compact?: boolean;
   onLoadMore: () => void;
   /**
    * Preflight read-only truoc khi trinh duyet. Tra ve null khi server tu choi hoac du lieu
@@ -64,6 +66,7 @@ export function DirectEntrySubmissionList({
   hasMore,
   busySubmissionId,
   blockedSubmissionIds,
+  compact = false,
   onLoadMore,
   onPreflight,
   onTransition,
@@ -125,14 +128,24 @@ export function DirectEntrySubmissionList({
   const duplicateBusy = pendingDuplicate !== null &&
     busySubmissionId === pendingDuplicate.submission.submission_id;
 
-  return (
-    <section className={styles.submissionSection} aria-labelledby="direct-entry-submissions-heading">
+  const content = (
+    <section
+      className={compact ? styles.compactListSection : styles.submissionSection}
+      aria-labelledby={compact ? undefined : "direct-entry-submissions-heading"}
+      aria-label={compact ? "Danh sách đợt nhập liệu" : undefined}
+    >
       <div className={styles.submissionHead}>
         <div>
-          <h2 id="direct-entry-submissions-heading" className={styles.submissionTitle}>Đợt nhập liệu</h2>
-          <p className={styles.submissionHint}>
-            Trạng thái được tải từ máy chủ; tải lại trang vẫn giữ đúng đợt đang ở bản nháp, chờ duyệt hoặc đã gửi.
-          </p>
+          {!compact && (
+            <h2 id="direct-entry-submissions-heading" className={styles.submissionTitle}>
+              Đợt nhập liệu
+            </h2>
+          )}
+          {!compact && (
+            <p className={styles.submissionHint}>
+              Trạng thái được tải từ máy chủ; tải lại trang vẫn giữ đúng đợt đang ở bản nháp, chờ duyệt hoặc đã gửi.
+            </p>
+          )}
         </div>
         {hasMore && (
           <button
@@ -155,20 +168,23 @@ export function DirectEntrySubmissionList({
 
       {blockedNotice && <p className={styles.submissionBlocked} role="alert">{blockedNotice}</p>}
 
-      <ul className={styles.submissionList}>
+      <ul className={compact ? styles.compactList : styles.submissionList}>
         {submissions.map((submission) => {
           const actions = actionsForSubmission(submission);
           const busy = busySubmissionId === submission.submission_id;
           const terminal = submission.state === "SUBMITTED";
           return (
-            <li key={submission.submission_id} className={styles.submissionCard}>
+            <li
+              key={submission.submission_id}
+              className={compact ? styles.compactCard : styles.submissionCard}
+            >
               <div className={styles.submissionCardTop}>
                 <strong>{SUBMISSION_STATE_LABELS[submission.state]}</strong>
                 <span className={styles.submissionRef} title="Mã kỹ thuật rút gọn">
                   Mã {shortRef(submission.submission_id)}
                 </span>
               </div>
-              <dl className={styles.submissionMeta}>
+              <dl className={compact ? styles.compactMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{submission.entry_count}</dd></div>
                 <div><dt>Cập nhật</dt><dd>{formatHcmDateTime(submission.updated_at)}</dd></div>
                 <div><dt>Phiên bản</dt><dd>{submission.version}</dd></div>
@@ -180,7 +196,7 @@ export function DirectEntrySubmissionList({
                     : "Đã gửi chính thức là trạng thái cuối. Thay đổi sau đó phải đi qua yêu cầu thay đổi."}
                 </p>
               )}
-              <div className={styles.submissionActions}>
+              <div className={compact ? styles.compactActions : styles.submissionActions}>
                 {actions.map((action) => {
                   const checking = checkingId === submission.submission_id;
                   const working = busy || checking;
@@ -276,5 +292,26 @@ export function DirectEntrySubmissionList({
         }}
       />
     </section>
+  );
+
+  if (!compact) return content;
+  return (
+    <DirectEntryCompactPanel
+      title="Đợt nhập liệu"
+      loadedCount={submissions.length}
+      badges={[
+        {
+          count: submissions.filter(({ state: itemState }) => itemState === "DRAFT").length,
+          label: SUBMISSION_STATE_LABELS.DRAFT,
+        },
+        {
+          count: submissions.filter(({ state: itemState }) => itemState === "REVIEW").length,
+          label: SUBMISSION_STATE_LABELS.REVIEW,
+        },
+      ]}
+      state={state}
+    >
+      {content}
+    </DirectEntryCompactPanel>
   );
 }

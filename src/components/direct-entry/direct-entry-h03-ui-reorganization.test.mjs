@@ -17,19 +17,16 @@ import {
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
 
-test("header has five approved actions and no legacy paste or technical label", () => {
+test("header keeps spreadsheet access and mobile quick-add without legacy paste controls", () => {
   const headerStart = live.indexOf("<header className={styles.header}>");
   const headerEnd = live.indexOf("</header>", headerStart);
   const header = live.slice(headerStart, headerEnd);
   assert.ok(headerStart > 0 && headerEnd > headerStart);
-  // P1.7-H05: them nut "Thêm nhanh NLĐ" rieng voi "Thêm dòng" => tong cong 5.
-  assert.equal((header.match(/<button\b/g) ?? []).length, 5);
+  assert.equal((header.match(/<button\b/g) ?? []).length, 3);
   for (const action of [
     "Tải file Excel mẫu",
     "Nhập file Excel",
-    "Thêm dòng",
     "Thêm nhanh NLĐ",
-    "Lưu các dòng hợp lệ",
   ]) assert.ok(header.includes(action), action);
   for (const hidden of [
     "P1.6 · Direct Entry · S03CD",
@@ -42,19 +39,16 @@ test("header has five approved actions and no legacy paste or technical label", 
   assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
 });
 
-test("collapsed submission and change-request panels render immediately before the grid", () => {
-  const submissionPanel = live.indexOf("<details className={styles.secondaryPanel}");
-  const submissionList = live.indexOf("<DirectEntrySubmissionList", submissionPanel);
-  const changePanel = live.indexOf("<details className={styles.secondaryPanel}", submissionPanel + 1);
-  const changeList = live.indexOf("<DirectEntryChangeRequestList", changePanel);
-  const gridSection = live.indexOf("<section className={styles.gridSection}", changeList);
+test("compact submission and change-request panels render immediately before the grid", () => {
+  const submissionList = live.indexOf("<DirectEntrySubmissionList");
+  const changeList = live.indexOf("<DirectEntryChangeRequestList", submissionList);
+  const gridSection = live.indexOf("<section className={styles.gridSection", changeList);
   const gridComponent = live.indexOf("<DirectEntrySpreadsheetGrid", gridSection);
-  assert.ok(submissionPanel > 0 && submissionList > submissionPanel);
-  assert.ok(changePanel > submissionList);
-  assert.ok(changeList > changePanel && gridSection > changeList && gridComponent > gridSection);
-  assert.match(live, /<summary>Đợt nhập liệu \(\{submissions\.length\}\)<\/summary>/);
-  assert.match(live, /<summary>Yêu cầu thay đổi \(\{changeRequests\.length\}\)<\/summary>/);
-  assert.doesNotMatch(live, /<details className=\{styles\.secondaryPanel\}[^>]*\bopen\b/);
+  assert.ok(submissionList > 0 && changeList > submissionList);
+  assert.ok(gridSection > changeList && gridComponent > gridSection);
+  assert.match(live.slice(submissionList, live.indexOf("/>", submissionList)), /\bcompact\b/);
+  assert.match(live.slice(changeList, live.indexOf("/>", changeList)), /\bcompact\b/);
+  assert.doesNotMatch(live, /<details className=\{styles\.secondaryPanel\}/);
 });
 
 test("only the approved 17 data columns render; action rail is outside that set", () => {

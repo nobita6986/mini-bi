@@ -1841,31 +1841,19 @@ export function DirectEntryLive() {
             hidden
             aria-label="Chọn tệp workbook .xlsx"
           />
-          <button type="button" className={styles.secondaryButton}
+          <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
             onClick={() => void downloadXlsxTemplate()}>
             Tải file Excel mẫu
           </button>
-          <button type="button" className={styles.secondaryButton}
+          <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
             onClick={() => xlsxInputRef.current?.click()}>
             Nhập file Excel
           </button>
-          <button type="button" className={styles.secondaryButton}
-            data-testid="add-rows-batch"
-            onClick={addStagedRows}
-            disabled={loadState !== "ready" || !canAddStagedRows(stagedModel)}>
-            Thêm dòng
-          </button>
-          <button type="button" className={styles.secondaryButton}
+          <button type="button" className={`${styles.secondaryButton} ${styles.quickAddButton}`}
             data-testid="quick-add-row"
             onClick={addQuickStagedRow}
             disabled={loadState !== "ready"}>
             Thêm nhanh NLĐ
-          </button>
-          <button type="button" className={styles.primaryButton}
-            data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
-            disabled={loadState !== "ready" || stagedBusy}
-            aria-busy={stagedBusy}>
-            Lưu các dòng hợp lệ
           </button>
         </div>
       </header>
@@ -1889,36 +1877,32 @@ export function DirectEntryLive() {
 
       {loadState === "ready" && (
         <>
-          <details className={styles.secondaryPanel}>
-            <summary>Đợt nhập liệu ({submissions.length})</summary>
-            <DirectEntrySubmissionList
-              state={submissionListState}
-              message={submissionListMessage}
-              submissions={submissions}
-              hasMore={submissionHasMore}
-              busySubmissionId={busySubmissionId}
-              blockedSubmissionIds={blockedSubmissionIds}
-              onLoadMore={() => void loadSubmissions("append")}
-              onPreflight={preflightDuplicateCccd}
-              onTransition={(input) => runTransition(input)}
-              onRequestChange={(submission) => setProposerSubmission(submission)}
-              onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
-            />
-          </details>
-          <details className={styles.secondaryPanel}>
-            <summary>Yêu cầu thay đổi ({changeRequests.length})</summary>
-            {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
-            <DirectEntryChangeRequestList
-              state={changeRequestListState}
-              message={changeRequestListMessage}
-              requests={changeRequests}
-              hasMore={changeRequestHasMore}
-              busyRequestId={busyChangeRequestId}
-              onLoadMore={() => void loadChangeRequests("append")}
-              onWithdraw={(request) => void withdrawChangeRequest(request)}
-              onReview={(request) => setReviewRequest(request)}
-            />
-          </details>
+          <DirectEntrySubmissionList
+            compact
+            state={submissionListState}
+            message={submissionListMessage}
+            submissions={submissions}
+            hasMore={submissionHasMore}
+            busySubmissionId={busySubmissionId}
+            blockedSubmissionIds={blockedSubmissionIds}
+            onLoadMore={() => void loadSubmissions("append")}
+            onPreflight={preflightDuplicateCccd}
+            onTransition={(input) => runTransition(input)}
+            onRequestChange={(submission) => setProposerSubmission(submission)}
+            onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
+          />
+          {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
+          <DirectEntryChangeRequestList
+            compact
+            state={changeRequestListState}
+            message={changeRequestListMessage}
+            requests={changeRequests}
+            hasMore={changeRequestHasMore}
+            busyRequestId={busyChangeRequestId}
+            onLoadMore={() => void loadChangeRequests("append")}
+            onWithdraw={(request) => void withdrawChangeRequest(request)}
+            onReview={(request) => setReviewRequest(request)}
+          />
           <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
             {(() => {
               /**
@@ -2059,6 +2043,20 @@ export function DirectEntryLive() {
                 </>
               );
             })()}
+            <div className={styles.spreadsheetActions}>
+              <button type="button" className={styles.secondaryButton}
+                data-testid="add-rows-batch"
+                onClick={addStagedRows}
+                disabled={loadState !== "ready" || !canAddStagedRows(stagedModel)}>
+                Thêm dòng
+              </button>
+              <button type="button" className={styles.primaryButton}
+                data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
+                disabled={loadState !== "ready" || stagedBusy}
+                aria-busy={stagedBusy}>
+                Lưu các dòng hợp lệ
+              </button>
+            </div>
             {stagedRejection !== "" && (
               <p role="alert" data-testid="spreadsheet-paste-rejected">{stagedRejection}</p>
             )}
