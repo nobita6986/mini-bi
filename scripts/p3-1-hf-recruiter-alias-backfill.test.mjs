@@ -22,13 +22,14 @@ async function databaseBeforeHotfix() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = await migrationNames();
-  assert.equal(names.length, 74);
+  assert.equal(names.length, 75);
   // P3.1-HF: #74 now follows the alias hotfix, so the pre-hotfix cut must stop at #73
-  // rather than dropping only the last ledger entry.
+  // rather than dropping only the last ledger entry. P3.1-W02-B (#75) appends after #74.
   const hotfixAt = names.indexOf(MIGRATION);
   assert.deepEqual(names.slice(hotfixAt), [
     "20261009090000_p3_1_hf_recruiter_alias_backfill.sql",
     "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql",
+    "20261009110000_p3_1_w02b_vendor_lifecycle.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));

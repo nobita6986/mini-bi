@@ -51,7 +51,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 74, "the inventory includes P3.1-HF #74 after alias hotfix #73");
+  assert.equal(names.length, 75, "the inventory includes the W02-B vendor lifecycle #75 after P3.1-HF #74 and alias hotfix #73");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }
