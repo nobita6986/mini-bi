@@ -55,14 +55,14 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 73, "the ledger carries 72 migrations after W02-A #72");
-  assert.equal(names.at(-9), VENDOR_DOCUMENT_MIGRATION, "P3-W07A-R3 remains #65");
-  assert.equal(names.at(-10), R7_MIGRATION, "P2.5-HF-R7 remains #64");
-  assert.equal(names.at(-11), R6_MIGRATION, "P2.5-HF-R6 remains #63");
-  assert.equal(names.at(-13), R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names.at(-14), R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names.at(-16), HF_MIGRATION, "P2.5-HF remains #58");
-  assert.equal(names.at(-17), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
+  assert.equal(names.length, 74, "the ledger carries the P3.1-HF duplicate-CCCD report at #74");
+  assert.equal(names.at(-10), VENDOR_DOCUMENT_MIGRATION, "P3-W07A-R3 remains #65");
+  assert.equal(names.at(-11), R7_MIGRATION, "P2.5-HF-R7 remains #64");
+  assert.equal(names.at(-12), R6_MIGRATION, "P2.5-HF-R6 remains #63");
+  assert.equal(names.at(-14), R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.at(-15), R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.at(-17), HF_MIGRATION, "P2.5-HF remains #58");
+  assert.equal(names.at(-18), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
   return db;
 }
 
@@ -505,7 +505,7 @@ test("HF-R7: service_role can commit a valid batch through the deferred submissi
 // ---------------------------------------------------------------------------
 // 2. CCCD rehire.
 // ---------------------------------------------------------------------------
-test("HF: a rehire needs every earlier episode OFF and creates a brand new episode", async () => {
+test("HF: a rehire after a closed episode creates a brand new episode", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -537,36 +537,36 @@ test("HF: a rehire needs every earlier episode OFF and creates a brand new episo
   }
 });
 
-test("HF: ON, UNCONFIRMED and unknown prior episodes block a rehire with a stable code", async () => {
+test("HF: ON, UNCONFIRMED and unknown prior episodes no longer block a new episode", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    for (const [index, status] of ["ON", "UNCONFIRMED"].entries()) {
+    // P3.1-HF: #58/#59 refused a second live episode for one canonical CCCD. That business
+    // block is gone on every write path - the duplicate is reported, never blocked.
+    for (const [index, status] of ["ON", "UNCONFIRMED", null].entries()) {
       const cccd = "10000000000" + index;
-      const previous = await seedEpisode(db, { cccd, name: "HF Blocked " + index, status });
-      await assert.rejects(
-        () => createBatchV2(db, { rows: [batchRow({ date: "2026-10-02", cccd,
-          name: "HF Blocked " + index })], key: "hf-blocked-" + index,
-          auth: MGR_A_AUTH, app: MGR_A_APP }),
-        (error) => error.code === "23505"
-          && error.message.includes("worker_active_episode_exists")
-          && !error.message.includes(cccd),
-        status + " must fail closed without leaking the CCCD");
+      const previous = await seedEpisode(db, { cccd, name: "HF Shared " + index, status });
+      const created = await createBatchV2(db, { rows: [batchRow({ date: "2026-10-02", cccd,
+        name: "HF Shared " + index })], key: "hf-shared-" + index,
+        auth: MGR_A_AUTH, app: MGR_A_APP });
+      assert.equal(created.entry_ids.length, 1,
+        String(status) + " prior episode must not block the new episode");
+      assert.notEqual(created.entry_ids[0], previous.entryId, "the new episode is a new entry");
       const still = await db.query(
         "select count(*)::int as n from public.direct_entries where entry_id = $1::uuid",
         [previous.entryId]);
-      assert.equal(still.rows[0].n, 1, "the earlier episode survives");
+      assert.equal(still.rows[0].n, 1, "the earlier episode survives untouched");
     }
-    // A batch that repeats the same CCCD twice is refused by the in-batch check.
+    // The in-batch duplicate check is gone too: one batch may carry two rows of one worker.
     const before = await residue(db);
-    await assert.rejects(
-      () => createBatchV2(db, {
-        rows: [batchRow({ cccd: "200000000000", name: "HF Twin" }),
-          batchRow({ cccd: "200000000000", name: "HF Twin" })],
-        key: "hf-twin", auth: MGR_A_AUTH, app: MGR_A_APP,
-      }),
-      (error) => error.code === "22023");
-    assert.deepEqual(await residue(db), before);
+    const twins = await createBatchV2(db, {
+      rows: [batchRow({ cccd: "200000000000", name: "HF Twin" }),
+        batchRow({ cccd: "200000000000", name: "HF Twin" })],
+      key: "hf-twin", auth: MGR_A_AUTH, app: MGR_A_APP,
+    });
+    assert.equal(twins.entry_ids.length, 2, "both rows of the twin batch are written");
+    assert.notEqual(twins.entry_ids[0], twins.entry_ids[1]);
+    assert.equal((await residue(db)).entries, before.entries + 2, "exactly two new episodes");
   } finally {
     await db.close();
   }
@@ -638,7 +638,7 @@ test("HF: the rehire lookup returns the minimum fields and refuses non-managers"
 // ---------------------------------------------------------------------------
 // 4. Authority mechanics: helper, guard and no direct-edit after SUBMITTED.
 // ---------------------------------------------------------------------------
-test("HF: the authority helper, the episode guard and the SUBMITTED boundary are hardened", async () => {
+test("HF: the authority helper, the dropped episode guard and the SUBMITTED boundary", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -655,10 +655,9 @@ test("HF: the authority helper, the episode guard and the SUBMITTED boundary are
       (error) => error.code === "42501",
       "a recruiter link and created_by never authorize a create");
 
-    // ACL: the helper and the guard stay internal, the lookup is service_role only.
+    // ACL: the helper stays internal, the lookup is service_role only.
     for (const signature of [
       "public.direct_entry_create_authority(uuid, uuid, text, date)",
-      "public.direct_entry_guard_active_episode()",
     ]) {
       for (const role of ["anon", "authenticated", "service_role"]) {
         const ok = (await db.query(
@@ -667,10 +666,14 @@ test("HF: the authority helper, the episode guard and the SUBMITTED boundary are
         assert.equal(ok, false, signature + " vs " + role);
       }
     }
+    // P3.1-HF: the canonical-CCCD row guard and its trigger are dropped, never replaced.
+    assert.equal(await count(db,
+      "select count(*)::int as n from pg_proc where proname = 'direct_entry_guard_active_episode'"),
+    0, "the duplicate-CCCD row guard function is gone");
     const trigger = await db.query(
       "select tgname from pg_trigger where tgrelid = 'public.direct_entries'::regclass" +
       " and not tgisinternal and tgname = 'direct_entry_active_episode_guard'");
-    assert.equal(trigger.rows.length, 1);
+    assert.equal(trigger.rows.length, 0, "the duplicate-CCCD row guard trigger is gone");
     const index = await db.query(
       "select count(*)::int as n from pg_indexes where schemaname='public'" +
       " and indexname='direct_entries_worker_national_id_uidx'");

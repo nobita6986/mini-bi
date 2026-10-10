@@ -51,10 +51,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 73, "the ledger carries 72 migrations through W02-A #72");
-  assert.equal(names[names.length - (13)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names[names.length - (14)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names[names.length - (15)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
+  assert.equal(names.length, 74, "the ledger carries the P3.1-HF duplicate-CCCD report at #74");
+  assert.equal(names[names.length - (14)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (15)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names[names.length - (16)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
   return db;
 }
 
@@ -263,16 +263,19 @@ test("R1: approving OFF->ON on an older episode is refused atomically", async ()
       (error) => error.code === "42501");
 
     // Layer 2: approving WORK_STATUS OFF->ON on the older episode is refused on the
-    // status-event path - the rehire must be a new profile.
+    // status-event path. P3.1-HF removed the cross-episode canonical-CCCD conflict, so the
+    // only refusal left here is the append-only one: an episode whose latest event is OFF is
+    // never reopened, and a return to work is a new profile.
     const requestId = await proposeWorkStatus(db, { entry: old.entryId, version: beforeVersion });
     const before = await state(db);
     await assert.rejects(
       () => approve(db, requestId),
       (error) => {
         assert.equal(error.code, "23505", "the status path must fail closed");
-        assert.ok(["worker_active_episode_exists", "worker_episode_reopen_forbidden"]
-          .some((code) => error.message.includes(code)),
-        "stable safe message expected, got: " + error.message);
+        // P3.1-HF: the cross-episode canonical-CCCD conflict is gone, so the append-only
+        // reopen rule is the only stable safe message left on this path.
+        assert.ok(error.message.includes("worker_episode_reopen_forbidden"),
+          "stable safe message expected, got: " + error.message);
         assert.equal(error.message.includes("400000000001"), false, "no CCCD in the error");
         return true;
       });
@@ -442,7 +445,6 @@ test("R1: the status guard is a table-level trigger and stays internal", async (
       "the table-level status guard must exist");
     for (const signature of [
       "public.direct_entry_guard_episode_status_event()",
-      "public.direct_entry_guard_active_episode()",
     ]) {
       for (const role of ["anon", "authenticated", "service_role"]) {
         const ok = (await db.query(
@@ -451,6 +453,14 @@ test("R1: the status guard is a table-level trigger and stays internal", async (
         assert.equal(ok, false, signature + " vs " + role);
       }
     }
+    // P3.1-HF: the canonical-CCCD row guard and its trigger are dropped, never replaced.
+    assert.equal(await count(db,
+      "select count(*)::int as n from pg_proc where proname = 'direct_entry_guard_active_episode'"),
+    0, "the duplicate-CCCD row guard function is gone");
+    assert.equal(await count(db,
+      "select count(*)::int as n from pg_trigger" +
+      " where tgname = 'direct_entry_active_episode_guard'"),
+    0, "the duplicate-CCCD row guard trigger is gone");
     const lookupAcl = await db.query(
       "select has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') as service," +
       " has_function_privilege('authenticated', $1::regprocedure, 'EXECUTE') as authenticated",

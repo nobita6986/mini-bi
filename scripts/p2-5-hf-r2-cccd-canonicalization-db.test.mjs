@@ -42,9 +42,9 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 73, "the ledger carries 72 migrations through W02-A #72");
-  assert.equal(names[names.length - (13)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names[names.length - (14)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.length, 74, "the ledger carries the P3.1-HF duplicate-CCCD report at #74");
+  assert.equal(names[names.length - (14)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (15)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
   return db;
 }
 
@@ -194,11 +194,11 @@ async function seedLegacyEpisode(db, options) {
 
 /** Full-profile v1 batch with an explicit employee_code (the server-side create path). */
 async function createFullProfile(db, { cccd, name, auth = MGR_A_AUTH, app = MGR_A_APP,
-  date = "2026-10-01", key = "r2" }) {
+  date = "2026-10-01", key = "r2", code = "hrp-2026-900001" }) {
   await db.query(
     "select public.direct_entry_create_full_profile_batch($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text)",
     [auth, app, "worker-profile/1.0", JSON.stringify([{
-      project_id: PROJ_A, first_work_date: date, employee_code: "hrp-2026-900001",
+      project_id: PROJ_A, first_work_date: date, employee_code: code,
       recruiter_id: REC_A, labor_type: "TEMPORARY", display_name: name,
       worker_details: workerDetails(cccd),
     }]), idemKey(key)]);
@@ -232,9 +232,13 @@ async function lookup(db, { cccd, name = null, project = PROJ_A, auth = MGR_A_AU
 }
 
 // ---------------------------------------------------------------------------
-// 1. Fail-closed: a historical formatted CCCD blocks a digits-only create.
+// 1. P3.1-HF: a historical formatted CCCD no longer blocks a digits-only create.
+//
+// The #58/#59 cross-episode refusal is gone: the second live episode is written and the
+// duplicate is surfaced by the read-only report instead. Historical spellings stay as
+// written, they are never canonicalised in place.
 // ---------------------------------------------------------------------------
-test("R2: a legacy formatted CCCD blocks a new digits-only episode", async () => {
+test("R2: a legacy formatted CCCD no longer blocks a new digits-only episode", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -243,28 +247,31 @@ test("R2: a legacy formatted CCCD blocks a new digits-only episode", async () =>
       date: "2026-01-05", status: "ON" });
     assert.ok(legacy.entryId);
 
-    await assert.rejects(
-      () => createFullProfile(db, { cccd: "012345678901", name: "R2 New", key: "r2-dup" }),
-      (error) => {
-        assert.equal(error.code, "23505", "the create guard must fail closed");
-        assert.ok(error.message.includes("worker_active_episode_exists"), error.message);
-        assert.equal(error.message.includes("012345678901"), false, "no CCCD in the error");
-        assert.equal(error.message.includes("0123 456 78901"), false, "no CCCD in the error");
-        return true;
-      });
+    await createFullProfile(db, { cccd: "012345678901", name: "R2 New", key: "r2-dup" });
     assert.equal(await count(db,
-      "select count(*)::int as n from public.direct_entries where project_id = $1", [PROJ_A]), 1,
-    "no second episode was written");
-    // A different CCCD is still allowed: the rule does not block unrelated workers.
-    await createFullProfile(db, { cccd: "987654321098", name: "R2 Other", key: "r2-other" });
+      "select count(*)::int as n from public.direct_entries where project_id = $1", [PROJ_A]), 2,
+    "the digits-only episode is written next to the formatted legacy one");
+    assert.deepEqual((await db.query(
+      "select worker_details->'national_id'->>'value' as value from public.direct_entries" +
+      " order by first_work_date")).rows.map((row) => row.value),
+    ["0123 456 78901", "012345678901"],
+    "each row keeps the spelling it was written with");
+    const audit = (await db.query(
+      "select public.direct_entry_national_id_canonical_audit() as data")).rows[0].data;
+    assert.equal(audit.duplicate_active_cccd_groups, 1,
+      "two live episodes under one canonical CCCD are reported, not blocked");
+    assert.equal(audit.noncanonical_entries, 1, "the formatted spelling is still reported");
+    // A different CCCD keeps working: the change never touched unrelated workers.
+    await createFullProfile(db, { cccd: "987654321098", name: "R2 Other", key: "r2-other",
+      code: "hrp-2026-900003" });
     assert.equal(await count(db,
-      "select count(*)::int as n from public.direct_entries where project_id = $1", [PROJ_A]), 2);
+      "select count(*)::int as n from public.direct_entries where project_id = $1", [PROJ_A]), 3);
   } finally {
     await db.close();
   }
 });
 
-test("R2: the status guard uses the same canonical identity as the create guard", async () => {
+test("R2: a formatted legacy value and its digits-only sibling are one identity", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -284,12 +291,15 @@ test("R2: the status guard uses the same canonical identity as the create guard"
       "select count(*)::int as n from public.direct_entry_employment_status_events" +
       " where entry_id = $1::uuid", [older.entryId]), 2, "no status event appended");
     assert.ok(newer.entryId);
-    // Two live episodes under one canonical CCCD is exactly what the preflight reports.
+    // P3.1-HF: the same canonical identity is still what every helper agrees on, but a
+    // second live episode is no longer a conflict - the audit reports the pair instead.
+    await createFullProfile(db, { cccd: "012345678901", name: "R2 Third", key: "r2-third" });
     const audit = (await db.query(
       "select public.direct_entry_national_id_canonical_audit() as data")).rows[0].data;
-    assert.equal(audit.duplicate_active_cccd_groups, 0,
-      "one episode is OFF, so the invariant still holds");
-    assert.equal(audit.noncanonical_entries, 1, "the formatted legacy value is reported");
+    assert.equal(audit.duplicate_active_cccd_groups, 1,
+      "two live episodes under one canonical CCCD are reported as one group");
+    assert.equal(audit.noncanonical_entries, 1,
+      "only the formatted legacy value is non-canonical; its digits-only sibling already is");
   } finally {
     await db.close();
   }
@@ -358,7 +368,7 @@ test("R2: canonical values keep the leading zero and both business lengths", asy
   }
 });
 
-test("R2: the lookup sees the legacy episode that the guard blocks on", async () => {
+test("R2: the lookup sees the legacy episode that the create path no longer blocks", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -369,7 +379,7 @@ test("R2: the lookup sees the legacy episode that the guard blocks on", async ()
     assert.equal(found.workers[0].episodes[0].entry_id, legacy.entryId);
     assert.equal(found.workers[0].active_episode_exists, true);
     assert.equal(found.workers[0].rehire_allowed, false,
-      "lookup and guard agree: the episode is still active");
+      "the episode is still active, so the lookup does not advise a rehire");
     // Name search stays inside the target project and finds the same episode.
     const byName = await lookup(db, { cccd: null, name: "R2 Legacy" });
     assert.equal(byName.match, "display_name");
@@ -433,7 +443,7 @@ test("R2: the preflight audit reports counts only and never a CCCD", async () =>
   }
 });
 
-test("R2: every guard, the lookup and the validator share one rule", async () => {
+test("R2: the status guard, the lookup and the validator share one rule", async () => {
   const db = await buildDb();
   try {
     const forms = ["012345678", "012345678901"];
@@ -457,16 +467,28 @@ test("R2: every guard, the lookup and the validator share one rule", async () =>
       "select public.direct_entry_is_canonical_national_id('12345678') as bad," +
       " public.direct_entry_is_canonical_national_id('1234567890123') as long," +
       " public.direct_entry_canonical_national_id('NOT-REAL') as none")).rows[0].none, null);
-    for (const [label, signature] of [
-      ["create guard", "public.direct_entry_guard_active_episode()"],
-      ["status guard", "public.direct_entry_guard_episode_status_event()"],
-      ["lookup", "public.direct_entry_lookup_worker_episodes(uuid,uuid,text,text,text,integer,integer)"],
-    ]) {
-      const source = (await db.query(
-        "select prosrc as src from pg_proc where oid = $1::regprocedure", [signature])).rows[0].src;
-      assert.ok(source.includes("direct_entry_canonical_national_id"), label);
-      assert.ok(source.includes("direct_entry_national_id_lock_key"), label);
+    // P3.1-HF: the status guard keeps only its append-only lifecycle rule, so the shared
+    // canonical rule now lives in the lookup (and in the create/status/audit helpers) alone.
+    const guardSource = (await db.query(
+      "select prosrc as src from pg_proc where oid = $1::regprocedure",
+      ["public.direct_entry_guard_episode_status_event()"])).rows[0].src;
+    assert.ok(guardSource.includes("worker_episode_reopen_forbidden"),
+      "status guard keeps the append-only reopen rule");
+    assert.ok(!guardSource.includes("direct_entry_canonical_national_id"),
+      "status guard no longer refuses a cross-episode canonical CCCD");
+    const lookupSource = (await db.query(
+      "select prosrc as src from pg_proc where oid = $1::regprocedure",
+      ["public.direct_entry_lookup_worker_episodes(uuid,uuid,text,text,text,integer,integer)"])
+    ).rows[0].src;
+    for (const token of ["direct_entry_canonical_national_id", "direct_entry_national_id_lock_key"]) {
+      assert.ok(lookupSource.includes(token), "lookup " + token);
     }
+    // P3.1-HF: the create guard that used to share the rule is dropped, never replaced.
+    // The canonical helper and the lock key stay because create, import, status and audit
+    // still canonicalise the same way.
+    assert.equal(await count(db,
+      "select count(*)::int as n from pg_proc where proname = 'direct_entry_guard_active_episode'"),
+    0, "the duplicate-CCCD row guard function is gone");
   } finally {
     await db.close();
   }

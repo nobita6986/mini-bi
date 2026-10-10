@@ -96,7 +96,7 @@ test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", a
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrationNames.length, 73);
+  assert.equal(migrationNames.length, 74);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -199,7 +199,10 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // helper and a service-role candidate RPC, and revokes the old seed's grant,
   // moving that function into the internal inventory. W02-A adds one private
   // project-operation authority selector/lock helper plus the internal recruiter
-  // alias trigger helper. Measured: 177 total, 81 service-role executable and 96 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [177, 81, 96]);
+  // alias trigger helper. P3.1-HF (#74) adds one internal reader gate, one internal
+  // source-rewrite helper and the service-role-only duplicate-CCCD report RPC, and
+  // drops the retired episode guard. Measured: 179 total, 82 service-role executable
+  // and 97 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [179, 82, 97]);
   await db.close();
 });

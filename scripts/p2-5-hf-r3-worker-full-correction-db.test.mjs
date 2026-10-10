@@ -46,8 +46,8 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 73, "the ledger carries 72 migrations through W02-A #72");
-  assert.equal(names[names.length - (13)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.length, 74, "the ledger carries the P3.1-HF duplicate-CCCD report at #74");
+  assert.equal(names[names.length - (14)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 
@@ -428,7 +428,7 @@ test("R3: a manager proposes the full field set and the approval applies it", as
 // ---------------------------------------------------------------------------
 // 4. CCCD rule and episode invariant on the direct correction path.
 // ---------------------------------------------------------------------------
-test("R3: the direct correction keeps the CCCD rule and the episode invariant", async () => {
+test("R3: the direct correction keeps the CCCD format rule and the append-only invariant", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -436,12 +436,6 @@ test("R3: the direct correction keeps the CCCD rule and the episode invariant", 
     const target = await seedEpisode(db, { cccd: "700000000005", name: "R3 Target" });
     const version = await entryVersion(db, target.entryId);
     const before = await residue(db);
-    // The same CCCD as a still active episode is refused by the #58/#60 guard.
-    await assert.rejects(
-      () => edit(db, { auth: ADMIN_AUTH, app: ADMIN_APP, entryId: target.entryId, version,
-        patch: { worker_details: workerDetails("700000000004", "R3 Target") } }),
-      (error) => error.code === "23505");
-    assert.deepEqual(await residue(db), before, "no partial write on a refused CCCD change");
     // A non canonical CMT/CCCD is refused by the write validator.
     for (const bad of ["7000 000005", "7000000000", "NOT-REAL"]) {
       await assert.rejects(
@@ -449,14 +443,19 @@ test("R3: the direct correction keeps the CCCD rule and the episode invariant", 
           patch: { worker_details: workerDetails(bad, "R3 Target") } }),
         (error) => error.code === "23514", bad);
     }
-    assert.deepEqual(await residue(db), before);
-    // A free canonical CCCD is accepted, leading zero preserved.
-    const ok = await edit(db, { auth: ADMIN_AUTH, app: ADMIN_APP, entryId: target.entryId, version,
-      patch: { worker_details: workerDetails("012345678901", "R3 Target") } });
-    assert.equal(ok.rows[0].data.version, version + 1);
-    const row = await entryRow(db, target.entryId);
-    assert.equal(row.cccd, "012345678901");
+    assert.deepEqual(await residue(db), before, "no partial write on a refused CCCD format");
+    // P3.1-HF: reusing the CCCD of a still active episode is no longer refused by the
+    // #58/#60 guard. The correction is written and the duplicate is reported, never blocked.
+    const shared = await edit(db, { auth: ADMIN_AUTH, app: ADMIN_APP, entryId: target.entryId,
+      version, patch: { worker_details: workerDetails("700000000004", "R3 Target") } });
+    assert.equal(shared.rows[0].data.version, version + 1);
+    assert.equal((await entryRow(db, target.entryId)).cccd, "700000000004");
     assert.equal(active.entryId !== target.entryId, true);
+    // A free canonical CCCD is still accepted, leading zero preserved.
+    const ok = await edit(db, { auth: ADMIN_AUTH, app: ADMIN_APP, entryId: target.entryId,
+      version: version + 1, patch: { worker_details: workerDetails("012345678901", "R3 Target") } });
+    assert.equal(ok.rows[0].data.version, version + 2);
+    assert.equal((await entryRow(db, target.entryId)).cccd, "012345678901");
   } finally {
     await db.close();
   }

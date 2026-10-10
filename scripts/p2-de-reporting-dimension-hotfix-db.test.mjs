@@ -90,12 +90,16 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 73, "the ledger carries alias hotfix #73 after W02-A #72");
-  assert.equal(names.at(-1), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  assert.equal(names.length, 74, "the ledger carries P3.1-HF #74 after alias hotfix #73");
+  assert.equal(names.at(-2), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  assert.equal(names.at(-1), "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql");
   // This is the regression for the earlier one-off P2 repair. Apply the
   // pre-hotfix ledger so its defect fixture remains reproducible; #73 has its
   // own focused lane and prevents this shape from being created again.
-  for (const name of names.slice(0, -1)) {
+  // P3.1-HF: #74 follows #73, so cut explicitly before the alias backfill
+  // instead of dropping only the last ledger entry.
+  for (const name of names.slice(0, names.indexOf(
+    "20261009090000_p3_1_hf_recruiter_alias_backfill.sql"))) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   return db;
