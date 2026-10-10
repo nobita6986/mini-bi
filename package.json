@@ -92,7 +92,7 @@
     "test:p1.6-w04-s04c-s03b3-r1-dev": "node scripts/p1.6-s04c-policy-closure-dev-acceptance.mjs",
     "test:p3-1-w04-a1-a2": "node --test src/lib/admin/admin-navigation.test.mjs src/lib/admin/personnel-catalog-model.test.mjs src/app/admin/admin-access.test.mjs src/components/admin/personnel-catalog-manager.test.mjs src/lib/navigation/registry.test.mjs src/lib/navigation/registry-capability.test.mjs src/lib/navigation/resolve-nav-actor.test.mjs src/lib/auth/direct-entry-page-access.test.mjs src/components/app-shell/app-shell.test.mjs src/app/dashboard/layout.test.mjs src/app/direct-entry/layout.test.mjs",
     "test:p3-1-w01d-a1b2-leader-write": "node --test scripts/p3-1-w01d-a1b2-leader-write.test.mjs",
-    "test:p3-1-w02a-team-leader-project-manager": "node --test scripts/p3-1-w02a-team-leader-project-manager.test.mjs"
+    "test:p3-1-w02a-team-leader-project-manager": "node --test scripts/p3-1-w02a-team-leader-project-manager.test.mjs scripts/p3-1-w02a-concurrency.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",

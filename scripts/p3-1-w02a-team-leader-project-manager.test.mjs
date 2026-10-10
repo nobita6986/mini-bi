@@ -90,7 +90,7 @@ function mutateMigration(source) {
         "'can_manage_project_master', true");
     case "legacy-entry-admin":
       return replaceOnce(source,
-        "perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'entry_admin');",
+        "perform public.direct_entry_assert_project_admin(p_auth_subject, p_app_user_id);",
         "perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'catalog_master_manage');");
     case "candidate-enabled-account":
       return functionBody(source, "direct_entry_list_project_manager_candidates", (body) =>
@@ -108,9 +108,12 @@ function mutateMigration(source) {
 function sourceAssertions(source) {
   assert.match(source, /direct_entry_assert_team_leader_read_authority/);
   assert.match(source, /direct_entry_assert_project_operation_authority/);
+  assert.match(source, /direct_entry_lock_project_team_manager_context/);
+  assert.doesNotMatch(source,
+    /create(?:\s+or\s+replace)?\s+function\s+public\.direct_entry_assert_project_admin\s*\(/i);
   assert.match(source, /'can_manage_project_master', v_authority <> 'team_manager_assign'/);
   assert.match(source, /'can_assign_managers', true/);
-  assert.match(source, /perform public\.direct_entry_assert_actor\(p_auth_subject, p_app_user_id, 'entry_admin'\)/);
+  assert.match(source, /perform public\.direct_entry_assert_project_admin\(p_auth_subject, p_app_user_id\)/);
   assert.doesNotMatch(source,
     /create(?:\s+or\s+replace)?\s+function\s+public\.direct_entry_assert_team_manager_assign\s*\(/i);
   assert.match(source,
@@ -188,8 +191,8 @@ async function buildDb() {
   const before = await functionInventory(db);
   await db.exec(mutateMigration(MIGRATION));
   const after = await functionInventory(db);
-  assert.equal(after.total, before.total + 1, "#72 adds only the internal authority selector");
-  assert.equal(after.internal, before.internal + 1);
+  assert.equal(after.total, before.total + 2, "#72 adds only the internal authority and lock helpers");
+  assert.equal(after.internal, before.internal + 2);
   assert.equal(after.service_role, before.service_role);
   return { db, names, inventory: after };
 }
@@ -450,12 +453,20 @@ test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutatio
     admin, accounting, leader, legacyAdmin, staff, projectManager, disabledActor,
     ambiguousLeader, managerA, managerB, managerC, invalidManagers,
   } = actors;
+  const guardSource = (await db.query(
+    "select pg_get_functiondef('public.direct_entry_assert_project_admin(uuid,uuid)'::regprocedure) as source",
+  )).rows[0].source;
+  assert.match(guardSource, /direct_entry_assert_actor/);
+  assert.doesNotMatch(guardSource, /direct_entry_assert_catalog_operator/);
 
   const allCandidates = await candidateList(db, admin);
   const accountingCandidates = await candidateList(db, accounting);
   const legacyCandidates = await candidateList(db, legacyAdmin);
   const teamCandidates = await candidateList(db, leader);
   assert.deepEqual(accountingCandidates, allCandidates);
+  await denied(() => call(db,
+    "select public.direct_entry_lookup_worker_episodes($1::uuid,$2::uuid,$3::text,$4::text,$5::text) as data",
+    [accounting.auth, accounting.app, PROJECT_ACTIVE, "Worker", "123456789012"]), "42501");
   assert.deepEqual(legacyCandidates, allCandidates);
   assert.deepEqual(
     teamCandidates.candidates.map((candidate) => candidate.recruiter_id).sort(),
@@ -510,16 +521,15 @@ test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutatio
   const accountingProject = await projectGet(db, accounting, PROJECT_ACTIVE);
   const legacyProject = await projectGet(db, legacyAdmin, PROJECT_ACTIVE);
   const leaderProject = await projectGet(db, leader, PROJECT_ACTIVE);
-  const inactiveLeaderProject = await projectGet(db, leader, PROJECT_INACTIVE);
+  await denied(() => projectGet(db, leader, PROJECT_INACTIVE), "P0002");
   for (const project of [adminProject, accountingProject, legacyProject]) {
     assert.equal(project.can_manage_project_master, true);
     assert.equal(project.can_assign_managers, true);
   }
-  for (const project of [leaderProject, inactiveLeaderProject]) {
+  for (const project of [leaderProject]) {
     assert.equal(project.can_manage_project_master, false);
     assert.equal(project.can_assign_managers, true);
   }
-  assert.equal(inactiveLeaderProject.active, false);
 
   const adminCreated = await createProject(db, admin, "w02a-admin-created", "admin-create");
   const accountingCreated = await createProject(
@@ -682,12 +692,27 @@ test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutatio
     db, accounting, PROJECT_INACTIVE, false, 3, "accounting-deactivate-inactive-project",
   );
   const inactiveProjectVersion = await projectVersion(db, PROJECT_INACTIVE);
+  await denied(() => projectGet(db, leader, PROJECT_INACTIVE), "P0002");
+  await denied(() => assignmentList(db, leader, PROJECT_INACTIVE), "P0002");
+  assert.equal(
+    (await assignmentList(db, leader, null)).assignments.some(
+      (assignment) => assignment.project_id === PROJECT_INACTIVE,
+    ),
+    false,
+    "leader-wide assignment reads omit inactive projects",
+  );
   const canceledFuture = await unassign(
     db, leader, inactiveAssignment.assignment_id, inactiveAssignment.version,
     inactiveProjectVersion, "leader-cancel-future-inactive",
   );
   assert.equal(canceledFuture.valid_to, "2099-01-01");
   assert.equal(canceledFuture.already_unassigned, false);
+
+  const thirdUnassignVersion = await projectVersion(db, PROJECT_ACTIVE);
+  const thirdUnassigned = await unassign(
+    db, leader, third.assignment_id, third.version, thirdUnassignVersion,
+    "leader-unassign-c",
+  );
 
   const today = (await db.query(
     "select public.direct_entry_authorization_date()::text as today",
@@ -706,6 +731,19 @@ test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutatio
   assert.equal((await assignmentList(db, leader, PROJECT_ACTIVE)).assignments.some(
     (assignment) => assignment.manager_recruiter_id === managerC.recruiter,
   ), false, "assignment history follows the manager's current team");
+  assert.deepEqual(
+    await assign(db, leader, PROJECT_ACTIVE, managerC.recruiter, versionAfterTwo, "leader-assign-c"),
+    third,
+    "an authorized exact replay returns the recorded result after target state drifts",
+  );
+  assert.deepEqual(
+    await unassign(
+      db, leader, third.assignment_id, third.version, thirdUnassignVersion,
+      "leader-unassign-c",
+    ),
+    thirdUnassigned,
+    "unassign exact replay is stable after target team changes",
+  );
   await denied(async () => unassign(
     db, leader, third.assignment_id, third.version, await projectVersion(db, PROJECT_ACTIVE),
     "leader-unassign-after-team-move",

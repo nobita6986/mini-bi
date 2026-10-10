@@ -646,11 +646,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // leader writes. A1b3 adds the internal transition helper and candidate RPC,
     // then revokes the old seed's service-role grant, moving it into the internal
     // inventory. W02-A adds one private authority selector. The measured inventory
-    // is 175 total / 81 service-role / 94 internal.
+    // is 176 total / 81 service-role / 95 internal.
     assert.deepEqual(result.rows[0], {
-      total: 175,
+      total: 176,
       service_role: 81,
-      internal: 94,
+      internal: 95,
       exposed_internal: 0,
     });
   } finally {

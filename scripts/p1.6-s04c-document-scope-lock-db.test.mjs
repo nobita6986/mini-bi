@@ -198,8 +198,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // two service-role-only leader write RPCs. A1b3 adds one internal transition
   // helper and a service-role candidate RPC, and revokes the old seed's grant,
   // moving that function into the internal inventory. W02-A adds one private
-  // project-operation authority selector. Measured: 175 total, 81 service-role
-  // executable and 94 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [175, 81, 94]);
+  // project-operation authority selector and lock helper. Measured: 176 total,
+  // 81 service-role executable and 95 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [176, 81, 95]);
   await db.close();
 });

@@ -6,42 +6,6 @@
 
 begin;
 
-create or replace function public.direct_entry_assert_project_admin(
-  p_auth_subject uuid,
-  p_app_user_id uuid
-)
-returns void
-language plpgsql
-security definer
-set search_path = pg_catalog, public
-as $$
-begin
-  begin
-    perform public.direct_entry_assert_catalog_operator(p_auth_subject, p_app_user_id);
-    return;
-  exception
-    when insufficient_privilege then
-      null;
-  end;
-
-  perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'entry_admin');
-  if not exists (
-    select 1
-      from public.direct_entry_scope_grants s
-     where s.app_user_id = p_app_user_id
-       and s.scope_kind = 'all'
-       and s.valid_from <= public.direct_entry_authorization_date()
-       and (s.valid_to is null or public.direct_entry_authorization_date() < s.valid_to)
-  ) then
-    raise exception 'project administration requires all scope' using errcode = '42501';
-  end if;
-end;
-$$;
-revoke all on function public.direct_entry_assert_project_admin(uuid, uuid)
-  from public, anon, authenticated, service_role;
-comment on function public.direct_entry_assert_project_admin(uuid, uuid) is
-  'P3.1-W02A project-admin guard preserves P2.5 entry_admin + effective all scope and adds the canonical catalog-operator + all path. Team leaders are excluded. Revoked from every role.';
-
 create or replace function public.direct_entry_assert_project_operation_authority(
   p_auth_subject uuid,
   p_app_user_id uuid
@@ -84,6 +48,147 @@ revoke all on function public.direct_entry_assert_project_operation_authority(uu
   from public, anon, authenticated, service_role;
 comment on function public.direct_entry_assert_project_operation_authority(uuid, uuid) is
   'P3.1-W02A internal authority selector: catalog operator, legacy P2.5 entry_admin@all, or W01D canonical own-team leader authority. It delegates leader resolution to W01D and is revoked from every role.';
+
+create or replace function public.direct_entry_lock_project_team_manager_context(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_team_id uuid,
+  p_manager_recruiter_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_app_user_ids uuid[];
+  v_leader_recruiter_id uuid;
+  v_link_count integer;
+  v_locked_team_id uuid;
+  v_lock_key text;
+begin
+  if p_team_id is null or p_manager_recruiter_id is null then
+    raise exception 'team manager context required' using errcode = '22023';
+  end if;
+
+  perform t.team_id
+    from public.teams t
+   where t.team_id = p_team_id
+   for update;
+  if not found then
+    raise exception 'team leader authority denied' using errcode = '42501';
+  end if;
+
+  select array_agg(ids.app_user_id order by ids.app_user_id)
+    into v_app_user_ids
+    from (
+      select p_app_user_id as app_user_id
+      union
+      select l.app_user_id
+        from public.direct_entry_app_user_recruiter_links l
+       where l.recruiter_id = p_manager_recruiter_id
+         and l.verified
+         and l.valid_from <= public.direct_entry_authorization_date()
+         and (l.valid_to is null
+              or public.direct_entry_authorization_date() < l.valid_to)
+         and (l.valid_to is null or l.valid_to > l.valid_from)
+    ) ids;
+
+  perform u.app_user_id
+    from public.direct_entry_app_users u
+   where u.app_user_id = any(v_app_user_ids)
+   order by u.app_user_id
+   for update;
+  perform s.grant_id
+    from public.direct_entry_scope_grants s
+   where s.app_user_id = p_app_user_id
+     and s.scope_kind = 'team'
+   order by s.grant_id
+   for update;
+  perform g.grant_id
+    from public.direct_entry_capability_grants g
+   where g.app_user_id = p_app_user_id
+     and g.capability = 'team_manager_assign'
+   order by g.grant_id
+   for update;
+
+  for v_lock_key in
+    select distinct keys.key
+      from (
+        select 'capability:' || p_app_user_id::text || ':team_manager_assign' as key
+        union all
+        select 'scope:' || p_app_user_id::text || ':team:' || p_team_id::text
+        union all
+        select 'recruiter-link:' || ids.app_user_id::text
+          from unnest(v_app_user_ids) ids(app_user_id)
+      ) keys
+     order by keys.key
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
+  end loop;
+
+  perform l.link_id
+    from public.direct_entry_app_user_recruiter_links l
+   where l.app_user_id = any(v_app_user_ids)
+   order by l.link_id
+   for update;
+
+  select count(*)::int,
+         (array_agg(l.recruiter_id order by l.link_id))[1]
+    into v_link_count, v_leader_recruiter_id
+    from public.direct_entry_app_user_recruiter_links l
+   where l.app_user_id = p_app_user_id
+     and l.verified
+     and l.valid_from <= public.direct_entry_authorization_date()
+     and (l.valid_to is null
+          or public.direct_entry_authorization_date() < l.valid_to)
+     and (l.valid_to is null or l.valid_to > l.valid_from);
+  if v_link_count <> 1 or v_leader_recruiter_id is null then
+    raise exception 'team leader authority denied' using errcode = '42501';
+  end if;
+
+  perform r.recruiter_id
+    from public.recruiters r
+   where r.recruiter_id in (v_leader_recruiter_id, p_manager_recruiter_id)
+   order by r.recruiter_id
+   for update;
+
+  for v_lock_key in
+    select distinct keys.key
+      from unnest(array[
+        'provider:' || v_leader_recruiter_id::text,
+        'team-membership:' || v_leader_recruiter_id::text,
+        'provider:' || p_manager_recruiter_id::text,
+        'team-membership:' || p_manager_recruiter_id::text
+      ]) keys(key)
+     order by keys.key
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(v_lock_key, 0));
+  end loop;
+
+  perform m.membership_id
+    from public.recruiter_provider_memberships m
+   where m.recruiter_id in (v_leader_recruiter_id, p_manager_recruiter_id)
+   order by m.recruiter_id, m.membership_id
+   for update;
+  perform m.membership_id
+    from public.recruiter_team_memberships m
+   where m.recruiter_id in (v_leader_recruiter_id, p_manager_recruiter_id)
+   order by m.recruiter_id, m.membership_id
+   for update;
+
+  v_locked_team_id := public.direct_entry_assert_team_leader_read_authority(
+    p_auth_subject, p_app_user_id, p_team_id
+  );
+  if v_locked_team_id is distinct from p_team_id then
+    raise exception 'team leader authority changed' using errcode = '42501';
+  end if;
+end;
+$$;
+revoke all on function public.direct_entry_lock_project_team_manager_context(uuid, uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+comment on function public.direct_entry_lock_project_team_manager_context(uuid, uuid, uuid, uuid) is
+  'W02-A internal lock set for project assignment writes: project first, then W01D team/app-user/grant/link order, then recruiter/provider/team-membership aggregate locks shared with W01C/W01D. Revalidates canonical leader authority while locks are held.';
 
 create or replace function public.direct_entry_list_projects_admin(
   p_auth_subject uuid,
@@ -202,7 +307,8 @@ begin
         from public.direct_entry_project_manager_assignments a
        where a.project_id = p.project_id and a.valid_to is null
     ) asg on true
-   where p.project_id = p_project_id;
+   where p.project_id = p_project_id
+     and (v_authority <> 'team_manager_assign' or p.active);
   if v_project is null then
     raise exception 'project not found' using errcode = 'P0002';
   end if;
@@ -214,7 +320,7 @@ revoke all on function public.direct_entry_get_project_admin(uuid, uuid, text)
 grant execute on function public.direct_entry_get_project_admin(uuid, uuid, text)
   to service_role;
 comment on function public.direct_entry_get_project_admin(uuid, uuid, text) is
-  'P3.1-W02A project read: Admin/Accounting and team leaders may read one project, including inactive project metadata needed to revoke an open assignment. service_role only.';
+  'P3.1-W02A project read: Admin/Accounting may read any project; team leaders may read active projects only. Inactive-project unassignment uses its existing assignment mutation path. service_role only.';
 
 create or replace function public.direct_entry_list_project_manager_assignments(
   p_auth_subject uuid,
@@ -248,6 +354,9 @@ begin
     if v_project_version is null then
       raise exception 'project not found' using errcode = 'P0002';
     end if;
+    if v_authority = 'team_manager_assign' and not v_project_active then
+      raise exception 'project not found' using errcode = 'P0002';
+    end if;
   end if;
 
   select coalesce(jsonb_agg(jsonb_build_object(
@@ -268,6 +377,7 @@ begin
     from public.direct_entry_project_manager_assignments a
     join public.direct_entry_projects p on p.project_id = a.project_id
    where (p_project_id is null or a.project_id = p_project_id)
+     and (v_authority <> 'team_manager_assign' or p.active)
      and (p_include_history or a.valid_to is null)
      and (
        v_authority <> 'team_manager_assign'
@@ -296,6 +406,12 @@ begin
   select count(*)::int into v_active
     from public.direct_entry_project_manager_assignments a
    where (p_project_id is null or a.project_id = p_project_id)
+     and exists (
+       select 1
+         from public.direct_entry_projects p
+        where p.project_id = a.project_id
+          and (v_authority <> 'team_manager_assign' or p.active)
+     )
      and a.valid_to is null
      and (
        v_authority <> 'team_manager_assign'
@@ -532,66 +648,18 @@ begin
     ))
   );
   if v_prior is not null then
-    if v_authority = 'team_manager_assign' then
-      select count(*)::int,
-             count(*) filter (where m.team_id = v_team_id)::int
-        into v_membership_count, v_matching_membership_count
-        from public.recruiter_team_memberships m
-       where m.recruiter_id = p_manager_recruiter_id
-         and m.valid_from <= public.direct_entry_authorization_date()
-         and (m.valid_to is null or public.direct_entry_authorization_date() < m.valid_to)
-         and (m.valid_to is null or m.valid_to > m.valid_from);
-      if v_membership_count <> 1 or v_matching_membership_count <> 1 then
-        raise exception 'team manager assignment denied' using errcode = '42501';
-      end if;
-      select count(*)::int
-        into v_link_count
-        from public.direct_entry_app_user_recruiter_links l
-       where l.recruiter_id = p_manager_recruiter_id
-         and l.verified
-         and l.valid_from <= public.direct_entry_authorization_date()
-         and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to);
-      select count(*)::int
-        into v_enabled_link_count
-        from public.direct_entry_app_user_recruiter_links l
-        join public.direct_entry_app_users au on au.app_user_id = l.app_user_id
-       where l.recruiter_id = p_manager_recruiter_id
-         and l.verified
-         and l.valid_from <= public.direct_entry_authorization_date()
-         and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to)
-         and au.enabled
-         and au.auth_subject is not null;
-      select count(*)::int,
-             count(*) filter (
-               where m.provider_type = 'hrp' and m.vendor_id is null
-             )::int
-        into v_provider_count, v_hrp_provider_count
-        from public.recruiter_provider_memberships m
-       where m.recruiter_id = p_manager_recruiter_id
-         and m.valid_from <= public.direct_entry_authorization_date()
-         and (m.valid_to is null or public.direct_entry_authorization_date() < m.valid_to);
-      if v_link_count <> 1 or v_enabled_link_count <> 1
-         or v_provider_count <> 1 or v_hrp_provider_count <> 1
-         or not exists (
-           select 1 from public.recruiters r
-            where r.recruiter_id = p_manager_recruiter_id and r.active
-         ) then
-        raise exception 'team manager assignment denied' using errcode = '42501';
-      end if;
-    end if;
     return v_prior;
   end if;
 
-  -- All writers lock the project first. Authority and team membership are
-  -- rechecked after this lock so a concurrent revocation/move cannot authorize
-  -- the write using the pre-lock snapshot.
+  -- Lock project first, then the canonical leader/team and target-recruiter
+  -- authority aggregates in the same order as W01C/W01D before validating.
   v_project := public.direct_entry_lock_project(p_project_id, p_expected_project_version);
   if not v_project.active then
     raise exception 'project is not active' using errcode = '22023';
   end if;
   if v_authority = 'team_manager_assign' then
-    v_team_id := public.direct_entry_assert_team_leader_read_authority(
-      p_auth_subject, p_app_user_id, null
+    perform public.direct_entry_lock_project_team_manager_context(
+      p_auth_subject, p_app_user_id, v_team_id, p_manager_recruiter_id
     );
     select count(*)::int,
            count(*) filter (where m.team_id = v_team_id)::int
@@ -788,22 +856,6 @@ begin
     ))
   );
   if v_prior is not null then
-    if v_authority = 'team_manager_assign' then
-      select a.manager_recruiter_id into v_assignment.manager_recruiter_id
-        from public.direct_entry_project_manager_assignments a
-       where a.assignment_id = p_assignment_id;
-      select count(*)::int,
-             count(*) filter (where m.team_id = v_team_id)::int
-        into v_membership_count, v_matching_membership_count
-        from public.recruiter_team_memberships m
-       where m.recruiter_id = v_assignment.manager_recruiter_id
-         and m.valid_from <= public.direct_entry_authorization_date()
-         and (m.valid_to is null or public.direct_entry_authorization_date() < m.valid_to)
-         and (m.valid_to is null or m.valid_to > m.valid_from);
-      if v_membership_count <> 1 or v_matching_membership_count <> 1 then
-        raise exception 'team manager assignment denied' using errcode = '42501';
-      end if;
-    end if;
     return v_prior;
   end if;
 
@@ -826,8 +878,8 @@ begin
   end if;
 
   if v_authority = 'team_manager_assign' then
-    v_team_id := public.direct_entry_assert_team_leader_read_authority(
-      p_auth_subject, p_app_user_id, null
+    perform public.direct_entry_lock_project_team_manager_context(
+      p_auth_subject, p_app_user_id, v_team_id, v_assignment.manager_recruiter_id
     );
     select count(*)::int,
            count(*) filter (where m.team_id = v_team_id)::int
@@ -1236,8 +1288,8 @@ declare
   v_membership_position integer;
 begin
   foreach v_signature in array array[
-    'public.direct_entry_assert_project_admin(uuid,uuid)',
     'public.direct_entry_assert_project_operation_authority(uuid,uuid)',
+    'public.direct_entry_lock_project_team_manager_context(uuid,uuid,uuid,uuid)',
     'public.direct_entry_list_project_manager_assignments(uuid,uuid,text,boolean)',
     'public.direct_entry_list_project_manager_candidates(uuid,uuid,text)',
     'public.direct_entry_list_projects_admin(uuid,uuid,boolean)',
@@ -1264,19 +1316,20 @@ begin
       raise exception 'W02A SECURITY DEFINER/search_path self-check failed: %', v_signature
         using errcode = '55000';
     end if;
-    if v_signature = 'public.direct_entry_assert_project_admin(uuid,uuid)' then
-      if v_public_exec or v_anon_exec or v_authenticated_exec or v_service_exec
-         or v_source not like '%direct_entry_assert_catalog_operator%'
-         or v_source not like '%direct_entry_assert_actor%'
-         or v_source not like '%scope_kind = ''all''%' then
-        raise exception 'W02A internal project guard self-check failed'
-          using errcode = '55000';
-      end if;
-    elsif v_signature = 'public.direct_entry_assert_project_operation_authority(uuid,uuid)' then
+    if v_signature = 'public.direct_entry_assert_project_operation_authority(uuid,uuid)' then
       if v_public_exec or v_anon_exec or v_authenticated_exec or v_service_exec
          or v_source not like '%direct_entry_assert_team_leader_read_authority%'
          or v_source not like '%direct_entry_assert_project_admin%' then
         raise exception 'W02A authority selector self-check failed'
+          using errcode = '55000';
+      end if;
+    elsif v_signature =
+      'public.direct_entry_lock_project_team_manager_context(uuid,uuid,uuid,uuid)' then
+      if v_public_exec or v_anon_exec or v_authenticated_exec or v_service_exec
+         or v_source not like '%for update%'
+         or v_source not like '%pg_advisory_xact_lock%'
+         or v_source not like '%direct_entry_assert_team_leader_read_authority%' then
+        raise exception 'W02A leader context lock self-check failed'
           using errcode = '55000';
       end if;
     elsif v_public_exec or v_anon_exec or v_authenticated_exec or not v_service_exec then
@@ -1298,7 +1351,7 @@ begin
   v_lock_position := position('direct_entry_lock_project' in v_source);
   v_authority_recheck_position := v_lock_position + strpos(
     substring(v_source from v_lock_position + 1),
-    'direct_entry_assert_team_leader_read_authority'
+    'direct_entry_lock_project_team_manager_context'
   );
   v_membership_position := v_lock_position + strpos(
     substring(v_source from v_lock_position + 1),
@@ -1307,7 +1360,8 @@ begin
   if v_lock_position = 0 or v_authority_recheck_position <= v_lock_position
      or v_membership_position <= v_lock_position
      or v_source not like '%scope_team_id%'
-     or v_source not like '%v_authority%' then
+     or v_source not like '%v_authority%'
+     or v_source not like '%direct_entry_lock_project_team_manager_context%' then
     raise exception 'W02A assignment authority/lock-order self-check failed'
       using errcode = '55000';
   end if;
@@ -1319,7 +1373,7 @@ begin
   v_assignment_lock_position := position('for update' in v_source);
   v_authority_recheck_position := v_assignment_lock_position + strpos(
     substring(v_source from v_assignment_lock_position + 1),
-    'direct_entry_assert_team_leader_read_authority'
+    'direct_entry_lock_project_team_manager_context'
   );
   v_membership_position := v_assignment_lock_position + strpos(
     substring(v_source from v_assignment_lock_position + 1),
@@ -1329,7 +1383,8 @@ begin
      or v_authority_recheck_position <= v_assignment_lock_position
      or v_membership_position <= v_assignment_lock_position
      or v_source not like '%scope_team_id%'
-     or v_source not like '%v_authority%' then
+     or v_source not like '%v_authority%'
+     or v_source not like '%direct_entry_lock_project_team_manager_context%' then
     raise exception 'W02A unassignment authority/lock-order self-check failed'
       using errcode = '55000';
   end if;
