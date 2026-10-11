@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   decideAdminAreaAccess,
   decideDirectEntryPageAccess,
+  decideLaborTypeCatalogPageAccess,
   decidePersonnelCatalogPageAccess,
   decideTeamCatalogPageAccess,
   decideVendorCatalogPageAccess,
@@ -87,6 +88,7 @@ test("Admin route decisions use all-scope catalog operator OR canonical Full Adm
     decidePersonnelCatalogPageAccess,
     decideTeamCatalogPageAccess,
     decideVendorCatalogPageAccess,
+    decideLaborTypeCatalogPageAccess,
   ]) {
     assert.equal(decide({ actor: fullAdmin }), "ALLOW");
     assert.equal(decide({ actor: accounting }), "ALLOW");

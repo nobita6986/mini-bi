@@ -61,6 +61,7 @@ test("Admin internal navigation exposes catalog sections exactly once", () => {
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
     { id: "vendors", href: "/admin/catalog/vendors" },
+    { id: "labor-types", href: "/admin/catalog/labor-types" },
   ]);
   assert.deepEqual(visibleAdminSections(accountingCatalog), ADMIN_SECTIONS);
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), []);
@@ -74,6 +75,8 @@ test("catalog paths and nested paths highlight exactly one internal tab", () => 
     ["/admin/catalog/teams/record", "teams"],
     ["/admin/catalog/vendors", "vendors"],
     ["/admin/catalog/vendors/record", "vendors"],
+    ["/admin/catalog/labor-types", "labor-types"],
+    ["/admin/catalog/labor-types/record", "labor-types"],
   ]) {
     assert.deepEqual(
       ADMIN_SECTIONS.filter((section) => isAdminSectionActive(pathname, section.href)).map(({ id }) => id),
@@ -88,4 +91,5 @@ test("top-level Admin remains the active registry entry across catalog routes", 
   assert.equal(findEntryByPath("/admin/catalog/teams")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/teams/nested")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/vendors")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/catalog/labor-types")?.id, "admin");
 });
