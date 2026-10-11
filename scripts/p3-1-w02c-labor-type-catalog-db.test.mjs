@@ -1245,9 +1245,10 @@ test("18: the ACL posture is service-role only, with revoked helpers and forced 
 
 test("19: the retired closed set is gone and a legacy value aborts migration #79", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-3), NEW_MIGRATION, "#79 stays the catalog migration");
-  assert.equal(names.at(-2), R2_MIGRATION, "#80 stays the display projection migration");
-  assert.equal(names.at(-1), R3_MIGRATION, "#81 occupies the last migration slot");
+  assert.equal(names.at(-4), NEW_MIGRATION, "#79 stays the catalog migration");
+  assert.equal(names.at(-3), R2_MIGRATION, "#80 stays the display projection migration");
+  assert.equal(names.at(-2), R3_MIGRATION, "#81 remains before W03A");
+  assert.equal(names.at(-1), "20261011150000_p3_1_w03a_app_user_lifecycle.sql", "#82 is the W03A migration");
   assert.equal(new Set(names).size, names.length, "the ledger carries no duplicate slot");
 
   const closedSetQuery =
@@ -1263,7 +1264,7 @@ test("19: the retired closed set is gone and a legacy value aborts migration #79
   // projection that builds on it.
   const legacy = new PGlite();
   await legacy.exec(AUTH_PROLOGUE);
-  for (const name of names.slice(0, -3)) {
+  for (const name of names.slice(0, -4)) {
     await legacy.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
 
