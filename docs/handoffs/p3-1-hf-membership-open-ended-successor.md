@@ -49,7 +49,9 @@ Focused DB/API 46/46 và UI 25/25 đã đạt trước release. Bao phủ succes
 stale OCC, exact replay, hủy lịch hữu hạn cũ, audit hai dòng, predecessor inactive,
 nhân sự inactive, lịch độc lập liền kề, thay thế cùng ngày và overlap zero-residue.
 Các migration-count/offset assertions được cập nhật cơ học 77 → 78.
-Full canonical suite và các release gates được chạy trước apply/deploy.
+Full canonical `pnpm test`, typegen, typecheck, lint (0 lỗi; 15 cảnh báo có sẵn),
+webpack build, docs 6/6, secrets (1.517 file), offline migration validation (78)
+và `git diff --check` đều đạt trước apply/deploy.
 
 ## Owner UAT sau deploy
 
