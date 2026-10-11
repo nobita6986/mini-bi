@@ -24,11 +24,11 @@ const ACTOR = {
 };
 const ACCOUNT = {
   account_ref: "40000000-0000-4000-8000-000000000103",
-  account_label: "TK-abcdef12",
+  display_name: "Target",
   enabled: true,
   version: 1,
 };
-const LIST = { enabled: "all", page: 1, page_size: 25, total: 1, accounts: [ACCOUNT] };
+const LIST = { search: null, enabled: "all", page: 1, page_size: 25, total: 1, accounts: [ACCOUNT] };
 function deps(overrides = {}) {
   return {
     resolveSession: async () => ({ actor: { ok: true, actor: ACTOR } }),
@@ -49,21 +49,24 @@ function json(body, headers = {}) {
 }
 
 test("strict projection rejects raw identity and extra fields", () => {
-  assert.deepEqual(Object.keys(projectExistingAccount(ACCOUNT)).sort(), ["account_label", "account_ref", "enabled", "version"]);
-  assert.deepEqual(Object.keys(projectExistingAccountList(LIST)).sort(), ["accounts", "enabled", "page", "page_size", "total"]);
+  assert.deepEqual(Object.keys(projectExistingAccount(ACCOUNT)).sort(), ["account_ref", "display_name", "enabled", "version"]);
+  assert.deepEqual(Object.keys(projectExistingAccountList(LIST)).sort(), ["accounts", "enabled", "page", "page_size", "search", "total"]);
   assert.equal(projectExistingAccount({ ...ACCOUNT, email: "x@example.test" }), null);
+  assert.equal(projectExistingAccount({ ...ACCOUNT, account_label: "TK-abcdef12" }), null);
   assert.equal(projectExistingAccount({ ...ACCOUNT, auth_subject: ACTOR.auth_subject }), null);
   assert.equal(projectExistingAccountList({ ...LIST, raw_uuid: ACCOUNT.account_ref }), null);
 });
 
 test("R2 API list/detail allow only strict server projections", async () => {
-  const list = await listAccounts(request("/api/admin/access/accounts?enabled=all&page=1&page_size=25"), "true", deps());
+  const list = await listAccounts(request("/api/admin/access/accounts?search=%20TaRgEt%20&enabled=all&page=1&page_size=25"), "true", deps({
+    listAccounts: async (input) => ({ ok: true, data: { ...LIST, search: input.search } }),
+  }));
   assert.equal(list.status, 200);
-  assert.deepEqual(await list.json(), { ok: true, list: LIST });
+  assert.deepEqual(await list.json(), { ok: true, list: { ...LIST, search: "TaRgEt" } });
   const detail = await getAccount(request("/api/admin/access/accounts/ref"), ACCOUNT.account_ref, "true", deps());
   assert.equal(detail.status, 200);
   assert.deepEqual(await detail.json(), { ok: true, account: ACCOUNT });
-  const malformed = await listAccounts(request("/api/admin/access/accounts?search=x"), "true", deps());
+  const malformed = await listAccounts(request("/api/admin/access/accounts?search=%20"), "true", deps());
   assert.deepEqual([malformed.status, await malformed.json()], [400, { ok: false, code: "ACCOUNT_INVALID" }]);
   const malformedRepo = createAccountAccessRepository(async () => ({ data: { ...LIST, accounts: [{ ...ACCOUNT, email: "x@example.test" }] }, error: null }));
   const leaked = await listAccounts(request("/api/admin/access/accounts"), "true", deps({
@@ -79,13 +82,20 @@ test("R2 API mutations enforce gate, same-origin, bounded exact body and return 
     disableAccount: async (input) => { called = input; return { ok: true, data: null }; },
   };
   const response = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({
-    expected_version: 1, reason: "R2 reason", idempotency_key: "r2-key",
-  }, { "idempotency-key": "r2-key" })), ACCOUNT.account_ref, "disable", "true", deps(repository));
+    expected_version: 1, reason: "R2 reason", idempotency_key: "40000000-0000-4000-8000-000000000201",
+  }, { "idempotency-key": "40000000-0000-4000-8000-000000000201" })), ACCOUNT.account_ref, "disable", "true", deps(repository));
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true });
-  assert.deepEqual(called, { auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, target_app_user_id: ACCOUNT.account_ref, expected_version: 1, reason: "R2 reason", idempotency_key: "r2-key" });
+  assert.deepEqual(called, { auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, target_app_user_id: ACCOUNT.account_ref, expected_version: 1, reason: "R2 reason", idempotency_key: "40000000-0000-4000-8000-000000000201" });
 
-  const mismatch = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({ expected_version: 1, reason: "R2 reason", idempotency_key: "r2-key" }, { "idempotency-key": "other" })), ACCOUNT.account_ref, "disable", "true", deps());
+  const invalidActor = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({ expected_version: 1, reason: "x", idempotency_key: "40000000-0000-4000-8000-000000000202" })), ACCOUNT.account_ref, "disable", "true", {
+    resolveSession: async () => ({ actor: { ok: true, actor: { ...ACTOR, auth_subject: "not-a-uuid" } } }),
+    repository: deps().repository,
+  });
+  assert.deepEqual([invalidActor.status, await invalidActor.json()], [403, { ok: false, code: "ACTOR_NOT_AVAILABLE" }]);
+  const invalidIdempotency = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({ expected_version: 1, reason: "x", idempotency_key: "not-a-uuid" })), ACCOUNT.account_ref, "disable", "true", deps());
+  assert.deepEqual([invalidIdempotency.status, await invalidIdempotency.json()], [400, { ok: false, code: "ACCOUNT_INVALID" }]);
+  const mismatch = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({ expected_version: 1, reason: "R2 reason", idempotency_key: "40000000-0000-4000-8000-000000000201" }, { "idempotency-key": "other" })), ACCOUNT.account_ref, "disable", "true", deps());
   assert.equal(mismatch.status, 400);
   const csrf = await mutateAccount(request("/api/admin/access/accounts/ref/disable", { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.test", host: "app.test" }, body: JSON.stringify({ expected_version: 1, reason: "x", idempotency_key: "k" }) }), ACCOUNT.account_ref, "disable", "true", deps());
   assert.equal(csrf.status, 403);
@@ -116,7 +126,7 @@ test("repository exposes only canonical read/lifecycle RPCs", async () => {
     if (name === "direct_entry_get_app_user_admin") return { data: ACCOUNT, error: null };
     return { data: { change: "disable" }, error: null };
   });
-  await repo.listAccounts({ auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, enabled: "all", page: 1, page_size: 25 });
+  await repo.listAccounts({ auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, search: null, enabled: "all", page: 1, page_size: 25 });
   await repo.getAccount({ auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, target_app_user_id: ACCOUNT.account_ref });
   await repo.disableAccount({ auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, target_app_user_id: ACCOUNT.account_ref, expected_version: 1, reason: "x", idempotency_key: "k" });
   assert.deepEqual(calls.map(([name]) => name), ["direct_entry_list_app_users_admin", "direct_entry_get_app_user_admin", "direct_entry_disable_app_user"]);

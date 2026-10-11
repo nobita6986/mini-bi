@@ -16,6 +16,7 @@ export type AccountAccessDependencies = {
 export type Parsed<T> = { ok: true; value: T } | { ok: false; response: Response };
 
 type TrustedActor = { auth_subject: string; app_user_id: string };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function respond(body: unknown, status: number): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -55,6 +56,9 @@ async function resolveTrustedActor(
         ? fail("UNAUTHENTICATED", 401) : fail("ACTOR_NOT_AVAILABLE", 403) };
     }
     const actor = session.actor.actor;
+    if (!UUID.test(actor.auth_subject) || !UUID.test(actor.app_user_id)) {
+      return { ok: false, response: fail("ACTOR_NOT_AVAILABLE", 403) };
+    }
     return { ok: true, value: { auth_subject: actor.auth_subject, app_user_id: actor.app_user_id } };
   } catch {
     console.error("[account-access] session unavailable");

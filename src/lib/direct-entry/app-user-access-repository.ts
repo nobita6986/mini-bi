@@ -81,7 +81,7 @@ export function createAccountAccessRepository(rpc?: Rpc): AccountAccessRepositor
     listAccounts(input) {
       return read("direct_entry_list_app_users_admin", {
         p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id,
-        p_enabled: input.enabled, p_page: input.page, p_page_size: input.page_size,
+        p_search: input.search, p_enabled: input.enabled, p_page: input.page, p_page_size: input.page_size,
       }, projectExistingAccountList);
     },
     getAccount(input) {
