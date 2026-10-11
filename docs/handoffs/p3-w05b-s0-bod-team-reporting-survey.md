@@ -1,6 +1,6 @@
 # P3-W05B-S0 — BoD recruitment reporting by team (Survey / Contract Lock)
 
-> **Status:** `P3_W05B_S0_R1_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `P3_W05B_S0_R2_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
 > **Base:** `origin/main@5f41caf689dbfd52bb889744f227aa659da393db`
 >   (`fix(projects): compact table layout without forced scroll`).
 > **Branch:** `audit/p3-w05b-s0-bod-team-reporting-survey`
@@ -43,11 +43,19 @@ has no team dimension. The W05A scoped payload already proves that:
 W05B adds the missing team breakdown to the BoD view **and** a server-side
 drill-down within each team. The team attribution rule is the historical one:
 **the team of the row is the team stored on the row at the time the fact was
-saved** (Direct Entry: `direct_entries.team_id`; legacy: bucket `__unknown__`),
+saved** (Direct Entry: `direct_entries.team_id`; legacy: bucket
+`unknown`, the namespaced unknown literal from §2.5.2),
 never the team of the recruiter today, never the team of the actor looking at
-the report. The chart-to-drill-down identity is the team's
-`teams.code` (the W01C-A stable-code invariant), not the `display_name` and
-not the `team_id` UUID (see §2.5.2). Inactive teams stay in their own bucket
+the report. The chart-to-drill-down identity is the server-issued,
+namespaced `bucket_key` token (§2.5.2 namespace A:
+`team.<base64url(UTF-8(teams.code))>` for known teams, namespace
+B: the literal `unknown` for the unknown bucket) — the W05B
+chart never uses the raw `teams.code` on the wire, the
+`display_name`, or the `team_id` UUID. The namespaced token
+is built on top of the W01C-A stable-code invariant (the
+canonical `teams.code` is preserved across versions), so the
+namespaced token is itself stable for the lifetime of the
+team. Inactive teams stay in their own bucket
 and are labelled " (Đã ngừng hoạt động)"; the unknown bucket is reserved
 for the legacy aggregate and Direct Entry defensive null / orphan only
 (see §2.3.1 / §2.3.2). The W05B implementation adds **exactly one**
@@ -158,30 +166,42 @@ The BoD view (`mode.kind === "all"`) renders a new card set in the
   count desc, then by `display` ascending (stable Vietnamese collation), and
   are emitted alongside the existing per-team detail list (so the chart and
   the list share a single bucketing function).
-- **Buckets are keyed by an opaque, stable `bucket_key` token.** The chart
-  bucket identity is `bucket_key` (NOT the `display_name`, NOT the
-  `team_id` UUID). `bucket_key` is a sanitized token the server maps
-  one-to-one to the team fact rows (see §2.5.2 for the contract). The
-  UI never infers `bucket_key` from display text; the server is the
-  single source of truth. The `display` field on the bucket is a
-  current best-effort display label, joined from `teams.display_name`
-  at query time; if the team is `active = false`, the display label
-  is suffixed with " (Đã ngừng hoạt động)" (the chart card and the
-  drill-down title render the same suffix; see §2.3.1 for the
-  attribution rule and §2.5.2 for the bucket_key contract). A fact
-  whose `team_id` matches no row in `public.teams` (orphan) or whose
-  `team_id IS NULL` falls into the "Không xác định" bucket, which is
-  the **only** bucket whose `bucket_key` is a sentinel, not a team
-  token (see §2.3.1 and §2.5.2).
-- A "Không xác định" bucket MUST exist whenever any Direct Entry fact
-  in the result has no resolvable team (see §2.3.1) and MUST be
-  displayed last, with the same shared display rules as
-  `p1-reporting.ts::selectDisplay`. The legacy aggregate contributes
-  fully to this bucket because it has no team column (see §1.1). The
-  bucket's label is fixed: "Không xác định". The bucket's
-  `bucket_key` is the literal sentinel `__unknown__` (see §2.5.2 for
-  the rule that the server is the only authority that maps a
-  sentinel to a set of rows).
+- **Buckets are keyed by an opaque, stable, server-owned
+  `bucket_key` token with two disjoint namespaces.** The chart
+  bucket identity is `bucket_key` (NOT the `display_name`, NOT
+  the `team_id` UUID, NOT the raw `teams.code`). The token has
+  two namespaces: known-team tokens are
+  `team.<base64url_no_padding(UTF-8(teams.code))>` (namespace A);
+  the unknown literal is the bare `unknown` (namespace B). The
+  two namespaces are disjoint by construction, so a team whose
+  `code` is the literal `__unknown__` (or any other string) is
+  always a known-team token, never collides with the unknown
+  literal. `bucket_key` is a sanitized routing key the server
+  maps one-to-one to the team fact rows (see §2.5.2 for the
+  full contract and the wire-format rules). The UI never
+  infers `bucket_key` from display text, never decodes it, and
+  never shows it to the user; the server is the single source
+  of truth. The `display` field on the bucket is a current
+  best-effort display label, joined from `teams.display_name`
+  at query time; if the team is `active = false`, the display
+  label is suffixed with " (Đã ngừng hoạt động)" (the chart
+  card and the drill-down title render the same suffix; see
+  §2.3.1 for the attribution rule and §2.5.2 for the
+  bucket_key contract). A fact whose `team_id` matches no row
+  in `public.teams` (orphan) or whose `team_id IS NULL` falls
+  into the "Không xác định" bucket, which is the **only**
+  bucket whose `bucket_key` is the unknown literal (namespace
+  B in §2.5.2), not a team token.
+- A "Không xác định" bucket MUST exist whenever any Direct
+  Entry fact in the result has no resolvable team (see §2.3.1)
+  and MUST be displayed last, with the same shared display
+  rules as `p1-reporting.ts::selectDisplay`. The legacy
+  aggregate contributes fully to this bucket because it has
+  no team column (see §1.1). The bucket's label is fixed:
+  "Không xác định". The bucket's `bucket_key` is the literal
+  unknown sentinel `"unknown"` (see §2.5.2 for the rule that
+  the server is the only authority that maps a sentinel to a
+  set of rows).
 - Every `recruitedCount` shown in the team chart equals the
   corresponding bucketed count in the read-model. The team chart and
   the total `recruitedTotal` agree (the BoD total is the sum of all
@@ -224,7 +244,8 @@ token, NOT a display text, NOT a UUID).
   snapshot; this is locked by §2.2.1 below).
 - A row whose `team_id` no longer matches any row in `teams` (orphan) is
   bucketed as "Không xác định" with the sentinel `bucket_key =
-  "__unknown__"`, not silently dropped and not re-attributed to a current
+  "unknown"` (the namespaced unknown literal from §2.5.2), not
+  silently dropped and not re-attributed to a current
   recruiter's team. An inactive team is **not** an orphan (see §2.3.1 for
   the inactive-team rule and the " (Đã ngừng hoạt động)" suffix).
 
@@ -278,17 +299,23 @@ future toggle is **out of scope** and is a deferred extension (see
 `display_name`).
 
 **§2.3.2 (locked — Unknown is the only sentinel bucket):** the only
-sentinel `bucket_key` in W05B is the literal string `"__unknown__"`,
-reserved for the unknown bucket. No other sentinel is allowed; the
-`__system_vendor__` reserved team identity is a `teams.code` (a real
-team) and is treated like any other team in the chart (its bucket
-shows up if it has facts in the result). The unknown bucket is
-emitted **only** if the unknown bucket's count is greater than zero;
-if no fact falls into it, the chart and the totals still reconcile
-(`total = sum(knownTeamBuckets)`) and the unknown bucket is omitted
-from the chart visually. The drill-down panel for the unknown bucket
-is reachable only via the chart bucket (or, in a no-facts-fall-into-
-it case, not at all).
+sentinel `bucket_key` in W05B is the literal string `"unknown"`
+(namespace B in §2.5.2), reserved for the unknown bucket. No
+other sentinel is allowed; the `__system_vendor__` reserved team
+identity is a `teams.code` (a real team) and is treated like any
+other team in the chart (its bucket shows up as a known-team
+bucket if it has facts in the result, with a token of the form
+`team.<base64url("__system_vendor__")>`). The legacy R1 sentinel
+`__unknown__` is **not** a valid token in W05B and the server
+rejects it (the `__` decoration is a stale alias; the namespace
+contract locks the unknown literal as the bare `unknown` with no
+underscores). The unknown bucket is emitted **only** if the
+unknown bucket's count is greater than zero; if no fact falls
+into it, the chart and the totals still reconcile
+(`total = sum(knownTeamBuckets)`) and the unknown bucket is
+omitted from the chart visually. The drill-down panel for the
+unknown bucket is reachable only via the chart bucket (or, in a
+no-facts-fall-into-it case, not at all).
 
 **§2.3.3 (locked — legacy aggregate total in the unknown panel):**
 the unknown drill-down panel is split into two clearly-labelled
@@ -350,18 +377,23 @@ W05B adds a server-side **team drill-down** endpoint. The endpoint is
 reached from the BoD view (the BoD team chart is interactive; clicking
 or focusing a team bucket opens the drill-down). The drill-down contract:
 
-- **Request:** `{ bucket_key: string, from?: string, to?: string, project?:
-  string, recruiter?: string, provider?: string, employment?: string,
-  cursor?: string, limit?: number }`. `bucket_key` is the **opaque,
-  stable, server-issued token** the chart emits for the team bucket;
-  see §2.5.2 for the contract. The literal sentinel `bucket_key =
-  "__unknown__"` is also accepted and renders the unknown bucket's
-  contents (see §2.5.4 for the unknown panel split). `bucket_key` is
-  **not** a `team_id` UUID, **not** a `recruiter_id`, **not** a
-  `scope_team_id`, **not** a `display_name`, and **not** any
-  user-inferable text. The server is the **single** authority that
-  maps a `bucket_key` to a fact-row set; the UI never tries to
-  decode or guess it.
+- **Request:** `{ bucket_key: string, from?: string, to?: string,
+  project?: string, recruiter?: string, provider?: string,
+  employment?: string, cursor?: string, limit?: number }`.
+  `bucket_key` is the **opaque, stable, server-issued,
+  namespaced token** the chart emits for the team bucket; see
+  §2.5.2 for the contract (namespace A: `team.<base64url>`;
+  namespace B: literal `unknown`). The unknown literal
+  `bucket_key = "unknown"` is also accepted and renders the
+  unknown bucket's contents (see §2.5.4 for the unknown panel
+  split). The R1 sentinel `__unknown__` is **not** a valid
+  token in W05B and is rejected as `INVALID_FILTER` (§2.5.2).
+  `bucket_key` is **not** a `team_id` UUID, **not** a
+  `recruiter_id`, **not** a `scope_team_id`, **not** a
+  `display_name`, **not** the raw `teams.code`, and **not**
+  any user-inferable text. The server is the **single**
+  authority that maps a `bucket_key` to a fact-row set; the UI
+  never tries to decode or guess it.
 - **Scope is BoD-only:** the endpoint is reachable only when the
   DB-resolved audience is `all`. A `team` or `own` actor who calls the
   endpoint with a `bucket_key` for any team is rejected with the
@@ -423,46 +455,128 @@ need additional pagination, a different row shape (aggregated rows, not
 fact rows) and a different sorting contract. The survey records this as
 a deferred extension (§6) and not as part of the locked contract.
 
-**§2.5.2 (locked — `bucket_key` contract, no UUID, no display text):**
-`bucket_key` is the sanitized identity the chart emits for each team
-bucket and the drill-down accepts back. The rules are:
-- `bucket_key` is **opaque** to the UI and the wire format: it is
-  a `text` token the server derives and the UI passes verbatim. The
-  UI never decodes it, never infers it from display text, and never
-  shows it to the user as a "code" or "id" (the user sees only
-  `display`).
-- `bucket_key` is **stable** across reads: the same team yields the
-  same `bucket_key` in the chart, in the drill-down response, and
-  in any future paginated request. The current derivation is
-  `bucket_key = teams.code` for every team row (`teams.code` is
+**§2.5.2 (locked — `bucket_key` contract, namespaced token, no UUID, no
+display text, no raw `teams.code`):** `bucket_key` is the
+sanitized identity the chart emits for each team bucket and the
+drill-down accepts back. The contract has two disjoint namespaces
+so that no known-team token can ever equal the unknown literal
+(even when a team's `code` happens to be the string
+`__unknown__` or `unknown`). The two namespaces are:
+
+- **Namespace A — known-team token:**
+  `bucket_key = "team." || base64url_no_padding(UTF-8(teams.code))`,
+  where `base64url_no_padding` is the RFC 4648 §5 alphabet
+  (`A-Z a-z 0-9 - _`) without the `=` padding. The literal prefix
+  `team.` is a **namespace separator**, not a name; it does not
+  appear in any `teams.code`. The payload is the canonical
+  `teams.code` (the same value stored on the team's row, which is
   `unique` and has a `length(btrim(code)) between 1 and 128`
-  check; the W01C-A append-only revision ledger
+  per `p1_6_direct_entry_foundation.sql` lines 22–26; the W01C-A
+  append-only revision ledger
   `p3_1_w01c_a_team_catalog.sql` keeps `code` stable for a team
-  across versions). The server validates that the requested
-  `bucket_key` matches exactly one team row in `public.teams` (a
-  `bucket_key` that matches zero or more than one team is rejected
-  as `INVALID_FILTER` — the reserved `__system_vendor__` is a real
-  `code` and is treated like any other team). The literal
-  `__unknown__` is the only sentinel `bucket_key`; the server maps
-  it to the unknown bucket's contents (see §2.5.4) and rejects
-  every other sentinel.
-- `bucket_key` is **sanitized** for the wire: the server rejects
-  any `bucket_key` that is not a single non-empty line of printable
-  text matching `^[A-Za-z0-9_]+$` with `1 ≤ length ≤ 128`. This
-  matches the `teams.code` check (after the `btrim`) and prevents
-  injection of display-text look-alikes. A `bucket_key` that
-  passes the wire check but is not a real `teams.code` (and is not
-  the `__unknown__` sentinel) is rejected as `INVALID_FILTER`.
+  across versions). The `team.` prefix and the base64url
+  encoding together guarantee:
+  - no known-team token starts with the unknown literal
+    `unknown` (every known-team token starts with `team.`);
+  - no two distinct teams ever produce the same token
+    (`base64url` is bijective, `teams.code` is unique, and the
+    canonical `teams.code` is preserved across versions);
+  - a team whose `code` is the literal string `__unknown__`
+    (or `unknown`, or any other string) produces a known-team
+    token of the form `team.<base64url("__unknown__")>`, which
+    is a **known-team** token, not the unknown literal.
+- **Namespace B — unknown literal:** the literal string
+  `unknown` (no prefix, no payload, no decoration). This is the
+  **only** sentinel. Every other sentinel is rejected. The
+  literal `__unknown__` is **not** a valid token in W05B; it is
+  a stale alias from R1 and the server rejects it. The unknown
+  literal is the only token that maps to the unknown bucket's
+  contents (see §2.5.4); every other token is a known-team
+  token and must resolve to exactly one row in `public.teams`.
+
+The token rules in detail:
+
+- `bucket_key` is **opaque** to the UI and the wire format: it
+  is a `text` token the server derives and the UI passes
+  verbatim. The UI never decodes it, never infers it from
+  display text, and never shows it to the user as a "code" or
+  "id" (the user sees only `display`). The chart never renders
+  `bucket_key` to the user; the user sees only `display` (with
+  the " (Đã ngừng hoạt động)" suffix for inactive teams).
+- `bucket_key` is **stable** across reads: the same team yields
+  the same `bucket_key` in the chart, in the drill-down
+  response, and in any future paginated request. The derivation
+  is the one in namespace A above; the W01C-A append-only
+  revision ledger locks `code` for a team across versions, so
+  the token is stable for the lifetime of the team.
+- `bucket_key` is **non-colliding with the unknown literal**
+  by construction: every known-team token starts with `team.`;
+  the unknown literal is the bare `unknown`. There is no
+  string that is both a known-team token and the unknown
+  literal. There is no `teams.code` whose token equals
+  `unknown`. There is no `teams.code` whose token starts with
+  `unknown`.
+- `bucket_key` is **sanitized** for the wire: the server
+  validates the wire format BEFORE any decode. The wire
+  validation accepts exactly two forms:
+  - unknown literal: `bucket_key = "unknown"` (length 7, no
+    other string);
+  - known-team token: `bucket_key` matches the regex
+    `^team\.[A-Za-z0-9_\-]+$` with `7 ≤ length ≤ 256`. The
+    lower bound 7 covers `team.` (5 chars) + at least 2
+    base64url chars (the minimum payload that decodes to a
+    1-byte `teams.code` whose `btrim` length satisfies the
+    schema's 1-128 check; the server validates the decoded
+    payload separately — see below). The upper bound 256
+    covers the worst case: a 128-byte `teams.code` encodes to
+    `ceil(128/3)*4 = 172` base64url chars, plus the 5-char
+    `team.` prefix is 177. 256 leaves comfortable headroom
+    while still bounding the wire size and rejecting
+    attacker-controlled padding / overloads.
+
+  Any `bucket_key` that does not match one of those two
+  forms — including the stale R1 sentinel `__unknown__`,
+  the literal `team.` with no payload, the literal `team`
+  with no `.`, a token containing whitespace or punctuation
+  outside the base64url alphabet, or a token longer than 256
+  — is rejected as `INVALID_FILTER`. There is no fallback
+  and no 404 leak.
+- `bucket_key` is **decoded and re-validated server-side** for
+  known-team tokens. After the wire check, the server strips
+  the `team.` prefix, base64url-decodes the payload to bytes,
+  interprets the bytes as UTF-8, and runs the same canonical
+  `teams.code` check the schema runs:
+  `length(btrim(code)) between 1 and 128`. The decoded
+  payload is then looked up against `public.teams.code` (the
+  `unique` index). A known-team token whose decoded payload
+  is empty, contains leading or trailing whitespace, exceeds
+  128 bytes, is not valid UTF-8, or matches zero or more than
+  one `public.teams` row is rejected as `INVALID_FILTER`. The
+  server test pins each of these rejections.
 - `bucket_key` is **never** the `team_id` UUID, **never** the
-  `display_name`, and **never** the `recruiter_key` /
-  `project_key` / `scope_team_id` / `auth_subject` / `app_user_id`.
-  The `bucket_key` is the chart ↔ drill-down token only; the
-  read-model pins this rule.
-- `bucket_key` is the only field the chart emits to identify a
-  bucket. The chart's bucket shape is
-  `{ bucket_key: string, display: string, recruitedCount: number }`
-  (additive on the BoD team's response). The drill-down response
-  echoes `bucket: { key: string, display: string }` round-trip.
+  raw `teams.code`, **never** the `display_name`, and **never**
+  any of `recruiter_key` / `project_key` / `scope_team_id` /
+  `auth_subject` / `app_user_id`. The drill-down response
+  **row** does not carry `bucket_key`, `team_id`, `team_code`,
+  `recruiter_key`, `project_key`, or any other internal team
+  identifier either; the team identity is implicit in the
+  request's `bucket_key` (see §2.5.3) and the response's
+  top-level `bucket.key` echoes the request's `bucket_key`
+  (round-trip). The read-model pins this rule.
+- `bucket_key` is the only field the chart emits to identify
+  a bucket. The chart's bucket shape is
+  `{ bucket_key: string, display: string, recruitedCount:
+  number }` (additive on the BoD team's response). The
+  drill-down response echoes `bucket: { key: string, display:
+  string }` round-trip; the echoed `key` is the request's
+  `bucket_key` (the namespaced token, not the raw
+  `teams.code`).
+- `bucket_key` is a **routing key, not an authority token**.
+  The drill-down RPC re-resolves the audience via
+  `direct_entry_reporting_resolve_audience` (§2.4) and
+  validates the `bucket_key` server-side. The token does not
+  carry any capability, grant, audience, or PII claim; it is
+  a lookup handle.
 
 **§2.5.3 (locked — drill-down row shape, no internal team id):** the drill-down response row carries exactly the
 seven sanitized fields listed in §2.5. The server test rejects any
@@ -475,7 +589,7 @@ identifier on each row to render the drill-down; the chart's
 `bucket.display` and the panel title already identify the team.
 
 **§2.5.4 (locked — unknown panel split, legacy aggregate honest):**
-when the user opens the unknown bucket (`bucket_key = "__unknown__"`),
+when the user opens the unknown bucket (`bucket_key = "unknown"`),
 the panel renders two clearly-labelled sections in this order:
 - **Section A: legacy aggregate total** — a single card that
   shows one number (`sum(recruited_count)` over the legacy aggregate
@@ -607,11 +721,11 @@ display text, **not** a UUID.
 | BoD team chart bucket count | Renders per-team buckets (active + inactive, inactive labelled " (Đã ngừng hoạt động)") plus "Không xác định" (only when unknown bucket count > 0) | Never reached | Never reached | Never reached |
 | BoD team chart total vs. `recruitedTotal` | Equal (`recruitedTotal = sum(perTeamBuckets) + unknownBucketCount`; server test pin) | Never reached | Never reached | Never reached |
 | BoD team chart bucket identity | Each bucket carries `{ bucket_key, display, recruitedCount }`; UI never infers `bucket_key` from `display` | n/a | n/a | n/a |
-| Team drill-down endpoint (new RPC) | Renders sanitized rows for the requested `bucket_key` (or the unknown panel for `__unknown__`); respects filter parser; respects bounded pagination | Rejected with `REPORTING_QUERY_FAILED` (the caller's audience is `team`; no leak, no 404) | Rejected with `REPORTING_QUERY_FAILED` (same reason) | Rejected with `REPORTING_QUERY_FAILED` (audience is null / not `all`) |
-| Team drill-down row shape | Only `business_date, project_display, recruiter_display, provider_type_display, employment_type_display, recruited_count, first_work_date` (no `entry_id`, no `team_id`, no `team_code`, no `bucket_key`, no internal id) | n/a | n/a | n/a |
+| Team drill-down endpoint (new RPC) | Renders sanitized rows for the requested `bucket_key` (or the unknown panel for the `unknown` literal); respects filter parser; respects bounded pagination | Rejected with `REPORTING_QUERY_FAILED` (the caller's audience is `team`; no leak, no 404) | Rejected with `REPORTING_QUERY_FAILED` (same reason) | Rejected with `REPORTING_QUERY_FAILED` (audience is null / not `all`) |
+| Team drill-down row shape | Only `business_date, project_display, recruiter_display, provider_type_display, employment_type_display, recruited_count, first_work_date` (no `entry_id`, no `team_id`, no `team_code`, no `bucket_key`, no `teams.code`, no internal id) | n/a | n/a | n/a |
 | Team drill-down `limit` | Default 25, max 100; >100 → `INVALID_FILTER`; `limit = 0` → `INVALID_FILTER`; non-numeric `limit` → `INVALID_FILTER` | n/a | n/a | n/a |
 | Team drill-down `cursor` | Opaque server string; out-of-range returns empty page + `nextCursor: null`; undecodable `cursor` → `INVALID_FILTER` | n/a | n/a | n/a |
-| Team drill-down `bucket_key` validation | Matches `^[A-Za-z0-9_]+$` and `1 ≤ length ≤ 128`; exactly one row in `public.teams`; or the literal sentinel `__unknown__`. Any other value → `INVALID_FILTER` (no 404 leak) | n/a | n/a | n/a |
+| Team drill-down `bucket_key` validation | Wire check (BEFORE any decode) accepts exactly two forms: the unknown literal `"unknown"` (length 7), OR a known-team token matching `^team\.[A-Za-z0-9_\-]+$` with `7 ≤ length ≤ 256`. For known-team tokens the server then strips the `team.` prefix, base64url-decodes the payload, validates the canonical `teams.code` check (`length(btrim(code)) between 1 and 128`, valid UTF-8), and resolves the payload against `public.teams.code` (must match exactly one row). Anything else — including the R1 stale `__unknown__`, the literal `team.` with no payload, the literal `team` with no `.`, whitespace, punctuation outside the base64url alphabet, a payload that decodes to a non-`teams.code` string, or a payload that matches zero or more than one `public.teams` row — is rejected as `INVALID_FILTER` (no 404 leak). The drill-down RPC is also `dbKind === "all"` gated; a `team` / `own` / anonymous actor is rejected with `REPORTING_QUERY_FAILED` (see §2.5). | n/a | n/a | n/a |
 | Filter outside the W05A parser | Rejected as `INVALID_FILTER` | n/a | n/a | n/a |
 | Unknown bucket contributors | Legacy aggregate + Direct Entry defensive null / orphan only (see §2.3 / §2.3.3) | n/a | n/a | n/a |
 | Inactive-team rows in BoD team chart | Render under the team's own bucket with display label suffixed " (Đã ngừng hoạt động)"; `bucket_key` and `recruitedCount` unchanged (see §2.3.1) | n/a | n/a | n/a |
@@ -649,10 +763,11 @@ The T0 acceptance gates are:
   anomaly row list). The legacy aggregate total equals (a) and
   matches the BoD `cutover` date and the `business_date` range.
 - **E4: drill-down happy path.** A BoD request with a valid
-  `bucket_key` (a real `teams.code` or `__unknown__`), a valid
-  filter set and `limit=25` returns the first page in
-  `business_date` / `recruiter_display` / `entry_id` order, the
-  `nextCursor` matches the next page, the second page returns the
+  `bucket_key` (a known-team token in namespace A, or the
+  `unknown` literal in namespace B), a valid filter set and
+  `limit=25` returns the first page in `business_date` /
+  `recruiter_display` / `entry_id` order, the `nextCursor`
+  matches the next page, the second page returns the
   remainder, and the `nextCursor` is null on the last page. The
   total returned equals the team's per-team total for the same
   filter set. The unknown panel returns the legacy aggregate
@@ -685,18 +800,25 @@ The T0 acceptance gates are:
   drill-down fail with `REPORTING_QUERY_FAILED` and the BoD team
   chart fail with the W06C error mode. The test pins this in both
   directions.
-- **E11: `bucket_key` is opaque and stable.** A bucket for team
-  `T1` is keyed by `T1.code` in both the chart and the
-  drill-down response. The test seeds a team, asserts the chart's
-  `bucket_key` equals `T1.code`, asserts the drill-down's
-  `bucket.key` round-trips, then renames the team's
-  `display_name` and re-asserts (the `bucket_key` is unchanged).
+- **E11: `bucket_key` is opaque, stable and namespaced.** A
+  bucket for team `T1` is keyed in namespace A:
+  `bucket_key = "team." || base64url_no_padding(UTF-8(T1.code))`
+  in both the chart and the drill-down response. The test seeds
+  a team, asserts the chart's `bucket_key` matches the
+  `team.<base64url(T1.code)>` form, asserts the drill-down's
+  `bucket.key` round-trips the same namespaced token, then
+  renames the team's `display_name` and re-asserts (the
+  `bucket_key` is unchanged — `display_name` is not part of
+  the token derivation). Renaming the team's `code` is not
+  allowed by the W01C-A append-only revision ledger, so it is
+  not tested here.
 - **E12: inactive team stays in its own bucket.** A team is
   deactivated (`active = false`) and the BoD chart is read again.
-  The team's bucket still appears, with `bucket_key = T.code`
-  unchanged, `display` suffixed " (Đã ngừng hoạt động)", and
-  `recruitedCount` unchanged. The total of all buckets still
-  equals `recruitedTotal`.
+  The team's bucket still appears, with `bucket_key` unchanged
+  (the namespaced token derived from `T.code`), `display`
+  suffixed " (Đã ngừng hoạt động)", and `recruitedCount`
+  unchanged. The total of all buckets still equals
+  `recruitedTotal`.
 - **E13: orphan and defensive null go to unknown.** A Direct
   Entry row whose `team_id` is hard-orphaned (no row in `teams`)
   falls into the unknown bucket. The unknown panel's section B
@@ -720,6 +842,69 @@ The T0 acceptance gates are:
   earlier migrations stay byte-identical, and the new migration's
   body is the additive in-place view projection + additive RPC
   keys + new `direct_entry_reporting_team_drill_down` RPC.
+- **E16: `bucket_key` is in the namespaced form, never the raw
+  `teams.code` on the wire.** The chart's `bucket_key` for a
+  known team is always `team.<base64url(teams.code)>`. A test
+  reads the BoD team chart for a team with a known `code` and
+  asserts: (a) `bucket_key` matches `^team\.[A-Za-z0-9_\-]+$`,
+  (b) `bucket_key` does **not** equal the raw `teams.code`,
+  (c) `bucket_key` does **not** start with `unknown`, (d) the
+  payload portion decodes (base64url) to the canonical
+  `teams.code` (UTF-8, `btrim` length 1-128). The drill-down
+  response's `bucket.key` is the same namespaced token (round-
+  trip). The drill-down row does not carry `bucket_key` (the
+  chart's bucket identity is implicit in the request's
+  `bucket_key`).
+- **E17: a team whose `code = "__unknown__"` produces its own
+  known-team bucket, never the unknown literal.** A test seeds
+  a real team `T_unknown_with_sentinel_code` with
+  `code = "__unknown__"` (the schema reserves only
+  `__system_vendor__`, so this is a legal `code` per
+  `p1_6_direct_entry_foundation.sql`), seeds one Direct Entry
+  fact whose `team_id` resolves to that team, and reads the BoD
+  team chart. The test asserts: (a) the chart emits a
+  known-team bucket with `bucket_key = "team." ||
+  base64url("__unknown__") = "team.X191bmtub3duX18"`, (b) the
+  chart does **not** emit a bucket with `bucket_key = "unknown"`
+  (the unknown literal) just because of this row, (c) the
+  chart's totals still reconcile (the team's contribution
+  stays in the team's bucket), (d) opening the drill-down for
+  that team resolves to the team's rows (not the legacy
+  aggregate or the defensive null / orphan list). The test
+  also asserts that a chart emitted while this team has zero
+  facts and the unknown bucket has facts still emits the
+  unknown bucket as the bare `unknown` literal (no `team.`
+  prefix). This is the non-collision invariant from §2.5.2.
+- **E18: a team whose `code = "unknown"` (no underscores)
+  also produces its own known-team bucket, never the unknown
+  literal.** A test seeds a real team `T_unknown_no_underscore`
+  with `code = "unknown"` (legal per the schema; length 7 ≤
+  128), seeds one Direct Entry fact whose `team_id` resolves to
+  that team, and reads the BoD team chart. The test asserts:
+  (a) the chart emits a known-team bucket with
+  `bucket_key = "team." || base64url("unknown") =
+  "team.dW5rbm93bg"`, (b) the chart does **not** emit a bucket
+  with `bucket_key = "unknown"`, (c) the team's contribution
+  stays in the team's bucket (not in the unknown bucket). The
+  unknown bucket, if it has facts (legacy aggregate or
+  defensive null / orphan), still emits `bucket_key =
+  "unknown"` (the literal). Two distinct namespaces coexist
+  cleanly.
+- **E19: the unknown bucket uses the bare `unknown` literal,
+  never the stale R1 `__unknown__` sentinel.** A test seeds a
+  legacy aggregate row (no `team_id`) and reads the BoD team
+  chart. The test asserts: (a) the chart emits a bucket with
+  `bucket_key = "unknown"` (length 7, no `team.` prefix, no
+  underscores), (b) the chart does **not** emit a bucket with
+  `bucket_key = "__unknown__"` (length 11, R1 sentinel). A
+  second test calls the drill-down with `bucket_key =
+  "__unknown__"` and asserts the response is
+  `INVALID_FILTER` (the R1 sentinel is rejected; see §2.5.2
+  wire check and §2.5 server validation). A third test calls
+  the drill-down with `bucket_key = "unknown"` and asserts the
+  unknown panel renders Section A (legacy aggregate total) +
+  Section B (defensive null / orphan row list, empty in this
+  fixture).
 
 **Mutation cases** (each makes the corresponding E test fail, then
 is restored to byte-equivalent code; the migration file hash stays
@@ -737,8 +922,15 @@ unchanged):
 | Render the BoD team chart for a `team` audience | E9, E10 |
 | Remove the legacy aggregate from the unknown bucket | E3, E14 |
 | Compute the team bucket on the client (the W05A page-test pin) | E1 |
-| Use `display_name` as `bucket_key` (or return `display_name` as `bucket_key` to the client) | E11 |
-| Reject only the `__unknown__` sentinel at `bucket_key` validation while accepting any other string | E11 |
+| Use `display_name` as `bucket_key` (or return `display_name` as `bucket_key` to the client) | E11, E16 |
+| Reject only the `__unknown__` sentinel at `bucket_key` validation while accepting any other string | E11, E16, E17, E19 |
+| Revert the chart to `bucket_key = teams.code` (drop the `team.` prefix and base64url encoding) | E11, E16, E17, E18 |
+| Revert the unknown literal to the R1 sentinel `__unknown__` (or to any other non-`unknown` literal) | E17, E18, E19 |
+| Accept a known-team token whose decoded payload does not match exactly one `public.teams` row (e.g. `team.<base64url("not_a_team")>`) | E16 |
+| Accept a known-team token whose decoded payload fails the canonical `teams.code` check (empty, leading / trailing whitespace, length > 128, not valid UTF-8) | E16 |
+| Accept the R1 stale sentinel `__unknown__` at the wire check (no `team.` prefix, has `__` decoration) | E19 |
+| Accept a known-team token at the unknown-bucket drill-down (e.g. `bucket_key = "team.<base64url(...)">` mapped to the legacy aggregate card) | E17, E18, E19 |
+| Emit the raw `teams.code`, the `team_id` UUID, or any other internal id on a drill-down row | E6, E16 |
 | Bucket an inactive team into "Không xác định" | E12 |
 | Render the legacy aggregate as entry-level rows in the unknown panel | E14 |
 | Skip the unknown panel section A (legacy aggregate total) and only show anomaly rows | E3, E14 |
@@ -822,24 +1014,31 @@ approves the contract above.
     revoked).
 - Extend the read-model in `p1-reporting.ts` to compute
   `byTeam` from the same scoped-fact array. `byTeam` is keyed
-  by `bucket_key` (= `teams.code` for known teams; the literal
-  `__unknown__` for the unknown bucket). The bucket's `display`
-  is the joined `teams.display_name`, suffixed with " (Đã ngừng
-  hoạt động)" when `teams.active = false`. The unknown sentinel
-  is used for null / orphan Direct Entry rows; the legacy
-  aggregate contributes to the same unknown bucket. The
-  `recruitedTotal` invariant (`total = sum(byTeam)`) is a
-  server test pin.
+  by `bucket_key`, derived per §2.5.2 namespace A
+  (`team.<base64url_no_padding(UTF-8(teams.code))>`) for known
+  teams and the literal `unknown` (namespace B) for the unknown
+  bucket. The bucket's `display` is the joined
+  `teams.display_name`, suffixed with " (Đã ngừng hoạt động)"
+  when `teams.active = false`. The unknown literal is used
+  for null / orphan Direct Entry rows; the legacy aggregate
+  contributes to the same unknown bucket. The `recruitedTotal`
+  invariant (`total = sum(byTeam)`) is a server test pin. The
+  read-model never emits the raw `teams.code` as
+  `bucket_key`, never emits a `team_id` UUID as `bucket_key`,
+  and never emits the R1 stale `__unknown__` sentinel.
 - Add a new server endpoint
   `fetchCutoverTeamDrillDown(params, actor)` in
   `p2-w04a-reporting-server.ts` (or a new sibling) that calls
   the new RPC, applies the same filter parser, applies the
   same `dbKind === "all"` gate, validates `bucket_key` per
-  §2.5.2 (the wire check, then the one-row-in-`teams` check;
-  the `__unknown__` sentinel bypasses the row check and maps
-  to the unknown bucket), validates `limit` (default 25, max
-  100), validates `cursor` (server-issued opaque string; an
-  undecodable `cursor` is rejected as `INVALID_FILTER`), and
+  §2.5.2 (the wire check, then the base64url decode + the
+  canonical `teams.code` check + the one-row-in-`teams`
+  check; the `unknown` literal bypasses the decode / row
+  check and maps to the unknown bucket; the R1 stale
+  `__unknown__` sentinel is rejected as `INVALID_FILTER`),
+  validates `limit` (default 25, max 100), validates `cursor`
+  (server-issued opaque string; an undecodable `cursor` is
+  rejected as `INVALID_FILTER`), and
   returns the sanitized shape. The existing
   `fetchCutoverReporting` is unchanged. The unknown panel
   response carries both sections (§2.5.4): the non-paginated
@@ -864,9 +1063,10 @@ approves the contract above.
     re-check (E5, E10), the filter parity (E8), the unknown
     bucket and panel split (E3, E13, E14), the historical
     attribution rule (E2), the `bucket_key` validation
-    (E11), the inactive-team rule (E12), and the row-shape
-    rejection of `team_id` / `team_code` / `bucket_key` on
-    the response row (E6);
+    (E11, E16, E19), the inactive-team rule (E12), the row-
+    shape rejection of `team_id` / `team_code` / `bucket_key`
+    on the response row (E6, E16), and the
+    `code = "__unknown__"` non-collision invariant (E17);
   - add `p3-w05b-by-team.test.mjs` that pins the `byTeam`
     aggregate against the `recruitedTotal` invariant (E1) and
     the inactive-team label suffix (E12);
@@ -985,14 +1185,27 @@ approves the contract above.
 - **R5 — unbounded drill-down.** Risk: a developer removes the
   `limit` cap. Mitigation: §2.5 + §2.7 lock the cap at 100; E7 / M6
   fail closed.
-- **R6 — `bucket_key` instability.** Risk: a developer uses
-  `display_name` as `bucket_key` (display name can be renamed or
-  duplicated) or returns `team_id` as `bucket_key` (UUID leaks).
-  Mitigation: §2.5.2 locks the contract: `bucket_key = teams.code`
-  for known teams and `__unknown__` for the unknown bucket; the
-  server validates the wire format and the one-row-in-`teams`
-  constraint; the chart never shows `bucket_key` to the user.
-  E11 / M11 / M12 fail closed.
+- **R6 — `bucket_key` instability or collision.** Risk: a
+  developer uses `display_name` as `bucket_key` (display name
+  can be renamed or duplicated), returns `team_id` as
+  `bucket_key` (UUID leaks), uses the raw `teams.code` as
+  `bucket_key` (collides with the unknown literal when a real
+  team's `code` happens to be `__unknown__` or `unknown`),
+  or reverts the unknown literal to the R1 sentinel
+  `__unknown__` (collides with a real team's code). Mitigation:
+  §2.5.2 locks the namespaced contract — known-team tokens are
+  `team.<base64url(UTF-8(teams.code))>` (namespace A), the
+  unknown literal is the bare `unknown` (namespace B); the
+  two namespaces are disjoint by construction; the server
+  validates the wire format (the unknown literal, or a known-
+  team token matching `^team\.[A-Za-z0-9_\-]+$` with
+  `7 ≤ length ≤ 256`), then base64url-decodes the payload,
+  validates the canonical `teams.code` check, and resolves
+  the payload against `public.teams.code` (must match exactly
+  one row); the chart never shows `bucket_key` to the user;
+  the R1 stale `__unknown__` sentinel is rejected. E11, E16,
+  E17, E18, E19 / M11, M12, the new M17, M18, M19, M20 fail
+  closed.
 - **R7 — inactive team misclassified as Unknown.** Risk: a
   developer drops inactive teams into the unknown bucket. Mitigation:
   §2.3.1 + §2.7 lock the rule: an inactive team stays in its own
@@ -1022,15 +1235,24 @@ approves the contract above.
   chart.** Risk: the W06C dispatch regresses. Mitigation: §2.4 +
   E9 + M8 pin "card is rendered only inside the BoD branch". The
   W06C dispatch is unchanged in W05B.
-- **R12 — `bucket_key` validation is too loose.** Risk: a
-  developer accepts any string at the `bucket_key` wire check and
-  lets the server `JOIN teams ON teams.code = p_bucket_key` match
-  a row only by accident, leaking the row's `team_id` to the
-  wire. Mitigation: §2.5.2 + §2.7 lock the wire check
-  (`^[A-Za-z0-9_]+$`, `1 ≤ length ≤ 128`), the one-row-in-`teams`
-  check, and the explicit "the response's `bucket.key` is the
-  request's `bucket_key` round-trip" rule. E11 / M11 / M12 fail
-  closed.
+- **R12 — `bucket_key` validation is too loose or wrong.**
+  Risk: a developer accepts any string at the `bucket_key` wire
+  check and lets the server `JOIN teams ON teams.code =
+  p_bucket_key` match a row only by accident, leaking the row's
+  `team_id` to the wire; or a developer drops the base64url
+  decode and lets a `team.<base64url("not_a_team")>` token
+  resolve to zero rows (silent drop) or to a real team whose
+  `code` decodes to the same payload (collision); or a
+  developer accepts the R1 stale `__unknown__` sentinel at the
+  wire check. Mitigation: §2.5.2 + §2.7 lock the wire check
+  (the unknown literal `"unknown"`, or a known-team token
+  matching `^team\.[A-Za-z0-9_\-]+$` with `7 ≤ length ≤ 256`),
+  the base64url decode, the canonical `teams.code` check
+  (`length(btrim(code)) between 1 and 128`, valid UTF-8), the
+  one-row-in-`public.teams` check, and the explicit rejection
+  of the R1 `__unknown__` sentinel; the response's `bucket.key`
+  is the request's `bucket_key` round-trip. E11, E16, E17, E18,
+  E19 / M11, M12, the new M17, M18, M19, M20 fail closed.
 
 ## 6. Deferred (recorded, not in W05B)
 
@@ -1088,11 +1310,20 @@ approves the contract above.
   no project_key, no team_id, no team_code, no bucket_key, no
   entry_id, no submission_id, no source_id, no drive_file_id, no
   auth subject, no app_user_id); the drill-down first dimension is
-  recruiter; `bucket_key` is the chart-to-drill-down token, derived
-  as `teams.code` for known teams and the literal `__unknown__` for
-  the unknown bucket, validated server-side via the wire check
-  (`^[A-Za-z0-9_]+$`, `1 ≤ length ≤ 128`) and the one-row-in-`teams`
-  constraint; the unknown drill-down panel is split into a
+  recruiter; `bucket_key` is the chart-to-drill-down token,
+  derived per §2.5.2 namespace A
+  (`team.<base64url_no_padding(UTF-8(teams.code))>`) for known
+  teams and the literal `unknown` (namespace B) for the
+  unknown bucket, validated server-side via the wire check
+  (the unknown literal, or a known-team token matching
+  `^team\.[A-Za-z0-9_\-]+$` with `7 ≤ length ≤ 256`), the
+  base64url decode, the canonical `teams.code` check
+  (`length(btrim(code)) between 1 and 128`, valid UTF-8), and
+  the one-row-in-`public.teams` constraint; the R1 stale
+  `__unknown__` sentinel is rejected as `INVALID_FILTER`; the
+  token is a routing key, not an authority token; the
+  drill-down RPC re-resolves audience and validates the token
+  server-side; the unknown drill-down panel is split into a
   non-paginated `legacy_aggregate_total` card (the legacy aggregate
   is never paginated as entry-level rows) and a paginated Direct
   Entry anomaly row list; the W05B implementation adds **exactly
@@ -1107,9 +1338,13 @@ approves the contract above.
   snapshot; cross-team period comparison; per-team KPI; legacy
   aggregate-grain paginated rows in the unknown panel; Owner
   browser UAT.
-- **Review pass:** this memo is `PASS_AWAITING_T0_REVIEW` (R1 of
-  the S0 survey). T0's review will check the four locked decisions
-  in §2.2, §2.3 / §2.3.1, §2.4, §2.5 / §2.5.2 / §2.5.3 / §2.5.4,
-  the acceptance / mutation plan in §2.8 (E1-E15), the migration
-  posture in §2.6 / §3, the T1B / T1A split in §4, and the risk
-  register in §5.
+- **Review pass:** this memo is
+  `P3_W05B_S0_R2_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
+  (R2 of the S0 survey; R1 locked the four prior blockers, R2
+  locks the namespaced `bucket_key` contract to remove the
+  `teams.code` vs unknown-sentinel collision). T0's review will
+  check the locked decisions in §2.1, §2.2, §2.3 / §2.3.1 /
+  §2.3.2, §2.4, §2.5 / §2.5.2 / §2.5.3 / §2.5.4, the acceptance
+  / mutation plan in §2.8 (E1-E19), the migration posture in
+  §2.6 / §3, the T1B / T1A split in §4, and the risk register
+  in §5.
