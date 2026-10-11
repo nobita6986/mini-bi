@@ -36,6 +36,7 @@ const readProjection = {
   team_id: "94000000-0000-4000-8000-000000000001",
   provider_type: "hrp",
   labor_type: "TEMPORARY",
+  labor_type_display: "Thời vụ",
   general_note: null,
   version: 1,
   scope_kind: "own",

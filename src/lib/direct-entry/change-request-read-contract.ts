@@ -34,7 +34,12 @@ export const LIST_ITEM_KEYS = [
 export const DETAIL_KEYS = [
   "request_id", "state", "version", "created_at", "items", "can_withdraw", "can_decide",
 ] as const;
-export const DETAIL_ITEM_KEYS = ["entry_id", "target_kind", "expected_version", "proposal"] as const;
+// P3.1-W02C-R2: labor_type_display la field display-only NGOAI proposal. Proposal van giu
+// nguyen key nghiep vu trong write-shape; nhan do server resolve va khong bao gio duoc nhet
+// vao proposal.
+export const DETAIL_ITEM_KEYS = [
+  "entry_id", "target_kind", "expected_version", "proposal", "labor_type_display",
+] as const;
 
 /** Cursor opaque do DB sinh: <yyyyMMddHH24MISSUS UTC>:<request_id>. */
 const CURSOR = /^[0-9]{20}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -285,6 +290,8 @@ export type ChangeRequestDetailItem = {
   target_kind: ChangeRequestTargetKind;
   expected_version: number;
   proposal: Record<string, unknown>;
+  /** Nhan cua proposal.labor_type; null khi item khong mang labor type. */
+  labor_type_display: string | null;
 };
 
 export type ChangeRequestDetail = {
@@ -306,11 +313,25 @@ function projectDetailItem(value: unknown): ChangeRequestDetailItem | null {
   if (findSensitiveProposalKey(value.proposal) !== null) return null;
   const proposal = projectReadProposal(kind, value.proposal);
   if (!proposal) return null;
+
+  // P3.1-W02C-R2: item co labor type thi BAT BUOC co nhan khong rong; item khong co
+  // labor type thi BAT BUOC la null. Lech mot trong hai => unavailable, khong render
+  // key tho va khong bao gio render mot nhan fallback.
+  const proposalLaborType = typeof proposal.labor_type === "string" && proposal.labor_type.length > 0
+    ? proposal.labor_type
+    : null;
+  if (proposalLaborType === null) {
+    if (value.labor_type_display !== null) return null;
+  } else if (typeof value.labor_type_display !== "string" ||
+      value.labor_type_display.length < 1) {
+    return null;
+  }
   return {
     entry_id: value.entry_id,
     target_kind: kind,
     expected_version: value.expected_version,
     proposal,
+    labor_type_display: value.labor_type_display,
   };
 }
 

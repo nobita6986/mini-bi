@@ -208,7 +208,8 @@ async function runReads(client, before) {
   const detail = await readChangeRequest(db, ACTORS.reviewerAll, requests.single);
   assert.equal(detail.error, null);
   assert.deepEqual([detail.data.state, detail.data.can_decide, detail.data.can_withdraw], ["PENDING", true, false]);
-  assert.deepEqual(Object.keys(detail.data.items[0]).sort(), ["entry_id", "expected_version", "proposal", "target_kind"]);
+  assert.deepEqual(Object.keys(detail.data.items[0]).sort(),
+    ["entry_id", "expected_version", "labor_type_display", "proposal", "target_kind"]);
   const multi = await readChangeRequest(db, ACTORS.reviewerAll, requests.multi);
   assert.equal(multi.data.items.length, 2);
   const hidden = await readChangeRequest(db, ACTORS.reviewer, requests.multi);

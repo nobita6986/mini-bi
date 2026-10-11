@@ -1,8 +1,64 @@
-# P3.1-W02-C R1 Labor type catalog backend, dynamic boundaries: P3_1_W02_C_R1_LABOR_TYPE_CATALOG_LOCAL_PASS_AWAITING_T0_REVIEW
+# P3.1-W02-C R2 Labor type display projection: P3_1_W02C_R2_READ_PROJECTION_LOCAL_PASS_AWAITING_T0_REVIEW
 
 Branch `feature/p3-1-w02c-labor-type-catalog`. Base `origin/main@5f41caf689dbfd52bb889744f227aa659da393db`
 -> final (this commit). Fast-forward only; no Production query/apply/deploy, no browser or UAT work, no new
 dependency, no merge of `main`.
+
+## R2 delta
+
+```
+R2_SLOT       #80  20261011130000_p3_1_w02c_r2_labor_type_display_projection.sql
+PATCHED LIVE  public.direct_entry_list_workers(uuid,uuid,text,text,uuid,text,text,integer)
+              public.direct_entry_read_projection(uuid,uuid,uuid)
+              public.direct_entry_read_change_request(uuid,uuid,uuid)
+NOT PATCHED   public.direct_entry_labor_type_options()   -- vẫn active-only
+INVENTORY     209 total / 95 service_role / 114 internal  -- KHONG doi (helper bi drop)
+```
+
+**R2 blocker.** After #79 the database owns the labor-type vocabulary, but every Direct Entry read
+surface still shipped only the RAW KEY. A client therefore had to turn `labor_type` into a label
+itself, which means a static map plus a fallback for a key the build has never seen - exactly what a
+dynamic catalog forbids. An INACTIVE labor type made it worse: it is deliberately absent from
+`direct_entry_labor_type_options()`, so the client had no label source at all for a row that already
+stores it. R2 adds ONE display-only field, `labor_type_display`, beside the `labor_type` KEY on the
+three read surfaces, resolved from `public.direct_entry_labor_types` by `labor_type_key` with **NO
+`active` filter**, so a deactivated type still renders its current label.
+
+- Migration #80 is append-only (#1-#79 byte-identical) and patches the three bodies **in place** from
+  their LIVE definitions via a new `direct_entry_w02c_r2_replace_proc_source` helper (the #79 helper is
+  dropped at the end of its own migration, so this one is new rather than reused). It is dropped again at
+  the end of #80, so the function inventory is unchanged. The migration opens and closes its own
+  transaction and ends with a self-check that reads the LIVE bodies and aborts the whole file with
+  `55000` if any of them stops projecting `labor_type_display`, stops resolving the catalog by key,
+  regains an `active` filter, regains the retired static map, or gains a fallback label - and if
+  `direct_entry_labor_type_options()` loses its `where t.active`.
+- `direct_entry_labor_type_options()` is deliberately **untouched**: an inactive type must never become
+  a new write choice. The write path, the authority model, RLS and every grant are unchanged; the DB
+  active-write guard still rejects an inactive key with `23514`.
+- Read surfaces:
+  - `direct_entry_list_workers` -> each Worker Directory row gains `labor_type_display`.
+  - `direct_entry_read_projection` -> the entry payload gains `labor_type_display`.
+  - `direct_entry_read_change_request` -> each `items` element gains `labor_type_display` as a
+    **sibling of `proposal`**, never inside it; `proposal.labor_type` stays the business key. An item
+    whose `ENTRY_FIELD` proposal carries `labor_type` must carry a non-empty label; an item without one
+    must carry exactly `null`.
+- Strict TS read contracts updated (unknown/invalid shape => `null` => `unavailable`, never a raw key
+  and never "Không xác định"): `worker-directory-contract.ts`, `write-api.ts` (`projectEntry`) and
+  `change-request-read-contract.ts`. The pass-through layers (repository/API) were already generic and
+  needed no change. No UI file was cut over: mapping key -> label in the UI is what T1A removes.
+- Lane `test:p3-1-w02c-r2-labor-type-display` (11 tests) covers the six required groups: an active type
+  choosable *and* labelled on all three surfaces; a deactivated type gone from the input catalog yet
+  still labelled everywhere; a brand-new key (`PROBATION`) reading its own live label; a rename visible
+  immediately; the change-request item shape; and the unchanged write guard (`23514`, with an identical
+  full table-count snapshot). Fail-closed rejection of a missing/empty/wrong-typed label is asserted per
+  contract.
+- Mutation evidence - every probe turned the lane RED with a byte-identical restore:
+  `M12` label lookup removed from the entry projection; `M13` display lookup wrongly narrowed to
+  `active`; `M14` Worker Directory returns the raw key as the label; `M15` Worker Directory contract
+  stops validating the label; `M16` entry contract stops validating the label; `M17` change-request item
+  contract stops validating the label. Probes `M1`-`M11` (R1) stay RED.
+- Ledger pins across `scripts/` were rebaselined for the new slot (offset, count and `.at(-N)` forms)
+  and the pinned pre-hotfix tail in `p3-1-hf-recruiter-alias-backfill.test.mjs` now lists #80.
 
 **R1 correction.** The R2 handoff below claimed end-to-end dynamic behavior the tree did not have.
 Migration #79 made the *database* dynamic, but every server and CLI boundary still accepted only the

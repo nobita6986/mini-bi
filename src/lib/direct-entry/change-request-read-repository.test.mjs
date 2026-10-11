@@ -33,7 +33,7 @@ const detailPayload = {
   version: 1,
   created_at: createdAt,
   items: [{ entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
-    proposal: { labor_type: "PERMANENT" } }],
+    proposal: { labor_type: "PERMANENT" }, labor_type_display: "Chính thức" }],
   can_withdraw: false,
   can_decide: true,
 };

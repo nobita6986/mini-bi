@@ -96,8 +96,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 79,
-    "the P3.1-HF duplicate-CCCD report #74 and the W02-B vendor lifecycle #75 append after alias hotfix #73");
+  assert.equal(totalCount, 80,
+    "the ledger carries every migration through the W02C-R2 labor-type display projection #80");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -663,8 +663,10 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // admin RPCs and the reporting display lookup). It redefines two write paths,
     // the input-catalog builder, the reporting key lookup and the actor-scoped
     // options projection in place, so the inventory grows by fifteen and nothing
-    // becomes reachable by anon/authenticated. The measured inventory is 209 total /
-    // 95 service-role / 114 internal.
+    // becomes reachable by anon/authenticated. P3.1-W02C-R2 (#80) adds no function at
+    // all: it patches three live read bodies in place through a helper that the same
+    // migration drops before it ends, so the inventory is unchanged. The measured
+    // inventory is 209 total / 95 service-role / 114 internal.
     assert.deepEqual(result.rows[0], {
       total: 209,
       service_role: 95,

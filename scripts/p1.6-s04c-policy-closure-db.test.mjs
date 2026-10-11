@@ -70,7 +70,7 @@ test("from-scratch apply covers the policy closure migration and its ACLs", asyn
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 79);
+  assert.equal(migrations.migrationNames.length, 80);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(
@@ -327,7 +327,7 @@ test("read projection tra FULL / MASKED / PRESENCE_ONLY / OMIT theo capability",
   const nonPii = await readDetail(db, POLICY_ACTORS.entryOnly, requests.nonPiiApprove);
   assert.deepEqual(nonPii.data.items[0].proposal, { worker_details: { present: true } });
   assert.deepEqual(Object.keys(nonPii.data.items[0]).sort(),
-    ["entry_id", "expected_version", "proposal", "target_kind"]);
+    ["entry_id", "expected_version", "labor_type_display", "proposal", "target_kind"]);
 
   for (const detail of [fullPayment, maskedPayment, status, fullPii, presencePii, nonPii]) {
     const text = json(detail.data);

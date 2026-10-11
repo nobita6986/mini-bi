@@ -51,6 +51,7 @@ function detailBody(overrides = {}) {
       target_kind: "ENTRY_FIELD",
       expected_version: 1,
       proposal: { labor_type: "PERMANENT" },
+      labor_type_display: "Chính thức",
     }],
     can_withdraw: false,
     can_decide: true,
@@ -149,6 +150,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
       target_kind: "PAYMENT",
       expected_version: 2,
       proposal: { state: "unknown", account_number: null, bank_id: null, account_holder_name: null },
+      labor_type_display: null,
     }],
   });
   assert.deepEqual(projectChangeRequestDetail(payment, { request_id: requestId }), payment);
@@ -158,6 +160,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     items: [{
       entry_id: entryA, target_kind: "PAYMENT", expected_version: 1,
       proposal: { state: "provided", account_number: "••••6789" },
+      labor_type_display: null,
     }],
   });
   assert.deepEqual(projectChangeRequestDetail(masked, { request_id: requestId }), masked);
@@ -165,6 +168,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     items: [{
       entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,
       proposal: { status: "ON", effective_date: "2026-10-01" },
+      labor_type_display: null,
     }],
   });
   assert.deepEqual(projectChangeRequestDetail(workStatus, { request_id: requestId }), workStatus);
@@ -173,6 +177,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
       entry_id: entryA, target_kind: "DOCUMENT", expected_version: 1,
       proposal: { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048,
         mime_type: "application/pdf" },
+      labor_type_display: null,
     }],
   });
   assert.deepEqual(projectChangeRequestDetail(document, { request_id: requestId }), document);
@@ -184,6 +189,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
       target_kind: "ENTRY_FIELD",
       expected_version: 2,
       proposal: { worker_details: { present: true } },
+      labor_type_display: null,
     }],
   });
   assert.deepEqual(projectChangeRequestDetail(presenceOnly, { request_id: requestId }), presenceOnly);

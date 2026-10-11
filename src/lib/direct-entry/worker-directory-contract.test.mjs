@@ -25,6 +25,7 @@ const row = {
   project_display: "Project A",
   first_work_date: "2026-10-01",
   labor_type: "TEMPORARY",
+  labor_type_display: "Thời vụ",
   employment_status: "ON",
   recruiter_id: recruiterId,
   recruiter_display: "Recruiter A",

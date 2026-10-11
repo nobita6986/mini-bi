@@ -104,8 +104,8 @@ async function createDatabase() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 79);
-  assert.equal(names.at(-9), MIGRATION_71);
+  assert.equal(names.length, 80);
+  assert.equal(names.at(-10), MIGRATION_71);
   const migrations = await Promise.all(names.map(async (name) => ({
     name,
     sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
@@ -119,7 +119,7 @@ async function createDatabase() {
     await db.exec(local.toString("utf8"));
   }
   const baseline = await inventory(db);
-  await db.exec(mutation(migrations.at(-9).sql));
+  await db.exec(mutation(migrations.at(-10).sql));
   return { db, names, baseline, migrations };
 }
 
@@ -253,8 +253,8 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   migrationNames = state.names;
   inventoryBefore = state.baseline;
   allMigrationsForNames = state.migrations.slice(0, -8);
-  assert.equal(migrationNames.length, 79);
-  assert.equal(migrationNames.at(-9), MIGRATION_71);
+  assert.equal(migrationNames.length, 80);
+  assert.equal(migrationNames.at(-10), MIGRATION_71);
   assert.equal(migrationNames.some((name) => name.startsWith("202610100")), false);
 
   await db.query(

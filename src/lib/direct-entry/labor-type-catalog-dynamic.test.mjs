@@ -82,7 +82,13 @@ const TEST_DIRECTORY = fileURLToPath(TEST_DIRECTORY_URL);
 // --- Fixture (copy tu test cua chinh module, chi doi labor_type) ---------------------------
 
 /** write-api.test.mjs: read projection cua direct_entry_read_projection. */
-function entryProjection(laborType) {
+/**
+ * P3.1-W02C-R2: nhan la mot field RIENG do server resolve tu catalog theo key. Fixture nay
+ * chi can mot nhan khong rong; nhan THAT luon den tu public.direct_entry_labor_types.
+ */
+const LABOR_TYPE_DISPLAY_FIXTURE = "Nhãn lao động giả";
+
+function entryProjection(laborType, laborTypeDisplay = LABOR_TYPE_DISPLAY_FIXTURE) {
   return {
     entry_id: ENTRY_ID,
     submission_id: SUBMISSION_ID,
@@ -103,6 +109,7 @@ function entryProjection(laborType) {
     team_id: TEAM_ID,
     provider_type: "hrp",
     labor_type: laborType,
+    labor_type_display: laborTypeDisplay,
     general_note: null,
     version: 1,
     scope_kind: "own",
@@ -185,6 +192,10 @@ function privilegedEditBody(laborType) {
 }
 
 /** change-request-contract.test.mjs: mot item ENTRY_FIELD. */
+/**
+ * WRITE shape cua change-request item: KHONG co labor_type_display. Nhan la field display-only
+ * cua READ contract (xem fixture readChangeRequestDetail trong lane R2).
+ */
 function changeRequestItem(laborType) {
   return {
     entry_id: ENTRY_ID,
@@ -224,7 +235,7 @@ function proposerEntryProjection(laborType) {
 }
 
 /** worker-directory-contract.test.mjs: mot dong cua direct_entry_worker_directory. */
-function directoryRow(laborType) {
+function directoryRow(laborType, laborTypeDisplay = LABOR_TYPE_DISPLAY_FIXTURE) {
   return {
     entry_id: ENTRY_ID,
     entry_version: 3,
@@ -235,6 +246,7 @@ function directoryRow(laborType) {
     project_display: "Project A",
     first_work_date: "2026-10-01",
     labor_type: laborType,
+    labor_type_display: laborTypeDisplay,
     employment_status: "ON",
     recruiter_id: "d1000000-0000-4000-8000-000000000001",
     recruiter_display: "Recruiter A",

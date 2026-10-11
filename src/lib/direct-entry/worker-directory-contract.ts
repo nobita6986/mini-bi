@@ -27,7 +27,8 @@ export const WORKER_DIRECTORY_PAGE_KEYS = [
 ] as const;
 export const WORKER_DIRECTORY_ROW_KEYS = [
   "entry_id", "entry_version", "submission_state", "employee_code", "display_name",
-  "project_id", "project_display", "first_work_date", "labor_type", "employment_status",
+  "project_id", "project_display", "first_work_date", "labor_type", "labor_type_display",
+  "employment_status",
   "recruiter_id", "recruiter_display", "payment", "pending_request", "last_decision",
   "is_project_manager", "allowed_actions",
 ] as const;
@@ -166,6 +167,8 @@ export type WorkerDirectoryRow = {
   project_display: string;
   first_work_date: string;
   labor_type: LaborType;
+  /** P3.1-W02C-R2: nhan do server resolve tu catalog theo key; KHONG BAO GIO la key tho. */
+  labor_type_display: string;
   employment_status: (typeof WORKER_EMPLOYMENT_STATUSES)[number] | null;
   recruiter_id: string;
   recruiter_display: string;
@@ -274,6 +277,9 @@ export function projectWorkerDirectoryRow(value: unknown): WorkerDirectoryRow | 
     return null;
   }
   if (!isCanonicalLaborTypeKey(value.labor_type)) return null;
+  // P3.1-W02C-R2: mot dong luon phai co nhan that. Thieu/rong => ca trang unavailable,
+  // khong bao gio render key tho hay mot nhan fallback.
+  if (typeof value.labor_type_display !== "string" || value.labor_type_display.length < 1) return null;
   if (value.employment_status !== null &&
       !(WORKER_EMPLOYMENT_STATUSES as readonly string[]).includes(value.employment_status as string)) {
     return null;
@@ -301,6 +307,7 @@ export function projectWorkerDirectoryRow(value: unknown): WorkerDirectoryRow | 
     project_display: value.project_display,
     first_work_date: value.first_work_date,
     labor_type: value.labor_type,
+    labor_type_display: value.labor_type_display,
     employment_status: value.employment_status as WorkerDirectoryRow["employment_status"],
     recruiter_id: value.recruiter_id,
     recruiter_display: value.recruiter_display,

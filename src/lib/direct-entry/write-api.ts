@@ -237,7 +237,8 @@ const ENTRY_UUID = UUID;
 const ENTRY_KEYS = new Set([
   "entry_id", "submission_id", "project_id", "first_work_date", "employee_code",
   "worker_details", "recruiter_id", "team_id", "provider_type", "labor_type",
-  "general_note", "version", "scope_kind", "payment", "employment_status", "documents",
+  "labor_type_display", "general_note", "version", "scope_kind", "payment", "employment_status",
+  "documents",
 ]);
 const WORKER_PROJECTION_KEYS = new Set([
   "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
@@ -327,6 +328,9 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       typeof value.team_id !== "string" || !ENTRY_UUID.test(value.team_id) ||
       (value.provider_type !== "hrp" && value.provider_type !== "vendor") ||
       !isCanonicalLaborTypeKey(value.labor_type) ||
+      // P3.1-W02C-R2: nhan do server resolve tu catalog theo key (ke ca key da inactive).
+      // Thieu/rong => unavailable, khong de UI tu map key sang nhan.
+      typeof value.labor_type_display !== "string" || value.labor_type_display.length < 1 ||
       typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
       (value.scope_kind !== "own" && value.scope_kind !== "team" &&
         value.scope_kind !== "all" && value.scope_kind !== "project") ||

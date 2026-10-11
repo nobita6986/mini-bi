@@ -71,7 +71,7 @@ assert.equal(detail.data.can_withdraw, false);
 // the reviewer with pii_view sees that payload (presence-only without pii_view).
 assert.equal(typeof detail.data.items[0].proposal.worker_details.display_name, "string");
 assert.deepEqual(Object.keys(detail.data.items[0]).sort(), [
-  "entry_id", "expected_version", "proposal", "target_kind",
+  "entry_id", "expected_version", "labor_type_display", "proposal", "target_kind",
 ]);
 pass("detail tra dung projection va proposal thuoc vocabulary W01/W03 da khoa");
 
