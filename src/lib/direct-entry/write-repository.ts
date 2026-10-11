@@ -101,11 +101,26 @@ export type DraftCatalogRecruiter =
   | DraftCatalogRecruiterHrp
   | DraftCatalogRecruiterVendor;
 
+/** P3.1-W02C active labor-type option: canonical key + current label + order. */
+export type DraftCatalogLaborType = {
+  labor_type_key: string;
+  display_name: string;
+  sort_order: number;
+};
+
 export type DraftCatalog = {
   effective_date: string;
   projects: Array<{ project_id: string; display_name: string }>;
   recruiters: DraftCatalogRecruiter[];
   banks: Array<{ bank_id: string; display_name: string }>;
+  /**
+   * P3.1-W02C: the ACTIVE labor-type options travel on this same canonical
+   * projection, so the Direct Entry runtime keeps resolving them through
+   * getInputCatalog and no parallel route or private label map exists.
+   * Optional so a payload produced before the catalog existed still projects;
+   * absent means "no options supplied", never "any key is allowed".
+   */
+  labor_types?: DraftCatalogLaborType[];
 };
 
 export type DirectEntryRepository = {
@@ -267,11 +282,43 @@ function projectDocumentFinalization(value: unknown, documentId: string): Docume
     : null;
 }
 
+// P3.1-W02C: the canonical projection may also carry the active labor-type
+// options. The key is accepted exactly when the server supplies it and every
+// option is validated strictly (exact keys, canonical key format, bounded
+// order); a payload without it still projects, because only the consumer
+// cutover lane is required to read the list.
+const CATALOG_BASE_KEYS = ["effective_date", "projects", "recruiters", "banks"];
+const CATALOG_LABOR_KEYS = [...CATALOG_BASE_KEYS, "labor_types"];
+
 export function projectDraftCatalog(value: unknown, expectedDate?: string): DraftCatalog | null {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["effective_date", "projects", "recruiters", "banks"]) ||
+  if (!isRecord(value)) return null;
+  const withLaborTypes = Object.hasOwn(value, "labor_types");
+  if (!hasExactKeys(value, withLaborTypes ? CATALOG_LABOR_KEYS : CATALOG_BASE_KEYS) ||
       typeof value.effective_date !== "string" || !Array.isArray(value.projects) ||
       !Array.isArray(value.recruiters) || !Array.isArray(value.banks)) return null;
+  let laborTypes: DraftCatalogLaborType[] | undefined;
+  if (withLaborTypes) {
+    if (!Array.isArray(value.labor_types)) return null;
+    laborTypes = [];
+    for (const option of value.labor_types) {
+      if (!isRecord(option) ||
+          !hasExactKeys(option, ["labor_type_key", "display_name", "sort_order"]) ||
+          typeof option.labor_type_key !== "string" ||
+          !/^[A-Z][A-Z0-9_]{0,63}$/.test(option.labor_type_key) ||
+          typeof option.display_name !== "string" ||
+          option.display_name.trim().length === 0 || option.display_name.length > 256 ||
+          typeof option.sort_order !== "number" || !Number.isSafeInteger(option.sort_order) ||
+          option.sort_order < 0 || option.sort_order > 100000) return null;
+      laborTypes.push({
+        labor_type_key: option.labor_type_key,
+        display_name: option.display_name,
+        sort_order: option.sort_order,
+      });
+    }
+    if (new Set(laborTypes.map(({ labor_type_key }) => labor_type_key)).size !== laborTypes.length) {
+      return null;
+    }
+  }
   const projects: DraftCatalog["projects"] = [];
   for (const project of value.projects) {
     if (!isRecord(project) || !hasExactKeys(project, ["project_id", "display_name"]) ||
@@ -350,12 +397,14 @@ export function projectDraftCatalog(value: unknown, expectedDate?: string): Draf
       new Set(projects.map(({ project_id }) => project_id)).size !== projects.length ||
       new Set(recruiters.map(({ recruiter_id }) => recruiter_id)).size !== recruiters.length ||
       new Set(banks.map(({ bank_id }) => bank_id)).size !== banks.length) return null;
-  return {
+  const projected: DraftCatalog = {
     effective_date: value.effective_date,
     projects,
     recruiters,
     banks,
   };
+  if (laborTypes !== undefined) projected.labor_types = laborTypes;
+  return projected;
 }
 
 export function projectDraftUpdate(value: unknown, entryId: string): {

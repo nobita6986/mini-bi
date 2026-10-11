@@ -86,7 +86,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 78, "the ledger carries 78 migrations through the finite-membership hotfix #77");
+  assert.equal(names.length, 79, "the ledger carries 79 migrations through the finite-membership hotfix #77");
   assert.equal(names[names.length - 5], HOTFIX_MIGRATION, "the contract ships in #74");
   assert.equal(names[names.length - 6], PREVIOUS_MIGRATION, "#74 stays append-only");
   return db;
