@@ -6,6 +6,7 @@ import {
   decideDirectEntryPageAccess,
   decidePersonnelCatalogPageAccess,
   decideTeamCatalogPageAccess,
+  decideVendorCatalogPageAccess,
 } from "./direct-entry-page-access.ts";
 
 function actor(capabilities) {
@@ -81,7 +82,12 @@ test("Admin route decisions use all-scope catalog operator OR canonical Full Adm
       scopes: [{ kind: "all", reference: "all", valid_from: "2026-01-01", valid_to: null }],
     },
   };
-  for (const decide of [decideAdminAreaAccess, decidePersonnelCatalogPageAccess, decideTeamCatalogPageAccess]) {
+  for (const decide of [
+    decideAdminAreaAccess,
+    decidePersonnelCatalogPageAccess,
+    decideTeamCatalogPageAccess,
+    decideVendorCatalogPageAccess,
+  ]) {
     assert.equal(decide({ actor: fullAdmin }), "ALLOW");
     assert.equal(decide({ actor: accounting }), "ALLOW");
     assert.equal(decide({ actor: actor(["catalog_master_manage"]) }), "ACCESS_DENIED");

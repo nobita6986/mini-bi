@@ -50,13 +50,16 @@ test("both Admin URL surfaces resolve actor server-side and use explicit access 
   const layout = readFileSync(new URL("./layout.tsx", import.meta.url), "utf8");
   const adminPage = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
   const personnelPage = readFileSync(new URL("./catalog/personnel/page.tsx", import.meta.url), "utf8");
+  const vendorPage = readFileSync(new URL("./catalog/vendors/page.tsx", import.meta.url), "utf8");
   assert.match(layout, /resolveActorForRequest\(\)/);
   assert.match(layout, /decideAdminAreaAccess/);
   assert.match(adminPage, /resolveActorForRequest\(\)/);
   assert.match(adminPage, /decideAdminAreaAccess/);
   assert.match(personnelPage, /resolveActorForRequest\(\)/);
   assert.match(personnelPage, /decidePersonnelCatalogPageAccess/);
-  assert.doesNotMatch(layout + adminPage + personnelPage, /DIRECT_ENTRY_UI_ENABLED/);
+  assert.match(vendorPage, /resolveActorForRequest\(\)/);
+  assert.match(vendorPage, /decideVendorCatalogPageAccess/);
+  assert.doesNotMatch(layout + adminPage + personnelPage + vendorPage, /DIRECT_ENTRY_UI_ENABLED/);
 });
 
 test("/admin preserves its server gate then redirects straight to Personnel", () => {

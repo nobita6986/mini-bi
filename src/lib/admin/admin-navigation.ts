@@ -6,6 +6,7 @@ import {
 export const ADMIN_SECTIONS = [
   { id: "personnel", label: "Nhân sự", href: "/admin/catalog/personnel" },
   { id: "teams", label: "Nhóm", href: "/admin/catalog/teams" },
+  { id: "vendors", label: "Nhà cung cấp", href: "/admin/catalog/vendors" },
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
