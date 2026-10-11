@@ -542,8 +542,13 @@ export function ProjectOperations() {
           ) : null}
           {state === "ready" || state === "empty" ? (
             <div className="max-h-[46rem] overflow-x-auto overflow-y-auto">
-              <table className="w-full min-w-[760px] border-collapse text-sm">
+              <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
                 <caption className="sr-only">Danh sách dự án và trạng thái</caption>
+                <colgroup>
+                  <col />
+                  <col className="w-44" />
+                  <col className="w-[300px]" />
+                </colgroup>
                 <thead className="sticky top-0 z-10 bg-surface text-left text-xs uppercase tracking-wide text-muted shadow-[0_1px_0_var(--border)]">
                   <tr>
                     <th scope="col" className="px-4 py-3">Dự án</th>
@@ -573,7 +578,7 @@ export function ProjectOperations() {
                         </td>
                         <td className="px-4 py-3"><ProjectStatusBadge active={project.active} /></td>
                         <td className="px-4 py-3">
-                          <div className="flex flex-wrap justify-end gap-2">
+                          <div className="flex justify-end gap-2 whitespace-nowrap">
                             <button type="button" className={buttonClass}
                               disabled={projectActionId !== null || conflict !== null || reloadBusy}
                               onClick={() => { void openProjectAction(project, "view"); }}>
@@ -976,7 +981,7 @@ function SummaryMetric({
 function ProjectStatusBadge({ active }: { active: boolean }) {
   return (
     <span className={
-      "inline-flex rounded-full px-2.5 py-1 text-xs font-semibold " +
+      "inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold " +
       (active
         ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
         : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200")

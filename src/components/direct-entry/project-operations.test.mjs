@@ -177,7 +177,7 @@ test("edit trigger is an accessible pencil beside the project name, not an actio
     /<td className="px-4 py-3">\s*<div className="flex items-center gap-2">[\s\S]*?project\.display_name[\s\S]*?<\/td>/,
   )?.[0];
   const actionsCell = source.match(
-    /<td className="px-4 py-3">\s*<div className="flex flex-wrap justify-end gap-2">[\s\S]*?<\/td>/,
+    /<td className="px-4 py-3">\s*<div className="flex justify-end gap-2 whitespace-nowrap">[\s\S]*?<\/td>/,
   )?.[0];
 
   assert.ok(projectCell, "project name cell contains the edit trigger");
@@ -192,6 +192,25 @@ test("edit trigger is an accessible pencil beside the project name, not an actio
   assert.equal(actionsCell.includes("Đổi tên"), false);
   assert.match(actionsCell, /Xem quản lý/);
   assert.match(actionsCell, /project\.active \? "Ngừng" : "Kích hoạt"/);
+});
+
+test("project table reserves stable columns and keeps status/actions on one line", () => {
+  const table = source.match(/<table className="w-full min-w-\[900px\] table-fixed[^>]*>[\s\S]*?<\/table>/)?.[0];
+  const statusBadge = source.match(/function ProjectStatusBadge[\s\S]*?\n}\n/)?.[0];
+
+  assert.ok(table, "project table has a fixed minimum layout");
+  assert.match(table, /<colgroup>\s*<col \/>\s*<col className="w-44" \/>\s*<col className="w-\[300px\]" \/>\s*<\/colgroup>/);
+  assert.match(source, /overflow-x-auto overflow-y-auto[\s\S]{0,120}<table/);
+  const actionCell = table.match(
+    /<td className="px-4 py-3">\s*<div className="flex justify-end gap-2 whitespace-nowrap">[\s\S]*?<\/td>/,
+  )?.[0];
+  assert.ok(actionCell, "action buttons share a right-aligned non-wrapping row");
+  assert.equal(actionCell.includes("flex-wrap"), false);
+  assert.match(actionCell, /Xem quản lý/);
+  assert.match(actionCell, /project\.active \? "Ngừng" : "Kích hoạt"/);
+
+  assert.ok(statusBadge, "status badge component exists");
+  assert.match(statusBadge, /inline-flex whitespace-nowrap/);
 });
 
 test("button to dialog wiring covers create, detail, rename, active, assign, and revoke", () => {
