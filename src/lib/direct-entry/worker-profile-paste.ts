@@ -8,7 +8,7 @@
  * Truong tuy chon vang mat => { state: "omitted" }; module nay KHONG sinh "unknown" hay
  * "intentionally_blank" vi UI chua cho nguoi dung chon ro.
  */
-import type { LaborType } from "../contracts/direct-entry-v1.ts";
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import { NATIONAL_ID_DIGIT_LENGTHS, isCanonicalNationalId } from "../contracts/national-id.ts";
 import {
   foldPasteToken,
@@ -289,8 +289,11 @@ function buildRow(
   } else if (isFormulaLikeCell(laborRaw)) {
     fail(context, "PASTE_FORMULA_CELL", "labor_type");
   } else {
-    const resolved = LABOR_ALIASES[laborRaw.toLowerCase()] ?? LABOR_ALIASES[foldPasteToken(laborRaw)];
-    void resolved;
+    // P3.1-W02C-R1: alias la lop tuong thich; mot canonical key da dung phai di qua
+    // nguyen ven de catalog dong khong bi parser nay chan truoc canonical RPC.
+    const alias = LABOR_ALIASES[laborRaw.toLowerCase()] ?? LABOR_ALIASES[foldPasteToken(laborRaw)];
+    const upper = laborRaw.trim().toUpperCase();
+    const resolved = alias ?? (isCanonicalLaborTypeKey(upper) ? upper : undefined);
     if (resolved === undefined) fail(context, "PASTE_LABOR_TYPE_INVALID", "labor_type");
     else laborType = resolved;
   }

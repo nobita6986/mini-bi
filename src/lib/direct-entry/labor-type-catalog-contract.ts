@@ -16,8 +16,18 @@
  * storage data. reporting_key la catalog-owned: client khong bao gio gui.
  */
 
-/** Canonical labor-type key: chu hoa dau, sau do [A-Z0-9_], toi da 64 ky tu. */
-export const LABOR_TYPE_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+/**
+ * Canonical labor-type key: chu hoa dau, sau do [A-Z0-9_], toi da 64 ky tu.
+ * MOT nguon duy nhat: predicate dung chung o src/lib/contracts/direct-entry-v1.ts.
+ * Khong dinh nghia lai regex nay o bat ky boundary nao khac.
+ */
+import {
+  LABOR_TYPE_KEY_PATTERN as LABOR_TYPE_KEY,
+  isCanonicalLaborTypeKey,
+  type LaborType,
+} from "../contracts/direct-entry-v1.ts";
+
+export { LABOR_TYPE_KEY, isCanonicalLaborTypeKey, type LaborType };
 
 export type AdminLaborType = {
   labor_type_key: string;

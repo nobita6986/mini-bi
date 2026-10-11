@@ -12,6 +12,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import {
   DOCUMENT_MAX_BYTES_HARD_LIMIT,
   DOCUMENT_MIME_TYPES,
+  isCanonicalLaborTypeKey,
 } from "../contracts/direct-entry-v1.ts";
 import { isDocumentType } from "./document-upload-contract.ts";
 import { projectPaymentInput } from "./payment-contract.ts";
@@ -60,7 +61,7 @@ const WORKER_DETAILS_KEYS: readonly string[] = Object.freeze([
   "display_name", "date_of_birth", "national_id", "address", "phone", "state", "value",
 ]);
 
-const LABOR_TYPES = ["TEMPORARY", "PERMANENT"] as const;
+// P3.1-W02C-R1: labor type la catalog dong - chi con predicate hinh dang canonical key.
 const WORKER_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
 
 /** S03B4A: vocabulary trang thai lam viec dung chung cho read projection (khong doi validator). */
@@ -261,7 +262,7 @@ function projectEntryFieldProposal(value: Record<string, unknown>): Record<strin
   }
   if ("labor_type" in value) {
     if (typeof value.labor_type !== "string" ||
-        !LABOR_TYPES.some((laborType) => laborType === value.labor_type)) return null;
+        !isCanonicalLaborTypeKey(value.labor_type)) return null;
     proposal.labor_type = value.labor_type;
   }
   return proposal;

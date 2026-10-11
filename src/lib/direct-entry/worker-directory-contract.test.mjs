@@ -135,7 +135,9 @@ test("page projection enforces scope, page size and cursor consistency", () => {
     "has_more without cursor": { ...page, has_more: true },
     "cursor without has_more": { ...page, next_cursor: cursor },
     "bad authorization date": { ...page, authorization_date: "08/10/2026" },
-    "bad item": { ...page, items: [{ ...row, labor_type: "CONTRACTOR" }] },
+    // P3.1-W02C-R1: an unknown but well-formed key is the database's business; this
+    // projection only rejects a key that is not a canonical key at all.
+    "bad item": { ...page, items: [{ ...row, labor_type: "contractor" }] },
   };
   for (const [label, value] of Object.entries(variants)) {
     assert.equal(projectWorkerDirectoryPage(value, { scope: "managed", page_size: 25 }), null, label);

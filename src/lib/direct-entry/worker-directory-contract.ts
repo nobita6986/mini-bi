@@ -11,6 +11,8 @@
  * quyen. propose_change hien la false vi policy audience/read/withdraw cua change-request
  * con thuoc W04 (xem migration #52 self-check).
  */
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
+
 export const WORKER_DIRECTORY_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerDirectoryScope = (typeof WORKER_DIRECTORY_SCOPES)[number];
 
@@ -163,7 +165,7 @@ export type WorkerDirectoryRow = {
   project_id: string;
   project_display: string;
   first_work_date: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
   employment_status: (typeof WORKER_EMPLOYMENT_STATUSES)[number] | null;
   recruiter_id: string;
   recruiter_display: string;
@@ -271,7 +273,7 @@ export function projectWorkerDirectoryRow(value: unknown): WorkerDirectoryRow | 
   if (typeof value.first_work_date !== "string" || !ISO_DATE.test(value.first_work_date)) {
     return null;
   }
-  if (value.labor_type !== "TEMPORARY" && value.labor_type !== "PERMANENT") return null;
+  if (!isCanonicalLaborTypeKey(value.labor_type)) return null;
   if (value.employment_status !== null &&
       !(WORKER_EMPLOYMENT_STATUSES as readonly string[]).includes(value.employment_status as string)) {
     return null;

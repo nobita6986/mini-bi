@@ -1,3 +1,4 @@
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import { DIRECT_ENTRY_GRID_COLUMNS } from "./direct-entry-grid-columns.ts";
 import { normalizePasteHeader } from "./paste-primitives.ts";
 import { WORKER_PROFILE_FIELDS } from "./worker-profile-import-contract.ts";
@@ -44,7 +45,7 @@ const XLSX_TEMPLATE_KEYS: readonly string[] = Object.freeze([
  * P1.7-H05: legacy alias "Toàn thời gian" duoc XLSX import chap nhan (map sang
  * canonical UI value "Chính thức" -> "PERMANENT" server).
  */
-const LABOR_TYPE_KEY_BY_HEADER: Readonly<Record<string, "TEMPORARY" | "PERMANENT">> = Object.freeze({
+const LABOR_TYPE_KEY_BY_HEADER: Readonly<Record<string, LaborType>> = Object.freeze({
   "Thời vụ": "TEMPORARY",
   "Chính thức": "PERMANENT",
   "Toàn thời gian": "PERMANENT",
@@ -250,7 +251,15 @@ export function xlsxTemplateHeaders(): readonly string[] {
   });
 }
 
-export function normalizeLaborTypeHeader(value: string): "TEMPORARY" | "PERMANENT" | null {
+/**
+ * P3.1-W02C-R1: header alias truoc, sau do mot canonical key da dung di qua nguyen ven.
+ * Neu khong co nhanh thu hai, mot loai moi trong catalog se bi chan ngay o tang nhap
+ * lieu va W02C khong con dong.
+ */
+export function normalizeLaborTypeHeader(value: string): LaborType | null {
   const trimmed = value.trim();
-  return LABOR_TYPE_KEY_BY_HEADER[trimmed] ?? null;
+  const alias = LABOR_TYPE_KEY_BY_HEADER[trimmed];
+  if (alias !== undefined) return alias;
+  const upper = trimmed.toUpperCase();
+  return isCanonicalLaborTypeKey(upper) ? upper : null;
 }

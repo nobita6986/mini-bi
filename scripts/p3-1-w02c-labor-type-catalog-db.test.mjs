@@ -63,6 +63,8 @@ const RPC_PARAMS = {
     "p_active", "p_expected_version", "p_reason", "p_idempotency_key"],
   direct_entry_read_projection: ["p_auth_subject", "p_app_user_id", "p_entry_id"],
   direct_entry_input_catalog: ["p_auth_subject", "p_app_user_id", "p_effective_date"],
+  direct_entry_list_workers: ["p_auth_subject", "p_app_user_id", "p_scope", "p_project_id",
+    "p_recruiter_id", "p_employment_status", "p_cursor", "p_page_size"],
 };
 
 const RPC_SIGNATURES = [
@@ -1435,4 +1437,112 @@ test("21: the Direct Entry runtime receives the active catalog through the input
   assert.equal(denied.denied, true);
   assert.equal(denied.code, "42501");
   assert.equal(denied.payload, null);
+});
+
+// ---------------------------------------------------------------------------
+// P3.1-W02C-R1: the catalog is only DYNAMIC if a key created after the fact
+// survives every backend boundary. These three tests create PROBATION through
+// the admin RPC and prove the write path, the entry read projection, the runtime
+// catalog and the worker directory all carry it; then that deactivating it fails
+// closed for new writes with zero residue while history stays readable and the
+// key silently leaves the choosable options.
+// ---------------------------------------------------------------------------
+
+let PROBATION_ENTRY = null;
+
+test("22: the dynamically created PROBATION key reaches a write, the entry read and the runtime catalog", async () => {
+  // PROBATION is not a seed row and not a source constant: it was created through
+  // the admin RPC earlier in this file. Everything below proves that a key only
+  // the runtime catalog knows about survives the whole backend - the blocker this
+  // revision exists to close.
+  const created = await getLaborType(db, OPERATOR_FULL_ADMIN, "PROBATION");
+  assert.equal(created.labor_type_key, "PROBATION");
+  assert.equal(created.active, true, "the dynamic key is active before the write");
+  assert.equal(created.reporting_key, "probation", "the reporting key stays server generated");
+
+  // The retired closed set used to answer here, before the database guard saw
+  // the key at all. Now the catalog decides and PROBATION is an ordinary write.
+  const probe = await directEntryProbe(db, "hrp-2026-420001", "PROBATION");
+  assert.equal(probe.code, null, "a newly created ACTIVE key is an acceptable new write");
+  assert.equal(typeof probe.entry_id, "string");
+  PROBATION_ENTRY = probe.entry_id;
+
+  const projection = await rpc(db, "direct_entry_read_projection", {
+    p_auth_subject: ENTRY_OPERATOR.auth, p_app_user_id: ENTRY_OPERATOR.app,
+    p_entry_id: PROBATION_ENTRY,
+  });
+  assert.equal(projection.labor_type, "PROBATION", "the entry read returns the dynamic key");
+
+  const catalog = await rpc(db, "direct_entry_input_catalog", {
+    p_auth_subject: ENTRY_OPERATOR.auth, p_app_user_id: ENTRY_OPERATOR.app,
+    p_effective_date: WORK_DATE,
+  });
+  const option = catalog.labor_types.find((row) => row.labor_type_key === "PROBATION");
+  assert.ok(option, "the Direct Entry runtime receives the dynamic key with no source change");
+  assert.equal(sortedKeys(option), "display_name,labor_type_key,sort_order");
+  assert.equal(option.display_name, "Thời gian thử việc");
+});
+
+test("23: the worker directory projects a SUBMITTED row carrying PROBATION", async () => {
+  // The submission carries a deferred non-empty constraint trigger, so the row
+  // and its submission are written in one transaction, exactly like the fixture.
+  await db.query("begin");
+  const submissionId = (await db.query(
+    "insert into public.direct_entry_submissions (created_by_user_id) values ($1::uuid)"
+    + " returning submission_id", [ENTRY_OPERATOR.app])).rows[0].submission_id;
+  const entryId = await insertEntry(db, { employeeCode: "hrp-2026-420002",
+    laborType: "PROBATION", submissionId });
+  await db.query("commit");
+  // DRAFT -> REVIEW -> SUBMITTED is the only legal path (the transition guard
+  // rejects any other edge and any non +1 version).
+  await db.query("update public.direct_entry_submissions set state = 'REVIEW',"
+    + " version = version + 1 where submission_id = $1::uuid", [submissionId]);
+  await db.query("update public.direct_entry_submissions set state = 'SUBMITTED',"
+    + " version = version + 1 where submission_id = $1::uuid", [submissionId]);
+
+  const page = await rpc(db, "direct_entry_list_workers", {
+    p_auth_subject: ENTRY_OPERATOR.auth, p_app_user_id: ENTRY_OPERATOR.app,
+    p_scope: "all", p_page_size: 50,
+  });
+  const row = page.items.find((item) => item.entry_id === entryId);
+  assert.ok(row, "the dynamic-key worker is listed");
+  assert.equal(row.labor_type, "PROBATION", "the worker directory returns the dynamic key");
+});
+
+test("24: deactivating PROBATION fails closed for new writes with zero residue", async () => {
+  const version = await currentVersion(db, "PROBATION");
+  const off = await setLaborTypeActive(db, OPERATOR_FULL_ADMIN, {
+    laborTypeKey: "PROBATION", active: false, expectedVersion: version, idempotencyKey: KEY("32"),
+  });
+  assert.equal(off.active, false);
+
+  const before = await counts(db);
+  const inactive = await directEntryProbe(db, "hrp-2026-420003", "PROBATION");
+  assert.equal(inactive.code, "23514", "a deactivated key is never an acceptable new write");
+  assert.equal(inactive.entry_id, null);
+  const unknown = await directEntryProbe(db, "hrp-2026-420004", UNKNOWN_KEY);
+  assert.equal(unknown.code, "23514", "an unknown canonical key fails closed at the same guard");
+  assert.deepEqual(await counts(db), before,
+    "no entry, revision, audit or idempotency residue is left behind");
+
+  // History keeps resolving: the stored row is still readable and still editable,
+  // because the guard only judges a CHANGE to a new key.
+  const projection = await rpc(db, "direct_entry_read_projection", {
+    p_auth_subject: ENTRY_OPERATOR.auth, p_app_user_id: ENTRY_OPERATOR.app,
+    p_entry_id: PROBATION_ENTRY,
+  });
+  assert.equal(projection.labor_type, "PROBATION", "a stored row stays readable");
+  const edited = await db.query(
+    "update public.direct_entries set labor_type = 'PROBATION', version = version + 1,"
+    + " general_note = $2 where entry_id = $1::uuid",
+    [PROBATION_ENTRY, "Synthetic post-deactivation edit"]);
+  assert.equal(edited.affectedRows, 1, "a stored row under a deactivated key stays editable");
+
+  // Choosable and stored are different questions: the options drop the key.
+  const catalog = await rpc(db, "direct_entry_input_catalog", {
+    p_auth_subject: ENTRY_OPERATOR.auth, p_app_user_id: ENTRY_OPERATOR.app,
+    p_effective_date: WORK_DATE,
+  });
+  assert.equal(catalog.labor_types.some((row) => row.labor_type_key === "PROBATION"), false,
+    "a deactivated key silently leaves the runtime options");
 });

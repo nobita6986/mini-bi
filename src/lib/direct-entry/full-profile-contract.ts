@@ -1,5 +1,9 @@
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
-import { validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
+import {
+  isCanonicalLaborTypeKey,
+  validateEmployeeCode,
+  type LaborType,
+} from "../contracts/direct-entry-v1.ts";
 import { isCanonicalNationalId } from "../contracts/national-id.ts";
 
 export const WORKER_PROFILE_CONTRACT_VERSION = "worker-profile/1.0" as const;
@@ -40,7 +44,7 @@ export type FullProfileRpcRow = {
   first_work_date: string;
   employee_code: string;
   recruiter_id: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
   display_name: string;
   worker_details: {
     gender: OptionalText;
@@ -321,7 +325,7 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
         (generatedCodes && provider_type !== "hrp" && provider_type !== "vendor") ||
         typeof display_name !== "string" ||
         display_name.trim().length < 1 || display_name.length > 256 ||
-        (labor_type !== "TEMPORARY" && labor_type !== "PERMANENT")) {
+        !isCanonicalLaborTypeKey(labor_type)) {
       issues.push({ code: "BATCH_INVALID", path });
       return;
     }
@@ -353,7 +357,7 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       project_id,
       first_work_date,
       recruiter_id,
-      labor_type: labor_type as "TEMPORARY" | "PERMANENT",
+      labor_type: labor_type as LaborType,
       display_name,
       worker_details: worker ?? {
         gender: { state: "omitted" },

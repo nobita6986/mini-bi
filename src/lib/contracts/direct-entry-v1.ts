@@ -17,7 +17,21 @@ export const DOCUMENT_MAX_BYTES_HARD_LIMIT = 10 * 1024 * 1024;
 export const DOCUMENT_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png"] as const;
 
 export type ProviderType = "hrp" | "vendor";
-export type LaborType = "TEMPORARY" | "PERMANENT";
+/**
+ * P3.1-W02C-R1: labor type is a DYNAMIC catalog, so the shared contract validates
+ * only the canonical key SHAPE. Whether a key exists, and whether it is still
+ * active, is decided by the database active-catalog guard
+ * (public.direct_entry_is_active_labor_type) together with the hard RESTRICT
+ * foreign key on direct_entries.labor_type - never by a closed list in a server,
+ * route, repository or CLI boundary. `isCanonicalLaborTypeKey` is the single
+ * predicate every backend and CLI consumer must reuse; a second copy of the
+ * vocabulary anywhere in those layers is a defect.
+ */
+export const LABOR_TYPE_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+export type LaborType = string;
+export function isCanonicalLaborTypeKey(value: unknown): value is LaborType {
+  return typeof value === "string" && LABOR_TYPE_KEY_PATTERN.test(value);
+}
 export type WorkerStatus = "UNCONFIRMED" | "ON" | "OFF";
 export type OptionalState = "omitted" | "unknown" | "intentionally_blank";
 export type OptionalValue<T> =
@@ -517,7 +531,7 @@ export function validateEntry(input: {
       catalog: input.catalog,
     }));
   }
-  if (entry.labor_type !== "TEMPORARY" && entry.labor_type !== "PERMANENT") {
+  if (!isCanonicalLaborTypeKey(entry.labor_type)) {
     issues.push({ code: "LABOR_TYPE_INVALID", path: "labor_type" });
   }
   issues.push(...validatePaymentDetails(entry.payment, input.banks));

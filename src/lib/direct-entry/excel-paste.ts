@@ -5,6 +5,7 @@
  * mutation API, KHONG resolve catalog o day (project/recruiter duoc resolve o tang UI theo
  * first_work_date). Server van la authority cua batch; day chi la buoc nhap du lieu.
  */
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import {
   foldPasteToken,
   normalizePasteDate,
@@ -17,7 +18,7 @@ import {
 export const EXCEL_PASTE_MAX_ROWS = PASTE_MAX_ROWS;
 export const EXCEL_PASTE_COLUMN_COUNT = 6;
 
-export const LABOR_TYPE_ALIASES: Readonly<Record<string, "TEMPORARY" | "PERMANENT">> = Object.freeze({
+export const LABOR_TYPE_ALIASES: Readonly<Record<string, LaborType>> = Object.freeze({
   temporary: "TEMPORARY",
   permanent: "PERMANENT",
   "thời vụ": "TEMPORARY",
@@ -31,7 +32,7 @@ export type ExcelPasteParsedRow = {
   worker_display_name: string;
   project: string;
   recruiter: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
 };
 
 export type ExcelPasteRowError = { line: number; message: string };
@@ -69,9 +70,17 @@ function isHeaderRow(cells: readonly string[]): boolean {
     HEADER_TOKENS[index].some((token) => foldPasteToken(token) === foldPasteToken(cell)));
 }
 
-function normalizeLaborType(value: string): "TEMPORARY" | "PERMANENT" | null {
+/**
+ * P3.1-W02C-R1: alias map chi la lop tuong thich nhan (T1A mo rong tiep). Mot canonical
+ * key da dung thi PHAI di qua nguyen ven - neu khong, mot loai moi trong catalog se bi
+ * parser nay chan truoc khi toi canonical RPC va catalog khong con dong.
+ */
+function normalizeLaborType(value: string): LaborType | null {
   const lower = value.trim().toLowerCase();
-  return LABOR_TYPE_ALIASES[lower] ?? (LABOR_TYPE_ALIASES[foldPasteToken(value)] ?? null);
+  const alias = LABOR_TYPE_ALIASES[lower] ?? LABOR_TYPE_ALIASES[foldPasteToken(value)];
+  if (alias !== undefined) return alias;
+  const upper = value.trim().toUpperCase();
+  return isCanonicalLaborTypeKey(upper) ? upper : null;
 }
 
 /** Cac chi so cot 1..6 cua khoi dan (dung cho preview va thong bao loi). */

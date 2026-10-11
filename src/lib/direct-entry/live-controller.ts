@@ -1,3 +1,4 @@
+import type { LaborType } from "../contracts/direct-entry-v1.ts";
 import type { DraftProfileProjection, OwnDraft } from "./write-repository";
 
 export type EditableDraftFields = {
@@ -6,7 +7,7 @@ export type EditableDraftFields = {
   workerName: string;
   projectId: string;
   recruiterId: string;
-  laborType: "TEMPORARY" | "PERMANENT";
+  laborType: LaborType;
 };
 
 export type DraftSaveState = "clean" | "dirty" | "saving" | "saved" | "conflict" | "error";

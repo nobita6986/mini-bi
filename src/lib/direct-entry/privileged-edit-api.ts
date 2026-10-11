@@ -10,6 +10,7 @@
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
+import { isCanonicalLaborTypeKey } from "../contracts/direct-entry-v1.ts";
 import { isCanonicalNationalId } from "../contracts/national-id.ts";
 import { readBoundedJson } from "./write-api.ts";
 import type { PrivilegedEditRepository } from "./privileged-edit-repository.ts";
@@ -17,7 +18,8 @@ import type { PrivilegedEditRepository } from "./privileged-edit-repository.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
-const LABOR_TYPES = ["TEMPORARY", "PERMANENT"] as const;
+// P3.1-W02C-R1: khong con closed set o day. Hinh dang canonical key do predicate dung chung
+// quyet dinh; ton tai/active do DB active-catalog guard quyet dinh.
 const BODY_KEYS = ["expected_entry_version", "patch", "reason"] as const;
 export const PRIVILEGED_EDIT_PATCH_KEYS = [
   "employee_code", "first_work_date", "labor_type", "project_id", "recruiter_id", "worker_details",
@@ -71,7 +73,7 @@ export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditReque
       (patch.employee_code.trim().length === 0 || patch.employee_code.length > 64)) return null;
   if (typeof patch.recruiter_id === "string" && !UUID.test(patch.recruiter_id)) return null;
   if (typeof patch.labor_type === "string" &&
-      !(LABOR_TYPES as readonly string[]).includes(patch.labor_type)) return null;
+      !isCanonicalLaborTypeKey(patch.labor_type)) return null;
   if (patch.worker_details !== undefined) {
     if (!isRecord(patch.worker_details)) return null;
     const nationalId = patch.worker_details.national_id;

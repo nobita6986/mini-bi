@@ -3,6 +3,7 @@ import {
 } from "../auth/direct-entry-v2.ts";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import {
+  isCanonicalLaborTypeKey,
   validateEmployeeCode,
   validateWorkerDetails,
   type WorkerDetails,
@@ -109,7 +110,7 @@ function projectRows(value: unknown): ProjectedBatchRow[] | null {
         typeof first_work_date !== "string" || !isRealCalendarDate(first_work_date) ||
         typeof employee_code !== "string" ||
         typeof recruiter_id !== "string" || !UUID.test(recruiter_id) ||
-        (labor_type !== "TEMPORARY" && labor_type !== "PERMANENT") ||
+        !isCanonicalLaborTypeKey(labor_type) ||
         !isWorkerDetails(worker) ||
         validateWorkerDetails(worker).length > 0 ||
         validateEmployeeCode(employee_code, first_work_date, codes).length > 0) return null;
@@ -325,7 +326,7 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       typeof value.recruiter_id !== "string" || !ENTRY_UUID.test(value.recruiter_id) ||
       typeof value.team_id !== "string" || !ENTRY_UUID.test(value.team_id) ||
       (value.provider_type !== "hrp" && value.provider_type !== "vendor") ||
-      (value.labor_type !== "TEMPORARY" && value.labor_type !== "PERMANENT") ||
+      !isCanonicalLaborTypeKey(value.labor_type) ||
       typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
       (value.scope_kind !== "own" && value.scope_kind !== "team" &&
         value.scope_kind !== "all" && value.scope_kind !== "project") ||

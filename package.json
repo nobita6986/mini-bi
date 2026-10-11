@@ -20,7 +20,7 @@
     "test:p3-1-w01b-personnel": "node --conditions=react-server --test src/lib/direct-entry/personnel-catalog-api.test.mjs scripts/p3-1-w01b-personnel-catalog-db.test.mjs",
     "test:p3-1-w01c-a-team-catalog": "node --conditions=react-server --test src/lib/direct-entry/team-catalog-api.test.mjs scripts/p3-1-w01c-a-team-catalog-db.test.mjs",
     "test:p3-1-w02b-vendor-catalog": "node --conditions=react-server --test src/lib/direct-entry/vendor-catalog-api.test.mjs scripts/p3-1-w02b-vendor-lifecycle-db.test.mjs",
-    "test:p3-1-w02c-labor-type-catalog": "node --conditions=react-server --test src/lib/direct-entry/labor-type-catalog-api.test.mjs scripts/p3-1-w02c-labor-type-catalog-db.test.mjs",
+    "test:p3-1-w02c-labor-type-catalog": "node --conditions=react-server --test src/lib/direct-entry/labor-type-catalog-api.test.mjs src/lib/direct-entry/labor-type-catalog-dynamic.test.mjs scripts/p3-1-w02c-labor-type-catalog-db.test.mjs",
     "test:p3-1-w01c-b-team-membership": "node --conditions=react-server --test src/lib/direct-entry/team-membership-api.test.mjs scripts/p3-1-w01c-b-team-membership-db.test.mjs",
     "test:p3-1-w01d-a1a-leader-schema": "node --test scripts/p3-1-w01d-a1a-leader-schema.test.mjs",
     "test:p3-1-w01d-a1b1-leader-read": "node --test scripts/p3-1-w01d-a1b1-leader-read.test.mjs",

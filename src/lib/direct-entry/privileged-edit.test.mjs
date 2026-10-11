@@ -62,7 +62,9 @@ test("R3: patch projection is strict and refuses authority keys and malformed CM
     { ...validBody, patch: { provider_type: "vendor" } },
     { ...validBody, patch: { app_user_id: actor.app_user_id } },
     { ...validBody, patch: { version: 9 } },
-    { ...validBody, patch: { labor_type: "OFFICIAL" } },
+    // P3.1-W02C-R1: the catalog owns existence; this layer owns the canonical key
+    // SHAPE, so the rejected fixture is a malformed key, not an unknown one.
+    { ...validBody, patch: { labor_type: "official" } },
     { ...validBody, patch: { project_id: "bad project" } },
     { ...validBody, patch: { first_work_date: "01/02/2026" } },
     { ...validBody, patch: { recruiter_id: "nope" } },

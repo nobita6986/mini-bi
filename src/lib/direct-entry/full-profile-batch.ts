@@ -20,6 +20,7 @@ import {
   SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
   WORKER_PROFILE_CONTRACT_VERSION,
 } from "./full-profile-contract.ts";
+import type { LaborType } from "../contracts/direct-entry-v1.ts";
 import type { WorkerProfileOptional } from "./worker-profile-paste.ts";
 import type {
   WorkerProfilePreview,
@@ -62,7 +63,7 @@ export type FullProfileRequestRow = {
   first_work_date: string;
   employee_code: string;
   recruiter_id: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
   display_name: string;
   worker: {
     gender: FullProfileOptionalText;

@@ -5,8 +5,10 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import {
+  isCanonicalLaborTypeKey,
   validateEmployeeCode,
   validateWorkerDetails,
+  type LaborType,
   type WorkerDetails,
 } from "../contracts/direct-entry-v1.ts";
 import {
@@ -32,7 +34,7 @@ type DraftPatch = {
   employee_code: string;
   worker_details: Pick<WorkerDetails, "display_name">;
   recruiter_id: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
 };
 
 function respond(body: unknown, status: number): Response {
@@ -79,7 +81,7 @@ function projectPatch(value: unknown): {
       typeof patch.employee_code !== "string" ||
       validateEmployeeCode(patch.employee_code, patch.first_work_date).length > 0 ||
       typeof patch.recruiter_id !== "string" || !UUID.test(patch.recruiter_id) ||
-      (patch.labor_type !== "TEMPORARY" && patch.labor_type !== "PERMANENT") ||
+      !isCanonicalLaborTypeKey(patch.labor_type) ||
       !isWorkerNamePatch(patch.worker_details)) return null;
   const projectedPatch: DraftPatch = {
     project_id: patch.project_id,

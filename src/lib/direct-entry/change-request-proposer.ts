@@ -9,6 +9,7 @@
  * Khong I/O, khong framework. Validator cua server van la authority cuoi.
  */
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
+import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import {
   CHANGE_REQUEST_STATES,
   type ChangeRequestState,
@@ -45,7 +46,7 @@ export type ProposerFields = {
   first_work_date: string;
   project_id: string;
   recruiter_id: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
 };
 
 /** Mot entry duoc chon de de xuat thay doi: baseline = gia tri server, draft = gia tri nguoi dung. */
@@ -98,7 +99,7 @@ export function projectProposerEntry(value: unknown): ProposerEntryProjection | 
   if (typeof value.employee_code !== "string" || value.employee_code.length < 1 ||
       value.employee_code.length > 64) return null;
   if (typeof value.recruiter_id !== "string" || !UUID.test(value.recruiter_id)) return null;
-  if (value.labor_type !== "TEMPORARY" && value.labor_type !== "PERMANENT") return null;
+  if (!isCanonicalLaborTypeKey(value.labor_type)) return null;
   return {
     entry_id: value.entry_id,
     expected_version: value.version,

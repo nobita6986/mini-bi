@@ -172,7 +172,15 @@ test("recursive authority fields are rejected at every depth", () => {
 
 test("proposal vocabulary follows the database allowed sets", () => {
   assert.equal(projectChangeRequestItem(item({ proposal: { unknown_field: 1 } })), null);
-  assert.equal(projectChangeRequestItem(item({ proposal: { labor_type: "CONTRACT" } })), null);
+  // P3.1-W02C-R1: the contract owns the canonical key SHAPE, not the vocabulary.
+  // A well-formed key the catalog does not know is still a well-formed proposal;
+  // the database remains the single authority on which keys exist and are active.
+  assert.equal(projectChangeRequestItem(item({ proposal: { labor_type: "CONTRACT" } })).proposal.labor_type,
+    "CONTRACT");
+  assert.equal(projectChangeRequestItem(item({ proposal: { labor_type: "PROBATION" } })).proposal.labor_type,
+    "PROBATION");
+  assert.equal(projectChangeRequestItem(item({ proposal: { labor_type: "contract" } })), null);
+  assert.equal(projectChangeRequestItem(item({ proposal: { labor_type: "1BAD" } })), null);
   assert.equal(projectChangeRequestItem(item({ proposal: { first_work_date: "2026-02-30" } })), null);
   assert.equal(projectChangeRequestItem(item({ proposal: { recruiter_id: "nope" } })), null);
   assert.equal(projectChangeRequestItem(item({ proposal: { project_id: 7 } })), null);

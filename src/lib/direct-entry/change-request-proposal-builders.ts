@@ -8,6 +8,7 @@
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import {
   validateWorkerDetails,
+  type LaborType,
   type OptionalState,
   type OptionalValue,
   type WorkerDetails,
@@ -88,7 +89,7 @@ export type WorkerEntryFieldBaseline = {
   first_work_date: string;
   employee_code: string;
   recruiter_id: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
   worker_details: WorkerDetails;
 };
 

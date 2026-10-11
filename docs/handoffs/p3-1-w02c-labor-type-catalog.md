@@ -1,8 +1,16 @@
-# P3.1-W02-C Labor type catalog backend: P3_1_W02_C_LABOR_TYPE_CATALOG_LOCAL_PASS_AWAITING_T0_REVIEW
+# P3.1-W02-C R1 Labor type catalog backend, dynamic boundaries: P3_1_W02_C_R1_LABOR_TYPE_CATALOG_LOCAL_PASS_AWAITING_T0_REVIEW
 
 Branch `feature/p3-1-w02c-labor-type-catalog`. Base `origin/main@5f41caf689dbfd52bb889744f227aa659da393db`
 -> final (this commit). Fast-forward only; no Production query/apply/deploy, no browser or UAT work, no new
 dependency, no merge of `main`.
+
+**R1 correction.** The R2 handoff below claimed end-to-end dynamic behavior the tree did not have.
+Migration #79 made the *database* dynamic, but every server and CLI boundary still accepted only the
+retired `TEMPORARY | PERMANENT` pair, so a newly created key was rejected **before** the database
+active-catalog guard was ever reached. The catalog was therefore not dynamic in practice, which is the
+T0 blocker this revision closes. R1 changes source and tests only: no migration was added or amended
+(#79 is byte-identical, there is no #80), no UI consumer was cut over, and the misleading claim is
+withdrawn here. The dynamic UI consumer is the next lane, **T1A**.
 
 ## Delta
 
@@ -83,10 +91,62 @@ dependency, no merge of `main`.
   other catalog, W04 UI, T1A consumer/client alias maps, import resolver and grid options, and all
   Production state.
 
+## R1 delta (dynamic boundaries)
+
+**Blocker.** Migration #79 made the database own the labor-type vocabulary, but every server and CLI
+acceptance site still carried the retired closed set `TEMPORARY | PERMANENT`. A key created through the
+catalog RPC was therefore rejected by the backend **before** the database active-catalog guard ran, so the
+catalog was dynamic only inside the database. Until this revision the honest status was "database dynamic,
+backend closed", and R2's end-to-end claim was wrong.
+
+**One shared predicate, no second vocabulary.** `src/lib/contracts/direct-entry-v1.ts` now defines the
+single contract every other layer consumes: `LABOR_TYPE_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/` (the
+canonical key SHAPE), `type LaborType = string` (the key is no longer a union of literals) and
+`isCanonicalLaborTypeKey(value): value is LaborType` (the one predicate every boundary calls).
+`labor-type-catalog-contract.ts` re-exports all three — `LABOR_TYPE_KEY` is the pattern — so the admin API
+and every other layer share exactly one definition. No server or CLI module defines a second copy: a
+source-level test asserts none of the fifteen touched modules contains `"TEMPORARY" | "PERMANENT"` or
+`["TEMPORARY", "PERMANENT"]`.
+
+**Boundaries converted** (closed list to the shared shape predicate):
+
+| Boundary | File |
+|---|---|
+| Batch write rows and the entry read projection | `write-api.ts` |
+| Draft patch | `draft-api.ts` |
+| Draft list projection | `draft-list-contract.ts` |
+| Full-profile batch contract | `full-profile-batch.ts`, `full-profile-contract.ts` |
+| Privileged edit patch | `privileged-edit-api.ts` |
+| Change-request proposal contract | `change-request-contract.ts` |
+| Change-request proposer | `change-request-proposer.ts`, `change-request-proposal-builders.ts` |
+| Worker-directory read projection | `worker-directory-contract.ts` |
+| Live controller view model | `live-controller.ts` |
+| Excel/paste parser | `excel-paste.ts` |
+| XLSX header normalizer | `worker-profile-xlsx.ts` |
+| Worker-profile paste parser | `worker-profile-paste.ts` |
+| T0 operator import preflight | `scripts/lib/t0-operator-import.mjs` |
+
+The three alias tables (`LABOR_TYPE_ALIASES`, `LABOR_TYPE_KEY_BY_HEADER`, `LABOR_ALIASES`) stay — their
+*content* is a T1A question — but each normalizer gained a canonical-key **passthrough**: a supplied value
+that is already canonical is returned unchanged instead of being rejected, so a catalog key no alias table
+has ever heard of still reaches the canonical RPC.
+
+**The database decides, and it still fails closed.** No cache, no lookup table and no second guard was
+added on the server: existence and active state remain the database's answer. A deactivated key and a
+canonical key that has never existed are both `23514` at `direct_entry_labor_type_write_guard`, with no
+entry, revision, audit or idempotency residue and no raw database message surfaced, while a stored row
+keeps its key readable and editable.
+
+**Evidence added by R1.** The new lane `src/lib/direct-entry/labor-type-catalog-dynamic.test.mjs` (19
+tests) proves `PROBATION` at every boundary above and proves the legacy keys stay green; the DB lane
+gained tests 22-24 covering the dynamic write plus entry read plus runtime catalog, the worker directory,
+and deactivate-then-reject with zero residue. Negative fixtures that used to be "unknown but well-formed"
+were retargeted to malformed keys, because a well-formed key is no longer this layer's business.
+
 ## Evidence
 
-The focused lane `test:p3-1-w02c-labor-type-catalog` is 37/37 (21 PGlite DB tests + 16
-API/repository tests) and is green again after the mutation pass.
+The focused lane `test:p3-1-w02c-labor-type-catalog` is 59/59 (24 PGlite DB tests + 16
+API/repository tests + 19 dynamic-boundary tests) and is green again after the mutation pass.
 
 - Ledger: exact #79 addition, #1-#78 byte-identical, and the worktree check that no earlier migration is
   modified, deleted or renamed.
@@ -141,14 +201,22 @@ API/repository tests) and is green again after the mutation pass.
   status defaults and W07B per-actor project scope; the P3-W07A-R3 vendor-upload and P3-W07B
   project-scope lanes caught both regressions. The three write paths now differ from their live
   predecessors by exactly one line each.
-- Extensibility proof: a fourth type (`PROBATION`/"Thử việc") created through the RPC alone — no source
-  or migration change — is accepted by the API validator, persists the key, appears in the active
-  projection with a server-generated lowercase `reporting_key`, and is offered by the Direct Entry input
-  catalog; no member of the TS contract, request validators or projections carries a closed vocabulary.
-- Mutation plan: M1-M9 below, each temporarily applied to the final tree and each turning a named test
-  red, with the tree restored byte-identically.
+- Extensibility proof (R1): a fourth type `PROBATION` created through the RPC alone — no source or
+  migration change — now survives the *whole* backend, not just the database. A single shared predicate
+  (`isCanonicalLaborTypeKey`, defined once in `contracts/direct-entry-v1.ts` and re-exported by
+  `labor-type-catalog-contract.ts`) replaced the closed vocabulary at every server and CLI acceptance
+  site; a new key is persisted, appears in the active projection with a server-generated lowercase
+  `reporting_key`, and is accepted by the batch and direct-entry write validators, the draft patch and
+  list projections, the full-profile batch contract, the privileged-edit patch, the change-request
+  proposal contract and proposer, the worker-directory read projection, the T0 operator-import preflight
+  and the Excel/Paste/XLSX normalizers, then returned by the entry read projection, the runtime input
+  catalog and the worker directory. R2 asserted this without the source change and it was not true; see
+  the R1 delta section below.
+- Mutation plan: M1-M11 below, each temporarily applied to the final tree and each turning a named test
+  red, with the tree restored byte-identically. M10 and M11 are the R1 additions: each reverts exactly
+  one server/CLI boundary from the shared predicate back to the closed `TEMPORARY/PERMANENT` set.
 
-### M1-M9 mutation plan (R2 §9, retained by R3 §12)
+### M1-M11 mutation plan (R2 §9, retained by R3 §12; M10-M11 added by R1)
 
 | # | Temporary mutation | Result |
 |---|---|---|
@@ -161,6 +229,8 @@ API/repository tests) and is green again after the mutation pass.
 | M7 | an unknown key silently falls back to `TEMPORARY` | RED |
 | M8 | hard-coded three-key vocabulary in the TS create validator | RED |
 | M9 | duplicated hard-coded label map returns in the display lookup | RED |
+| M10 | the batch read projection reverts to the closed `TEMPORARY/PERMANENT` set | RED |
+| M11 | the T0 operator-import preflight reverts to the closed key set | RED |
 
 - Gates: focused lane, the full `pnpm test` chain, `next typegen`, `tsc --noEmit`, `eslint`,
   `pnpm build` (the three labor-type routes compile), `docs:check`, `secrets:check`, offline
@@ -168,5 +238,32 @@ API/repository tests) and is green again after the mutation pass.
 
 ## Follow-ups (not in this lane)
 
-- T1A consumer cutover: grid/import/template options, filters, alias maps and fixtures read the new
-  key list, and the client stops carrying a two-key vocabulary.
+- **T1A is the dynamic UI consumer, and it is the next lane.** Nothing in this revision changed a UI
+  consumer. The backend now accepts any canonical key; the client still offers and labels the retired
+  pair. T1A must read the active options from `getInputCatalog` instead of a literal list, drop the
+  client-side two-key vocabulary, extend the grid/template/import aliases, and add the admin UI for the
+  five catalog RPCs.
+
+  The exact closed sets still in the tree — all presentation or alias content, none of them an acceptance
+  decision on a server boundary:
+
+  | Where | What |
+  |---|---|
+  | `direct-entry-grid-columns.ts:96` | grid labor-type options |
+  | `worker-operations.tsx:793,818,1101,1220,1221` | filter, dropdown and label options |
+  | `direct-entry-live.tsx:1261,1403,1515,2587,2591,2592` | default, options and labels |
+  | `direct-entry-change-request-proposer.tsx:582,587,588` | proposal labor-type options |
+  | `direct-entry-worker-profile-paste-dialog.tsx:134` | dialog option copy |
+  | `live-controller.ts:102` | the `"TEMPORARY"` default for a new draft |
+  | `change-request-reviewer.ts:63,64` | `LABOR_TYPE_LABELS` display map |
+  | `excel-paste.ts:22-25` | `LABOR_TYPE_ALIASES` content |
+  | `worker-profile-xlsx.ts:46,49-51` | `LABOR_TYPE_KEY_BY_HEADER` content |
+  | `worker-profile-xlsx.ts:220,230` | template guide text |
+  | `worker-profile-paste.ts:99-103,286` | `LABOR_ALIASES` content and copy |
+  | `worker-profile-import-contract.ts:71,216` | `PASTE_LABOR_TYPE_INVALID` copy |
+  | `excel-paste.ts:137` | import error copy |
+
+  Every test fixture, DB test and acceptance script that still spells `TEMPORARY`/`PERMANENT` is
+  deliberate legacy coverage and stays: those keys remain valid catalog rows, so the legacy paths must
+  keep passing.
+- Still out of scope for T1A and later: the Production ledger, deploy and UAT.

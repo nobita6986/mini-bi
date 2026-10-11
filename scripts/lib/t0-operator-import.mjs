@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { isCanonicalLaborTypeKey } from "../../src/lib/contracts/direct-entry-v1.ts";
 import { isCanonicalNationalId } from "../../src/lib/contracts/national-id.ts";
 
 export const IMPORT_CONFIRM_PREFIX = "T0_WORKER_IMPORT_APPLY:";
@@ -47,7 +48,9 @@ export const IMPORT_WORKER_DETAIL_KEYS = Object.freeze([
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const EMPLOYEE_CODE = /^hrp-[0-9]{4}-[0-9]{6}$/;
-const LABOR_TYPES = Object.freeze(["TEMPORARY", "PERMANENT"]);
+// P3.1-W02C-R1: labor type la catalog dong. Preflight chi kiem tra HINH DANG canonical key
+// (predicate dung chung voi server); ton tai/active do DB active-catalog guard quyet dinh
+// khi apply, nen mot loai moi trong catalog khong bi chan o day.
 const PROVIDER_TYPES = Object.freeze(["hrp", "vendor"]);
 const PAYMENT_STATES = Object.freeze(["omitted", "unknown", "intentionally_blank", "provided"]);
 const SAFE_DB_MESSAGES = Object.freeze([
@@ -254,7 +257,7 @@ export function validateManifest(records) {
       errors.push(issue("ROW_TARGET_STATE_INVALID", sourceRowId));
     }
     const laborType = text(raw.labor_type).toUpperCase();
-    if (!LABOR_TYPES.includes(laborType)) errors.push(issue("ROW_LABOR_TYPE_INVALID", sourceRowId));
+    if (!isCanonicalLaborTypeKey(laborType)) errors.push(issue("ROW_LABOR_TYPE_INVALID", sourceRowId));
     const providerType = text(raw.provider_type).toLowerCase();
     if (!PROVIDER_TYPES.includes(providerType)) {
       errors.push(issue("ROW_PROVIDER_INVALID", sourceRowId));

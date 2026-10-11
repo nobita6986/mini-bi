@@ -1,5 +1,9 @@
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
-import { validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
+import {
+  isCanonicalLaborTypeKey,
+  validateEmployeeCode,
+  type LaborType,
+} from "../contracts/direct-entry-v1.ts";
 
 export type DraftProfileField =
   | { state: "provided"; value: string }
@@ -54,7 +58,7 @@ export type OwnDraft = {
   provider_type: "hrp" | "vendor";
   team_id: string;
   team_display_name: string;
-  labor_type: "TEMPORARY" | "PERMANENT";
+  labor_type: LaborType;
   employment_status: "UNCONFIRMED" | "ON" | "OFF" | null;
   created_at: string;
   updated_at: string;
@@ -101,7 +105,7 @@ export function projectOwnDrafts(value: unknown): OwnDraft[] | null {
         (draft.provider_type !== "hrp" && draft.provider_type !== "vendor") ||
         typeof draft.team_id !== "string" || !UUID.test(draft.team_id) ||
         typeof draft.team_display_name !== "string" ||
-        (draft.labor_type !== "TEMPORARY" && draft.labor_type !== "PERMANENT") ||
+        !isCanonicalLaborTypeKey(draft.labor_type) ||
         (draft.employment_status !== null && draft.employment_status !== "UNCONFIRMED" &&
           draft.employment_status !== "ON" && draft.employment_status !== "OFF") ||
         !isRealCalendarDate(draft.first_work_date) ||
