@@ -90,13 +90,11 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   await db.close();
 });
 
-test("39-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
+test("40-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
-  // P3-W07B migration #43 adds project-manager scope enforcement.
-  // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
-  // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
-  // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrationNames.length, 81);
+  // P3.1-W03A app-user lifecycle is migration #82 and adds three internal
+  // helpers plus two service-role-only lifecycle RPCs.
+  assert.equal(migrationNames.length, 82);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -171,50 +169,9 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // service-role-only directory RPC.
   // P2.5-W04 (#53) adds two service-role-only worker_details guards.
   // P2.5-W06A (#54) adds one service-role-only manager-candidate RPC.
-  // P2.5-W05 (#55) adds one internal scope reader and one service-role-only
-  // reviewer-bundle reader.
-  // P3.1-W01B (#68) adds six internal helpers (the catalog-operator guard, the
-  // personnel row lock/OCC guard, the personnel snapshot, the shared personnel
-  // admin projection, the personnel revision writer and the personnel version
-  // bump) plus five service-role-only personnel-catalog RPCs
-  // (list/get/create/update/set-active). Nothing is reachable by
-  // anon/authenticated.
-  // P3.1-W01C-A (#69) adds five internal helpers (the fixed team snapshot, the
-  // shared team admin projection, the team row lock/OCC guard, the team revision
-  // writer and the team version bump) plus five service-role-only team master RPCs
-  // (list/get/create/update/set-active). Nothing is reachable by anon/authenticated.
-  // P3.1-W01C-B-R1 adds a tenth internal helper (the close-only recruiter lock that
-  // keeps unassign reachable after creation eligibility is gone).
-  // P3.1-W01C-B (#70) adds nine internal helpers (the membership subject lock/OCC
-  // guard, the target-team guard, the attribution guard, the fixed six-key snapshot,
-  // the shared membership projection, the revision writer, the version bump and the
-  // two membership write triggers) plus six service-role-only membership RPCs
-  // (current/scheduled/history reads and assign/move/unassign). Nothing is reachable
-  // by anon/authenticated.
-  // P3.1-W01D-A1a (#71) adds three internal helpers (the leader marker guard,
-  // the fixed eight-key leader snapshot and the bounded leader projection).
-  // A1b1 adds one internal read-authority resolver and three service-role-only
-  // current/scheduled/history reads; A1b2 adds one internal mutation helper and
-  // two service-role-only leader write RPCs. A1b3 adds one internal transition
-  // helper and a service-role candidate RPC, and revokes the old seed's grant,
-  // moving that function into the internal inventory. W02-A adds one private
-  // project-operation authority selector/lock helper plus the internal recruiter
-  // alias trigger helper. P3.1-HF (#74) adds one internal reader gate, one internal
-  // source-rewrite helper and the service-role-only duplicate-CCCD report RPC, and
-  // drops the retired episode guard. P3.1-HF-R1 (same, unmerged #74) adds two internal
-  // helpers (the duplicate conflict-state source of truth and the shared transition
-  // body) and two service-role-only RPCs (the duplicate preflight and the acknowledged
-  // transition), and turns the legacy six-argument transition into a wrapper over that
-  // P3.1-W02-C (#79) retires the closed TEMPORARY/PERMANENT vocabulary in favour
-  // of the canonical labor-type catalog: nine internal helpers (the active-key
-  // predicate, the bounded active options projection, the fixed six-key snapshot,
-  // the shared admin projection, the row lock/OCC guard, the revision writer, the
-  // version bump and the two write guards) plus six service-role-only functions
-  // (the five catalog RPCs list/get/create/update/set-active and the single shared
-  // reporting display lookup that replaces the four duplicated label CASE sites;
-  // the reporting key function was already in the inventory and is only
-  // redefined). Nothing is reachable by anon/authenticated.
-  // Measured: 209 total, 95 service-role executable and 114 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [209, 95, 114]);
+  // P3.1-W03A (#82) adds the app-user snapshot, lock-time Full Admin guard and
+  // shared status mutation helper plus enable/disable service-role RPCs.
+  // Measured: 214 total, 97 service-role executable and 117 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [214, 97, 117]);
   await db.close();
 });
