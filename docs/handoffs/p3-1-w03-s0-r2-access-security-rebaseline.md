@@ -1,11 +1,20 @@
-# P3.1-W03-S0-R2 — Existing-user / grants / recruiter-links current-base security rebaseline (T1C docs-only)
+# P3.1-W03-S0-R3 — Existing-user / grants / recruiter-links R2 repair (T1C docs-only)
 
-> **Status:** `P3_1_W03_S0_R2_REBASELINE_PASS_AWAITING_T0_REVIEW`
-> **Process:** docs-only rebaseline on top of the locked R1 memo. No source, test, migration, API, UI, `package.json` / dependency, `docs/P3.1.md` or other code change. No Production query/apply, no deploy, no browser/Playwright/CUA/UAT, no merge. The only tracked change for this rebaseline is the single documentation file at `docs/handoffs/p3-1-w03-s0-r2-access-security-rebaseline.md`. The working tree was clean at branch creation; only this file changes; the final commit is a fast-forward append on top of `origin/main@fc1c8b49`.
+> **Status:** `P3_1_W03_S0_R3_REPAIR_PASS_AWAITING_T0_REVIEW`
+> **Process:** docs-only repair on top of the locked R2 memo. No source, test, migration, API, UI, `package.json` / dependency, `docs/P3.1.md` or other code change. No Production query/apply, no deploy, no browser/Playwright/CUA/UAT, no merge. The only tracked change for this repair is the same single documentation file at `docs/handoffs/p3-1-w03-s0-r2-access-security-rebaseline.md` (this file). The R2 commit `f3ec2724` is left in branch history; R3 is a normal `git commit` appended on top, no amend/rebase/force-push, no history rewrite. The R1 commit `244441ae` remains the source-of-truth contract and is unchanged.
 > **Base:** `origin/main@fc1c8b4958f0049631f62f37f57d34c0131cfba6` (81 migrations; `main` local is `4b93313` and is `0 ahead / 251 behind`).
-> **Branch:** `audit/p3-1-w03-s0-r2-access-security-rebaseline`.
+> **Branch:** `audit/p3-1-w03-s0-r2-access-security-rebaseline` (R3 keeps the same branch name and worktree; the file name itself encodes the R2 + R3 lineage).
 > **Worktree:** `C:\CodeApp\BI-p3-1-w03-s0-r2-access-security-rebaseline`.
-> **Locked inheritance (R1):** R1 commit `244441ae...` is the source of truth for every authority, OCC, idempotency, marker, audit-vocabulary, lock-order, mutation-taxonomy and F-matrix row. R2 re-states nothing R1 already locked; R2 re-states only what the post-`1189c8a` reality on `main` (migrations #72–#81) requires. Where R1 said "R1 also corrects the R1-wrong claim that the schema permits multiple verified effective links per app user" and the like, R2 leaves the R1 wording in place because the underlying contract on `fc1c8b49` is unchanged.
+> **Locked inheritance (R1):** R1 commit `244441ae...` is the source of truth for every authority, OCC, idempotency, marker, audit-vocabulary, lock-order, mutation-taxonomy and F-matrix row. R3 re-states nothing R1 already locked; R3 only re-states what R2 weakened in violation of the R1 §I.2 dependency rule and what R2 mis-stated about the post-R2 push state. Where R2 was correct, R2 wording is preserved verbatim.
+
+R3 is a **repair**, not a new rebaseline round. It is triggered by the T0 review of R2 (`P3_1_W03_S0_R2_REBASELINE_PASS_AWAITING_T0_REVIEW`), which identified two factual / contractual blockers in the R2 memo:
+
+1. **W03D dependency weakened in violation of R1 §I.2.** R1 §I.2 locked: "W03D cannot land before the W03A–C audit vocabulary is stable". R2 §4 instead stated "W03D needs W03A (audit vocabulary) and **W02A** … W03D does **not** need W03B / W03C" — i.e. R2 weakened the dependency to "W03A + W02A only", which is a direct contradiction of R1 while R2 simultaneously declared R1 to be the source of truth. R2's §3 lane-boundary table, §4 ASCII graph, §4 inter-lane bullets, §4 hard-ordering rules, §12 lane status and §13 Bàn giao summary all reflect the same weakening. R3 restores the R1 §I.2 rule exactly: W03D lands only after W03A, W03B **and** W03C have landed; W02A remains an additional dependency specifically for the W03D `own_manager` mode (not for the W03D `full` / `catalog` modes).
+2. **§13 Bàn giao (handoff) local = remote status was mis-stated.** R2 §13 wrote: "the R2 branch is local-only; no `origin/audit/p3-1-w03-s0-r2-access-security-rebaseline` push (the rebaseline commit will be pushed fast-forward after the local commit lands; R2 does not push in this rebaseline round)". The actual R2 state on `fc1c8b49` is: R2 was pushed fast-forward; `origin/audit/p3-1-w03-s0-r2-access-security-rebaseline` is at the same commit as the local HEAD; the local = remote invariant is `0 ahead / 0 behind`. R3 corrects the §13 line to the actual state and removes the false "no push" wording.
+
+R3 does **not** re-open R1, R2-of-R1, R3, R4, R5, R6 or R7 of the W03 handoff. R3 does **not** change a single R1 §A, §B, §C, §D, §F, §G, §G.0, §H or §I row. R3 does **not** re-open R2's factual deltas (migrations #72–#81, W02A own_manager audit, W02B / W02C / W04-C relationship to the W03 authority contract, migration-slot rule #82, gates results). R3 only re-anchors the dependency graph and the §13 Bàn giao local = remote state.
+
+R1 source-of-truth (locked, inherited, unchanged): R1 commit `244441ae...` at `docs/handoffs/p3-1-w03-s0-r1-access-security-rebaseline.md`. R1 §I.2 dependency rule quoted verbatim: "W03D cannot land before the W03A–C audit vocabulary is stable, and its `own_manager` mode cannot be asserted as team-scoped until W02 records `scope_kind = 'team'` + `scope_team_id = <leader team>` on `team_manager_assign@team` assign/unassign writes (a W02-side change; the W03D lane asserts the predicate, not W02's writer)." R3 restores the dependency half of this rule (W03A + W03B + W03C) and keeps the W02-side predicate satisfaction as a per-mode dependency (verified in §1.1: W02A #72 already writes the predicate, so the W03D `own_manager` mode can run as soon as the W03A–C audit vocabulary is stable).
 
 This R2 rebaseline is a documentation pass only. It re-anchors the W03 design to the **current** `origin/main` tip (81 migrations, post-`1189c8a`) and answers the post-#71 factual changes one by one. It does **not** re-open R1, R2 of R1, R3, R4, R5, R6, R7 or any other R-round decision: those are locked and inherited verbatim. The R1 handoff remains the contract; this file is the **delta** between the R1 contract and the current `main`.
 
@@ -107,9 +116,9 @@ The R1 handoff's §C.1–§C.5 are the contracts. R2 restates the lane boundary 
 | **W03A** | `direct_entry_app_users` only. Adds `version integer default 1 check (version >= 1)`, `updated_at timestamptz default now()`, the new `direct_entry_app_user_revisions` table (eight-verb `action` CHECK, four-key envelope, forced RLS, no role privilege, unique `(app_user_id, version)`), the new `direct_entry_audit_events.app_user_revision_id` FK. Two RPCs: `direct_entry_enable_app_user`, `direct_entry_disable_app_user`. W03A does **not** cascade to capability / scope / link / leader rows; the disabled state is enforced by the next actor resolution (W08A). | None upstream; W03B / W03C / W03D / W03E all depend on the W03A `version` OCC root, the eight-verb audit vocabulary and the `app_user_revision_id` FK. | next available at W03A implementation (currently #82) | T1B | `scripts/p3-1-w03a-app-user-lifecycle-db.test.mjs` |
 | **W03B** | `direct_entry_capability_grants` (grant / revoke) and `direct_entry_scope_grants` (grant / revoke). Capability and scope are **separate RPCs**; capability RPCs do not take `scope_kind` / `team_id`; scope RPCs do. Reuses the §A.5 lock order and the W01D `direct_entry_team_leader_marker()` trigger; reuses the W01D partial marker-excluding indexes; reuses the W01D `direct_entry_assert_actor_app_user_admin` helper. Rejects `team_manager_assign` and leader-bundle `team` scope mutations with `42501 'security mutation is owned by the leader lifecycle RPC'`. Rejects the reserved `__system_vendor__` team with `23514`. | W03A (OCC root, eight-verb audit, post-lock actor-authority recheck); W01A (23-token capability CHECK + REQUIRED_SCOPE_KIND map); W01D (lock order, partial marker-excluding indexes, marker trigger function, leader-bundle exclusivity); W01C-A (reserved-team guard). | next available at W03B implementation; no W03A–W03B bundle | T1B | `scripts/p3-1-w03b-capability-scope-lifecycle-db.test.mjs` |
 | **W03C** | `direct_entry_app_user_recruiter_links` (create verified / revoke). Minimal schema delta: widen link CHECK to `valid_to >= valid_from`; install the **existing** `direct_entry_team_leader_marker()` trigger on the link table; no partial verified-effective unique index (the foundation `direct_entry_recruiter_link_no_overlap` trigger is the cardinality guard; partial unique indexes cannot be conditioned on the current date). Revoke takes `p_link_id`; refuses to break a **current-or-scheduled** leader assignment (R1 R7 FIX G predicate; R1 §C.3 verbatim). | W03A (OCC root, eight-verb audit); W01A (REQUIRED_SCOPE_KIND); W01D (lock order, marker trigger function, leader bundle); W01C-A (reserved-team guard, indirect). | next available at W03C implementation; no W03A–W03C bundle | T1B | `scripts/p3-1-w03c-verified-link-lifecycle-db.test.mjs` |
-| **W03D** | Bounded audit projection RPCs by mode (`full` / `catalog` / `own_manager`). `full` is Admin-only Full Admin triple at `all`; `catalog` is `catalog_master_manage@all` with an explicit exact `action` allowlist (no `LIKE` / wildcards) and the security slice excluded; `own_manager` is `team_manager_assign@team` and the allowlist is exactly `('project_manager_assignment_assign','project_manager_assignment_unassign')` plus any future Owner-approved scheduled-cancel verb (none today; see §1.1 and §1.4). The W03D lane must run its regression against the W02A audit rows because the W02A writer already records `scope_kind = 'team'` and `scope_team_id = <leader team>` on the `team_manager_assign@team` path. | W03A (eight-verb audit vocabulary; `app_user_revision_id` FK); W01A (REQUIRED_SCOPE_KIND; `audit_view` capability); W02A (the writer of the W03D `own_manager` allowlist verbs, verified in §1.1). | next available at W03D implementation; no W03A–W03D bundle | T1B | `scripts/p3-1-w03d-audit-projection-db.test.mjs` |
+| **W03D** | Bounded audit projection RPCs by mode (`full` / `catalog` / `own_manager`). `full` is Admin-only Full Admin triple at `all`; `catalog` is `catalog_master_manage@all` with an explicit exact `action` allowlist (no `LIKE` / wildcards) and the security slice excluded; `own_manager` is `team_manager_assign@team` and the allowlist is exactly `('project_manager_assignment_assign','project_manager_assignment_unassign')` plus any future Owner-approved scheduled-cancel verb (none today; see §1.1 and §1.4). The W03D `own_manager` mode runs its regression against the W02A audit rows because the W02A writer already records `scope_kind = 'team'` and `scope_team_id = <leader team>` on the `team_manager_assign@team` path. | **W03A, W03B and W03C** (R1 §I.2: "W03D cannot land before the W03A–C audit vocabulary is stable" — the W03A–C `direct_entry_audit_events` action vocabulary, the `app_user_revision_id` FK and the eight-verb W03A/B/C action set must be stable before the W03D bounded projection can be implemented; R2 weakened this to "W03A + W02A" only, which is rejected in R3); **W01A** (REQUIRED_SCOPE_KIND; `audit_view` capability); **W02A** (the writer of the W03D `own_manager` allowlist verbs, verified in §1.1; this is a per-mode dependency, not a W03D-as-a-whole dependency, so it joins the W03A/B/C prerequisite rather than substituting for it). | next available at W03D implementation; no W03A–W03D bundle | T1B | `scripts/p3-1-w03d-audit-projection-db.test.mjs` |
 | **W03E** | Single Direct Entry row restore (soft-deleted, DRAFT parent submission). Adds `entry_restore: "all"` to `REQUIRED_SCOPE_KIND`. Bumps `direct-entry-auth` contract `1.3` → `1.4` (the W01A v1.3 compatibility fixture remains green). Single RPC `direct_entry_restore_entry(p_auth_subject, p_actor_app_user_id, p_entry_id, p_expected_entry_version integer, p_reason text, p_idempotency_key text)` — no `p_target_app_user_id` because the entry is the only target; restore sets `deleted_at = NULL`, bumps entry `version + 1`, appends one `direct_entry_revisions` row, one `direct_entry_audit_events` row (`revision_id` to the Direct Entry entry, not the `app_user_revision_id`), one idempotency row. W03E does **not** mutate capability / scope / link / leader rows; it does **not** revert a W01D revoke, a W03A disable, a W03B revoke or a W03C revoke. | W01A (REQUIRED_SCOPE_KIND bump; contract bump); the entry-level revision / OCC / idempotency foundation (already in `direct_entry_*` from #1–#66). | next available at W03E implementation; no W03A–W03E bundle | T1B | `scripts/p3-1-w03e-entry-restore-db.test.mjs` |
-| **W03F** | Combined session-revocation regression. W08A `createDirectEntryActorRepository` is the only producer; the resolver is service-role-only; no in-memory cache; concurrent resolves of the same actor cannot return mixed stale/fresh state. W03F adds regression cases for: disable mid-resolve, capability revoke (normal close or audited marker) mid-resolve, verified-link revoke (normal close or audited marker) on enabled or disabled target mid-resolve, `getDirectEntryActor` denial parity. W03F does **not** introduce a parallel session framework. | W03A, W03B, W03C, W03E (every W03 mutation rechecked under W08A freshness); W08A (the existing lane, not a new contract). | next available at W03F implementation; W03F is a regression lane, may share migration with another W03 lane if there is no schema delta. | T1C (regression) | `src/lib/auth/p3-w08a-session-revocation-cache.test.mjs` + W03F-focused cases. |
+| **W03F** | Combined session-revocation regression. W08A `createDirectEntryActorRepository` is the only producer; the resolver is service-role-only; no in-memory cache; concurrent resolves of the same actor cannot return mixed stale/fresh state. W03F adds regression cases for: disable mid-resolve, capability revoke (normal close or audited marker) mid-resolve, verified-link revoke (normal close or audited marker) on enabled or disabled target mid-resolve, `getDirectEntryActor` denial parity. W03F does **not** introduce a parallel session framework. | W03A, W03B, W03C, W03D and W03E (every W03 mutation rechecked under W08A freshness; the W03A/B/C/D audit vocabulary and the W03E entry-level restore must each be exercisable before W03F can be the combined regression); W08A (the existing lane, not a new contract). | next available at W03F implementation; W03F is a regression lane, may share migration with another W03 lane if there is no schema delta. | T1C (regression) | `src/lib/auth/p3-w08a-session-revocation-cache.test.mjs` + W03F-focused cases. |
 | **J01** | Readiness audit. Asserts every W03 lane passed focused + integration; asserts the preflight counts (see R1 §H); signs off W03A–F together. | All of W03. | no migration (J01 is a verification artifact) | T1C | J01 readiness memo. |
 
 **Closed scope for W03A–E (carried from R1 §I.3 verbatim, retested against #72–#81):**
@@ -124,40 +133,48 @@ The R1 handoff's §C.1–§C.5 are the contracts. R2 restates the lane boundary 
 
 R2 retests the closed-scope list against the migration history #72–#81: no new table, RPC, API route, capability token, scope kind, GUC, migration-inventory guard, handoff or `package.json` change in #72–#81 introduces a P3.2 surface or a parallel framework. The closed-scope list remains correct.
 
-## 4. W03A–E dependency graph (locked for R2)
+## 4. W03A–E dependency graph (locked for R3; R1 §I.2 dependency half restored)
 
 ```
-W01A  capability contract foundation (v1.3) ──> W03A ──> W03B
-W01A  REQUIRED_SCOPE_KIND                      │        W03C
-W01A  direct-entry-auth contract               │        W03D  (reads W02A audit rows)
-                                               │        W03E  (bump v1.3 -> v1.4, REQUIRED_SCOPE_KIND += entry_restore = all)
+W01A  capability contract foundation (v1.3) ──> W03A ─┬──> W03B ─┬──> W03D
+W01A  REQUIRED_SCOPE_KIND                         │         │          (audit vocabulary must be stable)
+W01A  direct-entry-auth contract                  │         ├──> W03C ─┘
+                                                  │         │
+                                                  │         ├──> W03E  (independent code-wise; contract bump 1.3 -> 1.4 + entry_restore = all land in the same W03E migration)
+                                                  │         │
+                                                  │         ├──> W03F  (regression; reuses W08A; lands after W03A/B/C/D/E)
+                                                  │         │
+                                                  │         └──> J01   (readiness audit; lands after all of W03A–F)
+                                                  │
 W01D  leader bundle (designate / replace / revoke) ──┐
 W01D  direct_entry_team_leader_marker() trigger ─────┤
 W01D  partial marker-excluding indexes (capability, scope) ─┤
 W01D  lock order (W01D §A.5) ──────────────────────────────┘
 W01C-A reserved-team guard (__system_vendor__) ─────────────> W03B (rejects __system_vendor__ team)
-W02A  project_manager_assignment_{assign,unassign} audit verb + scope_kind='team' / scope_team_id=<leader team> on team_manager_assign@team path ──> W03D own_manager
+W02A  project_manager_assignment_{assign,unassign} audit verb + scope_kind='team' / scope_team_id=<leader team> on team_manager_assign@team path ──> W03D own_manager (per-mode dependency; the W03A/B/C audit vocabulary must already be stable for W03D to land; W02A is the additional dependency for the own_manager mode specifically, not for W03D as a whole)
 W08A  session-revocation contract (no in-memory cache, request-time resolve) ──> W03F
 J00   security regression baseline ──> (information carrier only; no code dep)
 P3.2  invitation / password / reset / recovery / MFA (OUT OF P3.1) ──> (boundary, no W03 deps)
 ```
 
-**W03A–E inter-lane dependency** (this is the only "W03-internal" dependency that R2 locks):
+**W03A–E inter-lane dependency** (this is the only "W03-internal" dependency that R3 locks; R1 §I.2 dependency half is restored verbatim):
 
 - W03A is the **only** W03 lane that touches `direct_entry_app_users` and `direct_entry_app_user_revisions`. W03B, W03C, W03D, W03E all assume W03A has landed (they need the `version` OCC root, the eight-verb audit vocabulary, the `app_user_revision_id` FK and the `direct_entry_assert_actor_app_user_admin` helper).
-- W03B and W03C are **independent** of each other (different tables, different RPCs) but each needs W03A. W03B does **not** need W03C and W03C does **not** need W03B.
-- W03D needs W03A (audit vocabulary) and **W02A** (the writer of the `own_manager` allowlist verbs; see §1.1). W03D does **not** need W03B / W03C.
-- W03E needs W01A (REQUIRED_SCOPE_KIND bump; contract bump `1.3` → `1.4`); W03E does **not** need W03A / W03B / W03C / W03D (the entry-level OCC / revision / idempotency foundation is already in `direct_entry_*` from #1–#66 and is unchanged by W03A–D).
-- W03F needs W08A (already on `main`) and W03A / W03B / W03C / W03E (every W03 mutation rechecked under W08A freshness). W03F is a regression lane; it does **not** introduce a schema delta.
+- W03B and W03C are **independent** of each other (different tables, different RPCs) but each needs W03A. W03B does **not** need W03C and W03C does **not** need W03B. Both may land in any order relative to each other once W03A has landed.
+- W03D needs **W03A + W03B + W03C** to have landed (R1 §I.2: "W03D cannot land before the W03A–C audit vocabulary is stable" — the W03A/B/C `direct_entry_audit_events` action vocabulary, the `app_user_revision_id` FK and the eight-verb action set must be stable before the W03D bounded projection can be implemented). W03D also needs **W02A** as a per-mode dependency for the `own_manager` mode specifically (the W02A writer already records `scope_kind = 'team'` and `scope_team_id = <leader team>` on the `team_manager_assign@team` path, verified in §1.1; this is a per-mode dependency, **not** a substitute for the W03A/B/C prerequisite). R2 weakened this to "W03D needs W03A (audit vocabulary) and W02A … W03D does **not** need W03B / W03C" — R3 rejects that weakening and restores the R1 §I.2 rule.
+- W03E needs W01A (REQUIRED_SCOPE_KIND bump; contract bump `1.3` → `1.4`); W03E does **not** need W03A / W03B / W03C / W03D in code (the entry-level OCC / revision / idempotency foundation is already in `direct_entry_*` from #1–#66 and is unchanged by W03A–D). The W03E contract bump and the `entry_restore: "all"` `REQUIRED_SCOPE_KIND` row land in the **same W03E migration** (R1 §C.5: the W03E lane lands the scope change and the contract bump together).
+- W03F needs W08A (already on `main`) and W03A + W03B + W03C + W03D + W03E (every W03 mutation rechecked under W08A freshness). W03F is a regression lane; it does **not** introduce a schema delta.
 - J01 needs every W03 lane passed and the W08A freshness lane green; J01 is a verification artifact, not a migration.
 
-**Hard ordering rules for R2:**
+**Hard ordering rules for R3 (R1 §I.2 dependency half restored; R2 "W03D only needs W03A + W02A" wording rejected):**
 
-- W03A must land **before** W03B / W03C / W03D. W03E is **independent** of W03A in code (it is the entry-level restore) but the W03E contract bump **must** land in the same W03E migration (R1 §C.5: "the contract bump `1.3 → 1.4` is locked at R3 … lands the scope change and the contract bump together"). R2 confirms the W03E contract-bump rule.
-- W03B / W03C may land in any order relative to each other (independent tables).
-- W03F may land as soon as W03A, W03B, W03C and W03E have landed; W03F reuses W08A.
+- W03A must land **before** W03B / W03C / W03D / W03E. (W03E is independent of W03A in code but the W03E contract bump is locked to the same W03E migration; W03A is the OCC root of W03A/B/C/D and the W03A audit vocabulary is required for W03D to land.)
+- W03B and W03C must land **before** W03D (R1 §I.2: the W03A–C audit vocabulary must be stable before W03D lands). W03B and W03C may land in any order relative to each other (independent tables; both are required before W03D).
+- W03D must land **after** W03A + W03B + W03C; W03D also requires W02A for the `own_manager` mode specifically. W03D does **not** require W03E.
+- W03E must land with the contract bump `1.3` → `1.4` and the `entry_restore: "all"` `REQUIRED_SCOPE_KIND` row in the same migration (R1 §C.5: "lands the scope change and the contract bump together"). W03E is independent of W03A/B/C/D in code.
+- W03F may land as soon as W03A, W03B, W03C, W03D and W03E have landed; W03F reuses W08A.
 - J01 runs only after W03A, W03B, W03C, W03D, W03E, W03F have all landed and passed focused regression.
-- **No W03 lane may land on a branch that has not first rebased onto the W01D `main` (or its post-#71 successor).** R1 locked this; R2 retests the rule on `fc1c8b49` and confirms it is still correct: the W01D `direct_entry_team_leader_marker()` trigger function, the partial marker-excluding indexes, the atomic leader-bundle RPC and the `direct_entry_assert_actor_app_user_admin` helper are all present on `fc1c8b49` (none of the post-#71 migrations removed them; #76 only tightens the W01D RPC's legacy `team` scope guard, preserving the trigger function and partial-index semantics).
+- **No W03 lane may land on a branch that has not first rebased onto the W01D `main` (or its post-#71 successor).** R1 locked this; R2 retested the rule on `fc1c8b49` and confirmed it is still correct: the W01D `direct_entry_team_leader_marker()` trigger function, the partial marker-excluding indexes, the atomic leader-bundle RPC and the `direct_entry_assert_actor_app_user_admin` helper are all present on `fc1c8b49` (none of the post-#71 migrations removed them; #76 only tightens the W01D RPC's legacy `team` scope guard, preserving the trigger function and partial-index semantics).
 
 ## 5. Acceptance / mutation matrix (locked for R2; pointer to R1 §F)
 
@@ -233,7 +250,7 @@ R1 §I.1 and §I.2 are the risk / blocker list. R2 retests on `fc1c8b49`:
     3. W02B / W02C / W04-C are independent of the W03 authority contract; R2 confirms this with a per-migration write-target inspection (see §1.2).
 - **No new P3.2 surface** is introduced by #72–#81 or by W04-C. The R1 §I.3 P3.2 boundary list is unchanged.
 
-## 11. Out of scope for R2 (locked)
+## 11. Out of scope for R2 (locked) and for R3 (locked)
 
 R2 does **not**:
 
@@ -246,15 +263,27 @@ R2 does **not**:
 - Run a `pnpm test`, a `pnpm docs:check` or a `pnpm secrets:check` against Production or against a `pnpm install` — R2 is docs-only. The R2 working tree contains the single handoff file and nothing else.
 - Force-push, amend, rebase, reset, clean, or rewrite history. R2 appends one commit on top of `fc1c8b49` and pushes fast-forward only.
 
-## 12. Lane status (R2)
+R3 does **not** (R3 is the round that wrote this repair; the same locked rules apply, plus):
 
-- `W03A`: not started; R1 contract locked; next migration slot #82; W1B owner.
-- `W03B`: not started; R1 contract locked; no reserved slot; W1B owner.
-- `W03C`: not started; R1 contract locked; no reserved slot; W1B owner.
-- `W03D`: not started; R1 contract locked; no reserved slot; W1B owner; `own_manager` regression now exercisable against W02A audit rows (see §1.1).
-- `W03E`: not started; R1 contract locked; no reserved slot; W1B owner; contract-bump `1.3 → 1.4` is part of the W03E migration.
-- `W03F`: not started; R1 contract locked; regression-only; T1C owner.
-- `J01`: not started; readiness audit; T1C owner.
+- Re-open R1, R2-of-R1, R3, R4, R5, R6 or R7 of the W03 handoff. R1 is the contract; R3 restores the R1 §I.2 dependency half inside the same handoff file. R3 does **not** introduce a new R2-of-R2 round.
+- Open any W03 implementation work (no source, no migration, no RPC, no API, no UI, no test lane, no `package.json` change). **T1B continues preflight only until T0 accepts R3; implementation of W03A–F does not open in the R3 round.**
+- Reserve migration numbers for W03B / W03C / W03D / W03E.
+- Add a capability, scope, link or app-user row.
+- Touch `auth.users`, the Supabase Auth boundary, the invitation path, the password / reset / recovery path, or the MFA path.
+- Modify `docs/P3.1.md` (R3 inherits the P3.1 master as the contract for the W03 lane scope and acceptance, unchanged from R2).
+- Modify the R1 handoff file (`docs/handoffs/p3-1-w03-s0-r1-access-security-rebaseline.md`). R3 repairs the R2 handoff file only; R1 is the locked source-of-truth.
+- Run a `pnpm test` against the W03 lanes (W03 has no implementation yet; R3 is docs-only).
+- Force-push, amend, rebase, reset, clean, or rewrite history. R3 appends one commit on top of `f3ec2724` (the R2 commit) and pushes fast-forward only. The R2 commit remains in branch history.
+
+## 12. Lane status (R3)
+
+- `W03A`: not started; R1 contract locked; next migration slot #82; W1B owner. **Implementation may not open until T0 accepts R3** (the T0 review of R2 identified the §4 dependency weakening; T1B continues preflight only until R3 is accepted).
+- `W03B`: not started; R1 contract locked; no reserved slot; W1B owner. **Implementation may not open until T0 accepts R3.**
+- `W03C`: not started; R1 contract locked; no reserved slot; W1B owner. **Implementation may not open until T0 accepts R3.**
+- `W03D`: not started; R1 contract locked; no reserved slot; W1B owner; **prerequisite: W03A + W03B + W03C must have landed** (R1 §I.2: "W03D cannot land before the W03A–C audit vocabulary is stable"); `own_manager` mode additionally requires W02A, which is already satisfied (see §1.1). R3 restores the R1 §I.2 dependency half; R2's "W03D only needs W03A + W02A" wording is rejected. **Implementation may not open until T0 accepts R3.**
+- `W03E`: not started; R1 contract locked; no reserved slot; W1B owner; contract-bump `1.3 → 1.4` is part of the W03E migration. **Implementation may not open until T0 accepts R3.**
+- `W03F`: not started; R1 contract locked; regression-only; T1C owner. **Implementation may not open until T0 accepts R3.**
+- `J01`: not started; readiness audit; T1C owner. **Readiness audit may not start until T0 accepts R3.**
 
 ## 13. Bàn giao (handoff)
 
@@ -263,10 +292,10 @@ R2 does **not**:
 - **Worktree:** `C:\CodeApp\BI-p3-1-w03-s0-r2-access-security-rebaseline`; clean at branch creation; only this handoff file changes in this rebaseline.
 - **R1 source-of-truth SHA:** `244441aec08cb7ad011bce6cd485b2658f5dbaaa` (the R1 rebaseline commit; unchanged; R1 handoff at `docs/handoffs/p3-1-w03-s0-r1-access-security-rebaseline.md` is the contract).
 - **Factual delta (R1 → R2 base):** migrations #72–#81 have landed (W02A, three hotfixes, W02B, three W02C migrations, one W01D scope hotfix, two W01C-B membership hotfixes); W04-C vendor UI landed. No W03 contract change is required.
-- **W03A–E dependency graph:** §4 of this file. W03A → W03B / W03C / W03D (W03A is the OCC root); W03E is independent of W03A in code (entry-level restore) but the contract bump `1.3 → 1.4` and the `entry_restore = all` `REQUIRED_SCOPE_KIND` row land in the same W03E migration. W03D reads the W02A audit rows; the W02A writer already records `scope_kind = 'team'` and `scope_team_id = <leader team>` on the `team_manager_assign@team` path. W03F reuses W08A. J01 verifies all of W03.
+- **W03A–E dependency graph:** §4 of this file. **R3 restore (R1 §I.2):** W03A → (W03B and W03C, independent of each other) → W03D; W02A is the per-mode dependency for the W03D `own_manager` mode specifically (verified in §1.1, already satisfied), not a substitute for the W03A + W03B + W03C prerequisite. W03E is independent of W03A/B/C/D in code (entry-level restore) but the contract bump `1.3 → 1.4` and the `entry_restore: "all"` `REQUIRED_SCOPE_KIND` row land in the same W03E migration. W03F lands after W03A + W03B + W03C + W03D + W03E. J01 verifies all of W03A–F.
 - **Migration-slot rule:** §2 of this file. W03A uses the next available slot at implementation time (currently **#82** on `fc1c8b49`); W03B–E do not reserve any slot; the logical sequencing is R1 §E and is not a migration-number contract.
 - **Acceptance / mutation matrix:** R1 §F is the matrix. R2 retests and confirms no row change is required. W03D `own_manager` allowlist is exactly `('project_manager_assignment_assign','project_manager_assignment_unassign')` plus any future Owner-approved scheduled-cancel verb (none today; §1.4).
 - **Gates:** §9 of this file. Migration count 81; next available slot 82; the W03 preflight measures the current count and asserts the expected W03 functions on top.
-- **Local = remote / worktree clean:** the R2 branch is local-only; no `origin/audit/p3-1-w03-s0-r2-access-security-rebaseline` push (the rebaseline commit will be pushed fast-forward after the local commit lands; R2 does not push in this rebaseline round). Worktree clean at branch creation; the commit is the only change.
+- **Local = remote / worktree clean (R3):** after the R2 commit `f3ec2724f20a7841d82b4022bcc25b00266e9a34` (pushed fast-forward) the local branch and `origin/audit/p3-1-w03-s0-r2-access-security-rebaseline` were identical (`0 ahead / 0 behind`). R3 appends a new commit on top of `f3ec2724`; that new commit is the only tracked change, and is pushed fast-forward so local = remote after the R3 push. The R2 §13 bullet that read "the R2 branch is local-only; no `origin/audit/p3-1-w03-s0-r2-access-security-rebaseline` push" was a factual error; R3 corrects it. Worktree clean before R3; clean after R3 (no untracked, no uncommitted, no `M`/`D`/`R` outside this handoff file).
 
-**Dừng tại:** `P3_1_W03_S0_R2_REBASELINE_PASS_AWAITING_T0_REVIEW`.
+**Dừng tại:** `P3_1_W03_S0_R3_REPAIR_PASS_AWAITING_T0_REVIEW`.
