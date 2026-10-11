@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./vendor-catalog-manager.tsx", import.meta.url), "utf8");
 const page = readFileSync(new URL("../../app/admin/catalog/vendors/page.tsx", import.meta.url), "utf8");
+const packageJson = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
 
 test("vendor manager provides list loading, empty, denied, error and retry states", () => {
   for (const state of ['"loading"', '"loaded"', '"denied"', '"unavailable"', '"error"']) {
@@ -39,6 +40,21 @@ test("create, rename and active flows use exact API routes, reason, version and 
   assert.match(source, /Xác nhận ngừng/);
 });
 
+test("vendor version remains OCC-only and is not rendered in the UI", () => {
+  assert.match(source, /expectedVersion: dialog\.vendor\.version/);
+  assert.doesNotMatch(source, /Phiên bản|revision_count|v\{vendor\.version\}/);
+});
+
+test("create date defaults only from authoritative list data and is required API input", () => {
+  assert.match(source, /validFrom: listState\.list\.authorization_date/);
+  assert.match(source, /if \(listState\.kind !== "loaded"\)[\s\S]{0,180}return/);
+  assert.match(source, /pendingIntent !== null \|\| list === null/);
+  assert.match(source, /label="Ngày hiệu lực" type="date"/);
+  assert.match(source, /value=\{form\.validFrom\} maxLength=\{10\} required/);
+  assert.match(source, /effectiveDate: form\.validFrom/);
+  assert.doesNotMatch(source, /new Date\(\)|toISOString\(\)/);
+});
+
 test("OCC and applied writes stay locked until strict authoritative reload succeeds", () => {
   assert.match(source, /outcome\.kind === "applied" \|\| outcome\.kind === "conflict"/);
   assert.match(source, /setConflictIntent\(intent\)/);
@@ -47,6 +63,20 @@ test("OCC and applied writes stay locked until strict authoritative reload succe
   assert.match(source, /vendorListConfirmsId\(list, vendorId\)/);
   assert.match(source, /setConflictIntent\(null\)[\s\S]{0,100}setConflictError\(null\)/);
   assert.match(source, /Thao tác vẫn đang bị khóa/);
+});
+
+test("canonical pnpm test invokes the W04-C lane exactly once", () => {
+  assert.ok(packageJson.scripts["test:p3-1-w04-c-vendor-ui"]);
+  const occurrences = packageJson.scripts.test.match(/test:p3-1-w04-c-vendor-ui/g) ?? [];
+  assert.equal(occurrences.length, 1);
+  assert.match(packageJson.scripts["test:p3-1-w04-c-vendor-ui"],
+    /vendor-catalog-model\.test\.mjs/);
+  assert.match(packageJson.scripts["test:p3-1-w04-c-vendor-ui"],
+    /vendor-catalog-manager\.test\.mjs/);
+  assert.match(packageJson.scripts["test:p3-1-w04-c-vendor-ui"],
+    /admin-navigation\.test\.mjs/);
+  assert.match(packageJson.scripts["test:p3-1-w04-c-vendor-ui"],
+    /admin-access\.test\.mjs/);
 });
 
 test("UI consumes only safe display fields and never renders internal recruiter identifiers or authority", () => {

@@ -55,6 +55,7 @@ test("create matches API request contract, requires reason and keeps create vers
   const result = buildVendorCreateRequest({
     vendorId: "SUP-02",
     displayName: "Nhà cung cấp B",
+    effectiveDate: "2032-02-29",
     reason: "Tạo mới",
     idempotencyKey: KEY,
   });
@@ -64,10 +65,23 @@ test("create matches API request contract, requires reason and keeps create vers
     "display_name", "expected_version", "idempotency_key", "reason", "valid_from", "vendor_id",
   ]);
   assert.equal(result.body.expected_version, 0);
-  assert.match(String(result.body.valid_from), /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(result.body.valid_from, "2032-02-29");
   assert.equal(buildVendorCreateRequest({
-    vendorId: "__system_vendor__", displayName: "Reserved", reason: "x", idempotencyKey: KEY,
+    vendorId: "SUP-02", displayName: "Nhà cung cấp B", effectiveDate: "2026-02-29",
+    reason: "Tạo mới", idempotencyKey: KEY,
   }).ok, false);
+  assert.equal(buildVendorCreateRequest({
+    vendorId: "SUP-02", displayName: "Nhà cung cấp B", effectiveDate: "",
+    reason: "Tạo mới", idempotencyKey: KEY,
+  }).ok, false);
+  assert.equal(buildVendorCreateRequest({
+    vendorId: "__system_vendor__", displayName: "Reserved", effectiveDate: "2026-10-11",
+    reason: "x", idempotencyKey: KEY,
+  }).ok, false);
+  assert.equal(buildVendorCreateRequest({
+    vendorId: "SUP-02", displayName: "Nhà cung cấp B", effectiveDate: "2024-02-29",
+    reason: "Tạo mới", idempotencyKey: KEY,
+  }).ok, true);
 });
 
 test("update and set-active send exact expected-version, reason and idempotency fields", () => {

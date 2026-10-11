@@ -35,7 +35,7 @@ type DialogState =
   | { kind: "edit"; vendor: AdminVendor }
   | { kind: "active"; vendor: AdminVendor; active: boolean };
 
-type FormState = { vendorId: string; displayName: string; reason: string };
+type FormState = { vendorId: string; displayName: string; validFrom: string; reason: string };
 type MutationIntent = {
   url: string;
   method: "POST" | "PATCH";
@@ -46,7 +46,7 @@ type MutationIntent = {
   retry: boolean;
 };
 
-const EMPTY_FORM: FormState = { vendorId: "", displayName: "", reason: "" };
+const EMPTY_FORM: FormState = { vendorId: "", displayName: "", validFrom: "", reason: "" };
 const button = "inline-flex min-h-10 items-center justify-center rounded-md border border-border " +
   "bg-surface px-3 text-sm font-medium text-foreground focus-visible:outline-none " +
   "focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
@@ -145,13 +145,17 @@ export function VendorCatalogManager() {
   };
 
   const startCreate = () => {
-    setForm(EMPTY_FORM);
+    if (listState.kind !== "loaded") {
+      setNotice("Cần tải danh sách từ máy chủ để xác định ngày hiệu lực mặc định.");
+      return;
+    }
+    setForm({ ...EMPTY_FORM, validFrom: listState.list.authorization_date });
     setFormError(null);
     setDialog({ kind: "create" });
   };
 
   const startEdit = (vendor: AdminVendor) => {
-    setForm({ vendorId: vendor.vendor_id, displayName: vendor.display_name, reason: "" });
+    setForm({ vendorId: vendor.vendor_id, displayName: vendor.display_name, validFrom: "", reason: "" });
     setFormError(null);
     setDialog({ kind: "edit", vendor });
   };
@@ -281,6 +285,7 @@ export function VendorCatalogManager() {
       request = buildVendorCreateRequest({
         vendorId: form.vendorId,
         displayName: form.displayName,
+        effectiveDate: form.validFrom,
         reason: form.reason,
         idempotencyKey,
       });
@@ -345,7 +350,7 @@ export function VendorCatalogManager() {
           onOpenChange={(open) => { if (!open && !busy && !conflictIntent) setDialog(null); }}>
           <Dialog.Trigger asChild>
             <button type="button" onClick={startCreate}
-              disabled={busy || conflictIntent !== null || pendingIntent !== null}
+              disabled={busy || conflictIntent !== null || pendingIntent !== null || list === null}
               className={primaryButton}>
               Thêm nhà cung cấp
             </button>
@@ -420,6 +425,11 @@ export function VendorCatalogManager() {
                   )}
                   <Field id="vendor-name" label="Tên nhà cung cấp" value={form.displayName}
                     maxLength={256} required onChange={(value) => changeForm("displayName", value)} />
+                  {dialog?.kind === "create" ? (
+                    <Field id="vendor-valid-from" label="Ngày hiệu lực" type="date"
+                      value={form.validFrom} maxLength={10} required
+                      onChange={(value) => changeForm("validFrom", value)} />
+                  ) : null}
                   <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
                   {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
                   <button type="submit" disabled={busy || pendingIntent !== null || conflictIntent !== null}
@@ -502,7 +512,6 @@ export function VendorCatalogManager() {
                     <th scope="col" className="px-3 py-3">Mã nhà cung cấp</th>
                     <th scope="col" className="px-3 py-3">Tên nhà cung cấp</th>
                     <th scope="col" className="px-3 py-3">Trạng thái</th>
-                    <th scope="col" className="px-3 py-3">Phiên bản</th>
                     <th scope="col" className="px-3 py-3 text-right">Thao tác</th>
                   </tr>
                 </thead>
@@ -514,7 +523,6 @@ export function VendorCatalogManager() {
                         <td className="px-3 py-3 font-mono text-xs">{vendor.vendor_id}</td>
                         <td className="px-3 py-3 font-medium">{vendor.display_name}</td>
                         <td className="px-3 py-3"><ActiveBadge active={vendor.active} /></td>
-                        <td className="px-3 py-3 text-xs text-muted">v{vendor.version} · {vendor.revision_count} lần cập nhật</td>
                         <td className="px-3 py-3">
                           <div className="flex justify-end gap-2 whitespace-nowrap">
                             <button type="button" className={button} disabled={locked}
@@ -551,14 +559,15 @@ export function VendorCatalogManager() {
   );
 }
 
-function Field({ id, label, value, maxLength, required, onChange }: {
+function Field({ id, label, value, maxLength, required, type = "text", onChange }: {
   id: string; label: string; value: string; maxLength: number; required: boolean;
+  type?: "text" | "date";
   onChange(value: string): void;
 }) {
   return (
     <label htmlFor={id} className="flex flex-col gap-1 text-sm font-medium">
       {label}
-      <input id={id} value={value} maxLength={maxLength} required={required}
+      <input id={id} type={type} value={value} maxLength={maxLength} required={required}
         onChange={(event) => onChange(event.target.value)}
         className="min-h-11 rounded-md border border-border bg-surface px-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50" />
     </label>

@@ -115,14 +115,30 @@ function validateDisplayName(value: string): string | null {
   return null;
 }
 
+function validateISODate(value: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return "Ngày hiệu lực không hợp lệ.";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]!) {
+    return "Ngày hiệu lực không hợp lệ.";
+  }
+  return null;
+}
+
 export function buildVendorCreateRequest(input: {
   vendorId: string;
   displayName: string;
+  effectiveDate: string;
   reason: string;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateVendorId(input.vendorId) ?? validateDisplayName(input.displayName)
-    ?? validateReason(input.reason) ?? validateUuid(input.idempotencyKey);
+    ?? validateISODate(input.effectiveDate) ?? validateReason(input.reason)
+    ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return {
     ok: true,
@@ -130,7 +146,7 @@ export function buildVendorCreateRequest(input: {
       expected_version: 0,
       vendor_id: input.vendorId.trim(),
       display_name: input.displayName.trim(),
-      valid_from: new Date().toISOString().slice(0, 10),
+      valid_from: input.effectiveDate,
       reason: input.reason,
       idempotency_key: input.idempotencyKey,
     },
