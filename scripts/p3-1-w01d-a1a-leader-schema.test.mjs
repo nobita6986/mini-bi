@@ -107,9 +107,9 @@ await db.query(
 // ---------------------------------------------------------------------------
 test("assertions 1-2: 75 migrations, #71 stays append-only, and #72 remains W02-A", async () => {
   const names = await readMigrationNames();
-  assert.equal(names.length, 80, "the ledger carries exactly 80 migrations");
+  assert.equal(names.length, 81, "the ledger carries exactly 81 migrations");
   assert.equal(names[70], NEW_MIGRATION, "#71 remains the W01D migration");
-  assert.equal(names.at(-9), W02A_MIGRATION, "#72 remains the W02-A migration");
+  assert.equal(names.at(-10), W02A_MIGRATION, "#72 remains the W02-A migration");
   assert.equal(names.filter((name) => name.startsWith("20261009070000")).length, 1,
     "exactly one migration occupies the #71 slot");
   assert.equal(names.filter((name) => name.startsWith("20261009060000")).length, 1,

@@ -208,7 +208,7 @@ async function createRequest(db, items, suffix) {
 // ma tung test can.
 // ---------------------------------------------------------------------------
 const { db, migrationNames } = await createMigratedDatabase();
-assert.equal(migrationNames.at(-1), R2_MIGRATION, "#80 la migration cuoi cung cua ledger");
+assert.equal(migrationNames.at(-2), R2_MIGRATION, "#80 la migration display projection");
 
 const fixture = await seedChangeRequestFixture(db);
 assert.equal(typeof fixture.entryA.entry_id, "string", "fixture chung phai seed xong");

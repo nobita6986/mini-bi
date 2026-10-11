@@ -1,8 +1,59 @@
-# P3.1-W02-C R2 Labor type display projection: P3_1_W02C_R2_READ_PROJECTION_LOCAL_PASS_AWAITING_T0_REVIEW
+# P3.1-W02-C R3 Own Draft display projection: P3_1_W02C_R3_OWN_DRAFT_DISPLAY_LOCAL_PASS_AWAITING_T0_REVIEW
 
 Branch `feature/p3-1-w02c-labor-type-catalog`. Base `origin/main@5f41caf689dbfd52bb889744f227aa659da393db`
 -> final (this commit). Fast-forward only; no Production query/apply/deploy, no browser or UAT work, no new
 dependency, no merge of `main`.
+
+## R3 delta
+
+```
+R3_SLOT       #81  20261011140000_p3_1_w02c_r3_own_draft_display_projection.sql
+PATCHED LIVE  public.direct_entry_list_own_drafts(uuid,uuid)
+NOT PATCHED   public.direct_entry_labor_type_options()   -- vẫn active-only
+ENVELOPE      'direct-entry-draft-list/1' -> 'direct-entry-draft-list/2'
+INVENTORY     khong doi (helper bi drop ngay trong #81)
+```
+
+**R3 blocker.** Sau #80, Worker Directory, entry baseline và Change Request đều đã có
+`labor_type_display`, nhưng Direct Entry grid tải draft đã lưu qua `direct_entry_list_own_drafts`, và
+payload đó vẫn chỉ có raw key. Một draft giữ type đã bị tắt vì thế buộc client fallback sang render raw
+key — đúng thứ mà dynamic catalog cấm, vì type đó đã **vắng** khỏi
+`direct_entry_labor_type_options()` và không còn là giá trị chọn được nữa.
+
+- Migration #81 append-only (#1–#80 byte-identical) patch **in place** body LIVE của
+  `direct_entry_list_own_drafts(uuid,uuid)` qua helper `direct_entry_w02c_r3_replace_proc_source`
+  (helper #79 và #80 đều bị drop ở cuối migration của chúng, nên đây là helper mới). Helper bị drop ngay
+  trong #81, nên inventory không đổi. Migration mở/đóng transaction riêng.
+- Thêm top-level `labor_type_display` cho **mọi** phần tử `drafts[]`, resolve
+  `public.direct_entry_labor_types.display_name` theo stored `labor_type_key`, **không lọc `active`**.
+  Dùng scalar subquery chứ không join, nên tập dòng, thứ tự, bound 500 dòng, scope resolver và mọi nhánh
+  redaction profile đều không đổi. Key cũ giữ nguyên vị trí; nhãn được thêm **bên cạnh**, không thay thế.
+- Envelope lên `direct-entry-draft-list/2`. Nhãn là field BẮT BUỘC của strict contract, nên version là
+  thứ chặn một client build còn mong đợi shape /1 nhận payload mà nó sẽ render draft thiếu nhãn —
+  `DRAFT_LIST_PROJECTION_VERSION` trong `draft-list-contract.ts` được bump tương ứng.
+- Self-check của #81 đọc body LIVE của **cả bốn** read surface (`list_workers`, `read_projection`,
+  `read_change_request`, `list_own_drafts`), nên các surface R2 được chứng minh lại và một migration
+  sau không thể âm thầm hoàn tác chúng. Nó abort cả file bằng `55000` nếu bất kỳ surface nào mất
+  `labor_type_display`, mọc lại static map `'TEMPORARY'`/`'PERMANENT'`, thôi resolve catalog theo key,
+  mọc lại filter `active`, hoặc mọc nhãn fallback "Không xác định"; và nếu envelope own-draft không
+  quảng cáo đúng /2, còn sót /1, input catalog mất `where t.active`, hoặc input catalog lộ
+  `labor_type_display`.
+- Strict contract `OwnDraft`/`projectOwnDrafts`: `labor_type_display` bắt buộc là string không rỗng
+  (thiếu/rỗng/sai kiểu ⇒ `null` ⇒ unavailable), key set chính xác 20 key có cả `labor_type` và
+  `labor_type_display`. Không raw key, không "Không xác định", không static map, không Admin API.
+- Authority, own-draft scope resolver, bound 500 dòng, RLS, grant và toàn bộ write path **không đổi**.
+  Không sửa UI trong lane này.
+- Lane `test:p3-1-w02c-r3-own-draft-display` (12 test) phủ các nhóm yêu cầu: draft dùng type active trả
+  đủ key + nhãn và envelope /2; draft dùng type inactive vẫn resolve đúng `display_name` trong khi key
+  đó vắng khỏi input catalog; type tạo mới và rename phản ánh nhãn live (không snapshot); thiếu/rỗng/sai
+  nhãn và envelope /1 bị contract từ chối fail-closed; key không có catalog row trả JSON null, không bỏ
+  qua dòng và không bịa nhãn; tập entry và tập 20 key không đổi.
+- Mutation evidence — mọi probe làm lane RED với restore byte-identical: `M18` bỏ lookup nhãn ở
+  own-draft; `M19` thu hẹp lookup sai bằng `active`; `M20` âm thầm revert envelope về /1; `M21`
+  contract ngừng validate nhãn; `M22` contract nhận lại envelope /1. `M1`-`M17` giữ nguyên RED.
+- Ledger pin trong `scripts/` được rebaseline cho slot #81 ở cả bốn dạng đang tồn tại trong repo:
+  `names.length, N`, `names.at(-N)`, `names.slice(0, -N)` và `names[names.length - (N)]`; kèm
+  `totalCount`, message count và pinned tail của alias-backfill.
 
 ## R2 delta
 

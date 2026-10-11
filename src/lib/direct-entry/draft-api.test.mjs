@@ -46,6 +46,7 @@ const draft = {
   team_id: catalog.recruiters[0].team_id,
   team_display_name: "Synthetic team",
   labor_type: "TEMPORARY",
+  labor_type_display: "Thời vụ",
   employment_status: "UNCONFIRMED",
   created_at: "2026-10-03T00:00:00.000Z",
   updated_at: "2026-10-03T00:00:00.000Z",

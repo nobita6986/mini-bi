@@ -96,8 +96,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 80,
-    "the ledger carries every migration through the W02C-R2 labor-type display projection #80");
+  assert.equal(totalCount, 81,
+    "the ledger carries every migration through the W02C-R3 own-draft display projection #81");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -855,7 +855,7 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
     assert.equal(await count(db, "direct_entry_rpc_idempotency"), before.idempotency + 1);
 
     const ownerList = await listDrafts(db, IDS.auth, IDS.user);
-    assert.equal(ownerList.projection_version, "direct-entry-draft-list/1");
+    assert.equal(ownerList.projection_version, "direct-entry-draft-list/2");
     assert.equal(ownerList.drafts.length, 2);
     const ownerFirst = ownerList.drafts.find(({ employee_code }) => employee_code === "hrp-2020-000001");
     const ownerOff = ownerList.drafts.find(({ employee_code }) => employee_code === "hrp-2020-000002");

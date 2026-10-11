@@ -59,13 +59,25 @@ export type OwnDraft = {
   team_id: string;
   team_display_name: string;
   labor_type: LaborType;
+  /**
+   * P3.1-W02C-R3: nhan do server resolve tu public.direct_entry_labor_types theo
+   * stored key, KHONG loc active. Bat buoc la string khong rong: draft dung mot
+   * type da inactive van phai hien nhan that, va client khong bao gio duoc tu
+   * map key sang nhan hay render raw key.
+   */
+  labor_type_display: string;
   employment_status: "UNCONFIRMED" | "ON" | "OFF" | null;
   created_at: string;
   updated_at: string;
   profile: DraftProfileProjection;
 };
 
-export const DRAFT_LIST_PROJECTION_VERSION = "direct-entry-draft-list/1" as const;
+/**
+ * P3.1-W02C-R3: /2 them labor_type_display BAT BUOC tren moi draft. Client build
+ * con mong doi shape /1 phai tu choi payload thay vi lang le render draft khong
+ * co nhan.
+ */
+export const DRAFT_LIST_PROJECTION_VERSION = "direct-entry-draft-list/2" as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -92,7 +104,7 @@ export function projectOwnDrafts(value: unknown): OwnDraft[] | null {
       "submission_id", "submission_version", "entry_id", "entry_version", "employee_code",
       "first_work_date", "worker_display_name", "project_id", "project_display_name",
       "recruiter_id", "recruiter_display_name", "provider_type", "team_id", "team_display_name",
-      "labor_type", "employment_status", "created_at", "updated_at", "profile",
+      "labor_type", "labor_type_display", "employment_status", "created_at", "updated_at", "profile",
     ]) || typeof draft.submission_id !== "string" || !UUID.test(draft.submission_id) ||
         !isPositiveVersion(draft.submission_version) ||
         typeof draft.entry_id !== "string" || !UUID.test(draft.entry_id) ||
@@ -106,6 +118,7 @@ export function projectOwnDrafts(value: unknown): OwnDraft[] | null {
         typeof draft.team_id !== "string" || !UUID.test(draft.team_id) ||
         typeof draft.team_display_name !== "string" ||
         !isCanonicalLaborTypeKey(draft.labor_type) ||
+        typeof draft.labor_type_display !== "string" || draft.labor_type_display.length < 1 ||
         (draft.employment_status !== null && draft.employment_status !== "UNCONFIRMED" &&
           draft.employment_status !== "ON" && draft.employment_status !== "OFF") ||
         !isRealCalendarDate(draft.first_work_date) ||
@@ -139,6 +152,7 @@ export function projectOwnDrafts(value: unknown): OwnDraft[] | null {
       team_id: draft.team_id,
       team_display_name: draft.team_display_name,
       labor_type: draft.labor_type,
+      labor_type_display: draft.labor_type_display,
       employment_status: draft.employment_status,
       created_at: draft.created_at,
       updated_at: draft.updated_at,

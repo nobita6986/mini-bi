@@ -137,6 +137,7 @@ function draftRow(laborType) {
     team_id: TEAM_ID,
     team_display_name: "Synthetic team",
     labor_type: laborType,
+    labor_type_display: LABOR_TYPE_DISPLAY_FIXTURE,
     employment_status: "UNCONFIRMED",
     created_at: "2026-10-03T00:00:00.000Z",
     updated_at: "2026-10-03T00:00:00.000Z",

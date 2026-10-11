@@ -26,6 +26,7 @@ import { AUTH_PROLOGUE, createMigratedDatabase } from "./lib/s04c-read-fixture.m
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const NEW_MIGRATION = "20261011120000_p3_1_w02c_labor_type_catalog.sql";
 const R2_MIGRATION = "20261011130000_p3_1_w02c_r2_labor_type_display_projection.sql";
+const R3_MIGRATION = "20261011140000_p3_1_w02c_r3_own_draft_display_projection.sql";
 
 const OPERATOR_FULL_ADMIN = { auth: "10000000-0000-4000-8000-0000000000e1", app: "20000000-0000-4000-8000-0000000000e1" };
 const OPERATOR_ACCOUNTING = { auth: "10000000-0000-4000-8000-0000000000e2", app: "20000000-0000-4000-8000-0000000000e2" };
@@ -1244,8 +1245,9 @@ test("18: the ACL posture is service-role only, with revoked helpers and forced 
 
 test("19: the retired closed set is gone and a legacy value aborts migration #79", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-2), NEW_MIGRATION, "#79 stays the catalog migration");
-  assert.equal(names.at(-1), R2_MIGRATION, "#80 occupies the last migration slot");
+  assert.equal(names.at(-3), NEW_MIGRATION, "#79 stays the catalog migration");
+  assert.equal(names.at(-2), R2_MIGRATION, "#80 stays the display projection migration");
+  assert.equal(names.at(-1), R3_MIGRATION, "#81 occupies the last migration slot");
   assert.equal(new Set(names).size, names.length, "the ledger carries no duplicate slot");
 
   const closedSetQuery =
@@ -1261,7 +1263,7 @@ test("19: the retired closed set is gone and a legacy value aborts migration #79
   // projection that builds on it.
   const legacy = new PGlite();
   await legacy.exec(AUTH_PROLOGUE);
-  for (const name of names.slice(0, -2)) {
+  for (const name of names.slice(0, -3)) {
     await legacy.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
 
