@@ -56,7 +56,8 @@ async function resolveTrustedActor(
         ? fail("UNAUTHENTICATED", 401) : fail("ACTOR_NOT_AVAILABLE", 403) };
     }
     const actor = session.actor.actor;
-    if (!actor || !UUID.test(actor.auth_subject) || !UUID.test(actor.app_user_id)) {
+    if (!actor || typeof actor.auth_subject !== "string" || typeof actor.app_user_id !== "string" ||
+        !UUID.test(actor.auth_subject) || !UUID.test(actor.app_user_id)) {
       return { ok: false, response: fail("ACTOR_NOT_AVAILABLE", 403) };
     }
     return { ok: true, value: { auth_subject: actor.auth_subject, app_user_id: actor.app_user_id } };

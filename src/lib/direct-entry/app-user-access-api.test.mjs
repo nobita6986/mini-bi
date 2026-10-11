@@ -96,6 +96,8 @@ test("null, missing and invalid session actors are denied before any RPC", async
     { ok: true },
     { ok: true, actor: { ...ACTOR, auth_subject: "not-a-uuid" } },
     { ok: true, actor: { ...ACTOR, app_user_id: "not-a-uuid" } },
+    { ok: true, actor: { ...ACTOR, auth_subject: [ACTOR.auth_subject] } },
+    { ok: true, actor: { ...ACTOR, app_user_id: [ACTOR.app_user_id] } },
   ]) {
     const dependencies = {
       repository, resolveSession: async () => ({ actor: resolution }),
