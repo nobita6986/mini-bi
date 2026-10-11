@@ -32,7 +32,8 @@ export function projectExistingAccount(value: unknown): ExistingAccount | null {
   const row = value as Record<string, unknown>;
   if (Object.keys(row).sort().join(",") !== "account_ref,display_name,enabled,version") return null;
   if (typeof row.account_ref !== "string" || !UUID.test(row.account_ref)) return null;
-  if (typeof row.display_name !== "string" || row.display_name.trim() === "" || row.display_name.length > 256) return null;
+  if (typeof row.display_name !== "string" || row.display_name !== row.display_name.trim() ||
+      row.display_name === "" || row.display_name.length > 256) return null;
   if (typeof row.enabled !== "boolean" || typeof row.version !== "number" ||
       !Number.isSafeInteger(row.version) || row.version < 1) return null;
   return {
@@ -47,7 +48,8 @@ export function projectExistingAccountList(value: unknown): ExistingAccountList 
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const envelope = value as Record<string, unknown>;
   if (Object.keys(envelope).sort().join(",") !== "accounts,enabled,page,page_size,search,total") return null;
-  if (envelope.search !== null && (typeof envelope.search !== "string" || envelope.search.trim() === "" || envelope.search.length > 256)) return null;
+  if (envelope.search !== null && (typeof envelope.search !== "string" ||
+      envelope.search !== envelope.search.trim() || envelope.search === "" || envelope.search.length > 256)) return null;
   if (envelope.enabled !== "all" && envelope.enabled !== "true" && envelope.enabled !== "false") return null;
   if (typeof envelope.page !== "number" || !Number.isSafeInteger(envelope.page) || envelope.page < 1) return null;
   if (typeof envelope.page_size !== "number" || !Number.isSafeInteger(envelope.page_size) || envelope.page_size < 1 || envelope.page_size > 100) return null;

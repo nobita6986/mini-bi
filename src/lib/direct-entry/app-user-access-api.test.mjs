@@ -57,6 +57,66 @@ test("strict projection rejects raw identity and extra fields", () => {
   assert.equal(projectExistingAccountList({ ...LIST, raw_uuid: ACCOUNT.account_ref }), null);
 });
 
+test("non-canonical display names and search echoes fail closed through the repository", async () => {
+  for (const value of [" Target", "Target ", "\tTarget", "Target\n"]) {
+    const account = { ...ACCOUNT, display_name: value };
+    const repository = createAccountAccessRepository(async (name) => ({
+      data: name === "direct_entry_get_app_user_admin"
+        ? account : { ...LIST, accounts: [account] },
+      error: null,
+    }));
+    const dependencies = { ...deps(), repository };
+    const detail = await getAccount(request("/api/admin/access/accounts/ref"), ACCOUNT.account_ref, "true", dependencies);
+    assert.deepEqual([detail.status, await detail.json()], [500, { ok: false, code: "ACCOUNT_UNAVAILABLE" }]);
+    const list = await listAccounts(request("/api/admin/access/accounts"), "true", dependencies);
+    assert.deepEqual([list.status, await list.json()], [500, { ok: false, code: "ACCOUNT_UNAVAILABLE" }]);
+
+    const searchRepository = createAccountAccessRepository(async () => ({
+      data: { ...LIST, search: value }, error: null,
+    }));
+    const search = await listAccounts(request("/api/admin/access/accounts?search=Target"), "true", {
+      ...deps(), repository: searchRepository,
+    });
+    assert.deepEqual([search.status, await search.json()], [500, { ok: false, code: "ACCOUNT_UNAVAILABLE" }]);
+  }
+  assert.deepEqual(projectExistingAccount({ ...ACCOUNT, display_name: "T".repeat(256) }), {
+    ...ACCOUNT, display_name: "T".repeat(256),
+  });
+  assert.deepEqual(projectExistingAccountList({ ...LIST, search: "Target" }), { ...LIST, search: "Target" });
+});
+
+test("null, missing and invalid session actors are denied before any RPC", async () => {
+  let rpcCalls = 0;
+  const repository = createAccountAccessRepository(async () => {
+    rpcCalls += 1;
+    return { data: null, error: null };
+  });
+  for (const resolution of [
+    { ok: true, actor: null },
+    { ok: true },
+    { ok: true, actor: { ...ACTOR, auth_subject: "not-a-uuid" } },
+    { ok: true, actor: { ...ACTOR, app_user_id: "not-a-uuid" } },
+  ]) {
+    const dependencies = {
+      repository, resolveSession: async () => ({ actor: resolution }),
+    };
+    const responses = [
+      await listAccounts(request("/api/admin/access/accounts"), "true", dependencies),
+      await getAccount(request("/api/admin/access/accounts/ref"), ACCOUNT.account_ref, "true", dependencies),
+    ];
+    for (const action of ["enable", "disable"]) {
+      responses.push(await mutateAccount(request(`/api/admin/access/accounts/ref/${action}`, json({
+        expected_version: 1, reason: "R2-R2 reason",
+        idempotency_key: "40000000-0000-4000-8000-000000000201",
+      })), ACCOUNT.account_ref, action, "true", dependencies));
+    }
+    for (const response of responses) {
+      assert.deepEqual([response.status, await response.json()], [403, { ok: false, code: "ACTOR_NOT_AVAILABLE" }]);
+    }
+    assert.equal(rpcCalls, 0);
+  }
+});
+
 test("R2 API list/detail allow only strict server projections", async () => {
   const list = await listAccounts(request("/api/admin/access/accounts?search=%20TaRgEt%20&enabled=all&page=1&page_size=25"), "true", deps({
     listAccounts: async (input) => ({ ok: true, data: { ...LIST, search: input.search } }),
