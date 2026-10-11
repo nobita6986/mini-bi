@@ -374,7 +374,7 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
     name,
     sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
   })));
-  for (const name of names.slice(0, -9)) {
+  for (const name of names.slice(0, -10)) {
     const file = path.join(MIGRATION_DIR, name);
     const local = await readFile(file);
     const trackedPath = path.relative(ROOT, file).replaceAll("\\", "/");
@@ -1186,7 +1186,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   db = state.db;
   const names = state.names;
   const inventoryBefore = state.baseline;
-  const allMigrations = state.migrations.slice(0, -8);
+  const allMigrations = state.migrations.slice(0, -9);
   assert.equal(names.length, 80);
   assert.equal(names.at(-10), MIGRATION_71);
   assert.equal(names.at(-5), LEGACY_SCOPE_HOTFIX);
@@ -1814,9 +1814,9 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     exists: true, service_exec: false, anon_exec: false,
     authenticated_exec: false, public_exec: false,
   });
-  assert.equal((allMigrations.at(-2).sql.match(
+  assert.equal((allMigrations.at(-1).sql.match(
     /^\s*select public\.direct_entry_transition_legacy_team_leaders\(/gm) ?? []).length, 1);
-  assert.doesNotMatch(allMigrations.at(-2).sql,
+  assert.doesNotMatch(allMigrations.at(-1).sql,
     /select\s+public\.direct_entry_seed_team_scope_grants\s*\(/i);
   const seedMigrationIndex = names.findIndex((name) => name === "20261008080000_p3_w05a_actor_scoped_reporting.sql");
   assert.ok(seedMigrationIndex >= 0);

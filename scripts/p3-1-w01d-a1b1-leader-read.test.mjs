@@ -110,7 +110,7 @@ async function createDatabase() {
     name,
     sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
   })));
-  for (const name of names.slice(0, -9)) {
+  for (const name of names.slice(0, -10)) {
     const file = path.join(MIGRATION_DIR, name);
     const local = await readFile(file);
     const trackedPath = path.relative(ROOT, file).replaceAll("\\", "/");
@@ -252,7 +252,7 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   db = state.db;
   migrationNames = state.names;
   inventoryBefore = state.baseline;
-  allMigrationsForNames = state.migrations.slice(0, -8);
+  allMigrationsForNames = state.migrations.slice(0, -9);
   assert.equal(migrationNames.length, 80);
   assert.equal(migrationNames.at(-10), MIGRATION_71);
   assert.equal(migrationNames.some((name) => name.startsWith("202610100")), false);
