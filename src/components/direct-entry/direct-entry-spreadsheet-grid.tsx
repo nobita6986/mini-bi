@@ -35,11 +35,15 @@ import { DdmmDateInput } from "./direct-entry-ddmm-date-input";
 import {
   DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS,
   DIRECT_ENTRY_GENDER_OPTIONS,
-  DIRECT_ENTRY_LABOR_TYPE_OPTIONS,
   recruitersForProvider,
   directEntryGridColumn,
   type DirectEntryGridColumn,
 } from "@/lib/direct-entry/direct-entry-grid-columns";
+import {
+  activeLaborTypeLabel,
+  sortedActiveLaborTypes,
+} from "@/lib/direct-entry/labor-type-catalog-ui";
+import type { DraftCatalogLaborType } from "@/lib/direct-entry/write-repository";
 import {
   formatDateToDDMM,
   formatFreeDateText,
@@ -113,6 +117,7 @@ export type SpreadsheetGridRow = {
 
 export type SpreadsheetCatalogOptions = {
   projects: readonly { id: string; label: string; keywords?: string }[];
+  laborTypes: readonly DraftCatalogLaborType[];
   recruiters: readonly {
     id: string;
     label: string;
@@ -174,7 +179,6 @@ export type DirectEntrySpreadsheetGridProps = {
 };
 
 const PROVIDER_OPTIONS = ["hrp", "vendor"] as const;
-const LABOR_TYPE_UI_VALUES: readonly string[] = DIRECT_ENTRY_LABOR_TYPE_OPTIONS;
 
 export function spreadsheetSelectOptions(
   columnKey: string,
@@ -187,7 +191,10 @@ export function spreadsheetSelectOptions(
   // the row still stores ""; choosing that visible option emits no change and
   // the value disappears when the editor closes.
   if (columnKey === "gender") return ["", ...DIRECT_ENTRY_GENDER_OPTIONS];
-  if (columnKey === "labor_type") return ["", ...LABOR_TYPE_UI_VALUES];
+  if (columnKey === "labor_type") {
+    return ["", ...sortedActiveLaborTypes(catalogs?.laborTypes)
+      .map((option) => option.labor_type_key)];
+  }
   if (columnKey === "provider_type") return ["", ...PROVIDER_OPTIONS];
   if (columnKey === "project_id") {
     // Stable project IDs are stored; the searchable editor renders separate labels.
@@ -262,6 +269,23 @@ function SelectCellEditor(
         onBlur={commitBlur}>
         <option value="">—</option>
         {recruiters.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    );
+  }
+  if (props.columnKey === "labor_type") {
+    const selectedIsInactive = value !== "" && !options.includes(value);
+    return (
+      <select aria-label="Loại hình LĐ" autoFocus value={value}
+        onChange={(event) => commit(event.currentTarget.value)}
+        onBlur={commitBlur}>
+        <option value="">—</option>
+        {selectedIsInactive && <option value={value} disabled>
+          {value} · không còn hoạt động
+        </option>}
+        {sortedActiveLaborTypes(rowCatalogs?.laborTypes).map((option) =>
+          <option key={option.labor_type_key} value={option.labor_type_key}>
+            {option.display_name}
+          </option>)}
       </select>
     );
   }
@@ -693,6 +717,13 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           if (column.key === "project_id") return row.projectLabel;
           if (column.key === "provider_type") return row.providerType.toUpperCase();
           if (column.key === "recruiter_id") return row.recruiterLabel;
+          if (column.key === "labor_type") {
+            const key = row.cells.labor_type ?? "";
+            return key === ""
+              ? ""
+              : activeLaborTypeLabel(row.catalogOptions?.laborTypes ?? catalogOptions?.laborTypes, key) ??
+                `${key} · không còn hoạt động`;
+          }
           if (column.key === "row_index") return String(rowIndexOf(row.clientRowId) + 1);
           // `first_work_date` retains its ISO contract and renders DD/MM/YYYY.
           // DOB/CCCD issue date are ordinary text and render exactly as stored.

@@ -25,6 +25,7 @@ export type { PasteCatalogOption };
 export type PasteCatalogSource = {
   projects: readonly PasteCatalogOption[];
   recruiters: readonly PasteCatalogOption[];
+  labor_types: readonly PasteCatalogOption[];
 };
 
 /** Caller cung cap nguon catalog theo ngay hieu luc (co the la cache cua trang). */
@@ -77,7 +78,7 @@ export type WorkerProfilePreviewRow = {
     recruiter_id: string | null;
     provider_type: "hrp" | "vendor" | null;
   };
-  labels: { project: string; recruiter: string };
+  labels: { project: string; recruiter: string; laborType: string };
   issues: WorkerProfileIssue[];
   warnings: WorkerProfileIssue[];
   canProceed: boolean;
@@ -126,7 +127,7 @@ function resolveRow(
   const resolved: WorkerProfilePreviewRow["resolved"] =
     { project_id: null, recruiter_id: null, provider_type: null };
   const labels: WorkerProfilePreviewRow["labels"] =
-    { project: row.project_label, recruiter: row.recruiter_label };
+    { project: row.project_label, recruiter: row.recruiter_label, laborType: row.labor_type };
   if (source === null) {
     addIssue(issues, issue("PASTE_CATALOG_UNAVAILABLE", "error", row.sourceRow, null));
     return { resolved, labels, issues };
@@ -145,6 +146,15 @@ function resolveRow(
   }
   else addIssue(issues, issue(recruiter.reason === "AMBIGUOUS" ? "PASTE_CATALOG_AMBIGUOUS" :
     "PASTE_CATALOG_MISSING", "error", row.sourceRow, "recruiter_id"));
+
+  const laborType = matchCatalogReference(row.labor_type, source.labor_types);
+  if (laborType.ok) {
+    labels.laborType = source.labor_types.find((option) => option.id === laborType.id)?.label ??
+      row.labor_type;
+  } else {
+    addIssue(issues, issue("PASTE_LABOR_TYPE_INVALID", "error", row.sourceRow, "labor_type"));
+    labels.laborType = row.labor_type === "" ? "" : row.labor_type + " · không còn hoạt động";
+  }
 
   // R4-S02: STK / tên ngân hàng / tên chủ tài khoản là TEXT metadata để đối chiếu.
   // KHONG resolve qua direct_entry_banks, KHONG phu thuoc banks=0, KHONG tao bank_id.

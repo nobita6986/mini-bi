@@ -34,6 +34,7 @@ export type PasteCatalogOption = {
 export type PasteCatalog = {
   projects: readonly PasteCatalogOption[];
   recruiters: readonly PasteCatalogOption[];
+  laborTypes: readonly PasteCatalogOption[];
 };
 
 export type PastePreviewIssue = { line: number; column: number | null; message: string };
@@ -46,6 +47,7 @@ export type PastePreviewRow = {
   projectText: string;
   recruiterText: string;
   laborType: LaborType;
+  laborTypeLabel: string;
   projectId: string;
   recruiterId: string;
   issues: PastePreviewIssue[];
@@ -148,6 +150,7 @@ function projectRow(
     projectText: parsed.project,
     recruiterText: parsed.recruiter,
     laborType: parsed.labor_type,
+    laborTypeLabel: parsed.labor_type,
     projectId: "",
     recruiterId: "",
     issues: [],
@@ -178,6 +181,15 @@ function projectRow(
   const recruiter = matchCatalogReference(row.recruiterText, catalog.recruiters);
   if (recruiter.ok) row.recruiterId = recruiter.id;
   else add(EXCEL_PASTE_COLUMN_CODES.recruiter, catalogMessage("recruiter", recruiter.reason));
+
+  const laborType = matchCatalogReference(row.laborType, catalog.laborTypes);
+  if (laborType.ok) {
+    row.laborTypeLabel = catalog.laborTypes.find((option) => option.id === laborType.id)?.label ??
+      row.laborType;
+  } else {
+    add(EXCEL_PASTE_COLUMN_CODES.laborType,
+      "Loại hình lao động không có trong danh mục đang hoạt động cho ngày bắt đầu làm việc.");
+  }
 
   return row;
 }

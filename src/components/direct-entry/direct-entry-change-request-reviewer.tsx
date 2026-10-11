@@ -30,14 +30,12 @@ import {
   catalogProjectLabel,
   catalogRecruiterLabel,
   decisionIntentSignature,
-  LABOR_TYPE_LABELS,
   REVIEW_DECISION_LABELS,
   REVIEW_TARGET_KIND_LABELS,
   reviewerErrorMessage,
   reviewDecisionMessage,
   reviewDecisionState,
   STALE_REVIEW_MESSAGE,
-  UNSUPPORTED_REVIEW_MESSAGE,
   reviewerUnsupportedMessage,
   unsupportedReviewerViewModel,
   type ReviewerUnsupportedReason,
@@ -107,13 +105,14 @@ export function DirectEntryChangeRequestReviewer({
   const openerRef = useRef<HTMLElement | null>(null);
 
   const formatField = useCallback(
-    (entry: ProposerEntryProjection, field: string, value: string): string | null => {
+    (entry: ProposerEntryProjection, field: string, value: string,
+      authoritativeDisplay?: string | null): string | null => {
       // P3-W07C-R6-R1: nhan Du an / Nguoi tuyen lay tu catalog HIEN TAI (actor-scoped),
       // khong theo first_work_date cua ban ghi.
       const catalog = catalogFor(hcmTodayDate());
       if (field === "project_id") return catalogProjectLabel(catalog, value);
       if (field === "recruiter_id") return catalogRecruiterLabel(catalog, value);
-      if (field === "labor_type") return LABOR_TYPE_LABELS[value] ?? null;
+      if (field === "labor_type") return authoritativeDisplay ?? null;
       return value;
     },
     [catalogFor],

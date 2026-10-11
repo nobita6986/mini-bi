@@ -56,6 +56,8 @@ export type SpreadsheetStagedRow = {
    * "Bộ Công An" tại RPC create-batch.
    */
   cells: Readonly<Record<string, string>>;
+  /** Key preselected from the active catalog; ignored while identifying a blank row. */
+  defaultLaborType: string;
   /**
    * P3-W07C: client-only cờ row đã được kích hoạt lazy defaults chưa. Một lần
    * kích hoạt mỗi row, không tự khởi tạo. Import/paste giữ giá trị người
@@ -121,6 +123,8 @@ export function spreadsheetRowIsBlank(
   return SPREADSHEET_WRITABLE_FIELD_KEYS.every((key) => {
     const value = (row.cells[key] ?? "").trim();
     if (value.length === 0) return true;
+    if (key === "labor_type" && row.defaultLaborType !== "" &&
+        value === row.defaultLaborType) return true;
     if (key === SPREADSHEET_DEFAULT_DATE_FIELD_KEY) {
       return value === today;
     }
@@ -147,6 +151,7 @@ export function activateSpreadsheetRowLazyDefaults(
   model: SpreadsheetRowModel,
   clientRowId: string,
   now: Date = new Date(),
+  laborTypeDefault = "",
 ): SpreadsheetRowModel {
   let changed = false;
   const today = spreadsheetDefaultFirstWorkDate(now);
@@ -158,7 +163,15 @@ export function activateSpreadsheetRowLazyDefaults(
     if ((cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] ?? "").trim() === "") {
       cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = today;
     }
-    return { ...row, cells, lazyDefaultsApplied: true };
+    if ((cells.labor_type ?? "").trim() === "" && laborTypeDefault !== "") {
+      cells.labor_type = laborTypeDefault;
+    }
+    return {
+      ...row,
+      cells,
+      defaultLaborType: cells.labor_type ?? "",
+      lazyDefaultsApplied: true,
+    };
   });
   if (!changed) return model;
   return { ...model, rows };
@@ -180,20 +193,27 @@ function importedCells(cells: Readonly<Record<string, string>>): Record<string, 
   return out;
 }
 
-function nextBlankRow(sequence: number): SpreadsheetStagedRow {
+function nextBlankRow(sequence: number, laborTypeDefault = ""): SpreadsheetStagedRow {
+  const cells = defaultCells();
+  cells.labor_type = laborTypeDefault;
   return {
     clientRowId: `${CLIENT_ROW_ID_PREFIX}-${sequence}`,
-    cells: defaultCells(),
+    cells,
+    defaultLaborType: laborTypeDefault,
     lazyDefaultsApplied: false,
     providerType: "",
   };
 }
 
-function appendBlankRows(model: SpreadsheetRowModel, count: number): SpreadsheetRowModel {
+function appendBlankRows(
+  model: SpreadsheetRowModel,
+  count: number,
+  laborTypeDefault = "",
+): SpreadsheetRowModel {
   if (count <= 0) return model;
 
   const added = Array.from({ length: count }, (_, index) =>
-    nextBlankRow(model.nextClientRowSequence + index));
+    nextBlankRow(model.nextClientRowSequence + index, laborTypeDefault));
 
   return {
     rows: [...model.rows, ...added],
@@ -252,9 +272,12 @@ export function ensureSpreadsheetSpareRows(model: SpreadsheetRowModel): Spreadsh
 export function ensureSpreadsheetRowCount(
   model: SpreadsheetRowModel,
   minimumRowCount: number,
+  laborTypeDefault = "",
 ): SpreadsheetRowModel {
   if (!Number.isFinite(minimumRowCount) || minimumRowCount <= model.rows.length) return model;
-  return appendBlankRows(model, Math.ceil(minimumRowCount) - model.rows.length);
+  return appendBlankRows(
+    model, Math.ceil(minimumRowCount) - model.rows.length, laborTypeDefault,
+  );
 }
 
 export function createSpreadsheetRowModel(): SpreadsheetRowModel {
@@ -280,6 +303,7 @@ export function updateSpreadsheetRowCells(
   clientRowId: string,
   patch: Readonly<Record<string, string>>,
   now: Date = new Date(),
+  laborTypeDefault = "",
 ): SpreadsheetRowModel {
   assertWritablePatch(patch);
 
@@ -296,11 +320,16 @@ export function updateSpreadsheetRowCells(
   if (!found) return model;
 
   const baseModel = needsActivation
-    ? activateSpreadsheetRowLazyDefaults(model, clientRowId, now)
+    ? activateSpreadsheetRowLazyDefaults(model, clientRowId, now, laborTypeDefault)
     : model;
   const rows = baseModel.rows.map((row) => {
     if (row.clientRowId !== clientRowId) return row;
-    return { ...row, cells: { ...row.cells, ...patch }, lazyDefaultsApplied: true };
+    return {
+      ...row,
+      cells: { ...row.cells, ...patch },
+      defaultLaborType: Object.hasOwn(patch, "labor_type") ? "" : row.defaultLaborType,
+      lazyDefaultsApplied: true,
+    };
   });
 
   return ensureSpreadsheetSpareRows({ ...baseModel, rows });
@@ -311,6 +340,7 @@ export function updateSpreadsheetRowProviderType(
   clientRowId: string,
   providerType: SpreadsheetStagedRow["providerType"],
   now: Date = new Date(),
+  laborTypeDefault = "",
 ): SpreadsheetRowModel {
   // P3-W07C-R1: chon HRP/Vendor cung la tuong tac => activate lazy defaults truoc.
   let needsActivation = false;
@@ -325,7 +355,7 @@ export function updateSpreadsheetRowProviderType(
   }
   if (!found) return model;
   const baseModel = needsActivation
-    ? activateSpreadsheetRowLazyDefaults(model, clientRowId, now)
+    ? activateSpreadsheetRowLazyDefaults(model, clientRowId, now, laborTypeDefault)
     : model;
 
   const rows = baseModel.rows.map((row) => {
@@ -388,6 +418,7 @@ export function duplicateSpreadsheetRow(
     // duplicate cung chua kich hoat. Neu nguon da kich hoat hoac co gia
     // tri user, duplicate giu nguyen.
     cells: { ...source.cells },
+    defaultLaborType: source.defaultLaborType,
     lazyDefaultsApplied: source.lazyDefaultsApplied,
     providerType: source.providerType,
   };
@@ -425,6 +456,7 @@ export function importSpreadsheetRows(
     const candidate: SpreadsheetStagedRow = {
       clientRowId: `${CLIENT_ROW_ID_PREFIX}-${model.nextClientRowSequence + newRows.length}`,
       cells: nextCells,
+      defaultLaborType: "",
       lazyDefaultsApplied: true,
       providerType: "",
     };

@@ -18,6 +18,11 @@ const DATE = "2026-10-15";
 const CATALOG = {
   projects: [PROJECT_BAC, PROJECT_NAM],
   recruiters: [RECRUITER_HRP, RECRUITER_VENDOR],
+  laborTypes: [
+    { id: "TEMPORARY", label: "Thời vụ" },
+    { id: "PERMANENT", label: "Chính thức" },
+    { id: "PROBATION", label: "Thử việc" },
+  ],
 };
 const CATALOGS = { [DATE]: CATALOG, "2026-01-05": CATALOG };
 const HEADER = "Mã NLĐ\tNgày bắt đầu làm việc\tHọ tên\tDự án\tNgười tuyển\tLoại hình lao động";
@@ -73,6 +78,28 @@ test("khong header van nhan; LF va TSV; hai dinh dang ngay", () => {
     RECRUITER_HRP.id, "Thời vụ"));
   assert.equal(singleDigit.canSubmit, true);
   assert.equal(singleDigit.rows[0].firstWorkDate, "2026-01-05");
+});
+
+test("Excel paste chỉ nhận key mới khi active catalog có key đó; alias legacy vẫn hợp lệ", () => {
+  const active = preview(row("hrp-2026-000123", DATE, "A", PROJECT_BAC.id,
+    RECRUITER_HRP.id, "PROBATION"));
+  assert.equal(active.canSubmit, true);
+  assert.equal(active.rows[0].laborType, "PROBATION");
+  assert.equal(active.rows[0].laborTypeLabel, "Thử việc");
+
+  const inactiveCatalog = {
+    [DATE]: { ...CATALOG, laborTypes: CATALOG.laborTypes.filter(({ id }) => id !== "PROBATION") },
+  };
+  const inactive = preview(row("hrp-2026-000124", DATE, "B", PROJECT_BAC.id,
+    RECRUITER_HRP.id, "PROBATION"), { catalogs: inactiveCatalog });
+  assert.equal(inactive.canSubmit, false);
+  assert.ok(inactive.issues.some(({ column, message }) =>
+    column === 6 && /danh mục đang hoạt động/.test(message)));
+
+  const legacy = preview(row("hrp-2026-000125", DATE, "C", PROJECT_BAC.id,
+    RECRUITER_HRP.id, "Thời vụ"));
+  assert.equal(legacy.canSubmit, true);
+  assert.equal(legacy.rows[0].laborType, "TEMPORARY");
 });
 
 test("formula chi duoc coi la text: khong evaluate, khong sinh so", () => {
@@ -148,6 +175,7 @@ test("catalog: missing / ambiguous bao loi ro tai dung dong va dung cot", () => 
     [DATE]: {
       projects: [PROJECT_BAC, { id: PROJECT_NAM.id, label: PROJECT_BAC.label }],
       recruiters: CATALOG.recruiters,
+      laborTypes: CATALOG.laborTypes,
     },
   };
   const result = buildPastePreview({
@@ -200,6 +228,6 @@ test("preview khong mutation server: module thuan, khong fetch/localStorage/auth
   const result = preview(row("hrp-2026-000123", "2026-10-15", "A", PROJECT_BAC.id,
     RECRUITER_HRP.id, "Thời vụ"));
   assert.deepEqual(Object.keys(result.rows[0]).sort(),
-    ["employeeCode", "firstWorkDate", "issues", "laborType", "line", "projectId",
+    ["employeeCode", "firstWorkDate", "issues", "laborType", "laborTypeLabel", "line", "projectId",
       "projectText", "recruiterId", "recruiterText", "workerName"]);
 });

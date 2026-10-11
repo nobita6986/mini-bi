@@ -10,7 +10,6 @@ import {
   catalogRecruiterLabel,
   decisionIntentSignature,
   isSupportedEntryFieldProposal,
-  LABOR_TYPE_LABELS,
   reviewerErrorMessage,
   reviewDecisionMessage,
   reviewDecisionState,
@@ -40,6 +39,7 @@ function detailItem(overrides = {}) {
     target_kind: "ENTRY_FIELD",
     expected_version: 2,
     proposal: { employee_code: "hrp-2026-600009" },
+    labor_type_display: null,
     ...overrides,
   };
 }
@@ -66,6 +66,7 @@ function entryProjection(entryId, overrides = {}) {
     employee_code: "hrp-2026-600001",
     recruiter_id: RECRUITER_CU,
     labor_type: "TEMPORARY",
+    labor_type_display: "Loại cũ",
     ...overrides,
   });
 }
@@ -89,11 +90,11 @@ function catalog(overrides = {}) {
 }
 
 function formatWith(catalogByDate) {
-  return (entry, field, value) => {
+  return (entry, field, value, authoritativeDisplay) => {
     const current = catalogByDate[entry.first_work_date];
     if (field === "project_id") return catalogProjectLabel(current, value);
     if (field === "recruiter_id") return catalogRecruiterLabel(current, value);
-    if (field === "labor_type") return LABOR_TYPE_LABELS[value] ?? null;
+    if (field === "labor_type") return authoritativeDisplay ?? null;
     return value;
   };
 }
@@ -182,6 +183,7 @@ test("de xuat chi gom 5 field non-PII, chi hien field thuc su thay doi", () => {
           labor_type: "PERMANENT",
           first_work_date: "2026-10-15",
         },
+        labor_type_display: "Loại mới",
       })],
     },
   });
@@ -289,12 +291,15 @@ test("de xuat khong ho tro khong bao gio lo noi dung", () => {
 test("buildReviewerEntryRows tra null khi thieu du lieu de doi chieu", () => {
   const entry = entryProjection(ENTRY_A);
   const rows = buildReviewerEntryRows({
-    item: detailItem({ proposal: { labor_type: "PERMANENT" } }),
+    item: detailItem({
+      proposal: { labor_type: "PROBATION" },
+      labor_type_display: "Loại mới",
+    }),
     entry,
     format: formatWith(CATALOGS),
   });
   assert.deepEqual(rows, [{ field: "labor_type", label: "Loại hình lao động",
-    before: "Thời vụ", after: "Toàn thời gian" }]);
+    before: "Loại cũ", after: "Loại mới" }]);
   assert.equal(buildReviewerEntryRows({
     item: detailItem({ proposal: { project_id: "khong-co" } }),
     entry,

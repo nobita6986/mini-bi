@@ -87,6 +87,8 @@ import {
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import { projectPaymentInput, type PaymentState } from "@/lib/direct-entry/payment-contract";
 import type { WorkerDetails, WorkerStatus } from "@/lib/contracts/direct-entry-v1";
+import { isCanonicalLaborTypeKey } from "@/lib/contracts/direct-entry-v1";
+import { sortedActiveLaborTypes } from "@/lib/direct-entry/labor-type-catalog-ui";
 
 const API = "/api/direct-entry";
 
@@ -790,7 +792,8 @@ type EntryBaseline = {
   firstWorkDate: string;
   employeeCode: string;
   recruiterId: string;
-  laborType: "TEMPORARY" | "PERMANENT";
+  laborType: string;
+  laborTypeDisplay: string;
   workerDetails: WorkerDetails | null;
   providerType: "hrp" | "vendor" | null;
   status: WorkerStatus | null;
@@ -815,7 +818,8 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
     if (typeof row.version !== "number" || typeof row.project_id !== "string" ||
         typeof row.first_work_date !== "string" || typeof row.employee_code !== "string" ||
         typeof row.recruiter_id !== "string" ||
-        (row.labor_type !== "TEMPORARY" && row.labor_type !== "PERMANENT")) return null;
+        !isCanonicalLaborTypeKey(row.labor_type) ||
+        typeof row.labor_type_display !== "string" || row.labor_type_display.length === 0) return null;
     const details = projectWorkerDetailsForProposal(row.worker_details);
     const status = typeof row.employment_status === "object" && row.employment_status !== null
       ? row.employment_status as Record<string, unknown> : null;
@@ -828,6 +832,7 @@ async function fetchBaseline(entryId: string): Promise<EntryBaseline | null> {
       employeeCode: row.employee_code,
       recruiterId: row.recruiter_id,
       laborType: row.labor_type,
+      laborTypeDisplay: row.labor_type_display,
       workerDetails: details,
       providerType: row.provider_type === "hrp" || row.provider_type === "vendor"
         ? row.provider_type : null,
@@ -1098,7 +1103,7 @@ function ProposeDrawer({
                       ["Người tuyển / Vendor", row.recruiter_display],
                       ["HRP/Vendor", baseline?.providerType === "hrp" ? "HRP"
                         : baseline?.providerType === "vendor" ? "Vendor" : "—"],
-                      ["Loại hình lao động", row.labor_type === "TEMPORARY" ? "Thời vụ" : "Chính thức"],
+                      ["Loại hình lao động", row.labor_type_display],
                       ["Trạng thái làm việc", workerStatusLabel(baseline?.status ?? row.employment_status)],
                     ].map(([label, value]) => (
                       <div key={label}>
@@ -1214,17 +1219,29 @@ function ProposeDrawer({
                     <label htmlFor="worker-labor-type" className="text-sm font-medium">
                       Loại hình lao động
                     </label>
-                    <select id="worker-labor-type" className={inputClass} value={entryForm.labor_type}
+                    <select id="worker-labor-type" className={inputClass}
+                      value={(entryCatalog?.labor_types ?? []).some((option) =>
+                        option.labor_type_key === entryForm.labor_type) ? entryForm.labor_type : ""}
+                      disabled={loading || entryCatalog === undefined ||
+                        (entryCatalog.labor_types ?? []).length === 0}
                       onChange={(event) => setEntryForm({ ...entryForm,
-                        labor_type: event.target.value as WorkerEntryFieldForm["labor_type"] })}>
-                      <option value="PERMANENT">Chính thức</option>
-                      <option value="TEMPORARY">Thời vụ</option>
+                        labor_type: event.target.value })}>
+                      <option value="">Chọn loại hình</option>
+                      {sortedActiveLaborTypes(entryCatalog?.labor_types).map((option) => (
+                        <option key={option.labor_type_key} value={option.labor_type_key}>
+                          {option.display_name}
+                        </option>
+                      ))}
                     </select>
+                    {baseline !== null &&
+                      !(entryCatalog?.labor_types ?? []).some((option) =>
+                        option.labor_type_key === baseline.laborType) && (
+                      <small>Hiện tại: {baseline.laborTypeDisplay} · không còn hoạt động</small>
+                    )}
                   </div>
                   {!loading && entryCatalog === undefined && catalogDenied ? (
                     <p role="status" className={infoClass}>
-                      Vai trò hiện tại không có quyền đọc danh mục nên chỉ giữ được dự án và người
-                      tuyển hiện tại; không thể chọn giá trị mới.
+                      Vai trò hiện tại không có quyền đọc danh mục; không thể chọn giá trị danh mục mới.
                     </p>
                   ) : null}
                   {!loading && entryCatalog === undefined && !catalogDenied ? (

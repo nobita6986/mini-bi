@@ -74,6 +74,11 @@ import {
   type OwnDraft,
 } from "@/lib/direct-entry/draft-list-contract";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
+import {
+  activeLaborTypeLabel,
+  firstActiveLaborTypeKey,
+  sortedActiveLaborTypes,
+} from "@/lib/direct-entry/labor-type-catalog-ui";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
 import { projectDraftProfileGridCells } from "@/lib/direct-entry/draft-profile-grid";
 import {
@@ -184,6 +189,7 @@ function spreadsheetProjectOptions(catalog: DraftCatalog | undefined) {
 function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
   return {
     projects: spreadsheetProjectOptions(catalog),
+    laborTypes: catalog?.labor_types ?? [],
     recruiters: (catalog?.recruiters ?? []).map((recruiter) => ({
       id: recruiter.recruiter_id,
       // P3-W07A: server-side `label` carries the locked HRP/Vendor display
@@ -193,6 +199,10 @@ function spreadsheetCatalogOptions(catalog: DraftCatalog | undefined) {
       provider_type: recruiter.provider_type,
       personnel_code: recruiter.personnel_code,
       vendor_id: recruiter.vendor_id,
+    })),
+    labor_types: (catalog?.labor_types ?? []).map((option) => ({
+      id: option.labor_type_key,
+      label: option.display_name,
     })),
   };
 }
@@ -869,6 +879,8 @@ export function DirectEntryLive() {
       current.workerName.trim().length > 0 &&
       catalog.projects.some(({ project_id }) => project_id === current.projectId) &&
       catalog.recruiters.some(({ recruiter_id }) => recruiter_id === current.recruiterId) &&
+      (catalog.labor_types ?? []).some(({ labor_type_key }) =>
+        labor_type_key === current.laborType) &&
       validation.length === 0;
     if (!valid) {
       updateRow(rowId, { recruiterId: catalog.recruiters.some(({ recruiter_id }) =>
@@ -1080,9 +1092,12 @@ export function DirectEntryLive() {
         setStagedMessageWithTone("Đã đạt giới hạn 100 dòng dữ liệu; không thêm được 10 dòng mới.", "info");
         return current;
       }
-      return ensureSpreadsheetRowCount(current, current.rows.length + ADD_STAGED_ROW_BATCH);
+      return ensureSpreadsheetRowCount(
+        current, current.rows.length + ADD_STAGED_ROW_BATCH,
+        firstActiveLaborTypeKey(catalogs[today]?.labor_types),
+      );
     });
-  }, [setStagedMessageWithTone, setStagedModel]);
+  }, [catalogs, today, setStagedMessageWithTone, setStagedModel]);
 
   /**
    * P3-W07C: kich hoat lazy defaults cho staged row khi user co y thuc tuong
@@ -1091,8 +1106,10 @@ export function DirectEntryLive() {
    */
   const activateStagedRowLazyDefaults = useCallback((clientRowId: string) => {
     setStagedModel((current) =>
-      activateSpreadsheetRowLazyDefaults(current, clientRowId, new Date()));
-  }, [setStagedModel]);
+      activateSpreadsheetRowLazyDefaults(
+        current, clientRowId, new Date(), firstActiveLaborTypeKey(catalogs[today]?.labor_types),
+      ));
+  }, [catalogs, today, setStagedModel]);
 
   /**
    * P3-W07C: wrapper setSelectedClientRowId de kich hoat lazy defaults khi
@@ -1134,19 +1151,25 @@ export function DirectEntryLive() {
       const emptyRow = current.rows.find((row) => spreadsheetRowIsBlank(row));
       if (emptyRow) {
         targetClientRowId = emptyRow.clientRowId;
-        return activateSpreadsheetRowLazyDefaults(current, emptyRow.clientRowId);
+        return activateSpreadsheetRowLazyDefaults(
+          current, emptyRow.clientRowId, new Date(),
+          firstActiveLaborTypeKey(catalogs[today]?.labor_types),
+        );
       }
       if (current.rows.length + 1 > SPREADSHEET_MAX_DATA_ROWS) {
         setStagedMessageWithTone("Đã đạt giới hạn 100 dòng dữ liệu; không mở thêm NLĐ mới.", "info");
         return current;
       }
-      const next = ensureSpreadsheetRowCount(current, current.rows.length + 1);
+      const next = ensureSpreadsheetRowCount(
+        current, current.rows.length + 1,
+        firstActiveLaborTypeKey(catalogs[today]?.labor_types),
+      );
       const newRow = next.rows[next.rows.length - 1];
       if (newRow) targetClientRowId = newRow.clientRowId;
       return next;
     });
     if (targetClientRowId !== null) setQuickEditClientRowId(targetClientRowId);
-  }, [setStagedModel, setStagedMessageWithTone, setQuickEditClientRowId]);
+  }, [catalogs, today, setStagedModel, setStagedMessageWithTone, setQuickEditClientRowId]);
 
 
   /**
@@ -1159,6 +1182,7 @@ export function DirectEntryLive() {
    */
   const currentCatalog = useMemo(() => catalogs[today] ?? Object.values(catalogs).find(
     (catalog) => catalog !== undefined) ?? null, [catalogs, today]);
+  const hasActiveLaborTypes = (currentCatalog?.labor_types?.length ?? 0) > 0;
 
   // Ham khong nhan tham so ngay: catalog luon la catalog hien tai (P3-W07C-R6).
   const stagedCatalogSource = useCallback(() => {
@@ -1171,6 +1195,10 @@ export function DirectEntryLive() {
         provider_type: recruiter.provider_type,
         personnel_code: recruiter.personnel_code,
         vendor_id: recruiter.vendor_id,
+      })),
+      labor_types: (currentCatalog.labor_types ?? []).map((option) => ({
+        id: option.labor_type_key,
+        label: option.display_name,
       })),
     };
   }, [currentCatalog]);
@@ -1258,7 +1286,8 @@ export function DirectEntryLive() {
           recruiter_id: row.recruiterId,
           provider_hint: row.providerType?.toUpperCase() ?? "",
           team_hint: row.teamDisplayName,
-          labor_type: row.laborType === "TEMPORARY" ? "Thời vụ" : "Chính thức",
+          labor_type: activeLaborTypeLabel(fallbackCatalog?.labor_types, row.laborType) ??
+            `${row.laborType} · không còn hoạt động`,
           initial_status: employment
             ? `${employmentStatusLabel} · hiệu lực ${employment.effective_date}`
             : employmentStatusLabel,
@@ -1400,7 +1429,7 @@ export function DirectEntryLive() {
       if (safePatch.project_id !== undefined) draftPatch.projectId = safePatch.project_id;
       if (safePatch.recruiter_id !== undefined) draftPatch.recruiterId = safePatch.recruiter_id;
       if (safePatch.labor_type !== undefined) {
-        draftPatch.laborType = safePatch.labor_type === "Chính thức" ? "PERMANENT" : "TEMPORARY";
+        draftPatch.laborType = safePatch.labor_type;
       }
       if (Object.keys(draftPatch).length === 0) return;
       setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
@@ -1408,16 +1437,22 @@ export function DirectEntryLive() {
       return;
     }
     // P3-W07C-R4: doi ngay KHONG xoa recruiter da chon.
-    setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, safePatch));
-  }, [rows, setStagedModel]);
+    setStagedModel((current) => updateSpreadsheetRowCells(
+      current, clientRowId, safePatch, new Date(),
+      firstActiveLaborTypeKey(currentCatalog?.labor_types),
+    ));
+  }, [currentCatalog?.labor_types, rows, setStagedModel]);
 
   const onStagedProviderTypeChange = useCallback((
     clientRowId: string,
     providerType: "hrp" | "vendor" | "",
   ) => {
     setStagedModel((current) =>
-      updateSpreadsheetRowProviderType(current, clientRowId, providerType));
-  }, [setStagedModel]);
+      updateSpreadsheetRowProviderType(
+        current, clientRowId, providerType, new Date(),
+        firstActiveLaborTypeKey(currentCatalog?.labor_types),
+      ));
+  }, [currentCatalog?.labor_types, setStagedModel]);
 
   const onStagedPasteRejected = useCallback((reason: SpreadsheetPasteRejection) => {
     setStagedRejection(PASTE_REJECTION_MESSAGES[reason]);
@@ -1448,7 +1483,9 @@ export function DirectEntryLive() {
     });
     const maxRowIndex = mapping.cells.reduce(
       (maximum, cell) => Math.max(maximum, cell.rowIndex), 0);
-    let next = ensureSpreadsheetRowCount(stagedModel, maxRowIndex + 1);
+    let next = ensureSpreadsheetRowCount(
+      stagedModel, maxRowIndex + 1, firstActiveLaborTypeKey(currentCatalog?.labor_types),
+    );
     const patches = new Map<number, Record<string, string>>();
     for (const cell of mapping.writeCells) {
       const bucket = patches.get(cell.rowIndex) ?? {};
@@ -1457,14 +1494,18 @@ export function DirectEntryLive() {
     }
     for (const [rowIndex, patch] of patches) {
       const target = next.rows[rowIndex];
-      if (target) next = updateSpreadsheetRowCells(next, target.clientRowId, patch);
+      if (target) next = updateSpreadsheetRowCells(
+        next, target.clientRowId, patch, new Date(),
+        firstActiveLaborTypeKey(currentCatalog?.labor_types),
+      );
     }
     stagedUndo.current = snapshot;
     setStagedCanUndo(true);
     setStagedModel(next);
     setStagedRejection("");
     setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
-  }, [rows.length, setStagedModel, stagedModel, setStagedMessageWithTone, setStagedRejection, setStagedNotice]);
+  }, [currentCatalog?.labor_types, rows.length, setStagedModel, stagedModel,
+    setStagedMessageWithTone, setStagedRejection, setStagedNotice]);
 
   const onXlsxFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
@@ -1512,7 +1553,7 @@ export function DirectEntryLive() {
             first_work_date: row.first_work_date,
             display_name: row.display_name,
             recruiter_id: recruiter?.recruiter_id ?? row.recruiter_label,
-            labor_type: row.labor_type === "PERMANENT" ? "Chính thức" : "Thời vụ",
+            labor_type: row.labor_type,
             gender: value(row.worker.gender),
             date_of_birth: value(row.worker.date_of_birth),
             national_id: value(row.worker.national_id),
@@ -1593,11 +1634,12 @@ export function DirectEntryLive() {
     // `row.cells`; preview enforces only the text contract (non-empty/length),
     // never date parsing or ISO conversion.
     const storedValue = value;
-    setStagedModel((current) => updateSpreadsheetRowCells(current, clientRowId, {
-      [field]: storedValue,
-    }));
+    setStagedModel((current) => updateSpreadsheetRowCells(
+      current, clientRowId, { [field]: storedValue }, new Date(),
+      firstActiveLaborTypeKey(currentCatalog?.labor_types),
+    ));
     // P3-W07C-R6: doi ngay KHONG phat request catalog theo ngay vua nhap.
-  }, [setStagedModel]);
+  }, [currentCatalog?.labor_types, setStagedModel]);
 
   // P1.7-H05: capture handler trong bien cuc bo truoc khi render de tranh
   // React Compiler canh bao "Cannot access refs during render" khi closure
@@ -1619,6 +1661,13 @@ export function DirectEntryLive() {
   /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
   const onStagedSave = useCallback(async () => {
     if (stagedInFlight.current) return;
+    if (!hasActiveLaborTypes) {
+      setStagedMessageWithTone(
+        "Chưa có loại hình lao động đang hoạt động từ danh mục máy chủ; không thể lưu dòng mới.",
+        "error",
+      );
+      return;
+    }
     // P1.7-H07: user da bam "Lưu" => kich hoat hien thi required-missing
     // errors va validate truoc khi gui. Neu khong co row non-blank hoac
     // validation that bai (bao gom required-missing), thong bao va return
@@ -1702,7 +1751,8 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [loadSubmissions, reloadDrafts, selectedClientRowId, setStagedModel, setStagedMessageWithTone, stagedValidation]);
+  }, [hasActiveLaborTypes, loadSubmissions, reloadDrafts, selectedClientRowId, setStagedModel,
+    setStagedMessageWithTone, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -2059,6 +2109,13 @@ export function DirectEntryLive() {
                 Đi tới lỗi đầu tiên
               </button>
             )}
+            {!hasActiveLaborTypes && (
+              <p role="status">
+                {loadState === "ready"
+                  ? "Danh mục chưa có loại hình lao động đang hoạt động; không thể lưu dòng mới."
+                  : "Đang tải danh mục loại hình lao động từ máy chủ."}
+              </p>
+            )}
             <DirectEntrySpreadsheetGrid
               rows={spreadsheetRows}
               validation={stagedValidationForDisplay}
@@ -2087,7 +2144,7 @@ export function DirectEntryLive() {
                   </button>
                   <button type="button" className={styles.primaryButton}
                     data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
-                    disabled={loadState !== "ready" || stagedBusy}
+                    disabled={loadState !== "ready" || stagedBusy || !hasActiveLaborTypes}
                     aria-busy={stagedBusy}>
                     Lưu các dòng hợp lệ
                   </button>
@@ -2275,8 +2332,10 @@ export function DirectEntryLive() {
                           <select value={cells.labor_type ?? ""}
                             onChange={handleMobileStagedFieldChange(stagedRow.clientRowId, "labor_type")}>
                             <option value="">—</option>
-                            <option value="Thời vụ">Thời vụ</option>
-                            <option value="Chính thức">Chính thức</option>
+                            {(currentCatalog?.labor_types ?? []).map((option) =>
+                              <option key={option.labor_type_key} value={option.labor_type_key}>
+                                {option.display_name}
+                              </option>)}
                           </select>
                         </Field>
                         <Field label="STK">
@@ -2473,8 +2532,10 @@ export function DirectEntryLive() {
                     <select value={target.cells.labor_type ?? ""}
                       onChange={handleMobileStagedFieldChange(target.clientRowId, "labor_type")}>
                       <option value="">—</option>
-                      <option value="Thời vụ">Thời vụ</option>
-                      <option value="Chính thức">Chính thức</option>
+                      {(rowCatalog?.labor_types ?? []).map((option) =>
+                        <option key={option.labor_type_key} value={option.labor_type_key}>
+                          {option.display_name}
+                        </option>)}
                     </select>
                   </Field>
                   <Field label="STK">
@@ -2580,17 +2641,24 @@ export function DirectEntryLive() {
                   {" · "}Team: <strong>{currentRecruiter?.team_display_name ?? "—"}</strong>
                 </p>
                 <Field label={<><span>Loại hình lao động</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
-                  <select aria-label="Loại hình lao động" value={selectedRow.laborType}
+                  <select aria-label="Loại hình lao động"
+                    value={(selectedRowCatalog?.labor_types ?? []).some((option) =>
+                      option.labor_type_key === selectedRow.laborType) ? selectedRow.laborType : ""}
                     disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" || selectedRowLocked}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      if (value === "TEMPORARY" || value === "PERMANENT") {
-                        updateRow(selectedRow.rowId, { laborType: value });
-                      }
-                    }}>
-                    <option value="TEMPORARY">Thời vụ</option>
-                    <option value="PERMANENT">Chính thức</option>
+                    onChange={(event) => updateRow(selectedRow.rowId, {
+                      laborType: event.currentTarget.value,
+                    })}>
+                    <option value="">Chọn loại hình</option>
+                    {sortedActiveLaborTypes(selectedRowCatalog?.labor_types).map((option) =>
+                      <option key={option.labor_type_key} value={option.labor_type_key}>
+                        {option.display_name}
+                      </option>)}
                   </select>
+                  {selectedRow.laborType !== "" &&
+                    !(selectedRowCatalog?.labor_types ?? []).some((option) =>
+                      option.labor_type_key === selectedRow.laborType) && (
+                    <small>{selectedRow.laborType} · không còn hoạt động</small>
+                  )}
                 </Field>
                 <DirectEntryPaymentEditor
                   key={`${selectedRow.rowId}:${selectedRow.entryId ?? "new"}`}

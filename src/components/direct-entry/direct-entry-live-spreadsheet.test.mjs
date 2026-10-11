@@ -79,7 +79,7 @@ test("validation chay tren staged rows va map issue ve dung o", () => {
   assert.match(live, /Lưu các dòng hợp lệ/);
   // P1.7-H07: nut Save luon click duoc (khong bi khoa theo canSave)
   // de kich hoat required validation va nguoi dung thay nguyen nhan.
-  assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy\}/);
+  assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy \|\| !hasActiveLaborTypes\}/);
 });
 
 test("save dung full-profile batch, mot request, co chan double submit", () => {

@@ -67,17 +67,16 @@ test("template is versioned, has 16 R3 data headers and contains no identifiers 
   // CMT/CCCD cung phai text format de giu so 0 dau neu Excel doc nhan dang so.
   const cccdColumn = headers.indexOf("CMT/CCCD") + 1;
   assert.equal(sheet.getColumn(cccdColumn).numFmt, "@");
-  // Data validation cho Gioi tinh va Loai hinh LĐ.
+  // Labor type is dynamic and must not carry a fixed validation list in the template.
   const genderColumn = headers.indexOf("Giới tính") + 1;
   assert.deepEqual(
     sheet.getCell(2, genderColumn).dataValidation,
     { type: "list", allowBlank: true, formulae: ['"Nam,Nữ"'] },
   );
   const laborColumn = headers.indexOf("Loại hình LĐ") + 1;
-  assert.deepEqual(
-    sheet.getCell(2, laborColumn).dataValidation,
-    { type: "list", allowBlank: true, formulae: ['"Thời vụ,Chính thức"'] },
-  );
+  assert.equal(sheet.getCell(2, laborColumn).dataValidation, undefined);
+  assert.match(String(workbook.getWorksheet("Hướng dẫn").getColumn(2).values.join(" ")),
+    /danh mục theo ngày bắt đầu làm việc/);
   // Data validation cells nam tren row 2 nen rowCount = 2 (header row + validation
   // template row); khong co sample data that.
   assert.equal(sheet.rowCount, 2);

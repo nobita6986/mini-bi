@@ -131,7 +131,7 @@ function RowDetail({ row }: { row: WorkerProfilePreviewRow }) {
           ["Dự án", row.row.project_label + " · " + resolved(row.resolved.project_id, "danh mục")],
           ["Ngày bắt đầu làm việc", row.row.first_work_date || "—"],
           ["Người tuyển", row.row.recruiter_label + " · " + resolved(row.resolved.recruiter_id, "danh mục")],
-          ["Loại hình LĐ", row.row.labor_type === "TEMPORARY" ? "Thời vụ" : "Toàn thời gian"],
+          ["Loại hình LĐ", row.labels.laborType || "—"],
           ["Ghi chú", optionalText(row.row.general_note)],
         ]} />
       </section>
@@ -416,6 +416,9 @@ function toCatalogSource(catalog: DraftCatalog | undefined) {
     })),
     recruiters: catalog.recruiters.map((recruiter) => ({
       id: recruiter.recruiter_id, label: recruiter.display_name,
+    })),
+    labor_types: (catalog.labor_types ?? []).map((option) => ({
+      id: option.labor_type_key, label: option.display_name,
     })),
   };
 }

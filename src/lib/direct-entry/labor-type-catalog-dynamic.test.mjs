@@ -226,6 +226,7 @@ function proposerEntryProjection(laborType) {
     employee_code: EMPLOYEE_CODE,
     recruiter_id: RECRUITER_ID,
     labor_type: laborType,
+    labor_type_display: `Tên ${laborType}`,
     worker_details: { display_name: "Kin", national_id: { state: "provided", value: "0123" } },
     payment: { state: "provided", account_number: "000012340056" },
     documents: [{ document_id: ENTRY_ID }],
@@ -311,6 +312,7 @@ function previewBody(laborTypeCell) {
   const resolver = createPasteCatalogResolver(() => ({
     projects: [PREVIEW_PROJECT],
     recruiters: [PREVIEW_RECRUITER],
+    labor_types: ALL_KEYS.map((key) => ({ id: key, label: `Tên ${key}` })),
   }));
   const preview = buildWorkerProfilePreview({
     text: toTsv([pastePairs(laborTypeCell)]),
@@ -373,6 +375,7 @@ test("write-api: read projection nhan PROBATION va van nhan TEMPORARY/PERMANENT"
     const projected = projectEntry(entryProjection(key));
     assert.ok(projected, key);
     assert.equal(projected.labor_type, key);
+    assert.equal(projected.labor_type_display, LABOR_TYPE_DISPLAY_FIXTURE);
     assert.equal(projected.entry_id, ENTRY_ID);
   }
   for (const bad of NON_CANONICAL_KEYS) {

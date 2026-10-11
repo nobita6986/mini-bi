@@ -9,6 +9,7 @@ function source(relative) {
 const reviewer = source("./direct-entry-change-request-reviewer.tsx");
 const helper = source("../../lib/direct-entry/change-request-reviewer.ts");
 const projection = source("../../lib/direct-entry/change-request-read-projection.ts");
+const readContract = source("../../lib/direct-entry/change-request-read-contract.ts");
 const list = source("./direct-entry-change-request-list.tsx");
 const live = source("./direct-entry-live.tsx");
 
@@ -79,11 +80,13 @@ test("before/after chi qua projector strict, khong raw JSON va khong key cam", (
   assert.match(projection, /export function projectWorkStatusReadProposal\(/);
   assert.match(projection, /export function projectDocumentReadProposal\(/);
   assert.match(projection, /export function projectEntrySensitiveContext\(/);
+  assert.match(reviewer, /authoritativeDisplay \?\?/);
+  assert.match(readContract, /labor_type_display/);
   assert.match(reviewer, /<table className=\{styles\.reviewerTable\}>/);
   assert.match(reviewer, /<th scope="row">\{row\.label\}<\/th>/);
   assert.match(reviewer, /catalogProjectLabel\(catalog, value\)/);
   assert.match(reviewer, /catalogRecruiterLabel\(catalog, value\)/);
-  assert.match(reviewer, /LABOR_TYPE_LABELS\[value\]/);
+  assert.doesNotMatch(reviewer, /LABOR_TYPE_LABELS|TEMPORARY|PERMANENT/);
 });
 
 test("decision request dung URL, body contract va header idempotency", () => {

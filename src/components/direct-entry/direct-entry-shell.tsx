@@ -86,7 +86,6 @@ const columns: readonly Column<DirectEntryRow>[] = [
     width: 110,
     renderCell: ({ row }) => pickerOptions.find(({ id }) => id === row.recruiterId)?.provider ?? "—",
   },
-  textColumn("laborType", "Loại hình", 155),
   textColumn("workStatus", "Trạng thái", 150),
 ];
 
@@ -142,7 +141,7 @@ function DemoDirectEntryShell() {
       workerLabel: "Nhân sự mẫu 04",
       project: "Dự án thử nghiệm Bắc",
       recruiterId: "",
-      laborType: "Thời vụ",
+      laborType: "",
       workStatus: "Chưa xác nhận",
     }]);
     setLocalSaved(false);
@@ -258,9 +257,7 @@ function DemoDirectEntryShell() {
                   HRP/Vendor được suy ra: <strong>{pickerOptions.find(({ id }) => id === selectedRow.recruiterId)?.provider}</strong>
                 </p>
                 <Field label="Loại hình làm việc">
-                  <select aria-label="Loại hình làm việc" value={selectedRow.laborType} onChange={(event) => updateRow(selectedRow.rowId, { laborType: event.target.value as DirectEntryRow["laborType"] })}>
-                    <option>Toàn thời gian</option><option>Thời vụ</option>
-                  </select>
+                  <output>Danh mục động chỉ có khi kết nối máy chủ.</output>
                 </Field>
                 <Field label="Trạng thái làm việc">
                   <select aria-label="Trạng thái làm việc" value={selectedRow.workStatus} onChange={(event) => {

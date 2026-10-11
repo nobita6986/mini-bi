@@ -20,7 +20,11 @@ const RECRUITER = {
   provider_type: "hrp",
 };
 
-const catalogFor = () => ({ projects: [PROJECT], recruiters: [RECRUITER] });
+const catalogFor = () => ({
+  projects: [PROJECT],
+  recruiters: [RECRUITER],
+  labor_types: [{ id: "TEMPORARY", label: "Thời vụ" }],
+});
 
 function withRow(model, index, patch) {
   const row = model.rows[index];

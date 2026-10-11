@@ -69,7 +69,10 @@ function row(code, date = "2026-10-15", overrides = {}) {
 function preview(text, options = {}) {
   const projects = options.projects ?? [PROJECT, PROJECT_2];
   const recruiters = options.recruiters ?? [RECRUITER];
-  const source = { projects, recruiters };
+  const source = {
+    projects, recruiters,
+    labor_types: options.labor_types ?? [{ id: "TEMPORARY", label: "Thời vụ" }],
+  };
   const resolver = createPasteCatalogResolver(() => source);
   return buildWorkerProfilePreview({ text, referenceDate: REFERENCE_DATE, resolver,
     existing: options.existing, employeeCodeMode: options.employeeCodeMode });

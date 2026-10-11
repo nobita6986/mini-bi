@@ -99,7 +99,7 @@ export function newDraftRow(rowId: string, firstWorkDate: string): LiveDraftRow 
     workerName: "",
     projectId: "",
     recruiterId: "",
-    laborType: "TEMPORARY",
+    laborType: "",
     providerType: null,
     teamId: null,
     teamDisplayName: "",

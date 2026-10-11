@@ -213,7 +213,7 @@ export const WORKER_PROFILE_ISSUE_MESSAGES: Readonly<Record<string, string>> = O
   PASTE_LEAVE_REASON_MISSING: "Tình trạng đã nghỉ phải có ghi chú về nghỉ việc.",
   PASTE_EMPLOYEE_CODE_FORMAT: "Mã NLĐ phải theo dạng hrp-YYYY-NNNNNN.",
   PASTE_EMPLOYEE_CODE_YEAR: "Năm trong mã NLĐ phải khớp năm của ngày bắt đầu làm việc.",
-  PASTE_LABOR_TYPE_INVALID: "Loại hình LĐ chỉ nhận Thời vụ/TEMPORARY hoặc Toàn thời gian/PERMANENT.",
+  PASTE_LABOR_TYPE_INVALID: "Loại hình LĐ phải khớp danh mục đang hoạt động cho ngày bắt đầu làm việc.",
   PASTE_GENDER_INVALID: "Giới tính chỉ nhận Nam/Male, Nữ/Female hoặc Khác/Other.",
   PASTE_NATIONAL_ID_INVALID: "CMT/CCCD phải gồm đúng 9 hoặc 12 chữ số.",
   PASTE_STATUS_INVALID: "Tình trạng làm việc chỉ nhận Chưa xác nhận/Đang làm/Đã nghỉ.",

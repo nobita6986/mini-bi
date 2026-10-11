@@ -1,5 +1,4 @@
 import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
-import { DIRECT_ENTRY_GRID_COLUMNS } from "./direct-entry-grid-columns.ts";
 import { normalizePasteHeader } from "./paste-primitives.ts";
 import { WORKER_PROFILE_FIELDS } from "./worker-profile-import-contract.ts";
 
@@ -41,10 +40,7 @@ const XLSX_TEMPLATE_KEYS: readonly string[] = Object.freeze([
   "general_note",
 ]);
 
-/**
- * P1.7-H05: legacy alias "Toàn thời gian" duoc XLSX import chap nhan (map sang
- * canonical UI value "Chính thức" -> "PERMANENT" server).
- */
+/** Legacy spreadsheet labels remain accepted as import aliases, not as UI choices. */
 const LABOR_TYPE_KEY_BY_HEADER: Readonly<Record<string, LaborType>> = Object.freeze({
   "Thời vụ": "TEMPORARY",
   "Chính thức": "PERMANENT",
@@ -194,8 +190,7 @@ export async function createWorkerProfileTemplate(): Promise<Uint8Array> {
   if (nationalIdColumn > 0) {
     sheet.getColumn(nationalIdColumn).numFmt = "@";
   }
-  // Data validation cho Gioi tinh, HRP/Vendor va Loai hinh LĐ (dat tren dong vi du
-  // de Excel luu).
+  // Data validation cho Gioi tinh va HRP/Vendor (dat tren dong vi du de Excel luu).
   const genderColumn = headers.indexOf("Giới tính") + 1;
   if (genderColumn > 0) {
     sheet.getCell(2, genderColumn).dataValidation = {
@@ -212,14 +207,6 @@ export async function createWorkerProfileTemplate(): Promise<Uint8Array> {
       formulae: ['"HRP,Vendor"'],
     };
   }
-  const laborTypeColumn = headers.indexOf("Loại hình LĐ") + 1;
-  if (laborTypeColumn > 0) {
-    sheet.getCell(2, laborTypeColumn).dataValidation = {
-      type: "list",
-      allowBlank: true,
-      formulae: ['"Thời vụ,Chính thức"'],
-    };
-  }
   // Guide sheet ghi ro field bat buoc.
   const guide = workbook.addWorksheet("Hướng dẫn");
   guide.addRow(["Field bắt buộc", "Mô tả"]);
@@ -227,7 +214,7 @@ export async function createWorkerProfileTemplate(): Promise<Uint8Array> {
   guide.addRow(["Ngày bắt đầu làm việc", "Định dạng YYYY-MM-DD"]);
   guide.addRow(["Họ và tên", "Bắt buộc"]);
   guide.addRow(["HRP/Vendor (Người tuyển / Vendor)", "Phải là stable ID ứng với recruiter trong danh mục"]);
-  guide.addRow(["Loại hình LĐ", "Chính thức (PERMANENT) hoặc Thời vụ (TEMPORARY); alias cũ 'Toàn thời gian' vẫn được chấp nhận khi nhập."]);
+  guide.addRow(["Loại hình LĐ", "Nhập mã loại hình đang hoạt động trong danh mục theo ngày bắt đầu làm việc; alias cũ vẫn được chấp nhận."]);
   guide.addRow(["STK", "Nhập dạng Text để giữ số 0 đầu; không resolve ngân hàng."]);
   const metadata = workbook.addWorksheet("_meta");
   metadata.state = "veryHidden";

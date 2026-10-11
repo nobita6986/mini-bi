@@ -59,11 +59,6 @@ export const REVIEW_DECISION_LABELS: Readonly<Record<ChangeRequestDecision, stri
   reject: "Từ chối",
 });
 
-export const LABOR_TYPE_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  TEMPORARY: "Thời vụ",
-  PERMANENT: "Toàn thời gian",
-});
-
 export const REVIEWER_REASON_MAX_LENGTH = 4000;
 
 export type ReviewerFieldRow = {
@@ -157,6 +152,7 @@ export type ReviewerFieldFormatter = (
   entry: ProposerEntryProjection,
   field: ProposerField,
   value: string,
+  authoritativeDisplay?: string | null,
 ) => string | null;
 
 export function catalogProjectLabel(catalog: DraftCatalog | undefined, projectId: string): string | null {
@@ -188,7 +184,8 @@ export function isSupportedEntryFieldProposal(value: unknown): value is Record<s
  * theo thu tu co dinh. Tra null khi co field khong giai duoc nhan hien thi.
  */
 export function buildReviewerEntryRows(input: {
-  item: { entry_id: string; expected_version: number; target_kind: string; proposal: Record<string, unknown> };
+  item: { entry_id: string; expected_version: number; target_kind: string;
+    proposal: Record<string, unknown>; labor_type_display?: string | null };
   entry: ProposerEntryProjection;
   format: ReviewerFieldFormatter;
 }): ReviewerFieldRow[] | null {
@@ -200,8 +197,10 @@ export function buildReviewerEntryRows(input: {
     if (typeof proposed !== "string") return null;
     const current = entry[field];
     if (proposed === current) continue;
-    const before = format(entry, field, current);
-    const after = format(entry, field, proposed);
+    const before = format(entry, field, current,
+      field === "labor_type" ? entry.labor_type_display : undefined);
+    const after = format(entry, field, proposed,
+      field === "labor_type" ? item.labor_type_display : undefined);
     if (before === null || after === null) return null;
     rows.push({ field, label: PROPOSER_FIELD_LABELS[field], before, after });
   }

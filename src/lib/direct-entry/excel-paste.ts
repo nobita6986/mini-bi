@@ -20,8 +20,12 @@ export const EXCEL_PASTE_COLUMN_COUNT = 6;
 
 export const LABOR_TYPE_ALIASES: Readonly<Record<string, LaborType>> = Object.freeze({
   temporary: "TEMPORARY",
+  thoivu: "TEMPORARY",
   permanent: "PERMANENT",
+  chinhthuc: "PERMANENT",
+  toanthoigian: "PERMANENT",
   "thời vụ": "TEMPORARY",
+  "chính thức": "PERMANENT",
   "toàn thời gian": "PERMANENT",
 });
 
@@ -134,7 +138,7 @@ export function parseExcelPasteReport(text: string): ExcelPasteReport {
     }
     if (normalizedLabor === null) {
       errors.push({ line: lineNumber, column: EXCEL_PASTE_COLUMN_CODES.laborType,
-        message: "Loại hình lao động phải là Thời vụ/TEMPORARY hoặc Toàn thời gian/PERMANENT." });
+        message: "Loại hình lao động phải là mã hợp lệ hoặc bí danh cũ và thuộc danh mục đang hoạt động." });
       continue;
     }
     rows.push({

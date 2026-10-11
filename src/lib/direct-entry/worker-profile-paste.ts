@@ -51,7 +51,7 @@ export type WorkerProfileRow = {
   /** A2: plain string, khong phai OptionalValue. */
   display_name: string;
   recruiter_label: string;
-  labor_type: LaborType;
+  labor_type: LaborType | "";
   general_note: WorkerProfileOptional<string>;
   worker: {
     gender: WorkerProfileOptional<Gender>;
@@ -283,7 +283,7 @@ function buildRow(
   }
 
   const laborRaw = rawCell(context, "labor_type");
-  let laborType: LaborType = "TEMPORARY";
+  let laborType: LaborType | "" = "";
   if (laborRaw === undefined || laborRaw === "") {
     fail(context, "PASTE_VALUE_REQUIRED", "labor_type");
   } else if (isFormulaLikeCell(laborRaw)) {

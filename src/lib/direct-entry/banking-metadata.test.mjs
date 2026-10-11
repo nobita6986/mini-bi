@@ -61,6 +61,7 @@ function preview(text, options = {}) {
   const source = {
     projects: options.projects ?? [PROJECT],
     recruiters: options.recruiters ?? [RECRUITER],
+    labor_types: options.labor_types ?? [{ id: "TEMPORARY", label: "Thời vụ" }],
   };
   const resolver = createPasteCatalogResolver(() => source);
   return buildWorkerProfilePreview({ text, referenceDate: REFERENCE_DATE, resolver,

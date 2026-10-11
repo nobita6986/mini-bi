@@ -128,6 +128,7 @@ test("entry projection reads only the five non-PII fields", () => {
     employee_code: "hrp-2026-000001",
     recruiter_id: "93000000-0000-4000-8000-000000000001",
     labor_type: "TEMPORARY",
+    labor_type_display: "Nhãn loại hình",
     worker_details: { display_name: "Kín", national_id: { state: "provided", value: "0123" } },
     payment: { state: "provided", account_number: "000012340056" },
     documents: [{ document_id: entryA }],
@@ -142,6 +143,7 @@ test("entry projection reads only the five non-PII fields", () => {
     employee_code: "hrp-2026-000001",
     recruiter_id: "93000000-0000-4000-8000-000000000001",
     labor_type: "TEMPORARY",
+    labor_type_display: "Nhãn loại hình",
   });
   const serialized = JSON.stringify(projection);
   for (const forbidden of [workerPlaceholder, "payment", "documents", "account_number", "submission_id"]) {

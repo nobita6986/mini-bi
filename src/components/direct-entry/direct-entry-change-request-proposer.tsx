@@ -73,6 +73,7 @@ import {
   type TransitionIntentKeyState,
 } from "@/lib/direct-entry/submission-lifecycle";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
+import { sortedActiveLaborTypes } from "@/lib/direct-entry/labor-type-catalog-ui";
 
 import styles from "./direct-entry-shell.module.css";
 
@@ -576,17 +577,20 @@ export function DirectEntryChangeRequestProposer({
                         <select
                           id={"cr-labor-" + entry.entry_id}
                           aria-label={"Loại hình lao động của " + entry.employee_code}
-                          value={draft.labor_type}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            if (value === "TEMPORARY" || value === "PERMANENT") {
-                              editEntry(entry.entry_id, { labor_type: value });
-                            }
-                          }}
+                          value={(catalog?.labor_types ?? []).some((option) =>
+                            option.labor_type_key === draft.labor_type) ? draft.labor_type : ""}
+                          onChange={(event) => editEntry(entry.entry_id, {
+                            labor_type: event.target.value,
+                          })}
                         >
-                          <option value="TEMPORARY">Thời vụ</option>
-                          <option value="PERMANENT">Toàn thời gian</option>
+                          <option value="">Chọn loại hình</option>
+                          {sortedActiveLaborTypes(catalog?.labor_types).map((option) => (
+                            <option key={option.labor_type_key} value={option.labor_type_key}>
+                              {option.display_name}
+                            </option>
+                          ))}
                         </select>
+                        <small>Hiện tại: {entry.labor_type_display}</small>
                       </div>
                       <p className={styles.submissionHint}>
                         Thay đổi: {changedProposerFields(baseline, draft)

@@ -19,10 +19,12 @@ const CATALOGS = {
   "2026-10-15": {
     projects: [{ id: "11111111-1111-4111-8111-111111111111", label: "Dự án Giả Bắc" }],
     recruiters: [{ id: "22222222-2222-4222-8222-222222222222", label: "Tuyển Dụng Giả 1" }],
+    labor_types: [{ id: "TEMPORARY", label: "Thời vụ" }],
   },
   "2026-11-01": {
     projects: [{ id: "11111111-1111-4111-8111-111111111112", label: "Dự án Giả Nam" }],
     recruiters: [{ id: "22222222-2222-4222-8222-222222222223", label: "Tuyển Dụng Giả 2" }],
+    labor_types: [{ id: "TEMPORARY", label: "Thời vụ" }],
   },
 };
 
@@ -50,7 +52,8 @@ function loadCountTracking() {
     counts.set(date, (counts.get(date) ?? 0) + 1);
     const source = CATALOGS[date];
     return source === undefined ? null
-      : { projects: source.projects, recruiters: source.recruiters };
+      : { projects: source.projects, recruiters: source.recruiters,
+        labor_types: source.labor_types };
   };
   return { loader, counts };
 }
@@ -107,6 +110,7 @@ test("catalog: exact ID hoac exact label, khong fuzzy; missing/ambiguous la loi 
   const ambiguousResolver = createPasteCatalogResolver(() => ({
     projects: [{ id: "p-a", label: "Dự án Giả Bắc" }, { id: "p-b", label: "Dự án Giả Bắc" }],
     recruiters: CATALOGS["2026-10-15"].recruiters,
+    labor_types: CATALOGS["2026-10-15"].labor_types,
   }));
   const ambiguous = buildWorkerProfilePreview({ text: toTsv([row("hrp-2026-000123")]),
     referenceDate: REFERENCE_DATE, resolver: ambiguousResolver });

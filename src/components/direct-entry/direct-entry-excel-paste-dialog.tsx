@@ -30,11 +30,6 @@ type Props = {
   onSubmit(rows: readonly PastePreviewRow[]): Promise<PasteSubmitResult>;
 };
 
-const LABOR_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  TEMPORARY: "Thời vụ",
-  PERMANENT: "Toàn thời gian",
-});
-
 export function toPasteCatalog(catalog: DraftCatalog | undefined): PasteCatalog | undefined {
   if (!catalog) return undefined;
   return {
@@ -46,6 +41,10 @@ export function toPasteCatalog(catalog: DraftCatalog | undefined): PasteCatalog 
       id: recruiter.recruiter_id,
       // P3-W07A: server-side `label` is the canonical UI string.
       label: recruiter.label,
+    })),
+    laborTypes: (catalog.labor_types ?? []).map((option) => ({
+      id: option.labor_type_key,
+      label: option.display_name,
     })),
   };
 }
@@ -180,7 +179,7 @@ export function DirectEntryExcelPasteDialog({
                         <td>{row.workerName}</td>
                         <td>{row.projectText}</td>
                         <td>{row.recruiterText}</td>
-                        <td>{LABOR_LABELS[row.laborType]}</td>
+                        <td>{row.laborTypeLabel}</td>
                         <td>
                           {row.issues.map((issue) => (
                             <span key={describeIssue(issue.column, issue.message)}>

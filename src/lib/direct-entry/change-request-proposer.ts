@@ -84,6 +84,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export type ProposerEntryProjection = ProposerFields & {
   entry_id: string;
   expected_version: number;
+  labor_type_display: string;
 };
 
 export function projectProposerEntry(value: unknown): ProposerEntryProjection | null {
@@ -100,6 +101,7 @@ export function projectProposerEntry(value: unknown): ProposerEntryProjection | 
       value.employee_code.length > 64) return null;
   if (typeof value.recruiter_id !== "string" || !UUID.test(value.recruiter_id)) return null;
   if (!isCanonicalLaborTypeKey(value.labor_type)) return null;
+  if (typeof value.labor_type_display !== "string" || value.labor_type_display.length < 1) return null;
   return {
     entry_id: value.entry_id,
     expected_version: value.version,
@@ -108,6 +110,7 @@ export function projectProposerEntry(value: unknown): ProposerEntryProjection | 
     employee_code: value.employee_code,
     recruiter_id: value.recruiter_id,
     labor_type: value.labor_type,
+    labor_type_display: value.labor_type_display,
   };
 }
 

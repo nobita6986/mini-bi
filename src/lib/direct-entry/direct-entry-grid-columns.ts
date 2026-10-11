@@ -91,15 +91,6 @@ export const DIRECT_ENTRY_ACTION_RAIL_COLUMN_KEYS: readonly string[] = Object.fr
 ]);
 
 export const DIRECT_ENTRY_GENDER_OPTIONS: readonly string[] = Object.freeze(["Nam", "Nữ"]);
-/**
- * UI theo ngu canh P1.7-H05: hien thi "Chính thức"; backend canonical value van la
- * "PERMANENT". Bo bao gom "Toàn thời gian" khoi UI moi nhung XLSX import alias van
- * chap nhan.
- */
-export const DIRECT_ENTRY_LABOR_TYPE_OPTIONS: readonly string[] = Object.freeze([
-  "Thời vụ",
-  "Chính thức",
-]);
 export const DIRECT_ENTRY_PROVIDER_OPTIONS: readonly string[] = Object.freeze(["HRP", "Vendor"]);
 
 export type GridRecruiterOption = {

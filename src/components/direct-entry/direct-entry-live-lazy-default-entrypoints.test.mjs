@@ -1,8 +1,8 @@
 /**
  * P3-W07C-R1 behavioral regressions: lazy default entry points.
  *
- * P3-W07C-R3: chỉ còn lazy default cho `first_work_date` (hôm nay theo
- * Asia/Ho_Chi_Minh). `national_id_issued_place` không còn được tự điền
+ * P3-W07C-R3: `first_work_date` và Labor Type active được prefill khi
+ * người dùng kích hoạt row. `national_id_issued_place` không còn được tự điền
  * ở client — server-authoritative migration #46 ghi "Bộ Công An" tại
  * RPC create-batch. Behavioral checks dưới đây đã được viết lại để
  * phù hợp với R3 contract; vẫn đảm bảo mỗi user interaction với một
@@ -34,14 +34,14 @@ const NOW = new Date("2026-04-15T08:00:00.000Z");
 const TODAY = spreadsheetDefaultFirstWorkDate(NOW);
 
 test("Add quick: fresh row -> drawer nhan du first_work_date default truoc khi mo", () => {
-  // P3-W07C-R3: chi con first_work_date default; place do server migration.
+  // P3-W07C-R3: date default va active Labor Type preselection; place do server migration.
   // Production path: addQuickStagedRow tinh target rowId + activated model
   // TRUOC khi setStagedModel commit, roi setQuickEditClientRowId ben ngoai
   // updater (khong side effect trong setStagedModel). Source pattern:
   //   `targetClientRowId = emptyRow.clientRowId;`
-  //   `return activateSpreadsheetRowLazyDefaults(current, emptyRow.clientRowId);`
+  //   `return activateSpreadsheetRowLazyDefaults(current, emptyRow.clientRowId, ..., activeKey);`
   assert.match(live,
-    /const addQuickStagedRow = useCallback\(\(\) => \{[\s\S]{0,800}targetClientRowId = emptyRow\.clientRowId;[\s\S]{0,500}return activateSpreadsheetRowLazyDefaults\(current, emptyRow\.clientRowId\)/,
+    /const addQuickStagedRow = useCallback\(\(\) => \{[\s\S]{0,1600}targetClientRowId = emptyRow\.clientRowId;[\s\S]{0,500}return activateSpreadsheetRowLazyDefaults\(\s*current, emptyRow\.clientRowId, new Date\(\),\s*firstActiveLaborTypeKey\(catalogs\[today\]\?\.labor_types\)/,
     "addQuickStagedRow phai activate row truoc khi setQuickEditClientRowId (ben ngoai updater)");
 
   let model = createSpreadsheetRowModel();
@@ -212,6 +212,6 @@ test("openQuickEditor activate truoc khi mo drawer", () => {
 });
 
 test("handleMobileStagedFieldChange (mobile edit) di qua updateSpreadsheetRowCells", () => {
-  assert.match(live, /const onMobileStagedChange = useCallback\(\([\s\S]{0,1200}updateSpreadsheetRowCells\(current, clientRowId, \{[\s\S]{0,500}\}\)/,
+  assert.match(live, /const onMobileStagedChange = useCallback\(\([\s\S]{0,2400}updateSpreadsheetRowCells\(\s*current, clientRowId, \{[\s\S]{0,500}\}, new Date\(\),\s*firstActiveLaborTypeKey\(currentCatalog\?\.labor_types\)/,
     "onMobileStagedChange phai goi updateSpreadsheetRowCells (activation contract)");
 });

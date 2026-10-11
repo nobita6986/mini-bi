@@ -5,7 +5,7 @@ export interface DirectEntryRow {
   workerLabel: string;
   project: string;
   recruiterId: string;
-  laborType: "Toàn thời gian" | "Thời vụ";
+  laborType: string;
   workStatus: "Chưa xác nhận" | "Đang làm" | "Đã nghỉ";
 }
 
@@ -31,7 +31,7 @@ export const INITIAL_DIRECT_ENTRY_ROWS: readonly DirectEntryRow[] = [
     workerLabel: "Nhân sự mẫu 01",
     project: "Dự án thử nghiệm Bắc",
     recruiterId: SYNTHETIC_RECRUITERS[0].id,
-    laborType: "Toàn thời gian",
+    laborType: "",
     workStatus: "Đang làm",
   },
   {
@@ -41,7 +41,7 @@ export const INITIAL_DIRECT_ENTRY_ROWS: readonly DirectEntryRow[] = [
     workerLabel: "Nhân sự mẫu 02",
     project: "Dự án thử nghiệm Nam",
     recruiterId: SYNTHETIC_RECRUITERS[1].id,
-    laborType: "Thời vụ",
+    laborType: "",
     workStatus: "Chưa xác nhận",
   },
   {
@@ -51,7 +51,7 @@ export const INITIAL_DIRECT_ENTRY_ROWS: readonly DirectEntryRow[] = [
     workerLabel: "Nhân sự mẫu 03",
     project: "Dự án thử nghiệm Bắc",
     recruiterId: SYNTHETIC_RECRUITERS[2].id,
-    laborType: "Toàn thời gian",
+    laborType: "",
     workStatus: "Chưa xác nhận",
   },
 ];
