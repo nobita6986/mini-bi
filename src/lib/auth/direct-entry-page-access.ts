@@ -67,6 +67,13 @@ export function decideVendorCatalogPageAccess(input: {
   return decideAdminAreaAccess(input);
 }
 
+/** Separate direct-URL gate for the implemented Labor Type catalog page. */
+export function decideLaborTypeCatalogPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideAdminAreaAccess(input);
+}
+
 const ENTRY_CAPABILITIES = ["entry_own", "entry_team", "entry_admin"] as const;
 
 export function decideDirectEntryPageAccess(input: {
