@@ -280,7 +280,7 @@ function SelectCellEditor(
         onBlur={commitBlur}>
         <option value="">—</option>
         {selectedIsInactive && <option value={value} disabled>
-          {value} · không còn hoạt động
+          {props.row.displayValues?.labor_type || "Loại hình không còn hoạt động"}
         </option>}
         {sortedActiveLaborTypes(rowCatalogs?.laborTypes).map((option) =>
           <option key={option.labor_type_key} value={option.labor_type_key}>
@@ -722,7 +722,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
             return key === ""
               ? ""
               : activeLaborTypeLabel(row.catalogOptions?.laborTypes ?? catalogOptions?.laborTypes, key) ??
-                `${key} · không còn hoạt động`;
+                "Loại hình không còn hoạt động";
           }
           if (column.key === "row_index") return String(rowIndexOf(row.clientRowId) + 1);
           // `first_work_date` retains its ISO contract and renders DD/MM/YYYY.

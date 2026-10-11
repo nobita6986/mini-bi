@@ -1,6 +1,6 @@
 # P3.1-W02C UI cutover — dynamic Labor Type catalog
 
-**Status:** `P3_1_W02C_UI_DYNAMIC_CATALOG_LOCAL_PASS_AWAITING_T0_REVIEW`
+**Status:** `P3_1_W02C_UI_DYNAMIC_CATALOG_REPAIR_LOCAL_PASS_AWAITING_T0_REVIEW`
 
 ## Base and scope
 
@@ -58,3 +58,24 @@
 - Inactive keys are never offered for new writes. Existing history is rendered only from the
   authoritative `labor_type_display` projection.
 - No Production query/apply, deployment, browser automation, UAT, or merge was performed.
+
+## Own Draft display repair
+
+- `LiveDraftRow.laborTypeDisplay` hydrates from the required R3
+  `OwnDraft.labor_type_display` projection. It remains outside `EditableDraftFields`, saved-field
+  comparison, and create/update payloads; `laborType` remains the canonical key.
+- Persisted spreadsheet rows keep that key in `cells.labor_type`. The closed cell uses the current
+  active Input Catalog label when available and otherwise the authoritative Own Draft display
+  projection. The desktop inactive option and quick/mobile inactive notice show that label while
+  keeping the inactive key unselectable.
+- No raw-key inactive-label fallback, static legacy map, or Admin Catalog client request was added.
+  A new label from a subsequently loaded Own Draft projection is used by the hydrated row.
+- Regression coverage is in `own-draft-labor-type-ui.test.mjs` and
+  `live-controller.test.mjs`; the W02C UI lane includes both. The mutation probe restored the
+  `${key} · không còn hoạt động` fallback and caused the focused lane to fail, then restored
+  `direct-entry-live.tsx` byte-identically (SHA-256 before/after:
+  `D1BF29A40910908164A5E050C7D70F28F46FBD38ED7DC29CC36E3E89D3A31AB7`).
+- Repair verification: focused W02C UI lane 184/184; existing W02C dynamic catalog lane 59/59;
+  R3 Own Draft lane 12/12; related LiveDraft/grid tests 53/53. Type generation, typecheck, lint,
+  build, docs, secrets, offline validation of all 81 migrations, and `git diff --check` pass.
+  Lint reports 13 warnings and no errors.

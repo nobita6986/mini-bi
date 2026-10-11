@@ -32,7 +32,8 @@ const projection = {
   provider_type: "hrp",
   team_id: "94000000-0000-4000-8000-000000000001",
   team_display_name: "Synthetic team",
-  labor_type: "TEMPORARY",
+  labor_type: "PROBATION",
+  labor_type_display: "Thử việc",
   employment_status: "UNCONFIRMED",
   created_at: "2026-10-03T00:00:00.000Z",
   updated_at: "2026-10-03T00:00:00.000Z",
@@ -60,10 +61,16 @@ test("persisted IDs, versions and fields hydrate from server; unsaved rows use t
   assert.equal(persisted.entryVersion, 3);
   assert.equal(persisted.submissionVersion, 2);
   assert.equal(persisted.state, "clean");
+  assert.equal(persisted.laborType, "PROBATION");
+  assert.equal(persisted.laborTypeDisplay, "Thử việc");
+  assert.deepEqual(Object.keys(editableFields(persisted)), [
+    "employeeCode", "firstWorkDate", "workerName", "projectId", "recruiterId", "laborType",
+  ]);
   assert.deepEqual(persisted.profile, projection.profile);
   const unsaved = newDraftRow("local-temp-1", "2026-10-15");
   assert.equal(unsaved.employmentStatus, "ON");
   assert.equal(unsaved.entryId, null);
+  assert.equal(unsaved.laborTypeDisplay, "");
   assert.equal(stableLiveDraftKey(unsaved), "local-temp-1");
   assert.equal(stableLiveDraftKey(persisted), projection.entry_id);
 });
@@ -71,6 +78,7 @@ test("persisted IDs, versions and fields hydrate from server; unsaved rows use t
 test("local edits become dirty, unchanged edits return clean, and saving rows reject mutation", () => {
   const row = draftRowFromProjection(projection);
   const changed = updateLiveDraftRow([row], row.rowId, { workerName: "Synthetic changed" })[0];
+  assert.equal(changed.laborTypeDisplay, "Thử việc");
   assert.equal(changed.state, "dirty");
   assert.equal(fieldsDiffer(editableFields(changed), editableFields(row)), true);
   assert.deepEqual(changedDraftFields(editableFields(changed), editableFields(row)), ["Họ tên"]);

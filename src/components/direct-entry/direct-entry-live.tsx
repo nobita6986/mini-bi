@@ -1274,7 +1274,11 @@ export function DirectEntryLive() {
         cccdStatus: cccdStatus.label,
         canManageCccd: cccdStatus.canManage,
         catalogOptions: spreadsheetCatalogOptions(fallbackCatalog ?? undefined),
-        displayValues: profileCells.displayValues,
+        displayValues: {
+          ...profileCells.displayValues,
+          labor_type: activeLaborTypeLabel(fallbackCatalog?.labor_types, row.laborType) ??
+            row.laborTypeDisplay,
+        },
         cells: {
           ...profileCells.cells,
           // P1.7-H05-R1: Mã NLĐ chi de hien thi (output), khong sua; cell key
@@ -1286,8 +1290,7 @@ export function DirectEntryLive() {
           recruiter_id: row.recruiterId,
           provider_hint: row.providerType?.toUpperCase() ?? "",
           team_hint: row.teamDisplayName,
-          labor_type: activeLaborTypeLabel(fallbackCatalog?.labor_types, row.laborType) ??
-            `${row.laborType} · không còn hoạt động`,
+          labor_type: row.laborType,
           initial_status: employment
             ? `${employmentStatusLabel} · hiệu lực ${employment.effective_date}`
             : employmentStatusLabel,
@@ -2657,7 +2660,7 @@ export function DirectEntryLive() {
                   {selectedRow.laborType !== "" &&
                     !(selectedRowCatalog?.labor_types ?? []).some((option) =>
                       option.labor_type_key === selectedRow.laborType) && (
-                    <small>{selectedRow.laborType} · không còn hoạt động</small>
+                    <small>{selectedRow.laborTypeDisplay} · không còn hoạt động</small>
                   )}
                 </Field>
                 <DirectEntryPaymentEditor

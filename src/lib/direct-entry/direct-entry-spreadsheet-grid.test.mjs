@@ -85,9 +85,11 @@ test("loi duoc danh dau tren dung o va co tong ket dong loi", () => {
 });
 
 test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia nghiep vu moi", () => {
-  // P1.7-H05: dropdown vocabulary su dung hang so import tu direct-entry-grid-columns.
+  // Dropdown vocabulary uses the current active catalog projection.
   assert.match(source, /DIRECT_ENTRY_GENDER_OPTIONS/);
-  assert.match(source, /DIRECT_ENTRY_LABOR_TYPE_OPTIONS/);
+  assert.match(source, /sortedActiveLaborTypes\(catalogs\?\.laborTypes\)/);
+  assert.match(source, /option\.labor_type_key/);
+  assert.doesNotMatch(source, /DIRECT_ENTRY_LABOR_TYPE_OPTIONS/);
   // provider_type options are defined as a local const to keep the registry
   // contract surface area separate.
   assert.match(source, /PROVIDER_OPTIONS/);
@@ -97,7 +99,7 @@ test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia 
   assert.equal(source.includes("STATUS_OPTIONS"), false,
     "status khong con nam trong grid mac dinh");
   // Option project/recruiter den tu catalog truyen vao, khong hard-code ID.
-  assert.match(source, /source\?\.projects \?\? \[\]/);
+  assert.match(source, /catalogs\?\.projects \?\? \[\]/);
   assert.match(source, /catalogs\?\.recruiters \?\? \[\]/);
   assert.match(source, /recruitersForProvider\(/);
   assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(source), false,

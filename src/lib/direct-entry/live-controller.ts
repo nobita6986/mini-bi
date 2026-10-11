@@ -38,6 +38,7 @@ export type UpdateDraftResult = {
 
 export type LiveDraftRow = EditableDraftFields & {
   rowId: string;
+  laborTypeDisplay: string;
   entryId: string | null;
   submissionId: string | null;
   entryVersion: number | null;
@@ -68,6 +69,7 @@ export function draftRowFromProjection(draft: OwnDraft): LiveDraftRow {
   return {
     ...fields,
     rowId: draft.entry_id,
+    laborTypeDisplay: draft.labor_type_display,
     entryId: draft.entry_id,
     submissionId: draft.submission_id,
     entryVersion: draft.entry_version,
@@ -90,6 +92,7 @@ export function draftRowFromProjection(draft: OwnDraft): LiveDraftRow {
 export function newDraftRow(rowId: string, firstWorkDate: string): LiveDraftRow {
   return {
     rowId,
+    laborTypeDisplay: "",
     entryId: null,
     submissionId: null,
     entryVersion: null,
