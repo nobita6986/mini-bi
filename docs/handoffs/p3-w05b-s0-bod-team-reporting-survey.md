@@ -1,6 +1,6 @@
 # P3-W05B-S0 — BoD recruitment reporting by team (Survey / Contract Lock)
 
-> **Status:** `P3_W05B_S0_R3_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `P3_W05B_S0_R4_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
 > **Base:** `origin/main@5f41caf689dbfd52bb889744f227aa659da393db`
 >   (`fix(projects): compact table layout without forced scroll`).
 > **Branch:** `audit/p3-w05b-s0-bod-team-reporting-survey`
@@ -474,8 +474,17 @@ so that no known-team token can ever equal the unknown literal
   the W01C-A canonical rule only forbids whitespace and
   control characters in the canonical `teams.code`, per
   `p3_1_w01c_a_team_catalog.sql` line 404's
-  `v_code ~ '[[:space:][:cntrl:]]'` guard, and forbids the
-  reserved literal `__system_vendor__`. The `.` character
+  `v_code ~ '[[:space:][:cntrl:]]'` guard, and the
+  W01C-A **catalog-mutation** create guard (line 410)
+  forbids the reserved literal `__system_vendor__` for
+  catalog create. The W01C-A reserved-literal rejection
+  is a **mutation** guard only; the W05B reporting read
+  path **accepts** a known-team token whose decoded
+  canonical `code` is the literal `__system_vendor__`
+  provided the row exists in `public.teams` (see §2.5.2
+  step 7 and E22 — the W07A-R3 / R4 migrations install
+  and use that row as the canonical Vendor team for all
+  `provider_type='vendor'` facts). The `.` character
   itself is allowed in a canonical `teams.code`, and the
   server does not interpret that as a namespace marker —
   the marker exists only in the wire serialization, not in
@@ -543,8 +552,13 @@ The token rules in detail:
   The W01C-A app-level rule additionally forbids whitespace
   and control characters
   (`v_code ~ '[[:space:][:cntrl:]]'`, per
-  `p3_1_w01c_a_team_catalog.sql` line 404) and the reserved
-  literal `__system_vendor__` (line 410). A canonical
+  `p3_1_w01c_a_team_catalog.sql` line 404) and the
+  catalog-mutation create guard (line 410) forbids the
+  reserved literal `__system_vendor__` for catalog
+  create. The W01C-A reserved-literal rejection is a
+  **mutation** guard only — it is not applied to the
+  W05B reporting read path (see §2.5.2 step 7 and E22).
+  A canonical
   `teams.code` is therefore at most 128 characters long;
   its UTF-8 byte size is at most `4 * 128 = 512` bytes
   (UTF-8 encodes any Unicode code point in at most 4 bytes).
@@ -561,17 +575,33 @@ The token rules in detail:
     separately validates the decoded payload against the
     canonical `teams.code` rule — see below). The upper
     bound 688 covers the **worst-case** legal canonical
-    `teams.code`: a 128-character code whose UTF-8 form is
-    512 bytes encodes to
-    `ceil(512 / 3) * 4 = 684` base64url chars (verified:
-    Node's `Buffer.from(512-byte buffer).toString('base64url')
-    === 683 chars`, accounting for the
-    `512 = 170 * 3 + 2` group split), plus the 5-char
-    `team.` prefix is 688. The bound is **tight** — every
+    `teams.code`:     a 128-character code whose UTF-8 form is
+    512 bytes encodes to **683** base64url chars. The
+    exact math: `512 = 170 * 3 + 2` (170 full 3-byte
+    groups plus 2 remaining bytes); 170 full groups
+    produce `170 * 4 = 680` base64url chars; the 2
+    remaining bytes produce 3 base64url chars (no
+    padding for base64url); total payload is
+    `680 + 3 = 683`. (Note: `ceil(512 / 3) * 4 = 684`
+    overcounts by one — the `ceil(512/3) = 171` form
+    assumes a `=` padding char for the 2 remaining
+    bytes, which is **not** present in
+    `base64url_no_padding`; the correct count is
+    `170 * 4 + 3 = 683`, verified: Node's
+    `Buffer.from(512-byte buffer).toString('base64url')
+    === 683 chars`.) Plus the 5-char `team.` prefix, the
+    total wire length is `5 + 683 = 688`. The bound is **tight** — every
     legal canonical `teams.code` (per the DB-level check
     and the W01C-A rule) is representable, and any wire
     payload longer than 688 chars is rejected without
-    allocation.
+    allocation. The **128-character 4-byte-UTF-8
+    boundary** (a code of 128 chars × 4 UTF-8 bytes/char
+    = 512 bytes, e.g. 128 copies of the unicorn emoji
+    `🦄` U+1F984) produces a token of exactly 688 chars
+    (the upper bound); a 129-character 4-byte-UTF-8 code
+    (129 × 4 = 516 bytes) produces a 693-char token and
+    is rejected; a 689-char known-team token is rejected
+    (the wire bound is 688, not 689 — see E20).
 
   Any `bucket_key` that does not match one of those two
   forms — including the stale R1 sentinel `__unknown__`,
@@ -615,8 +645,7 @@ The token rules in detail:
      W01C-A: `btrim` non-empty, `length(btrim(code))
      between 1 and 128` (character count, per PG
      `length(text)`), no whitespace (`[[:space:]]`),
-     no control characters (`[[:cntrl:]]`), and not
-     equal to the reserved literal `__system_vendor__`.
+     no control characters (`[[:cntrl:]]`).
      A payload that fails any of these checks is rejected
      as `INVALID_FILTER`. (The character-count check
      `length(btrim(code)) between 1 and 128` is the
@@ -625,6 +654,35 @@ The token rules in detail:
      rule the schema applies, in addition to the
      whitespace / control guard from the W01C-A
      canonical rule.)
+     The W01C-A **reserved-literal rejection**
+     (`v_code = '__system_vendor__'` in
+     `direct_entry_create_team`, line 410 of
+     `p3_1_w01c_a_team_catalog.sql`) is a
+     **catalog-mutation** guard: it stops the catalog
+     operator from creating a new team with that
+     `code`. It is **not** a read-path guard. W07A-R3
+     (`p3_w07a_r3_vendor_hidden_team_and_document_upload.sql`,
+     migration #65) and W07A-R4
+     (`p3_w07a_r4_vendor_historical_team_backfill.sql`,
+     migration #66) install a single canonical
+     `__system_vendor__` row in `public.teams` and
+     route every `provider_type='vendor'` Direct Entry
+     fact to that row's `team_id`; the W07A-R3
+     `direct_entry_reject_system_vendor_business_team`
+     trigger blocks business membership and team-scope
+     grants for the reserved team, but the row is
+     itself a normal, active, business-readable team on
+     the read path. The W05B reporting read path
+     therefore **accepts** a known-team token whose
+     decoded canonical `code` is the literal
+     `__system_vendor__`, provided the row exists in
+     `public.teams` (W07A-R4 lines 39–49 guarantee the
+     row is canonical, unique, and active before any
+     backfill). The two rules — W01C-A mutation
+     (catalog create/update reject) and W05B reporting
+     resolution (read path accepts) — are
+     **deliberately disjoint**; this memo locks the
+     read-path rule.
   8. Look up the canonical `code` against
      `public.teams.code` (the `unique` index). The
      payload must match exactly one row. Zero or more
@@ -635,7 +693,9 @@ The token rules in detail:
   with a server test (E21 covers the canonical re-encode
   comparison; E20 covers the 128-character Unicode
   payload; E16-E19 cover the namespace disjointness and
-  the unknown literal).
+  the unknown literal; E22 covers the read-path
+  acceptance of the W01C-A reserved `__system_vendor__`
+  literal as a known-team token).
 - `bucket_key` is **never** the `team_id` UUID, **never**
   the raw `teams.code`, **never** the `display_name`, and
   **never** any of `recruiter_key` / `project_key` /
@@ -835,7 +895,7 @@ display text, **not** a UUID.
 | Team drill-down row shape | Only `business_date, project_display, recruiter_display, provider_type_display, employment_type_display, recruited_count, first_work_date` (no `entry_id`, no `team_id`, no `team_code`, no `bucket_key`, no `teams.code`, no internal id) | n/a | n/a | n/a |
 | Team drill-down `limit` | Default 25, max 100; >100 → `INVALID_FILTER`; `limit = 0` → `INVALID_FILTER`; non-numeric `limit` → `INVALID_FILTER` | n/a | n/a | n/a |
 | Team drill-down `cursor` | Opaque server string; out-of-range returns empty page + `nextCursor: null`; undecodable `cursor` → `INVALID_FILTER` | n/a | n/a | n/a |
-| Team drill-down `bucket_key` validation | Wire check (BEFORE any decode) accepts exactly two forms: the unknown literal `"unknown"` (length 7), OR a known-team token matching `^team\.[A-Za-z0-9_-]+$` with `7 ≤ length ≤ 688` (the upper bound covers the worst-case legal canonical `teams.code`: 128 characters × max 4 UTF-8 bytes/char = 512 bytes; `ceil(512/3)*4 = 684` base64url chars + 5-char `team.` prefix = 688; verified against Node's `Buffer.from(512-byte buffer).toString('base64url') === 683` chars). For known-team tokens the server then strips the `team.` prefix, base64url-decodes the payload, validates the canonical-form check (UTF-8 well-formedness + byte-for-byte re-encode comparison, see §2.5.2), validates the canonical `teams.code` check (`btrim` non-empty, `length(btrim(code)) between 1 and 128` character count, no whitespace `[[:space:]]`, no control `[[:cntrl:]]`, not equal to the reserved `__system_vendor__` — same as the W01C-A rule), and resolves the canonical `code` against `public.teams.code` (must match exactly one row). Anything else — including the R3 stale `__unknown__`, the literal `team.` with no payload, the literal `team` with no `.`, whitespace, punctuation outside the base64url alphabet, a payload that decodes to a non-`teams.code` string (e.g. whitespace, control, length > 128, not-`__system_vendor__`-and-not-`teams.code`), a payload that fails the canonical re-encode comparison (non-canonical base64url alias), a known-team token shorter than 7 chars, a known-team token longer than 688 chars, or a payload that matches zero or more than one `public.teams` row — is rejected as `INVALID_FILTER` (no 404 leak). The drill-down RPC is also `dbKind === "all"` gated; a `team` / `own` / anonymous actor is rejected with `REPORTING_QUERY_FAILED` (see §2.5). The RPC signature has no audience parameter; the audience is always re-resolved server-side from `(p_auth_subject, p_app_user_id)` (see §2.6). | n/a | n/a | n/a |
+| Team drill-down `bucket_key` validation | Wire check (BEFORE any decode) accepts exactly two forms: the unknown literal `"unknown"` (length 7), OR a known-team token matching `^team\.[A-Za-z0-9_-]+$` with `7 ≤ length ≤ 688` (the upper bound covers the worst-case legal canonical `teams.code`: 128 characters × max 4 UTF-8 bytes/char = 512 bytes; `512 = 170*3 + 2` → `170*4 + 3 = 683` base64url chars + 5-char `team.` prefix = 688; verified against Node's `Buffer.from(512-byte buffer).toString('base64url') === 683` chars). For known-team tokens the server then strips the `team.` prefix, base64url-decodes the payload, validates the canonical-form check (UTF-8 well-formedness + byte-for-byte re-encode comparison, see §2.5.2), validates the canonical `teams.code` check (`btrim` non-empty, `length(btrim(code)) between 1 and 128` character count, no whitespace `[[:space:]]`, no control `[[:cntrl:]]`), and resolves the canonical `code` against `public.teams.code` (must match exactly one row). The W01C-A **reserved-literal rejection** is a **catalog-mutation** guard only; the W05B reporting read path **accepts** a known-team token whose decoded canonical `code` is the literal `__system_vendor__` provided the row exists in `public.teams` (W07A-R3/R4 install and use that row as the canonical Vendor team for all `provider_type='vendor'` facts — see E22). Anything else — including the R3 stale `__unknown__`, the literal `team.` with no payload, the literal `team` with no `.`, whitespace, punctuation outside the base64url alphabet, a payload that decodes to a non-`teams.code` string (whitespace, control, length > 128), a payload that fails the canonical re-encode comparison (non-canonical base64url alias), a known-team token shorter than 7 chars, a known-team token longer than 688 chars, or a payload that matches zero or more than one `public.teams` row — is rejected as `INVALID_FILTER` (no 404 leak). The drill-down RPC is also `dbKind === "all"` gated; a `team` / `own` / anonymous actor is rejected with `REPORTING_QUERY_FAILED` (see §2.5). The RPC signature has no audience parameter; the audience is always re-resolved server-side from `(p_auth_subject, p_app_user_id)` (see §2.6). | n/a | n/a | n/a |
 | Filter outside the W05A parser | Rejected as `INVALID_FILTER` | n/a | n/a | n/a |
 | Unknown bucket contributors | Legacy aggregate + Direct Entry defensive null / orphan only (see §2.3 / §2.3.3) | n/a | n/a | n/a |
 | Inactive-team rows in BoD team chart | Render under the team's own bucket with display label suffixed " (Đã ngừng hoạt động)"; `bucket_key` and `recruitedCount` unchanged (see §2.3.1) | n/a | n/a | n/a |
@@ -861,9 +921,12 @@ The T0 acceptance gates are:
   `T1.display_name`) for every filter window covering that fact's
   `business_date`. The test seeds a fact with `team_id = T1` then a
   recruiter transfer, and asserts the BoD team chart and the team
-  drill-down both show `T1`. The bucket's `bucket_key` is
-  `T1.code` (the team's `code` is stable across the W01C-A
-  revision history).
+  drill-down both show `T1`. The bucket's `bucket_key` is the
+  namespaced canonical token
+  `team.<base64url_no_padding(UTF-8(T1.code))>` (per §2.5.2
+  namespace A; the team's `code` is stable across the W01C-A
+  revision history, so the token is stable for the lifetime
+  of the team).
 - **E3: unknown bucket.** The unknown bucket equals the sum of
   (a) the legacy aggregate's `recruited_count` for the current
   filter window and (b) the Direct Entry defensive null / orphan
@@ -1015,34 +1078,50 @@ The T0 acceptance gates are:
   unknown panel renders Section A (legacy aggregate total) +
   Section B (defensive null / orphan row list, empty in this
   fixture).
-- **E20: a canonical 128-character Unicode `teams.code` is
-  accepted and its wire token can exceed 256 chars.** A test
-  seeds a team whose `code` is a 128-character Unicode string
-  (e.g. 128 copies of a Vietnamese diacritic character such
-  as `ê` — 2 UTF-8 bytes per code point → 256 UTF-8 bytes;
-  the test additionally seeds a 64-copy `ê` (128 UTF-8
-  bytes) and a 128-copy `ê` (256 UTF-8 bytes) variant — the
-  server must accept all three: 128 chars is the DB-level
-  ceiling, all are within the W01C-A canonical rule). The
-  test asserts: (a) the BoD team chart emits a known-team
+- **E20: a canonical 128-character 4-byte-UTF-8 `teams.code`
+  is accepted and its wire token is exactly 688 chars (the
+  upper bound).** A test seeds a team whose `code` is **128
+  copies of the unicorn emoji `🦄` U+1F984** — each code
+  point is 4 UTF-8 bytes, so 128 chars × 4 bytes/char = 512
+  UTF-8 bytes, the worst-case legal canonical `teams.code`.
+  The test asserts: (a) the BoD team chart emits a known-team
   bucket with `bucket_key = "team." ||
-  base64url_no_padding(UTF-8(code))`, (b) the token length is
-  within the wire bound 7..688 (the 256-byte variant
-  produces a 5 + `ceil(256/3)*4 = 5 + 344 = 349` char token,
-  which is greater than R2's incorrect bound of 256 — this
-  is the regression that E20 catches), (c) the drill-down
-  request with that long token is accepted and resolves to
-  the team's rows, (d) the canonical-form re-encode
-  comparison passes (`P_canonical == P_request`), (e) the
-  W01C-A rule passes (`btrim` non-empty, `length(btrim)`
-  = 128, no whitespace, no control), (f) the public.teams
-  lookup matches exactly one row. A second test seeds a
-  team whose `code` is 4 ASCII chars with a 4-byte UTF-8
-  payload and asserts the token is exactly 11 chars
-  (`team.` + 6 base64url chars); a third test seeds a team
-  whose `code` is 1 ASCII char and asserts the token is
-  exactly 7 chars (`team.` + 2 base64url chars); both
-  within the wire bound.
+  base64url_no_padding(UTF-8(code))`, (b) the wire token is
+  **exactly 688 chars** (5-char `team.` prefix + 683-char
+  base64url payload, computed as
+  `170 * 4 + 3 = 683` from the
+  `512 = 170 * 3 + 2` group split — verified: Node's
+  `Buffer.from(512-byte buffer).toString('base64url') ===
+  683` chars; Node's
+  `Buffer.from('🦄'.repeat(128), 'utf8').toString('base64url')` is
+  also 683 chars), (c) the drill-down request with that
+  688-char token is accepted and resolves to the team's
+  rows, (d) the canonical-form re-encode comparison passes
+  (`P_canonical == P_request`), (e) the W01C-A rule passes
+  (`btrim` non-empty, `length(btrim) = 128`, no whitespace,
+  no control), (f) the `public.teams.code` lookup matches
+  exactly one row. A second test seeds a team whose `code`
+  is 64 × `ê` (128 UTF-8 bytes, 128 chars) and asserts the
+  token is exactly 5 + 172 = 177 chars
+  (within the wire bound). A third test seeds a team whose
+  `code` is 128 × `ê` (256 UTF-8 bytes, 128 chars) and
+  asserts the token is exactly 5 + 344 = 349 chars. A
+  fourth test seeds a team whose `code` is 4 ASCII chars
+  with a 4-byte UTF-8 payload and asserts the token is
+  exactly 11 chars (`team.` + 6 base64url chars); a fifth
+  test seeds a team whose `code` is 1 ASCII char and asserts
+  the token is exactly 7 chars (`team.` + 2 base64url
+  chars). All five tokens are within the wire bound 7..688.
+  **Boundary rejection cases** (a separate fixture, no real
+  team): (g) a synthetic `bucket_key` of 689 chars (a
+  canonical `team.<...>` form with a 684-char base64url
+  payload) is rejected as `INVALID_FILTER` at the wire
+  check (length 689 > 688 — the wire bound is 688, not 689);
+  (h) a synthetic `bucket_key` derived from a 129 × `🦄`
+  code (516 UTF-8 bytes, 693-char token) is also rejected
+  at the wire check (length 693 > 688). The 128 × `🦄`
+  boundary is the **tightest** legal maximum; anything
+  longer is rejected without allocation.
 - **E21: canonical-form re-encode comparison rejects
   non-canonical base64url aliases.** A test seeds a team
   whose `code = "f"`. The canonical payload for that
@@ -1059,13 +1138,79 @@ The T0 acceptance gates are:
   but the canonical re-encode of `f` is `Zg`, which is
   byte-for-byte different from `Zh`; the canonical-form
   re-encode comparison in §2.5.2 step 6 catches the
-  alias). A third assertion: (d) a drill-down request
-  with the canonical token `team.Zg` of a different real
-  team (whose `code` is not `f`) is rejected as
-  `INVALID_FILTER` (canonical comparison passes, but the
-  `public.teams.code` lookup matches the other team, not
-  the requested one — zero rows; this is a defense-in-depth
-  check that the canonical re-encode is not the only gate).
+  alias). A third assertion (separate fixture, **no
+  team whose `code = "f"`**): (d) a drill-down request
+  with `bucket_key = "team.Zg"` is rejected as
+  `INVALID_FILTER` (the canonical-form re-encode
+  comparison passes: P_canonical = "Zg" decodes to "f"
+  and re-encodes to "Zg" — the request is well-formed
+  UTF-8, passes the W01C-A canonical `teams.code` rule,
+  and the payload matches the canonical form), but the
+  `public.teams.code` lookup matches **zero rows** (no
+  team with `code = "f"` in the fixture); zero rows
+  → `INVALID_FILTER`. This is the **lookup-miss
+  branch** of the read-path pipeline — the canonical
+  re-encode is **not** the only gate, and the
+  one-row-in-`public.teams` check is the final defense
+  against a payload that decodes to a `code` that is
+  not a real team).
+- **E22: the W01C-A reserved `__system_vendor__` literal
+  is a known-team token on the read path (a Vendor
+  bucket, not Unknown).** A test seeds a real team
+  whose `code = "__system_vendor__"`,
+  `display_name = "Vendor"`, `active = true` (this is
+  the canonical, unique, active row that W07A-R3
+  installs in `public.teams` and that W07A-R4 keeps
+  canonical — both migrations precondition the row
+  before any backfill; the W07A-R3 trigger
+  `direct_entry_reject_system_vendor_business_team`
+  blocks business membership and team-scope grants for
+  this team, but the row is itself a normal, active,
+  business-readable team on the read path). The test
+  then seeds N Vendor Direct Entry facts whose
+  `team_id` resolves to that team (W07A-R3 / R4 route
+  every `provider_type='vendor'` fact to that team_id).
+  The test reads the BoD team chart and asserts: (a)
+  the chart emits a known-team bucket with
+  `bucket_key = "team." || base64url("__system_vendor__")
+  = "team.X19zeXN0ZW1fdmVuZG9yX18"` (28 chars, verified
+  against Node: `Buffer.from("__system_vendor__",
+  "utf8").toString("base64url") === "X19zeXN0ZW1fdmVuZG9yX18"`,
+  23 chars; + 5 = 28), (b) the chart does **not** emit
+  a bucket with `bucket_key = "unknown"` just because
+  of the Vendor facts (the Vendor facts are a
+  known-team bucket, not Unknown), (c) the bucket's
+  `display` is the current `teams.display_name` =
+  `"Vendor"`, (d) the unknown bucket's count equals
+  only the legacy aggregate plus Direct Entry
+  defensive null / orphan (the N Vendor facts do
+  **not** contribute to the unknown bucket; the
+  `recruitedTotal` invariant still holds). The test
+  then opens the BoD drill-down for the Vendor
+  bucket and asserts: (e) the drill-down request with
+  `bucket_key = "team.X19zeXN0ZW1fdmVuZG9yX18"` is
+  accepted (the W01C-A reserved-literal rejection is a
+  catalog-mutation guard only; the W05B read path
+  accepts), (f) the response's
+  `bucket: { key, display }` round-trips
+  `key = "team.X19zeXN0ZW1fdmVuZG9yX18"` and
+  `display = "Vendor"`, (g) the sanitized
+  `DrillDownRow[]` contains the N Vendor facts (with
+  the same shape as E6: `business_date`,
+  `project_display`, `recruiter_display`,
+  `provider_type_display`, `employment_type_display`,
+  `recruited_count`, `first_work_date` — no
+  `entry_id`, `team_id`, `team_code`, `bucket_key`,
+  `auth_subject`, `app_user_id`, or any other
+  internal identifier), (h) the drill-down RPC
+  re-resolves audience to `all` (the BoD-only gate;
+  a `team` / `own` actor calling the same
+  `bucket_key` is rejected with
+  `REPORTING_QUERY_FAILED`; no membership or scope is
+  added for the reserved team). The test pins that
+  the reserved `__system_vendor__` literal flows
+  through the W05B read path as a normal known-team
+  token.
 
 **Mutation cases** (each makes the corresponding E test fail, then
 is restored to byte-equivalent code; the migration file hash stays
@@ -1097,7 +1242,7 @@ unchanged):
 | Accept a `bucket_key` whose decoded payload is not well-formed UTF-8 (skip the UTF-8 well-formedness check in §2.5.2 step 3) | E20, E21 |
 | Accept a `bucket_key` whose decoded payload contains whitespace or control characters (skip the W01C-A `[[:space:]]` / `[[:cntrl:]]` guard in §2.5.2 step 7) | E20, E21 |
 | Accept a `bucket_key` whose decoded `teams.code` is longer than 128 characters (skip the W01C-A character-count check in §2.5.2 step 7) | E20 |
-| Accept a `bucket_key` whose decoded `teams.code` equals the reserved `__system_vendor__` (skip the W01C-A reserved-literal guard in §2.5.2 step 7) | E16, E21 |
+| **Reject a `bucket_key` whose decoded canonical `code` is the W01C-A reserved `__system_vendor__` literal (treat the reserved literal as a read-path `INVALID_FILTER` like the R3 contract did)** | E22 |
 | Bucket an inactive team into "Không xác định" | E12 |
 | Render the legacy aggregate as entry-level rows in the unknown panel | E14 |
 | Skip the unknown panel section A (legacy aggregate total) and only show anomaly rows | E3, E14 |
@@ -1216,12 +1361,24 @@ approves the contract above.
   comparison + the full W01C-A canonical `teams.code` rule
   (`btrim` non-empty, `length(btrim(code)) between 1 and 128`
   character count, no whitespace `[[:space:]]`, no control
-  `[[:cntrl:]]`, not equal to the reserved `__system_vendor__`)
+  `[[:cntrl:]]`)
   + the one-row-in-`public.teams` check; the `unknown`
   literal bypasses the decode / canonical / row check and
   maps to the unknown bucket; the R1 stale `__unknown__`
   sentinel is rejected as `INVALID_FILTER` at the wire
-  check), validates `limit` (default 25, max 100), validates
+  check; the W01C-A reserved-literal rejection
+  (`__system_vendor__`) is a **catalog-mutation** guard
+  only and is **not** applied here — a known-team token
+  whose decoded canonical `code` is the literal
+  `__system_vendor__` is **accepted** on the read path
+  provided the row exists in `public.teams` — see E22
+  and §2.5.2 step 7; the M29 mutation **reject a
+  known-team token whose decoded canonical `code` is
+  the reserved `__system_vendor__` literal** fails E22
+  closed — the Vendor bucket disappears from the chart
+  and the Vendor drill-down is rejected; W07A-R3 / R4
+  guarantee the row exists, so the read path's
+  acceptance is exact — see E22), validates `limit` (default 25, max 100), validates
   `cursor` (server-issued opaque string; an undecodable
   `cursor` is rejected as `INVALID_FILTER`), and
   returns the sanitized shape. The existing
@@ -1248,15 +1405,20 @@ approves the contract above.
     re-check (E5, E10), the filter parity (E8), the unknown
     bucket and panel split (E3, E13, E14), the historical
     attribution rule (E2), the `bucket_key` validation
-    (E11, E16, E19, E20, E21), the inactive-team rule
-    (E12), the row-shape rejection of `team_id` /
-    `team_code` / `bucket_key` on the response row (E6,
-    E16), the `code = "__unknown__"` non-collision
-    invariant (E17), the 128-character Unicode payload
-    accept (E20), the canonical-form re-encode comparison
-    non-canonical-alias rejection (E21), and the
-    `__system_vendor__` reserved-literal rejection (E16,
-    E21);
+    (E11, E16, E17, E18, E19, E20, E21, E22), the
+    inactive-team rule (E12), the row-shape rejection of
+    `team_id` / `team_code` / `bucket_key` on the
+    response row (E6, E16), the
+    `code = "__unknown__"` non-collision invariant (E17),
+    the 128-character 4-byte-UTF-8 boundary acceptance
+    (E20: 128 × `🦄` = 512 bytes → 688-char token; 689
+    and 693 reject), the canonical-form re-encode
+    comparison non-canonical-alias rejection (E21), the
+    lookup-miss branch (E21(d): canonical decode pass +
+    zero-row lookup), and the W01C-A reserved
+    `__system_vendor__` literal accepted as a known-team
+    token on the read path (E22: Vendor bucket + drill-
+    down + audience re-resolve + Unknown unchanged);
   - add `p3-w05b-by-team.test.mjs` that pins the `byTeam`
     aggregate against the `recruitedTotal` invariant (E1) and
     the inactive-team label suffix (E12);
@@ -1389,7 +1551,12 @@ approves the contract above.
   `code` decodes to the same bytes), or pins the wire upper
   bound at 256 (rejects a legal canonical 128-character
   Unicode `teams.code` whose UTF-8 size is up to 512 bytes,
-  with a wire token of up to 688 chars). Mitigation: §2.5.2
+  with a wire token of up to 688 chars); or **treats the
+  W01C-A reserved `__system_vendor__` literal as a
+  read-path `INVALID_FILTER`** (R3's wrong rule, which
+  would silently drop every Vendor Direct Entry fact
+  into Unknown or reject the Vendor drill-down — see
+  E22 / M29). Mitigation: §2.5.2
   locks the namespaced contract — known-team tokens are
   `team.<base64url(UTF-8(teams.code))>` (namespace A), the
   unknown literal is the bare `unknown` (namespace B); the
@@ -1404,13 +1571,21 @@ approves the contract above.
   (catches non-canonical base64url aliases), validates the
   full W01C-A canonical `teams.code` rule (`btrim`
   non-empty, `length(btrim(code)) between 1 and 128`
-  character count, no whitespace, no control, not the
-  reserved `__system_vendor__`), and resolves the
+  character count, no whitespace, no control) —
+  **the W01C-A reserved-literal rejection is a
+  catalog-mutation guard only and is NOT applied to
+  the read path** (the W05B reporting read path accepts
+  a known-team token whose decoded canonical `code` is
+  the literal `__system_vendor__`, provided the row
+  exists in `public.teams` — W07A-R3 / R4 install and
+  use that row as the canonical Vendor team for all
+  `provider_type='vendor'` facts) — and resolves the
   canonical `code` against `public.teams.code` (must match
   exactly one row); the chart never shows `bucket_key` to
   the user; the R1 stale `__unknown__` sentinel is rejected
-  at the wire check. E11, E16, E17, E18, E19, E20, E21 /
-  M11, M12, M17, M18, M19, M20, M21, M22 fail closed.
+  at the wire check.   E11, E16, E17, E18, E19, E20, E21,
+  E22 / M11, M12, M17, M18, M19, M20, M21, M22, M29 fail
+  closed.
 - **R7 — inactive team misclassified as Unknown.** Risk: a
   developer drops inactive teams into the unknown bucket. Mitigation:
   §2.3.1 + §2.7 lock the rule: an inactive team stays in its own
@@ -1468,13 +1643,18 @@ approves the contract above.
   re-encode comparison** (catches non-canonical base64url
   aliases), the full W01C-A canonical `teams.code` check
   (`btrim` non-empty, `length(btrim(code)) between 1 and
-  128` character count, no whitespace, no control, not
-  the reserved `__system_vendor__`), the
+  128` character count, no whitespace, no control) —
+  the W01C-A reserved-literal rejection is a
+  catalog-mutation guard only and is NOT applied to
+  the read path (the W05B reporting read path accepts
+  the `__system_vendor__` literal provided the row
+  exists in `public.teams` — see E22 / M29), the
   one-row-in-`public.teams` check, and the explicit
   rejection of the R1 `__unknown__` sentinel; the
   response's `bucket.key` is the request's `bucket_key`
-  round-trip. E11, E16, E17, E18, E19, E20, E21 / M11, M12,
-  M17, M18, M19, M20, M21, M22 fail closed.
+  round-trip.   E11, E16, E17, E18, E19, E20, E21, E22 /
+  M11, M12, M17, M18, M19, M20, M21, M22, M29 fail
+  closed.
 
 ## 6. Deferred (recorded, not in W05B)
 
@@ -1525,7 +1705,17 @@ approves the contract above.
   contributors are the legacy aggregate and Direct Entry defensive
   null / orphan only (an inactive team is **not** in the unknown
   bucket — it stays in its own bucket with the
-  " (Đã ngừng hoạt động)" label suffix); the BoD team chart and
+  " (Đã ngừng hoạt động)" label suffix; the W01C-A reserved
+  `__system_vendor__` team is also **not** in the unknown
+  bucket — it is a known-team bucket with
+  `display = "Vendor"` and
+  `bucket_key = "team.X19zeXN0ZW1fdmVuZG9yX18"`, and every
+  Vendor Direct Entry fact (W07A-R3 / R4 backfilled) is
+  charted there; the W01C-A reserved-literal rejection is
+  a **catalog-mutation** guard only, deliberately disjoint
+  from the W05B reporting resolution rule that accepts
+  the literal on the read path — see §2.5.2 step 7 and
+  E22); the BoD team chart and
   the team drill-down are reachable only for a DB-confirmed `all`
   audience; the drill-down is server-side, bounded (default 25,
   max 100), filter-narrowing, sanitized (no UUID, no recruiter_key,
@@ -1571,10 +1761,10 @@ approves the contract above.
   aggregate-grain paginated rows in the unknown panel; Owner
   browser UAT.
 - **Review pass:** this memo is
-  `P3_W05B_S0_R3_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
-  (R3 of the S0 survey; R1 locked the four prior blockers;
+  `P3_W05B_S0_R4_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
+  (R4 of the S0 survey; R1 locked the four prior blockers;
   R2 locked the namespaced `bucket_key` contract to remove
-  the `teams.code` vs unknown-sentinel collision; R3 locks
+  the `teams.code` vs unknown-sentinel collision; R3 locked
   the byte-bound correctness for 128-character Unicode
   `teams.code` (1-128 chars × up to 4 UTF-8 bytes/char =
   up to 512 bytes payload → 5 + 683 = 688-char wire
@@ -1588,9 +1778,36 @@ approves the contract above.
   audience parameter — the audience is always re-resolved
   server-side from `(p_auth_subject, p_app_user_id)`, with
   no "caller passes the resolved audience" field in the
-  contract). T0's review will check the locked decisions
+  contract; **R4 locks the read-path acceptance of the
+  W01C-A reserved `__system_vendor__` literal as a
+  known-team token** — the W01C-A reserved-literal
+  rejection is a **catalog-mutation** guard only and is
+  deliberately disjoint from the W05B reporting
+  resolution rule; W07A-R3 / R4 install and use the
+  reserved team as the canonical Vendor team for all
+  `provider_type='vendor'` Direct Entry facts, and the
+  W05B read path must accept
+  `team.<base64url("__system_vendor__")> =
+  team.X19zeXN0ZW1fdmVuZG9yX18` as a normal known-team
+  token (Vendor bucket, drill-down success, audience
+  re-resolve to `all`, no change to Unknown count, no
+  membership / scope for the reserved team); R4 also
+  locks the tight 128-character 4-byte-UTF-8 boundary
+  acceptance (128 × `🦄` = 512 bytes → 688-char token;
+  689 and 693 reject), the lookup-miss branch (E21(d):
+  canonical decode pass + zero-row lookup), and the
+  E2 historical-attribution bucket_key is the namespaced
+  canonical token, not the raw `teams.code`); R4 also adds
+  a new M29 mutation: **reject a known-team token whose
+  decoded canonical `code` is the literal
+  `__system_vendor__`** (i.e. treat the reserved literal
+  as a read-path `INVALID_FILTER` like the R3 contract
+  did) → E22 fails closed (the Vendor bucket disappears
+  from the chart and the Vendor drill-down is rejected;
+  the W07A-R3 / R4 Vendor team is silently dropped to
+  Unknown or rejected)). T0's review will check the locked decisions
   in §2.1, §2.2, §2.3 / §2.3.1 / §2.3.2, §2.4,
   §2.5 / §2.5.2 / §2.5.3 / §2.5.4, the acceptance /
-  mutation plan in §2.8 (E1-E21, M1-M22), the migration
+  mutation plan in §2.8 (E1-E22, M1-M29), the migration
   posture in §2.6 / §3, the T1B / T1A split in §4, and
   the risk register in §5.
