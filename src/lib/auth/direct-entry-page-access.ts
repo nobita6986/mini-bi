@@ -8,6 +8,7 @@ import type { ActorResolution } from "./direct-entry-v2";
 import type { NavCapabilityPredicate } from "../navigation/registry-capability.ts";
 import {
   adminAreaNavPredicate,
+  adminSecurityNavPredicate,
   projectAdminNavPredicate,
   workerOperationsNavPredicate,
 } from "../navigation/registry-capability.ts";
@@ -72,6 +73,21 @@ export function decideLaborTypeCatalogPageAccess(input: {
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
   return decideAdminAreaAccess(input);
+}
+
+/**
+ * Separate direct-URL gate for the existing-account access page (P3.1-W05-A).
+ * Security administration is limited to the canonical Full Admin triple at
+ * effective `all` scope; the broader Admin-area predicate (which also admits a
+ * catalog operator) must NOT be reused here.
+ */
+export function decideAccountAccessPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: adminSecurityNavPredicate,
+  });
 }
 
 const ENTRY_CAPABILITIES = ["entry_own", "entry_team", "entry_admin"] as const;

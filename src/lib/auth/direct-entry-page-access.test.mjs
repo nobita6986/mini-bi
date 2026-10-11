@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  decideAccountAccessPageAccess,
   decideAdminAreaAccess,
   decideDirectEntryPageAccess,
   decideLaborTypeCatalogPageAccess,
@@ -103,4 +104,35 @@ test("Admin route decisions use all-scope catalog operator OR canonical Full Adm
     assert.equal(decide({ actor: { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" } }), "TEMPORARY_UNAVAILABLE");
     assert.equal(decide({ actor: { ok: false, reason: "AMBIGUOUS_RECRUITER_LINK" } }), "TEMPORARY_UNAVAILABLE");
   }
+});
+
+test("Account access decision allows only the canonical Full Admin triple at effective all", () => {
+  const withAllScope = (capabilities) => ({
+    ...actor(capabilities),
+    actor: {
+      ...actor(capabilities).actor,
+      scopes: [{ kind: "all", reference: "all", valid_from: "2026-01-01", valid_to: null }],
+    },
+  });
+  const triple = ["entry_admin", "recruiter_master_manage", "team_master_manage"];
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(triple) }), "ALLOW");
+  // Accounting catalog operator is DENIED: the broader Admin-area predicate must not apply here.
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(["catalog_master_manage"]) }), "ACCESS_DENIED");
+  // Project Admin (entry_admin@all without the triple) is DENIED.
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(["entry_admin"]) }), "ACCESS_DENIED");
+  // A partial triple is DENIED.
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(["entry_admin", "recruiter_master_manage"]) }), "ACCESS_DENIED");
+  // The triple without effective all scope is DENIED (actor() has empty scopes).
+  assert.equal(decideAccountAccessPageAccess({ actor: actor(triple) }), "ACCESS_DENIED");
+  // Leader and ordinary staff are DENIED.
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(["team_manager_assign"]) }), "ACCESS_DENIED");
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(["entry_own"]) }), "ACCESS_DENIED");
+  assert.equal(decideAccountAccessPageAccess({ actor: withAllScope(["change_request_create"]) }), "ACCESS_DENIED");
+  // Resolution failures fail closed with the shared decision taxonomy.
+  assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "UNAUTHENTICATED" } }), "REDIRECT_LOGIN");
+  assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "ACTOR_DISABLED" } }), "ACCOUNT_UNAVAILABLE");
+  assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "ACTOR_MAPPING_MISSING" } }), "ACCOUNT_UNAVAILABLE");
+  assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" } }), "TEMPORARY_UNAVAILABLE");
+  assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "AMBIGUOUS_RECRUITER_LINK" } }), "TEMPORARY_UNAVAILABLE");
+  assert.equal(decideAccountAccessPageAccess({ actor: null }), "TEMPORARY_UNAVAILABLE");
 });

@@ -56,18 +56,25 @@ test("one top-level /admin entry is independently authorized and is not a Direct
   }), false);
 });
 
-test("Admin internal navigation exposes catalog sections exactly once", () => {
+test("Admin internal navigation exposes catalog sections plus the Full-Admin-only accounts section", () => {
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
     { id: "vendors", href: "/admin/catalog/vendors" },
     { id: "labor-types", href: "/admin/catalog/labor-types" },
+    { id: "accounts", href: "/admin/access/accounts" },
   ]);
-  assert.deepEqual(visibleAdminSections(accountingCatalog), ADMIN_SECTIONS);
+  const catalogOnly = ADMIN_SECTIONS.filter(({ id }) => id !== "accounts");
+  // Accounting (catalog operator) sees the catalog sections but never Accounts.
+  assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
+  // The canonical Full Admin triple sees every section, including Accounts.
+  assert.deepEqual(visibleAdminSections(fullAdmin), ADMIN_SECTIONS);
+  // Project Admin (entry_admin@all without the triple) and unresolved actors see nothing.
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), []);
+  assert.deepEqual(visibleAdminSections(null), []);
 });
 
-test("catalog paths and nested paths highlight exactly one internal tab", () => {
+test("catalog and access paths highlight exactly one internal tab", () => {
   for (const [pathname, activeId] of [
     ["/admin/catalog/personnel", "personnel"],
     ["/admin/catalog/personnel/record", "personnel"],
@@ -77,6 +84,8 @@ test("catalog paths and nested paths highlight exactly one internal tab", () => 
     ["/admin/catalog/vendors/record", "vendors"],
     ["/admin/catalog/labor-types", "labor-types"],
     ["/admin/catalog/labor-types/record", "labor-types"],
+    ["/admin/access/accounts", "accounts"],
+    ["/admin/access/accounts/record", "accounts"],
   ]) {
     assert.deepEqual(
       ADMIN_SECTIONS.filter((section) => isAdminSectionActive(pathname, section.href)).map(({ id }) => id),
@@ -86,10 +95,11 @@ test("catalog paths and nested paths highlight exactly one internal tab", () => 
   }
 });
 
-test("top-level Admin remains the active registry entry across catalog routes", () => {
+test("top-level Admin remains the active registry entry across catalog and access routes", () => {
   assert.equal(findEntryByPath("/admin/catalog/personnel")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/teams")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/teams/nested")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/vendors")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/labor-types")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/access/accounts")?.id, "admin");
 });
