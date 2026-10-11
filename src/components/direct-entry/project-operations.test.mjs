@@ -125,7 +125,6 @@ test("a11y + keyboard parity", () => {
 test("mobile parity: bang cuon ngang va layout responsive", () => {
   assert.match(source, /overflow-x-auto/);
   assert.match(source, /sm:flex-row/);
-  assert.match(source, /min-w-\[/);
 });
 
 test("hotfix UI: chi dung token theme that, modal co nen dac va dung z-index", () => {
@@ -174,10 +173,10 @@ test("hotfix feature coverage: xem, doi ten, active, gan, thu hoi va lich su deu
 
 test("edit trigger is an accessible pencil beside the project name, not an action button", () => {
   const projectCell = source.match(
-    /<td className="px-4 py-3">\s*<div className="flex items-center gap-2">[\s\S]*?project\.display_name[\s\S]*?<\/td>/,
+    /<td className="px-3 py-3">\s*<div className="flex min-w-0 items-center gap-2">[\s\S]*?project\.display_name[\s\S]*?<\/td>/,
   )?.[0];
   const actionsCell = source.match(
-    /<td className="px-4 py-3">\s*<div className="flex justify-end gap-2 whitespace-nowrap">[\s\S]*?<\/td>/,
+    /<td className="px-3 py-3">\s*<div className="flex justify-start gap-2 whitespace-nowrap">[\s\S]*?<\/td>/,
   )?.[0];
 
   assert.ok(projectCell, "project name cell contains the edit trigger");
@@ -195,19 +194,26 @@ test("edit trigger is an accessible pencil beside the project name, not an actio
 });
 
 test("project table reserves stable columns and keeps status/actions on one line", () => {
-  const table = source.match(/<table className="w-full min-w-\[900px\] table-fixed[^>]*>[\s\S]*?<\/table>/)?.[0];
+  const table = source.match(/<table className="w-full table-fixed[^>]*>[\s\S]*?<\/table>/)?.[0];
   const statusBadge = source.match(/function ProjectStatusBadge[\s\S]*?\n}\n/)?.[0];
 
-  assert.ok(table, "project table has a fixed minimum layout");
-  assert.match(table, /<colgroup>\s*<col \/>\s*<col className="w-44" \/>\s*<col className="w-\[300px\]" \/>\s*<\/colgroup>/);
+  assert.ok(table, "project table has a fixed layout that can fit its container");
+  assert.equal(table.includes("min-w-["), false, "the table does not force a horizontal scrollbar");
+  assert.match(table, /<colgroup>\s*<col \/>\s*<col className="w-40" \/>\s*<col className="w-\[300px\]" \/>\s*<\/colgroup>/);
   assert.match(source, /overflow-x-auto overflow-y-auto[\s\S]{0,120}<table/);
   const actionCell = table.match(
-    /<td className="px-4 py-3">\s*<div className="flex justify-end gap-2 whitespace-nowrap">[\s\S]*?<\/td>/,
+    /<td className="px-3 py-3">\s*<div className="flex justify-start gap-2 whitespace-nowrap">[\s\S]*?<\/td>/,
   )?.[0];
   assert.ok(actionCell, "action buttons share a right-aligned non-wrapping row");
   assert.equal(actionCell.includes("flex-wrap"), false);
   assert.match(actionCell, /Xem quản lý/);
   assert.match(actionCell, /project\.active \? "Ngừng" : "Kích hoạt"/);
+
+  const projectCell = table.match(
+    /<td className="px-3 py-3">\s*<div className="flex min-w-0 items-center gap-2">[\s\S]*?<\/td>/,
+  )?.[0];
+  assert.ok(projectCell, "project name cell can shrink inside its fixed column");
+  assert.match(projectCell, /min-w-0 break-words font-semibold text-foreground/);
 
   assert.ok(statusBadge, "status badge component exists");
   assert.match(statusBadge, /inline-flex whitespace-nowrap/);

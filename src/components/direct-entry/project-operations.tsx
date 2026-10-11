@@ -542,18 +542,18 @@ export function ProjectOperations() {
           ) : null}
           {state === "ready" || state === "empty" ? (
             <div className="max-h-[46rem] overflow-x-auto overflow-y-auto">
-              <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+              <table className="w-full table-fixed border-collapse text-sm">
                 <caption className="sr-only">Danh sách dự án và trạng thái</caption>
                 <colgroup>
                   <col />
-                  <col className="w-44" />
+                  <col className="w-40" />
                   <col className="w-[300px]" />
                 </colgroup>
                 <thead className="sticky top-0 z-10 bg-surface text-left text-xs uppercase tracking-wide text-muted shadow-[0_1px_0_var(--border)]">
                   <tr>
-                    <th scope="col" className="px-4 py-3">Dự án</th>
-                    <th scope="col" className="px-4 py-3">Trạng thái</th>
-                    <th scope="col" className="px-4 py-3 text-right">Thao tác</th>
+                    <th scope="col" className="px-3 py-3">Dự án</th>
+                    <th scope="col" className="px-3 py-3">Trạng thái</th>
+                    <th scope="col" className="px-3 py-3">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -563,9 +563,9 @@ export function ProjectOperations() {
                     return (
                       <tr key={project.project_id}
                         className={(selected ? "bg-primary/5 " : "") + "border-b border-border/70 last:border-0"}>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-foreground">{project.display_name}</span>
+                        <td className="px-3 py-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 break-words font-semibold text-foreground">{project.display_name}</span>
                             <button type="button"
                               aria-label={`Chỉnh sửa dự án ${project.display_name}`}
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted transition-colors hover:bg-muted/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
@@ -576,9 +576,9 @@ export function ProjectOperations() {
                           </div>
                           <span className="mt-0.5 block font-mono text-xs text-muted">{project.project_id}</span>
                         </td>
-                        <td className="px-4 py-3"><ProjectStatusBadge active={project.active} /></td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end gap-2 whitespace-nowrap">
+                        <td className="px-3 py-3"><ProjectStatusBadge active={project.active} /></td>
+                        <td className="px-3 py-3">
+                          <div className="flex justify-start gap-2 whitespace-nowrap">
                             <button type="button" className={buttonClass}
                               disabled={projectActionId !== null || conflict !== null || reloadBusy}
                               onClick={() => { void openProjectAction(project, "view"); }}>
