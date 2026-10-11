@@ -32,11 +32,18 @@ dependency, no merge of `main`.
   OF labor_type) requires an existing ACTIVE catalog key for every genuine write, but returns early when
   the value is unchanged and defers when it is NULL, so a historical row whose key was later deactivated
   stays fully editable and every rejection that already existed keeps its own message and ordering; (2)
-  the FK proves existence; (3) the three PL/pgSQL write paths that carried the literal
-  `TEMPORARY/PERMANENT` closed set — `direct_entry_create_batch`, `direct_entry_create_draft_row` and
-  `direct_entry_create_full_profile_batch` — were re-emitted with
-  `direct_entry_is_active_labor_type(...)` in place of the literal set. An unknown or inactive key is a
-  `23514` before any FK is consulted.
+  the FK proves existence; (3) the three PL/pgSQL write paths that still carried the literal
+  `TEMPORARY/PERMANENT` closed set — `direct_entry_create_batch`,
+  `direct_entry_create_draft_row` and `direct_entry_create_full_profile_batch` — are patched **in
+  place**: the migration reads each live definition with `pg_get_functiondef`, requires the retired
+  literal to appear exactly once, and re-executes the replaced definition. That is the same mechanism
+  the later P1.7-H06, W07B, W07C-R2, W07C-R3 and P2.5-HF migrations already use on those same bodies.
+  Re-emitting them from the original foundation source was explicitly rejected because it silently
+  reverts every one of those later patches (the first implementation did exactly that and the
+  P3-W07A-R3 vendor-upload lane caught it); source drift now aborts the migration with `55000`
+  instead of dropping the guard, and replacing a definition preserves its ownership, ACL and
+  volatility, so no grant is re-issued. An unknown or inactive key is a `23514` before any FK is
+  consulted.
 - Five canonical RPCs, mirroring the W01B Personnel shape exactly (no Team Leader or Team Membership
   topology, no nested mutations): `direct_entry_list_labor_types_admin`,
   `direct_entry_get_labor_type_admin`, `direct_entry_create_labor_type`,
@@ -51,21 +58,27 @@ dependency, no merge of `main`.
   `case ... 'Thời vụ' / 'Chính thức'` sites in `direct_entry_reporting_facts_v01`,
   `direct_entry_reporting_dimension_options_v01` and `direct_entry_reporting_de_options_scoped` now call
   that one function, so a rename can never make the dashboard and the actor-scoped views disagree.
-- Canonical projection (D12): `direct_entry_input_catalog` now carries `labor_types` sourced from the
-  bounded active projection (key, display_name, sort_order — never a reporting key, never an inactive
-  row), so the Direct Entry runtime keeps receiving its active options through `getInputCatalog` and no
-  parallel route exists. `write-repository.ts` accepts and strictly validates the new key, and it stays
-  optional so a payload produced before the catalog existed still projects.
+- Canonical projection (D12): the builder `direct_entry_input_catalog_unscoped_v42` now carries
+  `labor_types` sourced from the bounded active projection (key, display_name, sort_order — never a
+  reporting key, never an inactive row), so the Direct Entry runtime keeps receiving its active options
+  through `getInputCatalog` and no parallel route exists. The `direct_entry_input_catalog` wrapper
+  itself is **byte-untouched**, so W07B's per-actor project filter is exactly as it was written.
+  `write-repository.ts` accepts and strictly validates the new key, and it stays optional so a payload
+  produced before the catalog existed still projects. The two W07A-R2 catalog-contract locks (H1 and
+  H6) were extended from the four locked top-level keys to five and now also assert that the three
+  active options arrive through that projection.
 - Server layer, no UI: `labor-type-catalog-contract.ts` (fail-closed exact-key projections),
   `labor-type-catalog-repository.ts` (the five RPCs, SQLSTATE to sanitized kinds),
   `labor-type-catalog-api.ts` (feature gate, same-origin, bounded JSON, recursive client authority
   rejection, strict request projection, session-only actor, `no-store`, sanitized taxonomy) and three
   `/api/admin/catalog/labor-types` routes (collection GET/POST, `[laborTypeKey]` GET/PATCH,
   `[laborTypeKey]/active` POST). `/api/direct-entry/labor-types/**` was NOT created.
-- Ledger bookkeeping: migration count 78 -> 79, every pinned ledger offset shifted by one (47 files),
-  and the alias-backfill pre-hotfix tail list extended with #79, following the same convention as
-  #66-#78. Lane `test:p3-1-w02c-labor-type-catalog` is registered exactly once in `package.json` and
-  once in the `pnpm test` chain.
+- Ledger bookkeeping: migration count 78 -> 79, every pinned ledger offset shifted by one (48 files),
+  the alias-backfill pre-hotfix tail list extended with #79, and the derived direct-entry function
+  inventory moved from 194/89/105 to 209/95/114 (nine internal helpers plus six service-role
+  functions), following the same convention as #66-#78. Lane
+  `test:p3-1-w02c-labor-type-catalog` is registered exactly once in `package.json` and once in the
+  `pnpm test` chain.
 - Out of scope and untouched: password/invitation/MFA, Team Leader and Team Membership topology, every
   other catalog, W04 UI, T1A consumer/client alias maps, import resolver and grid options, and all
   Production state.
@@ -112,7 +125,22 @@ API/repository tests) and is green again after the mutation pass.
   revision table is immutable.
 - Retired closed set and abort path: after a full migration there is no closed-set CHECK left on
   `direct_entries.labor_type`; applying #79 to a ledger whose entry carries an unresolvable legacy key
-  aborts with `55000` and leaves no table behind.
+  aborts with `55000` and leaves no table behind. A closing self-check asserts that **no**
+  `direct_entry_*` function body still contains `TEMPORARY`, `PERMANENT`, "Thời vụ" or "Chính thức",
+  so no write path and no display path can carry a second vocabulary.
+- Scope of change, verified against the base commit: of the 197 direct-entry functions and views at
+  base, exactly eight differ afterwards — the three write paths (`create_batch`,
+  `create_draft_row`, `create_full_profile_batch`), the catalog builder
+  (`input_catalog_unscoped_v42`), the reporting key lookup, the actor-scoped options projection and
+  the two reporting views — and fifteen functions are added. Nothing in the database changes
+  otherwise.
+- **Nothing is re-emitted from a historical source.** The six functions and the two views are the
+  *live* definitions patched in place, which is what makes every later migration's change survive.
+  Re-emitting them from the foundation or cutover source was the first implementation and it silently
+  reverted P1.7-H06 employee codes, W07B per-row project authority, W07C-R3 issue place, P2.5-HF
+  status defaults and W07B per-actor project scope; the P3-W07A-R3 vendor-upload and P3-W07B
+  project-scope lanes caught both regressions. The three write paths now differ from their live
+  predecessors by exactly one line each.
 - Extensibility proof: a fourth type (`PROBATION`/"Thử việc") created through the RPC alone — no source
   or migration change — is accepted by the API validator, persists the key, appears in the active
   projection with a server-generated lowercase `reporting_key`, and is offered by the Direct Entry input
@@ -134,8 +162,9 @@ API/repository tests) and is green again after the mutation pass.
 | M8 | hard-coded three-key vocabulary in the TS create validator | RED |
 | M9 | duplicated hard-coded label map returns in the display lookup | RED |
 
-- Gates: focused lane, `pnpm test`, `next typegen`, `tsc --noEmit`, `eslint`, `pnpm build`,
-  `docs:check`, `secrets:check`, offline migration validation and `git diff --check` all pass.
+- Gates: focused lane, the full `pnpm test` chain, `next typegen`, `tsc --noEmit`, `eslint`,
+  `pnpm build` (the three labor-type routes compile), `docs:check`, `secrets:check`, offline
+  migration validation and `git diff --check` all pass.
 
 ## Follow-ups (not in this lane)
 

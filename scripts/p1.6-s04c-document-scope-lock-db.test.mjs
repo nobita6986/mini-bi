@@ -205,7 +205,16 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // helpers (the duplicate conflict-state source of truth and the shared transition
   // body) and two service-role-only RPCs (the duplicate preflight and the acknowledged
   // transition), and turns the legacy six-argument transition into a wrapper over that
-  // body. Measured: 194 total, 89 service-role executable and 105 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [194, 89, 105]);
+  // P3.1-W02-C (#79) retires the closed TEMPORARY/PERMANENT vocabulary in favour
+  // of the canonical labor-type catalog: nine internal helpers (the active-key
+  // predicate, the bounded active options projection, the fixed six-key snapshot,
+  // the shared admin projection, the row lock/OCC guard, the revision writer, the
+  // version bump and the two write guards) plus six service-role-only functions
+  // (the five catalog RPCs list/get/create/update/set-active and the single shared
+  // reporting display lookup that replaces the four duplicated label CASE sites;
+  // the reporting key function was already in the inventory and is only
+  // redefined). Nothing is reachable by anon/authenticated.
+  // Measured: 209 total, 95 service-role executable and 114 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [209, 95, 114]);
   await db.close();
 });

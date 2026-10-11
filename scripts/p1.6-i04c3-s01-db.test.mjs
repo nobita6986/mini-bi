@@ -655,12 +655,20 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // helpers (direct_entry_submission_duplicate_cccd_state and
     // direct_entry_transition_submission_apply) and two service-role-only RPCs (the
     // duplicate preflight and the acknowledged transition), and re-creates the legacy
-    // six-argument transition as a thin wrapper over the shared body. The measured
-    // inventory is 183 total / 84 service-role / 99 internal.
+    // six-argument transition as a thin wrapper over the shared body.
+    // P3.1-W02C (#79) adds nine internal helpers (the immutable guard, the active
+    // lookup, the bounded active options projection, the fixed snapshot, the admin
+    // projection, the OCC lock, the revision writer, the version bump helper and the
+    // active-write guard) and six service-role-only functions (the five labor-type
+    // admin RPCs and the reporting display lookup). It redefines two write paths,
+    // the input-catalog builder, the reporting key lookup and the actor-scoped
+    // options projection in place, so the inventory grows by fifteen and nothing
+    // becomes reachable by anon/authenticated. The measured inventory is 209 total /
+    // 95 service-role / 114 internal.
     assert.deepEqual(result.rows[0], {
-      total: 194,
-      service_role: 89,
-      internal: 105,
+      total: 209,
+      service_role: 95,
+      internal: 114,
       exposed_internal: 0,
     });
   } finally {

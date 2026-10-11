@@ -52,9 +52,9 @@ async function buildDb() {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   assert.equal(names.length, 79, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (18)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names[names.length - (19)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names[names.length - (20)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
+  assert.equal(names[names.length - (19)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (20)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names[names.length - (21)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
   return db;
 }
 

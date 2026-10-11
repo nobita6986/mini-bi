@@ -54,9 +54,9 @@ async function buildDb() {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   assert.equal(names.length, 79, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (26)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (27)], W03_MIGRATION, "W03 is #52");
-  assert.equal(names[names.length - (28)], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names[names.length - (27)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (28)], W03_MIGRATION, "W03 is #52");
+  assert.equal(names[names.length - (29)], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 

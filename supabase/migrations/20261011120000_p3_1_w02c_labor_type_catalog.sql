@@ -469,771 +469,123 @@ create trigger direct_entry_labor_type_active_guard
 -- -----------------------------------------------------------------------------
 -- 6. Replace every PL/pgSQL closed set with the ACTIVE catalog lookup.
 --
--- These three functions carry the only literal TEMPORARY/PERMANENT closed sets
--- left on a write path (foundation D2 and full-profile D4). Each body is
--- re-emitted verbatim except for that single predicate, and the ACL is
--- re-asserted. Every other write path (draft patch, change-request item,
--- privileged patch) instead inherits the hard FK plus the active-write guard.
+-- Three functions carry the only literal TEMPORARY/PERMANENT closed set left on
+-- a write path: direct_entry_create_batch, direct_entry_create_draft_row and
+-- direct_entry_create_full_profile_batch. They are deliberately NOT re-emitted.
+-- Later migrations patch those same live bodies by source replacement (P1.7-H06
+-- employee codes, W07B per-row project authority, W07C-R2 raw dates, W07C-R3
+-- issue place, P2.5-HF status default), so a verbatim re-emission from the
+-- original foundation source would silently revert every one of those patches.
+--
+-- Instead the live definition is patched in place with the same mechanism those
+-- migrations already use: read pg_get_functiondef, require the exact expected
+-- literal to appear exactly the expected number of times, and execute the
+-- replaced definition. Source drift in any of the three bodies aborts the whole
+-- migration with 55000 rather than dropping the guard silently. Replacing a
+-- definition preserves its ownership, ACL and volatility, so no grant is
+-- re-issued here.
+--
+-- The null guard preserves the original three-valued logic exactly: the retired
+-- `v_labor_type not in (...)` is NULL-safe (a NULL key never raised there), so
+-- the replacement keeps that shape and only widens which NON-NULL keys are
+-- refused.
 -- -----------------------------------------------------------------------------
 
-create or replace function public.direct_entry_create_batch(
-  p_auth_subject uuid,
-  p_app_user_id uuid,
-  p_rows jsonb,
-  p_idempotency_key text
+create function public.direct_entry_w02c_replace_proc_source(
+  p_signature regprocedure,
+  p_expected text,
+  p_replacement text,
+  p_expected_count integer
 )
-returns jsonb
+returns void
 language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
 declare
-  v_row jsonb;
-  v_submission_id uuid := gen_random_uuid();
-  v_candidate_id uuid;
-  v_entry_id uuid;
-  v_recruiter_id uuid;
-  v_project_id text;
-  v_first_work_date date;
-  v_employee_code text;
-  v_worker_details jsonb;
-  v_labor_type text;
-  v_provider_type text;
-  v_team_id uuid;
-  v_scope text;
+  v_definition text;
   v_count integer;
-  v_reason_id uuid;
-  v_submission_revision_id uuid;
-  v_prior jsonb;
-  v_result jsonb;
-  v_entry_ids jsonb := '[]'::jsonb;
 begin
-  if p_idempotency_key is null or length(p_idempotency_key) not between 1 and 128
-     or jsonb_typeof(p_rows) <> 'array'
-     or jsonb_array_length(p_rows) not between 1 and 100 then
-    raise exception 'invalid batch input' using errcode = '22023';
+  select pg_get_functiondef(p_signature) into v_definition;
+  if v_definition is null or p_expected is null or p_expected = '' then
+    raise exception 'labor type source missing' using errcode = '55000';
   end if;
-  perform public.direct_entry_assert_actor(
-    p_auth_subject, p_app_user_id, 'entry_create'
-  );
-  perform public.direct_entry_assert_actor(
-    p_auth_subject, p_app_user_id, 'submission_create'
-  );
-  v_prior := public.direct_entry_idempotency_begin(
-    p_app_user_id, 'batch_create', p_idempotency_key,
-    public.direct_entry_payload_hash(p_rows)
-  );
-  if v_prior is not null then return v_prior; end if;
-  insert into public.direct_entry_submissions (submission_id, created_by_user_id)
-    values (v_submission_id, p_app_user_id);
-  v_reason_id := public.direct_entry_reason(p_app_user_id, 'Initial batch creation');
-  for v_row in select value from jsonb_array_elements(p_rows) loop
-    if (v_row - array['project_id','first_work_date','employee_code','worker_details','recruiter_id','labor_type'])
-       <> '{}'::jsonb then
-      raise exception 'unsupported batch field' using errcode = '22023';
-    end if;
-    v_project_id := v_row->>'project_id';
-    v_first_work_date := (v_row->>'first_work_date')::date;
-    v_employee_code := v_row->>'employee_code';
-    v_worker_details := v_row->'worker_details';
-    v_recruiter_id := (v_row->>'recruiter_id')::uuid;
-    v_labor_type := v_row->>'labor_type';
-    if public.direct_entry_contains_authority(v_worker_details) then
-      raise exception 'client authority field forbidden' using errcode = '22023';
-    end if;
-    if v_project_id is null or v_first_work_date is null or v_employee_code is null
-       or jsonb_typeof(v_worker_details) <> 'object'
-       or v_recruiter_id is null or not public.direct_entry_is_active_labor_type(v_labor_type) then
-      raise exception 'incomplete batch row' using errcode = '22023';
-    end if;
-    select count(*) into v_count
-      from public.direct_entry_scope_grants g
-     where g.app_user_id = p_app_user_id and g.scope_kind = 'own'
-       and g.valid_from <= v_first_work_date
-       and (g.valid_to is null or v_first_work_date < g.valid_to);
-    if v_count <> 1 then
-      raise exception 'entry creation own scope denied' using errcode = '42501';
-    end if;
-    select count(*), min(m.provider_type) into v_count, v_provider_type
-      from public.recruiter_provider_memberships m
-     where m.recruiter_id = v_recruiter_id
-       and m.valid_from <= v_first_work_date
-       and (m.valid_to is null or v_first_work_date < m.valid_to);
-    if v_count <> 1 then
-      raise exception 'recruiter provider membership denied' using errcode = '42501';
-    end if;
-    select count(*), (array_agg(m.team_id))[1] into v_count, v_team_id
-      from public.recruiter_team_memberships m
-     where m.recruiter_id = v_recruiter_id
-       and m.valid_from <= v_first_work_date
-       and (m.valid_to is null or v_first_work_date < m.valid_to);
-    if v_count <> 1 then
-      raise exception 'recruiter team membership denied' using errcode = '42501';
-    end if;
-    insert into public.direct_entry_candidates default values returning candidate_id into v_candidate_id;
-    insert into public.direct_entries (
-      submission_id, candidate_id, created_by_user_id, project_id, first_work_date,
-      employee_code, worker_details, recruiter_id, team_id, provider_type, labor_type
-    ) values (
-      v_submission_id, v_candidate_id, p_app_user_id, v_project_id, v_first_work_date,
-      v_employee_code, v_worker_details, v_recruiter_id, v_team_id, v_provider_type, v_labor_type
-    ) returning entry_id into v_entry_id;
-    insert into public.direct_entry_employment_status_events (
-      entry_id, status, effective_date, version, actor_user_id, reason_id
-    ) values (
-      v_entry_id, 'UNCONFIRMED', v_first_work_date, 1, p_app_user_id, v_reason_id
-    );
-    perform public.direct_entry_write_revision(
-      v_entry_id, p_app_user_id, v_reason_id, null,
-      public.direct_entry_entry_snapshot(v_entry_id), 1
-    );
-    insert into public.direct_entry_audit_events (
-      auth_subject, app_user_id, action, capability, resource_ref,
-      scope_kind, outcome, reason_id, changed_fields
-    ) values (
-      p_auth_subject, p_app_user_id, 'entry_create', 'entry_create', v_entry_id::text,
-      'own', 'APPLIED', v_reason_id, array['entry_created']
-    );
-    v_entry_ids := v_entry_ids || jsonb_build_array(v_entry_id);
-  end loop;
-  v_submission_revision_id := public.direct_entry_write_submission_revision(
-    v_submission_id, p_app_user_id, v_reason_id, null,
-    jsonb_build_object('state','DRAFT','version',1,'entry_count',jsonb_array_length(p_rows)), 1
-  );
-  insert into public.direct_entry_audit_events (
-    auth_subject, app_user_id, action, capability, resource_ref,
-    scope_kind, outcome, reason_id, submission_revision_id, changed_fields
-  ) values (
-    p_auth_subject, p_app_user_id, 'batch_create', 'entry_create',
-    v_submission_id::text, 'own', 'APPLIED', v_reason_id,
-    v_submission_revision_id, array['submission_created','entries_created']
-  );
-  v_result := jsonb_build_object(
-    'submission_id', v_submission_id, 'state', 'DRAFT', 'version', 1, 'entry_ids', v_entry_ids
-  );
-  perform public.direct_entry_idempotency_finish(
-    p_app_user_id, 'batch_create', p_idempotency_key, v_result
-  );
-  return v_result;
+  v_count := (length(v_definition) - length(replace(v_definition, p_expected, '')))
+    / length(p_expected);
+  if v_count <> p_expected_count then
+    raise exception 'labor type source drift for %: expected %, found %',
+      p_signature, p_expected_count, v_count using errcode = '55000';
+  end if;
+  execute replace(v_definition, p_expected, p_replacement);
 end;
 $$;
-revoke all on function public.direct_entry_create_batch(uuid, uuid, jsonb, text) from public, anon, authenticated, service_role;
-grant execute on function public.direct_entry_create_batch(uuid, uuid, jsonb, text) to service_role;
-comment on function public.direct_entry_create_batch(uuid, uuid, jsonb, text) is
-  'P3.1-W02C re-emission of the foundation definition with the retired TEMPORARY/PERMANENT closed set replaced by direct_entry_is_active_labor_type, so a newly created catalog type is accepted and an inactive or unknown key is rejected. All other logic is unchanged.';
-
-create or replace function public.direct_entry_create_draft_row(
-  p_auth_subject uuid,
-  p_app_user_id uuid,
-  p_submission_id uuid,
-  p_expected_submission_version integer,
-  p_row jsonb,
-  p_idempotency_key text
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = pg_catalog, public
-as $$
-declare
-  v_submission public.direct_entry_submissions%rowtype;
-  v_entry_id uuid;
-  v_candidate_id uuid;
-  v_recruiter_id uuid;
-  v_new_recruiter_id uuid;
-  v_new_work_date date;
-  v_team_id uuid;
-  v_provider_type text;
-  v_project_id text;
-  v_first_work_date date;
-  v_employee_code text;
-  v_worker_details jsonb;
-  v_labor_type text;
-  v_count integer;
-  v_scope text;
-  v_reason_id uuid;
-  v_submission_revision_id uuid;
-  v_prior jsonb;
-  v_result jsonb;
-begin
-  if p_idempotency_key is null or length(p_idempotency_key) not between 1 and 128
-     or jsonb_typeof(p_row) <> 'object'
-     or (p_row - array['project_id','first_work_date','employee_code','worker_details','recruiter_id','labor_type'])
-        <> '{}'::jsonb then
-    raise exception 'invalid draft row input' using errcode = '22023';
-  end if;
-  perform public.direct_entry_assert_actor(
-    p_auth_subject, p_app_user_id, 'entry_create'
-  );
-  select * into v_submission
-    from public.direct_entry_submissions
-   where submission_id = p_submission_id;
-  if not found or v_submission.created_by_user_id <> p_app_user_id then
-    raise exception 'draft submission scope denied' using errcode = '42501';
-  end if;
-  v_prior := public.direct_entry_idempotency_begin(
-    p_app_user_id, 'draft_row_create', p_idempotency_key,
-    public.direct_entry_payload_hash(jsonb_build_object(
-      'submission_id', p_submission_id, 'expected_version', p_expected_submission_version,
-      'row', p_row
-    ))
-  );
-  if v_prior is not null then return v_prior; end if;
-  select * into v_submission
-    from public.direct_entry_submissions
-   where submission_id = p_submission_id
-   for update;
-  if not found or v_submission.created_by_user_id <> p_app_user_id
-     or v_submission.state <> 'DRAFT' then
-    raise exception 'draft submission denied' using errcode = '42501';
-  end if;
-  if p_expected_submission_version is null or p_expected_submission_version <> v_submission.version then
-    raise exception 'submission version conflict' using errcode = '40001';
-  end if;
-  v_project_id := p_row->>'project_id';
-  v_first_work_date := (p_row->>'first_work_date')::date;
-  v_employee_code := p_row->>'employee_code';
-  v_worker_details := p_row->'worker_details';
-  v_recruiter_id := (p_row->>'recruiter_id')::uuid;
-  v_labor_type := p_row->>'labor_type';
-  if public.direct_entry_contains_authority(v_worker_details) then
-    raise exception 'client authority field forbidden' using errcode = '22023';
-  end if;
-  if v_project_id is null or v_first_work_date is null or v_employee_code is null
-     or jsonb_typeof(v_worker_details) <> 'object'
-     or v_recruiter_id is null or not public.direct_entry_is_active_labor_type(v_labor_type) then
-    raise exception 'incomplete draft row' using errcode = '22023';
-  end if;
-  select count(*) into v_count
-    from public.direct_entry_scope_grants g
-   where g.app_user_id = p_app_user_id and g.scope_kind = 'own'
-     and g.valid_from <= v_first_work_date
-     and (g.valid_to is null or v_first_work_date < g.valid_to);
-  if v_count <> 1 then
-    raise exception 'entry creation own scope denied' using errcode = '42501';
-  end if;
-  select count(*), min(m.provider_type) into v_count, v_provider_type
-    from public.recruiter_provider_memberships m
-   where m.recruiter_id = v_recruiter_id and m.valid_from <= v_first_work_date
-     and (m.valid_to is null or v_first_work_date < m.valid_to);
-  if v_count <> 1 then
-    raise exception 'recruiter provider membership denied' using errcode = '42501';
-  end if;
-  select count(*), (array_agg(m.team_id))[1] into v_count, v_team_id
-    from public.recruiter_team_memberships m
-   where m.recruiter_id = v_recruiter_id and m.valid_from <= v_first_work_date
-     and (m.valid_to is null or v_first_work_date < m.valid_to);
-  if v_count <> 1 then
-    raise exception 'recruiter team membership denied' using errcode = '42501';
-  end if;
-  insert into public.direct_entry_candidates default values returning candidate_id into v_candidate_id;
-  insert into public.direct_entries (
-    submission_id, candidate_id, created_by_user_id, project_id, first_work_date,
-    employee_code, worker_details, recruiter_id, team_id, provider_type, labor_type
-  ) values (
-    p_submission_id, v_candidate_id, p_app_user_id, v_project_id, v_first_work_date,
-    v_employee_code, v_worker_details, v_recruiter_id, v_team_id, v_provider_type, v_labor_type
-  ) returning entry_id into v_entry_id;
-  update public.direct_entry_submissions
-     set version = version + 1
-   where submission_id = p_submission_id;
-  v_reason_id := public.direct_entry_reason(p_app_user_id, 'Draft row creation');
-  insert into public.direct_entry_employment_status_events (
-    entry_id, status, effective_date, version, actor_user_id, reason_id
-  ) values (
-    v_entry_id, 'UNCONFIRMED', v_first_work_date, 1, p_app_user_id, v_reason_id
-  );
-  perform public.direct_entry_write_revision(
-    v_entry_id, p_app_user_id, v_reason_id, null,
-    public.direct_entry_entry_snapshot(v_entry_id), 1
-  );
-  v_submission_revision_id := public.direct_entry_write_submission_revision(
-    p_submission_id, p_app_user_id, v_reason_id,
-    jsonb_build_object('state','DRAFT','version',v_submission.version,'entry_count',
-      (select count(*) - 1 from public.direct_entries
-        where submission_id=p_submission_id and deleted_at is null)),
-    jsonb_build_object('state','DRAFT','version',v_submission.version + 1,'entry_count',
-      (select count(*) from public.direct_entries where submission_id=p_submission_id)),
-    v_submission.version + 1
-  );
-  insert into public.direct_entry_audit_events (
-    auth_subject, app_user_id, action, capability, resource_ref,
-    scope_kind, outcome, reason_id, revision_id, submission_revision_id, changed_fields
-  ) values (
-    p_auth_subject, p_app_user_id, 'draft_row_create', 'entry_create',
-    v_entry_id::text, 'own', 'APPLIED', v_reason_id,
-    (select revision_id from public.direct_entry_revisions where entry_id=v_entry_id and version=1),
-    v_submission_revision_id, array['entry_created']
-  );
-  v_result := jsonb_build_object(
-    'entry_id', v_entry_id, 'candidate_id', v_candidate_id,
-    'submission_id', p_submission_id, 'version', 1,
-    'submission_version', v_submission.version + 1
-  );
-  perform public.direct_entry_idempotency_finish(
-    p_app_user_id, 'draft_row_create', p_idempotency_key, v_result
-  );
-  return v_result;
-end;
-$$;
-revoke all on function public.direct_entry_create_draft_row(uuid, uuid, uuid, integer, jsonb, text) from public, anon, authenticated, service_role;
-grant execute on function public.direct_entry_create_draft_row(uuid, uuid, uuid, integer, jsonb, text) to service_role;
-comment on function public.direct_entry_create_draft_row(uuid, uuid, uuid, integer, jsonb, text) is
-  'P3.1-W02C re-emission of the foundation definition with the retired TEMPORARY/PERMANENT closed set replaced by direct_entry_is_active_labor_type, so a newly created catalog type is accepted and an inactive or unknown key is rejected. All other logic is unchanged.';
-
-create or replace function public.direct_entry_create_full_profile_batch(
-  p_auth_subject uuid,
-  p_app_user_id uuid,
-  p_contract_version text,
-  p_rows jsonb,
-  p_idempotency_key text
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = pg_catalog, public
-as $$
-declare
-  v_auth_date date := public.direct_entry_authorization_date();
-  v_row jsonb;
-  v_worker_input jsonb;
-  v_worker_details jsonb;
-  v_payment jsonb;
-  v_employment jsonb;
-  v_note jsonb;
-  v_state text;
-  v_project_id text;
-  v_recruiter_id uuid;
-  v_first_work_date date;
-  v_employee_code text;
-  v_labor_type text;
-  v_display_name text;
-  v_general_note text;
-  v_payment_state text;
-  v_account_number text;
-  v_bank_id text;
-  v_bank_name text;
-  v_account_holder_name text;
-  v_status text;
-  v_leave_date date;
-  v_leave_reason_text text;
-  v_provider_type text;
-  v_team_id uuid;
-  v_count integer;
-  v_submission_id uuid := gen_random_uuid();
-  v_candidate_id uuid;
-  v_entry_id uuid;
-  v_reason_id uuid;
-  v_revision_id uuid;
-  v_submission_revision_id uuid;
-  v_trim_chars text := E' \t\n\r' || chr(11) || chr(12) || chr(160) || chr(5760)
-    || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197)
-    || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232)
-    || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279);
-  v_entry_ids jsonb := '[]'::jsonb;
-  v_codes text[] := '{}';
-  v_national_ids text[] := '{}';
-  v_national_id text;
-  v_has_payment boolean := false;
-  v_has_status boolean := false;
-  v_prior jsonb;
-  v_hash text;
-  v_result jsonb;
-begin
-  if p_contract_version is distinct from 'worker-profile/1.0' then
-    raise exception 'CONTRACT_VERSION_UNSUPPORTED' using errcode = '22023';
-  end if;
-  if p_idempotency_key is null
-     or p_idempotency_key !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-     or jsonb_typeof(p_rows) <> 'array'
-     or jsonb_array_length(p_rows) not between 1 and 100 then
-    raise exception 'BATCH_INVALID' using errcode = '22023';
-  end if;
-  for v_row in select value from jsonb_array_elements(p_rows) loop
-    if jsonb_typeof(v_row) <> 'object'
-       or v_row - array[
-         'project_id','first_work_date','employee_code','recruiter_id','labor_type',
-         'display_name','worker_details','general_note','payment','employment'
-       ] <> '{}'::jsonb then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-    if v_row ? 'payment'
-       and coalesce(v_row->'payment'->>'state', 'omitted') <> 'omitted'
-       and not (
-         v_row->'payment'->>'state' = 'provided'
-         and nullif(btrim(v_row->'payment'->>'account_number', v_trim_chars), '') is null
-         and nullif(btrim(v_row->'payment'->>'bank_name', v_trim_chars), '') is null
-         and nullif(btrim(v_row->'payment'->>'account_holder_name', v_trim_chars), '') is null
-         and nullif(btrim(v_row->'payment'->>'bank_id'), '') is null
-       ) then
-      v_has_payment := true;
-    end if;
-    if v_row ? 'employment' and v_row->'employment' ? 'initial_status' then
-      v_has_status := true;
-    end if;
-  end loop;
-
-  perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'entry_create');
-  perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'submission_create');
-  if v_has_payment then
-    perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'payment_view');
-    perform public.direct_entry_assert_actor(p_auth_subject, p_app_user_id, 'payment_edit');
-  end if;
-  if v_has_status then
-    perform public.direct_entry_assert_actor(
-      p_auth_subject, p_app_user_id, 'employment_status.apply'
-    );
-  end if;
-
-  v_hash := public.direct_entry_payload_hash(jsonb_build_object(
-    'contract_version', p_contract_version, 'rows', p_rows
-  ));
-  v_prior := public.direct_entry_idempotency_begin(
-    p_app_user_id, 'full_profile_batch_create', p_idempotency_key, v_hash
-  );
-  if v_prior is not null then
-    return v_prior || jsonb_build_object('replayed', true);
-  end if;
-
-  insert into public.direct_entry_submissions (submission_id, created_by_user_id)
-    values (v_submission_id, p_app_user_id);
-  v_reason_id := public.direct_entry_reason(p_app_user_id, 'Initial full-profile batch creation');
-
-  for v_row in select value from jsonb_array_elements(p_rows) loop
-    if v_row ? 'worker_details' and jsonb_typeof(v_row->'worker_details') <> 'object' then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-    v_worker_input := coalesce(v_row->'worker_details', '{}'::jsonb);
-    if v_worker_input - array[
-      'gender','date_of_birth','national_id','national_id_issued_at',
-      'national_id_issued_place','address','phone'
-    ] <> '{}'::jsonb then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-
-    v_project_id := v_row->>'project_id';
-    v_recruiter_id := case
-      when coalesce(v_row->>'recruiter_id','') ~*
-        '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-      then (v_row->>'recruiter_id')::uuid else null end;
-    v_employee_code := v_row->>'employee_code';
-    v_labor_type := v_row->>'labor_type';
-    v_display_name := v_row->>'display_name';
-    begin
-      if coalesce(v_row->>'first_work_date','') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
-        raise exception 'invalid date';
-      end if;
-      v_first_work_date := (v_row->>'first_work_date')::date;
-      if to_char(v_first_work_date, 'YYYY-MM-DD') <> v_row->>'first_work_date' then
-        raise exception 'invalid date';
-      end if;
-    exception when others then
-      raise exception 'PROFILE_DATE_INVALID' using errcode = '22023';
-    end;
-
-    if v_project_id is null or v_project_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
-       or not exists (
-         select 1 from public.direct_entry_projects p
-          where p.project_id = v_project_id and p.active
-       ) then
-      raise exception 'PROJECT_NOT_ACTIVE' using errcode = '22023';
-    end if;
-    if v_recruiter_id is null or not exists (
-      select 1 from public.recruiters r
-       where r.recruiter_id = v_recruiter_id and r.active
-    ) then
-      raise exception 'RECRUITER_NOT_ACTIVE' using errcode = '22023';
-    end if;
-    if v_employee_code is null then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    elsif v_employee_code ~ '^hrp-[0-9]{4}-[0-9]+$'
-       and v_employee_code !~ '^hrp-[0-9]{4}-[0-9]{6}$' then
-      raise exception 'EMPLOYEE_CODE_LEGACY_QUARANTINE' using errcode = '22023';
-    elsif v_employee_code !~ '^hrp-[0-9]{4}-[0-9]{6}$' then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    elsif substring(v_employee_code from 5 for 4) <> to_char(v_first_work_date, 'YYYY') then
-      raise exception 'EMPLOYEE_CODE_YEAR' using errcode = '22023';
-    end if;
-    if v_employee_code = any(v_codes) then
-      raise exception 'EMPLOYEE_CODE_DUPLICATE' using errcode = '22023';
-    end if;
-    v_codes := array_append(v_codes, v_employee_code);
-
-    if v_display_name is null or length(btrim(v_display_name)) not between 1 and 256
-       or not public.direct_entry_is_active_labor_type(v_labor_type) then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-    v_worker_details := jsonb_build_object(
-      'display_name', v_display_name,
-      'gender', coalesce(v_worker_input->'gender', '{"state":"omitted"}'::jsonb),
-      'date_of_birth', coalesce(v_worker_input->'date_of_birth', '{"state":"omitted"}'::jsonb),
-      'national_id', coalesce(v_worker_input->'national_id', '{"state":"omitted"}'::jsonb),
-      'national_id_issued_at', coalesce(v_worker_input->'national_id_issued_at', '{"state":"omitted"}'::jsonb),
-      'national_id_issued_place', coalesce(v_worker_input->'national_id_issued_place', '{"state":"omitted"}'::jsonb),
-      'address', coalesce(v_worker_input->'address', '{"state":"omitted"}'::jsonb),
-      'phone', coalesce(v_worker_input->'phone', '{"state":"omitted"}'::jsonb)
-    );
-    if not public.direct_entry_valid_worker_details(v_worker_details) then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-    v_national_id := case
-      when v_worker_details->'national_id'->>'state' = 'provided'
-      then v_worker_details->'national_id'->>'value'
-      else null
-    end;
-    if v_national_id is not null then
-      if v_national_id = any(v_national_ids) then
-        raise exception 'NATIONAL_ID_DUPLICATE' using errcode = '22023';
-      end if;
-      if exists (
-        select 1 from public.direct_entries e
-         where btrim(e.worker_details->'national_id'->>'value') = btrim(v_national_id)
-           and e.worker_details->'national_id'->>'state' = 'provided'
-      ) then
-        raise exception 'NATIONAL_ID_DUPLICATE' using errcode = '23505';
-      end if;
-      v_national_ids := array_append(v_national_ids, v_national_id);
-    end if;
-
-    if v_worker_details->'date_of_birth'->>'state' = 'provided'
-       and v_worker_details->'date_of_birth'->>'value' > to_char(v_auth_date, 'YYYY-MM-DD') then
-      raise exception 'PROFILE_DATE_INVALID' using errcode = '22023';
-    end if;
-    if v_worker_details->'national_id_issued_at'->>'state' = 'provided' then
-      if v_worker_details->'national_id_issued_at'->>'value' > to_char(v_auth_date, 'YYYY-MM-DD')
-         or (v_worker_details->'date_of_birth'->>'state' = 'provided'
-           and v_worker_details->'national_id_issued_at'->>'value'
-             < v_worker_details->'date_of_birth'->>'value') then
-        raise exception 'PROFILE_DATE_INVALID' using errcode = '22023';
-      end if;
-    end if;
-
-    select count(*) into v_count
-      from public.direct_entry_scope_grants g
-     where g.app_user_id = p_app_user_id and g.scope_kind = 'own'
-       and g.valid_from <= v_first_work_date
-       and (g.valid_to is null or v_first_work_date < g.valid_to);
-    if v_count <> 1 then
-      raise exception 'entry creation own scope denied' using errcode = '42501';
-    end if;
-    select count(*), min(m.provider_type) into v_count, v_provider_type
-      from public.recruiter_provider_memberships m
-     where m.recruiter_id = v_recruiter_id
-       and m.valid_from <= v_first_work_date
-       and (m.valid_to is null or v_first_work_date < m.valid_to);
-    if v_count <> 1 then
-      raise exception 'RECRUITER_MEMBERSHIP_INVALID' using errcode = '22023';
-    end if;
-    select count(*), (array_agg(m.team_id))[1] into v_count, v_team_id
-      from public.recruiter_team_memberships m
-     where m.recruiter_id = v_recruiter_id
-       and m.valid_from <= v_first_work_date
-       and (m.valid_to is null or v_first_work_date < m.valid_to);
-    if v_count <> 1 then
-      raise exception 'RECRUITER_MEMBERSHIP_INVALID' using errcode = '22023';
-    end if;
-
-    v_note := coalesce(v_row->'general_note', '{"state":"omitted"}'::jsonb);
-    if jsonb_typeof(v_note) <> 'object'
-       or v_note - array['state','value'] <> '{}'::jsonb
-       or not (v_note ? 'state') then
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-    v_state := v_note->>'state';
-    if v_state = 'provided' then
-      v_general_note := v_note->>'value';
-      if jsonb_typeof(v_note->'value') <> 'string'
-         or not (v_note ? 'value')
-         or length(btrim(v_general_note)) not between 1 and 4000 then
-        raise exception 'GENERAL_NOTE_TOO_LONG' using errcode = '22023';
-      end if;
-    elsif v_state = 'omitted' then
-      if v_note ? 'value' then
-        raise exception 'BATCH_INVALID' using errcode = '22023';
-      end if;
-      v_general_note := null;
-    else
-      raise exception 'BATCH_INVALID' using errcode = '22023';
-    end if;
-
-    v_payment := nullif(v_row->'payment', 'null'::jsonb);
-    v_payment_state := null;
-    v_account_number := null;
-    v_bank_id := null;
-    v_account_holder_name := null;
-    if v_payment is not null then
-      if jsonb_typeof(v_payment) <> 'object'
-         or v_payment - array['state','account_number','bank_id','bank_name','account_holder_name'] <> '{}'::jsonb
-         or not (v_payment ? 'state') then
-        raise exception 'PAYMENT_DETAILS_INVALID' using errcode = '22023';
-      end if;
-      v_payment_state := v_payment->>'state';
-      if v_payment_state not in ('omitted','unknown','intentionally_blank','provided') then
-        raise exception 'PAYMENT_DETAILS_INVALID' using errcode = '22023';
-      end if;
-      v_account_number := nullif(btrim(v_payment->>'account_number', v_trim_chars), '');
-      v_bank_id := nullif(btrim(v_payment->>'bank_id'), '');
-      v_bank_name := nullif(btrim(v_payment->>'bank_name', v_trim_chars), '');
-      v_account_holder_name := nullif(
-        btrim(v_payment->>'account_holder_name', v_trim_chars), ''
-      );
-      if (v_payment ? 'account_number' and jsonb_typeof(v_payment->'account_number') not in ('string','null'))
-         or (v_payment ? 'bank_id' and jsonb_typeof(v_payment->'bank_id') not in ('string','null'))
-         or (v_payment ? 'bank_name' and jsonb_typeof(v_payment->'bank_name') not in ('string','null'))
-         or (v_payment ? 'account_holder_name' and jsonb_typeof(v_payment->'account_holder_name') not in ('string','null'))
-         or (v_account_number is not null and (length(v_account_number) not between 1 and 64
-           or v_account_number ~ '[[:cntrl:]]'))
-         or (v_bank_name is not null and (length(v_bank_name) not between 1 and 256
-           or v_bank_name ~ '[[:cntrl:]]'))
-         or (v_account_holder_name is not null and
-           (length(v_account_holder_name) not between 1 and 256
-             or v_account_holder_name ~ '[[:cntrl:]]'))
-         or (v_bank_id is not null and
-           v_bank_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') then
-        raise exception 'PAYMENT_DETAILS_INVALID' using errcode = '22023';
-      end if;
-      if v_bank_id is not null and not exists (
-        select 1 from public.direct_entry_banks b
-         where b.bank_id = v_bank_id and b.active
-      ) then
-        raise exception 'BANK_NOT_ACTIVE' using errcode = '22023';
-      end if;
-      if v_payment_state <> 'provided' then
-        if v_account_number is not null or v_bank_id is not null or v_bank_name is not null
-           or v_account_holder_name is not null then
-          raise exception 'PAYMENT_DETAILS_INVALID' using errcode = '22023';
-        end if;
-      elsif v_account_number is null and v_bank_name is null and v_account_holder_name is null then
-        if v_bank_id is not null then
-          raise exception 'PAYMENT_DETAILS_INVALID' using errcode = '22023';
-        end if;
-        v_payment_state := 'omitted';
-      end if;
-    end if;
-
-    v_employment := nullif(v_row->'employment', 'null'::jsonb);
-    v_status := null;
-    v_leave_date := null;
-    v_leave_reason_text := null;
-    if v_employment is not null then
-      if jsonb_typeof(v_employment) <> 'object'
-         or v_employment - array['initial_status','leave_date','leave_reason_text'] <> '{}'::jsonb
-         or not (v_employment ? 'initial_status') then
-        raise exception 'BATCH_INVALID' using errcode = '22023';
-      end if;
-      v_status := v_employment->>'initial_status';
-      if v_status not in ('UNCONFIRMED','ON','OFF')
-         or v_first_work_date >= v_auth_date then
-        raise exception 'BATCH_INVALID' using errcode = '22023';
-      end if;
-      if v_status = 'OFF' then
-        begin
-          if coalesce(v_employment->>'leave_date','') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
-            raise exception 'invalid date';
-          end if;
-          v_leave_date := (v_employment->>'leave_date')::date;
-          if to_char(v_leave_date, 'YYYY-MM-DD') <> v_employment->>'leave_date' then
-            raise exception 'invalid date';
-          end if;
-        exception when others then
-          raise exception 'OFF_REQUIRES_DATE_AND_REASON' using errcode = '22023';
-        end;
-        v_leave_reason_text := v_employment->>'leave_reason_text';
-        if v_leave_date < v_first_work_date or v_leave_date > v_auth_date
-           or v_leave_reason_text is null
-           or length(btrim(v_leave_reason_text)) not between 1 and 4000 then
-          raise exception 'OFF_REQUIRES_DATE_AND_REASON' using errcode = '22023';
-        end if;
-      elsif v_employment ? 'leave_date' or v_employment ? 'leave_reason_text' then
-        raise exception 'BATCH_INVALID' using errcode = '22023';
-      end if;
-    end if;
-
-    insert into public.direct_entry_candidates default values
-      returning candidate_id into v_candidate_id;
-    insert into public.direct_entries (
-      submission_id, candidate_id, created_by_user_id, project_id, first_work_date,
-      employee_code, worker_details, recruiter_id, team_id, provider_type, labor_type,
-      general_note
-    ) values (
-      v_submission_id, v_candidate_id, p_app_user_id, v_project_id, v_first_work_date,
-      v_employee_code, v_worker_details, v_recruiter_id, v_team_id, v_provider_type,
-      v_labor_type, v_general_note
-    ) returning entry_id into v_entry_id;
-
-    insert into public.direct_entry_employment_status_events (
-      entry_id, status, effective_date, version, actor_user_id, reason_id
-    ) values (
-      v_entry_id, 'UNCONFIRMED', v_first_work_date, 1, p_app_user_id, v_reason_id
-    );
-    if v_status in ('ON','OFF') then
-      insert into public.direct_entry_employment_status_events (
-        entry_id, status, effective_date, leave_date, leave_reason_text,
-        version, actor_user_id, reason_id
-      ) values (
-        v_entry_id, v_status,
-        case when v_status = 'OFF' then v_leave_date else v_first_work_date end,
-        v_leave_date, v_leave_reason_text, 2, p_app_user_id, v_reason_id
-      );
-    end if;
-    if v_payment_state is not null and v_payment_state <> 'omitted' then
-      insert into public.direct_entry_payments (
-        entry_id, state, account_number, bank_id, bank_name, account_holder_name
-      ) values (
-        v_entry_id, v_payment_state, v_account_number, v_bank_id, v_bank_name, v_account_holder_name
-      );
-    end if;
-
-    v_revision_id := public.direct_entry_write_revision(
-      v_entry_id, p_app_user_id, v_reason_id, null,
-      public.direct_entry_entry_snapshot(v_entry_id), 1
-    );
-    insert into public.direct_entry_audit_events (
-      auth_subject, app_user_id, action, capability, resource_ref,
-      scope_kind, outcome, reason_id, revision_id, changed_fields
-    ) values (
-      p_auth_subject, p_app_user_id, 'entry_create', 'entry_create',
-      v_entry_id::text, 'own', 'APPLIED', v_reason_id, v_revision_id,
-      array['entry_created','worker_details','general_note']
-        || case when v_payment_state is not null and v_payment_state <> 'omitted'
-             then array['payment']::text[] else '{}'::text[] end
-        || case when v_status is not null
-             then array['employment_status']::text[] else '{}'::text[] end
-    );
-    v_entry_ids := v_entry_ids || jsonb_build_array(v_entry_id);
-  end loop;
-
-  v_submission_revision_id := public.direct_entry_write_submission_revision(
-    v_submission_id, p_app_user_id, v_reason_id, null,
-    jsonb_build_object('state','DRAFT','version',1,'entry_count',jsonb_array_length(p_rows)), 1
-  );
-  insert into public.direct_entry_audit_events (
-    auth_subject, app_user_id, action, capability, resource_ref,
-    scope_kind, outcome, reason_id, submission_revision_id, changed_fields
-  ) values (
-    p_auth_subject, p_app_user_id, 'full_profile_batch_create', 'entry_create',
-    v_submission_id::text, 'own', 'APPLIED', v_reason_id,
-    v_submission_revision_id, array['submission_created','entries_created']
-  );
-  v_result := jsonb_build_object(
-    'submission_id', v_submission_id,
-    'state', 'DRAFT',
-    'version', 1,
-    'entry_ids', v_entry_ids,
-    'replayed', false
-  );
-  perform public.direct_entry_idempotency_finish(
-    p_app_user_id, 'full_profile_batch_create', p_idempotency_key, v_result
-  );
-  return v_result;
-end;
-$$;
-revoke all on function public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text)
+revoke all on function public.direct_entry_w02c_replace_proc_source(regprocedure, text, text, integer)
   from public, anon, authenticated, service_role;
-grant execute on function public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text)
-  to service_role;
-comment on function public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text) is
-  'P3.1-W02C re-emission of the foundation definition with the retired TEMPORARY/PERMANENT closed set replaced by direct_entry_is_active_labor_type, so a newly created catalog type is accepted and an inactive or unknown key is rejected. All other logic is unchanged.';
+
+select public.direct_entry_w02c_replace_proc_source(
+  'public.direct_entry_create_batch(uuid,uuid,jsonb,text)'::regprocedure,
+  'v_labor_type not in (''TEMPORARY'',''PERMANENT'')',
+  '(v_labor_type is not null and not public.direct_entry_is_active_labor_type(v_labor_type))',
+  1
+);
+
+select public.direct_entry_w02c_replace_proc_source(
+  'public.direct_entry_create_draft_row(uuid,uuid,uuid,integer,jsonb,text)'::regprocedure,
+  'v_labor_type not in (''TEMPORARY'',''PERMANENT'')',
+  '(v_labor_type is not null and not public.direct_entry_is_active_labor_type(v_labor_type))',
+  1
+);
+
+select public.direct_entry_w02c_replace_proc_source(
+  'public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text)'::regprocedure,
+  'v_labor_type not in (''TEMPORARY'',''PERMANENT'')',
+  '(v_labor_type is not null and not public.direct_entry_is_active_labor_type(v_labor_type))',
+  1
+);
+
+create function public.direct_entry_w02c_replace_view_source(
+  p_view regclass,
+  p_expected text,
+  p_replacement text,
+  p_expected_count integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_definition text;
+  v_count integer;
+  v_target text;
+begin
+  -- `p_view::text` renders unqualified whenever the view already sits on the
+  -- search_path, and CREATE VIEW then targets the FIRST schema on the path
+  -- (pg_catalog), leaving the real view untouched. Resolve the qualified name
+  -- from the catalog instead so the patch always lands on the intended relation.
+  select quote_ident(n.nspname) || '.' || quote_ident(c.relname) into v_target
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+   where c.oid = p_view;
+  if v_target is null then
+    raise exception 'labor type view missing' using errcode = '55000';
+  end if;
+  select pg_get_viewdef(p_view) into v_definition;
+  if v_definition is null or p_expected is null or p_expected = '' then
+    raise exception 'labor type view source missing' using errcode = '55000';
+  end if;
+  v_count := (length(v_definition) - length(replace(v_definition, p_expected, '')))
+    / length(p_expected);
+  if v_count <> p_expected_count then
+    raise exception 'labor type view source drift for %: expected %, found %',
+      p_view, p_expected_count, v_count using errcode = '55000';
+  end if;
+  execute 'create or replace view ' || v_target || ' as '
+    || replace(v_definition, p_expected, p_replacement);
+end;
+$$;
+revoke all on function public.direct_entry_w02c_replace_view_source(regclass, text, text, integer)
+  from public, anon, authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
 -- 5. Administration RPCs (service_role only).
@@ -1757,102 +1109,39 @@ revoke all on function public.direct_entry_reporting_employment_display(text)
   from public, anon, authenticated;
 grant execute on function public.direct_entry_reporting_employment_display(text) to service_role;
 
-create or replace view public.direct_entry_reporting_facts_v01
-as
-select
-    public.direct_entry_reporting_source_id()::text as source_id,
-    e.first_work_date                                as business_date,
-    public.direct_entry_reporting_dim_key(p.display_name) as project_key,
-    p.display_name                                  as project_display,
-    public.direct_entry_reporting_recruiter_alias_key(e.recruiter_id, e.first_work_date) as recruiter_key,
-    r.display_name                                  as recruiter_display,
-    public.direct_entry_reporting_recruiter_provider_key(e.recruiter_id, e.first_work_date) as provider_type_key,
-    case e.provider_type
-      when 'hrp'    then 'HRP'
-      when 'vendor' then 'Vendor'
-      else               'Không xác định'
-    end                                             as provider_type_display,
-    public.direct_entry_reporting_employment_key(e.labor_type) as employment_type_key,
-    public.direct_entry_reporting_employment_display(e.labor_type)                                             as employment_type_display,
-    1                                               as recruited_count,
-    e.first_work_date                               as first_work_date,
-    e.entry_id                                      as entry_id,
-    e.submission_id                                 as submission_id,
-    public.direct_entry_reporting_cutoff()          as cutoff_date
-  from public.direct_entries e
-  join public.direct_entry_submissions s
-    on s.submission_id = e.submission_id
-  join public.direct_entry_projects p
-    on p.project_id = e.project_id
-  join public.recruiters r
-    on r.recruiter_id = e.recruiter_id
- where s.state = 'SUBMITTED'
-   and e.deleted_at is null
-   and e.first_work_date >= public.direct_entry_reporting_cutoff()
- -- Deterministic ordering for read path pagination:
- -- ReportingFact grain first, then entry_id as the unique tie-breaker
- -- so two DE entries sharing the same grain do not collapse.
- order by
-   public.direct_entry_reporting_source_id()::text,
-   e.first_work_date,
-   public.direct_entry_reporting_dim_key(p.display_name),
-   public.direct_entry_reporting_recruiter_alias_key(e.recruiter_id, e.first_work_date),
-   public.direct_entry_reporting_recruiter_provider_key(e.recruiter_id, e.first_work_date),
-   public.direct_entry_reporting_employment_key(e.labor_type),
-   e.entry_id;
 
-create or replace view public.direct_entry_reporting_dimension_options_v01
-as
-select 'project' as dimension,
-       public.direct_entry_reporting_dim_key(p.display_name) as key,
-       p.display_name as display,
-       count(*)::integer as recruited_count
-  from public.direct_entries e
-  join public.direct_entry_submissions s on s.submission_id = e.submission_id
-  join public.direct_entry_projects p on p.project_id = e.project_id
- where s.state = 'SUBMITTED'
-   and e.deleted_at is null
-   and e.first_work_date >= public.direct_entry_reporting_cutoff()
- group by 1, 2, 3
-union all
-select 'recruiter',
-       public.direct_entry_reporting_recruiter_alias_key(e.recruiter_id, e.first_work_date),
-       r.display_name,
-       count(*)::integer
-  from public.direct_entries e
-  join public.direct_entry_submissions s on s.submission_id = e.submission_id
-  join public.recruiters r on r.recruiter_id = e.recruiter_id
- where s.state = 'SUBMITTED'
-   and e.deleted_at is null
-   and e.first_work_date >= public.direct_entry_reporting_cutoff()
- group by 1, 2, 3
-union all
-select 'provider',
-       public.direct_entry_reporting_recruiter_provider_key(e.recruiter_id, e.first_work_date),
-       case e.provider_type
-         when 'hrp'    then 'HRP'
-         when 'vendor' then 'Vendor'
-         else               'Không xác định'
-       end,
-       count(*)::integer
-  from public.direct_entries e
-  join public.direct_entry_submissions s on s.submission_id = e.submission_id
- where s.state = 'SUBMITTED'
-   and e.deleted_at is null
-   and e.first_work_date >= public.direct_entry_reporting_cutoff()
- group by 1, 2, 3
-union all
-select 'employment',
-       public.direct_entry_reporting_employment_key(e.labor_type),
-       public.direct_entry_reporting_employment_display(e.labor_type),
-       count(*)::integer
-  from public.direct_entries e
-  join public.direct_entry_submissions s on s.submission_id = e.submission_id
- where s.state = 'SUBMITTED'
-   and e.deleted_at is null
-   and e.first_work_date >= public.direct_entry_reporting_cutoff()
- group by 1, 2, 3;
+-- -----------------------------------------------------------------------------
+-- 7b. The two reporting views lose their duplicated label map IN PLACE.
+--
+-- They are patched, never re-emitted: W04B, W04C, W05A, W07A-R3 and W07A-R4 all
+-- redefined these views after the W04A cutover, so a verbatim re-emission from the
+-- original cutover source would revert every one of those later redefinitions.
+-- pg_get_viewdef is read, the duplicated CASE block must appear exactly the
+-- expected number of times, and the patched definition is re-executed as
+-- "create or replace view", which preserves the columns, owner and grants.
+-- -----------------------------------------------------------------------------
 
+select public.direct_entry_w02c_replace_view_source(
+  'public.direct_entry_reporting_facts_v01'::regclass,
+  E'        CASE e.labor_type
+            WHEN ''TEMPORARY''::text THEN ''Thời vụ''::text
+            WHEN ''PERMANENT''::text THEN ''Chính thức''::text
+            ELSE ''Không xác định''::text
+        END',
+  E'        public.direct_entry_reporting_employment_display(e.labor_type)',
+  1
+);
+
+select public.direct_entry_w02c_replace_view_source(
+  'public.direct_entry_reporting_dimension_options_v01'::regclass,
+  E'        CASE e.labor_type
+            WHEN ''TEMPORARY''::text THEN ''Thời vụ''::text
+            WHEN ''PERMANENT''::text THEN ''Chính thức''::text
+            ELSE ''Không xác định''::text
+        END',
+  E'        public.direct_entry_reporting_employment_display(e.labor_type)',
+  2
+);
 create or replace function public.direct_entry_reporting_de_options_scoped(
   p_auth_subject uuid,
   p_app_user_id uuid
@@ -1953,149 +1242,31 @@ revoke all on function public.direct_entry_reporting_de_options_scoped(uuid, uui
 grant execute on function public.direct_entry_reporting_de_options_scoped(uuid, uuid)
   to service_role;
 
-create or replace function public.direct_entry_input_catalog(
-  p_auth_subject uuid,
-  p_app_user_id uuid,
-  p_effective_date date
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = pg_catalog, public
-as $$
-declare
-  v_result jsonb;
-begin
-  if p_effective_date is null then
-    raise exception 'effective date required' using errcode = '22023';
-  end if;
-  if not exists (
-    select 1
-      from public.direct_entry_app_users u
-     where u.app_user_id = p_app_user_id
-       and u.auth_subject = p_auth_subject
-       and u.enabled
-  ) or not exists (
-    select 1
-      from public.direct_entry_capability_grants g
-     where g.app_user_id = p_app_user_id
-       and g.capability in ('entry_create', 'entry_own')
-       and g.valid_from <= public.direct_entry_authorization_date()
-       and (g.valid_to is null or public.direct_entry_authorization_date() < g.valid_to)
-  ) then
-    raise exception 'actor capability denied' using errcode = '42501';
-  end if;
+-- -----------------------------------------------------------------------------
+-- 7d. The canonical Direct Entry projection gains the active labor types.
+--
+-- The object is built by direct_entry_input_catalog_unscoped_v42 (W07B), which
+-- direct_entry_input_catalog wraps with the per-actor project filter. The wrapper
+-- is left untouched so that scope enforcement stays exactly as W07B wrote it, and
+-- the builder is patched in place to append the bounded active options. The
+-- runtime therefore keeps receiving its labor types through getInputCatalog, and
+-- no /api/direct-entry/labor-types route exists.
+-- -----------------------------------------------------------------------------
 
-  with hrp_memberships as (
-    -- P1.6 contract (unchanged from #41): an HRP recruiter is eligible only
-    -- when they have exactly one HRP provider membership in force on
-    -- `effective_date`. Overlapping HRP memberships are excluded.
-    select m.recruiter_id, count(*) as membership_count
-      from public.recruiter_provider_memberships m
-     where m.provider_type = 'hrp'
-       and m.valid_from <= p_effective_date
-       and (m.valid_to is null or p_effective_date < m.valid_to)
-     group by m.recruiter_id
-  ), vendor_memberships as (
-    -- P3-W07A (unchanged from #41): Vendor eligibility is decided by
-    -- `provider_type = 'vendor'` membership at `effective_date`. The
-    -- catalog surfaces the active membership; overlapping memberships
-    -- are filtered by the effective-date window.
-    select m.recruiter_id, m.vendor_id
-      from public.recruiter_provider_memberships m
-     where m.provider_type = 'vendor'
-       and m.valid_from <= p_effective_date
-       and (m.valid_to is null or p_effective_date < m.valid_to)
-  ), hrp_teams as (
-    select m.recruiter_id, count(*) as membership_count,
-           min(m.team_id::text)::uuid as team_id
-      from public.recruiter_team_memberships m
-     where m.valid_from <= p_effective_date
-       and (m.valid_to is null or p_effective_date < m.valid_to)
-     group by m.recruiter_id
-  ), hrp_recruiters as (
-    select r.recruiter_id, r.display_name, r.personnel_code, tt.team_id,
-           team.display_name as team_display_name
-      from public.recruiters r
-      join hrp_memberships p on p.recruiter_id = r.recruiter_id
-                            and p.membership_count = 1
-      join hrp_teams tt on tt.recruiter_id = r.recruiter_id
-                        and tt.membership_count = 1
-      join public.teams team on team.team_id = tt.team_id and team.active
-     where r.active
-  ), vendor_recruiters as (
-    select r.recruiter_id, r.display_name, vm.vendor_id,
-           v.display_name as vendor_display_name
-      from public.recruiters r
-      join vendor_memberships vm on vm.recruiter_id = r.recruiter_id
-      left join public.vendors v on v.vendor_id = vm.vendor_id and v.active
-     where r.active
-       -- Vendor recruiters without a `vendor_id` on the membership are
-       -- legacy P1.6 bootstrap rows; they still appear in the catalog with
-       -- the recruiter display_name as the label until the W07A importer
-       -- links them to a vendor record.
-       and (vm.vendor_id is null or v.vendor_id is not null)
-  )
-  select jsonb_build_object(
-    'effective_date', p_effective_date,
-    -- P3.1-W02C: active labor-type options travel on the SAME canonical
-    -- projection the Direct Entry runtime already consumes. There is no
-    -- parallel /api/direct-entry/labor-types route and no second label map.
-    'labor_types', public.direct_entry_labor_type_options(),
-    'projects', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'project_id', p.project_id, 'display_name', p.display_name
-      ) order by p.display_name, p.project_id)
-        from public.direct_entry_projects p
-       where p.active
-    ), '[]'::jsonb),
-    'recruiters', coalesce((
-      select coalesce(jsonb_agg(jsonb_build_object(
-        'recruiter_id', r.recruiter_id,
-        'display_name', r.display_name,
-        'personnel_code', r.personnel_code,
-        'provider_type', 'hrp',
-        'vendor_id', null,
-        'team_id', r.team_id,
-        'team_display_name', r.team_display_name,
-        'label', (
-          r.display_name
-          || ' · ' || coalesce(r.personnel_code, '—')
-          || ' · ' || r.team_display_name
-        )
-      ) order by r.display_name, r.team_display_name, r.recruiter_id), '[]'::jsonb)
-        from hrp_recruiters r
-    ) || coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'recruiter_id', r.recruiter_id,
-        'display_name', coalesce(r.vendor_display_name, r.display_name),
-        'personnel_code', null,
-        'provider_type', 'vendor',
-        'vendor_id', r.vendor_id,
-        'team_id', null,
-        'team_display_name', null,
-        'label', coalesce(r.vendor_display_name, r.display_name)
-      ) order by coalesce(r.vendor_display_name, r.display_name), r.recruiter_id)
-        from vendor_recruiters r
-    ), '[]'::jsonb), '[]'::jsonb),
-    -- P3-W07A-R2: restore the `banks` key that migration #41 dropped.
-    -- Active banks only, ordered for determinism, may be empty.
-    'banks', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'bank_id', b.bank_id, 'display_name', b.display_name
-      ) order by b.display_name, b.bank_id)
-        from public.direct_entry_banks b
-       where b.active
-    ), '[]'::jsonb)
-  ) into v_result;
+select public.direct_entry_w02c_replace_proc_source(
+  'public.direct_entry_input_catalog_unscoped_v42(uuid,uuid,date)'::regprocedure,
+  E'    ''effective_date'', p_effective_date,',
+  E'    ''effective_date'', p_effective_date,
+    ''labor_types'', public.direct_entry_labor_type_options(),',
+  1
+);
+-- -----------------------------------------------------------------------------
+-- 7e. Drop both source-patching helpers: they exist only inside this migration,
+-- are revoked from every role, and must not survive it.
+-- -----------------------------------------------------------------------------
 
-  return v_result;
-end;
-$$;
-revoke all on function public.direct_entry_input_catalog(uuid, uuid, date)
-  from public, anon, authenticated, service_role;
-grant execute on function public.direct_entry_input_catalog(uuid, uuid, date)
-  to service_role;
+drop function public.direct_entry_w02c_replace_proc_source(regprocedure, text, text, integer);
+drop function public.direct_entry_w02c_replace_view_source(regclass, text, text, integer);
 
 -- -----------------------------------------------------------------------------
 -- 8. Self-check: seeds, immutability, FK, active guard, reporting and ACL.
@@ -2281,11 +1452,30 @@ begin
 
   -- The Direct Entry runtime keeps receiving active options through the existing
   -- canonical catalog projection - no parallel route and no second label map.
-  select pg_get_functiondef('public.direct_entry_input_catalog(uuid,uuid,date)'::regprocedure)
+  -- The wrapper is deliberately untouched, so the assertion follows the BUILDER
+  -- that direct_entry_input_catalog wraps with the per-actor project filter.
+  select pg_get_functiondef(
+      'public.direct_entry_input_catalog_unscoped_v42(uuid,uuid,date)'::regprocedure)
     into v_definition;
   if v_definition not like '%labor_types%'
      or v_definition not like '%direct_entry_labor_type_options%' then
     raise exception 'input catalog does not expose the active labor types' using errcode = '55000';
+  end if;
+
+  -- No direct_entry function may carry the retired closed set or a duplicated
+  -- label literal any more: every write path resolves the catalog and every
+  -- display resolves display_name. This is the invariant that stops a later edit
+  -- from quietly reintroducing a second vocabulary.
+  select count(*) into v_count
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname like 'direct_entry_%'
+     and (p.prosrc like '%TEMPORARY%' or p.prosrc like '%PERMANENT%'
+          or p.prosrc like '%Thời vụ%' or p.prosrc like '%Chính thức%');
+  if v_count <> 0 then
+    raise exception 'a direct_entry function still carries the retired closed set or label'
+      using errcode = '55000';
   end if;
 end;
 $$;

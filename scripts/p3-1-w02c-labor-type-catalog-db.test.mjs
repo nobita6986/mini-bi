@@ -1413,9 +1413,12 @@ test("21: the Direct Entry runtime receives the active catalog through the input
   assert.equal(JSON.stringify(catalog.labor_types).includes("reporting_key"), false);
 
   // No parallel route and no second label map: the catalog key is resolved by
-  // the one shared projection function.
+  // the one shared projection function. The projection returned above is the
+  // behavioural assertion; this one pins WHERE the key is attached, so the
+  // wrapper that enforces per-actor project scope stays byte-untouched.
   const definition = (await db.query(
-    "select pg_get_functiondef('public.direct_entry_input_catalog(uuid,uuid,date)'::regprocedure)"
+    "select pg_get_functiondef("
+    + "'public.direct_entry_input_catalog_unscoped_v42(uuid,uuid,date)'::regprocedure)"
     + " as definition")).rows[0].definition;
   assert.equal(definition.includes("direct_entry_labor_type_options"), true);
   const surface = (await db.query(

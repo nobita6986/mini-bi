@@ -77,9 +77,9 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 79, "the ledger carries 79 migrations through the finite-membership hotfix #77");
-  assert.equal(names[names.length - 5], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
-  assert.equal(names[names.length - 6], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
-  assert.equal(names[names.length - 18], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (6)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
+  assert.equal(names[names.length - (7)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
+  assert.equal(names[names.length - (19)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 

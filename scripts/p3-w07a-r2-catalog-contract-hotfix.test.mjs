@@ -79,11 +79,21 @@ async function callCatalog(db, effectiveDate) {
 test("H1 empty catalog before import still carries the four locked top-level keys", async () => {
   const db = await buildDatabase();
   const catalog = await callCatalog(db, "2026-10-15");
+  // P3.1-W02-C (#79): the locked four-key contract is preserved and the active
+  // labor-type options are appended, so the Direct Entry runtime resolves its
+  // labor types from this one canonical projection instead of a private map.
   assert.deepEqual(
     Object.keys(catalog).sort(),
-    ["banks", "effective_date", "projects", "recruiters"],
-    "the locked four-key top-level contract is present (banks restored, not optional)",
+    ["banks", "effective_date", "labor_types", "projects", "recruiters"],
+    "the locked four-key top-level contract is present (banks restored, not optional)" +
+    " plus the active labor-type options",
   );
+  assert.deepEqual(catalog.labor_types.map((option) => option.labor_type_key),
+    ["TEMPORARY", "PERMANENT", "OUTSOURCED"],
+    "the canonical labor-type catalog reaches the runtime through this projection");
+  assert.deepEqual(Object.keys(catalog.labor_types[0]).sort(),
+    ["display_name", "labor_type_key", "sort_order"],
+    "the option stays bounded to key, label and order");
   assert.deepEqual(catalog.projects, []);
   assert.deepEqual(catalog.recruiters, []);
   // Banks is always an array (may be empty); the runtime projector
@@ -325,8 +335,8 @@ test("H6 getInputCatalog returns HTTP 200 with the real RPC contract, not a hand
   const body = await response.json();
   assert.equal(body.ok, true);
   assert.deepEqual(Object.keys(body.catalog).sort(),
-    ["banks", "effective_date", "projects", "recruiters"],
-    "HTTP 200 body carries the four locked top-level keys");
+    ["banks", "effective_date", "labor_types", "projects", "recruiters"],
+    "HTTP 200 body carries the locked top-level keys plus the active labor types");
   assert.equal(body.catalog.recruiters.length, 2);
   const hrp = body.catalog.recruiters.find((r) => r.provider_type === "hrp");
   const vendor = body.catalog.recruiters.find((r) => r.provider_type === "vendor");
