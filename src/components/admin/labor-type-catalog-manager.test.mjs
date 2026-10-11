@@ -68,6 +68,8 @@ test("no static TEMPORARY/PERMANENT vocabulary, label map or raw-key fallback ca
 test("inactive rows stay visible with history preserved through the inactive filter", () => {
   assert.match(source, /include_inactive|includeInactive/);
   assert.match(source, /Ngừng hoạt động/);
+  assert.match(source, /bg-slate-200[\s\S]{0,120}text-slate-900[\s\S]{0,120}dark:bg-slate-700[\s\S]{0,120}dark:text-slate-100/);
+  assert.doesNotMatch(source, /bg-muted px-2\.5 py-1 text-xs font-medium text-muted/);
   assert.match(source, /Thao tác này không xóa dữ liệu hay lịch sử/);
   assert.doesNotMatch(source, /method: "DELETE"/);
 });

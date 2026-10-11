@@ -58,7 +58,7 @@ function ActiveBadge({ active }: { active: boolean }) {
   return (
     <span className={active
       ? "inline-flex whitespace-nowrap rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-      : "inline-flex whitespace-nowrap rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted"}>
+      : "inline-flex whitespace-nowrap rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-900 dark:bg-slate-700 dark:text-slate-100"}>
       {active ? "Đang hoạt động" : "Ngừng hoạt động"}
     </span>
   );
