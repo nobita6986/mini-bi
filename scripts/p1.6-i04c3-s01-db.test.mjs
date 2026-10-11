@@ -96,8 +96,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 82,
-    "the ledger carries migration #82 after the W02C-R3 own-draft display projection");
+  assert.equal(totalCount, 84,
+    "the ledger carries migration #84 after the W03A account-read repair");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -668,9 +668,9 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // migration drops before it ends, so the inventory is unchanged. The measured
     // inventory is 209 total / 95 service-role / 114 internal.
     assert.deepEqual(result.rows[0], {
-      total: 214,
-      service_role: 97,
-      internal: 117,
+      total: 217,
+      service_role: 99,
+      internal: 118,
       exposed_internal: 0,
     });
   } finally {

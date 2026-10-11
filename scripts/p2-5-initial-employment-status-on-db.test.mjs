@@ -22,8 +22,8 @@ async function database() {
 test("initial employment status policy is migration #57 and patches every creation path", async () => {
   const { db, names } = await database();
   try {
-    assert.equal(names.length, 82);
-    assert.equal(names.at(-26), MIGRATION);
+    assert.equal(names.length, 84);
+    assert.equal(names.at(-28), MIGRATION);
     const result = await db.query(`
       select p.proname, p.prosrc
         from pg_proc p join pg_namespace n on n.oid=p.pronamespace

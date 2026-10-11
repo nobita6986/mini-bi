@@ -265,8 +265,8 @@ async function insertDraftRow(db, {
 // tung test can.
 // ---------------------------------------------------------------------------
 const { db, migrationNames } = await createMigratedDatabase();
-assert.equal(migrationNames.at(-2), R3_MIGRATION,
-  "#81 la migration own draft display projection va phai la migration CUOI");
+assert.equal(migrationNames.at(-4), R3_MIGRATION,
+  "#81 la migration own draft display projection truoc cac migration W03A");
 
 const fixture = await seedChangeRequestFixture(db);
 assert.equal(typeof fixture.entryA.entry_id, "string", "fixture chung phai seed xong");

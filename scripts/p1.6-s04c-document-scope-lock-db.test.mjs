@@ -90,11 +90,11 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   await db.close();
 });
 
-test("40-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
+test("84-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
-  // P3.1-W03A app-user lifecycle is migration #82 and adds three internal
-  // helpers plus two service-role-only lifecycle RPCs.
-  assert.equal(migrationNames.length, 82);
+  // P3.1-W03A #82 adds three internal helpers plus two lifecycle RPCs;
+  // W03A-R2 #83/#84 add two read RPCs and one internal label helper net.
+  assert.equal(migrationNames.length, 84);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -171,7 +171,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // P2.5-W06A (#54) adds one service-role-only manager-candidate RPC.
   // P3.1-W03A (#82) adds the app-user snapshot, lock-time Full Admin guard and
   // shared status mutation helper plus enable/disable service-role RPCs.
-  // Measured: 214 total, 97 service-role executable and 117 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [214, 97, 117]);
+  // W03A-R2 (#83/#84) adds the account list/detail read boundary.
+  // Measured: 217 total, 99 service-role executable and 118 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [217, 99, 118]);
   await db.close();
 });
