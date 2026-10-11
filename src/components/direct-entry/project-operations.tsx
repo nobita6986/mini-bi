@@ -559,7 +559,16 @@ export function ProjectOperations() {
                       <tr key={project.project_id}
                         className={(selected ? "bg-primary/5 " : "") + "border-b border-border/70 last:border-0"}>
                         <td className="px-4 py-3">
-                          <span className="block font-semibold text-foreground">{project.display_name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-foreground">{project.display_name}</span>
+                            <button type="button"
+                              aria-label={`Chỉnh sửa dự án ${project.display_name}`}
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted transition-colors hover:bg-muted/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={projectActionId !== null || conflict !== null || reloadBusy}
+                              onClick={() => { void openProjectAction(project, "rename"); }}>
+                              <Pencil aria-hidden="true" className="h-4 w-4" />
+                            </button>
+                          </div>
                           <span className="mt-0.5 block font-mono text-xs text-muted">{project.project_id}</span>
                         </td>
                         <td className="px-4 py-3"><ProjectStatusBadge active={project.active} /></td>
@@ -571,12 +580,6 @@ export function ProjectOperations() {
                               {actionBusy ? <RefreshCw aria-hidden="true" className="h-4 w-4 animate-spin" /> :
                                 <UsersRound aria-hidden="true" className="h-4 w-4" />}
                               Xem quản lý
-                            </button>
-                            <button type="button" className={buttonClass}
-                              disabled={projectActionId !== null || conflict !== null || reloadBusy}
-                              onClick={() => { void openProjectAction(project, "rename"); }}>
-                              <Pencil aria-hidden="true" className="h-4 w-4" />
-                              Đổi tên
                             </button>
                             <button type="button" className={project.active ? dangerClass : buttonClass}
                               disabled={projectActionId !== null || conflict !== null || reloadBusy}

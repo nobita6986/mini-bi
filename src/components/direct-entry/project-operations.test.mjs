@@ -162,7 +162,7 @@ test("hotfix mutation: loi mang khong lam nut bi ket va loi hien trong modal", (
 });
 
 test("hotfix feature coverage: xem, doi ten, active, gan, thu hoi va lich su deu co UI", () => {
-  for (const label of ["Xem quản lý", "Đổi tên", "Ngừng", "Kích hoạt", "Gán quản lý",
+  for (const label of ["Xem quản lý", "Đổi tên dự án", "Ngừng", "Kích hoạt", "Gán quản lý",
     "Thu hồi phân công", "Đang phụ trách", "Sắp hiệu lực", "Lịch sử phân công"]) {
     assert.ok(source.includes(label), "thieu tinh nang UI: " + label);
   }
@@ -170,6 +170,28 @@ test("hotfix feature coverage: xem, doi ten, active, gan, thu hoi va lich su deu
   assert.match(source, /paginateProjects\(visibleProjects, projectPage\)/);
   assert.match(source, /aria-label="Phân trang danh sách dự án"/);
   assert.match(source, /type="date"/);
+});
+
+test("edit trigger is an accessible pencil beside the project name, not an action button", () => {
+  const projectCell = source.match(
+    /<td className="px-4 py-3">\s*<div className="flex items-center gap-2">[\s\S]*?project\.display_name[\s\S]*?<\/td>/,
+  )?.[0];
+  const actionsCell = source.match(
+    /<td className="px-4 py-3">\s*<div className="flex flex-wrap justify-end gap-2">[\s\S]*?<\/td>/,
+  )?.[0];
+
+  assert.ok(projectCell, "project name cell contains the edit trigger");
+  assert.match(projectCell, /aria-label=\{`Chỉnh sửa dự án \$\{project\.display_name\}`\}/);
+  assert.match(projectCell, /<Pencil aria-hidden="true" className="h-4 w-4" \/>/);
+  assert.match(projectCell, /onClick=\{\(\) => \{ void openProjectAction\(project, "rename"\); \}\}/);
+  assert.match(projectCell, /disabled=\{projectActionId !== null \|\| conflict !== null \|\| reloadBusy\}/);
+  assert.equal((source.match(/openProjectAction\(project, "rename"\)/g) ?? []).length, 1);
+
+  assert.ok(actionsCell, "project actions cell remains present");
+  assert.equal(actionsCell.includes('openProjectAction(project, "rename")'), false);
+  assert.equal(actionsCell.includes("Đổi tên"), false);
+  assert.match(actionsCell, /Xem quản lý/);
+  assert.match(actionsCell, /project\.active \? "Ngừng" : "Kích hoạt"/);
 });
 
 test("button to dialog wiring covers create, detail, rename, active, assign, and revoke", () => {
