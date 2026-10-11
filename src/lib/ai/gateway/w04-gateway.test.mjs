@@ -26,14 +26,7 @@ import {
   readPolicyConfig,
   responseCeilingOf,
 } from "./policy.mjs";
-import {
-  LIVE_ADAPTER_VERSION,
-  SCRIPTED_ADAPTER_VERSION,
-  adapterVersionForProvider,
-  createLiveAdapter,
-  createScriptedAdapter,
-  resolveProviderAdapter,
-} from "./provider.mjs";
+import { createLiveTransport, createScriptedAdapter, resolveProviderAdapter } from "./provider.mjs";
 import { computeBackoffMs, computeBackoffMs as backoff, decideAfterFailure, canTransition, classifyFailure } from "./job-state.mjs";
 import { buildJobIdentity, describeIdentity, normalizeIdentityInput } from "./job-identity.mjs";
 import { checkSameOriginRequest, checkWorkerToken, sanitizeMessage, timingSafeEqualString } from "./http-guards.mjs";
@@ -75,7 +68,7 @@ test("W04 prompt 1.1: so sánh team và anomaly monitoring có guard evidence/co
   }
   assert.match(manifest.developer_instruction, /ít nhất hai team/);
   assert.match(manifest.developer_instruction, /team mapping partial/);
-  assert.ok(manifest.developer_instruction.includes("stability/volatility"));
+  assert.match(manifest.developer_instruction, /stability\/volatility/);
   assert.match(manifest.developer_instruction, /chưa đủ dữ liệu/);
   assert.match(manifest.developer_instruction, /không được đề xuất quyết định nhân sự/);
 });
@@ -220,11 +213,7 @@ test("W04 identity: chuẩn hoá deterministic và đổi mọi thành phần �
   assert.ok(describeIdentity(normalizeIdentityInput(base)).includes("scripted/m1"));
 });
 
-test("W04 provider: scripted deterministic; live cần outbound wiring, thiếu ⇒ fail-closed", async () => {
-  assert.equal(adapterVersionForProvider("scripted"), SCRIPTED_ADAPTER_VERSION);
-  assert.equal(adapterVersionForProvider("live"), LIVE_ADAPTER_VERSION);
-  assert.equal(adapterVersionForProvider("unknown"), null);
-
+test("W04 provider: chỉ scripted được phép; live bị TẮT và không có outbound", async () => {
   const scripted = resolveProviderAdapter({ provider_key: "scripted", config: {} });
   assert.equal(scripted.ok, true);
   const live = resolveProviderAdapter({ provider_key: "live", config: {} });
@@ -232,14 +221,13 @@ test("W04 provider: scripted deterministic; live cần outbound wiring, thiếu 
   assert.equal(live.code, "AI_PROVIDER_DISABLED");
   assert.equal(resolveProviderAdapter({ provider_key: "openai" }).code, "AI_CONFIG_REQUIRED");
 
-  // W04B-S01: live adapter cần outbound wiring; không wiring ⇒ fail-closed, không bao giờ raw fetch.
-  const wired = resolveProviderAdapter({ provider_key: "live", config: { outbound: async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }) } });
-  assert.equal(wired.ok, true);
-  assert.equal(wired.adapter.adapter_version, "live-adapter/0.7");
-  assert.equal(wired.adapter.provider_key, "live");
-  const bare = createLiveAdapter({ outbound: async () => ({ statusCode: 200, headers: {}, body: Buffer.from("{}") }) });
-  assert.equal(bare.provider_key, "live");
-  assert.equal(bare.adapter_version, "live-adapter/0.7");
+  const transport = createLiveTransport({ allowed_hosts: ["api.example.com"] });
+  assert.equal(transport.isUrlAllowed("https://api.example.com/v1"), true);
+  assert.equal(transport.isUrlAllowed("http://api.example.com/v1"), false);
+  assert.equal(transport.isUrlAllowed("https://evil.example.org/v1"), false);
+  const result = await transport.generateStructured();
+  assert.equal(result.ok, false);
+  assert.equal(result.error_code, "AI_PROVIDER_DISABLED");
 
   const adapter = createScriptedAdapter({ scenario: "valid" });
   const packet = casePacket("c01");
@@ -364,18 +352,17 @@ test("W04 migration 2: audit append-only ở tầng quyền (revoke update/delet
   assert.ok(sql.includes("ROLLBACK"));
 });
 
-test("W04 routes: route AI nằm sau Supabase session guard và không lộ dữ liệu trong URL", () => {
-  // P1.7-H04: Pilot Basic Auth đã bị loại bỏ. Route AI giờ phải tự guard bằng session.
-  assert.throws(() => readFileSync(new URL("../../../proxy.ts", import.meta.url), "utf8"),
-    "proxy Pilot Basic Auth phải bị xóa");
-  assert.throws(() => readFileSync(new URL("../../auth/pilot-access.ts", import.meta.url), "utf8"),
-    "pilot-access phải bị xóa");
+test("W04 routes/proxy: route AI nằm sau pilot gate và không lộ dữ liệu trong URL", () => {
+  const proxy = readFileSync(new URL("../../../proxy.ts", import.meta.url), "utf8");
+  assert.ok(proxy.includes('"/api/ai/reports"'));
+  assert.ok(proxy.includes('"/api/ai/reports/:path*"'));
+  assert.ok(proxy.includes('"/api/ai/worker/run"'));
+  const pilot = readFileSync(new URL("../../auth/pilot-access.ts", import.meta.url), "utf8");
+  assert.ok(pilot.includes('"/api/ai/"'));
 
   const enqueue = readFileSync(new URL("../../../app/api/ai/reports/route.ts", import.meta.url), "utf8");
-  assert.ok(enqueue.includes("guardApiSession()"), "route AI phải qua session guard");
   assert.ok(enqueue.includes("isAiReportsEnabled()"));
   assert.ok(enqueue.includes("checkSameOriginRequest"));
-  assert.ok(enqueue.includes('worker_ref: "inline-after", limit: 2'));
   assert.ok(enqueue.includes("no-store") === false, "header no-store nằm trong helper jsonResponse");
   assert.ok(enqueue.includes("readJsonBody"));
   const worker = readFileSync(new URL("../../../app/api/ai/worker/run/route.ts", import.meta.url), "utf8");

@@ -1,15 +1,15 @@
-# Master Plan — Sales Performance & Reporting System V1
+# Master Plan — Recruitment Reporting & Operations — Chặng 1
 
-- **Phiên bản:** 1.0
-- **Ngày:** 01/10/2026
+- **Phiên bản:** 1.2
+- **Ngày:** 02/10/2026
 - **Trạng thái:** Baseline kế hoạch; chưa phải đặc tả triển khai chi tiết.
-- **Phạm vi:** P0–P4 — Foundation, BoD Dashboard, Data Platform, Auth/Organization, KPI/Performance.
+- **Phạm vi Chặng 1:** P0–P3, gồm hai phase mở rộng P1.5/P1.6 — Foundation, BoD Dashboard, AI Analysis, Direct Entry, Data Platform và Auth/Organization.
 - **Đội thực thi:** AI Coding Web và AI Assistant n8n.
 - **Chủ dự án:** xác nhận nghiệp vụ, cung cấp dữ liệu/môi trường và nghiệm thu milestone.
 
 ## 1. Mục tiêu và nguyên tắc
 
-Xây hệ thống báo cáo kết quả kinh doanh và quản trị KPI cho BoD, Leader và Staff. Google Sheets tiếp tục là nơi nhập liệu; Supabase là nguồn dữ liệu trung tâm phục vụ web app. BoD được sử dụng dashboard với dữ liệu thật từ P1, sau đó hệ thống được hoàn thiện về độ tin cậy, phân quyền và KPI.
+Xây hệ thống báo cáo tuyển dụng và vận hành dữ liệu cho BoD, Leader và Staff. Google Sheets là nơi nhập liệu đến hết giai đoạn pilot P1; P1.6 chuyển nghiệp vụ hằng ngày sang form web dạng lưới có cấu trúc và Supabase trở thành nguồn dữ liệu gốc. Chặng 1 cung cấp dashboard dữ liệu thật, AI analysis, direct entry, độ tin cậy và phân quyền. KPI/Target cùng Commission/Payroll được rebaseline thành Chặng 2.
 
 Các nguyên tắc bắt buộc:
 
@@ -19,26 +19,28 @@ Các nguyên tắc bắt buộc:
 4. Một nơi tính cho mỗi chỉ số nghiệp vụ; UI và n8n không tự tính hai phiên bản khác nhau.
 5. Dữ liệu lịch sử giữ đúng bối cảnh tại thời điểm phát sinh; chuyển team không viết lại kết quả cũ.
 6. Secrets chỉ nằm trong môi trường server/credentials; không đưa vào frontend, Git hoặc file bàn giao.
-7. Commission/Payroll chỉ là hướng mở rộng kiến trúc, không triển khai trong V1.
+7. KPI/Target/Performance và Commission/Payroll chỉ là hướng mở rộng Chặng 2, không triển khai trong Chặng 1.
 
 ## 2. Phạm vi
 
-### Trong V1
+### Trong Chặng 1
 
 - Dashboard kết quả theo công ty, team, nhân viên và project.
 - Bộ lọc ngày/kỳ/team/nhân viên/project; so sánh kỳ và drill-down.
-- Đồng bộ Google Sheets qua n8n vào Supabase.
+- Đồng bộ Google Sheets qua n8n trong P0–P1 và cho nguồn legacy/external còn được duyệt sau cutover.
 - Master data, source registry, validation, chống trùng, retry, sync history và audit.
 - Đăng nhập, tổ chức, lịch sử phân công và phân quyền BoD/Leader/Staff.
-- Quản lý target tối thiểu; Actual/Target, Achievement, Remaining, Run Rate và lịch sử hiệu suất.
 - Trang vận hành tối thiểu để xem tình trạng nguồn dữ liệu và lỗi đồng bộ.
+- AI business analysis có bằng chứng trên dữ liệu aggregate đã kiểm chứng.
+- Nhập liệu tuyển dụng trực tiếp trên web theo trải nghiệm dạng Sheet, có hồ sơ CCCD/Hợp đồng, review/submit/correction, trạng thái ON/OFF do Kế toán quản lý, auth/RLS/audit và cutover khỏi Sheet ingestion.
 
-### Ngoài V1
+### Ngoài Chặng 1 — chuyển sang Chặng 2
 
+- KPI catalog, target, Achievement, Remaining, Run Rate và lịch sử hiệu suất.
 - Tính hoa hồng, incentive, lương, khấu trừ, kỳ lương và khóa kỳ lương.
-- UI, workflow, business rule hoặc estimate công sức cho Commission/Payroll.
+- UI, workflow, business rule hoặc estimate công sức cho KPI/Commission/Payroll.
 - Forecast, anomaly detection và phân tích nâng cao cần dữ liệu lịch sử dài.
-- Admin portal toàn diện, CRM hoặc thay thế toàn bộ quy trình nhập Google Sheets.
+- Admin portal toàn diện, CRM/ATS hoặc spreadsheet engine tự do. P1.6 chỉ thay quy trình nhập báo cáo tuyển dụng đã khóa schema, không thay mọi use case của Google Sheets.
 
 Các màn hình cấu hình cần thiết cho vận hành V1 có thể nằm trong scope từng phase; không mặc nhiên mở rộng thành management platform đầy đủ.
 
@@ -46,32 +48,37 @@ Các màn hình cấu hình cần thiết cho vận hành V1 có thể nằm tro
 
 | Lớp | Công nghệ dự kiến | Trách nhiệm |
 |---|---|---|
-| Nhập liệu | Google Sheets | Dữ liệu nguồn theo mẫu đã thống nhất |
-| Ingestion/automation | n8n self-hosted trên VPS | Đọc nguồn, chuẩn hóa, validate, đồng bộ, retry, cảnh báo |
+| Nhập liệu | Google Sheets đến P1; Next.js structured grid từ P1.6 | Dữ liệu theo mẫu đã thống nhất; web trở thành authority sau cutover |
+| Ingestion/automation | n8n self-hosted trên VPS | Đọc nguồn Sheet trong giai đoạn cũ; sau P1.6 chỉ dùng cho import chuyển đổi/automation khác khi thật sự cần |
 | Data platform | Supabase/PostgreSQL | Master data, facts, lịch sử, constraints, audit và reporting |
 | Web | Next.js/TypeScript | UI, API/server layer, phân quyền và báo cáo |
+| App Shell/điều hướng | Next.js shared layout + navigation registry | Một desktop sidebar thu gọn và mobile drawer dùng chung; module P1.6/P2/P3 chỉ đăng ký route/capability, không dựng menu riêng |
 | Hosting web | Vercel | DEV/preview và PROD theo cấu hình triển khai |
 | Source control | GitHub | Code, migrations, contract và workflow export đã loại secrets |
 
-Luồng chính: **Google Sheets → n8n → Supabase → Next.js → Người dùng**.
+Luồng P0–P1: **Google Sheets → n8n → Supabase → Next.js → Người dùng**.
+
+Luồng mục tiêu sau P1.6: **Người dùng đã đăng nhập → Next.js structured grid → Supabase → Dashboard/AI**.
 
 Supabase là điểm tích hợp chung. Next.js không xây pipeline đọc Google Sheets thứ hai. n8n không trở thành backend nghiệp vụ song song.
 
 ### Thư viện định hướng
 
-| Nhóm | Lựa chọn | Thời điểm |
+| Nhóm | Lựa chọn | Trạng thái thực tế / thời điểm |
 |---|---|---|
-| UI | Tailwind CSS, shadcn/ui, Lucide | P0–P1 |
-| Biểu đồ | Recharts | P1 |
-| Bảng | TanStack Table | P1 |
-| Filter URL | nuqs | P1 |
-| Ngày/kỳ | date-fns; xử lý timezone rõ ràng | P1 |
-| Dữ liệu tương tác/cache | TanStack Query khi cần | P1 trở đi |
-| Validation | Zod, kết hợp DB constraints | P0 trở đi |
-| Form | React Hook Form + Zod | Khi có form quản trị/target |
-| Database/Auth client | Supabase JS SDK; SSR integration khi cần | P0/P3 |
+| UI/App Shell | Tailwind CSS; `radix-ui` umbrella + `lucide-react`; source component shadcn/ui Sidebar/Sheet/Dialog chỉ phần cần dùng | Tailwind đã dùng; shadcn/Radix/Lucide **chưa cài**, chỉ thêm tại `APP-NAV-01` sau compatibility/bundle check; không tự dựng focus trap/drawer/sidebar |
+| Biểu đồ | Recharts | **Đã dùng** từ P1 (`recharts@3.10.1`) |
+| Grid nhập liệu | Pin `react-data-grid@7.0.0-beta.61` theo spike W01; Client Component route-scoped | **Chưa có trên main**; chỉ thêm sau G3 PASS; G4 xác nhận bundle/workload/IME/a11y |
+| Typeahead | Native/Radix trước; `cmdk` chỉ sau focused spike chứng minh cần | **Chưa cài**; quyết định đầu P1.6-W04 |
+| Bảng read-only | HTML table hiện có; chỉ thêm TanStack Table khi sorting/paging/column behavior thực tế vượt khả năng hiện tại | TanStack Table **chưa cài**; giữ native table hiện tại |
+| Filter URL | nuqs | **Đã dùng** từ P1 (`nuqs@2.10.1`) |
+| Ngày/kỳ | Native `Intl`/UTC-safe helper hiện có; chỉ thêm date-fns khi rule lịch thực tế cần | `date-fns` **chưa cài**; giữ helper hiện tại |
+| Dữ liệu tương tác/cache | Server Components/native fetch trước; TanStack Query chỉ khi cache/invalidation client có nhu cầu đo được | TanStack Query **chưa cài**; polling AI bền vững tiếp tục dùng controller hiện có |
+| Validation | Zod, kết hợp DB constraints | **Đã dùng** (`zod@4.6.5`) |
+| Form | Native form + Zod trước; React Hook Form chỉ cho form động/phức tạp có lợi ích rõ | React Hook Form **chưa cài** |
+| Database/Auth client | Supabase JS SDK; SSR integration khi cần | Supabase JS **đã dùng**; SSR nằm trong nhánh P1.6 cho Auth |
 
-Agent Web kiểm tra compatibility và khóa dependency version lúc scaffold. shadcn/ui được quản lý dưới dạng component trong source. Server Component dùng cho tải ban đầu phù hợp; Client Component cho filter, chart và tương tác. Chưa bổ sung Redux, Prisma, GraphQL, Redis hoặc các lớp hạ tầng khác khi chưa có nhu cầu cụ thể.
+Agent Web kiểm tra compatibility và khóa dependency version lúc scaffold. shadcn/ui được quản lý dưới dạng source component trong repo nhưng không copy cả bộ; generated wrapper LOC và runtime dependency vẫn phải được tính. Server Component dùng cho tải ban đầu phù hợp; Client Component cho filter, chart và tương tác. Trước khi tự viết interaction/accessibility primitive, phải kiểm tra code hiện có, native platform, rồi dependency đã duyệt. Durable AI polling, theme registry, native upload, `Intl`, native form và bảng read-only tiếp tục giữ nguyên cho tới khi có bằng chứng thay thế giảm code/rủi ro thật. Không bổ sung Sonner, CVA, `clsx`, `tailwind-merge`, Redux, Prisma, GraphQL, Redis hoặc các lớp hạ tầng khác khi chưa có change request và lợi ích đo được.
 
 ## 4. Phân quyền trách nhiệm giữa hai Agent
 
@@ -80,6 +87,7 @@ Agent Web kiểm tra compatibility và khóa dependency version lúc scaffold. s
 | Schema, migrations, constraints, indexes, reporting views/RPC | AI Coding Web | n8n góp yêu cầu ingestion |
 | Data contract và payload mẫu | AI Coding Web | n8n xác nhận khả năng đọc/ghi |
 | Workflow đọc Sheets, mapping, đồng bộ và retry | AI Assistant n8n | Web cung cấp contract |
+| Direct-entry schema, write boundary, grid UI và cutover authority | AI Coding Web | n8n chỉ hỗ trợ import/reconciliation khi cần |
 | Quy tắc nghiệp vụ, công thức chỉ số và target | AI Coding Web | Chủ dự án xác nhận; n8n cung cấp dữ liệu |
 | Auth, RLS, API và UI | AI Coding Web | n8n kiểm tra tác động tới tài khoản ingestion |
 | Sync logs, ingestion audit payload và vận hành workflow | AI Assistant n8n | Web tạo schema và UI giám sát |
@@ -95,11 +103,13 @@ Quyền nghiệp vụ không suy ra từ người sở hữu Sheet hoặc accoun
 |---|---|---|---|---|
 | P0 | Nền kỹ thuật và contract đầu tiên | Chính | Chính | Một dòng test chạy xuyên pipeline |
 | P1 | BoD Dashboard MVP | Chính về trải nghiệm | Chính về dữ liệu | BoD xem, filter và drill-down dữ liệu thật |
-| P2 | Dữ liệu đáng tin và nguồn động | Chính về DB/reporting | Chính về ingestion | Thêm nguồn qua registry; sync có đối soát và phục hồi |
+| P1.5 | AI Business Analyst | Chính | Trigger sau boundary nếu cần | BoD tạo phân tích có bằng chứng theo yêu cầu |
+| P1.6 | Direct Recruitment Entry | Chính | Migration/cutover và Drive worker nếu được chọn | User nhập/nộp/sửa có kiểm soát, quản lý hồ sơ và ON/OFF; không cần Sheet ingestion hằng ngày |
+| P2 | Data Platform & Reliability | Chính về canonical data/reporting | Conditional cho nguồn ngoài/automation | Direct-entry source đáng tin; nguồn ngoài nếu còn dùng có đối soát và phục hồi |
 | P3 | Auth, tổ chức và phân quyền | Chính | Phối hợp | Ba role chỉ thấy dữ liệu đúng phạm vi |
-| P4 | KPI và hiệu suất | Chính | Phối hợp | Target/Actual và báo cáo hiệu suất được nghiệm thu |
+| Chặng 2 | KPI/Target/Performance + Commission/Payroll | Rebaseline sau P3 | Chỉ khi cần automation | Kế hoạch riêng; không thuộc DoD Chặng 1 |
 
-Thực hiện theo P0 → P1 → P2 → P3 → P4. Các phần độc lập trong một phase có thể làm song song sau khi contract được thống nhất. Chưa cam kết lịch/công sức trước khi kiểm tra mẫu Sheet, quy mô và định nghĩa chỉ số.
+Chặng 1 thực hiện theo P0 → P1 → P1.5 → P1.6 → P2 → P3 và kết thúc sau nghiệm thu P3. P1.6 kéo sớm phần Auth/RBAC tối thiểu cần cho nhập liệu; P3 phải mở rộng cùng identity model, không dựng lại. Trước P1.6-W04, `APP-NAV-01` tạo App Shell/navigation registry dùng chung; P2 đăng ký thêm màn vận hành và P3 gắn visibility vào quyền thật thay vì xây sidebar mới. KPI/Target và Commission/Payroll chỉ được mở trong Chặng 2 sau một lần rebaseline nghiệp vụ, dữ liệu, quyền và công thức. P1.5 AI có thể phân tích actual đã kiểm chứng nhưng không thay thế KPI engine và không được tự suy target.
 
 ## 6. P0 — Foundation
 
@@ -164,6 +174,8 @@ Không đổi contract v0.2 âm thầm; nếu P1 cần schema mới phải versi
 
 **Đầu vào:** dữ liệu thật P1, lỗi thực tế và contract được bổ sung từ pilot.
 
+> Sau P1.6, các hạng mục Sheet/registry/incremental sync trong baseline P2 chỉ áp dụng cho nguồn legacy/external còn được T0 giữ lại. Canonical source là direct-entry database; P2-W01 phải rebaseline task N8N, không chạy hai authority song song.
+
 ### AI Coding Web
 
 - Hoàn thiện employee/team/project/customer master và source registry.
@@ -202,7 +214,7 @@ Khả năng mở rộng là yêu cầu cấu hình và kiến trúc; số lượ
 - Supabase Auth, session phía server, login/logout và user–employee mapping.
 - BoD: phạm vi công ty; Leader: team được phân công; Staff: bản thân.
 - Tạo RLS/backend authorization cho tables, views, RPC và API; role quản lý ở nguồn tin cậy.
-- UI phù hợp từng role; không dùng ẩn menu làm cơ chế bảo mật.
+- Mở rộng App Shell/navigation registry đã có: menu phù hợp từng role/capability, không dựng shell riêng và không dùng ẩn menu làm cơ chế bảo mật.
 - Hoàn thiện lịch sử employee-team và leader-team với ngày hiệu lực.
 - Cung cấp thao tác quản trị tối thiểu hoặc quy trình có kiểm soát để quản lý user/role/membership.
 
@@ -219,38 +231,11 @@ Kiểm tra ma trận role bằng truy cập trực tiếp API/DB và đổi filt
 
 Nhân viên chuyển team không làm thay đổi phân bổ kết quả lịch sử. Quyền Leader xem dữ liệu trước/sau thời điểm nhận team phải có quy tắc được duyệt và ca kiểm tra riêng; không mặc định mọi Leader hiện tại thấy toàn bộ lịch sử.
 
-## 10. P4 — KPI & Performance
+## 10. Chặng 2 — KPI, hiệu suất và Commission/Payroll (deferred)
 
-**Đầu vào:** định nghĩa KPI, target, kỳ đo, cách tính ngày làm việc và quyền sửa target đã được duyệt.
+Chặng 2 không nằm trong phạm vi thực thi hiện tại. `P4.md` được giữ như tài liệu khảo sát lịch sử, không phải prompt giao việc và không được dùng để mở task. Sau khi P3 hoàn tất, PO rebaseline KPI/Target/Performance cùng Commission/Payroll trong một kế hoạch Chặng 2 riêng để tránh thiết kế KPI tách rời cơ chế hoa hồng, lương, kỳ và khóa kỳ.
 
-### AI Coding Web
-
-- Mô hình KPI definitions, target assignments và lịch sử thay đổi có ngày hiệu lực/version.
-- Form quản lý target tối thiểu; quyền nhập/sửa target tách khỏi quyền chỉ xem báo cáo.
-- Công thức dùng chung ở DB/application: Actual, Target, Achievement, Remaining, Run Rate, Required Run Rate.
-- So sánh MoM/QoQ/YoY và progress kỳ hiện tại theo quy tắc nhất quán.
-- Dashboard Company/Team/Employee; lịch sử performance và drill-down.
-- Xử lý target thiếu/0, kỳ chưa kết thúc, ngày còn lại bằng 0 và dữ liệu chưa đầy đủ.
-
-### AI Assistant n8n
-
-- Ingest target/KPI từ nguồn ngoài nếu quy trình yêu cầu; không ghi đè target do web quản lý.
-- Refresh/aggregation/snapshot theo lịch khi có nhu cầu đã thống nhất.
-- Validate nguồn KPI, theo dõi lỗi và gọi logic dùng chung; không sao chép công thức trong nodes.
-
-### Bàn giao và nghiệm thu
-
-Kết quả tính khớp bộ ví dụ nghiệp vụ đã duyệt và nhất quán giữa các dashboard. Target thiếu được thể hiện là chưa thiết lập; không biến thành 0% đạt. Kỳ so sánh ghi rõ so sánh toàn kỳ hay cùng tiến độ. Thay đổi target có người thực hiện, thời điểm và lý do; có thể giải thích báo cáo lịch sử.
-
-Các công thức sơ bộ để chốt trong đặc tả:
-
-- Achievement = Actual / Target × 100%, chỉ khi Target > 0.
-- Remaining = max(Target − Actual, 0) với KPI tăng là tốt; KPI khác cần rule riêng.
-- Run Rate = Actual / số ngày đã qua theo lịch đo thống nhất.
-- Required Run Rate = Remaining / số ngày còn lại, chỉ khi số ngày còn lại > 0.
-- Growth = (Current − Previous) / Previous × 100%, cần chính sách khi Previous = 0.
-
-Đây chưa phải công thức nghiệp vụ đã phê duyệt. Không mặc định cộng tỷ lệ KPI hoặc cộng mọi target team/nhân viên thành target công ty.
+P1.5 AI chỉ nhận aggregate/feature đã kiểm chứng để phân tích actual, điểm mạnh/yếu và phụ thuộc; AI không tạo target, không chấm đạt/chưa đạt và không biến nhận định thành công thức trả tiền.
 
 ## 11. Data contract và lịch sử
 
@@ -258,7 +243,7 @@ Contract được viết trước khi giao việc tích hợp của mỗi phase.
 
 | Nội dung bắt buộc | Quy tắc |
 |---|---|
-| Định danh | Internal ID ổn định; employee code là business key theo quy tắc đã duyệt; không dùng tên người hoặc số hàng Sheet làm khóa lâu dài |
+| Định danh | Internal ID ổn định; app user (actor), employee và recruiter (business subject) là các identity tách biệt, chỉ liên kết bằng mapping explicit; không dùng tên người hoặc số hàng Sheet làm khóa lâu dài |
 | Grain | Chốt một dòng là transaction, kết quả theo ngày hay grain khác; không gộp mất chi tiết nguồn trước khi được duyệt |
 | Payload | Tên trường, kiểu, nullable/default, enum, valid/invalid examples |
 | Nguồn | source ID, sheet/tab, stable record key, run ID và raw reference |
@@ -269,8 +254,11 @@ Contract được viết trước khi giao việc tích hợp của mỗi phase.
 | Lỗi | Error code, reason, trạng thái cách ly và cách replay |
 | Chỉ số | Định nghĩa Actual, bộ lọc hợp lệ, kỳ và nguyên tắc aggregation |
 | Lịch sử | Membership theo hiệu lực, target versions, change audit và chính sách sửa dữ liệu nguồn |
+| Hồ sơ | Document type/version/checksum/storage ID/quyền/retention; không dùng filename hoặc Drive folder làm identity |
+| Submission/correction | Draft/review/submitted và correction request có snapshot/version/actor/decision; submitted row không sửa trực tiếp |
+| Trạng thái lao động | Append-only ON/OFF events có effective date/actor/reason; tách khỏi metric người đã tuyển |
 
-Để mở đường cho Commission/Payroll, V1 giữ ID ổn định, business date, dữ liệu chi tiết phù hợp nguồn, project/employee linkage, lịch sử tổ chức và audit. Không tạo sẵn các bảng tính hoa hồng/lương hoặc triển khai engine tương lai.
+Để mở đường cho Chặng 2, Chặng 1 giữ ID ổn định, business date, dữ liệu chi tiết phù hợp nguồn, project/employee linkage, lịch sử tổ chức và audit. Không tạo sẵn bảng KPI/hoa hồng/lương hoặc triển khai engine tương lai.
 
 ## 12. Cách phối hợp và bàn giao
 
@@ -281,7 +269,19 @@ Contract được viết trước khi giao việc tích hợp của mỗi phase.
 5. Cả hai đối soát end-to-end; ghi lỗi, sửa và kiểm tra lại phần bị ảnh hưởng.
 6. Chủ dự án nghiệm thu gate; cập nhật baseline nếu scope thay đổi.
 
-Mỗi task giao sau master plan phải có: **Task ID, owner, dependency, input, output, acceptance criteria, phần được phép sửa và handoff cho Agent còn lại**.
+### P3 Fast Track — kiểm thử theo rủi ro
+
+P3 ưu tiên hoàn thành lát cắt Auth/RBAC end-to-end trước, sau đó gom full regression vào P3-J01. Agent không chạy toàn bộ test/build/browser matrix sau mỗi chỉnh sửa nhỏ. Chính sách chi tiết và danh sách “hàng rào đỏ” nằm trong `P3.md` §6.1; nếu tài liệu khác mâu thuẫn, §6.1 được ưu tiên trong phạm vi P3.
+
+- **FT0 — mỗi task/iteration:** test đúng module thay đổi, typecheck, lint phần liên quan và `git diff --check`.
+- **FT1 — gate/migration/integration:** thêm build một lần, migration checks, DEV integration và allowed/denied cho boundary vừa thay đổi.
+- **FT2 — P3-J01:** full test suite, production build, security/API/DB matrix, browser/mobile, performance và regression P1–P2/P1.5/P1.6.
+
+Không được hoãn kiểm tra server session/actor authority, RLS/grants/RPC/API authorization, forged actor/scope, secret/PII leakage hoặc migration/data compatibility. Lỗi thuộc các nhóm này phải sửa và retest trước khi tiếp tục. Các kiểm tra khác được hoãn phải ghi vào deferred test register; `IMPLEMENTED_FAST_TRACK` không đồng nghĩa `PASS`.
+
+Để tránh một Agent trở thành nút thắt, mọi P3 work package phải chia thành micro-task có một primary outcome, mục tiêu hoàn tất trong một working turn/timebox 60–90 phút và tạo được checkpoint độc lập. Không gộp implementation, DEV apply, live acceptance, UI, deploy và full regression vào cùng một prompt. Task vượt timebox phải bảo toàn phần coherent, báo `DONE/PENDING/BLOCKER` và dừng để coordinator giao slice tiếp theo; chi tiết xem `P3.md` §6.1.
+
+Mỗi task giao sau master plan phải có: **Task ID, owner, dependency, input, primary outcome, output, acceptance criteria, phần được phép sửa, stop condition, test tier FT0/FT1/FT2, deferred tests, checkpoint và handoff cho Agent còn lại**.
 
 Gói bàn giao Web: code commit, migrations, contract version, env mẫu, hướng dẫn chạy và bằng chứng kiểm tra. Gói bàn giao n8n: workflow export, mapping version, danh sách credentials cần cấu hình, lịch chạy, log mẫu và hướng dẫn retry/recovery. Không kèm giá trị secrets.
 
@@ -294,10 +294,10 @@ Khi đổi contract: nêu lý do/tác động → Web tạo migration và cập 
 | Kết quả kinh doanh đo gì: doanh thu, số người, số giao dịch hay chỉ số khác | Contract P0/P1 | Fact grain, cards và aggregation |
 | Mẫu Sheet, định danh dòng, cách sửa/xóa và chất lượng dữ liệu | P0 | Mapping, upsert, reconciliation |
 | Nguồn pilot, tổng nguồn và khối lượng/lịch cập nhật | P1/P2 | Sync schedule và performance |
-| Đầu tuần, timezone, lịch làm việc, so sánh kỳ chưa kết thúc | P1/P4 | Filter và KPI |
+| Đầu tuần, timezone, lịch làm việc, so sánh kỳ chưa kết thúc | P1/Chặng 2 | Filter và KPI |
 | Nhân viên làm nhiều team/project; leader quản lý nhiều team | P2/P3 | Membership và scope |
 | Chính sách xem lịch sử sau chuyển team/leader | P3 | RLS và truy vấn lịch sử |
-| KPI, quyền sửa target và cách giữ lịch sử target | P4 | Công thức và workflow |
+| KPI, quyền sửa target, Commission/Payroll và lịch sử thay đổi | Chặng 2 | Công thức, tiền và workflow |
 | Kênh cảnh báo, người vận hành, thời hạn lưu raw/log và mức freshness mong muốn | P2 | Vận hành và lưu trữ |
 
 Các mục này là backlog quyết định, không phải giả định đã được xác nhận. Hai Agent không tự đặt business rule khi thiếu quyết định; ghi câu hỏi cùng đề xuất và tiếp tục phần không phụ thuộc.
@@ -311,32 +311,32 @@ Các mục này là backlog quyết định, không phải giả định đã đ
 | Dữ liệu sửa ở dòng cũ bị bỏ sót | Reconciliation định kỳ ngoài incremental sync |
 | Chuyển team làm sai lịch sử | Membership theo hiệu lực và phân bổ theo business date |
 | Dashboard có số nhưng nguồn chưa cập nhật đủ | Last successful sync, completeness/freshness status |
-| UI và n8n tính KPI khác nhau | Một implementation nghiệp vụ dùng chung |
+| Chặng 2 tính KPI/hoa hồng khác nhau giữa UI và automation | Một implementation nghiệp vụ dùng chung |
 | Lộ dữ liệu trước P3 hoặc qua view/API | Truy cập pilot có kiểm soát; kiểm tra quyền từ backend |
 | Hai Agent sửa schema lệch nhau | Web sở hữu migrations; contract version và integration gate |
 | Scope trượt sang hoa hồng/lương/admin toàn diện | Giữ danh sách ngoài scope; thay đổi phải cập nhật baseline |
 
-## 15. Definition of Done — V1
+## 15. Definition of Done — Chặng 1
 
-V1 hoàn thành khi P0–P4 đều được nghiệm thu và:
+Chặng 1 hoàn thành khi P0–P3 (bao gồm P1.5/P1.6) đều được nghiệm thu và:
 
 - BoD/Leader/Staff dùng được báo cáo đúng phạm vi trên mobile và desktop.
-- Kết quả và KPI khớp bộ đối soát; có thể truy nguồn và giải thích công thức.
+- Kết quả và phân tích AI khớp bộ đối soát; có thể truy nguồn và giải thích bằng chứng.
 - Thêm nguồn/nhân viên/team/project không cần đổi kiến trúc hoặc hard-code.
 - Sync có chống trùng, xử lý lỗi, quan sát tình trạng và phục hồi đã được kiểm tra.
 - RLS/API được kiểm tra cả ca được phép và bị từ chối; secrets không lộ ra frontend.
-- Lịch sử tổ chức, dữ liệu và target được xử lý theo chính sách đã duyệt.
+- Lịch sử tổ chức và dữ liệu được xử lý theo chính sách đã duyệt.
 - Có code/workflow/migrations/contract và hướng dẫn triển khai, vận hành, backup/restore.
-- Không có Commission/Payroll trong tính năng V1.
+- Không có KPI/Target/Commission/Payroll trong tính năng Chặng 1.
 
 ## 16. Tài liệu chi tiết ở bước tiếp theo
 
 Master plan này là điểm tham chiếu cho các tài liệu sẽ viết sau:
 
 - `data-contract.md`: schema logic, payload, grain, lịch sử, chỉ số và error contract.
-- `phase-0-plan.md` đến `phase-4-plan.md`: task IDs, dependencies, deliverables và nghiệm thu.
+- `P0.md` đến `P3.md` cùng `P1.5.md`/`P1.6.md`: task IDs, dependencies, deliverables và nghiệm thu Chặng 1.
 - `agent-web-brief.md` / `agent-n8n-brief.md`: prompt giao việc cho từng Agent.
-- `acceptance-checklist.md`: bộ đối soát dữ liệu, ma trận quyền và ví dụ tính KPI.
+- `acceptance-checklist.md`: bộ đối soát dữ liệu, ma trận quyền và bằng chứng AI.
 - `operations-runbook.md`: sync monitoring, retry, incident handling và phục hồi.
 
 Các file trên chưa được tạo trong bước này. Ưu tiên tiếp theo là chốt dữ liệu mẫu và contract P0/P1, rồi chia task chi tiết cho hai Agent.
