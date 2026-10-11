@@ -1,6 +1,6 @@
 # P3-W05B-S0 — BoD recruitment reporting by team (Survey / Contract Lock)
 
-> **Status:** `P3_W05B_S0_R4_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `P3_W05B_S0_R5_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
 > **Base:** `origin/main@5f41caf689dbfd52bb889744f227aa659da393db`
 >   (`fix(projects): compact table layout without forced scroll`).
 > **Branch:** `audit/p3-w05b-s0-bod-team-reporting-survey`
@@ -302,10 +302,25 @@ future toggle is **out of scope** and is a deferred extension (see
 sentinel `bucket_key` in W05B is the literal string `"unknown"`
 (namespace B in §2.5.2), reserved for the unknown bucket. No
 other sentinel is allowed; the `__system_vendor__` reserved team
-identity is a `teams.code` (a real team) and is treated like any
-other team in the chart (its bucket shows up as a known-team
-bucket if it has facts in the result, with a token of the form
-`team.<base64url("__system_vendor__")>`). The legacy R1 sentinel
+identity is a `teams.code` (a real row in `public.teams`) and is
+treated like any other team in the **W05B BoD chart
+aggregation for the audience `all`**: its bucket shows
+up as a known-team bucket if it has facts in the
+result, with a token of the form
+`team.<base64url("__system_vendor__")>`. The Vendor
+system team is **not** a business team (W07A-R3
+trigger
+`direct_entry_reject_system_vendor_business_team`
+blocks `recruiter_team_memberships` and
+`direct_entry_scope_grants` and labels the row "not a
+business team") and is **not** selectable as a
+report-audience team for the `team` / `own` audience —
+so a `team` / `own` audience actor never sees the
+Vendor bucket in the chart (their `team_ids` never
+resolve to the system team), and the W05B drill-down
+RPC is `dbKind === "all"` gated and rejects
+`team` / `own` / anonymous actors with
+`REPORTING_QUERY_FAILED`. The legacy R1 sentinel
 `__unknown__` is **not** a valid token in W05B and the server
 rejects it (the `__` decoration is a stale alias; the namespace
 contract locks the unknown literal as the bare `unknown` with no
@@ -667,22 +682,57 @@ The token rules in detail:
      migration #66) install a single canonical
      `__system_vendor__` row in `public.teams` and
      route every `provider_type='vendor'` Direct Entry
-     fact to that row's `team_id`; the W07A-R3
+     fact to that row's `team_id`. The
+     `__system_vendor__` row is a **system team**,
+     not a business team: the row is **active** in
+     `public.teams` (canonical, unique), but W07A-R3
+     explicitly labels the reserved row as "not a
+     business team" (the trigger
      `direct_entry_reject_system_vendor_business_team`
-     trigger blocks business membership and team-scope
-     grants for the reserved team, but the row is
-     itself a normal, active, business-readable team on
-     the read path. The W05B reporting read path
-     therefore **accepts** a known-team token whose
-     decoded canonical `code` is the literal
-     `__system_vendor__`, provided the row exists in
-     `public.teams` (W07A-R4 lines 39–49 guarantee the
-     row is canonical, unique, and active before any
-     backfill). The two rules — W01C-A mutation
-     (catalog create/update reject) and W05B reporting
-     resolution (read path accepts) — are
-     **deliberately disjoint**; this memo locks the
-     read-path rule.
+     raises `'reserved Vendor team is not a business
+     team'` on every attempt to insert the row into
+     `public.recruiter_team_memberships` or into
+     `public.direct_entry_scope_grants` with
+     `scope_kind = 'team'`). W07A-R3 also comments
+     the trigger as "Prevent the reserved row from
+     becoming a selectable recruiter team or a
+     report audience, including through later
+     administrative provisioning." — the system team
+     is not selectable as a business team, not
+     selectable as a report `team` / `own` audience
+     team, and not a target for catalog
+     create / update / activate. The W05B reporting
+     read path therefore **accepts** a known-team
+     token whose decoded canonical `code` is the
+     literal `__system_vendor__`, provided the row
+     exists in `public.teams` (W07A-R4 lines 39–49
+     guarantee the row is canonical, unique, and
+     active before any backfill). The bucket and the
+     drill-down are reachable only for the BoD
+     audience `all`: the W05A
+     `direct_entry_reporting_resolve_audience` RPC
+     returns `audience = 'all'` only when the actor
+     has an active `all` scope grant, and the
+     `all`-scope authorized-entries view reads every
+     Vendor Direct Entry fact (the Vendor team's
+     `team_id` is in the join, but the audience is
+     not filtered by `team_ids`); a `team` / `own`
+     audience never includes the Vendor system team
+     in its `team_ids` (the W07A-R3 trigger blocks
+     the team-scope grant, so no actor has a
+     `team_ids` that resolves to `__system_vendor__`),
+     and the W05B drill-down RPC also gates on
+     `dbKind === "all"` and rejects `team` / `own` /
+     anonymous actors with `REPORTING_QUERY_FAILED`.
+     The W05B acceptance of the reserved literal is
+     therefore **read-path-only, BoD-only**, and
+     does **not** infer any business-team permission
+     or any `team` / `own` audience scope. The two
+     rules — W01C-A mutation (catalog
+     create / update / activate reject) and W05B
+     reporting resolution (read path accepts, BoD
+     audience only) — are **deliberately disjoint**;
+     this memo locks the read-path rule.
   8. Look up the canonical `code` against
      `public.teams.code` (the `unique` index). The
      payload must match exactly one row. Zero or more
@@ -895,7 +945,7 @@ display text, **not** a UUID.
 | Team drill-down row shape | Only `business_date, project_display, recruiter_display, provider_type_display, employment_type_display, recruited_count, first_work_date` (no `entry_id`, no `team_id`, no `team_code`, no `bucket_key`, no `teams.code`, no internal id) | n/a | n/a | n/a |
 | Team drill-down `limit` | Default 25, max 100; >100 → `INVALID_FILTER`; `limit = 0` → `INVALID_FILTER`; non-numeric `limit` → `INVALID_FILTER` | n/a | n/a | n/a |
 | Team drill-down `cursor` | Opaque server string; out-of-range returns empty page + `nextCursor: null`; undecodable `cursor` → `INVALID_FILTER` | n/a | n/a | n/a |
-| Team drill-down `bucket_key` validation | Wire check (BEFORE any decode) accepts exactly two forms: the unknown literal `"unknown"` (length 7), OR a known-team token matching `^team\.[A-Za-z0-9_-]+$` with `7 ≤ length ≤ 688` (the upper bound covers the worst-case legal canonical `teams.code`: 128 characters × max 4 UTF-8 bytes/char = 512 bytes; `512 = 170*3 + 2` → `170*4 + 3 = 683` base64url chars + 5-char `team.` prefix = 688; verified against Node's `Buffer.from(512-byte buffer).toString('base64url') === 683` chars). For known-team tokens the server then strips the `team.` prefix, base64url-decodes the payload, validates the canonical-form check (UTF-8 well-formedness + byte-for-byte re-encode comparison, see §2.5.2), validates the canonical `teams.code` check (`btrim` non-empty, `length(btrim(code)) between 1 and 128` character count, no whitespace `[[:space:]]`, no control `[[:cntrl:]]`), and resolves the canonical `code` against `public.teams.code` (must match exactly one row). The W01C-A **reserved-literal rejection** is a **catalog-mutation** guard only; the W05B reporting read path **accepts** a known-team token whose decoded canonical `code` is the literal `__system_vendor__` provided the row exists in `public.teams` (W07A-R3/R4 install and use that row as the canonical Vendor team for all `provider_type='vendor'` facts — see E22). Anything else — including the R3 stale `__unknown__`, the literal `team.` with no payload, the literal `team` with no `.`, whitespace, punctuation outside the base64url alphabet, a payload that decodes to a non-`teams.code` string (whitespace, control, length > 128), a payload that fails the canonical re-encode comparison (non-canonical base64url alias), a known-team token shorter than 7 chars, a known-team token longer than 688 chars, or a payload that matches zero or more than one `public.teams` row — is rejected as `INVALID_FILTER` (no 404 leak). The drill-down RPC is also `dbKind === "all"` gated; a `team` / `own` / anonymous actor is rejected with `REPORTING_QUERY_FAILED` (see §2.5). The RPC signature has no audience parameter; the audience is always re-resolved server-side from `(p_auth_subject, p_app_user_id)` (see §2.6). | n/a | n/a | n/a |
+| Team drill-down `bucket_key` validation | Wire check (BEFORE any decode) accepts exactly two forms: the unknown literal `"unknown"` (length 7), OR a known-team token matching `^team\.[A-Za-z0-9_-]+$` with `7 ≤ length ≤ 688` (the upper bound covers the worst-case legal canonical `teams.code`: 128 characters × max 4 UTF-8 bytes/char = 512 bytes; `512 = 170*3 + 2` → `170*4 + 3 = 683` base64url chars + 5-char `team.` prefix = 688; verified against Node's `Buffer.from(512-byte buffer).toString('base64url') === 683` chars). For known-team tokens the server then strips the `team.` prefix, base64url-decodes the payload (canonical base64url — RFC 4648 §5 no-padding alphabet `A-Z a-z 0-9 - _`), validates the canonical-form check (UTF-8 well-formedness + byte-for-byte re-encode comparison, see §2.5.2), validates the canonical `teams.code` check (`btrim` non-empty, `length(btrim(code)) between 1 and 128` character count, no whitespace `[[:space:]]`, no control `[[:cntrl:]]`), and resolves the canonical `code` against `public.teams.code` (must match exactly one row). **The W05B known-team validation has no `__system_vendor__` rejection** — the W01C-A reserved-literal rejection (`p3_1_w01c_a_team_catalog.sql` line 410) is a **catalog-mutation** guard only and is **not** applied here; the W05B reporting read path **accepts** a known-team token whose decoded canonical `code` is the literal `__system_vendor__` provided the row exists in `public.teams` (W07A-R3 / R4 install and use that row as the canonical Vendor **system** team — not a business team — for all `provider_type='vendor'` facts; see E22). The system team is read-accessible on the W05B reporting read path only, and the drill-down is reachable only for the BoD audience `all`. Anything else — including the R3 stale `__unknown__`, the literal `team.` with no payload, the literal `team` with no `.`, whitespace, punctuation outside the base64url alphabet, a payload that decodes to a non-`teams.code` string (whitespace, control, length > 128), a payload that fails the canonical re-encode comparison (non-canonical base64url alias), a known-team token shorter than 7 chars, a known-team token longer than 688 chars, or a payload that matches zero or more than one `public.teams` row — is rejected as `INVALID_FILTER` (no 404 leak). The drill-down RPC is also `dbKind === "all"` gated; a `team` / `own` / anonymous actor is rejected with `REPORTING_QUERY_FAILED` (see §2.5). The RPC signature has no audience parameter; the audience is always re-resolved server-side from `(p_auth_subject, p_app_user_id)` (see §2.6). | n/a | n/a | n/a |
 | Filter outside the W05A parser | Rejected as `INVALID_FILTER` | n/a | n/a | n/a |
 | Unknown bucket contributors | Legacy aggregate + Direct Entry defensive null / orphan only (see §2.3 / §2.3.3) | n/a | n/a | n/a |
 | Inactive-team rows in BoD team chart | Render under the team's own bucket with display label suffixed " (Đã ngừng hoạt động)"; `bucket_key` and `recruitedCount` unchanged (see §2.3.1) | n/a | n/a | n/a |
@@ -1159,14 +1209,20 @@ The T0 acceptance gates are:
   bucket, not Unknown).** A test seeds a real team
   whose `code = "__system_vendor__"`,
   `display_name = "Vendor"`, `active = true` (this is
-  the canonical, unique, active row that W07A-R3
-  installs in `public.teams` and that W07A-R4 keeps
-  canonical — both migrations precondition the row
-  before any backfill; the W07A-R3 trigger
+  the canonical, unique, active system-team row that
+  W07A-R3 installs in `public.teams` and that W07A-R4
+  keeps canonical — both migrations precondition the
+  row before any backfill; the W07A-R3 trigger
   `direct_entry_reject_system_vendor_business_team`
-  blocks business membership and team-scope grants for
-  this team, but the row is itself a normal, active,
-  business-readable team on the read path). The test
+  raises `'reserved Vendor team is not a business
+  team'` on every attempt to insert the row into
+  `public.recruiter_team_memberships` or into
+  `public.direct_entry_scope_grants` with
+  `scope_kind = 'team'`, so the system team is not a
+  business team, is not a selectable recruiter team,
+  and is not a selectable report-audience team — the
+  row is a system team that exists in `public.teams`
+  for the read path only). The test
   then seeds N Vendor Direct Entry facts whose
   `team_id` resolves to that team (W07A-R3 / R4 route
   every `provider_type='vendor'` fact to that team_id).
@@ -1242,7 +1298,7 @@ unchanged):
 | Accept a `bucket_key` whose decoded payload is not well-formed UTF-8 (skip the UTF-8 well-formedness check in §2.5.2 step 3) | E20, E21 |
 | Accept a `bucket_key` whose decoded payload contains whitespace or control characters (skip the W01C-A `[[:space:]]` / `[[:cntrl:]]` guard in §2.5.2 step 7) | E20, E21 |
 | Accept a `bucket_key` whose decoded `teams.code` is longer than 128 characters (skip the W01C-A character-count check in §2.5.2 step 7) | E20 |
-| **Reject a `bucket_key` whose decoded canonical `code` is the W01C-A reserved `__system_vendor__` literal (treat the reserved literal as a read-path `INVALID_FILTER` like the R3 contract did)** | E22 |
+| **Reject a `bucket_key` whose decoded canonical `code` is the W01C-A reserved `__system_vendor__` literal at the drill-down validation step** (treat the reserved literal as a drill-down `INVALID_FILTER` like the R3 contract did — the chart aggregation is **not** affected, the canonical row is still in `public.teams`, and the Vendor facts are still charted under the Vendor bucket; the mutation only fails E22's drill-down request with `INVALID_FILTER`) | E22 |
 | Bucket an inactive team into "Không xác định" | E12 |
 | Render the legacy aggregate as entry-level rows in the unknown panel | E14 |
 | Skip the unknown panel section A (legacy aggregate total) and only show anomaly rows | E3, E14 |
@@ -1375,8 +1431,13 @@ approves the contract above.
   and §2.5.2 step 7; the M29 mutation **reject a
   known-team token whose decoded canonical `code` is
   the reserved `__system_vendor__` literal** fails E22
-  closed — the Vendor bucket disappears from the chart
-  and the Vendor drill-down is rejected; W07A-R3 / R4
+  closed **at the drill-down validation step only** —
+  the chart aggregation is unaffected (the Vendor
+  bucket is still emitted because the canonical row
+  exists), but the Vendor drill-down request is
+  rejected with `INVALID_FILTER` (the chart's
+  Vendor bucket key no longer opens a drill-down
+  result); W07A-R3 / R4
   guarantee the row exists, so the read path's
   acceptance is exact — see E22), validates `limit` (default 25, max 100), validates
   `cursor` (server-issued opaque string; an undecodable
@@ -1553,10 +1614,12 @@ approves the contract above.
   Unicode `teams.code` whose UTF-8 size is up to 512 bytes,
   with a wire token of up to 688 chars); or **treats the
   W01C-A reserved `__system_vendor__` literal as a
-  read-path `INVALID_FILTER`** (R3's wrong rule, which
-  would silently drop every Vendor Direct Entry fact
-  into Unknown or reject the Vendor drill-down — see
-  E22 / M29). Mitigation: §2.5.2
+  read-path `INVALID_FILTER`** (R3's wrong rule,
+  which would reject every Vendor drill-down
+  request as `INVALID_FILTER` — see E22 / M29;
+  the chart's Vendor bucket is **not** affected
+  by the M29 validation-only mutation, only the
+  drill-down endpoint is). Mitigation: §2.5.2
   locks the namespaced contract — known-team tokens are
   `team.<base64url(UTF-8(teams.code))>` (namespace A), the
   unknown literal is the bare `unknown` (namespace B); the
@@ -1715,7 +1778,19 @@ approves the contract above.
   a **catalog-mutation** guard only, deliberately disjoint
   from the W05B reporting resolution rule that accepts
   the literal on the read path — see §2.5.2 step 7 and
-  E22); the BoD team chart and
+  E22; the `__system_vendor__` team is a **system
+  team**, not a business team — it is excluded from
+  the business catalog (W01C-A line 410 rejects the
+  reserved literal on catalog create), blocked from
+  `recruiter_team_memberships` and
+  `direct_entry_scope_grants` (W07A-R3 trigger
+  raises `'reserved Vendor team is not a business
+  team'`), and not a selectable report-audience team;
+  the W05B bucket and drill-down are reachable only
+  for the BoD audience `all`, and the W05B drill-down
+  RPC re-resolves the audience server-side and
+  rejects `team` / `own` / anonymous actors with
+  `REPORTING_QUERY_FAILED`); the BoD team chart and
   the team drill-down are reachable only for a DB-confirmed `all`
   audience; the drill-down is server-side, bounded (default 25,
   max 100), filter-narrowing, sanitized (no UUID, no recruiter_key,
@@ -1761,8 +1836,8 @@ approves the contract above.
   aggregate-grain paginated rows in the unknown panel; Owner
   browser UAT.
 - **Review pass:** this memo is
-  `P3_W05B_S0_R4_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
-  (R4 of the S0 survey; R1 locked the four prior blockers;
+  `P3_W05B_S0_R5_BOD_TEAM_REPORTING_SURVEY_PASS_AWAITING_T0_REVIEW`
+  (R5 of the S0 survey; R1 locked the four prior blockers;
   R2 locked the namespaced `bucket_key` contract to remove
   the `teams.code` vs unknown-sentinel collision; R3 locked
   the byte-bound correctness for 128-character Unicode
@@ -1802,10 +1877,63 @@ approves the contract above.
   decoded canonical `code` is the literal
   `__system_vendor__`** (i.e. treat the reserved literal
   as a read-path `INVALID_FILTER` like the R3 contract
-  did) → E22 fails closed (the Vendor bucket disappears
-  from the chart and the Vendor drill-down is rejected;
-  the W07A-R3 / R4 Vendor team is silently dropped to
-  Unknown or rejected)). T0's review will check the locked decisions
+  did) → E22 fails closed **at the drill-down
+  validation step only** — the chart's Vendor bucket
+  is unaffected (the canonical row still exists in
+  `public.teams`, so the chart aggregation still
+  emits the Vendor bucket), but the Vendor
+  drill-down request is rejected with
+  `INVALID_FILTER`; the Vendor facts are **not**
+  dropped into Unknown and the `recruitedTotal`
+  invariant still holds. **R5 refines the Vendor
+  system-team terminology and narrows the M29
+  mutation to the drill-down validation step**:
+  (a) the `__system_vendor__` row is a **system
+  team**, not a business team — the row is active
+  in `public.teams` (canonical, unique) for the read
+  path only; W07A-R3 explicitly labels the row "not
+  a business team" (the trigger
+  `direct_entry_reject_system_vendor_business_team`
+  raises `'reserved Vendor team is not a business
+  team'` on every attempt to insert the row into
+  `public.recruiter_team_memberships` or
+  `public.direct_entry_scope_grants` with
+  `scope_kind = 'team'`); W07A-R3 also comments the
+  trigger as "Prevent the reserved row from becoming
+  a selectable recruiter team or a report audience,
+  including through later administrative
+  provisioning"; (b) the W05B bucket and drill-down
+  are reachable only for the BoD audience `all`
+  (the W05A `direct_entry_reporting_resolve_audience`
+  RPC returns `audience = 'all'` only when the actor
+  has an active `all` scope grant; the W07A-R3
+  trigger blocks the team-scope grant, so a `team` /
+  `own` audience never has a `team_ids` that resolves
+  to `__system_vendor__`); (c) the W05B
+  known-team validation has **no `__system_vendor__`
+  rejection** — the W01C-A reserved-literal
+  rejection (line 410) is catalog-mutation only and
+  is not applied to the read path; the W05B rule is
+  btrim non-empty, 1..128 characters, no
+  whitespace, no control, canonical base64url, and
+  one-row `public.teams.code` lookup — the W05B rule
+  **allows** the reserved literal if the canonical
+  row exists; (d) the M29 mutation is
+  **drill-down-validation-only** — the mutation
+  rejects a Vendor drill-down request with
+  `INVALID_FILTER` at the §2.5.2 step 7 wire check,
+  but the chart's Vendor bucket is **not** affected
+  (the canonical row still exists in `public.teams`,
+  so the chart aggregation still emits the Vendor
+  bucket for the BoD audience `all`); the Vendor
+  facts are **never** silently dropped to Unknown by
+  the M29 mutation; the `recruitedTotal` invariant
+  still holds under M29. R5 removes all R3 / R4
+  wording that says the Vendor bucket "disappears
+  from the chart" or the Vendor facts are "silently
+  dropped" under M29 — those claims were
+  over-scoping the M29 mutation (the mutation is
+  validation-only, not aggregation). T0's review will check the locked decisions
   in §2.1, §2.2, §2.3 / §2.3.1 / §2.3.2, §2.4,
   §2.5 / §2.5.2 / §2.5.3 / §2.5.4, the acceptance /
   mutation plan in §2.8 (E1-E22, M1-M29), the migration
