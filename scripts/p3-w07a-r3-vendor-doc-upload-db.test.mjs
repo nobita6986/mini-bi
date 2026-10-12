@@ -34,8 +34,8 @@ async function buildDb() {
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
-  assert.equal(names.length, 84);
-  assert.equal(names.at(-20), MIGRATION);
+  assert.equal(names.length, 85);
+  assert.equal(names.at(-21), MIGRATION);
   return db;
 }
 
@@ -287,8 +287,9 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
       "select column_name from information_schema.columns" +
         " where table_schema='public' and table_name='direct_entry_reporting_facts_v01'",
     )).rows.map((row) => row.column_name);
-    assert.equal(factColumns.some((name) => name.includes("team")), false,
-      "reporting facts do not project the hidden team identifier or label");
+    const teamFactColumns = factColumns.filter((name) => name.includes("team"));
+    assert.deepEqual(teamFactColumns, ["team_id", "team_code", "team_display_name", "team_active"],
+      "R9 reporting facts append the four server-side team projection columns");
   } finally {
     await db.close();
   }

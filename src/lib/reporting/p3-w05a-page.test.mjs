@@ -52,3 +52,10 @@ test("E22: audience projection carries only kind + label (no UUID/grants/raw sco
   assert.ok(!/app_user_id|auth_subject|team_id|recruiter_id|grant|scope_kind|email/.test(body), "projection must not carry actor identity/grants");
 });
 
+test("W05B: aggregate byTeam stays in the server read-model and never joins teams in the client", () => {
+  assert.match(server, /computeReporting\(sources, combinedFacts, filters, sourcesWithFacts\)/);
+  assert.match(server, /payload\.facts/);
+  assert.doesNotMatch(page, /direct_entry_reporting_facts_v01/);
+  assert.doesNotMatch(page, /teams|team_id|team_code|team_display_name/);
+});
+
