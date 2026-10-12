@@ -205,9 +205,9 @@ test("P3.1-W02A serializes leader revocation and manager transfer against assign
       run(pgCtl, [
         "-D", dataDir,
         "-l", logFile,
-        "-o", `-h 127.0.0.1 -p ${port}`,
+        "-o", `-h 127.0.0.1 -p ${port}${process.platform === "win32" ? "" : ` -k ${tempDir}`}`,
         "-w", "start",
-      ], { ignoreOutput: true });
+      ], { ignoreOutput: process.platform === "win32" });
       serverStarted = true;
       databaseName = `w02a_${process.pid}`;
       adminClient = await connect(port);
