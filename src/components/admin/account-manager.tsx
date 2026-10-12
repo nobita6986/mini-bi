@@ -313,7 +313,7 @@ export function AccountManager() {
                   <strong>{dialog.account.display_name}</strong>.
                 </p>
                 <form onSubmit={submit} className="space-y-4">
-                  <ReasonField value={reason} onChange={(value) => { setReason(value); setFormError(null); setNotice(null); }} />
+                  <ReasonField value={reason} disabled={locked} onChange={(value) => { setReason(value); setFormError(null); setNotice(null); }} />
                   {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
                   <button type="submit" disabled={locked} className={primaryButton}>
                     {busy ? "Đang lưu…" : dialog.nextEnabled ? "Xác nhận kích hoạt" : "Xác nhận ngừng"}
@@ -439,11 +439,11 @@ export function AccountManager() {
   );
 }
 
-function ReasonField({ value, onChange }: { value: string; onChange(value: string): void }) {
+function ReasonField({ value, disabled, onChange }: { value: string; disabled: boolean; onChange(value: string): void }) {
   return (
     <label htmlFor="account-reason" className="flex flex-col gap-1 text-sm font-medium">
       Lý do thay đổi
-      <textarea id="account-reason" value={value} maxLength={4000} required rows={3}
+      <textarea id="account-reason" value={value} maxLength={4000} required rows={3} disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className="rounded-md border border-border bg-surface px-3 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
     </label>

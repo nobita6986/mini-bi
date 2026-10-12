@@ -50,6 +50,16 @@ test("enable/disable use exact API routes, mandatory reason, authoritative versi
   assert.match(source, /aria-label="Đóng hộp thoại"/);
 });
 
+test("reason field is locked once a mutation intent exists so retry replays the captured reason", () => {
+  // locked covers in-flight, transport-uncertain retry and applied/conflict reload states.
+  assert.match(source, /const locked = busy \|\| pendingIntent !== null \|\| conflictIntent !== null;/);
+  // ReasonField is driven by that same locked flag.
+  assert.match(source, /<ReasonField value=\{reason\} disabled=\{locked\}/);
+  // ReasonField forwards disabled to the native textarea.
+  assert.match(source, /function ReasonField\(\{ value, disabled, onChange \}: \{ value: string; disabled: boolean; onChange\(value: string\): void \}\)/);
+  assert.match(source, /rows=\{3\} disabled=\{disabled\}/);
+});
+
 test("only display_name and status are rendered; account_ref and version stay internal", () => {
   assert.match(source, /<td className="px-3 py-3 font-medium">\{account\.display_name\}<\/td>/);
   assert.match(source, /<strong>\{dialog\.account\.display_name\}<\/strong>/);
