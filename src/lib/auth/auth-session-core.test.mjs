@@ -41,6 +41,18 @@ const request = (path, body) => new Request(`https://app.example${path}`, {
   },
   body: JSON.stringify(body),
 });
+const reverseProxiedRequest = (path, body, headers = {}) => new Request(`http://bi-app:3000${path}`, {
+  method: "POST",
+  headers: {
+    Origin: "https://app.example",
+    Host: "app.example",
+    "X-Forwarded-Proto": "https",
+    "Sec-Fetch-Site": "same-origin",
+    "Content-Type": "application/json",
+    ...headers,
+  },
+  body: JSON.stringify(body),
+});
 const credentials = { email: " user@example.com ", password: "  keep exact  " };
 const successClient = (overrides = {}) => ({
   auth: {
@@ -77,6 +89,56 @@ test("login validates origin and exact bounded credentials before creating a cli
     });
     assert.equal(response.status, expectedStatus);
     assert.equal(created, 0);
+  }
+});
+
+test("login and logout accept same-origin requests when TLS terminates at the reverse proxy", async () => {
+  let loginCalls = 0;
+  const login = await createAuthLoginResponse(
+    reverseProxiedRequest("/api/auth/login", credentials),
+    {
+      ...baseDependencies(),
+      createClient: async () => {
+        loginCalls++;
+        return successClient();
+      },
+    },
+  );
+  assert.equal(login.status, 200);
+  assert.equal(loginCalls, 1);
+
+  let logoutCalls = 0;
+  const logout = await createAuthLogoutResponse(
+    reverseProxiedRequest("/api/auth/logout", {}),
+    {
+      createClient: async () => {
+        logoutCalls++;
+        return successClient();
+      },
+    },
+  );
+  assert.equal(logout.status, 204);
+  assert.equal(logoutCalls, 1);
+
+  for (const headers of [
+    { Origin: "https://attacker.example" },
+    { "X-Forwarded-Proto": "http" },
+    { "X-Forwarded-Proto": "https,http" },
+    { "Sec-Fetch-Site": "cross-site" },
+  ]) {
+    let deniedCalls = 0;
+    const denied = await createAuthLoginResponse(
+      reverseProxiedRequest("/api/auth/login", credentials, headers),
+      {
+        ...baseDependencies(),
+        createClient: async () => {
+          deniedCalls++;
+          return successClient();
+        },
+      },
+    );
+    assert.equal(denied.status, 403);
+    assert.equal(deniedCalls, 0);
   }
 });
 

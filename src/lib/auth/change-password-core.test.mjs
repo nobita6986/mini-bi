@@ -24,6 +24,19 @@ const post = (payload) =>
     },
     body: typeof payload === "string" ? payload : JSON.stringify(payload),
   });
+const proxiedPost = (payload, headers = {}) =>
+  new Request("http://bi-app:3000/api/auth/change-password", {
+    method: "POST",
+    headers: {
+      Origin: "https://app.example",
+      Host: "app.example",
+      "X-Forwarded-Proto": "https",
+      "Sec-Fetch-Site": "same-origin",
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: JSON.stringify(payload),
+  });
 
 function clientRecorder(overrides = {}) {
   const calls = {
@@ -109,6 +122,18 @@ test("change-password returns UNAUTHENTICATED when the active session is missing
   assert.equal(calls.getUser, 1);
   assert.equal(calls.signIn, 0, "must not re-auth without a live session");
   assert.equal(calls.update, 0, "must not call updateUser without a live session");
+});
+
+test("change-password accepts a public HTTPS origin through the TLS-terminating proxy", async () => {
+  const { client, calls } = clientRecorder();
+  const response = await createChangePasswordResponse(proxiedPost(validPayload()), {
+    createClient: async () => client,
+    now: () => "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(response.status, 200);
+  assert.equal(calls.getUser, 1);
+  assert.equal(calls.signIn, 1);
+  assert.equal(calls.update, 1);
 });
 
 test("change-password rejects current password mismatches with sanitized INVALID_CURRENT_PASSWORD code", async () => {
