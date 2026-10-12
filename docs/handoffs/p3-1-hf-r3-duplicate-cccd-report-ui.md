@@ -1,7 +1,7 @@
 # P3.1-HF-R3 — Duplicate CCCD report API/UI
 
 - **Status:** `P3_1_HF_R3_DUPLICATE_CCCD_REPORT_UI_LOCAL_PASS_AWAITING_T0_REVIEW`
-- **Base:** `origin/main@48bb83b2572ff241a9acecd2db54e53a5d245a55` (`docs(p3-w06d-s0-r1): rebaseline survey on R9 contract`). Local = remote; branch cut from this SHA.
+- **Base:** `origin/main@48bb83b2572ff241a9acecd2db54e53a5d245a55` (`docs(p3-w06d-s0-r1): rebaseline survey on R9 contract`), recorded at preflight (local = remote then). During this work `origin/main` advanced independently to `2a235b0` (`e7f54b4` + `2a235b0`, W06D dashboard tabs) — an external, unrelated lane; `48bb83b` remains an ancestor. This branch is intentionally based on the recorded preflight SHA and is **not** rebased onto the later main.
 - **Branch / worktree:** `feature/p3-1-hf-r3-duplicate-cccd-report-ui` on a clean isolated worktree (`node_modules` is a junction to the primary checkout; see Limitations).
 
 ## Preflight
