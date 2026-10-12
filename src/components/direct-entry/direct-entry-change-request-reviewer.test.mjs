@@ -142,9 +142,11 @@ test("dialog dung Radix, co escape/focus mac dinh va khong co mock route trong r
   const names = [];
   const walk = (directory) => {
     for (const entry of readdirSync(directory)) {
-      const path = new URL(entry + (statSync(new URL(entry + "/", directory)).isDirectory() ? "/" : ""), directory);
-      if (statSync(path).isDirectory()) walk(path);
-      else names.push(entry);
+      const path = new URL(entry, directory);
+      if (statSync(path).isDirectory()) {
+        path.pathname += "/";
+        walk(path);
+      } else names.push(entry);
     }
   };
   walk(routeRoot);
