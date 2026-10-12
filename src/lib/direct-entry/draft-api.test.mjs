@@ -165,8 +165,12 @@ test("repository projections strictly reject malformed and unexpected fields", (
   }, draft.entry_id), {
     entry_id: draft.entry_id, version: 2, submission_version: 2,
   });
+  assert.equal(projectDraftUpdate({
+    entry_id: draft.entry_id, version: 2, submission_version: 2, audit: {},
+  }, draft.entry_id), null);
+});
 
-  test("repository maps catalog, drafts, and update only to their named RPCs and fails closed", async () => {
+test("repository maps catalog, drafts, and update only to their named RPCs and fails closed", async () => {
     const calls = [];
     const repository = createDirectEntryWriteRepository(async (name, args) => {
       calls.push({ name, args });
@@ -219,10 +223,6 @@ test("repository projections strictly reject malformed and unexpected fields", (
       patch,
       idempotency_key: "synthetic-update-02",
     }), { ok: false, kind: "unavailable" });
-  });
-  assert.equal(projectDraftUpdate({
-    entry_id: draft.entry_id, version: 2, submission_version: 2, audit: {},
-  }, draft.entry_id), null);
 });
 
 test("catalog gate and effective date validation happen before session or RPC", async () => {
