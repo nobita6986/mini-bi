@@ -5,6 +5,7 @@ import { test } from "node:test";
 const HERE = new URL("./", import.meta.url);
 const view = readFileSync(new URL("./dashboard-view.tsx", HERE), "utf8");
 const team = readFileSync(new URL("./team-dashboard-view.tsx", HERE), "utf8");
+const teamReport = readFileSync(new URL("./team-report-view.tsx", HERE), "utf8");
 const own = readFileSync(new URL("./own-dashboard-view.tsx", HERE), "utf8");
 const filters = readFileSync(new URL("./dashboard-filters.tsx", HERE), "utf8");
 const page = readFileSync(new URL("../../app/dashboard/page.tsx", HERE), "utf8");
@@ -67,9 +68,11 @@ test("W06C: the page passes the audience from the scoped payload, never a UI rol
 });
 
 test("W06C: team dashboard has its own UX (member roster), not a relabelled BoD page", () => {
-  assert.match(team, /buildMemberContributions/);
+  // P3-W06D-R2: the roster body now lives in the shared TeamReportView; the
+  // TeamDashboardView stays a thin adapter selecting the team view config.
+  assert.match(teamReport, /buildMemberContributions/);
   assert.ok(team.includes("Đóng góp của thành viên nhóm"), "team roster panel must exist");
-  assert.ok(team.includes("Trung bình/người"), "team summary metrics must exist");
+  assert.ok(teamReport.includes("Trung bình/người"), "team summary metrics must exist");
   assert.match(team, /showMemberRanking|view\.showProjectProviderMix/);
   // The team page must not reuse the BoD hero/title or the BoD KPI labels.
   assert.ok(!team.includes("BoD · Báo cáo điều hành"));

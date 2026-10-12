@@ -1,24 +1,35 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { parseAsString, useQueryStates } from "nuqs";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
-import { FiltersOrError, NoMatchesBlock } from "./dashboard-shared";
-import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import {
   UNKNOWN_TEAM_BUCKET_KEY,
   type ReportingBucket,
   type ReportingData,
 } from "@/lib/reporting/p1-reporting";
-import { sortBuckets } from "@/lib/reporting/p1-dashboard";
 import type {
   TeamDrillDownEnvelope,
   TeamDrillDownRow,
 } from "@/lib/reporting/p2-w05b-team-reporting-server";
 import { TeamBucketChart } from "./team-bucket-chart";
+
+/**
+ * P3-W06D-R2 - shared "entry-level detail" tail of the team report.
+ *
+ * This is the single drill-down implementation reused by BOTH the Team Leader
+ * report (`TeamReportView` via `TeamDashboardView`) and the BoD detailed team
+ * report. It renders the team picker and the server-sanitized per-row table at
+ * the END of the report.
+ *
+ * Authority stays server-side: it only calls the existing audience-gated
+ * `GET /api/reporting/team-drill-down`; it never joins team or membership data,
+ * never calls the admin catalog and never derives counts from the paginated
+ * rows.
+ */
 
 const filterParsers = {
   from: parseAsString,
@@ -126,30 +137,30 @@ function DetailTable({ rows, caption }: { rows: TeamDrillDownRow[]; caption: str
   );
 }
 
-export function TeamReportingPanel({
-  data,
-  optionsResult,
-}: {
+export interface TeamEntryDetailProps {
   data: ReportingData;
-  optionsResult: ReportingOptionsResult;
-}) {
-  const [queryFilters] = useQueryStates(filterParsers, { shallow: false, scroll: false });
-  const querySignature = filtersSignature(queryFilters as QueryFilters);
-  return <TeamReportingPanelContent key={querySignature} data={data} optionsResult={optionsResult} querySignature={querySignature} />;
+  buckets: ReportingBucket[];
+  heading: string;
+  description?: string;
+  pickerTitle: string;
 }
 
-function TeamReportingPanelContent({
+export function TeamEntryDetail(props: TeamEntryDetailProps) {
+  const [queryFilters] = useQueryStates(filterParsers, { shallow: false, scroll: false });
+  const querySignature = filtersSignature(queryFilters as QueryFilters);
+  return <TeamEntryDetailContent key={querySignature} {...props} querySignature={querySignature} />;
+}
+
+function TeamEntryDetailContent({
   data,
-  optionsResult,
+  buckets,
+  heading,
+  description,
+  pickerTitle,
   querySignature,
-}: {
-  data: ReportingData;
-  optionsResult: ReportingOptionsResult;
-  querySignature: string;
-}) {
+}: TeamEntryDetailProps & { querySignature: string }) {
   const dataSignature = dataFiltersSignature(data);
   const authoritative = querySignature === dataSignature && data.applied.source === undefined;
-  const buckets = useMemo(() => sortBuckets(data.byTeam), [data.byTeam]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [rows, setRows] = useState<TeamDrillDownRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -217,87 +228,83 @@ function TeamReportingPanelContent({
   }
 
   const selectedBucket = selectedKey === null ? null : buckets.find((bucket) => bucket.key === selectedKey) ?? null;
-  const noAggregate = data.empty.noSources || data.empty.noFacts;
+
+  if (buckets.length === 0) {
+    return (
+      <EmptyState title="Chưa có nhóm trong dữ liệu báo cáo" description="Hãy thử lại sau khi dữ liệu được đồng bộ." />
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <FiltersOrError optionsResult={optionsResult} />
       {!authoritative ? (
         <Alert tone="info" role="status" title="Đang tải dữ liệu theo nhóm">
           Dữ liệu theo nhóm đang được tải lại theo đúng bộ lọc hiện tại.
         </Alert>
-      ) : noAggregate ? (
-        <EmptyState title="Chưa có dữ liệu tuyển dụng theo nhóm" description="Hiện chưa có dữ liệu để hiển thị." />
-      ) : data.empty.noMatches ? (
-        <NoMatchesBlock detail="Không có nhóm nào khớp bộ lọc đang chọn." />
-      ) : buckets.length === 0 ? (
-        <EmptyState title="Chưa có nhóm trong dữ liệu báo cáo" description="Hãy thử lại sau khi dữ liệu được đồng bộ." />
-      ) : (
-        <>
-          <Card>
-            <CardHeader title="Tuyển dụng theo nhóm" description="Chọn một nhóm để xem các dòng chi tiết đã được máy chủ làm sạch." />
-            <TeamBucketChart buckets={buckets} />
-            <div className="mt-5 border-t border-border pt-4">
-              <h3 className="text-sm font-semibold text-foreground">Danh sách nhóm</h3>
-              <ul aria-label="Danh sách nhóm báo cáo" className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {buckets.map((bucket) => (
-                  <li key={bucket.key}>
-                    <button
-                      type="button"
-                      aria-pressed={selectedKey === bucket.key}
-                      disabled={drillState === "loading" || loadingMore}
-                      onClick={() => selectBucket(bucket)}
-                      className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 ${selectedKey === bucket.key
-                        ? "border-primary bg-primary/10 text-foreground"
-                        : "border-border bg-surface text-foreground hover:bg-muted/10"}`}
-                    >
-                      <span className="min-w-0 break-words">{bucket.display}</span>
-                      <span className="shrink-0 font-mono">{bucket.recruitedCount}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </Card>
+      ) : null}
 
-          {selectedBucket ? (
-            <Card>
-              {selectedKey === UNKNOWN_TEAM_BUCKET_KEY ? (
-                <div className="space-y-4">
-                  {legacyAggregate ? (
-                    <section aria-label="Tổng hợp dữ liệu cũ">
-                      <CardHeader title="Tổng hợp từ dữ liệu cũ (tổng hợp theo ngày, không phải entry-level)" description="Tổng này không phải danh sách các dòng chi tiết." />
-                      <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-                        <div><dt className="text-muted">Số người</dt><dd className="font-semibold text-foreground">{legacyAggregate.recruited_count}</dd></div>
-                        <div><dt className="text-muted">Từ ngày</dt><dd className="font-mono text-foreground">{legacyAggregate.from ?? "—"}</dd></div>
-                        <div><dt className="text-muted">Đến ngày</dt><dd className="font-mono text-foreground">{legacyAggregate.to ?? "—"}</dd></div>
-                      </dl>
-                    </section>
-                  ) : null}
-                  <section aria-label="Anomaly Direct Entry">
-                    <CardHeader title="Anomaly Direct Entry (không gán được team)" description="Các dòng Direct Entry không xác định được nhóm." />
-                    <DrillDownBody state={drillState} error={error} rows={rows} caption="Các dòng Direct Entry không gán được nhóm" onRetry={retry} />
-                  </section>
-                </div>
-              ) : (
-                <section aria-label={`Chi tiết nhóm ${selectedBucket.display}`}>
-                  <CardHeader title={`Chi tiết nhóm ${selectedBucket.display}`} />
-                  <DrillDownBody state={drillState} error={error} rows={rows} caption={`Chi tiết tuyển dụng nhóm ${selectedBucket.display}`} onRetry={retry} />
-                </section>
-              )}
-              {drillState === "loaded" && rows.length > 0 && nextCursor !== null ? (
-                <button type="button" disabled={loadingMore} onClick={() => void loadPage(selectedBucket.key, nextCursor, true)}
-                  className="mt-4 min-h-11 rounded-md border border-border px-4 text-sm font-medium disabled:opacity-50">
-                  {loadingMore ? "Đang tải thêm…" : "Tải thêm"}
+      <Card>
+        <CardHeader title={heading} description={description} />
+        <TeamBucketChart buckets={buckets} />
+        <div className="mt-5 border-t border-border pt-4">
+          <h3 className="text-sm font-semibold text-foreground">{pickerTitle}</h3>
+          <ul aria-label="Danh sách nhóm báo cáo" className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {buckets.map((bucket) => (
+              <li key={bucket.key}>
+                <button
+                  type="button"
+                  aria-pressed={selectedKey === bucket.key}
+                  disabled={!authoritative || drillState === "loading" || loadingMore}
+                  onClick={() => selectBucket(bucket)}
+                  className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 ${selectedKey === bucket.key
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border bg-surface text-foreground hover:bg-muted/10"}`}
+                >
+                  <span className="min-w-0 break-words">{bucket.display}</span>
+                  <span className="shrink-0 font-mono">{bucket.recruitedCount}</span>
                 </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Card>
+
+      {selectedBucket ? (
+        <Card>
+          {selectedKey === UNKNOWN_TEAM_BUCKET_KEY ? (
+            <div className="space-y-4">
+              {legacyAggregate ? (
+                <section aria-label="Tổng hợp dữ liệu cũ">
+                  <CardHeader title="Tổng hợp từ dữ liệu cũ (tổng hợp theo ngày, không phải entry-level)" description="Tổng này không phải danh sách các dòng chi tiết." />
+                  <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+                    <div><dt className="text-muted">Số người</dt><dd className="font-semibold text-foreground">{legacyAggregate.recruited_count}</dd></div>
+                    <div><dt className="text-muted">Từ ngày</dt><dd className="font-mono text-foreground">{legacyAggregate.from ?? "—"}</dd></div>
+                    <div><dt className="text-muted">Đến ngày</dt><dd className="font-mono text-foreground">{legacyAggregate.to ?? "—"}</dd></div>
+                  </dl>
+                </section>
               ) : null}
-              {drillState === "loaded" && rows.length > 0 && nextCursor === null ? (
-                <p role="status" className="mt-3 text-sm text-muted">Đã hiển thị hết kết quả.</p>
-              ) : null}
-            </Card>
+              <section aria-label="Anomaly Direct Entry">
+                <CardHeader title="Anomaly Direct Entry (không gán được team)" description="Các dòng Direct Entry không xác định được nhóm." />
+                <DrillDownBody state={drillState} error={error} rows={rows} caption="Các dòng Direct Entry không gán được nhóm" onRetry={retry} />
+              </section>
+            </div>
+          ) : (
+            <section aria-label={`Chi tiết nhóm ${selectedBucket.display}`}>
+              <CardHeader title={`Chi tiết nhóm ${selectedBucket.display}`} />
+              <DrillDownBody state={drillState} error={error} rows={rows} caption={`Chi tiết tuyển dụng nhóm ${selectedBucket.display}`} onRetry={retry} />
+            </section>
+          )}
+          {drillState === "loaded" && rows.length > 0 && nextCursor !== null ? (
+            <button type="button" disabled={loadingMore} onClick={() => void loadPage(selectedBucket.key, nextCursor, true)}
+              className="mt-4 min-h-11 rounded-md border border-border px-4 text-sm font-medium disabled:opacity-50">
+              {loadingMore ? "Đang tải thêm…" : "Tải thêm"}
+            </button>
           ) : null}
-        </>
-      )}
+          {drillState === "loaded" && rows.length > 0 && nextCursor === null ? (
+            <p role="status" className="mt-3 text-sm text-muted">Đã hiển thị hết kết quả.</p>
+          ) : null}
+        </Card>
+      ) : null}
     </div>
   );
 }

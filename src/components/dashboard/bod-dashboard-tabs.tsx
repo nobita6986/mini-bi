@@ -5,7 +5,35 @@ import { parseAsString, useQueryStates } from "nuqs";
 
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
-import { TeamReportingPanel } from "./team-reporting-panel";
+import { TeamReportView, type TeamReportViewConfig } from "./team-report-view";
+
+/**
+ * P3-W06D-R2 - BoD "Báo cáo chi tiết nhóm" uses the SAME report implementation
+ * as the Team Leader report (`TeamReportView`), so the report is only built once.
+ */
+const bodTeamReportConfig: TeamReportViewConfig = {
+  eyebrow: "BoD · Báo cáo chi tiết nhóm",
+  title: "Báo cáo chi tiết nhóm",
+  description: "Số người tuyển theo ngày, dự án, người tuyển và loại hình. Chọn một nhóm để xem chi tiết từng dòng.",
+  scopeNote: "Đang xem dữ liệu toàn công ty; chọn một nhóm để xem chi tiết từng dòng theo nhóm.",
+  emptyTitle: "Chưa có dữ liệu tuyển dụng theo nhóm",
+  emptyDescription: "Hiện chưa có dữ liệu để hiển thị.",
+  noMatchesDetail: "Không có nhóm nào khớp bộ lọc đang chọn.",
+  showMemberRanking: true,
+  showProjectProviderMix: false,
+  showRecruiterFilter: true,
+  kpiAriaLabel: "Chỉ số báo cáo chi tiết nhóm",
+  kpiPrimaryLabel: "Tổng tuyển mới",
+  kpiPrimaryHint: "số người tuyển",
+  kpiSecondaryLabel: "Người tuyển có đóng góp",
+  kpiSecondaryHint: "trong phạm vi báo cáo",
+  memberTitle: "Đóng góp của người tuyển",
+  memberDescription: "Xếp hạng số người tuyển của từng người tuyển trong phạm vi báo cáo.",
+  memberAriaLabel: "Đóng góp của người tuyển",
+  entryHeading: "Tuyển dụng theo nhóm",
+  entryDescription: "Chọn một nhóm để xem các dòng chi tiết đã được máy chủ làm sạch.",
+  entryPickerTitle: "Danh sách nhóm",
+};
 
 const queryParsers = {
   tab: parseAsString,
@@ -22,10 +50,12 @@ type TabKey = (typeof tabs)[number]["key"];
 export function BodDashboardTabs({
   general,
   data,
+  generatedAt,
   optionsResult,
 }: {
   general: ReactNode;
   data: ReportingData;
+  generatedAt?: string;
   optionsResult: ReportingOptionsResult;
 }) {
   const [{ tab: rawTab, source }, setQuery] = useQueryStates(queryParsers, {
@@ -89,7 +119,12 @@ export function BodDashboardTabs({
         </div>
       ) : (
         <div id="bod-panel-team" role="tabpanel" aria-labelledby="bod-tab-team" tabIndex={0} className="pt-4">
-          <TeamReportingPanel data={data} optionsResult={optionsResult} />
+          <TeamReportView
+            data={data}
+            generatedAt={generatedAt}
+            optionsResult={optionsResult}
+            view={bodTeamReportConfig}
+          />
         </div>
       )}
     </div>

@@ -112,6 +112,7 @@ export function DashboardView({
   return (
     <BodDashboardTabs
       data={report.data}
+      generatedAt={generatedAt}
       optionsResult={optionsResult}
       general={
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
