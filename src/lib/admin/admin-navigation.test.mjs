@@ -64,11 +64,13 @@ test("Admin internal navigation exposes catalog sections plus the Full-Admin-onl
     { id: "labor-types", href: "/admin/catalog/labor-types" },
     { id: "accounts", href: "/admin/access/accounts" },
   ]);
-  const catalogOnly = ADMIN_SECTIONS.filter(({ id }) => id !== "accounts");
+  const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
+  const catalogOnly = serializableSections.filter(({ id }) => id !== "accounts");
   // Accounting (catalog operator) sees the catalog sections but never Accounts.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
   // The canonical Full Admin triple sees every section, including Accounts.
-  assert.deepEqual(visibleAdminSections(fullAdmin), ADMIN_SECTIONS);
+  assert.deepEqual(visibleAdminSections(fullAdmin), serializableSections);
+  assert.equal(visibleAdminSections(fullAdmin).some((section) => Object.values(section).some((value) => typeof value === "function")), false);
   // Project Admin (entry_admin@all without the triple) and unresolved actors see nothing.
   assert.deepEqual(visibleAdminSections({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), []);
   assert.deepEqual(visibleAdminSections(null), []);

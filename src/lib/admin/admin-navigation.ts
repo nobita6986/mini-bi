@@ -9,10 +9,13 @@ export type AdminSection = {
   readonly id: string;
   readonly label: string;
   readonly href: string;
+};
+
+type AdminSectionConfig = AdminSection & {
   readonly visible: NavCapabilityPredicate;
 };
 
-export const ADMIN_SECTIONS: readonly AdminSection[] = [
+export const ADMIN_SECTIONS: readonly AdminSectionConfig[] = [
   { id: "personnel", label: "Nhân sự", href: "/admin/catalog/personnel", visible: adminAreaNavPredicate },
   { id: "teams", label: "Nhóm", href: "/admin/catalog/teams", visible: adminAreaNavPredicate },
   { id: "vendors", label: "Nhà cung cấp", href: "/admin/catalog/vendors", visible: adminAreaNavPredicate },
@@ -26,5 +29,7 @@ export function isAdminSectionActive(pathname: string, href: string): boolean {
 
 export function visibleAdminSections(actor: NavActorProjection | null): readonly AdminSection[] {
   if (!actor) return [];
-  return ADMIN_SECTIONS.filter((section) => section.visible(actor));
+  return ADMIN_SECTIONS
+    .filter((section) => section.visible(actor))
+    .map(({ id, label, href }) => ({ id, label, href }));
 }
