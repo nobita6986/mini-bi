@@ -97,14 +97,14 @@ export async function duplicateCccdPreflight(
     return fail("SUBMISSION_UNAVAILABLE", 500);
   }
 
-  const conflicts: DuplicateCccdConflict[] = result.data.conflicts.map((conflict) => ({
-    conflict_ref: conflict.conflict_ref,
-    draft_display_name: conflict.draft_display_name,
-    project_display: conflict.project_display,
-    employment_status: conflict.employment_status,
-    employment_status_label: conflict.employment_status_label,
-    cccd_last4: conflict.cccd_last4,
-  }));
+  const conflicts: Array<Omit<DuplicateCccdConflict, "employment_status_label">> =
+    result.data.conflicts.map((conflict) => ({
+      conflict_ref: conflict.conflict_ref,
+      draft_display_name: conflict.draft_display_name,
+      project_display: conflict.project_display,
+      employment_status: conflict.employment_status,
+      cccd_last4: conflict.cccd_last4,
+    }));
   return respond({
     ok: true,
     submission_id: result.data.submission_id,
