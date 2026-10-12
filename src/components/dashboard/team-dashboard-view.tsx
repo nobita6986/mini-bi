@@ -34,9 +34,9 @@ function teamReportConfig(view: ScopedDashboardView): TeamReportViewConfig {
     memberTitle: "Đóng góp của thành viên nhóm",
     memberDescription: "Xếp hạng số người tuyển của từng thành viên trong phạm vi nhóm được cấp.",
     memberAriaLabel: "Đóng góp của thành viên nhóm",
-    entryHeading: "Tuyển dụng theo nhóm",
-    entryDescription: "Chọn một nhóm để xem các dòng chi tiết đã được máy chủ làm sạch.",
-    entryPickerTitle: "Danh sách nhóm",
+    pickerHeading: "Tuyển dụng theo nhóm",
+    pickerDescription: "Chọn một nhóm để xem báo cáo và các dòng chi tiết đã được máy chủ làm sạch.",
+    pickerTitle: "Danh sách nhóm",
   };
 }
 

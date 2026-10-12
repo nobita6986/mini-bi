@@ -1,4 +1,5 @@
 import { INVALID_FILTER_CODE, parseReportingFilters } from "./p1-filter.ts";
+import type { ReportingFilters } from "./p1-filter.ts";
 
 export type RequestParams = Record<string, string | string[] | undefined>;
 
@@ -17,14 +18,7 @@ export type TeamDrillDownFilters = {
   bucket_key: string;
   cursor: string | null;
   limit: number;
-  filters: {
-    from?: string;
-    to?: string;
-    project?: string;
-    recruiter?: string;
-    provider?: string;
-    employment?: string;
-  };
+  filters: ReportingFilters;
 };
 
 function parserInvalid(): { ok: false; code: typeof INVALID_FILTER_CODE } {
@@ -82,6 +76,25 @@ function validCursor(value: string): boolean {
     && UUID_RE.test(record.entry_id)
     && typeof record.recruiter_display === "string"
     && record.recruiter_display.length > 0;
+}
+
+/**
+ * P3-W06D-R2: decode a canonical team bucket key into its team code (or the
+ * `unknown` sentinel). Returns null when the key fails the canonical wire
+ * checks. Used by the server-side team-report read to resolve the requested
+ * bucket inside the actor's authorized fact set; the code never reaches the
+ * client.
+ */
+export function decodeTeamBucketKey(
+  value: string,
+): { kind: "unknown" } | { kind: "team"; code: string } | null {
+  if (value === UNKNOWN_BUCKET_KEY) return { kind: "unknown" };
+  if (!validBucketKey(value)) return null;
+  const match = TEAM_BUCKET_RE.exec(value);
+  if (!match) return null;
+  const decoded = decodeBase64Url(match[1]);
+  if (!decoded) return null;
+  return { kind: "team", code: decoded.toString("utf8") };
 }
 
 export function parseTeamDrillDownRequest(params: RequestParams): ParserResult {

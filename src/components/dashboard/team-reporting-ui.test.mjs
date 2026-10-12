@@ -2,17 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const view = readFileSync(new URL("./dashboard-view.tsx", import.meta.url), "utf8");
-const tabs = readFileSync(new URL("./bod-dashboard-tabs.tsx", import.meta.url), "utf8");
-const leader = readFileSync(new URL("./team-dashboard-view.tsx", import.meta.url), "utf8");
-const report = readFileSync(new URL("./team-report-view.tsx", import.meta.url), "utf8");
-const detail = readFileSync(new URL("./team-entry-detail.tsx", import.meta.url), "utf8");
-const chart = readFileSync(new URL("./team-bucket-chart.tsx", import.meta.url), "utf8");
-const page = readFileSync(new URL("../../app/dashboard/page.tsx", import.meta.url), "utf8");
-const nav = readFileSync(new URL("../../lib/admin/admin-navigation.ts", import.meta.url), "utf8");
-const navTest = readFileSync(new URL("../../lib/admin/admin-navigation.test.mjs", import.meta.url), "utf8");
-const accountTest = readFileSync(new URL("../admin/account-manager.test.mjs", import.meta.url), "utf8");
-const packageJson = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
+const HERE = new URL("./", import.meta.url);
+const view = readFileSync(new URL("./dashboard-view.tsx", HERE), "utf8");
+const tabs = readFileSync(new URL("./bod-dashboard-tabs.tsx", HERE), "utf8");
+const leader = readFileSync(new URL("./team-dashboard-view.tsx", HERE), "utf8");
+const report = readFileSync(new URL("./team-report-view.tsx", HERE), "utf8");
+const detail = readFileSync(new URL("./team-entry-detail.tsx", HERE), "utf8");
+const request = readFileSync(new URL("./team-report-request.ts", HERE), "utf8");
+const chart = readFileSync(new URL("./team-bucket-chart.tsx", HERE), "utf8");
+const server = readFileSync(new URL("../../lib/reporting/p3-w06d-team-report-server.ts", HERE), "utf8");
+const core = readFileSync(new URL("../../lib/reporting/p3-w06d-team-report-core.ts", HERE), "utf8");
+const route = readFileSync(new URL("../../app/api/reporting/team-report/route.ts", HERE), "utf8");
+const page = readFileSync(new URL("../../app/dashboard/page.tsx", HERE), "utf8");
+const nav = readFileSync(new URL("../../lib/admin/admin-navigation.ts", HERE), "utf8");
+const navTest = readFileSync(new URL("../../lib/admin/admin-navigation.test.mjs", HERE), "utf8");
+const accountTest = readFileSync(new URL("../admin/account-manager.test.mjs", HERE), "utf8");
+const packageJson = JSON.parse(readFileSync(new URL("../../../package.json", HERE), "utf8"));
 
 test("W06D: only DB-confirmed all reaches the two-tab shell", () => {
   assert.match(view, /resolveDashboardMode\(\{ ok: report\.ok, audience \}\)/);
@@ -66,12 +71,10 @@ test("W06D: direct team tab with source normalizes before reporting fetch", () =
 });
 
 test("W06D-R2: one shared report component serves both Team Leader and BoD", () => {
-  // Both the Team Leader report and the BoD team tab import the SAME module.
   assert.match(leader, /import \{ TeamReportView, type TeamReportViewConfig \} from "\.\/team-report-view"/);
   assert.match(tabs, /import \{ TeamReportView, type TeamReportViewConfig \} from "\.\/team-report-view"/);
   assert.match(leader, /<TeamReportView/);
   assert.match(tabs, /<TeamReportView/);
-  // The old separate BoD-only panel must be gone.
   assert.doesNotMatch(leader, /TeamReportingPanel/);
   assert.doesNotMatch(tabs, /TeamReportingPanel/);
 });
@@ -82,94 +85,120 @@ test("W06D-R2: 'Theo HRP/Vendor của nhóm' card is removed from the shared rep
   assert.doesNotMatch(leader, /Theo HRP\/Vendor của nhóm/);
 });
 
-test("W06D-R2: section order keeps the entry-level detail list at the end", () => {
+test("W06D-R2: picker precedes the report body and the entry-level detail is last", () => {
+  const picker = report.indexOf("<TeamPicker");
+  const selection = report.indexOf("<TeamReportSelection");
+  const body = report.indexOf("<TeamReportBody");
+  const entry = report.indexOf("<TeamEntryDetail");
+  assert.ok(picker >= 0 && selection >= 0 && body >= 0 && entry >= 0,
+    "picker, selection, body and detail are rendered");
+  assert.ok(picker < selection && selection < body && body < entry,
+    "render order: picker < selection < body < entry detail");
+
   const member = report.indexOf("aria-label={view.memberAriaLabel}");
   const trend = report.indexOf('aria-label="Xu hướng tuyển dụng của nhóm"');
   const project = report.indexOf('title="Theo dự án trong nhóm"');
   const employment = report.indexOf('title="Theo loại hình làm việc của nhóm"');
-  const entry = report.indexOf("<TeamEntryDetail");
-  assert.ok(member >= 0, "member section present");
-  assert.ok(member < trend && trend < project && project < employment && employment < entry,
-    "member < trend < project < employment < entry detail");
+  assert.ok(member >= 0 && member < trend && trend < project && project < employment,
+    "member < trend < project < employment");
   assert.match(report, /Danh sách chi tiết từng dòng/);
-  assert.match(report, /heading=\{view\.entryHeading\}/);
+  assert.match(report, /aria-label="Danh sách nhóm báo cáo"/);
 });
 
 test("W06D-R2: Team Leader report runs on DB-scoped data with no client authority", () => {
-  // The leader adapter passes only view/data/options and never joins teams or
-  // reads the Admin Catalog; scope stays with the W05A payload.
-  for (const source of [leader, report]) {
+  for (const source of [leader, report, detail, core, server]) {
     assert.doesNotMatch(source, /team_memberships|recruiter_team|Admin Catalog/);
-    assert.doesNotMatch(source, /fetchCutoverReporting|createServiceSupabaseClient|\.rpc\(/);
+  }
+  for (const source of [leader, report, detail]) {
+    assert.doesNotMatch(source, /createServiceSupabaseClient|\.rpc\(/);
   }
   assert.match(leader, /view: ScopedDashboardView/);
   assert.match(report, /data\.byTeam/);
   assert.match(report, /sortBuckets\(data\.byTeam\)/);
 });
 
-test("W06D: team aggregate consumes byTeam and never regroups facts client-side", () => {
-  assert.match(report, /data\.byTeam/);
-  assert.match(report, /sortBuckets\(data\.byTeam\)/);
-  assert.match(chart, /stableColorForKey/);
-  assert.match(chart, /\{bucket\.display\}/);
-  assert.doesNotMatch(detail, /team_memberships|recruiter_team|Admin Catalog/);
-  assert.doesNotMatch(detail, /fetchCutoverReporting|createServiceSupabaseClient|\.rpc\(/);
+test("W06D-R2: BoD team selection loads THAT team from the authorized endpoint", () => {
+  assert.match(request, /\/api\/reporting\/team-report/);
+  assert.match(request, /bucket_key: bucketKey/);
+  assert.doesNotMatch(request, /team-drill-down/);
+  assert.match(report, /teamReportUrl\(data, bucket\.key, null\)/);
+  assert.match(report, /if \(!response\.ok \|\| !isTeamReportPayload\(payload\) \|\| payload\.report === null\)/);
+  // With no selection the audience-scoped payload is still shown (BoD overview).
+  assert.match(report, /<TeamReportBody data=\{data\} view=\{view\} \/>/);
+});
+
+test("W06D-R2: the server re-resolves the audience and verifies the bucket (no client audience)", () => {
+  assert.match(server, /direct_entry_reporting_scoped_facts/);
+  assert.match(server, /resolveReportingAudienceProjection\(payload\.audience\)/);
+  assert.match(server, /authorizeBucket\(rawAudienceKind\(payload\.audience\), decoded, teamFacts\.length > 0\)/);
+  assert.doesNotMatch(server, /params\.(audience|kind|dbKind)/);
+  assert.match(core, /if \(dbKind === null \|\| dbKind === "own"\) return "denied";/);
+  assert.match(core, /return dbKind === "all" \? "ok" : "denied";/);
+  assert.match(core, /return dbKind === "team" \? "denied" : "invalid";/);
+});
+
+test("W06D-R2: the team-report route owns auth, runtime, no-store headers and status mapping", () => {
+  assert.match(route, /export const runtime = "nodejs"/);
+  assert.match(route, /export const dynamic = "force-dynamic"/);
+  assert.match(route, /await guardApiSession\(\)/);
+  assert.match(server, /cache-control.*private, no-store/);
+  assert.match(server, /x-content-type-options.*nosniff/);
+  assert.match(server, /referrer-policy.*no-referrer/);
+  assert.match(server, /status: 400/);
+  assert.match(server, /status: 403/);
+  assert.match(server, /status: 503/);
 });
 
 test("W06D: bucket selection is accessible and internal identifiers stay off the surface", () => {
-  assert.match(detail, /aria-pressed=\{selectedKey === bucket\.key\}/);
-  assert.match(detail, /<button/);
-  assert.match(detail, /bucket\.display/);
-  assert.match(detail, /selectedBucket\.display/);
-  assert.doesNotMatch(detail, /<[^>]+>\{(?:bucket|selectedBucket)\.key\}<\/|title=\{[^}]*\.key/);
+  assert.match(report, /aria-pressed=\{selectedKey === bucket\.key\}/);
+  assert.match(report, /<button/);
+  assert.match(report, /bucket\.display/);
+  assert.match(report, /bucket\.recruitedCount/);
+  assert.doesNotMatch(report, /<[^>]+>\{(?:bucket|selectedBucket)\.key\}<\/|title=\{[^}]*\.key/);
   for (const forbidden of ["team_id", "team_code", "auth_subject", "app_user_id", "entry_id", "submission_id"]) {
+    assert.doesNotMatch(report, new RegExp(forbidden));
     assert.doesNotMatch(detail, new RegExp(forbidden));
   }
   assert.match(detail, /UNKNOWN_TEAM_BUCKET_KEY/);
-  assert.match(detail, /bucket\.display/);
+  assert.match(detail, /\{bucket\.display\}/);
 });
 
-test("W06D: drill-down sends only allowed filters, uses opaque cursor, and renders seven fields", () => {
-  assert.match(detail, /\/api\/reporting\/team-drill-down/);
-  assert.match(detail, /bucket_key: bucketKey/);
-  assert.match(detail, /limit: "25"/);
-  assert.match(detail, /params\.set\("cursor", cursor\)/);
-  assert.doesNotMatch(detail, /params\.set\("source"/);
+test("W06D: detail request uses the authorized endpoint, an opaque cursor and seven fields", () => {
+  assert.match(request, /limit: "25"/);
+  assert.match(request, /params\.set\("cursor", cursor\)/);
+  assert.doesNotMatch(request, /params\.set\("source"/);
   for (const field of [
     "business_date", "project_display", "recruiter_display", "provider_type_display",
     "employment_type_display", "recruited_count", "first_work_date",
   ]) assert.match(detail, new RegExp(field));
   assert.match(detail, /scope="col"/);
   assert.match(detail, /<caption className="sr-only"/);
+  assert.match(detail, /teamReportUrl\(data, bucket\.key, nextCursor\)/);
 });
 
-test("W06D-R2: drill-down request uses the DB-applied filters and resets on team/filter change", () => {
-  // Reset on filter change is a full remount keyed on the authoritative filter signature.
-  assert.match(detail, /TeamEntryDetailContent key=\{querySignature\}/);
-  assert.match(detail, /function drillDownUrl\(data: ReportingData, bucketKey: string, cursor: string \| null\)/);
-  assert.match(detail, /const value = data\.applied\[key\]/);
-  assert.match(detail, /if \(value\) params\.set\(key, value\)/);
-  // Selecting a team always starts at page one and clears the previous rows.
-  assert.match(detail, /void loadPage\(bucket\.key, null, false\)/);
-  assert.match(detail, /setRows\(\[\]\)/);
-  assert.match(detail, /setNextCursor\(null\)/);
+test("W06D-R2: team/filter change resets the selection and the detail rows", () => {
+  assert.match(report, /selection\.signature === dataSignature/);
+  assert.match(report, /setSelection\(\{ signature: dataSignature, key \}\)/);
+  assert.match(report, /key=\{dataSignature \+ "\|" \+ selectedBucket\.key\}/);
+  assert.match(request, /export function teamReportDataSignature/);
+  assert.match(report, /\[data, bucket, reloadToken\]/);
+  assert.match(report, /<TeamReportSelection/);
 });
 
-test("W06D: unknown split, loading/error/retry/empty/load-more/end and reset are explicit", () => {
+test("W06D: unknown split, load-more/end and retry are explicit", () => {
   assert.match(detail, /Tổng hợp từ dữ liệu cũ \(tổng hợp theo ngày, không phải entry-level\)/);
   assert.match(detail, /Anomaly Direct Entry \(không gán được team\)/);
-  assert.match(detail, /Đang tải chi tiết nhóm/);
   assert.match(detail, /Không tải được chi tiết nhóm/);
   assert.match(detail, /Thử tải lại/);
   assert.match(detail, /Chưa có dòng chi tiết/);
+  assert.match(detail, /Đang tải thêm/);
   assert.match(detail, /Tải thêm/);
   assert.match(detail, /Đã hiển thị hết kết quả/);
-  assert.match(detail, /setRows\(\[\]\)/);
-  assert.match(detail, /setNextCursor\(null\)/);
-  assert.match(detail, /TeamEntryDetailContent key=\{querySignature\}/);
   assert.match(detail, /requestId\.current/);
   assert.match(detail, /AbortController/);
   assert.doesNotMatch(detail, /IntersectionObserver|setInterval|setTimeout/);
+  assert.match(report, /Đang tải báo cáo nhóm/);
+  assert.match(report, /Không tải được báo cáo nhóm/);
 });
 
 test("W06D: mobile contract uses bounded inner table overflow, not body-level overflow", () => {
@@ -189,6 +218,7 @@ test("W06D: approved Admin navigation labels are exact and routes remain unchang
 test("W06D: focused lane is registered once and canonical test invokes it once", () => {
   assert.ok(packageJson.scripts["test:p3-w06d"]);
   assert.match(packageJson.scripts["test:p3-w06d"], /team-reporting-ui\.test\.mjs/);
+  assert.match(packageJson.scripts["test:p3-w06d"], /p3-w06d-team-report-core\.test\.mjs/);
   const occurrences = packageJson.scripts.test.match(/test:p3-w06d/g) ?? [];
   assert.equal(occurrences.length, 1);
 });

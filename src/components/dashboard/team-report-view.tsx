@@ -1,12 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
 import { buildMemberContributions } from "@/lib/reporting/p3-w06c-audience-view";
 import { formatTimestamp } from "@/lib/format";
-import type { ReportingData } from "@/lib/reporting/p1-reporting";
+import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
+import type { TeamReportDetail } from "@/lib/reporting/p3-w06d-team-report-server";
 
+import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { EmploymentComposition } from "./employment-composition";
@@ -15,23 +19,27 @@ import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { TrendChart } from "./trend-chart";
 import { BucketList, FiltersOrError, NoMatchesBlock, ScopeNote } from "./dashboard-shared";
+import { TeamBucketChart } from "./team-bucket-chart";
 import { TeamEntryDetail } from "./team-entry-detail";
+import { teamReportDataSignature, teamReportUrl } from "./team-report-request";
 
 /**
  * P3-W06D-R2 - single shared team-report implementation.
  *
- * This is the ONE report body reused by BOTH audiences:
+ * Used by BOTH audiences:
  *   - the Team Leader report (`TeamDashboardView`, DB audience `team`), and
  *   - the BoD "Báo cáo chi tiết nhóm" tab (`BodDashboardTabs`, DB audience `all`).
  *
- * It keeps the audience in the DB: it renders only the scoped `ReportingData`
- * it is handed, performs no client-side team or membership join, does not call
- * the admin catalog and never regroups facts. The per-row entry-level detail
- * list is rendered once, at the END of the report, by the shared
- * `TeamEntryDetail`.
+ * The team picker lists the buckets the actor is authorized to see
+ * (`data.byTeam`). Selecting one loads THAT team's report from the single
+ * server-authorized endpoint `GET /api/reporting/team-report`; the same
+ * endpoint serves the trailing entry-level detail. Authority is never inferred
+ * here: the server re-resolves the audience and verifies the bucket, and a
+ * denied bucket surfaces as an error instead of data.
  *
- * The HRP/Vendor breakdown card was removed per P3-W06D-R2 so both audiences
- * see exactly the same sections.
+ * With no team selected the audience-scoped report (`data`) is shown and the
+ * bucket list stays (BoD keeps its current overview). The entry-level detail is
+ * the LAST section.
  */
 
 export interface TeamReportViewConfig {
@@ -53,9 +61,28 @@ export interface TeamReportViewConfig {
   memberTitle: string;
   memberDescription: string;
   memberAriaLabel: string;
-  entryHeading: string;
-  entryDescription: string;
-  entryPickerTitle: string;
+  pickerHeading: string;
+  pickerDescription: string;
+  pickerTitle: string;
+}
+
+function isTeamReportPayload(value: unknown): value is { report: ReportingData | null; detail: TeamReportDetail } {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const detail = record.detail;
+  if (typeof detail !== "object" || detail === null) return false;
+  const d = detail as Partial<TeamReportDetail>;
+  if (!Array.isArray(d.rows)) return false;
+  if (!(typeof d.nextCursor === "string" || d.nextCursor === null)) return false;
+  if (typeof d.total !== "number") return false;
+  const report = record.report;
+  if (report === null) return true;
+  if (typeof report !== "object" || report === null) return false;
+  const r = report as Partial<ReportingData>;
+  return typeof r.recruitedTotal === "number"
+    && typeof r.byDate === "object" && r.byDate !== null
+    && typeof r.byTeam === "object" && r.byTeam !== null
+    && typeof r.empty === "object" && r.empty !== null;
 }
 
 export function TeamReportView({
@@ -69,34 +96,28 @@ export function TeamReportView({
   optionsResult: ReportingOptionsResult;
   view: TeamReportViewConfig;
 }) {
-  const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
-  const dataDays = trend.filter((p) => p.count > 0);
-  const members = buildMemberContributions(data.byRecruiter);
-  const noData = data.empty.noSources || data.empty.noFacts;
-  const showData = !noData && !data.empty.noMatches;
-  const memberTotal = members.reduce((a, m) => a + m.count, 0);
-  const averagePerMember = members.length > 0 ? Math.round((memberTotal / members.length) * 10) / 10 : 0;
-  const entryBuckets = sortBuckets(data.byTeam);
+  const dataSignature = teamReportDataSignature(data);
+  const buckets = sortBuckets(data.byTeam);
+  const [selection, setSelection] = useState<{ signature: string; key: string } | null>(null);
+  // A selection only survives while the DB-applied filters are unchanged; a
+  // single-bucket scope (e.g. one-team leader) resolves to that bucket so its
+  // detail is visible without an extra click.
+  const selectedKey = selection !== null && selection.signature === dataSignature
+    ? selection.key
+    : buckets.length === 1 ? buckets[0].key : null;
+  const selectedBucket = selectedKey === null ? null : buckets.find((bucket) => bucket.key === selectedKey) ?? null;
 
   return (
     <>
       <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">{view.eyebrow}</p>
-            <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">{view.title}</h1>
-            <p className="mt-0.5 max-w-2xl text-sm text-muted">{view.description}</p>
-            {generatedAt ? (
-              <p className="mt-1 text-xs text-muted">
-                Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time>
-              </p>
-            ) : null}
-          </div>
-          {showData ? (
-            <dl aria-label={view.kpiAriaLabel} className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-80 sm:grid-cols-2">
-              <KpiCard variant="compact" label={view.kpiPrimaryLabel} value={data.recruitedTotal} hint={view.kpiPrimaryHint} accent="var(--primary)" />
-              <KpiCard variant="compact" label={view.kpiSecondaryLabel} value={members.length} hint={view.kpiSecondaryHint} accent="var(--secondary)" />
-            </dl>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">{view.eyebrow}</p>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">{view.title}</h1>
+          <p className="mt-0.5 max-w-2xl text-sm text-muted">{view.description}</p>
+          {generatedAt ? (
+            <p className="mt-1 text-xs text-muted">
+              Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time>
+            </p>
           ) : null}
         </div>
       </header>
@@ -105,120 +126,251 @@ export function TeamReportView({
         <ScopeNote label="Phạm vi báo cáo nhóm">{view.scopeNote}</ScopeNote>
         <FiltersOrError optionsResult={optionsResult} showRecruiter={view.showRecruiterFilter} />
 
-        {noData ? (
-          <EmptyState title={view.emptyTitle} description={view.emptyDescription} />
-        ) : data.empty.noMatches ? (
-          <NoMatchesBlock detail={view.noMatchesDetail} />
+        {buckets.length > 0 ? (
+          <TeamPicker
+            buckets={buckets}
+            selectedKey={selectedKey}
+            view={view}
+            onSelect={(key) => setSelection({ signature: dataSignature, key })}
+          />
+        ) : null}
+
+        {selectedBucket !== null ? (
+          <TeamReportSelection
+            key={dataSignature + "|" + selectedBucket.key}
+            data={data}
+            bucket={selectedBucket}
+            view={view}
+          />
         ) : (
-          <>
-            {view.showMemberRanking ? (
-              <section aria-label={view.memberAriaLabel}>
-                <Card>
-                  <CardHeader title={view.memberTitle} description={view.memberDescription} />
-                  <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    <div className="rounded-xl border border-border bg-muted/10 px-3 py-2">
-                      <p className="text-xs uppercase tracking-wide text-muted">Tổng nhóm</p>
-                      <p className="mt-0.5 font-semibold text-foreground">{memberTotal}</p>
-                    </div>
-                    <div className="rounded-xl border border-border bg-muted/10 px-3 py-2">
-                      <p className="text-xs uppercase tracking-wide text-muted">Thành viên có tuyển</p>
-                      <p className="mt-0.5 font-semibold text-foreground">{members.length}</p>
-                    </div>
-                    <div className="rounded-xl border border-border bg-muted/10 px-3 py-2">
-                      <p className="text-xs uppercase tracking-wide text-muted">Trung bình/người</p>
-                      <p className="mt-0.5 font-semibold text-foreground">{averagePerMember}</p>
-                    </div>
-                  </div>
-                  {members.length === 0 ? (
-                    <p className="text-sm text-muted">Chưa có thành viên nào có dữ liệu trong bộ lọc hiện tại.</p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {members.map((m) => (
-                        <li key={m.key} className="grid grid-cols-1 gap-1 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,7rem)] md:items-center md:gap-3">
-                          <span className="min-w-0 truncate text-sm text-foreground" title={m.display}>{m.display}</span>
-                          <span
-                            role="img"
-                            aria-label={m.display + ": " + m.count + " người"}
-                            className="flex h-3 w-full overflow-hidden rounded-full border border-border bg-muted/15"
-                          >
-                            <span className="h-full bg-primary" style={{ width: (m.share === null ? 0 : Math.round(m.share * 100)) + "%" }} />
-                          </span>
-                          <span className="text-xs md:text-right">
-                            <span className="font-medium text-foreground">{m.count} người</span>
-                            <span className="block text-muted">{m.share === null ? "—" : Math.round(m.share * 100) + "%"}</span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </Card>
-              </section>
-            ) : null}
-
-            <section aria-label="Xu hướng tuyển dụng của nhóm">
-              <Card>
-                <CardHeader title="Xu hướng tuyển dụng của nhóm" description="Số người tuyển theo ngày; những ngày không có record thể hiện là 0 trên biểu đồ." />
-                <TrendChart data={trend} />
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm font-medium text-primary">
-                    Xem chi tiết {dataDays.length} ngày
-                  </summary>
-                  <div className="mt-2 max-h-72 overflow-y-auto">
-                    <table className="w-full text-left text-sm">
-                      <caption className="sr-only">Bảng số người tuyển theo ngày trong nhóm (chỉ các ngày có tuyển dụng)</caption>
-                      <thead className="sticky top-0 bg-surface text-xs uppercase tracking-wide text-muted">
-                        <tr className="border-b border-border">
-                          <th className="py-1.5 font-medium">Ngày</th>
-                          <th className="py-1.5 text-right font-medium">Số người</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {dataDays.map((p) => (
-                          <tr key={p.date} className="text-foreground">
-                            <td className="py-1.5 font-mono text-xs">{p.date}</td>
-                            <td className="py-1.5 text-right font-mono">{p.count}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              </Card>
-            </section>
-
-            <section aria-label="Phân bổ tuyển dụng của nhóm" className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-              <Card className="lg:col-span-7">
-                <CardHeader title="Theo dự án trong nhóm" description="Phân bổ tuyển dụng của nhóm theo dự án." />
-                <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án của nhóm" />
-                <BucketList buckets={data.byProject} />
-              </Card>
-              <Card className="lg:col-span-5">
-                <CardHeader title="Theo loại hình làm việc của nhóm" />
-                <EmploymentComposition segments={buildCategorySegments(data.byEmployment)} title="Biểu đồ loại hình làm việc của nhóm" />
-              </Card>
-              {view.showProjectProviderMix ? (
-                <Card className="lg:col-span-12">
-                  <CardHeader
-                    title="Tỷ lệ HRP/Vendor theo dự án của nhóm"
-                    description="Tỷ trọng Vendor/HRP trong phần đã phân loại của từng dự án trong nhóm; “Không xác định” và “Không hợp lệ” không nằm trong mẫu số."
-                  />
-                  <ProjectProviderMixCard mix={data.projectProviderMix} providerFilterActive={Boolean(data.applied.provider)} />
-                </Card>
-              ) : null}
-            </section>
-
-            <section aria-label="Danh sách chi tiết từng dòng">
-              <TeamEntryDetail
-                data={data}
-                buckets={entryBuckets}
-                heading={view.entryHeading}
-                description={view.entryDescription}
-                pickerTitle={view.entryPickerTitle}
-              />
-            </section>
-          </>
+          <TeamReportBody data={data} view={view} />
         )}
       </div>
+    </>
+  );
+}
+
+/**
+ * The selected team's report: fetched from the server-authorized team-report
+ * endpoint. Mounted keyed by the selection + filter signature, so a change
+ * re-fetches from a clean state; state is only ever set from the async
+ * response (never synchronously in the effect body).
+ */
+function TeamReportSelection({
+  data,
+  bucket,
+  view,
+}: {
+  data: ReportingData;
+  bucket: ReportingBucket;
+  view: TeamReportViewConfig;
+}) {
+  const [report, setReport] = useState<ReportingData | null>(null);
+  const [detail, setDetail] = useState<TeamReportDetail | null>(null);
+  const [error, setError] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(teamReportUrl(data, bucket.key, null), {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload: unknown = await response.json().catch(() => null);
+        if (controller.signal.aborted) return;
+        if (!response.ok || !isTeamReportPayload(payload) || payload.report === null) {
+          setError(true);
+          return;
+        }
+        setReport(payload.report);
+        setDetail(payload.detail);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setError(true);
+      });
+    return () => controller.abort();
+  }, [data, bucket, reloadToken]);
+
+  if (error) {
+    return (
+      <Alert tone="error" role="alert" title="Không tải được báo cáo nhóm">
+        <p>Không tải được báo cáo của nhóm đã chọn. Hãy thử lại.</p>
+        <button type="button" onClick={() => setReloadToken((n) => n + 1)} className="mt-2 min-h-10 rounded-md border border-current px-3 font-medium">Thử tải lại</button>
+      </Alert>
+    );
+  }
+  if (report === null || detail === null) {
+    return <p role="status">Đang tải báo cáo nhóm…</p>;
+  }
+  return (
+    <>
+      <TeamReportBody data={report} view={view} />
+      <section aria-label="Danh sách chi tiết từng dòng">
+        <TeamEntryDetail data={data} bucket={bucket} initialDetail={detail} />
+      </section>
+    </>
+  );
+}
+
+function TeamPicker({
+  buckets,
+  selectedKey,
+  view,
+  onSelect,
+}: {
+  buckets: ReportingBucket[];
+  selectedKey: string | null;
+  view: TeamReportViewConfig;
+  onSelect(key: string): void;
+}) {
+  return (
+    <Card>
+      <CardHeader title={view.pickerHeading} description={view.pickerDescription} />
+      <TeamBucketChart buckets={buckets} />
+      <div className="mt-5 border-t border-border pt-4">
+        <h3 className="text-sm font-semibold text-foreground">{view.pickerTitle}</h3>
+        <ul aria-label="Danh sách nhóm báo cáo" className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {buckets.map((bucket) => (
+            <li key={bucket.key}>
+              <button
+                type="button"
+                aria-pressed={selectedKey === bucket.key}
+                onClick={() => onSelect(bucket.key)}
+                className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 ${selectedKey === bucket.key
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-surface text-foreground hover:bg-muted/10"}`}
+              >
+                <span className="min-w-0 break-words">{bucket.display}</span>
+                <span className="shrink-0 font-mono">{bucket.recruitedCount}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
+}
+
+function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportViewConfig }) {
+  const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
+  const dataDays = trend.filter((p) => p.count > 0);
+  const members = buildMemberContributions(data.byRecruiter);
+  const noData = data.empty.noSources || data.empty.noFacts;
+  const memberTotal = members.reduce((a, m) => a + m.count, 0);
+  const averagePerMember = members.length > 0 ? Math.round((memberTotal / members.length) * 10) / 10 : 0;
+
+  if (noData) {
+    return <EmptyState title={view.emptyTitle} description={view.emptyDescription} />;
+  }
+  if (data.empty.noMatches) {
+    return <NoMatchesBlock detail={view.noMatchesDetail} />;
+  }
+
+  return (
+    <>
+      <dl aria-label={view.kpiAriaLabel} className="grid grid-cols-2 gap-2 sm:grid-cols-2">
+        <KpiCard variant="compact" label={view.kpiPrimaryLabel} value={data.recruitedTotal} hint={view.kpiPrimaryHint} accent="var(--primary)" />
+        <KpiCard variant="compact" label={view.kpiSecondaryLabel} value={members.length} hint={view.kpiSecondaryHint} accent="var(--secondary)" />
+      </dl>
+
+      {view.showMemberRanking ? (
+        <section aria-label={view.memberAriaLabel}>
+          <Card>
+            <CardHeader title={view.memberTitle} description={view.memberDescription} />
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className="rounded-xl border border-border bg-muted/10 px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted">Tổng nhóm</p>
+                <p className="mt-0.5 font-semibold text-foreground">{memberTotal}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/10 px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted">Thành viên có tuyển</p>
+                <p className="mt-0.5 font-semibold text-foreground">{members.length}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/10 px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted">Trung bình/người</p>
+                <p className="mt-0.5 font-semibold text-foreground">{averagePerMember}</p>
+              </div>
+            </div>
+            {members.length === 0 ? (
+              <p className="text-sm text-muted">Chưa có thành viên nào có dữ liệu trong bộ lọc hiện tại.</p>
+            ) : (
+              <ul className="space-y-2">
+                {members.map((m) => (
+                  <li key={m.key} className="grid grid-cols-1 gap-1 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,7rem)] md:items-center md:gap-3">
+                    <span className="min-w-0 truncate text-sm text-foreground" title={m.display}>{m.display}</span>
+                    <span
+                      role="img"
+                      aria-label={m.display + ": " + m.count + " người"}
+                      className="flex h-3 w-full overflow-hidden rounded-full border border-border bg-muted/15"
+                    >
+                      <span className="h-full bg-primary" style={{ width: (m.share === null ? 0 : Math.round(m.share * 100)) + "%" }} />
+                    </span>
+                    <span className="text-xs md:text-right">
+                      <span className="font-medium text-foreground">{m.count} người</span>
+                      <span className="block text-muted">{m.share === null ? "—" : Math.round(m.share * 100) + "%"}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </section>
+      ) : null}
+
+      <section aria-label="Xu hướng tuyển dụng của nhóm">
+        <Card>
+          <CardHeader title="Xu hướng tuyển dụng của nhóm" description="Số người tuyển theo ngày; những ngày không có record thể hiện là 0 trên biểu đồ." />
+          <TrendChart data={trend} />
+          <details className="mt-3">
+            <summary className="cursor-pointer text-sm font-medium text-primary">
+              Xem chi tiết {dataDays.length} ngày
+            </summary>
+            <div className="mt-2 max-h-72 overflow-y-auto">
+              <table className="w-full text-left text-sm">
+                <caption className="sr-only">Bảng số người tuyển theo ngày trong nhóm (chỉ các ngày có tuyển dụng)</caption>
+                <thead className="sticky top-0 bg-surface text-xs uppercase tracking-wide text-muted">
+                  <tr className="border-b border-border">
+                    <th className="py-1.5 font-medium">Ngày</th>
+                    <th className="py-1.5 text-right font-medium">Số người</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {dataDays.map((p) => (
+                    <tr key={p.date} className="text-foreground">
+                      <td className="py-1.5 font-mono text-xs">{p.date}</td>
+                      <td className="py-1.5 text-right font-mono">{p.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </Card>
+      </section>
+
+      <section aria-label="Phân bổ tuyển dụng của nhóm" className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <Card className="lg:col-span-7">
+          <CardHeader title="Theo dự án trong nhóm" description="Phân bổ tuyển dụng của nhóm theo dự án." />
+          <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án của nhóm" />
+          <BucketList buckets={data.byProject} />
+        </Card>
+        <Card className="lg:col-span-5">
+          <CardHeader title="Theo loại hình làm việc của nhóm" />
+          <EmploymentComposition segments={buildCategorySegments(data.byEmployment)} title="Biểu đồ loại hình làm việc của nhóm" />
+        </Card>
+        {view.showProjectProviderMix ? (
+          <Card className="lg:col-span-12">
+            <CardHeader
+              title="Tỷ lệ HRP/Vendor theo dự án của nhóm"
+              description="Tỷ trọng Vendor/HRP trong phần đã phân loại của từng dự án trong nhóm; “Không xác định” và “Không hợp lệ” không nằm trong mẫu số."
+            />
+            <ProjectProviderMixCard mix={data.projectProviderMix} providerFilterActive={Boolean(data.applied.provider)} />
+          </Card>
+        ) : null}
+      </section>
     </>
   );
 }

@@ -30,9 +30,9 @@ const bodTeamReportConfig: TeamReportViewConfig = {
   memberTitle: "Đóng góp của người tuyển",
   memberDescription: "Xếp hạng số người tuyển của từng người tuyển trong phạm vi báo cáo.",
   memberAriaLabel: "Đóng góp của người tuyển",
-  entryHeading: "Tuyển dụng theo nhóm",
-  entryDescription: "Chọn một nhóm để xem các dòng chi tiết đã được máy chủ làm sạch.",
-  entryPickerTitle: "Danh sách nhóm",
+  pickerHeading: "Tuyển dụng theo nhóm",
+  pickerDescription: "Chọn một nhóm để xem báo cáo và các dòng chi tiết đã được máy chủ làm sạch.",
+  pickerTitle: "Danh sách nhóm",
 };
 
 const queryParsers = {

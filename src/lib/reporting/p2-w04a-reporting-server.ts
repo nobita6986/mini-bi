@@ -4,6 +4,7 @@ import type { DirectEntryActor } from "@/lib/auth/direct-entry-v2";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
 import { parseReportingFilters } from "./p1-filter";
+import type { ReportingFilters } from "./p1-filter";
 import { computeReporting, reportingQueryFailed } from "./p1-reporting";
 import type {
   ReportingData,
@@ -160,19 +161,6 @@ export async function fetchCutoverReporting(
     for (const r of payload.latest_runs ?? []) latestBySource.set(r.source_id, r.status);
     const sourcesWithFacts = new Set<string>(payload.presence ?? []);
 
-    // 4. Split + defense-in-depth mask + combine.
-    const legacyFactsRaw: ReportingFact[] = [];
-    const directEntryFactsRaw: DirectEntryReportingFact[] = [];
-    for (const f of scopedFacts) {
-      if (f.source_id === P2_W04A_DIRECT_ENTRY_SOURCE_ID) {
-        directEntryFactsRaw.push(f as unknown as DirectEntryReportingFact);
-      } else {
-        legacyFactsRaw.push(f as ReportingFact);
-      }
-    }
-    const maskedDirectEntry = maskDirectEntryFacts(directEntryFactsRaw);
-    const legacyFacts = maskLegacyFacts(legacyFactsRaw);
-
     // 6. Sources for computeReporting: DB-provided legacy sources (all only)
     //    + the Direct Entry synthetic source.
     const sources: ReportingSource[] = rawSources.map((s) => ({
@@ -180,38 +168,89 @@ export async function fetchCutoverReporting(
       latest_run_status: latestBySource.get(s.id) ?? null,
     }));
     sources.push(P2_W04A_DIRECT_ENTRY_SOURCE);
-    if (maskedDirectEntry.length > 0) sourcesWithFacts.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
 
-    // 7. Reconciliation (overlap_blocker is the authoritative global count).
-    const legacy_subtotal = legacyFacts.reduce((a, f) => a + f.recruited_count, 0);
-    const direct_entry_subtotal = maskedDirectEntry.length;
-    const reconciliation: CutoverReconciliation = {
-      legacy_subtotal,
-      direct_entry_subtotal,
-      overlap_blocker: blocker.count,
-      combined_total: legacy_subtotal + direct_entry_subtotal,
-      cutoff_date: P2_W04A_CUTOVER_DATE,
-    };
-
-    if (hasCutoverBlocker(reconciliation)) {
-      const err = cutoverBlockerError(reconciliation);
-      console.error(
-        "[p3-w05a] cutover blocker: overlap=" + err.reconciliation.overlap_blocker +
-          " cutoff=" + err.reconciliation.cutoff_date +
-          " legacy=" + err.reconciliation.legacy_subtotal + " de=" + err.reconciliation.direct_entry_subtotal,
-      );
-      return { ok: false, code: err.code, message: err.message, reconciliation };
+    // 4/7/8. Split + defense-in-depth mask + reconcile + combine + compute are
+    //        expressed once in `computeScopedReportingData`, shared with the
+    //        team-scoped read (P3-W06D-R2).
+    const built = computeScopedReportingData({
+      facts: scopedFacts,
+      sources,
+      sourcesWithFacts,
+      overlapBlocker: blocker.count,
+      filters,
+    });
+    if (!built.ok) {
+      return { ok: false, code: built.code, message: built.message, reconciliation: built.reconciliation };
     }
 
-    // 8. Concatenate WITHOUT grain-dedupe, then compute.
-    const combinedFacts = combineReportingFacts(legacyFacts, maskedDirectEntry);
-    const data = computeReporting(sources, combinedFacts, filters, sourcesWithFacts);
-
-    return { ok: true, data, generatedAt: new Date().toISOString(), audience };
+    return { ok: true, data: built.data, generatedAt: new Date().toISOString(), audience };
   } catch (error) {
     logSafeError("p3-w05a-scoped-reporting", error);
     return reportingQueryFailed();
   }
+}
+
+export type ScopedReportingBuild =
+  | { ok: true; data: ReportingData }
+  | { ok: false; code: string; message: string; reconciliation?: CutoverReconciliation };
+
+/**
+ * P3-W05A / P3-W06D-R2 - build ReportingData from an already-authorized fact set.
+ *
+ * Shared by the company/scope read path (`fetchCutoverReporting`) and the
+ * team-scoped read (`fetchCutoverTeamReport`) so cutover masking, the
+ * reconciliation and the read-model are expressed exactly once.
+ *
+ * `facts` MUST already be scoped and authorized at the DB boundary (audience +
+ * filters); this builder only applies the defense-in-depth date mask, sums and
+ * runs the pure read-model. It never widens the fact set.
+ */
+export function computeScopedReportingData(input: {
+  facts: ReportingFact[];
+  sources: ReportingSource[];
+  sourcesWithFacts: ReadonlySet<string>;
+  overlapBlocker: number;
+  filters: ReportingFilters;
+}): ScopedReportingBuild {
+  const { facts, sources, overlapBlocker, filters } = input;
+  const legacyFactsRaw: ReportingFact[] = [];
+  const directEntryFactsRaw: DirectEntryReportingFact[] = [];
+  for (const f of facts) {
+    if (f.source_id === P2_W04A_DIRECT_ENTRY_SOURCE_ID) {
+      directEntryFactsRaw.push(f as unknown as DirectEntryReportingFact);
+    } else {
+      legacyFactsRaw.push(f as ReportingFact);
+    }
+  }
+  const maskedDirectEntry = maskDirectEntryFacts(directEntryFactsRaw);
+  const legacyFacts = maskLegacyFacts(legacyFactsRaw);
+
+  const sourcesWithFacts = new Set(input.sourcesWithFacts);
+  if (maskedDirectEntry.length > 0) sourcesWithFacts.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
+
+  const legacy_subtotal = legacyFacts.reduce((a, f) => a + f.recruited_count, 0);
+  const direct_entry_subtotal = maskedDirectEntry.length;
+  const reconciliation: CutoverReconciliation = {
+    legacy_subtotal,
+    direct_entry_subtotal,
+    overlap_blocker: overlapBlocker,
+    combined_total: legacy_subtotal + direct_entry_subtotal,
+    cutoff_date: P2_W04A_CUTOVER_DATE,
+  };
+
+  if (hasCutoverBlocker(reconciliation)) {
+    const err = cutoverBlockerError(reconciliation);
+    console.error(
+      "[p3-w05a] cutover blocker: overlap=" + err.reconciliation.overlap_blocker +
+        " cutoff=" + err.reconciliation.cutoff_date +
+        " legacy=" + err.reconciliation.legacy_subtotal + " de=" + err.reconciliation.direct_entry_subtotal,
+    );
+    return { ok: false, code: err.code, message: err.message, reconciliation };
+  }
+
+  const combinedFacts = combineReportingFacts(legacyFacts, maskedDirectEntry);
+  const data = computeReporting(sources, combinedFacts, filters, sourcesWithFacts);
+  return { ok: true, data };
 }
 
 /**
