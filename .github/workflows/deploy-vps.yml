@@ -1,4 +1,4 @@
-name: Deploy BI to VPS
+name: Deploy BI to VPS 1 (main)
 
 on:
   workflow_run:
