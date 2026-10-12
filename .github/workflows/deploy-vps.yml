@@ -1,10 +1,6 @@
-name: Deploy BI to VPS
+name: Deploy BI to VPS 1 (main)
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       commit_sha:
@@ -23,11 +19,6 @@ concurrency:
 
 jobs:
   release:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -40,19 +31,16 @@ jobs:
         shell: bash
         env:
           REQUESTED_SHA: ${{ inputs.commit_sha }}
-          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git fetch origin main
-          sha="${REQUESTED_SHA:-${WORKFLOW_SHA:-}}"
+          sha="${REQUESTED_SHA:-}"
           if [[ -z "$sha" ]]; then sha="$(git rev-parse origin/main)"; fi
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::full 40-character SHA required'; exit 1; }
           git merge-base --is-ancestor "$sha" origin/main || { echo '::error::SHA is not on main'; exit 1; }
-          if [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
-            successful_ci=$(gh run list --workflow CI --commit "$sha" --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')
-            [[ "$successful_ci" -gt 0 ]] || { echo '::error::SHA has no successful CI run'; exit 1; }
-          fi
+          successful_ci=$(gh run list --workflow CI --commit "$sha" --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')
+          [[ "$successful_ci" -gt 0 ]] || { echo '::error::SHA has no successful CI run'; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
