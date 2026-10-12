@@ -149,7 +149,6 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   entry_admin: directEntryNavPredicate,
   project_admin: projectAdminNavPredicate,
   worker_operations: workerOperationsNavPredicate,
-  duplicate_cccd_report: duplicateCccdReportNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */

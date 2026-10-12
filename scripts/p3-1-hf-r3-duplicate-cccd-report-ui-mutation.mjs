@@ -10,6 +10,10 @@
  *   2. tra authority/project_id (dinh danh noi bo) ra client;
  *   3. vuot paging bound cua RPC (bo tran page_size).
  *
+ * P3.1-HF-R3-R1 them hai probe cho phan Dashboard tab:
+ *   4. bo chan page 1000 (cho phep goi page 1001 du has_more);
+ *   5. bo gate tab CCCD tren Dashboard (luon hien tab).
+ *
  * Cach chay: node scripts/p3-1-hf-r3-duplicate-cccd-report-ui-mutation.mjs
  */
 import { execFile } from "node:child_process";
@@ -22,6 +26,7 @@ const run = promisify(execFile);
 const ROOT = path.resolve(".");
 const CAPABILITY = path.resolve("src/lib/navigation/registry-capability.ts");
 const CONTRACT = path.resolve("src/lib/direct-entry/duplicate-cccd-report-contract.ts");
+const TABS = path.resolve("src/components/dashboard/bod-dashboard-tabs.tsx");
 
 const LANE_COMMANDS = [
   ["--conditions=react-server", "--test",
@@ -55,6 +60,23 @@ const MUTATIONS = [
     replace: "    pageSize = Number(rawPageSize);\n" +
       "    if (pageSize < 1) return QUERY_INVALID;",
   },
+  {
+    label: "4. bo chan page 1000 (cho phep goi page 1001 du has_more)",
+    file: CONTRACT,
+    find: "  if (!Number.isSafeInteger(page) || page < 1) return null;\n" +
+      "  if (page >= DUPLICATE_CCCD_REPORT_MAX_PAGE) return null;\n" +
+      "  return page + 1;",
+    replace: "  if (!Number.isSafeInteger(page) || page < 1) return null;\n" +
+      "  return page + 1;",
+  },
+  {
+    label: "5. bo gate tab CCCD tren Dashboard (luon hien tab)",
+    file: TABS,
+    find: "  const visibleTabs = tabs.filter(\n" +
+      "    (tab) => tab.key !== \"duplicate-cccd\" || canViewDuplicateCccd,\n" +
+      "  );",
+    replace: "  const visibleTabs = tabs.filter(() => true);",
+  },
 ];
 
 function sha256(text) {
@@ -84,7 +106,7 @@ async function runLane() {
 
 const originals = new Map();
 const originalHashes = new Map();
-const touchedFiles = [CAPABILITY, CONTRACT];
+const touchedFiles = [CAPABILITY, CONTRACT, TABS];
 for (const file of touchedFiles) {
   const text = await readFile(file, "utf8");
   originals.set(file, text);

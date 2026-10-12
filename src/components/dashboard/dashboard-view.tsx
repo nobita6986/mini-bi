@@ -51,11 +51,14 @@ export function DashboardView({
   report,
   optionsResult,
   audience,
+  canViewDuplicateCccd,
 }: {
   report: ReportingFetchResult;
   optionsResult: ReportingOptionsResult;
   /** DB-authoritative audience from the scoped payload; null fails closed. */
   audience: ReportingAudience | null;
+  /** P3.1-HF-R3-R1: server-derived visibility for the "Báo cáo CCCD trùng" tab. */
+  canViewDuplicateCccd: boolean;
 }) {
   // P3-W06C: the audience is DB-authoritative (W05A scoped payload); it is never
   // inferred from a UI role. A failed read, or a successful read without a usable
@@ -113,6 +116,7 @@ export function DashboardView({
     <BodDashboardTabs
       data={report.data}
       optionsResult={optionsResult}
+      canViewDuplicateCccd={canViewDuplicateCccd}
       general={
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
           <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">

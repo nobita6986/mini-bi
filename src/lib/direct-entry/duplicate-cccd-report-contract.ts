@@ -152,6 +152,17 @@ export function buildDuplicateCccdReportQuery(
   });
 }
 
+/**
+ * Trang ke tiep cho nut "Trang sau". Tra null khi het ket qua HOAC khi da cham tran cua RPC
+ * (page > 1000) - nen tai page 1000 du RPC con `has_more: true` thi van KHONG goi page 1001.
+ */
+export function nextDuplicateCccdReportPage(page: number, hasMore: boolean): number | null {
+  if (!hasMore) return null;
+  if (!Number.isSafeInteger(page) || page < 1) return null;
+  if (page >= DUPLICATE_CCCD_REPORT_MAX_PAGE) return null;
+  return page + 1;
+}
+
 export type DuplicateCccdReportEpisode = {
   employee_code: string | null;
   display_name: string | null;

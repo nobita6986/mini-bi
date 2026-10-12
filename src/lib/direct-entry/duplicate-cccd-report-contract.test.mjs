@@ -12,6 +12,7 @@ import {
   buildDuplicateCccdReportQuery,
   employmentStatusLabel,
   maskedCccd,
+  nextDuplicateCccdReportPage,
   projectDuplicateCccdReportRpcPage,
   projectDuplicateCccdReportQuery,
   projectDuplicateCccdReportResponse,
@@ -19,6 +20,7 @@ import {
   DUPLICATE_CCCD_REPORT_DEFAULT_PAGE_SIZE,
   DUPLICATE_CCCD_REPORT_EPISODE_KEYS,
   DUPLICATE_CCCD_REPORT_GROUP_KEYS,
+  DUPLICATE_CCCD_REPORT_MAX_PAGE,
   DUPLICATE_CCCD_REPORT_MAX_PAGE_SIZE,
   DUPLICATE_CCCD_REPORT_PAGE_KEYS,
   DUPLICATE_CCCD_REPORT_PAGE_SIZE_OPTIONS,
@@ -104,6 +106,18 @@ test("the client query builder mirrors the wire bounds", () => {
   }
   for (const size of DUPLICATE_CCCD_REPORT_PAGE_SIZE_OPTIONS) {
     assert.ok(size >= 1 && size <= DUPLICATE_CCCD_REPORT_MAX_PAGE_SIZE);
+  }
+});
+
+test("the next page stops at the RPC page ceiling even when has_more is true", () => {
+  assert.equal(DUPLICATE_CCCD_REPORT_MAX_PAGE, 1000);
+  assert.equal(nextDuplicateCccdReportPage(1, true), 2);
+  assert.equal(nextDuplicateCccdReportPage(999, true), 1000);
+  assert.equal(nextDuplicateCccdReportPage(1000, true), null);
+  assert.equal(nextDuplicateCccdReportPage(1000, false), null);
+  assert.equal(nextDuplicateCccdReportPage(5, false), null);
+  for (const bad of [0, -1, 1.5, Number.NaN]) {
+    assert.equal(nextDuplicateCccdReportPage(bad, true), null, String(bad));
   }
 });
 

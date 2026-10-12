@@ -158,17 +158,17 @@ export function decideWorkerOperationsPageAccess(input: {
 }
 
 /**
- * P3.1-HF-R3: server page gate cho /reports/duplicate-cccd.
- * Dung CHUNG predicate voi nav (duplicateCccdReportNavPredicate) — dung authority cua RPC
- * #74 (Full Admin triple | catalog_master_manage | entry_privileged_edit, kem all scope).
- * Khong mo rong quyen: chi ba nhom ma RPC da cho phep moi qua duoc; entry_admin@all mot minh,
- * change_review, leader/PM va actor khong map deu ACCESS_DENIED.
+ * P3.1-HF-R3-R1: quyet dinh actor co duoc THAY tab "Bao cao CCCD trung" tren Dashboard khong.
+ *
+ * Day chi la metadata hien thi (server-derived, khong phai client); quyen that van do API/RPC
+ * #74 quyet dinh lai. Dung CHUNG predicate (duplicateCccdReportNavPredicate) voi authority cua
+ * RPC: Full Admin triple | catalog_master_manage | entry_privileged_edit, kem effective all
+ * scope. Actor chua resolve hoac resolve fail => false (fail-closed).
  */
-export function decideDuplicateCccdReportPageAccess(input: {
-  actor: ActorResolution | null;
-}): DirectEntryPageDecision {
-  return decideCapabilityPageAccess({
-    actor: input.actor,
-    allowed: duplicateCccdReportNavPredicate,
+export function canViewDuplicateCccdReport(actor: ActorResolution | null): boolean {
+  if (!actor || !actor.ok) return false;
+  return duplicateCccdReportNavPredicate({
+    capabilities: actor.actor.capabilities,
+    scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
   });
 }

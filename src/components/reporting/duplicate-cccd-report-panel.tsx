@@ -10,8 +10,10 @@ import {
   buildDuplicateCccdReportQuery,
   employmentStatusLabel,
   maskedCccd,
+  nextDuplicateCccdReportPage,
   projectDuplicateCccdReportResponse,
   DUPLICATE_CCCD_REPORT_DEFAULT_PAGE_SIZE,
+  DUPLICATE_CCCD_REPORT_MAX_PAGE,
   DUPLICATE_CCCD_REPORT_PAGE_SIZE_OPTIONS as PAGE_SIZE_OPTIONS,
 } from "@/lib/direct-entry/duplicate-cccd-report-contract";
 import type {
@@ -55,12 +57,12 @@ function GroupCard({ group }: { group: DuplicateCccdReportGroup }) {
       <p className="mb-3 text-sm text-muted">
         Vào làm sớm nhất: {group.first_work_date ?? "—"} · gần nhất: {group.latest_first_work_date ?? "—"}
       </p>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full min-w-[560px] text-left text-sm">
           <caption className="sr-only">
             Các hồ sơ dùng chung số CCCD {masked}
           </caption>
-          <thead className="border-b border-border text-xs uppercase text-muted">
+          <thead className="bg-muted/20 text-xs uppercase tracking-wide text-muted">
             <tr>
               <th scope="col" className="px-3 py-3">Họ tên</th>
               <th scope="col" className="px-3 py-3">Mã nhân viên</th>
@@ -69,13 +71,13 @@ function GroupCard({ group }: { group: DuplicateCccdReportGroup }) {
               <th scope="col" className="px-3 py-3">Trạng thái</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border">
             {group.episodes.map((episode, index) => (
-              <tr key={index} className="border-b border-border/70 last:border-0">
+              <tr key={index}>
                 <td className="px-3 py-3 font-medium">{episode.display_name ?? "—"}</td>
                 <td className="px-3 py-3">{episode.employee_code ?? "—"}</td>
                 <td className="px-3 py-3">{episode.project_display ?? "—"}</td>
-                <td className="px-3 py-3">{episode.first_work_date ?? "—"}</td>
+                <td className="px-3 py-3 font-mono text-xs">{episode.first_work_date ?? "—"}</td>
                 <td className="px-3 py-3"><StatusBadge status={episode.latest_status} /></td>
               </tr>
             ))}
@@ -86,6 +88,12 @@ function GroupCard({ group }: { group: DuplicateCccdReportGroup }) {
   );
 }
 
+/**
+ * P3.1-HF-R3-R1 - panel bao cao CCCD trung, tai su dung trong Dashboard shell (tab "Bao cao
+ * CCCD trung"). Khong co container/heading cap trang: Card, spacing, typography va responsive
+ * ke thua tu Dashboard. Du lieu lay tu API read-only hien co; quyen do API/RPC quyet dinh, tab
+ * chi la metadata hien thi.
+ */
 export function DuplicateCccdReportPanel() {
   const [state, setState] = useState<ReportState>({ kind: "loading" });
   const [page, setPage] = useState(1);
@@ -132,7 +140,7 @@ export function DuplicateCccdReportPanel() {
           setState({ kind: "error" });
           return;
         }
-        const pageCount = Math.min(1000, Math.max(1,
+        const pageCount = Math.min(DUPLICATE_CCCD_REPORT_MAX_PAGE, Math.max(1,
           Math.ceil(loaded.total_groups / Math.max(1, loaded.page_size))));
         if (page > pageCount) {
           setPage(pageCount);
@@ -153,19 +161,14 @@ export function DuplicateCccdReportPanel() {
 
   const loaded = state.kind === "loaded" ? state.page : null;
   const pageCount = loaded
-    ? Math.min(1000, Math.max(1, Math.ceil(loaded.total_groups / Math.max(1, loaded.page_size))))
+    ? Math.min(DUPLICATE_CCCD_REPORT_MAX_PAGE, Math.max(1,
+        Math.ceil(loaded.total_groups / Math.max(1, loaded.page_size))))
     : 1;
+  const nextPage = loaded ? nextDuplicateCccdReportPage(loaded.page, loaded.has_more) : null;
+  const previousPage = loaded && loaded.page > 1 ? loaded.page - 1 : null;
 
   return (
-    <div className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-bold text-foreground">Báo cáo hồ sơ có CCCD trùng</h1>
-        <p className="mt-1 text-sm text-muted">
-          Danh sách các hồ sơ trên toàn hệ thống đang dùng chung một số CCCD. Đây là báo cáo
-          chỉ xem — không gộp, không sửa và không xóa hồ sơ.
-        </p>
-      </header>
-
+    <div className="space-y-4">
       <Alert tone="info" title="Chỉ xem">
         <p>
           Số CCCD được che, chỉ hiển thị 4 chữ số cuối. Báo cáo này độc lập với cảnh báo khi gửi
@@ -173,25 +176,31 @@ export function DuplicateCccdReportPanel() {
         </p>
       </Alert>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <label className="flex flex-col gap-1 text-sm font-medium">
-          Số dòng mỗi trang
-          <select
-            value={pageSize}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value));
-              setPage(1);
-              setState({ kind: "loading" });
-            }}
-            className="min-h-10 rounded-md border border-border bg-surface px-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            {PAGE_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className={button} onClick={reload}>Tải lại</button>
-      </div>
+      <Card className="p-4">
+        <CardHeader
+          title="Hồ sơ có CCCD trùng"
+          description="Danh sách các hồ sơ trên toàn hệ thống đang dùng chung một số CCCD. Chỉ xem — không gộp, không sửa và không xóa hồ sơ."
+        />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <label className="flex flex-col gap-1 text-sm font-medium">
+            Số dòng mỗi trang
+            <select
+              value={pageSize}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(1);
+                setState({ kind: "loading" });
+              }}
+              className="min-h-10 rounded-md border border-border bg-surface px-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className={button} onClick={reload}>Tải lại</button>
+        </div>
+      </Card>
 
       {state.kind === "loading" ? (
         <p role="status" className="py-8 text-center text-sm text-muted">Đang tải báo cáo CCCD trùng…</p>
@@ -241,12 +250,12 @@ export function DuplicateCccdReportPanel() {
               className="flex flex-col gap-3 border-t border-border pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
               <p aria-live="polite">Trang {loaded.page} / {pageCount}</p>
               <div className="flex items-center gap-2">
-                <button type="button" className={button} disabled={loaded.page <= 1}
-                  onClick={() => { setPage((value) => Math.max(1, value - 1)); setState({ kind: "loading" }); }}>
+                <button type="button" className={button} disabled={previousPage === null}
+                  onClick={() => { if (previousPage !== null) { setPage(previousPage); setState({ kind: "loading" }); } }}>
                   Trang trước
                 </button>
-                <button type="button" className={button} disabled={!loaded.has_more}
-                  onClick={() => { setPage((value) => value + 1); setState({ kind: "loading" }); }}>
+                <button type="button" className={button} disabled={nextPage === null}
+                  onClick={() => { if (nextPage !== null) { setPage(nextPage); setState({ kind: "loading" }); } }}>
                   Trang sau
                 </button>
               </div>

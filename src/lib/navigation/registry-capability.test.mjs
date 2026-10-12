@@ -240,9 +240,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboa
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin thấy Admin, báo cáo CCCD trùng cùng với các khu vực đã có quyền.
+  // Full Admin thấy Admin cùng với các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "dashboard", "direct-entry", "duplicate-cccd-report", "project-operations", "worker-operations"]);
+    ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -264,13 +264,13 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
     actor: accounting,
     decide: decideFor(accounting, "desktop"),
   });
-  assert.deepEqual(result.map((entry) => entry.id), ["dashboard", "admin", "duplicate-cccd-report"]);
+  assert.deepEqual(result.map((entry) => entry.id), ["dashboard", "admin"]);
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
   // Admin is added to the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "duplicate-cccd-report", "project-operations", "worker-operations"]);
+  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============
