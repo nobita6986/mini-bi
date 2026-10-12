@@ -2,7 +2,7 @@
 
 ## Status
 
-`P3_W06D_DASHBOARD_TEAM_UI_LOCAL_PASS_AWAITING_T0_REVIEW`
+`P3_W06D_R1_DASHBOARD_TEAM_UI_REPAIR_LOCAL_PASS_AWAITING_T0_REVIEW`
 
 ## Base / branch
 
@@ -25,9 +25,10 @@
 - `src/components/dashboard/bod-dashboard-tabs.tsx`
   - Client tab shell with exact `tab=general|team` contract.
   - Missing/invalid tab normalizes to `general`.
-  - Tab changes use nuqs history `push`, `shallow:false`, `scroll:false`.
+  - Tab changes use nuqs history `push`, `shallow:true`, `scroll:false` when only changing the tab.
+  - Entering `tab=team` while `source` is present removes `source` and uses `shallow:false` for the authoritative server reload.
+  - Repeated/malformed tab values are normalized server-side to `general`; missing tab defaults to `general`.
   - `role=tablist/tab/tabpanel`, `aria-selected`, `aria-controls`, linked IDs, roving `tabIndex`, ArrowLeft/ArrowRight/Home/End.
-  - Keeps existing `source` on general tab; removes it when entering team tab.
 
 - `src/app/dashboard/page.tsx`
   - Direct `tab=team&source=...` normalization happens before reporting fetch.
@@ -133,4 +134,22 @@ Canonical `pnpm test` reached `test:p3-w06d` and the remaining chain. It recorde
 
 ## Review target
 
-T0 should review the two-tab flow, direct `tab=team&source=...` normalization, bucket/detail accessibility, Unknown split, Admin label copy, and the known canonical G4-I exception.
+
+## R1 repair revision
+
+R1 appends one repair commit on top of `e7f54b43081ce3b1c1f6c2067486a3885aa4f89e`; no amend, rebase or force-push.
+
+- Tab-only changes now use `history: "push"`, `shallow: true`, `scroll: false`, so the reporting payload is not refetched.
+- Entering team with a present `source` uses `shallow: false`, removes `source`, preserves the remaining filters, and lets the server reload authoritative reporting data before rendering the team panel.
+- Server tab validation accepts exactly one string `general` or `team`; missing defaults to general; repeated arrays and malformed values redirect to explicit `tab=general` while preserving valid filters and source.
+- Direct `tab=team&source=...` redirects to normalized `tab=team` without source before reporting fetch.
+
+### R1 verification
+
+- Focused W06D lane: 11/11 PASS.
+- W05B-A: 13/13 PASS; W05A: 46/46 PASS; W06C: 22/22 PASS; Admin navigation: 98/98 PASS.
+- `next typegen`, typecheck, lint, build, docs 6/6, secrets, offline migration (85) and diff check PASS.
+- Mutation probes: shallow policy and repeated/malformed normalization each RED when removed, then restored byte-identically and focused lane returned GREEN.
+- Canonical suite still has only the known pre-existing G4-I failure: base `48bb83b` reproduces 446/447 in `test:main`; all lanes after `test:main` were rerun and completed green.
+
+Skipped: no backend/API/parser/migration changes, Production access, deploy or browser/UAT. Risk is limited to runtime visual validation of tab URL transitions, which remains covered by contract tests and build only.

@@ -23,26 +23,44 @@ test("W06D: only DB-confirmed all reaches the two-tab shell", () => {
   assert.match(tabs, /Báo cáo theo nhóm/);
 });
 
-test("W06D: tab URL/default/history and source normalization use the locked contract", () => {
+test("W06D: tab URL/history and source normalization use the locked contract", () => {
   assert.match(tabs, /parseAsString/);
   for (const fragment of [
     "useQueryStates(queryParsers",
     "history: \"push\"",
-    "shallow: false",
+    "shallow: true",
     "scroll: false",
+    "needsAuthoritativeReload",
+    "shallow: !needsAuthoritativeReload",
   ]) assert.ok(tabs.includes(fragment), fragment);
   assert.match(tabs, /rawTab === "team" \? "team" : "general"/);
   assert.match(tabs, /source: next === "team" \? null : source/);
+  assert.match(tabs, /history: "push", shallow: !needsAuthoritativeReload, scroll: false/);
   assert.match(tabs, /role="tablist"/);
   assert.match(tabs, /role="tabpanel"/);
   assert.match(tabs, /aria-selected/);
   assert.match(tabs, /aria-controls/);
   assert.match(tabs, /tabIndex=\{activeTab === tab\.key \? 0 : -1\}/);
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) assert.ok(tabs.includes(key));
-  assert.match(page, /firstSearchParam\(params\.tab\) === "team"/);
+  assert.match(page, /normalizedDashboardTab/);
   assert.match(page, /params\.source !== undefined/);
-  assert.match(page, /redirect\(normalizedDashboardPath\(params\)\)/);
-  assert.match(page, /if \(key === "tab" \|\| key === "source"/);
+  assert.match(page, /normalizedDashboardPath\(params, "team", true\)/);
+  assert.match(page, /if \(key === "tab" \|\| \(removeSource && key === "source"\)/);
+});
+
+test("W06D: missing tab defaults general; repeated or malformed tab normalizes general", () => {
+  assert.match(page, /type DashboardTab = "general" \| "team"/);
+  assert.match(page, /typeof value === "string" && \(value === "general" \|\| value === "team"\)/);
+  assert.match(page, /rawTab !== undefined && tab === null/);
+  assert.match(page, /normalizedDashboardPath\(params, "general", false\)/);
+  assert.match(page, /query\.set\("tab", tab\)/);
+});
+
+test("W06D: direct team tab with source normalizes before reporting fetch", () => {
+  const normalize = page.indexOf('normalizedDashboardPath(params, "team", true)');
+  const fetch = page.indexOf("fetchCutoverReporting(params, actor.actor)");
+  assert.ok(normalize >= 0 && normalize < fetch);
+  assert.match(page, /params\.source !== undefined/);
 });
 
 test("W06D: team aggregate consumes byTeam and never regroups facts client-side", () => {

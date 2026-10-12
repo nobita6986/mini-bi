@@ -13,20 +13,20 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Tổng quan tuyển dụng — mini-bi" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type DashboardTab = "general" | "team";
 
-function firstSearchParam(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
+function normalizedDashboardTab(value: string | string[] | undefined): DashboardTab | null {
+  return typeof value === "string" && (value === "general" || value === "team") ? value : null;
 }
 
-function normalizedDashboardPath(params: SearchParams): string {
+function normalizedDashboardPath(params: SearchParams, tab: DashboardTab, removeSource: boolean): string {
   const query = new URLSearchParams();
   for (const [key, raw] of Object.entries(params)) {
-    if (key === "tab" || key === "source" || raw === undefined) continue;
+    if (key === "tab" || (removeSource && key === "source") || raw === undefined) continue;
     for (const value of Array.isArray(raw) ? raw : [raw]) query.append(key, value);
   }
-  query.set("tab", "team");
-  const encoded = query.toString();
-  return encoded ? "/dashboard?" + encoded : "/dashboard?tab=team";
+  query.set("tab", tab);
+  return "/dashboard?" + query.toString();
 }
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -59,8 +59,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
 
   const params = await searchParams;
-  if (firstSearchParam(params.tab) === "team" && params.source !== undefined) {
-    redirect(normalizedDashboardPath(params));
+  const rawTab = params.tab;
+  const tab = normalizedDashboardTab(rawTab);
+  const sourcePresent = params.source !== undefined;
+  if (rawTab !== undefined && tab === null) {
+    redirect(normalizedDashboardPath(params, "general", false));
+  }
+  if (tab === "team" && sourcePresent) {
+    redirect(normalizedDashboardPath(params, "team", true));
   }
   const [report, options] = await Promise.all([
     fetchCutoverReporting(params, actor.actor),

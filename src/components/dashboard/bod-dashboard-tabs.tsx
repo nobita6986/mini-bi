@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useTransition, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useTransition, type KeyboardEvent, type ReactNode } from "react";
 import { parseAsString, useQueryStates } from "nuqs";
 
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
@@ -30,22 +30,20 @@ export function BodDashboardTabs({
 }) {
   const [{ tab: rawTab, source }, setQuery] = useQueryStates(queryParsers, {
     history: "push",
-    shallow: false,
+    shallow: true,
     scroll: false,
   });
   const [isPending, startTransition] = useTransition();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeTab: TabKey = rawTab === "team" ? "team" : "general";
 
-  useEffect(() => {
-    if (rawTab !== null && rawTab !== "general" && rawTab !== "team") {
-      void setQuery({ tab: "general" });
-    }
-  }, [rawTab, setQuery]);
-
   function selectTab(next: TabKey): void {
+    const needsAuthoritativeReload = next === "team" && source !== null;
     startTransition(() => {
-      void setQuery({ tab: next, source: next === "team" ? null : source });
+      void setQuery(
+        { tab: next, source: next === "team" ? null : source },
+        { history: "push", shallow: !needsAuthoritativeReload, scroll: false },
+      );
     });
   }
 
