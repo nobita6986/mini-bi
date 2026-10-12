@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "db:migrate": "node scripts/apply-migrations.mjs",
     "fixtures:check": "node scripts/check-daily-recruitment-fixtures.mjs",
     "secrets:check": "node scripts/check-secrets.mjs",
