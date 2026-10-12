@@ -37,9 +37,12 @@ import { teamReportDataSignature, teamReportUrl } from "./team-report-request";
  * here: the server re-resolves the audience and verifies the bucket, and a
  * denied bucket surfaces as an error instead of data.
  *
- * With no team selected the audience-scoped report (`data`) is shown and the
- * bucket list stays (BoD keeps its current overview). The entry-level detail is
- * the LAST section.
+ * With no team selected the `requireTeamSelection` flag decides what is shown:
+ * the Team Leader (audience `team`) still renders its DB-scoped report, while
+ * the BoD (audience `all`) renders ONLY the picker until a team is chosen, so
+ * company-wide figures can never read as a team report. When a filter change
+ * resets the selection the body disappears immediately. The entry-level detail
+ * is always the LAST section.
  */
 
 export interface TeamReportViewConfig {
@@ -53,6 +56,12 @@ export interface TeamReportViewConfig {
   showMemberRanking: boolean;
   showProjectProviderMix: boolean;
   showRecruiterFilter: boolean;
+  /**
+   * P3-W06D-R3: when true (BoD / audience `all`) NO report body is rendered
+   * until a team is explicitly selected, so company-wide figures can never be
+   * mistaken for a team report. The Team Leader keeps `false`.
+   */
+  requireTeamSelection: boolean;
   kpiAriaLabel: string;
   kpiPrimaryLabel: string;
   kpiPrimaryHint: string;
@@ -99,12 +108,13 @@ export function TeamReportView({
   const dataSignature = teamReportDataSignature(data);
   const buckets = sortBuckets(data.byTeam);
   const [selection, setSelection] = useState<{ signature: string; key: string } | null>(null);
-  // A selection only survives while the DB-applied filters are unchanged; a
+  // A selection only survives while the DB-applied filters are unchanged. A
   // single-bucket scope (e.g. one-team leader) resolves to that bucket so its
-  // detail is visible without an extra click.
+  // detail is visible without an extra click, but only when the view does NOT
+  // require an explicit selection (BoD always picks a team).
   const selectedKey = selection !== null && selection.signature === dataSignature
     ? selection.key
-    : buckets.length === 1 ? buckets[0].key : null;
+    : !view.requireTeamSelection && buckets.length === 1 ? buckets[0].key : null;
   const selectedBucket = selectedKey === null ? null : buckets.find((bucket) => bucket.key === selectedKey) ?? null;
 
   return (
@@ -142,6 +152,10 @@ export function TeamReportView({
             bucket={selectedBucket}
             view={view}
           />
+        ) : view.requireTeamSelection ? (
+          <p role="status" className="rounded-2xl border border-dashed border-border bg-muted/10 px-4 py-6 text-center text-sm text-muted">
+            Chọn một nhóm trong danh sách để xem báo cáo chi tiết của nhóm đó.
+          </p>
         ) : (
           <TeamReportBody data={data} view={view} />
         )}

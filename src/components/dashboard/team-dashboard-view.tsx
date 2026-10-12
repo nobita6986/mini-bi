@@ -26,6 +26,7 @@ function teamReportConfig(view: ScopedDashboardView): TeamReportViewConfig {
     showMemberRanking: view.showMemberRanking,
     showProjectProviderMix: view.showProjectProviderMix,
     showRecruiterFilter: view.showRecruiterFilter,
+    requireTeamSelection: false,
     kpiAriaLabel: "Chỉ số nhóm",
     kpiPrimaryLabel: "Tuyển mới trong nhóm",
     kpiPrimaryHint: "số người tuyển",

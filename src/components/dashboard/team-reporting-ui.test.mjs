@@ -123,7 +123,8 @@ test("W06D-R2: BoD team selection loads THAT team from the authorized endpoint",
   assert.doesNotMatch(request, /team-drill-down/);
   assert.match(report, /teamReportUrl\(data, bucket\.key, null\)/);
   assert.match(report, /if \(!response\.ok \|\| !isTeamReportPayload\(payload\) \|\| payload\.report === null\)/);
-  // With no selection the audience-scoped payload is still shown (BoD overview).
+  // The no-selection fallback body (Team Leader path) still exists; the BoD
+  // path is gated by `requireTeamSelection` (see the R3 tests below).
   assert.match(report, /<TeamReportBody data=\{data\} view=\{view\} \/>/);
 });
 
@@ -183,6 +184,58 @@ test("W06D-R2: team/filter change resets the selection and the detail rows", () 
   assert.match(request, /export function teamReportDataSignature/);
   assert.match(report, /\[data, bucket, reloadToken\]/);
   assert.match(report, /<TeamReportSelection/);
+});
+
+test("W06D-R3: BoD with no team selected shows only the picker and never requests a team report", () => {
+  // BoD (audience `all`) must pick a team before any report body is rendered.
+  assert.match(tabs, /requireTeamSelection: true/);
+  assert.match(report, /requireTeamSelection: boolean/);
+
+  const picker = report.indexOf("<TeamPicker");
+  const selection = report.indexOf("<TeamReportSelection");
+  const gate = report.indexOf("view.requireTeamSelection ?");
+  const prompt = report.indexOf("Chọn một nhóm trong danh sách để xem báo cáo chi tiết của nhóm đó.");
+  const body = report.indexOf("<TeamReportBody data={data} view={view} />");
+  assert.ok(picker >= 0 && selection >= 0 && gate >= 0 && prompt >= 0 && body >= 0,
+    "picker, selection, required gate, prompt and fallback body exist");
+  assert.ok(picker < selection && selection < gate && gate < prompt && prompt < body,
+    "render order: picker < selection < required gate < prompt < fallback body");
+
+  // The only team-report fetch lives inside TeamReportSelection, which is
+  // rendered exclusively when a bucket is selected -> no request without one.
+  const fetchCall = report.indexOf("fetch(teamReportUrl(data, bucket.key, null)");
+  assert.ok(fetchCall >= 0 && report.indexOf("function TeamReportSelection(") < fetchCall);
+  assert.ok(fetchCall > gate, "the fetch sits behind the selection gate");
+
+  // A required-selection view never auto-selects a single bucket.
+  assert.match(report, /!view\.requireTeamSelection && buckets\.length === 1/);
+});
+
+test("W06D-R3: selecting a team replaces the audience payload with that team's report", () => {
+  assert.match(report, /<TeamReportBody data=\{report\} view=\{view\} \/>/);
+  assert.match(report, /setReport\(payload\.report\)/);
+  assert.match(report, /setDetail\(payload\.detail\)/);
+  assert.match(report, /if \(!response\.ok \|\| !isTeamReportPayload\(payload\) \|\| payload\.report === null\)/);
+});
+
+test("W06D-R3: a filter change resets the selection so the team body disappears", () => {
+  assert.match(report, /selection !== null && selection\.signature === dataSignature/);
+  assert.match(report, /key=\{dataSignature \+ "\|" \+ selectedBucket\.key\}/);
+  assert.match(report, /\[data, bucket, reloadToken\]/);
+  assert.match(report, /if \(report === null \|\| detail === null\) \{\s*return <p role="status">Đang tải báo cáo nhóm…<\/p>;/);
+});
+
+test("W06D-R3: the Team Leader keeps the audience-scoped report (no selection gate)", () => {
+  assert.match(leader, /requireTeamSelection: false/);
+  assert.doesNotMatch(leader, /requireTeamSelection: true/);
+});
+
+test("W06D-R3: the CCCD tab and its panel are unchanged", () => {
+  assert.match(tabs, /\{ key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" \}/);
+  assert.match(tabs, /<DuplicateCccdReportPanel \/>/);
+  assert.match(tabs, /canViewDuplicateCccd/);
+  assert.match(tabs, /tab\.key !== "duplicate-cccd" \|\| canViewDuplicateCccd/);
+  assert.match(tabs, /id="bod-panel-duplicate-cccd"/);
 });
 
 test("W06D: unknown split, load-more/end and retry are explicit", () => {
