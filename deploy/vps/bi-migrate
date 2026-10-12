@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly MIGRATION_ENV=/etc/bi/migration.env
+readonly EDGE_NETWORK=hrp-edge
+
+if [[ $# -ne 2 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}-migrations$ ||
+      ! $2 =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "refusing unexpected migration image or actor" >&2
+  exit 65
+fi
+
+migration_image=$1
+actor=$2
+token=$(cat)
+[[ -n $token ]] || { echo "registry token required on stdin" >&2; exit 66; }
+[[ -r $MIGRATION_ENV ]] || { echo "missing root-owned $MIGRATION_ENV" >&2; exit 66; }
+
+cleanup() {
+  docker logout ghcr.io >/dev/null 2>&1 || true
+  unset token
+}
+trap cleanup EXIT
+printf '%s' "$token" | docker login ghcr.io --username "$actor" --password-stdin >/dev/null
+unset token
+docker pull "$migration_image"
+
+docker run --rm --network "$EDGE_NETWORK" --env-file "$MIGRATION_ENV" \
+  -v "$MIGRATION_ENV:/etc/bi/migration.env:ro" \
+  -e SUPABASE_CONFIG_FILE=/etc/bi/migration.env \
+  "$migration_image"
+
+status=$(docker run --rm --network "$EDGE_NETWORK" --env-file "$MIGRATION_ENV" \
+  -v "$MIGRATION_ENV:/etc/bi/migration.env:ro" \
+  -e SUPABASE_CONFIG_FILE=/etc/bi/migration.env \
+  "$migration_image" --dry-run 2>&1) || { printf '%s\n' "$status" >&2; exit 1; }
+printf '%s\n' "$status"
+if grep -Eq '^(PENDING|CHECKSUM MISMATCH) ' <<<"$status"; then
+  echo "post-migration verification found pending migrations or checksum mismatches" >&2
+  exit 1
+fi

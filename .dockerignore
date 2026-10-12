@@ -1,0 +1,13 @@
+.git
+.codegraph
+.commandcode
+.next
+.vercel
+node_modules
+coverage
+docs
+.env*
+!.env.example
+*.tsbuildinfo
+*.xlsx
+supabase-bi.txt

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly MIGRATION_ENV=/etc/bi/migration.env
+readonly EDGE_NETWORK=hrp-edge
+
+if [[ $# -ne 3 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}$ ||
+      ! $2 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}-migrations$ ||
+      ! $3 =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "refusing unexpected image or actor" >&2
+  exit 65
+fi
+
+app_image=$1
+migration_image=$2
+actor=$3
+token=$(cat)
+[[ -n $token ]] || { echo "registry token required on stdin" >&2; exit 66; }
+[[ -r $MIGRATION_ENV ]] || { echo "missing root-owned $MIGRATION_ENV" >&2; exit 66; }
+
+cleanup() {
+  docker logout ghcr.io >/dev/null 2>&1 || true
+  unset token
+}
+trap cleanup EXIT
+printf '%s' "$token" | docker login ghcr.io --username "$actor" --password-stdin >/dev/null
+unset token
+docker pull "$app_image"
+docker pull "$migration_image"
+
+status=$(docker run --rm --network "$EDGE_NETWORK" --env-file "$MIGRATION_ENV" \
+  -v "$MIGRATION_ENV:/etc/bi/migration.env:ro" \
+  -e SUPABASE_CONFIG_FILE=/etc/bi/migration.env \
+  "$migration_image" --dry-run 2>&1) || { printf '%s\n' "$status" >&2; exit 1; }
+printf '%s\n' "$status"
+if grep -Eq '^(PENDING|CHECKSUM MISMATCH) ' <<<"$status"; then
+  echo "production database migrations are pending or have checksum mismatches; release stopped" >&2
+  exit 1
+fi
+
+/opt/bi/deploy-production.sh "$app_image"

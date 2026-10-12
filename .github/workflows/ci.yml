@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality (typecheck · lint · tests · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://ci.invalid
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-secret
+      SUPABASE_SECRET_KEY: ci-placeholder-not-a-secret
+      SUPABASE_DB_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+      SUPABASE_CONFIG_FILE: /dev/null
+      DIRECT_ENTRY_API_ENABLED: "false"
+      PIPELINE_CHECK_ENABLED: "false"
+      AI_REPORTS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Install PostgreSQL for real concurrency regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql
+          pg_bin="$(pg_config --bindir)"
+          test -x "$pg_bin/initdb" && test -x "$pg_bin/pg_ctl"
+          echo "P3_1_W02A_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
+      - name: Unit and local database regression suites
+        run: pnpm test
+      - name: Validate migration files without connecting to a database
+        run: pnpm db:migrate -- --offline
+      - name: Build
+        run: pnpm build
+      - name: Check public bundle and repository for secrets
+        run: pnpm secrets:check
+      - name: Check documentation examples
+        run: pnpm docs:check

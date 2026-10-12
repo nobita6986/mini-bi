@@ -1,0 +1,1 @@
+bi-deploy ALL=(root) NOPASSWD: /usr/local/sbin/bi-release *, /usr/local/sbin/bi-migrate *
