@@ -13,6 +13,21 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Tổng quan tuyển dụng — mini-bi" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
+type DashboardTab = "general" | "team";
+
+function normalizedDashboardTab(value: string | string[] | undefined): DashboardTab | null {
+  return typeof value === "string" && (value === "general" || value === "team") ? value : null;
+}
+
+function normalizedDashboardPath(params: SearchParams, tab: DashboardTab, removeSource: boolean): string {
+  const query = new URLSearchParams();
+  for (const [key, raw] of Object.entries(params)) {
+    if (key === "tab" || (removeSource && key === "source") || raw === undefined) continue;
+    for (const value of Array.isArray(raw) ? raw : [raw]) query.append(key, value);
+  }
+  query.set("tab", tab);
+  return "/dashboard?" + query.toString();
+}
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await connection();
@@ -44,6 +59,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
 
   const params = await searchParams;
+  const rawTab = params.tab;
+  const tab = normalizedDashboardTab(rawTab);
+  const sourcePresent = params.source !== undefined;
+  if (rawTab !== undefined && tab === null) {
+    redirect(normalizedDashboardPath(params, "general", false));
+  }
+  if (tab === "team" && sourcePresent) {
+    redirect(normalizedDashboardPath(params, "team", true));
+  }
   const [report, options] = await Promise.all([
     fetchCutoverReporting(params, actor.actor),
     fetchCutoverReportingOptions(actor.actor),
