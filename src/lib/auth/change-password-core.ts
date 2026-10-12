@@ -17,7 +17,7 @@
  *   - No DML, no logging, no env mutation, no dep changes.
  */
 import type { ActorRepository, ActorResolution } from "./direct-entry-v2";
-import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
+import { isSameOriginAuthRequest } from "./same-origin-auth-request.ts";
 import { z } from "zod";
 
 const MAX_BODY_BYTES = 4096;
@@ -77,27 +77,7 @@ function resolveIdentifierToEmail(identifier: string): string {
 }
 
 function sameOriginFailure(request: Request): Response | null {
-  const origin = request.headers.get("origin");
-  let requestOrigin: string;
-  try {
-    requestOrigin = new URL(request.url).origin;
-  } catch {
-    return failure("CSRF_REJECTED", 403);
-  }
-  let originValue: string;
-  try {
-    if (typeof origin !== "string") return failure("CSRF_REJECTED", 403);
-    originValue = new URL(origin).origin;
-  } catch {
-    return failure("CSRF_REJECTED", 403);
-  }
-  if (originValue !== requestOrigin) return failure("CSRF_REJECTED", 403);
-  const result = checkSameOriginRequest({
-    origin,
-    host: request.headers.get("host"),
-    secFetchSite: request.headers.get("sec-fetch-site"),
-  });
-  return result.ok ? null : failure("CSRF_REJECTED", 403);
+  return isSameOriginAuthRequest(request) ? null : failure("CSRF_REJECTED", 403);
 }
 
 async function readBoundedJson(request: Request): Promise<unknown | null> {

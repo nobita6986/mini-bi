@@ -34,7 +34,7 @@ test("change-password core derives the email from getUser() and rejects client-s
   assert.match(core, /AUTH_PASSWORD_TOO_WEAK/);
   assert.match(core, /AUTH_UNAUTHENTICATED/);
   assert.match(core, /AUTH_UNAVAILABLE/);
-  assert.match(core, /checkSameOriginRequest/);
+  assert.match(core, /isSameOriginAuthRequest/);
   assert.match(core, /projectChangePasswordInput/);
   assert.match(core, /X-Content-Type-Options/,
     "every JSON response must declare X-Content-Type-Options");
