@@ -1,6 +1,11 @@
-# P3-W05B-S0-R7 — BoD team reporting contract rebaseline (current main)
+# P3-W05B-S0-R8 — BoD team reporting contract rebaseline (current main)
 
-> **Status:** `P3_W05B_S0_R7_CURRENT_MAIN_REBASELINE_PASS_AWAITING_T0_REVIEW`
+> **Status:** `P3_W05B_S0_R8_CURRENT_MAIN_REBASELINE_PASS_AWAITING_T0_REVIEW`
+> **Revision:** R8 — review of R7 returned
+> `P3_W05B_S0_R7_REVIEW_CHANGES_REQUIRED_AWAITING_R8`. R8 is an append-only
+> revision of the same contract file on the same branch: the R7 commit `33b5d6d`
+> stays in history (no amend / no rebase / no force-push). R8 closes the three
+> must-fix and one should-fix items — see §15.
 > **Base:** `origin/main@0c1676e17c27e4ea715d1c817d95a2ffe6efc9ba`
 >   (`fix(admin): serialize navigation sections`; migration ledger = **84** files).
 > **Branch:** `audit/p3-w05b-s0-r7-bod-team-reporting-rebaseline`
@@ -311,28 +316,44 @@ These R6 decisions are **kept verbatim** because current main proves no conflict
   unknown bucket **is** a member of `byTeam` keyed by the literal `unknown`, so
   the sum is over all buckets.
 - **Invariant `I-2`:** `byTeam` display is the joined current
-  `teams.display_name`; an inactive team's display carries the
-  `" (Đã ngừng hoạt động)"` suffix; the `unknown` bucket's display is the fixed
-  `"Không xác định"`.
+  `teams.display_name`; when the fact's `team_active = false` the display carries
+  the `" (Đã ngừng hoạt động)"` suffix; the `unknown` bucket's display is the
+  fixed `"Không xác định"`. The suffix is derived from the new server-only
+  `team_active` fact field (§4.2) — the read-model never infers inactivity from
+  absent data and never calls the Admin Catalog.
 - **Invariant `I-3`:** the unknown bucket is emitted only when its count > 0;
   otherwise `byTeam` has no `unknown` key and `I-1` still holds.
 - **Invariant `I-4`:** a team's `bucket_key` is independent of `display_name`
   and of `active`; renaming/reactivating never changes it.
 - The legacy aggregate contributes its `sum(recruited_count)` to the **unknown**
   bucket only; it is never re-attributed to a team.
+- **`team_active` is server-internal.** It is read only to compose the `display`
+  label suffix (read-model) and inside the drill-down RPC to compose
+  `bucket.display`. It is **not** a client field, **not** a drill-down row field,
+  and **not** exposed as its own key on the wire beyond the already-composed
+  `display` string. It never reaches the browser as a boolean.
 
-### 4.2 Scoped fact payload extension (additive keys)
+### 4.2 Scoped fact payload extension (four additive keys)
 
-`direct_entry_reporting_scoped_facts` gains **three additive keys per fact**:
+`direct_entry_reporting_scoped_facts` gains **four additive keys per fact**:
 `team_id` (the row's stored `direct_entries.team_id`; the legacy branch emits
 `null`), `team_code` (joined `teams.code` or `null`), `team_display_name`
-(joined current `teams.display_name` or `null`). The existing 15 keys and the
-fact ordering are unchanged. For the legacy branch all three new keys are `null`.
+(joined current `teams.display_name` or `null`) and **`team_active`
+(`teams.active` when the row resolves to a team, else `null`)**. The existing 15
+keys and the fact ordering are unchanged. For the legacy branch and for Direct
+Entry null/orphan rows all four new keys are `null`.
 
-The `direct_entry_reporting_facts_v01` view gains the same three columns via a
+`team_active` is the field that makes E12 implementable: the read-model composes
+the `" (Đã ngừng hoạt động)"` suffix from `team_active === false`. Without it the
+read-model cannot tell an inactive team from an active one, and the UI would be
+forced to call the Admin Catalog or do a client-side join — both forbidden.
+
+The `direct_entry_reporting_facts_v01` view gains the same **four** columns via a
 `LEFT JOIN public.teams t ON t.team_id = e.team_id` in its Direct Entry branch
-(legacy is a separate `UNION ALL` and needs no team columns). Existing columns
-and their order stay unchanged; the three new columns are appended.
+(legacy is a separate `UNION ALL` and emits `null` for all four). Existing columns
+and their order stay unchanged; the four new columns are appended. The view
+therefore moves from **15** to **19** projected columns; the scoped fact payload
+moves from **15** to **19** keys.
 
 ### 4.3 Drill-down RPC (locked name and signature)
 
@@ -387,41 +408,106 @@ public.direct_entry_reporting_team_drill_down(
   `p_bucket_key = "unknown"`; it is computed inside the same RPC (not a second
   call) and equals the legacy aggregate sum for the current filter window; the
   `rows` array for the unknown bucket is the Direct Entry null/orphan anomaly
-  list alone (its `total` is the anomaly count alone).
+  list alone.
+- **`total` semantics (locked, resolves the R6/R7/E4 ambiguity):**
+  - **Known-team bucket:** `total` = the number of Direct Entry facts in the
+    bucket for the filter set = the bucket's `recruitedCount` (every Direct Entry
+    fact has `recruited_count = 1`). `rows[].length ≤ total`; paging walks the
+    same fact set the chart counted.
+  - **Unknown bucket:** `total` = the number of Direct Entry `team_id IS NULL` /
+    orphan anomaly rows (Section B) alone. The legacy aggregate is **not** counted
+    in `total` and is **not** paginated.
+- **Invariant `I-5` (unknown reconciliation):** for the same filter set,
+  `legacy_aggregate_total.recruited_count + total` =
+  `byTeam["unknown"].recruitedCount`. (`total` = anomaly row count;
+  `legacy_aggregate_total.recruited_count` = legacy sum.) This is the single
+  arithmetic contract the unknown panel and its pagination rely on.
 
-### 4.4 Server boundary
+### 4.4 Server boundary and Route Handler contract (locked)
 
-- The BoD chart's `byTeam` rides on the **existing**
-  `fetchCutoverReporting` result (no new call for the chart).
-- The drill-down is a **new interactive endpoint**. Locked convention: a Next.js
-  Route Handler under `src/app/api/**` (matching the existing `src/app/api/**/route.ts`
-  pattern), guarded by the same session/actor resolution as `/dashboard`. The
-  handler calls a new server function `fetchCutoverTeamDrillDown(params, actor)`
+- The BoD chart's `byTeam` rides on the **existing** `fetchCutoverReporting`
+  result (no new call for the chart).
+- The drill-down is a **new interactive endpoint** with its **own** auth contract
+  that is **independent of `/dashboard`**. An API route can be called directly, so
+  the `/dashboard` page gate does not protect it; the route must re-authenticate
+  itself.
+
+**Locked Route Handler:**
+
+```
+GET /api/reporting/team-drill-down
+```
+
+- File: `src/app/api/reporting/team-drill-down/route.ts`.
+- Module directives (match every guarded API route on `main`, e.g.
+  `src/app/api/ai/settings/route.ts`):
+  `export const runtime = "nodejs";` and
+  `export const dynamic = "force-dynamic";`.
+- Every response carries `content-type: application/json; charset=utf-8`,
+  `cache-control: private, no-store`, `x-content-type-options: nosniff`,
+  `referrer-policy: no-referrer` — reuse the existing sanitized-response posture
+  (`apiSessionError` / `settingsJson`); add a thin `drillDownJson` / `drillDownError`
+  sibling in the reporting server module if no generic helper exists. **No** new
+  response framework.
+- **The route itself calls `await guardApiSession()`** (`src/lib/auth/api-session-guard.ts`)
+  before touching any data — it does NOT defer to the page-level actor check and
+  does NOT trust any client-supplied actor/audience. On failure the route returns
+  the guard's response verbatim (`401 UNAUTHENTICATED` or `403 ACTOR_NOT_AVAILABLE`).
+- The handler calls a new server function `fetchCutoverTeamDrillDown(params, actor)`
   (new sibling module under `src/lib/reporting/`, or in
-  `p2-w04a-reporting-server.ts`), which:
-  1. resolves the actor,
-  2. calls the `direct_entry_reporting_team_drill_down` RPC,
-  3. maps RPC errors to the locked taxonomy (§4.5),
-  4. returns only the sanitized envelope.
-  No API route exists today for reporting; this is additive and does not change
-  `/dashboard`.
-- **Reuse** `parseReportingFilters` for the query string; add `bucket_key`,
-  `cursor`, `limit` parsing in the same module. The request body/query carries
-  only `{ bucket_key, from, to, project, recruiter, provider, employment, cursor, limit }`.
+  `p2-w04a-reporting-server.ts`) which calls the RPC and maps results/errors to
+  the locked taxonomy (§4.5). It returns only the sanitized envelope.
+
+**HTTP status / error mapping (locked):**
+
+| Condition | HTTP | `code` |
+|---|---|---|
+| Missing/invalid session (from `guardApiSession()`) | 401 | `UNAUTHENTICATED` |
+| Authenticated but actor not usable (from `guardApiSession()`) | 403 | `ACTOR_NOT_AVAILABLE` |
+| Valid actor but DB-resolved audience ≠ `all` | 403 | `REPORTING_QUERY_FAILED` |
+| Invalid filter / `bucket_key` / `limit` / `cursor`, or any non-allowlisted field | 400 | `INVALID_FILTER` |
+| RPC / transport / DB infrastructure failure | 503 | `REPORTING_QUERY_FAILED` |
+| Success | 200 | — (envelope §4.3) |
+
+Server-side, the wrapper distinguishes the two `REPORTING_QUERY_FAILED` cases by
+SQLSTATE: the RPC raises `insufficient_privilege` (SQLSTATE `42501`) when the
+resolved audience is not `all` → mapped to **403**; any other RPC/transport error
+→ **503**. The client-visible `code` is `REPORTING_QUERY_FAILED` in both cases.
+The **RPC still re-resolves the audience** server-side (`§4.3`); no client input
+is ever treated as authority.
+
+**Thin drill-down parser (locked — do NOT extend the shared parser):** keep
+`parseReportingFilters` and `ReportingFilters` **unchanged**. Add a thin
+`parseTeamDrillDownRequest(params)` in the reporting server module that:
+
+1. allows **exactly** `bucket_key, from, to, project, recruiter, provider,
+   employment, cursor, limit`; any other key → `INVALID_FILTER` (400);
+2. **never accepts `source`** (not in the allowlist → `INVALID_FILTER`);
+3. delegates `from/to/project/recruiter/provider/employment` to
+   `parseReportingFilters(params, undefined)` (reuse, not fork);
+4. validates `bucket_key` (§3), `cursor` (opaque) and `limit` (default 25, max
+   100) itself.
 
 ### 4.5 Validation and error taxonomy (locked)
 
-| Condition | Result |
-|---|---|
-| `dbKind !== "all"` (team/own/anonymous/failed actor) | `REPORTING_QUERY_FAILED` |
-| `bucket_key` fails the wire/canonical/lookup checks | `INVALID_FILTER` |
-| `limit` > 100, `= 0`, or non-numeric | `INVALID_FILTER` |
-| `cursor` undecodable | `INVALID_FILTER` |
-| `from > to`, bad date, bad provider/employment, bust UUID source | `INVALID_FILTER` |
-| cursor beyond last row | `{ rows: [], nextCursor: null, total, applied, bucket }` (no error) |
-| RPC/transport failure | `REPORTING_QUERY_FAILED` (sanitized; the raw DB code/message never reaches the client) |
+The server function and the Route Handler share one taxonomy; the HTTP column is
+the Route Handler mapping (§4.4).
 
-`source` is **not exposed** to the drill-down (Direct Entry scoped).
+| Condition | `code` | HTTP |
+|---|---|---|
+| Missing/invalid session | `UNAUTHENTICATED` | 401 |
+| Actor not usable | `ACTOR_NOT_AVAILABLE` | 403 |
+| Valid actor but `dbKind !== "all"` | `REPORTING_QUERY_FAILED` | 403 |
+| `bucket_key` fails the wire/canonical/lookup checks | `INVALID_FILTER` | 400 |
+| `limit` > 100, `= 0`, or non-numeric | `INVALID_FILTER` | 400 |
+| `cursor` undecodable | `INVALID_FILTER` | 400 |
+| `from > to`, bad date, bad provider/employment | `INVALID_FILTER` | 400 |
+| Non-allowlisted field present (incl. `source`) | `INVALID_FILTER` | 400 |
+| Cursor beyond last row | no error | 200 (`{ rows: [], nextCursor: null, total, applied, bucket }`) |
+| RPC / transport / DB infrastructure failure | `REPORTING_QUERY_FAILED` | 503 (sanitized; the raw DB code/message never reaches the client) |
+
+`source` is **not exposed** to the drill-down (Direct Entry scoped) and is
+rejected by the thin parser if present.
 
 ### 4.6 Authoritative label source
 
@@ -435,8 +521,11 @@ using the W02C `direct_entry_reporting_employment_display()` lookup.
 - The new RPC and the extended view/RPC keep `SECURITY DEFINER` + fixed
   `search_path = pg_catalog, public`.
 - The new RPC is `service_role` EXECUTE only (`public`/`anon`/`authenticated`
-  revoked). The drill-down Route Handler uses the service-role client only after
-  the page-level actor check, and the RPC re-derives the audience server-side.
+  revoked). The drill-down Route Handler uses the service-role client **only after
+  it calls `await guardApiSession()` itself** (§4.4) — its auth boundary is the
+  route's own guard, **not** the `/dashboard` page gate. The RPC independently
+  re-derives the audience server-side and rejects any non-`all` audience, so a
+  valid session alone never yields cross-team data.
 - `bucket_key` is a routing key, **not** an authority token; it carries no
   capability/grant/audience/PII.
 - No new dependency, no new package, no parallel RPC framework, no second
@@ -513,7 +602,8 @@ unchanged. The migration adds **no** team dimension to
 
 | Reuse from | What to reuse | Do NOT |
 |---|---|---|
-| `src/lib/reporting/p1-filter.ts` | `parseReportingFilters`, `INVALID_FILTER_CODE`, `PROVIDER_FILTER_VALUES`, `EMPLOYMENT_FILTER_VALUES` | introduce a second filter parser |
+| `src/lib/reporting/p1-filter.ts` | `parseReportingFilters`, `INVALID_FILTER_CODE`, `PROVIDER_FILTER_VALUES`, `EMPLOYMENT_FILTER_VALUES` — reused **unchanged** by the thin `parseTeamDrillDownRequest` (§4.4) | extend `parseReportingFilters`/`ReportingFilters` with drill-down or pagination fields; accept `source` on the drill-down |
+| `src/lib/auth/api-session-guard.ts` | `guardApiSession()` (401 `UNAUTHENTICATED` / 403 `ACTOR_NOT_AVAILABLE`) and the `apiSessionError` sanitized-response posture, for the new Route Handler | any new auth framework; trusting a client-supplied actor/audience |
 | `src/lib/reporting/p1-reporting.ts` | `ReportingFact`, `ReportingBucket`, `ReportingData`, `selectDisplay`, `groupByDimension` semantics, `reportingQueryFailed`, `REPORTING_QUERY_FAILED_CODE` | fork a parallel bucket type |
 | `src/lib/reporting/p1-reporting-server.ts` | existing read-model grouping conventions | — |
 | `src/lib/reporting/p2-w04a-reporting-server.ts` | `fetchCutoverReporting` shape (`CutoverFetchResult`), the `dbKind === "all"` gate block, `logSafeError` sanitization | add a second audience inference |
@@ -536,22 +626,22 @@ No Admin Catalog call to build labels.**
 
 ---
 
-## 8. Acceptance matrix (27 — E1–E22 carried from R6, E23–E27 new in R7)
+## 8. Acceptance matrix (31 — E1–E22 carried from R6, E23–E27 from R7, E28–E31 new in R8)
 
 | ID | Acceptance |
 |---|---|
 | E1 | BoD by-team happy path: each bucket's count = Σ `recruited_count` of matching facts; invariant `I-1` holds (`recruitedTotal === Σ byTeam`). |
 | E2 | Historical attribution: a fact stored with `team_id=T1` whose recruiter later moved to `T2` is bucketed under `T1`; `bucket_key = team.<base64url(T1.code)>`. |
 | E3 | Unknown bucket = legacy aggregate + Direct Entry null/orphan; emitted only when > 0. |
-| E4 | Drill-down happy path: page 1 with `limit=25`, `nextCursor` chains, last page `nextCursor=null`, `total` = the bucket's per-team total. |
+| E4 | Drill-down happy path: page 1 with `limit=25`, `nextCursor` chains, last page `nextCursor=null`. **`total` = the bucket's fact count** for the filter set — for a known team, the Direct Entry row count = the bucket's `recruitedCount`; for `unknown`, the Direct Entry anomaly row count (§4.3). |
 | E5 | Drill-down re-derives audience; a `team`/`own` caller → `REPORTING_QUERY_FAILED`. |
-| E6 | Drill-down row shape is exactly the seven fields; any added field fails. |
+| E6 | Drill-down row shape is exactly the seven fields; any added field fails (incl. `team_active`, `team_id`, `team_code`, `bucket_key`). |
 | E7 | `limit=101`, `limit=0`, non-numeric `limit`, undecodable `cursor` → `INVALID_FILTER`. |
 | E8 | Drill-down filter parity: `from > to` etc. → `INVALID_FILTER`. |
 | E9 | The team chart card renders only inside the BoD `all` branch. |
 | E10 | Removing the audience re-check fails closed in both directions. |
 | E11 | `bucket_key` is namespaced/opaque/stable across a `display_name` rename. |
-| E12 | Inactive team stays in its own bucket with the suffix; total still reconciles. |
+| E12 | Inactive team stays in its own bucket with the suffix; total still reconciles. Implementable via the `team_active` fact field (§4.2). |
 | E13 | Orphan/`null` `team_id` → unknown; appears in Section B, not Section A. |
 | E14 | Section A is non-paginated, no entry-level rows, no internal identifiers. |
 | E15 | Exactly one append-only migration after `0c1676e`; earlier migrations byte-identical. |
@@ -567,17 +657,24 @@ No Admin Catalog call to build labels.**
 | **E25 (new)** | No second aggregate dimension is built for the team report (no project/provider/employment re-bucketing inside Tab 2). |
 | **E26 (new)** | The migration patches live definitions (`pg_get_viewdef`/`pg_get_functiondef`) with exact expected replacement counts and aborts on drift; it does not re-emit the W04A/W05A bodies (the W02C employment-display patch survives). |
 | **E27 (new)** | `direct_entry_reporting_dimension_options_v01` still emits no `team` dimension (W07A-R4 invariant preserved). |
+| **E28 (new, R8)** | The Route Handler `GET /api/reporting/team-drill-down` carries `runtime="nodejs"` + `dynamic="force-dynamic"`, returns `cache-control: private, no-store`, and calls `await guardApiSession()` itself (independent of `/dashboard`). Mapping: 401 `UNAUTHENTICATED`, 403 `ACTOR_NOT_AVAILABLE`, 403 `REPORTING_QUERY_FAILED` (valid actor, audience ≠ `all`), 400 `INVALID_FILTER`, 503 `REPORTING_QUERY_FAILED`. A direct call without a session is rejected. |
+| **E29 (new, R8)** | Total semantics: known-team `total` equals the bucket `recruitedCount`; unknown `total` equals the anomaly row count; and `legacy_aggregate_total.recruited_count + total = byTeam["unknown"].recruitedCount` (invariant `I-5`). |
+| **E30 (new, R8)** | `team_active` drives the server-side inactive suffix and is **absent** from the drill-down row and from every client payload. |
+| **E31 (new, R8)** | The thin `parseTeamDrillDownRequest` rejects non-allowlisted fields and never accepts `source`; `parseReportingFilters`/`ReportingFilters` are byte-unchanged. |
 
-## 9. Mutation matrix (32 — M1–M29 carried from R6, M30–M32 new in R7)
+## 9. Mutation matrix (35 — M1–M29 carried from R6, M30–M32 from R7, M33–M35 new in R8)
 
 The R6 mutation set (M1–M29) is retained unchanged, including the M29
-drill-down-validation-only rule. New in R7:
+drill-down-validation-only rule. New in R7/R8:
 
 | Mutation | Failing test(s) |
 |---|---|
 | **M30** Re-emit the facts view / scoped-facts RPC from the original W04A/W05A source (dropping the W02C `direct_entry_reporting_employment_display` patch) | E26 |
 | **M31** Build a second aggregate dimension (by project/provider/employment) inside the team report | E25 |
 | **M32** Render the two BoD tabs (or the team chart) for a `team`/`own` audience | E24 |
+| **M33 (R8)** Drop `team_active` from the view/scoped RPC (or compute the inactive suffix from absence of data / a catalog call) | E12, E30 |
+| **M34 (R8)** Omit `await guardApiSession()` from the Route Handler, or trust a client-supplied actor/audience | E28 |
+| **M35 (R8)** Extend `parseReportingFilters` with drill-down fields, or accept `source` on the drill-down | E31 |
 
 Plus the R6 mutation set covers: dropping team keys (E1/E2/E11); membership join
 (E2); skipping unknown (E3/E13); leaking ids into the drill-down row (E6);
@@ -595,17 +692,22 @@ entry-level rows (E14); missing Section A (E3/E14); a second migration (E15).
 
 **T1B (backend / SQL) — first:**
 
-1. One append-only migration (§6): patch the facts view (+3 columns via LEFT JOIN
-   `teams`), patch the scoped-facts RPC (+3 additive keys), create
+1. One append-only migration (§6): patch the facts view (+4 columns via LEFT JOIN
+   `teams`: `team_id`, `team_code`, `team_display_name`, `team_active`), patch the
+   scoped-facts RPC (+4 additive keys), create
    `direct_entry_reporting_team_drill_down`, keep ACL/`search_path` posture, drop
    the patch helper within the migration, self-check.
 2. Read-model: compute `byTeam` (reuse `groupByDimension` semantics) in
-   `p1-reporting.ts`; extend `ReportingData` additively; pin `I-1`..`I-4`.
-3. Server: `fetchCutoverTeamDrillDown(params, actor)` + the Route Handler
-   (`bucket_key`/`cursor`/`limit` validation; error taxonomy §4.5).
-4. Tests: `p3-w05b-by-team.test.mjs`, `p3-w05b-team-drill-down.test.mjs`,
-   extend `p3-w05a-page.test.mjs` ("no client-side team join", "byTeam computed in
-   the read-model"), and a migration test asserting E15/E26.
+   `p1-reporting.ts`, using `team_active` for the inactive suffix; extend
+   `ReportingData` additively; pin `I-1`..`I-5`.
+3. Server: `fetchCutoverTeamDrillDown(params, actor)`, the thin
+   `parseTeamDrillDownRequest` (§4.4), and the Route Handler
+   `src/app/api/reporting/team-drill-down/route.ts` (own `guardApiSession()`;
+   `runtime`/`dynamic`; status/code mapping §4.4–§4.5).
+4. Tests: `p3-w05b-by-team.test.mjs`, `p3-w05b-team-drill-down.test.mjs`
+   (incl. E28 route contract, E29 totals, E30 `team_active` off-wire, E31 thin
+   parser), extend `p3-w05a-page.test.mjs` ("no client-side team join", "byTeam
+   computed in the read-model"), and a migration test asserting E15/E26.
 
 **T1A (UI) — after T1B lands:**
 
@@ -633,7 +735,7 @@ W05B-A (backend) must not depend on W06D; W06D consumes the W05B-A contract.
 
 ---
 
-## 12. Risk register (R7 additions on top of R6)
+## 12. Risk register (R7/R8 additions on top of R6)
 
 - **R13 — re-emission reverts the W02C patch.** A developer copies the facts view
   or scoped-facts RPC body from W04A/W05A and silently drops
@@ -643,6 +745,15 @@ W05B-A (backend) must not depend on W06D; W06D consumes the W05B-A contract.
   project/provider/employment re-bucketing inside Tab 2. Mitigation: §5.2 +
   E25 / M31.
 - **R15 — the BoD tabs leak to `team`/`own`.** Mitigation: §5.3 + E24 / M32.
+- **R16 (R8) — inactive team not detectable.** Without `team_active`, the
+  read-model cannot produce the " (Đã ngừng hoạt động)" suffix without a catalog
+  call or a client-side join. Mitigation: §4.2 + E12 / E30 / M33.
+- **R17 (R8) — unprotected Route Handler.** A direct API call bypasses the
+  `/dashboard` page gate. Mitigation: §4.4 (route calls `guardApiSession()` itself;
+  RPC re-resolves audience) + E28 / M34.
+- **R18 (R8) — shared filter parser polluted.** Extending `ReportingFilters` with
+  drill-down/pagination fields leaks drill-down concepts into every reporting
+  caller. Mitigation: §4.4 thin parser + E31 / M35.
 - R6's R1–R12 (recruiter's current team used; legacy mis-attributed; drill-down
   PII leak; audience bypass; unbounded drill-down; `bucket_key` instability /
   collision / non-canonical alias; inactive misclassified; legacy as entry-level
@@ -654,7 +765,9 @@ W05B-A (backend) must not depend on W06D; W06D consumes the W05B-A contract.
 ## 13. Boundary (what this memo does NOT do)
 
 - No source, migration, API, route, UI, dependency, contract-doc,
-  `package.json`, `pnpm-lock.yaml` or `tsconfig.json` change. No `pnpm install`.
+  `package.json`, `pnpm-lock.yaml` or `tsconfig.json` change. (A local
+  `pnpm install --frozen-lockfile` used only to run the gates does not alter
+  `package.json` / `pnpm-lock.yaml`.)
 - No edit to the R6 memo
   (`docs/handoffs/p3-w05b-s0-bod-team-reporting-survey.md`) or its branch.
 - No Production query, no apply, no deploy, no browser, no CUA, no screenshot,
@@ -668,10 +781,53 @@ W05B-A (backend) must not depend on W06D; W06D consumes the W05B-A contract.
 ## 14. Review pass
 
 This memo is
-`P3_W05B_S0_R7_CURRENT_MAIN_REBASELINE_PASS_AWAITING_T0_REVIEW`.
-It re-grounds R6 on `origin/main@0c1676e` (84 migrations). T0's review should
-check: the factual truth (§1), the delta table (§2), the preserved decisions (§3),
-the exact implementation contract (§4), the Owner two-tab UX lock (§5), the
-patch-in-place migration strategy (§6), the reuse matrix (§7), the acceptance /
-mutation matrices (§8 / §9 — 27 / 32), the T1B/T1A split and dependency graph
-(§10) and the migration-slot observation (§11).
+`P3_W05B_S0_R8_CURRENT_MAIN_REBASELINE_PASS_AWAITING_T0_REVIEW`.
+It re-grounds R6 on `origin/main@0c1676e` (84 migrations) and closes the R7
+review. T0's review should check: the factual truth (§1), the delta table (§2),
+the preserved decisions (§3), the exact implementation contract (§4 — incl. the
+`team_active` field, the Route Handler contract and the locked `total` semantics),
+the Owner two-tab UX lock (§5), the patch-in-place migration strategy (§6), the
+reuse matrix (§7 — parser kept unchanged), the acceptance / mutation matrices
+(§8 / §9 — 31 / 35), the T1B/T1A split and dependency graph (§10) and the
+migration-slot observation (§11).
+
+---
+
+## 15. Revision log (R8)
+
+R8 is an append-only edit of the same file on the same branch (`33b5d6d` stays in
+history; no amend/rebase/force-push). It closes the R7 review
+(`P3_W05B_S0_R7_REVIEW_CHANGES_REQUIRED_AWAITING_R8`):
+
+**Must fix**
+
+1. **Inactive-team data.** Added the fourth server-only field
+   `team_active: boolean | null` to the facts view (15 → 19 columns) and to the
+   scoped-facts RPC (15 → 19 keys); `null` for legacy and Direct Entry
+   null/orphan; used server-side only for the " (Đã ngừng hoạt động)" suffix and
+   never sent to the drill-down row or the client (§4.1 / §4.2, E12/E30, M33).
+2. **Route Handler auth contract.** Locked
+   `GET /api/reporting/team-drill-down` with `runtime="nodejs"`,
+   `dynamic="force-dynamic"`, `cache-control: private, no-store`, its own
+   `await guardApiSession()`, and the status/code mapping 401 `UNAUTHENTICATED`,
+   403 `ACTOR_NOT_AVAILABLE`, 403 `REPORTING_QUERY_FAILED` (audience ≠ `all`),
+   400 `INVALID_FILTER`, 503 `REPORTING_QUERY_FAILED`; the RPC still re-resolves
+   the audience (§4.4 / §4.5 / §4.7, E28, M34). This removes the §4.4↔§4.7
+   contradiction ("after the page-level actor check").
+3. **Unknown-bucket `total`.** Locked: known-team `total` = bucket
+   `recruitedCount`; unknown `total` = anomaly row count; and
+   `legacy_aggregate_total.recruited_count + total =
+   byTeam["unknown"].recruitedCount` (invariant `I-5`), reconciling §4.3 with E4
+   (§4.3, E4/E29).
+
+**Should fix**
+
+4. **Shared parser kept clean.** `parseReportingFilters` / `ReportingFilters` stay
+   byte-unchanged; a thin `parseTeamDrillDownRequest` reuses them and handles
+   `bucket_key`/`cursor`/`limit`, rejects non-allowlisted fields and never accepts
+   `source` (§4.4, E31, M35).
+
+**R8 gate evidence (this revision):** `pnpm install --frozen-lockfile` (worktree
+only; `package.json`/`pnpm-lock.yaml` unchanged), `git diff --check` clean,
+`pnpm docs:check` 6/6 pass, `pnpm secrets:check` ĐẠT. No source test/build run:
+this is a docs-only branch.
