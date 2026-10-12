@@ -14,6 +14,21 @@ export const metadata = { title: "Tổng quan tuyển dụng — mini-bi" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+function firstSearchParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function normalizedDashboardPath(params: SearchParams): string {
+  const query = new URLSearchParams();
+  for (const [key, raw] of Object.entries(params)) {
+    if (key === "tab" || key === "source" || raw === undefined) continue;
+    for (const value of Array.isArray(raw) ? raw : [raw]) query.append(key, value);
+  }
+  query.set("tab", "team");
+  const encoded = query.toString();
+  return encoded ? "/dashboard?" + encoded : "/dashboard?tab=team";
+}
+
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await connection();
 
@@ -44,6 +59,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
 
   const params = await searchParams;
+  if (firstSearchParam(params.tab) === "team" && params.source !== undefined) {
+    redirect(normalizedDashboardPath(params));
+  }
   const [report, options] = await Promise.all([
     fetchCutoverReporting(params, actor.actor),
     fetchCutoverReportingOptions(actor.actor),

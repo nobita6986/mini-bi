@@ -64,6 +64,13 @@ test("Admin internal navigation exposes catalog sections plus the Full-Admin-onl
     { id: "labor-types", href: "/admin/catalog/labor-types" },
     { id: "accounts", href: "/admin/access/accounts" },
   ]);
+  assert.deepEqual(ADMIN_SECTIONS.map(({ id, label }) => ({ id, label })), [
+    { id: "personnel", label: "Nhân sự tuyển dụng" },
+    { id: "teams", label: "Nhóm" },
+    { id: "vendors", label: "Nhà cung cấp" },
+    { id: "labor-types", label: "Loại hình lao động" },
+    { id: "accounts", label: "Tài khoản truy cập" },
+  ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
   const catalogOnly = serializableSections.filter(({ id }) => id !== "accounts");
   // Accounting (catalog operator) sees the catalog sections but never Accounts.

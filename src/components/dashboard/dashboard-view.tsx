@@ -22,6 +22,7 @@ import { ProviderDonut } from "./provider-donut";
 import { RecruiterBarChart } from "./recruiter-bar-chart";
 import { TeamDashboardView } from "./team-dashboard-view";
 import { TrendChart } from "./trend-chart";
+import { BodDashboardTabs } from "./bod-dashboard-tabs";
 
 function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
   const sorted = sortBuckets(buckets);
@@ -109,30 +110,36 @@ export function DashboardView({
   const dataDays = trend.filter((p) => p.count > 0);
   const showKpis = report.ok && !report.data.empty.noSources && !report.data.empty.noFacts && !report.data.empty.noMatches;
   return (
-    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
-      <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
-            <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
-            <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
-            {generatedAt ? (
-              <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
-            ) : null}
-          </div>
-          {showKpis ? (
-            <div aria-label="Chỉ số chính" className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-72 sm:grid-cols-2">
-              <KpiCard variant="compact" label="Tổng tuyển mới" value={report.data.recruitedTotal} hint="số người tuyển" accent="var(--primary)" />
-              <KpiCard variant="compact" label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
+    <BodDashboardTabs
+      data={report.data}
+      optionsResult={optionsResult}
+      general={
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+          <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
+                <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
+                <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+                {generatedAt ? (
+                  <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
+                ) : null}
+              </div>
+              {showKpis ? (
+                <div aria-label="Chỉ số chính" className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-72 sm:grid-cols-2">
+                  <KpiCard variant="compact" label="Tổng tuyển mới" value={report.data.recruitedTotal} hint="số người tuyển" accent="var(--primary)" />
+                  <KpiCard variant="compact" label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      </header>
+          </header>
 
-      <div className="mt-4">
-        <DashboardBody data={report.data} optionsResult={optionsResult} trend={trend} dataDays={dataDays} />
-      </div>
-    </main>
+          <div className="mt-4">
+            <DashboardBody data={report.data} optionsResult={optionsResult} trend={trend} dataDays={dataDays} />
+          </div>
+        </main>
+      }
+    />
   );
 }
 
