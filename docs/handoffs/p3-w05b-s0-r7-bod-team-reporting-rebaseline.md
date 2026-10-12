@@ -1,11 +1,12 @@
-# P3-W05B-S0-R8 — BoD team reporting contract rebaseline (current main)
+# P3-W05B-S0-R9 — BoD team reporting contract rebaseline (current main)
 
-> **Status:** `P3_W05B_S0_R8_CURRENT_MAIN_REBASELINE_PASS_AWAITING_T0_REVIEW`
-> **Revision:** R8 — review of R7 returned
-> `P3_W05B_S0_R7_REVIEW_CHANGES_REQUIRED_AWAITING_R8`. R8 is an append-only
-> revision of the same contract file on the same branch: the R7 commit `33b5d6d`
-> stays in history (no amend / no rebase / no force-push). R8 closes the three
-> must-fix and one should-fix items — see §15.
+> **Status:** `P3_W05B_S0_R9_CONTRACT_CONSISTENCY_PASS_AWAITING_T0_REVIEW`
+> **Revision:** R9 — the R8 commit `bf23d5a` is the accepted base. R9 is an
+> append-only revision on the same branch that closes **one stale wording** in the
+> §6 migration self-check: it still described the team projection as adding only
+> three fields instead of four. Detected by the W05B-A-S0 preflight. No new
+> contract decision. R7 (`33b5d6d`) and R8 (`bf23d5a`) stay in history (no amend /
+> no rebase / no force-push) — see §15 (R8) and §16 (R9).
 > **Base:** `origin/main@0c1676e17c27e4ea715d1c817d95a2ffe6efc9ba`
 >   (`fix(admin): serialize navigation sections`; migration ledger = **84** files).
 > **Branch:** `audit/p3-w05b-s0-r7-bod-team-reporting-rebaseline`
@@ -584,11 +585,21 @@ Required mechanism (establishes as precedent by W02C, files
 - The helper used to do this must be created and **dropped within the same
   migration**, revoked from every role (exactly as W02C does at §7e).
 - The migration must add a self-check (in-transaction `do $$ ... $$`) asserting
-  the post-state: the three new view columns exist; the scoped-facts RPC body
-  carries `team_id`/`team_code`/`team_display_name`; the new drill-down RPC exists
-  with the locked signature, is `SECURITY DEFINER`, and is `service_role`-only;
-  the W05A existing keys are unchanged; the W02C employment-display patch is still
-  present (i.e. the facts view does not carry a `CASE e.labor_type` label map).
+  the post-state:
+  - the facts view keeps its **15-column prefix** unchanged and appends **exactly
+    four** columns, in order — `team_id`, `team_code`, `team_display_name`,
+    `team_active` — for a **19-column** projection;
+  - the scoped-facts RPC body keeps its **15 existing keys** and appends **exactly
+    four** keys — `team_id`, `team_code`, `team_display_name`, `team_active`;
+  - the Direct Entry `team_id IS NULL` / orphan rows and the legacy branch return
+    `null` for all four new columns/keys;
+  - `team_active` is server-side only and never appears in the drill-down row or
+    any client payload;
+  - the new drill-down RPC exists with the locked signature, is
+    `SECURITY DEFINER`, and is `service_role`-only;
+  - the W05A existing keys are unchanged; the W02C employment-display patch is
+    still present (i.e. the facts view does not carry a `CASE e.labor_type` label
+    map).
 
 Non-breaking requirement: existing read-path behavior, existing keys, the view's
 `service_role`-only ACL, and all earlier migrations (byte-identical) stay
@@ -781,7 +792,7 @@ W05B-A (backend) must not depend on W06D; W06D consumes the W05B-A contract.
 ## 14. Review pass
 
 This memo is
-`P3_W05B_S0_R8_CURRENT_MAIN_REBASELINE_PASS_AWAITING_T0_REVIEW`.
+`P3_W05B_S0_R9_CONTRACT_CONSISTENCY_PASS_AWAITING_T0_REVIEW`.
 It re-grounds R6 on `origin/main@0c1676e` (84 migrations) and closes the R7
 review. T0's review should check: the factual truth (§1), the delta table (§2),
 the preserved decisions (§3), the exact implementation contract (§4 — incl. the
@@ -831,3 +842,40 @@ history; no amend/rebase/force-push). It closes the R7 review
 only; `package.json`/`pnpm-lock.yaml` unchanged), `git diff --check` clean,
 `pnpm docs:check` 6/6 pass, `pnpm secrets:check` ĐẠT. No source test/build run:
 this is a docs-only branch.
+
+---
+
+## 16. Revision log (R9)
+
+R9 is an append-only edit of the same file on the same branch, on top of R8
+(`bf23d5a`); R7 (`33b5d6d`) and R8 stay in history (no amend/rebase/force-push).
+R9 makes **no new contract decision**. It closes exactly one stale wording the
+W05B-A-S0 preflight found in the §6 migration self-check: the self-check text
+still described the team projection as adding only three fields (and listed only
+those three) — a leftover from before R8 added the fourth field.
+
+The corrected self-check now asserts the exact post-state, consistent with
+§4.1 / §4.2 / §10 / E12 / E30 / M33:
+
+- the facts view keeps its **15-column prefix** unchanged and appends **exactly
+  four** columns, in order — `team_id`, `team_code`, `team_display_name`,
+  `team_active` — for a **19-column** projection;
+- the scoped-facts RPC keeps its **15 existing keys** and appends **exactly four**
+  keys (`team_id`, `team_code`, `team_display_name`, `team_active`);
+- the Direct Entry null/orphan rows and the legacy branch return `null` for all
+  four;
+- `team_active` is server-side only and never appears in the drill-down row or any
+  client payload.
+
+No other decision changed: the employment filter is not widened,
+`parseReportingFilters` is untouched, no migration slot is reserved, W03B is not
+touched, and the R8 locks (Route Handler auth contract, `total` semantics,
+thin parser, two-tab UX, patch-in-place migration) are unchanged.
+
+**R9 gate evidence (this revision):** `git diff --check` clean,
+`pnpm docs:check` 6/6 pass, `pnpm secrets:check` ĐẠT, and a content scan confirms
+the current contract sections (§0–§13) no longer describe the team projection as
+three fields/keys; the only remaining "three ..." mentions are historical review
+notes in §15/§16 (e.g. the "three must-fix" phrase), which are legitimate history
+and are left as-is. The diff is exactly one file. No source test/build run: this is
+a docs-only branch.
