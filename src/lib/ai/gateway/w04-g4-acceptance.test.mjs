@@ -573,7 +573,7 @@ test("G4-H2: stale worker complete bị từ chối (fencing) và lease hết h�
 test("G4-I: policy fail-closed (rate/concurrency/budget/policy required) — không gọi provider", async () => {
   const packet = teamFactsPacket();
 
-  const rateQueue = createMemoryQueue();
+  const rateQueue = createMemoryQueue({ clock: { nowMs: () => Date.parse("2026-10-12T00:00:00Z") } });
   const rateAudit = createMemoryAudit();
   const rateService = makeService({ queue: rateQueue, audit: rateAudit, packet, scenario: "valid", policy: { ...DEFAULT_POLICY, max_requests_per_window: 1 } });
   const first = await rateService.service.enqueueReport({
