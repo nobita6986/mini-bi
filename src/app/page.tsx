@@ -29,7 +29,7 @@ import { redirect } from "next/navigation";
 // Server-side 307, no streaming UI is rendered.
 export const dynamic = "force-dynamic";
 export const metadata = {
-  title: "mini-bi — Báo cáo tuyển dụng",
+  title: "Hệ thống báo cáo HRP — Báo cáo tuyển dụng",
 };
 
 export default function RootEntry(): never {

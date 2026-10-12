@@ -10,7 +10,7 @@ import { fetchCutoverReporting } from "@/lib/reporting/p2-w04a-reporting-server"
 import { fetchCutoverReportingOptions } from "@/lib/reporting/p2-w04a-options-server";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tổng quan tuyển dụng — mini-bi" };
+export const metadata = { title: "Tổng quan tuyển dụng — Hệ thống báo cáo HRP" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type DashboardTab = "general" | "team";

@@ -8,7 +8,7 @@ import { decideSessionPageAccess } from "@/lib/auth/session-page-access";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Đổi mật khẩu — mini-bi" };
+export const metadata = { title: "Đổi mật khẩu — Hệ thống báo cáo HRP" };
 
 export default async function ChangePasswordPage() {
   // P3-W09A-R1: use the request-scoped resolver shared with the AppShell and

@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "mini-bi",
+  title: "Hệ thống báo cáo HRP",
   description: "Sales Performance & Reporting System V1",
 };
 
