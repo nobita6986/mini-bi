@@ -27,6 +27,10 @@ export interface ReportingFact {
   employment_type_key: string;
   employment_type_display: string;
   recruited_count: number;
+  team_id?: string | null;
+  team_code?: string | null;
+  team_display_name?: string | null;
+  team_active?: boolean | null;
 }
 
 export type ReportingSourceStatus =
@@ -96,6 +100,7 @@ export interface ReportingData {
   byRecruiter: Record<string, ReportingBucket>;
   byProvider: Record<string, ReportingBucket>;
   byEmployment: Record<string, ReportingBucket>;
+  byTeam: Record<string, ReportingBucket>;
   /** Breakdown chéo project × provider, tính từ CHÍNH tập facts đã filter. */
   projectProviderMix: ProjectProviderMix[];
   coverage: ReportingCoverage;
@@ -213,6 +218,46 @@ function groupByDimension(
     let total = 0;
     for (const count of byDisplay.values()) total += count;
     out[k] = { key: k, display: selectDisplay(k, byDisplay), recruitedCount: total };
+  }
+  return out;
+}
+
+export const UNKNOWN_TEAM_BUCKET_KEY = "unknown";
+export const UNKNOWN_TEAM_DISPLAY = "Không xác định";
+
+export function teamBucketKey(teamCode: string): string {
+  const bytes = new TextEncoder().encode(teamCode);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return "team." + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function groupByTeam(rows: ReportingFact[]): Record<string, ReportingBucket> {
+  const buckets = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const known = typeof row.team_code === "string" && row.team_code !== ""
+      && typeof row.team_display_name === "string" && row.team_display_name !== "";
+    const key = known ? teamBucketKey(row.team_code!) : UNKNOWN_TEAM_BUCKET_KEY;
+    const display = known
+      ? row.team_display_name! + (row.team_active === false ? " (Đã ngừng hoạt động)" : "")
+      : UNKNOWN_TEAM_DISPLAY;
+    let byDisplay = buckets.get(key);
+    if (!byDisplay) {
+      byDisplay = new Map();
+      buckets.set(key, byDisplay);
+    }
+    byDisplay.set(display, (byDisplay.get(display) ?? 0) + row.recruited_count);
+  }
+  const out: Record<string, ReportingBucket> = {};
+  for (const key of [...buckets.keys()].sort()) {
+    const byDisplay = buckets.get(key)!;
+    let total = 0;
+    for (const count of byDisplay.values()) total += count;
+    out[key] = {
+      key,
+      display: key === UNKNOWN_TEAM_BUCKET_KEY ? UNKNOWN_TEAM_DISPLAY : selectDisplay(key, byDisplay),
+      recruitedCount: total,
+    };
   }
   return out;
 }
@@ -374,6 +419,7 @@ export function computeReporting(
     byRecruiter: groupByDimension(rows, "recruiter_key", "recruiter_display"),
     byProvider: groupByDimension(rows, "provider_type_key", "provider_type_display"),
     byEmployment: groupByDimension(rows, "employment_type_key", "employment_type_display"),
+    byTeam: groupByTeam(rows),
     projectProviderMix: buildProjectProviderMix(rows),
     coverage: { expected: visible.length, succeeded, partial, failed, neverSucceeded, coverageRatio },
     sources: sourceRows,

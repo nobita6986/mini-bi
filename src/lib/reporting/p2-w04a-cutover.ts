@@ -334,4 +334,8 @@ export interface DirectEntryReportingFact extends ReportingFact {
   entry_id: string;
   submission_id: string;
   cutoff_date: string;
+  team_id: string | null;
+  team_code: string | null;
+  team_display_name: string | null;
+  team_active: boolean | null;
 }
