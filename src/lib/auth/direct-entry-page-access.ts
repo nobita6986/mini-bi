@@ -9,6 +9,7 @@ import type { NavCapabilityPredicate } from "../navigation/registry-capability.t
 import {
   adminAreaNavPredicate,
   adminSecurityNavPredicate,
+  duplicateCccdReportNavPredicate,
   projectAdminNavPredicate,
   workerOperationsNavPredicate,
 } from "../navigation/registry-capability.ts";
@@ -154,4 +155,20 @@ export function decideWorkerOperationsPageAccess(input: {
     return "TEMPORARY_UNAVAILABLE";
   }
   return workerOperationsNavPredicate(actor.actor) ? "ALLOW" : "ACCESS_DENIED";
+}
+
+/**
+ * P3.1-HF-R3: server page gate cho /reports/duplicate-cccd.
+ * Dung CHUNG predicate voi nav (duplicateCccdReportNavPredicate) — dung authority cua RPC
+ * #74 (Full Admin triple | catalog_master_manage | entry_privileged_edit, kem all scope).
+ * Khong mo rong quyen: chi ba nhom ma RPC da cho phep moi qua duoc; entry_admin@all mot minh,
+ * change_review, leader/PM va actor khong map deu ACCESS_DENIED.
+ */
+export function decideDuplicateCccdReportPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: duplicateCccdReportNavPredicate,
+  });
 }

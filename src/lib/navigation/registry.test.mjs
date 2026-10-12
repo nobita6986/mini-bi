@@ -15,9 +15,9 @@ const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } 
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 5, "phải có đúng 5 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 6, "phải có đúng 6 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"],
+  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "duplicate-cccd-report", "project-operations", "worker-operations"],
     `got ids: ${ids.join(",")}`);
 });
 
@@ -59,7 +59,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "admin"]);
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "admin", "duplicate-cccd-report"]);
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -67,15 +67,15 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "admin"]);
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "admin", "duplicate-cccd-report"]);
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "admin", "duplicate-cccd-report"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "admin", "duplicate-cccd-report"]);
   }
 });
 
@@ -118,6 +118,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "project_admin",
         "worker_operations",
         "admin_area",
+        "duplicate_cccd_report",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );
