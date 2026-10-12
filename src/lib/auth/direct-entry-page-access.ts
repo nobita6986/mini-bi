@@ -9,6 +9,7 @@ import type { NavCapabilityPredicate } from "../navigation/registry-capability.t
 import {
   adminAreaNavPredicate,
   adminSecurityNavPredicate,
+  duplicateCccdReportNavPredicate,
   projectAdminNavPredicate,
   workerOperationsNavPredicate,
 } from "../navigation/registry-capability.ts";
@@ -154,4 +155,20 @@ export function decideWorkerOperationsPageAccess(input: {
     return "TEMPORARY_UNAVAILABLE";
   }
   return workerOperationsNavPredicate(actor.actor) ? "ALLOW" : "ACCESS_DENIED";
+}
+
+/**
+ * P3.1-HF-R3-R1: quyet dinh actor co duoc THAY tab "Bao cao CCCD trung" tren Dashboard khong.
+ *
+ * Day chi la metadata hien thi (server-derived, khong phai client); quyen that van do API/RPC
+ * #74 quyet dinh lai. Dung CHUNG predicate (duplicateCccdReportNavPredicate) voi authority cua
+ * RPC: Full Admin triple | catalog_master_manage | entry_privileged_edit, kem effective all
+ * scope. Actor chua resolve hoac resolve fail => false (fail-closed).
+ */
+export function canViewDuplicateCccdReport(actor: ActorResolution | null): boolean {
+  if (!actor || !actor.ok) return false;
+  return duplicateCccdReportNavPredicate({
+    capabilities: actor.actor.capabilities,
+    scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
+  });
 }

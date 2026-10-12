@@ -113,6 +113,30 @@ export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
     DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
 };
 
+/**
+ * P3.1-HF-R3: authority doc bao cao CCCD trung.
+ *
+ * Phan anh DUNG `direct_entry_assert_duplicate_cccd_reader` (#74) - khong rong hon:
+ *  - Full Admin triple (entry_admin ∧ recruiter_master_manage ∧ team_master_manage), hoac
+ *  - catalog_master_manage (Admin / Ke toan), hoac
+ *  - entry_privileged_edit (BoD),
+ * VA luon doi hoi mot effective `all` scope. entry_admin@all mot minh, change_review, leader/PM
+ * va actor khong map deu KHONG mo. Day chi la metadata hien thi; quyen that do RPC quyet dinh.
+ */
+export const DUPLICATE_CCCD_REPORT_CAPABILITIES: readonly Capability[] = [
+  "catalog_master_manage",
+  "entry_privileged_edit",
+];
+
+export const duplicateCccdReportNavPredicate: NavCapabilityPredicate = (actor) => {
+  if (!actor.scopes.some((scope) => scope.kind === "all")) return false;
+  if (ADMIN_AUTHORITY_CAPABILITIES.every((required) => actor.capabilities.includes(required))) {
+    return true;
+  }
+  return DUPLICATE_CCCD_REPORT_CAPABILITIES.some((capability) =>
+    actor.capabilities.includes(capability));
+};
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,

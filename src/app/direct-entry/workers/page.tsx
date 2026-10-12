@@ -24,7 +24,7 @@ import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
  */
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Người lao động — mini-bi" };
+export const metadata = { title: "Người lao động — Hệ thống báo cáo HRP" };
 
 export default async function WorkerOperationsPage() {
   const uiEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);

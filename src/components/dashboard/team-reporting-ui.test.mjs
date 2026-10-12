@@ -40,8 +40,8 @@ test("W06D: tab URL/history and source normalization use the locked contract", (
     "needsAuthoritativeReload",
     "shallow: !needsAuthoritativeReload",
   ]) assert.ok(tabs.includes(fragment), fragment);
-  assert.match(tabs, /rawTab === "team" \? "team" : "general"/);
-  assert.match(tabs, /source: next === "team" \? null : source/);
+  assert.match(tabs, /rawTab === "duplicate-cccd" && canViewDuplicateCccd[\s\S]*: "general";/);
+  assert.match(tabs, /source: next === "general" \? source : null/);
   assert.match(tabs, /history: "push", shallow: !needsAuthoritativeReload, scroll: false/);
   assert.match(tabs, /role="tablist"/);
   assert.match(tabs, /role="tabpanel"/);
@@ -51,20 +51,20 @@ test("W06D: tab URL/history and source normalization use the locked contract", (
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) assert.ok(tabs.includes(key));
   assert.match(page, /normalizedDashboardTab/);
   assert.match(page, /params\.source !== undefined/);
-  assert.match(page, /normalizedDashboardPath\(params, "team", true\)/);
+  assert.match(page, /normalizedDashboardPath\(params, tab, true\)/);
   assert.match(page, /if \(key === "tab" \|\| \(removeSource && key === "source"\)/);
 });
 
 test("W06D: missing tab defaults general; repeated or malformed tab normalizes general", () => {
-  assert.match(page, /type DashboardTab = "general" \| "team"/);
-  assert.match(page, /typeof value === "string" && \(value === "general" \|\| value === "team"\)/);
+  assert.match(page, /type DashboardTab = "general" \| "team" \| "duplicate-cccd"/);
+  assert.match(page, /typeof value === "string" &&[\s\S]*\(value === "general" \|\| value === "team" \|\| value === "duplicate-cccd"\)/);
   assert.match(page, /rawTab !== undefined && tab === null/);
   assert.match(page, /normalizedDashboardPath\(params, "general", false\)/);
   assert.match(page, /query\.set\("tab", tab\)/);
 });
 
 test("W06D: direct team tab with source normalizes before reporting fetch", () => {
-  const normalize = page.indexOf('normalizedDashboardPath(params, "team", true)');
+  const normalize = page.indexOf("normalizedDashboardPath(params, tab, true)");
   const fetch = page.indexOf("fetchCutoverReporting(params, actor.actor)");
   assert.ok(normalize >= 0 && normalize < fetch);
   assert.match(page, /params\.source !== undefined/);

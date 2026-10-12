@@ -4,19 +4,21 @@ import { connection } from "next/server";
 import { AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
+import { canViewDuplicateCccdReport } from "@/lib/auth/direct-entry-page-access";
 import { decideSessionPageAccess } from "@/lib/auth/session-page-access";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 import { fetchCutoverReporting } from "@/lib/reporting/p2-w04a-reporting-server";
 import { fetchCutoverReportingOptions } from "@/lib/reporting/p2-w04a-options-server";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tổng quan tuyển dụng — mini-bi" };
+export const metadata = { title: "Tổng quan tuyển dụng — Hệ thống báo cáo HRP" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type DashboardTab = "general" | "team";
+type DashboardTab = "general" | "team" | "duplicate-cccd";
 
 function normalizedDashboardTab(value: string | string[] | undefined): DashboardTab | null {
-  return typeof value === "string" && (value === "general" || value === "team") ? value : null;
+  return typeof value === "string" &&
+    (value === "general" || value === "team" || value === "duplicate-cccd") ? value : null;
 }
 
 function normalizedDashboardPath(params: SearchParams, tab: DashboardTab, removeSource: boolean): string {
@@ -65,8 +67,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (rawTab !== undefined && tab === null) {
     redirect(normalizedDashboardPath(params, "general", false));
   }
-  if (tab === "team" && sourcePresent) {
-    redirect(normalizedDashboardPath(params, "team", true));
+  // P3.1-HF-R3-R1: the CCCD report tab is server-gated. An unauthorized deep link is
+  // normalized back to the general tab; the CCCD API/RPC still enforces independently.
+  const canViewDuplicateCccd = canViewDuplicateCccdReport(actor);
+  if (tab === "duplicate-cccd" && !canViewDuplicateCccd) {
+    redirect(normalizedDashboardPath(params, "general", false));
+  }
+  // `source` is a general-dashboard filter; the team and CCCD tabs never consume it.
+  if ((tab === "team" || tab === "duplicate-cccd") && sourcePresent) {
+    redirect(normalizedDashboardPath(params, tab, true));
   }
   const [report, options] = await Promise.all([
     fetchCutoverReporting(params, actor.actor),
@@ -80,6 +89,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       report={report}
       optionsResult={options}
       audience={report.ok ? report.audience : null}
+      canViewDuplicateCccd={canViewDuplicateCccd}
     />
   );
 }

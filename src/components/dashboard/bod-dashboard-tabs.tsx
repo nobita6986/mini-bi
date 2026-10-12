@@ -5,6 +5,7 @@ import { parseAsString, useQueryStates } from "nuqs";
 
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
+import { DuplicateCccdReportPanel } from "@/components/reporting/duplicate-cccd-report-panel";
 import { TeamReportView, type TeamReportViewConfig } from "./team-report-view";
 
 /**
@@ -40,23 +41,33 @@ const queryParsers = {
   source: parseAsString,
 };
 
-const tabs = [
+type TabKey = "general" | "team" | "duplicate-cccd";
+
+type TabDef = { key: TabKey; label: string; panelId: string };
+
+/**
+ * P3.1-HF-R3-R1: "Báo cáo CCCD trùng" is a sibling tab right after "Báo cáo theo nhóm".
+ * It is only rendered when the server-derived `canViewDuplicateCccd` is true; the CCCD API/RPC
+ * remains the real authority.
+ */
+const tabs: readonly TabDef[] = [
   { key: "general", label: "Báo cáo tổng quát", panelId: "bod-panel-general" },
   { key: "team", label: "Báo cáo theo nhóm", panelId: "bod-panel-team" },
-] as const;
-
-type TabKey = (typeof tabs)[number]["key"];
+  { key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" },
+];
 
 export function BodDashboardTabs({
   general,
   data,
   generatedAt,
   optionsResult,
+  canViewDuplicateCccd,
 }: {
   general: ReactNode;
   data: ReportingData;
   generatedAt?: string;
   optionsResult: ReportingOptionsResult;
+  canViewDuplicateCccd: boolean;
 }) {
   const [{ tab: rawTab, source }, setQuery] = useQueryStates(queryParsers, {
     history: "push",
@@ -65,13 +76,21 @@ export function BodDashboardTabs({
   });
   const [isPending, startTransition] = useTransition();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const activeTab: TabKey = rawTab === "team" ? "team" : "general";
+  const visibleTabs = tabs.filter(
+    (tab) => tab.key !== "duplicate-cccd" || canViewDuplicateCccd,
+  );
+  const activeTab: TabKey =
+    rawTab === "team"
+      ? "team"
+      : rawTab === "duplicate-cccd" && canViewDuplicateCccd
+        ? "duplicate-cccd"
+        : "general";
 
   function selectTab(next: TabKey): void {
     const needsAuthoritativeReload = next === "team" && source !== null;
     startTransition(() => {
       void setQuery(
-        { tab: next, source: next === "team" ? null : source },
+        { tab: next, source: next === "general" ? source : null },
         { history: "push", shallow: !needsAuthoritativeReload, scroll: false },
       );
     });
@@ -79,20 +98,20 @@ export function BodDashboardTabs({
 
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
     let next = -1;
-    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
-    else if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+    if (event.key === "ArrowRight") next = (index + 1) % visibleTabs.length;
+    else if (event.key === "ArrowLeft") next = (index + visibleTabs.length - 1) % visibleTabs.length;
     else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = tabs.length - 1;
+    else if (event.key === "End") next = visibleTabs.length - 1;
     if (next < 0) return;
     event.preventDefault();
-    selectTab(tabs[next].key);
+    selectTab(visibleTabs[next].key);
     requestAnimationFrame(() => tabRefs.current[next]?.focus());
   }
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-4 sm:px-6" aria-busy={isPending}>
       <div role="tablist" aria-label="Báo cáo BoD" className="flex flex-wrap gap-2 border-b border-border">
-        {tabs.map((tab, index) => (
+        {visibleTabs.map((tab, index) => (
           <button
             key={tab.key}
             ref={(element) => { tabRefs.current[index] = element; }}
@@ -117,7 +136,7 @@ export function BodDashboardTabs({
         <div id="bod-panel-general" role="tabpanel" aria-labelledby="bod-tab-general" tabIndex={0} className="pt-4">
           {general}
         </div>
-      ) : (
+      ) : activeTab === "team" ? (
         <div id="bod-panel-team" role="tabpanel" aria-labelledby="bod-tab-team" tabIndex={0} className="pt-4">
           <TeamReportView
             data={data}
@@ -125,6 +144,10 @@ export function BodDashboardTabs({
             optionsResult={optionsResult}
             view={bodTeamReportConfig}
           />
+        </div>
+      ) : (
+        <div id="bod-panel-duplicate-cccd" role="tabpanel" aria-labelledby="bod-tab-duplicate-cccd" tabIndex={0} className="pt-4">
+          <DuplicateCccdReportPanel />
         </div>
       )}
     </div>
