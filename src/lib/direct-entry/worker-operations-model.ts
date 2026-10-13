@@ -129,6 +129,43 @@ export function proposeCta(row: Pick<WorkerDirectoryRow, "allowed_actions">): Pr
   return { show: false, code, message: workerDenialMessage(code) };
 }
 
+/* ---------- PRE-W2-P2: sua ho ten NLĐ qua luong duyet (target WORKER) ---------- */
+
+/** Thieu pii_view: khong doc duoc baseline nen KHONG the de xuat sua ho ten. */
+export const WORKER_NAME_DENIED_PII_MESSAGE =
+  "Cần quyền xem thông tin cá nhân để đề xuất sửa họ tên.";
+
+/** Du quyen nhung chua nap duoc baseline canonical day du (khong bia gia tri). */
+export const WORKER_NAME_NO_BASELINE_MESSAGE =
+  "Chưa đọc được thông tin người lao động để đề xuất sửa họ tên.";
+
+export type WorkerNameAvailability = {
+  /** true chi khi du propose_change + pii_view VA co baseline canonical day du. */
+  available: boolean;
+  /** Copy giai thich khi KHONG the sua ten; null khi available. */
+  message: string | null;
+};
+
+/**
+ * Quyet dinh affordance sua ho ten (target WORKER) o ca hai entry point.
+ *
+ * `propose_change` va `pii_view` la HAI quyen doc lap do server tra (allowed_actions); KHONG bao
+ * gio suy quyen xem PII tu quyen de xuat. Thieu bat ky dieu kien nao => KHONG hien form kha dung
+ * (hien giai thich thay vi mot form chac chan that bai).
+ */
+export function workerNameAvailability(input: {
+  proposeChange: boolean;
+  viewPii: boolean;
+  hasBaseline: boolean;
+}): WorkerNameAvailability {
+  if (!input.proposeChange) {
+    return { available: false, message: workerDenialMessage(null) };
+  }
+  if (!input.viewPii) return { available: false, message: WORKER_NAME_DENIED_PII_MESSAGE };
+  if (!input.hasBaseline) return { available: false, message: WORKER_NAME_NO_BASELINE_MESSAGE };
+  return { available: true, message: null };
+}
+
 /* ---------- nhan nghiep vu (khong goi "PAYMENT"/thanh toan) ---------- */
 
 export const BANK_ACCOUNT_SECTION_LABEL = "Thông tin tài khoản ngân hàng";
