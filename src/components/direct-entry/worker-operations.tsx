@@ -57,6 +57,15 @@ import {
   type WorkerDirectoryFilters,
   type WorkerProposeTarget,
 } from "@/lib/direct-entry/worker-operations-model";
+import {
+  buildWorkerExportRequest,
+  exportScopeForTab,
+  workerExportErrorMessage,
+  workerExportFilename,
+  workerExportRequestMessage,
+  WORKER_EXPORT_REASON_MAX,
+  type WorkerExportScope,
+} from "@/lib/direct-entry/worker-export-ui-model";
 import type {
   ChangeRequestListItem,
   SubmissionReadItem,
@@ -145,11 +154,14 @@ export function WorkerOperations({
   canSeeAllWorkers = false,
   canReview = false,
   canPrivilegedEditWorkers = false,
+  canExport = false,
   actor = null,
 }: {
   canSeeAllWorkers?: boolean;
   canReview?: boolean;
   canPrivilegedEditWorkers?: boolean;
+  /** Capability projection server-side (pii_export + pii_view + payment_view); authority cuoi do RPC. */
+  canExport?: boolean;
   actor?: WorkerOperationsActor | null;
 }) {
   const tabs = visibleWorkerTabs(canSeeAllWorkers);
@@ -171,6 +183,7 @@ export function WorkerOperations({
   const [drawerMode, setDrawerMode] = useState<"proposal" | "correction">("proposal");
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   /** Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger. */
@@ -423,6 +436,7 @@ export function WorkerOperations({
   }
 
   const scope = tabScope(tab);
+  const exportScope = exportScopeForTab(tab);
   const workerPage = scope === null ? null : workerPages[scope as WorkerScopeTab];
   const activePage: { state: PageState; message: string | null } =
     workerPage ?? submissionPage;
@@ -569,6 +583,15 @@ export function WorkerOperations({
           </>
         )}
 
+        {canExport && exportScope !== null ? (
+          <div className="flex justify-end">
+            <button type="button" className={primaryClass}
+              onClick={() => setExportOpen(true)}>
+              Xuất Excel
+            </button>
+          </div>
+        ) : null}
+
         {activePage.state === "loading" || activePage.state === "idle" ? (
           <p role="status" className={infoClass}>Đang tải dữ liệu…</p>
         ) : null}
@@ -629,6 +652,15 @@ export function WorkerOperations({
           </>
         ) : null}
       </section>
+
+      <WorkerExportDialog
+        key={exportOpen ? "export-open" : "export-closed"}
+        open={exportOpen}
+        scope={exportScope}
+        filters={filters}
+        onOpenChange={(open) => { if (!open) setExportOpen(false); }}
+        onDone={(message) => { setExportOpen(false); setNotice({ kind: "success", message }); }}
+      />
 
       <ProposeDrawer
         key={drawerRow === null ? "none" : drawerRow.entry_id + ":" + drawerMode}
@@ -1414,6 +1446,123 @@ function ProposeDrawer({
               <button type="submit" className={primaryClass}
                 disabled={busy || loading || baseline === null} aria-busy={busy}>
                 {mode === "correction" ? "Lưu chỉnh sửa trực tiếp" : "Gửi đề xuất"}
+              </button>
+            </footer>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Tai Blob tu response thanh file; khong dung XLSX phia client va khong doc PII tu bang. */
+function downloadFile(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * PRE-W2-P1 (T1A): hop thoai "Xuat Excel".
+ *
+ * Chi gui `scope` + bo loc hien tai + `reason` (bat buoc) toi POST /api/direct-entry/workers/export;
+ * khong gui authority va khong gui PII tu bang. Thanh cong => tai .xlsx tu response Blob. 422
+ * row-limit => bao ro gioi han, khong tai file thieu dong. Khong log reason/body/PII.
+ */
+function WorkerExportDialog({
+  open, scope, filters, onOpenChange, onDone,
+}: {
+  open: boolean;
+  scope: WorkerExportScope | null;
+  filters: WorkerDirectoryFilters;
+  onOpenChange: (open: boolean) => void;
+  onDone: (message: string) => void;
+}) {
+  const reasonId = useId();
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function submit(): Promise<void> {
+    if (scope === null || busy) return;
+    const request = buildWorkerExportRequest({ scope, filters, reason });
+    if (!request.ok) { setMessage(workerExportRequestMessage(request.code)); return; }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch(API + "/workers/export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(request.body),
+      });
+      if (response.status === 200) {
+        const blob = await response.blob();
+        downloadFile(blob, workerExportFilename(
+          response.headers.get("content-disposition"), hcmTodayDate()));
+        setBusy(false);
+        onDone("Đã tải danh sách người lao động (.xlsx).");
+        return;
+      }
+      const payload = await readJson(response);
+      setBusy(false);
+      setMessage(workerExportErrorMessage(response.status, payload));
+    } catch {
+      setBusy(false);
+      setMessage(workerExportErrorMessage(0, null));
+    }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next && !busy) onOpenChange(false); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)]
+            w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2
+            overflow-hidden rounded-2xl border border-border bg-surface text-foreground shadow-2xl
+            outline-none"
+        >
+          <form className="flex min-h-0 w-full flex-col"
+            onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border
+              bg-surface px-4 py-4 sm:px-5">
+              <div>
+                <Dialog.Title className="text-xl font-semibold">Xuất Excel</Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-muted">
+                  Xuất danh sách người lao động theo đúng quan hệ và bộ lọc đang chọn. Nhập lý do
+                  để ghi nhận vào nhật ký truy cập.
+                </Dialog.Description>
+              </div>
+              <button type="button" aria-label="Đóng xuất Excel" disabled={busy}
+                className="inline-flex size-10 shrink-0 items-center justify-center rounded-full
+                  border border-border bg-surface text-xl text-muted hover:bg-muted/10
+                  hover:text-foreground focus-visible:outline-none focus-visible:ring-2
+                  focus-visible:ring-ring/40 disabled:opacity-50"
+                onClick={() => onOpenChange(false)}>×</button>
+            </header>
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={reasonId} className="text-sm font-medium">Lý do xuất</label>
+                <textarea id={reasonId} required aria-required="true"
+                  maxLength={WORKER_EXPORT_REASON_MAX}
+                  className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
+                    text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  value={reason} onChange={(event) => setReason(event.target.value)} />
+              </div>
+              {message ? <p role="alert" className={errorClass}>{message}</p> : null}
+            </div>
+
+            <footer className="flex shrink-0 justify-end gap-2 border-t border-border bg-surface px-4 py-3 sm:px-5">
+              <button type="button" className={buttonClass} disabled={busy}
+                onClick={() => onOpenChange(false)}>Huỷ</button>
+              <button type="submit" className={primaryClass}
+                disabled={busy || scope === null} aria-busy={busy}>
+                {busy ? "Đang xuất…" : "Tải xuống"}
               </button>
             </footer>
           </form>
