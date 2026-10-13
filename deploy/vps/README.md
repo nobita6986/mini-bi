@@ -19,6 +19,17 @@ Add these environment secrets:
 - `VPS_SSH_PRIVATE_KEY`
 - `VPS_KNOWN_HOSTS` (the VPS host key, verified out of band)
 
+VPS 2 uses separate build variables so its image cannot silently reuse VPS 1's
+Supabase project:
+
+- `VPS2_NEXT_PUBLIC_SUPABASE_URL`
+- `VPS2_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+It also requires environment secrets `VPS2_HOST`, `VPS2_USER`,
+`VPS2_SSH_PRIVATE_KEY`, and `VPS2_KNOWN_HOSTS`. Use the restricted `bi-deploy`
+account, not root SSH. The VPS 2 workflow refuses the VPS 1 host and project,
+and tags its images with `-vps2` to prevent GHCR tag collisions.
+
 Protect `main` with pull requests and require the exact status check
 `Quality (typecheck · lint · tests · build)` before merging. Block force-pushes
 and branch deletion.
@@ -50,6 +61,9 @@ Create `/etc/bi/migration.env` with the values required by
 `SUPABASE_POOLER_PORT`. This points to the same Supabase project used by Vercel.
 Keep it root-owned with mode `0600`; it is mounted read-only only into the
 one-shot migration container.
+
+Configure VPS 2's runtime and migration env files independently for its own
+Supabase project. Do not copy VPS 1's production or migration environment.
 
 ## Release behavior
 
