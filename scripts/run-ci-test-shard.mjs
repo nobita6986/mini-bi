@@ -5,16 +5,59 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const SHARD_COUNT = 4;
-const POSTGRES_SHARD = 4;
-const POSTGRES_TESTS = new Set([
-  "test:p3-1-w02a-team-leader-project-manager",
+const POSTGRES_TARGET = "postgres";
+const POSTGRES_TEST_FILES = new Set([
+  "scripts/p3-1-w02a-concurrency.test.mjs",
 ]);
+// shortcut: weights come from the latest successful main CI run; refresh when shard times drift.
+const TEST_WEIGHTS = {
+  "test:p3-w05a": 41.3,
+  "test:p3-1-hf-r1-duplicate-cccd-submit-confirmation": 37.6,
+  "test:p1.6-w03": 28.7,
+  "test:p2-de-dim-hotfix": 27.2,
+  "test:p1.6-i04c3-s01": 26.9,
+  "test:p3-1-hf-duplicate-cccd-report": 23.3,
+  "test:p2.5-w02": 20.5,
+  "test:p2.5-hf-create-rehire": 20.1,
+  "test:p2.5-w03": 19.4,
+  "test:p1.6-i04c2b": 18.2,
+  "test:p2.5-w05": 17.8,
+  "test:p2.5-hf-r2": 16.6,
+  "test:main": 16.4,
+  "test:p3-1-w02c-labor-type-catalog": 15.8,
+  "test:p1.6-w04-s04c-s02b": 13.3,
+  "test:p1.6-w04-s04c-s02c": 13.3,
+  "test:p1.6-w04-s04c-s03b3-r1": 13.2,
+  "test:p3-1-w01c-a-team-catalog": 13.2,
+  "test:p3-1-w02c-r2-labor-type-display": 13.2,
+  "test:p3-1-w01b-personnel": 13.2,
+  "test:p3-1-w01c-b-team-membership": 12.3,
+  "test:p3-w07a-r2-contract-hotfix": 12.3,
+  "test:p3-1-w02c-r3-own-draft-display": 12.1,
+  "test:p3-1-w02b-vendor-catalog": 12.1,
+  "test:p3-1-w01d-a1a-leader-schema": 12,
+  "test:t0-import": 11.8,
+  "test:p2.5-hf-r5": 10.2,
+  "test:p3-1-w03a-app-user-lifecycle": 9.7,
+  "test:p2.5-hf-r3": 9.4,
+  "test:p2.5-w06a": 9.3,
+  "test:p3-1-w01d-a1b2-leader-write": 8.8,
+  "test:p3-1-w01d-a2-leader-server": 7.7,
+  "test:p3-1-w01a-capability-contract": 7.3,
+  "test:p2.5-reviewer-hotfix": 7.1,
+  "test:p3-1-w03a-r2-account-read": 7,
+  "test:p2.5-hf-r1": 6.1,
+  "test:p3-w05b-a-team-reporting": 6.1,
+  "test:p2.5-status-default": 5.3,
+};
 
-const shard = Number(process.argv[2]);
+const target = process.argv[2];
+const shard = Number(target);
 const listOnly = process.argv.includes("--list");
 
-if (!Number.isInteger(shard) || shard < 1 || shard > SHARD_COUNT) {
-  throw new Error(`Shard must be an integer from 1 to ${SHARD_COUNT}.`);
+if (target !== POSTGRES_TARGET &&
+    (!Number.isInteger(shard) || shard < 1 || shard > SHARD_COUNT)) {
+  throw new Error(`Target must be an integer from 1 to ${SHARD_COUNT}, or postgres.`);
 }
 
 const packageJson = JSON.parse(
@@ -27,12 +70,6 @@ const rootCommands = packageJson.scripts.test.split(/\s*&&\s*/).map((part) => {
   }
   return match[1];
 });
-
-for (const command of POSTGRES_TESTS) {
-  if (!rootCommands.includes(command)) {
-    throw new Error(`PostgreSQL test is missing from package.json scripts.test: ${command}`);
-  }
-}
 
 const seenTestInvocations = new Set();
 let originalTestCount = 0;
@@ -66,7 +103,7 @@ const plannedCommands = rootCommands.map((name, index) => {
 
     return testFiles.length === 0
       ? []
-      : [{ args: [...nodeArgs, "--test", ...testFiles], testFiles }];
+      : [{ nodeArgs, testFiles }];
   });
 
   return { name, index, commands };
@@ -84,11 +121,45 @@ if (uniqueTestCount !== seenTestInvocations.size) {
   throw new Error("CI test de-duplication produced an inconsistent test plan.");
 }
 
-const selected = plannedCommands.filter(({ name, index, commands }) => {
-  if (commands.length === 0) return false;
-  if (POSTGRES_TESTS.has(name)) return shard === POSTGRES_SHARD;
-  return index % SHARD_COUNT === shard - 1;
+const normalizeTestPath = (testFile) => path.posix.normalize(testFile.replaceAll("\\", "/"));
+const selectPlans = (predicate) => plannedCommands.flatMap((plan) => {
+  const commands = plan.commands.flatMap((command) => {
+    const testFiles = command.testFiles.filter(predicate);
+    return testFiles.length === 0 ? [] : [{ ...command, testFiles }];
+  });
+  return commands.length === 0 ? [] : [{ ...plan, commands }];
 });
+const postgresPlans = selectPlans((testFile) => POSTGRES_TEST_FILES.has(normalizeTestPath(testFile)));
+const pglitePlans = selectPlans((testFile) => !POSTGRES_TEST_FILES.has(normalizeTestPath(testFile)));
+const countTests = (plans) => plans.reduce(
+  (total, plan) => total + plan.commands.reduce(
+    (commandTotal, command) => commandTotal + command.testFiles.length,
+    0,
+  ),
+  0,
+);
+const postgresTestCount = countTests(postgresPlans);
+const pgliteTestCount = countTests(pglitePlans);
+
+if (postgresTestCount !== POSTGRES_TEST_FILES.size ||
+    pgliteTestCount + postgresTestCount !== uniqueTestCount) {
+  throw new Error("CI test split must cover every unique test exactly once.");
+}
+
+const pgliteShards = Array.from({ length: SHARD_COUNT }, () => ({ plans: [], weight: 0 }));
+for (const plan of [...pglitePlans].sort((left, right) =>
+  (TEST_WEIGHTS[right.name] ?? 1) - (TEST_WEIGHTS[left.name] ?? 1) || left.index - right.index)) {
+  const destination = pgliteShards.reduce((lightest, candidate) =>
+    candidate.weight < lightest.weight ? candidate : lightest);
+  destination.plans.push(plan);
+  destination.weight += TEST_WEIGHTS[plan.name] ?? 1;
+}
+
+if (pgliteShards.reduce((total, item) => total + countTests(item.plans), 0) !== pgliteTestCount) {
+  throw new Error("CI PGlite sharding produced an inconsistent test plan.");
+}
+
+const selected = target === POSTGRES_TARGET ? postgresPlans : pgliteShards[shard - 1].plans;
 
 if (selected.length === 0) {
   throw new Error(`CI test shard ${shard} is empty.`);
@@ -107,17 +178,20 @@ const selectedTestCount = selected.reduce(
 );
 
 console.log(
-  `CI test plan: ${uniqueTestCount} unique file invocations; `
+  `CI test plan: ${pgliteTestCount} PGlite and ${postgresTestCount} real PostgreSQL `
+    + `file invocations; `
     + `${duplicateTestCount} exact duplicates removed from ${originalTestCount}`,
 );
-console.log(
-  `CI test shard ${shard}/${SHARD_COUNT}: ${selected.length} package scripts, `
-    + `${selectedCommandCount} node commands, ${selectedTestCount} file invocations`,
-);
+const targetLabel = target === POSTGRES_TARGET
+  ? "Real PostgreSQL concurrency"
+  : `PGlite shard ${shard}/${SHARD_COUNT}`;
+console.log(`${targetLabel}: ${selected.length} package scripts, `
+  + `${selectedCommandCount} node commands, ${selectedTestCount} file invocations`
+  + (target === POSTGRES_TARGET ? "" : `, ${pgliteShards[shard - 1].weight.toFixed(1)}s estimated`));
 if (listOnly) {
   for (const plan of selected) {
     for (const command of plan.commands) {
-      console.log(`${plan.name}: node ${command.args.join(" ")}`);
+      console.log(`${plan.name}: node ${[...command.nodeArgs, "--test", ...command.testFiles].join(" ")}`);
     }
   }
   process.exit(0);
@@ -125,10 +199,11 @@ if (listOnly) {
 
 for (const plan of selected) {
   for (const command of plan.commands) {
+    const args = [...command.nodeArgs, "--test", ...command.testFiles];
     console.log(
-      `\n[CI shard ${shard}/${SHARD_COUNT}] ${plan.name}: node ${command.args.join(" ")}`,
+      `\n[CI ${targetLabel}] ${plan.name}: node ${args.join(" ")}`,
     );
-    const result = spawnSync(process.execPath, command.args, { stdio: "inherit" });
+    const result = spawnSync(process.execPath, args, { stdio: "inherit" });
     if (result.error) throw result.error;
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
