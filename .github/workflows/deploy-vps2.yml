@@ -26,13 +26,23 @@ jobs:
       - name: Require VPS 2 connection secrets
         shell: bash
         env:
+          VPS1_HOST: ${{ secrets.VPS_HOST }}
           VPS2_HOST: ${{ secrets.VPS2_HOST }}
+          VPS2_USER: ${{ secrets.VPS2_USER }}
           VPS2_SSH_PRIVATE_KEY: ${{ secrets.VPS2_SSH_PRIVATE_KEY }}
           VPS2_KNOWN_HOSTS: ${{ secrets.VPS2_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          [[ -n "$VPS2_HOST" && -n "$VPS2_SSH_PRIVATE_KEY" && -n "$VPS2_KNOWN_HOSTS" ]] || {
-            echo '::error::Set VPS2_HOST, VPS2_SSH_PRIVATE_KEY, and VPS2_KNOWN_HOSTS in the production environment.'
+          [[ -n "$VPS1_HOST" && -n "$VPS2_HOST" && -n "$VPS2_USER" && -n "$VPS2_SSH_PRIVATE_KEY" && -n "$VPS2_KNOWN_HOSTS" ]] || {
+            echo '::error::Set VPS2_HOST, VPS2_USER, VPS2_SSH_PRIVATE_KEY, and VPS2_KNOWN_HOSTS in the production environment.'
+            exit 1
+          }
+          [[ "${VPS1_HOST,,}" != "${VPS2_HOST,,}" ]] || {
+            echo '::error::VPS 2 host must not equal the VPS 1 production host.'
+            exit 1
+          }
+          [[ "$VPS2_USER" != root ]] || {
+            echo '::error::VPS 2 deploy must use the restricted bi-deploy user, not root.'
             exit 1
           }
       - uses: actions/checkout@v4
@@ -55,18 +65,34 @@ jobs:
           [[ "$successful_ci" -gt 0 ]] || { echo '::error::SHA has no successful CI run'; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${sha}-vps2" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.release.outputs.sha }}
       - name: Require production Supabase build settings
         shell: bash
         env:
-          SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          VPS1_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          VPS2_SUPABASE_URL: ${{ vars.VPS2_NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ vars.VPS2_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
-          [[ -n "$SUPABASE_URL" && -n "$SUPABASE_KEY" ]] || {
-            echo '::error::Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in the production environment variables.'
+          [[ -n "$VPS1_SUPABASE_URL" && -n "$VPS2_SUPABASE_URL" && -n "$SUPABASE_KEY" ]] || {
+            echo '::error::Set VPS2_NEXT_PUBLIC_SUPABASE_URL and VPS2_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in the production environment variables.'
+            exit 1
+          }
+          [[ "$VPS1_SUPABASE_URL" =~ ^https://([a-z0-9-]+)\.supabase\.co$ ]] || {
+            echo '::error::VPS 1 Supabase URL is not in the expected project URL format.'
+            exit 1
+          }
+          vps1_project="${BASH_REMATCH[1]}"
+          [[ "$VPS2_SUPABASE_URL" =~ ^https://([a-z0-9-]+)\.supabase\.co$ ]] || {
+            echo '::error::VPS 2 Supabase URL is not in the expected project URL format.'
+            exit 1
+          }
+          vps2_project="${BASH_REMATCH[1]}"
+          [[ "$vps1_project" != "$vps2_project" ]] || {
+            echo '::error::VPS 2 Supabase project must differ from VPS 1.'
             exit 1
           }
       - uses: docker/setup-buildx-action@v3
@@ -81,17 +107,17 @@ jobs:
           context: .
           target: runner
           push: true
-          tags: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.sha }}
+          tags: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.image_tag }}
           build-args: |
-            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.VPS2_NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${{ vars.VPS2_NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
       - name: Build and publish migration image
         uses: docker/build-push-action@v6
         with:
           context: .
           target: migrations
           push: true
-          tags: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.sha }}-migrations
+          tags: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.image_tag }}-migrations
       - name: Configure pinned SSH host
         shell: bash
         env:
@@ -108,10 +134,11 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VPS2_HOST: ${{ secrets.VPS2_HOST }}
-          IMAGE: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.sha }}
-          MIGRATION_IMAGE: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.sha }}-migrations
+          VPS2_USER: ${{ secrets.VPS2_USER }}
+          IMAGE: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.image_tag }}
+          MIGRATION_IMAGE: ${{ steps.release.outputs.repository }}:${{ steps.release.outputs.image_tag }}-migrations
         run: |
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            "root@$VPS2_HOST" \
-            "/usr/local/sbin/bi-release '$IMAGE' '$MIGRATION_IMAGE' '$GITHUB_ACTOR'"
+            "$VPS2_USER@$VPS2_HOST" \
+            "sudo -n /usr/local/sbin/bi-release '$IMAGE' '$MIGRATION_IMAGE' '$GITHUB_ACTOR'"

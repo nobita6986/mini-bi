@@ -4,8 +4,8 @@ set -Eeuo pipefail
 readonly MIGRATION_ENV=/etc/bi/migration.env
 readonly EDGE_NETWORK=hrp-edge
 
-if [[ $# -ne 3 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}$ ||
-      ! $2 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}-migrations$ ||
+if [[ $# -ne 3 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}(-vps2)?$ ||
+      ! $2 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}(-vps2)?-migrations$ ||
       ! $3 =~ ^[A-Za-z0-9-]+$ ]]; then
   echo "refusing unexpected image or actor" >&2
   exit 65
