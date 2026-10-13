@@ -47,6 +47,7 @@ import {
   visibleWorkerTabs,
   workerListErrorMessage,
   WORKER_LOAD_FAILED_MESSAGE,
+  workerNameAvailability,
   workerRowKey,
   workerStatusLabel,
   workersQuery,
@@ -918,6 +919,14 @@ function ProposeDrawer({
   const catalog = catalogFor(today);
   const entryCatalogDate = entryForm?.first_work_date;
   const entryCatalog = catalogFor(entryCatalogDate ?? today);
+  // PRE-W2-P2: sua ho ten (WORKER) can du propose_change + pii_view + baseline canonical;
+  // correction (privileged) chi can baseline. Khong suy quyen xem PII tu quyen de xuat.
+  const workerFieldMode = mode === "correction" || target === "WORKER";
+  const nameAvailability = workerNameAvailability({
+    proposeChange: mode === "correction" ? true : row?.allowed_actions.propose_change === true,
+    viewPii: row?.allowed_actions.view_pii === true,
+    hasBaseline: entryForm !== null,
+  });
 
   useEffect(() => {
     if (row === null) return;
@@ -1176,7 +1185,8 @@ function ProposeDrawer({
                 </div>
               ) : null}
 
-              {(mode === "correction" || target === "WORKER") && entryForm !== null ? (
+              {workerFieldMode ? (
+                entryForm !== null && nameAvailability.available ? (
                 <section aria-labelledby="worker-profile-fields" className="space-y-4 rounded-xl
                   border border-border p-4">
                   <div>
@@ -1343,6 +1353,11 @@ function ProposeDrawer({
                     </div>
                   ))}
                 </section>
+                ) : (
+                  <p role="status" className={infoClass} data-testid="propose-worker-unavailable">
+                    {nameAvailability.message}
+                  </p>
+                )
               ) : null}
 
               {mode === "proposal" && target === "PAYMENT" ? (
@@ -1444,7 +1459,8 @@ function ProposeDrawer({
               <button type="button" className={buttonClass} disabled={busy}
                 onClick={() => onOpenChange(false)}>Huỷ</button>
               <button type="submit" className={primaryClass}
-                disabled={busy || loading || baseline === null} aria-busy={busy}>
+                disabled={busy || loading || baseline === null ||
+                  (workerFieldMode && !nameAvailability.available)} aria-busy={busy}>
                 {mode === "correction" ? "Lưu chỉnh sửa trực tiếp" : "Gửi đề xuất"}
               </button>
             </footer>
