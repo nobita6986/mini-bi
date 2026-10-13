@@ -4,7 +4,7 @@ set -Eeuo pipefail
 readonly COMPOSE_FILE=/opt/bi/compose.yaml
 readonly RELEASE_FILE=/opt/bi/.release.env
 readonly LOCK_FILE=/opt/bi/.deploy.lock
-if [[ $# -ne 1 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}$ ]]; then
+if [[ $# -ne 1 || ! $1 =~ ^ghcr\.io/nobita6986/mini-bi:[0-9a-f]{40}(-vps2)?$ ]]; then
   echo "refusing unexpected or non-immutable BI image reference" >&2
   exit 65
 fi
