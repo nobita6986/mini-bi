@@ -1,51 +1,51 @@
-# W2-S0-C — Wave 2 contract, security & integration survey
+# W2-S0-C-R1 — Wave 2 contract, security & integration survey (consistency repair)
 
-> **Status:** `W2_S0_C_CONTRACT_SECURITY_INTEGRATION_SURVEY_PASS_AWAITING_T0_REVIEW`
-> **Base SHA:** `origin/main@7afc02632f83a4cddff7ddfe75f7eb5308f1a969`
+> **Status:** `W2_S0_C_R1_CONTRACT_SECURITY_INTEGRATION_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Revision:** R1 — consistency repair of the S0 survey (`e434a88`) against the
+>   Wave 2 master plan `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md`. Append-only
+>   on the same branch (no amend / no rebase / no force-push).
+> **Base SHA:** `origin/main@7afc02632f83a4cddff7ddfe75f7eb5308f1a969`.
 > **Branch / worktree:** `audit/w2-s0-c-contract-security-integration-survey` @
 >   `C:\CodeApp\BI-w2-s0-c-contract-security-integration-survey`.
 > **Migration observation:** 85 files on current main; last =
 >   `20261011180000_p3_w05b_a_team_reporting.sql`. **Next-available = #86**
 >   (observation only; **no slot reserved**).
-> **Authority:** repo source/contracts win over any historical summary. Preflight
->   read `C:\CodeApp\P2-P3-R00_REUSE_CAPABILITY_SURVEY.md`.
+> **Authority (order):** the master plan (latest Owner decision) → accepted
+>   `main` contracts → this memo. Preflight also read
+>   `C:\CodeApp\P2-P3-R00_REUSE_CAPABILITY_SURVEY.md`.
 > **Document budget:** `DELTA_ONLY`. **Survey-only. No implementation, no
 >   source/schema change, no Production query.** Pre-W2 branches untouched.
 
 ---
 
-## 0. Preflight findings (reconcile before implementation)
+## 0. Preflight findings
 
-1. **No authoritative Wave 2 Lean plan exists on `main`.** `docs/` has **no**
-   `W2`/`wave2`/`disburse`/`refund`/`portrait`/`accountant` plan file, and the
-   external memory contains **no** `W2S1`–`W2S5` section. Wave 2 Lean is defined
-   only by this task brief → **T0 must publish/confirm the plan before backend
-   work**; this memo locks the contract from the brief + current source.
-2. **No T1A/T1B Wave 2 memo exists** on `main`. This survey is therefore the
-   current-main-independent baseline; any later T1A/T1B survey must be reconciled
-   against §8–§10 here.
+1. **The Wave 2 Lean plan now exists.** The master plan
+   `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md` is the official out-of-repo
+   coordination source ("nguồn điều phối chính thức của Wave 2"). The S0 blocker
+   "no Wave 2 Lean plan" is therefore **resolved** — no second plan is needed on
+   `main`.
+2. **Survey ledger (per the master plan):** `W2-S0-A` UI reuse = `ASSIGNED` (T1A,
+   not reported); `W2-S0-B` Backend/API reuse = `NOT_ASSIGNED` (T1B busy on Pre-W2);
+   `W2-S0-C` = `REVIEWED_R1_REQUIRED` (this R1).
 3. **W2S1 (portrait), W2S4 (disbursement/proof), W2S5 (refund) are greenfield.**
    Grep over `src/**` and `supabase/migrations/**` finds **zero** `portrait`,
-   `disburse`, `refund` or `advance_payment` definitions. No schema, RPC or UI
-   exists. Wave 2 Lean therefore needs **new tables + migrations + RPCs** (below).
+   `disburse`, `refund` or `advance_payment` definitions. New tables + migrations +
+   RPCs are required (slot observed only, not reserved).
 4. **W2S2 (accountant assignment) is partly greenfield.** There is **no**
    first-class accounting role/bundle on `main`: "accounting" exists only as a
-   test fixture (`direct-entry-v2.test.mjs:490–518`, capabilities `change_review`,
-   `entry_privileged_edit`, `employment_status.apply`, `payment_view`,
-   `payment_edit`, `pii_export` denied) and as the shared catalog-operator
-   capability `catalog_master_manage` (`registry-capability.ts:62`). The external
-   memory's Accounting bundle is policy, **not implemented source**.
-5. **W2S3 (request/decision) has a reusable engine.** The P1.6/W04 change-request
-   engine (`direct_entry_change_requests`/`_items`/`_revisions`,
-   `direct_entry_create_change_request` / `_decide_change_request` /
-   `_apply_change_item`, propose/approve/reject/withdraw APIs, no-self-review,
-   OCC, idempotency, reason, immutable audit) is exactly the request/decision
-   primitive to reuse — **do not build a second workflow engine**.
-6. **AI is off on current main.** `AI_REPORTS_ENABLED` / `AI_SETTINGS_ENABLED`
-   must not be `true`; AI actor/rate-limit work is deferred to P3.3. Any W2S4
-   "AI signal" must be **advisory and provider-gated** (§6).
-7. **Pre-W2 branches not touched**; primary checkout
-   (`codex/vps-deploy-hardening`) not touched.
+   test fixture (`direct-entry-v2.test.mjs:490–518`) and as the shared
+   catalog-operator capability `catalog_master_manage` (`registry-capability.ts:62`).
+5. **W2S3 reuses change-request primitives/patterns — not necessarily the business
+   tables.** Reuse the P1.6/W04 engine's **patterns** (no-self-review, OCC,
+   idempotency, mandatory reason, immutable audit, propose/decide/withdraw,
+   actor-scoped RPC). The salary-advance **data model is a W2-S0-B decision**; this
+   memo does **not** lock salary advance into `direct_entry_change_requests`.
+6. **AI is off on current main.** `AI_REPORTS_ENABLED` / `AI_SETTINGS_ENABLED` must
+   not be `true`; AI actor/rate-limit work is deferred to P3.3. The W2S4 image
+   signal is **advisory and provider-gated** (§6).
+7. **Pre-W2 branches not touched**; primary checkout (`codex/vps-deploy-hardening`)
+   not touched.
 
 ---
 
@@ -53,125 +53,151 @@
 
 | Lane | Scope (locked) |
 |---|---|
-| **W2S1** | Worker **portrait** capture/upload + versioned portrait asset; original/current/legacy-added; snapshot into a disbursement/salary request. |
-| **W2S2** | **Accountant assignment**: assign the reviewer (accountant) accountable for a disbursement case; effective-dated assignment; re-resolve on every transition. |
-| **W2S3** | **Request / decision**: proposer submits a disbursement request; assigned accountant approves/rejects with reason, OCC, idempotency, immutable audit, no self-review. |
-| **W2S4** | **Disbursement / proof / AI signal**: record the disbursement (CASH or BANK_TRANSFER); capture proof (cash photo / transfer receipt); manual proof review; advisory AI signal. |
-| **W2S5** | **Refund / basic summary / release**: refund a disbursement; basic summary view; release/close the case. |
+| **W2S1** | **Worker Portrait + full worker detail.** A worker detail surface showing everything the server authorizes: portrait, CCCD front/back images, employment contract and other documents, name/employee code/gender/DOB, CCCD + issue date/place per `pii_view`, address/phone per `pii_view`, project/start date/labor type, recruiter/provider, current work status, payment per `payment_view`, pending change request + last decision (if authorized), and per-document-type completeness status. Independent capability-based redaction. |
+| **W2S2** | **Accountant assignment**: one effective accountant per project; effective-dated, versioned, audited; the salary-advance request **snapshots the accountant/assignment at submit**. |
+| **W2S3** | **Salary-advance request + initial decision**: Manager submits; assigned (snapshot) accountant approves/rejects with reason, OCC, idempotency, immutable audit, no self-review. |
+| **W2S4** | **Disbursement + identity review + proof**: mark disbursed (`DISBURSED_WAITING_PROOF`); Manager submits proof; accountant reviews (human); advisory AI image signal. |
+| **W2S5** | **Refund + basic summary + UAT**: `REFUND_REQUIRED` → `REFUNDED`; basic summary; W2-R2 gate. |
 
-**Deferred (explicitly out of Wave 2 Lean):** full Accounting/Admin CRUD console;
-multi-manager/project CRUD (P2.5 scope); `pii_export` (Pre-W2 only); AI Production
-activation + authenticated AI actor + atomic rate limit (P3.3); invite/forced-reset/
-MFA/recovery (P3.2); commission/payroll engines; generic audit explorer; any second
-workflow/RBAC/audit framework; period-over-period/cross-team analytics (P4).
-
----
-
-## 2. State machine and transition actors (locked)
-
-Single case aggregate `disbursement_case`; every transition is a server RPC with
-reason + expected_version (OCC) + idempotency + immutable audit + no-self-review.
-
-```
-DRAFT
-  --submit (proposer)----------------------------> PENDING
-PENDING
-  --approve (assigned accountant, != proposer)--> APPROVED
-  --reject  (assigned accountant, != proposer)--> REJECTED
-  --cancel  (proposer | accountant)-------------> CANCELLED
-APPROVED
-  --disburse CASH   (accountant; requires portrait READY) --> DISBURSED
-  --disburse TRANSFER (accountant; requires bank details; NO portrait) --> DISBURSED
-  --cancel  (accountant)-------------------------> CANCELLED
-DISBURSED
-  --submit_proof (proposer | accountant)--------> PROOF_SUBMITTED
-PROOF_SUBMITTED
-  --accept_proof (accountant; AI advisory only)--> PROOF_ACCEPTED
-  --reject_proof (accountant; reason required)---> PROOF_REJECTED
-PROOF_REJECTED
-  --resubmit_proof (proposer | accountant)------> PROOF_SUBMITTED
-PROOF_ACCEPTED
-  --close (accountant)---------------------------> CLOSED
-CLOSED | DISBURSED | PROOF_* 
-  --request_refund (proposer | accountant)-------> REFUND_REQUESTED
-REFUND_REQUESTED
-  --approve_refund (accountant)------------------> REFUND_APPROVED
-  --reject_refund  (accountant)------------------> back to prior state
-REFUND_APPROVED
-  --record_refund (accountant)-------------------> REFUNDED
-```
-
-**Transition actors (locked):** `proposer` (case creator / authorized worker
-owner); `accountant` = the **effective assigned accountant** resolved at the
-moment of the transition (never cached in the client); `admin` (full-Admin
-triple) as break-glass with reason. **A transition must re-resolve the assigned
-accountant inside the RPC**; a reassignment mid-flow invalidates the previous
-accountant's authority. **No self-review**: the proposer may never approve/reject
-their own case (reuse the change-request no-self-review rule).
+**Deferred (explicitly out of Wave 2 Lean):** `DRAFT`/cancel flow; explicit
+accountant transfer + bulk reassignment; refund after `COMPLETED`/reversal;
+partial disbursement/refund; batch approve; general notification center; advanced
+summary charts/export/period comparison/forecast; multiple accountants per project;
+full Accounting/Admin CRUD console; multi-manager/project CRUD; `pii_export`
+(Pre-W2); AI Production activation + authenticated AI actor + atomic rate limit
+(P3.3); invite/reset/MFA/recovery (P3.2); a second workflow/RBAC/audit engine.
 
 ---
 
-## 3. Portrait contract (W2S1)
+## 2. State machine and transition actors (locked — official)
 
-- **Assets:** each worker (or case) has a versioned portrait asset with an
-  explicit **kind**: `original` (first capture), `current` (latest accepted), and
-  `legacy_added` (backfilled for pre-existing workers with no original). The
-  asset is immutable per version; re-capture creates a new version.
-- **Snapshot into the request:** when a salary/disbursement request is created,
-  it records the **portrait version id** in effect at that instant (an immutable
-  reference), so a later portrait change does not silently rewrite the request's
-  evidence.
-- **CASH requires `portrait.status = READY`.** A CASH disbursement fails closed if
-  the snapshot portrait is missing or not ready.
-- **BANK_TRANSFER does NOT require a portrait** (it requires bank details instead).
-- **Classification:** the portrait is high-sensitivity PII; it is stored via the
-  existing document storage posture (§9) — short-lived, attachment-only,
-  generic-filename presigned access; no storage key or signed URL returned to the
-  list projection or written to logs.
-- **No automatic portrait→identity conclusion** (no face recognition; §5/§6).
+```
+REQUESTED
+├── REJECTED
+└── APPROVED
+     └── DISBURSED_WAITING_PROOF
+          └── PROOF_SUBMITTED
+               ├── COMPLETED
+               ├── PROOF_REJECTED
+               │    └── PROOF_SUBMITTED ...   (Manager resubmits)
+               └── REFUND_REQUIRED
+                    └── REFUNDED
+```
 
-## 4. Bank-transfer contract (W2S4)
+**Removed from the current contract (not aliases, not extra transitions):**
+`DRAFT`, `PENDING`, `CANCELLED`, `DISBURSED`, `PROOF_ACCEPTED`, `CLOSED`,
+`REFUND_REQUESTED`, `REFUND_APPROVED`. A client form that has not been submitted
+is **not** a persisted business state. Renaming a state requires a master-plan
+change first.
 
-- **Fields (locked):** `bank` (from the active `direct_entry_banks` catalog),
-  `account_number` (stored as **text**, leading zeros preserved),
-  `account_holder_name`.
-- **Manual accountant ownership review:** the assigned accountant must manually
-  confirm the account holder/ownership; the system records the decision + reason.
-- **No automatic ownership conclusion:** a name-match between the worker and the
-  account holder is at most an **advisory signal** and must never auto-approve,
-  auto-reject or auto-disburse.
-- **Masking/logging/audit:** masked display (`••••` + last 4) in read/list
-  projections unless `payment_view`; **no raw account number / bank data in
-  logs, errors, audit text or `resource_ref`**; audit stores a canonical hash
-  (reuse `direct_entry_payload_hash`) not the raw values.
+**Transition actors (locked):**
+- **REQUESTED** is created by the **Manager** submit; the DB rechecks Manager,
+  project, worker and accountant assignment **at submit**. A project with no
+  accountant cannot submit.
+- **REQUESTED → REJECTED | APPROVED**: the **snapshot accountant** of the case
+  decides; reject requires a reason; **no self-review** (the manager may not
+  decide their own request).
+- **APPROVED → DISBURSED_WAITING_PROOF**: the snapshot accountant marks the
+  disbursement after money is actually handed over; stores actor, time, amount and
+  method; **no partial disbursement**.
+- **DISBURSED_WAITING_PROOF → PROOF_SUBMITTED**: the **Manager** submits the
+  mandatory proof.
+- **PROOF_SUBMITTED → COMPLETED | PROOF_REJECTED**: the snapshot accountant reviews
+  (human); reject requires a reason.
+- **PROOF_REJECTED → PROOF_SUBMITTED**: the **Manager** resubmits (new proof
+  version + new AI check).
+- **PROOF_SUBMITTED → REFUND_REQUIRED → REFUNDED**: **only the case's snapshot
+  accountant or Full Admin break-glass** opens `REFUND_REQUIRED` (reason
+  required); the accountant confirms the money was received back; refund is an
+  append-only event; **no partial refund**; **no refund from `COMPLETED`** in MVP.
+- **Accountant snapshot:** the request **snapshots the accountant/assignment at
+  submit**; the RPC must **not** silently re-resolve the *current* assignment to
+  replace the snapshot accountant of an open case. Explicit transfer and bulk
+  reassignment are **deferred**.
+- Every transition is a server RPC with mandatory reason (where required) +
+  `expected_version` (OCC) + idempotency + immutable audit.
+
+---
+
+## 3. Portrait + worker-detail contract (W2S1)
+
+- **Full worker detail (§1):** the detail surface renders every authorized group
+  (portrait, CCCD front/back, contract + documents, identity/placement, PII,
+  payment, change-request state, document completeness). The shell (drawer/dialog/
+  page) is a UI-survey decision; **the content groups are fixed** and none may be
+  dropped.
+- **Redaction:** PII, payment and document groups are **redacted independently** per
+  capability; the client never infers authority from the tab or a display role. No
+  raw storage key, internal actor id or long-lived signed URL is returned.
+- **Assets:** versioned portrait with an explicit **kind**: `original`/enrollment
+  (first accepted, never overwritten), `current` (latest approved), `legacy_added`
+  (first portrait added for an old worker, showing the added date — **not** assumed
+  to be the onboarding photo). Old versions stay in audit/history.
+- **Snapshot is immutable.** A salary-advance request continues to use the portrait
+  version/checksum **snapshotted at submit**. **A newer portrait does not change or
+  invalidate an existing request and does not force re-review.** The review UI may
+  *show* that a newer portrait exists for reference, but the decision stays bound to
+  the request's immutable snapshot.
+- **CASH requires `portrait.status = READY`, checked at SUBMIT** (not deferred to
+  disbursement); if missing, the UI guides the Manager to add the portrait first.
+- **BANK_TRANSFER does NOT require a portrait** (it requires bank details, §4).
+- **Storage:** reuse private R2 + the existing signed upload/download posture;
+  dedicated document type `WORKER_PORTRAIT`; MIME/magic-byte/checksum/size checks;
+  strip sensitive EXIF/metadata; short-lived `private, no-store`; **no crop editor,
+  camera, gallery, face recognition or portrait AI in W2S1**.
+
+## 4. Bank-transfer contract (W2S3/W2S4)
+
+- **Fields (locked):** `bank` (active `direct_entry_banks` catalog),
+  `account_number` (text, leading zeros preserved), `account_holder_name`; snapshot
+  into the request at submit.
+- **Manual ownership review at the accountant review.** String normalization only
+  *assists* comparison; it **never concludes ownership**. If the accountant cannot
+  confirm, they **reject with a reason** so the Manager fixes the details and
+  resubmits.
+- **Masking/logging/audit:** the full account number is shown only to the manager
+  who created the request, the responsible accountant and Full Admin; all other
+  lists are masked (`••••` + last 4). The account number never enters a URL,
+  analytics, client log or error log; audit stores a canonical hash (reuse
+  `direct_entry_payload_hash`), not raw values.
+- **Changing payee details after a decision** creates a new version/request; no
+  silent mutation.
 
 ## 5. Proof-review contract (W2S4)
 
-- **CASH:** manual **image comparison** by the accountant — the cash proof photo
-  is compared with the case/portrait evidence **by a human**.
-- **BANK_TRANSFER:** **financial comparison** — the transfer receipt is compared
-  against the request amount/reference/receiver; a bank transfer receipt is
-  financial evidence, not identity evidence.
-- **Locked:** there is **no claim that a bill/receipt verifies a face**, and
-  **no automated face recognition** is performed anywhere in Wave 2.
-- Proof is bound to `(case_id, case_version, request_amount)`; a proof whose
-  `case_version` does not match the current version is rejected (proof/version
-  mismatch, §7).
+- **Actor:** the **Manager submits and re-submits** the mandatory proof; the
+  accountant only reviews and decides. An **accountant-uploaded document is
+  optional supporting evidence only** — it does **not** replace the Manager proof
+  and does **not** by itself move the case to `PROOF_SUBMITTED`.
+- **CASH:** manual **image comparison** by the accountant — the cash proof photo is
+  compared with the snapshot portrait **by a human**.
+- **BANK_TRANSFER:** **financial comparison** — bank, approved account number,
+  recipient name, amount and time/content from the receipt.
+- **Locked:** a bank receipt is **not** face-verification evidence; the memo makes
+  **no claim that a bill verifies a face**, and **no automated face recognition** is
+  performed anywhere in Wave 2.
+- **Binding:** each proof is logically bound to the correct **request version,
+  disbursement event, amount, method and proof version**; a stale or
+  wrong-case proof is rejected. Re-submission creates a new proof version and a new
+  AI check; old documents/results are never overwritten.
 
 ## 6. AI-result posture (W2S4)
 
-- **Advisory only.** The AI signal may surface to the accountant but must **never
-  auto-approve or auto-reject** a case/proof/refund.
-- **Override reason:** an accountant who overrides the AI signal must supply a
-  reason, captured in the immutable audit.
-- **"Unavailable" is not "safe".** A provider error/disabled/timeout must resolve
-  to **needs-manual-review**, never to an implicit accept.
-- **Audit:** record provider, model and the check timestamp (and the advisory
-  verdict) in the immutable audit — **no raw portrait/PII** in the audit.
-- **Third-party privacy/retention:** no portrait/CCCD/bank value may be sent to a
-  provider without an explicit, reviewed data-processing decision; retention and
-  deletion of any provider-submitted data must be specified before enablement.
-  Default posture on current main: **AI disabled** (feature flag not `true`).
+- **Advisory only** — never auto approve/reject.
+- **Normalized result:** `PENDING`, `LOW_SYNTHETIC_RISK`, `REVIEW_REQUIRED`,
+  `INCONCLUSIVE`, `UNAVAILABLE`.
+- **Rules:** `REVIEW_REQUIRED` approve requires an **override reason**;
+  `UNAVAILABLE` is **not safe** — continuing requires a manual-review confirmation
+  and a reason; the result never proves an image is genuine.
+- **Idempotency** by proof checksum (a refresh does not call the provider again);
+  **each proof version has its own result**; store provider/model version,
+  `checked_at` and state; **no secret/raw PII** in logs.
+- **Egress minimization:** send only the **metadata-stripped proof image**; do not
+  send portrait, name, CCCD, account number, project or leave reason when the
+  provider only needs image bytes.
+- **API key is server-only**; any webhook verifies signature + replay protection.
+- **Provider retention/training/privacy** must satisfy a T0-accepted decision
+  **before** implementation. Default on current main: **AI disabled**.
 
 ---
 
@@ -179,16 +205,16 @@ their own case (reuse the change-request no-self-review rule).
 
 | # | Threat | Locked control |
 |---|---|---|
-| R1 | **IDOR / cross-project access** | Server-side authority only; per-row audience resolved in the RPC (reuse `direct_entry_actor_can_access_project` / project-manager assignment). A client-supplied project/case id is never authority. |
-| R2 | **Accountant reassignment mid-flow** | Re-resolve the effective assigned accountant inside every transition; a stale accountant's decide/disburse is rejected (OCC + assignment check). |
-| R3 | **Double-submit / replay** | OCC `expected_version` + `direct_entry_rpc_idempotency` begin/finish; the same logical action maps to one record. |
-| R4 | **Proof/version mismatch** | Proof bound to `(case_id, case_version)`; stale proofs rejected. |
-| R5 | **Signed-URL leakage** | Reuse the R2 presign posture: ≤2-minute GET, attachment-only, generic filename; never log/return storage keys or URLs; list projections carry no `signedUrl`/`bucket`. |
-| R6 | **Raw PII in logs** | Sanitized logs/errors (no CCCD, portrait, bank values, name); audit uses a canonical hash, not raw values. |
-| R7 | **Provider outage / cost exhaustion** | AI provider-gated + off by default; bounded/rate-limited calls; outage = needs-manual-review; no unbounded retries. |
-| R8 | **Forged webhook** | Any inbound webhook (provider/proof/receipt) verifies an HMAC signature + timestamp, is idempotent, and rejects replay. |
-| R9 | **Worker portrait changed during review** | The request holds an immutable portrait version snapshot; a portrait change after submission invalidates the review binding and forces re-review. |
-| R10 | **Financial totals drift** | Totals come from one server-side authoritative ledger/derivation; no client recompute; a reconciliation test pins totals vs the recorded disbursement/refund rows. |
+| R1 | **IDOR / cross-project access** | Server/DB authority only; per-row scope resolved in the RPC; a client-supplied project/case id is never authority (worker detail, request, disbursement, proof, refund). |
+| R2 | **Accountant reassignment mid-flow** | The case **snapshots** the accountant/assignment at submit; the RPC must not re-resolve the current assignment to replace the snapshot handler of an open case; explicit transfer/bulk reassignment is deferred. |
+| R3 | **Double-submit / replay** | OCC `expected_version` + the idempotency pattern; one logical action → one record; proof idempotency by checksum. |
+| R4 | **Proof/version mismatch** | Proof bound to request version + disbursement event + amount + method + proof version; stale/wrong-case rejected. |
+| R5 | **Signed-URL leakage** | Reuse the R2 presign posture: ≤2-min GET, attachment-only, generic filename; never log/return storage keys or URLs; list projections carry no `signedUrl`/`bucket`. |
+| R6 | **Raw PII in logs** | Sanitized logs/errors (no CCCD/portrait/bank values/name); audit uses a canonical hash, not raw values. |
+| R7 | **Provider outage / cost exhaustion** | Provider-gated + off by default; bounded/rate-limited; outage = manual review; no unbounded retries; checksum idempotency. |
+| R8 | **Forged webhook** | Any inbound webhook verifies HMAC signature + timestamp, is idempotent, and rejects replay. |
+| R9 | **Portrait changed during review** | The request holds an **immutable** portrait snapshot; a new portrait does **not** invalidate the request or force re-review; the decision stays bound to the snapshot (UI may show a newer portrait for reference only). |
+| R10 | **Financial totals drift** | Totals come from one server-side authoritative derivation; no client recompute; reconciliation pins cashflow (`disbursed_at`), reconciliation (`completed_at`) and refund (`refunded_at`) in `Asia/Bangkok`. |
 
 ---
 
@@ -198,20 +224,21 @@ their own case (reuse the change-request no-self-review rule).
 
 | Surface | Authority | Writes | Reads | Audit |
 |---|---|---|---|---|
-| Portrait asset | server RPC, `pii_view`/owner authority | new versioned row | masked ref until `pii_view` | immutable event |
+| Worker detail (portrait + CCCD + docs + PII) | server RPC, per-capability redaction | versioned portrait/doc rows | masked/completeness | immutable event |
 | Accountant assignment | full-Admin / authorized assigner, reason+OCC | effective-dated assignment | self + admin | immutable event |
-| Disbursement request/decision | change-request engine (reused) | request/item/revision | proposer + assigned accountant | immutable event |
-| Disbursement record | assigned accountant, reason+OCC+idempotency | disbursement row | accountant + admin | immutable event |
-| Proof asset | proposer/accountant | versioned document (R2 posture) | accountant | immutable event |
-| AI signal | provider-gated advisory | advisory row only | accountant | provider/model/timestamp |
-| Refund | assigned accountant | refund row | accountant + admin | immutable event |
-| Summary/release | server-derived | none | authorized | none |
+| Salary-advance request/decision | change-request **primitives/patterns** (data model = W2-S0-B) | request/item/revision | owner + **snapshot** accountant | immutable event |
+| Disbursement (`DISBURSED_WAITING_PROOF`) | snapshot accountant, reason+OCC+idempotency | disbursement event (actor/time/amount/method) | accountant + admin | immutable event |
+| Proof (Manager-submitted) | **Manager** submit/resubmit | versioned document (R2 posture) | accountant | immutable event |
+| AI image signal | provider-gated advisory | advisory row only | accountant | provider/model/checked_at |
+| Refund (`REFUND_REQUIRED`→`REFUNDED`) | **snapshot accountant** or Full Admin break-glass | append-only refund event | accountant + admin | immutable event |
+| Basic summary | server-derived | none | accountant | none |
 
 ### 8.2 Data-classification table
 
 | Data | Class | Handling |
 |---|---|---|
-| Portrait image | high-sensitivity PII (quasi-biometric) | short-TTL attachment presign; no logs; `pii_view` |
+| Portrait image | high-sensitivity PII (quasi-biometric) | short-TTL attachment presign; no logs; `pii_view`; MIME/magic/checksum; EXIF stripped |
+| CCCD front/back images, contract/other documents | direct_pii / documents | `document_view`; redacted independently; completeness only when unauthorized |
 | CCCD / name / DOB / phone / address | direct_pii | `pii_view`; masked in lists |
 | Account number / bank / holder | financial | `payment_view`; masked (`••••`+last4); hash in audit |
 | Proof image / receipt | financial evidence | R2 posture; no face claim |
@@ -221,53 +248,83 @@ their own case (reuse the change-request no-self-review rule).
 
 ### 8.3 Acceptance E-list
 
-E1 portrait versioning (original/current/legacy_added); E2 portrait snapshot bound
-to the request; E3 CASH denied without `portrait READY`; E4 BANK_TRANSFER succeeds
-without portrait; E5 request→decision with no-self-review; E6 reassigned accountant
-cannot decide; E7 disbursement requires assigned-accountant authority + reason +
-OCC; E8 proof bound to case_version (stale rejected); E9 CASH manual image compare;
-E10 BANK_TRANSFER financial compare; E11 AI never auto-approves/rejects; E12 AI
-override requires reason; E13 AI unavailable ⇒ needs-manual-review; E14 refund
-approval/rejection path; E15 basic summary totals reconcile; E16 all lists masked
-without the required capability; E17 no signed URL/storage key in any projection or
-log; E18 `all`/cross-project access denied by server authority.
+E1 portrait versioning (original/current/legacy_added; old versions retained).
+E2 portrait snapshot is immutable; a newer portrait does not invalidate an existing
+request or force re-review.
+E3 CASH requires `portrait READY` **checked at submit**.
+E4 BANK_TRANSFER requires no portrait.
+E5 the request snapshots the accountant/assignment at submit; reassignment does not
+silently change an open case's handler.
+E6 no self-review.
+E7 initial reject and proof reject require a reason.
+E8 disburse marks `DISBURSED_WAITING_PROOF` with actor/time/amount/method, no partial.
+E9 the Manager submits/resubmits the mandatory proof; an accountant-uploaded
+document does not replace it or advance the state.
+E10 CASH manual image comparison.
+E11 BANK_TRANSFER financial comparison (bank/STK/holder/amount/time).
+E12 no bill=face claim and no automated face recognition.
+E13 proof bound to request version + disbursement event + amount + method + proof
+version; stale rejected.
+E14 AI advisory only; never auto approve/reject.
+E15 `REVIEW_REQUIRED` approve requires an override reason; `UNAVAILABLE` is not safe
+(manual review + reason).
+E16 AI idempotent by proof checksum; each proof version has its own result;
+provider/model/`checked_at` stored.
+E17 independent redaction + masking (PII/payment/document) and no signed URL,
+storage key or raw PII in any projection or log.
+E18 server/DB scope denies IDOR/cross-project; only the snapshot accountant or Full
+Admin break-glass opens `REFUND_REQUIRED`; no refund from `COMPLETED`; summary
+timezone `Asia/Bangkok` reconciles.
 
 ### 8.4 Mutation M-list
 
-M1 drop the per-row project check → IDOR red; M2 cache the accountant instead of
-re-resolving → reassignment red; M3 remove OCC → replay red; M4 accept a stale
-proof version → proof-match red; M5 return the signed URL in a list → leakage red;
-M6 log a raw CCCD/bank/portrait → log-scan red; M7 let AI auto-approve → AI red;
-M8 treat AI-unavailable as accept → AI-safety red; M9 allow self-review → no-self-
-review red; M10 let CASH proceed without portrait → portrait-gate red; M11 recompute
-totals on the client → totals-drift red; M12 accept an unsigned webhook → webhook
-red.
+M1 drop the per-row project/scope check → IDOR red; M2 re-resolve the current
+accountant to replace the snapshot handler → reassignment red; M3 remove OCC →
+replay red; M4 accept a stale/wrong-case proof version → proof-match red; M5 return
+a signed URL/storage key in a list → leakage red; M6 log a raw CCCD/bank/portrait →
+log-scan red; M7 let AI auto-approve → AI red; M8 treat `UNAVAILABLE` as accept →
+AI-safety red; M9 allow self-review → no-self-review red; M10 check CASH portrait at
+disbursement instead of submit (or skip it) → portrait-gate red; M11 let an
+accountant-uploaded document advance to `PROOF_SUBMITTED` → proof-actor red; M12
+open `REFUND_REQUIRED` from `COMPLETED` or by the Manager → refund-actor red.
 
 ### 8.5 Integration order
 
-1. T0 confirms the Wave 2 Lean plan (reconcile §0).
-2. T1B: schema + RPCs (portrait, assignment, case state machine reusing the
-   change-request engine, disbursement, proof, refund) + focused tests. **One
-   backend owner** to avoid migration/RPC drift.
-3. T1A: UI (portrait capture/review, accountant queue, proof review, summary).
-4. T1C: allowed/denied + threat verification.
-5. T0: migration apply, deploy, Owner UAT.
+1. **T0** has absorbed this survey (master plan `REVIEWED_R1_REQUIRED`); R1 closes
+   the S0 corrections. **W2-S0-B (T1B backend/API reuse) is still required** to lock
+   the exact data model.
+2. **T1B**: schema + RPCs (portrait/worker-detail, assignment, request/decision,
+   disbursement, proof, refund) + focused tests. **One backend owner** to avoid
+   migration/RPC drift.
+3. **T1A**: UI (worker-detail surface, portrait capture/review, accountant queue,
+   proof review, summary), gated by W2-S0-A.
+4. **T1C**: allowed/denied + threat verification.
+5. **T0**: migration apply, deploy (W2S2/W2S3/W2S4 hidden), Owner UAT.
+
+Release split (per master plan): **W2-R1** = portrait + worker detail; **W2-R2** =
+salary advance + refund + summary. Pre-W2 must be integrated and affected lanes
+rebased before Wave 2 implementation opens.
 
 ### 8.6 UAT checklist (Owner)
 
-Portrait capture for a worker without a portrait; CASH blocked without portrait;
-BANK_TRANSFER without portrait; request→approve/reject by the assigned accountant;
-reassign accountant mid-flow; disbursement + proof upload; proof accept/reject;
-refund; basic summary totals; masked vs full views per capability; AI advisory
-shown but never decisive; no PII/URL leakage in the browser network tab.
+Worker detail opens the right record (no IDOR) and shows portrait/CCCD/documents/PII
+per capability; add portrait for a worker without one; CASH blocked without a ready
+portrait **at submit**; BANK_TRANSFER without a portrait; request→approve/reject by
+the snapshot accountant; reassign accountant mid-flow (old case keeps its handler);
+mark disbursed; Manager submits proof; accountant optional document does not advance;
+proof accept/reject + resubmit; refund only by the snapshot accountant/Full Admin;
+basic summary totals + timezone; masked vs full views; AI advisory shown but never
+decisive; no PII/URL leakage in the network tab.
 
 ### 8.7 Stop conditions for go-live
 
 Any of: an IDOR/cross-project leak; a signed-URL/storage-key leak; a raw PII/bank
-value in logs or audit; AI able to auto-approve/reject or an unavailable AI
-treated as accept; self-review possible; a CASH case without a ready portrait;
-unreconciled financial totals; a forged/unsigned webhook accepted; the Wave 2 Lean
-plan still unconfirmed by T0.
+value in logs or audit; AI able to auto-approve/reject or `UNAVAILABLE` treated as
+accept; self-review possible; a CASH case without a ready portrait at submit; proof
+not Manager-submitted (or an accountant document advancing the state); a refund
+opened by the Manager or from `COMPLETED`; a live re-resolution replacing an open
+case's snapshot accountant; unreconciled financial totals; a forged/unsigned webhook
+accepted.
 
 ---
 
@@ -276,25 +333,29 @@ plan still unconfirmed by T0.
 | Concern | Reuse | Do NOT |
 |---|---|---|
 | Session/actor | `resolveActorForRequest`, `getDirectEntryActor`, `guardApiSession`, `decideSessionPageAccess` | new auth |
-| Capability/scope | the 23-token `CAPABILITIES` set + grants/scopes + `direct_entry_has_capability` / `direct_entry_assert_*` | new RBAC engine; role/email/env grants |
-| Request/decision | the change-request tables/RPC/API/proposer/reviewer, no-self-review, OCC, idempotency, reason, immutable audit | a second workflow engine |
+| Capability/scope | the `CAPABILITIES` set + grants/scopes + `direct_entry_has_capability` / `direct_entry_assert_*` | new RBAC engine; role/email/env grants |
+| Request/decision | the change-request engine's **primitives/patterns** (no-self-review, OCC, idempotency, reason, immutable audit, propose/decide/withdraw, actor-scoped RPC); the salary-advance **data model is a W2-S0-B decision** | a second workflow engine; assuming the business tables are reused unchanged |
 | Reason/audit/OCC/idempotency | `direct_entry_restricted_reasons`, `direct_entry_audit_events` (+`denial_code`, `scope_kind` incl. `project`), `direct_entry_revisions`, `direct_entry_rpc_idempotency`, `direct_entry_payload_hash` | new audit store; raw PII in logs |
 | Payment authority | `payment_view` (masked) / `payment_edit`; `direct_entry_payments` `bank_id`/`account_number`/`account_holder_name` | bypass payment capability |
-| Documents/proof | the R2 storage posture (`@aws-sdk/s3-request-presigner`; ≤2-min GET attachment-only generic filename; ≤5-min PUT bound) | new storage abstraction; leaking keys/URLs |
-| AI | the existing AI gateway, provider-gated and off by default | auto-decision; unapproved provider PII egress |
+| Documents/portrait/proof | the R2 storage posture (`@aws-sdk/s3-request-presigner`; ≤2-min GET attachment-only generic filename; ≤5-min PUT bound); existing CCCD/contract document flow; document type `WORKER_PORTRAIT` | new storage abstraction; leaking keys/URLs; face recognition |
+| AI | the existing AI gateway, provider-gated and off by default | auto-decision; unapproved provider PII egress; sending portrait/CCCD/bank |
 | UI | React 19, Radix UI, Lucide, Card/Alert, existing grid, Recharts, `nuqs` | new component/form/state library |
 | Tests | `node:test`, PGlite, existing fixtures/canonical scripts | new test framework |
 
 ## 10. Reconciliation points / blockers
 
-- **Wave 2 Lean plan** not on `main` (§0.1) — T0 to publish/confirm.
-- **No T1A/T1B W2 survey** to cross-check (§0.2) — reconcile before T1B.
-- **Greenfield schema** for portrait/disbursement/proof/refund (§0.3) — new
-  append-only migrations are required; the slot is observed only (#86), not reserved.
+- **Master plan** now exists out-of-repo → the S0 plan blocker is **resolved** (§0.1).
+- **W2-S0-B** (T1B backend/API reuse) is **not yet assigned** → required before
+  implementation to lock the exact schema/RPC/data model (§8.5).
+- **Greenfield schema** for portrait/worker-detail/disbursement/proof/refund (§0.3)
+  — new append-only migrations required; slot observed only (#86), not reserved.
 - **Accounting bundle** is policy, not source (§0.4) — W2S2 must define the exact
   capability/authority set before implementation.
-- **AI egress/privacy** (§6) — a reviewed data-processing/retention decision is
-  required before any provider receives worker data.
+- **AI egress/privacy** (§6) — a T0-accepted provider/retention/training/privacy
+  decision is required before enablement.
+- **Open decisions (master plan §"Quyết định còn phải khóa"):** max advance amount;
+  Full Admin break-glass scope; AI provider/retention/SLA; WebP support; worker-
+  detail shell; PDF preview vs signed-download fallback.
 
 ## 11. Explicit no-implementation statement
 
@@ -304,3 +365,31 @@ schema, SQL, API, UI, package, dependency or lockfile change; no Production
 query/apply; no deploy; no browser/UAT; no external-memory edit; no primary-checkout
 change; no Pre-W2 branch touched; no T1B/T1A implementation started; **no migration
 reserved**.
+
+---
+
+## 12. Revision log (R1)
+
+R1 is an append-only consistency repair of the S0 survey (`e434a88`) on the same
+branch, aligning it to the Wave 2 master plan:
+
+- **State machine mapped to the official set** (§2): `REQUESTED → REJECTED |
+  APPROVED → DISBURSED_WAITING_PROOF → PROOF_SUBMITTED → COMPLETED |
+  PROOF_REJECTED` (→ resubmit) and `PROOF_SUBMITTED → REFUND_REQUIRED → REFUNDED`.
+  The extra states are removed from the current contract.
+- **Accountant snapshot** (§2/§3/§7): the request snapshots the accountant/
+  assignment at submit; the RPC must not silently re-resolve the current assignment
+  to replace an open case's handler; explicit transfer/bulk reassignment deferred.
+- **Proof actor** (§5): the Manager submits/resubmits the mandatory proof; an
+  accountant-uploaded document is optional and never replaces or advances it.
+- **Portrait snapshot** (§3/§7): immutable; a newer portrait does not invalidate an
+  existing request or force re-review; CASH validates `READY` at **submit**;
+  BANK_TRANSFER requires no portrait.
+- **Refund actor** (§2/§5/§7): only the case's snapshot accountant or Full Admin
+  break-glass opens `REFUND_REQUIRED`; no refund from `COMPLETED`; append-only; no
+  partial; no separate `REFUND_APPROVED` step.
+- **Reuse clarified** (§0.5/§9): reuse change-request **primitives/patterns**, not
+  necessarily the business tables; the data model is a W2-S0-B decision.
+- **Plan blocker resolved** (§0.1): the master plan exists out-of-repo.
+- **W2S1 expanded** (§1/§3): full worker detail (portrait + CCCD images +
+  documents + capability-based redaction), not only the portrait asset.
