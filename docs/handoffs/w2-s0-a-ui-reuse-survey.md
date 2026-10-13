@@ -62,20 +62,38 @@
 | `src/lib/direct-entry/cccd-upload-runner.ts` / `cccd-transport.ts` | `runCccdUpload`, `sha256HexFromBytes`, `EMPTY_CCCD_KEY_STATE`, `createCccdTransport` | Upload runner (Web Crypto SHA-256 fingerprint, transport). |
 | `src/lib/direct-entry/r2-document-storage.ts` | `R2Config`, `DocumentObjectStorage`, `SignedDocumentUrl`, `createR2DocumentStorage`, `loadR2Config`, `unavailableDocumentObjectStorage`, `DOCUMENT_BUCKETS` (per-env) | Private object storage + presigned PUT/GET (AWS SDK v3). |
 
-**A4. Image preview — DOES NOT EXIST.** There is no `<img>`, `next/image`,
-`object-contain`, lightbox, image zoom or full-screen viewer anywhere in `src/`
-(only an unrelated test fixture string and a test asserting the dashboard must
-**not** import `next/image`). The only "view" affordance is the
-`<a download>` link in `DirectEntryDocumentEditor` targeting
+**A4. Image preview — no reusable worker/document preview exists.**
+`next/image` *is* used, but only for branding:
+`src/components/app-shell/app-shell.tsx:35` imports `Image` and `:119` renders
+`<Image src="/brand/hrpartner-logo.png" alt="HR Partner" width={2166} height={1706} className="h-9 w-auto" />`;
+`src/components/dashboard/dashboard-brand.test.mjs:28` pins that the dashboard must
+**not** import `next/image`. There is no `<img>`, `object-contain`, lightbox,
+image-zoom or full-screen viewer for worker or document images anywhere in
+`src/`, and no reusable image-preview component to hand a document to. The only
+"view" affordance is the `<a download>` link in `DirectEntryDocumentEditor` targeting
 `/api/direct-entry/entries/[entryId]/documents/[documentId]/download`
 (`GET`, `runtime="nodejs"`, `dynamic="force-dynamic"`, `Cache-Control: private, no-store`).
 
-**A5. Original vs current vs additional image for a pre-existing worker.** No
-such concept exists. Images are modelled only as multiple `DocumentDetailSummary`
-rows per `DocumentType`, distinguished by `version` + `upload_status` /
-`validation_status` / `scan_status`; `document-editor.statusLabel` already maps a
-`SUPERSEDED` state. There is **no** "original vs current portrait", no
-"additional photo", no biometric/portrait field, and no per-worker image gallery.
+**A5. Portrait semantics for a pre-existing worker.** No such concept exists
+today. Images are modelled only as multiple `DocumentDetailSummary` rows per
+`DocumentType`, distinguished by `version` + `upload_status` /
+`validation_status` / `scan_status`; `document-editor.statusLabel` maps a
+`SUPERSEDED` state. There is no portrait field, no per-worker image gallery and
+no biometric concept. The W2S1 vocabulary and rules are fixed by R1 in A5a.
+
+**A5a. W2S1 portrait kind contract (R1, locked vocabulary).**
+- The semantic kind set is exactly **`original`/`enrollment`**, **`current`**,
+  **`legacy_added`** (R1 replaces the earlier "original/current/additional"
+  wording).
+- The UI must **not** infer the kind from `version` or from the `SUPERSEDED`
+  status — those are transport/bookkeeping facts, not semantic kind. Inferring a
+  kind client-side is forbidden.
+- The server MUST return a **validated kind/projection** (fail-closed); the
+  client renders the kind it was given and never derives or guesses it.
+- `legacy_added` MUST display its **added date** and MUST NOT be described as
+  onboarding/enrollment photography (it is a later addition to a pre-existing
+  worker).
+- A per-worker portrait set is a W2S1 addition; today it does not exist.
 
 **A6. Dialog/drawer primitives.** Radix UI (`radix-ui@1.6.7`):
 `Dialog` in `direct-entry-worker-documents.tsx`, `worker-operations.tsx`
@@ -127,7 +145,7 @@ asserts `project-operations.tsx` must **not** reference `RecruiterTypeahead`
 | `src/lib/direct-entry/worker-directory-contract.ts` / `-api.ts` / `-repository.ts` | `WorkerDirectoryRow`, `WorkerDirectoryFilters` | Worker directory read model. |
 | `src/components/direct-entry/direct-entry-submission-list.tsx` | `DirectEntrySubmissionList` (L62), `SubmissionTransitionRequest`, `TransitionOutcome` | Queue/list + `AlertDialog` confirm + acknowledgement payload. |
 | `src/components/direct-entry/direct-entry-change-request-reviewer.tsx`, `src/lib/direct-entry/change-request-reviewer.ts` | reviewer + decision model | Approve/reject/reason. |
-| `src/lib/ai-report/review-projection.ts` | `projectReviewRequest` (decision `approve\|reject`, `expected_revision_number`, reject reason 3..300) | The strictest existing decision+reason projection. |
+| `src/lib/ai-report/review-projection.ts` | `projectReviewRequest` (decision `approve\|reject`, `expected_revision_number`, reject reason 3..300) | **Reference pattern only** — do NOT import or reuse directly for salary advance; the salary request/review strict projection is locked separately by W2-S0-B. |
 | `src/components/reporting/status-badge.tsx` | `StatusBadge({status: RunStatus})` | Badges — **typed to `RunStatus` only**. |
 | `src/components/reporting/duplicate-cccd-report-panel.tsx` | `DuplicateCccdReportPanel` (L97) + local `StatusBadge`/`GroupCard` | List/table/pagination + badge pattern. |
 
@@ -216,9 +234,9 @@ recharts + the existing wrappers suffice.
 | W2S1 worker edit/propose | `change-request-*` models/projections; `ProposeDrawer` structure | `WorkerOperations` drawer to surface a portrait target | portrait-specific field group | — |
 | W2S1 document upload | `DirectEntryDocumentEditor` (generic single-type), `DirectEntryCccdManager`, `document-detail-projection`, `cccd-*`, `r2-document-storage` | add a portrait `DocumentType` to `DETAIL_DOCUMENT_TYPES` + `DOCUMENT_TYPES` | — | copying the uploader |
 | W2S1 dialogs/drawers | Radix `Dialog` + `direct-entry-shell.module.css` classes | — | a shared `ui/dialog` wrapper only if T0 wants one (not required) | manual focus traps |
-| **W2S1/A4 image preview** | — | — | **new** portrait preview/thumbnail sibling (nothing exists) | — |
-| W2S1 original/current/additional | `version` + `upload_status` + `SUPERSEDED` label | add explicit "original/current/additional" grouping over the version list | small grouping helper | inventing biometric concepts |
-| W2S2 assignment flow | `project-operations-model` (request builders, OCC, reason, `classifyResponse`, `splitAssignments`, `paginateProjects`) | repoint `manager_recruiter_id` → accountant subject; adjust labels | accountant candidate picker**sibling** | `project-operations.tsx` verbatim (its candidate picker is inline, and its test forbids `RecruiterTypeahead`) |
+| **W2S1/A4 image preview** | — | add a preview affordance (same-origin stream *or* short-lived signed URL per R2 posture) | one small portrait panel (nothing reusable exists) | raw storage keys in DOM/props; long-lived signed URLs |
+| W2S1 portrait kind (`original`/`enrollment`, `current`, `legacy_added`) | — | render the server-validated kind + the `legacy_added` added date | small portrait panel | inferring kind from `version`/`SUPERSEDED`; calling `legacy_added` onboarding |
+| W2S2 assignment flow | `project-operations-model` as **reference/pattern** (validators, `classifyResponse`, OCC, reason, idempotency, `splitAssignments`, pagination) | — | accountant-specific model/wire contract + screen sibling (both W2-S0-B) | parameterising/repointing `project-operations-model` or `manager_recruiter_id` |
 | W2S2 picker | `typeahead.ts` (pure) | `RecruiterTypeahead` → generalise to an `EntityTypeahead` sibling (label/providers) | `AccountantTypeahead` sibling | importing `RecruiterTypeahead` into `project-operations.tsx` |
 | W2S2 effective-date editor | `type="date"` + `validateDate` | extract a small `EffectiveDateField` | — | a date library |
 | W2S2 OCC/conflict/reason | `classifyResponse` (`reload-required`), `validateReason`, `ReasonField`, `DialogActions`, `newIdempotencyKey` | reuse as-is | — | bespoke conflict handling |
@@ -227,13 +245,13 @@ recharts + the existing wrappers suffice.
 | W2S3 amount/method form | `DirectEntryPaymentEditor` **as the structural template** | add amount + method fields | `SalaryMethodFields` sibling (CASH/BANK_TRANSFER conditional) | assuming an amount input exists |
 | W2S3 bank selector + holder | `payment-contract` (`projectPaymentInput(activeBankIds)`, masked projection), bank `<select>`, `DraftCatalog["banks"]` | reuse `PaymentInput` shape | — | duplicating the bank allowlist |
 | W2S3 queue/list/status | `duplicate-cccd-report-panel` (list+pagination), `DirectEntrySubmissionList`, `EmptyState`/`ErrorState` | make `StatusBadge` generic (see risks) | `RequestStatusBadge` sibling | `StatusBadge` for non-`RunStatus` values |
-| W2S3 approve/reject/reason | `projectReviewRequest` (decision+expected_version+reason), `change-request-reviewer`, `AlertDialog` | — | — | custom decision protocol |
-| W2S4 private upload/preview | `document-*`, `cccd-*`, `r2-document-storage`, `…/download/route.ts` | add a same-origin **preview** route/`<img>` sibling | `ProofImagePreview` sibling | embedding signed URLs / storage keys in the DOM |
-| W2S4 side-by-side / zoom / fullscreen | — | — | **new** comparison + zoom siblings | — |
+| W2S3 approve/reject/reason | `change-request-reviewer` + `AlertDialog` pattern | — | **own strict projection (W2-S0-B)** | importing/reusing AI-report `projectReviewRequest` directly for salary advance; a decision protocol without a locked projection |
+| W2S4 private upload/preview | `document-*`, `cccd-*`, `r2-document-storage`, `…/download/route.ts` | add a preview affordance (same-origin stream *or* short-lived signed URL per R2 posture) | ONE small proof-review component | raw storage keys anywhere; long-lived signed URLs; logging/storing signed URLs |
+| W2S4 zoom / fullscreen / lightbox | — | — | **deferred** (not in MVP) | — |
 | W2S4 cash vs bank evidence layout | `Card`/grid classes; `change-request-read-projection` diff pattern as inspiration | — | evidence-layout sibling | putting the bill next to the face on mobile |
 | W2S4 AI badges/callouts | `Alert` (info/warning/error) | add a risk-state → tone/label map | `AiRiskBadge` sibling | reusing `StatusBadge` (`RunStatus`) for risk states |
 | W2S4 acknowledgment/override reason | `DirectEntryDuplicateCccdDialog` (AlertDialog), reason fields, `acknowledgement {fingerprint,count}` | reuse pattern; add an explicit override-reason field | — | submit-without-acknowledgement |
-| W2S5 summary | `KpiCard`, `SummaryCard`, `Card`, `DashboardFilters`, `computeDatePresets`, `SourceStatusTable`, `Empty/ErrorState`, charts, `p1-chart-data`, theme slots | add daily/weekly/monthly bucketing helper | `PeriodSummary` view sibling | any new chart library |
+| W2S5 summary | `KpiCard`, `SummaryCard`, `Card`, `DashboardFilters` (+ "Hôm nay/Tuần này/Tháng này" presets), `SourceStatusTable`, `Empty/ErrorState`, existing charts, `p1-chart-data`, theme slots | server-derived KPI + per-project / per-method tables driven by the selected preset | one small summary sibling | daily/weekly/monthly bucketing helper, new trend chart, `PeriodSummary`/period comparison, export UI, any new chart library (all deferred) |
 
 ---
 
@@ -246,21 +264,21 @@ recharts + the existing wrappers suffice.
 - `src/lib/direct-entry/document-detail-projection.ts` — add the portrait type to `DETAIL_DOCUMENT_TYPES`.
 - `src/components/direct-entry/direct-entry-document-editor.tsx` — allow the portrait `DocumentType` list.
 - `src/components/direct-entry/direct-entry-worker-documents.tsx` — add the portrait section inside the existing dialog.
-- **new** `src/components/direct-entry/portrait-preview.tsx` (or `…/worker-portrait-panel.tsx`) — preview + original/current/additional grouping (**no image preview exists today**).
-- **new** `src/lib/direct-entry/worker-portrait.ts` — pure grouping/masking rules.
+- **new** one small portrait panel (e.g. `src/components/direct-entry/worker-portrait-panel.tsx`) — renders the **server-validated kind** (`original`/`enrollment`, `current`, `legacy_added`), the `legacy_added` added date, and a preview affordance (**no reusable image preview exists today**).
+- **new** `src/lib/direct-entry/worker-portrait.ts` — pure presentation helpers only (order, label, date formatting); **no** kind inference from `version`/`SUPERSEDED`.
 - **new/extended** focused test file(s) `src/components/direct-entry/*portrait*.test.mjs`.
 
 **W2S2 — Accountant Assignment**
 - `src/lib/admin/admin-navigation.ts` — add the sections entry.
 - `src/lib/navigation/registry-capability.ts` — add the predicate (or reuse `adminAreaNavPredicate`).
-- **new** `src/lib/direct-entry/accountant-assignment-model.ts` (or reuse `project-operations-model.ts` by parameterising) — request builders/validate/outcome.
+- **new** `src/lib/direct-entry/accountant-assignment-model.ts` — **accountant-specific** request builders/validators/outcome. Do **not** parameterise or repoint `project-operations-model.ts`/`manager_recruiter_id`; copy the *pattern* (validator, outcome, OCC, reason, idempotency, effective-date) only. The accountant wire contract is decided by W2-S0-B.
 - **new** `src/components/direct-entry/accountant-assignment.tsx` — screen reusing `Field`/`ReasonField`/`DialogActions` structure.
 - **new** `src/components/direct-entry/accountant-typeahead.tsx` — sibling of `RecruiterTypeahead` (do not import it into `project-operations.tsx`).
 - `src/app/admin/**` — one page + its API route(s) (T1B-backed).
 - Focused tests `src/lib/direct-entry/accountant-assignment-model.test.mjs`, `src/components/direct-entry/accountant-*.test.mjs`.
 
 **W2S3 — Salary Request**
-- **new** `src/lib/direct-entry/salary-request-contract.ts` — amount/method projection (mirror `payment-contract.ts`).
+- **new** `src/lib/direct-entry/salary-request-contract.ts` — **own strict** amount/method projection (mirror the *shape* of `payment-contract.ts`). The request/review projection is locked by W2-S0-B; do **not** import AI-report `projectReviewRequest`.
 - **new** `src/components/direct-entry/salary-method-fields.tsx` — CASH/BANK_TRANSFER conditional sibling.
 - **new** `src/components/direct-entry/salary-request-form.tsx` — reuses `DirectEntryPaymentEditor` structure + `ReasonField`.
 - **new** `src/components/direct-entry/salary-request-queue.tsx` — reuses the `duplicate-cccd-report-panel` list/pagination pattern.
@@ -268,19 +286,18 @@ recharts + the existing wrappers suffice.
 - `src/app/api/direct-entry/**` routes (T1B-backed) + focused tests.
 
 **W2S4 — Proof Review**
-- **new** `src/components/direct-entry/proof-image-preview.tsx` — `<img>` + zoom/full-screen.
-- **new** `src/components/direct-entry/proof-evidence-layout.tsx` — cash vs bank layouts (mobile: never face-next-to-bill).
-- **new** `src/components/direct-entry/proof-comparison.tsx` — side-by-side.
+- **new** ONE small proof-review component (e.g. `src/components/direct-entry/proof-review.tsx`) — reuses the `document-*`/`cccd-*` upload path and `Card`/grid primitives; renders a preview clear enough for human review, responsive and keyboard reachable. Do **not** build multiple image abstractions when one small component suffices.
+- **Deferred (not in the touch set):** zoom, fullscreen/lightbox, and side-by-side image comparison.
 - **new** `src/components/reporting/ai-risk-badge.tsx` — `PENDING|LOW_SYNTHETIC_RISK|REVIEW_REQUIRED|INCONCLUSIVE|UNAVAILABLE` → `Alert` tones/labels.
 - **new** `src/lib/direct-entry/proof-review-contract.ts` — risk-state projection (fail-closed).
 - reuse `DirectEntryDuplicateCccdDialog` pattern for acknowledgment + override reason.
-- **new** preview route sibling under `src/app/api/direct-entry/…` if a same-origin byte stream is required (T1B decision).
+- preview bytes: same-origin stream **or** short-lived signed URL (R2 posture) — a T1B decision; raw storage keys are never rendered, logged or persisted.
 
 **W2S5 — Summary**
-- **new** `src/lib/reporting/p2-w2s5-period.ts` — daily/weekly/monthly bucketing (pure, Asia/Ho_Chi_Minh, reusing `p1-date-presets` helpers).
-- **new** `src/components/dashboard/period-summary.tsx` — reuses `KpiCard`, `TrendChart`, `SourceStatusTable`, `Card`.
-- reuse `DashboardFilters` + `computeDatePresets` unchanged.
-- focused test `src/lib/reporting/p2-w2s5-period.test.mjs`.
+- reuse `DashboardFilters` + `computeDatePresets` unchanged; MVP uses **Hôm nay / Tuần này / Tháng này** as the filter for a **server-derived KPI** plus per-project / per-method tables (no client aggregation).
+- **new** one small summary view sibling (e.g. `src/components/dashboard/summary-view.tsx`) reusing `KpiCard`, `Card`, `SourceStatusTable`.
+- **Deferred (not in the touch set):** daily/weekly/monthly bucketing helper, a new trend chart, `PeriodSummary`, period comparison, and export UI. (A worker-export *backend* landed on `origin/main@afd1342`, but the W2S5 export UI stays deferred.)
+- focused test for the new summary view only.
 
 ---
 
@@ -302,11 +319,16 @@ recharts + the existing wrappers suffice.
   `overflow-x-auto` + deliberate `min-w-[…]` (never body-level overflow).
 - **Focus:** `focus-visible:ring-2 ring-ring/40`; do not bypass with
   `outline-none` alone.
-- **No internal identifiers on the surface:** no `bucket_key`, UUID, storage
-  key, signed URL, file name, or raw code in labels/titles/ARIA.
-- **Images (new, W2S4):** `<img alt>` must not imply a bill verifies a person's
-  face; zoom/full-screen must be keyboard reachable and Escape-closable; the
-  mobile layout must not place the face next to the bill as a verification cue.
+- **No internal identifiers on the surface:** no `bucket_key`, UUID, **raw
+  storage key**, file name, or raw error code in labels/titles/ARIA — and none
+  logged. (R1: a short-lived, R2-posture signed URL **may** be used as an image
+  source; it must not be logged, embedded in a label/ARIA, or persisted
+  long-term. Raw storage keys stay forbidden everywhere.)
+- **Images (new, W2S1/W2S4):** the preview must be clear enough for a human to
+  review, responsive, and keyboard reachable/operable; `<img alt>` must not imply
+  a bill verifies a person's face, and the mobile layout must not place the face
+  next to the bill as a verification cue. Zoom/fullscreen/lightbox are deferred
+  and therefore outside this contract.
 
 ---
 
@@ -331,29 +353,33 @@ source and assert exact fragments) plus pure-logic unit tests, wired into a
 focused `test:p3-…` lane and once into the canonical `test` chain.
 
 Suggested per W2S:
-- **W2S1:** portrait type present in the allow-lists; preview renders an
-  `<img>` with a non-identifying `alt`; original/current/additional grouping
-  ordering; no `bucket_key`/storage key/signed URL in the DOM.
-- **W2S2:** ledger-guard updates for a new migration (none here) are **not**
-  needed; assignment request body carries `expected_project_version` +
-  `idempotency_key` + reason; `classifyResponse` maps 409 → `reload-required`;
-  accountant picker is a sibling (assert `project-operations.tsx` still has no
-  `RecruiterTypeahead`); nav predicate gating.
+- **W2S1:** portrait type present in the allow-lists; the panel renders the
+  **server-validated kind** and the `legacy_added` added date; a mutation that
+  derives the kind from `version`/`SUPERSEDED` must fail; `legacy_added` is never
+  labelled onboarding; no raw storage key rendered/logged.
+- **W2S2:** the accountant model + wire contract are a **sibling** (assert
+  `project-operations-model.ts` and `manager_recruiter_id` are unchanged); the
+  request body carries the accountant OCC + `idempotency_key` + reason; 409 →
+  `reload-required`; accountant picker is a sibling (assert
+  `project-operations.tsx` still has no `RecruiterTypeahead`); nav predicate gating.
 - **W2S3:** CASH/BANK_TRANSFER conditional field visibility; bank `select`
   options come from the server catalog allowlist; amount validation; masked
-  projection when `canView` is false; decision needs `expected_revision_number`.
+  projection when `canView` is false; the decision uses the **W2-S0-B strict
+  projection** (assert no import of `@/lib/ai-report/review-projection`).
 - **W2S4:** the five risk states map to distinct labels/tones and fail closed on
   unknown values; acknowledgment is required before submit; override reason
   required when overriding; mobile layout assertion (face and bill are not
-  siblings); no signed URL/key in props.
-- **W2S5:** bucket counts sum to the daily total; week starts Monday;
-  month/quarter boundaries in Asia/Ho_Chi_Minh; no new chart import.
+  siblings); no raw storage key rendered/logged; **no zoom/fullscreen** (deferred).
+- **W2S5:** the summary renders a server-derived KPI + per-project / per-method
+  tables for the selected preset (Hôm nay/Tuần này/Tháng này); assert no client
+  aggregation, no bucketing helper and no new chart import.
 
 **Mutation probes** (make the lane RED, then restore byte-identically and confirm
 GREEN): (1) drop the CASH/BANK_TRANSFER conditional; (2) remove the acknowledgment
 requirement; (3) collapse two risk states to one label; (4) let `project-operations`
-import `RecruiterTypeahead`; (5) revert a week to start on Sunday; (6) render a
-storage key/`bucket_key` into a title or `alt`.
+import `RecruiterTypeahead`; (5) derive a portrait kind from `version`/`SUPERSEDED`,
+or label `legacy_added` as onboarding; (6) render a raw storage key into a title/`alt`,
+or import AI-report `projectReviewRequest` into the salary flow.
 
 ---
 
@@ -361,17 +387,20 @@ storage key/`bucket_key` into a title or `alt`.
 
 1. **W2S1 portrait images** — needs (a) a portrait `DocumentType` (or a new
    image kind) accepted by the DB/storage boundary and the strict projection,
-   and (b) a server concept of "original / current / additional" for a
+   and (b) a server-side **validated portrait kind** — `original`/`enrollment`,
+   `current`, `legacy_added` — carrying the `legacy_added` added date for a
    pre-existing worker. Today only `version` + statuses exist. **Blocked on
-   backend contract**; the UI must not invent grouping or call R2 directly.
-2. **W2S1 image preview bytes** — the only current access is the authenticated
-   `download` route returning a signed URL. A same-origin preview stream (or an
-   approved short-lived signed URL passed as a prop) is a **server decision**;
-   the client must never receive a bucket name/storage key.
+   backend contract**; the UI must not infer a kind or call R2 directly.
+2. **W2S1/W2S4 image delivery** — the only current access is the authenticated
+   `download` route. T1B may deliver bytes as a **same-origin preview stream** or
+   a **short-lived signed URL** (R2 posture); either is acceptable. Raw storage
+   keys must never reach the client, and signed URLs must not be logged, placed in
+   labels/ARIA, or persisted long-term.
 3. **W2S2 accountant identity** — PM assignment keys on
    `manager_recruiter_id`; an accountant may be keyed by app-user/account rather
    than recruiter. The candidate read model and the exact wire keys are
-   **T1B-owned**; do not reuse `manager_recruiter_id` blindly.
+   **T1B-owned (W2-S0-B)**; do **not** parameterise or repoint
+   `project-operations-model.ts`/`manager_recruiter_id` — build a sibling.
 4. **W2S3 money/method** — there is **no** amount, currency, or
    `CASH/BANK_TRANSFER` contract anywhere. `PaymentInput` is a bank-provision
    shape. Amount/currency precision, method enum, and the salary-request
@@ -392,6 +421,11 @@ storage key/`bucket_key` into a title or `alt`.
    keep those green and derive authority server-side only.
 9. **No migration slot reserved.** If T1B needs DDL, T0 must allocate the next
    slot from the then-current ledger; W2-S0-A reserves nothing.
+10. **Deferred W2S4/W2S5 scope (R1).** Zoom/fullscreen/lightbox, image
+    comparison, daily/weekly/monthly bucketing, a new trend chart, `PeriodSummary`,
+    period comparison and export UI are explicitly out of the MVP.
+    `origin/main@afd1342` added a worker-export **backend**; the W2S5 export
+    **UI** remains deferred.
 
 ---
 
@@ -401,5 +435,65 @@ storage key/`bucket_key` into a title or `alt`.
   route, RPC, schema or migration was created, edited or deleted.
 - No mock API, no stub, no placeholder, no dependency added.
 - No Production query/apply, no deploy, no browser/UAT, no merge to `main`.
-- The only change in this branch is this memo
+- The only file changed in this branch is this memo
   (`docs/handoffs/w2-s0-a-ui-reuse-survey.md`).
+
+---
+
+## 10. Revision log
+
+### R1 — targeted consistency repair (append-only)
+
+R0 was authored on `origin/main@7afc026`. T0 confirmed that `origin/main` has
+since advanced to **`afd1342`** (`Merge PRE-W2-P1 worker export backend`).
+Delta checked here with `git diff --name-status 7afc026 afd1342`: the only
+source/route additions are **new** files
+(`src/lib/direct-entry/worker-export-*.ts`,
+`src/app/api/direct-entry/workers/export/route.ts`), plus one new migration and
+ledger/test-count bumps. **No file this survey cites was modified**, so no UI
+reuse fact changed and no stop/report to T0 was required.
+
+Corrections applied in R1 (each supersedes the R0 wording):
+
+1. **Portrait semantics.** R0 said "original/current/additional"; R1 replaces it
+   everywhere with **`original`/`enrollment`, `current`, `legacy_added`**, and
+   states that the UI must **not** infer the kind from `version`/`SUPERSEDED`,
+   that the server MUST return a validated kind/projection, and that
+   `legacy_added` shows its added date and must not be described as onboarding
+   photography (§1 A5/A5a, §3, §4, §7, §8).
+2. **Image delivery.** R0 locked "no signed URL in props/DOM". R1 removes that
+   lock: T1B may use a **same-origin preview stream** *or* a **short-lived signed
+   URL** under the R2 posture. What stays forbidden: raw storage keys, logging a
+   signed URL, putting it in a label/ARIA, or storing it long-term (§3, §4, §5,
+   §7, §8).
+3. **Factual correction.** R0 claimed there is no `next/image` anywhere in
+   `src/`. R1 records the truth: `src/components/app-shell/app-shell.tsx:35`
+   imports `next/image` and `:119` renders the branding logo; there is no
+   reusable worker/document image-preview component (§1 A4).
+4. **Salary decision.** `projectReviewRequest`
+   (`src/lib/ai-report/review-projection.ts`) is downgraded to a **reference
+   pattern** and must **not** be imported/reused for salary advance; the salary
+   request/review strict projection is locked by W2-S0-B (§1 C, §3, §4, §7).
+5. **W2S4 scope.** Zoom/fullscreen/lightbox and side-by-side image comparison are
+   removed from the required touch set and the acceptance contract; the MVP is a
+   preview clear enough for human review, responsive and keyboard accessible, and
+   the survey warns against multiple image abstractions when one small
+   proof-review component suffices (§3, §4, §5, §7).
+6. **W2S5 scope.** The daily/weekly/monthly bucketing helper, a new trend chart
+   and a new `PeriodSummary` are removed from the touch set; the MVP reuses the
+   **Hôm nay / Tuần này / Tháng này** presets as the filter for a server-derived
+   KPI plus per-project / per-method tables. Chart, export and period comparison
+   stay deferred (§3, §4, §7, §8).
+7. **Accountant assignment.** R0 proposed parameterising/repointing
+   `project-operations-model.ts`/`manager_recruiter_id`; R1 forbids that and
+   requires reusing only the **validator / outcome / OCC / reason / idempotency /
+   effective-date / UI pattern**, with the accountant-specific model and wire
+   contract decided as a **sibling** by W2-S0-B (§3, §4, §7, §8).
+
+Synchronised in R1: §1 (A4, A5/A5a, C), §3 reuse matrix, §4 anticipated touch
+set, §5 accessibility contract, §7 tests + mutation probes, §8 blockers, and this
+revision log.
+
+R1 is append-only on `audit/w2-s0-a-ui-reuse-survey` — one new commit on top of
+`0ccd806`; no amend, no rebase, no force-push. No implementation, source, schema,
+API, UI, package or migration change was made.
