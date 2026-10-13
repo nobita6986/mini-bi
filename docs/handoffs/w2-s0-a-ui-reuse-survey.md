@@ -20,6 +20,14 @@
   `master-plan.md` only), so the W2S1–W2S5 scope is taken verbatim from the T0
   brief.
 - No rebase is performed; T0's `30d9864`→`7afc026` advance is already the base.
+- **Git facts (R2):** the survey's **ancestry base remains `7afc026`** and this
+  branch is never rebased. `afd1342` is the *current* `origin/main`, used **only**
+  for the factual-delta check — it is **not** a branch ancestor, and `main` is
+  never rebased/merged into this survey branch.
+- **Ownership (R2):** backend-contract ownership is expressed as the
+  **"W2-S0-B backend contract"** (or a "T0-accepted backend decision"), never by
+  agent name. W2-S0-B is currently assigned to **T1C**; the architecture must not
+  depend on agent names long-term.
 
 ---
 
@@ -166,12 +174,28 @@ asserts `project-operations.tsx` must **not** reference `RecruiterTypeahead`
 | `src/lib/direct-entry/change-request-read-projection.ts` | before/after field diff rows (`before`/`after`, `HIDDEN`) | The only **side-by-side**-style comparison data (field-level). |
 | `src/components/ui/card.tsx`, `src/components/dashboard/*` | `Card`, `CardHeader`, grid classes | Layout primitives for a comparison view. |
 
-**Absent in W2S4:** image preview, zoom/full-screen, side-by-side **image**
-comparison, cash-vs-bank evidence layout, and the AI risk states
+**Absent in W2S4 (R1/R2):** image preview, zoom/full-screen, lightbox, a generic
+side-by-side **image** comparison framework, and the AI risk states
 `LOW_SYNTHETIC_RISK` / `REVIEW_REQUIRED` / `INCONCLUSIVE` / `UNAVAILABLE`
 (grep confirms zero occurrences; the existing AI vocabulary is
 `approved/rejected/draft` + job `failed_*` codes). No checkbox-style
 "acknowledge" control exists — only `AlertDialog` confirmation.
+
+**D1. W2S4 CASH dual-image review (R2, locked).** For a **CASH** salary/proof
+review the Accountant must see, **in the same review context**, BOTH:
+1. the **immutable portrait snapshot** attached to the request at submission
+   time (the snapshot — not the worker's live/current portrait); and
+2. the **cash-envelope proof** the Manager uploaded.
+- Desktop: the two frames MAY sit side by side.
+- Mobile: they MUST stack vertically, each with an explicit label —
+  **"Ảnh hồ sơ được snapshot"** and **"Ảnh bằng chứng nhận tiền"**.
+- Neither image may be deferred, collapsed behind a click, or omitted: exactly
+  two images are required for CASH and they must be viewable together.
+- No generic comparison framework, zoom, fullscreen or lightbox is required for
+  this — one small proof-review component is enough.
+- **BANK_TRANSFER** is different: it reconciles the **bill** against the
+  financial data only. It does NOT require a portrait, and the UI must not claim
+  a bill verifies a person's face.
 
 ### E. W2S5 — Summary
 
@@ -248,7 +272,7 @@ recharts + the existing wrappers suffice.
 | W2S3 approve/reject/reason | `change-request-reviewer` + `AlertDialog` pattern | — | **own strict projection (W2-S0-B)** | importing/reusing AI-report `projectReviewRequest` directly for salary advance; a decision protocol without a locked projection |
 | W2S4 private upload/preview | `document-*`, `cccd-*`, `r2-document-storage`, `…/download/route.ts` | add a preview affordance (same-origin stream *or* short-lived signed URL per R2 posture) | ONE small proof-review component | raw storage keys anywhere; long-lived signed URLs; logging/storing signed URLs |
 | W2S4 zoom / fullscreen / lightbox | — | — | **deferred** (not in MVP) | — |
-| W2S4 cash vs bank evidence layout | `Card`/grid classes; `change-request-read-projection` diff pattern as inspiration | — | evidence-layout sibling | putting the bill next to the face on mobile |
+| W2S4 CASH dual-image review vs BANK_TRANSFER | `Card`/grid classes | CASH: render **both** the immutable portrait snapshot and the Manager's cash proof in one review context (desktop may be side-by-side; mobile stacked with the two locked labels). BANK_TRANSFER: bill vs financial data only, no portrait | (inside the one small proof-review component) | deferring/omitting either CASH image; a generic comparison framework; requiring a portrait for BANK_TRANSFER; claiming a bill verifies a face (esp. face-next-to-bill on mobile) |
 | W2S4 AI badges/callouts | `Alert` (info/warning/error) | add a risk-state → tone/label map | `AiRiskBadge` sibling | reusing `StatusBadge` (`RunStatus`) for risk states |
 | W2S4 acknowledgment/override reason | `DirectEntryDuplicateCccdDialog` (AlertDialog), reason fields, `acknowledgement {fingerprint,count}` | reuse pattern; add an explicit override-reason field | — | submit-without-acknowledgement |
 | W2S5 summary | `KpiCard`, `SummaryCard`, `Card`, `DashboardFilters` (+ "Hôm nay/Tuần này/Tháng này" presets), `SourceStatusTable`, `Empty/ErrorState`, existing charts, `p1-chart-data`, theme slots | server-derived KPI + per-project / per-method tables driven by the selected preset | one small summary sibling | daily/weekly/monthly bucketing helper, new trend chart, `PeriodSummary`/period comparison, export UI, any new chart library (all deferred) |
@@ -260,7 +284,7 @@ recharts + the existing wrappers suffice.
 *(Survey only — no files are touched now. This is the anticipated minimal set.)*
 
 **W2S1 — Worker Portrait**
-- `src/lib/contracts/direct-entry-v1.ts` — extend `DocumentType` with a portrait type (contract, T1B-owned if server-side).
+- `src/lib/contracts/direct-entry-v1.ts` — extend `DocumentType` with a portrait type (contract — W2-S0-B backend contract if server-side).
 - `src/lib/direct-entry/document-detail-projection.ts` — add the portrait type to `DETAIL_DOCUMENT_TYPES`.
 - `src/components/direct-entry/direct-entry-document-editor.tsx` — allow the portrait `DocumentType` list.
 - `src/components/direct-entry/direct-entry-worker-documents.tsx` — add the portrait section inside the existing dialog.
@@ -274,7 +298,7 @@ recharts + the existing wrappers suffice.
 - **new** `src/lib/direct-entry/accountant-assignment-model.ts` — **accountant-specific** request builders/validators/outcome. Do **not** parameterise or repoint `project-operations-model.ts`/`manager_recruiter_id`; copy the *pattern* (validator, outcome, OCC, reason, idempotency, effective-date) only. The accountant wire contract is decided by W2-S0-B.
 - **new** `src/components/direct-entry/accountant-assignment.tsx` — screen reusing `Field`/`ReasonField`/`DialogActions` structure.
 - **new** `src/components/direct-entry/accountant-typeahead.tsx` — sibling of `RecruiterTypeahead` (do not import it into `project-operations.tsx`).
-- `src/app/admin/**` — one page + its API route(s) (T1B-backed).
+- `src/app/admin/**` — one page + its API route(s) (W2-S0-B backend contract).
 - Focused tests `src/lib/direct-entry/accountant-assignment-model.test.mjs`, `src/components/direct-entry/accountant-*.test.mjs`.
 
 **W2S3 — Salary Request**
@@ -283,15 +307,16 @@ recharts + the existing wrappers suffice.
 - **new** `src/components/direct-entry/salary-request-form.tsx` — reuses `DirectEntryPaymentEditor` structure + `ReasonField`.
 - **new** `src/components/direct-entry/salary-request-queue.tsx` — reuses the `duplicate-cccd-report-panel` list/pagination pattern.
 - **new** `src/components/reporting/request-status-badge.tsx` — sibling (or generalise `StatusBadge`).
-- `src/app/api/direct-entry/**` routes (T1B-backed) + focused tests.
+- `src/app/api/direct-entry/**` routes (W2-S0-B backend contract) + focused tests.
 
 **W2S4 — Proof Review**
-- **new** ONE small proof-review component (e.g. `src/components/direct-entry/proof-review.tsx`) — reuses the `document-*`/`cccd-*` upload path and `Card`/grid primitives; renders a preview clear enough for human review, responsive and keyboard reachable. Do **not** build multiple image abstractions when one small component suffices.
-- **Deferred (not in the touch set):** zoom, fullscreen/lightbox, and side-by-side image comparison.
+- **new** ONE small proof-review component (e.g. `src/components/direct-entry/proof-review.tsx`) — reuses the `document-*`/`cccd-*` upload path and `Card`/grid primitives; renders previews clear enough for human review, responsive and keyboard reachable. Do **not** build multiple image abstractions when one small component suffices.
+- The same component MUST render the **CASH dual-image review** (§1 D1): the immutable portrait snapshot **and** the Manager's cash-envelope proof, together in one context — desktop MAY place them side by side; mobile MUST stack them with the labels "Ảnh hồ sơ được snapshot" and "Ảnh bằng chứng nhận tiền". For **BANK_TRANSFER** it renders the bill vs the financial data only (no portrait).
+- **Deferred (not in the touch set):** zoom, fullscreen/lightbox, and a generic side-by-side comparison framework.
 - **new** `src/components/reporting/ai-risk-badge.tsx` — `PENDING|LOW_SYNTHETIC_RISK|REVIEW_REQUIRED|INCONCLUSIVE|UNAVAILABLE` → `Alert` tones/labels.
 - **new** `src/lib/direct-entry/proof-review-contract.ts` — risk-state projection (fail-closed).
 - reuse `DirectEntryDuplicateCccdDialog` pattern for acknowledgment + override reason.
-- preview bytes: same-origin stream **or** short-lived signed URL (R2 posture) — a T1B decision; raw storage keys are never rendered, logged or persisted.
+- preview bytes: same-origin stream **or** short-lived signed URL (R2 posture) — a T0-accepted backend decision; raw storage keys are never rendered, logged or persisted.
 
 **W2S5 — Summary**
 - reuse `DashboardFilters` + `computeDatePresets` unchanged; MVP uses **Hôm nay / Tuần này / Tháng này** as the filter for a **server-derived KPI** plus per-project / per-method tables (no client aggregation).
@@ -326,9 +351,10 @@ recharts + the existing wrappers suffice.
   long-term. Raw storage keys stay forbidden everywhere.)
 - **Images (new, W2S1/W2S4):** the preview must be clear enough for a human to
   review, responsive, and keyboard reachable/operable; `<img alt>` must not imply
-  a bill verifies a person's face, and the mobile layout must not place the face
-  next to the bill as a verification cue. Zoom/fullscreen/lightbox are deferred
-  and therefore outside this contract.
+  a bill verifies a person's face. In the **CASH** review both images are labelled
+  ("Ảnh hồ sơ được snapshot" / "Ảnh bằng chứng nhận tiền") and, on mobile, are
+  stacked vertically — never placed face-next-to-bill as a verification cue.
+  Zoom/fullscreen/lightbox are deferred and therefore outside this contract.
 
 ---
 
@@ -368,8 +394,12 @@ Suggested per W2S:
   projection** (assert no import of `@/lib/ai-report/review-projection`).
 - **W2S4:** the five risk states map to distinct labels/tones and fail closed on
   unknown values; acknowledgment is required before submit; override reason
-  required when overriding; mobile layout assertion (face and bill are not
-  siblings); no raw storage key rendered/logged; **no zoom/fullscreen** (deferred).
+  required when overriding; no raw storage key rendered/logged; **no
+  zoom/fullscreen** (deferred). **CASH** review renders **both** the immutable
+  portrait snapshot and the cash-envelope proof in one review context, with the
+  labels "Ảnh hồ sơ được snapshot" / "Ảnh bằng chứng nhận tiền" and a stacked
+  mobile layout; **BANK_TRANSFER** renders bill vs financial data with **no**
+  portrait and no face-verification claim.
 - **W2S5:** the summary renders a server-derived KPI + per-project / per-method
   tables for the selected preset (Hôm nay/Tuần này/Tháng này); assert no client
   aggregation, no bucketing helper and no new chart import.
@@ -379,7 +409,9 @@ GREEN): (1) drop the CASH/BANK_TRANSFER conditional; (2) remove the acknowledgme
 requirement; (3) collapse two risk states to one label; (4) let `project-operations`
 import `RecruiterTypeahead`; (5) derive a portrait kind from `version`/`SUPERSEDED`,
 or label `legacy_added` as onboarding; (6) render a raw storage key into a title/`alt`,
-or import AI-report `projectReviewRequest` into the salary flow.
+or import AI-report `projectReviewRequest` into the salary flow; (7) remove the
+portrait snapshot from the CASH review, **or** remove the cash-envelope proof from
+it — either must make the focused lane RED.
 
 ---
 
@@ -392,14 +424,14 @@ or import AI-report `projectReviewRequest` into the salary flow.
    pre-existing worker. Today only `version` + statuses exist. **Blocked on
    backend contract**; the UI must not infer a kind or call R2 directly.
 2. **W2S1/W2S4 image delivery** — the only current access is the authenticated
-   `download` route. T1B may deliver bytes as a **same-origin preview stream** or
+   `download` route. The W2-S0-B backend contract may deliver bytes as a **same-origin preview stream** or
    a **short-lived signed URL** (R2 posture); either is acceptable. Raw storage
    keys must never reach the client, and signed URLs must not be logged, placed in
    labels/ARIA, or persisted long-term.
 3. **W2S2 accountant identity** — PM assignment keys on
    `manager_recruiter_id`; an accountant may be keyed by app-user/account rather
    than recruiter. The candidate read model and the exact wire keys are
-   **T1B-owned (W2-S0-B)**; do **not** parameterise or repoint
+   **W2-S0-B backend contract**; do **not** parameterise or repoint
    `project-operations-model.ts`/`manager_recruiter_id` — build a sibling.
 4. **W2S3 money/method** — there is **no** amount, currency, or
    `CASH/BANK_TRANSFER` contract anywhere. `PaymentInput` is a bank-provision
@@ -419,13 +451,19 @@ or import AI-report `projectReviewRequest` into the salary flow.
    `admin-navigation.ts` + a page-access predicate; the repo pins these in
    several regression lanes (98/98 admin-nav tests today). Any new section must
    keep those green and derive authority server-side only.
-9. **No migration slot reserved.** If T1B needs DDL, T0 must allocate the next
+9. **No migration slot reserved.** If the W2-S0-B backend contract needs DDL, T0 must allocate the next
    slot from the then-current ledger; W2-S0-A reserves nothing.
 10. **Deferred W2S4/W2S5 scope (R1).** Zoom/fullscreen/lightbox, image
     comparison, daily/weekly/monthly bucketing, a new trend chart, `PeriodSummary`,
     period comparison and export UI are explicitly out of the MVP.
     `origin/main@afd1342` added a worker-export **backend**; the W2S5 export
     **UI** remains deferred.
+11. **W2S4 CASH dual-image contract (R2).** The proof-review UI can only show
+    both images if the backend provides them: an **immutable portrait snapshot**
+    attached to the salary request at submission time (not the worker's live
+    portrait) and the **cash-envelope proof** the Manager uploaded. Which fields
+    carry them, and their immutability, are the **W2-S0-B backend contract**.
+    BANK_TRANSFER needs no portrait.
 
 ---
 
@@ -462,7 +500,7 @@ Corrections applied in R1 (each supersedes the R0 wording):
    `legacy_added` shows its added date and must not be described as onboarding
    photography (§1 A5/A5a, §3, §4, §7, §8).
 2. **Image delivery.** R0 locked "no signed URL in props/DOM". R1 removes that
-   lock: T1B may use a **same-origin preview stream** *or* a **short-lived signed
+   lock: the W2-S0-B backend contract may use a **same-origin preview stream** *or* a **short-lived signed
    URL** under the R2 posture. What stays forbidden: raw storage keys, logging a
    signed URL, putting it in a label/ARIA, or storing it long-term (§3, §4, §5,
    §7, §8).
@@ -497,3 +535,33 @@ revision log.
 R1 is append-only on `audit/w2-s0-a-ui-reuse-survey` — one new commit on top of
 `0ccd806`; no amend, no rebase, no force-push. No implementation, source, schema,
 API, UI, package or migration change was made.
+
+### R2 — CASH dual-image review + ownership / git-fact repair (append-only)
+
+1. **CASH dual-image review (must-fix).** W2S4 now locks that the Accountant
+   sees, **in the same review context**, both (a) the **immutable portrait
+   snapshot** attached to the request at submission time (not the worker's live
+   portrait) and (b) the **cash-envelope proof** the Manager uploaded. Desktop MAY
+   show the two frames side by side; mobile MUST stack them with the labels
+   **"Ảnh hồ sơ được snapshot"** and **"Ảnh bằng chứng nhận tiền"**. Neither image
+   may be deferred, collapsed behind a click, or omitted; no generic comparison
+   framework, zoom, fullscreen or lightbox is required for this.
+   **BANK_TRANSFER** stays a bill-vs-financial-data reconciliation with no
+   portrait and no claim that a bill verifies a face. Applied to §1 (new D1), §3,
+   §4, §5, §7 and §8 (new blocker 11); a new mutation (7) requires that removing
+   the portrait snapshot **or** the cash proof from the CASH review makes the
+   focused lane RED.
+2. **Ownership wording.** Every backend-contract ownership phrase is now
+   **"W2-S0-B backend contract"** or **"T0-accepted backend decision"**; the
+   `T1B-owned` / `T1B-backed` / `T1B decision` wording is gone (§0, §4, §8 and the
+   R1 log's image-delivery bullet). W2-S0-B is currently assigned to **T1C**; the
+   architecture must not depend on agent names.
+3. **Git facts.** The survey's **ancestry base is `7afc026`** and this branch is
+   never rebased. `afd1342` is the *current* `origin/main`, used only for the
+   factual-delta check — it is **not** a branch ancestor, and `main` is not merged
+   into this branch.
+
+No other R1 correction was changed. R2 is append-only on
+`audit/w2-s0-a-ui-reuse-survey` — one new commit on top of `0a9331e`; no amend,
+no rebase, no force-push. No implementation, source, schema, API, UI, test,
+package or migration change was made.
