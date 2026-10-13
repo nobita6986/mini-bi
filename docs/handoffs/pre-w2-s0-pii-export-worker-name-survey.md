@@ -1,9 +1,9 @@
-# PRE-W2-S0-R1 — Full-PII worker export & worker display-name correction (contract lock)
+# PRE-W2-S0-R2 — Full-PII worker export & worker display-name correction (implementation-binding lock)
 
-> **Status:** `PRE_W2_S0_R1_PII_EXPORT_NAME_CHANGE_CONTRACT_LOCK_PASS_AWAITING_T0_REVIEW`
-> **Revision:** R1 — repairs the S0 survey contract (`311b274`) into a form T0 can
->   open backend implementation against. Append-only on the same branch; R7/R8-style
->   history preserved (no amend / no rebase / no force-push).
+> **Status:** `PRE_W2_S0_R2_IMPLEMENTATION_BINDING_PASS_AWAITING_T0_REVIEW`
+> **Revision:** R2 — final implementation-binding repair of R1 (`44f3bbb`); closes the
+>   two repository-shape mismatches T0 flagged (export idempotency; audit schema
+>   binding). Append-only on the same branch (no amend / no rebase / no force-push).
 > **Base:** `origin/main@caab159eddb920fd60f75153bfa8828f35dfbb7e`.
 > **Branch / worktree:** `audit/pre-w2-s0-pii-export-worker-name-survey` @
 >   `C:\CodeApp\BI-pre-w2-s0-pii-export-worker-name-survey`.
@@ -109,28 +109,31 @@ WorkerOperations (src/components/direct-entry/worker-operations.tsx)
   and no global capability grant in the migration** (capabilities are provisioned
   by T0/Admin through the existing grant model — §2.6).
 - **The RPC is a "business-read + audit-write" function, not a pure read-only RPC.**
-  It reads the authorized business rows and writes one immutable audit/access
-  event in the same transaction.
+  It reads the authorized business rows and, in the same transaction, writes one
+  immutable `direct_entry_audit_events` access event (§2.10). **It has no
+  idempotency guard** — every HTTP export attempt is an independent access (no
+  dedupe key on this route).
 - The RPC:
   1. calls `direct_entry_worker_directory_audience` for the recruited/managed scope
      guard and **rejects `p_scope = 'all'`** (and any scope other than
-     `recruited`/`managed`) with `42501`;
+     `recruited`/`managed`) with a fail-closed database exception `42501` (§2.10);
   2. requires **all** of `pii_export` **AND** `pii_view` **AND** `payment_view`
      **AND** the recruited/managed row authority together; if **any** is missing it
-     **denies the whole export** (`42501`) — it never returns a partly-redacted file
-     and never omits columns (§2.5);
+     raises `42501` and **denies the whole export** — it never returns a
+     partly-redacted file and never omits columns (§2.5 / §2.10);
   3. reads one row per eligible `SUBMITTED`, non-deleted entry in the authorized
      set, reusing the same eligibility + filter semantics as
      `direct_entry_list_workers` (project/recruiter/employment_status);
   4. selects **at most 10,001** candidate rows in a **single consistent
      PostgreSQL statement / transaction snapshot**; **no row lock is taken** (this
      is a read, not a locked mutation);
-  5. enforces the **10,000-row hard cap** (§2.10) — if the 10,001st candidate is
-     observed it **fails closed**;
-  6. writes one immutable `direct_entry_audit_events` row (access event) with the
-     actor, scope, filter, reason, row count, outcome and timestamp — **no raw PII**
-     (§2.10);
-  7. is `SECURITY DEFINER`, fixed `search_path = pg_catalog, public`,
+  5. on `≤ 10,000` rows returns the strict success envelope `{ status: "ok", rows:
+     [...] }` and writes the `ALLOW` access event; on observing the **10,001st**
+     candidate it writes a `REJECTED` access event with `denial_code =
+     'EXPORT_ROW_LIMIT_EXCEEDED'` and returns the strict non-PII envelope
+     `{ status: "too_many_rows", limit: 10000 }` — **it does not raise after the
+     audit, and it returns no worker row** (§2.10);
+  6. is `SECURITY DEFINER`, fixed `search_path = pg_catalog, public`,
      `service_role`-only, revoked from every other role.
 - **Rejected alternatives:** client loop over `/api/direct-entry/entries/[id]`
   (N+1); widening `direct_entry_list_workers` to always return PII (leaks PII to
@@ -161,22 +164,16 @@ denied in Pre-W2 regardless of other grants. The client never sends
 - `POST /api/direct-entry/workers/export` (new Route Handler, `runtime="nodejs"`,
   `dynamic="force-dynamic"`, `DIRECT_ENTRY_API_ENABLED` gate first, own
   `guardApiSession()`); same-origin/CSRF check like other mutations
-  (`checkSameOriginRequest`).
+  (`checkSameOriginRequest`) — POST + the same-origin/CSRF guard are unchanged.
 - **Body allowlist (exact keys):** `scope` (`recruited`|`managed` only),
-  `project_id`, `recruiter_id`, `employment_status`, `reason` (required, 1..4000,
-  trimmed), `idempotency_key` (**required**, 1..128, no control chars).
-  `source`/`limit`/`offset`/`order`/any other key → `400`.
-- **`Idempotency-Key` header is REQUIRED** and must equal the body
-  `idempotency_key`; a missing header, missing body key, or a mismatch →
-  `400 IDEMPOTENCY_KEY_MISMATCH` (reuse the existing header/body consistency
-  pattern, `submission-transition-api.ts:85–87`). Retries reuse
-  `direct_entry_rpc_idempotency` + `direct_entry_idempotency_begin` /
-  `direct_entry_idempotency_finish` so one logical export = one row, never a
-  duplicated audit/export record.
-- **Validation scope (locked):** lock **unknown fields, value types, enum values,
-  numeric bounds, and the header/body idempotency mismatch** only. **Do NOT claim
-  detection of duplicate JSON keys** — after `JSON.parse` an object cannot carry
-  duplicate keys, so no duplicate-key guard is asserted.
+  `project_id`, `recruiter_id`, `employment_status`, `reason` (required, trimmed,
+  1..4000). Any other key, wrong value type, invalid enum or invalid filter →
+  `400`. The export is a sensitive read; every HTTP attempt is an independent
+  access (no dedupe key).
+- **Validation scope (locked):** lock **unknown fields, value types, enum values
+  and filter bounds** only. **Do NOT claim detection of duplicate JSON keys** —
+  after `JSON.parse` an object cannot carry duplicate keys, so no duplicate-key
+  guard is asserted.
 - Response: `200` with
   `content-type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
   `content-disposition: attachment`, `cache-control: private, no-store`,
@@ -241,21 +238,53 @@ document/binary content; internal authority/capability fields; internal
 storage/path identifiers; UUIDs/versions; raw audit metadata; any
 `auth_subject`/`app_user_id`; any internal token (e.g. `bucket_key`/`team_id`).
 
-### 2.10 Audit contract + hard cap / fail-closed
+### 2.10 Audit contract (bound to `direct_entry_audit_events`) + hard cap
 
-- **Audit (immutable access event):** the RPC writes one `direct_entry_audit_events`
-  row (with `direct_entry_reason` / `direct_entry_restricted_reasons` for the
-  mandatory reason) recording actor (`auth_subject`/`app_user_id`), `scope`
-  (`recruited`/`managed`), the applied filter (project/recruiter/status), the
-  **reason**, the **row count**, the **outcome** and the **timestamp**. Audit,
-  logs and error bodies must contain **no raw CCCD, no bank data and no other PII
-  values**.
-- **Hard cap = exactly 10,000 worker rows.** The RPC returns **at most 10,001**
-  candidate rows; if it observes the **10,001st** row it **fails closed**. It must
-  **not** silently truncate and must **not** produce a file with only the first
-  10,000 rows. The error must **guide the user to narrow the scope/filter** (e.g.
-  a stable code plus the 10,000 ceiling). No partial success; retry under the same
-  `Idempotency-Key` yields one audit/export record.
+- **Table:** reuse `direct_entry_audit_events` **as-is** — no new audit table, no
+  new column (`20261002170000:417–436`). Columns used: `auth_subject`,
+  `app_user_id`, `action`, `capability`, `resource_ref`, `scope_kind`, `outcome`,
+  `denial_code`, `reason_id`, `changed_fields`.
+- **Success access event** (written when the PII rows have been read, ≤ 10,000):
+  - `action = 'worker_export'` (≤ 96 chars);
+  - `capability = 'pii_export'`;
+  - `outcome = 'ALLOW'`;
+  - `changed_fields = '{}'` (empty array);
+  - `reason_id` = the mandatory reason via
+    `direct_entry_reason(app_user_id, reason)` → `direct_entry_restricted_reasons`;
+  - `scope_kind`: **the recruited scope maps to `'own'` and the managed scope maps
+    to `'project'`** (both allowed by the current CHECK, widened to
+    `('own','team','all','project')` in `20261009010000:201–204`). The raw scope
+    token (`recruited`/`managed`) is **never** written as `scope_kind`.
+  - `resource_ref = 'worker-export:' || <recruited|managed> || ':' || <row_count> ||
+    ':' || <sha256 canonical filters>`, which satisfies the existing
+    `resource_ref ~ '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$'` bound (≤ 128 chars).
+- **Filter hash:** the `<sha256 canonical filters>` is a canonical server-side hash
+  (reuse `direct_entry_payload_hash(jsonb)` → 64-hex, `20261002170000:1183–1190`)
+  over a **canonical, server-built** filter object. It never stores or embeds raw
+  `project`/`recruiter`/`employment_status`, worker name, CCCD, phone or bank data.
+- **Capability / row-authority denial:** the RPC keeps a **fail-closed database
+  exception `42501`**; the Route maps it to a sanitized `403`. This memo does
+  **not** claim that a DENY audit is persisted — a transaction that raises is rolled
+  back, so no audit row survives. Only the ≤ 10,000 success and the 10,001 row-cap
+  outcomes are persisted.
+- **Hard cap = exactly 10,000 worker rows.** The RPC selects **at most 10,001**
+  candidates. On the **10,001st** candidate it:
+  1. writes an audit event with `outcome = 'REJECTED'`,
+     `denial_code = 'EXPORT_ROW_LIMIT_EXCEEDED'`, `action = 'worker_export'`,
+     `capability = 'pii_export'`, the same `scope_kind` mapping and `reason_id`;
+  2. returns the **strict non-PII envelope** `{ status: "too_many_rows", limit:
+     10000 }`;
+  3. **does not `RAISE` after the audit** and **returns no worker row**. It never
+     truncates silently and never produces a file with only the first 10,000 rows.
+- **Route mapping:** `{ status: "too_many_rows", limit: 10000 }` → HTTP **422**
+  `{ ok: false, code: "WORKER_EXPORT_ROW_LIMIT_EXCEEDED", limit: 10000 }`, guiding
+  the user to narrow the scope/filter.
+- **Success envelope:** the RPC returns `{ status: "ok", rows: [...] }`; the Route
+  validates it with a **strict projection** (exact shape per §2.8) and only then
+  generates the XLSX.
+- **Access semantics:** the `ALLOW` audit is written when the PII rows have been
+  read, even if XLSX generation or the download later fails — this is an **access
+  audit, not a delivery receipt**.
 
 ### 2.11 Reuse matrix (Survey A)
 
@@ -267,17 +296,17 @@ storage/path identifiers; UUIDs/versions; raw audit metadata; any
 | Capabilities | `pii_export` + `pii_view` + `payment_view` (existing grants) | grant any capability in the migration |
 | Payment label | `bank_name` (authoritative bank label) | expose `bank_id`/storage ids |
 | XLSX | `exceljs`, `worker-profile-xlsx.ts` patterns (text numFmt, formula rejection) | new spreadsheet dependency |
-| Idempotency | `direct_entry_rpc_idempotency` + `direct_entry_idempotency_begin/finish` + header/body pattern | an optional key or a second idempotency store |
-| Audit | `direct_entry_audit_events`, `direct_entry_restricted_reasons`, `direct_entry_reason` | new audit store; raw PII in logs |
-| Validation | server-side schema/filter validation (unknown fields/type/enum/bounds/header-body mismatch) | a duplicate-JSON-key claim |
+| Audit | `direct_entry_audit_events` (as-is) + `direct_entry_reason` / `direct_entry_restricted_reasons`; `direct_entry_payload_hash` for the filter hash | a new audit table/column; raw PII in logs; raw scope tokens as `scope_kind` |
+| Validation | server-side schema/filter validation (unknown fields/type/enum/filter bounds) | a duplicate-JSON-key claim |
 | Tests | `node:test`, PGlite, worker-directory + `worker-profile-xlsx` suites | new framework |
 
 ### 2.12 Smallest implementation touch set
 
 - **T1B (backend/SQL):** one append-only migration → `direct_entry_export_workers`
-  (+ self-check: `all` deny, capability conjunction deny, ACL, 10k cap);
-  a `worker-export` contract/repository/api module mirroring `worker-directory-*`;
-  the `POST /api/direct-entry/workers/export` route; server XLSX builder reusing
+  (+ self-check: `all` deny, capability conjunction deny, ACL, 10k cap envelope,
+  audit mapping `own`/`project`, `ALLOW`/`REJECTED`); a `worker-export`
+  contract/repository/api module mirroring `worker-directory-*`; the
+  `POST /api/direct-entry/workers/export` route; server XLSX builder reusing
   `exceljs`.
 - **T1A (UI):** an "Xuất Excel" action on the recruited/managed tabs (visible only
   when the server grants export), reusing existing primitives; download only.
@@ -288,9 +317,13 @@ Acceptance: exactly the authorized recruited/managed rows; **whole-file** succes
 only when `pii_export` + `pii_view` + `payment_view` + row authority all hold —
 otherwise a whole-export denial (never a redacted/partial file); `all` denied; all
 18 columns present in the fixed order; leading zeros preserved; `=/+/-/@` values
-rendered as literal text; >10,000 fails closed with a narrowing hint (10,001st row
-detected); `Idempotency-Key` required and header/body mismatch → 400; retry is
-idempotent; audit row carries actor/scope/filter/reason/count/outcome with no PII.
+rendered as literal text; ≤ 10,000 rows returns `{ status: "ok", rows }`; the
+10,001st row writes a `REJECTED` `EXPORT_ROW_LIMIT_EXCEEDED` audit and returns the
+`too_many_rows` envelope → HTTP 422 `WORKER_EXPORT_ROW_LIMIT_EXCEEDED` with no
+worker rows and no truncation; the `ALLOW` audit binds `action=worker_export`,
+`capability=pii_export`, `scope_kind` `own`/`project`, `outcome=ALLOW`,
+`changed_fields={}`, `reason_id`, and a non-PII `resource_ref`; no request or body
+carries a dedupe key.
 
 Mutation probes: (M-A1) add `all` to the export scope → deny; (M-A2) drop the
 `pii_export` gate → deny test red; (M-A3) drop the `pii_view` gate → PII-leak test
@@ -299,9 +332,10 @@ partly-redacted file when a capability is missing → whole-file test red;
 (M-A6) replace the batch read with a per-row `read_projection` loop → N+1 red;
 (M-A7) write `national_id` as a number → leading-zero red; (M-A8) write a
 `=`-prefixed value as a formula → injection red; (M-A9) truncate above the cap
-instead of failing → cap red; (M-A10) make `Idempotency-Key` optional or skip the
-header/body check → idempotency red; (M-A11) put raw PII/CCCD/bank in an error or
-log → log-scan red.
+instead of returning the `too_many_rows` envelope → cap red; (M-A10) write the raw
+scope token (`recruited`/`managed`) as `scope_kind` instead of `own`/`project` →
+audit-mapping red; (M-A11) `RAISE` after the row-cap audit → audit-survival red;
+(M-A12) embed raw filter/CCCD/bank/name in `resource_ref` or logs → PII red.
 
 ---
 
@@ -411,7 +445,7 @@ WorkerOperations rows → allowed_actions (RPC direct_entry_list_workers)
 
 ---
 
-## 5. Implementation order (after T0 accepts R1)
+## 5. Implementation order (after T0 accepts R2)
 
 1. **T1B** — backend/RPC/API/export core (migration + `direct_entry_export_workers`
    + repository/api + route + server XLSX builder) with focused tests + mutation
@@ -449,31 +483,44 @@ change; no T1B/T1A implementation started; **no migration reserved**.
 
 ---
 
-## 8. Revision log (R1)
+## 8. Revision log
 
-R1 is an append-only repair of the S0 survey on the same branch. It locks the
-contract and removes contradictory wording so T0 can open backend implementation:
+**R1 (`44f3bbb`)** locked the S0 survey into a contract T0 could open:
 
-- **§2.4/2.5** — the export requires the full conjunction `pii_export` + `pii_view`
-  + `payment_view` + row authority; **any missing term denies the whole export**, and
-  payment columns are never dropped or a partly-redacted file produced. The RPC is
-  re-described as a **business-read + audit-write** function over one consistent
-  snapshot; the earlier suggestion that the read holds a lock is retracted (a read
-  takes no lock).
-- **§2.6** — the export requires a **mandatory** `Idempotency-Key` matched to the
-  body key (`direct_entry_rpc_idempotency` + begin/finish + header/body pattern);
-  validation locks unknown fields, value type, enum, bounds and the header/body
-  mismatch only, and asserts no automatic detection of repeated JSON keys.
-- **§2.8/2.9** — the **fixed 18-column schema** (exact order); the entry-level note
-  and any document-status column are **excluded**.
-- **§2.10** — **hard cap exactly 10,000** rows; the 10,001st candidate fails the
-  whole request closed with a narrowing hint; the audit event carries no raw
-  CCCD/bank/PII.
-- **§3.2.9** — the previously-open `pii_view` question is replaced by the **locked**
-  rule: keep `pii_view`, no name-only payload, no validator relaxation, no client
-  bypass/reassembly; the repair is the existing `WORKER` affordance made usable at
-  both entry points, with correct denial when `propose_change`/`pii_view` is
-  missing.
-- **§4/§5** — a single new batch-RPC migration (observation-only slot); caps,
-  columns, acceptance, mutation probes, touch set and sequencing updated to this
-  contract.
+- §2.4/2.5 — export requires the full conjunction `pii_export` + `pii_view` +
+  `payment_view` + row authority; any missing term denies the whole export, and
+  payment columns are never dropped and no partly-redacted file is produced; the RPC
+  is a business-read + audit-write function over one consistent snapshot (no lock).
+- §2.6 — the export validation locks unknown fields, value type, enum and bounds
+  only, and asserts no automatic detection of repeated JSON keys.
+- §2.8/2.9 — the fixed 18-column schema (exact order); the entry-level note and any
+  document-status column are excluded.
+- §2.10 — hard cap exactly 10,000 rows; the audit event carries no raw CCCD/bank/PII.
+- §3.2.9 — `pii_view` kept strictly; no name-only payload; no validator relaxation;
+  the repair is the existing `WORKER` affordance made usable at both entry points.
+- §4/§5 — one batch-RPC migration (observation-only slot); sequencing.
+
+**R2 (this commit)** closes the two repository-shape mismatches T0 flagged:
+
+- **Export idempotency removed entirely.** The export is a sensitive read; each HTTP
+  attempt is an independent access. The request contract no longer carries a header
+  key, a body key, a mismatch code, the idempotency-table helper or the
+  begin/finish helpers, and no "same key → one record" claim remains. The body
+  allowlist is exactly `scope`, `project_id`, `recruiter_id`, `employment_status`,
+  `reason`; `reason` stays required/trimmed/1..4000; unknown field, wrong type,
+  invalid enum or invalid filter → `400`; POST + the same-origin/CSRF guard are
+  unchanged; the idempotency of existing mutations is untouched.
+- **Audit bound to the real schema (§2.10).** Reuse `direct_entry_audit_events`
+  as-is. Success: `action='worker_export'`, `capability='pii_export'`,
+  `outcome='ALLOW'`, `changed_fields='{}'`, `reason_id` from the mandatory reason,
+  `scope_kind` `'own'` for the recruited scope and `'project'` for the managed scope
+  (never the raw scope token), and a bounded non-PII `resource_ref`
+  `worker-export:<scope>:<row_count>:<sha256 canonical filters>` (≤ 128 chars, valid
+  regex). Capability/row-authority denial stays a fail-closed `42501` (Route → 403)
+  and does **not** claim a persisted DENY audit. Row-cap: select ≤ 10,001; the
+  10,001st writes `outcome='REJECTED'` +
+  `denial_code='EXPORT_ROW_LIMIT_EXCEEDED'` and returns
+  `{ status:"too_many_rows", limit:10000 }` **without `RAISE`** (Route → HTTP 422
+  `WORKER_EXPORT_ROW_LIMIT_EXCEEDED`); the success envelope is
+  `{ status:"ok", rows:[...] }`; the `ALLOW` audit is written once PII is read, even
+  if XLSX build/download later fails (access audit, not delivery receipt).
