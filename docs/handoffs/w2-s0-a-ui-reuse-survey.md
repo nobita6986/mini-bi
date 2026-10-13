@@ -1,6 +1,6 @@
 # W2-S0-A — Wave 2 UI Reuse Survey
 
-> **Status:** `W2_S0_A_UI_REUSE_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `W2_S0_A_UI_REUSE_SURVEY_R3_PORTRAIT_TWO_AXIS_CONSISTENCY_PASS_AWAITING_T0_REVIEW`
 > **Type:** docs-only survey. No implementation, no source change, no migration,
 > no API/RPC/schema change, no mock API, no new dependency, no browser/UAT.
 > **Deliverable:** this file only.
@@ -87,20 +87,33 @@ today. Images are modelled only as multiple `DocumentDetailSummary` rows per
 `DocumentType`, distinguished by `version` + `upload_status` /
 `validation_status` / `scan_status`; `document-editor.statusLabel` maps a
 `SUPERSEDED` state. There is no portrait field, no per-worker image gallery and
-no biometric concept. The W2S1 vocabulary and rules are fixed by R1 in A5a.
+no biometric concept. The W2S1 contract is the **two-axis** shape fixed by R3 in
+A5a (it supersedes the R1 single-`kind` wording, kept for history in §10).
 
-**A5a. W2S1 portrait kind contract (R1, locked vocabulary).**
-- The semantic kind set is exactly **`original`/`enrollment`**, **`current`**,
-  **`legacy_added`** (R1 replaces the earlier "original/current/additional"
-  wording).
-- The UI must **not** infer the kind from `version` or from the `SUPERSEDED`
-  status — those are transport/bookkeeping facts, not semantic kind. Inferring a
-  kind client-side is forbidden.
-- The server MUST return a **validated kind/projection** (fail-closed); the
-  client renders the kind it was given and never derives or guesses it.
-- `legacy_added` MUST display its **added date** and MUST NOT be described as
+**A5a. W2S1 portrait contract — TWO AXES (R3; conforms to the Wave 2 master plan).**
+A portrait is described by **two independent axes**, never by one exclusive enum:
+
+1. **Immutable origin** — `origin = ENROLLMENT | LEGACY_ADDED`. This is the
+   origin of the FIRST portrait and **never changes**:
+   - `ENROLLMENT` — captured when the worker is newly entered.
+   - `LEGACY_ADDED` — a portrait **added for a worker who already existed before
+     this feature**; it **MUST carry `added_at`** (the added date).
+2. **Server-selected current pointer/flag** — `is_current` / the `current
+   portrait` slot points at the most recently approved version. The FIRST
+   `LEGACY_ADDED` portrait **may also be `current`**; the two axes are independent.
+
+Rules:
+- The **server MUST return a validated projection of both axes** (fail-closed).
+  The client renders what it was given and never derives either axis.
+- The client MUST NOT infer `origin` from `version`, `SUPERSEDED`, `created_at`,
+  record age or **array order**, and MUST NOT pick `current` itself (e.g. "the
+  last element") — `is_current` is a server fact, not a list position.
+- `LEGACY_ADDED` MUST display its **`added_at`** date and MUST NOT be described as
   onboarding/enrollment photography (it is a later addition to a pre-existing
   worker).
+- **CASH snapshot:** the snapshot bound at submit is the exact **document id +
+  version + checksum of the `current` portrait at that moment**; the `origin`
+  marker never substitutes for the snapshot version.
 - A per-worker portrait set is a W2S1 addition; today it does not exist.
 
 **A6. Dialog/drawer primitives.** Radix UI (`radix-ui@1.6.7`):
@@ -183,8 +196,10 @@ side-by-side **image** comparison framework, and the AI risk states
 
 **D1. W2S4 CASH dual-image review (R2, locked).** For a **CASH** salary/proof
 review the Accountant must see, **in the same review context**, BOTH:
-1. the **immutable portrait snapshot** attached to the request at submission
-   time (the snapshot — not the worker's live/current portrait); and
+1. the **immutable portrait snapshot** bound to the request at submission time —
+   the exact **document id + version + checksum of the `current` portrait at that
+   moment** (not the worker's live portrait, and never the `origin` marker in
+   place of the snapshot version); and
 2. the **cash-envelope proof** the Manager uploaded.
 - Desktop: the two frames MAY sit side by side.
 - Mobile: they MUST stack vertically, each with an explicit label —
@@ -259,7 +274,7 @@ recharts + the existing wrappers suffice.
 | W2S1 document upload | `DirectEntryDocumentEditor` (generic single-type), `DirectEntryCccdManager`, `document-detail-projection`, `cccd-*`, `r2-document-storage` | add a portrait `DocumentType` to `DETAIL_DOCUMENT_TYPES` + `DOCUMENT_TYPES` | — | copying the uploader |
 | W2S1 dialogs/drawers | Radix `Dialog` + `direct-entry-shell.module.css` classes | — | a shared `ui/dialog` wrapper only if T0 wants one (not required) | manual focus traps |
 | **W2S1/A4 image preview** | — | add a preview affordance (same-origin stream *or* short-lived signed URL per R2 posture) | one small portrait panel (nothing reusable exists) | raw storage keys in DOM/props; long-lived signed URLs |
-| W2S1 portrait kind (`original`/`enrollment`, `current`, `legacy_added`) | — | render the server-validated kind + the `legacy_added` added date | small portrait panel | inferring kind from `version`/`SUPERSEDED`; calling `legacy_added` onboarding |
+| W2S1 portrait two-axis (`origin = ENROLLMENT / LEGACY_ADDED` + server `is_current`) | — | render the server-validated `origin` and `is_current`; show `added_at` for `LEGACY_ADDED` | small portrait panel | a single-kind enum; inferring `origin`/`current` from `version`/`SUPERSEDED`/array order; calling `LEGACY_ADDED` onboarding |
 | W2S2 assignment flow | `project-operations-model` as **reference/pattern** (validators, `classifyResponse`, OCC, reason, idempotency, `splitAssignments`, pagination) | — | accountant-specific model/wire contract + screen sibling (both W2-S0-B) | parameterising/repointing `project-operations-model` or `manager_recruiter_id` |
 | W2S2 picker | `typeahead.ts` (pure) | `RecruiterTypeahead` → generalise to an `EntityTypeahead` sibling (label/providers) | `AccountantTypeahead` sibling | importing `RecruiterTypeahead` into `project-operations.tsx` |
 | W2S2 effective-date editor | `type="date"` + `validateDate` | extract a small `EffectiveDateField` | — | a date library |
@@ -288,8 +303,8 @@ recharts + the existing wrappers suffice.
 - `src/lib/direct-entry/document-detail-projection.ts` — add the portrait type to `DETAIL_DOCUMENT_TYPES`.
 - `src/components/direct-entry/direct-entry-document-editor.tsx` — allow the portrait `DocumentType` list.
 - `src/components/direct-entry/direct-entry-worker-documents.tsx` — add the portrait section inside the existing dialog.
-- **new** one small portrait panel (e.g. `src/components/direct-entry/worker-portrait-panel.tsx`) — renders the **server-validated kind** (`original`/`enrollment`, `current`, `legacy_added`), the `legacy_added` added date, and a preview affordance (**no reusable image preview exists today**).
-- **new** `src/lib/direct-entry/worker-portrait.ts` — pure presentation helpers only (order, label, date formatting); **no** kind inference from `version`/`SUPERSEDED`.
+- **new** one small portrait panel (e.g. `src/components/direct-entry/worker-portrait-panel.tsx`) — renders the **server-validated two axes** (`origin = ENROLLMENT / LEGACY_ADDED` and `is_current`), the `LEGACY_ADDED` `added_at` date, and a preview affordance (**no reusable image preview exists today**).
+- **new** `src/lib/direct-entry/worker-portrait.ts` — pure presentation helpers only (labels, date formatting, the `current` badge); **no** inference of `origin`/`current` from `version`/`SUPERSEDED`/array order.
 - **new/extended** focused test file(s) `src/components/direct-entry/*portrait*.test.mjs`.
 
 **W2S2 — Accountant Assignment**
@@ -311,7 +326,7 @@ recharts + the existing wrappers suffice.
 
 **W2S4 — Proof Review**
 - **new** ONE small proof-review component (e.g. `src/components/direct-entry/proof-review.tsx`) — reuses the `document-*`/`cccd-*` upload path and `Card`/grid primitives; renders previews clear enough for human review, responsive and keyboard reachable. Do **not** build multiple image abstractions when one small component suffices.
-- The same component MUST render the **CASH dual-image review** (§1 D1): the immutable portrait snapshot **and** the Manager's cash-envelope proof, together in one context — desktop MAY place them side by side; mobile MUST stack them with the labels "Ảnh hồ sơ được snapshot" and "Ảnh bằng chứng nhận tiền". For **BANK_TRANSFER** it renders the bill vs the financial data only (no portrait).
+- The same component MUST render the **CASH dual-image review** (§1 D1): the immutable portrait snapshot — the exact **document id + version + checksum of the `current` portrait at submit** — **and** the Manager's cash-envelope proof, together in one context — desktop MAY place them side by side; mobile MUST stack them with the labels "Ảnh hồ sơ được snapshot" and "Ảnh bằng chứng nhận tiền". For **BANK_TRANSFER** it renders the bill vs the financial data only (no portrait).
 - **Deferred (not in the touch set):** zoom, fullscreen/lightbox, and a generic side-by-side comparison framework.
 - **new** `src/components/reporting/ai-risk-badge.tsx` — `PENDING|LOW_SYNTHETIC_RISK|REVIEW_REQUIRED|INCONCLUSIVE|UNAVAILABLE` → `Alert` tones/labels.
 - **new** `src/lib/direct-entry/proof-review-contract.ts` — risk-state projection (fail-closed).
@@ -380,9 +395,13 @@ focused `test:p3-…` lane and once into the canonical `test` chain.
 
 Suggested per W2S:
 - **W2S1:** portrait type present in the allow-lists; the panel renders the
-  **server-validated kind** and the `legacy_added` added date; a mutation that
-  derives the kind from `version`/`SUPERSEDED` must fail; `legacy_added` is never
-  labelled onboarding; no raw storage key rendered/logged.
+  **server-validated two axes** (`origin = ENROLLMENT / LEGACY_ADDED` and
+  `is_current`) plus the `LEGACY_ADDED` `added_at` date. The lane must fail if the
+  client infers `origin` from `version`/`SUPERSEDED`, picks `current` itself
+  (e.g. the last array element), labels `LEGACY_ADDED` as onboarding, or shows a
+  live portrait in the CASH review instead of the immutable snapshot (document id
+  + version + checksum of the `current` portrait at submit). No raw storage key
+  rendered/logged.
 - **W2S2:** the accountant model + wire contract are a **sibling** (assert
   `project-operations-model.ts` and `manager_recruiter_id` are unchanged); the
   request body carries the accountant OCC + `idempotency_key` + reason; 409 →
@@ -405,24 +424,33 @@ Suggested per W2S:
   aggregation, no bucketing helper and no new chart import.
 
 **Mutation probes** (make the lane RED, then restore byte-identically and confirm
-GREEN): (1) drop the CASH/BANK_TRANSFER conditional; (2) remove the acknowledgment
-requirement; (3) collapse two risk states to one label; (4) let `project-operations`
-import `RecruiterTypeahead`; (5) derive a portrait kind from `version`/`SUPERSEDED`,
-or label `legacy_added` as onboarding; (6) render a raw storage key into a title/`alt`,
-or import AI-report `projectReviewRequest` into the salary flow; (7) remove the
-portrait snapshot from the CASH review, **or** remove the cash-envelope proof from
-it — either must make the focused lane RED.
+GREEN):
+1. drop the CASH/BANK_TRANSFER conditional;
+2. remove the acknowledgment requirement;
+3. collapse two risk states to one label;
+4. let `project-operations` import `RecruiterTypeahead`;
+5. **portrait origin/current (R3)** — each of these must be RED: (a) infer `origin`
+   from `version`/`SUPERSEDED`; (b) let the client pick `current` as the last array
+   element; (c) describe `LEGACY_ADDED` as onboarding/enrollment photography;
+   (d) render the **live** portrait in the CASH review instead of the immutable
+   `current`-portrait snapshot (document id + version + checksum at submit);
+6. render a raw storage key into a title/`alt`, or import AI-report
+   `projectReviewRequest` into the salary flow;
+7. remove the portrait snapshot from the CASH review, **or** remove the
+   cash-envelope proof from it — either must make the focused lane RED.
 
 ---
 
 ## 8. Risks / blockers needing a backend contract
 
-1. **W2S1 portrait images** — needs (a) a portrait `DocumentType` (or a new
-   image kind) accepted by the DB/storage boundary and the strict projection,
-   and (b) a server-side **validated portrait kind** — `original`/`enrollment`,
-   `current`, `legacy_added` — carrying the `legacy_added` added date for a
-   pre-existing worker. Today only `version` + statuses exist. **Blocked on
-   backend contract**; the UI must not infer a kind or call R2 directly.
+1. **W2S1 portrait images** — needs (a) a portrait `DocumentType` (e.g.
+   `WORKER_PORTRAIT`) accepted by the DB/storage boundary and the strict
+   projection, and (b) a server-side **validated two-axis projection**: an
+   immutable `origin = ENROLLMENT | LEGACY_ADDED` (with `added_at` required for
+   `LEGACY_ADDED`) plus a separate `is_current` pointer/flag, and the
+   `current`-portrait document id + version + checksum to bind the CASH snapshot.
+   Today only `version` + statuses exist. **Blocked on the W2-S0-B backend
+   contract**; the UI must not infer either axis, and must not call R2 directly.
 2. **W2S1/W2S4 image delivery** — the only current access is the authenticated
    `download` route. The W2-S0-B backend contract may deliver bytes as a **same-origin preview stream** or
    a **short-lived signed URL** (R2 posture); either is acceptable. Raw storage
@@ -458,12 +486,13 @@ it — either must make the focused lane RED.
     period comparison and export UI are explicitly out of the MVP.
     `origin/main@afd1342` added a worker-export **backend**; the W2S5 export
     **UI** remains deferred.
-11. **W2S4 CASH dual-image contract (R2).** The proof-review UI can only show
+11. **W2S4 CASH dual-image contract (R2/R3).** The proof-review UI can only show
     both images if the backend provides them: an **immutable portrait snapshot**
-    attached to the salary request at submission time (not the worker's live
-    portrait) and the **cash-envelope proof** the Manager uploaded. Which fields
-    carry them, and their immutability, are the **W2-S0-B backend contract**.
-    BANK_TRANSFER needs no portrait.
+    bound to the salary request at submission time — the exact **document id +
+    version + checksum of the `current` portrait at that moment** — and the
+    **cash-envelope proof** the Manager uploaded. Which fields carry them, and
+    their immutability, are the **W2-S0-B backend contract**. BANK_TRANSFER needs
+    no portrait.
 
 ---
 
@@ -493,7 +522,9 @@ reuse fact changed and no stop/report to T0 was required.
 
 Corrections applied in R1 (each supersedes the R0 wording):
 
-1. **Portrait semantics.** R0 said "original/current/additional"; R1 replaces it
+1. **[SUPERSEDED by R3 — the three-value "kind" set below is replaced by the
+   two-axis `origin` + `is_current` contract in §1 A5a.]** **Portrait semantics.**
+   R0 said "original/current/additional"; R1 replaced it
    everywhere with **`original`/`enrollment`, `current`, `legacy_added`**, and
    states that the UI must **not** infer the kind from `version`/`SUPERSEDED`,
    that the server MUST return a validated kind/projection, and that
@@ -550,7 +581,8 @@ API, UI, package or migration change was made.
    portrait and no claim that a bill verifies a face. Applied to §1 (new D1), §3,
    §4, §5, §7 and §8 (new blocker 11); a new mutation (7) requires that removing
    the portrait snapshot **or** the cash proof from the CASH review makes the
-   focused lane RED.
+   focused lane RED. *(R3 keeps this CASH lock unchanged; it only refines the
+   snapshot wording to the `current`-portrait document id + version + checksum.)*
 2. **Ownership wording.** Every backend-contract ownership phrase is now
    **"W2-S0-B backend contract"** or **"T0-accepted backend decision"**; the
    `T1B-owned` / `T1B-backed` / `T1B decision` wording is gone (§0, §4, §8 and the
@@ -565,3 +597,47 @@ No other R1 correction was changed. R2 is append-only on
 `audit/w2-s0-a-ui-reuse-survey` — one new commit on top of `0a9331e`; no amend,
 no rebase, no force-push. No implementation, source, schema, API, UI, test,
 package or migration change was made.
+
+### R3 — portrait two-axis consistency repair (append-only)
+
+Authority: `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md`
+(SHA-256 `E439EC67434FD23ACEDD74B0D787B36A72778B45706871915E8584A422206364`),
+whose W2S1 "Contract ảnh cá nhân" locks portrait semantics as two axes and whose
+W2-S0-A review lists the R1 single-`kind` wording as REJECTED/CORRECTED item 8.
+
+1. **Portrait two-axis contract (§1 A5/A5a replaced).** A portrait is now
+   described by two independent axes, never one exclusive enum:
+   - **immutable `origin = ENROLLMENT | LEGACY_ADDED`** (the origin of the first
+     portrait; `LEGACY_ADDED` MUST carry `added_at`);
+   - a **server-selected `is_current`** pointer/flag (the first `LEGACY_ADDED`
+     portrait may also be `current`).
+   The client must not infer `origin` from `version`/`SUPERSEDED`/`created_at`/
+   record age/array order, must not pick `current` itself, and must render only
+   the server-validated projection. `LEGACY_ADDED` shows `added_at` and is never
+   described as onboarding photography. The **CASH snapshot** is the exact
+   document id + version + checksum of the `current` portrait at submit; the
+   `origin` marker never substitutes for the snapshot version.
+2. **Synchronised in R3:** §1 A5/A5a and D1 (snapshot wording), §3 reuse matrix,
+   §4 anticipated touch set (W2S1 panel/helper + W2S4 CASH snapshot), §7
+   acceptance tests (W2S1) and mutation probes, §8 blockers 1 and 11, and this
+   revision log. The R1 log's single-`kind` item is marked **SUPERSEDED** (its
+   text is kept for history); the R2 log notes that its CASH lock is unchanged and
+   only the snapshot wording was refined.
+3. **Unchanged (must not regress):** the R2 CASH dual-image lock (both images in
+   one review context; desktop may be side-by-side; mobile stacked with the two
+   labels; neither deferred), the BANK_TRANSFER separation (bill vs financial data
+   only, no portrait, no face-verification claim), the ownership-neutral wording
+   (W2-S0-B backend contract / T0-accepted backend decision, no agent names), and
+   the git ancestry facts (base `7afc026`; `afd1342` is the current `origin/main`
+   used only for the delta check and is **not** a branch ancestor).
+4. **New mutation probes (R3):** the focused lane must be RED if the client infers
+   `origin` from `version`/`SUPERSEDED`; if the client picks `current` as the last
+   array element; if `LEGACY_ADDED` is described as onboarding; or if the CASH
+   review shows the live portrait instead of the immutable `current`-portrait
+   snapshot.
+
+R3 is append-only on `audit/w2-s0-a-ui-reuse-survey` — one new commit on top of
+`0e3dd02`; no amend, no rebase, no force-push, and no merge/rebase of `main` into
+this branch. The memo status header is now
+`W2_S0_A_UI_REUSE_SURVEY_R3_PORTRAIT_TWO_AXIS_CONSISTENCY_PASS_AWAITING_T0_REVIEW`.
+No implementation, source, schema, API, UI, test, package or migration change.
