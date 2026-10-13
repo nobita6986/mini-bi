@@ -96,7 +96,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 85,
+  assert.equal(totalCount, 86,
     "the ledger carries migration #84 after the W03A account-read repair");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
@@ -665,11 +665,12 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // options projection in place, so the inventory grows by fifteen and nothing
     // becomes reachable by anon/authenticated. P3.1-W02C-R2 (#80) adds no function at
     // all: it patches three live read bodies in place through a helper that the same
-    // migration drops before it ends, so the inventory is unchanged. The measured
-    // inventory is 209 total / 95 service-role / 114 internal.
+    // migration drops before it ends, so the inventory is unchanged. PRE-W2-P1
+    // (#86) adds one service-role-only worker-export RPC. The measured inventory
+    // is 219 total / 101 service-role / 118 internal.
     assert.deepEqual(result.rows[0], {
-      total: 218,
-      service_role: 100,
+      total: 219,
+      service_role: 101,
       internal: 118,
       exposed_internal: 0,
     });

@@ -1,0 +1,248 @@
+/**
+ * PRE-W2-P1 - Hop dong server cho xuat Excel full-PII (recruited / managed).
+ *
+ * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
+ * Authority (pii_export AND pii_view AND payment_view AND recruited/managed row authority
+ * + scope) do RPC public.direct_entry_export_workers quyet dinh - client khong bao gio tu
+ * khai identity/capability/scope.
+ *
+ * Fail-closed: dung key, dung kieu, khong fallback rong; khong type assertion. Mot envelope
+ * sai hinh => null (khong bao gio tao file rong tu du lieu khong ro nguon).
+ */
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
+
+export const WORKER_EXPORT_SCOPES = ["recruited", "managed"] as const;
+export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
+
+export const WORKER_EXPORT_EMPLOYMENT_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
+export const WORKER_EXPORT_PROVIDER_TYPES = ["HRP", "Vendor"] as const;
+
+export const WORKER_EXPORT_ROW_LIMIT = 10000;
+
+/** Body allowlist. `scope` + `reason` required; the three filters optional/null. */
+export const WORKER_EXPORT_BODY_KEYS = [
+  "scope", "project_id", "recruiter_id", "employment_status", "reason",
+] as const;
+
+/** Exact row projection, string/null theo du lieu authoritative (18 truong). */
+export const WORKER_EXPORT_ROW_KEYS = [
+  "employee_code", "display_name", "date_of_birth", "national_id", "phone", "address",
+  "project_display", "first_work_date", "labor_type_display", "recruiter_display",
+  "provider_type", "employment_status", "leave_date", "leave_reason", "account_number",
+  "bank_name", "account_holder_name", "payment_note",
+] as const;
+
+export const WORKER_EXPORT_OK_KEYS = ["status", "rows"] as const;
+export const WORKER_EXPORT_TOO_MANY_KEYS = ["status", "limit"] as const;
+
+/** 18 cot XLSX theo dung thu tu; `text` giu so 0 dau (numFmt "@"). */
+export const WORKER_EXPORT_COLUMNS: ReadonlyArray<{
+  header: string;
+  key: (typeof WORKER_EXPORT_ROW_KEYS)[number];
+  text: boolean;
+}> = Object.freeze([
+  { header: "Mã NLĐ", key: "employee_code", text: true },
+  { header: "Họ và tên", key: "display_name", text: false },
+  { header: "Ngày sinh", key: "date_of_birth", text: false },
+  { header: "CCCD", key: "national_id", text: true },
+  { header: "Số điện thoại", key: "phone", text: true },
+  { header: "Địa chỉ", key: "address", text: false },
+  { header: "Dự án", key: "project_display", text: false },
+  { header: "Ngày bắt đầu", key: "first_work_date", text: false },
+  { header: "Loại hình lao động", key: "labor_type_display", text: false },
+  { header: "Người tuyển", key: "recruiter_display", text: false },
+  { header: "Nhà cung cấp", key: "provider_type", text: false },
+  { header: "Trạng thái làm việc", key: "employment_status", text: false },
+  { header: "Ngày nghỉ", key: "leave_date", text: false },
+  { header: "Lý do nghỉ", key: "leave_reason", text: false },
+  { header: "Số tài khoản", key: "account_number", text: true },
+  { header: "Ngân hàng", key: "bank_name", text: false },
+  { header: "Chủ tài khoản", key: "account_holder_name", text: false },
+  { header: "Ghi chú thanh toán", key: "payment_note", text: false },
+]);
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const present = Object.keys(value);
+  return present.length === keys.length && present.every((key) => keys.includes(key));
+}
+
+function isBoundedText(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length <= max;
+}
+
+function isNullableText(value: unknown, max: number): value is string | null {
+  return value === null || isBoundedText(value, max);
+}
+
+function isRealIsoDate(value: unknown): value is string {
+  return typeof value === "string" && isRealCalendarDate(value);
+}
+
+function isNullableRealIsoDate(value: unknown): value is string | null {
+  return value === null || isRealIsoDate(value);
+}
+
+export type WorkerExportRequest = {
+  scope: WorkerExportScope;
+  project_id: string | null;
+  recruiter_id: string | null;
+  employment_status: (typeof WORKER_EXPORT_EMPLOYMENT_STATUSES)[number] | null;
+  reason: string;
+};
+
+/**
+ * Strict request projection. Unknown keys, wrong value types, an invalid enum/filter or a
+ * missing/blank `reason` are refused. `project_id`/`recruiter_id`/`employment_status` may be
+ * absent or null (worker-directory convention). No idempotency key.
+ */
+export function projectWorkerExportRequest(body: unknown): WorkerExportRequest | null {
+  if (!isRecord(body)) return null;
+  for (const key of Object.keys(body)) {
+    if (!(WORKER_EXPORT_BODY_KEYS as readonly string[]).includes(key)) return null;
+  }
+
+  const scope = body.scope;
+  if (typeof scope !== "string" ||
+      !(WORKER_EXPORT_SCOPES as readonly string[]).includes(scope)) {
+    return null;
+  }
+  const reason = body.reason;
+  if (typeof reason !== "string" || reason.trim().length === 0 || reason.length > 4000) {
+    return null;
+  }
+  const projectId = body.project_id ?? null;
+  if (projectId !== null && (typeof projectId !== "string" || !PROJECT_ID.test(projectId))) {
+    return null;
+  }
+  const recruiterId = body.recruiter_id ?? null;
+  if (recruiterId !== null && (typeof recruiterId !== "string" || !UUID.test(recruiterId))) {
+    return null;
+  }
+  const employmentStatus = body.employment_status ?? null;
+  if (employmentStatus !== null &&
+      (typeof employmentStatus !== "string" ||
+       !(WORKER_EXPORT_EMPLOYMENT_STATUSES as readonly string[]).includes(employmentStatus))) {
+    return null;
+  }
+
+  return {
+    scope: scope as WorkerExportScope,
+    project_id: projectId,
+    recruiter_id: recruiterId,
+    employment_status: employmentStatus as WorkerExportRequest["employment_status"],
+    reason: reason.trim(),
+  };
+}
+
+export type WorkerExportRow = {
+  employee_code: string | null;
+  display_name: string | null;
+  date_of_birth: string | null;
+  national_id: string | null;
+  phone: string | null;
+  address: string | null;
+  project_display: string;
+  first_work_date: string;
+  labor_type_display: string | null;
+  recruiter_display: string;
+  provider_type: (typeof WORKER_EXPORT_PROVIDER_TYPES)[number] | null;
+  employment_status: (typeof WORKER_EXPORT_EMPLOYMENT_STATUSES)[number] | null;
+  leave_date: string | null;
+  leave_reason: string | null;
+  account_number: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  payment_note: string | null;
+};
+
+export type WorkerExportEnvelope =
+  | { status: "ok"; rows: WorkerExportRow[] }
+  | { status: "too_many_rows"; limit: number };
+
+export function projectWorkerExportRow(value: unknown): WorkerExportRow | null {
+  if (!isRecord(value) || !hasExactKeys(value, WORKER_EXPORT_ROW_KEYS)) return null;
+  if (!isNullableText(value.employee_code, 64)) return null;
+  if (!isNullableText(value.display_name, 256)) return null;
+  if (!isNullableRealIsoDate(value.date_of_birth)) return null;
+  if (!isNullableText(value.national_id, 64)) return null;
+  if (!isNullableText(value.phone, 64)) return null;
+  if (!isNullableText(value.address, 1000)) return null;
+  if (typeof value.project_display !== "string" || value.project_display.length < 1 ||
+      value.project_display.length > 256) {
+    return null;
+  }
+  if (!isRealIsoDate(value.first_work_date)) return null;
+  if (!isNullableText(value.labor_type_display, 256)) return null;
+  if (typeof value.recruiter_display !== "string" || value.recruiter_display.length < 1 ||
+      value.recruiter_display.length > 256) {
+    return null;
+  }
+  if (value.provider_type !== null &&
+      !(WORKER_EXPORT_PROVIDER_TYPES as readonly string[]).includes(value.provider_type as string)) {
+    return null;
+  }
+  if (value.employment_status !== null &&
+      !(WORKER_EXPORT_EMPLOYMENT_STATUSES as readonly string[])
+        .includes(value.employment_status as string)) {
+    return null;
+  }
+  if (!isNullableRealIsoDate(value.leave_date)) return null;
+  if (!isNullableText(value.leave_reason, 4000)) return null;
+  if (!isNullableText(value.account_number, 64)) return null;
+  if (!isNullableText(value.bank_name, 256)) return null;
+  if (!isNullableText(value.account_holder_name, 256)) return null;
+  // No authoritative payment note today: only null or empty is accepted, never fabricated.
+  if (value.payment_note !== null && value.payment_note !== "") return null;
+
+  return {
+    employee_code: value.employee_code,
+    display_name: value.display_name,
+    date_of_birth: value.date_of_birth,
+    national_id: value.national_id,
+    phone: value.phone,
+    address: value.address,
+    project_display: value.project_display,
+    first_work_date: value.first_work_date,
+    labor_type_display: value.labor_type_display,
+    recruiter_display: value.recruiter_display,
+    provider_type: value.provider_type as WorkerExportRow["provider_type"],
+    employment_status: value.employment_status as WorkerExportRow["employment_status"],
+    leave_date: value.leave_date,
+    leave_reason: value.leave_reason,
+    account_number: value.account_number,
+    bank_name: value.bank_name,
+    account_holder_name: value.account_holder_name,
+    payment_note: value.payment_note,
+  };
+}
+
+/**
+ * Strict envelope projection. Either { status:"ok", rows:[...] } or
+ * { status:"too_many_rows", limit:10000 }. Anything else fails closed.
+ */
+export function projectWorkerExportEnvelope(value: unknown): WorkerExportEnvelope | null {
+  if (!isRecord(value)) return null;
+  if (value.status === "too_many_rows") {
+    if (!hasExactKeys(value, WORKER_EXPORT_TOO_MANY_KEYS)) return null;
+    if (value.limit !== WORKER_EXPORT_ROW_LIMIT) return null;
+    return { status: "too_many_rows", limit: WORKER_EXPORT_ROW_LIMIT };
+  }
+  if (value.status !== "ok") return null;
+  if (!hasExactKeys(value, WORKER_EXPORT_OK_KEYS)) return null;
+  if (!Array.isArray(value.rows)) return null;
+  if (value.rows.length > WORKER_EXPORT_ROW_LIMIT) return null;
+  const rows: WorkerExportRow[] = [];
+  for (const raw of value.rows) {
+    const row = projectWorkerExportRow(raw);
+    if (row === null) return null;
+    rows.push(row);
+  }
+  return { status: "ok", rows };
+}

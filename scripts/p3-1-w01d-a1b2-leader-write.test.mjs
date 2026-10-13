@@ -366,15 +366,15 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 85);
-  assert.equal(names.at(-15), MIGRATION_71);
-  assert.equal(names.at(-10), LEGACY_SCOPE_HOTFIX);
+  assert.equal(names.length, 86);
+  assert.equal(names.at(-16), MIGRATION_71);
+  assert.equal(names.at(-11), LEGACY_SCOPE_HOTFIX);
   assert.equal(names.some((name) => name.startsWith("202610100")), false);
   const migrations = await Promise.all(names.map(async (name) => ({
     name,
     sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
   })));
-  for (const name of names.slice(0, -15)) {
+  for (const name of names.slice(0, -16)) {
     const file = path.join(MIGRATION_DIR, name);
     const local = await readFile(file);
     const trackedPath = path.relative(ROOT, file).replaceAll("\\", "/");
@@ -384,7 +384,7 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   }
   const baseline = await inventory(db);
   const transitionFixtures = await seedLegacyTransition(db, legacyCount);
-  if (applyLatest) await db.exec(mutateMigration(migrations.at(-15).sql));
+  if (applyLatest) await db.exec(mutateMigration(migrations.at(-16).sql));
   return { db, names, baseline, migrations, transitionFixtures };
 }
 
@@ -590,7 +590,7 @@ async function assertTransitionAtomicity() {
   const state = await createDatabase(1, { applyLatest: false });
   const database = state.db;
   const [fixture] = state.transitionFixtures;
-  const baseSql = mutateMigration(state.migrations.at(-15).sql);
+  const baseSql = mutateMigration(state.migrations.at(-16).sql);
   try {
     const otherTeam = "99000000-0000-4000-8000-000000000001";
     await database.query(
@@ -867,7 +867,7 @@ async function assertTransitionAtomicity() {
     await expectMigrationFailure(database, beforeCorruption, "55000");
     await assertTransitionRolledBack(database, fixture);
 
-    const result = await database.exec(mutateMigration(state.migrations.at(-15).sql));
+    const result = await database.exec(mutateMigration(state.migrations.at(-16).sql));
     assert.ok(result);
     const transitionDate = (await database.query(
       "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
@@ -1186,15 +1186,15 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   db = state.db;
   const names = state.names;
   const inventoryBefore = state.baseline;
-  const allMigrations = state.migrations.slice(0, -14);
-  assert.equal(names.length, 85);
-  assert.equal(names.at(-15), MIGRATION_71);
-  assert.equal(names.at(-10), LEGACY_SCOPE_HOTFIX);
+  const allMigrations = state.migrations.slice(0, -15);
+  assert.equal(names.length, 86);
+  assert.equal(names.at(-16), MIGRATION_71);
+  assert.equal(names.at(-11), LEGACY_SCOPE_HOTFIX);
   today = (await db.query(
     "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
   assert.equal(state.transitionFixtures.length, 3);
   await assertTransitionFixtures(db, state.transitionFixtures, today);
-  await db.exec(mutateLegacyScopeHotfix(state.migrations.at(-10).sql));
+  await db.exec(mutateLegacyScopeHotfix(state.migrations.at(-11).sql));
 
   await addTeam(TEAM_A, "TEAM_A");
   await addTeam(TEAM_B, "TEAM_B");
