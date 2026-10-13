@@ -12,20 +12,21 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NEXT_PUBLIC_SUPABASE_URL: https://ci.invalid
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-secret
+  SUPABASE_SECRET_KEY: ci-placeholder-not-a-secret
+  SUPABASE_DB_URL: postgresql://ci:ci_db_password_placeholder_not_a_secret_2026@127.0.0.1:5432/ci
+  SUPABASE_CONFIG_FILE: /dev/null
+  DIRECT_ENTRY_API_ENABLED: "false"
+  PIPELINE_CHECK_ENABLED: "false"
+  AI_REPORTS_ENABLED: "false"
+
 jobs:
-  quality:
-    name: Quality (typecheck · lint · tests · build)
+  static:
+    name: Static quality (typecheck · lint · build)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: https://ci.invalid
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-placeholder-not-a-secret
-      SUPABASE_SECRET_KEY: ci-placeholder-not-a-secret
-      SUPABASE_DB_URL: postgresql://ci:ci_db_password_placeholder_not_a_secret_2026@127.0.0.1:5432/ci
-      SUPABASE_CONFIG_FILE: /dev/null
-      DIRECT_ENTRY_API_ENABLED: "false"
-      PIPELINE_CHECK_ENABLED: "false"
-      AI_REPORTS_ENABLED: "false"
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,15 +44,6 @@ jobs:
         run: pnpm typecheck
       - name: Lint
         run: pnpm lint
-      - name: Install PostgreSQL for real concurrency regression
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql
-          pg_bin="$(pg_config --bindir)"
-          test -x "$pg_bin/initdb" && test -x "$pg_bin/pg_ctl"
-          echo "P3_1_W02A_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
-      - name: Unit and local database regression suites
-        run: pnpm test
       - name: Validate migration files without connecting to a database
         run: pnpm db:migrate -- --offline
       - name: Build
@@ -60,3 +52,50 @@ jobs:
         run: pnpm secrets:check
       - name: Check documentation examples
         run: pnpm docs:check
+
+  tests:
+    name: Tests (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Install PostgreSQL for real concurrency regression
+        if: matrix.shard == 4
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql
+          pg_bin="$(pg_config --bindir)"
+          test -x "$pg_bin/initdb" && test -x "$pg_bin/pg_ctl"
+          echo "P3_1_W02A_PG_BIN=$pg_bin" >> "$GITHUB_ENV"
+      - name: Run test shard
+        run: node scripts/run-ci-test-shard.mjs ${{ matrix.shard }}
+
+  quality:
+    name: Quality (typecheck · lint · tests · build)
+    if: always()
+    needs: [static, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every CI job to pass
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          TEST_RESULT: ${{ needs.tests.result }}
+        run: |
+          test "$STATIC_RESULT" = "success"
+          test "$TEST_RESULT" = "success"
