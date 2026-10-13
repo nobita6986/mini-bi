@@ -1,9 +1,12 @@
-# W2-S0-C-R1 — Wave 2 contract, security & integration survey (consistency repair)
+# W2-S0-C-R2 — Wave 2 contract, security & integration survey (targeted repair)
 
-> **Status:** `W2_S0_C_R1_CONTRACT_SECURITY_INTEGRATION_SURVEY_PASS_AWAITING_T0_REVIEW`
-> **Revision:** R1 — consistency repair of the S0 survey (`e434a88`) against the
->   Wave 2 master plan `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md`. Append-only
->   on the same branch (no amend / no rebase / no force-push).
+> **Status:** `W2_S0_C_R2_CONTRACT_SECURITY_INTEGRATION_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Revision:** R2 — targeted repair of R1 (`8e9d879`) against the Wave 2 master
+>   plan `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md`: corrects the refund
+>   source states (`REFUND_REQUIRED` is reachable only from `PROOF_REJECTED`) and
+>   removes Full Admin break-glass as an accepted actor (it stays an unlocked
+>   Owner/T0 decision). Append-only on the same branch (no amend / no rebase / no
+>   force-push).
 > **Base SHA:** `origin/main@7afc02632f83a4cddff7ddfe75f7eb5308f1a969`.
 > **Branch / worktree:** `audit/w2-s0-c-contract-security-integration-survey` @
 >   `C:\CodeApp\BI-w2-s0-c-contract-security-integration-survey`.
@@ -78,10 +81,10 @@ REQUESTED
      └── DISBURSED_WAITING_PROOF
           └── PROOF_SUBMITTED
                ├── COMPLETED
-               ├── PROOF_REJECTED
-               │    └── PROOF_SUBMITTED ...   (Manager resubmits)
-               └── REFUND_REQUIRED
-                    └── REFUNDED
+               └── PROOF_REJECTED
+                    ├── PROOF_SUBMITTED ...   (Manager resubmits)
+                    └── REFUND_REQUIRED
+                         └── REFUNDED
 ```
 
 **Removed from the current contract (not aliases, not extra transitions):**
@@ -103,13 +106,16 @@ change first.
 - **DISBURSED_WAITING_PROOF → PROOF_SUBMITTED**: the **Manager** submits the
   mandatory proof.
 - **PROOF_SUBMITTED → COMPLETED | PROOF_REJECTED**: the snapshot accountant reviews
-  (human); reject requires a reason.
+  (human); reject requires a reason. `PROOF_SUBMITTED` has **no** direct path to
+  `REFUND_REQUIRED`.
 - **PROOF_REJECTED → PROOF_SUBMITTED**: the **Manager** resubmits (new proof
   version + new AI check).
-- **PROOF_SUBMITTED → REFUND_REQUIRED → REFUNDED**: **only the case's snapshot
-  accountant or Full Admin break-glass** opens `REFUND_REQUIRED` (reason
+- **PROOF_REJECTED → REFUND_REQUIRED → REFUNDED**: **only the case's snapshot
+  accountant** (the locked MVP authority) opens `REFUND_REQUIRED` (reason
   required); the accountant confirms the money was received back; refund is an
   append-only event; **no partial refund**; **no refund from `COMPLETED`** in MVP.
+  (A Full Admin refund break-glass is an **unlocked** Owner/T0 decision — §10 — and
+  is **not** an accepted actor here.)
 - **Accountant snapshot:** the request **snapshots the accountant/assignment at
   submit**; the RPC must **not** silently re-resolve the *current* assignment to
   replace the snapshot accountant of an open case. Explicit transfer and bulk
@@ -230,7 +236,7 @@ change first.
 | Disbursement (`DISBURSED_WAITING_PROOF`) | snapshot accountant, reason+OCC+idempotency | disbursement event (actor/time/amount/method) | accountant + admin | immutable event |
 | Proof (Manager-submitted) | **Manager** submit/resubmit | versioned document (R2 posture) | accountant | immutable event |
 | AI image signal | provider-gated advisory | advisory row only | accountant | provider/model/checked_at |
-| Refund (`REFUND_REQUIRED`→`REFUNDED`) | **snapshot accountant** or Full Admin break-glass | append-only refund event | accountant + admin | immutable event |
+| Refund (`PROOF_REJECTED`→`REFUND_REQUIRED`→`REFUNDED`) | **snapshot accountant** (locked MVP) | append-only refund event | accountant + admin | immutable event |
 | Basic summary | server-derived | none | accountant | none |
 
 ### 8.2 Data-classification table
@@ -272,9 +278,9 @@ E16 AI idempotent by proof checksum; each proof version has its own result;
 provider/model/`checked_at` stored.
 E17 independent redaction + masking (PII/payment/document) and no signed URL,
 storage key or raw PII in any projection or log.
-E18 server/DB scope denies IDOR/cross-project; only the snapshot accountant or Full
-Admin break-glass opens `REFUND_REQUIRED`; no refund from `COMPLETED`; summary
-timezone `Asia/Bangkok` reconciles.
+E18 server/DB scope denies IDOR/cross-project; only the snapshot accountant (locked
+MVP) opens `REFUND_REQUIRED`, and only from `PROOF_REJECTED` (never directly from
+`PROOF_SUBMITTED` or from `COMPLETED`); summary timezone `Asia/Bangkok` reconciles.
 
 ### 8.4 Mutation M-list
 
@@ -286,7 +292,9 @@ log-scan red; M7 let AI auto-approve → AI red; M8 treat `UNAVAILABLE` as accep
 AI-safety red; M9 allow self-review → no-self-review red; M10 check CASH portrait at
 disbursement instead of submit (or skip it) → portrait-gate red; M11 let an
 accountant-uploaded document advance to `PROOF_SUBMITTED` → proof-actor red; M12
-open `REFUND_REQUIRED` from `COMPLETED` or by the Manager → refund-actor red.
+open `REFUND_REQUIRED` from `COMPLETED` or by the Manager → refund-actor red; M13
+allow `PROOF_SUBMITTED → REFUND_REQUIRED` directly (skipping `PROOF_REJECTED`) →
+refund-source red.
 
 ### 8.5 Integration order
 
@@ -312,9 +320,9 @@ per capability; add portrait for a worker without one; CASH blocked without a re
 portrait **at submit**; BANK_TRANSFER without a portrait; request→approve/reject by
 the snapshot accountant; reassign accountant mid-flow (old case keeps its handler);
 mark disbursed; Manager submits proof; accountant optional document does not advance;
-proof accept/reject + resubmit; refund only by the snapshot accountant/Full Admin;
-basic summary totals + timezone; masked vs full views; AI advisory shown but never
-decisive; no PII/URL leakage in the network tab.
+proof accept/reject + resubmit; refund only by the snapshot accountant and only from
+`PROOF_REJECTED`; basic summary totals + timezone; masked vs full views; AI advisory
+shown but never decisive; no PII/URL leakage in the network tab.
 
 ### 8.7 Stop conditions for go-live
 
@@ -322,9 +330,9 @@ Any of: an IDOR/cross-project leak; a signed-URL/storage-key leak; a raw PII/ban
 value in logs or audit; AI able to auto-approve/reject or `UNAVAILABLE` treated as
 accept; self-review possible; a CASH case without a ready portrait at submit; proof
 not Manager-submitted (or an accountant document advancing the state); a refund
-opened by the Manager or from `COMPLETED`; a live re-resolution replacing an open
-case's snapshot accountant; unreconciled financial totals; a forged/unsigned webhook
-accepted.
+opened by the Manager, from `COMPLETED`, or directly from `PROOF_SUBMITTED` (skipping
+`PROOF_REJECTED`); a live re-resolution replacing an open case's snapshot accountant;
+unreconciled financial totals; a forged/unsigned webhook accepted.
 
 ---
 
@@ -354,8 +362,9 @@ accepted.
 - **AI egress/privacy** (§6) — a T0-accepted provider/retention/training/privacy
   decision is required before enablement.
 - **Open decisions (master plan §"Quyết định còn phải khóa"):** max advance amount;
-  Full Admin break-glass scope; AI provider/retention/SLA; WebP support; worker-
-  detail shell; PDF preview vs signed-download fallback.
+  **Full Admin refund break-glass scope (unlocked — the locked MVP refund authority is
+  the snapshot accountant only)**; AI provider/retention/SLA; WebP support;
+  worker-detail shell; PDF preview vs signed-download fallback.
 
 ## 11. Explicit no-implementation statement
 
@@ -368,14 +377,14 @@ reserved**.
 
 ---
 
-## 12. Revision log (R1)
+## 12. Revision log (R1, R2)
 
 R1 is an append-only consistency repair of the S0 survey (`e434a88`) on the same
 branch, aligning it to the Wave 2 master plan:
 
 - **State machine mapped to the official set** (§2): `REQUESTED → REJECTED |
   APPROVED → DISBURSED_WAITING_PROOF → PROOF_SUBMITTED → COMPLETED |
-  PROOF_REJECTED` (→ resubmit) and `PROOF_SUBMITTED → REFUND_REQUIRED → REFUNDED`.
+  PROOF_REJECTED` (→ `PROOF_SUBMITTED` resubmit, or → `REFUND_REQUIRED` → `REFUNDED`).
   The extra states are removed from the current contract.
 - **Accountant snapshot** (§2/§3/§7): the request snapshots the accountant/
   assignment at submit; the RPC must not silently re-resolve the current assignment
@@ -385,11 +394,24 @@ branch, aligning it to the Wave 2 master plan:
 - **Portrait snapshot** (§3/§7): immutable; a newer portrait does not invalidate an
   existing request or force re-review; CASH validates `READY` at **submit**;
   BANK_TRANSFER requires no portrait.
-- **Refund actor** (§2/§5/§7): only the case's snapshot accountant or Full Admin
-  break-glass opens `REFUND_REQUIRED`; no refund from `COMPLETED`; append-only; no
-  partial; no separate `REFUND_APPROVED` step.
+- **Refund actor** (§2/§5/§7): only the case's snapshot accountant opens
+  `REFUND_REQUIRED`; no refund from `COMPLETED`; append-only; no partial; no separate
+  `REFUND_APPROVED` step.
 - **Reuse clarified** (§0.5/§9): reuse change-request **primitives/patterns**, not
   necessarily the business tables; the data model is a W2-S0-B decision.
 - **Plan blocker resolved** (§0.1): the master plan exists out-of-repo.
 - **W2S1 expanded** (§1/§3): full worker detail (portrait + CCCD images +
   documents + capability-based redaction), not only the portrait asset.
+
+**R2 (this commit)** closes two targeted mismatches:
+
+- **Refund source corrected (§2/§8):** `PROOF_SUBMITTED` transitions only to
+  `COMPLETED | PROOF_REJECTED`; `REFUND_REQUIRED` is reachable **only from
+  `PROOF_REJECTED`** (which branches to `PROOF_SUBMITTED` resubmission or, directly,
+  to `REFUND_REQUIRED`), and `REFUND_REQUIRED → REFUNDED`. The diagram, transition
+  actors, contract matrix, E-list (E18), M-list (new M13), UAT and stop conditions
+  were updated in lockstep; a direct `PROOF_SUBMITTED → REFUND_REQUIRED` must be RED.
+- **Full Admin break-glass removed as an accepted actor (§2/§8/§10/§12):** the locked
+  MVP refund authority is the **snapshot accountant only**; a Full Admin refund
+  break-glass remains an **unlocked** Owner/T0 decision, recorded only in the open
+  decisions (no longer in the state machine, matrix, E-list, UAT or this log).
