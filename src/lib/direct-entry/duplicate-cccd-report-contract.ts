@@ -50,9 +50,7 @@ export const DUPLICATE_CCCD_REPORT_EPISODE_KEYS = [
   "active",
 ] as const;
 
-export const DUPLICATE_CCCD_REPORT_AUTHORITIES = [
-  "entry_admin", "catalog_master_manage", "entry_privileged_edit",
-] as const;
+export const DUPLICATE_CCCD_REPORT_AUTHORITIES = ["business_actor"] as const;
 export const DUPLICATE_CCCD_EMPLOYMENT_STATUSES = ["ON", "UNCONFIRMED", "OFF"] as const;
 
 export type DuplicateCccdEmploymentStatus = (typeof DUPLICATE_CCCD_EMPLOYMENT_STATUSES)[number];

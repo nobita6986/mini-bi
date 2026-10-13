@@ -114,28 +114,15 @@ export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
 };
 
 /**
- * P3.1-HF-R3: authority doc bao cao CCCD trung.
+ * PRE-W2-HF-C: authority doc bao cao CCCD trung.
  *
- * Phan anh DUNG `direct_entry_assert_duplicate_cccd_reader` (#74) - khong rong hon:
- *  - Full Admin triple (entry_admin ∧ recruiter_master_manage ∧ team_master_manage), hoac
- *  - catalog_master_manage (Admin / Ke toan), hoac
- *  - entry_privileged_edit (BoD),
- * VA luon doi hoi mot effective `all` scope. entry_admin@all mot minh, change_review, leader/PM
- * va actor khong map deu KHONG mo. Day chi la metadata hien thi; quyen that do RPC quyet dinh.
+ * Phan anh DUNG `direct_entry_assert_duplicate_cccd_reader` (#87): MOI authenticated active
+ * business actor (co actor mapping hop le) deu doc duoc. Khong doi hoi high-authority bundle
+ * hay effective all scope nua. Day chi la metadata hien thi; quyen that do RPC quyet dinh.
+ * `decideNavEntryVisibility` van an entry khi actor chua resolve (capability khac "any"), nen
+ * anonymous khong bao gio thay link nay.
  */
-export const DUPLICATE_CCCD_REPORT_CAPABILITIES: readonly Capability[] = [
-  "catalog_master_manage",
-  "entry_privileged_edit",
-];
-
-export const duplicateCccdReportNavPredicate: NavCapabilityPredicate = (actor) => {
-  if (!actor.scopes.some((scope) => scope.kind === "all")) return false;
-  if (ADMIN_AUTHORITY_CAPABILITIES.every((required) => actor.capabilities.includes(required))) {
-    return true;
-  }
-  return DUPLICATE_CCCD_REPORT_CAPABILITIES.some((capability) =>
-    actor.capabilities.includes(capability));
-};
+export const duplicateCccdReportNavPredicate: NavCapabilityPredicate = () => true;
 
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
@@ -149,6 +136,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   entry_admin: directEntryNavPredicate,
   project_admin: projectAdminNavPredicate,
   worker_operations: workerOperationsNavPredicate,
+  duplicate_cccd_report: duplicateCccdReportNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */
