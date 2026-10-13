@@ -40,6 +40,7 @@ async function databaseBeforeHotfix() {
     "20261011160000_p3_1_w03a_r2_account_read.sql",
     "20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql",
     "20261011180000_p3_w05b_a_team_reporting.sql",
+    "20261013120000_pre_w2_p1_worker_export.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
