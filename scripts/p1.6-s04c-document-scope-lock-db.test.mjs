@@ -172,7 +172,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // P3.1-W03A (#82) adds the app-user snapshot, lock-time Full Admin guard and
   // shared status mutation helper plus enable/disable service-role RPCs.
   // W03A-R2 (#83/#84) adds the account list/detail read boundary.
-  // Measured: 218 total, 100 service-role executable and 118 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [218, 100, 118]);
+  // PRE-W2-P1 (#86) adds one service-role-only worker-export RPC.
+  // Measured: 219 total, 101 service-role executable and 118 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [219, 101, 118]);
   await db.close();
 });
