@@ -12,6 +12,7 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
+import { DuplicateCccdReportPanel } from "@/components/reporting/duplicate-cccd-report-panel";
 import { FiltersOrError, NoMatchesBlock } from "./dashboard-shared";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
@@ -52,13 +53,16 @@ export function DashboardView({
   optionsResult,
   audience,
   canViewDuplicateCccd,
+  duplicateCccdRequested,
 }: {
   report: ReportingFetchResult;
   optionsResult: ReportingOptionsResult;
   /** DB-authoritative audience from the scoped payload; null fails closed. */
   audience: ReportingAudience | null;
-  /** P3.1-HF-R3-R1: server-derived visibility for the "Báo cáo CCCD trùng" tab. */
+  /** PRE-W2-HF-C: server-derived visibility for the "Báo cáo CCCD trùng" tab. */
   canViewDuplicateCccd: boolean;
+  /** PRE-W2-HF-C: the request asked for ?tab=duplicate-cccd. */
+  duplicateCccdRequested: boolean;
 }) {
   // P3-W06C: the audience is DB-authoritative (W05A scoped payload); it is never
   // inferred from a UI role. A failed read, or a successful read without a usable
@@ -87,6 +91,9 @@ export function DashboardView({
   }
 
   if (mode.kind === "team") {
+    // PRE-W2-HF-C: every valid actor may open the CCCD report tab directly. The
+    // team lease stays the default body; general/team are never widened.
+    if (duplicateCccdRequested && canViewDuplicateCccd) return <DuplicateCccdTabPanel />;
     return (
       <TeamDashboardView
         data={report.data}
@@ -98,6 +105,7 @@ export function DashboardView({
   }
 
   if (mode.kind === "own") {
+    if (duplicateCccdRequested && canViewDuplicateCccd) return <DuplicateCccdTabPanel />;
     return (
       <OwnDashboardView
         data={report.data}
@@ -145,6 +153,20 @@ export function DashboardView({
         </main>
       }
     />
+  );
+}
+
+/**
+ * PRE-W2-HF-C: the CCCD report panel for audiences whose dashboard has no tab
+ * shell (team / own). It is reached through the Dashboard tab URL
+ * `/dashboard?tab=duplicate-cccd`; the panel itself is the single shared
+ * read-only report component and never renders general/team content.
+ */
+function DuplicateCccdTabPanel() {
+  return (
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+      <DuplicateCccdReportPanel />
+    </main>
   );
 }
 

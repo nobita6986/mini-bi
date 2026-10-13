@@ -1,20 +1,23 @@
 /**
- * P3.1-HF-R3-R1 - Dashboard tab placement + server-derived access gate.
+ * PRE-W2-HF-C - Global duplicate-CCCD read access: navigation + Dashboard tab.
  *
- * Khoa: bao cao CCCD trung KHONG con la muc top-level nav; no la tab ngang hang tren Dashboard
- * ngay sau "Bao cao theo nhom". Tab chi la metadata hien thi (server-derived) - quyen that do
- * API/RPC #74 quyet dinh. Predicate dung authority cua RPC: Full Admin triple |
- * catalog_master_manage | entry_privileged_edit, kem effective all scope.
+ * Khoa: bao cao CCCD trung mo cho MOI account nghiep vu hop le (actor resolve ok = da dang
+ * nhap, app_user enabled, actor mapping duy nhat). Co mot muc navigation "Bao cao CCCD trung"
+ * tro thang toi tab Dashboard `/dashboard?tab=duplicate-cccd`; tab van la tab thu ba sau
+ * "Bao cao theo nhom" va general/team khong bi mo rong. Quyen that do API/RPC (#87) quyet dinh.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { duplicateCccdReportNavPredicate } from "../navigation/registry-capability.ts";
+import {
+  duplicateCccdReportNavPredicate,
+  resolveNavCapabilityPredicate,
+} from "../navigation/registry-capability.ts";
 import { NAV_ENTRIES, findEntryByPath } from "../navigation/registry.ts";
 import { canViewDuplicateCccdReport } from "./direct-entry-page-access.ts";
 
-function actor(capabilities, scopes = [{ kind: "all", reference: "all" }]) {
+function actor(capabilities = [], scopes = [{ kind: "all", reference: "all" }]) {
   return {
     ok: true,
     actor: {
@@ -30,47 +33,54 @@ function actor(capabilities, scopes = [{ kind: "all", reference: "all" }]) {
   };
 }
 
-const FULL_ADMIN = ["entry_admin", "recruiter_master_manage", "team_master_manage"];
-
-test("the visibility predicate matches exactly the three RPC audiences at all scope", () => {
-  const all = [{ kind: "all", reference: "all" }];
-  assert.equal(duplicateCccdReportNavPredicate({ capabilities: FULL_ADMIN, scopes: all }), true);
-  assert.equal(duplicateCccdReportNavPredicate({ capabilities: ["catalog_master_manage"], scopes: all }), true);
-  assert.equal(duplicateCccdReportNavPredicate({ capabilities: ["entry_privileged_edit"], scopes: all }), true);
-
+test("the nav predicate opens the report to every resolved actor", () => {
+  const predicate = resolveNavCapabilityPredicate("duplicate_cccd_report");
+  assert.equal(predicate, duplicateCccdReportNavPredicate);
   for (const capabilities of [
-    ["entry_admin"], ["change_review"], ["team_manager_assign"], [], ["pii_view"],
-    ["entry_admin", "recruiter_master_manage"],
+    [], ["entry_own"], ["entry_team"], ["entry_admin"], ["change_review"],
+    ["recruiter_master_manage"], ["catalog_master_manage"], ["entry_privileged_edit"],
+    ["team_manager_assign"], ["pii_view"],
   ]) {
-    assert.equal(duplicateCccdReportNavPredicate({ capabilities, scopes: all }), false,
-      JSON.stringify(capabilities));
+    for (const scopes of [
+      [], [{ kind: "own", reference: "own" }], [{ kind: "team", reference: "t" }],
+      [{ kind: "all", reference: "all" }],
+    ]) {
+      assert.equal(duplicateCccdReportNavPredicate({ capabilities, scopes }), true,
+        JSON.stringify({ capabilities, scopes }));
+    }
   }
-  for (const scopes of [[], [{ kind: "own", reference: "own" }], [{ kind: "team", reference: "t" }]]) {
-    assert.equal(duplicateCccdReportNavPredicate({ capabilities: FULL_ADMIN, scopes }), false);
-    assert.equal(duplicateCccdReportNavPredicate({ capabilities: ["catalog_master_manage"], scopes }), false);
-    assert.equal(duplicateCccdReportNavPredicate({ capabilities: ["entry_privileged_edit"], scopes }), false);
-  }
+  // An unresolved actor is still hidden by decideNavEntryVisibility (capability != "any").
+  assert.equal(resolveNavCapabilityPredicate("duplicate_cccd_report")(
+    { capabilities: [], scopes: [] }), true);
 });
 
-test("canViewDuplicateCccdReport is server-derived and fails closed", () => {
-  assert.equal(canViewDuplicateCccdReport(actor(FULL_ADMIN)), true);
-  assert.equal(canViewDuplicateCccdReport(actor(["catalog_master_manage"])), true);
-  assert.equal(canViewDuplicateCccdReport(actor(["entry_privileged_edit"])), true);
-  assert.equal(canViewDuplicateCccdReport(actor(["entry_admin"])), false);
-  assert.equal(canViewDuplicateCccdReport(actor(["change_review"])), false);
-  assert.equal(canViewDuplicateCccdReport(actor(FULL_ADMIN, [{ kind: "team", reference: "t" }])), false);
+test("canViewDuplicateCccdReport follows the resolved actor and fails closed", () => {
+  assert.equal(canViewDuplicateCccdReport(actor([])), true);
+  assert.equal(canViewDuplicateCccdReport(actor(["entry_own"], [{ kind: "own", reference: "own" }])), true);
+  assert.equal(canViewDuplicateCccdReport(
+    actor(["team_manager_assign"], [{ kind: "team", reference: "t" }])), true);
   assert.equal(canViewDuplicateCccdReport(null), false);
-  assert.equal(canViewDuplicateCccdReport({ ok: false, reason: "UNAUTHENTICATED" }), false);
-  assert.equal(canViewDuplicateCccdReport({ ok: false, reason: "ACTOR_DISABLED" }), false);
+  for (const reason of [
+    "UNAUTHENTICATED", "ACTOR_DISABLED", "ACTOR_MAPPING_MISSING", "AMBIGUOUS_RECRUITER_LINK",
+  ]) {
+    assert.equal(canViewDuplicateCccdReport({ ok: false, reason }), false, reason);
+  }
 });
 
-test("the report is no longer a top-level navigation entry and has no standalone page", () => {
-  assert.equal(NAV_ENTRIES.some((entry) => entry.id === "duplicate-cccd-report"), false);
-  assert.equal(NAV_ENTRIES.some((entry) => entry.path.startsWith("/reports")), false);
+test("the report has a navigation entry that deep-links to the Dashboard tab", () => {
+  const entry = NAV_ENTRIES.find((candidate) => candidate.id === "duplicate-cccd-report");
+  assert.ok(entry, "the report menu entry exists");
+  assert.equal(entry.path, "/dashboard?tab=duplicate-cccd");
+  assert.equal(entry.capability, "duplicate_cccd_report");
+  assert.equal(entry.status, "current");
+  assert.equal(entry.visibility.desktop, true);
+  assert.equal(entry.visibility.mobile, true);
+  // No standalone report page was recreated.
+  assert.equal(NAV_ENTRIES.some((candidate) => candidate.path.startsWith("/reports")), false);
   assert.equal(findEntryByPath("/reports/duplicate-cccd"), undefined);
   assert.throws(
     () => readFileSync(new URL("../../app/reports/duplicate-cccd/page.tsx", import.meta.url), "utf8"),
-    "the standalone report page must be gone",
+    "the standalone report page must stay gone",
   );
 });
 
@@ -88,7 +98,7 @@ test("the CCCD report is the Dashboard tab right after the team tab", () => {
   assert.match(tabs, /id="bod-panel-duplicate-cccd"/);
 });
 
-test("the Dashboard page server-gates the CCCD tab and keeps URL/tab compatibility", () => {
+test("the Dashboard page + view server-gate the CCCD tab for every audience", () => {
   const page = readFileSync(new URL("../../app/dashboard/page.tsx", import.meta.url), "utf8");
   assert.match(page, /canViewDuplicateCccdReport\(actor\)/);
   assert.match(page, /type DashboardTab = "general" \| "team" \| "duplicate-cccd"/);
@@ -97,6 +107,19 @@ test("the Dashboard page server-gates the CCCD tab and keeps URL/tab compatibili
   assert.match(page, /\(tab === "team" \|\| tab === "duplicate-cccd"\) && sourcePresent/);
   assert.match(page, /normalizedDashboardPath\(params, tab, true\)/);
   assert.match(page, /canViewDuplicateCccd=\{canViewDuplicateCccd\}/);
+  assert.match(page, /duplicateCccdRequested=\{tab === "duplicate-cccd"\}/);
+
+  const view = readFileSync(
+    new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url), "utf8");
+  // Team/own audiences render the single shared CCCD panel on the deep link.
+  assert.match(view, /duplicateCccdRequested && canViewDuplicateCccd/);
+  assert.match(view, /<DuplicateCccdReportPanel \/>/);
+  // General/team are never widened: the scoped views stay the default body and
+  // the BoD tab shell is unchanged.
+  assert.match(view, /mode\.kind === "team"/);
+  assert.match(view, /mode\.kind === "own"/);
+  assert.ok(view.indexOf('mode.kind === "team"') < view.indexOf("<BodDashboardTabs"),
+    "the BoD tab shell is still the all-audience branch");
 });
 
 test("the panel keeps masked CCCD + states and never consumes dashboard filters", () => {

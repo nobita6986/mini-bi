@@ -53,8 +53,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 86, "the ledger carries the Pre-W2-P1 export migration as #86");
-  assert.equal(names[names.length - 1], EXPORT_MIGRATION_NAME, "export migration is the last slot");
+  assert.equal(names.length, 87, "the ledger carries the Pre-W2-P1 export migration as #86");
+  assert.equal(names[names.length - 2], EXPORT_MIGRATION_NAME,
+    "the export migration stays immediately before the PRE-W2-HF-C migration #87");
   return db;
 }
 

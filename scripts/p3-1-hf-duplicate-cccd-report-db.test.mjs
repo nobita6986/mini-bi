@@ -76,10 +76,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 86, "the ledger carries 84 migrations through W03A-R2 #84");
-  assert.equal(names[names.length - (13)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
-  assert.equal(names[names.length - (14)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
-  assert.equal(names[names.length - (26)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.length, 87, "the ledger carries 84 migrations through W03A-R2 #84");
+  assert.equal(names[names.length - (14)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
+  assert.equal(names[names.length - (15)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
+  assert.equal(names[names.length - (27)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 
@@ -406,10 +406,10 @@ test("P3.1-HF: the raw write path accepts a second active episode for one canoni
 });
 
 // ---------------------------------------------------------------------------
-// 5. Quyen doc: chi Full Admin / catalog_master_manage / entry_privileged_edit
-//    voi all scope con hieu luc.
+// 5. Quyen doc (PRE-W2-HF-C): MOI authenticated active business actor (co actor
+//    mapping hop le) deu doc duoc; chi unmapped/mismatched bi tu choi.
 // ---------------------------------------------------------------------------
-test("P3.1-HF: only the three all-scope authorities read the duplicate report", async () => {
+test("PRE-W2-HF-C: every mapped active business actor reads the same global report", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -417,31 +417,23 @@ test("P3.1-HF: only the three all-scope authorities read the duplicate report", 
     await createFullProfile(db, { cccd: "012345678901", name: "HF Gate Second",
       date: "2026-10-05", code: "hrp-2026-900011" });
 
-    const admin = await report(db);
-    assert.equal(admin.authority, "entry_admin");
-    assert.equal(admin.total_groups, 1);
-    assert.equal(admin.total_entries, 2);
-    assert.equal(admin.groups.length, 1);
-    assert.equal(admin.groups[0].profile_count, 2);
+    // Every mapped + enabled actor — regardless of capability or scope bundle —
+    // reads the SAME global result under one stable authority label.
+    for (const [auth, app] of [
+      [ADMIN_AUTH, ADMIN_APP], [ACC_AUTH, ACC_APP], [BOD_AUTH, BOD_APP],
+      [LONE_AUTH, LONE_APP], [REVIEW_AUTH, REVIEW_APP], [LEADER_AUTH, LEADER_APP],
+      [OUTSIDE_AUTH, OUTSIDE_APP], [SCOPED_AUTH, SCOPED_APP],
+    ]) {
+      const payload = await report(db, { auth, app });
+      assert.equal(payload.authority, "business_actor", "one stable authority label");
+      assert.equal(payload.total_groups, 1);
+      assert.equal(payload.total_entries, 2);
+      assert.equal(payload.groups.length, 1);
+      assert.equal(payload.groups[0].profile_count, 2);
+    }
 
-    const accounting = await report(db, { auth: ACC_AUTH, app: ACC_APP });
-    assert.equal(accounting.authority, "catalog_master_manage");
-    assert.equal(accounting.total_groups, 1);
-
-    const board = await report(db, { auth: BOD_AUTH, app: BOD_APP });
-    assert.equal(board.authority, "entry_privileged_edit");
-    assert.equal(board.total_groups, 1);
-
-    // entry_admin@all mot minh, change_review, team leader, actor khong co capability:
-    // tat ca bi tu choi truoc khi doc bat cu dong nao.
-    await reportDenied(db, { auth: LONE_AUTH, app: LONE_APP }, /duplicate cccd report denied/);
-    await reportDenied(db, { auth: REVIEW_AUTH, app: REVIEW_APP }, /duplicate cccd report denied/);
-    await reportDenied(db, { auth: LEADER_AUTH, app: LEADER_APP }, /duplicate cccd report denied/);
-    await reportDenied(db, { auth: OUTSIDE_AUTH, app: OUTSIDE_APP }, /duplicate cccd report denied/);
-    // Full Admin triple nhung chi team scope.
-    await reportDenied(db, { auth: SCOPED_AUTH, app: SCOPED_APP },
-      /duplicate cccd report requires all scope/);
-    // Mapping: chu the nay khong duoc muon tai khoan khac, va cap chua map bi tu choi.
+    // Mapping stays the authority: a mismatched or unmapped actor is denied
+    // before any read.
     await reportDenied(db, { auth: ADMIN_AUTH, app: ACC_APP }, /actor mapping denied/);
     await reportDenied(db, { auth: UNMAPPED_AUTH, app: UNMAPPED_APP }, /actor mapping denied/);
   } finally {

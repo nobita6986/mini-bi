@@ -14,7 +14,7 @@ const actor = {
 
 function validData(overrides = {}) {
   return {
-    authority: "entry_admin",
+    authority: "business_actor",
     authorization_date: "2026-10-09",
     page: 1,
     page_size: 25,
