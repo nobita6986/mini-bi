@@ -21,14 +21,14 @@ const dependencies = {
  * P3.1-W01B - GET/POST /api/admin/catalog/personnel
  * Gate chay TRUOC khi tao session hay repository. Khong co UI trong task nay.
  */
-import { createPersonnelCatalog, listPersonnelCatalog } from "@/lib/direct-entry/personnel-catalog-api";
+import { listPersonnelCatalog } from "@/lib/direct-entry/personnel-catalog-api";
 
+/**
+ * PRE-W2-HF-D3-C: free-create personnel is closed. POST is intentionally not
+ * exported here — Next returns 405 for POST. Create now goes through
+ * POST /api/admin/catalog/personnel/from-account (account-driven).
+ */
 export async function GET(request: Request): Promise<Response> {
   if (process.env.DIRECT_ENTRY_API_ENABLED !== "true") return GATE();
   return listPersonnelCatalog(request, "true", dependencies);
-}
-
-export async function POST(request: Request): Promise<Response> {
-  if (process.env.DIRECT_ENTRY_API_ENABLED !== "true") return GATE();
-  return createPersonnelCatalog(request, "true", dependencies);
 }

@@ -8,6 +8,8 @@
 import {
   MAX_PASSWORD_BYTES,
   MIN_PASSWORD_BYTES,
+  projectEligibleAccountsEnvelope,
+  type EligibleAccountsEnvelope,
 } from "./account-operation-contract.ts";
 import {
   newIdempotencyKey,
@@ -187,4 +189,22 @@ export function classifyAccountOperationResponse(
 
 export function newAccountOperationKey(): string {
   return newIdempotencyKey();
+}
+
+export const ELIGIBLE_ACCOUNTS_PAGE_SIZE = 25;
+
+export function buildEligibleAccountsQuery(page: number): URLSearchParams | null {
+  if (!Number.isSafeInteger(page) || page < 1 || page > 1000) return null;
+  return new URLSearchParams({
+    page: String(page),
+    page_size: String(ELIGIBLE_ACCOUNTS_PAGE_SIZE),
+  });
+}
+
+/** Strict-project the eligible-accounts list (app_user_id + display_name only). */
+export function projectEligibleAccounts(payload: unknown): EligibleAccountsEnvelope | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  if (record.ok !== true) return null;
+  return projectEligibleAccountsEnvelope(record.list);
 }

@@ -4,10 +4,12 @@ import test from "node:test";
 import {
   buildCreateAccountRequest,
   buildEditDisplayNameRequest,
+  buildEligibleAccountsQuery,
   buildPersonnelFromAccountRequest,
   buildReconcileRequest,
   buildResetPasswordRequest,
   classifyAccountOperationResponse,
+  projectEligibleAccounts,
 } from "./account-operation-ui-model.ts";
 
 const KEY = "91000000-0000-4000-8000-000000000001";
@@ -47,6 +49,22 @@ test("D3-B UI: personnel-from-account keeps display_name server-side (not a fiel
   assert.equal(built.ok, true);
   assert.equal("display_name" in built.body, false, "display_name must not be sent from the browser");
   assert.equal(built.body.personnel_code, "NV001");
+});
+
+test("D3-C UI: eligible accounts projection only exposes app_user_id + display_name", () => {
+  const query = buildEligibleAccountsQuery(1);
+  assert.ok(query);
+  assert.equal(query.get("page"), "1");
+  assert.equal(query.get("page_size"), "25");
+
+  const list = projectEligibleAccounts({
+    ok: true,
+    list: { page: 1, page_size: 25, total: 1, has_more: false, accounts: [{ app_user_id: ACCOUNT, display_name: "Nguyen Van A" }] },
+  });
+  assert.equal(list.accounts.length, 1);
+  assert.equal(list.accounts[0].display_name, "Nguyen Van A");
+  // No email/login/auth_subject/internal link ids in the projection.
+  assert.equal(projectEligibleAccounts({ ok: true, list: { page: 1, page_size: 25, total: 1, has_more: false, accounts: [{ app_user_id: ACCOUNT, display_name: "X", email: "x@hrpartner.vn" }] } }), null);
 });
 
 test("D3-B UI: response classifier surfaces needs-reconcile states without password/ref leak", () => {

@@ -212,6 +212,23 @@ test("D3: personnel from account returns the created personnel, display_name ser
   assert.equal(body.personnel.personnel_code, "NV001");
 });
 
+/* ---------- personnel-from-account taxonomy ---------- */
+test("D3-C: personnel-from-account maps denied/conflict/invalid to the sanitized taxonomy", async () => {
+  for (const [kind, status] of [["denied", 403], ["conflict", 409], ["invalid", 400]]) {
+    const d = deps({
+      repository: repository({ async createPersonnelFromAccount() { return { ok: false, kind }; } }),
+    });
+    const response = await createPersonnelFromAccount(fakeRequest({
+      account_ref: APP_USER, expected_account_version: 1, personnel_code: "NV001",
+      personnel_position: "STAFF", valid_from: "2026-10-01", reason: "create", idempotency_key: AUTH_SUBJECT,
+    }), "true", d);
+    assert.equal(response.status, status, kind);
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    assert.doesNotMatch(JSON.stringify(body), /auth_subject|email|password|app_user_id/);
+  }
+});
+
 /* ---------- finish result is authoritative ---------- */
 test("D3: create unknown with a failed finish does NOT return terminal success", async () => {
   let authCalls = 0;
