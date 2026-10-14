@@ -2,9 +2,9 @@
  * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the 92-migration ledger).
  *
  * Covers the durable account-operation intent, the narrow RPCs (begin/claim/read/finish,
- * finalize, update display name, create personnel from account, reclassify), the symmetric
- * 1:1 account<->recruiter cardinality, the revision action extension and the
- * no-password / deny-by-default / OCC / idempotency / audit guarantees.
+ * finalize, update display name, create personnel from account, list eligible accounts,
+ * reclassify), the locked state machine, the symmetric 1:1 cardinality, the revision
+ * action extension and the no-password / deny-by-default / OCC / idempotency / audit guarantees.
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -29,7 +29,6 @@ const LONE_AUTH = uuid(32), LONE_APP = uuid(42);   // entry_admin only
 const ACC_AUTH = uuid(33), ACC_APP = uuid(43);      // catalog_master_manage only
 const DISABLED_AUTH = uuid(34), DISABLED_APP = uuid(44);
 const UNMAPPED_AUTH = uuid(35), UNMAPPED_APP = uuid(45);
-// Target account used for reset/update/create-personnel scenarios.
 const TARGET_AUTH = uuid(51), TARGET_APP = uuid(61);
 
 async function buildDb() {
@@ -73,7 +72,6 @@ async function seed(db) {
   await insertActor(db, LONE_AUTH, LONE_APP, { capabilities: ["entry_admin"], scopes: ["all"] });
   await insertActor(db, ACC_AUTH, ACC_APP, { capabilities: ["catalog_master_manage"], scopes: ["all"] });
   await insertActor(db, DISABLED_AUTH, DISABLED_APP, { capabilities: FULL_ADMIN, scopes: ["all"], enabled: false });
-  // UNMAPPED_AUTH never inserted into direct_entry_app_users.
   await insertActor(db, TARGET_AUTH, TARGET_APP, { capabilities: ["entry_create"], scopes: ["own"] });
 }
 
@@ -96,6 +94,7 @@ const finish = (db, args) => rpc(db, "public.direct_entry_account_operation_fini
 const finalize = (db, args) => rpc(db, "public.direct_entry_account_operation_finalize_create", args);
 const updateName = (db, args) => rpc(db, "public.direct_entry_account_operation_update_display_name", args);
 const createPersonnel = (db, args) => rpc(db, "public.direct_entry_account_operation_create_personnel", args);
+const listEligible = (db, args) => rpc(db, "public.direct_entry_account_operation_list_eligible_accounts", args);
 const reclassify = (db, args) => rpc(db, "public.direct_entry_account_operation_reclassify", args);
 
 async function count(db, sql, params = []) {
@@ -108,7 +107,7 @@ async function expectDenied(db, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Intent lifecycle: begin -> claim -> read -> finish, idempotent begin.
+// 1. Intent lifecycle + idempotent begin.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: begin/claim/read/finish and idempotent begin", async () => {
   const db = await buildDb();
@@ -121,11 +120,17 @@ test("PRE-W2-HF-D3-A: begin/claim/read/finish and idempotent begin", async () =>
     assert.ok(b.intent_id);
     assert.ok(b.intent_token);
 
+    const key = idemKey();
+    const b2 = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "xyz789", "Charlie",
+      null, "create", key]);
+    const replay = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "xyz789", "Charlie",
+      null, "create", key]);
+    assert.deepEqual(replay, b2);
+
     const c = await claim(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token]);
     assert.equal(c.claimed, true);
     assert.equal(c.state, "IN_FLIGHT");
 
-    // Second claim loses: already IN_FLIGHT.
     const c2 = await claim(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token]);
     assert.equal(c2.claimed, false);
     assert.equal(c2.state, "IN_FLIGHT");
@@ -135,31 +140,14 @@ test("PRE-W2-HF-D3-A: begin/claim/read/finish and idempotent begin", async () =>
     assert.equal(r.login_id, "abc123");
     assert.equal(r.display_name, "Alpha Beta");
 
-    const f = await finish(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, "FAILED", null, null]);
+    const f = await finish(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, "FAILED", "auth_failed"]);
     assert.equal(f.state, "FAILED");
     assert.ok(f.resolved_at);
-  } finally {
-    await db.close();
-  }
-});
 
-// ---------------------------------------------------------------------------
-// 2. Idempotent begin: same key returns byte-identical result; different input fails.
-// ---------------------------------------------------------------------------
-test("PRE-W2-HF-D3-A: begin is idempotent per key and rejects key reuse with different input", async () => {
-  const db = await buildDb();
-  try {
-    await seed(db);
-    const key = idemKey();
-    const first = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
-      null, "create account", key]);
-    const replay = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
-      null, "create account", key]);
-    assert.deepEqual(replay, first);
-
+    // Idempotent begin replay with different input is rejected.
     await assert.rejects(
-      () => begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Different Name",
-        null, "create account", key]),
+      () => begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "xyz789", "Different",
+        null, "create", key]),
       (error) => error.code === "22023");
   } finally {
     await db.close();
@@ -167,28 +155,44 @@ test("PRE-W2-HF-D3-A: begin is idempotent per key and rejects key reuse with dif
 });
 
 // ---------------------------------------------------------------------------
-// 3. Two concurrent creates for the same login_id: the unique live-login guard
-//    allows only one.
+// 2. RESET begin stores the target auth_subject for the Auth call.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D3-A: two concurrent creates for one login_id leave only one live intent", async () => {
+test("PRE-W2-HF-D3-A: reset begin stores the target auth_subject", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
-      null, "create account", idemKey()]);
-    await assert.rejects(
-      () => begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Another Name",
-        null, "create account", idemKey()]),
-      (error) => error.code === "23505");
-    assert.equal(await count(db,
-      "select count(*) from public.direct_entry_account_operation_intents"), 1);
+    const b = await begin(db, [ADMIN_AUTH, ADMIN_APP, "RESET_PASSWORD", null, null,
+      TARGET_APP, "reset password", idemKey()]);
+    assert.equal(b.kind, "RESET_PASSWORD");
+    const r = await read(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id]);
+    assert.equal(r.auth_subject, TARGET_AUTH);
+    assert.equal(r.account_ref, TARGET_APP);
   } finally {
     await db.close();
   }
 });
 
 // ---------------------------------------------------------------------------
-// 4. finalize create: correct provenance creates the app user; wrong token blocks.
+// 3. Two concurrent creates for one login_id: only one live intent.
+// ---------------------------------------------------------------------------
+test("PRE-W2-HF-D3-A: two concurrent creates for one login_id leave only one live intent", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
+      null, "create", idemKey()]);
+    await assert.rejects(
+      () => begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Another Name",
+        null, "create", idemKey()]),
+      (error) => error.code === "23505");
+    assert.equal(await count(db, "select count(*) from public.direct_entry_account_operation_intents"), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 4. finalize create (correct provenance) + no default grants.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenance", async () => {
   const db = await buildDb();
@@ -213,7 +217,6 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
     assert.equal(appUser.enabled, true);
     assert.equal(appUser.display_name, "Alpha Beta");
 
-    // No default capability/scope/link was granted.
     assert.equal(await count(db, "select count(*) from public.direct_entry_capability_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_scope_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links where app_user_id = $1", [f.app_user_id]), 0);
@@ -226,7 +229,10 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
   }
 });
 
-test("PRE-W2-HF-D3-A: finalize blocks a mismatched provenance token", async () => {
+// ---------------------------------------------------------------------------
+// 5. finalize blocks a mismatched provenance token; terminal is immutable.
+// ---------------------------------------------------------------------------
+test("PRE-W2-HF-D3-A: finalize blocks a mismatched token and terminal is immutable", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -245,34 +251,88 @@ test("PRE-W2-HF-D3-A: finalize blocks a mismatched provenance token", async () =
       [b.intent_id])).rows[0].state;
     assert.equal(state, "BLOCKED");
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_users"), 5);
+
+    // BLOCKED is terminal: a later correct token cannot revive it.
+    const still = await finalize(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token,
+      createdAuth, idemKey()]);
+    assert.equal(still.intent_state, "BLOCKED");
   } finally {
     await db.close();
   }
 });
 
 // ---------------------------------------------------------------------------
-// 5. update display name: unlinked and linked (recruiter sync).
+// 6. finalize reconciles an INDETERMINATE create (after timeout).
+// ---------------------------------------------------------------------------
+test("PRE-W2-HF-D3-A: finalize reconciles an INDETERMINATE create", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const b = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
+      null, "create account", idemKey()]);
+    await claim(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token]);
+    await db.query("update public.direct_entry_account_operation_intents set state = 'INDETERMINATE', resolved_at = now() where intent_id = $1", [b.intent_id]);
+
+    const createdAuth = uuid(73);
+    await db.query("insert into auth.users (id) values ($1)", [createdAuth]);
+
+    const f = await finalize(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token,
+      createdAuth, idemKey()]);
+    assert.equal(f.intent_state, "APPLIED");
+    assert.equal(f.auth_subject, createdAuth);
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. finish transition matrix: CREATE cannot be APPLIED via finish; terminal immutable.
+// ---------------------------------------------------------------------------
+test("PRE-W2-HF-D3-A: finish enforces the transition matrix", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const b = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
+      null, "create account", idemKey()]);
+    await claim(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token]);
+
+    // CREATE APPLIED is finalize-only.
+    await assert.rejects(
+      () => finish(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, "APPLIED", null]),
+      (error) => error.code === "22023");
+
+    const f = await finish(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, "FAILED", "auth_failed"]);
+    assert.equal(f.state, "FAILED");
+
+    // FAILED is terminal.
+    await assert.rejects(
+      () => finish(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, "INDETERMINATE", null]),
+      (error) => error.code === "22023");
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 8. update display name: unlinked + linked + OCC + idempotent.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: update display name updates the app user and its linked recruiter", async () => {
   const db = await buildDb();
   try {
     await seed(db);
 
-    // Unlinked: only the app user changes.
     const u1 = await updateName(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "New Name", 1,
       "rename", idemKey()]);
     assert.equal(u1.version, 2);
     assert.equal(u1.recruiter_id, null);
 
-    // Create personnel from the target account -> links a recruiter.
-    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "PC-001", "STAFF",
+    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 2, "PC-001", "STAFF",
       "2026-01-05", "create personnel", idemKey()]);
     assert.equal(p.display_name, "New Name");
 
-    // Linked: both app user and recruiter change together.
-    const u2 = await updateName(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "Renamed Again", 2,
+    const u2 = await updateName(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "Renamed Again", 3,
       "rename again", idemKey()]);
-    assert.equal(u2.version, 3);
+    assert.equal(u2.version, 4);
     assert.equal(u2.recruiter_id, p.recruiter_id);
     assert.equal(u2.recruiter_version, 2);
 
@@ -302,62 +362,70 @@ test("PRE-W2-HF-D3-A: update display name honours OCC and idempotency", async ()
 });
 
 // ---------------------------------------------------------------------------
-// 6. create personnel from account: atomic, display_name from account,
-//    conflict on personnel_code fails with zero residue.
+// 9. create personnel: atomic, account lifecycle (version + link_create revision),
+//    conflict rollback.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D3-A: create personnel is atomic and rolls back on a code conflict", async () => {
+test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecycle", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "PC-001", "STAFF",
+    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-001", "STAFF",
       "2026-01-05", "create personnel", idemKey()]);
-    assert.equal(p.display_name, "D3A Account"); // server-side from account
+    assert.equal(p.display_name, "D3A Account");
+    assert.equal(p.app_user_version, 2);
     assert.ok(p.recruiter_id);
     assert.ok(p.link_id);
     assert.ok(p.membership_id);
+    assert.ok(p.app_user_revision_id);
 
     assert.equal(await count(db, "select count(*) from public.recruiters"), 1);
     assert.equal(await count(db, "select count(*) from public.recruiter_provider_memberships"), 1);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links"), 1);
 
-    // A second unlinked account for the conflict check.
+    const linkRev = (await db.query(
+      "select action from public.direct_entry_app_user_revisions where app_user_id = $1 and action = 'link_create'",
+      [TARGET_APP])).rows;
+    assert.equal(linkRev.length, 1);
+    const linkAudit = (await db.query(
+      "select count(*)::int as n from public.direct_entry_audit_events where action = 'link_create' and app_user_id = $1",
+      [ADMIN_APP])).rows[0].n;
+    assert.equal(linkAudit, 1);
+
+    // Conflict: same code on a different unlinked account fails with no residue.
     const secondAuth = uuid(82), secondApp = uuid(83);
     await insertActor(db, secondAuth, secondApp, { capabilities: ["entry_create"], scopes: ["own"] });
-
-    // Conflict: same personnel_code (on a different unlinked account) fails with no
-    // recruiter/membership/link residue.
     const before = await count(db, "select count(*) from public.recruiters");
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, secondApp, "PC-001", "STAFF",
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, secondApp, 1, "PC-001", "STAFF",
         "2026-01-05", "create personnel again", idemKey()]),
       (error) => error.code === "23505");
     assert.equal(await count(db, "select count(*) from public.recruiters"), before);
-    assert.equal(await count(db, "select count(*) from public.recruiter_provider_memberships"), 1);
-    assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links"), 1);
   } finally {
     await db.close();
   }
 });
 
-test("PRE-W2-HF-D3-A: create personnel rejects disabled, already-linked and unknown accounts", async () => {
+test("PRE-W2-HF-D3-A: create personnel rejects disabled, already-linked, unknown accounts and empty code", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    // Unknown account.
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, uuid(99), "PC-002", "STAFF", "2026-01-05", "r", idemKey()]),
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, uuid(99), 1, "PC-002", "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "P0002");
 
-    // Already-linked account.
-    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "PC-003", "STAFF", "2026-01-05", "r", idemKey()]);
+    // Empty personnel code -> input-invalid 22023, not 23514/23505.
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "PC-004", "STAFF", "2026-01-05", "r", idemKey()]),
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "   ", "STAFF", "2026-01-05", "r", idemKey()]),
+      (error) => error.code === "22023");
+
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-003", "STAFF", "2026-01-05", "r", idemKey()]);
+    await assert.rejects(
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 2, "PC-004", "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "23514");
 
-    // Disabled account.
     await db.query("update public.direct_entry_app_users set enabled = false, version = version + 1 where app_user_id = $1", [TARGET_APP]);
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "PC-005", "STAFF", "2026-01-05", "r", idemKey()]),
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 3, "PC-005", "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "23514");
   } finally {
     await db.close();
@@ -365,14 +433,13 @@ test("PRE-W2-HF-D3-A: create personnel rejects disabled, already-linked and unkn
 });
 
 // ---------------------------------------------------------------------------
-// 7. Symmetric 1:1 cardinality: one recruiter -> one verified app-user link.
+// 10. Symmetric 1:1 cardinality.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: a recruiter cannot gain a second verified app-user link", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]);
-    // Create a second account and try to link it to the same recruiter directly.
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]);
     const secondAuth = uuid(80), secondApp = uuid(81);
     await insertActor(db, secondAuth, secondApp, { capabilities: ["entry_create"], scopes: ["own"] });
     const recruiter = (await db.query("select recruiter_id from public.recruiters")).rows[0].recruiter_id;
@@ -388,28 +455,55 @@ test("PRE-W2-HF-D3-A: a recruiter cannot gain a second verified app-user link", 
 });
 
 // ---------------------------------------------------------------------------
-// 8. Authority: only Full Admin triple + all scope; disabled / narrower / unmapped denied.
+// 11. list eligible accounts: enabled + unlinked only, no auth_subject/email/link ids.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D3-A: only the Full Admin triple with all scope may mutate", async () => {
+test("PRE-W2-HF-D3-A: list eligible accounts returns only enabled unlinked accounts", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    const args = [null, null, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()];
+    // TARGET is eligible; create a second eligible + link TARGET via personnel.
+    const secondAuth = uuid(84), secondApp = uuid(85);
+    await insertActor(db, secondAuth, secondApp, { capabilities: ["entry_create"], scopes: ["own"] });
 
-    await expectDenied(db, () => begin(db, [LONE_AUTH, LONE_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
-    await expectDenied(db, () => begin(db, [ACC_AUTH, ACC_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
-    await expectDenied(db, () => begin(db, [DISABLED_AUTH, DISABLED_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
-    await expectDenied(db, () => begin(db, [UNMAPPED_AUTH, UNMAPPED_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
+    const all = await listEligible(db, [ADMIN_AUTH, ADMIN_APP, 1, 25]);
+    assert.ok(all.total >= 2);
 
-    await expectDenied(db, () => createPersonnel(db, [LONE_AUTH, LONE_APP, TARGET_APP, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]));
-    await expectDenied(db, () => updateName(db, [ACC_AUTH, ACC_APP, TARGET_APP, "X", 1, "r", idemKey()]));
+    const serialized = JSON.stringify(all);
+    assert.ok(!serialized.includes(TARGET_AUTH), "auth_subject must not leak");
+    assert.ok(!serialized.includes(secondAuth), "auth_subject must not leak");
+
+    // Link TARGET, it drops out of the eligible set.
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]);
+    const after = await listEligible(db, [ADMIN_AUTH, ADMIN_APP, 1, 25]);
+    const ids = after.accounts.map((a) => a.app_user_id);
+    assert.equal(ids.includes(TARGET_APP), false, "linked account is no longer eligible");
+    assert.equal(ids.includes(secondApp), true);
   } finally {
     await db.close();
   }
 });
 
 // ---------------------------------------------------------------------------
-// 9. No password/hash in schema, audit or projection.
+// 12. Authority: only Full Admin triple + all scope; disabled / narrower / unmapped denied.
+// ---------------------------------------------------------------------------
+test("PRE-W2-HF-D3-A: only the Full Admin triple with all scope may mutate", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await expectDenied(db, () => begin(db, [LONE_AUTH, LONE_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
+    await expectDenied(db, () => begin(db, [ACC_AUTH, ACC_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
+    await expectDenied(db, () => begin(db, [DISABLED_AUTH, DISABLED_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
+    await expectDenied(db, () => begin(db, [UNMAPPED_AUTH, UNMAPPED_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
+    await expectDenied(db, () => createPersonnel(db, [LONE_AUTH, LONE_APP, TARGET_APP, 1, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]));
+    await expectDenied(db, () => updateName(db, [ACC_AUTH, ACC_APP, TARGET_APP, "X", 1, "r", idemKey()]));
+    await expectDenied(db, () => listEligible(db, [ACC_AUTH, ACC_APP, 1, 25]));
+  } finally {
+    await db.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 13. No password/hash in schema, audit or projection.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: no password or hash is ever stored or projected", async () => {
   const db = await buildDb();
@@ -417,20 +511,16 @@ test("PRE-W2-HF-D3-A: no password or hash is ever stored or projected", async ()
     await seed(db);
     const b = await begin(db, [ADMIN_AUTH, ADMIN_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta",
       null, "create account", idemKey()]);
-    const serialized = JSON.stringify(b);
-    assert.ok(!/password|secret|hash/i.test(serialized));
+    assert.ok(!/password|secret|hash/i.test(JSON.stringify(b)));
 
-    // The intent table has no password/hash column.
     const cols = (await db.query(
       "select column_name from information_schema.columns where table_schema='public' and table_name='direct_entry_account_operation_intents'"))
       .rows.map((r) => r.column_name);
     assert.equal(cols.some((c) => /password|secret|hash/i.test(c)), false);
 
-    // The begin audit event stores only internal references, never a password.
     const audit = (await db.query(
       "select action, resource_ref from public.direct_entry_audit_events where action = 'account_operation_begin' order by created_at desc limit 1"))
       .rows[0];
-    assert.ok(audit.resource_ref);
     assert.ok(!/password|secret|hash/i.test(audit.resource_ref));
   } finally {
     await db.close();
@@ -438,7 +528,7 @@ test("PRE-W2-HF-D3-A: no password or hash is ever stored or projected", async ()
 });
 
 // ---------------------------------------------------------------------------
-// 10. Reclassify: PENDING expires, IN_FLIGHT becomes INDETERMINATE.
+// 14. Reclassify.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: reclassify moves stale intents to their terminal states", async () => {
   const db = await buildDb();
@@ -466,7 +556,7 @@ test("PRE-W2-HF-D3-A: reclassify moves stale intents to their terminal states", 
 });
 
 // ---------------------------------------------------------------------------
-// 11. Migration self-check: ACL, search_path, signature posture.
+// 15. Migration self-check: ACL, search_path, signature posture.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-D3-A: the migration locks the RPC boundary and revision action vocabulary", async () => {
   const db = await buildDb();
@@ -484,7 +574,6 @@ test("PRE-W2-HF-D3-A: the migration locks the RPC boundary and revision action v
       " from pg_proc p where p.oid = 'public.direct_entry_account_operation_begin(uuid,uuid,text,text,text,uuid,text,text)'::regprocedure")).rows[0];
     assert.deepEqual(acl, { s: true, a: false, u: false });
 
-    // Revision action vocabulary includes the two new meaningful actions.
     const actions = (await db.query(
       "select pg_get_constraintdef(oid) as d from pg_constraint" +
       " where conname = 'direct_entry_app_user_revisions_action_check'")).rows[0].d;

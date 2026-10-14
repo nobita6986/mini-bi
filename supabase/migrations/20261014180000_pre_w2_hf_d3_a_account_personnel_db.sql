@@ -4,8 +4,8 @@
 -- SQL/database foundation only: durable account-operation intents, the narrow
 -- Postgres RPCs that D3-B (server + Auth saga) and D3-C (personnel-from-account)
 -- will call, the symmetric 1:1 account<->recruiter link guard, the app-user
--- revision action extension and the retention/reclassification entry point.
--- No Supabase Auth call, no API route, no UI, no cron.
+-- revision action extension, the eligible-account read model and the retention /
+-- reclassification entry point. No Supabase Auth call, no API route, no UI, no cron.
 --
 -- Authority: the canonical Full Admin triple (entry_admin + recruiter_master_manage
 -- + team_master_manage) with an effective `all` scope, reusing the W03A guard
@@ -66,11 +66,13 @@ create table public.direct_entry_account_operation_intents (
   check (kind = 'CREATE_ACCOUNT' or account_ref is not null)
 );
 
--- Unique live-login guard: at most one CREATE_ACCOUNT intent per canonical login_id
--- that is still PENDING or IN_FLIGHT, so two concurrent creates cannot both claim.
+-- Unique live-login guard: at most one unresolved CREATE_ACCOUNT intent per canonical
+-- login_id. Unresolved = PENDING / IN_FLIGHT / INDETERMINATE / BLOCKED / CONFLICT, so a
+-- timed-out, blocked or conflicting create cannot be re-run into a second Auth saga.
 create unique index direct_entry_account_operation_intents_live_login_uniq
   on public.direct_entry_account_operation_intents (login_id)
-  where kind = 'CREATE_ACCOUNT' and state in ('PENDING', 'IN_FLIGHT');
+  where kind = 'CREATE_ACCOUNT'
+    and state in ('PENDING', 'IN_FLIGHT', 'INDETERMINATE', 'BLOCKED', 'CONFLICT');
 
 alter table public.direct_entry_account_operation_intents enable row level security;
 alter table public.direct_entry_account_operation_intents force row level security;
@@ -138,7 +140,7 @@ create trigger direct_entry_recruiter_link_no_overlap_by_recruiter
   for each row execute function public.direct_entry_guard_recruiter_link_recruiter_overlap();
 
 -- -----------------------------------------------------------------------------
--- 5. Internal helper: lock + read one intent.
+-- 5. Internal helpers.
 -- -----------------------------------------------------------------------------
 create function public.direct_entry_lock_account_operation(p_intent_id uuid)
 returns public.direct_entry_account_operation_intents
@@ -169,7 +171,9 @@ revoke all on function public.direct_entry_lock_account_operation(uuid)
 -- 6. Intent lifecycle RPCs (service_role entry points).
 -- -----------------------------------------------------------------------------
 
--- 6a. begin: write the intent first (no password). Idempotent per key.
+-- 6a. begin: write the intent first (no password). Idempotent per key; the idempotency
+--     claim happens before any reason/intent write so a concurrent replay can never
+--     leave an orphan intent. RESET_PASSWORD stores the target auth_subject.
 create function public.direct_entry_account_operation_begin(
   p_auth_subject uuid,
   p_actor_app_user_id uuid,
@@ -190,9 +194,9 @@ declare
   v_login_id text := lower(btrim(p_login_id));
   v_display_name text := btrim(p_display_name);
   v_account_ref uuid := p_account_ref;
+  v_auth_subject uuid;
   v_reason_id uuid;
   v_payload_hash text;
-  v_existing_hash text;
   v_prior jsonb;
   v_intent public.direct_entry_account_operation_intents;
 begin
@@ -222,12 +226,18 @@ begin
     v_display_name := null;
   end if;
 
+  -- Authority before any target read, so an unauthorized actor learns nothing.
   perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_actor_app_user_id);
 
-  if p_kind = 'RESET_PASSWORD' and not exists (
-    select 1 from public.direct_entry_app_users u where u.app_user_id = v_account_ref
-  ) then
-    raise exception 'account not found' using errcode = 'P0002';
+  if p_kind = 'RESET_PASSWORD' then
+    -- Read the target auth_subject under lock and store it on the intent.
+    select u.auth_subject into v_auth_subject
+      from public.direct_entry_app_users u
+     where u.app_user_id = v_account_ref
+     for update;
+    if not found then
+      raise exception 'account not found' using errcode = 'P0002';
+    end if;
   end if;
 
   v_payload_hash := public.direct_entry_payload_hash(jsonb_build_object(
@@ -235,34 +245,22 @@ begin
     'account_ref', v_account_ref, 'reason', p_reason
   ));
 
-  select i.request_hash, i.result into v_existing_hash, v_prior
-    from public.direct_entry_rpc_idempotency i
-   where i.app_user_id = p_actor_app_user_id
-     and i.action = v_action
-     and i.idempotency_key = p_idempotency_key
-   for update;
-  if found then
-    if v_existing_hash <> v_payload_hash then
-      raise exception 'idempotency key reused with different input' using errcode = '22023';
-    end if;
-    return v_prior;
-  end if;
-
-  v_reason_id := public.direct_entry_reason(p_actor_app_user_id, p_reason);
-
-  insert into public.direct_entry_account_operation_intents (
-    kind, state, login_id, display_name, account_ref, idempotency_key, reason_id
-  ) values (
-    p_kind, 'PENDING', nullif(v_login_id, ''), nullif(v_display_name, ''), v_account_ref,
-    p_idempotency_key, v_reason_id
-  ) returning * into v_intent;
-
+  -- Atomic idempotency claim + hash check before any write.
   v_prior := public.direct_entry_idempotency_begin(
     p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
   );
   if v_prior is not null then
     return v_prior;
   end if;
+
+  v_reason_id := public.direct_entry_reason(p_actor_app_user_id, p_reason);
+
+  insert into public.direct_entry_account_operation_intents (
+    kind, state, login_id, display_name, account_ref, auth_subject, idempotency_key, reason_id
+  ) values (
+    p_kind, 'PENDING', nullif(v_login_id, ''), nullif(v_display_name, ''), v_account_ref,
+    v_auth_subject, p_idempotency_key, v_reason_id
+  ) returning * into v_intent;
 
   insert into public.direct_entry_audit_events (
     auth_subject, app_user_id, action, capability, resource_ref, scope_kind, outcome, reason_id
@@ -389,15 +387,16 @@ revoke all on function public.direct_entry_account_operation_read(uuid, uuid, uu
 grant execute on function public.direct_entry_account_operation_read(uuid, uuid, uuid)
   to service_role;
 
--- 6d. finish: record an explicitly observed terminal outcome. Never auto-promotes
---     INDETERMINATE to APPLIED; the caller states the outcome it actually observed.
+-- 6d. finish: record an explicitly observed terminal outcome with a sanitized
+--     failure code. Locked transition matrix: only from IN_FLIGHT; RESET may reach
+--     APPLIED/FAILED/INDETERMINATE, CREATE only FAILED/INDETERMINATE/CONFLICT (CREATE
+--     APPLIED/BLOCKED are finalize-only); terminal states are immutable.
 create function public.direct_entry_account_operation_finish(
   p_auth_subject uuid,
   p_actor_app_user_id uuid,
   p_intent_id uuid,
   p_outcome text,
-  p_auth_subject_created uuid,
-  p_detail text
+  p_failure_code text
 )
 returns jsonb
 language plpgsql
@@ -408,38 +407,64 @@ declare
   v_intent public.direct_entry_account_operation_intents;
 begin
   perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_actor_app_user_id);
-  if p_outcome is null or p_outcome not in ('APPLIED','FAILED','INDETERMINATE','BLOCKED','CONFLICT','EXPIRED') then
-    raise exception 'account operation outcome invalid' using errcode = '22023';
+  if p_outcome is null then
+    raise exception 'account operation outcome required' using errcode = '22023';
+  end if;
+  if p_failure_code is not null and p_failure_code !~ '^[a-z0-9_]{1,64}$' then
+    raise exception 'account operation failure code invalid' using errcode = '22023';
   end if;
 
   v_intent := public.direct_entry_lock_account_operation(p_intent_id);
-  if v_intent.state in ('APPLIED','FAILED','EXPIRED') then
-    return jsonb_build_object(
-      'intent_id', v_intent.intent_id, 'state', v_intent.state, 'resolved_at', v_intent.resolved_at
-    );
+
+  if v_intent.kind = 'RESET_PASSWORD' then
+    if p_outcome not in ('APPLIED', 'FAILED', 'INDETERMINATE') then
+      raise exception 'reset outcome invalid' using errcode = '22023';
+    end if;
+  else
+    if p_outcome not in ('FAILED', 'INDETERMINATE', 'CONFLICT') then
+      raise exception 'create outcome invalid (APPLIED is finalize-only)' using errcode = '22023';
+    end if;
+  end if;
+
+  if v_intent.state in ('APPLIED', 'FAILED', 'EXPIRED', 'BLOCKED', 'CONFLICT') then
+    raise exception 'account operation is terminal' using errcode = '22023';
+  end if;
+  if v_intent.state <> 'IN_FLIGHT' then
+    raise exception 'account operation is not in flight' using errcode = '22023';
   end if;
 
   update public.direct_entry_account_operation_intents
      set state = p_outcome,
          resolved_at = now(),
-         updated_at = now(),
-         auth_subject = coalesce(p_auth_subject_created, auth_subject)
+         updated_at = now()
    where intent_id = p_intent_id
   returning * into v_intent;
+
+  insert into public.direct_entry_audit_events (
+    auth_subject, app_user_id, action, capability, resource_ref, scope_kind, outcome, denial_code, reason_id
+  ) values (
+    p_auth_subject, p_actor_app_user_id, 'account_operation_finish', 'entry_admin',
+    p_intent_id::text, 'all',
+    case when p_outcome = 'APPLIED' then 'APPLIED' else 'REJECTED' end,
+    case when p_outcome = 'APPLIED' then null else coalesce(p_failure_code, lower(p_outcome)) end,
+    v_intent.reason_id
+  );
 
   return jsonb_build_object(
     'intent_id', v_intent.intent_id, 'state', v_intent.state, 'resolved_at', v_intent.resolved_at
   );
 end;
 $$;
-revoke all on function public.direct_entry_account_operation_finish(uuid, uuid, uuid, text, uuid, text)
+revoke all on function public.direct_entry_account_operation_finish(uuid, uuid, uuid, text, text)
   from public, anon, authenticated, service_role;
-grant execute on function public.direct_entry_account_operation_finish(uuid, uuid, uuid, text, uuid, text)
+grant execute on function public.direct_entry_account_operation_finish(uuid, uuid, uuid, text, text)
   to service_role;
 
 -- -----------------------------------------------------------------------------
 -- 7. finalize create: after Auth create is verified (server reads Admin API and the
---    app_metadata.account_intent marker), create the app user and mark APPLIED.
+--    app_metadata.account_intent marker), create the app user and mark APPLIED. It
+--    accepts IN_FLIGHT or INDETERMINATE (reconcile); terminal states are immutable and
+--    checked before provenance so a wrong token can never flip APPLIED to BLOCKED.
 -- -----------------------------------------------------------------------------
 create function public.direct_entry_account_operation_finalize_create(
   p_auth_subject uuid,
@@ -458,7 +483,6 @@ declare
   v_action text := 'account_created';
   v_intent public.direct_entry_account_operation_intents;
   v_payload_hash text;
-  v_existing_hash text;
   v_prior jsonb;
   v_reason_id uuid;
   v_app_user public.direct_entry_app_users;
@@ -477,16 +501,10 @@ begin
     'intent_id', p_intent_id, 'intent_token', p_intent_token,
     'auth_subject', p_created_auth_subject
   ));
-  select i.request_hash, i.result into v_existing_hash, v_prior
-    from public.direct_entry_rpc_idempotency i
-   where i.app_user_id = p_actor_app_user_id
-     and i.action = v_action
-     and i.idempotency_key = p_idempotency_key
-   for update;
-  if found then
-    if v_existing_hash <> v_payload_hash then
-      raise exception 'idempotency key reused with different input' using errcode = '22023';
-    end if;
+  v_prior := public.direct_entry_idempotency_begin(
+    p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
+  );
+  if v_prior is not null then
     return v_prior;
   end if;
 
@@ -494,29 +512,29 @@ begin
   if v_intent.kind <> 'CREATE_ACCOUNT' then
     raise exception 'account operation kind mismatch' using errcode = '22023';
   end if;
-  if v_intent.intent_token <> p_intent_token then
-    -- Provenance mismatch: the Auth user does not carry this intent's marker.
-    -- Mark BLOCKED and return; never bind, never delete. The exception is avoided
-    -- so the BLOCKED state is committed rather than rolled back.
-    update public.direct_entry_account_operation_intents
-       set state = 'BLOCKED', resolved_at = now(), updated_at = now()
-     where intent_id = p_intent_id;
-    return jsonb_build_object('intent_id', p_intent_id, 'intent_state', 'BLOCKED');
-  end if;
-  if v_intent.state = 'APPLIED' then
+
+  -- Terminal first: APPLIED/FAILED/EXPIRED/BLOCKED/CONFLICT are immutable and a wrong
+  -- token can never rewrite them.
+  if v_intent.state in ('APPLIED', 'FAILED', 'EXPIRED', 'BLOCKED', 'CONFLICT') then
     return jsonb_build_object(
-      'intent_id', v_intent.intent_id, 'intent_state', 'APPLIED'
+      'intent_id', v_intent.intent_id, 'intent_state', v_intent.state
     );
   end if;
-  if v_intent.state <> 'IN_FLIGHT' then
+  if v_intent.state not in ('IN_FLIGHT', 'INDETERMINATE') then
     raise exception 'account operation is not claimable' using errcode = '22023';
   end if;
 
-  v_prior := public.direct_entry_idempotency_begin(
-    p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
-  );
-  if v_prior is not null then
-    return v_prior;
+  if v_intent.intent_token <> p_intent_token then
+    update public.direct_entry_account_operation_intents
+       set state = 'BLOCKED', resolved_at = now(), updated_at = now()
+     where intent_id = p_intent_id;
+    insert into public.direct_entry_audit_events (
+      auth_subject, app_user_id, action, capability, resource_ref, scope_kind, outcome, denial_code, reason_id
+    ) values (
+      p_auth_subject, p_actor_app_user_id, 'account_operation_finish', 'entry_admin',
+      p_intent_id::text, 'all', 'REJECTED', 'provenance_mismatch', v_intent.reason_id
+    );
+    return jsonb_build_object('intent_id', p_intent_id, 'intent_state', 'BLOCKED');
   end if;
 
   v_reason_id := v_intent.reason_id;
@@ -567,6 +585,7 @@ grant execute on function public.direct_entry_account_operation_finalize_create(
 
 -- -----------------------------------------------------------------------------
 -- 8. update display name: app user + effective linked recruiter in one transaction.
+--    Authority is checked before any target lookup/lock.
 -- -----------------------------------------------------------------------------
 create function public.direct_entry_account_operation_update_display_name(
   p_auth_subject uuid,
@@ -588,7 +607,6 @@ declare
   v_locked_id uuid;
   v_target public.direct_entry_app_users;
   v_payload_hash text;
-  v_existing_hash text;
   v_prior jsonb;
   v_reason_id uuid;
   v_revision_id uuid;
@@ -614,6 +632,20 @@ begin
     raise exception 'idempotency key required' using errcode = '22023';
   end if;
 
+  -- Authority first: an unauthorized actor is denied before any target lookup/lock.
+  perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_actor_app_user_id);
+
+  v_payload_hash := public.direct_entry_payload_hash(jsonb_build_object(
+    'target_app_user_id', p_target_app_user_id, 'display_name', v_display_name,
+    'expected_app_user_version', p_expected_app_user_version, 'reason', p_reason
+  ));
+  v_prior := public.direct_entry_idempotency_begin(
+    p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
+  );
+  if v_prior is not null then
+    return v_prior;
+  end if;
+
   for v_locked_id in
     select u.app_user_id from public.direct_entry_app_users u
      where u.app_user_id in (p_actor_app_user_id, p_target_app_user_id)
@@ -627,28 +659,9 @@ begin
     raise exception 'target app user unavailable' using errcode = 'P0002';
   end if;
 
-  v_payload_hash := public.direct_entry_payload_hash(jsonb_build_object(
-    'target_app_user_id', p_target_app_user_id, 'display_name', v_display_name,
-    'expected_app_user_version', p_expected_app_user_version, 'reason', p_reason
-  ));
-  select i.request_hash, i.result into v_existing_hash, v_prior
-    from public.direct_entry_rpc_idempotency i
-   where i.app_user_id = p_actor_app_user_id
-     and i.action = v_action
-     and i.idempotency_key = p_idempotency_key
-   for update;
-  if found then
-    if v_existing_hash <> v_payload_hash then
-      raise exception 'idempotency key reused with different input' using errcode = '22023';
-    end if;
-    return v_prior;
-  end if;
-
   if v_target.version <> p_expected_app_user_version then
     raise exception 'app user version conflict' using errcode = '40001';
   end if;
-
-  perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_actor_app_user_id);
 
   -- Resolve the effective verified link by app_user_id only; never by name/email.
   select l.recruiter_id into v_linked_recruiter_id
@@ -659,13 +672,6 @@ begin
      and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to)
    order by l.valid_from desc, l.link_id desc
    limit 1;
-
-  v_prior := public.direct_entry_idempotency_begin(
-    p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
-  );
-  if v_prior is not null then
-    return v_prior;
-  end if;
 
   v_reason_id := public.direct_entry_reason(p_actor_app_user_id, p_reason);
 
@@ -735,12 +741,15 @@ grant execute on function public.direct_entry_account_operation_update_display_n
 
 -- -----------------------------------------------------------------------------
 -- 9. create personnel from account: recruiter + HRP membership + verified link
---    atomically, display_name always server-side from the account.
+--    atomically, display_name always server-side from the account. It also bumps the
+--    account version, writes an app-user `link_create` revision + audit and a personnel
+--    revision, all in one transaction.
 -- -----------------------------------------------------------------------------
 create function public.direct_entry_account_operation_create_personnel(
   p_auth_subject uuid,
   p_actor_app_user_id uuid,
   p_account_ref uuid,
+  p_expected_account_version integer,
   p_personnel_code text,
   p_personnel_position text,
   p_valid_from date,
@@ -758,19 +767,22 @@ declare
   v_position text := p_personnel_position;
   v_account public.direct_entry_app_users;
   v_payload_hash text;
-  v_existing_hash text;
   v_prior jsonb;
   v_reason_id uuid;
   v_recruiter public.recruiters;
   v_membership_id uuid;
   v_link_id uuid;
-  v_revision_id uuid;
+  v_personnel_revision_id uuid;
+  v_app_user_revision_id uuid;
   v_result jsonb;
 begin
   if p_account_ref is null then
     raise exception 'account ref required' using errcode = '22023';
   end if;
-  if v_code is null or length(v_code) > 64 or v_code ~ '[[:space:][:cntrl:]]' then
+  if p_expected_account_version is null or p_expected_account_version < 1 then
+    raise exception 'expected account version required' using errcode = '22023';
+  end if;
+  if v_code is null or v_code = '' or length(v_code) > 64 or v_code ~ '[[:space:][:cntrl:]]' then
     raise exception 'personnel code is not canonical' using errcode = '22023';
   end if;
   if v_position is null or v_position not in ('STAFF', 'TEAM_LEADER') then
@@ -789,7 +801,20 @@ begin
     raise exception 'idempotency key required' using errcode = '22023';
   end if;
 
+  -- Authority first: an unauthorized actor is denied before any target lookup/lock.
   perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_actor_app_user_id);
+
+  v_payload_hash := public.direct_entry_payload_hash(jsonb_build_object(
+    'account_ref', p_account_ref, 'expected_account_version', p_expected_account_version,
+    'personnel_code', v_code, 'personnel_position', v_position,
+    'valid_from', p_valid_from, 'reason', p_reason
+  ));
+  v_prior := public.direct_entry_idempotency_begin(
+    p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
+  );
+  if v_prior is not null then
+    return v_prior;
+  end if;
 
   select u.* into v_account
     from public.direct_entry_app_users u
@@ -810,22 +835,8 @@ begin
   ) then
     raise exception 'account already has an effective recruiter link' using errcode = '23514';
   end if;
-
-  v_payload_hash := public.direct_entry_payload_hash(jsonb_build_object(
-    'account_ref', p_account_ref, 'personnel_code', v_code,
-    'personnel_position', v_position, 'valid_from', p_valid_from, 'reason', p_reason
-  ));
-  select i.request_hash, i.result into v_existing_hash, v_prior
-    from public.direct_entry_rpc_idempotency i
-   where i.app_user_id = p_actor_app_user_id
-     and i.action = v_action
-     and i.idempotency_key = p_idempotency_key
-   for update;
-  if found then
-    if v_existing_hash <> v_payload_hash then
-      raise exception 'idempotency key reused with different input' using errcode = '22023';
-    end if;
-    return v_prior;
+  if v_account.version <> p_expected_account_version then
+    raise exception 'app user version conflict' using errcode = '40001';
   end if;
 
   if exists (
@@ -835,13 +846,6 @@ begin
            = lower(public.recruitment_dimension_key(v_code))
   ) then
     raise exception 'personnel code already exists' using errcode = '23505';
-  end if;
-
-  v_prior := public.direct_entry_idempotency_begin(
-    p_actor_app_user_id, v_action, p_idempotency_key, v_payload_hash
-  );
-  if v_prior is not null then
-    return v_prior;
   end if;
 
   v_reason_id := public.direct_entry_reason(p_actor_app_user_id, p_reason);
@@ -862,7 +866,32 @@ begin
     p_account_ref, v_recruiter.recruiter_id, true, p_valid_from
   ) returning link_id into v_link_id;
 
-  v_revision_id := public.direct_entry_write_personnel_revision(
+  -- Account lifecycle: bump version + link_create revision + audit.
+  update public.direct_entry_app_users
+     set version = version + 1, updated_at = now()
+   where app_user_id = p_account_ref
+  returning version into v_account.version;
+
+  insert into public.direct_entry_app_user_revisions (
+    app_user_id, version, actor_user_id, action, before_snapshot, after_snapshot, reason_id
+  ) values (
+    p_account_ref, v_account.version, p_actor_app_user_id, 'link_create',
+    jsonb_build_object('recruiter_id', null),
+    jsonb_build_object('recruiter_id', v_recruiter.recruiter_id),
+    v_reason_id
+  ) returning revision_id into v_app_user_revision_id;
+
+  insert into public.direct_entry_audit_events (
+    auth_subject, app_user_id, action, capability, resource_ref, scope_kind, outcome, reason_id,
+    changed_fields, app_user_revision_id
+  ) values (
+    p_auth_subject, p_actor_app_user_id, 'link_create', 'entry_admin',
+    p_account_ref::text, 'all', 'APPLIED', v_reason_id,
+    array['recruiter_link'], v_app_user_revision_id
+  );
+
+  -- Personnel revision + audit.
+  v_personnel_revision_id := public.direct_entry_write_personnel_revision(
     v_recruiter.recruiter_id, v_recruiter.version, p_actor_app_user_id, v_reason_id,
     null, public.direct_entry_personnel_snapshot(v_recruiter)
   );
@@ -873,7 +902,7 @@ begin
   ) values (
     p_auth_subject, p_actor_app_user_id, v_action, 'entry_admin',
     v_recruiter.recruiter_id::text, 'all', 'APPLIED', v_reason_id,
-    array['display_name', 'personnel_code', 'personnel_position', 'active'], v_revision_id
+    array['display_name', 'personnel_code', 'personnel_position', 'active'], v_personnel_revision_id
   );
 
   v_result := jsonb_build_object(
@@ -884,7 +913,9 @@ begin
     'version', v_recruiter.version,
     'link_id', v_link_id,
     'membership_id', v_membership_id,
-    'revision_id', v_revision_id
+    'app_user_version', v_account.version,
+    'app_user_revision_id', v_app_user_revision_id,
+    'personnel_revision_id', v_personnel_revision_id
   );
   perform public.direct_entry_idempotency_finish(
     p_actor_app_user_id, v_action, p_idempotency_key, v_result
@@ -892,13 +923,100 @@ begin
   return v_result;
 end;
 $$;
-revoke all on function public.direct_entry_account_operation_create_personnel(uuid, uuid, uuid, text, text, date, text, text)
+revoke all on function public.direct_entry_account_operation_create_personnel(uuid, uuid, uuid, integer, text, text, date, text, text)
   from public, anon, authenticated, service_role;
-grant execute on function public.direct_entry_account_operation_create_personnel(uuid, uuid, uuid, text, text, date, text, text)
+grant execute on function public.direct_entry_account_operation_create_personnel(uuid, uuid, uuid, integer, text, text, date, text, text)
   to service_role;
 
 -- -----------------------------------------------------------------------------
--- 10. reclassify: retention per the locked contract. No cron; Full Admin triggers.
+-- 10. eligible accounts read-model: bounded list of enabled accounts with no
+--     effective verified recruiter link, for the personnel-from-account UI. Never
+--     exposes auth_subject, email or internal link ids.
+-- -----------------------------------------------------------------------------
+create function public.direct_entry_account_operation_list_eligible_accounts(
+  p_auth_subject uuid,
+  p_actor_app_user_id uuid,
+  p_page integer default 1,
+  p_page_size integer default 25
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_page integer := coalesce(p_page, 1);
+  v_page_size integer := coalesce(p_page_size, 25);
+  v_offset integer;
+  v_total integer;
+  v_rows jsonb;
+  v_has_more boolean;
+begin
+  perform public.direct_entry_assert_actor_app_user_admin(p_auth_subject, p_actor_app_user_id);
+  if v_page < 1 or v_page > 1000 then
+    raise exception 'account list page invalid' using errcode = '22023';
+  end if;
+  if v_page_size < 1 or v_page_size > 100 then
+    raise exception 'account list page size invalid' using errcode = '22023';
+  end if;
+  v_offset := (v_page - 1) * v_page_size;
+
+  select count(*)::int into v_total
+    from public.direct_entry_app_users u
+   where u.enabled
+     and not exists (
+       select 1 from public.direct_entry_app_user_recruiter_links l
+        where l.app_user_id = u.app_user_id
+          and l.verified
+          and l.valid_from <= public.direct_entry_authorization_date()
+          and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to)
+     );
+
+  select coalesce(jsonb_agg(a.row_json order by a.display_name, a.app_user_id), '[]'::jsonb)
+    into v_rows
+    from (
+      select jsonb_build_object(
+               'app_user_id', u.app_user_id,
+               'display_name', u.display_name
+             ) as row_json,
+             u.display_name, u.app_user_id
+        from public.direct_entry_app_users u
+       where u.enabled
+         and not exists (
+           select 1 from public.direct_entry_app_user_recruiter_links l
+            where l.app_user_id = u.app_user_id
+              and l.verified
+              and l.valid_from <= public.direct_entry_authorization_date()
+              and (l.valid_to is null or public.direct_entry_authorization_date() < l.valid_to)
+         )
+       order by u.display_name, u.app_user_id
+       limit v_page_size + 1
+      offset v_offset
+    ) a;
+
+  v_has_more := jsonb_array_length(v_rows) > v_page_size;
+  if v_has_more then
+    select coalesce(jsonb_agg(t.value order by t.ord), '[]'::jsonb) into v_rows
+      from jsonb_array_elements(v_rows) with ordinality as t(value, ord)
+     where t.ord <= v_page_size;
+  end if;
+
+  return jsonb_build_object(
+    'page', v_page,
+    'page_size', v_page_size,
+    'total', v_total,
+    'has_more', v_has_more,
+    'accounts', v_rows
+  );
+end;
+$$;
+revoke all on function public.direct_entry_account_operation_list_eligible_accounts(uuid, uuid, integer, integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.direct_entry_account_operation_list_eligible_accounts(uuid, uuid, integer, integer)
+  to service_role;
+
+-- -----------------------------------------------------------------------------
+-- 11. reclassify: retention per the locked contract. No cron; Full Admin triggers.
 -- -----------------------------------------------------------------------------
 create function public.direct_entry_account_operation_reclassify(
   p_auth_subject uuid,
@@ -974,13 +1092,12 @@ grant execute on function public.direct_entry_account_operation_reclassify(uuid,
   to service_role;
 
 -- -----------------------------------------------------------------------------
--- 11. Install-time self-check (data free).
+-- 12. Install-time self-check (data free).
 -- -----------------------------------------------------------------------------
 do $check$
 declare
   v_source text;
 begin
-  -- Intent table carries no password/hash/secret column.
   if exists (
     select 1 from information_schema.columns
      where table_schema = 'public'
@@ -1010,7 +1127,6 @@ begin
     raise exception 'PRE-W2-HF-D3-A symmetric recruiter-link guard is missing';
   end if;
 
-  -- Fail closed on existing 1:1 violations (never mutate business data).
   if exists (
     select 1
       from public.direct_entry_app_user_recruiter_links a
@@ -1027,10 +1143,11 @@ begin
     'public.direct_entry_account_operation_begin(uuid,uuid,text,text,text,uuid,text,text)',
     'public.direct_entry_account_operation_claim(uuid,uuid,uuid,uuid)',
     'public.direct_entry_account_operation_read(uuid,uuid,uuid)',
-    'public.direct_entry_account_operation_finish(uuid,uuid,uuid,text,uuid,text)',
+    'public.direct_entry_account_operation_finish(uuid,uuid,uuid,text,text)',
     'public.direct_entry_account_operation_finalize_create(uuid,uuid,uuid,uuid,uuid,text)',
     'public.direct_entry_account_operation_update_display_name(uuid,uuid,uuid,text,integer,text,text)',
-    'public.direct_entry_account_operation_create_personnel(uuid,uuid,uuid,text,text,date,text,text)',
+    'public.direct_entry_account_operation_create_personnel(uuid,uuid,uuid,integer,text,text,date,text,text)',
+    'public.direct_entry_account_operation_list_eligible_accounts(uuid,uuid,integer,integer)',
     'public.direct_entry_account_operation_reclassify(uuid,uuid)'
   ] loop
     if not exists (

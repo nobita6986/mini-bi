@@ -30,31 +30,33 @@ SQL/database foundation + DB tests. Không API/UI, không Supabase Auth call, kh
 | begin | `direct_entry_account_operation_begin(uuid,uuid,text,text,text,uuid,text,text)` | `{intent_id,intent_token,kind,state}` |
 | claim | `direct_entry_account_operation_claim(uuid,uuid,uuid,uuid)` | `{intent_id,intent_token,kind,state,claimed}` |
 | read | `direct_entry_account_operation_read(uuid,uuid,uuid)` | `{intent_id,intent_token,kind,state,login_id,display_name,account_ref,auth_subject,created_at,claimed_at,resolved_at}` |
-| finish | `direct_entry_account_operation_finish(uuid,uuid,uuid,text,uuid,text)` | `{intent_id,state,resolved_at}` |
+| finish | `direct_entry_account_operation_finish(uuid,uuid,uuid,text,text)` | `{intent_id,state,resolved_at}` |
 | finalize | `direct_entry_account_operation_finalize_create(uuid,uuid,uuid,uuid,uuid,text)` | `{app_user_id,auth_subject,display_name,version,revision_id,intent_id,intent_state}` |
 | update name | `direct_entry_account_operation_update_display_name(uuid,uuid,uuid,text,integer,text,text)` | `{app_user_id,version,revision_id,recruiter_id,recruiter_version,recruiter_revision_id}` |
-| create personnel | `direct_entry_account_operation_create_personnel(uuid,uuid,uuid,text,text,date,text,text)` | `{recruiter_id,display_name,personnel_code,personnel_position,version,link_id,membership_id,revision_id}` |
+| create personnel | `direct_entry_account_operation_create_personnel(uuid,uuid,uuid,integer,text,text,date,text,text)` | `{recruiter_id,display_name,personnel_code,personnel_position,version,link_id,membership_id,app_user_version,app_user_revision_id,personnel_revision_id}` |
+| list eligible | `direct_entry_account_operation_list_eligible_accounts(uuid,uuid,integer,integer)` | `{page,page_size,total,has_more,accounts:[{app_user_id,display_name}]}` |
 | reclassify | `direct_entry_account_operation_reclassify(uuid,uuid)` | `{reclassified,purged,deleted}` |
 
-Ngữ nghĩa khoá:
-- `claim` là conditional atomic `PENDING -> IN_FLIGHT`; loser đọc lại state, không gọi Auth.
-- `finish` ghi outcome tường minh, **không tự suy INDETERMINATE -> APPLIED**.
-- `finalize_create` chỉ tạo app user khi token khớp; token sai -> `BLOCKED` (không bind/xoá), không raise rollback.
-- `update_display_name` đồng bộ linked effective recruiter trong cùng transaction; không tìm recruiter theo email/tên, không đụng link lịch sử.
-- `create_personnel` tạo recruiter + HRP membership (`vendor_id null`) + verified/effective link atomically; conflict personnel_code -> 23505, không auto-link; `display_name` server-side từ account.
-- `reclassify`: PENDING/IN_FLIGHT >15 phút -> EXPIRED/INDETERMINATE; terminal >30 ngày purge PII + tombstone 60 ngày; create INDETERMINATE/BLOCKED/CONFLICT được giữ (không auto-purge).
+State machine khoá (transition matrix):
+- `claim`: `PENDING -> IN_FLIGHT` (conditional atomic); loser đọc lại state, không gọi Auth.
+- `finalize_create`: `IN_FLIGHT | INDETERMINATE -> APPLIED` (marker khớp) hoặc `-> BLOCKED` (marker lệch); terminal (`APPLIED/FAILED/EXPIRED/BLOCKED/CONFLICT`) immutable và được kiểm tra TRƯỚC provenance.
+- `finish`: chỉ từ `IN_FLIGHT`; RESET -> `APPLIED/FAILED/INDETERMINATE`, CREATE -> `FAILED/INDETERMINATE/CONFLICT` (CREATE `APPLIED/BLOCKED` chỉ qua finalize); terminal immutable; ghi audit outcome cuối + mã lỗi allowlist.
+- `update_display_name`: authority trước target lookup; đồng bộ linked recruiter cùng transaction; không tìm recruiter theo email/tên.
+- `create_personnel`: authority trước; OCC account + bump version + `link_create` revision/audit + personnel revision; conflict personnel_code -> 23505; `''` -> 22023; `display_name` server-side.
+- `begin`: idempotency claim trước mọi write; RESET lưu `auth_subject` từ account.
+- `reclassify`: PENDING/IN_FLIGHT >15 phút -> EXPIRED/INDETERMINATE; terminal >30 ngày purge PII + tombstone 60 ngày; create INDETERMINATE/BLOCKED/CONFLICT được giữ.
 
 ## Files
 
 - `supabase/migrations/20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql` (mới)
-- `scripts/pre-w2-hf-d3-a-account-personnel-db.test.mjs` (mới, 14 test)
+- `scripts/pre-w2-hf-d3-a-account-personnel-db.test.mjs` (mới, 17 test)
 - `scripts/pre-w2-hf-d3-a-account-personnel-mutation.mjs` (mới, 5 probe)
 - `package.json` (lane `test:pre-w2-hf-d3-a-account-personnel-db`)
 - Rebaseline migration pins 91 -> 92 (47 file) + 3 sửa ngữ nghĩa: W03A action vocabulary (8->10), personnel-catalog function count (10->11), vendor-lifecycle git allowlist.
 
 ## Tests
 
-DB lane 14 test: lifecycle, idempotent begin, hai create cùng login (chỉ 1 intent), finalize provenance (đúng/sai token), update name linked/unlinked + OCC, create personnel atomic + conflict rollback, disabled/already-linked/unknown account, cardinality 1:1, authority (Full Admin triple only), no password/hash, reclassify retention, self-check ACL/search_path/signature.
+DB lane 17 test: lifecycle + idempotent begin, reset lưu auth_subject, hai create cùng login, finalize provenance (đúng/sai token + terminal immutable), finalize reconcile từ INDETERMINATE, transition matrix của finish, update name linked/unlinked + OCC, create personnel atomic + conflict rollback + account lifecycle (version + link_create), empty code -> 22023, disabled/already-linked/unknown account, list eligible accounts, cardinality 1:1, authority (Full Admin triple only), no password/hash, reclassify retention, self-check ACL/search_path/signature.
 
 ## Mutation probes (chạy tay) — 5/5 RED, khôi phục byte-for-byte
 
