@@ -38,7 +38,8 @@ function uuid(n) {
 
 const TEAM = uuid(11);
 const PROJ_A = "t0_proj_a", PROJ_B = "t0_proj_b", PROJ_C = "t0_proj_c", PROJ_D = "t0_proj_d";
-const REC_A = "Rec A", REC_B = "Rec B", REC_C = "Rec C", REC_D = "Rec D";
+const REC_A = "Rec A", REC_B = "Rec B", REC_C = "Rec C", REC_D = "Rec D",
+  REC_FUTURE = "Rec Future", REC_NO_ACCESS = "Rec No Access";
 const UP3_AUTH = uuid(35), UP3_APP = uuid(45);
 const UP4_AUTH = uuid(36), UP4_APP = uuid(46);
 const UP3_LOGIN = "t0-pm-future@example.test", UP4_LOGIN = "t0-pm-expired@example.test";
@@ -88,7 +89,7 @@ async function seed(db) {
     await db.query("insert into public.direct_entry_projects (project_id, display_name)" +
       " values ($1,$2)", [project, name]);
   }
-  for (const name of [REC_A, REC_B, REC_C, REC_D]) {
+  for (const name of [REC_A, REC_B, REC_C, REC_D, REC_FUTURE, REC_NO_ACCESS]) {
     await db.query("insert into public.recruiters (recruiter_id, display_name) values" +
       " (gen_random_uuid(),$1)", [name]);
     await db.query("insert into public.recruiter_provider_memberships" +
@@ -123,7 +124,7 @@ async function seed(db) {
   await insertActor(db, UP4_AUTH, UP4_APP, UP4_LOGIN, ["entry_create", "submission_create"], []);
   // Each negative fixture lives on its own project: the canonical assignment guard forbids
   // overlapping intervals on one project, and a single assignment per project is a valid seed.
-  await assignProject(db, { project: PROJ_C, recruiterName: REC_C, app: UP3_APP,
+  await assignProject(db, { project: PROJ_C, recruiterName: REC_FUTURE, app: UP3_APP,
     validFrom: "2027-01-01" });
   await assignProject(db, { project: PROJ_D, recruiterName: REC_D, app: UP4_APP,
     validFrom: "2020-01-01", validTo: "2020-06-01" });
@@ -133,7 +134,7 @@ async function seed(db) {
   await db.query("insert into public.direct_entry_app_user_recruiter_links" +
     " (app_user_id, recruiter_id, verified, valid_from)" +
     " select $1, recruiter_id, true, '2020-01-01' from public.recruiters where display_name = $2",
-    [MGR_APP, REC_B]);
+    [MGR_APP, REC_NO_ACCESS]);
 }
 
 /** Assignment + verified link, seeded trong mot lan (valid_to di kem revoked_at). */
