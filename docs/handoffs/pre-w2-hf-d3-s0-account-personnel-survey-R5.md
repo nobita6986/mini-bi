@@ -4,6 +4,7 @@
 > Base: `origin/main@0e5e27d` (unchanged; docs-only on top of R4). Branch already synced; no re-sync needed.
 > Kind: docs-only. No source/package/SQL change, no DB access/mutation, no migration apply, no merge, no UAT, no VPS deploy. Only this file and the pointer edit in R4 are written.
 > Supersedes: R4 §2 (purge table, retention-exception claim, and the "non-PII" label on the opaque `auth_subject` ref). Corrects Must-fix 1 and Should-fix 2/3.
+> Superseded-by: R6 — `pre-w2-hf-d3-s0-account-personnel-survey-R6.md` (purge scope, block mechanism after `login_id` purge, `T_decide`/`T_handle_max` behaviour, reset-INDETERMINATE field classification). R6 supersedes R5 §2/§4/§5 only; R5 §1/§3 remain in force.
 
 ## 1. Two intent types, two retention footprints (fixes Should-fix 3)
 
