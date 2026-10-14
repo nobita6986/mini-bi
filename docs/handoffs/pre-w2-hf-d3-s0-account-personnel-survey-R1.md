@@ -4,6 +4,7 @@
 > Base: `origin/main@c29b44c` (87 migrations; survey branch rebased onto main).
 > Kind: docs-only correction/addendum. No source/package/SQL change, no DB access/mutation, no migration apply, no deploy, no UAT. Only this addendum and the pointer edit in the S0 survey are written.
 > Supersedes: S0 §5/§7/§9 for account-creation atomicity, "zero residue", byte-identical replay and password-reset audit.
+> Superseded-by: R2 — `pre-w2-hf-d3-s0-account-personnel-survey-R2.md` (reset-password indeterminate state, account-create provenance + password idempotency, PII classification, D5 escalation).
 
 ## 1. Rebaseline (mandatory point 1)
 
