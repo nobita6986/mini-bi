@@ -2,8 +2,10 @@
 
 **Trạng thái:** `PRE_W2_HF_D3_CONTRACT_FINAL_READY_FOR_IMPLEMENTATION`
 
-**Baseline:** `origin/main@aba3c58` · migration ledger `91/91`  
-**Thay thế:** toàn bộ chuỗi khảo sát `S0 → R1 → R2 → R3 → R4 → R5 → R6` trên nhánh `codex/pre-w2-hf-d3-s0-account-personnel-survey`  
+**Baseline:** `origin/main@aba3c58` · migration ledger `91/91`
+
+**Thay thế:** toàn bộ chuỗi khảo sát `S0 → R1 → R2 → R3 → R4 → R5 → R6` trên nhánh `codex/pre-w2-hf-d3-s0-account-personnel-survey`
+
 **Tính chất:** contract docs-only; chưa có source/API/SQL/UI implementation, chưa apply DB, chưa deploy.
 
 ## 1. Kết luận ngắn
