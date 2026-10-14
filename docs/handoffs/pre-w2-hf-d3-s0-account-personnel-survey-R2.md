@@ -4,6 +4,7 @@
 > Base: `origin/main@c29b44c` (unchanged; docs-only correction on top of R1).
 > Kind: docs-only correction. No source/package/SQL change, no DB access/mutation, no migration apply, no deploy, no UAT. Only this file and the pointer edits in S0/R1 are written.
 > Supersedes: R1 §2/§3/§6/§7 (account-create saga, reset-password recovery, PII classification, acceptance matrix) and re-escalates R1 D5.
+> Superseded-by: R3 — `pre-w2-hf-d3-s0-account-personnel-survey-R3.md` (server-managed provenance, stale-PENDING detection, concrete retention, BLOCKED/password-retry clarifications).
 
 ## 1. Reset password: indeterminate outcome (corrects R1 §3)
 
