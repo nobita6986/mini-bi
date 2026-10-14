@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the 92-migration ledger).
+ * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the 93-migration ledger).
  *
  * Covers the durable account-operation intent, the narrow RPCs (begin/claim/read/finish,
  * finalize, update display name, create personnel from account, list eligible accounts,
@@ -43,8 +43,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 92, "the ledger carries the PRE-W2-HF-D3-A migration as #92");
-  assert.equal(names[names.length - 1], D3A_MIGRATION, "the D3-A migration is the latest slot");
+  assert.equal(names.length, 93, "the ledger carries the PRE-W2-HF-D3-A migration as #92");
+  assert.equal(names[names.length - 2], D3A_MIGRATION,
+    "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
   return db;
 }
 

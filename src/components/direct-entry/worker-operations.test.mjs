@@ -239,8 +239,11 @@ test("W06-R1: proposal drawer reuses ENTRY_FIELD, PAYMENT and WORK_STATUS builde
   assert.match(source, /worker-first-work-date/);
   assert.match(source, /worker-recruiter/);
   assert.match(source, /worker-labor-type/);
-  // Khong co DOCUMENT/CCCD.
-  assert.equal(/DOCUMENT|CCCD/.test(source), false);
+  // Chi kiem tra proposal drawer; export dialog ben duoi duoc phep noi ro cot CCCD.
+  const proposalStart = source.indexOf("function ProposeDrawer(");
+  const proposalEnd = source.indexOf("/** Tai Blob", proposalStart);
+  assert.ok(proposalStart >= 0 && proposalEnd > proposalStart);
+  assert.equal(/DOCUMENT|CCCD/.test(source.slice(proposalStart, proposalEnd)), false);
 });
 
 test("HF-R4: proposal preloads and exposes each ENTRY_FIELD value", () => {

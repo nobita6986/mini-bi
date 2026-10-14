@@ -1,9 +1,9 @@
 /**
- * PRE-W2-P1 - Full-PII worker export RPC (DB regression, PGlite over the 86-migration ledger).
+ * PRE-W2-P1/HF-G - Full-PII worker export RPC (DB regression, PGlite over the 93-migration ledger).
  *
  * Proves the export contract at the DB boundary:
- *   * authority = pii_export AND pii_view AND payment_view AND recruited/managed row
- *     authority; any missing term denies the whole export with 42501;
+ *   * recruited/managed full-PII export requires the existing row authority, not a
+ *     separate export-capability grant; `all` retains the capability conjunction;
  *   * `all` (and any other scope) is denied with 42501;
  *   * one batch read over the authorized set with the directory's eligibility/filter
  *     semantics and deterministic order;
@@ -53,10 +53,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 92,
-    "ledger = 88 base + cutoff #89 + HF-E #90 + HF-F #91");
-  assert.equal(names[names.length - 7], EXPORT_MIGRATION_NAME,
-    "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90 and HF-F #91");
+  assert.equal(names.length, 93,
+    "ledger = 88 base + cutoff #89 + HF-E #90 + HF-F #91 + D3-A #92 + HF-G #93");
+  assert.equal(names[names.length - 8], EXPORT_MIGRATION_NAME,
+    "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
   return db;
 }
 
@@ -221,7 +221,6 @@ test("PRE-W2-P1: recruited export returns the full authorized rows and an own/AL
   const db = await buildDb();
   try {
     await seed(db);
-    await grantExportCaps(db, MGR_APP);
     const entry = await addWorker(db, {
       recruiter: REC_A, workDate: "2026-10-01",
       payment: { account_number: "012345678901", bank_name: "Synthetic Bank",
@@ -288,7 +287,6 @@ test("PRE-W2-P1: managed export logs the project scope_kind", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    await grantExportCaps(db, MGR_APP);
     await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
     await addWorker(db, { project: PROJ_A, recruiter: REC_B, workDate: "2026-10-02" });
 
@@ -311,16 +309,23 @@ test("PRE-W2-P1: managed export logs the project scope_kind", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Scope and capability conjunction: any missing term denies the whole export.
+// 3. Row authority gates recruited/managed; the all-scope capability conjunction remains.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-E: all opens only for the admin/BoD/accounting audience; capability conjunction still denies", async () => {
+test("PRE-W2-HF-G: directory scopes export full PII without extra grants; all stays restricted", async () => {
   const db = await buildDb();
   try {
     await seed(db);
-    await grantExportCaps(db, MGR_APP);
     await addWorker(db, { recruiter: REC_A, workDate: "2026-10-01" });
 
-    // A linked recruiter with export caps but NO all-scope grant is denied `all`.
+    // A linked recruiter without pii/payment export capabilities can export only their own rows.
+    const own = await runExport(db, { scope: "recruited" });
+    assert.equal(own.status, "ok");
+    assert.equal(own.rows.length, 1);
+    assert.equal(own.rows[0].national_id, "012345678911");
+    assert.equal(own.rows[0].account_number, null);
+    assert.equal((await audits(db)).at(-1).scope_kind, "own");
+
+    // No all-scope grant means a normal linked recruiter is denied the company-wide export.
     await assert.rejects(() => runExport(db, { scope: "all" }),
       (error) => error.code === "42501", "all must be denied without the all audience");
     await assert.rejects(() => runExport(db, { scope: "everything" }),
@@ -336,38 +341,25 @@ test("PRE-W2-HF-E: all opens only for the admin/BoD/accounting audience; capabil
     const all = await runExport(db, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" });
     assert.equal(all.status, "ok");
     assert.equal(all.rows.length, 1);
-    const [allAudit] = await audits(db);
+    const allAudit = (await audits(db)).at(-1);
     assert.equal(allAudit.scope_kind, "all");
 
+    // `all` also requires every capability term even for the all-scope admin.
     for (const missing of ["pii_export", "pii_view", "payment_view"]) {
       const db2 = await buildDb();
       try {
         await seed(db2);
         for (const cap of ["pii_export", "pii_view", "payment_view"]) {
-          if (cap !== missing) await grant(db2, MGR_APP, cap);
+          if (cap !== missing) await grant(db2, ADMIN_APP, cap);
         }
         await addWorker(db2, { recruiter: REC_A, workDate: "2026-10-01" });
-        await assert.rejects(() => runExport(db2, { scope: "recruited" }),
-          (error) => error.code === "42501", "missing " + missing + " must deny");
-        assert.equal((await audits(db2)).length, 0, "no audit on a denied export");
+        await assert.rejects(
+          () => runExport(db2, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" }),
+          (error) => error.code === "42501", "all must deny when missing " + missing);
+        assert.equal((await audits(db2)).length, 0, "no audit on denied all export");
       } finally {
         await db2.close();
       }
-    }
-
-    // The all scope also requires the full capability triple: an admin without
-    // pii_export is denied even though the all audience is open.
-    const db3 = await buildDb();
-    try {
-      await seed(db3);
-      await grant(db3, ADMIN_APP, "pii_view");
-      await grant(db3, ADMIN_APP, "payment_view");
-      await addWorker(db3, { recruiter: REC_A, workDate: "2026-10-01" });
-      await assert.rejects(
-        () => runExport(db3, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" }),
-        (error) => error.code === "42501", "all must deny without pii_export");
-    } finally {
-      await db3.close();
     }
 
     // Row authority is still required: a linked recruiter without an assignment
