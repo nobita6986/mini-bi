@@ -4,6 +4,7 @@
 > Base: `origin/main@c29b44c` (unchanged; docs-only correction on top of R2).
 > Kind: docs-only correction. No source/package/SQL change, no DB access/mutation, no migration apply, no deploy, no UAT. Only this file and the pointer edit in R2 are written.
 > Supersedes: R2 §1/§2/§3 (provenance marker, INDETERMINATE trigger, retention) and clarifies R2 §2.2 (BLOCKED) and R2 §2.4 (password-on-retry).
+> Superseded-by: R4 — `pre-w2-hf-d3-s0-account-personnel-survey-R4.md` (atomic Auth claim, orphan-safe purge, marker-secrecy wording, TTL lock, baseline sync).
 
 ## 1. Provenance proof = server-managed `app_metadata` (corrects R2 §2.1)
 
