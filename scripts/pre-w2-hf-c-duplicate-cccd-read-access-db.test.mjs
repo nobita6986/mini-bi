@@ -53,8 +53,8 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 87, "the ledger carries the PRE-W2-HF-C migration as #87");
-  assert.equal(names[names.length - 1], HF_C_MIGRATION, "the HF-C migration is the latest slot");
+  assert.equal(names.length, 88, "the ledger carries the PRE-W2-HF-C migration as #87");
+  assert.equal(names[names.length - 2], HF_C_MIGRATION, "the HF-C migration precedes only the HF-D2 slot");
   return db;
 }
 
@@ -110,6 +110,7 @@ async function seed(db) {
 }
 
 let entrySeq = 0;
+let reasonSeq = 0;
 async function addProfile(db, { cccd, name, code, date = "2026-01-05" }) {
   entrySeq += 1;
   const candidate = uuid(5000 + entrySeq);
@@ -133,6 +134,18 @@ async function addProfile(db, { cccd, name, code, date = "2026-01-05" }) {
           address: { state: "provided", value: "1 HFC Street" },
           phone: { state: "provided", value: "0900000000" } }),
         REC_A, TEAM]);
+    // PRE-W2-HF-D2: the report now only counts ON (working) episodes, so seed an ON
+    // status event; a profile with no event (UNCONFIRMED) is no longer "working".
+    reasonSeq += 1;
+    const reasonId = (await db.query(
+      "insert into public.direct_entry_restricted_reasons (actor_user_id, reason_text)" +
+      " values ($1,$2) returning reason_id::text as id", [ADMIN_APP, `HFC reason ${reasonSeq}`])).rows[0].id;
+    await db.query(
+      "insert into public.direct_entry_employment_status_events" +
+      " (entry_id, status, effective_date, leave_date, leave_reason_text, version," +
+      " actor_user_id, reason_id, supersedes_event_id)" +
+      " values ($1,'ON',$2::date,null,null,1,$3,$4,null)",
+      [entry, date, ADMIN_APP, reasonId]);
     await db.query(
       "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
       [submission]);

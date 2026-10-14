@@ -202,7 +202,7 @@ function projectEpisodeFields(value: Record<string, unknown>): DuplicateCccdRepo
   if (!isNullableIsoDate(value.first_work_date)) return null;
   if (!isEmploymentStatus(value.latest_status)) return null;
   if (typeof value.active !== "boolean") return null;
-  if (value.active !== (value.latest_status !== "OFF")) return null;
+  if (value.latest_status !== "ON" || value.active !== true) return null;
   return {
     employee_code: value.employee_code,
     display_name: value.display_name,
@@ -237,7 +237,7 @@ function projectGroup(
   if (!isCount(value.project_count)) return null;
   if (!isCount(value.active_profile_count)) return null;
   if (value.project_count > value.profile_count) return null;
-  if (value.active_profile_count > value.profile_count) return null;
+  if (value.active_profile_count !== value.profile_count) return null;
   if (!isNullableIsoDate(value.first_work_date)) return null;
   if (!isNullableIsoDate(value.latest_first_work_date)) return null;
   if (!Array.isArray(value.episodes)) return null;

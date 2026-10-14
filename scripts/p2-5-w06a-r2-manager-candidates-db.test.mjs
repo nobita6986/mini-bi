@@ -64,9 +64,9 @@ async function candidates(db, auth, app, search) {
 
 test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 84-migration ledger", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 87);
-  assert.equal(names[names.length - (34)], W06A_MIGRATION);
-  assert.equal(names[names.length - (33)], W05_MIGRATION);
+  assert.equal(names.length, 88);
+  assert.equal(names[names.length - (35)], W06A_MIGRATION);
+  assert.equal(names[names.length - (34)], W05_MIGRATION);
   await db.close();
 });
 
