@@ -1,21 +1,23 @@
 # PRE-W2-HF-E — Worker Excel export: Admin/BoD/Kế toán "all" scope + cột Ghi chú
 
-- **Status:** `PRE_W2_HF_E_WORKER_EXPORT_LOCAL_PASS_AWAITING_T0_REVIEW`
-- **Base:** `origin/main@0e5e27dcf5571d043a151a5f819efed843f3d52d` (ledger **88**, next slot **#89** verified — không mặc định).
+- **Status:** `PRE_W2_HF_E_WORKER_EXPORT_LOCAL_PASS_AWAITING_T0_REVIEW` (sau reconcile #89/#90)
+- **Base:** `origin/main@0e5e27dcf5571d043a151a5f819efed843f3d52d` (ledger **88**).
 - **Impl SHA:** `5b47ddda76352377de817ae0ad764d0bc288259d`
+- **Reconcile SHA:** `7b7fdd6b47a2acf8852b5f5a5bea4adf44b9b716`
 - **Branch / worktree:** `feature/pre-w2-hf-e-worker-export` trên worktree cô lập
   `C:\CodeApp\BI\.worktrees\pre-w2-hf-e` (`node_modules` là junction về primary). **Primary
   checkout không bị chạm.**
 
 ## Preflight
 
-Fetch origin → base `0e5e27d`, ledger 88 (last migration `20261013140000_pre_w2_hf_d2_...`). Slot
-kế tiếp #89 được xác minh qua `pnpm db:migrate -- --offline` (89/89). Không có migration #89 sẵn có;
-không đụng migration/DB Production.
+Fetch origin → base `0e5e27d`, ledger 88. T0 review phát hiện DB Production Vercel đã có migration
+`20261014150000_p2_w04d_cutoff_2000_01_01.sql` ở slot **#89** (nhánh `feature/p2-w04c-cutoff-2000-direct-entry`,
+chưa merge main). Đã reconcile: đưa migration cutoff đó vào nhánh (#89), chuyển HF-E sang slot kế tiếp
+`20261014160000` (#90). Không apply DB/migration Production.
 
 ## Thay đổi (reuse P1, additive)
 
-- **Migration append-only #89** `supabase/migrations/20261014120000_pre_w2_hf_e_worker_export_all_and_note.sql`:
+- **Migration append-only #90** `supabase/migrations/20261014160000_pre_w2_hf_e_worker_export_all_and_note.sql`:
   `create or replace public.direct_entry_export_workers` (cùng chữ ký). Hai thay đổi additive:
   1. `all` scope được phép nhưng **chỉ** cho DB-authoritative audience `direct_entry_worker_directory_audience`
      = effective `all` scope **AND** (`entry_admin` OR `change_review`) — tức **Admin / BoD / Kế toán**.
@@ -34,7 +36,8 @@ không đụng migration/DB Production.
 
 ## File
 
-- Mới `supabase/migrations/20261014120000_pre_w2_hf_e_worker_export_all_and_note.sql`.
+- Mới `supabase/migrations/20261014160000_pre_w2_hf_e_worker_export_all_and_note.sql` (HF-E #90) và
+  `supabase/migrations/20261014150000_p2_w04d_cutoff_2000_01_01.sql` (cutoff #89, reconcile).
 - Mới `scripts/pre-w2-hf-e-worker-export-mutation.mjs`.
 - Sửa `src/lib/direct-entry/worker-export-contract.ts`, `worker-export-ui-model.ts`,
   `worker-operations.tsx`, `src/app/direct-entry/workers/page.tsx`.
@@ -53,7 +56,7 @@ không đụng migration/DB Production.
 - Related lanes xanh: `test:pre-w2-p1-worker-export-backend` (26+7), `test:pre-w2-p1-worker-export-ui` (18),
   `test:p2.5-w06` (62), `test:p3-1-hf-change-request-panel` (57).
 - `pnpm typecheck` 0 · `pnpm lint` 0 error / 13 warning pre-existing · `next build --webpack` 0 ·
-  `pnpm docs:check` 6/6 · `pnpm secrets:check` clean · `pnpm db:migrate -- --offline` **89/89** ·
+  `pnpm docs:check` 6/6 · `pnpm secrets:check` clean · `pnpm db:migrate -- --offline` **90/90** ·
   `git diff --check` 0. (`pnpm build` Turbopack không chạy được trong worktree do junction — dùng Webpack.)
 
 ## Mutation evidence
@@ -91,5 +94,6 @@ nhưng **không** `all` scope).
 
 ## Chờ T0
 
-Push branch fast-forward, **không** merge main. Dừng ở trạng thái chờ T0 review; migration #89 chờ T0
-review/apply (không tự apply vào DB nào).
+Push branch fast-forward, **không** merge main. Dừng ở trạng thái chờ T0 review; migration #90 (HF-E) và
+#89 (cutoff, reconcile) chờ T0 review/apply — không tự apply vào DB nào. Checksum repo của cutoff #89:
+`1ab6ffe4fb281d21e7e3e9609c8b1f82b1c2e0341f69ddc20618dfe2678dbb5c` (cần khớp `schema_migrations.checksum` Vercel).
