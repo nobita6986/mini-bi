@@ -101,7 +101,7 @@
     "test:pre-w2-p2-worker-name-correction": "node --test src/lib/direct-entry/worker-name-correction.test.mjs",
     "test:pre-w2-hf-d1-dashboard-only-duplicate-cccd": "node --test src/lib/auth/duplicate-cccd-report-access.test.mjs src/lib/navigation/registry.test.mjs",
     "test:pre-w2-hf-e-worker-export": "node --conditions=react-server --test src/lib/direct-entry/worker-export-contract.test.mjs src/lib/direct-entry/worker-export-repository.test.mjs src/lib/direct-entry/worker-export-api.test.mjs src/lib/direct-entry/worker-export-xlsx.test.mjs && node --test scripts/pre-w2-p1-worker-export-db.test.mjs src/lib/direct-entry/worker-export-ui-model.test.mjs src/components/direct-entry/worker-export-ui.test.mjs",
-    "test:pre-w2-hf-d3-bc-account-personnel": "node --conditions=react-server --test src/lib/admin/account-operation.test.mjs",
+    "test:pre-w2-hf-d3-bc-account-personnel": "node --conditions=react-server --test src/lib/admin/account-operation.test.mjs src/lib/admin/account-operation-ui-model.test.mjs && node --test src/components/admin/account-operation-ui.test.mjs",
     "test:p3-1-hf-recruiter-alias": "node --test scripts/p3-1-hf-recruiter-alias-backfill.test.mjs",
     "test:p3-1-hf-duplicate-cccd-report": "node --test scripts/p3-1-hf-duplicate-cccd-report-db.test.mjs",
     "test:p3-1-hf-r1-duplicate-cccd-submit-confirmation": "node --conditions=react-server --test scripts/p3-1-hf-r1-duplicate-cccd-submit-confirmation-db.test.mjs src/lib/direct-entry/submission-duplicate-cccd-contract.test.mjs src/lib/direct-entry/submission-duplicate-cccd-repository.test.mjs src/lib/direct-entry/submission-duplicate-cccd-preflight-roundtrip.test.mjs",
