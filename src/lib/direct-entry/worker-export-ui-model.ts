@@ -3,7 +3,7 @@
  *
  * Khong React, khong I/O. Client KHONG gui authority: body chi gom `scope` + bo loc + `reason`,
  * dung allowlist cua POST /api/direct-entry/workers/export. Quyen cuoi cung do server session +
- * RPC #86 quyet dinh; o day chi dung capability projection do server tra de an/hien nut.
+ * DB row-audience guard quyet dinh; capability triple van bat buoc voi scope toan cong ty.
  */
 
 import {
@@ -15,11 +15,11 @@ import type {
   WorkerOperationsActor,
 } from "./worker-operations-model.ts";
 
-/** Scope xuat duoc server cho phep; `all` chi mo cho Admin/BoD/Kế toán (#89). */
+/** Scope xuat duoc server cho phep; `all` chi mo cho Admin/BoD/Kế toán (#90). */
 export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
-/** Capability triple server-side: thieu bat ky term nao => ca file bi tu choi. */
+/** Capability triple remains mandatory for company-wide (`all`) exports. */
 export const WORKER_EXPORT_CAPABILITIES = ["pii_export", "pii_view", "payment_view"] as const;
 
 export const WORKER_EXPORT_REASON_MAX = 4000;
@@ -56,14 +56,11 @@ export function isExportableScope(
 }
 
 /**
- * An/hien nut "Xuat Excel": chi dua tren capability projection do server tra. Khong suy quyen tu
- * role/email/scope kind. Row authority (recruiter link / PM assignment) van do RPC quyet dinh;
- * mot 403 tu server hien thong bao, khong mo rong access.
+ * Offer export beside directory scopes to any resolved business actor. The RPC still verifies
+ * the recruiter link / PM assignment; this UI signal does not grant row access.
  */
 export function canExportWorkers(actor: WorkerOperationsActor | null): boolean {
-  if (actor === null) return false;
-  return WORKER_EXPORT_CAPABILITIES.every((capability) =>
-    actor.capabilities.includes(capability));
+  return actor !== null;
 }
 
 /**
@@ -72,7 +69,8 @@ export function canExportWorkers(actor: WorkerOperationsActor | null): boolean {
  */
 export function canExportAllWorkers(actor: WorkerOperationsActor | null): boolean {
   if (actor === null) return false;
-  return canExportWorkers(actor) &&
+  return WORKER_EXPORT_CAPABILITIES.every((capability) =>
+      actor.capabilities.includes(capability)) &&
     actor.scopes.some((scope) => scope.kind === "all") &&
     actor.capabilities.some((capability) =>
       capability === "entry_admin" || capability === "change_review");

@@ -6,8 +6,8 @@
  * file bi sua duoc khoi phuc byte-for-byte (script tu so hash).
  *
  * Tam probe toi thieu theo yeu cau:
- *   1. bo pii_export gate;
- *   2. cho phep all;
+ *   1. reintroduce an export-capability requirement for row-scoped exports;
+ *   2. allow an unknown scope token;
  *   3. truncate 10.001 thanh 10.000;
  *   4. ghi recruited/managed truc tiep vao scope_kind;
  *   5. RAISE sau cap audit (audit mat);
@@ -25,7 +25,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const ROOT = path.resolve(".");
-const MIGRATION = path.resolve("supabase/migrations/20261013120000_pre_w2_p1_worker_export.sql");
+const MIGRATION = path.resolve("supabase/migrations/20261014190000_pre_w2_hf_g_worker_directory_export.sql");
 const XLSX = path.resolve("src/lib/direct-entry/worker-export-xlsx.ts");
 
 const LANE_COMMANDS = [
@@ -39,17 +39,20 @@ const LANE_COMMANDS = [
 
 const MUTATIONS = [
   {
-    label: "1. bo pii_export gate",
+    label: "1. require pii_export outside all scope (denying row-scoped export)",
     file: MIGRATION,
-    find: "  if not public.direct_entry_has_capability(p_app_user_id, 'pii_export')\n" +
-      "     or not public.direct_entry_has_capability(p_app_user_id, 'pii_view')",
-    replace: "  if not public.direct_entry_has_capability(p_app_user_id, 'pii_view')",
+    find: "  -- 2. Company-wide export keeps the existing capability conjunction. For\n",
+    replace: "  if p_scope in ('recruited', 'managed') and\n" +
+      "     not public.direct_entry_has_capability(p_app_user_id, 'pii_export') then\n" +
+      "    raise exception 'mutation capability denied' using errcode = '42501';\n" +
+      "  end if;\n\n" +
+      "  -- 2. Company-wide export keeps the existing capability conjunction. For\n",
   },
   {
-    label: "2. cho phep all",
+    label: "2. allow an unknown scope token",
     file: MIGRATION,
-    find: "  if p_scope is null or p_scope not in ('recruited', 'managed') then",
-    replace: "  if p_scope is null or p_scope not in ('recruited', 'managed', 'all') then",
+    find: "  if p_scope is null or p_scope not in ('recruited', 'managed', 'all') then",
+    replace: "  if p_scope is null or p_scope not in ('recruited', 'managed', 'all', 'everything') then",
   },
   {
     label: "3. truncate 10.001 thanh 10.000",
@@ -60,7 +63,11 @@ const MUTATIONS = [
   {
     label: "4. ghi raw scope vao scope_kind",
     file: MIGRATION,
-    find: "  v_scope_kind := case when p_scope = 'recruited' then 'own' else 'project' end;",
+    find: "  v_scope_kind := case\n" +
+      "    when p_scope = 'recruited' then 'own'\n" +
+      "    when p_scope = 'managed' then 'project'\n" +
+      "    else 'all'\n" +
+      "  end;",
     replace: "  v_scope_kind := p_scope;",
   },
   {

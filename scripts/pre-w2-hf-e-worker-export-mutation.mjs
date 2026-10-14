@@ -1,7 +1,7 @@
 /**
- * PRE-W2-HF-E - bang chung MUTATION CHECK (chay tay, khong nam trong lane tu dong).
+ * PRE-W2-HF-G - bang chung MUTATION CHECK (chay tay, khong nam trong lane tu dong).
  *
- * Voi moi mutation, script sua dung mot doan trong UI gate / contract / migration #89, chay lane
+ * Voi moi mutation, script sua dung mot doan trong UI gate / contract / migration #93, chay lane
  * focused va BAT BUOC lane do phai DO. Sau moi lan, moi file bi sua duoc khoi phuc byte-for-byte.
  *
  * Tam probe toi thieu theo yeu cau:
@@ -23,7 +23,7 @@ const ROOT = path.resolve(".");
 const MODEL = path.resolve("src/lib/direct-entry/worker-export-ui-model.ts");
 const CONTRACT = path.resolve("src/lib/direct-entry/worker-export-contract.ts");
 const MIGRATION = path.resolve(
-  "supabase/migrations/20261014160000_pre_w2_hf_e_worker_export_all_and_note.sql");
+  "supabase/migrations/20261014190000_pre_w2_hf_g_worker_directory_export.sql");
 
 const LANE_COMMANDS = [
   ["--conditions=react-server", "--test",
@@ -41,11 +41,12 @@ const MUTATIONS = [
   {
     label: "1. bo gate audience cua all trong UI",
     file: MODEL,
-    find: "  return canExportWorkers(actor) &&\n" +
+    find: "  return WORKER_EXPORT_CAPABILITIES.every((capability) =>\n" +
+      "      actor.capabilities.includes(capability)) &&\n" +
       "    actor.scopes.some((scope) => scope.kind === \"all\") &&\n" +
       "    actor.capabilities.some((capability) =>\n" +
       "      capability === \"entry_admin\" || capability === \"change_review\");",
-    replace: "  return canExportWorkers(actor);",
+    replace: "  return actor !== null;",
   },
   {
     label: "2. bo cot general_note khoi row projection",
@@ -62,19 +63,15 @@ const MUTATIONS = [
     replace: "             'payment_note', null,\n             'general_note', null",
   },
   {
-    label: "4. migration cho all bo qua capability conjunction",
+    label: "4. migration bo capability conjunction (all scope must still deny)",
     file: MIGRATION,
-    find: "  if not public.direct_entry_has_capability(p_app_user_id, 'pii_export')\n" +
-      "     or not public.direct_entry_has_capability(p_app_user_id, 'pii_view')\n" +
-      "     or not public.direct_entry_has_capability(p_app_user_id, 'payment_view') then\n" +
+    find: "  if p_scope = 'all' and (\n" +
+      "       not public.direct_entry_has_capability(p_app_user_id, 'pii_export')\n" +
+      "       or not public.direct_entry_has_capability(p_app_user_id, 'pii_view')\n" +
+      "       or not public.direct_entry_has_capability(p_app_user_id, 'payment_view')) then\n" +
       "    raise exception 'worker export capability denied' using errcode = '42501';\n" +
       "  end if;",
-    replace: "  if p_scope in ('recruited', 'managed') and (\n" +
-      "    not public.direct_entry_has_capability(p_app_user_id, 'pii_export')\n" +
-      "     or not public.direct_entry_has_capability(p_app_user_id, 'pii_view')\n" +
-      "     or not public.direct_entry_has_capability(p_app_user_id, 'payment_view')) then\n" +
-      "    raise exception 'worker export capability denied' using errcode = '42501';\n" +
-      "  end if;",
+    replace: "",
   },
 ];
 
