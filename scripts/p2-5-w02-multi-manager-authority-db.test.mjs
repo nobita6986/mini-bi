@@ -47,7 +47,8 @@ function uuid(n) {
 
 const TEAM = uuid(11);
 const PROJ_1 = "proj_1", PROJ_2 = "proj_2";
-const REC_A = uuid(21), REC_B = uuid(22), REC_C = uuid(23), REC_D = uuid(24);
+const REC_A = uuid(21), REC_B = uuid(22), REC_C = uuid(23), REC_D = uuid(24),
+  REC_CREATOR = uuid(25), REC_NO_SCOPE = uuid(26);
 const ADMIN_AUTH = uuid(31), ADMIN_APP = uuid(41);
 const MGR_A_AUTH = uuid(32), MGR_A_APP = uuid(42);
 const MGR_B_AUTH = uuid(33), MGR_B_APP = uuid(43);
@@ -134,7 +135,8 @@ async function seedActors(db) {
       [project, name]);
   }
   for (const [recruiter, name] of [[REC_A, "Recruiter A"], [REC_B, "Recruiter B"],
-    [REC_C, "Recruiter C"], [REC_D, "Recruiter D"]]) {
+    [REC_C, "Recruiter C"], [REC_D, "Recruiter D"],
+    [REC_CREATOR, "Recruiter Creator"], [REC_NO_SCOPE, "Recruiter No Scope"]]) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)",
       [recruiter, name]);
@@ -147,7 +149,7 @@ async function seedActors(db) {
   }
   const links = [
     [MGR_A_APP, REC_A], [MGR_B_APP, REC_B], [MGR_C_APP, REC_C],
-    [REC_APP, REC_D], [CREATOR_APP, REC_D], [MGR_NO_SCOPE_APP, REC_A],
+    [REC_APP, REC_D], [CREATOR_APP, REC_CREATOR], [MGR_NO_SCOPE_APP, REC_NO_SCOPE],
   ];
   for (const [app, recruiter] of links) {
     await db.query(

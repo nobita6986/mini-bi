@@ -666,12 +666,13 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // becomes reachable by anon/authenticated. P3.1-W02C-R2 (#80) adds no function at
     // all: it patches three live read bodies in place through a helper that the same
     // migration drops before it ends, so the inventory is unchanged. PRE-W2-P1
-    // (#86) adds one service-role-only worker-export RPC. The measured inventory
-    // is 219 total / 101 service-role / 118 internal.
+    // (#86) adds one service-role-only worker-export RPC. PRE-W2-HF-D3-A (#92)
+    // adds nine service-role RPCs and three internal helpers. The measured
+    // inventory is 231 total / 110 service-role / 121 internal.
     assert.deepEqual(result.rows[0], {
-      total: 219,
-      service_role: 101,
-      internal: 118,
+      total: 231,
+      service_role: 110,
+      internal: 121,
       exposed_internal: 0,
     });
   } finally {

@@ -173,7 +173,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // shared status mutation helper plus enable/disable service-role RPCs.
   // W03A-R2 (#83/#84) adds the account list/detail read boundary.
   // PRE-W2-P1 (#86) adds one service-role-only worker-export RPC.
-  // Measured: 219 total, 101 service-role executable and 118 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [219, 101, 118]);
+  // PRE-W2-HF-D3-A (#92) adds nine service-role RPCs and three internal helpers.
+  // Measured: 231 total, 110 service-role executable and 121 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [231, 110, 121]);
   await db.close();
 });
