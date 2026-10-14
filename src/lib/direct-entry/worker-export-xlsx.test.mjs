@@ -31,6 +31,7 @@ function row(overrides = {}) {
     bank_name: "Bank",
     account_holder_name: "Holder",
     payment_note: null,
+    general_note: "Ghi chú NLĐ",
     ...overrides,
   };
 }
@@ -42,7 +43,7 @@ async function reload(bytes) {
   return { excel, sheet: workbook.getWorksheet("Người lao động") };
 }
 
-test("the workbook has exactly the 18 headers in order", async () => {
+test("the workbook has exactly the 19 headers in order", async () => {
   const { sheet } = await reload(await buildWorkerExportXlsx([row()]));
   const header = sheet.getRow(1);
   assert.deepEqual(
@@ -90,12 +91,18 @@ test("no cell is a formula/hyperlink/error; dangerous strings stay literal", asy
   assert.equal(sheet.getRow(6).getCell(addressIndex).value, "line1\nline2");
 });
 
-test("column 18 is empty when there is no authoritative payment note", async () => {
-  const { sheet } = await reload(await buildWorkerExportXlsx([row({ payment_note: null })]));
-  const noteIndex = WORKER_EXPORT_COLUMNS.length;
-  const cell = sheet.getRow(2).getCell(noteIndex);
-  assert.ok(cell.value === null || cell.value === "",
+test("payment_note stays empty while general_note carries the source value", async () => {
+  const { sheet } = await reload(await buildWorkerExportXlsx([
+    row({ payment_note: null, general_note: "=1+1\nnote" }),
+  ]));
+  const paymentIndex = WORKER_EXPORT_COLUMNS.findIndex((c) => c.key === "payment_note") + 1;
+  const paymentCell = sheet.getRow(2).getCell(paymentIndex);
+  assert.ok(paymentCell.value === null || paymentCell.value === "",
     "the payment note cell must be empty, never fabricated");
+
+  const noteIndex = WORKER_EXPORT_COLUMNS.findIndex((c) => c.key === "general_note") + 1;
+  const noteCell = sheet.getRow(2).getCell(noteIndex);
+  assert.equal(noteCell.value, "=1+1\nnote", "general_note is literal text, never a formula");
 });
 
 test("an empty authorized result still produces a header-only file", async () => {

@@ -8,7 +8,7 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const NEW_MIGRATION = "20261011150000_p3_1_w03a_app_user_lifecycle.sql";
-const BASE_MIGRATION_COUNT = 87;
+const EXPECTED_MIGRATION_COUNT = 90;
 const ADMIN_AUTH = "10000000-0000-4000-8000-000000000001";
 const ADMIN_APP = "20000000-0000-4000-8000-000000000001";
 const ACCOUNTING_AUTH = "10000000-0000-4000-8000-000000000002";
@@ -140,8 +140,8 @@ async function assertSqlState(operation, code) {
 
 test("W03A migration is #82 append-only and exposes the locked schema", async () => {
   const names = await migrationNames();
-  assert.equal(names.length, BASE_MIGRATION_COUNT + 1);
-  assert.ok(names.includes(NEW_MIGRATION));
+  assert.equal(names.length, EXPECTED_MIGRATION_COUNT);
+  assert.equal(names.indexOf(NEW_MIGRATION), 81);
   const db = await database();
   const columns = await query(db, `
     select column_name from information_schema.columns

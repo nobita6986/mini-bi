@@ -5,7 +5,7 @@ import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { WorkerOperations } from "@/components/direct-entry/worker-operations";
 import { decideWorkerOperationsPageAccess } from "@/lib/auth/direct-entry-page-access";
 import { canDirectlyCorrectWorkers } from "@/lib/direct-entry/worker-operations-model";
-import { canExportWorkers } from "@/lib/direct-entry/worker-export-ui-model";
+import { canExportAllWorkers, canExportWorkers } from "@/lib/direct-entry/worker-export-ui-model";
 import {
   workerOperationsAllScopePredicate,
   workerOperationsReviewPredicate,
@@ -54,12 +54,14 @@ export default async function WorkerOperationsPage() {
         scopes: projection.scopes.map((scope) => ({ kind: scope.kind })),
       };
       const canExport = canExportWorkers(actorProjection);
+      const canExportAll = canExportAllWorkers(actorProjection);
       return (
         <WorkerOperations
           canSeeAllWorkers={canSeeAllWorkers}
           canReview={canReview}
           canPrivilegedEditWorkers={canPrivilegedEditWorkers}
           canExport={canExport}
+          canExportAll={canExportAll}
           actor={actorProjection}
         />
       );

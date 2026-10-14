@@ -33,6 +33,7 @@ const row = {
   bank_name: null,
   account_holder_name: null,
   payment_note: null,
+  general_note: null,
 };
 
 const VALID_BODY = { scope: "recruited", reason: "export test" };
@@ -98,7 +99,7 @@ test("CSRF, content-type and body guards reject before the repository", async ()
 test("client authority fields and an invalid request body are refused", async () => {
   assert.equal((await callApi({ ...VALID_BODY, auth_subject: "x" })).status, 400);
   assert.equal((await callApi({ ...VALID_BODY, app_user_id: "x" })).status, 400);
-  assert.equal((await callApi({ ...VALID_BODY, scope: "all" })).status, 400);
+  assert.equal((await callApi({ ...VALID_BODY, scope: "everything" })).status, 400);
   assert.equal((await callApi({ scope: "recruited" })).status, 400);
   assert.equal((await callApi({ ...VALID_BODY, employment_status: "MAYBE" })).status, 400);
 });
@@ -191,6 +192,23 @@ test("the request is forwarded to the repository with the server actor only", as
       recruiter_id: null,
       employment_status: "ON",
       reason: "x",
+    },
+  }]);
+});
+
+test("the all scope is accepted by the body allowlist (authority stays server-side)", async () => {
+  const deps = dependencies();
+  await callApi({ scope: "all", reason: "audit all" }, { deps });
+  assert.deepEqual(deps.calls, [{
+    name: "exportWorkers",
+    input: {
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      scope: "all",
+      project_id: null,
+      recruiter_id: null,
+      employment_status: null,
+      reason: "audit all",
     },
   }]);
 });

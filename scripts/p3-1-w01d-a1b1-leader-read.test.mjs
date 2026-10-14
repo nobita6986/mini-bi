@@ -104,13 +104,14 @@ async function createDatabase() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 88);
-  assert.equal(names.at(-18), MIGRATION_71);
+  assert.equal(names.length, 90);
+  const leaderMigrationAt = names.indexOf(MIGRATION_71);
+  assert.equal(leaderMigrationAt, 70);
   const migrations = await Promise.all(names.map(async (name) => ({
     name,
     sql: await readFile(path.join(MIGRATION_DIR, name), "utf8"),
   })));
-  for (const name of names.slice(0, -18)) {
+  for (const name of names.slice(0, leaderMigrationAt)) {
     const file = path.join(MIGRATION_DIR, name);
     const local = await readFile(file);
     const trackedPath = path.relative(ROOT, file).replaceAll("\\", "/");
@@ -119,8 +120,8 @@ async function createDatabase() {
     await db.exec(local.toString("utf8"));
   }
   const baseline = await inventory(db);
-  await db.exec(mutation(migrations.at(-18).sql));
-  return { db, names, baseline, migrations };
+  await db.exec(mutation(migrations[leaderMigrationAt].sql));
+  return { db, names, baseline, migrations, leaderMigrationAt };
 }
 
 let db;
@@ -252,9 +253,9 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   db = state.db;
   migrationNames = state.names;
   inventoryBefore = state.baseline;
-  allMigrationsForNames = state.migrations.slice(0, -17);
-  assert.equal(migrationNames.length, 88);
-  assert.equal(migrationNames.at(-18), MIGRATION_71);
+  allMigrationsForNames = state.migrations.slice(0, state.leaderMigrationAt + 1);
+  assert.equal(migrationNames.length, 90);
+  assert.equal(migrationNames.at(-20), MIGRATION_71);
   assert.equal(migrationNames.some((name) => name.startsWith("202610100")), false);
 
   await db.query(

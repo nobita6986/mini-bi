@@ -35,6 +35,7 @@ function validRow(overrides = {}) {
     bank_name: "Bank",
     account_holder_name: "Holder",
     payment_note: null,
+    general_note: "Synthetic note",
     ...overrides,
   };
 }
@@ -50,6 +51,9 @@ test("the request accepts the exact allowlist and optional/null filters", () => 
   }), {
     scope: "managed", project_id: "proj_a", recruiter_id: null, employment_status: "OFF", reason: "x",
   });
+  assert.deepEqual(projectWorkerExportRequest({ scope: "all", reason: "audit all" }), {
+    scope: "all", project_id: null, recruiter_id: null, employment_status: null, reason: "audit all",
+  });
 });
 
 test("the request rejects unknown keys, wrong types, invalid enums and filters", () => {
@@ -59,7 +63,6 @@ test("the request rejects unknown keys, wrong types, invalid enums and filters",
     { scope: "recruited" },
     { scope: "recruited", reason: "" },
     { scope: "recruited", reason: "x".repeat(4001) },
-    { scope: "all", reason: "x" },
     { scope: "everything", reason: "x" },
     { scope: "recruited", reason: "x", idempotency_key: "abc" },
     { scope: "recruited", reason: "x", auth_subject: "s" },
@@ -72,25 +75,28 @@ test("the request rejects unknown keys, wrong types, invalid enums and filters",
   }
 });
 
-test("the row projection keeps the 18 fields and fails closed on malformed rows", () => {
+test("the row projection keeps the 19 fields and fails closed on malformed rows", () => {
   assert.deepEqual(Object.keys(projectWorkerExportRow(validRow())).sort(),
     [...WORKER_EXPORT_ROW_KEYS].sort());
   for (const bad of [
     null,
     validRow({ extra: 1 }),
     (() => { const r = validRow(); delete r.national_id; return r; })(),
+    (() => { const r = validRow(); delete r.general_note; return r; })(),
     validRow({ first_work_date: "2026/10/01" }),
     validRow({ date_of_birth: "nope" }),
     validRow({ leave_date: "2026-99-99" }),
     validRow({ provider_type: "Other" }),
     validRow({ employment_status: "MAYBE" }),
     validRow({ payment_note: "fabricated" }),
+    validRow({ general_note: "x".repeat(4001) }),
     validRow({ project_display: "" }),
     validRow({ recruiter_display: "" }),
   ]) {
     assert.equal(projectWorkerExportRow(bad), null, JSON.stringify(bad));
   }
   assert.equal("payment_note" in projectWorkerExportRow(validRow({ payment_note: "" })), true);
+  assert.equal("general_note" in projectWorkerExportRow(validRow({ general_note: null })), true);
 });
 
 test("the envelope accepts exactly ok/rows or too_many_rows/limit", () => {
@@ -116,13 +122,13 @@ test("the envelope accepts exactly ok/rows or too_many_rows/limit", () => {
   }
 });
 
-test("the XLSX column contract is exactly 18 ordered columns with the four text ids", () => {
-  assert.equal(WORKER_EXPORT_COLUMNS.length, 18);
+test("the XLSX column contract is exactly 19 ordered columns with the four text ids", () => {
+  assert.equal(WORKER_EXPORT_COLUMNS.length, 19);
   assert.deepEqual(WORKER_EXPORT_COLUMNS.map((c) => c.header), [
     "Mã NLĐ", "Họ và tên", "Ngày sinh", "CCCD", "Số điện thoại", "Địa chỉ", "Dự án",
     "Ngày bắt đầu", "Loại hình lao động", "Người tuyển", "Nhà cung cấp",
     "Trạng thái làm việc", "Ngày nghỉ", "Lý do nghỉ", "Số tài khoản", "Ngân hàng",
-    "Chủ tài khoản", "Ghi chú thanh toán",
+    "Chủ tài khoản", "Ghi chú thanh toán", "Ghi chú",
   ]);
   assert.deepEqual(
     WORKER_EXPORT_COLUMNS.filter((c) => c.text).map((c) => c.key),

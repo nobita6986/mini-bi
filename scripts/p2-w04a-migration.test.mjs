@@ -32,7 +32,7 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
     // the P2.5-HF chain #58 through #64, P3-W07A-R3 #65, P3-W07A-R4 #66,
     // P3.1-W01A #67, W01B #68, W01C-A #69, W01C-B #70, W01D-A1a #71, W02-A #72,
     // alias hotfix #73 and the P3.1-HF duplicate-CCCD report #74.
-    assert.equal(migrationNames.length, 88);
+    assert.equal(migrationNames.length, 90);
     assert.equal(
       migrationNames[47],
       "20261008080000_p3_w05a_actor_scoped_reporting.sql",
@@ -90,6 +90,10 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
       "entry_id",
       "submission_id",
       "cutoff_date",
+      "team_id",
+      "team_code",
+      "team_display_name",
+      "team_active",
     ]);
 
     // 2b. Dimension options view exists with the canonical 4-column shape.
@@ -103,7 +107,7 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
 
     // 3. Cutoff is locked to the P2-W04C rebaseline value.
     const cutoffRes = await db.query("select public.direct_entry_reporting_cutoff()::text as c");
-    assert.equal(cutoffRes.rows[0].c, "2026-09-30");
+    assert.equal(cutoffRes.rows[0].c, "2000-01-01");
 
     // 4. Reconciliation totals are zero on fresh DB.
     const totals = await db.query(
@@ -113,7 +117,7 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
     assert.equal(Number(totals.rows[0].legacy_subtotal), 0);
     assert.equal(Number(totals.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(totals.rows[0].overlap_blocker), 0);
-    assert.equal(totals.rows[0].cutoff_date, "2026-09-30");
+    assert.equal(totals.rows[0].cutoff_date, "2000-01-01");
   } finally {
     await db.close();
   }
@@ -224,10 +228,9 @@ async function seedW04aFixture(db) {
   await db.query("insert into auth.users (id) values ($1)",
     ["10000000-0000-4000-8000-000000000001"]);
   await db.query(
-    "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name)" +
-    " values ($1, $2, true, $3)",
-    ["20000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000001",
-      "W04A Synthetic Admin"],
+    "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled)" +
+    " values ($1, $2, true)",
+    ["20000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000001"],
   );
   await db.query("insert into public.teams (team_id, code, display_name) values ($1, $2, $3)",
     ["94000000-0000-4000-8000-000000000001", "W04A-SYNTH", "W04A team"]);
@@ -272,8 +275,7 @@ async function applyBaseMigrations(db) {
     .filter((name) => name.endsWith(".sql"))
     .sort();
   for (const name of names) {
-    if (name.includes("p2_w04b_post_purge_cutover_rebaseline")) continue;
-    if (name.includes("p2_w04c_cutoff_rebaseline_2026_09_30")) continue;
+    if (name.includes("p2_w04b_post_purge_cutover_rebaseline")) break;
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   return names;
@@ -339,7 +341,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // Later main migrations (W05A, W07C-R7, W07E, P2.5-W02 and P2.5-W03) are present
   // after W04B in the source inventory; this test skipped applying only W04B.
-  assert.equal(names.length, 88);
+  assert.equal(names.length, 90);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

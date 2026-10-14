@@ -156,6 +156,7 @@ export function WorkerOperations({
   canReview = false,
   canPrivilegedEditWorkers = false,
   canExport = false,
+  canExportAll = false,
   actor = null,
 }: {
   canSeeAllWorkers?: boolean;
@@ -163,6 +164,8 @@ export function WorkerOperations({
   canPrivilegedEditWorkers?: boolean;
   /** Capability projection server-side (pii_export + pii_view + payment_view); authority cuoi do RPC. */
   canExport?: boolean;
+  /** Admin/BoD/Kế toán xuat toan bo (all scope): export caps + all scope + (entry_admin|change_review). */
+  canExportAll?: boolean;
   actor?: WorkerOperationsActor | null;
 }) {
   const tabs = visibleWorkerTabs(canSeeAllWorkers);
@@ -438,6 +441,7 @@ export function WorkerOperations({
 
   const scope = tabScope(tab);
   const exportScope = exportScopeForTab(tab);
+  const canExportThisTab = exportScope === "all" ? canExportAll : canExport;
   const workerPage = scope === null ? null : workerPages[scope as WorkerScopeTab];
   const activePage: { state: PageState; message: string | null } =
     workerPage ?? submissionPage;
@@ -584,7 +588,7 @@ export function WorkerOperations({
           </>
         )}
 
-        {canExport && exportScope !== null ? (
+        {canExportThisTab && exportScope !== null ? (
           <div className="flex justify-end">
             <button type="button" className={primaryClass}
               onClick={() => setExportOpen(true)}>
