@@ -4,6 +4,7 @@
 > Base: `origin/main@0e5e27d` (88 migrations; branch synced preserving history). New #88 = D2 active-duplicate-CCCD semantics — unrelated to account/personnel.
 > Kind: docs-only. No source/package/SQL change, no DB access/mutation, no migration apply, no merge, no VPS deploy, no UAT. Only this file and the pointer edits (S0/R3) are written.
 > Supersedes: R3 §2/§3 (concurrency claim, purge safety) and clarifies R3 §1 (marker secrecy wording) and R3 §3 (TTL values).
+> Superseded-by: R5 — `pre-w2-hf-d3-s0-account-personnel-survey-R5.md` (bounded retention for unresolved create intents, tombstone/auth_subject classification, per-intent-type retention).
 > Note: Owner performs UAT; this memo performs none.
 
 ## 1. Atomic claim before any Auth call (corrects R3 §2)
