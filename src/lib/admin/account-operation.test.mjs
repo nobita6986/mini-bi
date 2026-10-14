@@ -20,6 +20,7 @@ import {
   editDisplayName,
   resetPassword,
   createPersonnelFromAccount,
+  reclassifyAccountOperations,
 } from "./account-operation-api.ts";
 
 const AUTH_SUBJECT = "91000000-0000-4000-8000-000000000001";
@@ -209,4 +210,53 @@ test("D3: personnel from account returns the created personnel, display_name ser
   const body = await response.json();
   assert.equal(body.personnel.display_name, "Nguyen Van A");
   assert.equal(body.personnel.personnel_code, "NV001");
+});
+
+/* ---------- finish result is authoritative ---------- */
+test("D3: create unknown with a failed finish does NOT return terminal success", async () => {
+  let authCalls = 0;
+  const d = deps({
+    auth: auth({ async createAuthAccount() { authCalls += 1; return { kind: "unknown" }; } }),
+    repository: repository({ async finish() { return { ok: false, kind: "unavailable" }; } }),
+  });
+  const response = await createAccount(fakeRequest(VALID_CREATE), "true", d);
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.equal(body.ok, false);
+  assert.equal(authCalls, 1, "no second Auth call when finish write fails");
+});
+
+test("D3: reset applied with a failed finish is not reported as success and no second Auth call", async () => {
+  let resets = 0;
+  const d = deps({
+    auth: auth({ async resetAuthPassword() { resets += 1; return { kind: "applied" }; } }),
+    repository: repository({ async finish() { return { ok: false, kind: "unavailable" }; } }),
+  });
+  const response = await resetPassword(fakeRequest({
+    password: "new-pass-123", password_confirm: "new-pass-123", reason: "reset", idempotency_key: AUTH_SUBJECT,
+  }), APP_USER, "true", d);
+  assert.equal(response.status, 500);
+  assert.equal(resets, 1, "no second Auth call when finish write fails");
+});
+
+/* ---------- reclassify ---------- */
+test("D3: reclassify route calls the repository RPC and returns sanitized counts", async () => {
+  let called = false;
+  const d = deps({
+    repository: repository({
+      async reclassify() { called = true; return { ok: true, data: { reclassified: 2, purged: 1, deleted: 0 } }; },
+    }),
+  });
+  const response = await reclassifyAccountOperations(fakeRequest({}), "true", d);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.reclassified, { reclassified: 2, purged: 1, deleted: 0 });
+  assert.equal(called, true);
+});
+
+test("D3: reclassify is denied for a non-Full-Admin (session actor unavailable)", async () => {
+  const d = deps({ resolveSession: async () => ({ actor: { ok: false, reason: "ACTOR_DISABLED" } }) });
+  const response = await reclassifyAccountOperations(fakeRequest({}), "true", d);
+  assert.equal(response.status, 403);
 });

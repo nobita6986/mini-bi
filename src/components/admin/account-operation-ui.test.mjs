@@ -38,6 +38,13 @@ test("D3-B: reconcile surface shows BLOCKED/INDETERMINATE handling, no auto-retr
   assert.match(source, /classifyAccountOperationResponse/);
 });
 
+test("D3-B: reclassify is wired to the retention RPC route, no cron", () => {
+  assert.match(source, /Phân loại lại/);
+  assert.match(source, /\/api\/admin\/access\/accounts\/reclassify/);
+  assert.match(source, /reclassified/);
+  assert.doesNotMatch(source, /setTimeout|cron|setInterval/);
+});
+
 test("D3-B: no auth_subject/intent_token/raw identity rendered in the UI surface", () => {
   for (const file of [source, model]) {
     assert.doesNotMatch(file, /\{intent_token\}|\{auth_subject\}/);

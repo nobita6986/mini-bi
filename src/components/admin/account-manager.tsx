@@ -696,13 +696,43 @@ function AccountReconcileSurface({
     }
   }
 
+  async function reclassify() {
+    onBusyChange(true);
+    try {
+      const response = await fetch("/api/admin/access/accounts/reclassify", {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const payload = await response.json().catch(() => null);
+      onBusyChange(false);
+      if (response.ok && payload && typeof payload.reclassified === "object") {
+        onNoticeChange({
+          kind: "applied",
+          message: "Đã phân loại lại " + String(payload.reclassified.reclassified ?? 0) +
+            " intent; purged " + String(payload.reclassified.purged ?? 0) +
+            "; deleted " + String(payload.reclassified.deleted ?? 0) + ".",
+        });
+      } else {
+        onNoticeChange({ kind: "unavailable", message: "Không phân loại lại được. Hãy thử lại." });
+      }
+    } catch {
+      onBusyChange(false);
+      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
+    }
+  }
+
   return (
     <Alert tone="warning" title="Operation cần xử lý">
       <p>Intent đang ở trạng thái {intent.state}. Không tự retry Auth; chỉ Đối soát để xác minh qua Admin API.</p>
       {notice ? <p role="status">{notice.message}</p> : null}
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={() => void reconcile()} className={opPrimary}>
           {busy ? "Đang đối soát…" : "Đối soát"}
+        </button>
+        <button type="button" disabled={busy} onClick={() => void reclassify()} className={opButton}>
+          {busy ? "Đang phân loại…" : "Phân loại lại"}
         </button>
         <button type="button" disabled={busy} onClick={onClose} className={opButton}>Đóng</button>
       </div>

@@ -151,15 +151,17 @@ async function runCreateAccount(
     login_id: input.login_id, password: input.password, intent_token: intent.intent_token,
   });
   if (created.kind === "unknown") {
-    await deps.repository.finish({
+    const finished = await deps.repository.finish({
       ...actor.value, intent_id: intent.intent_id, outcome: "INDETERMINATE", failure_code: "auth_unknown",
     });
+    if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
     return intentResponse(intent.intent_id, intent.intent_token, "CREATE_ACCOUNT", "INDETERMINATE");
   }
   if (created.kind === "failure") {
-    await deps.repository.finish({
+    const finished = await deps.repository.finish({
       ...actor.value, intent_id: intent.intent_id, outcome: "CONFLICT", failure_code: created.code,
     });
+    if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
     return intentResponse(intent.intent_id, intent.intent_token, "CREATE_ACCOUNT", "CONFLICT");
   }
 
@@ -251,14 +253,17 @@ async function runResetPassword(
   const auth = deps.auth;
   const reset = await auth.resetAuthPassword({ auth_subject: read.data.auth_subject, password: input.password });
   if (reset.kind === "applied") {
-    await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "APPLIED", failure_code: null });
+    const finished = await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "APPLIED", failure_code: null });
+    if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
     return respond({ ok: true }, 200);
   }
   if (reset.kind === "failure") {
-    await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "FAILED", failure_code: reset.code });
+    const finished = await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "FAILED", failure_code: reset.code });
+    if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
     return fail("ACCOUNT_OPERATION_FAILED", 400);
   }
-  await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "INDETERMINATE", failure_code: "auth_unknown" });
+  const finished = await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "INDETERMINATE", failure_code: "auth_unknown" });
+  if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
   return fail("ACCOUNT_OPERATION_INDETERMINATE", 500);
 }
 
@@ -350,4 +355,21 @@ export async function listEligibleAccounts(
   const result = await deps.repository.listEligibleAccounts({ ...actor.value, page, page_size: pageSize });
   if (!result.ok) return errorResponse(result.kind);
   return respond({ ok: true, list: result.data }, 200);
+}
+
+/* ---------------- reclassify (retention sweep, Full Admin triggered) ---------------- */
+export async function reclassifyAccountOperations(
+  request: Request, flag: string | undefined, deps: AccountOperationDependencies,
+): Promise<Response> {
+  const preflight = mutationPreflight(request, flag);
+  if (preflight) return preflight;
+  const actor = await resolveActor(deps);
+  if (!actor.ok) return actor.response;
+  try {
+    const result = await deps.repository.reclassify(actor.value);
+    if (!result.ok) return errorResponse(result.kind);
+    return respond({ ok: true, reclassified: result.data }, 200);
+  } catch {
+    return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
+  }
 }
