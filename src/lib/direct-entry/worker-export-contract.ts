@@ -11,7 +11,7 @@
  */
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 
-export const WORKER_EXPORT_SCOPES = ["recruited", "managed"] as const;
+export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
 export const WORKER_EXPORT_EMPLOYMENT_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
@@ -24,18 +24,18 @@ export const WORKER_EXPORT_BODY_KEYS = [
   "scope", "project_id", "recruiter_id", "employment_status", "reason",
 ] as const;
 
-/** Exact row projection, string/null theo du lieu authoritative (18 truong). */
+/** Exact row projection, string/null theo du lieu authoritative (19 truong, P1 + Ghi chú). */
 export const WORKER_EXPORT_ROW_KEYS = [
   "employee_code", "display_name", "date_of_birth", "national_id", "phone", "address",
   "project_display", "first_work_date", "labor_type_display", "recruiter_display",
   "provider_type", "employment_status", "leave_date", "leave_reason", "account_number",
-  "bank_name", "account_holder_name", "payment_note",
+  "bank_name", "account_holder_name", "payment_note", "general_note",
 ] as const;
 
 export const WORKER_EXPORT_OK_KEYS = ["status", "rows"] as const;
 export const WORKER_EXPORT_TOO_MANY_KEYS = ["status", "limit"] as const;
 
-/** 18 cot XLSX theo dung thu tu; `text` giu so 0 dau (numFmt "@"). */
+/** 19 cot XLSX theo dung thu tu; `text` giu so 0 dau (numFmt "@"). */
 export const WORKER_EXPORT_COLUMNS: ReadonlyArray<{
   header: string;
   key: (typeof WORKER_EXPORT_ROW_KEYS)[number];
@@ -59,6 +59,7 @@ export const WORKER_EXPORT_COLUMNS: ReadonlyArray<{
   { header: "Ngân hàng", key: "bank_name", text: false },
   { header: "Chủ tài khoản", key: "account_holder_name", text: false },
   { header: "Ghi chú thanh toán", key: "payment_note", text: false },
+  { header: "Ghi chú", key: "general_note", text: false },
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -160,6 +161,7 @@ export type WorkerExportRow = {
   bank_name: string | null;
   account_holder_name: string | null;
   payment_note: string | null;
+  general_note: string | null;
 };
 
 export type WorkerExportEnvelope =
@@ -200,6 +202,8 @@ export function projectWorkerExportRow(value: unknown): WorkerExportRow | null {
   if (!isNullableText(value.account_holder_name, 256)) return null;
   // No authoritative payment note today: only null or empty is accepted, never fabricated.
   if (value.payment_note !== null && value.payment_note !== "") return null;
+  // PRE-W2-HF-E: Ghi chú lấy từ direct_entries.general_note (1..4000, hoặc null).
+  if (!isNullableText(value.general_note, 4000)) return null;
 
   return {
     employee_code: value.employee_code,
@@ -220,6 +224,7 @@ export function projectWorkerExportRow(value: unknown): WorkerExportRow | null {
     bank_name: value.bank_name,
     account_holder_name: value.account_holder_name,
     payment_note: value.payment_note,
+    general_note: value.general_note,
   };
 }
 

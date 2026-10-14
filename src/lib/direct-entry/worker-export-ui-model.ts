@@ -15,8 +15,8 @@ import type {
   WorkerOperationsActor,
 } from "./worker-operations-model.ts";
 
-/** Scope xuat duoc server cho phep; `all` va moi token khac deu bi tu choi (#86). */
-export const WORKER_EXPORT_SCOPES = ["recruited", "managed"] as const;
+/** Scope xuat duoc server cho phep; `all` chi mo cho Admin/BoD/Kế toán (#89). */
+export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
 /** Capability triple server-side: thieu bat ky term nao => ca file bi tu choi. */
@@ -44,7 +44,7 @@ export function isWorkerExportScope(value: unknown): value is WorkerExportScope 
     (WORKER_EXPORT_SCOPES as readonly string[]).includes(value);
 }
 
-/** Scope tab cua danh sach nao duoc phep xuat; `all` va `uploader` => null. */
+/** Scope tab cua danh sach nao duoc phep xuat; `uploader` => null. */
 export function exportScopeForTab(tab: string): WorkerExportScope | null {
   return isWorkerExportScope(tab) ? tab : null;
 }
@@ -64,6 +64,18 @@ export function canExportWorkers(actor: WorkerOperationsActor | null): boolean {
   if (actor === null) return false;
   return WORKER_EXPORT_CAPABILITIES.every((capability) =>
     actor.capabilities.includes(capability));
+}
+
+/**
+ * Admin/BoD/Kế toán xuat toan bo (scope=all): can du export caps + effective all scope +
+ * (entry_admin OR change_review). KHONG suy quyen tu role/email; row audience van do RPC quyet.
+ */
+export function canExportAllWorkers(actor: WorkerOperationsActor | null): boolean {
+  if (actor === null) return false;
+  return canExportWorkers(actor) &&
+    actor.scopes.some((scope) => scope.kind === "all") &&
+    actor.capabilities.some((capability) =>
+      capability === "entry_admin" || capability === "change_review");
 }
 
 export type WorkerExportRequestCode =
@@ -118,7 +130,7 @@ export function buildWorkerExportRequest(input: {
 /** Copy loi request (khong lo UUID/raw DB/PII). */
 export function workerExportRequestMessage(code: WorkerExportRequestCode): string {
   if (code === "SCOPE_INVALID") {
-    return "Chỉ xuất được ở hai danh sách \"Người tôi tuyển\" và \"Dự án tôi quản lý\".";
+    return "Chỉ xuất được ở \"Người tôi tuyển\", \"Dự án tôi quản lý\" và \"Toàn bộ NLĐ\".";
   }
   if (code === "REASON_TOO_LONG") {
     return "Lý do xuất tối đa " + String(WORKER_EXPORT_REASON_MAX) + " ký tự.";

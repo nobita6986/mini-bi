@@ -28,10 +28,12 @@ test("T1A: POST dung method, content-type va same-origin (CSRF)", () => {
   assert.match(source, /credentials: "same-origin"/);
 });
 
-test("T1A: nut xuat chi o recruited/managed va gate bang capability server", () => {
+test("T1A: nut xuat gate bang capability server; all chi cho Admin/BoD/Kế toán", () => {
   assert.match(source, /canExport\?: boolean/);
+  assert.match(source, /canExportAll\?: boolean/);
   assert.match(source, /const exportScope = exportScopeForTab\(tab\)/);
-  assert.match(source, /canExport && exportScope !== null \?/);
+  assert.match(source, /const canExportThisTab = exportScope === "all" \? canExportAll : canExport/);
+  assert.match(source, /canExportThisTab && exportScope !== null \?/);
   assert.match(source, /Xuất Excel/);
   // Khong suy quyen tu role/email/scope kind trong code.
   const code = source.split("\n").filter((line) => !/^\s*(\*|\/\/)/.test(line)).join("\n");
@@ -74,8 +76,10 @@ test("T1A: khong log reason/body/PII ra console", () => {
     .test(source), false, "body xuat khong lay PII tu bang");
 });
 
-test("T1A: page tinh canExport tu capability projection va truyen xuong", () => {
+test("T1A: page tinh canExport + canExportAll tu capability projection va truyen xuong", () => {
   assert.match(page, /canExportWorkers\(actorProjection\)/);
+  assert.match(page, /canExportAllWorkers\(actorProjection\)/);
   assert.match(page, /canExport=\{canExport\}/);
-  assert.match(page, /import \{ canExportWorkers \} from "@\/lib\/direct-entry\/worker-export-ui-model"/);
+  assert.match(page, /canExportAll=\{canExportAll\}/);
+  assert.match(page, /import \{ canExportAllWorkers, canExportWorkers \} from "@\/lib\/direct-entry\/worker-export-ui-model"/);
 });

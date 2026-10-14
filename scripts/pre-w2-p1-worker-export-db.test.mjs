@@ -53,9 +53,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 88, "the ledger carries the Pre-W2-P1 export migration as #86");
-  assert.equal(names[names.length - 3], EXPORT_MIGRATION_NAME,
-    "the export migration stays immediately before the PRE-W2-HF-C migration #87");
+  assert.equal(names.length, 89, "the ledger carries the Pre-W2-P1 export migration as #86 + HF-E #89");
+  assert.equal(names[names.length - 4], EXPORT_MIGRATION_NAME,
+    "the export migration stays four before the end (HF-C #87, HF-D2 #88, HF-E #89 follow)");
   return db;
 }
 
@@ -126,7 +126,7 @@ async function assignManager(db, { project, recruiter, key }) {
 let entrySeq = 0;
 async function addWorker(db, {
   project = PROJ_A, recruiter = REC_A, workDate = "2026-10-01", state = "SUBMITTED",
-  payment = null, employment = null, paymentNote = undefined,
+  payment = null, employment = null, generalNote = undefined,
 }) {
   entrySeq += 1;
   const n = entrySeq;
@@ -139,7 +139,6 @@ async function addWorker(db, {
     address: { state: "provided", value: "1 Synthetic Street " + n },
     phone: { state: "provided", value: "0900" + String(100000 + n) },
   };
-  if (paymentNote !== undefined) workerDetails.general_note = paymentNote;
   await db.exec("begin");
   try {
     await db.query("insert into public.direct_entry_candidates (candidate_id) values ($1)", [candidate]);
@@ -153,7 +152,7 @@ async function addWorker(db, {
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',$11)",
       [entry, submission, candidate, UPLOADER_APP, project, workDate,
         "hrp-" + year + "-" + String(300000 + n), JSON.stringify(workerDetails), recruiter, TEAM,
-        paymentNote ?? null]);
+        generalNote ?? null]);
     if (state !== "DRAFT") {
       await db.query(
         "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
@@ -229,6 +228,7 @@ test("PRE-W2-P1: recruited export returns the full authorized rows and an own/AL
       employment: [{ status: "UNCONFIRMED", effective: "2026-10-01" },
         { status: "ON", effective: "2026-10-02" },
         { status: "OFF", effective: "2026-10-03" }],
+      generalNote: "Synthetic general note",
     });
     // Another recruiter's worker must never appear.
     await addWorker(db, { recruiter: REC_B, workDate: "2026-10-04" });
@@ -239,9 +239,9 @@ test("PRE-W2-P1: recruited export returns the full authorized rows and an own/AL
     const row = payload.rows[0];
     assert.deepEqual(Object.keys(row).sort(), [
       "account_holder_name", "account_number", "address", "bank_name", "date_of_birth",
-      "display_name", "employee_code", "employment_status", "first_work_date", "labor_type_display",
-      "leave_date", "leave_reason", "national_id", "payment_note", "phone", "project_display",
-      "provider_type", "recruiter_display",
+      "display_name", "employee_code", "employment_status", "first_work_date", "general_note",
+      "labor_type_display", "leave_date", "leave_reason", "national_id", "payment_note", "phone",
+      "project_display", "provider_type", "recruiter_display",
     ]);
     // FULL PII and FULL payment (never masked).
     assert.match(row.national_id, /^0123456789[0-9]{2}$/);
@@ -259,6 +259,8 @@ test("PRE-W2-P1: recruited export returns the full authorized rows and an own/AL
     assert.equal(row.bank_name, "Synthetic Bank");
     assert.equal(row.account_holder_name, "Synthetic Holder");
     assert.equal(row.payment_note, null, "no authoritative payment note");
+    assert.equal(row.general_note, "Synthetic general note",
+      "general_note comes from direct_entries.general_note");
     assert.equal(row.employee_code, "hrp-2026-300001");
     assert.ok(entry);
 
@@ -310,31 +312,31 @@ test("PRE-W2-P1: managed export logs the project scope_kind", async () => {
 // ---------------------------------------------------------------------------
 // 3. Scope and capability conjunction: any missing term denies the whole export.
 // ---------------------------------------------------------------------------
-test("PRE-W2-P1: all scope and every missing capability deny the export", async () => {
+test("PRE-W2-HF-E: all opens only for the admin/BoD/accounting audience; capability conjunction still denies", async () => {
   const db = await buildDb();
   try {
     await seed(db);
     await grantExportCaps(db, MGR_APP);
     await addWorker(db, { recruiter: REC_A, workDate: "2026-10-01" });
 
+    // A linked recruiter with export caps but NO all-scope grant is denied `all`.
     await assert.rejects(() => runExport(db, { scope: "all" }),
-      (error) => error.code === "42501", "all scope must be denied");
+      (error) => error.code === "42501", "all must be denied without the all audience");
     await assert.rejects(() => runExport(db, { scope: "everything" }),
       (error) => error.code === "42501", "an unknown scope must be denied");
 
-    // An actor who IS authorized for the all directory audience AND holds every
-    // export capability must STILL be denied the `all` export scope: the export
-    // gate forbids `all` on its own, before the audience guard would allow it.
+    // Admin (entry_admin + all scope) with the full export capability triple succeeds.
     await grantExportCaps(db, ADMIN_APP);
     const directoryAll = await db.query(
       "select public.direct_entry_list_workers($1::uuid,$2::uuid,'all',null,null,null,null,25) as data",
       [ADMIN_AUTH, ADMIN_APP]);
     assert.equal(Array.isArray(directoryAll.rows[0].data.items), true,
       "the all directory audience is open for this actor");
-    await assert.rejects(
-      () => runExport(db, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" }),
-      (error) => error.code === "42501",
-      "the export must deny all even for a fully capable all-scope actor");
+    const all = await runExport(db, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" });
+    assert.equal(all.status, "ok");
+    assert.equal(all.rows.length, 1);
+    const [allAudit] = await audits(db);
+    assert.equal(allAudit.scope_kind, "all");
 
     for (const missing of ["pii_export", "pii_view", "payment_view"]) {
       const db2 = await buildDb();
@@ -350,6 +352,21 @@ test("PRE-W2-P1: all scope and every missing capability deny the export", async 
       } finally {
         await db2.close();
       }
+    }
+
+    // The all scope also requires the full capability triple: an admin without
+    // pii_export is denied even though the all audience is open.
+    const db3 = await buildDb();
+    try {
+      await seed(db3);
+      await grant(db3, ADMIN_APP, "pii_view");
+      await grant(db3, ADMIN_APP, "payment_view");
+      await addWorker(db3, { recruiter: REC_A, workDate: "2026-10-01" });
+      await assert.rejects(
+        () => runExport(db3, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" }),
+        (error) => error.code === "42501", "all must deny without pii_export");
+    } finally {
+      await db3.close();
     }
 
     // Row authority is still required: a linked recruiter without an assignment
@@ -494,4 +511,43 @@ test("PRE-W2-P1: the export RPC is service_role-only and the migration grants no
     "the migration must not grant a capability");
   assert.doesNotMatch(sql, /direct_entry_rpc_idempotency|direct_entry_idempotency_begin/,
     "the export must not use idempotency");
+});
+
+// ---------------------------------------------------------------------------
+// 7. PRE-W2-HF-E: BoD/Accounting (change_review + all scope) audience + Ghi chú.
+// ---------------------------------------------------------------------------
+test("PRE-W2-HF-E: change_review + all scope exports all workers with the Ghi chú column", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const reviewerAuth = uuid(35), reviewerApp = uuid(45);
+    await db.query("insert into auth.users (id) values ($1)", [reviewerAuth]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Reviewer Account')", [reviewerApp, reviewerAuth]);
+    await db.query(
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
+      " values ($1,'all','2020-01-01')", [reviewerApp]);
+    await grant(db, reviewerApp, "change_review");
+    await grantExportCaps(db, reviewerApp);
+
+    await addWorker(db, { recruiter: REC_A, workDate: "2026-10-01", generalNote: "Note A" });
+    await addWorker(db, { recruiter: REC_B, workDate: "2026-10-02", generalNote: "Note B" });
+
+    const payload = await runExport(db, { auth: reviewerAuth, app: reviewerApp, scope: "all" });
+    assert.equal(payload.status, "ok");
+    assert.equal(payload.rows.length, 2, "change_review + all scope exports the whole directory");
+    assert.deepEqual(payload.rows.map((r) => r.general_note).sort(), ["Note A", "Note B"]);
+    const [audit] = await audits(db);
+    assert.equal(audit.scope_kind, "all");
+    assert.equal(audit.outcome, "ALLOW");
+    assert.match(audit.resource_ref, /^worker-export:all:2:[0-9a-f]{64}$/);
+
+    // A recruiter/PM with export caps but no all scope is still denied `all`.
+    await grantExportCaps(db, MGR_APP);
+    await assert.rejects(() => runExport(db, { scope: "all" }),
+      (error) => error.code === "42501", "recruiter/PM must not export all");
+  } finally {
+    await db.close();
+  }
 });

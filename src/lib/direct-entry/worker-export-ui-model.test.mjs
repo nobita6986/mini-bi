@@ -13,6 +13,7 @@ import {
   WORKER_EXPORT_REASON_MAX,
   WORKER_EXPORT_SCOPES,
   buildWorkerExportRequest,
+  canExportAllWorkers,
   canExportWorkers,
   exportScopeForTab,
   isExportableScope,
@@ -25,20 +26,20 @@ import {
 
 const EMPTY_FILTERS = { status: "", projectId: "", recruiterId: "" };
 
-test("T1A: chi recruited|managed duoc xuat, dung allowlist body", () => {
-  assert.deepEqual([...WORKER_EXPORT_SCOPES], ["recruited", "managed"]);
+test("T1A: recruited|managed|all duoc xuat, uploader thi khong", () => {
+  assert.deepEqual([...WORKER_EXPORT_SCOPES], ["recruited", "managed", "all"]);
   assert.equal(isWorkerExportScope("recruited"), true);
   assert.equal(isWorkerExportScope("managed"), true);
-  assert.equal(isWorkerExportScope("all"), false);
+  assert.equal(isWorkerExportScope("all"), true);
   assert.equal(isWorkerExportScope("uploader"), false);
   assert.equal(isWorkerExportScope(null), false);
-  // Tab -> scope: uploader/all KHONG xuat.
+  // Tab -> scope: uploader KHONG xuat; all xuat (quyen server se quyet).
   assert.equal(exportScopeForTab("recruited"), "recruited");
   assert.equal(exportScopeForTab("managed"), "managed");
-  assert.equal(exportScopeForTab("all"), null);
+  assert.equal(exportScopeForTab("all"), "all");
   assert.equal(exportScopeForTab("uploader"), null);
   assert.equal(isExportableScope("managed"), true);
-  assert.equal(isExportableScope("all"), false);
+  assert.equal(isExportableScope("all"), true);
   assert.equal(isExportableScope(null), false);
 });
 
@@ -74,8 +75,11 @@ test("T1A: managed gui dung body voi bo loc hien tai", () => {
   });
 });
 
-test("T1A: scope all/invalid va reason sai bi tu choi fail-closed", () => {
+test("T1A: scope all duoc gui, scope la/invalid va reason sai bi tu choi fail-closed", () => {
   assert.deepEqual(buildWorkerExportRequest({ scope: "all", filters: EMPTY_FILTERS, reason: "x" }),
+    { ok: true, body: { scope: "all", project_id: null, recruiter_id: null,
+      employment_status: null, reason: "x" } });
+  assert.deepEqual(buildWorkerExportRequest({ scope: "everything", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: false, code: "SCOPE_INVALID" });
   assert.deepEqual(buildWorkerExportRequest({ scope: "", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: false, code: "SCOPE_INVALID" });
@@ -121,6 +125,23 @@ test("T1A: nut xuat chi hien khi server cap du capability triple", () => {
     capabilities: ["pii_export", "pii_view", "payment_view"], scopes }), true);
   // Khong suy quyen tu role/scope kind.
   assert.equal(canExportWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), false);
+});
+
+test("HF-E: canExportAllWorkers chi mo cho Admin/BoD/Kế toán", () => {
+  const caps = ["pii_export", "pii_view", "payment_view"];
+  assert.equal(canExportAllWorkers(null), false);
+  assert.equal(canExportAllWorkers({ capabilities: caps, scopes: [{ kind: "own" }] }), false);
+  assert.equal(canExportAllWorkers({ capabilities: caps, scopes: [{ kind: "all" }] }), false,
+    "thieu entry_admin/change_review => khong xuat all");
+  assert.equal(canExportAllWorkers({
+    capabilities: [...caps, "entry_admin"], scopes: [{ kind: "all" }] }), true);
+  assert.equal(canExportAllWorkers({
+    capabilities: [...caps, "change_review"], scopes: [{ kind: "all" }] }), true);
+  // Thieu pii_export van khong duoc xuat all.
+  assert.equal(canExportAllWorkers({
+    capabilities: ["pii_view", "payment_view", "entry_admin"], scopes: [{ kind: "all" }] }), false);
+  // Khong suy quyen tu role/email.
+  assert.equal(canExportAllWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), false);
 });
 
 test("T1A: 422 row-limit bao ro gioi han, khong tai file thieu dong", () => {

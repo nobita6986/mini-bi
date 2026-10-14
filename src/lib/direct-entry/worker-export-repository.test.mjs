@@ -34,6 +34,7 @@ const row = {
   bank_name: null,
   account_holder_name: null,
   payment_note: null,
+  general_note: null,
 };
 
 test("the worker export repository exposes exactly one RPC", () => {
