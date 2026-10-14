@@ -1190,8 +1190,8 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const inventoryBefore = state.baseline;
   const allMigrations = state.migrations.slice(0, state.leaderMigrationAt + 1);
   assert.equal(names.length, 93);
-  assert.equal(names.at(-22), MIGRATION_71);
-  assert.equal(names.at(-17), LEGACY_SCOPE_HOTFIX);
+  assert.equal(names.at(-23), MIGRATION_71);
+  assert.equal(names.at(-18), LEGACY_SCOPE_HOTFIX);
   today = (await db.query(
     "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
   assert.equal(state.transitionFixtures.length, 3);
