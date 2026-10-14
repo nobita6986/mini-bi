@@ -58,7 +58,7 @@ export type DuplicateCccdEmploymentStatus = (typeof DUPLICATE_CCCD_EMPLOYMENT_ST
 export const EMPLOYMENT_STATUS_LABELS: Readonly<Record<DuplicateCccdEmploymentStatus, string>> =
   Object.freeze({
     ON: "Đang làm việc",
-    UNCONFIRMED: "Không xác định",
+    UNCONFIRMED: "Đang chờ việc",
     OFF: "Đã nghỉ",
   });
 

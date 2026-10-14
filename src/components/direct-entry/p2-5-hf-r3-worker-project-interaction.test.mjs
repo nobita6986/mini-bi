@@ -84,22 +84,22 @@ test("HF-R3: o chon trang thai chi hien thi buoc chuyen hop le", () => {
   assert.match(workers, /<option key=\{status\} value=\{status\}>\{workerStatusLabel\(status\)\}<\/option>/);
   assert.deepEqual(allowedWorkStatusTargets("UNCONFIRMED"), ["ON", "OFF"]);
   assert.deepEqual(allowedWorkStatusTargets("ON"), ["OFF"]);
-  assert.deepEqual(allowedWorkStatusTargets("OFF"), ["ON"]);
+  assert.deepEqual(allowedWorkStatusTargets("OFF"), []);
   assert.deepEqual(allowedWorkStatusTargets(null), []);
 });
 
 test("HF-R3: nhan lua chon Lam viec/Nghi viec dung nghiep vu", () => {
   assert.equal(workerStatusLabel("ON"), "Đang làm");
   assert.equal(workerStatusLabel("OFF"), "Đã nghỉ");
-  assert.equal(workerStatusLabel("UNCONFIRMED"), "Chưa xác nhận");
+  assert.equal(workerStatusLabel("UNCONFIRMED"), "Đang chờ việc");
   assert.equal(workerStatusLabel(null), "Chưa có trạng thái");
   assert.deepEqual(allowedWorkStatusTargets("ON").map(workerStatusLabel), ["Đã nghỉ"]);
-  assert.deepEqual(allowedWorkStatusTargets("OFF").map(workerStatusLabel), ["Đang làm"]);
+  assert.deepEqual(allowedWorkStatusTargets("OFF").map(workerStatusLabel), []);
   assert.match(workers, /Trạng thái làm việc mới/);
   assert.match(workers, /disabled=\{loading \|\| baseline\?\.status == null\}/);
 });
 
-test("HF-R3: Nghi viec bat buoc ly do; Lam viec khong gui leave_reason", () => {
+test("HF-R3: Nghi viec bat buoc ly do; episode da nghi khong duoc mo lai", () => {
   const onBaseline = { status: "ON", effective_date: "2026-01-05" };
   const missing = buildWorkStatusProposal({ baseline: onBaseline, status: "OFF",
     effectiveDate: "2026-02-01", leaveReason: "   ", today: TODAY });
@@ -114,9 +114,8 @@ test("HF-R3: Nghi viec bat buoc ly do; Lam viec khong gui leave_reason", () => {
 
   const back = buildWorkStatusProposal({ baseline: { status: "OFF", effective_date: "2026-02-01" },
     status: "ON", effectiveDate: "2026-03-01", leaveReason: "khong duoc dung", today: TODAY });
-  assert.equal(back.ok, true);
-  assert.deepEqual(Object.keys(back.proposal).sort(), ["effective_date", "status"]);
-  assert.equal(Object.prototype.hasOwnProperty.call(back.proposal, "leave_reason"), false);
+  assert.equal(back.ok, false);
+  assert.equal(back.code, "STATUS_TRANSITION_INVALID");
 });
 
 test("HF-R3: buoc chuyen sai bi tu choi ngay tren client", () => {

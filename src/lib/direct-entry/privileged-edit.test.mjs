@@ -53,6 +53,11 @@ test("R3: patch projection is strict and refuses authority keys and malformed CM
   assert.deepEqual(projectPrivilegedEditRequest(validBody), {
     expected_entry_version: 3, patch: { labor_type: "PERMANENT" }, reason: "R3 correction",
   });
+  assert.deepEqual(projectPrivilegedEditRequest({ ...validBody, patch: {
+    employment_status: { status: "OFF", effective_date: "2026-10-14", leave_reason: "Nghỉ" },
+  } })?.patch, {
+    employment_status: { status: "OFF", effective_date: "2026-10-14", leave_reason: "Nghỉ" },
+  });
   for (const bad of [
     { ...validBody, expected_entry_version: 0 },
     { ...validBody, expected_entry_version: "3" },
@@ -68,6 +73,11 @@ test("R3: patch projection is strict and refuses authority keys and malformed CM
     { ...validBody, patch: { project_id: "bad project" } },
     { ...validBody, patch: { first_work_date: "01/02/2026" } },
     { ...validBody, patch: { recruiter_id: "nope" } },
+    { ...validBody, patch: { employment_status: { status: "OFF", effective_date: "2026-10-14" } } },
+    { ...validBody, patch: { employment_status: { status: "ON", effective_date: "14/10/2026" } } },
+    { ...validBody, patch: { employment_status: {
+      status: "ON", effective_date: "2026-10-14", leave_reason: "không hợp lệ",
+    } } },
     { ...validBody, extra: 1 },
     { patch: { labor_type: "PERMANENT" }, reason: "x" },
     null, [], "x",

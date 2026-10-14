@@ -8,7 +8,7 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const NEW_MIGRATION = "20261011150000_p3_1_w03a_app_user_lifecycle.sql";
-const EXPECTED_MIGRATION_COUNT = 90;
+const EXPECTED_MIGRATION_COUNT = 91;
 const ADMIN_AUTH = "10000000-0000-4000-8000-000000000001";
 const ADMIN_APP = "20000000-0000-4000-8000-000000000001";
 const ACCOUNTING_AUTH = "10000000-0000-4000-8000-000000000002";

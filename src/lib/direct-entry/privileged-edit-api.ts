@@ -8,6 +8,7 @@
  * + scope do RPC quyet dinh. Khong bao gio nhan identity tu client va khong forward raw DB message.
  */
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
 import { isCanonicalLaborTypeKey } from "../contracts/direct-entry-v1.ts";
@@ -23,6 +24,7 @@ const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const BODY_KEYS = ["expected_entry_version", "patch", "reason"] as const;
 export const PRIVILEGED_EDIT_PATCH_KEYS = [
   "employee_code", "first_work_date", "labor_type", "project_id", "recruiter_id", "worker_details",
+  "employment_status",
 ] as const;
 
 export type PrivilegedEditDependencies = {
@@ -81,6 +83,21 @@ export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditReque
         !isCanonicalNationalId(nationalId.value)) {
       return null;
     }
+  }
+  if (patch.employment_status !== undefined) {
+    if (!isRecord(patch.employment_status)) return null;
+    const status = patch.employment_status;
+    const statusKeys = Object.keys(status);
+    if (statusKeys.length < 2 || statusKeys.length > 3 ||
+        !statusKeys.every((key) => ["status", "effective_date", "leave_reason"].includes(key)) ||
+        !["UNCONFIRMED", "ON", "OFF"].includes(String(status.status)) ||
+        typeof status.effective_date !== "string" || !isRealCalendarDate(status.effective_date)) {
+      return null;
+    }
+    if (status.status === "OFF") {
+      if (typeof status.leave_reason !== "string" || status.leave_reason.trim().length === 0 ||
+          status.leave_reason.length > 4000) return null;
+    } else if (status.leave_reason !== undefined) return null;
   }
   return { expected_entry_version: version, patch, reason: reason.trim() };
 }

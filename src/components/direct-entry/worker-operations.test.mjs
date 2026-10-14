@@ -266,6 +266,9 @@ test("HF-R4: direct correction UI is gated by the server capability projection",
   assert.match(source, /canPrivilegedEdit \? \(/);
   assert.match(source, /\/privileged-edit/);
   assert.match(page, /canPrivilegedEditWorkers=\{canPrivilegedEditWorkers\}/);
+  assert.match(source, /mode === "correction" \|\| target === "WORK_STATUS"/);
+  assert.match(source, /patch\.employment_status = status\.proposal/);
+  assert.match(source, /Giữ nguyên trạng thái/);
 });
 
 test("W06: reviewer UI dung authority backend (can_decide), khong suy tu role client", () => {

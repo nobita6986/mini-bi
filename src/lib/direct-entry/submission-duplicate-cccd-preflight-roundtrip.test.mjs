@@ -105,7 +105,7 @@ test("HF-R2: repository result -> API response -> client projection round-trips"
   assert.notEqual(projected, null);
   assert.equal(projected.conflict_count, 2);
   assert.equal(projected.conflicts[0].employment_status_label, "Đang làm việc");
-  assert.equal(projected.conflicts[1].employment_status_label, "Không xác định");
+  assert.equal(projected.conflicts[1].employment_status_label, "Đang chờ việc");
   assert.deepEqual(
     Object.keys(projected.conflicts[0]).sort(),
     [...DUPLICATE_CCCD_CONFLICT_KEYS, "employment_status_label"].sort(),

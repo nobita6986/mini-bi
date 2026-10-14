@@ -38,10 +38,11 @@ export type DirectEntryGridColumn = {
 /**
  * P1.7-H05 - Bo cot mac dinh cho Direct Entry Production UI.
  *
- * Thu tu 17 cot mac dinh da duoc khoa theo task brief. STT chi la hien thi, Mã NLĐ
+ * Thu tu 18 cot mac dinh gom them trạng thái làm việc. STT chi la hien thi, Mã NLĐ
  * khong xuat hien o day va them khong cho nhap; việc cấp mã định danh vẫn do server
  * (migration #39) đảm nhiệm và hiện ở action rail/drawer. Tuổi suy ra từ DOB; lifecycle
- * (nghỉ việc/trạng thái) đóng vai trò nội bộ và không nằm trên grid mặc định.
+ * Ngày nghỉ/lý do nghỉ vẫn là dữ liệu lịch sử nội bộ; trạng thái làm việc được
+ * hiển thị để người nhập có thể chọn khác mặc định Đang làm việc.
  *
  * P3-W07C-R3: thứ tự mặc định đã đảo để ba cột ngay sau `Dự án` là
  * `HRP/Vendor → Người tuyển / Vendor → Loại hình LĐ` (theo brief). Cột
@@ -66,6 +67,7 @@ export const DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS: readonly string[] = Object.f
   "recruiter_id",
   "labor_type",
   "first_work_date",
+  "initial_status",
   "display_name",
   "phone",
   "national_id",
@@ -206,7 +208,7 @@ export const DIRECT_ENTRY_GRID_COLUMNS: readonly DirectEntryGridColumn[] = Objec
   fieldColumn("labor_type", { group: "entry", pasteMode: "write", width: 140,
     editor: "select" }),
   fieldColumn("initial_status", { group: "employment", pasteMode: "write", width: 205,
-    editor: "select" }),
+    editor: "select", label: "Trạng thái làm việc" }),
   fieldColumn("leave_date", { group: "employment", pasteMode: "write", width: 150,
     editor: "date" }),
   fieldColumn("leave_reason_text", { group: "employment", pasteMode: "write", width: 240,

@@ -173,7 +173,7 @@ export const BANK_ACCOUNT_SECTION_HINT =
   "Chỉ gồm số tài khoản, ngân hàng và tên chủ tài khoản để lưu và tra cứu.";
 
 export const WORKER_STATUS_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  UNCONFIRMED: "Chưa xác nhận",
+  UNCONFIRMED: "Đang chờ việc",
   ON: "Đang làm",
   OFF: "Đã nghỉ",
 });

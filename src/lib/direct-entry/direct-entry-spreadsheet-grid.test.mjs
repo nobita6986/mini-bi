@@ -93,11 +93,12 @@ test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia 
   // provider_type options are defined as a local const to keep the registry
   // contract surface area separate.
   assert.match(source, /PROVIDER_OPTIONS/);
-  // Khong con LABOR_TYPE_OPTIONS hay STATUS_OPTIONS hard-code.
+  // Status dùng canonical value nhưng nhãn tiếng Việt nằm ngay editor hiện hữu.
   assert.equal(source.includes("Toàn thời gian"), false,
     "P1.7-H05: UI khong con hien thi 'Toan thoi gian'");
-  assert.equal(source.includes("STATUS_OPTIONS"), false,
-    "status khong con nam trong grid mac dinh");
+  assert.match(source, /columnKey === "initial_status"/);
+  assert.match(source, /Đang làm việc \(mặc định\)/);
+  for (const label of ["Đang chờ việc", "Đã nghỉ"]) assert.ok(source.includes(label));
   // Option project/recruiter den tu catalog truyen vao, khong hard-code ID.
   assert.match(source, /catalogs\?\.projects \?\? \[\]/);
   assert.match(source, /catalogs\?\.recruiters \?\? \[\]/);
