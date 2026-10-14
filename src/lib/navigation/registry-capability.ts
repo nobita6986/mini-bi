@@ -113,17 +113,6 @@ export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
     DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
 };
 
-/**
- * PRE-W2-HF-C: authority doc bao cao CCCD trung.
- *
- * Phan anh DUNG `direct_entry_assert_duplicate_cccd_reader` (#87): MOI authenticated active
- * business actor (co actor mapping hop le) deu doc duoc. Khong doi hoi high-authority bundle
- * hay effective all scope nua. Day chi la metadata hien thi; quyen that do RPC quyet dinh.
- * `decideNavEntryVisibility` van an entry khi actor chua resolve (capability khac "any"), nen
- * anonymous khong bao gio thay link nay.
- */
-export const duplicateCccdReportNavPredicate: NavCapabilityPredicate = () => true;
-
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -136,7 +125,6 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   entry_admin: directEntryNavPredicate,
   project_admin: projectAdminNavPredicate,
   worker_operations: workerOperationsNavPredicate,
-  duplicate_cccd_report: duplicateCccdReportNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */

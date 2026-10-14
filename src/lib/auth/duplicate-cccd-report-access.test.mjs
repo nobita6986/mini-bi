@@ -1,19 +1,15 @@
 /**
- * PRE-W2-HF-C - Global duplicate-CCCD read access: navigation + Dashboard tab.
+ * PRE-W2-HF-D1 - Duplicate-CCCD report is Dashboard-only (navigation + tab).
  *
- * Khoa: bao cao CCCD trung mo cho MOI account nghiep vu hop le (actor resolve ok = da dang
- * nhap, app_user enabled, actor mapping duy nhat). Co mot muc navigation "Bao cao CCCD trung"
- * tro thang toi tab Dashboard `/dashboard?tab=duplicate-cccd`; tab van la tab thu ba sau
- * "Bao cao theo nhom" va general/team khong bi mo rong. Quyen that do API/RPC (#87) quyet dinh.
+ * Bao cao CCCD trung chi con nam trong tab Dashboard `/dashboard?tab=duplicate-cccd` (tab thu ba
+ * sau "Bao cao theo nhom"); KHONG con muc navigation doc lap. `canViewDuplicateCccdReport` van mo
+ * cho moi account nghiep vu hop le (actor resolve ok) va general/team khong bi mo rong. Quyen that
+ * do API/RPC (#87) quyet dinh.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import {
-  duplicateCccdReportNavPredicate,
-  resolveNavCapabilityPredicate,
-} from "../navigation/registry-capability.ts";
 import { NAV_ENTRIES, findEntryByPath } from "../navigation/registry.ts";
 import { canViewDuplicateCccdReport } from "./direct-entry-page-access.ts";
 
@@ -33,27 +29,6 @@ function actor(capabilities = [], scopes = [{ kind: "all", reference: "all" }]) 
   };
 }
 
-test("the nav predicate opens the report to every resolved actor", () => {
-  const predicate = resolveNavCapabilityPredicate("duplicate_cccd_report");
-  assert.equal(predicate, duplicateCccdReportNavPredicate);
-  for (const capabilities of [
-    [], ["entry_own"], ["entry_team"], ["entry_admin"], ["change_review"],
-    ["recruiter_master_manage"], ["catalog_master_manage"], ["entry_privileged_edit"],
-    ["team_manager_assign"], ["pii_view"],
-  ]) {
-    for (const scopes of [
-      [], [{ kind: "own", reference: "own" }], [{ kind: "team", reference: "t" }],
-      [{ kind: "all", reference: "all" }],
-    ]) {
-      assert.equal(duplicateCccdReportNavPredicate({ capabilities, scopes }), true,
-        JSON.stringify({ capabilities, scopes }));
-    }
-  }
-  // An unresolved actor is still hidden by decideNavEntryVisibility (capability != "any").
-  assert.equal(resolveNavCapabilityPredicate("duplicate_cccd_report")(
-    { capabilities: [], scopes: [] }), true);
-});
-
 test("canViewDuplicateCccdReport follows the resolved actor and fails closed", () => {
   assert.equal(canViewDuplicateCccdReport(actor([])), true);
   assert.equal(canViewDuplicateCccdReport(actor(["entry_own"], [{ kind: "own", reference: "own" }])), true);
@@ -67,14 +42,13 @@ test("canViewDuplicateCccdReport follows the resolved actor and fails closed", (
   }
 });
 
-test("the report has a navigation entry that deep-links to the Dashboard tab", () => {
-  const entry = NAV_ENTRIES.find((candidate) => candidate.id === "duplicate-cccd-report");
-  assert.ok(entry, "the report menu entry exists");
-  assert.equal(entry.path, "/dashboard?tab=duplicate-cccd");
-  assert.equal(entry.capability, "duplicate_cccd_report");
-  assert.equal(entry.status, "current");
-  assert.equal(entry.visibility.desktop, true);
-  assert.equal(entry.visibility.mobile, true);
+test("the report is Dashboard-only: no standalone nav entry or page", () => {
+  assert.equal(NAV_ENTRIES.some((candidate) => candidate.id === "duplicate-cccd-report"), false,
+    "the standalone menu entry must be removed");
+  assert.equal(NAV_ENTRIES.some((candidate) => candidate.path.startsWith("/dashboard?tab=")), false,
+    "no nav entry should deep-link to a dashboard tab");
+  // The only way to open the report is the Dashboard entry itself.
+  assert.equal(findEntryByPath("/dashboard")?.id, "dashboard");
   // No standalone report page was recreated.
   assert.equal(NAV_ENTRIES.some((candidate) => candidate.path.startsWith("/reports")), false);
   assert.equal(findEntryByPath("/reports/duplicate-cccd"), undefined);

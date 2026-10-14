@@ -19,7 +19,6 @@ import {
   Building2,
   ClipboardList,
   LayoutDashboard,
-  ShieldAlert,
   ShieldCheck,
   Users,
   type LucideIcon,
@@ -54,8 +53,7 @@ export type NavCapability =
   | "entry_admin"
   | "project_admin"
   | "admin_area"
-  | "worker_operations"
-  | "duplicate_cccd_report";
+  | "worker_operations";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -160,21 +158,6 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: ShieldCheck,
     status: "current",
     capability: "admin_area",
-    visibility: { desktop: true, mobile: true },
-  },
-  {
-    id: "duplicate-cccd-report",
-    label: "Báo cáo CCCD trùng",
-    path: "/dashboard?tab=duplicate-cccd",
-    description:
-      "PRE-W2-HF-C: đường dẫn trực tiếp tới tab “Báo cáo CCCD trùng” trên Dashboard cho mọi " +
-      "account nghiệp vụ hợp lệ. Báo cáo chỉ đọc, CCCD đã che. Capability " +
-      "'duplicate_cccd_report' ánh xạ duplicateCccdReportNavPredicate (mọi actor đã resolve — " +
-      "khớp direct_entry_assert_duplicate_cccd_reader #87); là metadata hiển thị, quyền thật do " +
-      "RPC enforce.",
-    icon: ShieldAlert,
-    status: "current",
-    capability: "duplicate_cccd_report",
     visibility: { desktop: true, mobile: true },
   },
 ];
