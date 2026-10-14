@@ -22,6 +22,7 @@ const H05_LABEL_OVERRIDES = Object.freeze({
   phone: "Số điện thoại",
   provider_hint: "HRP/Vendor",
   recruiter_id: "Người tuyển / Vendor",
+  initial_status: "Trạng thái làm việc",
   // P3-W07C: doi label UI tu "DOB" (contract canonicalHeader) sang "Ngày sinh".
   date_of_birth: "Ngày sinh",
 });
@@ -65,7 +66,7 @@ test("registry tai su dung worker-profile spec thay vi nhan ban contract", () =>
   assert.equal(directEntryGridColumn("recruiter_id")?.label, "Người tuyển / Vendor");
 });
 
-test("default visible data columns are the 17 R3 columns and exclude action rail", () => {
+test("default grid includes employment status and excludes the action rail", () => {
   // P3-W07C-R3: ba cột ngay sau `Dự án` là
   // `HRP/Vendor → Người tuyển / Vendor → Loại hình LĐ`. Cột
   // `national_id_issued_place` đã được bỏ khỏi mặc định vì giá trị do
@@ -73,11 +74,11 @@ test("default visible data columns are the 17 R3 columns and exclude action rail
   // còn trong template Excel mới.
   assert.deepEqual(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS, [
     "row_index", "project_id", "provider_type", "recruiter_id", "labor_type",
-    "first_work_date", "display_name", "phone", "national_id", "gender", "date_of_birth",
+    "first_work_date", "initial_status", "display_name", "phone", "national_id", "gender", "date_of_birth",
     "national_id_issued_at", "address", "account_number", "bank_name",
     "account_holder_name", "general_note",
   ]);
-  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 17);
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.length, 18);
   // Ba cột ngay sau `Dự án` phải đúng thứ tự theo brief R3.
   const projectIndex = DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.indexOf("project_id");
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS[projectIndex + 1], "provider_type");
@@ -90,8 +91,9 @@ test("default visible data columns are the 17 R3 columns and exclude action rail
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("employee_code"), false);
   // P3-W07C-R3: `Nơi cấp` không còn hiện trên grid mặc định.
   assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("national_id_issued_place"), false);
-  // Tuoi, trang thai lam viec, ngay nghi, ghi chu nghi khong xuat hien tren grid.
-  for (const key of ["age_years", "initial_status", "leave_date", "leave_reason_text",
+  assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes("initial_status"), true);
+  // Tuoi, ngay nghi, ghi chu nghi khong xuat hien tren grid.
+  for (const key of ["age_years", "leave_date", "leave_reason_text",
     "team_hint", "provider_hint"]) {
     assert.equal(DIRECT_ENTRY_DEFAULT_GRID_COLUMN_KEYS.includes(key), false, key);
   }

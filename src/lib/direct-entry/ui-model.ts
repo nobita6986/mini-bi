@@ -6,7 +6,7 @@ export interface DirectEntryRow {
   project: string;
   recruiterId: string;
   laborType: string;
-  workStatus: "Chưa xác nhận" | "Đang làm" | "Đã nghỉ";
+  workStatus: "Đang chờ việc" | "Đang làm" | "Đã nghỉ";
 }
 
 export interface RecruiterRecord {
@@ -42,7 +42,7 @@ export const INITIAL_DIRECT_ENTRY_ROWS: readonly DirectEntryRow[] = [
     project: "Dự án thử nghiệm Nam",
     recruiterId: SYNTHETIC_RECRUITERS[1].id,
     laborType: "",
-    workStatus: "Chưa xác nhận",
+    workStatus: "Đang chờ việc",
   },
   {
     rowId: "sample-row-003",
@@ -52,7 +52,7 @@ export const INITIAL_DIRECT_ENTRY_ROWS: readonly DirectEntryRow[] = [
     project: "Dự án thử nghiệm Bắc",
     recruiterId: SYNTHETIC_RECRUITERS[2].id,
     laborType: "",
-    workStatus: "Chưa xác nhận",
+    workStatus: "Đang chờ việc",
   },
 ];
 

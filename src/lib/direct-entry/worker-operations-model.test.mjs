@@ -345,7 +345,7 @@ test("W06: bank account copy dung nghiep vu, chi STK/ngan hang/chu tai khoan", (
 test("W06: trang thai lam viec co nhan tieng Viet", () => {
   assert.equal(workerStatusLabel("ON"), "Đang làm");
   assert.equal(workerStatusLabel("OFF"), "Đã nghỉ");
-  assert.equal(workerStatusLabel("UNCONFIRMED"), "Chưa xác nhận");
+  assert.equal(workerStatusLabel("UNCONFIRMED"), "Đang chờ việc");
   assert.equal(workerStatusLabel(null), "Chưa có trạng thái");
 });
 

@@ -36,7 +36,7 @@ export const PAYMENT_STATE_LABELS: Readonly<Record<PaymentState, string>> = Obje
 });
 
 export const WORK_STATUS_LABELS: Readonly<Record<WorkerStatus, string>> = Object.freeze({
-  UNCONFIRMED: "Chưa xác nhận",
+  UNCONFIRMED: "Đang chờ việc",
   ON: "Đang làm",
   OFF: "Đã nghỉ",
 });

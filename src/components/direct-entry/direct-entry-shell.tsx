@@ -142,7 +142,7 @@ function DemoDirectEntryShell() {
       project: "Dự án thử nghiệm Bắc",
       recruiterId: "",
       laborType: "",
-      workStatus: "Chưa xác nhận",
+      workStatus: "Đang chờ việc",
     }]);
     setLocalSaved(false);
   }, []);
@@ -262,12 +262,12 @@ function DemoDirectEntryShell() {
                 <Field label="Trạng thái làm việc">
                   <select aria-label="Trạng thái làm việc" value={selectedRow.workStatus} onChange={(event) => {
                     const workStatus = event.currentTarget.value;
-                    if (workStatus === "Chưa xác nhận" || workStatus === "Đang làm" || workStatus === "Đã nghỉ") {
+                    if (workStatus === "Đang chờ việc" || workStatus === "Đang làm" || workStatus === "Đã nghỉ") {
                       updateRow(selectedRow.rowId, { workStatus });
                     }
 
                   }}>
-                    <option>Chưa xác nhận</option><option>Đang làm</option><option>Đã nghỉ</option>
+                    <option>Đang chờ việc</option><option>Đang làm</option><option>Đã nghỉ</option>
                   </select>
                 </Field>
               </div>

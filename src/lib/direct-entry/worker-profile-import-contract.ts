@@ -216,7 +216,7 @@ export const WORKER_PROFILE_ISSUE_MESSAGES: Readonly<Record<string, string>> = O
   PASTE_LABOR_TYPE_INVALID: "Loại hình LĐ phải khớp danh mục đang hoạt động cho ngày bắt đầu làm việc.",
   PASTE_GENDER_INVALID: "Giới tính chỉ nhận Nam/Male, Nữ/Female hoặc Khác/Other.",
   PASTE_NATIONAL_ID_INVALID: "CMT/CCCD phải gồm đúng 9 hoặc 12 chữ số.",
-  PASTE_STATUS_INVALID: "Tình trạng làm việc chỉ nhận Chưa xác nhận/Đang làm/Đã nghỉ.",
+  PASTE_STATUS_INVALID: "Tình trạng làm việc chỉ nhận Đang chờ việc/Đang làm/Đã nghỉ.",
   PASTE_ACCOUNT_NUMBER_INVALID: "STK phải có 1-64 ký tự và không chứa ký tự điều khiển.",
   PAYMENT_METADATA_INVALID:
     "Thông tin tài khoản không hợp lệ (độ dài hoặc ký tự điều khiển).",

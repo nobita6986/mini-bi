@@ -46,8 +46,8 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 90, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (30)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.length, 91, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (31)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 
@@ -298,6 +298,57 @@ test("R3: admin and BoD correct a submitted worker directly with reason/OCC/audi
     });
     assert.equal(bod.rows[0].data.version, version + 2);
     assert.equal((await entryRow(db, seeded.entryId)).project_id, PROJ_B);
+  } finally {
+    await db.close();
+  }
+});
+
+test("HF-F: privileged correction appends status atomically for Admin and BoD/Accounting", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const adminEntry = await seedEpisode(db, { cccd: "700000000011", name: "HF-F Admin" });
+    const version = await entryVersion(db, adminEntry.entryId);
+    const key = idemKey();
+    const patch = {
+      labor_type: "PERMANENT",
+      employment_status: {
+        status: "OFF", effective_date: "2026-10-13", leave_reason: "Đã nghỉ thực tế",
+      },
+    };
+    const result = await edit(db, {
+      auth: ADMIN_AUTH, app: ADMIN_APP, entryId: adminEntry.entryId, version, patch, key,
+    });
+    assert.equal(result.rows[0].data.version, version + 1);
+    assert.deepEqual((await db.query(
+      "select status, effective_date::text, leave_reason_text from " +
+      "public.direct_entry_employment_status_events where entry_id=$1 order by version desc limit 1",
+      [adminEntry.entryId])).rows[0], {
+      status: "OFF", effective_date: "2026-10-13", leave_reason_text: "Đã nghỉ thực tế",
+    });
+    assert.equal((await entryRow(db, adminEntry.entryId)).labor_type, "PERMANENT");
+    assert.deepEqual((await db.query(
+      "select changed_fields from public.direct_entry_audit_events where resource_ref=$1",
+      [adminEntry.entryId])).rows.at(-1).changed_fields, ["employment_status", "labor_type"]);
+
+    await edit(db, {
+      auth: ADMIN_AUTH, app: ADMIN_APP, entryId: adminEntry.entryId, version, patch, key,
+    });
+    assert.equal(await count(db,
+      "select count(*)::int as n from public.direct_entry_employment_status_events where entry_id=$1",
+      [adminEntry.entryId]), 2, "idempotent replay must not append a second transition");
+
+    const bodEntry = await seedEpisode(db, {
+      cccd: "700000000012", name: "HF-F BoD", status: "UNCONFIRMED",
+    });
+    await edit(db, {
+      auth: BOD_AUTH, app: BOD_APP, entryId: bodEntry.entryId,
+      version: await entryVersion(db, bodEntry.entryId),
+      patch: { employment_status: { status: "ON", effective_date: "2026-10-13" } },
+    });
+    assert.equal((await db.query(
+      "select status from public.direct_entry_employment_status_events " +
+      "where entry_id=$1 order by version desc limit 1", [bodEntry.entryId])).rows[0].status, "ON");
   } finally {
     await db.close();
   }

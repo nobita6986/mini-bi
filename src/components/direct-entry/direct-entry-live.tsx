@@ -1261,7 +1261,7 @@ export function DirectEntryLive() {
         : employmentStatus === "OFF"
           ? "Đã nghỉ"
           : employmentStatus === "UNCONFIRMED"
-            ? "Chưa xác nhận"
+            ? "Đang chờ việc"
             : "Chưa xác định";
       const cccdStatus = readCccdStatus(cccdCache, row.entryId, row.entryVersion);
       // Chi 6 field da co safe mutation path duoc sua; field full-profile khac read-only (W03).
@@ -1325,6 +1325,9 @@ export function DirectEntryLive() {
       // client; server-authoritative migration #46 ghi "Bộ Công An" tại
       // RPC create-batch, nên placeholder này bỏ.
       const placeholderValues: Record<string, string> = {};
+      if ((row.cells.initial_status ?? "") === "") {
+        placeholderValues.initial_status = "Đang làm việc";
+      }
       if (!row.lazyDefaultsApplied) {
         if ((row.cells[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] ?? "") === "") {
           placeholderValues[SPREADSHEET_DEFAULT_DATE_FIELD_KEY] = todayInHoChiMinhAsDDMM();

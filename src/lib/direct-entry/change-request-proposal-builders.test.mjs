@@ -186,7 +186,7 @@ test("PAYMENT proposal: dung 4 field, bank phai active, giu so 0 dau", () => {
 test("WORK_STATUS proposal: transition + date bounds + ly do bat buoc khi OFF", () => {
   assert.deepEqual(allowedWorkStatusTargets("UNCONFIRMED"), ["ON", "OFF"]);
   assert.deepEqual(allowedWorkStatusTargets("ON"), ["OFF"]);
-  assert.deepEqual(allowedWorkStatusTargets("OFF"), ["ON"]);
+  assert.deepEqual(allowedWorkStatusTargets("OFF"), []);
   assert.deepEqual(allowedWorkStatusTargets(null), []);
 
   const baseline = { status: "UNCONFIRMED", effective_date: "2026-10-01" };

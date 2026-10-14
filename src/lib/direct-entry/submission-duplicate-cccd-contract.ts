@@ -34,7 +34,7 @@ export type DuplicateCccdStatus = "ON" | "UNCONFIRMED";
 export const EMPLOYMENT_STATUS_LABELS: Readonly<Record<DuplicateCccdStatus, string>> =
   Object.freeze({
     ON: "Đang làm việc",
-    UNCONFIRMED: "Không xác định",
+    UNCONFIRMED: "Đang chờ việc",
   });
 
 export type DuplicateCccdConflict = {

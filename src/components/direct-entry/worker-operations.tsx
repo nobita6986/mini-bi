@@ -999,10 +999,30 @@ function ProposeDrawer({
         baseline: entryBaseline,
         form: entryForm,
       });
-      if (!built.ok) { setMessage(proposalErrorMessage(built.code)); return; }
-      proposal = built.proposal;
-      targetKind = "ENTRY_FIELD";
       if (mode === "correction") {
+        const patch: Record<string, unknown> = built.ok ? { ...built.proposal } : {};
+        if (!built.ok && built.code !== "WORKER_UNCHANGED") {
+          setMessage(proposalErrorMessage(built.code));
+          return;
+        }
+        if (targetStatus !== "") {
+          const status = buildWorkStatusProposal({
+            baseline: baseline.status === null ? null : {
+              status: baseline.status, effective_date: baseline.effectiveDate ?? row.first_work_date,
+            },
+            status: targetStatus as WorkerStatus,
+            effectiveDate: effectiveDate === ""
+              ? (baseline.effectiveDate ?? row.first_work_date) : effectiveDate,
+            leaveReason,
+            today,
+          });
+          if (!status.ok) { setMessage(proposalErrorMessage(status.code)); return; }
+          patch.employment_status = status.proposal;
+        }
+        if (Object.keys(patch).length === 0) {
+          setMessage("Hồ sơ chưa có thay đổi.");
+          return;
+        }
         setBusy(true);
         try {
           const response = await fetch(API + "/entries/" + encodeURIComponent(row.entry_id) +
@@ -1015,7 +1035,7 @@ function ProposeDrawer({
             credentials: "same-origin",
             body: JSON.stringify({
               expected_entry_version: baseline.version,
-              patch: built.proposal,
+              patch,
               reason: trimmed,
             }),
           });
@@ -1036,6 +1056,9 @@ function ProposeDrawer({
         }
         return;
       }
+      if (!built.ok) { setMessage(proposalErrorMessage(built.code)); return; }
+      proposal = built.proposal;
+      targetKind = "ENTRY_FIELD";
     } else if (target === "PAYMENT") {
       const activeBankIds = new Set((catalog?.banks ?? []).map((bank) => bank.bank_id));
       const built = buildPaymentProposal({
@@ -1407,7 +1430,7 @@ function ProposeDrawer({
                 </>
               ) : null}
 
-              {mode === "proposal" && target === "WORK_STATUS" ? (
+              {(mode === "correction" || target === "WORK_STATUS") ? (
                 <>
                   <p className="text-sm text-muted">
                     Trạng thái hiện tại: <strong className="text-foreground">
@@ -1421,20 +1444,22 @@ function ProposeDrawer({
                     <select id="worker-target-status" className={inputClass} value={targetStatus}
                       disabled={loading || baseline?.status == null}
                       onChange={(event) => { setTargetStatus(event.target.value); setMessage(null); }}>
-                      <option value="">Chọn trạng thái</option>
+                      <option value="">
+                        {mode === "correction" ? "Giữ nguyên trạng thái" : "Chọn trạng thái"}
+                      </option>
                       {allowedWorkStatusTargets(baseline?.status ?? null).map((status) => (
                         <option key={status} value={status}>{workerStatusLabel(status)}</option>
                       ))}
                     </select>
                   </div>
-                  <div className="flex flex-col gap-1.5">
+                  {targetStatus !== "" ? <div className="flex flex-col gap-1.5">
                     <label htmlFor="worker-effective-date" className="text-sm font-medium">Ngày hiệu lực</label>
                     <input id="worker-effective-date" type="date" className={inputClass}
                       min={baseline?.effectiveDate ?? row?.first_work_date ?? undefined}
                       max={today} value={effectiveDate}
                       disabled={loading || baseline === null}
                       onChange={(event) => setEffectiveDate(event.target.value)} />
-                  </div>
+                  </div> : null}
                   {targetStatus === "OFF" ? (
                     <div className="flex flex-col gap-1.5">
                       <label htmlFor="worker-leave-reason" className="text-sm font-medium">Lý do nghỉ</label>

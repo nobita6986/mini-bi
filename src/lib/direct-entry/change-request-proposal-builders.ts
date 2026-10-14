@@ -268,12 +268,12 @@ export function buildPaymentProposal(input: {
   };
 }
 
-/** Chuyen trang thai hop le theo trigger cua DB: UNCONFIRMED -> ON/OFF, ON -> OFF, OFF -> ON. */
+/** Chuyen trang thai hop le theo trigger cua DB; episode OFF phai tao ho so moi de tai tuyen. */
 export function allowedWorkStatusTargets(current: WorkerStatus | null): WorkerStatus[] {
   if (current === null) return [];
   if (current === "UNCONFIRMED") return ["ON", "OFF"];
   if (current === "ON") return ["OFF"];
-  return ["ON"];
+  return [];
 }
 
 /** Proposal WORK_STATUS: OFF bat buoc co ly do; trang thai khac khong gui leave_reason. */

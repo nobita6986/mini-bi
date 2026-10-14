@@ -191,6 +191,7 @@ export function spreadsheetSelectOptions(
   // the row still stores ""; choosing that visible option emits no change and
   // the value disappears when the editor closes.
   if (columnKey === "gender") return ["", ...DIRECT_ENTRY_GENDER_OPTIONS];
+  if (columnKey === "initial_status") return ["", "ON", "UNCONFIRMED", "OFF"];
   if (columnKey === "labor_type") {
     return ["", ...sortedActiveLaborTypes(catalogs?.laborTypes)
       .map((option) => option.labor_type_key)];
@@ -311,7 +312,12 @@ function SelectCellEditor(
       onChange={(event) => commit(event.currentTarget.value)}
       onBlur={commitBlur}
     >
-      {options.map((option) => <option key={option} value={option}>{option === "" ? "—" : option}</option>)}
+      {options.map((option) => <option key={option} value={option}>
+        {props.columnKey === "initial_status"
+          ? ({ "": "Đang làm việc (mặc định)", ON: "Đang làm việc",
+              UNCONFIRMED: "Đang chờ việc", OFF: "Đã nghỉ" } as Record<string, string>)[option]
+          : option === "" ? "—" : option}
+      </option>)}
     </select>
   );
 }

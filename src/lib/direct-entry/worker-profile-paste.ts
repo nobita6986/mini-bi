@@ -110,7 +110,7 @@ const GENDER_ALIASES: Readonly<Record<string, Gender>> = Object.freeze({
 });
 
 const STATUS_ALIASES: Readonly<Record<string, EmploymentStatus>> = Object.freeze({
-  unconfirmed: "UNCONFIRMED", chuaxacnhan: "UNCONFIRMED",
+  unconfirmed: "UNCONFIRMED", chuaxacnhan: "UNCONFIRMED", dangchoviec: "UNCONFIRMED",
   on: "ON", danglam: "ON", danglamviec: "ON",
   off: "OFF", danghi: "OFF", nghiviec: "OFF", danghiviec: "OFF",
 });

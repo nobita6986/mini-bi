@@ -432,7 +432,7 @@ test("WORK_STATUS hien nhan trang thai + ngay hieu luc va ghi ro ly do bi an", (
   assert.deepEqual(model.items[0].rows.map((row) => row.field),
     ["status", "effective_date", "leave_reason"]);
   assert.equal(model.items[0].rows[2].after, LEAVE_REASON_HIDDEN_MESSAGE);
-  assert.equal(model.items[0].rows[0].before, "Chưa xác nhận");
+  assert.equal(model.items[0].rows[0].before, "Đang chờ việc");
   assert.equal(model.items[0].rows[0].after, "Đã nghỉ");
 
   const stale = build({
