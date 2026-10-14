@@ -4,7 +4,7 @@
 - **Base:** `origin/main@148333e939b780656c3e4fe9d5a52bfaebf913fc` (ledger 92). Đã merge `origin/main@2a126415`
   (migration #93 worker-directory export) vào nhánh bằng merge commit (không rebase/amend/force-push).
 - **Branch/worktree:** `feature/pre-w2-hf-d3-bc-account-personnel-ui` @ `C:\CodeApp\BI\.worktrees\pre-w2-hf-d3-bc`.
-- **Final SHA:** `c1537a9d1e50e434889baabaecf9d10fc39a6d7a` (merge `21f8f95`, D3-B fixes, D3-C `c1537a9`).
+- **Final SHA:** `ad885378b7e696986f5ae290dda1fe52cd59b622` (merge `21f8f95`, D3-B fixes, D3-C + pagination).
 
 ## Đã hoàn thành
 
@@ -48,7 +48,9 @@
 - Đóng `POST /api/admin/catalog/personnel` (chỉ còn GET) — free-create trả 405. List/update/set-active/
   team-management giữ nguyên.
 - Test: focused D3-BC (account-driven flow + taxonomy + closed endpoint), personnel regression
-  `test:p3-1-w04-a1-a2` 152/152.
+  `test:p3-1-w04-a1-a2` 153/153.
+- Phân trang selector account (trang 1..1000, page_size 25) dùng metadata response; đổi trang xóa
+  selection/version cũ và bỏ qua response detail stale.
 
 ## Rủi ro
 
