@@ -9,7 +9,6 @@ import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import { PersonnelTeamMembershipManager } from "@/components/admin/personnel-team-membership-manager";
 import {
-  buildPersonnelCreateRequest,
   buildPersonnelListQuery,
   buildPersonnelSetActiveRequest,
   buildPersonnelUpdateRequest,
@@ -21,11 +20,19 @@ import {
   setPersonnelConflictLock,
   type PersonnelMutationOutcome,
 } from "@/lib/admin/personnel-catalog-model";
+import {
+  buildEligibleAccountsQuery,
+  buildPersonnelFromAccountRequest,
+  classifyAccountOperationResponse,
+  projectEligibleAccounts,
+} from "@/lib/admin/account-operation-ui-model";
+import { projectAccountItem } from "@/lib/admin/account-access-model";
 import type {
   AdminPersonnel,
   AdminPersonnelList,
   PersonnelPosition,
 } from "@/lib/direct-entry/personnel-catalog-contract";
+import type { EligibleAccount } from "@/lib/admin/account-operation-contract";
 
 type ListState =
   | { kind: "loading" }
@@ -67,7 +74,15 @@ const EMPTY_FORM: PersonnelForm = {
   reason: "",
 };
 
-function responseOutcome(status: number, payload: unknown, intent: MutationIntent) {
+function responseOutcome(status: number, payload: unknown, intent: MutationIntent): PersonnelMutationOutcome {
+  if (intent.operation === "create") {
+    const outcome = classifyAccountOperationResponse(status, payload);
+    if (outcome.kind === "applied") return { kind: "applied" } as unknown as PersonnelMutationOutcome;
+    return {
+      kind: outcome.kind === "needs-reconcile" ? "unavailable" : outcome.kind,
+      message: outcome.message,
+    } as unknown as PersonnelMutationOutcome;
+  }
   return classifyPersonnelMutation(status, payload, intent.operation);
 }
 
@@ -104,6 +119,65 @@ export function PersonnelCatalogManager() {
   const [conflictIntents, setConflictIntents] = useState<ReadonlyMap<string, ConflictEntry>>(new Map());
   const [busy, setBusy] = useState(false);
   const [conflictLocks, setConflictLocks] = useState<ReadonlySet<string>>(new Set());
+  const [eligibleAccounts, setEligibleAccounts] = useState<EligibleAccount[]>([]);
+  const [eligibleState, setEligibleState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
+  const [eligiblePage, setEligiblePage] = useState(1);
+  const [eligibleHasMore, setEligibleHasMore] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<EligibleAccount | null>(null);
+  const [accountVersion, setAccountVersion] = useState<number | null>(null);
+  const selectedAccountRef = useRef<string | null>(null);
+
+  const loadEligibleAccounts = useCallback(async (targetPage: number) => {
+    const query = buildEligibleAccountsQuery(targetPage);
+    if (!query) return;
+    setEligibleState("loading");
+    setSelectedAccount(null);
+    setAccountVersion(null);
+    selectedAccountRef.current = null;
+    try {
+      const response = await fetch(`/api/admin/catalog/personnel/eligible-accounts?${query.toString()}`, {
+        method: "GET", cache: "no-store", headers: { Accept: "application/json" },
+      });
+      if (response.status === 401 || response.status === 403) { setEligibleState("error"); return; }
+      if (response.status !== 200) { setEligibleState("error"); return; }
+      const list = projectEligibleAccounts(await response.json());
+      if (!list) { setEligibleState("error"); return; }
+      setEligibleAccounts(list.accounts);
+      setEligiblePage(list.page);
+      setEligibleHasMore(list.has_more);
+      setEligibleState(list.accounts.length === 0 ? "empty" : "ready");
+    } catch {
+      setEligibleState("error");
+    }
+  }, []);
+
+  const selectEligibleAccount = useCallback(async (account: EligibleAccount) => {
+    selectedAccountRef.current = account.app_user_id;
+    setSelectedAccount(account);
+    setAccountVersion(null);
+    try {
+      const response = await fetch(`/api/admin/access/accounts/${encodeURIComponent(account.app_user_id)}`, {
+        method: "GET", cache: "no-store", headers: { Accept: "application/json" },
+      });
+      const detail = response.status === 200 ? projectAccountItem(await response.json()) : null;
+      // Stale response guard: only apply the version if this is still the selected account.
+      if (selectedAccountRef.current !== account.app_user_id) return;
+      if (!detail || detail.account_ref !== account.app_user_id || !detail.enabled) {
+        setAccountVersion(null);
+        return;
+      }
+      setAccountVersion(detail.version);
+    } catch {
+      if (selectedAccountRef.current !== account.app_user_id) return;
+      setAccountVersion(null);
+    }
+  }, []);
+
+  const changeEligiblePage = useCallback((nextPage: number) => {
+    if (!Number.isSafeInteger(nextPage) || nextPage < 1 || nextPage > 1000) return;
+    setEligiblePage(nextPage);
+    void loadEligibleAccounts(nextPage);
+  }, [loadEligibleAccounts]);
 
   useEffect(() => {
     const listQuery = buildPersonnelListQuery({ search, includeInactive, page });
@@ -172,7 +246,15 @@ export function PersonnelCatalogManager() {
   const startCreate = () => {
     setForm(EMPTY_FORM);
     setFormError(null);
+    setSelectedAccount(null);
+    setAccountVersion(null);
+    selectedAccountRef.current = null;
+    setEligibleAccounts([]);
+    setEligiblePage(1);
+    setEligibleHasMore(false);
+    setEligibleState("loading");
     setDialog({ kind: "create" });
+    void loadEligibleAccounts(1);
   };
 
   const startEdit = (personnel: AdminPersonnel) => {
@@ -355,9 +437,14 @@ export function PersonnelCatalogManager() {
     let request;
     let intent: MutationIntent;
     if (dialog.kind === "create") {
-      request = buildPersonnelCreateRequest({
+      if (!selectedAccount || accountVersion === null) {
+        setFormError("Chọn một tài khoản đang hoạt động và chưa liên kết để tạo nhân sự.");
+        return;
+      }
+      request = buildPersonnelFromAccountRequest({
+        accountRef: selectedAccount.app_user_id,
+        expectedAccountVersion: accountVersion,
         personnelCode: form.personnelCode,
-        displayName: form.displayName,
         personnelPosition: form.personnelPosition,
         validFrom: form.validFrom,
         reason: form.reason,
@@ -368,7 +455,7 @@ export function PersonnelCatalogManager() {
         return;
       }
       intent = {
-        url: "/api/admin/catalog/personnel",
+        url: "/api/admin/catalog/personnel/from-account",
         method: "POST",
         body: request.body,
         operation: "create",
@@ -482,7 +569,7 @@ export function PersonnelCatalogManager() {
               onClick={startCreate}
               className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             >
-              Thêm nhân sự
+              Tạo nhân sự từ tài khoản
             </button>
           </Dialog.Trigger>
           <Dialog.Portal>
@@ -497,7 +584,7 @@ export function PersonnelCatalogManager() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <Dialog.Title className="text-xl font-semibold text-foreground">
-                    {dialog?.kind === "create" ? "Thêm nhân sự" :
+                    {dialog?.kind === "create" ? "Tạo nhân sự từ tài khoản" :
                       dialog?.kind === "edit" ? "Chỉnh sửa nhân sự" :
                         dialog?.active ? "Kích hoạt hồ sơ" : "Ngừng hoạt động hồ sơ"}
                   </Dialog.Title>
@@ -578,14 +665,67 @@ export function PersonnelCatalogManager() {
                       required
                       onChange={(value) => changeForm("personnelCode", value)}
                     />
-                    <Field
-                      id="personnel-name"
-                      label="Họ và tên"
-                      value={form.displayName}
-                      maxLength={256}
-                      required
-                      onChange={(value) => changeForm("displayName", value)}
-                    />
+                    {dialog?.kind === "create" ? (
+                      <label className="block text-sm font-medium text-foreground" htmlFor="personnel-account">
+                        Tài khoản
+                        <select
+                          id="personnel-account"
+                          value={selectedAccount?.app_user_id ?? ""}
+                          required
+                          disabled={eligibleState !== "ready"}
+                          onChange={(event) => {
+                            const found = eligibleAccounts.find((account) =>
+                              account.app_user_id === event.currentTarget.value);
+                            if (found) void selectEligibleAccount(found);
+                          }}
+                          className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3 text-sm"
+                        >
+                          <option value="">Chọn tài khoản</option>
+                          {eligibleAccounts.map((account) => (
+                            <option key={account.app_user_id} value={account.app_user_id}>
+                              {account.display_name}
+                            </option>
+                          ))}
+                        </select>
+                        {eligibleState === "loading" ? (
+                          <span className="mt-1 block text-xs text-muted">Đang tải tài khoản đủ điều kiện…</span>
+                        ) : null}
+                        {eligibleState === "empty" ? (
+                          <span className="mt-1 block text-xs text-muted">
+                            Không có tài khoản đang hoạt động và chưa liên kết nhân sự.
+                          </span>
+                        ) : null}
+                        {eligibleState === "error" ? (
+                          <span role="alert" className="mt-1 block text-xs text-red-700">
+                            Không tải được danh sách tài khoản. Hãy thử lại.
+                          </span>
+                        ) : null}
+                        {eligibleState === "ready" && (eligiblePage > 1 || eligibleHasMore) ? (
+                          <span className="mt-2 flex items-center gap-2 text-xs font-normal text-muted">
+                            <button type="button" disabled={eligiblePage <= 1 || eligibleState !== "ready"}
+                              onClick={() => changeEligiblePage(eligiblePage - 1)}
+                              className="rounded-md border border-border px-2 py-1 disabled:opacity-50">
+                              Trang trước
+                            </button>
+                            <span aria-live="polite">Trang {eligiblePage}</span>
+                            <button type="button" disabled={!eligibleHasMore || eligibleState !== "ready"}
+                              onClick={() => changeEligiblePage(eligiblePage + 1)}
+                              className="rounded-md border border-border px-2 py-1 disabled:opacity-50">
+                              Trang sau
+                            </button>
+                          </span>
+                        ) : null}
+                      </label>
+                    ) : (
+                      <Field
+                        id="personnel-name"
+                        label="Họ và tên"
+                        value={form.displayName}
+                        maxLength={256}
+                        required
+                        onChange={(value) => changeForm("displayName", value)}
+                      />
+                    )}
                     <label className="block text-sm font-medium text-foreground" htmlFor="personnel-position">
                       Vị trí
                       <select

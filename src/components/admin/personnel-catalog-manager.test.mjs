@@ -4,13 +4,32 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./personnel-catalog-manager.tsx", import.meta.url), "utf8");
 
-test("Personnel UI calls only canonical W01B list, create, update, active and detail APIs", () => {
+test("Personnel UI calls the account-driven create plus canonical list/update/active/detail APIs", () => {
   assert.match(source, /fetch\(`\/api\/admin\/catalog\/personnel\?\$\{listQuery\.toString\(\)\}`/);
-  assert.match(source, /url:\s*"\/api\/admin\/catalog\/personnel"/);
+  assert.match(source, /url:\s*"\/api\/admin\/catalog\/personnel\/from-account"/);
+  assert.match(source, /\/api\/admin\/catalog\/personnel\/eligible-accounts\?\$\{query\.toString\(\)\}/);
+  assert.match(source, /\/api\/admin\/access\/accounts\/\$\{encodeURIComponent\(account\.app_user_id\)\}/);
   assert.match(source, /method:\s*"PATCH"/);
   assert.match(source, /\/api\/admin\/catalog\/personnel\/\$\{encodeURIComponent\(dialog\.personnel\.recruiter_id\)\}\/active/);
   assert.match(source, /\/api\/admin\/catalog\/personnel\/\$\{encodeURIComponent\(intent\.recruiterId\)\}/);
   assert.doesNotMatch(source, /supabase|\.rpc\(|createClient\(/i);
+  // No free-create endpoint is called from the client.
+  assert.doesNotMatch(source, /url:\s*"\/api\/admin\/catalog\/personnel"\s*,/);
+});
+
+test("D3-C: eligible accounts paginate page 1..1000 and drop stale selections", () => {
+  assert.match(source, /changeEligiblePage/);
+  assert.match(source, /Trang trước/);
+  assert.match(source, /Trang sau/);
+  assert.match(source, /eligibleHasMore/);
+  assert.match(source, /setEligiblePage\(list\.page\)/);
+  assert.match(source, /setEligibleHasMore\(list\.has_more\)/);
+  // Stale detail response must never overwrite a newer selection.
+  assert.match(source, /if \(selectedAccountRef\.current !== account\.app_user_id\) return;/);
+  // A stale failed request must not clear the newer selection's version either.
+  assert.match(source, /catch \{\s*if \(selectedAccountRef\.current !== account\.app_user_id\) return;\s*setAccountVersion\(null\);\s*\}/);
+  // Page stays bounded 1..1000.
+  assert.match(source, /nextPage < 1 \|\| nextPage > 1000/);
 });
 
 test("strict response projection, page size and retry reuse are wired in the component", () => {

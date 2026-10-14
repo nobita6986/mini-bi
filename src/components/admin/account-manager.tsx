@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
@@ -20,6 +20,15 @@ import {
   projectAccountListForQuery,
   type AccountEnabledFilter,
 } from "@/lib/admin/account-access-model";
+import {
+  buildCreateAccountRequest,
+  buildEditDisplayNameRequest,
+  buildReconcileRequest,
+  buildResetPasswordRequest,
+  classifyAccountOperationResponse,
+  newAccountOperationKey,
+  type AccountOperationUiOutcome,
+} from "@/lib/admin/account-operation-ui-model";
 
 type ListState =
   | { kind: "loading" }
@@ -72,6 +81,37 @@ export function AccountManager() {
   const [conflictIntent, setConflictIntent] = useState<MutationIntent | null>(null);
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<
+    | "create"
+    | { kind: "edit"; account: ExistingAccount }
+    | { kind: "reset"; account: ExistingAccount }
+    | null
+  >(null);
+  const [reconcileIntent, setReconcileIntent] = useState<{ intentId: string; state: string } | null>(null);
+  const [opBusy, setOpBusy] = useState(false);
+  const [opNotice, setOpNotice] = useState<AccountOperationUiOutcome | null>(null);
+
+  // PRE-W2-HF-D3-B: Full Admin mở danh sách tài khoản thì chạy RPC reclassify một lần
+  // (qua route có session + CSRF) để xử lý intent tồn đọng kể cả sau process crash. Không
+  // chạy lại khi đổi search/page/filter; ref guard tránh vòng lặp/StrictMode double-fire.
+  const reclassifyFiredRef = useRef(false);
+  useEffect(() => {
+    if (reclassifyFiredRef.current) return;
+    reclassifyFiredRef.current = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/access/accounts/reclassify", {
+          method: "POST",
+          cache: "no-store",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (!response.ok) setNotice("Không phân loại lại được intent tồn đọng. Hãy thử lại sau.");
+      } catch {
+        setNotice("Không phân loại lại được intent tồn đọng. Hãy thử lại sau.");
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -267,6 +307,12 @@ export function AccountManager() {
           <h1 className="text-2xl font-bold text-foreground">Tài khoản</h1>
           <p className="mt-1 text-sm text-muted">Quản lý trạng thái hoạt động của tài khoản hiện có. Mọi thay đổi cần có lý do.</p>
         </div>
+        <div className="flex gap-2">
+          <button type="button" className={primaryButton}
+            onClick={() => { setOpNotice(null); setOperation("create"); }}>
+            Tạo tài khoản
+          </button>
+        </div>
       </header>
 
       <Dialog.Root open={dialog !== null}
@@ -409,6 +455,14 @@ export function AccountManager() {
                       <td className="px-3 py-3">
                         <div className="flex justify-end gap-2 whitespace-nowrap">
                           <button type="button" className={button} disabled={locked}
+                            onClick={() => { setOpNotice(null); setOperation({ kind: "edit", account }); }}>
+                            Sửa tên
+                          </button>
+                          <button type="button" className={button} disabled={locked}
+                            onClick={() => { setOpNotice(null); setOperation({ kind: "reset", account }); }}>
+                            Đặt lại mật khẩu
+                          </button>
+                          <button type="button" className={button} disabled={locked}
                             onClick={() => startStateChange(account, !account.enabled)}>
                             {account.enabled ? "Ngừng hoạt động" : "Kích hoạt"}
                           </button>
@@ -435,6 +489,32 @@ export function AccountManager() {
           </>
         ) : null}
       </Card>
+
+      <AccountOperationDialogs
+        key={operation === null ? "none" : operation === "create" ? "create" : operation.kind + ":" + operation.account.account_ref}
+        operation={operation}
+        busy={opBusy}
+        notice={opNotice}
+        onBusyChange={setOpBusy}
+        onNoticeChange={setOpNotice}
+        onClose={() => { setOperation(null); setOpNotice(null); }}
+        onApplied={() => { setOperation(null); setOpNotice(null); reloadList(); }}
+        onNeedsReconcile={(intentId, state) => {
+          setOperation(null);
+          setOpNotice(null);
+          setReconcileIntent({ intentId, state });
+          reloadList();
+        }}
+      />
+      <AccountReconcileSurface
+        intent={reconcileIntent}
+        busy={opBusy}
+        notice={opNotice}
+        onBusyChange={setOpBusy}
+        onNoticeChange={setOpNotice}
+        onClose={() => { setReconcileIntent(null); setOpNotice(null); }}
+        onDone={() => { setReconcileIntent(null); setOpNotice(null); reloadList(); }}
+      />
     </>
   );
 }
@@ -461,6 +541,223 @@ function ConflictReload({ message, busy, onReload }: {
         className="mt-2 inline-flex min-h-10 items-center rounded-md border border-current px-3 font-medium disabled:opacity-50">
         {busy ? "Đang tải…" : "Tải lại dữ liệu"}
       </button>
+    </Alert>
+  );
+}
+
+const opButton = "inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+const opPrimary = "inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+const opInput = "min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
+
+function PasswordField({ id, label, value, onChange }: {
+  id: string; label: string; value: string; onChange(value: string): void;
+}) {
+  return (
+    <label htmlFor={id} className="flex flex-col gap-1 text-sm font-medium">
+      {label}
+      <input id={id} type="password" value={value} autoComplete="new-password"
+        onChange={(event) => onChange(event.target.value)} className={opInput} />
+    </label>
+  );
+}
+
+function AccountOperationDialogs({
+  operation, busy, notice, onBusyChange, onNoticeChange, onClose, onApplied, onNeedsReconcile,
+}: {
+  operation: "create" | { kind: "edit"; account: ExistingAccount } | { kind: "reset"; account: ExistingAccount } | null;
+  busy: boolean;
+  notice: AccountOperationUiOutcome | null;
+  onBusyChange(v: boolean): void;
+  onNoticeChange(v: AccountOperationUiOutcome | null): void;
+  onClose(): void;
+  onApplied(): void;
+  onNeedsReconcile(intentId: string, state: string): void;
+}) {
+  const [loginId, setLoginId] = useState("");
+  const [displayName, setDisplayName] = useState(
+    operation !== null && operation !== "create" ? operation.account.display_name : "");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [reason, setReason] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const isCreate = operation === "create";
+  const isEdit = operation !== null && operation !== "create" && operation.kind === "edit";
+  const isReset = operation !== null && operation !== "create" && operation.kind === "reset";
+  const accountRef = operation !== null && operation !== "create" ? operation.account.account_ref : "";
+
+  async function submit() {
+    setFormError(null);
+    onNoticeChange(null);
+    if (operation === null) return;
+    const key = newAccountOperationKey();
+    const request = isCreate
+      ? buildCreateAccountRequest({ loginId, displayName, password, passwordConfirm, reason, idempotencyKey: key })
+      : isEdit
+        ? buildEditDisplayNameRequest({ displayName, expectedVersion: operation.account.version, reason, idempotencyKey: key })
+        : buildResetPasswordRequest({ password, passwordConfirm, reason, idempotencyKey: key });
+    if (!request.ok) { setFormError(request.message); return; }
+
+    const url = isCreate
+      ? "/api/admin/access/accounts"
+      : isEdit
+        ? `/api/admin/access/accounts/${encodeURIComponent(accountRef)}/display-name`
+        : `/api/admin/access/accounts/${encodeURIComponent(accountRef)}/reset-password`;
+
+    onBusyChange(true);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify(request.body),
+      });
+      const outcome = classifyAccountOperationResponse(response.status, await response.json().catch(() => null));
+      onBusyChange(false);
+      onNoticeChange(outcome);
+      if (outcome.kind === "applied") onApplied();
+      else if (outcome.kind === "needs-reconcile") onNeedsReconcile(outcome.intentId, outcome.state);
+      else setFormError(outcome.message);
+    } catch {
+      onBusyChange(false);
+      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
+      setFormError("Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency.");
+    }
+  }
+
+  return (
+    <Dialog.Root open={operation !== null} onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Content
+          className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-xl focus:outline-none sm:p-6"
+          aria-describedby="account-op-dialog-description">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <Dialog.Title className="text-xl font-semibold text-foreground">
+                {isCreate ? "Tạo tài khoản" : isReset ? "Đặt lại mật khẩu" : "Sửa tên hiển thị"}
+              </Dialog.Title>
+              <Dialog.Description id="account-op-dialog-description" className="mt-1 text-sm text-muted">
+                {isCreate
+                  ? "Tài khoản được tạo với email <mã đăng nhập>@hrpartner.vn và mật khẩu riêng."
+                  : "Mọi thay đổi cần lý do; không đổi email/login và không lưu mật khẩu."}
+              </Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <button type="button" aria-label="Đóng hộp thoại" disabled={busy} className={opButton}>×</button>
+            </Dialog.Close>
+          </div>
+
+          <form className="mt-5 space-y-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+            {isCreate ? (
+              <label className="flex flex-col gap-1 text-sm font-medium">
+                Mã đăng nhập
+                <input value={loginId} maxLength={64} onChange={(event) => setLoginId(event.target.value)} className={opInput} />
+              </label>
+            ) : null}
+            {!isReset ? (
+              <label className="flex flex-col gap-1 text-sm font-medium">
+                Tên hiển thị
+                <input value={displayName} maxLength={256} onChange={(event) => setDisplayName(event.target.value)} className={opInput} />
+              </label>
+            ) : null}
+            {!isEdit ? (
+              <>
+                <PasswordField id="account-op-password" label="Mật khẩu" value={password} onChange={setPassword} />
+                <PasswordField id="account-op-password-confirm" label="Nhập lại mật khẩu" value={passwordConfirm} onChange={setPasswordConfirm} />
+              </>
+            ) : null}
+            <ReasonField value={reason} disabled={busy} onChange={(value) => { setReason(value); setFormError(null); onNoticeChange(null); }} />
+            {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
+            {notice && notice.kind !== "applied" && notice.kind !== "needs-reconcile" ? (
+              <Alert tone="info" title="Trạng thái thao tác">{notice.message}</Alert>
+            ) : null}
+            <button type="submit" disabled={busy} className={opPrimary}>
+              {busy ? "Đang xử lý…" : isCreate ? "Tạo tài khoản" : isReset ? "Đặt lại mật khẩu" : "Lưu tên hiển thị"}
+            </button>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function AccountReconcileSurface({
+  intent, busy, notice, onBusyChange, onNoticeChange, onClose, onDone,
+}: {
+  intent: { intentId: string; state: string } | null;
+  busy: boolean;
+  notice: AccountOperationUiOutcome | null;
+  onBusyChange(v: boolean): void;
+  onNoticeChange(v: AccountOperationUiOutcome | null): void;
+  onClose(): void;
+  onDone(): void;
+}) {
+  if (intent === null) return null;
+  const intentId = intent.intentId;
+
+  async function reconcile() {
+    const key = newAccountOperationKey();
+    const request = buildReconcileRequest(key);
+    if (!request.ok) { onNoticeChange({ kind: "invalid", message: request.message }); return; }
+    onBusyChange(true);
+    try {
+      const response = await fetch(`/api/admin/access/accounts/intents/${encodeURIComponent(intentId)}/reconcile`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify(request.body),
+      });
+      const outcome = classifyAccountOperationResponse(response.status, await response.json().catch(() => null));
+      onBusyChange(false);
+      onNoticeChange(outcome);
+      if (outcome.kind === "applied") onDone();
+    } catch {
+      onBusyChange(false);
+      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
+    }
+  }
+
+  async function reclassify() {
+    onBusyChange(true);
+    try {
+      const response = await fetch("/api/admin/access/accounts/reclassify", {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const payload = await response.json().catch(() => null);
+      onBusyChange(false);
+      if (response.ok && payload && typeof payload.reclassified === "object") {
+        onNoticeChange({
+          kind: "applied",
+          message: "Đã phân loại lại " + String(payload.reclassified.reclassified ?? 0) +
+            " intent; purged " + String(payload.reclassified.purged ?? 0) +
+            "; deleted " + String(payload.reclassified.deleted ?? 0) + ".",
+        });
+      } else {
+        onNoticeChange({ kind: "unavailable", message: "Không phân loại lại được. Hãy thử lại." });
+      }
+    } catch {
+      onBusyChange(false);
+      onNoticeChange({ kind: "unavailable", message: "Dịch vụ hiện không khả dụng." });
+    }
+  }
+
+  return (
+    <Alert tone="warning" title="Operation cần xử lý">
+      <p>Intent đang ở trạng thái {intent.state}. Không tự retry Auth; chỉ Đối soát để xác minh qua Admin API.</p>
+      {notice ? <p role="status">{notice.message}</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" disabled={busy} onClick={() => void reconcile()} className={opPrimary}>
+          {busy ? "Đang đối soát…" : "Đối soát"}
+        </button>
+        <button type="button" disabled={busy} onClick={() => void reclassify()} className={opButton}>
+          {busy ? "Đang phân loại…" : "Phân loại lại"}
+        </button>
+        <button type="button" disabled={busy} onClick={onClose} className={opButton}>Đóng</button>
+      </div>
     </Alert>
   );
 }
