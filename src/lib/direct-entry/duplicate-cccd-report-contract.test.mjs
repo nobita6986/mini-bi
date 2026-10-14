@@ -53,14 +53,14 @@ function rpcPayload(overrides = {}) {
       cccd_length: 12,
       profile_count: 2,
       project_count: 2,
-      active_profile_count: 1,
+      active_profile_count: 2,
       first_work_date: "2026-01-05",
       latest_first_work_date: "2026-02-10",
       episodes: [
         episode({ first_work_date: "2026-02-10", latest_status: "ON", active: true }),
         episode({ employee_code: "hrp-2026-800002", project_id: "proj_b",
           project_display: "Project B", first_work_date: "2026-01-05",
-          latest_status: "OFF", active: false }),
+          latest_status: "ON", active: true }),
       ],
     }],
     ...overrides,
@@ -134,8 +134,8 @@ test("the projection keeps the display fields and drops authority + project_id",
     assert.deepEqual(Object.keys(item).sort(), [...DUPLICATE_CCCD_REPORT_EPISODE_KEYS].sort());
   }
   assert.equal(group.episodes[0].latest_status, "ON");
-  assert.equal(group.episodes[1].latest_status, "OFF");
-  assert.equal(group.episodes[1].active, false);
+  assert.equal(group.episodes[1].latest_status, "ON");
+  assert.equal(group.episodes[1].active, true);
 
   const serialized = JSON.stringify(page);
   assert.doesNotMatch(serialized, /authority|entry_admin|catalog_master_manage/);
@@ -169,15 +169,15 @@ test("malformed RPC payloads fail closed", () => {
     "episode missing project_id": rpcPayload({
       groups: [{ ...rpcPayload().groups[0], episodes: [
         (() => { const e = episode(); delete e.project_id; return e; })(),
-        episode({ latest_status: "OFF", active: false }),
+        episode(),
       ] }] }),
     "episode unknown status": rpcPayload({
       groups: [{ ...rpcPayload().groups[0], episodes: [
-        episode({ latest_status: "MAYBE" }), episode({ latest_status: "OFF", active: false }),
+        episode({ latest_status: "MAYBE" }), episode(),
       ] }] }),
     "episode active disagrees with status": rpcPayload({
       groups: [{ ...rpcPayload().groups[0], episodes: [
-        episode({ latest_status: "OFF", active: true }), episode({ latest_status: "ON", active: true }),
+        episode({ latest_status: "ON", active: false }), episode({ latest_status: "ON", active: true }),
       ] }] }),
     "more groups than page_size": rpcPayload({
       page_size: 1, has_more: false,

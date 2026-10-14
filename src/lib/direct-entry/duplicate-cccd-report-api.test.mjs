@@ -20,14 +20,14 @@ const group = {
   cccd_length: 12,
   profile_count: 2,
   project_count: 2,
-  active_profile_count: 1,
+  active_profile_count: 2,
   first_work_date: "2026-01-05",
   latest_first_work_date: "2026-02-10",
   episodes: [
     { employee_code: "hrp-2026-800001", display_name: "A", project_display: "Project A",
       first_work_date: "2026-01-05", latest_status: "ON", active: true },
     { employee_code: "hrp-2026-800002", display_name: "B", project_display: "Project B",
-      first_work_date: "2026-02-10", latest_status: "OFF", active: false },
+      first_work_date: "2026-02-10", latest_status: "ON", active: true },
   ],
 };
 

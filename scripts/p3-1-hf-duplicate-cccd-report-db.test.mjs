@@ -76,10 +76,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 87, "the ledger carries 84 migrations through W03A-R2 #84");
-  assert.equal(names[names.length - (14)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
-  assert.equal(names[names.length - (15)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
-  assert.equal(names[names.length - (27)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.length, 88, "the ledger carries 84 migrations through W03A-R2 #84");
+  assert.equal(names[names.length - (15)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
+  assert.equal(names[names.length - (16)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
+  assert.equal(names[names.length - (28)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 
@@ -452,11 +452,10 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     // Mot cap trung: mot dong canonical + mot dong con giu dinh dang cu.
     await seedEpisode(db, { cccd: "012345678901", name: "HF Mask Canonical", project: PROJ_A,
       date: "2026-02-10", status: "ON" });
-    // Dong dinh dang cu: ON khi vao (mac dinh hien hanh), roi nghi viec that su bang
-    // su kien OFF thu hai - trang thai dau tien khong the la OFF.
-    const legacy = await seedEpisode(db, { cccd: "0123 456 78901", name: "HF Mask Legacy",
+    // Dong dinh dang cu giu nguyen dinh dang (co khoang trang) va trang thai ON: report
+    // chuan hoa CCCD, con duong ghi khong tu y sua lai gia tri.
+    await seedEpisode(db, { cccd: "0123 456 78901", name: "HF Mask Legacy",
       project: PROJ_B, date: "2026-01-05", status: "ON" });
-    await appendStatus(db, legacy.entryId, "OFF", "2026-01-06", 2, null);
     // Cac truong hop KHONG phai trung: xuat hien mot lan, unknown, va da xoa mem.
     await seedEpisode(db, { cccd: "111222333", name: "HF Mask Single", project: PROJ_A,
       date: "2026-03-01", status: "ON" });
@@ -484,14 +483,14 @@ test("P3.1-HF: the report masks the CCCD, normalizes legacy formatting and emits
     assert.equal(group.cccd_length, 12);
     assert.equal(group.profile_count, 2);
     assert.equal(group.project_count, 2);
-    assert.equal(group.active_profile_count, 1);
+    assert.equal(group.active_profile_count, 2);
     assert.equal(group.first_work_date, "2026-01-05");
     assert.equal(group.latest_first_work_date, "2026-02-10");
 
     // Episode xep theo first_work_date: dong dinh dang cu (som hon) dung truoc.
     assert.deepEqual(group.episodes.map((e) => e.first_work_date), ["2026-01-05", "2026-02-10"]);
-    assert.deepEqual(group.episodes.map((e) => e.latest_status), ["OFF", "ON"]);
-    assert.deepEqual(group.episodes.map((e) => e.active), [false, true]);
+    assert.deepEqual(group.episodes.map((e) => e.latest_status), ["ON", "ON"]);
+    assert.deepEqual(group.episodes.map((e) => e.active), [true, true]);
     assert.deepEqual(group.episodes.map((e) => e.project_id), [PROJ_B, PROJ_A]);
     assert.deepEqual(group.episodes.map((e) => e.project_display),
       ["Project HF B", "Project HF A"]);

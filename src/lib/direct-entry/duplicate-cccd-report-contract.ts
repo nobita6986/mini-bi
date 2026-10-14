@@ -202,7 +202,7 @@ function projectEpisodeFields(value: Record<string, unknown>): DuplicateCccdRepo
   if (!isNullableIsoDate(value.first_work_date)) return null;
   if (!isEmploymentStatus(value.latest_status)) return null;
   if (typeof value.active !== "boolean") return null;
-  if (value.active !== (value.latest_status !== "OFF")) return null;
+  if (value.active !== (value.latest_status === "ON")) return null;
   return {
     employee_code: value.employee_code,
     display_name: value.display_name,
