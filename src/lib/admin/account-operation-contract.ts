@@ -1,0 +1,324 @@
+/**
+ * PRE-W2-HF-D3-B/C - Pure contract cho account operations (create / edit name /
+ * reset password / reconcile / personnel-from-account).
+ *
+ * Fail-closed: exact-key body allowlist, type/bounds, canonical login_id, password
+ * byte bounds (8..1024) + confirm equality (server-side, never logged/stored), reason
+ * + idempotency_key required. Strict projection for each RPC envelope; no raw DB
+ * message, no password/hash, no email/auth payload ever surfaced.
+ */
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LOGIN_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const MIN_PASSWORD_BYTES = 8;
+export const MAX_PASSWORD_BYTES = 1024;
+const REASON_MAX = 4000;
+const NAME_MAX = 256;
+const CODE_MAX = 64;
+const CODE = /^[^\s\u0000-\u001f\u007f]+$/;
+
+export type PersonnelPosition = "STAFF" | "TEAM_LEADER";
+export type AccountOperationKind = "CREATE_ACCOUNT" | "RESET_PASSWORD";
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function exact(v: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(v).sort().join(",") === [...keys].sort().join(",");
+}
+function uuid(v: unknown): string | null {
+  return typeof v === "string" && UUID.test(v) ? v : null;
+}
+function text(v: unknown, max: number): string | null {
+  return typeof v === "string" && v.trim() !== "" && v.length <= max ? v : null;
+}
+function version(v: unknown): number | null {
+  return typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null;
+}
+
+export type RequestFail = { ok: false; code: string };
+export type Parsed<T> = { ok: true; value: T } | RequestFail;
+
+function passwordBytes(password: unknown): boolean {
+  return typeof password === "string" &&
+    password.length >= MIN_PASSWORD_BYTES &&
+    new TextEncoder().encode(password).length <= MAX_PASSWORD_BYTES;
+}
+
+/* ---------- create account ---------- */
+export type CreateAccountRequest = {
+  login_id: string;
+  display_name: string;
+  password: string;
+  password_confirm: string;
+  reason: string;
+  idempotency_key: string;
+};
+export function parseCreateAccount(body: unknown): Parsed<CreateAccountRequest> {
+  if (!isRecord(body) ||
+      !exact(body, ["login_id", "display_name", "password", "password_confirm", "reason", "idempotency_key"])) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const login_id = typeof body.login_id === "string" && LOGIN_ID.test(body.login_id) ? body.login_id : null;
+  const display_name = text(body.display_name, NAME_MAX);
+  if (typeof body.password !== "string" || typeof body.password_confirm !== "string" ||
+      body.password !== body.password_confirm || !passwordBytes(body.password)) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const reason = text(body.reason, REASON_MAX);
+  const idempotency_key = uuid(body.idempotency_key);
+  if (!login_id || !display_name || !reason || !idempotency_key) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  return { ok: true, value: { login_id, display_name, password: body.password,
+    password_confirm: body.password_confirm, reason, idempotency_key } };
+}
+
+/* ---------- edit display name ---------- */
+export type EditDisplayNameRequest = {
+  display_name: string;
+  expected_version: number;
+  reason: string;
+  idempotency_key: string;
+};
+export function parseEditDisplayName(body: unknown): Parsed<EditDisplayNameRequest> {
+  if (!isRecord(body) || !exact(body, ["display_name", "expected_version", "reason", "idempotency_key"])) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const display_name = text(body.display_name, NAME_MAX);
+  const expected_version = version(body.expected_version);
+  const reason = text(body.reason, REASON_MAX);
+  const idempotency_key = uuid(body.idempotency_key);
+  if (!display_name || expected_version === null || expected_version < 1 || !reason || !idempotency_key) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  return { ok: true, value: { display_name, expected_version, reason, idempotency_key } };
+}
+
+/* ---------- reset password ---------- */
+export type ResetPasswordRequest = {
+  password: string;
+  password_confirm: string;
+  reason: string;
+  idempotency_key: string;
+};
+export function parseResetPassword(body: unknown): Parsed<ResetPasswordRequest> {
+  if (!isRecord(body) || !exact(body, ["password", "password_confirm", "reason", "idempotency_key"])) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  if (typeof body.password !== "string" || typeof body.password_confirm !== "string" ||
+      body.password !== body.password_confirm || !passwordBytes(body.password)) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const reason = text(body.reason, REASON_MAX);
+  const idempotency_key = uuid(body.idempotency_key);
+  if (!reason || !idempotency_key) return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  return { ok: true, value: { password: body.password, password_confirm: body.password_confirm,
+    reason, idempotency_key } };
+}
+
+/* ---------- reconcile intent ---------- */
+export type ReconcileRequest = { idempotency_key: string };
+export function parseReconcile(body: unknown): Parsed<ReconcileRequest> {
+  if (!isRecord(body) || !exact(body, ["idempotency_key"])) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const idempotency_key = uuid(body.idempotency_key);
+  return idempotency_key ? { ok: true, value: { idempotency_key } } : { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+}
+
+/* ---------- personnel from account ---------- */
+export type CreatePersonnelFromAccountRequest = {
+  account_ref: string;
+  expected_account_version: number;
+  personnel_code: string;
+  personnel_position: PersonnelPosition;
+  valid_from: string;
+  reason: string;
+  idempotency_key: string;
+};
+export function parseCreatePersonnelFromAccount(body: unknown): Parsed<CreatePersonnelFromAccountRequest> {
+  if (!isRecord(body) || !exact(body, [
+    "account_ref", "expected_account_version", "personnel_code", "personnel_position",
+    "valid_from", "reason", "idempotency_key",
+  ])) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  const account_ref = uuid(body.account_ref);
+  const expected_account_version = version(body.expected_account_version);
+  const code = text(body.personnel_code, CODE_MAX);
+  const personnel_position = body.personnel_position === "STAFF" || body.personnel_position === "TEAM_LEADER"
+    ? body.personnel_position : null;
+  const valid_from = typeof body.valid_from === "string" && DATE.test(body.valid_from) ? body.valid_from : null;
+  const reason = text(body.reason, REASON_MAX);
+  const idempotency_key = uuid(body.idempotency_key);
+  if (!account_ref || expected_account_version === null || expected_account_version < 1 ||
+      !code || !CODE.test(code) || !personnel_position || !valid_from || !reason || !idempotency_key) {
+    return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  }
+  return { ok: true, value: { account_ref, expected_account_version, personnel_code: code,
+    personnel_position, valid_from, reason, idempotency_key } };
+}
+
+/* ---------- envelopes (strict) ---------- */
+export type IntentEnvelope = {
+  intent_id: string;
+  intent_token: string;
+  kind: AccountOperationKind;
+  state: string;
+};
+export function projectIntentEnvelope(v: unknown): IntentEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["intent_id", "intent_token", "kind", "state"])) return null;
+  if (!uuid(v.intent_id) || !uuid(v.intent_token)) return null;
+  if (v.kind !== "CREATE_ACCOUNT" && v.kind !== "RESET_PASSWORD") return null;
+  if (typeof v.state !== "string") return null;
+  return { intent_id: v.intent_id as string, intent_token: v.intent_token as string,
+    kind: v.kind as AccountOperationKind, state: v.state as string };
+}
+
+export type ClaimEnvelope = IntentEnvelope & { claimed: boolean };
+export function projectClaimEnvelope(v: unknown): ClaimEnvelope | null {
+  const base = projectIntentEnvelope(v);
+  if (!base || typeof (v as Record<string, unknown>).claimed !== "boolean") return null;
+  return { ...base, claimed: (v as Record<string, unknown>).claimed as boolean };
+}
+
+export type ReadIntentEnvelope = {
+  intent_id: string;
+  intent_token: string;
+  kind: AccountOperationKind;
+  state: string;
+  login_id: string | null;
+  display_name: string | null;
+  account_ref: string | null;
+  auth_subject: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  resolved_at: string | null;
+};
+export function projectReadIntentEnvelope(v: unknown): ReadIntentEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["intent_id", "intent_token", "kind", "state", "login_id",
+    "display_name", "account_ref", "auth_subject", "created_at", "claimed_at", "resolved_at"])) return null;
+  if (!uuid(v.intent_id) || !uuid(v.intent_token)) return null;
+  if (v.kind !== "CREATE_ACCOUNT" && v.kind !== "RESET_PASSWORD") return null;
+  if (typeof v.state !== "string") return null;
+  if (v.login_id !== null && typeof v.login_id !== "string") return null;
+  if (v.display_name !== null && typeof v.display_name !== "string") return null;
+  if (v.account_ref !== null && !uuid(v.account_ref)) return null;
+  if (v.auth_subject !== null && !uuid(v.auth_subject)) return null;
+  if (typeof v.created_at !== "string") return null;
+  if (v.claimed_at !== null && typeof v.claimed_at !== "string") return null;
+  if (v.resolved_at !== null && typeof v.resolved_at !== "string") return null;
+  return {
+    intent_id: v.intent_id as string, intent_token: v.intent_token as string,
+    kind: v.kind as AccountOperationKind, state: v.state as string,
+    login_id: v.login_id as string | null, display_name: v.display_name as string | null,
+    account_ref: v.account_ref as string | null, auth_subject: v.auth_subject as string | null,
+    created_at: v.created_at as string, claimed_at: v.claimed_at as string | null,
+    resolved_at: v.resolved_at as string | null,
+  };
+}
+
+export type FinalizeCreateEnvelope = {
+  app_user_id: string;
+  auth_subject: string;
+  display_name: string;
+  version: number;
+  revision_id: string;
+  intent_id: string;
+  intent_state: string;
+};
+export function projectFinalizeCreateEnvelope(v: unknown): FinalizeCreateEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["app_user_id", "auth_subject", "display_name", "version",
+    "revision_id", "intent_id", "intent_state"])) return null;
+  if (!uuid(v.app_user_id) || !uuid(v.auth_subject) || !uuid(v.revision_id) || !uuid(v.intent_id)) return null;
+  if (typeof v.display_name !== "string") return null;
+  if (typeof v.version !== "number" || !Number.isSafeInteger(v.version) || v.version < 1) return null;
+  if (typeof v.intent_state !== "string") return null;
+  return { app_user_id: v.app_user_id as string, auth_subject: v.auth_subject as string,
+    display_name: v.display_name as string, version: v.version as number,
+    revision_id: v.revision_id as string, intent_id: v.intent_id as string,
+    intent_state: v.intent_state as string };
+}
+
+export type EditNameEnvelope = {
+  app_user_id: string;
+  version: number;
+  revision_id: string;
+  recruiter_id: string | null;
+  recruiter_version: number | null;
+  recruiter_revision_id: string | null;
+};
+export function projectEditNameEnvelope(v: unknown): EditNameEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["app_user_id", "version", "revision_id", "recruiter_id",
+    "recruiter_version", "recruiter_revision_id"])) return null;
+  if (!uuid(v.app_user_id) || !uuid(v.revision_id)) return null;
+  if (typeof v.version !== "number" || !Number.isSafeInteger(v.version) || v.version < 1) return null;
+  if (v.recruiter_id !== null && !uuid(v.recruiter_id)) return null;
+  if (v.recruiter_version !== null && (typeof v.recruiter_version !== "number" || !Number.isSafeInteger(v.recruiter_version))) return null;
+  if (v.recruiter_revision_id !== null && !uuid(v.recruiter_revision_id)) return null;
+  return { app_user_id: v.app_user_id as string, version: v.version as number,
+    revision_id: v.revision_id as string, recruiter_id: v.recruiter_id as string | null,
+    recruiter_version: v.recruiter_version as number | null,
+    recruiter_revision_id: v.recruiter_revision_id as string | null };
+}
+
+export type PersonnelFromAccountEnvelope = {
+  recruiter_id: string;
+  display_name: string;
+  personnel_code: string;
+  personnel_position: PersonnelPosition;
+  version: number;
+  link_id: string;
+  membership_id: string;
+  app_user_version: number;
+  app_user_revision_id: string;
+  personnel_revision_id: string;
+};
+export function projectPersonnelFromAccountEnvelope(v: unknown): PersonnelFromAccountEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["recruiter_id", "display_name", "personnel_code", "personnel_position",
+    "version", "link_id", "membership_id", "app_user_version", "app_user_revision_id",
+    "personnel_revision_id"])) return null;
+  if (!uuid(v.recruiter_id) || !uuid(v.link_id) || !uuid(v.membership_id) ||
+      !uuid(v.app_user_revision_id) || !uuid(v.personnel_revision_id)) return null;
+  if (typeof v.display_name !== "string" || typeof v.personnel_code !== "string") return null;
+  if (v.personnel_position !== "STAFF" && v.personnel_position !== "TEAM_LEADER") return null;
+  if (typeof v.version !== "number" || !Number.isSafeInteger(v.version) || v.version < 1) return null;
+  if (typeof v.app_user_version !== "number" || !Number.isSafeInteger(v.app_user_version)) return null;
+  return {
+    recruiter_id: v.recruiter_id as string, display_name: v.display_name as string,
+    personnel_code: v.personnel_code as string, personnel_position: v.personnel_position as PersonnelPosition,
+    version: v.version as number, link_id: v.link_id as string, membership_id: v.membership_id as string,
+    app_user_version: v.app_user_version as number, app_user_revision_id: v.app_user_revision_id as string,
+    personnel_revision_id: v.personnel_revision_id as string,
+  };
+}
+
+export type EligibleAccount = { app_user_id: string; display_name: string };
+export type EligibleAccountsEnvelope = {
+  page: number;
+  page_size: number;
+  total: number;
+  has_more: boolean;
+  accounts: EligibleAccount[];
+};
+export function projectEligibleAccountsEnvelope(v: unknown): EligibleAccountsEnvelope | null {
+  if (!isRecord(v) || !exact(v, ["page", "page_size", "total", "has_more", "accounts"])) return null;
+  if (typeof v.page !== "number" || typeof v.page_size !== "number" || typeof v.total !== "number" ||
+      !Number.isSafeInteger(v.page) || !Number.isSafeInteger(v.page_size) || !Number.isSafeInteger(v.total)) return null;
+  if (typeof v.has_more !== "boolean" || !Array.isArray(v.accounts)) return null;
+  const accounts: EligibleAccount[] = [];
+  for (const raw of v.accounts) {
+    if (!isRecord(raw) || !exact(raw, ["app_user_id", "display_name"]) ||
+        !uuid(raw.app_user_id) || typeof raw.display_name !== "string") return null;
+    accounts.push({ app_user_id: raw.app_user_id as string, display_name: raw.display_name as string });
+  }
+  return { page: v.page, page_size: v.page_size, total: v.total, has_more: v.has_more, accounts };
+}
+
+/** D3-A intent terminal states (finish/finalize). */
+export const ACCOUNT_OPERATION_TERMINAL = [
+  "APPLIED", "FAILED", "INDETERMINATE", "BLOCKED", "CONFLICT", "EXPIRED",
+] as const;
