@@ -1,9 +1,10 @@
 /**
- * PRE-W2-P1 + HF-E - Hop dong server cho xuat Excel full-PII (recruited / managed / all).
+ * PRE-W2-P1 + HF-E + HF-G - Hop dong server cho xuat Excel full-PII (recruited / managed / all).
  *
  * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
- * Authority (pii_export AND pii_view AND payment_view AND scope row authority recruited|managed|all)
- * do RPC public.direct_entry_export_workers quyet dinh - client khong bao gio tu khai
+ * Authority do RPC public.direct_entry_export_workers quyet dinh: recruited/managed require
+ * their DB-verified row audience; `all` additionally requires pii_export + pii_view + payment_view.
+ * Client khong bao gio tu khai
  * identity/capability/scope.
  *
  * Fail-closed: dung key, dung kieu, khong fallback rong; khong type assertion. Mot envelope

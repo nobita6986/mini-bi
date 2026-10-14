@@ -162,7 +162,7 @@ export function WorkerOperations({
   canSeeAllWorkers?: boolean;
   canReview?: boolean;
   canPrivilegedEditWorkers?: boolean;
-  /** Capability projection server-side (pii_export + pii_view + payment_view); authority cuoi do RPC. */
+  /** Resolved business actor may use recruited/managed export; the RPC enforces row authority. */
   canExport?: boolean;
   /** Admin/BoD/Kế toán xuat toan bo (all scope): export caps + all scope + (entry_admin|change_review). */
   canExportAll?: boolean;
@@ -1591,6 +1591,10 @@ function WorkerExportDialog({
             </header>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+              <p className={infoClass}>
+                File có thể chứa đầy đủ CCCD, ngày sinh, số điện thoại, địa chỉ và thông tin tài
+                khoản ngân hàng. Chỉ lưu hoặc chia sẻ với người có thẩm quyền.
+              </p>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor={reasonId} className="text-sm font-medium">Lý do xuất</label>
                 <textarea id={reasonId} required aria-required="true"

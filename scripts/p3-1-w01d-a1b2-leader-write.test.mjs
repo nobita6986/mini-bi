@@ -366,7 +366,7 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 92);
+  assert.equal(names.length, 93);
   const leaderMigrationAt = names.indexOf(MIGRATION_71);
   const legacyScopeHotfixAt = names.indexOf(LEGACY_SCOPE_HOTFIX);
   assert.equal(leaderMigrationAt, 70);
@@ -1189,7 +1189,7 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const names = state.names;
   const inventoryBefore = state.baseline;
   const allMigrations = state.migrations.slice(0, state.leaderMigrationAt + 1);
-  assert.equal(names.length, 92);
+  assert.equal(names.length, 93);
   assert.equal(names.at(-22), MIGRATION_71);
   assert.equal(names.at(-17), LEGACY_SCOPE_HOTFIX);
   today = (await db.query(

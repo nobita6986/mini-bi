@@ -97,7 +97,7 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
   assert.equal(totalCount, 92,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #92");
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #93");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);

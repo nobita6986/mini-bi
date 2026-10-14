@@ -110,21 +110,13 @@ test("T1A: request error copy sanitized", () => {
   assert.ok(workerExportRequestMessage("REASON_TOO_LONG").includes(String(WORKER_EXPORT_REASON_MAX)));
 });
 
-test("T1A: nut xuat chi hien khi server cap du capability triple", () => {
+test("PRE-W2 export: any resolved actor may export a directory scope", () => {
   assert.deepEqual([...WORKER_EXPORT_CAPABILITIES], ["pii_export", "pii_view", "payment_view"]);
   const scopes = [{ kind: "own" }];
   assert.equal(canExportWorkers(null), false);
-  assert.equal(canExportWorkers({ capabilities: [], scopes }), false);
-  assert.equal(canExportWorkers({ capabilities: ["pii_export", "pii_view"], scopes }), false,
-    "thieu payment_view => an nut");
-  assert.equal(canExportWorkers({ capabilities: ["pii_export", "payment_view"], scopes }), false,
-    "thieu pii_view => an nut");
-  assert.equal(canExportWorkers({ capabilities: ["pii_view", "payment_view"], scopes }), false,
-    "thieu pii_export => an nut");
-  assert.equal(canExportWorkers({
-    capabilities: ["pii_export", "pii_view", "payment_view"], scopes }), true);
-  // Khong suy quyen tu role/scope kind.
-  assert.equal(canExportWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), false);
+  assert.equal(canExportWorkers({ capabilities: [], scopes }), true,
+    "the server RPC enforces row authority, not export capability grants");
+  assert.equal(canExportWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), true);
 });
 
 test("HF-E: canExportAllWorkers chi mo cho Admin/BoD/Kế toán", () => {
@@ -137,7 +129,7 @@ test("HF-E: canExportAllWorkers chi mo cho Admin/BoD/Kế toán", () => {
     capabilities: [...caps, "entry_admin"], scopes: [{ kind: "all" }] }), true);
   assert.equal(canExportAllWorkers({
     capabilities: [...caps, "change_review"], scopes: [{ kind: "all" }] }), true);
-  // Thieu pii_export van khong duoc xuat all.
+  // Company-wide export still needs the complete capability triple.
   assert.equal(canExportAllWorkers({
     capabilities: ["pii_view", "payment_view", "entry_admin"], scopes: [{ kind: "all" }] }), false);
   // Khong suy quyen tu role/email.

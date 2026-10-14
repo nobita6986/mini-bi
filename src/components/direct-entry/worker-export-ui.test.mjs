@@ -28,13 +28,14 @@ test("T1A: POST dung method, content-type va same-origin (CSRF)", () => {
   assert.match(source, /credentials: "same-origin"/);
 });
 
-test("T1A: nut xuat gate bang capability server; all chi cho Admin/BoD/Kế toán", () => {
+test("PRE-W2 export button: directory export is offered to resolved actors; all stays restricted", () => {
   assert.match(source, /canExport\?: boolean/);
   assert.match(source, /canExportAll\?: boolean/);
   assert.match(source, /const exportScope = exportScopeForTab\(tab\)/);
   assert.match(source, /const canExportThisTab = exportScope === "all" \? canExportAll : canExport/);
   assert.match(source, /canExportThisTab && exportScope !== null \?/);
   assert.match(source, /Xuất Excel/);
+  assert.match(source, /đầy đủ CCCD, ngày sinh, số điện thoại, địa chỉ và thông tin tài/);
   // Khong suy quyen tu role/email/scope kind trong code.
   const code = source.split("\n").filter((line) => !/^\s*(\*|\/\/)/.test(line)).join("\n");
   for (const forbidden of ["role ===", "email", "is_admin"]) {
