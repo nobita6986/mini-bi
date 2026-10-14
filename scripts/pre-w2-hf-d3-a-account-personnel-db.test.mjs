@@ -205,8 +205,9 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
     const createdAuth = uuid(70);
     await db.query("insert into auth.users (id) values ($1)", [createdAuth]);
 
+    const finalizeKey = idemKey();
     const f = await finalize(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token,
-      createdAuth, idemKey()]);
+      createdAuth, finalizeKey]);
     assert.equal(f.intent_state, "APPLIED");
     assert.equal(f.auth_subject, createdAuth);
     assert.equal(f.display_name, "Alpha Beta");
@@ -217,6 +218,10 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
     assert.equal(appUser.enabled, true);
     assert.equal(appUser.display_name, "Alpha Beta");
 
+    const appliedIntent = await read(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id]);
+    assert.equal(appliedIntent.account_ref, f.app_user_id,
+      "an APPLIED create intent keeps the created app-user reference for reconciliation");
+
     assert.equal(await count(db, "select count(*) from public.direct_entry_capability_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_scope_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links where app_user_id = $1", [f.app_user_id]), 0);
@@ -224,6 +229,17 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
     const revision = (await db.query(
       "select action from public.direct_entry_app_user_revisions where app_user_id = $1", [f.app_user_id])).rows[0];
     assert.equal(revision.action, "account_created");
+
+    // A late reconcile with another key is terminal/idempotent and closes that key.
+    const lateKey = idemKey();
+    const terminal = await finalize(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token,
+      createdAuth, lateKey]);
+    assert.equal(terminal.intent_state, "APPLIED");
+    assert.equal(terminal.account_ref, f.app_user_id);
+    const lateResult = (await db.query(
+      "select result from public.direct_entry_rpc_idempotency where app_user_id=$1 and action='account_created' and idempotency_key=$2",
+      [ADMIN_APP, lateKey])).rows[0]?.result;
+    assert.deepEqual(lateResult, terminal, "terminal finalize must finish its idempotency record");
   } finally {
     await db.close();
   }

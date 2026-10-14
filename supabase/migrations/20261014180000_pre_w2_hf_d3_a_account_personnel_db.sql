@@ -516,9 +516,15 @@ begin
   -- Terminal first: APPLIED/FAILED/EXPIRED/BLOCKED/CONFLICT are immutable and a wrong
   -- token can never rewrite them.
   if v_intent.state in ('APPLIED', 'FAILED', 'EXPIRED', 'BLOCKED', 'CONFLICT') then
-    return jsonb_build_object(
-      'intent_id', v_intent.intent_id, 'intent_state', v_intent.state
+    v_prior := jsonb_build_object(
+      'intent_id', v_intent.intent_id,
+      'intent_state', v_intent.state,
+      'account_ref', v_intent.account_ref
     );
+    perform public.direct_entry_idempotency_finish(
+      p_actor_app_user_id, v_action, p_idempotency_key, v_prior
+    );
+    return v_prior;
   end if;
   if v_intent.state not in ('IN_FLIGHT', 'INDETERMINATE') then
     raise exception 'account operation is not claimable' using errcode = '22023';
@@ -534,7 +540,13 @@ begin
       p_auth_subject, p_actor_app_user_id, 'account_operation_finish', 'entry_admin',
       p_intent_id::text, 'all', 'REJECTED', 'provenance_mismatch', v_intent.reason_id
     );
-    return jsonb_build_object('intent_id', p_intent_id, 'intent_state', 'BLOCKED');
+    v_prior := jsonb_build_object(
+      'intent_id', p_intent_id, 'intent_state', 'BLOCKED', 'account_ref', null
+    );
+    perform public.direct_entry_idempotency_finish(
+      p_actor_app_user_id, v_action, p_idempotency_key, v_prior
+    );
+    return v_prior;
   end if;
 
   v_reason_id := v_intent.reason_id;
@@ -560,7 +572,8 @@ begin
 
   update public.direct_entry_account_operation_intents
      set state = 'APPLIED', resolved_at = now(), updated_at = now(),
-         auth_subject = p_created_auth_subject
+         auth_subject = p_created_auth_subject,
+         account_ref = v_app_user.app_user_id
    where intent_id = p_intent_id;
 
   v_prior := jsonb_build_object(

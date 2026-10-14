@@ -2,9 +2,9 @@
 
 - Base: `origin/main@68a555d` (92 migrations at commit; ledger 91 -> 92).
 - Branch: `feature/pre-w2-hf-d3-a-account-personnel-db`.
-- Status: **PRE_W2_HF_D3_A_DB_FOUNDATION_LOCAL_PASS_AWAITING_T0_REVIEW** (không apply Production/Vercel/VPS, không UAT).
+- Status: **PRE_W2_HF_D3_A_DB_FOUNDATION_T0_REVIEW_PASS_AWAITING_MERGE** (không apply Production/Vercel/VPS, không UAT).
 - Migration: `supabase/migrations/20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql`
-  - SHA-256: `27c45208e44699b1fdc7478a66da7378083cfd85d68a3eef30c3906a47b87400`
+  - SHA-256: `63120a70959b3907ace22cd8059c45f43d9eb7027cf82603e4d7effc62d27189`
 
 ## Phạm vi
 
@@ -17,11 +17,11 @@ SQL/database foundation + DB tests. Không API/UI, không Supabase Auth call, kh
 
 ## Migration #92
 
-1. **Intent table** `direct_entry_account_operation_intents`: `intent_token` (provenance marker, không phải secret), `kind` (`CREATE_ACCOUNT`|`RESET_PASSWORD`), `state` (8 trạng thái PENDING/IN_FLIGHT/APPLIED/FAILED/INDETERMINATE/BLOCKED/CONFLICT/EXPIRED), `login_id`/`display_name` (PII, có retention), `account_ref`/`auth_subject` (định danh giả danh), `reason_id`, `idempotency_key`, retention fields. **Không có cột password/hash.** Unique live-login guard (partial unique index trên login_id khi PENDING/IN_FLIGHT).
+1. **Intent table** `direct_entry_account_operation_intents`: `intent_token` (provenance marker, không phải secret), `kind` (`CREATE_ACCOUNT`|`RESET_PASSWORD`), `state` (8 trạng thái PENDING/IN_FLIGHT/APPLIED/FAILED/INDETERMINATE/BLOCKED/CONFLICT/EXPIRED), `login_id`/`display_name` (PII, có retention), `account_ref`/`auth_subject` (định danh giả danh), `reason_id`, `idempotency_key`, retention fields. **Không có cột password/hash.** Unique live-login guard phủ `PENDING/IN_FLIGHT/INDETERMINATE/BLOCKED/CONFLICT`.
 2. **Login predicate** `direct_entry_is_canonical_login_id(text)` — mirror regex `^[a-z0-9][a-z0-9._-]{0,63}$`.
 3. **Revision action extension**: thêm `account_created`, `display_name_update` vào CHECK của `direct_entry_app_user_revisions.action` (không tái dùng nhãn cũ).
 4. **Cardinality 1:1 đối xứng**: trigger `direct_entry_recruiter_link_no_overlap_by_recruiter` + hàm guard mới (một recruiter tối đa một verified link). Migration fail-closed nếu dữ liệu hiện hữu vi phạm (chỉ báo, không sửa).
-5. **RPCs** (8) + self-check data-free.
+5. **RPCs** (9) + self-check data-free.
 
 ## RPC signatures / envelopes (service_role only, SECURITY DEFINER, search_path=pg_catalog,public, revoke mọi role khác)
 
@@ -39,7 +39,7 @@ SQL/database foundation + DB tests. Không API/UI, không Supabase Auth call, kh
 
 State machine khoá (transition matrix):
 - `claim`: `PENDING -> IN_FLIGHT` (conditional atomic); loser đọc lại state, không gọi Auth.
-- `finalize_create`: `IN_FLIGHT | INDETERMINATE -> APPLIED` (marker khớp) hoặc `-> BLOCKED` (marker lệch); terminal (`APPLIED/FAILED/EXPIRED/BLOCKED/CONFLICT`) immutable và được kiểm tra TRƯỚC provenance.
+- `finalize_create`: `IN_FLIGHT | INDETERMINATE -> APPLIED` (marker khớp) hoặc `-> BLOCKED` (marker lệch); terminal (`APPLIED/FAILED/EXPIRED/BLOCKED/CONFLICT`) immutable và được kiểm tra TRƯỚC provenance. Intent `APPLIED` giữ `account_ref` của app user đã tạo; mọi nhánh trả kết quả đều đóng idempotency record.
 - `finish`: chỉ từ `IN_FLIGHT`; RESET -> `APPLIED/FAILED/INDETERMINATE`, CREATE -> `FAILED/INDETERMINATE/CONFLICT` (CREATE `APPLIED/BLOCKED` chỉ qua finalize); terminal immutable; ghi audit outcome cuối + mã lỗi allowlist.
 - `update_display_name`: authority trước target lookup; đồng bộ linked recruiter cùng transaction; không tìm recruiter theo email/tên.
 - `create_personnel`: authority trước; OCC account + bump version + `link_create` revision/audit + personnel revision; conflict personnel_code -> 23505; `''` -> 22023; `display_name` server-side.
@@ -64,7 +64,7 @@ DB lane 17 test: lifecycle + idempotent begin, reset lưu auth_subject, hai crea
 
 ## Gates
 
-- `pnpm test:pre-w2-hf-d3-a-account-personnel-db` 14/14; W03A+worker-export 11/11; vendor-lifecycle+HF-C+HF-D2+report 37/37; personnel-catalog 18/18.
+- `pnpm test:pre-w2-hf-d3-a-account-personnel-db` 17/17; W03A + personnel-catalog 22/22.
 - `apply-migrations.mjs --offline` 92/92 (không DB access).
 - `pnpm typecheck` exit 0; `pnpm lint` 0 error / 14 pre-existing warnings; `git diff --check` exit 0.
 
