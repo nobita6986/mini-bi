@@ -45,6 +45,17 @@ test("D3-B: reclassify is wired to the retention RPC route, no cron", () => {
   assert.doesNotMatch(source, /setTimeout|cron|setInterval/);
 });
 
+test("D3-B: reclassify fires once on list mount via ref guard, not on filter/page/search", () => {
+  assert.match(source, /reclassifyFiredRef = useRef\(false\)/);
+  assert.match(source, /if \(reclassifyFiredRef\.current\) return;/);
+  assert.match(source, /reclassifyFiredRef\.current = true;/);
+  assert.match(source, /\/api\/admin\/access\/accounts\/reclassify/);
+  // Sanitized error copy, no intent/PII detail.
+  assert.match(source, /Không phân loại lại được intent tồn đọng/);
+  // The list load keeps only search/page/filter/reload as its dependency.
+  assert.match(source, /\[enabledFilter, page, reloadToken, search\]/);
+});
+
 test("D3-B: no auth_subject/intent_token/raw identity rendered in the UI surface", () => {
   for (const file of [source, model]) {
     assert.doesNotMatch(file, /\{intent_token\}|\{auth_subject\}/);

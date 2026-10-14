@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
@@ -90,6 +90,28 @@ export function AccountManager() {
   const [reconcileIntent, setReconcileIntent] = useState<{ intentId: string; state: string } | null>(null);
   const [opBusy, setOpBusy] = useState(false);
   const [opNotice, setOpNotice] = useState<AccountOperationUiOutcome | null>(null);
+
+  // PRE-W2-HF-D3-B: Full Admin mở danh sách tài khoản thì chạy RPC reclassify một lần
+  // (qua route có session + CSRF) để xử lý intent tồn đọng kể cả sau process crash. Không
+  // chạy lại khi đổi search/page/filter; ref guard tránh vòng lặp/StrictMode double-fire.
+  const reclassifyFiredRef = useRef(false);
+  useEffect(() => {
+    if (reclassifyFiredRef.current) return;
+    reclassifyFiredRef.current = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/access/accounts/reclassify", {
+          method: "POST",
+          cache: "no-store",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (!response.ok) setNotice("Không phân loại lại được intent tồn đọng. Hãy thử lại sau.");
+      } catch {
+        setNotice("Không phân loại lại được intent tồn đọng. Hãy thử lại sau.");
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
