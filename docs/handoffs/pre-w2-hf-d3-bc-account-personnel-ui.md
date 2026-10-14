@@ -1,10 +1,10 @@
 # Pre-W2-HF-D3-B/C — Account Auth/API/UI & Personnel-from-account
 
-- **Status:** `PRE_W2_HF_D3_B_ACCOUNT_UI_DONE_C_PENDING` (D3-B hoàn tất + review fixes; D3-C chưa làm)
+- **Status:** `PRE_W2_HF_D3_BC_ACCOUNT_PERSONNEL_UI_LOCAL_PASS_AWAITING_T0_REVIEW`
 - **Base:** `origin/main@148333e939b780656c3e4fe9d5a52bfaebf913fc` (ledger 92). Đã merge `origin/main@2a126415`
   (migration #93 worker-directory export) vào nhánh bằng merge commit (không rebase/amend/force-push).
 - **Branch/worktree:** `feature/pre-w2-hf-d3-bc-account-personnel-ui` @ `C:\CodeApp\BI\.worktrees\pre-w2-hf-d3-bc`.
-- **Final SHA:** `a8b2f4605de31f7bfa69315c2e60235190c99a66` (merge `21f8f95`, fixes `cb66c2e`, reclassify-on-open `a8b2f46`).
+- **Final SHA:** `c1537a9d1e50e434889baabaecf9d10fc39a6d7a` (merge `21f8f95`, D3-B fixes, D3-C `c1537a9`).
 
 ## Đã hoàn thành
 
@@ -38,10 +38,17 @@
   lại khi đổi search/page/filter và không lặp; lỗi hiển thị copy sanitized. Không cron, không migration,
   không grant mới.
 
-## Chưa làm (D3-C, theo đúng yêu cầu task này)
+## D3-C (đã hoàn thành)
 
-- Chưa đổi luồng "Thêm nhân sự" tự do, chưa thêm "Tạo nhân sự từ tài khoản" (route/UI đã có sẵn
-  `POST /api/admin/catalog/personnel/from-account` + `GET .../eligible-accounts` nhưng chưa wire UI).
+- Danh mục nhân sự: thay "Thêm nhân sự" tự do bằng **"Tạo nhân sự từ tài khoản"**.
+- Create dialog tải `GET /api/admin/catalog/personnel/eligible-accounts` (chỉ projection
+  `app_user_id` + `display_name`), chọn account → đọc OCC version từ `GET /api/admin/access/accounts/[ref]`
+  → `POST /api/admin/catalog/personnel/from-account` với `account_ref` + `expected_account_version`.
+  `display_name` luôn do server lấy từ account (form không gửi tên).
+- Đóng `POST /api/admin/catalog/personnel` (chỉ còn GET) — free-create trả 405. List/update/set-active/
+  team-management giữ nguyên.
+- Test: focused D3-BC (account-driven flow + taxonomy + closed endpoint), personnel regression
+  `test:p3-1-w04-a1-a2` 152/152.
 
 ## Rủi ro
 
@@ -59,6 +66,14 @@
 4. **Đặt lại mật khẩu**: mật khẩu cũ bị từ chối, mật khẩu mới đăng nhập được.
 5. Actor không đủ Full Admin nhận 403; BoD/Kế toán không tự có quyền.
 6. Kiểm tra audit/revision không chứa password/email; không có password/auth_subject trong UI/log.
+
+## Owner UAT checklist (D3-C)
+
+1. Vào **Danh mục nhân sự** → nút chỉ còn "Tạo nhân sự từ tài khoản".
+2. Chọn account đang hoạt động chưa liên kết → nhập mã, vị trí STAFF/TEAM_LEADER, ngày hiệu lực, lý do → tạo; tên hiển thị đúng bằng tên account (không nhập tay).
+3. Account đã liên kết / ngừng hoạt động không xuất hiện trong danh sách chọn (hoặc bị từ chối).
+4. Gọi trực tiếp `POST /api/admin/catalog/personnel` → phải bị 405 (free-create đã đóng).
+5. TEAM_LEADER chỉ là thuộc tính hồ sơ, không cấp quyền.
 
 ## Chờ T0
 
