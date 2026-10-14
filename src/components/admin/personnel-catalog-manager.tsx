@@ -121,13 +121,19 @@ export function PersonnelCatalogManager() {
   const [conflictLocks, setConflictLocks] = useState<ReadonlySet<string>>(new Set());
   const [eligibleAccounts, setEligibleAccounts] = useState<EligibleAccount[]>([]);
   const [eligibleState, setEligibleState] = useState<"idle" | "loading" | "ready" | "empty" | "error">("idle");
+  const [eligiblePage, setEligiblePage] = useState(1);
+  const [eligibleHasMore, setEligibleHasMore] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<EligibleAccount | null>(null);
   const [accountVersion, setAccountVersion] = useState<number | null>(null);
+  const selectedAccountRef = useRef<string | null>(null);
 
   const loadEligibleAccounts = useCallback(async (targetPage: number) => {
     const query = buildEligibleAccountsQuery(targetPage);
     if (!query) return;
     setEligibleState("loading");
+    setSelectedAccount(null);
+    setAccountVersion(null);
+    selectedAccountRef.current = null;
     try {
       const response = await fetch(`/api/admin/catalog/personnel/eligible-accounts?${query.toString()}`, {
         method: "GET", cache: "no-store", headers: { Accept: "application/json" },
@@ -137,6 +143,8 @@ export function PersonnelCatalogManager() {
       const list = projectEligibleAccounts(await response.json());
       if (!list) { setEligibleState("error"); return; }
       setEligibleAccounts(list.accounts);
+      setEligiblePage(list.page);
+      setEligibleHasMore(list.has_more);
       setEligibleState(list.accounts.length === 0 ? "empty" : "ready");
     } catch {
       setEligibleState("error");
@@ -144,6 +152,7 @@ export function PersonnelCatalogManager() {
   }, []);
 
   const selectEligibleAccount = useCallback(async (account: EligibleAccount) => {
+    selectedAccountRef.current = account.app_user_id;
     setSelectedAccount(account);
     setAccountVersion(null);
     try {
@@ -151,6 +160,8 @@ export function PersonnelCatalogManager() {
         method: "GET", cache: "no-store", headers: { Accept: "application/json" },
       });
       const detail = response.status === 200 ? projectAccountItem(await response.json()) : null;
+      // Stale response guard: only apply the version if this is still the selected account.
+      if (selectedAccountRef.current !== account.app_user_id) return;
       if (!detail || detail.account_ref !== account.app_user_id || !detail.enabled) {
         setAccountVersion(null);
         return;
@@ -160,6 +171,12 @@ export function PersonnelCatalogManager() {
       setAccountVersion(null);
     }
   }, []);
+
+  const changeEligiblePage = useCallback((nextPage: number) => {
+    if (!Number.isSafeInteger(nextPage) || nextPage < 1 || nextPage > 1000) return;
+    setEligiblePage(nextPage);
+    void loadEligibleAccounts(nextPage);
+  }, [loadEligibleAccounts]);
 
   useEffect(() => {
     const listQuery = buildPersonnelListQuery({ search, includeInactive, page });
@@ -230,7 +247,10 @@ export function PersonnelCatalogManager() {
     setFormError(null);
     setSelectedAccount(null);
     setAccountVersion(null);
+    selectedAccountRef.current = null;
     setEligibleAccounts([]);
+    setEligiblePage(1);
+    setEligibleHasMore(false);
     setEligibleState("loading");
     setDialog({ kind: "create" });
     void loadEligibleAccounts(1);
@@ -677,6 +697,21 @@ export function PersonnelCatalogManager() {
                         {eligibleState === "error" ? (
                           <span role="alert" className="mt-1 block text-xs text-red-700">
                             Không tải được danh sách tài khoản. Hãy thử lại.
+                          </span>
+                        ) : null}
+                        {eligibleState === "ready" && (eligiblePage > 1 || eligibleHasMore) ? (
+                          <span className="mt-2 flex items-center gap-2 text-xs font-normal text-muted">
+                            <button type="button" disabled={eligiblePage <= 1 || eligibleState !== "ready"}
+                              onClick={() => changeEligiblePage(eligiblePage - 1)}
+                              className="rounded-md border border-border px-2 py-1 disabled:opacity-50">
+                              Trang trước
+                            </button>
+                            <span aria-live="polite">Trang {eligiblePage}</span>
+                            <button type="button" disabled={!eligibleHasMore || eligibleState !== "ready"}
+                              onClick={() => changeEligiblePage(eligiblePage + 1)}
+                              className="rounded-md border border-border px-2 py-1 disabled:opacity-50">
+                              Trang sau
+                            </button>
                           </span>
                         ) : null}
                       </label>

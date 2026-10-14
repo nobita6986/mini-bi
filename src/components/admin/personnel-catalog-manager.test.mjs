@@ -17,6 +17,19 @@ test("Personnel UI calls the account-driven create plus canonical list/update/ac
   assert.doesNotMatch(source, /url:\s*"\/api\/admin\/catalog\/personnel"\s*,/);
 });
 
+test("D3-C: eligible accounts paginate page 1..1000 and drop stale selections", () => {
+  assert.match(source, /changeEligiblePage/);
+  assert.match(source, /Trang trước/);
+  assert.match(source, /Trang sau/);
+  assert.match(source, /eligibleHasMore/);
+  assert.match(source, /setEligiblePage\(list\.page\)/);
+  assert.match(source, /setEligibleHasMore\(list\.has_more\)/);
+  // Stale detail response must never overwrite a newer selection.
+  assert.match(source, /if \(selectedAccountRef\.current !== account\.app_user_id\) return;/);
+  // Page stays bounded 1..1000.
+  assert.match(source, /nextPage < 1 \|\| nextPage > 1000/);
+});
+
 test("strict response projection, page size and retry reuse are wired in the component", () => {
   assert.match(source, /buildPersonnelListQuery/);
   assert.match(source, /projectPersonnelListForQuery\(await response\.json\(\)/);
