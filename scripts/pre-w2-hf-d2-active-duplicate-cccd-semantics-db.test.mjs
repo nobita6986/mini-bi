@@ -1,6 +1,6 @@
 /**
  * PRE-W2-HF-D2 - Active duplicate-CCCD reporting semantics (DB regression, PGlite over the
- * 91-migration ledger).
+ * 92-migration ledger).
  *
  * The report now only groups a canonical CCCD that has at least two episodes whose canonical
  * latest employment status is ON ("Dang lam viec"), and returns only those ON episodes. An
@@ -47,8 +47,8 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 91, "the ledger carries the PRE-W2-HF-D2 migration as #88");
-  assert.equal(names[names.length - 4], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
+  assert.equal(names.length, 92, "the ledger carries the PRE-W2-HF-D2 migration as #88");
+  assert.equal(names[names.length - 5], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
   return db;
 }
 

@@ -35,7 +35,7 @@ function uuid(n) {
 
 const TEAM = uuid(11);
 const PROJ_A = "hf_proj_a", PROJ_B = "hf_proj_b";
-const REC_A = uuid(21), REC_D = uuid(24);
+const REC_A = uuid(21), REC_D = uuid(24), REC_RECRUITER = uuid(25);
 const ADMIN_AUTH = uuid(31), ADMIN_APP = uuid(41);
 const MGR_A_AUTH = uuid(32), MGR_A_APP = uuid(42);
 const MGR_C_AUTH = uuid(34), MGR_C_APP = uuid(44);
@@ -51,10 +51,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 91, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (31)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names[names.length - (32)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names[names.length - (33)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
+  assert.equal(names.length, 92, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (32)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (33)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names[names.length - (34)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
   return db;
 }
 
@@ -94,7 +94,8 @@ async function seed(db) {
       "insert into public.direct_entry_projects (project_id, display_name) values ($1,$2)",
       [project, name]);
   }
-  for (const [recruiter, name] of [[REC_A, "Recruiter A"], [REC_D, "Recruiter D"]]) {
+  for (const [recruiter, name] of [[REC_A, "Recruiter A"], [REC_D, "Recruiter D"],
+    [REC_RECRUITER, "Recruiter Attribution"]]) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
@@ -121,12 +122,8 @@ async function seed(db) {
   await insertActor(db, RECRUITER_AUTH, RECRUITER_APP, ["change_request_create"]);
   await assignManager(db, { project: PROJ_A, recruiter: REC_A, app: MGR_A_APP });
   await assignManager(db, { project: PROJ_B, recruiter: REC_D, app: MGR_C_APP });
-  // The recruiter link points at a recruiter who manages only project B, so this actor is
-  // a manager of project B and never of the lookup target project A.
-  await db.query(
-    "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
-    [RECRUITER_APP, REC_D]);
+  // This actor manages only project B and never the lookup target project A.
+  await assignManager(db, { project: PROJ_B, recruiter: REC_RECRUITER, app: RECRUITER_APP });
 }
 
 function workerDetails(cccd) {

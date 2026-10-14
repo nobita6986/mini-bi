@@ -818,7 +818,7 @@ test("migration #68 is appended once and the W01A 23-token vocabulary is unchang
   const { rows: functionRows } = await db.query(
     "select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace"
     + " where n.nspname = 'public' and p.proname like '%personnel%'");
-  assert.equal(functionRows[0].n, 10, "the personnel surface is exactly the reviewed set");
+  assert.equal(functionRows[0].n, 11, "the personnel surface is exactly the reviewed set");
 });
 
 test("the admin personnel catalog excludes Vendor recruiters from list, count and detail", async () => {

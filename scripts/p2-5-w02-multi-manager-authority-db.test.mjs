@@ -47,7 +47,8 @@ function uuid(n) {
 
 const TEAM = uuid(11);
 const PROJ_1 = "proj_1", PROJ_2 = "proj_2";
-const REC_A = uuid(21), REC_B = uuid(22), REC_C = uuid(23), REC_D = uuid(24);
+const REC_A = uuid(21), REC_B = uuid(22), REC_C = uuid(23), REC_D = uuid(24),
+  REC_CREATOR = uuid(25), REC_NO_SCOPE = uuid(26);
 const ADMIN_AUTH = uuid(31), ADMIN_APP = uuid(41);
 const MGR_A_AUTH = uuid(32), MGR_A_APP = uuid(42);
 const MGR_B_AUTH = uuid(33), MGR_B_APP = uuid(43);
@@ -78,10 +79,10 @@ async function migratedDb(untilName = null) {
 
 async function buildDb() {
   const { db, names } = await migratedDb(null);
-  assert.equal(names.length, 91, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (41)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (39)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (40)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 92, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (42)], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - (40)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (41)], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
@@ -134,7 +135,8 @@ async function seedActors(db) {
       [project, name]);
   }
   for (const [recruiter, name] of [[REC_A, "Recruiter A"], [REC_B, "Recruiter B"],
-    [REC_C, "Recruiter C"], [REC_D, "Recruiter D"]]) {
+    [REC_C, "Recruiter C"], [REC_D, "Recruiter D"],
+    [REC_CREATOR, "Recruiter Creator"], [REC_NO_SCOPE, "Recruiter No Scope"]]) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)",
       [recruiter, name]);
@@ -147,7 +149,7 @@ async function seedActors(db) {
   }
   const links = [
     [MGR_A_APP, REC_A], [MGR_B_APP, REC_B], [MGR_C_APP, REC_C],
-    [REC_APP, REC_D], [CREATOR_APP, REC_D], [MGR_NO_SCOPE_APP, REC_A],
+    [REC_APP, REC_D], [CREATOR_APP, REC_CREATOR], [MGR_NO_SCOPE_APP, REC_NO_SCOPE],
   ];
   for (const [app, recruiter] of links) {
     await db.query(

@@ -15,7 +15,7 @@ function uuid(n) {
 }
 
 const TEAM_A = uuid(11), TEAM_B = uuid(12);
-const REC_A1 = uuid(21), REC_A2 = uuid(22), REC_B1 = uuid(23);
+const REC_A1 = uuid(21), REC_A2 = uuid(22), REC_B1 = uuid(23), REC_PM = uuid(24);
 const AUTH_ALL = uuid(31), AUTH_TEAMA = uuid(32), AUTH_OWNA1 = uuid(33),
   AUTH_OWNB1 = uuid(34), AUTH_NOLINK = uuid(35), AUTH_PM = uuid(36);
 const APP_ALL = uuid(41), APP_TEAMA = uuid(42), APP_OWNA1 = uuid(43),
@@ -51,22 +51,23 @@ async function seedBase(db) {
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter A1')", [REC_A1]);
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter A2')", [REC_A2]);
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter B1')", [REC_B1]);
-  for (const [rec, team] of [[REC_A1, TEAM_A], [REC_A2, TEAM_A], [REC_B1, TEAM_B]]) {
+  await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter PM')", [REC_PM]);
+  for (const [rec, team] of [[REC_A1, TEAM_A], [REC_A2, TEAM_A], [REC_B1, TEAM_B], [REC_PM, TEAM_A]]) {
     await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1,'hrp','2020-01-01')", [rec]);
     await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1,$2,'2020-01-01')", [rec, team]);
   }
-  for (const [rec, key] of [[REC_A1, "rec a1"], [REC_A2, "rec a2"], [REC_B1, "rec b1"]]) {
+  for (const [rec, key] of [[REC_A1, "rec a1"], [REC_A2, "rec a2"], [REC_B1, "rec b1"], [REC_PM, "rec pm"]]) {
     await db.query("insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from) values ($1,$2,'2020-01-01')", [rec, key]);
   }
   await db.query("insert into public.direct_entry_projects (project_id, display_name) values ('proj_a','Project A')");
   await db.query("insert into public.direct_entry_projects (project_id, display_name) values ('proj_b','Project B')");
-  for (const [app, rec] of [[APP_TEAMA, REC_A1], [APP_OWNA1, REC_A1], [APP_OWNB1, REC_B1], [APP_PM, REC_A1]]) {
+  for (const [app, rec] of [[APP_OWNA1, REC_A1], [APP_OWNB1, REC_B1], [APP_PM, REC_PM]]) {
     await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [app, rec]);
   }
   await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'all',null,'2020-01-01')", [APP_ALL]);
   await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,'2020-01-01')", [APP_TEAMA, TEAM_A]);
   // project-manager assignment for APP_PM (must NOT confer team scope).
-  await db.query("insert into public.direct_entry_project_manager_assignments (project_id, manager_recruiter_id) values ('proj_a',$1)", [REC_A1]);
+  await db.query("insert into public.direct_entry_project_manager_assignments (project_id, manager_recruiter_id) values ('proj_a',$1)", [REC_PM]);
 }
 
 async function insertEntry(db, { entry, sub, cand, createdBy, project, date, code, recruiter, team, provider, labor }) {
