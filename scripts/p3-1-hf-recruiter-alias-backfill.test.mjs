@@ -47,6 +47,7 @@ async function databaseBeforeHotfix() {
     "20261014160000_pre_w2_hf_e_worker_export_all_and_note.sql",
     "20261014170000_pre_w2_hf_f_employment_status_edit.sql",
     "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql",
+    "20261014190000_pre_w2_hf_g_worker_directory_export.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
