@@ -53,9 +53,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 89, "the ledger carries the Pre-W2-P1 export migration as #86 + HF-E #89");
-  assert.equal(names[names.length - 4], EXPORT_MIGRATION_NAME,
-    "the export migration stays four before the end (HF-C #87, HF-D2 #88, HF-E #89 follow)");
+  assert.equal(names.length, 90,
+    "ledger = 88 base + P2-W04D cutoff #89 + HF-E #90");
+  assert.equal(names[names.length - 5], EXPORT_MIGRATION_NAME,
+    "the export migration stays five before the end (HF-C #87, HF-D2 #88, cutoff #89, HF-E #90 follow)");
   return db;
 }
 

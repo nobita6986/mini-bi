@@ -23,7 +23,7 @@ const ROOT = path.resolve(".");
 const MODEL = path.resolve("src/lib/direct-entry/worker-export-ui-model.ts");
 const CONTRACT = path.resolve("src/lib/direct-entry/worker-export-contract.ts");
 const MIGRATION = path.resolve(
-  "supabase/migrations/20261014120000_pre_w2_hf_e_worker_export_all_and_note.sql");
+  "supabase/migrations/20261014160000_pre_w2_hf_e_worker_export_all_and_note.sql");
 
 const LANE_COMMANDS = [
   ["--conditions=react-server", "--test",

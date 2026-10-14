@@ -1,5 +1,5 @@
 /**
- * PRE-W2-P1 (T1A) - Pure UI model cho "Xuất Excel" (recruited / managed).
+ * PRE-W2-P1 (T1A) + HF-E - Pure UI model cho "Xuất Excel" (recruited / managed / all).
  *
  * Khong React, khong I/O. Client KHONG gui authority: body chi gom `scope` + bo loc + `reason`,
  * dung allowlist cua POST /api/direct-entry/workers/export. Quyen cuoi cung do server session +
