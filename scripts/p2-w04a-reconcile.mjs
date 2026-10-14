@@ -50,7 +50,7 @@ import { buildSslOptions } from "./lib/supabase-tls.mjs";
 import { readMigrations } from "./lib/migration-validation.mjs";
 
 // Locked post-purge cutoff (mirrors `public.direct_entry_reporting_cutoff()`).
-const EXPECTED_CUTOVER = "2026-09-30";
+const EXPECTED_CUTOVER = "2000-01-01";
 
 // Migration inventory at base `origin/main@6f5d38e` is 46. P2-W04C
 // rebaseline adds migration #47, so the on-disk inventory MUST be 47.

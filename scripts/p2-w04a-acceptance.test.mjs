@@ -48,15 +48,15 @@ async function seedFixture(db) {
     ["93000000-0000-4000-8000-000000000001", "W04A recruiter"]);
   await db.query(
     "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1, $2, $3)",
-    ["93000000-0000-4000-8000-000000000001", "hrp", "2020-01-01"],
+    ["93000000-0000-4000-8000-000000000001", "hrp", "1990-01-01"],
   );
   await db.query(
     "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1, $2, $3)",
-    ["93000000-0000-4000-8000-000000000001", "94000000-0000-4000-8000-000000000001", "2020-01-01"],
+    ["93000000-0000-4000-8000-000000000001", "94000000-0000-4000-8000-000000000001", "1990-01-01"],
   );
   await db.query(
     "insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from) values ($1, $2, $3)",
-    ["93000000-0000-4000-8000-000000000001", "w04a recruiter", "2020-01-01"],
+    ["93000000-0000-4000-8000-000000000001", "w04a recruiter", "1990-01-01"],
   );
   await db.query(
     "insert into public.direct_entry_projects (project_id, display_name) values ($1, $2)",
@@ -66,17 +66,17 @@ async function seedFixture(db) {
   for (const cap of ["entry_create", "submission_create", "entry_own"]) {
     await db.query(
       "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from) values ($1, $2, $3)",
-      ["20000000-0000-4000-8000-000000000001", cap, "2020-01-01"],
+      ["20000000-0000-4000-8000-000000000001", cap, "1990-01-01"],
     );
   }
   await db.query(
     "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from) values ($1, $2, $3)",
-    ["20000000-0000-4000-8000-000000000001", "own", "2020-01-01"],
+    ["20000000-0000-4000-8000-000000000001", "own", "1990-01-01"],
   );
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
     " (app_user_id, recruiter_id, verified, valid_from) values ($1, $2, true, $3)",
-    ["20000000-0000-4000-8000-000000000001", "93000000-0000-4000-8000-000000000001", "2020-01-01"],
+    ["20000000-0000-4000-8000-000000000001", "93000000-0000-4000-8000-000000000001", "1990-01-01"],
   );
 }
 
@@ -116,11 +116,11 @@ async function submitSubmission(db, submissionId) {
       submissionId, 2, "SUBMITTED", idemBase + "-submit"]);
 }
 
-test("W04A acceptance: legacy 2026-09-29 IS counted (business_date < cutoff)", async () => {
+test("W04A acceptance: legacy 1999-12-31 IS counted (business_date < cutoff)", async () => {
   const { db } = await buildDb();
   try {
     await seedFixture(db);
-    // Seed a legacy row on 2026-09-29 and a row on the cutoff day.
+    // Seed a legacy row on 1999-12-31 and a row on the cutoff day.
     await db.query("insert into public.data_sources (id, drive_file_id, file_name, sheet_name, active, is_test) values ($1, $2, $3, $4, $5, $6)",
       ["11111111-1111-4111-8111-111111111111", "W04A-LEGACY", "w04a-legacy.xlsx", "Sheet1", true, false]);
     await db.query("insert into public.sync_runs (run_id, source_id, trigger_type, status, started_at, finished_at) values ($1, $2, $3, $4, $5, $5)",
@@ -130,9 +130,9 @@ test("W04A acceptance: legacy 2026-09-29 IS counted (business_date < cutoff)", a
       " (source_id, business_date, project_key, project_display, recruiter_key, recruiter_display," +
       "  provider_type_key, provider_type_display, employment_type_key, employment_type_display," +
       "  recruited_count, sync_run_id, snapshot_at)" +
-      " values ($1, '2026-09-29', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      " values ($1, '1999-12-31', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
       " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 2, $2, '2026-09-29T00:00:00Z')," +
-      "        ($1, '2026-09-30', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      "        ($1, '2000-01-01', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
       " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 9, $2, '2026-09-29T00:00:00Z')",
       ["11111111-1111-4111-8111-111111111111", "21111111-1111-4111-8111-111111111111"],
     );
@@ -141,7 +141,7 @@ test("W04A acceptance: legacy 2026-09-29 IS counted (business_date < cutoff)", a
     const res = await db.query(
       "select * from public.direct_entry_reporting_reconciliation_totals()",
     );
-    // Legacy 2026-09-29 contributes 2; 2026-09-30 is masked out.
+    // Legacy 1999-12-31 contributes 2; the cutoff day is masked out.
     assert.equal(Number(res.rows[0].legacy_subtotal), 2);
     assert.equal(Number(res.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(res.rows[0].overlap_blocker), 0);
@@ -150,11 +150,11 @@ test("W04A acceptance: legacy 2026-09-29 IS counted (business_date < cutoff)", a
   }
 });
 
-test("W04A acceptance: eligible Direct Entry 2026-09-29 raises overlap_blocker", async () => {
+test("W04A acceptance: eligible Direct Entry before 2000-01-01 raises overlap_blocker", async () => {
   const { db } = await buildDb();
   try {
     await seedFixture(db);
-    const entryId = await createEntry(db, "2026-09-29", "hrp-2026-092901");
+    const entryId = await createEntry(db, "1999-12-31", "hrp-1999-092901");
     const submissionRes = await db.query(
       "select submission_id from public.direct_entries where entry_id = $1",
       [entryId],
@@ -449,7 +449,7 @@ test("W04A acceptance: fresh-DB reconciliation returns 0/0/0 with the locked cut
     await setRole(db, "service_role");
     // On a fresh migrated DB with no seeded business data, reconciliation
     // totals must be 0/0/0 and the cutoff must be the locked post-purge
-    // rebaseline value 2026-09-30. Production data-plane verification
+    // rebaseline value 2000-01-01. Production data-plane verification
     // (real row count / subtotal) is performed by the data-agnostic
     // scripts/p2-w04a-reconcile.mjs in a read-only transaction.
     const res = await db.query(
@@ -459,7 +459,7 @@ test("W04A acceptance: fresh-DB reconciliation returns 0/0/0 with the locked cut
     assert.equal(Number(res.rows[0].legacy_subtotal), 0);
     assert.equal(Number(res.rows[0].direct_entry_subtotal), 0);
     assert.equal(Number(res.rows[0].overlap_blocker), 0);
-    assert.equal(res.rows[0].cutoff_date, "2026-09-30");
+    assert.equal(res.rows[0].cutoff_date, "2000-01-01");
   } finally {
     await db.close();
   }
@@ -573,7 +573,7 @@ test("R1 acceptance: runtime blocker count is 1+ on a pre-cutoff eligible DE row
   const { db } = await buildDb();
   try {
     await seedFixture(db);
-    const entryId = await createEntry(db, "2026-09-29", "hrp-2026-092901");
+    const entryId = await createEntry(db, "1999-12-31", "hrp-1999-092901");
     const submissionRes = await db.query(
       "select submission_id from public.direct_entries where entry_id = $1",
       [entryId]
@@ -660,10 +660,6 @@ test("R1 acceptance: dimension options view emits DE-only dimensions (project/re
     await db.query(
       "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1, $2, $3) on conflict do nothing",
       ["93000000-0000-4000-8000-000000000002", "vendor", "2020-01-01"]
-    );
-    await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1, $2, $3) on conflict do nothing",
-      ["93000000-0000-4000-8000-000000000002", "94000000-0000-4000-8000-000000000001", "2020-01-01"]
     );
     await db.query(
       "insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from) values ($1, $2, $3) on conflict do nothing",
@@ -809,10 +805,10 @@ test("R1 acceptance: Dashboard page imports the cutover read path, not the legac
     "DashboardView must NOT introduce a data.data field; ReportingFetchResult shape preserved");
 });
 
-test("R1 acceptance: legacy 2026-09-30 row is masked out (cutoff day excluded from legacy)", async () => {
+test("R1 acceptance: legacy 2000-01-01 row is masked out (cutoff day excluded from legacy)", async () => {
   // P2-W04C rebaseline: the legacy aggregate mask is `business_date <
-  // direct_entry_reporting_cutoff()` = `business_date < 2026-09-30`. Rows
-  // on 2026-09-30 itself must be masked out. The seed is data-agnostic
+  // direct_entry_reporting_cutoff()` = `business_date < 2000-01-01`. Rows
+  // on 2000-01-01 itself must be masked out. The seed is data-agnostic
   // (no fixed 34/44 magnitude is asserted — the pre-purge baseline was
   // retired by the W04B rebaseline). The test proves the boundary: rows
   // on day 29 contribute, rows on day 30 are masked, the same
@@ -835,21 +831,21 @@ test("R1 acceptance: legacy 2026-09-30 row is masked out (cutoff day excluded fr
       " (source_id, business_date, project_key, project_display, recruiter_key, recruiter_display," +
       "  provider_type_key, provider_type_display, employment_type_key, employment_type_display," +
       "  recruited_count, sync_run_id, snapshot_at)" +
-      " values ($1, '2026-09-29', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      " values ($1, '1999-12-31', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
       " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 4, $2, '2026-09-29T00:00:00Z')," +
-      "        ($1, '2026-09-30', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
+      "        ($1, '2000-01-01', 'w04a project', 'W04A Project', 'w04a recruiter', 'W04A Recruiter'," +
       " 'hrp', 'HRP', 'thời vụ', 'Thời vụ', 7, $2, '2026-09-29T00:00:00Z')",
       ["11111111-1111-4111-8111-111111111111", "21111111-1111-4111-8111-111111111111"]
     );
     // Direct masked sum MUST equal the legacy subtotal returned by the
-    // helper. Row on 2026-09-29 contributes 4, row on 2026-09-30 is
+    // helper. Row on 1999-12-31 contributes 4, row on 2000-01-01 is
     // masked out.
     const masked = await db.query(
       "select coalesce(sum(recruited_count), 0)::bigint as subtotal" +
-      " from public.daily_recruitment_breakdown where business_date < '2026-09-30'"
+      " from public.daily_recruitment_breakdown where business_date < '2000-01-01'"
     );
     assert.equal(Number(masked.rows[0].subtotal), 4,
-      "row on 2026-09-29 contributes 4, row on 2026-09-30 is masked out");
+      "row on 1999-12-31 contributes 4, row on 2000-01-01 is masked out");
     await setRole(db, "service_role");
     const recon = await db.query(
       "select legacy_subtotal::text as legacy_subtotal" +
@@ -986,7 +982,7 @@ test("R1 service-role execution: views and table-reading helpers succeed under S
     );
     assert.equal(Number(recon.rows[0].direct_entry_subtotal), 1);
     assert.equal(Number(recon.rows[0].overlap_blocker), 0);
-    assert.equal(recon.rows[0].cutoff_date, "2026-09-30");
+    assert.equal(recon.rows[0].cutoff_date, "2000-01-01");
 
     // alias_key / provider_key helpers with a NON-EXISTENT recruiter_id =>
     // "__unknown__" sentinel (proves SECURITY DEFINER + table read works).
@@ -1256,10 +1252,10 @@ test("R1 reconcile reads cutoff as date text without host-timezone conversion", 
   // P2-W04B rebaseline removed the locked W01-R1 fingerprint contract
   // (the pre-purge baseline was retired). The new reconcile script must
   // still read the legacy aggregate via the SQL cutoff function, must
-  // assert the locked 2026-09-30 cutoff, and must run inside a read-only
+  // assert the locked 2000-01-01 cutoff, and must run inside a read-only
   // transaction that is always rolled back.
-  assert.match(source, /2026-09-30/,
-    "reconcile must reference the locked P2-W04C cutoff 2026-09-30");
+  assert.match(source, /2000-01-01/,
+    "reconcile must reference the locked P2-W04D cutoff 2000-01-01");
   assert.match(source, /begin read only/,
     "reconcile must open a read-only transaction");
   assert.match(source, /rollback/,

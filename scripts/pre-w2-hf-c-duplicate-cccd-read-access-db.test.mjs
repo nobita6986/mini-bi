@@ -53,8 +53,8 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 88, "the ledger carries the PRE-W2-HF-C migration as #87");
-  assert.equal(names[names.length - 2], HF_C_MIGRATION, "the HF-C migration precedes only the HF-D2 slot");
+  assert.equal(names.length, 90, "the ledger carries the PRE-W2-HF-C migration as #87");
+  assert.equal(names[names.length - 4], HF_C_MIGRATION, "HF-C #87 stays before D2 #88, cutoff #89 and export #90");
   return db;
 }
 

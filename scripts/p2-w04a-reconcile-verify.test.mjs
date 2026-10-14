@@ -6,7 +6,7 @@
  * unit tests. The test seeds the post-purge shape (legacy aggregate
  * empty, all sources inactive) and asserts:
  *
- *   * the reconciliation helper returns the locked cutoff 2026-09-30;
+ *   * the reconciliation helper returns the locked cutoff 2000-01-01;
  *   * legacy_subtotal = 0 (post-purge invariant);
  *   * active & !is_test sources = 0;
  *   * the DE projection view count and sum(recruited_count) equal the
@@ -136,7 +136,7 @@ test("P2-W04C reconcile: post-purge zero invariants and DE projection count/sum"
   const { db } = await buildPostPurgeDb();
   try {
     await seedFixture(db);
-    // Seed 3 eligible DE rows on dates >= the new cutoff (2026-09-30).
+    // Seed 3 eligible DE rows on dates >= the new cutoff (2000-01-01).
     await createAndSubmit(db, "2026-10-06", "hrp-2026-100601");
     await createAndSubmit(db, "2026-10-09", "hrp-2026-100901");
     await createAndSubmit(db, "2026-10-15", "hrp-2026-101501");
@@ -147,7 +147,7 @@ test("P2-W04C reconcile: post-purge zero invariants and DE projection count/sum"
       " cutoff_date::text as cutoff_date" +
       " from public.direct_entry_reporting_reconciliation_totals()",
     );
-    assert.equal(totals.rows[0].cutoff_date, "2026-09-30");
+    assert.equal(totals.rows[0].cutoff_date, "2000-01-01");
     assert.equal(Number(totals.rows[0].legacy_subtotal), 0);
     assert.equal(Number(totals.rows[0].direct_entry_subtotal), 3);
     assert.equal(Number(totals.rows[0].overlap_blocker), 0);
@@ -271,7 +271,7 @@ test("P2-W04C reconcile: read-only transaction always rolls back (no mutation)",
             legacy_subtotal: 0,
             direct_entry_subtotal: 0,
             overlap_blocker: 0,
-            cutoff_date: "2026-09-30",
+            cutoff_date: "2000-01-01",
           }],
         };
       }
@@ -307,8 +307,8 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 88);
-  assert.equal(names[names.length - (28)],
+  assert.equal(names.length, 90);
+  assert.equal(names[names.length - (30)],
     "20261008210000_p2_5_hf_r3_worker_full_correction.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",

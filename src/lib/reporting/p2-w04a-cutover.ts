@@ -6,7 +6,7 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting.ts";
 /**
  * P2-W04A — Direct Entry reporting cutover contract.
  *
- *   - Cutoff date locked at 2026-09-30 (Asia/Ho_Chi_Minh). P2-W04C rebaseline
+ *   - Cutoff date locked at 2000-01-01. P2-W04D rebaseline
  *     after the first canonical Direct Entry production intake. The locked
  *     mask is: legacy < cutoff; Direct Entry >= cutoff; eligible pre-cutoff
  *     Direct Entry raises a hard cutover blocker.
@@ -31,7 +31,7 @@ import type { ReportingFact, ReportingSource } from "./p1-reporting.ts";
  */
 
 /** Hard-coded cutover date. Mirrors `public.direct_entry_reporting_cutoff()`. */
-export const P2_W04A_CUTOVER_DATE = "2026-09-30" as const;
+export const P2_W04A_CUTOVER_DATE = "2000-01-01" as const;
 
 /** Synthetic Direct Entry source id. Mirrors `public.direct_entry_reporting_source_id()`. */
 export const P2_W04A_DIRECT_ENTRY_SOURCE_ID =
