@@ -8,7 +8,7 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const NEW_MIGRATION = "20261011150000_p3_1_w03a_app_user_lifecycle.sql";
-const EXPECTED_MIGRATION_COUNT = 91;
+const EXPECTED_MIGRATION_COUNT = 92;
 const ADMIN_AUTH = "10000000-0000-4000-8000-000000000001";
 const ADMIN_APP = "20000000-0000-4000-8000-000000000001";
 const ACCOUNTING_AUTH = "10000000-0000-4000-8000-000000000002";
@@ -167,7 +167,7 @@ test("W03A migration is #82 append-only and exposes the locked schema", async ()
   assert.equal(actionConstraints.length, 1);
   assert.deepEqual(
     [...actionConstraints[0].definition.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort(),
-    ['capability_grant', 'capability_revoke', 'disable', 'enable', 'link_create', 'link_revoke', 'scope_grant', 'scope_revoke'],
+    ['account_created', 'capability_grant', 'capability_revoke', 'disable', 'display_name_update', 'enable', 'link_create', 'link_revoke', 'scope_grant', 'scope_revoke'],
   );
   const revisionSecurity = await query(db, `
     select c.relrowsecurity, c.relforcerowsecurity,

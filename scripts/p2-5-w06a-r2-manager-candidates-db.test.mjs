@@ -62,11 +62,11 @@ async function candidates(db, auth, app, search) {
   return res.rows[0].data;
 }
 
-test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 91-migration ledger", async () => {
+test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 92-migration ledger", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 91);
-  assert.equal(names[names.length - (38)], W06A_MIGRATION);
-  assert.equal(names[names.length - (37)], W05_MIGRATION);
+  assert.equal(names.length, 92);
+  assert.equal(names[names.length - (39)], W06A_MIGRATION);
+  assert.equal(names[names.length - (38)], W05_MIGRATION);
   await db.close();
 });
 
