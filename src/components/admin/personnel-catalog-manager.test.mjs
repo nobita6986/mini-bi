@@ -26,6 +26,8 @@ test("D3-C: eligible accounts paginate page 1..1000 and drop stale selections", 
   assert.match(source, /setEligibleHasMore\(list\.has_more\)/);
   // Stale detail response must never overwrite a newer selection.
   assert.match(source, /if \(selectedAccountRef\.current !== account\.app_user_id\) return;/);
+  // A stale failed request must not clear the newer selection's version either.
+  assert.match(source, /catch \{\s*if \(selectedAccountRef\.current !== account\.app_user_id\) return;\s*setAccountVersion\(null\);\s*\}/);
   // Page stays bounded 1..1000.
   assert.match(source, /nextPage < 1 \|\| nextPage > 1000/);
 });

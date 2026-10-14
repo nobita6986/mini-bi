@@ -168,6 +168,7 @@ export function PersonnelCatalogManager() {
       }
       setAccountVersion(detail.version);
     } catch {
+      if (selectedAccountRef.current !== account.app_user_id) return;
       setAccountVersion(null);
     }
   }, []);
