@@ -4,7 +4,7 @@
 - **Base:** `origin/main@148333e939b780656c3e4fe9d5a52bfaebf913fc` (ledger 92). Đã merge `origin/main@2a126415`
   (migration #93 worker-directory export) vào nhánh bằng merge commit (không rebase/amend/force-push).
 - **Branch/worktree:** `feature/pre-w2-hf-d3-bc-account-personnel-ui` @ `C:\CodeApp\BI\.worktrees\pre-w2-hf-d3-bc`.
-- **Final SHA:** `cb66c2e39709ef613f31916f257e9a466d20a985` (merge `21f8f95`, fixes `cb66c2e`).
+- **Final SHA:** `a8b2f4605de31f7bfa69315c2e60235190c99a66` (merge `21f8f95`, fixes `cb66c2e`, reclassify-on-open `a8b2f46`).
 
 ## Đã hoàn thành
 
@@ -34,7 +34,9 @@
   ở lại `IN_FLIGHT`; reclassify sẽ chuyển `INDETERMINATE` sau 15 phút rồi operator đối soát.
 - **Reclassify:** thêm `POST /api/admin/access/accounts/reclassify` (session + CSRF) gọi RPC
   `direct_entry_account_operation_reclassify` hiện có; UI có nút "Phân loại lại" trong Operation surface.
-  Không cron, không migration, không grant mới.
+  Khi Full Admin mở danh sách tài khoản, reclassify chạy **một lần** (ref guard, empty deps) — không chạy
+  lại khi đổi search/page/filter và không lặp; lỗi hiển thị copy sanitized. Không cron, không migration,
+  không grant mới.
 
 ## Chưa làm (D3-C, theo đúng yêu cầu task này)
 
