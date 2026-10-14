@@ -1,11 +1,10 @@
 # Pre-W2-HF-D3-B/C — Account Auth/API/UI & Personnel-from-account
 
-- **Status:** `PRE_W2_HF_D3_B_ACCOUNT_UI_DONE_C_PENDING` (D3-B hoàn tất; D3-C chưa làm)
-- **Base:** `origin/main@148333e939b780656c3e4fe9d5a52bfaebf913fc` (ledger 92). origin/main sau đó đã tới
-  `2a126415` (migration #93 worker-directory export + rebaseline pins) nhưng contract D3 + migration/RPC
-  D3-A **không đổi** → không dừng.
+- **Status:** `PRE_W2_HF_D3_B_ACCOUNT_UI_DONE_C_PENDING` (D3-B hoàn tất + review fixes; D3-C chưa làm)
+- **Base:** `origin/main@148333e939b780656c3e4fe9d5a52bfaebf913fc` (ledger 92). Đã merge `origin/main@2a126415`
+  (migration #93 worker-directory export) vào nhánh bằng merge commit (không rebase/amend/force-push).
 - **Branch/worktree:** `feature/pre-w2-hf-d3-bc-account-personnel-ui` @ `C:\CodeApp\BI\.worktrees\pre-w2-hf-d3-bc`.
-- **Final SHA:** `808912913cd53be91c7b71fcbe1422884587e254` (impl `f7310ca`, UI `8089129`).
+- **Final SHA:** `cb66c2e39709ef613f31916f257e9a466d20a985` (merge `21f8f95`, fixes `cb66c2e`).
 
 ## Đã hoàn thành
 
@@ -27,6 +26,15 @@
   1. bỏ kiểm tra provenance (finalize APPLIED dù marker lệch); 2. claim thua vẫn gọi Auth lần hai;
   3. lộ password trong response. (Full Admin gate do RPC `direct_entry_assert_actor_app_user_admin` enforce;
   probe DB đã có trong `scripts/pre-w2-hf-d3-a-account-personnel-mutation.mjs`.)
+
+## Review fixes (đã xử lý)
+
+- **Finish authoritative:** mọi nhánh create/reset đều kiểm tra kết quả `repository.finish`; finish lỗi →
+  `ACCOUNT_OPERATION_UNAVAILABLE` (500), không trả success/terminal giả và **không gọi lại Auth**. Intent
+  ở lại `IN_FLIGHT`; reclassify sẽ chuyển `INDETERMINATE` sau 15 phút rồi operator đối soát.
+- **Reclassify:** thêm `POST /api/admin/access/accounts/reclassify` (session + CSRF) gọi RPC
+  `direct_entry_account_operation_reclassify` hiện có; UI có nút "Phân loại lại" trong Operation surface.
+  Không cron, không migration, không grant mới.
 
 ## Chưa làm (D3-C, theo đúng yêu cầu task này)
 
