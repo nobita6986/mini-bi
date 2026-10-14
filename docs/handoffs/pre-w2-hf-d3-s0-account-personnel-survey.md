@@ -1,8 +1,9 @@
 # Pre-W2-HF-D3-S0 — Account ↔ recruiter-personnel relationship survey (docs-only)
 
-> Status: `PRE_W2_HF_D3_S0_SURVEY_COMPLETE_AWAITING_T0_REVIEW`
-> Base: `origin/main@9c2fdb5` (branch `codex/vps-deploy-hardening`, 85 migrations).
-> Kind: read-only survey. No source/package/SQL change, no DB access/mutation, no migration apply, no deploy, no UAT. Only this handoff is written.
+> Status: `PRE_W2_HF_D3_S0_R1_REBASELINED_AWAITING_T0_REVIEW`
+> Base: `origin/main@c29b44c` (87 migrations, rebased; #86 worker-export, #87 global duplicate-CCCD read access — neither touches account/personnel).
+> Kind: read-only survey + R1 correction. No source/package/SQL change, no DB access/mutation, no migration apply, no deploy, no UAT. Only the survey and its R1 addendum are written.
+> **R1 supersedes §5/§7/§9 for account-creation atomicity, "zero residue", byte-identical replay and password-reset audit:** see `pre-w2-hf-d3-s0-account-personnel-survey-R1.md`.
 > Owner intent (summary): recruitment personnel is an operational assignment, not a free-standing profile. Adding a recruiter must first create/select an Access Account, then link a personnel profile to that account. The current Access Account screen lacks create/edit/password flows.
 
 ## 1. Current-base facts
@@ -23,7 +24,7 @@
 | E12 | `20261011150000...` (#82) + `..._r2_account_read` (#83) + `..._r2_r1_account_read_repair` (#84) + `src/lib/direct-entry/app-user-access-*.ts` + `src/app/api/admin/access/accounts/**` | Account lifecycle landed: `direct_entry_enable_app_user` / `direct_entry_disable_app_user` / `direct_entry_list_app_users_admin` / `direct_entry_get_app_user_admin`. API: `GET /api/admin/access/accounts`, `GET .../[accountRef]`, `POST .../[accountRef]/{enable,disable}`. Projection = `{account_ref, display_name, enabled, version}`; mutation = `{expected_version, reason, idempotency_key}`. **Create/edit/password absent.** |
 | E13 | `src/lib/auth/change-password-core.ts` + `src/app/api/auth/change-password/route.ts` | Self-service password change (W09A): session is the only authority for "which user"; re-auth via `signInWithPassword`; `updateUser({password})`. `resolveIdentifierToEmail` maps a bare HRP id to `<id>@hrpartner.vn`. |
 | E14 | `scripts/p3-first-owner-bootstrap.mjs:326`, `scripts/p3-w07b-access-bootstrap.mjs:110-220`, `scripts/p2-5-accounting-project-admin-provision.mjs` | **The only current account-creation path is offline scripts**: `admin.auth.admin.createUser({email,password,email_confirm:true})` + direct `INSERT INTO public.direct_entry_app_users` (via a direct postgres connection) + capability/scope/link inserts. There is **no runtime RPC/API** that creates an account or link. |
-| E15 | `20261011180000_p3_w05b_a_team_reporting.sql` (#85) | Current migration ledger = **85 migrations**. W03A = #82–#84; #85 = W05B team reporting. This survey reserves **no** slot. |
+| E15 | `20261011180000_p3_w05b_a_team_reporting.sql` (#85); `20261013120000_pre_w2_p1_worker_export.sql` (#86); `20261013130000_pre_w2_hf_c_global_duplicate_cccd_read_access.sql` (#87) | Current migration ledger = **87 migrations** (rebaselined). W03A = #82–#84; #85 = W05B team reporting; #86 = worker-export RPC; #87 = global duplicate-CCCD read guard. #86/#87 do **not** touch account/personnel create/edit/password. This survey reserves **no** slot. |
 
 ## 2. Data relationship map
 
@@ -172,7 +173,7 @@ Scope is **recruitment accounts + recruitment personnel only**. No invite link, 
 
 ## 7. Migration impact (observe only — no slot reserved)
 
-Current ledger: **85 migrations**. This survey reserves nothing and edits nothing.
+Current ledger: **87 migrations** (rebaselined). This survey reserves nothing and edits nothing.
 
 Required new DDL/RPC surface (each is a future append-only migration, one work item at a time):
 
