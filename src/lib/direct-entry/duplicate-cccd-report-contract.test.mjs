@@ -179,6 +179,11 @@ test("malformed RPC payloads fail closed", () => {
       groups: [{ ...rpcPayload().groups[0], episodes: [
         episode({ latest_status: "ON", active: false }), episode({ latest_status: "ON", active: true }),
       ] }] }),
+    "group with a resigned episode (ON + OFF)": rpcPayload({
+      groups: [{ ...rpcPayload().groups[0], active_profile_count: 1, episodes: [
+        episode({ latest_status: "ON", active: true }),
+        episode({ latest_status: "OFF", active: false }),
+      ] }] }),
     "more groups than page_size": rpcPayload({
       page_size: 1, has_more: false,
       groups: [rpcPayload().groups[0], rpcPayload().groups[0]],
