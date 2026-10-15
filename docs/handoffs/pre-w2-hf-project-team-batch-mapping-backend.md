@@ -3,6 +3,7 @@
 - **Status:** `PRE_W2_HF_PROJECT_TEAM_BATCH_MAPPING_LOCAL_PASS_AWAITING_T0_REVIEW`
 - **Base:** `origin/main@614a9393a93e9591f08a8e835b08adcded697fbf` (fetched latest; includes the requested `d9c7299` baseline and subsequent main commits).
 - **Migration ledger:** #97; #94 remains Project↔Team authority, #95 reporting-only, #96 is worker-export text/CCCD issue date, #97 is batch mapping.
+- **Migration SHA-256:** `20261015130000_pre_w2_hf_project_team_batch_mapping.sql` — `5147fb8073f00995fc5d0da0fd7f6888a3a6193a97aa0727ce9581d20f67c9e0`.
 - **Branch/worktree:** `feature/pre-w2-hf-project-team-mapping-backend` at `C:\CodeApp\BI-pre-w2-hf-project-team-mapping`.
 - **Scope:** backend/API/database migration/tests only. No persistent database was changed; no deploy or UAT was performed.
 
@@ -39,6 +40,8 @@ RPC projections are exact-key and fail closed. SQLSTATEs are converted to saniti
 
 Migration `20261015130000_pre_w2_hf_project_team_batch_mapping.sql` is append-only #97. It leaves migrations #1–#96 unchanged and retains the existing canonical Full Admin guard `direct_entry_assert_actor_app_user_admin`; no capability or scope was added. The migration contains no staging-derived IDs, project/team names, mapping rows, or seed logic.
 
+The supplied read-only staging audit is not encoded as a rule or fixture. Backend behavior accepts only the project IDs explicitly sent by an authorized Full Admin and applies the same per-pair checks to each; no staging mapping was seeded or written.
+
 - **Batch grant:** Full Admin only. Validates an active, non-reserved team and 1–100 unique active projects, normalizes project order, locks projects in stable order and the team, then serializes pair updates. The DB authorization date supplies `effective_from`; no grant date or pair version is accepted from the client.
 - A currently effective pair is returned in `skipped` with its mapping ID/version. Only newly created pairs receive a mapping and one immutable audit event apiece.
 - Pair version is computed and incremented inside the transaction. An exception during any insert rolls back every mapping, audit, restricted reason, and idempotency record from that request.
@@ -58,25 +61,26 @@ Migration `20261015130000_pre_w2_hf_project_team_batch_mapping.sql` is append-on
 - `pnpm test:pre-w2-hf-project-team-batch`: **pass** — strict request/result contract, session/CSRF/body ordering, authority and version-field rejection, sanitized errors, malformed projection handling, PGlite batch rollback/idempotency/authority, and local PostgreSQL simultaneous grant/revoke locking.
 - `pnpm test:pre-w2-hf-project-team-authority-db`: **9/9 pass**, including the full #97 ledger, legacy #94 behavior, migration-first RPC ACL posture, batch atomicity (including an injected second-insert failure), skipped effective pairs, persisted versions, audit-per-created-pair, Full Admin-only access and exact replay.
 - `pnpm test:pre-w2-hf-project-team-authority-ui`: **66/66 pass**. The UI source is unchanged; a model regression pins the old versioned request as blocked until coordinated UI work.
-- `pnpm test` is the canonical full repository chain and includes the focused batch lane exactly once.
+- `node scripts/pre-w2-hf-project-team-batch-mapping-mutation.mjs`: **6/6 probes made the focused lane fail**, with source files restored byte-for-byte. Probes cover removed Full Admin authority, swallowed mid-batch failure, accepted client pair version, accepted client authority, leaked error details, and revoked legacy RPC access.
+- `pnpm test` is the canonical full repository chain and includes the focused batch lane exactly once; the full chain passes on the 97-migration ledger.
 
-## Validation and remaining gates
+## Validation
 
-Completed locally before the latest-main rebase; rerun after rebasing:
+Rebased onto the latest fetched `origin/main` (`614a9393a93e9591f08a8e835b08adcded697fbf`), which includes the requested `d9c7299` base and later main commits. Ledger pins and end-relative anchors now target 97 migrations.
 
 - Focused batch/API/database/concurrency lane: pass.
-- Project↔Team authority DB regression: pass, including the injected mid-batch failure rollback assertion.
+- Project↔Team authority DB regression: pass, including the injected mid-batch failure rollback assertion and legacy-RPC ACL compatibility.
 - Project↔Team UI contract regression: **66/66 pass**; UI implementation unchanged.
-- `pnpm test`: pass (canonical full repository chain, including the focused batch lane).
+- `pnpm test`: pass on the rebased 97-migration ledger. The full chain also identified and rebaselined one stale W03A migration-count assertion; its focused lane passes.
 - `pnpm exec next typegen`: pass.
 - `pnpm typecheck`: pass.
 - `pnpm lint`: pass (0 errors; 14 existing warnings).
 - `pnpm build`: pass.
 - `pnpm docs:check`: pass (6/6).
 - `pnpm secrets:check`: pass.
-- `pnpm db:migrate -- --offline`: pass (**97/97** expected after rebase; no database was applied).
+- `pnpm db:migrate -- --offline`: pass (**97/97**; no database was applied).
 - `git diff --check`: pass.
 
-Appending #97 requires updating historical regression fixtures that pin the migration count, relative ledger positions, RPC inventory, or “no earlier migration touched” allowlist. No prior migration is edited. The fetched `origin/main` advanced from the originally stated `d9c7299` to `614a939`; all gates and the final diff must be revalidated on that newest base before handoff.
+Appending #97 required updating historical regression fixtures that pin migration count, relative ledger positions, and RPC inventory. No prior migration is edited. The handoff/code changes are ready to publish to the feature branch as a fast-forward after final remote verification.
 
 No migration was applied to a persistent database. Do not merge `main`, deploy, or perform UAT before T0 review and coordinated UI integration.
