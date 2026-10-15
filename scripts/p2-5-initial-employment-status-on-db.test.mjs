@@ -22,26 +22,37 @@ async function database() {
 test("initial employment status policy is migration #57 and patches every creation path", async () => {
   const { db, names } = await database();
   try {
-    assert.equal(names.length, 100);
-    assert.equal(names.at(-44), MIGRATION);
+    assert.equal(names.length, 101);
+    assert.equal(names.at(-45), MIGRATION);
+    assert.equal(names.at(-1), "20261015160000_pre_w2_initial_status_any_start_date.sql",
+      "#102 follows the existing #101 migration");
     const result = await db.query(`
       select p.proname, p.prosrc
         from pg_proc p join pg_namespace n on n.oid=p.pronamespace
        where n.nspname='public' and p.oid in (
          'public.direct_entry_create_batch(uuid,uuid,jsonb,text)'::regprocedure,
          'public.direct_entry_create_draft_row(uuid,uuid,uuid,integer,jsonb,text)'::regprocedure,
-         'public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text)'::regprocedure
+         'public.direct_entry_create_full_profile_batch(uuid,uuid,text,jsonb,text)'::regprocedure,
+         'public.direct_entry_create_full_profile_batch_v2_unscoped_h03(uuid,uuid,text,jsonb,text)'::regprocedure
        ) order by p.proname
     `);
-    assert.equal(result.rows.length, 3);
-    for (const row of result.rows) {
+    assert.equal(result.rows.length, 4);
+    for (const row of result.rows.filter((item) =>
+      item.proname !== "direct_entry_create_full_profile_batch_v2_unscoped_h03")) {
       assert.match(row.prosrc,
         /v_entry_id, 'ON', v_first_work_date, 1, p_app_user_id, v_reason_id/,
         `${row.proname} must create ON as version 1`);
     }
-    const full = result.rows.find((row) => row.proname === "direct_entry_create_full_profile_batch");
-    assert.match(full.prosrc, /if v_status = 'OFF' then/);
-    assert.doesNotMatch(full.prosrc, /if v_status in \('ON','OFF'\) then/);
+    const fullProfile = result.rows.find((row) => row.proname === "direct_entry_create_full_profile_batch");
+    const v2Implementation = result.rows.find((row) =>
+      row.proname === "direct_entry_create_full_profile_batch_v2_unscoped_h03");
+    assert.ok(fullProfile);
+    assert.ok(v2Implementation);
+    assert.match(fullProfile.prosrc, /if v_status = 'OFF' then/);
+    assert.doesNotMatch(fullProfile.prosrc, /if v_status in \('ON','OFF'\) then/);
+    assert.doesNotMatch(fullProfile.prosrc, /v_first_work_date >= v_auth_date/);
+    assert.match(fullProfile.prosrc, /if v_status not in \('UNCONFIRMED','ON','OFF'\) then/);
+    assert.match(v2Implementation.prosrc, /direct_entry_create_full_profile_batch\(/);
   } finally {
     await db.close();
   }
