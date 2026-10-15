@@ -181,11 +181,11 @@ export function projectIntentEnvelope(v: unknown): IntentEnvelope | null {
 export type ClaimEnvelope = IntentEnvelope & { claimed: boolean };
 export function projectClaimEnvelope(v: unknown): ClaimEnvelope | null {
   if (!isRecord(v) || !exact(v, ["intent_id", "intent_token", "kind", "state", "claimed"])) return null;
-  if (!uuid(v.intent_id) || !uuid(v.intent_token) ||
-      (v.kind !== "CREATE_ACCOUNT" && v.kind !== "RESET_PASSWORD") ||
-      typeof v.state !== "string" || typeof v.claimed !== "boolean") return null;
-  return { intent_id: v.intent_id, intent_token: v.intent_token, kind: v.kind,
-    state: v.state, claimed: v.claimed };
+  const base = projectIntentEnvelope({
+    intent_id: v.intent_id, intent_token: v.intent_token, kind: v.kind, state: v.state,
+  });
+  if (!base || typeof v.claimed !== "boolean") return null;
+  return { ...base, claimed: v.claimed };
 }
 
 export type ReadIntentEnvelope = {
