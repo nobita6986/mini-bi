@@ -134,6 +134,14 @@ export function decideProjectOperationsPageAccess(input: {
   return projectAdminNavPredicate(actor.actor) ? "ALLOW" : "ACCESS_DENIED";
 }
 
+/** Server-side fallback for an empty project list; mirrors #72's catalog-operator/admin authority order. */
+export function canManageProjectMasterFromActor(actor: ActorResolution | null): boolean {
+  if (actor?.ok !== true) return false;
+  const all = actor.actor.scopes.some((scope) => scope.kind === "all");
+  return all && (actor.actor.capabilities.includes("catalog_master_manage") ||
+    actor.actor.capabilities.includes("entry_admin"));
+}
+
 /**
  * P2.5-W06-R1: quyet dinh truy cap cho /direct-entry/workers.
  * Dung CHUNG predicate voi nav (workerOperationsNavPredicate) — khong hai logic lech nhau.
