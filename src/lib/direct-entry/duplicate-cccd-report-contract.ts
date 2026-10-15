@@ -15,6 +15,8 @@
  *   * map trang thai canonical ON / UNCONFIRMED / OFF sang nhan tieng Viet cho UI (SQL chi
  *     phat ra enum, khong bao gio so sanh chuoi tieng Viet).
  */
+import { WORK_STATUS_UI_LABELS } from "./display-labels.ts";
+
 export const DUPLICATE_CCCD_REPORT_DEFAULT_PAGE_SIZE = 25;
 export const DUPLICATE_CCCD_REPORT_MAX_PAGE_SIZE = 100;
 export const DUPLICATE_CCCD_REPORT_MAX_PAGE = 1000;
@@ -55,11 +57,12 @@ export const DUPLICATE_CCCD_EMPLOYMENT_STATUSES = ["ON", "UNCONFIRMED", "OFF"] a
 
 export type DuplicateCccdEmploymentStatus = (typeof DUPLICATE_CCCD_EMPLOYMENT_STATUSES)[number];
 
+/** PRE-W2-HF-UI-LABELS: nhan trang thai lay tu mot nguon duy nhat (display-labels). */
 export const EMPLOYMENT_STATUS_LABELS: Readonly<Record<DuplicateCccdEmploymentStatus, string>> =
   Object.freeze({
-    ON: "Đang làm việc",
-    UNCONFIRMED: "Đang chờ việc",
-    OFF: "Đã nghỉ",
+    ON: WORK_STATUS_UI_LABELS.ON,
+    UNCONFIRMED: WORK_STATUS_UI_LABELS.UNCONFIRMED,
+    OFF: WORK_STATUS_UI_LABELS.OFF,
   });
 
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;

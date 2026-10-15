@@ -21,6 +21,7 @@ import {
   type WorkerStatus,
 } from "../contracts/direct-entry-v1.ts";
 import { isDocumentType } from "./document-upload-contract.ts";
+import { WORK_STATUS_UI_LABELS, genderUiLabel } from "./display-labels.ts";
 import {
   PAYMENT_STATES,
   projectPaymentProjection,
@@ -35,11 +36,8 @@ export const PAYMENT_STATE_LABELS: Readonly<Record<PaymentState, string>> = Obje
   provided: "Đã cung cấp",
 });
 
-export const WORK_STATUS_LABELS: Readonly<Record<WorkerStatus, string>> = Object.freeze({
-  UNCONFIRMED: "Đang chờ việc",
-  ON: "Đang làm",
-  OFF: "Đã nghỉ",
-});
+/** PRE-W2-HF-UI-LABELS: nhan trang thai lam viec lay tu mot nguon duy nhat (display-labels). */
+export const WORK_STATUS_LABELS: Readonly<Record<WorkerStatus, string>> = WORK_STATUS_UI_LABELS;
 
 export const DOCUMENT_TYPE_LABELS: Readonly<Record<DocumentType, string>> = Object.freeze({
   CCCD_FRONT: "CCCD mặt trước",
@@ -261,6 +259,15 @@ export type ReadRow = { field: string; label: string; before: string; after: str
 
 const HIDDEN = "—";
 
+/** Text hien thi cho mot field worker_details; gender tra nhan tieng Viet thay vi ma enum. */
+function workerFieldText(
+  field: keyof typeof WORKER_FIELD_LABELS,
+  value: OptionalValue<string>,
+): string {
+  if (field === "gender" && value.state === "provided") return genderUiLabel(value.value);
+  return optionalValueText(value);
+}
+
 /** Bang before -> after cho worker_details (chi field THUC SU thay doi). */
 export function workerDetailsRows(before: WorkerDetails, after: WorkerDetails): ReadRow[] {
   const rows: ReadRow[] = [];
@@ -277,9 +284,9 @@ export function workerDetailsRows(before: WorkerDetails, after: WorkerDetails): 
     const beforeValue = before[field];
     const afterValue = after[field];
     const beforeText = beforeValue === undefined ? OPTIONAL_STATE_LABELS.omitted
-      : optionalValueText(beforeValue);
+      : workerFieldText(field, beforeValue);
     const afterText = afterValue === undefined ? OPTIONAL_STATE_LABELS.omitted
-      : optionalValueText(afterValue);
+      : workerFieldText(field, afterValue);
     if (beforeText !== afterText) {
       rows.push({ field, label: WORKER_FIELD_LABELS[field], before: beforeText, after: afterText });
     }

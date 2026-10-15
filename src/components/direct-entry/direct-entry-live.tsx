@@ -81,6 +81,7 @@ import {
 } from "@/lib/direct-entry/labor-type-catalog-ui";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
 import { projectDraftProfileGridCells } from "@/lib/direct-entry/draft-profile-grid";
+import { genderUiLabel, workStatusUiLabel } from "@/lib/direct-entry/display-labels";
 import {
   DirectEntrySpreadsheetGrid,
   type SpreadsheetGridRow,
@@ -1256,13 +1257,12 @@ export function DirectEntryLive() {
       const profileCells = projectDraftProfileGridCells(row.profile);
       const employment = row.profile.employment;
       const employmentStatus = employment?.status ?? row.employmentStatus;
-      const employmentStatusLabel = employmentStatus === "ON"
-        ? "Đang làm"
-        : employmentStatus === "OFF"
-          ? "Đã nghỉ"
-          : employmentStatus === "UNCONFIRMED"
-            ? "Đang chờ việc"
-            : "Chưa xác định";
+      // PRE-W2-HF-UI-LABELS: o trang thai chi hien nhan; bo hau to ngay hieu luc.
+      const employmentStatusLabel = employmentStatus === null || employmentStatus === undefined
+        ? ""
+        : workStatusUiLabel(employmentStatus);
+      // Gioi tinh luu canonical (MALE/FEMALE/OTHER) o draft; grid chi hien nhan tieng Viet.
+      const genderCell = profileCells.cells.gender;
       const cccdStatus = readCccdStatus(cccdCache, row.entryId, row.entryVersion);
       // Chi 6 field da co safe mutation path duoc sua; field full-profile khac read-only (W03).
       return {
@@ -1281,6 +1281,7 @@ export function DirectEntryLive() {
         },
         cells: {
           ...profileCells.cells,
+          ...(genderCell ? { gender: genderUiLabel(genderCell) } : {}),
           // P1.7-H05-R1: Mã NLĐ chi de hien thi (output), khong sua; cell key
           // van render gia tri hien tai de rail/drawer doc duoc.
           employee_code: row.employeeCode,
@@ -1291,9 +1292,7 @@ export function DirectEntryLive() {
           provider_hint: row.providerType?.toUpperCase() ?? "",
           team_hint: row.teamDisplayName,
           labor_type: row.laborType,
-          initial_status: employment
-            ? `${employmentStatusLabel} · hiệu lực ${employment.effective_date}`
-            : employmentStatusLabel,
+          initial_status: employmentStatusLabel,
         },
         editableFields: editable
           // P1.7-H05-R1: Mã NLĐ do server cấp; khong sua tren UI. 4 optional
@@ -1560,14 +1559,17 @@ export function DirectEntryLive() {
             display_name: row.display_name,
             recruiter_id: recruiter?.recruiter_id ?? row.recruiter_label,
             labor_type: row.labor_type,
-            gender: value(row.worker.gender),
+            // PRE-W2-HF-UI-LABELS: o nhap chi giu nhan tieng Viet; canonical enum duoc
+            // khoi phuc khi luu qua worker-profile-import-contract (Nam->MALE, ...).
+            gender: genderUiLabel(value(row.worker.gender)),
             date_of_birth: value(row.worker.date_of_birth),
             national_id: value(row.worker.national_id),
             national_id_issued_at: value(row.worker.national_id_issued_at),
             national_id_issued_place: value(row.worker.national_id_issued_place),
             address: value(row.worker.address),
             phone: value(row.worker.phone),
-            initial_status: value(row.employment.initial_status),
+            initial_status: value(row.employment.initial_status) === ""
+              ? "" : workStatusUiLabel(value(row.employment.initial_status)),
             leave_date: value(row.employment.leave_date),
             leave_reason_text: value(row.employment.leave_reason_text),
             general_note: value(row.general_note),
@@ -2284,6 +2286,9 @@ export function DirectEntryLive() {
                             <option value="">—</option>
                             <option value="Nam">Nam</option>
                             <option value="Nữ">Nữ</option>
+                            {(cells.gender ?? "") !== "" && !["Nam", "Nữ"].includes(cells.gender ?? "") && (
+                              <option value={cells.gender} disabled>{cells.gender}</option>
+                            )}
                           </select>
                         </Field>
                         <Field label="Ngày sinh">
@@ -2486,6 +2491,10 @@ export function DirectEntryLive() {
                       <option value="">—</option>
                       <option value="Nam">Nam</option>
                       <option value="Nữ">Nữ</option>
+                      {(target.cells.gender ?? "") !== "" &&
+                        !["Nam", "Nữ"].includes(target.cells.gender ?? "") && (
+                        <option value={target.cells.gender} disabled>{target.cells.gender}</option>
+                      )}
                     </select>
                   </Field>
                   <Field label="Ngày sinh">

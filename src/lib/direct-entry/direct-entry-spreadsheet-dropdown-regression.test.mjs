@@ -129,7 +129,7 @@ test("R6 catalog column key checks cover gender, project_id, recruiter_id, labor
   // `spreadsheetSelectOptions` lives in the grid component. The grid source
   // is read into `gridSource` at the top of this file.
   assert.match(gridSource, /if \(columnKey === "gender"\) return \["", \.\.\.DIRECT_ENTRY_GENDER_OPTIONS\]/);
-  assert.match(gridSource, /if \(columnKey === "labor_type"\) return \["", \.\.\.LABOR_TYPE_UI_VALUES\]/);
+  assert.match(gridSource, /if \(columnKey === "labor_type"\) \{\s*return \["", \.\.\.sortedActiveLaborTypes\(catalogs\?\.laborTypes\)/);
   assert.match(gridSource, /if \(columnKey === "provider_type"\) return \["", \.\.\.PROVIDER_OPTIONS\]/);
   assert.match(gridSource, /if \(columnKey === "project_id"\)/);
   assert.match(gridSource, /if \(columnKey === "recruiter_id"\)/);

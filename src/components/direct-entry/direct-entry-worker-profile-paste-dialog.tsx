@@ -37,6 +37,7 @@ import {
   resolveIntentKey,
   type TransitionIntentKeyState,
 } from "@/lib/direct-entry/submission-lifecycle";
+import { genderUiLabel, workStatusUiLabel } from "@/lib/direct-entry/display-labels";
 import type { WorkerProfileOptional } from "@/lib/direct-entry/worker-profile-paste";
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import styles from "./direct-entry-shell.module.css";
@@ -139,7 +140,8 @@ function RowDetail({ row }: { row: WorkerProfilePreviewRow }) {
         <h4>Hồ sơ cá nhân</h4>
         <DefinitionList entries={[
           ["Họ và tên", row.row.display_name],
-          ["Giới tính", worker.gender.state === "provided" ? worker.gender.value : "—"],
+          ["Giới tính", worker.gender.state === "provided"
+            ? genderUiLabel(worker.gender.value) : "—"],
           ["DOB", optionalText(worker.date_of_birth)],
           ["CMT/CCCD", worker.national_id.state === "provided"
             ? maskNationalId(worker.national_id.value) : "—"],
@@ -153,7 +155,7 @@ function RowDetail({ row }: { row: WorkerProfilePreviewRow }) {
         <h4>Tình trạng làm việc</h4>
         <DefinitionList entries={[
           ["Tình trạng làm việc hiện tại", employment.initial_status.state === "provided"
-            ? employment.initial_status.value : "—"],
+            ? workStatusUiLabel(employment.initial_status.value) : "—"],
           ["Ngày nghỉ thực tế", optionalText(employment.leave_date)],
           ["Ghi chú về nghỉ việc", optionalText(employment.leave_reason_text)],
         ]} />

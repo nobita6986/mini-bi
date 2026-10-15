@@ -318,6 +318,11 @@ function SelectCellEditor(
               UNCONFIRMED: "Đang chờ việc", OFF: "Đã nghỉ" } as Record<string, string>)[option]
           : option === "" ? "—" : option}
       </option>)}
+      {value !== "" && !options.includes(value) && (
+        // PRE-W2-HF-UI-LABELS: du lieu cu ngoai danh muc (vd gioi tinh Khác) van hien
+        // nhan cua no; chi cho CHON cac option trong danh muc.
+        <option value={value} disabled>{value}</option>
+      )}
     </select>
   );
 }
