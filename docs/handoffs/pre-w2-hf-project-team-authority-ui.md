@@ -1,8 +1,8 @@
 # Pre-W2-HF Project↔Team Authority — T1A handoff (API + UI)
 
-- **Status:** `PRE_W2_HF_PROJECT_TEAM_AUTHORITY_T1A_IN_PROGRESS` (API + Team Leader gate + flag-gated Project Ops done; standalone mapping admin page + focused tests pending)
+- **Status:** `PRE_W2_HF_PROJECT_TEAM_AUTHORITY_T1A_LOCAL_PASS_AWAITING_T0_REVIEW` (API + mapping UI + Team Leader gate + flag-gated Project Ops done; focused tests + mutation probes pending)
 - **Base:** `origin/main@785bafce18c1d319f9eea452c8cac10499919329` (ledger 94, PR #23 merged, migration #94 present).
-- **Final SHA:** `2eefc0664e0e52278be31eb58028751a23be0e2a`
+- **Final SHA:** `fd23116f785da29366a344de46545c051dfd7056`
 - **Branch/worktree:** `feature/pre-w2-hf-project-team-authority-ui` @ `C:\CodeApp\BI\.worktrees\pre-w2-hf-pt-ui`.
 
 ## Đã hoàn thành
@@ -22,15 +22,14 @@
 
 ### Project Operations flag-gated actions
 - `project-operations.tsx` derive `canManageProjectMaster` từ server-projected `projects[0].can_manage_project_master`; "Tạo dự án", "Chỉnh sửa", "Ngừng/Kích hoạt" chỉ render khi flag true.
-- `can_assign_managers` per-project để gate assign/unassign (server projection đã có sẵn; UI wiring pending cho detail view).
+- `can_assign_managers` wired vào detail view: gate "Gán quản lý" + "Thu hồi phân công" buttons.
+- Mapping admin UI page: `/admin/catalog/project-team-scopes` (Full Admin only) — list/filter/pagination + grant/revoke dialogs; nav entry "Mapping Dự án ↔ Nhóm".
 - Team Leader thấy danh sách rỗng → empty state "Chưa có dự án nào" (không phải lỗi quyền).
 
 ## Chưa hoàn thành (cần tiếp tục)
 
-1. **Standalone mapping admin page** — UI để xem mapping hiện tại/tương lai/lịch sử, cấp/thu hồi mapping cho Full Admin (API routes đã có; UI chưa dựng).
-2. **`can_assign_managers` flag-gated assign/unassign UI** — chi tiết assign/unassign dialog trong Project Operations detail view.
-3. **Focused tests** — API/repository/UI/nav/page-gate tests cho Admin, Team Leader mapped/unmapped, anonymous, actor không hợp lệ, mapping rỗng, phân trang, grant/revoke, OCC conflict, cùng-ngày, ngày revoke tương lai.
-4. **Mutation probes** — bỏ session/CSRF; tin authority từ client; cho leader xem unmapped/inactive; mở project-master actions; grant/revoke bằng non-Full-Admin; lộ danh sách ngoài mapping.
+1. **Focused tests** — API/repository/UI/nav/page-gate tests cho Admin, Team Leader mapped/unmapped, anonymous, actor không hợp lệ, mapping rỗng, phân trang, grant/revoke, OCC conflict, cùng-ngày, ngày revoke tương lai.
+2. **Mutation probes** — bỏ session/CSRF; tin authority từ client; cho leader xem unmapped/inactive; mở project-master actions; grant/revoke bằng non-Full-Admin; lộ danh sách ngoài mapping.
 
 ## Gates đã chạy
 
