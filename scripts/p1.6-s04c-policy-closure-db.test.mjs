@@ -67,7 +67,7 @@ function assertNoSensitive(label, value) {
 
 test("from-scratch apply covers the policy closure migration and its ACLs", async () => {
   // P3.1-W03A is migration #82 and is included in every from-scratch ACL check.
-  assert.equal(migrations.migrationNames.length, 99);
+  assert.equal(migrations.migrationNames.length, 100);
   assert.ok(migrations.migrationNames.includes(POLICY_MIGRATION));
   for (const signature of NEW_HELPERS) {
     const { rows } = await db.query(
