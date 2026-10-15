@@ -2,6 +2,7 @@
 
 - **Status:** `PRE_W2_HF_PROJECT_TEAM_BATCH_MAPPING_LOCAL_PASS_AWAITING_T0_REVIEW`
 - **Base:** `origin/main@614a9393a93e9591f08a8e835b08adcded697fbf` (fetched latest; includes the requested `d9c7299` baseline and subsequent main commits).
+- **Implementation commit:** `20207669575aa007afd3f830a149a2780057dc82` (batch backend, ledger rebaseline, and validation evidence).
 - **Migration ledger:** #97; #94 remains Project↔Team authority, #95 reporting-only, #96 is worker-export text/CCCD issue date, #97 is batch mapping.
 - **Migration SHA-256:** `20261015130000_pre_w2_hf_project_team_batch_mapping.sql` — `5147fb8073f00995fc5d0da0fd7f6888a3a6193a97aa0727ce9581d20f67c9e0`.
 - **Branch/worktree:** `feature/pre-w2-hf-project-team-mapping-backend` at `C:\CodeApp\BI-pre-w2-hf-project-team-mapping`.
