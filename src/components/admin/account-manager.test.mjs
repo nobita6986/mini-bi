@@ -60,9 +60,10 @@ test("reason field is locked once a mutation intent exists so retry replays the 
   assert.match(source, /rows=\{3\} disabled=\{disabled\}/);
 });
 
-test("only display_name and status are rendered; account_ref and version stay internal", () => {
-  assert.match(source, /<td className="px-3 py-3 font-medium">\{account\.display_name\}<\/td>/);
-  assert.match(source, /<strong>\{dialog\.account\.display_name\}<\/strong>/);
+test("real display name is primary and login id is secondary; account_ref and version stay internal", () => {
+  assert.match(source, /<span className="block font-medium">\{account\.display_name \?\? "Chưa cập nhật tên thật"\}<\/span>/);
+  assert.match(source, /\{account\.login_id \? <span className="block text-xs text-muted">\{account\.login_id\}<\/span> : null\}/);
+  assert.match(source, /<strong>\{dialog\.account\.display_name \?\? "Chưa cập nhật tên thật"\}<\/strong>/);
   // No JSX text interpolation of the opaque ref or the OCC version.
   assert.doesNotMatch(source, /\{account\.version\}/);
   assert.doesNotMatch(source, /\{dialog\.account\.version\}/);
@@ -71,7 +72,7 @@ test("only display_name and status are rendered; account_ref and version stay in
   // No version/label/raw-identity column or field anywhere in the surface.
   for (const file of [source, model]) {
     assert.doesNotMatch(file, /Phiên bản|auth_subject|revision|account_ref<\/th>|UUID<\/th/i);
-    assert.doesNotMatch(file, /\.email|display_name \?\?|display_name \|\|/);
+    assert.doesNotMatch(file, /\.email|display_name \|\|/);
   }
   // Exactly three visible columns.
   assert.equal(source.match(/<th scope="col"/g)?.length, 3);

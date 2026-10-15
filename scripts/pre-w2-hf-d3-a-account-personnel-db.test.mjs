@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the 93-migration ledger).
+ * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the migration ledger).
  *
  * Covers the durable account-operation intent, the narrow RPCs (begin/claim/read/finish,
  * finalize, update display name, create personnel from account, list eligible accounts,
@@ -15,14 +15,16 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const D3A_MIGRATION = "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql";
+const DEFAULT_CAPABILITIES_MIGRATION = "20261015150000_pre_w2_worker_data_capabilities_default.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
-  " create schema auth; create table auth.users (id uuid primary key);";
+  " create schema auth; create table auth.users (id uuid primary key, email text unique);";
 
 function uuid(n) {
   return "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
 }
+function loginForAuth(auth) { return "u" + auth.slice(-6); }
 
 const ADMIN_AUTH = uuid(31), ADMIN_APP = uuid(41);
 const LONE_AUTH = uuid(32), LONE_APP = uuid(42);   // entry_admin only
@@ -43,14 +45,50 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 98, "the ledger carries the PRE-W2-HF-D3-A migration as #92");
-  assert.equal(names[names.length - (7)], D3A_MIGRATION,
+  assert.equal(names.length, 100, "the ledger carries the worker-data default capabilities migration");
+  assert.equal(names[names.length - (9)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
+  assert.equal(names.at(-1), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
 }
 
-async function insertActor(db, auth, app, { capabilities = [], scopes = [], enabled = true } = {}) {
+async function buildDbBeforeDefaultCapabilities() {
+  const db = new PGlite();
+  await db.exec(AUTH_PROLOGUE);
+  const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
+  assert.equal(names.at(-1), DEFAULT_CAPABILITIES_MIGRATION);
+  for (const name of names.slice(0, -1)) {
+    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  }
+
+  const auth = uuid(901), app = uuid(902);
   await db.query("insert into auth.users (id) values ($1)", [auth]);
+  await db.query(
+    "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
+    " values ($1,$2,true,'Existing Account')", [app, auth]);
+  const today = (await db.query(
+    "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+  const future = new Date(Date.parse(today + "T00:00:00Z") + 10 * 86400000)
+    .toISOString().slice(0, 10);
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from)" +
+    " values ($1,'pii_view','2020-01-01')", [app]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from,valid_to)" +
+    " values ($1,'payment_view','2020-01-01',$2::date)", [app, today]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from)" +
+    " values ($1,'pii_export',$2::date)", [app, future]);
+  await db.query(
+    "insert into public.direct_entry_scope_grants (app_user_id,scope_kind,valid_from)" +
+    " values ($1,'own','2020-01-01')", [app]);
+
+  await db.exec(await readFile(path.join(MIGRATION_DIR, DEFAULT_CAPABILITIES_MIGRATION), "utf8"));
+  return { db, app, today, future };
+}
+
+async function insertActor(db, auth, app, { capabilities = [], scopes = [], enabled = true } = {}) {
+  await db.query("insert into auth.users (id, email) values ($1, $2)", [auth, loginForAuth(auth) + "@hrpartner.vn"]);
   await db.query(
     "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
     " values ($1,$2,$3,'D3A Account')", [app, auth, enabled]);
@@ -106,6 +144,32 @@ async function count(db, sql, params = []) {
 async function expectDenied(db, fn) {
   await assert.rejects(fn, (error) => error.code === "42501");
 }
+
+test("worker-data defaults cover existing accounts without changing their scopes or grant history", async () => {
+  const { db, app, today, future } = await buildDbBeforeDefaultCapabilities();
+  try {
+    for (const capability of ["pii_view", "payment_view", "pii_export"]) {
+      assert.equal(await count(db,
+        "select count(*) from public.direct_entry_capability_grants" +
+        " where app_user_id=$1 and capability=$2 and valid_from <= $3::date" +
+        " and (valid_to is null or $3::date < valid_to)", [app, capability, today]), 1,
+        `${capability} is effective on the baseline date`);
+    }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id=$1 and capability='pii_export' and valid_from=$2::date and valid_to is null",
+      [app, future]), 1, "a pre-existing future grant remains unchanged and contiguous");
+    assert.deepEqual((await db.query(
+      "select scope_kind from public.direct_entry_scope_grants where app_user_id=$1 order by scope_kind",
+      [app])).rows.map((row) => row.scope_kind), ["own"], "capability baseline does not add row scope");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events" +
+      " where action='capability_default_grant' and outcome='APPLIED'"), 2,
+    "only the two missing grant intervals are recorded by the migration");
+  } finally {
+    await db.close();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 1. Intent lifecycle + idempotent begin.
@@ -193,9 +257,9 @@ test("PRE-W2-HF-D3-A: two concurrent creates for one login_id leave only one liv
 });
 
 // ---------------------------------------------------------------------------
-// 4. finalize create (correct provenance) + no default grants.
+// 4. finalize create (correct provenance) + default worker-data capabilities.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenance", async () => {
+test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabilities", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -223,7 +287,14 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
     assert.equal(appliedIntent.account_ref, f.app_user_id,
       "an APPLIED create intent keeps the created app-user reference for reconciliation");
 
-    assert.equal(await count(db, "select count(*) from public.direct_entry_capability_grants where app_user_id = $1", [f.app_user_id]), 0);
+    const capabilities = (await db.query(
+      "select capability from public.direct_entry_capability_grants where app_user_id=$1 order by capability",
+      [f.app_user_id])).rows.map((row) => row.capability);
+    assert.deepEqual(capabilities, ["payment_view", "pii_export", "pii_view"].sort());
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events where app_user_id=$1" +
+      " and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 3,
+    "each default grant is audit-recorded under the creating Full Admin");
     assert.equal(await count(db, "select count(*) from public.direct_entry_scope_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links where app_user_id = $1", [f.app_user_id]), 0);
 
@@ -343,7 +414,7 @@ test("PRE-W2-HF-D3-A: update display name updates the app user and its linked re
     assert.equal(u1.version, 2);
     assert.equal(u1.recruiter_id, null);
 
-    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 2, "PC-001", "STAFF",
+    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 2, loginForAuth(TARGET_AUTH), "STAFF",
       "2026-01-05", "create personnel", idemKey()]);
     assert.equal(p.display_name, "New Name");
 
@@ -386,9 +457,10 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
   const db = await buildDb();
   try {
     await seed(db);
-    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-001", "STAFF",
+    const p = await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, loginForAuth(TARGET_AUTH), "STAFF",
       "2026-01-05", "create personnel", idemKey()]);
     assert.equal(p.display_name, "D3A Account");
+    assert.equal(p.personnel_code, loginForAuth(TARGET_AUTH));
     assert.equal(p.app_user_version, 2);
     assert.ok(p.recruiter_id);
     assert.ok(p.link_id);
@@ -408,12 +480,13 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
       [ADMIN_APP])).rows[0].n;
     assert.equal(linkAudit, 1);
 
-    // Conflict: same code on a different unlinked account fails with no residue.
+    // Legacy personnel-code collision still fails atomically.
     const secondAuth = uuid(82), secondApp = uuid(83);
     await insertActor(db, secondAuth, secondApp, { capabilities: ["entry_create"], scopes: ["own"] });
+    await db.query("insert into public.recruiters (display_name, personnel_code, personnel_position, active) values ('Existing', $1, 'STAFF', true)", [loginForAuth(secondAuth)]);
     const before = await count(db, "select count(*) from public.recruiters");
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, secondApp, 1, "PC-001", "STAFF",
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, secondApp, 1, loginForAuth(secondAuth), "STAFF",
         "2026-01-05", "create personnel again", idemKey()]),
       (error) => error.code === "23505");
     assert.equal(await count(db, "select count(*) from public.recruiters"), before);
@@ -430,19 +503,30 @@ test("PRE-W2-HF-D3-A: create personnel rejects disabled, already-linked, unknown
       () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, uuid(99), 1, "PC-002", "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "P0002");
 
+    await assert.rejects(
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "wrong-login", "STAFF", "2026-01-05", "r", idemKey()]),
+      (error) => error.code === "22023");
+
     // Empty personnel code -> input-invalid 22023, not 23514/23505.
     await assert.rejects(
       () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "   ", "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "22023");
 
-    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-003", "STAFF", "2026-01-05", "r", idemKey()]);
+    await db.query("update public.direct_entry_app_users set display_name = $1 where app_user_id = $2",
+      [loginForAuth(TARGET_AUTH), TARGET_APP]);
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 2, "PC-004", "STAFF", "2026-01-05", "r", idemKey()]),
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]),
+      (error) => error.code === "23514");
+    await db.query("update public.direct_entry_app_users set display_name = 'D3A Account' where app_user_id = $1", [TARGET_APP]);
+
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]);
+    await assert.rejects(
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 2, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "23514");
 
     await db.query("update public.direct_entry_app_users set enabled = false, version = version + 1 where app_user_id = $1", [TARGET_APP]);
     await assert.rejects(
-      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 3, "PC-005", "STAFF", "2026-01-05", "r", idemKey()]),
+      () => createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 3, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]),
       (error) => error.code === "23514");
   } finally {
     await db.close();
@@ -456,7 +540,7 @@ test("PRE-W2-HF-D3-A: a recruiter cannot gain a second verified app-user link", 
   const db = await buildDb();
   try {
     await seed(db);
-    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]);
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]);
     const secondAuth = uuid(80), secondApp = uuid(81);
     await insertActor(db, secondAuth, secondApp, { capabilities: ["entry_create"], scopes: ["own"] });
     const recruiter = (await db.query("select recruiter_id from public.recruiters")).rows[0].recruiter_id;
@@ -484,13 +568,16 @@ test("PRE-W2-HF-D3-A: list eligible accounts returns only enabled unlinked accou
 
     const all = await listEligible(db, [ADMIN_AUTH, ADMIN_APP, 1, 25]);
     assert.ok(all.total >= 2);
+    const target = all.accounts.find((account) => account.app_user_id === TARGET_APP);
+    assert.equal(target.display_name, "D3A Account");
+    assert.equal(target.login_id, loginForAuth(TARGET_AUTH));
 
     const serialized = JSON.stringify(all);
     assert.ok(!serialized.includes(TARGET_AUTH), "auth_subject must not leak");
     assert.ok(!serialized.includes(secondAuth), "auth_subject must not leak");
 
     // Link TARGET, it drops out of the eligible set.
-    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]);
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, TARGET_APP, 1, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]);
     const after = await listEligible(db, [ADMIN_AUTH, ADMIN_APP, 1, 25]);
     const ids = after.accounts.map((a) => a.app_user_id);
     assert.equal(ids.includes(TARGET_APP), false, "linked account is no longer eligible");
@@ -511,7 +598,7 @@ test("PRE-W2-HF-D3-A: only the Full Admin triple with all scope may mutate", asy
     await expectDenied(db, () => begin(db, [ACC_AUTH, ACC_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
     await expectDenied(db, () => begin(db, [DISABLED_AUTH, DISABLED_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
     await expectDenied(db, () => begin(db, [UNMAPPED_AUTH, UNMAPPED_APP, "CREATE_ACCOUNT", "abc123", "Alpha Beta", null, "create", idemKey()]));
-    await expectDenied(db, () => createPersonnel(db, [LONE_AUTH, LONE_APP, TARGET_APP, 1, "PC-001", "STAFF", "2026-01-05", "r", idemKey()]));
+    await expectDenied(db, () => createPersonnel(db, [LONE_AUTH, LONE_APP, TARGET_APP, 1, loginForAuth(TARGET_AUTH), "STAFF", "2026-01-05", "r", idemKey()]));
     await expectDenied(db, () => updateName(db, [ACC_AUTH, ACC_APP, TARGET_APP, "X", 1, "r", idemKey()]));
     await expectDenied(db, () => listEligible(db, [ACC_AUTH, ACC_APP, 1, 25]));
   } finally {
