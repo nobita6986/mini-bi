@@ -78,7 +78,7 @@ After this migration the leader no longer may close (unassign) a lingering PM as
 - `pnpm secrets:check`: PASS (1760 files).
 - `pnpm docs:check`: PASS.
 - `git diff --check`: PASS (whitespace).
-- T0 follow-up local checks: focused DB lane 7/7, offline migration validation 94/94, docs 6/6, secrets scan clean (1762 files), `git diff --check` clean. Latest GitHub CI for the updated branch is pending; see PR #23.
+- T0 follow-up local checks: focused DB lane 7/7, offline migration validation 94/94, docs 6/6, secrets scan clean (1762 files), `git diff --check` clean. GitHub CI run `38686303164` for branch head `086b4a9` passed all jobs; the PR check page remains authoritative for later runs.
 
 ## 8. ACL summary
 
