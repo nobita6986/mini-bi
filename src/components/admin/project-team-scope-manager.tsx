@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
@@ -11,14 +11,26 @@ import {
   buildGrantRequest,
   buildMappingListQuery,
   buildRevokeRequest,
-  classifyMappingResponse,
+  classifyGrantResponse,
+  classifyRevokeResponse,
+  filterActiveProjects,
+  MAX_BATCH_PROJECTS,
   newMappingKey,
+  paginateProjects,
+  PROJECT_PICKER_PAGE_SIZE,
+  toggleProjectSelection,
   type MappingUiOutcome,
 } from "@/lib/admin/project-team-scope-ui-model";
 import type {
   ProjectTeamScopeMapping,
   ProjectTeamScopeList,
 } from "@/lib/admin/project-team-scope-contract";
+import { parseListResponse, type ProjectView } from "@/lib/direct-entry/project-operations-model";
+import {
+  buildTeamListQuery,
+  projectTeamListForQuery,
+} from "@/lib/admin/team-catalog-model";
+import type { AdminTeam, AdminTeamList } from "@/lib/direct-entry/team-catalog-contract";
 
 const button = "inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
 const primary = "inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
@@ -28,6 +40,12 @@ type DialogState =
   | { kind: "grant" }
   | { kind: "revoke"; mapping: ProjectTeamScopeMapping }
   | null;
+
+type PickerState<T> =
+  | { kind: "loading" }
+  | { kind: "ready"; value: T }
+  | { kind: "denied" }
+  | { kind: "error" };
 
 export function ProjectTeamScopeManager() {
   const [list, setList] = useState<ProjectTeamScopeList | null>(null);
@@ -41,12 +59,19 @@ export function ProjectTeamScopeManager() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<MappingUiOutcome | null>(null);
-  const [grantProjectId, setGrantProjectId] = useState("");
-  const [grantTeamId, setGrantTeamId] = useState("");
-  const [grantPairVersion, setGrantPairVersion] = useState("0");
-  const [grantEffectiveFrom, setGrantEffectiveFrom] = useState("");
+  const [projectPicker, setProjectPicker] = useState<PickerState<ProjectView[]>>({ kind: "loading" });
+  const [projectReloadToken, setProjectReloadToken] = useState(0);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectPage, setProjectPage] = useState(1);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [teamPicker, setTeamPicker] = useState<PickerState<AdminTeamList>>({ kind: "loading" });
+  const [teamSearch, setTeamSearch] = useState("");
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamReloadToken, setTeamReloadToken] = useState(0);
+  const [selectedTeam, setSelectedTeam] = useState<AdminTeam | null>(null);
   const [revokeEffectiveTo, setRevokeEffectiveTo] = useState("");
   const [reason, setReason] = useState("");
+  const pendingIntent = useRef<{ signature: string; key: string } | null>(null);
 
   useEffect(() => {
     const query = buildMappingListQuery({ projectId: projectIdFilter, teamId: teamIdFilter, includeHistory, page });
@@ -73,18 +98,106 @@ export function ProjectTeamScopeManager() {
     return () => controller.abort();
   }, [includeHistory, page, projectIdFilter, reloadToken, teamIdFilter]);
 
+  useEffect(() => {
+    if (dialog?.kind !== "grant") return;
+    const controller = new AbortController();
+    void (async () => {
+      setProjectPicker({ kind: "loading" });
+      try {
+        const response = await fetch("/api/direct-entry/projects?include_inactive=true", {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (response.status === 401 || response.status === 403) {
+          setProjectPicker({ kind: "denied" });
+          return;
+        }
+        if (response.status !== 200) {
+          setProjectPicker({ kind: "error" });
+          return;
+        }
+        const projects = parseListResponse(await response.json());
+        if (!projects) {
+          setProjectPicker({ kind: "error" });
+          return;
+        }
+        setProjectPicker({ kind: "ready", value: projects });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setProjectPicker({ kind: "error" });
+      }
+    })();
+    return () => controller.abort();
+  }, [dialog?.kind, projectReloadToken]);
+
+  useEffect(() => {
+    if (dialog?.kind !== "grant") return;
+    const query = buildTeamListQuery({ search: teamSearch, includeInactive: false, page: teamPage });
+    if (!query) return;
+    const controller = new AbortController();
+    void (async () => {
+      setTeamPicker({ kind: "loading" });
+      try {
+        const response = await fetch(`/api/admin/catalog/teams?${query.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (response.status === 401 || response.status === 403) {
+          setTeamPicker({ kind: "denied" });
+          return;
+        }
+        if (response.status !== 200) {
+          setTeamPicker({ kind: "error" });
+          return;
+        }
+        const list = projectTeamListForQuery(await response.json(), {
+          search: teamSearch,
+          includeInactive: false,
+          page: teamPage,
+        });
+        if (!list || list.teams.some((team) => !team.active)) {
+          setTeamPicker({ kind: "error" });
+          return;
+        }
+        setTeamPicker({ kind: "ready", value: list });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setTeamPicker({ kind: "error" });
+      }
+    })();
+    return () => controller.abort();
+  }, [dialog?.kind, teamPage, teamReloadToken, teamSearch]);
+
   const reloadList = () => { setState("loading"); setReloadToken((v) => v + 1); };
 
   async function submitDialog() {
     setFormError(null);
     setNotice(null);
     if (!dialog) return;
-    const key = newMappingKey();
+    const signature = JSON.stringify(dialog.kind === "grant"
+      ? { kind: dialog.kind, projectIds: selectedProjectIds, teamId: selectedTeam?.team_id, reason: reason.trim() }
+      : { kind: dialog.kind, mappingId: dialog.mapping.mapping_id, effectiveTo: revokeEffectiveTo, reason: reason.trim() });
+    const key = pendingIntent.current?.signature === signature
+      ? pendingIntent.current.key
+      : newMappingKey();
+    pendingIntent.current = { signature, key };
     const request = dialog.kind === "grant"
-      ? buildGrantRequest({ projectId: grantProjectId, teamId: grantTeamId,
-        expectedPairVersion: /^(0|[1-9]\d*)$/.test(grantPairVersion) ? Number(grantPairVersion) : Number.NaN,
-        effectiveFrom: grantEffectiveFrom, reason, idempotencyKey: key })
-      : buildRevokeRequest({ mappingId: dialog.mapping.mapping_id, expectedPairVersion: dialog.mapping.version, effectiveTo: revokeEffectiveTo, reason, idempotencyKey: key });
+      ? buildGrantRequest({
+          projectIds: selectedProjectIds,
+          teamId: selectedTeam?.team_id ?? "",
+          reason,
+          idempotencyKey: key,
+        })
+      : buildRevokeRequest({
+          mappingId: dialog.mapping.mapping_id,
+          effectiveTo: revokeEffectiveTo,
+          reason,
+          idempotencyKey: key,
+        });
     if (!request.ok) { setFormError(request.message); return; }
     const url = dialog.kind === "grant" ? "/api/admin/catalog/project-team-scopes" : `/api/admin/catalog/project-team-scopes/${encodeURIComponent(dialog.mapping.mapping_id)}/revoke`;
     setBusy(true);
@@ -94,10 +207,29 @@ export function ProjectTeamScopeManager() {
         headers: { Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": key },
         body: JSON.stringify(request.body),
       });
-      const outcome = classifyMappingResponse(response.status);
+      const payload: unknown = await response.json().catch(() => null);
+      const projectNames = new Map(
+        (projectPicker.kind === "ready" ? projectPicker.value : [])
+          .map((project) => [project.project_id, project.display_name] as const),
+      );
+      const outcome = dialog.kind === "grant"
+        ? classifyGrantResponse(
+            response.status,
+            payload,
+            selectedTeam?.team_id ?? "",
+            selectedProjectIds,
+            projectNames,
+          )
+        : classifyRevokeResponse(response.status, payload, dialog.mapping.mapping_id);
       setBusy(false);
       setNotice(outcome);
-      if (outcome.kind === "applied") { setDialog(null); reloadList(); }
+      if (outcome.kind === "applied") {
+        pendingIntent.current = null;
+        setDialog(null);
+        setSelectedProjectIds([]);
+        setSelectedTeam(null);
+        reloadList();
+      }
       else setFormError(outcome.message);
     } catch {
       setBusy(false);
@@ -107,6 +239,13 @@ export function ProjectTeamScopeManager() {
 
   const mappings = list?.mappings ?? [];
   const pageCount = list ? Math.max(1, Math.ceil(list.total / Math.max(1, list.page_size))) : 1;
+  const allProjects = projectPicker.kind === "ready" ? projectPicker.value : [];
+  const activeProjects = filterActiveProjects(allProjects, projectSearch);
+  const visibleProjects = paginateProjects(activeProjects, projectPage);
+  const projectPickerPageCount = Math.max(1, Math.ceil(activeProjects.length / PROJECT_PICKER_PAGE_SIZE));
+  const projectNames = new Map(allProjects.map((project) => [project.project_id, project.display_name] as const));
+  const teamList = teamPicker.kind === "ready" ? teamPicker.value : null;
+  const teamPageCount = teamList ? Math.max(1, Math.ceil(teamList.total / Math.max(1, teamList.page_size))) : 1;
 
   return (
     <div className="space-y-6">
@@ -131,12 +270,28 @@ export function ProjectTeamScopeManager() {
             Bao gồm lịch sử
           </label>
           <button type="submit" className={button}>Lọc</button>
-          <button type="button" className={primary} onClick={() => { setReason(""); setGrantPairVersion("0"); setFormError(null); setDialog({ kind: "grant" }); }}>Cấp mapping</button>
+          <button type="button" className={primary} onClick={() => {
+            setReason("");
+            setSelectedProjectIds([]);
+            setSelectedTeam(null);
+            setProjectSearch("");
+            setProjectPage(1);
+            setTeamSearch("");
+            setTeamPage(1);
+            pendingIntent.current = null;
+            setFormError(null);
+            setDialog({ kind: "grant" });
+          }}>Cấp mapping</button>
         </form>
 
         {state === "loading" ? <p role="status" className="py-8 text-center text-sm text-muted">Đang tải…</p> : null}
         {state === "denied" ? <Alert tone="error" title="Không có quyền">Chỉ Full Admin được xem mapping.</Alert> : null}
-        {state === "error" ? <ErrorState title="Không tải được danh sách mapping" /> : null}
+        {state === "error" ? (
+          <div className="space-y-2">
+            <ErrorState title="Không tải được danh sách mapping" />
+            <button type="button" className={button} onClick={reloadList}>Thử tải lại</button>
+          </div>
+        ) : null}
         {state === "ready" && mappings.length === 0 ? <EmptyState title="Chưa có mapping nào" /> : null}
         {state === "ready" && mappings.length > 0 ? (
           <div className="overflow-x-auto">
@@ -160,7 +315,7 @@ export function ProjectTeamScopeManager() {
                     <td className="px-3 py-3 text-right">
                       {m.valid_to === null ? (
                         <button type="button" className={button} disabled={busy}
-                          onClick={() => { setRevokeEffectiveTo(""); setReason(""); setFormError(null); setDialog({ kind: "revoke", mapping: m }); }}>
+                          onClick={() => { pendingIntent.current = null; setRevokeEffectiveTo(""); setReason(""); setFormError(null); setDialog({ kind: "revoke", mapping: m }); }}>
                           Thu hồi
                         </button>
                       ) : null}
@@ -180,7 +335,12 @@ export function ProjectTeamScopeManager() {
         ) : null}
       </Card>
 
-      <Dialog.Root open={dialog !== null} onOpenChange={(open) => { if (!open && !busy) setDialog(null); }}>
+      <Dialog.Root open={dialog !== null} onOpenChange={(open) => {
+        if (!open && !busy) {
+          pendingIntent.current = null;
+          setDialog(null);
+        }
+      }}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-xl focus:outline-none sm:p-6" aria-describedby="mapping-dialog-desc">
@@ -194,20 +354,113 @@ export function ProjectTeamScopeManager() {
             <form className="mt-5 space-y-4" onSubmit={(e) => { e.preventDefault(); void submitDialog(); }}>
               {dialog?.kind === "grant" ? (
                 <>
-                  <label className="flex flex-col gap-1 text-sm font-medium">Project ID
-                    <input value={grantProjectId} maxLength={128} required onChange={(e) => setGrantProjectId(e.target.value)} className={input} />
-                  </label>
-                  <label className="flex flex-col gap-1 text-sm font-medium">Team ID (UUID)
-                    <input value={grantTeamId} maxLength={64} required onChange={(e) => setGrantTeamId(e.target.value)} className={input} />
-                  </label>
-                  <label className="flex flex-col gap-1 text-sm font-medium">Phiên bản cặp mapping
-                    <input type="number" min="0" step="1" value={grantPairVersion} required
-                      onChange={(e) => setGrantPairVersion(e.target.value)} className={input} />
-                    <span className="text-xs text-muted">Dùng 0 nếu cặp này chưa từng được cấp; nếu đã có lịch sử, lọc theo Project ID + Team ID, bật lịch sử và nhập version mới nhất.</span>
-                  </label>
-                  <label className="flex flex-col gap-1 text-sm font-medium">Ngày hiệu lực
-                    <input type="date" value={grantEffectiveFrom} onChange={(e) => setGrantEffectiveFrom(e.target.value)} className={input} />
-                  </label>
+                  <section aria-labelledby="project-picker-title" className="space-y-3">
+                    <label className="flex flex-col gap-1 text-sm font-medium">Tìm dự án
+                      <input type="search" value={projectSearch} disabled={busy}
+                        onChange={(e) => { setProjectSearch(e.target.value); setProjectPage(1); }}
+                        className={input} />
+                    </label>
+                    <h3 id="project-picker-title" className="text-sm font-semibold">
+                      Chọn dự án ({selectedProjectIds.length}/{MAX_BATCH_PROJECTS})
+                    </h3>
+                    {projectPicker.kind === "loading" ? <p role="status" className="text-sm text-muted">Đang tải dự án…</p> : null}
+                    {projectPicker.kind === "denied" ? <Alert tone="error" title="Không có quyền">Không thể tải danh sách dự án.</Alert> : null}
+                    {projectPicker.kind === "error" ? (
+                      <div className="space-y-2">
+                        <ErrorState title="Không tải được danh sách dự án" />
+                        <button type="button" className={button} disabled={busy}
+                          onClick={() => setProjectReloadToken((value) => value + 1)}>Thử tải lại</button>
+                      </div>
+                    ) : null}
+                    {projectPicker.kind === "ready" ? (
+                      <>
+                        <fieldset className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-3">
+                          <legend className="px-1 text-xs text-muted">Dự án đang hoạt động</legend>
+                          {visibleProjects.map((project) => {
+                            const checked = selectedProjectIds.includes(project.project_id);
+                            return (
+                              <label key={project.project_id} className="flex items-center gap-2 py-1 text-sm">
+                                <input type="checkbox" checked={checked} disabled={busy || (!checked && selectedProjectIds.length >= MAX_BATCH_PROJECTS)}
+                                  aria-label={`Chọn dự án ${project.display_name}`}
+                                  onChange={(event) => {
+                                    setFormError(null);
+                                    setSelectedProjectIds((current) =>
+                                      toggleProjectSelection(current, project.project_id, event.target.checked));
+                                  }}
+                                  className="size-4 accent-primary" />
+                                <span>{project.display_name}</span>
+                              </label>
+                            );
+                          })}
+                          {visibleProjects.length === 0 ? (
+                            <p className="py-2 text-sm text-muted">
+                              {allProjects.some((project) => project.active)
+                                ? "Không có dự án phù hợp với nội dung tìm kiếm."
+                                : "Chưa có dự án đang hoạt động."}
+                            </p>
+                          ) : null}
+                        </fieldset>
+                        <div className="flex items-center gap-2 text-sm text-muted">
+                          <button type="button" className={button} disabled={busy || projectPage <= 1}
+                            onClick={() => setProjectPage((value) => Math.max(1, value - 1))}>Trang trước</button>
+                          <span>Trang {projectPage} / {projectPickerPageCount}</span>
+                          <button type="button" className={button}
+                            disabled={busy || projectPage >= projectPickerPageCount}
+                            onClick={() => setProjectPage((value) => Math.min(projectPickerPageCount, value + 1))}>Trang sau</button>
+                        </div>
+                        <p className="text-xs text-muted">
+                          Đã chọn: {selectedProjectIds.map((id) => projectNames.get(id)).filter(Boolean).join(", ") || "chưa có dự án"}.
+                        </p>
+                      </>
+                    ) : null}
+                  </section>
+                  <section className="space-y-3" aria-labelledby="team-picker-title">
+                    <h3 id="team-picker-title" className="text-sm font-semibold">Chọn một nhóm</h3>
+                    <label className="flex flex-col gap-1 text-sm font-medium">Tìm nhóm
+                      <input type="search" value={teamSearch} disabled={busy}
+                        maxLength={256}
+                        onChange={(e) => { setTeamSearch(e.target.value); setTeamPage(1); }}
+                        className={input} />
+                    </label>
+                    {teamPicker.kind === "loading" ? <p role="status" className="text-sm text-muted">Đang tải nhóm…</p> : null}
+                    {teamPicker.kind === "denied" ? <Alert tone="error" title="Không có quyền">Không thể tải danh sách nhóm.</Alert> : null}
+                    {teamPicker.kind === "error" ? (
+                      <div className="space-y-2">
+                        <ErrorState title="Không tải được danh sách nhóm" />
+                        <button type="button" className={button} disabled={busy}
+                          onClick={() => setTeamReloadToken((value) => value + 1)}>Thử tải lại</button>
+                      </div>
+                    ) : null}
+                    {teamPicker.kind === "ready" ? (
+                      <>
+                        <label className="flex flex-col gap-1 text-sm font-medium">Nhóm
+                          <select required value={selectedTeam?.team_id ?? ""} disabled={busy} className={input}
+                            onChange={(event) => {
+                              setFormError(null);
+                              setSelectedTeam(
+                                teamList?.teams.find((team) => team.team_id === event.target.value) ?? null,
+                              );
+                            }}>
+                            <option value="">Chọn nhóm</option>
+                            {selectedTeam && !teamList?.teams.some((team) => team.team_id === selectedTeam.team_id)
+                              ? <option value={selectedTeam.team_id}>{selectedTeam.display_name}</option>
+                              : null}
+                            {teamList?.teams.filter((team) => team.active).map((team) => (
+                              <option key={team.team_id} value={team.team_id}>{team.display_name} ({team.code})</option>
+                            ))}
+                          </select>
+                        </label>
+                        {teamList?.teams.length === 0 ? <p className="text-sm text-muted">Không có nhóm đang hoạt động phù hợp.</p> : null}
+                        <div className="flex items-center gap-2 text-sm text-muted">
+                          <button type="button" className={button} disabled={busy || teamPage <= 1}
+                            onClick={() => setTeamPage((value) => Math.max(1, value - 1))}>Trang trước</button>
+                          <span>Trang {teamPage} / {teamPageCount}</span>
+                          <button type="button" className={button} disabled={busy || teamPage >= teamPageCount}
+                            onClick={() => setTeamPage((value) => Math.min(teamPageCount, value + 1))}>Trang sau</button>
+                        </div>
+                      </>
+                    ) : null}
+                  </section>
                 </>
               ) : dialog ? (
                 <>
@@ -223,7 +476,10 @@ export function ProjectTeamScopeManager() {
               {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
               <div className="flex justify-end gap-2">
                 <Dialog.Close asChild><button type="button" disabled={busy} className={button}>Hủy</button></Dialog.Close>
-                <button type="submit" disabled={busy} className={primary}>{busy ? "Đang lưu…" : dialog?.kind === "grant" ? "Cấp mapping" : "Xác nhận thu hồi"}</button>
+                <button type="submit" disabled={busy || (dialog?.kind === "grant" && (
+                  projectPicker.kind !== "ready" || teamPicker.kind !== "ready" ||
+                  selectedProjectIds.length < 1 || selectedProjectIds.length > MAX_BATCH_PROJECTS || !selectedTeam
+                ))} className={primary}>{busy ? "Đang lưu…" : dialog?.kind === "grant" ? "Cấp mapping" : "Xác nhận thu hồi"}</button>
               </div>
             </form>
           </Dialog.Content>

@@ -5,12 +5,17 @@ import {
   buildGrantRequest,
   buildMappingListQuery,
   buildRevokeRequest,
-  classifyMappingResponse,
+  classifyGrantResponse,
+  classifyRevokeResponse,
+  filterActiveProjects,
+  paginateProjects,
+  toggleProjectSelection,
 } from "./project-team-scope-ui-model.ts";
 
 const TEAM = "66666666-6666-4666-8666-666666666666";
 const MAPPING = "77777777-7777-4777-8777-777777777777";
 const KEY = "55555555-5555-4555-8555-555555555555";
+const IDS = ["project-1", "project-2"];
 
 test("mapping query is bounded and preserves filters", () => {
   assert.equal(buildMappingListQuery({ projectId: "x", includeHistory: false, page: 0 }), null);
@@ -20,24 +25,109 @@ test("mapping query is bounded and preserves filters", () => {
   ]);
 });
 
-test("legacy UI mutation builders are blocked until the coordinated batch UI contract update", () => {
-  const grant = buildGrantRequest({ projectId: " project-1 ", teamId: TEAM,
-    expectedPairVersion: 0, effectiveFrom: "", reason: "grant", idempotencyKey: KEY });
-  assert.equal(grant.ok, false);
-  const revoke = buildRevokeRequest({ mappingId: MAPPING, expectedPairVersion: 2,
-    effectiveTo: "2026-10-15", reason: "same-day", idempotencyKey: KEY });
-  assert.equal(revoke.ok, false);
-  assert.equal(buildGrantRequest({ projectId: "x", teamId: TEAM, expectedPairVersion: -1,
-    effectiveFrom: "", reason: "r", idempotencyKey: KEY }).ok, false);
-  assert.equal(buildRevokeRequest({ mappingId: MAPPING, expectedPairVersion: 0,
-    effectiveTo: "", reason: "r", idempotencyKey: KEY }).ok, false);
+test("project selection survives filtering and paging and is limited to one hundred unique projects", () => {
+  const projects = Array.from({ length: 31 }, (_, index) => ({
+    project_id: `project-${index + 1}`,
+    display_name: index === 1 ? "Archived Project" : `Project ${index + 1}`,
+    active: index !== 1,
+  }));
+  const matching = filterActiveProjects(projects, "project 3");
+  assert.deepEqual(matching.map(({ project_id }) => project_id), ["project-3", "project-30", "project-31"]);
+  assert.deepEqual(filterActiveProjects(projects, "archived"), []);
+  assert.equal(paginateProjects(projects, 2).length, 6);
+
+  const firstPageSelection = toggleProjectSelection([], "project-1", true);
+  const afterChangingFilterAndPage = toggleProjectSelection(firstPageSelection, "project-27", true);
+  assert.deepEqual(afterChangingFilterAndPage, ["project-1", "project-27"]);
+  assert.deepEqual(toggleProjectSelection(afterChangingFilterAndPage, "project-1", false), ["project-27"]);
+  assert.equal(toggleProjectSelection(Array.from({ length: 100 }, (_, i) => `p-${i}`), "another", true).length, 100);
 });
 
-test("response mapping sanitizes conflict and authorization errors", () => {
-  assert.equal(classifyMappingResponse(200).kind, "applied");
-  assert.equal(classifyMappingResponse(401).kind, "denied");
-  assert.equal(classifyMappingResponse(403).kind, "denied");
-  assert.equal(classifyMappingResponse(409).kind, "conflict");
-  assert.equal(classifyMappingResponse(422).kind, "invalid");
-  assert.equal(classifyMappingResponse(503).kind, "unavailable");
+test("batch grant body has only the exact versionless contract keys and enforces 1-100 unique IDs", () => {
+  const request = buildGrantRequest({
+    projectIds: IDS,
+    teamId: TEAM,
+    reason: "reviewed",
+    idempotencyKey: KEY,
+  });
+  assert.deepEqual(request, {
+    ok: true,
+    body: { team_id: TEAM, project_ids: IDS, reason: "reviewed", idempotency_key: KEY },
+  });
+  assert.deepEqual(Object.keys(request.body).sort(), ["idempotency_key", "project_ids", "reason", "team_id"]);
+  assert.equal(buildGrantRequest({ projectIds: [], teamId: TEAM, reason: "r", idempotencyKey: KEY }).ok, false);
+  assert.equal(buildGrantRequest({ projectIds: Array.from({ length: 101 }, (_, i) => `p-${i}`), teamId: TEAM, reason: "r", idempotencyKey: KEY }).ok, false);
+  assert.equal(buildGrantRequest({ projectIds: ["same", "same"], teamId: TEAM, reason: "r", idempotencyKey: KEY }).ok, false);
+});
+
+test("revoke body is versionless and exactly matches the current contract", () => {
+  const request = buildRevokeRequest({
+    mappingId: MAPPING,
+    effectiveTo: "",
+    reason: "same-day",
+    idempotencyKey: KEY,
+  });
+  assert.deepEqual(request, {
+    ok: true,
+    body: { mapping_id: MAPPING, effective_to: null, reason: "same-day", idempotency_key: KEY },
+  });
+  assert.deepEqual(Object.keys(request.body).sort(), ["effective_to", "idempotency_key", "mapping_id", "reason"]);
+});
+
+test("batch outcome strictly distinguishes created and already-effective projects", () => {
+  const labels = new Map([["project-1", "Project One"], ["project-2", "Project Two"]]);
+  const outcome = classifyGrantResponse(200, {
+    ok: true,
+    batch: {
+      team_id: TEAM,
+      effective_from: "2026-10-15",
+      created: [{
+        mapping_id: MAPPING,
+        project_id: "project-1",
+        team_id: TEAM,
+        valid_from: "2026-10-15",
+        valid_to: null,
+        version: 1,
+        created: true,
+      }],
+      skipped: [{
+        project_id: "project-2",
+        status: "ALREADY_EFFECTIVE",
+        mapping_id: "88888888-8888-4888-8888-888888888888",
+        version: 1,
+      }],
+    },
+  }, TEAM, IDS, labels);
+  assert.deepEqual(outcome, {
+    kind: "applied",
+    message: "Đã tạo 1 mapping: Project One. Đã bỏ qua 1 dự án đã có mapping hiệu lực: Project Two. Hiệu lực từ 2026-10-15.",
+  });
+  assert.equal(classifyGrantResponse(200, { ok: true }, TEAM, IDS, labels).kind, "unavailable");
+  assert.equal(classifyGrantResponse(200, {
+    ok: true,
+    batch: { team_id: TEAM, effective_from: "2026-10-15", created: [], skipped: [] },
+  }, TEAM, IDS, labels).kind, "unavailable");
+});
+
+test("mutation errors remain sanitized and revoke success requires the exact authoritative projection", () => {
+  assert.equal(classifyGrantResponse(401, null, TEAM, IDS, new Map()).kind, "denied");
+  assert.equal(classifyGrantResponse(403, null, TEAM, IDS, new Map()).kind, "denied");
+  assert.equal(classifyGrantResponse(409, null, TEAM, IDS, new Map()).kind, "conflict");
+  assert.equal(classifyGrantResponse(422, null, TEAM, IDS, new Map()).kind, "invalid");
+  assert.equal(classifyGrantResponse(503, null, TEAM, IDS, new Map()).kind, "unavailable");
+  assert.deepEqual(classifyRevokeResponse(200, {
+    ok: true,
+    scope: {
+      mapping_id: MAPPING,
+      project_id: "project-1",
+      team_id: TEAM,
+      valid_to: "2026-10-15",
+      version: 2,
+      revoked: true,
+    },
+  }, MAPPING), {
+    kind: "applied",
+    message: "Đã thu hồi mapping. Danh sách đang được cập nhật.",
+  });
+  assert.equal(classifyRevokeResponse(200, { ok: true }, MAPPING).kind, "unavailable");
 });
