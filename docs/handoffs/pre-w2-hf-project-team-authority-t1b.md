@@ -4,7 +4,7 @@
 > Branch: `codex/pre-w2-hf-project-team-authority-t1b` (isolated worktree, no primary-checkout changes).
 > PR for CI only (draft, not for merge by T1): nobita6986/mini-bi#23.
 > Base: `origin/main@3ffc9f8c887dcb8cb75eaef1bb17409aa7316228` (93 migration files verified immediately before work).
-> Final head: `876929fdc7b95e35b039c482dd329621070756cd` (commits `b2d58e1` + `876929f`).
+> T0 review-fix code commit: `dd50bd9` (reject future-effective revoke dates).
 
 ## 1. Preflight (per the T0 contract)
 
@@ -19,7 +19,7 @@
 
 | Slot | File | SHA-256 (ledger-algorithm) |
 | --- | --- | --- |
-| #94 | `20261015100000_pre_w2_hf_project_team_authority.sql` | `f631008f46f3444af6ea9eab9c2d0074b61a8d672413eac41a6b48b4e77535c2` |
+| #94 | `20261015100000_pre_w2_hf_project_team_authority.sql` | `e7cd3ca5aeb73d04d6bb4e096cebb45bb6d4a176f1dfff67c021e88fde849baf` |
 
 - **Table `public.direct_entry_project_team_scopes`** (forced RLS, revoked from every role): `mapping_id` PK, `project_id` FK→`direct_entry_projects(project_id)`, `team_id` FK→`teams(team_id)`, `valid_from`, nullable exclusive `valid_to`, pair-version OCC `version` (≥1; 0 = never mapped, monotonic per pair on grant AND revoke), `granted_by_user_id`, `revoked_by_user_id`, `reason_id`, `revoke_reason_id`, `revoked_at`, `created_at`, `updated_at`; constraint `direct_entry_project_team_scopes_revocation_check` and `direct_entry_project_team_scopes_interval_check`.
 - **Indexes**: partial unique open pair `direct_entry_project_team_scopes_open_pair_uidx` (≤1 open mapping per `(project_id, team_id)`), effective lookup index, team index.
@@ -33,15 +33,16 @@
 - **Project master remains denied** to Leaders in `direct_entry_create_project/_update_project/_set_project_active` (unchanged, 42501) and `can_manage_project_master` stays `v_authority <> 'team_manager_assign'` (false for Leaders).
 - **Install-time self-check** pins column set, unique open-pair index, the `>=` interval check, three guard triggers, forced RLS, table/RPC ACL boundary, internal-helper revocation, fixed search_path, and forbids a new `direct_entry_assert_project_team_admin` resolver (reuses the canonical `direct_entry_assert_actor_app_user_admin` Full Admin triple guard from #92).
 
-## 3. Interval-rule contract deviation (T0-approved)
+## 3. Interval-rule contract clarification (T0 D6 amendment)
 
-The contract (§Authorization/D6) required strict `valid_to > valid_from`, which makes an immediate same-day revoke impossible for a mapping granted that day (half-open `[valid_from, valid_to)` needs a zero-length interval to end the same date). Confirmed with T0:
+The D6 addendum at `docs/handoffs/pre-w2-hf-project-team-authority-d6-amendment.md` narrows the strict interval rule only for an audited same-day cancellation:
 
 - The DB check is `valid_to is null or valid_to >= valid_from`.
 - Only the audited revoke RPC may write `valid_to = valid_from` (zero-length cancellation marker, W01D marker-guard style); a grant always writes `valid_to = null`.
-- Every other guard/lock order/reason/OCC/idempotency rule stands.
+- Future-effective revoke dates are rejected (`22023`); revocation is immediate on the canonical authorization date, with no scheduled future close.
+- A current-date revoke on an older mapping removes access immediately. All other guard/lock order/reason/OCC/idempotency rules stand.
 
-Recorded in the migration header comment, the marker guard, the self-check, and the DB regression test (same-day grant→revoke kills access immediately; explicit future `effective_to` is honored).
+Recorded in the migration header, marker guard and self-check, plus the DB regression (same-day cancellation, current-date close, future-date rejection with no mapping/audit/idempotency residue).
 
 ## 4. Team Leader Project Operations behavior change (contract-mandated)
 
@@ -57,9 +58,9 @@ After this migration the leader no longer may close (unassign) a lingering PM as
 
 ## 6. Tests added
 
-- `scripts/pre-w2-hf-project-team-authority-db.test.mjs` (focused DB lane): ledger position + source assertions (no generic-helper rewrite, mapping predicate in every replaced RPC, Full Admin guard reuse), table/RPC/helper ACL boundary tests, Sample **Full Admin allows vs lone-admin/accounting/disabled/unmapped/leader denied**, grant validation (target/OCC/idempotency/overlap/interval), mapping-gate matrix for leader reads and assign/unassign (own team ok; cross-team/unmapped/foreign-team/inactive denied), revoke → fails closed + PM history untouched → regrant restores access (history=2), no-residue denied leader write, and revoke date semantics (same-day marker, future end date). 7/7 pass.
+- `scripts/pre-w2-hf-project-team-authority-db.test.mjs` (focused DB lane): 7/7 pass, including ledger/source + ACL checks, grant validation/OCC/idempotency/interval integrity, mapping-aware leader reads/writes, history preservation, and revoke-date semantics including future-date rejection with unchanged mapping/audit/idempotency state.
 - `scripts/pre-w2-hf-project-team-authority-concurrency.test.mjs` (real PostgreSQL via initdb+pg_ctl; mirrors the W02A pattern): revoke-vs-assign and revoke-vs-unassign lock ordering both directions (revoke-first denies the leader 42501; leader-assign-first then revoke succeeds without rewriting the committed assignment), plus no idempotency residue for denied leader writes. Passed under the CI Real PostgreSQL job.
-- `scripts/pre-w2-hf-project-team-authority-mutation.mjs` (manual, not in the CI lane): 6 probes every mutation flips the focused lane RED (mapping read gate, assign/unassign gate, wrong-team, project-master flag, Full Admin guard removed, revoke row lock removed). Evidence: **6/6 RED**, migration restored byte-for-byte (script self-check).
+- `scripts/pre-w2-hf-project-team-authority-mutation.mjs` (manual, not in the CI lane): **7/7 RED**, including mapping read/write gates, wrong-team, project-master flag, Full Admin guard, revoke row lock, and future-effective revoke guard; migration restored byte-for-byte.
 
 ## 7. Gates
 
@@ -68,7 +69,7 @@ After this migration the leader no longer may close (unassign) a lingering PM as
 - W02A Project Operations regression (PGlite): PASS 2/2 after fixture adaptation.
 - W02A real-PostgreSQL concurrency: PASS.
 - New real-PostgreSQL mapping race: PASS.
-- Mutation probes: 6/6 RED + byte-for-byte restore.
+- Mutation probes: 7/7 RED + byte-for-byte restore.
 - Sharded PGlite plan shards 1-4: PASS (CI proves).
 - Real-PostgreSQL CI job: PASS.
 - `pnpm typecheck` (with `next typegen`): PASS.
@@ -77,7 +78,7 @@ After this migration the leader no longer may close (unassign) a lingering PM as
 - `pnpm secrets:check`: PASS (1760 files).
 - `pnpm docs:check`: PASS.
 - `git diff --check`: PASS (whitespace).
-- GitHub Action run on the pushed branch: **success** (raw numbers in the CI tab; currently 38683324332 at base 876929f).
+- T0 follow-up local checks: focused DB lane 7/7, offline migration validation 94/94, docs 6/6, secrets scan clean (1762 files), `git diff --check` clean. Latest GitHub CI for the updated branch is pending; see PR #23.
 
 ## 8. ACL summary
 
@@ -96,7 +97,7 @@ After this migration the leader no longer may close (unassign) a lingering PM as
 
 ## 10. Blockers / notes for T0
 
-- Contract §D6 vs same-day revoke tension resolved via the approved zero-length cancellation marker (§3 above). No other contract keys diverge.
+- Contract §D6 is narrowed only by the same-day audited cancellation exception; future-effective revocation is prohibited. See the committed amendment linked in §3.
 - `pnpm build` locally uses the shared-junction workaround; the real (Turbopack-disabled) webpack build passes both locally and in CI — no code-level blocker.
 - No DB against production was touched; migration is not applied anywhere yet; no Vercel/VPS deployment executed.
 
