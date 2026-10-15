@@ -25,6 +25,7 @@ import {
   type ChangeRequestListItem,
   type ChangeRequestListPage,
 } from "./change-request-read-contract.ts";
+import { WORK_STATUS_UI_LABELS, workStatusUiLabel } from "./display-labels.ts";
 
 export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "all"] as const;
 export type WorkerOperationsTab = (typeof WORKER_OPERATIONS_TABS)[number];
@@ -172,15 +173,11 @@ export const BANK_ACCOUNT_SECTION_LABEL = "Thông tin tài khoản ngân hàng";
 export const BANK_ACCOUNT_SECTION_HINT =
   "Chỉ gồm số tài khoản, ngân hàng và tên chủ tài khoản để lưu và tra cứu.";
 
-export const WORKER_STATUS_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  UNCONFIRMED: "Đang chờ việc",
-  ON: "Đang làm",
-  OFF: "Đã nghỉ",
-});
+/** PRE-W2-HF-UI-LABELS: nhan trang thai lam viec lay tu mot nguon duy nhat (display-labels). */
+export const WORKER_STATUS_LABELS: Readonly<Record<string, string>> = WORK_STATUS_UI_LABELS;
 
 export function workerStatusLabel(status: string | null): string {
-  if (status === null) return "Chưa có trạng thái";
-  return WORKER_STATUS_LABELS[status] ?? "Chưa có trạng thái";
+  return workStatusUiLabel(status);
 }
 
 export type BankAccountSummary = {

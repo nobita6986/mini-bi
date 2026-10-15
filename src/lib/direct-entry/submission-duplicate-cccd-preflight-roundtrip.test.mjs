@@ -104,7 +104,7 @@ test("HF-R2: repository result -> API response -> client projection round-trips"
   const projected = clientProjection(body);
   assert.notEqual(projected, null);
   assert.equal(projected.conflict_count, 2);
-  assert.equal(projected.conflicts[0].employment_status_label, "Đang làm việc");
+  assert.equal(projected.conflicts[0].employment_status_label, "Đang làm");
   assert.equal(projected.conflicts[1].employment_status_label, "Đang chờ việc");
   assert.deepEqual(
     Object.keys(projected.conflicts[0]).sort(),
@@ -146,7 +146,7 @@ test("HF-R2: the strict projection keeps rejecting any extra wire key", async ()
   const { body } = await preflightBody(rawRpcPayload());
   const mutatedConflicts = body.conflicts.map((item) => ({
     ...item,
-    employment_status_label: "Đang làm việc",
+    employment_status_label: "Đang làm",
   }));
   assert.equal(projectDuplicateCccdPreflight({
     submission_id: body.submission_id,

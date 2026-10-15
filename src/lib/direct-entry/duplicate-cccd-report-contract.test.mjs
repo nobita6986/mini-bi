@@ -210,7 +210,7 @@ test("masked CCCD and status labels never expose the full identifier", () => {
   assert.equal(maskedCccd("8901", 12), "••••••••8901");
   assert.equal(maskedCccd("4321", 9), "•••••4321");
   assert.equal(maskedCccd("8901", 12).includes("8901"), true);
-  assert.equal(employmentStatusLabel("ON"), "Đang làm việc");
+  assert.equal(employmentStatusLabel("ON"), "Đang làm");
   assert.equal(employmentStatusLabel("UNCONFIRMED"), "Đang chờ việc");
   assert.equal(employmentStatusLabel("OFF"), "Đã nghỉ");
 });

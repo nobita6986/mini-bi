@@ -47,7 +47,7 @@ test("D31-D32: a valid preflight projects with the Vietnamese label mapping", ()
       draft_display_name: "Nguyen Van Draft",
       project_display: "Project A",
       employment_status: "ON",
-      employment_status_label: "Đang làm việc",
+      employment_status_label: "Đang làm",
       cccd_last4: "8901",
     }],
   });
@@ -133,7 +133,7 @@ test("the modal text follows the agreed wording for ON, UNCONFIRMED and no proje
     { submission_id: submissionId }).conflicts[0];
   assert.equal(duplicateCccdModalMessage(projectedOn),
     "NLĐ Nguyen Van Draft có số CCCD trùng với một NLĐ đang làm việc tại dự án Project A.");
-  assert.equal(duplicateCccdStatusLine(projectedOn), "Trạng thái hiện tại: Đang làm việc.");
+  assert.equal(duplicateCccdStatusLine(projectedOn), "Trạng thái hiện tại: Đang làm.");
   const projectedUnconfirmed = projectDuplicateCccdPreflight(preflight({
     conflicts: [conflict({ employment_status: "UNCONFIRMED", project_display: "Project B" })],
   }), { submission_id: submissionId }).conflicts[0];

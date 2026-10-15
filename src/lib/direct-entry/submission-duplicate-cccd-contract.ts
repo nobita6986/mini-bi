@@ -10,6 +10,8 @@
  *
  * OFF khong bao gio xuat hien trong projection nay: server da loai no truoc khi tra ve.
  */
+import { WORK_STATUS_UI_LABELS } from "./display-labels.ts";
+
 export const DUPLICATE_CCCD_PREFLIGHT_KEYS = [
   "submission_id", "version", "fingerprint", "conflict_count", "conflicts",
 ] as const;
@@ -31,10 +33,11 @@ export const DUPLICATE_CCCD_MAX_PROJECT_LENGTH = 200;
 
 export type DuplicateCccdStatus = "ON" | "UNCONFIRMED";
 
+/** PRE-W2-HF-UI-LABELS: nhan trang thai lay tu mot nguon duy nhat (display-labels). */
 export const EMPLOYMENT_STATUS_LABELS: Readonly<Record<DuplicateCccdStatus, string>> =
   Object.freeze({
-    ON: "Đang làm việc",
-    UNCONFIRMED: "Đang chờ việc",
+    ON: WORK_STATUS_UI_LABELS.ON,
+    UNCONFIRMED: WORK_STATUS_UI_LABELS.UNCONFIRMED,
   });
 
 export type DuplicateCccdConflict = {

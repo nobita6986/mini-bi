@@ -39,7 +39,7 @@ test("the repository calls only the preflight RPC with the server actor", async 
   const result = await repository.preflight({ ...actor, submission_id: submissionId });
   assert.equal(result.ok, true);
   assert.equal(result.data.conflict_count, 1);
-  assert.equal(result.data.conflicts[0].employment_status_label, "Đang làm việc");
+  assert.equal(result.data.conflicts[0].employment_status_label, "Đang làm");
   assert.deepEqual(calls, [{
     name: "direct_entry_submission_duplicate_cccd_preflight",
     args: {

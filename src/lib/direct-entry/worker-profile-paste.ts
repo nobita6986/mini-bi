@@ -110,6 +110,8 @@ const GENDER_ALIASES: Readonly<Record<string, Gender>> = Object.freeze({
 });
 
 const STATUS_ALIASES: Readonly<Record<string, EmploymentStatus>> = Object.freeze({
+  // PRE-W2-HF-UI-LABELS: nhan them nhan hien thi moi "Đang chờ việc" cho UNCONFIRMED
+  // (bo sung alias, khong loai bo gia tri cu => khong co input hop le nao tro thanh khong hop le).
   unconfirmed: "UNCONFIRMED", chuaxacnhan: "UNCONFIRMED", dangchoviec: "UNCONFIRMED",
   on: "ON", danglam: "ON", danglamviec: "ON",
   off: "OFF", danghi: "OFF", nghiviec: "OFF", danghiviec: "OFF",
