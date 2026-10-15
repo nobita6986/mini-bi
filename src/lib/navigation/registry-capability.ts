@@ -78,8 +78,9 @@ export const adminAreaNavPredicate: NavCapabilityPredicate = (actor) =>
  * Dung CHUNG cho nav visibility va page decision.
  */
 export const projectAdminNavPredicate: NavCapabilityPredicate = (actor) =>
-  actor.capabilities.includes("entry_admin") &&
-  actor.scopes.some((scope) => scope.kind === "all");
+  actor.capabilities.includes("team_manager_assign") ||
+  (actor.capabilities.includes("entry_admin") &&
+    actor.scopes.some((scope) => scope.kind === "all"));
 
 /**
  * P2.5-W06-R1: Worker Operations audience.

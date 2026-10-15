@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -6,9 +7,11 @@ import {
   decideAdminAreaAccess,
   decideDirectEntryPageAccess,
   decideLaborTypeCatalogPageAccess,
+  decideProjectOperationsPageAccess,
   decidePersonnelCatalogPageAccess,
   decideTeamCatalogPageAccess,
   decideVendorCatalogPageAccess,
+  canManageProjectMasterFromActor,
 } from "./direct-entry-page-access.ts";
 
 function actor(capabilities) {
@@ -135,4 +138,34 @@ test("Account access decision allows only the canonical Full Admin triple at eff
   assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" } }), "TEMPORARY_UNAVAILABLE");
   assert.equal(decideAccountAccessPageAccess({ actor: { ok: false, reason: "AMBIGUOUS_RECRUITER_LINK" } }), "TEMPORARY_UNAVAILABLE");
   assert.equal(decideAccountAccessPageAccess({ actor: null }), "TEMPORARY_UNAVAILABLE");
+});
+
+test("Project Operations page admits Team Leader; mapping page stays Full Admin-only", () => {
+  const all = [{ kind: "all", reference: "all", valid_from: "2026-01-01", valid_to: null }];
+  const team = [{ kind: "team", reference: "team-1", valid_from: "2026-01-01", valid_to: null }];
+  const withScopes = (capabilities, scopes) => ({
+    ...actor(capabilities), actor: { ...actor(capabilities).actor, scopes },
+  });
+  assert.equal(decideProjectOperationsPageAccess({ uiEnabled: true,
+    actor: withScopes(["team_manager_assign"], team) }), "ALLOW");
+  assert.equal(canManageProjectMasterFromActor(withScopes(["entry_admin"], all)), true,
+    "an Admin may create the first project after the empty list is loaded");
+  assert.equal(canManageProjectMasterFromActor(withScopes(["catalog_master_manage"], all)), true,
+    "a catalog operator may create the first project, matching the #72 authority order");
+  assert.equal(canManageProjectMasterFromActor(withScopes(["team_manager_assign"], team)), false,
+    "a Team Leader never receives project-master authority from an empty list");
+  assert.equal(decideProjectOperationsPageAccess({ uiEnabled: true,
+    actor: withScopes(["entry_admin"], all) }), "ALLOW");
+  assert.equal(decideProjectOperationsPageAccess({ uiEnabled: true,
+    actor: withScopes(["entry_team"], team) }), "ACCESS_DENIED");
+  assert.equal(decideProjectOperationsPageAccess({ uiEnabled: true,
+    actor: { ok: false, reason: "UNAUTHENTICATED" } }), "REDIRECT_LOGIN");
+  assert.equal(decideProjectOperationsPageAccess({ uiEnabled: true,
+    actor: { ok: false, reason: "ACTOR_DISABLED" } }), "ACCOUNT_UNAVAILABLE");
+
+  const source = readFileSync(new URL("../../app/admin/catalog/project-team-scopes/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /decideAccountAccessPageAccess\(\{ actor \}\)/);
+  assert.doesNotMatch(source, /decideAdminAreaAccess/);
+  const operationsPage = readFileSync(new URL("../../app/direct-entry/projects/page.tsx", import.meta.url), "utf8");
+  assert.match(operationsPage, /canManageProjectMasterForEmptyList=\{canManageProjectMasterFromActor\(actor\)\}/);
 });

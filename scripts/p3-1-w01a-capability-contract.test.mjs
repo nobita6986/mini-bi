@@ -334,9 +334,9 @@ test("an all-scope grant never substitutes the team scope of team_manager_assign
   );
 });
 
-test("the new tokens open no Direct Entry, project operations or full-Admin surface", () => {
+test("new tokens stay scoped; Team Leader can open only the Project Operations page", () => {
   const projected = {
-    capabilities: [...NEW_TOKENS],
+    capabilities: ["catalog_master_manage"],
     scopes: [{ kind: "all" }, { kind: "team" }, { kind: "own" }],
   };
   assert.equal(directEntryNavPredicate(projected), false);
@@ -344,14 +344,20 @@ test("the new tokens open no Direct Entry, project operations or full-Admin surf
   assert.equal(projectAdminNavPredicate(projected), false);
   assert.equal(adminAuthorityNavPredicate(projected), false);
 
+  const teamLeader = { capabilities: ["team_manager_assign"], scopes: [TEAM_SCOPE] };
+  assert.equal(directEntryNavPredicate(teamLeader), false);
+  assert.equal(workerOperationsNavPredicate(teamLeader), false);
+  assert.equal(projectAdminNavPredicate(teamLeader), true);
+  assert.equal(adminAuthorityNavPredicate(teamLeader), false);
+
   const resolution = {
     ok: true,
-    actor: actor({ capabilities: [...NEW_TOKENS], scopes: [ALL_SCOPE, TEAM_SCOPE] }),
+    actor: actor({ capabilities: ["team_manager_assign"], scopes: [TEAM_SCOPE] }),
   };
   assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: resolution }), "ACCESS_DENIED");
   assert.equal(
     decideProjectOperationsPageAccess({ uiEnabled: true, actor: resolution }),
-    "ACCESS_DENIED",
+    "ALLOW",
   );
 });
 

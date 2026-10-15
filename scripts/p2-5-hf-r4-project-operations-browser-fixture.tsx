@@ -250,5 +250,5 @@ if (typeof window !== "undefined") {
 }
 
 export default function ProjectOperationsBrowserFixture() {
-  return <ProjectOperations />;
+  return <ProjectOperations canManageProjectMasterForEmptyList={false} />;
 }
