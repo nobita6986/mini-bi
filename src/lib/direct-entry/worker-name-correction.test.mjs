@@ -2,7 +2,8 @@
  * PRE-W2-P2 - De xuat sua ho ten NLĐ qua luong duyet hien co.
  *
  * Pham vi: affordance sua ten (target WORKER) o CA HAI entry point chi mo khi du
- * propose_change + pii_view + baseline canonical day du; payload gui di la worker_details day du
+ * propose_change + pii_view hoac project-manager assignment + baseline canonical day du;
+ * payload gui di la worker_details day du
  * (chi display_name doi); reviewer before/after + OCC/target_kind van dung implementation hien co.
  * Khong tao workflow/direct-write/name-only.
  */
@@ -56,28 +57,38 @@ function entryBaseline() {
   };
 }
 
-/* ---------- authority: propose_change VA pii_view la hai quyen doc lap ---------- */
+/* ---------- authority: capability hoac assignment PM do server xac nhan ---------- */
 
-test("P2: affordance sua ten chi mo khi du propose_change + pii_view + baseline", () => {
+test("P2: affordance sua ten mo theo pii_view hoac PM assignment + baseline", () => {
   assert.deepEqual(
-    workerNameAvailability({ proposeChange: true, viewPii: true, hasBaseline: true }),
+    workerNameAvailability({ proposeChange: true, viewPii: true,
+      isProjectManager: false, hasBaseline: true }),
     { available: true, message: null });
 
-  const noPropose = workerNameAvailability({ proposeChange: false, viewPii: true, hasBaseline: true });
+  const noPropose = workerNameAvailability({ proposeChange: false, viewPii: true,
+    isProjectManager: true, hasBaseline: true });
   assert.equal(noPropose.available, false);
   assert.match(noPropose.message, /quyền đề xuất/);
 
-  const noPii = workerNameAvailability({ proposeChange: true, viewPii: false, hasBaseline: true });
+  const manager = workerNameAvailability({ proposeChange: true, viewPii: false,
+    isProjectManager: true, hasBaseline: true });
+  assert.deepEqual(manager, { available: true, message: null },
+    "PM duoc server xac nhan co the xem/de xuat profile trong project minh quan ly");
+
+  const noPii = workerNameAvailability({ proposeChange: true, viewPii: false,
+    isProjectManager: false, hasBaseline: true });
   assert.equal(noPii.available, false);
   assert.equal(noPii.message, WORKER_NAME_DENIED_PII_MESSAGE);
 
-  const noBaseline = workerNameAvailability({ proposeChange: true, viewPii: true, hasBaseline: false });
+  const noBaseline = workerNameAvailability({ proposeChange: true, viewPii: false,
+    isProjectManager: true, hasBaseline: false });
   assert.equal(noBaseline.available, false);
   assert.equal(noBaseline.message, WORKER_NAME_NO_BASELINE_MESSAGE);
 
-  // KHONG suy quyen xem PII tu quyen de xuat: thieu pii_view luon bi tu choi du propose_change=true.
+  // Khong suy quyen tu nut de xuat; actor khong co PII grant hay assignment van bi chan.
   assert.equal(
-    workerNameAvailability({ proposeChange: true, viewPii: false, hasBaseline: true }).available, false);
+    workerNameAvailability({ proposeChange: true, viewPii: false,
+      isProjectManager: false, hasBaseline: true }).available, false);
   // Copy khong lo UUID/raw DB.
   for (const message of [WORKER_NAME_DENIED_PII_MESSAGE, WORKER_NAME_NO_BASELINE_MESSAGE]) {
     assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}/i.test(message), false, "khong lo UUID");
@@ -133,10 +144,11 @@ test("P2: reviewer before/after dung projection hien co, hien thay doi ho ten", 
 
 /* ---------- entry point 1: Danh sach nguoi lao dong (WORKER target) ---------- */
 
-test("P2 (Directory): sua ten gate bang propose_change + view_pii, denial thay vi form hong", () => {
+test("P2 (Directory): PM server-scoped duoc sua ten; actor khac van can view_pii", () => {
   assert.match(drawer, /workerNameAvailability\(\{/);
   assert.match(drawer, /proposeChange: mode === "correction" \? true : row\?\.allowed_actions\.propose_change === true/);
   assert.match(drawer, /viewPii: row\?\.allowed_actions\.view_pii === true/);
+  assert.match(drawer, /isProjectManager: mode === "proposal" && row\?\.is_project_manager === true/);
   assert.match(drawer, /hasBaseline: entryForm !== null/);
   // Form sua ten chi render khi available; nguoc lai hien giai thich (khong hien form chac chan that bai).
   assert.match(drawer, /entryForm !== null && nameAvailability\.available \?/);
