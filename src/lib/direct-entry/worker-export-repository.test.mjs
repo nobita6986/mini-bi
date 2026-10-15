@@ -109,6 +109,27 @@ test("errors and malformed envelopes never produce a success", async () => {
     { ok: false, kind: "unavailable" });
 });
 
+test("RPC diagnostics log only a safe error code and never the database message", async () => {
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const repository = createWorkerExportRepository(async () => ({
+      data: null,
+      error: { code: "PGRST202", message: "PII and secret must stay out of logs" },
+    }));
+    assert.deepEqual(await repository.exportWorkers({ ...actor, ...request }),
+      { ok: false, kind: "unavailable" });
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(logged, [[
+    "[direct-entry] worker export RPC returned error",
+    { code: "PGRST202", kind: "unavailable" },
+  ]]);
+  assert.equal(JSON.stringify(logged).includes("PII and secret"), false);
+});
+
 test("the too_many_rows envelope is carried through, never turned into a file", async () => {
   const repository = createWorkerExportRepository(async () => ({
     data: { status: "too_many_rows", limit: 10000 }, error: null,

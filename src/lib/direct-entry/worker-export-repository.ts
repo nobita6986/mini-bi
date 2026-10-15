@@ -54,6 +54,12 @@ export function classifyWorkerExportError(
   return "unavailable";
 }
 
+function safeRpcErrorCode(code: unknown): string {
+  return typeof code === "string" && /^(?:[A-Z0-9]{5}|PGRST\d{3})$/.test(code)
+    ? code
+    : "OTHER";
+}
+
 export function createWorkerExportRepository(rpc?: Rpc): WorkerExportRepository {
   let resolvedRpc: Rpc | undefined = rpc;
   const callRpc: Rpc = async (name, args) => {
@@ -72,8 +78,16 @@ export function createWorkerExportRepository(rpc?: Rpc): WorkerExportRepository 
           p_employment_status: input.employment_status,
           p_reason: input.reason,
         });
-        if (error) return { ok: false, kind: classifyWorkerExportError(error) };
+        if (error) {
+          const kind = classifyWorkerExportError(error);
+          console.error("[direct-entry] worker export RPC returned error", {
+            code: safeRpcErrorCode(error.code),
+            kind,
+          });
+          return { ok: false, kind };
+        }
         const envelope = projectWorkerExportEnvelope(data);
+        if (!envelope) console.error("[direct-entry] worker export RPC returned malformed envelope");
         return envelope ? { ok: true, envelope } : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] worker export RPC failed");
