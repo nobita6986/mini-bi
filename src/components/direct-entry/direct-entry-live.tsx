@@ -66,6 +66,7 @@ import {
 } from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectSubmissionListPage,
+  type SubmissionQueueFilter,
   type SubmissionReadItem,
 } from "@/lib/direct-entry/submission-read-contract";
 import { projectSubmissionTransitionResult } from "@/lib/direct-entry/submission-transition-contract";
@@ -318,6 +319,8 @@ export function DirectEntryLive() {
   const inFlight = useRef(new Set<string>());
   const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
   const submissionsRef = useRef<SubmissionReadItem[]>([]);
+  const [submissionQueue, setSubmissionQueue] = useState<SubmissionQueueFilter>("ACTIVE");
+  const submissionQueueRef = useRef<SubmissionQueueFilter>("ACTIVE");
   const submissionLoadRequestRef = useRef(0);
   const [submissionListState, setSubmissionListState] = useState<"loading" | "ready" | "error">("loading");
   const [submissionListMessage, setSubmissionListMessage] = useState("");
@@ -420,11 +423,17 @@ export function DirectEntryLive() {
     submissionsRef.current = submissions;
   }, [submissions]);
 
-  const loadSubmissions = useCallback(async (mode: "replace" | "append") => {
+  const loadSubmissions = useCallback(async (
+    mode: "replace" | "append",
+    queue: SubmissionQueueFilter = submissionQueueRef.current,
+  ) => {
     const requestId = ++submissionLoadRequestRef.current;
     setSubmissionListState("loading");
     try {
-      const params = new URLSearchParams({ page_size: String(SUBMISSION_PAGE_SIZE) });
+      const params = new URLSearchParams({
+        page_size: String(SUBMISSION_PAGE_SIZE),
+        state: queue,
+      });
       if (mode === "append" && cursorRef.current) params.set("cursor", cursorRef.current);
       const response = await fetch("/api/direct-entry/submissions?" + params.toString(), {
         cache: "no-store",
@@ -1952,6 +1961,16 @@ export function DirectEntryLive() {
         <>
           <DirectEntrySubmissionList
             compact
+            queueFilter={submissionQueue}
+            onQueueFilterChange={(queue) => {
+              if (queue === submissionQueue) return;
+              cursorRef.current = null;
+              submissionQueueRef.current = queue;
+              setSubmissions([]);
+              setSubmissionHasMore(false);
+              setSubmissionQueue(queue);
+              void loadSubmissions("replace", queue);
+            }}
             state={submissionListState}
             message={submissionListMessage}
             submissions={submissions}
@@ -1972,6 +1991,8 @@ export function DirectEntryLive() {
               if (queue === changeRequestQueue) return;
               changeRequestCursorRef.current = null;
               changeRequestQueueRef.current = queue;
+              setChangeRequests([]);
+              setChangeRequestHasMore(false);
               setChangeRequestQueue(queue);
               void loadChangeRequests("replace", queue);
             }}

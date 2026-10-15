@@ -5,6 +5,7 @@ import test from "node:test";
 const list = readFileSync(new URL("./direct-entry-change-request-list.tsx", import.meta.url), "utf8");
 const reviewer = readFileSync(new URL("./direct-entry-change-request-reviewer.tsx", import.meta.url), "utf8");
 const submissions = readFileSync(new URL("./direct-entry-submission-list.tsx", import.meta.url), "utf8");
+const queueTabs = readFileSync(new URL("./direct-entry-queue-tabs.tsx", import.meta.url), "utf8");
 const workers = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("./direct-entry-compact-panel.tsx", import.meta.url), "utf8");
@@ -50,10 +51,11 @@ test("native panel toggle neither fetches nor resets open state on list prop upd
 });
 
 test("review queue separates pending/history and fits compact cards in a scrollable 1-5 column grid", () => {
-  assert.match(list, /role="tablist" aria-label="Trạng thái yêu cầu thay đổi"/);
+  assert.match(list, /ariaLabel="Trạng thái yêu cầu thay đổi"/);
   assert.match(list, /Chờ duyệt/);
   assert.match(list, /Đã xử lý/);
-  assert.match(list, /onQueueFilterChange\(queueFilters\[next\]\)/);
+  assert.match(queueTabs, /role="tablist" aria-label=\{ariaLabel\}/);
+  assert.match(queueTabs, /onChange\(tabs\[next\]\.value\)/);
   assert.match(reviewer, /request_reason/);
   assert.match(reviewer, /if \(detail\.state !== "PENDING"\)[\s\S]*kind: "terminal"/);
   assert.match(css, /\.compactListViewport\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/s);
@@ -65,6 +67,21 @@ test("review queue separates pending/history and fits compact cards in a scrolla
   assert.match(css, /\.compactCard\s*\{[^}]*min-width:\s*0/s);
   assert.match(css, /\.compactMeta[^}]*overflow-wrap:\s*anywhere/);
   assert.doesNotMatch(compactStyles, /overflow-x:\s*(?:auto|scroll)|min-width:\s*\d+(?:px|rem)/);
+});
+
+test("uploader queue separates active submissions from history without removing terminal actions", () => {
+  assert.match(submissions, /ariaLabel="Trạng thái đợt nhập liệu"/);
+  assert.match(submissions, /value: "ACTIVE", label: "Đang gửi"/);
+  assert.match(submissions, /value: "HISTORY", label: "Lịch sử gửi"/);
+  assert.match(submissions, /onRequestChange\(submission\)/);
+  assert.match(submissions, /Yêu cầu thay đổi/);
+  assert.match(submissions, /onManageDocuments\(submission\)/);
+  assert.match(submissions, /Quản lý tài liệu/);
+  assert.match(live, /useState<SubmissionQueueFilter>\("ACTIVE"\)/);
+  assert.match(live, /state: queue/);
+  assert.match(live, /loadSubmissions\("replace", queue\)/);
+  assert.match(live, /queueFilter=\{submissionQueue\}/);
+  assert.match(live, /submissionQueueRef\.current = queue;[\s\S]{0,120}setSubmissions\(\[\]\)/);
 });
 
 test("compact card metadata and actions stay aligned without changing submission list defaults", () => {

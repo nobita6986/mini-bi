@@ -80,6 +80,11 @@ test("owner sees all three lifecycle states with exact transitions and entry cou
   const submittedOnly = await listOwnSubmissions(db, ACTORS.owner,
     { pageSize: 50, state: "SUBMITTED" });
   assert.deepEqual(submittedOnly.data.items.map((item) => item.submission_id), [submissions.submitted]);
+  const active = await listOwnSubmissions(db, ACTORS.owner, { pageSize: 50, state: "ACTIVE" });
+  assert.deepEqual(new Set(active.data.items.map((item) => item.state)), new Set(["DRAFT", "REVIEW"]));
+  assert.equal(active.data.items.some((item) => item.submission_id === submissions.submitted), false);
+  const history = await listOwnSubmissions(db, ACTORS.owner, { pageSize: 50, state: "HISTORY" });
+  assert.deepEqual(history.data.items.map((item) => item.submission_id), [submissions.submitted]);
 });
 
 test("detail returns deterministic entry_ids and hides existence from other actors", async () => {

@@ -8,10 +8,11 @@
  * detail endpoint va KHONG render raw proposal/JSON: chi mo dialog reviewer khi nguoi dung bam
  * "Xem xet" (S03B2). can_decide chi la display hint; quyen that do server quyet dinh.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { AlertDialog } from "radix-ui";
 
 import { DirectEntryCompactPanel } from "@/components/direct-entry/direct-entry-compact-panel";
+import { DirectEntryQueueTabs } from "@/components/direct-entry/direct-entry-queue-tabs";
 import {
   canWithdrawChangeRequest,
   CHANGE_REQUEST_STATE_LABELS,
@@ -21,6 +22,11 @@ import type { ChangeRequestQueueFilter } from "@/lib/direct-entry/change-request
 import { formatHcmDateTime, shortRef } from "@/lib/direct-entry/submission-lifecycle";
 
 import styles from "./direct-entry-shell.module.css";
+
+const QUEUE_TABS = [
+  { value: "PENDING", label: "Chờ duyệt" },
+  { value: "RESOLVED", label: "Đã xử lý" },
+] as const;
 
 export type ChangeRequestListProps = {
   state: "loading" | "ready" | "error";
@@ -57,20 +63,6 @@ function ChangeRequestListContent({
   onReview,
 }: ChangeRequestListProps) {
   const [pendingWithdraw, setPendingWithdraw] = useState<ChangeRequestListItem | null>(null);
-  const queueTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const queueFilters: readonly ChangeRequestQueueFilter[] = ["PENDING", "RESOLVED"];
-
-  function onQueueTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
-    let next = -1;
-    if (event.key === "ArrowRight") next = (index + 1) % queueFilters.length;
-    if (event.key === "ArrowLeft") next = (index + queueFilters.length - 1) % queueFilters.length;
-    if (event.key === "Home") next = 0;
-    if (event.key === "End") next = queueFilters.length - 1;
-    if (next < 0) return;
-    event.preventDefault();
-    onQueueFilterChange(queueFilters[next]);
-    queueTabRefs.current[next]?.focus();
-  }
 
   return (
     <section
@@ -104,25 +96,13 @@ function ChangeRequestListContent({
         )}
       </div>
 
-      <div role="tablist" aria-label="Trạng thái yêu cầu thay đổi" className={styles.changeRequestTabs}>
-        <button ref={(element) => { queueTabRefs.current[0] = element; }} type="button" role="tab"
-          aria-controls="change-request-queue-panel" tabIndex={queueFilter === "PENDING" ? 0 : -1}
-          onKeyDown={(event) => onQueueTabKeyDown(event, 0)} aria-selected={queueFilter === "PENDING"}
-          className={queueFilter === "PENDING" ? styles.changeRequestTabActive : styles.changeRequestTab}
-          onClick={() => onQueueFilterChange("PENDING")}>
-          Chờ duyệt
-        </button>
-        <button ref={(element) => { queueTabRefs.current[1] = element; }} type="button" role="tab"
-          aria-controls="change-request-queue-panel" tabIndex={queueFilter === "RESOLVED" ? 0 : -1}
-          onKeyDown={(event) => onQueueTabKeyDown(event, 1)} aria-selected={queueFilter === "RESOLVED"}
-          className={queueFilter === "RESOLVED" ? styles.changeRequestTabActive : styles.changeRequestTab}
-          onClick={() => onQueueFilterChange("RESOLVED")}>
-          Đã xử lý
-        </button>
-      </div>
-
-      <div id="change-request-queue-panel" role="tabpanel" tabIndex={0}
-        aria-label={queueFilter === "PENDING" ? "Yêu cầu chờ duyệt" : "Yêu cầu đã xử lý"}>
+      <DirectEntryQueueTabs
+        ariaLabel="Trạng thái yêu cầu thay đổi"
+        panelId="change-request-queue-panel"
+        value={queueFilter}
+        tabs={QUEUE_TABS}
+        onChange={onQueueFilterChange}
+      >
       <div className={styles.notice} aria-live="polite">
         {state === "loading" && "Đang tải danh sách yêu cầu thay đổi…"}
         {state === "error" && `Không tải được danh sách yêu cầu thay đổi (${message}).`}
@@ -186,7 +166,7 @@ function ChangeRequestListContent({
         })}
       </ul>
       </div>
-      </div>
+      </DirectEntryQueueTabs>
 
       <AlertDialog.Root open={pendingWithdraw !== null} onOpenChange={(open) => {
         if (!open) setPendingWithdraw(null);
