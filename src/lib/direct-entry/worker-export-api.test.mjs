@@ -19,6 +19,7 @@ const row = {
   display_name: "Worker One",
   date_of_birth: "1990-01-01",
   national_id: "012345678901",
+  national_id_issued_at: "2020-01-01",
   phone: "0900000001",
   address: "1 Street",
   project_display: "Project A",

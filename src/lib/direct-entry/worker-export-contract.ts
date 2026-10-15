@@ -10,8 +10,6 @@
  * Fail-closed: dung key, dung kieu, khong fallback rong; khong type assertion. Mot envelope
  * sai hinh => null (khong bao gio tao file rong tu du lieu khong ro nguon).
  */
-import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
-
 export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
@@ -25,9 +23,10 @@ export const WORKER_EXPORT_BODY_KEYS = [
   "scope", "project_id", "recruiter_id", "employment_status", "reason",
 ] as const;
 
-/** Exact row projection, string/null theo du lieu authoritative (19 truong, P1 + Ghi chú). */
+/** Exact row projection, string/null theo du lieu authoritative (20 truong, P1 + Ghi chú). */
 export const WORKER_EXPORT_ROW_KEYS = [
-  "employee_code", "display_name", "date_of_birth", "national_id", "phone", "address",
+  "employee_code", "display_name", "date_of_birth", "national_id", "national_id_issued_at",
+  "phone", "address",
   "project_display", "first_work_date", "labor_type_display", "recruiter_display",
   "provider_type", "employment_status", "leave_date", "leave_reason", "account_number",
   "bank_name", "account_holder_name", "payment_note", "general_note",
@@ -36,31 +35,32 @@ export const WORKER_EXPORT_ROW_KEYS = [
 export const WORKER_EXPORT_OK_KEYS = ["status", "rows"] as const;
 export const WORKER_EXPORT_TOO_MANY_KEYS = ["status", "limit"] as const;
 
-/** 19 cot XLSX theo dung thu tu; `text` giu so 0 dau (numFmt "@"). */
+/** 20 cot XLSX theo dung thu tu; moi gia tri duoc giu dang text (numFmt "@"). */
 export const WORKER_EXPORT_COLUMNS: ReadonlyArray<{
   header: string;
   key: (typeof WORKER_EXPORT_ROW_KEYS)[number];
   text: boolean;
 }> = Object.freeze([
   { header: "Mã NLĐ", key: "employee_code", text: true },
-  { header: "Họ và tên", key: "display_name", text: false },
-  { header: "Ngày sinh", key: "date_of_birth", text: false },
+  { header: "Họ và tên", key: "display_name", text: true },
+  { header: "Ngày sinh", key: "date_of_birth", text: true },
   { header: "CCCD", key: "national_id", text: true },
+  { header: "Ngày cấp CCCD", key: "national_id_issued_at", text: true },
   { header: "Số điện thoại", key: "phone", text: true },
-  { header: "Địa chỉ", key: "address", text: false },
-  { header: "Dự án", key: "project_display", text: false },
-  { header: "Ngày bắt đầu", key: "first_work_date", text: false },
-  { header: "Loại hình lao động", key: "labor_type_display", text: false },
-  { header: "Người tuyển", key: "recruiter_display", text: false },
-  { header: "Nhà cung cấp", key: "provider_type", text: false },
-  { header: "Trạng thái làm việc", key: "employment_status", text: false },
-  { header: "Ngày nghỉ", key: "leave_date", text: false },
-  { header: "Lý do nghỉ", key: "leave_reason", text: false },
+  { header: "Địa chỉ", key: "address", text: true },
+  { header: "Dự án", key: "project_display", text: true },
+  { header: "Ngày bắt đầu", key: "first_work_date", text: true },
+  { header: "Loại hình lao động", key: "labor_type_display", text: true },
+  { header: "Người tuyển", key: "recruiter_display", text: true },
+  { header: "Nhà cung cấp", key: "provider_type", text: true },
+  { header: "Trạng thái làm việc", key: "employment_status", text: true },
+  { header: "Ngày nghỉ", key: "leave_date", text: true },
+  { header: "Lý do nghỉ", key: "leave_reason", text: true },
   { header: "Số tài khoản", key: "account_number", text: true },
-  { header: "Ngân hàng", key: "bank_name", text: false },
-  { header: "Chủ tài khoản", key: "account_holder_name", text: false },
-  { header: "Ghi chú thanh toán", key: "payment_note", text: false },
-  { header: "Ghi chú", key: "general_note", text: false },
+  { header: "Ngân hàng", key: "bank_name", text: true },
+  { header: "Chủ tài khoản", key: "account_holder_name", text: true },
+  { header: "Ghi chú thanh toán", key: "payment_note", text: true },
+  { header: "Ghi chú", key: "general_note", text: true },
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -81,14 +81,6 @@ function isBoundedText(value: unknown, max: number): value is string {
 
 function isNullableText(value: unknown, max: number): value is string | null {
   return value === null || isBoundedText(value, max);
-}
-
-function isRealIsoDate(value: unknown): value is string {
-  return typeof value === "string" && isRealCalendarDate(value);
-}
-
-function isNullableRealIsoDate(value: unknown): value is string | null {
-  return value === null || isRealIsoDate(value);
 }
 
 export type WorkerExportRequest = {
@@ -148,6 +140,7 @@ export type WorkerExportRow = {
   display_name: string | null;
   date_of_birth: string | null;
   national_id: string | null;
+  national_id_issued_at: string | null;
   phone: string | null;
   address: string | null;
   project_display: string;
@@ -173,15 +166,16 @@ export function projectWorkerExportRow(value: unknown): WorkerExportRow | null {
   if (!isRecord(value) || !hasExactKeys(value, WORKER_EXPORT_ROW_KEYS)) return null;
   if (!isNullableText(value.employee_code, 64)) return null;
   if (!isNullableText(value.display_name, 256)) return null;
-  if (!isNullableRealIsoDate(value.date_of_birth)) return null;
+  if (!isNullableText(value.date_of_birth, 64)) return null;
   if (!isNullableText(value.national_id, 64)) return null;
+  if (!isNullableText(value.national_id_issued_at, 64)) return null;
   if (!isNullableText(value.phone, 64)) return null;
   if (!isNullableText(value.address, 1000)) return null;
   if (typeof value.project_display !== "string" || value.project_display.length < 1 ||
       value.project_display.length > 256) {
     return null;
   }
-  if (!isRealIsoDate(value.first_work_date)) return null;
+  if (!isBoundedText(value.first_work_date, 64)) return null;
   if (!isNullableText(value.labor_type_display, 256)) return null;
   if (typeof value.recruiter_display !== "string" || value.recruiter_display.length < 1 ||
       value.recruiter_display.length > 256) {
@@ -196,7 +190,7 @@ export function projectWorkerExportRow(value: unknown): WorkerExportRow | null {
         .includes(value.employment_status as string)) {
     return null;
   }
-  if (!isNullableRealIsoDate(value.leave_date)) return null;
+  if (!isNullableText(value.leave_date, 64)) return null;
   if (!isNullableText(value.leave_reason, 4000)) return null;
   if (!isNullableText(value.account_number, 64)) return null;
   if (!isNullableText(value.bank_name, 256)) return null;
@@ -211,6 +205,7 @@ export function projectWorkerExportRow(value: unknown): WorkerExportRow | null {
     display_name: value.display_name,
     date_of_birth: value.date_of_birth,
     national_id: value.national_id,
+    national_id_issued_at: value.national_id_issued_at,
     phone: value.phone,
     address: value.address,
     project_display: value.project_display,

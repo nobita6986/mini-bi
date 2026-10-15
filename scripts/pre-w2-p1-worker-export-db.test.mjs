@@ -1,5 +1,5 @@
 /**
- * PRE-W2-P1/HF-G - Full-PII worker export RPC (DB regression, PGlite over the 93-migration ledger).
+ * PRE-W2-P1/HF-G - Full-PII worker export RPC (DB regression, PGlite over the migration ledger).
  *
  * Proves the export contract at the DB boundary:
  *   * recruited/managed full-PII export requires the existing row authority, not a
@@ -7,7 +7,7 @@
  *   * `all` (and any other scope) is denied with 42501;
  *   * one batch read over the authorized set with the directory's eligibility/filter
  *     semantics and deterministic order;
- *   * full-PII projection (never masked) with the exact 18-field row shape;
+ *   * full-PII projection (never masked) with the exact 20-field row shape;
  *   * 10,000 -> {status:"ok"}; 10,001 -> {status:"too_many_rows"} with a persisted
  *     REJECTED audit and no worker row; the RPC does not raise after the audit;
  *   * audit mapping recruited->own, managed->project, a non-PII resource_ref and an
@@ -53,9 +53,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 95,
-    "ledger = 88 base + cutoff #89 + HF-E #90 + HF-F #91 + D3-A #92 + HF-G #93");
-  assert.equal(names[names.length - (10)], EXPORT_MIGRATION_NAME,
+  assert.equal(names.length, 96,
+    "ledger = 95 existing migrations + worker export text/CCCD issue-date #96");
+  assert.equal(names[names.length - (11)], EXPORT_MIGRATION_NAME,
     "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
   return db;
 }
@@ -137,6 +137,7 @@ async function addWorker(db, {
     display_name: "Worker " + n,
     date_of_birth: { state: "provided", value: "1990-01-01" },
     national_id: { state: "provided", value: "0123456789" + String(10 + n).slice(-2) },
+    national_id_issued_at: { state: "provided", value: "2020-01-02" },
     address: { state: "provided", value: "1 Synthetic Street " + n },
     phone: { state: "provided", value: "0900" + String(100000 + n) },
   };
@@ -240,13 +241,15 @@ test("PRE-W2-P1: recruited export returns the full authorized rows and an own/AL
     assert.deepEqual(Object.keys(row).sort(), [
       "account_holder_name", "account_number", "address", "bank_name", "date_of_birth",
       "display_name", "employee_code", "employment_status", "first_work_date", "general_note",
-      "labor_type_display", "leave_date", "leave_reason", "national_id", "payment_note", "phone",
+      "labor_type_display", "leave_date", "leave_reason", "national_id", "national_id_issued_at",
+      "payment_note", "phone",
       "project_display", "provider_type", "recruiter_display",
     ]);
     // FULL PII and FULL payment (never masked).
     assert.match(row.national_id, /^0123456789[0-9]{2}$/);
     assert.equal(row.account_number, "012345678901");
     assert.equal(row.date_of_birth, "1990-01-01");
+    assert.equal(row.national_id_issued_at, "2020-01-02");
     assert.match(row.phone, /^0900[0-9]{6}$/);
     assert.equal(row.address, "1 Synthetic Street 1");
     assert.equal(row.project_display, "Project A");
