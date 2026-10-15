@@ -96,8 +96,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 93,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #93");
+  assert.equal(totalCount, 94,
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #94");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -668,11 +668,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // migration drops before it ends, so the inventory is unchanged. PRE-W2-P1
     // (#86) adds one service-role-only worker-export RPC. PRE-W2-HF-D3-A (#92)
     // adds nine service-role RPCs and three internal helpers. The measured
-    // inventory is 231 total / 110 service-role / 121 internal.
+    // inventory grows to 240 total / 113 service-role / 127 internal with #94.
     assert.deepEqual(result.rows[0], {
-      total: 231,
-      service_role: 110,
-      internal: 121,
+      total: 240,
+      service_role: 113,
+      internal: 127,
       exposed_internal: 0,
     });
   } finally {
