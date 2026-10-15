@@ -1,7 +1,7 @@
 /**
  * PRE-W2-P1 - server XLSX builder (round-trip reload).
  *
- * Chứng minh: 18 cot dung thu tu; 4 cot dinh danh la text (numFmt "@") giu so 0 dau; khong co
+ * Chứng minh: 20 cot dung thu tu; moi cot la text (numFmt "@"); khong co
  * cell formula/hyperlink/error; chuoi bat dau "=", "+", "-", "@" va chuoi chua tab/CR/LF van la
  * literal text; cot 18 rong khi khong co nguon ghi chu.
  */
@@ -17,6 +17,7 @@ function row(overrides = {}) {
     display_name: "Nguyen Van A",
     date_of_birth: "1990-01-01",
     national_id: "012345678901",
+    national_id_issued_at: "2020-01-01",
     phone: "0900000001",
     address: "1 Street",
     project_display: "Project A",
@@ -43,15 +44,16 @@ async function reload(bytes) {
   return { excel, sheet: workbook.getWorksheet("Người lao động") };
 }
 
-test("the workbook has exactly the 19 headers in order", async () => {
+test("the workbook has exactly the 20 headers in order", async () => {
   const { sheet } = await reload(await buildWorkerExportXlsx([row()]));
   const header = sheet.getRow(1);
   assert.deepEqual(
     WORKER_EXPORT_COLUMNS.map((_, index) => header.getCell(index + 1).value),
     WORKER_EXPORT_COLUMNS.map((column) => column.header));
+  assert.equal(WORKER_EXPORT_COLUMNS.length, 20);
 });
 
-test("leading zeros survive and the four id columns are text", async () => {
+test("all exported columns use Excel text format and leading zeros survive", async () => {
   const { sheet } = await reload(await buildWorkerExportXlsx([row()]));
   const dataRow = sheet.getRow(2);
   const index = (key) => WORKER_EXPORT_COLUMNS.findIndex((c) => c.key === key) + 1;
@@ -59,9 +61,19 @@ test("leading zeros survive and the four id columns are text", async () => {
   assert.equal(dataRow.getCell(index("national_id")).value, "012345678901");
   assert.equal(dataRow.getCell(index("phone")).value, "0900000001");
   assert.equal(dataRow.getCell(index("account_number")).value, "012345678901");
-  for (const key of ["employee_code", "national_id", "phone", "account_number"]) {
-    assert.equal(dataRow.getCell(index(key)).numFmt, "@", key + " must be text");
+  for (const column of WORKER_EXPORT_COLUMNS) {
+    assert.equal(dataRow.getCell(index(column.key)).numFmt, "@", column.key + " must be text");
   }
+});
+
+test("historical date text is exported literally", async () => {
+  const { sheet } = await reload(await buildWorkerExportXlsx([
+    row({ date_of_birth: "14/10/1990", national_id_issued_at: "19901014" }),
+  ]));
+  const dobIndex = WORKER_EXPORT_COLUMNS.findIndex((c) => c.key === "date_of_birth") + 1;
+  const idDateIndex = WORKER_EXPORT_COLUMNS.findIndex((c) => c.key === "national_id_issued_at") + 1;
+  assert.equal(sheet.getRow(2).getCell(dobIndex).value, "14/10/1990");
+  assert.equal(sheet.getRow(2).getCell(idDateIndex).value, "19901014");
 });
 
 test("no cell is a formula/hyperlink/error; dangerous strings stay literal", async () => {

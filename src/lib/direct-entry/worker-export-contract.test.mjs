@@ -21,6 +21,7 @@ function validRow(overrides = {}) {
     display_name: "Nguyen Van A",
     date_of_birth: "1990-01-01",
     national_id: "012345678901",
+    national_id_issued_at: "2020-01-01",
     phone: "0900000001",
     address: "1 Street",
     project_display: "Project A",
@@ -75,17 +76,17 @@ test("the request rejects unknown keys, wrong types, invalid enums and filters",
   }
 });
 
-test("the row projection keeps the 19 fields and fails closed on malformed rows", () => {
+test("the row projection keeps the 20 fields and fails closed on malformed rows", () => {
   assert.deepEqual(Object.keys(projectWorkerExportRow(validRow())).sort(),
     [...WORKER_EXPORT_ROW_KEYS].sort());
   for (const bad of [
     null,
     validRow({ extra: 1 }),
     (() => { const r = validRow(); delete r.national_id; return r; })(),
+    (() => { const r = validRow(); delete r.national_id_issued_at; return r; })(),
     (() => { const r = validRow(); delete r.general_note; return r; })(),
-    validRow({ first_work_date: "2026/10/01" }),
-    validRow({ date_of_birth: "nope" }),
-    validRow({ leave_date: "2026-99-99" }),
+    validRow({ date_of_birth: "x".repeat(65) }),
+    validRow({ national_id_issued_at: "x".repeat(65) }),
     validRow({ provider_type: "Other" }),
     validRow({ employment_status: "MAYBE" }),
     validRow({ payment_note: "fabricated" }),
@@ -97,6 +98,22 @@ test("the row projection keeps the 19 fields and fails closed on malformed rows"
   }
   assert.equal("payment_note" in projectWorkerExportRow(validRow({ payment_note: "" })), true);
   assert.equal("general_note" in projectWorkerExportRow(validRow({ general_note: null })), true);
+});
+
+test("historical date-of-birth text is preserved instead of rejecting the whole export", () => {
+  for (const dateValue of ["14/10/1990", "19901014", "unknown-format"]) {
+    const row = projectWorkerExportRow(validRow({
+      date_of_birth: dateValue,
+      national_id_issued_at: dateValue,
+      first_work_date: dateValue,
+      leave_date: dateValue,
+    }));
+    assert.equal(row?.date_of_birth, dateValue);
+    assert.equal(row?.national_id_issued_at, dateValue);
+    assert.equal(row?.first_work_date, dateValue);
+    assert.equal(row?.leave_date, dateValue);
+  }
+  assert.equal(projectWorkerExportRow(validRow({ date_of_birth: null }))?.date_of_birth, null);
 });
 
 test("the envelope accepts exactly ok/rows or too_many_rows/limit", () => {
@@ -122,15 +139,13 @@ test("the envelope accepts exactly ok/rows or too_many_rows/limit", () => {
   }
 });
 
-test("the XLSX column contract is exactly 19 ordered columns with the four text ids", () => {
-  assert.equal(WORKER_EXPORT_COLUMNS.length, 19);
+test("the XLSX column contract has 20 ordered text columns", () => {
+  assert.equal(WORKER_EXPORT_COLUMNS.length, 20);
   assert.deepEqual(WORKER_EXPORT_COLUMNS.map((c) => c.header), [
-    "Mã NLĐ", "Họ và tên", "Ngày sinh", "CCCD", "Số điện thoại", "Địa chỉ", "Dự án",
+    "Mã NLĐ", "Họ và tên", "Ngày sinh", "CCCD", "Ngày cấp CCCD", "Số điện thoại", "Địa chỉ", "Dự án",
     "Ngày bắt đầu", "Loại hình lao động", "Người tuyển", "Nhà cung cấp",
     "Trạng thái làm việc", "Ngày nghỉ", "Lý do nghỉ", "Số tài khoản", "Ngân hàng",
     "Chủ tài khoản", "Ghi chú thanh toán", "Ghi chú",
   ]);
-  assert.deepEqual(
-    WORKER_EXPORT_COLUMNS.filter((c) => c.text).map((c) => c.key),
-    ["employee_code", "national_id", "phone", "account_number"]);
+  assert.ok(WORKER_EXPORT_COLUMNS.every((column) => column.text));
 });

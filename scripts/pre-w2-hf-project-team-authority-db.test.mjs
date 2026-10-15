@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 95-migration ledger).
+ * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 96-migration ledger).
  *
  * Covers the mapping table + RPCs (bounded read, grant, revoke), the canonical Full
  * Admin authority boundary, the pair-version OCC and idempotency contract, half-open
@@ -68,9 +68,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 95, "the ledger carries reporting decoupling after Project<->Team authority #94");
-  assert.equal(names.at(-2), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
-  assert.equal(names.at(-3), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
+  assert.equal(names.length, 96, "the ledger carries reporting decoupling after Project<->Team authority #94");
+  assert.equal(names.at(-3), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-4), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 

@@ -6,8 +6,8 @@
  * storage path/internal id/capability.
  *
  * An toan injection: moi cell la literal string. ExcelJS luu chuoi bat dau bang "=", "+", "-",
- * "@" (hoac chua tab/CR/LF) thanh shared string, KHONG phai formula/hyperlink/error. Bon cot
- * dinh danh (Mã NLĐ, CCCD, SĐT, STK) dung numFmt "@" de giu so 0 dau.
+ * "@" (hoac chua tab/CR/LF) thanh shared string, KHONG phai formula/hyperlink/error. Moi cot
+ * dung numFmt "@" de giu nguyen chuoi nguon.
  */
 import type { WorkerExportRow } from "./worker-export-contract.ts";
 import { WORKER_EXPORT_COLUMNS } from "./worker-export-contract.ts";
