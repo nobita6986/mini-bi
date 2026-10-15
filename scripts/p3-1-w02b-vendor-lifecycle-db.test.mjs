@@ -184,7 +184,7 @@ await addActor(db, { ...ENTRY_OPERATOR, capabilities: ["entry_create"], scopes: 
 
 test("assertions 1: the ledger carries #75 append-only after the P3.1-HF report", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 99, "the ledger carries the complete 99-migration ledger");
+  assert.equal(names.length, 100, "the ledger carries the complete 100-migration ledger");
   assert.equal(names.at(-25), LEGACY_SCOPE_HOTFIX, "#76 is the append-only leader-scope hotfix");
   assert.equal(names.at(-26), NEW_MIGRATION, "#75 remains the P3.1-W02-B vendor lifecycle migration");
   assert.equal(names.at(-27), PREVIOUS_MIGRATION, "#75 stays append-only after #74");
@@ -943,6 +943,7 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
   const d3aMigration = "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql";
   const projectTeamMigration = "20261015100000_pre_w2_hf_project_team_authority.sql";
   const batchMappingMigration = "20261015130000_pre_w2_hf_project_team_batch_mapping.sql";
+  const currentMigration = "20261015150000_pre_w2_worker_data_capabilities_default.sql";
   const dirty = git.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   assert.deepEqual(dirty.filter((line) =>
     !line.endsWith(NEW_MIGRATION) &&
@@ -952,7 +953,8 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
     !line.endsWith(d2Migration) &&
     !line.endsWith(d3aMigration) &&
     !line.endsWith(projectTeamMigration) &&
-    !line.endsWith(batchMappingMigration)), [],
+    !line.endsWith(batchMappingMigration) &&
+    !line.endsWith(currentMigration)), [],
     "no earlier migration may be modified, deleted or renamed");
 
   const committed = spawnSync("git", ["show", `HEAD:supabase/migrations/${PREVIOUS_MIGRATION}`],

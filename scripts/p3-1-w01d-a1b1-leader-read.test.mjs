@@ -104,7 +104,7 @@ async function createDatabase() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 99);
+  assert.equal(names.length, 100);
   const leaderMigrationAt = names.indexOf(MIGRATION_71);
   assert.equal(leaderMigrationAt, 70);
   const migrations = await Promise.all(names.map(async (name) => ({

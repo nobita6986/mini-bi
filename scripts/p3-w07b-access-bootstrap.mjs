@@ -46,7 +46,8 @@ export const PROJECT_MANAGER_BY_ID = Object.freeze({
 
 const HRP_CAPABILITIES = Object.freeze([
   "entry_create", "entry_own", "submission_create", "change_request_create",
-  "employment_status.request", "document_upload", "document_view", "payment_view",
+  "employment_status.request", "document_upload", "document_view",
+  "pii_view", "payment_view", "pii_export",
 ]);
 const CONFIRM = "P3_W07B_ACCESS_APPLY";
 const UNASSIGNED_PROJECTS = Object.freeze(["AP", "TSCO"]);

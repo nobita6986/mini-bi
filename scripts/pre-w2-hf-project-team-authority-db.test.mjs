@@ -69,9 +69,11 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 99, "the ledger includes account display migration #99");
-  assert.equal(names.at(-1), "20261015140000_pre_w2_hf_account_real_name_display.sql",
+  assert.equal(names.length, 100, "the ledger includes account display and worker-data capability migrations");
+  assert.equal(names.at(-2), "20261015140000_pre_w2_hf_account_real_name_display.sql",
     "account real-name display is the append-only #99 migration");
+  assert.equal(names.at(-1), "20261015150000_pre_w2_worker_data_capabilities_default.sql",
+    "worker-data capabilities is the append-only #100 migration");
   assert.equal(names.at(-3), "20261015140000_pre_w2_change_request_review_queue.sql",
     "review queue remains the append-only #98 migration");
   assert.equal(names.at(-4), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
