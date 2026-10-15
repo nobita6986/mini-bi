@@ -181,6 +181,7 @@ test("D3: reset password unknown marks INDETERMINATE (no replay)", async () => {
     password: "new-pass-123", password_confirm: "new-pass-123", reason: "reset", idempotency_key: AUTH_SUBJECT,
   }), APP_USER, "true", d);
   assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { ok: false, code: "ACCOUNT_OPERATION_INDETERMINATE" });
 });
 
 /* ---------- authority / leak taxonomy ---------- */
@@ -254,6 +255,37 @@ test("D3: reset applied with a failed finish is not reported as success and no s
   }), APP_USER, "true", d);
   assert.equal(response.status, 500);
   assert.equal(resets, 1, "no second Auth call when finish write fails");
+  assert.deepEqual(await response.json(), { ok: false, code: "ACCOUNT_OPERATION_AUTH_APPLIED_UNRECORDED" });
+});
+
+test("D3: reset diagnostics log only fixed stages/outcomes and distinguish an unrecorded unknown result", async () => {
+  const messages = [];
+  const originalInfo = console.info;
+  console.info = (...values) => messages.push(values.join(" "));
+  try {
+    const d = deps({
+      auth: auth({ async resetAuthPassword() { return { kind: "unknown" }; } }),
+      repository: repository({ async finish() { return { ok: false, kind: "unavailable" }; } }),
+    });
+    const secretPassword = "must-never-appear-logged";
+    const response = await resetPassword(fakeRequest({
+      password: secretPassword, password_confirm: secretPassword, reason: "reset", idempotency_key: AUTH_SUBJECT,
+    }), APP_USER, "true", d);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { ok: false, code: "ACCOUNT_OPERATION_RESULT_UNRECORDED" });
+    assert.deepEqual(messages, [
+      "[account-operation] reset-password stage=begin outcome=ok",
+      "[account-operation] reset-password stage=claim outcome=ok",
+      "[account-operation] reset-password stage=read outcome=ok",
+      "[account-operation] reset-password stage=auth outcome=unknown",
+      "[account-operation] reset-password stage=finish outcome=unavailable",
+    ]);
+    assert.doesNotMatch(messages.join(" "), new RegExp(secretPassword));
+    assert.doesNotMatch(messages.join(" "), new RegExp(APP_USER));
+    assert.doesNotMatch(messages.join(" "), new RegExp(AUTH_SUBJECT));
+  } finally {
+    console.info = originalInfo;
+  }
 });
 
 /* ---------- reclassify ---------- */

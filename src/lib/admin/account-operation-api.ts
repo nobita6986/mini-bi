@@ -111,6 +111,10 @@ function intentResponse(intentId: string, intentToken: string, kind: string, sta
   return respond({ ok: true, intent: { intent_id: intentId, intent_token: intentToken, kind, state } }, 200);
 }
 
+function logResetStage(stage: "begin" | "claim" | "read" | "auth" | "finish", outcome: string): void {
+  console.info(`[account-operation] reset-password stage=${stage} outcome=${outcome}`);
+}
+
 /* ---------------- create account ---------------- */
 export async function createAccount(
   request: Request, flag: string | undefined, deps: AccountOperationDependencies,
@@ -236,34 +240,51 @@ async function runResetPassword(
     ...actor.value, kind: "RESET_PASSWORD", login_id: null, display_name: null,
     account_ref: accountRef, reason: input.reason, idempotency_key: input.idempotency_key,
   });
-  if (!began.ok) return errorResponse(began.kind);
+  if (!began.ok) {
+    logResetStage("begin", began.kind);
+    return errorResponse(began.kind);
+  }
+  logResetStage("begin", "ok");
   const intent = began.data;
 
   const claimed = await deps.repository.claim({
     ...actor.value, intent_id: intent.intent_id, intent_token: intent.intent_token,
   });
-  if (!claimed.ok) return errorResponse(claimed.kind);
-  if (!claimed.data.claimed) return fail("ACCOUNT_OPERATION_CONFLICT", 409);
+  if (!claimed.ok) {
+    logResetStage("claim", claimed.kind);
+    return errorResponse(claimed.kind);
+  }
+  if (!claimed.data.claimed) {
+    logResetStage("claim", "conflict");
+    return fail("ACCOUNT_OPERATION_CONFLICT", 409);
+  }
+  logResetStage("claim", "ok");
 
   const read = await deps.repository.readIntent({ ...actor.value, intent_id: intent.intent_id });
   if (!read.ok || read.data.auth_subject === null) {
+    logResetStage("read", read.ok ? "invalid" : read.kind);
     return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
   }
+  logResetStage("read", "ok");
 
   const auth = deps.auth;
   const reset = await auth.resetAuthPassword({ auth_subject: read.data.auth_subject, password: input.password });
+  logResetStage("auth", reset.kind);
   if (reset.kind === "applied") {
     const finished = await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "APPLIED", failure_code: null });
-    if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
+    logResetStage("finish", finished.ok ? "applied" : finished.kind);
+    if (!finished.ok) return fail("ACCOUNT_OPERATION_AUTH_APPLIED_UNRECORDED", 500);
     return respond({ ok: true }, 200);
   }
   if (reset.kind === "failure") {
     const finished = await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "FAILED", failure_code: reset.code });
+    logResetStage("finish", finished.ok ? "failed" : finished.kind);
     if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
     return fail("ACCOUNT_OPERATION_FAILED", 400);
   }
   const finished = await deps.repository.finish({ ...actor.value, intent_id: intent.intent_id, outcome: "INDETERMINATE", failure_code: "auth_unknown" });
-  if (!finished.ok) return fail("ACCOUNT_OPERATION_UNAVAILABLE", 500);
+  logResetStage("finish", finished.ok ? "indeterminate" : finished.kind);
+  if (!finished.ok) return fail("ACCOUNT_OPERATION_RESULT_UNRECORDED", 500);
   return fail("ACCOUNT_OPERATION_INDETERMINATE", 500);
 }
 

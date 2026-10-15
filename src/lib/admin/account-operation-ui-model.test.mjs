@@ -77,3 +77,22 @@ test("D3-B UI: response classifier surfaces needs-reconcile states without passw
   assert.equal(indeterminate.kind, "needs-reconcile");
   assert.match(indeterminate.message, /Không tự thử lại/);
 });
+
+test("reset errors distinguish confirmed Auth success from unknown outcome without exposing raw codes", () => {
+  const appliedUnrecorded = classifyAccountOperationResponse(500, {
+    ok: false, code: "ACCOUNT_OPERATION_AUTH_APPLIED_UNRECORDED",
+  });
+  assert.equal(appliedUnrecorded.kind, "unavailable");
+  assert.match(appliedUnrecorded.message, /Auth đã xác nhận đổi mật khẩu/);
+  assert.match(appliedUnrecorded.message, /Không gửi lại/);
+  assert.doesNotMatch(appliedUnrecorded.message, /ACCOUNT_OPERATION_/);
+
+  for (const code of ["ACCOUNT_OPERATION_INDETERMINATE", "ACCOUNT_OPERATION_RESULT_UNRECORDED"]) {
+    const unknown = classifyAccountOperationResponse(500, { ok: false, code });
+    assert.equal(unknown.kind, "unavailable");
+    assert.match(unknown.message, /Chưa xác định được kết quả/);
+    assert.match(unknown.message, /Không gửi lại ngay/);
+    assert.match(unknown.message, /Admin cần kiểm tra/);
+    assert.doesNotMatch(unknown.message, /ACCOUNT_OPERATION_/);
+  }
+});
