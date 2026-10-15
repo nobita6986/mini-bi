@@ -150,6 +150,7 @@ export async function readChangeRequest(
     state: result.data.state,
     version: result.data.version,
     created_at: result.data.created_at,
+    request_reason: result.data.request_reason,
     items: result.data.items,
     can_withdraw: result.data.can_withdraw,
     can_decide: result.data.can_decide,

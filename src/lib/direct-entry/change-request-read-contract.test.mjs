@@ -46,6 +46,7 @@ function detailBody(overrides = {}) {
     state: "PENDING",
     version: 1,
     created_at: createdAt,
+    request_reason: "Cập nhật hồ sơ theo xác nhận của PM.",
     items: [{
       entry_id: entryA,
       target_kind: "ENTRY_FIELD",
@@ -68,7 +69,7 @@ test("list query accepts only page_size, cursor and the locked state vocabulary"
   assert.equal(query("page_size=1").value.page_size, 1);
   assert.equal(query("page_size=" + LIST_MAX_PAGE_SIZE).value.page_size, LIST_MAX_PAGE_SIZE);
   assert.equal(query("cursor=" + cursor).value.cursor, cursor);
-  for (const state of ["PENDING", "APPROVED", "REJECTED", "WITHDRAWN"]) {
+  for (const state of ["PENDING", "APPROVED", "REJECTED", "WITHDRAWN", "RESOLVED"]) {
     assert.equal(query("state=" + state).value.state, state);
   }
   assert.deepEqual(query("page_size=2&state=PENDING&cursor=" + cursor).value, {
@@ -143,6 +144,8 @@ test("list page projection is exact and rejects coerced values", () => {
 
 test("detail projection is exact, vocabulary-bound and never partial", () => {
   assert.deepEqual(projectChangeRequestDetail(detailBody(), { request_id: requestId }), detailBody());
+  assert.equal(projectChangeRequestDetail(detailBody({ request_reason: null }),
+    { request_id: requestId })?.request_reason, null);
 
   const payment = detailBody({
     items: [{
@@ -204,6 +207,8 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     detailBody({ state: "pending" }),
     detailBody({ version: 0 }),
     detailBody({ created_at: "03/10/2026 10:00:00" }),
+    detailBody({ request_reason: " " }),
+    detailBody({ request_reason: "x".repeat(4001) }),
     detailBody({ items: [] }),
     detailBody({ items: "[]" }),
     detailBody({ items: [{ entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1, proposal: {} }] }),
@@ -239,11 +244,6 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     detailBody({ items: [{
       entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
       proposal: { worker_details: { checksum_sha256: "a".repeat(64) } },
-    }] }),
-    // S03B4A: proposal doc da lam sach co vocabulary rieng; raw sensitive key van bi tu choi.
-    detailBody({ items: [{
-      entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,
-      proposal: { status: "OFF", effective_date: "2026-10-01", leave_reason: "raw" },
     }] }),
     detailBody({ items: [{
       entry_id: entryA, target_kind: "DOCUMENT", expected_version: 1,

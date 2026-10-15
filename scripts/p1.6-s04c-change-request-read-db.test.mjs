@@ -5,6 +5,8 @@ import {
   ACTORS,
   REQUEST_STAMPS,
   createMigratedDatabase,
+  createChangeRequest,
+  item,
   listChangeRequests,
   readChangeRequest,
   seedChangeRequestFixture,
@@ -28,7 +30,7 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 98);
+  assert.equal(migrations.migrationNames.length, 99);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
@@ -123,7 +125,8 @@ test("detail returns the same not-found code for unknown and out-of-scope reques
   const ok = await readChangeRequest(db, ACTORS.reviewerAll, requests.single);
   assert.equal(ok.error, null);
   assert.deepEqual(Object.keys(ok.data).sort(), [
-    "can_decide", "can_withdraw", "created_at", "items", "request_id", "state", "version",
+    "can_decide", "can_withdraw", "created_at", "items", "request_id", "request_reason",
+    "state", "version",
   ]);
   assert.deepEqual(Object.keys(ok.data.items[0]).sort(), [
     "entry_id", "expected_version", "labor_type_display", "proposal", "target_kind",
@@ -132,6 +135,11 @@ test("detail returns the same not-found code for unknown and out-of-scope reques
   // the presence-only projection for a reviewer WITHOUT pii_view stays asserted in
   // p1.6-s04c-policy-closure-db.test.mjs (POLICY_ACTORS.entryOnly).
   assert.equal(typeof ok.data.items[0].proposal.worker_details.display_name, "string");
+  assert.equal(ok.data.request_reason, "S02B request single");
+  const proposerDetail = await readChangeRequest(db, ACTORS.proposer, requests.single);
+  assert.equal(proposerDetail.error, null);
+  assert.equal(proposerDetail.data.request_reason, null,
+    "free-text reason is returned only to the reviewer audience");
   for (const leaked of ["idempotency_key", "checksum_sha256", "storage_key"]) {
     assert.equal(JSON.stringify(ok.data).includes(leaked), false, leaked + " must never leak");
   }
@@ -173,6 +181,11 @@ test("state filter, actor mapping and invalid query text fail closed", async () 
   const pending = await listChangeRequests(db, ACTORS.proposer, { pageSize: 50, state: "PENDING" });
   assert.equal(pending.data.requests.length, 3);
   for (const item of pending.data.requests) assert.equal(item.state, "PENDING");
+  const resolved = await listChangeRequests(db, ACTORS.reviewerAll,
+    { pageSize: 50, state: "RESOLVED" });
+  assert.equal(resolved.error, null);
+  assert.equal(resolved.data.requests.length, 3);
+  assert.ok(resolved.data.requests.every((item) => item.state !== "PENDING"));
   for (const [label, options] of [
     ["page_size", { pageSize: 51 }],
     ["cursor", { pageSize: 20, cursor: "nope" }],
@@ -184,6 +197,27 @@ test("state filter, actor mapping and invalid query text fail closed", async () 
   const mapping = await listChangeRequests(db,
     { auth_subject: ACTORS.proposer.auth_subject, app_user_id: ACTORS.reviewer.app_user_id }, {});
   assert.equal(mapping.error.code, "42501");
+});
+
+test("reviewer can read work-status leave reason while proposer projection stays redacted", async () => {
+  const currentEntry = await db.query(
+    "select version from public.direct_entries where entry_id = $1",
+    [fixture.entryA.entry_id],
+  );
+  const request = await createChangeRequest(db, ACTORS.proposer, [item(
+    fixture.entryA.entry_id, currentEntry.rows[0].version,
+    { status: "OFF", effective_date: "2026-10-15", leave_reason: "Kết thúc công việc theo nguyện vọng" },
+    "WORK_STATUS",
+  )], "Cập nhật trạng thái theo xác nhận", "s02b_work_status_reason");
+  assert.equal(request.error, null);
+  const reviewer = await readChangeRequest(db, ACTORS.reviewerAll, request.data.request_id);
+  assert.equal(reviewer.error, null);
+  assert.equal(reviewer.data.request_reason, "Cập nhật trạng thái theo xác nhận");
+  assert.equal(reviewer.data.items[0].proposal.leave_reason, "Kết thúc công việc theo nguyện vọng");
+  const proposer = await readChangeRequest(db, ACTORS.proposer, request.data.request_id);
+  assert.equal(proposer.error, null);
+  assert.equal(proposer.data.request_reason, null);
+  assert.equal("leave_reason" in proposer.data.items[0].proposal, false);
 });
 
 test("list projection exposes no sensitive columns", async () => {

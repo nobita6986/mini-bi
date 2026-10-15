@@ -15,7 +15,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const D3A_MIGRATION = "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql";
-const DEFAULT_CAPABILITIES_MIGRATION = "20261015140000_pre_w2_worker_data_capabilities_default.sql";
+const DEFAULT_CAPABILITIES_MIGRATION = "20261015150000_pre_w2_worker_data_capabilities_default.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -44,8 +44,8 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 98, "the ledger carries the worker-data default capabilities migration");
-  assert.equal(names[names.length - (7)], D3A_MIGRATION,
+  assert.equal(names.length, 99, "the ledger carries the worker-data default capabilities migration");
+  assert.equal(names[names.length - (8)], D3A_MIGRATION,
     "the D3-A migration remains #92 in the established ledger");
   assert.equal(names.at(-1), DEFAULT_CAPABILITIES_MIGRATION);
   return db;

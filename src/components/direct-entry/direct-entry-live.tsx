@@ -62,6 +62,7 @@ import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-reque
 import {
   projectChangeRequestListPage,
   type ChangeRequestListItem,
+  type ChangeRequestQueueFilter,
 } from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectSubmissionListPage,
@@ -327,6 +328,8 @@ export function DirectEntryLive() {
   const intentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const lifecycleStatusRef = useRef<HTMLParagraphElement | null>(null);
   const [changeRequests, setChangeRequests] = useState<ChangeRequestListItem[]>([]);
+  const [changeRequestQueue, setChangeRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
+  const changeRequestQueueRef = useRef<ChangeRequestQueueFilter>("PENDING");
   const [changeRequestListState, setChangeRequestListState] =
     useState<"loading" | "ready" | "error">("loading");
   const [changeRequestListMessage, setChangeRequestListMessage] = useState("");
@@ -338,6 +341,7 @@ export function DirectEntryLive() {
   const [manageDocumentsSubmission, setManageDocumentsSubmission] =
     useState<SubmissionReadItem | null>(null);
   const changeRequestCursorRef = useRef<string | null>(null);
+  const changeRequestLoadRef = useRef(0);
   const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const [cccdCache, setCccdCache] = useState<CccdStatusCache>(EMPTY_CCCD_STATUS_CACHE);
   /**
@@ -617,10 +621,19 @@ export function DirectEntryLive() {
     }
   }, [loadSubmissions]);
 
-  const loadChangeRequests = useCallback(async (mode: "replace" | "append") => {
+  const loadChangeRequests = useCallback(async (
+    mode: "replace" | "append", queue = changeRequestQueueRef.current,
+  ) => {
+    const loadId = ++changeRequestLoadRef.current;
     setChangeRequestListState("loading");
+    if (mode === "replace") {
+      setChangeRequests([]);
+      setChangeRequestHasMore(false);
+    }
     try {
-      const params = new URLSearchParams({ page_size: String(CHANGE_REQUEST_PAGE_SIZE) });
+      const params = new URLSearchParams({
+        page_size: String(CHANGE_REQUEST_PAGE_SIZE), state: queue,
+      });
       if (mode === "append" && changeRequestCursorRef.current) {
         params.set("cursor", changeRequestCursorRef.current);
       }
@@ -634,6 +647,7 @@ export function DirectEntryLive() {
         { page_size: CHANGE_REQUEST_PAGE_SIZE },
       );
       if (!response.ok || !page) throw new Error("CHANGE_REQUESTS_UNAVAILABLE");
+      if (loadId !== changeRequestLoadRef.current) return;
       setChangeRequests((current) => {
         if (mode === "replace") return page.requests;
         const seen = new Set(current.map((item) => item.request_id));
@@ -644,6 +658,7 @@ export function DirectEntryLive() {
       setChangeRequestListState("ready");
       setChangeRequestListMessage("");
     } catch (cause) {
+      if (loadId !== changeRequestLoadRef.current) return;
       setChangeRequestListState("error");
       setChangeRequestListMessage(
         cause instanceof Error ? cause.message : "CHANGE_REQUESTS_UNAVAILABLE",
@@ -1952,6 +1967,14 @@ export function DirectEntryLive() {
           {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
           <DirectEntryChangeRequestList
             compact
+            queueFilter={changeRequestQueue}
+            onQueueFilterChange={(queue) => {
+              if (queue === changeRequestQueue) return;
+              changeRequestCursorRef.current = null;
+              changeRequestQueueRef.current = queue;
+              setChangeRequestQueue(queue);
+              void loadChangeRequests("replace", queue);
+            }}
             state={changeRequestListState}
             message={changeRequestListMessage}
             requests={changeRequests}
