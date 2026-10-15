@@ -7,6 +7,15 @@ import { PGlite } from "@electric-sql/pglite";
 
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
+test("HRP account bootstrap includes the default PII, payment and export capabilities", async () => {
+  const source = await readFile(path.resolve("scripts/p3-w07b-access-bootstrap.mjs"), "utf8");
+  const block = source.match(/const HRP_CAPABILITIES = Object\.freeze\(\[([\s\S]*?)\]\);/)?.[1];
+  assert.ok(block, "bootstrap capability set is present");
+  for (const capability of ["pii_view", "payment_view", "pii_export"]) {
+    assert.match(block, new RegExp('"' + capability.replaceAll(".", "\\.") + '"'));
+  }
+});
+
 const IDS = {
   managerAuth: "a1000000-0000-4000-8000-000000000001",
   managerUser: "a2000000-0000-4000-8000-000000000001",
@@ -26,7 +35,7 @@ async function database() {
   // P2-W04B adds migration #44 (cutoff rebaseline 2026-10-06) on top of
   // the W07B #43. P2-W04B is #44, W07C-R2 is #45, W07C-R3 is #46, P2-W04C is
   // #47, W05A #48, W07C-R7 #49, W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(names.length, 97);
+  assert.equal(names.length, 98);
   for (const name of names) {
     await db.exec(await readFile(path.resolve("supabase/migrations", name), "utf8"));
   }

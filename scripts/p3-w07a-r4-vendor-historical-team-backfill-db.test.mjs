@@ -166,8 +166,8 @@ async function auditCount(db) {
 
 test("P3-W07A-R4: #66 is followed by P3.1-W01A #67 and P3.1-W01B #68, and the historical Vendor rows are corrected", async () => {
   const names = await ledger();
-  assert.equal(names.length, 97, "ledger carries 93 migrations");
-  assert.equal(names[names.length - (32)], R4, "later P3.1 migrations append after P3-W07A-R4 #66");
+  assert.equal(names.length, 98, "ledger carries 93 migrations");
+  assert.equal(names[names.length - (33)], R4, "later P3.1 migrations append after P3-W07A-R4 #66");
 
   const db = new PGlite();
   try {
