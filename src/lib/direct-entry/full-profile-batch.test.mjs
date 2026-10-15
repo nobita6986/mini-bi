@@ -169,6 +169,10 @@ test("ho so day du: map worker/payment/employment dung contract", () => {
   const onRow = buildFullProfileRequestBody(on.rows).rows[0];
   assert.deepEqual(onRow.employment, { initial_status: "ON" });
   assert.equal("leave_date" in onRow.employment, false);
+  const waiting = preview(tsv([row("hrp-2026-000123", "2026-10-15",
+    { "Tình trạng làm việc hiện tại": "Đang chờ việc" })]));
+  const waitingRow = buildFullProfileRequestBody(waiting.rows).rows[0];
+  assert.deepEqual(waitingRow.employment, { initial_status: "UNCONFIRMED" });
 });
 
 test("thu tu cot tuy y va cot tuy chon vang mat deu cho cung request", () => {
