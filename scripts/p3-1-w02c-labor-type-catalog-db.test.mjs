@@ -1132,8 +1132,8 @@ test("17: the four duplicated label CASE sites are gone", async () => {
   assert.equal(facts.includes("direct_entry_reporting_employment_display"), true);
   assert.equal(options.includes("direct_entry_reporting_employment_key"), true);
   assert.equal(options.includes("direct_entry_reporting_employment_display"), true);
-  assert.equal(scoped.includes("direct_entry_reporting_employment_key"), true);
-  assert.equal(scoped.includes("direct_entry_reporting_employment_display"), true);
+  assert.equal(scoped.includes("employment_type_key"), true);
+  assert.equal(scoped.includes("employment_type_display"), true);
 });
 
 test("18: the ACL posture is service-role only, with revoked helpers and forced RLS", async () => {

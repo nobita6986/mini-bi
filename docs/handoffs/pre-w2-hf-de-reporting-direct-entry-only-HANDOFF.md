@@ -30,7 +30,7 @@ The app's canonical reporting dataset is submitted Direct Entry. People may be e
 - `pnpm db:migrate --offline`: 95/95 on this worktree (offline only; no database connection).
 - Focused lanes passed: `test:p3-w05a` (46), `test:p3-w05b-a-team-reporting` (13), `test:p3-w06d` (28), `test:p2-de-dim-hotfix` (20), P2-W04A migration/acceptance (38), and recruiter-alias history lane (3).
 - `pnpm docs:check`: 6/6; `pnpm secrets:check`: clean; `git diff --check`: clean.
-- Full `pnpm test` was not completed locally; the owner asked to let GitHub Actions run it. CI run `38703959166` found one remaining migration-count pin (`94`) in the P1.6 full-profile DB test harness; it was corrected to `95`, and that focused lane passed 41/41. CI must be rerun before treating the full suite as green.
+- Full `pnpm test` was not completed locally; the owner asked to let GitHub Actions run it. CI run `38703959166` found one remaining migration-count pin (`94`) in the P1.6 full-profile DB test harness; it was corrected to `95`, and that focused lane passed 41/41. The rerun `38704517324` found one obsolete test expectation that the scoped options function call the employment helpers directly; the function now correctly reuses the fact view's `employment_type_key/display` projection. The focused labor-type lane passes 59/59 after aligning that assertion. CI must be rerun before treating the full suite as green.
 - Typecheck, lint and migration validation passed in CI run `38703959166`; build was canceled after the shard failure, so its result is still pending on the rerun. Secrets/docs steps were skipped by CI after the failure; local checks passed.
 
 ## Owner UAT checklist
