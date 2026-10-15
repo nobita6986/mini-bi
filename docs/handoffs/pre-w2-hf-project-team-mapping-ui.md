@@ -2,7 +2,7 @@
 
 - **Status:** `PRE_W2_HF_PROJECT_TEAM_MAPPING_UI_LOCAL_PASS_AWAITING_T0_REVIEW`
 - **Base:** `feature/pre-w2-hf-project-team-mapping-backend@6222488f23a6ef865b0b5a57c1bc3912568f9ad3`
-- **UI implementation commit:** `85f12b8` (`feat(pre-w2-hf): add batch mapping admin UI`)
+- **Final UI implementation SHA:** `85f12b8c0dbad539c59a2ed9070f2a2f9e804e35` (`feat(pre-w2-hf): add batch mapping admin UI`; subsequent branch commits are handoff documentation only)
 - **Branch:** `feature/pre-w2-hf-project-team-mapping-ui`
 - **Worktree:** `C:\CodeApp\BI-pre-w2-hf-project-team-mapping-ui`
 - **Scope:** Admin UI/model/tests and handoff only. No backend, API, schema, migration, dependency, deployment, database apply, Production query, or UAT changes.
