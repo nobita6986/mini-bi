@@ -252,6 +252,9 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
       "the revoke RPC must re-read the mapping row FOR UPDATE after the project lock");
     assert.match(revokeSource, /project_team_scope_marker/,
       "the revoke RPC must own the cancellation marker");
+    assert.match(revokeSource,
+      /p_effective_to\s*>\s*public\.direct_entry_authorization_date\(\)/,
+      "the revoke RPC must reject future-effective revocation dates");
 
     // Table: forced RLS, revoked from every role.
     const rls = (await db.query(
@@ -609,9 +612,9 @@ test("PRE-W2-HF Project<->Team: a denied leader write on an unmapped project lea
 });
 
 // ---------------------------------------------------------------------------
-// 7. Revoke date semantics: audited same-day cancellation marker + explicit end date.
+// 7. Revoke date semantics: same-day cancellation, current end date, and no future scheduling.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF Project<->Team: revoke date semantics (same-day marker, explicit end date)", async () => {
+test("PRE-W2-HF Project<->Team: revoke is immediate and rejects future effective dates without residue", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -633,14 +636,38 @@ test("PRE-W2-HF Project<->Team: revoke date semantics (same-day marker, explicit
     assert.equal(row.t, today, "revoke closes the interval exactly at the start date");
     assert.deepEqual((await projectList(db, leaderA, true)).projects, []);
 
-    // An explicit end date strictly after the mapping start keeps access until then.
+    // An explicit end date at the authorization date still removes access immediately.
     const nextGrant = await grantScope(db, admin,
-      [PROJECT_MAPPED, TEAM_A, 2, null, "second grant", idemKey("second-grant")]);
-    const scheduled = await revokeScope(db, admin,
-      [nextGrant.mapping_id, 3, "2099-01-01", "scheduled revoke", idemKey("scheduled-revoke")]);
-    assert.equal(scheduled.valid_to, "2099-01-01");
+      [PROJECT_MAPPED, TEAM_A, 2, PAST, "second grant", idemKey("second-grant")]);
+    const before = (await db.query(
+      "select valid_from::text as valid_from, valid_to::text as valid_to, version,"
+        + " revoked_by_user_id, revoke_reason_id from public.direct_entry_project_team_scopes"
+        + " where mapping_id = $1", [nextGrant.mapping_id])).rows[0];
+    const auditBefore = await count(db,
+      "select count(*)::int from public.direct_entry_audit_events"
+        + " where action='project_team_scope_revoke'");
+    const futureKey = idemKey("future-revoke");
+    await expectDenied(async () => revokeScope(db, admin,
+      [nextGrant.mapping_id, nextGrant.version, "2099-01-01", "future revoke", futureKey]), "22023");
+    const after = (await db.query(
+      "select valid_from::text as valid_from, valid_to::text as valid_to, version,"
+        + " revoked_by_user_id, revoke_reason_id from public.direct_entry_project_team_scopes"
+        + " where mapping_id = $1", [nextGrant.mapping_id])).rows[0];
+    assert.deepEqual(after, before, "future revoke leaves the mapping unchanged");
+    assert.equal(await count(db,
+      "select count(*)::int from public.direct_entry_audit_events"
+        + " where action='project_team_scope_revoke'"), auditBefore,
+    "future revoke writes no audit event");
+    assert.equal(await count(db,
+      "select count(*)::int from public.direct_entry_rpc_idempotency"
+        + " where app_user_id=$1 and action='project_team_scope_revoke' and idempotency_key=$2",
+      [ADMIN_APP, futureKey]), 0, "future revoke leaves no idempotency residue");
+
+    const revokedToday = await revokeScope(db, admin,
+      [nextGrant.mapping_id, nextGrant.version, today, "revoke today", idemKey("revoke-today")]);
+    assert.equal(revokedToday.valid_to, today);
     assert.deepEqual((await projectList(db, leaderA, true)).projects
-      .map((project) => project.project_id), [PROJECT_MAPPED]);
+      .map((project) => project.project_id), []);
   } finally {
     await db.close();
   }

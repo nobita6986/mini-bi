@@ -11,7 +11,8 @@
  *   3. accept a wrong-team mapping (predicate loses the team term);
  *   4. allow project master to Team Leaders (can_manage_project_master forced true);
  *   5. drop the canonical Full Admin guard on the mapping RPCs;
- *   6. drop the revoke row lock (no revalidation under the lock).
+ *   6. drop the revoke row lock (no revalidation under the lock);
+ *   7. allow a future-effective revoke date.
  *
  * Run: node scripts/pre-w2-hf-project-team-authority-mutation.mjs
  */
@@ -97,6 +98,17 @@ const MUTATIONS = [
         + body.text.replace(find, "where s.mapping_id = p_mapping_id;")
         + source.slice(body.end);
     },
+  },
+  {
+    label: "7. allow a future-effective revoke date",
+    apply: (source) => replaceAll(
+      source,
+      "  if p_effective_to is not null\n"
+        + "     and p_effective_to > public.direct_entry_authorization_date() then\n"
+        + "    raise exception 'revoke date must not be in the future' using errcode = '22023';\n"
+        + "  end if;\n",
+      "",
+    ),
   },
 ];
 

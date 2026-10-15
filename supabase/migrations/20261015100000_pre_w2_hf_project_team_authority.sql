@@ -5,9 +5,11 @@
 -- mapping-aware replacement of the existing Team Leader Project Operations guard.
 -- No UI, no API route, no client-side authority, no deployment, no DB apply.
 --
--- Contract (T0, docs/handoffs/pre-w2-hf-project-team-authority-contract-final.md):
---   * D1 many-to-many Project<->Team; D6 half-open [valid_from, valid_to) with
---     valid_to > valid_from and at most one effective mapping per pair;
+-- Contract (T0, docs/handoffs/pre-w2-hf-project-team-authority-contract-final.md
+-- plus docs/handoffs/pre-w2-hf-project-team-authority-d6-amendment.md):
+--   * D1 many-to-many Project<->Team; D6 half-open [valid_from, valid_to), ordinary
+--     intervals have valid_to > valid_from, with only the audited same-day revoke
+--     cancellation marker allowed to equal valid_from; at most one effective mapping;
 --   * D2/D5 grant/revoke are the existing canonical Full Admin triple at effective
 --     `all` scope, both requiring reason + expected pair version (OCC, 0 when never
 --     mapped) + idempotency + audit; no new capability;
@@ -24,12 +26,13 @@
 -- before those locks.
 --
 -- Interval rule (T0-reviewed narrow amendment of D6): intervals stay half-open
--- [valid_from, valid_to) and the DB check is `valid_to is null or valid_to >= valid_from`.
--- A grant always writes valid_to = NULL, so it can never open a zero-length interval.
--- ONLY the audited revoke RPC may set valid_to = valid_from, which is how a mapping
--- granted today is cancelled today (access removed on the authorization date); that
--- zero-length write is gated by the transaction-local marker
--- 'direct_entry.project_team_scope_marker' and is rejected on any other path.
+-- [valid_from, valid_to); ordinary intervals are non-empty and the DB check is
+-- `valid_to is null or valid_to >= valid_from` to permit one guarded cancellation
+-- marker. A grant always writes valid_to = NULL. ONLY the audited revoke RPC may set
+-- valid_to = valid_from to cancel a same-day grant; the transaction-local marker
+-- 'direct_entry.project_team_scope_marker' rejects that value on every other path.
+-- Revocation is immediate on the canonical authorization date: an explicit
+-- p_effective_to after that date is rejected, never scheduled for the future.
 --
 -- ACL posture: the table is forced RLS and revoked from every role; internal helpers
 -- are SECURITY DEFINER with a pinned search_path and revoked from every role; only the
@@ -612,9 +615,13 @@ begin
     raise exception 'project team mapping version conflict' using errcode = '40001';
   end if;
 
-  -- Authority must end at or before the authorization date when no explicit end date is
-  -- supplied, so a revoke removes leader access immediately on that date. valid_to =
-  -- valid_from is the audited same-day cancellation marker and is only armed here.
+  -- Revocation is immediate; future-effective revocation would leave access open.
+  if p_effective_to is not null
+     and p_effective_to > public.direct_entry_authorization_date() then
+    raise exception 'revoke date must not be in the future' using errcode = '22023';
+  end if;
+  -- An explicit end date must not precede the grant. valid_to = valid_from is the
+  -- audited same-day cancellation marker and is only armed here.
   if p_effective_to is not null and p_effective_to < v_mapping.valid_from then
     raise exception 'revoke date must not precede the mapping start' using errcode = '22023';
   end if;
@@ -1526,8 +1533,9 @@ begin
     'public.direct_entry_revoke_project_team_scope(uuid,uuid,uuid,integer,date,text,text)'::regprocedure
   ) into v_source;
   if position('project_team_scope_marker' in v_source) = 0
-     or position('for update' in v_source) = 0 then
-    raise exception 'PRE-W2-HF revoke must own the cancellation marker and lock the mapping row'
+     or position('for update' in v_source) = 0
+     or position('p_effective_to > public.direct_entry_authorization_date()' in v_source) = 0 then
+    raise exception 'PRE-W2-HF revoke must own the cancellation marker, lock the mapping row, and reject future-effective dates'
       using errcode = '55000';
   end if;
 
