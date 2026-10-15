@@ -667,12 +667,14 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // all: it patches three live read bodies in place through a helper that the same
     // migration drops before it ends, so the inventory is unchanged. PRE-W2-P1
     // (#86) adds one service-role-only worker-export RPC. PRE-W2-HF-D3-A (#92)
-    // adds nine service-role RPCs and three internal helpers. The measured
-    // inventory grows to 240 total / 113 service-role / 127 internal with #94.
+    // adds nine service-role RPCs and three internal helpers. PRE-W2-HF #96 adds
+    // one batch RPC name and retires the old versioned grant/revoke service ACLs;
+    // the versionless revoke overload preserves the exposed revoke name. Measured:
+    // 241 total / 113 service-role / 129 internal names, none exposed internally.
     assert.deepEqual(result.rows[0], {
-      total: 240,
+      total: 241,
       service_role: 113,
-      internal: 127,
+      internal: 129,
       exposed_internal: 0,
     });
   } finally {

@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 96-migration ledger).
+ * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 97-migration ledger).
  *
  * Covers the mapping table + RPCs (bounded read, grant, revoke), the canonical Full
  * Admin authority boundary, the pair-version OCC and idempotency contract, half-open
@@ -19,6 +19,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const TEAM_AUTHORITY_MIGRATION = "20261015100000_pre_w2_hf_project_team_authority.sql";
+const BATCH_MIGRATION = "20261015130000_pre_w2_hf_project_team_batch_mapping.sql";
 const PREVIOUS_MIGRATION = "20261014190000_pre_w2_hf_g_worker_directory_export.sql";
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -68,9 +69,12 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 96, "the ledger carries reporting decoupling after Project<->Team authority #94");
-  assert.equal(names.at(-3), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
-  assert.equal(names.at(-4), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
+  assert.equal(names.length, 97, "the append-only batch mapping migration follows #96");
+  assert.equal(names.at(-1), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
+  assert.equal(names.at(-2), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
+  assert.equal(names.at(-3), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
+  assert.equal(names.at(-4), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-5), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 
@@ -86,6 +90,12 @@ const grantScope = (db, actor, args) =>
   rpc(db, "direct_entry_grant_project_team_scope", [actor.auth, actor.app, ...args]);
 const revokeScope = (db, actor, args) =>
   rpc(db, "direct_entry_revoke_project_team_scope", [actor.auth, actor.app, ...args]);
+const grantScopesBatch = (db, actor, { team, projects, reason = "batch grant", key }) =>
+  rpc(db, "direct_entry_grant_project_team_scopes_batch",
+    [actor.auth, actor.app, team, projects, reason, key]);
+const revokeScopeVersionless = (db, actor, { mapping, effectiveTo = null, reason = "batch test revoke", key }) =>
+  rpc(db, "direct_entry_revoke_project_team_scope",
+    [actor.auth, actor.app, mapping, effectiveTo, reason, key]);
 const projectList = (db, actor, includeInactive = true) =>
   rpc(db, "direct_entry_list_projects_admin", [actor.auth, actor.app, includeInactive]);
 const projectGet = (db, actor, project) =>
@@ -227,6 +237,8 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
   try {
     const source = (await readFile(path.join(MIGRATION_DIR, TEAM_AUTHORITY_MIGRATION), "utf8"))
       .replaceAll("\r\n", "\n");
+    const batchSource = (await readFile(path.join(MIGRATION_DIR, BATCH_MIGRATION), "utf8"))
+      .replaceAll("\r\n", "\n");
 
     // The generic authority selector must NOT be rewritten to pretend it checks a project.
     assert.doesNotMatch(source,
@@ -241,6 +253,13 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
     // Canonical Full Admin guard, no new capability vocabulary.
     assert.match(source, /direct_entry_assert_actor_app_user_admin\(p_auth_subject, p_app_user_id\)/);
     assert.doesNotMatch(source, /capability\s+(?:in|not in)?\s*\([^)]*project_team/);
+    assert.match(batchSource, /direct_entry_assert_actor_app_user_admin\(p_auth_subject, p_app_user_id\)/);
+    assert.match(batchSource, /direct_entry_authorization_date\(\)/);
+    assert.match(batchSource, /pg_advisory_xact_lock/);
+    assert.match(batchSource, /for update/i);
+    assert.match(batchSource, /direct_entry_idempotency_begin/);
+    assert.match(batchSource, /direct_entry_idempotency_finish/);
+    assert.doesNotMatch(batchSource, /p_expected_pair_version|p_effective_from/);
 
     // The revoke path must keep its row lock and own the cancellation marker.
     const revokeStart = source.indexOf(
@@ -273,8 +292,8 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
     // RPC boundary: service_role only, SECURITY DEFINER, pinned search_path.
     for (const signature of [
       "public.direct_entry_list_project_team_scopes_admin(uuid,uuid,text,uuid,boolean,integer,integer)",
-      "public.direct_entry_grant_project_team_scope(uuid,uuid,text,uuid,integer,date,text,text)",
-      "public.direct_entry_revoke_project_team_scope(uuid,uuid,uuid,integer,date,text,text)",
+      "public.direct_entry_grant_project_team_scopes_batch(uuid,uuid,uuid,text[],text,text)",
+      "public.direct_entry_revoke_project_team_scope(uuid,uuid,uuid,date,text,text)",
     ]) {
       const { rows } = await db.query(`
         select p.prosecdef,
@@ -289,6 +308,19 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
       assert.equal(rows[0].anon_exec, false);
       assert.equal(rows[0].auth_exec, false);
       assert.equal(rows[0].svc_exec, true);
+    }
+    for (const signature of [
+      "public.direct_entry_grant_project_team_scope(uuid,uuid,text,uuid,integer,date,text,text)",
+      "public.direct_entry_revoke_project_team_scope(uuid,uuid,uuid,integer,date,text,text)",
+    ]) {
+      const { rows } = await db.query(`
+        select has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+               has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec,
+               has_function_privilege('service_role', p.oid, 'EXECUTE') as svc_exec
+          from pg_proc p where p.oid = to_regprocedure($1)`, [signature]);
+      assert.equal(rows.length, 1);
+      assert.deepEqual(rows[0], { anon_exec: false, auth_exec: false, svc_exec: true },
+        `${signature} remains available to the current server caller during coordinated rollout`);
     }
 
     // Internal helpers stay revoked from every role.
@@ -359,6 +391,146 @@ test("PRE-W2-HF Project<->Team: only the canonical Full Admin may read/grant/rev
 
     await expectDenied(async () => listScopes(db, admin, null, null, true, 0, 25), "22023");
     await expectDenied(async () => listScopes(db, admin, null, null, true, 1, 101), "22023");
+  } finally {
+    await db.close();
+  }
+});
+
+test("PRE-W2-HF Project<->Team: batch mapping is atomic, idempotent, and owns pair versions", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const today = (await db.query(
+      "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+    const key = idemKey("batch");
+    const first = await grantScopesBatch(db, admin, {
+      team: TEAM_A, projects: [PROJECT_MAPPED, PROJECT_UNMAPPED], key,
+    });
+    assert.deepEqual(Object.keys(first).sort(), ["created", "effective_from", "skipped", "team_id"]);
+    assert.equal(first.team_id, TEAM_A);
+    assert.equal(first.effective_from, today);
+    assert.deepEqual(first.created.map(({ project_id }) => project_id).sort(),
+      [PROJECT_MAPPED, PROJECT_UNMAPPED].sort());
+    assert.ok(first.created.every((row) => row.version === 1 && row.created === true));
+    assert.deepEqual(first.skipped, []);
+    assert.deepEqual(await grantScopesBatch(db, admin, {
+      team: TEAM_A, projects: [PROJECT_UNMAPPED, PROJECT_MAPPED], key,
+    }), first, "input ordering is normalized for exact idempotent replay");
+
+    const skipped = await grantScopesBatch(db, admin, {
+      team: TEAM_A, projects: [PROJECT_MAPPED, PROJECT_UNMAPPED], key: idemKey("batch-skip"),
+    });
+    assert.deepEqual(skipped.created, []);
+    assert.equal(skipped.skipped.length, 2);
+    assert.ok(skipped.skipped.every((row) => row.status === "ALREADY_EFFECTIVE" && row.version === 1));
+    const atomicProjects = ["pt-authority-batch-atomic-a", "pt-authority-batch-atomic-b"];
+    await db.query(
+      "insert into public.direct_entry_projects(project_id,display_name,active,version)"
+        + " values ($1,'Atomic A',true,1),($2,'Atomic B',true,1)",
+      atomicProjects);
+
+    const baseline = await db.query(`
+      select
+        (select count(*)::int from public.direct_entry_project_team_scopes) as mappings,
+        (select count(*)::int from public.direct_entry_audit_events
+          where action='project_team_scope_grant') as audits
+    `);
+    const before = baseline.rows[0];
+    const invalidBatches = [
+      { team: TEAM_A, projects: [PROJECT_UNMAPPED, "missing-batch-project"], code: "P0002" },
+      { team: TEAM_A, projects: [PROJECT_UNMAPPED, PROJECT_INACTIVE], code: "22023" },
+      { team: TEAM_B, projects: [PROJECT_UNMAPPED], code: "22023", inactiveTeam: true },
+      { team: uuid(98765), projects: [PROJECT_UNMAPPED], code: "P0002" },
+    ];
+    for (const invalid of invalidBatches) {
+      if (invalid.inactiveTeam) {
+        await db.query("update public.teams set active=false where team_id=$1", [TEAM_B]);
+      }
+      const badKey = idemKey("batch-invalid");
+      await expectDenied(async () => grantScopesBatch(db, admin, {
+        team: invalid.team, projects: invalid.projects, key: badKey,
+      }), invalid.code);
+      const after = (await db.query(`
+        select
+          (select count(*)::int from public.direct_entry_project_team_scopes) as mappings,
+          (select count(*)::int from public.direct_entry_audit_events
+            where action='project_team_scope_grant') as audits,
+          (select count(*)::int from public.direct_entry_rpc_idempotency
+            where app_user_id=$1 and action='project_team_scope_batch_grant'
+              and idempotency_key=$2) as idempotency
+      `, [ADMIN_APP, badKey])).rows[0];
+      assert.deepEqual(after, { ...before, idempotency: 0 },
+        "one invalid item rolls back all mappings, audit, reason and idempotency writes");
+    }
+
+    const injectedKey = idemKey("batch-midwrite-failure");
+    await db.exec(`
+      create function public.test_fail_second_batch_mapping()
+      returns trigger language plpgsql set search_path=pg_catalog, public as $$
+      begin
+        if new.project_id = '${atomicProjects[1]}' then
+          raise exception 'injected mid-batch failure' using errcode='23514';
+        end if;
+        return new;
+      end
+      $$;
+      create trigger z_test_fail_second_batch_mapping
+        before insert on public.direct_entry_project_team_scopes
+        for each row execute function public.test_fail_second_batch_mapping();
+    `);
+    await expectDenied(() => grantScopesBatch(db, admin, {
+      team: TEAM_A, projects: atomicProjects, reason: "injected batch write failure", key: injectedKey,
+    }), "23514");
+    const rolledBack = (await db.query(`
+      select
+        (select count(*)::int from public.direct_entry_project_team_scopes
+          where project_id = any($1::text[]) and team_id=$2) as mappings,
+        (select count(*)::int from public.direct_entry_audit_events
+          where action='project_team_scope_grant') as audits,
+        (select count(*)::int from public.direct_entry_rpc_idempotency
+          where app_user_id=$3 and action='project_team_scope_batch_grant'
+            and idempotency_key=$4) as idempotency,
+        (select count(*)::int from public.direct_entry_restricted_reasons
+          where reason_text='injected batch write failure') as reasons
+    `, [atomicProjects, TEAM_A, ADMIN_APP, injectedKey])).rows[0];
+    assert.deepEqual(rolledBack, {
+      mappings: 0, audits: before.audits, idempotency: 0, reasons: 0,
+    },
+      "a write-time failure after the first insert rolls back all batch side effects");
+
+    const lone = { auth: LONE_AUTH, app: LONE_APP };
+    const accounting = { auth: ACCOUNTING_AUTH, app: ACCOUNTING_APP };
+    const leader = { auth: LEADER_A_AUTH, app: LEADER_A_APP };
+    for (const actor of [lone, accounting, leader, { auth: uuid(999), app: ADMIN_APP }]) {
+      await expectDenied(() => grantScopesBatch(db, actor, {
+        team: TEAM_A, projects: [PROJECT_UNMAPPED], key: idemKey("batch-denied"),
+      }));
+    }
+    await expectDenied(() => grantScopesBatch(db,
+      { auth: uuid(999), app: ADMIN_APP }, {
+        team: TEAM_A, projects: [PROJECT_UNMAPPED], key: idemKey("batch-anonymous"),
+      }));
+
+    const mapping = first.created.find((row) => row.project_id === PROJECT_MAPPED);
+    assert.ok(mapping);
+    const revokeKey = idemKey("batch-revoke");
+    const revoked = await revokeScopeVersionless(db, admin, {
+      mapping: mapping.mapping_id, key: revokeKey,
+    });
+    assert.equal(revoked.version, mapping.version + 1);
+    assert.equal(revoked.revoked, true);
+    assert.deepEqual(await revokeScopeVersionless(db, admin, {
+      mapping: mapping.mapping_id, key: revokeKey,
+    }), revoked, "versionless revoke replays exact saved outcome");
+    await expectDenied(() => revokeScopeVersionless(db, admin, {
+      mapping: mapping.mapping_id, key: idemKey("batch-revoke-again"),
+    }), "22023");
+
+    const audit = (await db.query(`
+      select count(*)::int as n from public.direct_entry_audit_events
+       where action='project_team_scope_grant' and resource_ref = any($1::text[])
+    `, [first.created.map((row) => row.mapping_id)])).rows[0].n;
+    assert.equal(audit, 2, "one immutable audit event is recorded for each created mapping");
   } finally {
     await db.close();
   }

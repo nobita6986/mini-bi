@@ -15,6 +15,19 @@ const ACTOR = {
 const KEY = "55555555-5555-4555-8555-555555555555";
 const MAPPING = "77777777-7777-4777-8777-777777777777";
 const TEAM = "66666666-6666-4666-8666-666666666666";
+const CREATED = [
+  { mapping_id: MAPPING, project_id: "project-1", team_id: TEAM,
+    valid_from: "2026-10-15", valid_to: null, version: 1, created: true },
+  { mapping_id: "88888888-8888-4888-8888-888888888888", project_id: "project-2", team_id: TEAM,
+    valid_from: "2026-10-15", valid_to: null, version: 1, created: true },
+];
+const BATCH = {
+  team_id: TEAM, effective_from: "2026-10-15", created: CREATED,
+  skipped: [{
+    project_id: "project-3", status: "ALREADY_EFFECTIVE",
+    mapping_id: "99999999-9999-4999-8999-999999999999", version: 2,
+  }],
+};
 const LIST = {
   authorization_date: "2026-10-15", include_history: false, page: 1, page_size: 25,
   total: 1, has_more: false,
@@ -53,12 +66,12 @@ function post(path, body, headers = {}) {
 }
 
 const grantBody = {
-  project_id: "project-1", team_id: TEAM, expected_pair_version: 0,
-  effective_from: "2026-10-15", reason: "UAT grant", idempotency_key: KEY,
+  team_id: TEAM, project_ids: ["project-1", "project-2", "project-3"],
+  reason: "UAT grant", idempotency_key: KEY,
 };
 const revokeBody = {
-  mapping_id: MAPPING, expected_pair_version: 1,
-  effective_to: "2026-10-15", reason: "same-day cancellation", idempotency_key: KEY,
+  mapping_id: MAPPING, effective_to: "2026-10-15",
+  reason: "same-day cancellation", idempotency_key: KEY,
 };
 
 test("list requires resolved active actor, forwards bounded filters, and is private no-store", async () => {
@@ -90,13 +103,13 @@ test("query rejects unknown, duplicate, malformed, and out-of-range pagination b
   assert.equal(parseListScopesQuery(new URL("https://app.test/api?page=1000&page_size=100")).ok, true);
 });
 
-test("grant and revoke derive actor from session and forward OCC, reason, and idempotency", async () => {
-  const grant = dependencies({ ok: true, data: { mapping_id: MAPPING, project_id: "project-1",
-    team_id: TEAM, valid_from: "2026-10-15", valid_to: null, version: 1, created: true } });
+test("batch grant and revoke derive actor from session and forward no client OCC version", async () => {
+  const grant = dependencies({ ok: true, data: BATCH });
   const grantResponse = await grantProjectTeamScope(post("/api", grantBody), "true", grant.value);
   assert.equal(grantResponse.status, 200);
   assert.equal(grantResponse.headers.get("cache-control"), "private, no-store");
   assert.deepEqual(grant.calls.repository[0], ["grant", { ...ACTOR, ...grantBody }]);
+  assert.deepEqual((await grantResponse.json()).batch, BATCH);
 
   const revoke = dependencies({ ok: true, data: { mapping_id: MAPPING, project_id: "project-1",
     team_id: TEAM, valid_to: "2026-10-15", version: 2, revoked: true } });
@@ -140,7 +153,8 @@ test("anonymous, disabled, and malformed actor are denied without mapping reads"
 
 test("authority fields and unknown body keys are rejected before session", async () => {
   for (const extra of [{ actor: "admin" }, { auth_subject: ACTOR.auth_subject },
-    { app_user_id: ACTOR.app_user_id }, { capabilities: ["entry_admin"] }, { scope: "all" }]) {
+    { app_user_id: ACTOR.app_user_id }, { capabilities: ["entry_admin"] }, { scope: "all" },
+    { role: "admin" }, { actor: { authority: "Full Admin" } }]) {
     const d = dependencies({ ok: true, data: LIST });
     const response = await grantProjectTeamScope(post("/api", { ...grantBody, ...extra }), "true", d.value);
     assert.equal(response.status, 400, JSON.stringify(extra));
@@ -148,11 +162,61 @@ test("authority fields and unknown body keys are rejected before session", async
     assert.equal(d.calls.session, 0);
     assert.equal(d.calls.repository.length, 0);
   }
+  for (const extra of [{ expected_pair_version: 0 }, { expected_version: 1 }]) {
+    const d = dependencies({ ok: true, data: LIST });
+    const response = await grantProjectTeamScope(post("/api", { ...grantBody, ...extra }), "true", d.value);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "PROJECT_TEAM_SCOPE_INVALID");
+    assert.equal(d.calls.session, 0);
+  }
+  const revokeWithVersion = dependencies({ ok: true, data: LIST });
+  const revokeResponse = await revokeProjectTeamScope(
+    post("/api", { ...revokeBody, expected_pair_version: 1 }), "true", revokeWithVersion.value,
+  );
+  assert.equal(revokeResponse.status, 400);
+  assert.equal(revokeWithVersion.calls.session, 0);
+  assert.equal(revokeWithVersion.calls.repository.length, 0);
   const d = dependencies({ ok: true, data: LIST });
   const response = await grantProjectTeamScope(post("/api", { ...grantBody, extra: true }), "true", d.value);
   assert.equal(response.status, 400);
   assert.equal((await response.json()).code, "PROJECT_TEAM_SCOPE_INVALID");
   assert.equal(d.calls.session, 0);
+});
+
+test("bounded JSON and invalid batch values are rejected before session", async () => {
+  const invalid = [
+    { ...grantBody, project_ids: [] },
+    { ...grantBody, project_ids: ["project-1", "project-1"] },
+    { ...grantBody, project_ids: Array.from({ length: 101 }, (_, i) => `p-${i}`) },
+    { ...grantBody, effective_from: "2020-01-01" },
+    { ...grantBody, project_ids: ["bad project"] },
+    { ...grantBody, team_id: "66666666-6666-4666-8666-666666666666", effective_date: "2026-02-30" },
+  ];
+  for (const body of invalid) {
+    const d = dependencies({ ok: true, data: BATCH });
+    const response = await grantProjectTeamScope(post("/api", body), "true", d.value);
+    assert.equal(response.status, 400);
+    assert.equal(d.calls.session, 0);
+    assert.equal(d.calls.repository.length, 0);
+  }
+  const d = dependencies({ ok: true, data: BATCH });
+  const oversized = new Request("https://app.test/api", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json", origin: "https://app.test", host: "app.test",
+      "sec-fetch-site": "same-origin",
+    },
+    body: JSON.stringify({ ...grantBody, reason: "x".repeat(70_000) }),
+  });
+  assert.equal((await grantProjectTeamScope(oversized, "true", d.value)).status, 400);
+  assert.equal(d.calls.session, 0);
+
+  const invalidRevoke = dependencies({ ok: true, data: BATCH });
+  const badDate = await revokeProjectTeamScope(post("/api", {
+    ...revokeBody, effective_to: "2026-02-30",
+  }), "true", invalidRevoke.value);
+  assert.equal(badDate.status, 400);
+  assert.equal(invalidRevoke.calls.session, 0);
 });
 
 test("sanitized repository errors retain status taxonomy and never expose DB text", async () => {
@@ -167,5 +231,6 @@ test("sanitized repository errors retain status taxonomy and never expose DB tex
     const text = await response.text();
     assert.ok(text.includes(code));
     assert.equal(text.includes("database"), false);
+    assert.equal(text.includes("sensitive"), false);
   }
 });

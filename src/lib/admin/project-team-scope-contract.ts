@@ -1,6 +1,6 @@
 /**
  * PRE-W2-HF Project↔Team authority (T1A) - Strict contract for the mapping
- * admin API. Mirrors migration #94 RPC envelopes exactly; fail-closed.
+ * admin API. Mirrors the migration #94 read and #97 mutation envelopes exactly.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -43,6 +43,18 @@ export type ProjectTeamScopeGrantResult = {
   created: boolean;
 };
 
+export type ProjectTeamScopeBatchGrantResult = {
+  team_id: string;
+  effective_from: string;
+  created: readonly ProjectTeamScopeGrantResult[];
+  skipped: readonly {
+    project_id: string;
+    status: "ALREADY_EFFECTIVE";
+    mapping_id: string;
+    version: number;
+  }[];
+};
+
 export type ProjectTeamScopeRevokeResult = {
   mapping_id: string;
   project_id: string;
@@ -68,7 +80,11 @@ function int(v: unknown, min: number): number | null {
   return typeof v === "number" && Number.isSafeInteger(v) && v >= min ? v : null;
 }
 function day(v: unknown): string | null {
-  return typeof v === "string" && DATE.test(v) ? v : null;
+  if (typeof v !== "string" || !DATE.test(v)) return null;
+  const [year, month, date] = v.split("-").map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12 && date >= 1 && date <= daysInMonth[month - 1] ? v : null;
 }
 function nullableDay(v: unknown): string | null | undefined {
   return v === null ? null : (day(v) ?? undefined);
@@ -151,6 +167,34 @@ export function projectGrantResult(value: unknown): ProjectTeamScopeGrantResult 
   return { mapping_id, project_id, team_id, valid_from, valid_to, version, created: true };
 }
 
+export function projectBatchGrantResult(value: unknown): ProjectTeamScopeBatchGrantResult | null {
+  if (!isRecord(value) ||
+      !exact(value, ["team_id", "effective_from", "created", "skipped"]) ||
+      !Array.isArray(value.created) || !Array.isArray(value.skipped)) return null;
+  const team_id = uuid(value.team_id);
+  const effective_from = day(value.effective_from);
+  if (!team_id || !effective_from) return null;
+  const created: ProjectTeamScopeGrantResult[] = [];
+  for (const raw of value.created) {
+    const row = projectGrantResult(raw);
+    if (!row || row.team_id !== team_id) return null;
+    created.push(row);
+  }
+  const skipped: ProjectTeamScopeBatchGrantResult["skipped"][number][] = [];
+  for (const raw of value.skipped) {
+    if (!isRecord(raw) ||
+        !exact(raw, ["project_id", "status", "mapping_id", "version"])) return null;
+    const project_id = projectId(raw.project_id);
+    const mapping_id = uuid(raw.mapping_id);
+    const version = int(raw.version, 1);
+    if (!project_id || raw.status !== "ALREADY_EFFECTIVE" || !mapping_id || version === null) {
+      return null;
+    }
+    skipped.push({ project_id, status: "ALREADY_EFFECTIVE", mapping_id, version });
+  }
+  return { team_id, effective_from, created, skipped };
+}
+
 export function projectRevokeResult(value: unknown): ProjectTeamScopeRevokeResult | null {
   if (!isRecord(value) || !exact(value, ["mapping_id", "project_id", "team_id",
     "valid_to", "version", "revoked"])) return null;
@@ -171,45 +215,52 @@ function reject(): Parsed<never> {
 }
 
 export type GrantRequest = {
-  project_id: string;
   team_id: string;
-  expected_pair_version: number;
-  effective_from: string | null;
+  project_ids: readonly string[];
   reason: string;
   idempotency_key: string;
 };
+const MAX_PROJECTS_PER_BATCH = 100;
+
 export function parseGrant(body: unknown): Parsed<GrantRequest> {
-  if (!isRecord(body) || !exact(body, ["project_id", "team_id", "expected_pair_version",
-    "effective_from", "reason", "idempotency_key"])) return reject();
-  const project_id = projectId(body.project_id);
+  if (!isRecord(body) || !exact(body, ["team_id", "project_ids", "reason", "idempotency_key"]) ||
+      !Array.isArray(body.project_ids) || body.project_ids.length < 1 ||
+      body.project_ids.length > MAX_PROJECTS_PER_BATCH) return reject();
   const team_id = uuid(body.team_id);
-  const expected_pair_version = int(body.expected_pair_version, 0);
-  const effective_from_raw = body.effective_from;
-  const effective_from = effective_from_raw === null ? null : day(effective_from_raw);
+  const project_ids: string[] = [];
+  for (const raw of body.project_ids) {
+    const id = projectId(raw);
+    if (!id) return reject();
+    project_ids.push(id);
+  }
   const reason = text(body.reason, 4000);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!project_id || !team_id || expected_pair_version === null ||
-      effective_from_raw === undefined || !reason || !idempotency_key) return reject();
-  return { ok: true, value: { project_id, team_id, expected_pair_version, effective_from, reason, idempotency_key } };
+  if (!team_id || new Set(project_ids).size !== project_ids.length || !reason || !idempotency_key) {
+    return reject();
+  }
+  return {
+    ok: true, value: { team_id, project_ids, reason, idempotency_key },
+  };
 }
 
 export type RevokeRequest = {
   mapping_id: string;
-  expected_pair_version: number;
   effective_to: string | null;
   reason: string;
   idempotency_key: string;
 };
 export function parseRevoke(body: unknown): Parsed<RevokeRequest> {
-  if (!isRecord(body) || !exact(body, ["mapping_id", "expected_pair_version",
-    "effective_to", "reason", "idempotency_key"])) return reject();
+  if (!isRecord(body) || !exact(body, [
+    "mapping_id", "effective_to", "reason", "idempotency_key",
+  ])) return reject();
   const mapping_id = uuid(body.mapping_id);
-  const expected_pair_version = int(body.expected_pair_version, 1);
   const effective_to_raw = body.effective_to;
   const effective_to = effective_to_raw === null ? null : day(effective_to_raw);
   const reason = text(body.reason, 4000);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!mapping_id || expected_pair_version === null ||
-      effective_to_raw === undefined || !reason || !idempotency_key) return reject();
-  return { ok: true, value: { mapping_id, expected_pair_version, effective_to, reason, idempotency_key } };
+  if (!mapping_id || effective_to_raw === undefined ||
+      (effective_to_raw !== null && effective_to === null) || !reason || !idempotency_key) {
+    return reject();
+  }
+  return { ok: true, value: { mapping_id, effective_to, reason, idempotency_key } };
 }

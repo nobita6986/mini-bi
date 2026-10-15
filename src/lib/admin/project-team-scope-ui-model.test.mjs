@@ -20,17 +20,13 @@ test("mapping query is bounded and preserves filters", () => {
   ]);
 });
 
-test("grant and revoke builders preserve exact OCC and audit fields", () => {
+test("legacy UI mutation builders are blocked until the coordinated batch UI contract update", () => {
   const grant = buildGrantRequest({ projectId: " project-1 ", teamId: TEAM,
     expectedPairVersion: 0, effectiveFrom: "", reason: "grant", idempotencyKey: KEY });
-  assert.equal(grant.ok, true);
-  assert.deepEqual(grant.body, { project_id: "project-1", team_id: TEAM,
-    expected_pair_version: 0, effective_from: null, reason: "grant", idempotency_key: KEY });
+  assert.equal(grant.ok, false);
   const revoke = buildRevokeRequest({ mappingId: MAPPING, expectedPairVersion: 2,
     effectiveTo: "2026-10-15", reason: "same-day", idempotencyKey: KEY });
-  assert.equal(revoke.ok, true);
-  assert.equal(revoke.body.expected_pair_version, 2);
-  assert.equal(revoke.body.effective_to, "2026-10-15");
+  assert.equal(revoke.ok, false);
   assert.equal(buildGrantRequest({ projectId: "x", teamId: TEAM, expectedPairVersion: -1,
     effectiveFrom: "", reason: "r", idempotencyKey: KEY }).ok, false);
   assert.equal(buildRevokeRequest({ mappingId: MAPPING, expectedPairVersion: 0,

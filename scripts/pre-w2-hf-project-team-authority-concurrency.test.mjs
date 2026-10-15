@@ -206,7 +206,7 @@ async function pairVersion(client) {
   return rows[0].pair_version;
 }
 
-test("PRE-W2-HF Project<->Team: revoke-vs-mutation race proves the locked lock order",
+test("PRE-W2-HF Project<->Team: batch mapping and revoke races prove the locked lock order",
   async (t) => {
     const initdb = binary("initdb");
     const pgCtl = binary("pg_ctl");
@@ -368,6 +368,78 @@ test("PRE-W2-HF Project<->Team: revoke-vs-mutation race proves the locked lock o
         assert.equal(assignmentAfter.version, 1, "the committed assignment stays intact");
         assert.equal(assignmentAfter.valid_to, null, "the committed assignment stays open");
         await checker.end();
+        await observer.end();
+        observer = undefined;
+      }
+
+      // ------------------------------------------------------------------
+      // Stage 3: simultaneous grants serialize on the project and the loser
+      // returns an explicit skip. Concurrent versionless revokes serialize
+      // too; the second observes the committed close and leaves no residue.
+      // ------------------------------------------------------------------
+      {
+        const grantFirst = await connect(port, databaseName, "pt-batch-grant-first");
+        const grantSecond = await connect(port, databaseName, "pt-batch-grant-second");
+        observer = await connect(port, databaseName, "pt-batch-observer");
+        inTx = [grantFirst, grantSecond];
+
+        await grantFirst.query("begin");
+        const firstBatch = await call(grantFirst, "direct_entry_grant_project_team_scopes_batch",
+          [ADMIN_AUTH, ADMIN_APP, TEAM_A, [PROJECT], "concurrent first", `batch-first-${PID}`]);
+        assert.equal(firstBatch.created.length, 1);
+        assert.deepEqual(firstBatch.skipped, []);
+
+        await grantSecond.query("begin");
+        const secondPending = call(grantSecond, "direct_entry_grant_project_team_scopes_batch",
+          [ADMIN_AUTH, ADMIN_APP, TEAM_A, [PROJECT], "concurrent second", `batch-second-${PID}`]);
+        await waitUntilBlocked(observer, "pt-batch-grant-second");
+        await grantFirst.query("commit");
+        const secondBatch = await secondPending;
+        assert.deepEqual(secondBatch.created, []);
+        assert.equal(secondBatch.skipped.length, 1);
+        assert.equal(secondBatch.skipped[0].mapping_id, firstBatch.created[0].mapping_id);
+        await grantSecond.query("commit");
+        await rollbackAll(inTx);
+        await observer.end();
+        observer = undefined;
+
+        const revokeFirst = await connect(port, databaseName, "pt-batch-revoke-first");
+        const revokeSecond = await connect(port, databaseName, "pt-batch-revoke-second");
+        observer = await connect(port, databaseName, "pt-batch-revoke-observer");
+        inTx = [revokeFirst, revokeSecond];
+        await revokeFirst.query("begin");
+        const firstRevoke = await call(revokeFirst, "direct_entry_revoke_project_team_scope",
+          [ADMIN_AUTH, ADMIN_APP, firstBatch.created[0].mapping_id, null,
+            "concurrent first revoke", `batch-revoke-first-${PID}`]);
+        assert.equal(firstRevoke.revoked, true);
+
+        await revokeSecond.query("begin");
+        const secondRevokePending = call(revokeSecond, "direct_entry_revoke_project_team_scope",
+          [ADMIN_AUTH, ADMIN_APP, firstBatch.created[0].mapping_id, null,
+            "concurrent second revoke", `batch-revoke-second-${PID}`]);
+        await waitUntilBlocked(observer, "pt-batch-revoke-second");
+        await revokeFirst.query("commit");
+        await assert.rejects(secondRevokePending, (error) => error.code === "22023",
+          "the second versionless revoke observes the first committed revoke");
+        await revokeSecond.query("rollback");
+        await rollbackAll(inTx);
+        await observer.end();
+        observer = undefined;
+
+        const verify = await connect(port, databaseName, "pt-batch-race-verify");
+        const { rows: [raceState] } = await verify.query(`
+          select
+            (select count(*)::int from public.direct_entry_project_team_scopes
+              where project_id=$1 and team_id=$2 and valid_to is null) as open_mappings,
+            (select count(*)::int from public.direct_entry_audit_events
+              where action='project_team_scope_grant' and resource_ref=$3) as grant_audits,
+            (select count(*)::int from public.direct_entry_rpc_idempotency
+              where idempotency_key='batch-revoke-second-${PID}') as losing_revoke_idempotency
+        `, [PROJECT, TEAM_A, firstBatch.created[0].mapping_id]);
+        assert.equal(raceState.open_mappings, 0);
+        assert.equal(raceState.grant_audits, 1);
+        assert.equal(raceState.losing_revoke_idempotency, 0);
+        await verify.end();
       }
 
       // Final state: no residue from the denied leader mutations.

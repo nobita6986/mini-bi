@@ -5,12 +5,12 @@
 import "server-only";
 
 import {
-  projectGrantResult,
+  projectBatchGrantResult,
   projectProjectTeamScopeList,
   projectRevokeResult,
 } from "./project-team-scope-contract.ts";
 import type {
-  ProjectTeamScopeGrantResult,
+  ProjectTeamScopeBatchGrantResult,
   ProjectTeamScopeList,
   ProjectTeamScopeRevokeResult,
 } from "./project-team-scope-contract.ts";
@@ -33,11 +33,11 @@ export type ProjectTeamScopeRepository = {
     include_history: boolean; page: number; page_size: number;
   }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeList>>;
   grantScope(input: ActorRef & {
-    project_id: string; team_id: string; expected_pair_version: number;
-    effective_from: string | null; reason: string; idempotency_key: string;
-  }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeGrantResult>>;
+    team_id: string; project_ids: readonly string[];
+    reason: string; idempotency_key: string;
+  }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeBatchGrantResult>>;
   revokeScope(input: ActorRef & {
-    mapping_id: string; expected_pair_version: number;
+    mapping_id: string;
     effective_to: string | null; reason: string; idempotency_key: string;
   }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeRevokeResult>>;
 };
@@ -88,18 +88,17 @@ export function createProjectTeamScopeRepository(rpc?: Rpc): ProjectTeamScopeRep
       }, projectProjectTeamScopeList);
     },
     grantScope(input) {
-      return call("direct_entry_grant_project_team_scope", {
+      return call("direct_entry_grant_project_team_scopes_batch", {
         p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id,
-        p_project_id: input.project_id, p_team_id: input.team_id,
-        p_expected_pair_version: input.expected_pair_version,
-        p_effective_from: input.effective_from, p_reason: input.reason,
+        p_team_id: input.team_id, p_project_ids: [...input.project_ids],
+        p_reason: input.reason,
         p_idempotency_key: input.idempotency_key,
-      }, projectGrantResult);
+      }, projectBatchGrantResult);
     },
     revokeScope(input) {
       return call("direct_entry_revoke_project_team_scope", {
         p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id,
-        p_mapping_id: input.mapping_id, p_expected_pair_version: input.expected_pair_version,
+        p_mapping_id: input.mapping_id,
         p_effective_to: input.effective_to, p_reason: input.reason,
         p_idempotency_key: input.idempotency_key,
       }, projectRevokeResult);
