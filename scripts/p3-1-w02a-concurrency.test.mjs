@@ -88,7 +88,7 @@ async function applyMigrations(client) {
       + " create schema auth; create table auth.users (id uuid primary key);",
   );
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 93, "the test applies the complete 93-migration ledger");
+  assert.equal(names.length, 94, "the test applies the complete 93-migration ledger");
   for (const name of names) {
     await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -166,6 +166,18 @@ async function seed(client) {
     "insert into public.direct_entry_projects(project_id,display_name,active,version)"
       + " values ($1,'Concurrency Project',true,1)",
     [PROJECT],
+  );
+  // PRE-W2-HF Project<->Team mapping: the leader assignment is authorized for this pair,
+  // so the race denials below come from the team move / leader revoke, not the mapping.
+  const { rows: [{ reason_id: mappingReason }] } = await client.query(
+    "select public.direct_entry_reason($1,'seed mapping') as reason_id",
+    [ADMIN_APP],
+  );
+  await client.query(
+    "insert into public.direct_entry_project_team_scopes"
+      + "(project_id,team_id,valid_from,version,granted_by_user_id,reason_id)"
+      + " values ($1,$2,$3,1,$4,$5)",
+    [PROJECT, TEAM_A, PAST, ADMIN_APP, mappingReason],
   );
   return today;
 }

@@ -8,6 +8,7 @@ const SHARD_COUNT = 4;
 const POSTGRES_TARGET = "postgres";
 const POSTGRES_TEST_FILES = new Set([
   "scripts/p3-1-w02a-concurrency.test.mjs",
+  "scripts/pre-w2-hf-project-team-authority-concurrency.test.mjs",
 ]);
 // shortcut: weights come from the latest successful main CI run; refresh when shard times drift.
 const TEST_WEIGHTS = {
@@ -49,6 +50,7 @@ const TEST_WEIGHTS = {
   "test:p2.5-hf-r1": 6.1,
   "test:p3-w05b-a-team-reporting": 6.1,
   "test:p2.5-status-default": 5.3,
+  "test:pre-w2-hf-project-team-authority-db": 15.7,
 };
 
 const target = process.argv[2];

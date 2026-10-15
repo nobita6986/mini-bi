@@ -18,6 +18,8 @@ const BASE_COMMIT = "1189c8a77decbecec0b402b72f428cb0525b460d";
 const MIGRATION_71 = "20261009070000_p3_1_w01d_team_leader_lifecycle.sql";
 const MIGRATION_72 =
   "20261009080000_p3_1_w02a_team_leader_project_manager_authority.sql";
+const TEAM_AUTHORITY_MIGRATION =
+  "20261015100000_pre_w2_hf_project_team_authority.sql";
 const MIGRATION = (await readFile(path.join(MIGRATION_DIR, MIGRATION_72), "utf8"))
   .replaceAll("\r\n", "\n");
 const MUTATION = process.env.P3_1_W02A_MUTATION;
@@ -148,10 +150,10 @@ async function assertPriorMigrationsUnchanged(names) {
     .sort()
     .map((name) => path.basename(name));
   assert.equal(baseline.length, 71, "reviewed base inventory is exactly #1-#71");
-  assert.equal(names.length, 93, "working ledger carries W02-A #72, alias hotfix #73, P3.1-HF #74 and the W02-B vendor lifecycle #75");
+  assert.equal(names.length, 94, "working ledger carries W02-A #72, alias hotfix #73, P3.1-HF #74 and the W02-B vendor lifecycle #75");
   assert.deepEqual(names.slice(0, 71), baseline, "migrations #1-#71 remain the baseline");
-  assert.equal(names.at(-23), MIGRATION_71);
-  assert.equal(names.at(-22), MIGRATION_72);
+  assert.equal(names.at(-24), MIGRATION_71);
+  assert.equal(names.at(-23), MIGRATION_72);
   for (const name of baseline) {
     const relative = `supabase/migrations/${name}`;
     const tracked = execFileSync("git", ["show", `${BASE_COMMIT}:${relative}`], {
@@ -194,6 +196,11 @@ async function buildDb() {
   assert.equal(after.total, before.total + 2, "#72 adds only the internal authority and lock helpers");
   assert.equal(after.internal, before.internal + 2);
   assert.equal(after.service_role, before.service_role);
+  // PRE-W2-HF #94: apply the Project<->Team authority migration so the fixture has the
+  // mapping table and the mapping-aware leader guards. Only #72's delta is asserted above.
+  await db.exec(
+    await readFile(path.join(MIGRATION_DIR, TEAM_AUTHORITY_MIGRATION), "utf8"),
+  );
   return { db, names, inventory: after };
 }
 
@@ -346,6 +353,16 @@ async function seed(db) {
     "insert into public.direct_entry_projects(project_id,display_name,active,version)"
       + " values ($1,'Active Project',true,1),($2,'Inactive Project',false,1)",
     [PROJECT_ACTIVE, PROJECT_INACTIVE]);
+  // PRE-W2-HF Project<->Team mapping: the leader may operate on PROJECT_ACTIVE only.
+  const { rows: [{ reason_id: mappingReason }] } = await db.query(
+    "select public.direct_entry_reason($1::uuid,'W02A seed mapping') as reason_id",
+    [admin.app],
+  );
+  await db.query(
+    "insert into public.direct_entry_project_team_scopes"
+      + "(project_id,team_id,valid_from,version,granted_by_user_id,reason_id)"
+      + " values ($1,$2,$3::date,1,$4::uuid,$5::uuid)",
+    [PROJECT_ACTIVE, TEAM_A, PAST, admin.app, mappingReason]);
   return {
     admin, accounting, leader, legacyAdmin, staff, projectManager, disabledActor,
     ambiguousLeader, managerA, managerB, managerC, secondLink,
@@ -444,9 +461,9 @@ test("P3.1-W02A: append-only ledger, source and baseline identity guards", async
 
 test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutations", async () => {
   const { db, names, inventory } = await buildDb();
-  assert.equal(names.length, 93);
-  assert.equal(names.at(-22), MIGRATION_72);
-  assert.equal(names.at(-23), MIGRATION_71);
+  assert.equal(names.length, 94);
+  assert.equal(names.at(-23), MIGRATION_72);
+  assert.equal(names.at(-24), MIGRATION_71);
   assert.ok(inventory.total > 0);
   const actors = await seed(db);
   const {
@@ -701,9 +718,15 @@ test("P3.1-W02A: PGlite authority matrix, scoped projections and audited mutatio
     false,
     "leader-wide assignment reads omit inactive projects",
   );
-  const canceledFuture = await unassign(
+  // PRE-W2-HF: a revoked/absent mapping also removes the leader's ability to close a
+  // pending assignment on that project; Admin is the only cleanup path now.
+  await denied(async () => unassign(
     db, leader, inactiveAssignment.assignment_id, inactiveAssignment.version,
     inactiveProjectVersion, "leader-cancel-future-inactive",
+  ), "42501");
+  const canceledFuture = await unassign(
+    db, accounting, inactiveAssignment.assignment_id, inactiveAssignment.version,
+    inactiveProjectVersion, "operator-cancel-future-inactive",
   );
   assert.equal(canceledFuture.valid_to, "2099-01-01");
   assert.equal(canceledFuture.already_unassigned, false);
