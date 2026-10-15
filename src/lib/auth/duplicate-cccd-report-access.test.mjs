@@ -68,7 +68,8 @@ test("the CCCD report is the Dashboard tab right after the team tab", () => {
     "the CCCD tab must come right after the team tab");
   assert.match(tabs, /DuplicateCccdReportPanel/);
   assert.match(tabs, /canViewDuplicateCccd/);
-  assert.match(tabs, /tab\.key !== "duplicate-cccd" \|\| canViewDuplicateCccd/);
+  assert.match(tabs, /tab\.key === "duplicate-cccd"[\s\S]*canViewDuplicateCccd/);
+  assert.match(tabs, /primaryTabLabel === undefined/);
   assert.match(tabs, /id="bod-panel-duplicate-cccd"/);
 });
 
@@ -81,19 +82,17 @@ test("the Dashboard page + view server-gate the CCCD tab for every audience", ()
   assert.match(page, /\(tab === "team" \|\| tab === "duplicate-cccd"\) && sourcePresent/);
   assert.match(page, /normalizedDashboardPath\(params, tab, true\)/);
   assert.match(page, /canViewDuplicateCccd=\{canViewDuplicateCccd\}/);
-  assert.match(page, /duplicateCccdRequested=\{tab === "duplicate-cccd"\}/);
 
   const view = readFileSync(
     new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url), "utf8");
-  // Team/own audiences render the single shared CCCD panel on the deep link.
-  assert.match(view, /duplicateCccdRequested && canViewDuplicateCccd/);
-  assert.match(view, /<DuplicateCccdReportPanel \/>/);
-  // General/team are never widened: the scoped views stay the default body and
-  // the BoD tab shell is unchanged.
+  // Every dashboard audience gets the shared tab shell while scoped audiences
+  // keep their own report as the primary tab.
+  assert.match(view, /primaryTabLabel="Báo cáo theo nhóm"/);
+  assert.match(view, /primaryTabLabel="Tổng quan cá nhân"/);
   assert.match(view, /mode\.kind === "team"/);
   assert.match(view, /mode\.kind === "own"/);
   assert.ok(view.indexOf('mode.kind === "team"') < view.indexOf("<BodDashboardTabs"),
-    "the BoD tab shell is still the all-audience branch");
+    "team-scoped branch uses the tab shell");
 });
 
 test("the panel keeps masked CCCD + states and never consumes dashboard filters", () => {
