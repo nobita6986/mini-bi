@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the 93-migration ledger).
+ * PRE-W2-HF-D3-A - Account/Personnel DB foundation (DB regression, PGlite over the migration ledger).
  *
  * Covers the durable account-operation intent, the narrow RPCs (begin/claim/read/finish,
  * finalize, update display name, create personnel from account, list eligible accounts,
@@ -15,6 +15,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const D3A_MIGRATION = "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql";
+const DEFAULT_CAPABILITIES_MIGRATION = "20261015150000_pre_w2_worker_data_capabilities_default.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -43,10 +44,46 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 98, "the ledger carries the PRE-W2-HF-D3-A migration as #92");
-  assert.equal(names[names.length - (7)], D3A_MIGRATION,
-    "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
+  assert.equal(names.length, 99, "the ledger carries the worker-data default capabilities migration");
+  assert.equal(names[names.length - (8)], D3A_MIGRATION,
+    "the D3-A migration remains #92 in the established ledger");
+  assert.equal(names.at(-1), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
+}
+
+async function buildDbBeforeDefaultCapabilities() {
+  const db = new PGlite();
+  await db.exec(AUTH_PROLOGUE);
+  const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
+  assert.equal(names.at(-1), DEFAULT_CAPABILITIES_MIGRATION);
+  for (const name of names.slice(0, -1)) {
+    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  }
+
+  const auth = uuid(901), app = uuid(902);
+  await db.query("insert into auth.users (id) values ($1)", [auth]);
+  await db.query(
+    "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
+    " values ($1,$2,true,'Existing Account')", [app, auth]);
+  const today = (await db.query(
+    "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+  const future = new Date(Date.parse(today + "T00:00:00Z") + 10 * 86400000)
+    .toISOString().slice(0, 10);
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from)" +
+    " values ($1,'pii_view','2020-01-01')", [app]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from,valid_to)" +
+    " values ($1,'payment_view','2020-01-01',$2::date)", [app, today]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from)" +
+    " values ($1,'pii_export',$2::date)", [app, future]);
+  await db.query(
+    "insert into public.direct_entry_scope_grants (app_user_id,scope_kind,valid_from)" +
+    " values ($1,'own','2020-01-01')", [app]);
+
+  await db.exec(await readFile(path.join(MIGRATION_DIR, DEFAULT_CAPABILITIES_MIGRATION), "utf8"));
+  return { db, app, today, future };
 }
 
 async function insertActor(db, auth, app, { capabilities = [], scopes = [], enabled = true } = {}) {
@@ -106,6 +143,32 @@ async function count(db, sql, params = []) {
 async function expectDenied(db, fn) {
   await assert.rejects(fn, (error) => error.code === "42501");
 }
+
+test("worker-data defaults cover existing accounts without changing their scopes or grant history", async () => {
+  const { db, app, today, future } = await buildDbBeforeDefaultCapabilities();
+  try {
+    for (const capability of ["pii_view", "payment_view", "pii_export"]) {
+      assert.equal(await count(db,
+        "select count(*) from public.direct_entry_capability_grants" +
+        " where app_user_id=$1 and capability=$2 and valid_from <= $3::date" +
+        " and (valid_to is null or $3::date < valid_to)", [app, capability, today]), 1,
+        `${capability} is effective on the baseline date`);
+    }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id=$1 and capability='pii_export' and valid_from=$2::date and valid_to is null",
+      [app, future]), 1, "a pre-existing future grant remains unchanged and contiguous");
+    assert.deepEqual((await db.query(
+      "select scope_kind from public.direct_entry_scope_grants where app_user_id=$1 order by scope_kind",
+      [app])).rows.map((row) => row.scope_kind), ["own"], "capability baseline does not add row scope");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events" +
+      " where action='capability_default_grant' and outcome='APPLIED'"), 2,
+    "only the two missing grant intervals are recorded by the migration");
+  } finally {
+    await db.close();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 1. Intent lifecycle + idempotent begin.
@@ -193,9 +256,9 @@ test("PRE-W2-HF-D3-A: two concurrent creates for one login_id leave only one liv
 });
 
 // ---------------------------------------------------------------------------
-// 4. finalize create (correct provenance) + no default grants.
+// 4. finalize create (correct provenance) + default worker-data capabilities.
 // ---------------------------------------------------------------------------
-test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenance", async () => {
+test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabilities", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -223,7 +286,14 @@ test("PRE-W2-HF-D3-A: finalize creates the app user only with matching provenanc
     assert.equal(appliedIntent.account_ref, f.app_user_id,
       "an APPLIED create intent keeps the created app-user reference for reconciliation");
 
-    assert.equal(await count(db, "select count(*) from public.direct_entry_capability_grants where app_user_id = $1", [f.app_user_id]), 0);
+    const capabilities = (await db.query(
+      "select capability from public.direct_entry_capability_grants where app_user_id=$1 order by capability",
+      [f.app_user_id])).rows.map((row) => row.capability);
+    assert.deepEqual(capabilities, ["payment_view", "pii_export", "pii_view"].sort());
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events where app_user_id=$1" +
+      " and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 3,
+    "each default grant is audit-recorded under the creating Full Admin");
     assert.equal(await count(db, "select count(*) from public.direct_entry_scope_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links where app_user_id = $1", [f.app_user_id]), 0);
 

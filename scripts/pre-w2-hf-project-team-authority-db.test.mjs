@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 98-migration ledger).
+ * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 99-migration ledger).
  *
  * Covers the mapping table + RPCs (bounded read, grant, revoke), the canonical Full
  * Admin authority boundary, the pair-version OCC and idempotency contract, half-open
@@ -69,14 +69,16 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 98, "the append-only review queue migration follows #97");
-  assert.equal(names.at(-1), "20261015140000_pre_w2_change_request_review_queue.sql",
+  assert.equal(names.length, 99, "the worker-data capabilities migration follows the review queue");
+  assert.equal(names.at(-1), "20261015150000_pre_w2_worker_data_capabilities_default.sql",
+    "worker-data capabilities is the append-only #99 migration");
+  assert.equal(names.at(-2), "20261015140000_pre_w2_change_request_review_queue.sql",
     "review queue is the append-only #98 migration");
-  assert.equal(names.at(-2), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
-  assert.equal(names.at(-3), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
-  assert.equal(names.at(-4), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
-  assert.equal(names.at(-5), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
-  assert.equal(names.at(-6), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
+  assert.equal(names.at(-3), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
+  assert.equal(names.at(-4), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
+  assert.equal(names.at(-5), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
+  assert.equal(names.at(-6), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-7), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 
