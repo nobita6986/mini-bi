@@ -186,8 +186,9 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
     "?scope=all&page_size=25&employment_status=ON&cursor=c1");
   assert.equal(submissionsQuery(null), "?page_size=25");
   assert.equal(submissionsQuery("c2"), "?page_size=25&cursor=c2");
-  assert.equal(requestsQuery(null), "?page_size=20");
-  assert.equal(requestsQuery("c3"), "?page_size=20&cursor=c3");
+  assert.equal(requestsQuery(null), "?page_size=20&state=PENDING");
+  assert.equal(requestsQuery("c3"), "?page_size=20&state=PENDING&cursor=c3");
+  assert.equal(requestsQuery(null, "RESOLVED"), "?page_size=20&state=RESOLVED");
   assert.equal(workersQuery({ scope: "managed", status: "", cursor: null }).includes("cursor"), false);
 });
 

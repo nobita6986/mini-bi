@@ -126,12 +126,14 @@ test("paymentReadRows dung nhan catalog va fail-closed khi khong giai duoc bank"
   }), null);
 });
 
-test("WORK_STATUS read projection chi co status + effective_date, ly do luon duoc ghi ro la an", () => {
+test("WORK_STATUS read projection omits reason for proposers and accepts it for reviewers", () => {
   const view = projectWorkStatusReadProposal({ status: "OFF", effective_date: "2026-10-01" });
-  assert.deepEqual(view, { status: "OFF", effectiveDate: "2026-10-01", reasonOmitted: true });
-  assert.equal(projectWorkStatusReadProposal({
-    status: "OFF", effective_date: "2026-10-01", leave_reason: "raw reason",
-  }), null);
+  assert.deepEqual(view, { status: "OFF", effectiveDate: "2026-10-01", leaveReason: null });
+  const reviewerView = projectWorkStatusReadProposal({
+    status: "OFF", effective_date: "2026-10-01", leave_reason: "Nghỉ theo đề nghị của NLĐ",
+  });
+  assert.deepEqual(reviewerView, { status: "OFF", effectiveDate: "2026-10-01",
+    leaveReason: "Nghỉ theo đề nghị của NLĐ" });
   assert.equal(projectWorkStatusReadProposal({ status: "MAYBE", effective_date: "2026-10-01" }), null);
   assert.equal(projectWorkStatusReadProposal({ status: "ON", effective_date: "31/10/2026" }), null);
   const rows = workStatusReadRows({
@@ -139,7 +141,10 @@ test("WORK_STATUS read projection chi co status + effective_date, ly do luon duo
   });
   assert.deepEqual(rows.map((row) => row.field), ["status", "effective_date", "leave_reason"]);
   assert.equal(rows[2].after, LEAVE_REASON_HIDDEN_MESSAGE);
-  assert.equal(JSON.stringify(rows).includes("raw reason"), false);
+  const reviewerRows = workStatusReadRows({
+    before: { status: "ON", effective_date: "2026-09-01" }, after: reviewerView,
+  });
+  assert.equal(reviewerRows[2].after, "Nghỉ theo đề nghị của NLĐ");
 });
 
 test("DOCUMENT read projection chi tra metadata an toan", () => {

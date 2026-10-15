@@ -215,17 +215,23 @@ export function projectPaymentReadProposal(value: unknown): PaymentReadView | nu
 export type WorkStatusReadView = {
   status: WorkerStatus;
   effectiveDate: string;
-  reasonOmitted: true;
+  leaveReason: string | null;
 };
 
-/** Strict-project proposal WORK_STATUS da lam sach: chi status + effective_date (leave_reason OMIT). */
+/** Strict-project WORK_STATUS; leave_reason chi co trong response danh cho reviewer. */
 export function projectWorkStatusReadProposal(value: unknown): WorkStatusReadView | null {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["status", "effective_date"])) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ["status", "effective_date", "leave_reason"])) return null;
   if (value.status !== "UNCONFIRMED" && value.status !== "ON" && value.status !== "OFF") return null;
   if (typeof value.effective_date !== "string" || !isRealCalendarDate(value.effective_date)) {
     return null;
   }
-  return { status: value.status, effectiveDate: value.effective_date, reasonOmitted: true };
+  let leaveReason: string | null = null;
+  if (value.leave_reason !== undefined) {
+    if (typeof value.leave_reason !== "string" || value.leave_reason.trim().length < 1 ||
+        value.leave_reason.length > 4000) return null;
+    leaveReason = value.leave_reason;
+  }
+  return { status: value.status, effectiveDate: value.effective_date, leaveReason };
 }
 
 export type DocumentReadView = {
@@ -355,7 +361,7 @@ export function paymentReadRows(input: {
   return rows;
 }
 
-/** Bang before -> after cho WORK_STATUS; luon neu ro ly do chi tiet bi an theo policy. */
+/** Bang before -> after cho WORK_STATUS; reviewer duoc doc ly do neu server cho phep. */
 export function workStatusReadRows(input: {
   before: { status: WorkerStatus; effective_date: string } | null;
   after: WorkStatusReadView;
@@ -373,7 +379,7 @@ export function workStatusReadRows(input: {
       after: after.effectiveDate });
   }
   rows.push({ field: "leave_reason", label: "Lý do chi tiết", before: HIDDEN,
-    after: LEAVE_REASON_HIDDEN_MESSAGE });
+    after: after.leaveReason ?? LEAVE_REASON_HIDDEN_MESSAGE });
   return rows;
 }
 

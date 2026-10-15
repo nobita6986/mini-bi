@@ -1052,11 +1052,54 @@
   margin: 0;
 }
 
+.changeRequestTabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changeRequestTab,
+.changeRequestTabActive {
+  min-height: 40px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.reviewerReason {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.changeRequestTabActive {
+  border-bottom-color: var(--primary);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.changeRequestTab:focus-visible,
+.changeRequestTabActive:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.compactListViewport {
+  max-height: min(58vh, 680px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .compactList {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -1073,7 +1116,7 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--background) 40%, var(--surface));
-  padding: 12px 14px;
+  padding: 9px 10px;
 }
 
 .compactMeta {
@@ -1121,7 +1164,13 @@
 
 @media (min-width: 1200px) {
   .compactList {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1600px) {
+  .compactList {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 

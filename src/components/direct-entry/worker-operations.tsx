@@ -16,6 +16,7 @@ import { Dialog } from "radix-ui";
 
 import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
+import type { ChangeRequestQueueFilter } from "@/lib/direct-entry/change-request-read-contract";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
   WORKER_CONFLICT_MESSAGE,
@@ -181,6 +182,7 @@ export function WorkerOperations({
     useState<TabPage<SubmissionReadItem>>(emptyTabPage);
   const [requestPage, setRequestPage] =
     useState<TabPage<ChangeRequestListItem>>(emptyTabPage);
+  const [requestQueue, setRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
@@ -267,8 +269,9 @@ export function WorkerOperations({
 
   const fetchRequests = useCallback(async (
     cursor: string | null,
+    queue: ChangeRequestQueueFilter = "PENDING",
   ): Promise<FetchOutcome<ChangeRequestListItem>> => {
-    const response = await fetch(API + "/change-requests" + requestsQuery(cursor),
+    const response = await fetch(API + "/change-requests" + requestsQuery(cursor, queue),
       { headers: { accept: "application/json" } });
     const payload = await readJson(response);
     if (response.status !== 200) return httpFailure(response.status);
@@ -305,14 +308,14 @@ export function WorkerOperations({
     setRequestPage((page) => outcome.ok
       ? applyPage(page, outcome.page, requestRowKey, append)
       : failLoad(page, outcome.state, outcome.message));
-  }, []);
+  }, [setRequestPage]);
 
   const reloadRequestPage = useCallback(async (): Promise<void> => {
     setRequestPage(resetTabPage());
-    const outcome = await fetchRequests(null).catch(
+    const outcome = await fetchRequests(null, requestQueue).catch(
       () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
     applyRequestPage(outcome, false);
-  }, [fetchRequests, applyRequestPage]);
+  }, [fetchRequests, applyRequestPage, requestQueue, setRequestPage]);
 
   /* ---------- effect: page 1 cho tab hien tai (moi tab doc lap) ---------- */
 
@@ -336,12 +339,12 @@ export function WorkerOperations({
   useEffect(() => {
     if (!canReview) return;
     let active = true;
-    fetchRequests(null).then(
+    fetchRequests(null, requestQueue).then(
       (outcome) => { if (active) applyRequestPage(outcome, false); },
       () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
     );
     return () => { active = false; };
-  }, [canReview, fetchRequests, applyRequestPage]);
+  }, [canReview, fetchRequests, applyRequestPage, requestQueue]);
 
   /* ---------- load more ---------- */
 
@@ -504,6 +507,12 @@ export function WorkerOperations({
       ) : null}
       {canReview ? (
         <DirectEntryChangeRequestList
+          queueFilter={requestQueue}
+          onQueueFilterChange={(queue) => {
+            if (queue === requestQueue) return;
+            setRequestQueue(queue);
+            setRequestPage(resetTabPage());
+          }}
           state={requestPage.state === "ready" || requestPage.state === "empty"
             ? "ready" : requestPage.state === "loading" || requestPage.state === "idle"
               ? "loading" : "error"}
@@ -512,7 +521,8 @@ export function WorkerOperations({
           hasMore={requestPage.hasMore}
           busyRequestId={busyRequestId}
           compact
-          onLoadMore={() => void loadMore(requestPage, fetchRequests, applyRequestPage)}
+          onLoadMore={() => void loadMore(requestPage,
+            (cursor) => fetchRequests(cursor, requestQueue), applyRequestPage)}
           onWithdraw={(request) => { void withdrawRequest(request); }}
           onReview={(request) => setReviewRequest(request)}
         />

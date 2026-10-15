@@ -24,6 +24,7 @@ import {
   projectChangeRequestListPage,
   type ChangeRequestListItem,
   type ChangeRequestListPage,
+  type ChangeRequestQueueFilter,
 } from "./change-request-read-contract.ts";
 import { WORK_STATUS_UI_LABELS, workStatusUiLabel } from "./display-labels.ts";
 
@@ -397,8 +398,8 @@ export function submissionsQuery(cursor: string | null): string {
   return query;
 }
 
-export function requestsQuery(cursor: string | null): string {
-  let query = "?page_size=" + String(WORKER_REQUEST_PAGE_SIZE);
+export function requestsQuery(cursor: string | null, state: ChangeRequestQueueFilter = "PENDING"): string {
+  let query = "?page_size=" + String(WORKER_REQUEST_PAGE_SIZE) + "&state=" + encodeURIComponent(state);
   if (cursor !== null) query += "&cursor=" + encodeURIComponent(cursor);
   return query;
 }
