@@ -38,6 +38,7 @@ test("initial employment status policy is migration #57 and patches every creati
     `);
     assert.equal(result.rows.length, 4);
     for (const row of result.rows.filter((item) =>
+      item.proname !== "direct_entry_create_full_profile_batch" &&
       item.proname !== "direct_entry_create_full_profile_batch_v2_unscoped_h03")) {
       assert.match(row.prosrc,
         /v_entry_id, 'ON', v_first_work_date, 1, p_app_user_id, v_reason_id/,
@@ -52,6 +53,10 @@ test("initial employment status policy is migration #57 and patches every creati
     assert.doesNotMatch(fullProfile.prosrc, /if v_status in \('ON','OFF'\) then/);
     assert.doesNotMatch(fullProfile.prosrc, /v_first_work_date >= v_auth_date/);
     assert.match(fullProfile.prosrc, /if v_status not in \('UNCONFIRMED','ON','OFF'\) then/);
+    assert.match(fullProfile.prosrc,
+      /case when v_status = 'UNCONFIRMED' then 'UNCONFIRMED' else 'ON' end/);
+    assert.doesNotMatch(fullProfile.prosrc,
+      /v_entry_id, 'ON', v_first_work_date, 1, p_app_user_id, v_reason_id/);
     assert.match(v2Implementation.prosrc, /direct_entry_create_full_profile_batch\(/);
   } finally {
     await db.close();
