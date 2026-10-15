@@ -69,8 +69,8 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 96, "the ledger carries reporting decoupling after Project<->Team authority #94");
-  assert.equal(names.at(-2), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
-  assert.equal(names.at(-3), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
+  assert.equal(names.at(-3), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-4), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 

@@ -185,13 +185,13 @@ await addActor(db, { ...ENTRY_OPERATOR, capabilities: ["entry_create"], scopes: 
 test("assertions 1: the ledger carries #75 append-only after the P3.1-HF report", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
   assert.equal(names.length, 96, "the ledger carries exactly 93 migrations");
-  assert.equal(names.at(-20), LEGACY_SCOPE_HOTFIX, "#76 is the append-only leader-scope hotfix");
-  assert.equal(names.at(-21), NEW_MIGRATION, "#75 remains the P3.1-W02-B vendor lifecycle migration");
-  assert.equal(names.at(-22), PREVIOUS_MIGRATION, "#75 stays append-only after #74");
-  assert.equal(names.at(-23), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
-  assert.equal(names.at(-24), "20261009080000_p3_1_w02a_team_leader_project_manager_authority.sql");
-  assert.equal(names.at(-30), "20261009020000_p3_w07a_r4_vendor_historical_team_backfill.sql");
-  assert.equal(names.at(-31), "20261009010000_p3_w07a_r3_vendor_hidden_team_and_document_upload.sql");
+  assert.equal(names.at(-21), LEGACY_SCOPE_HOTFIX, "#76 is the append-only leader-scope hotfix");
+  assert.equal(names.at(-22), NEW_MIGRATION, "#75 remains the P3.1-W02-B vendor lifecycle migration");
+  assert.equal(names.at(-23), PREVIOUS_MIGRATION, "#75 stays append-only after #74");
+  assert.equal(names.at(-24), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  assert.equal(names.at(-25), "20261009080000_p3_1_w02a_team_leader_project_manager_authority.sql");
+  assert.equal(names.at(-31), "20261009020000_p3_w07a_r4_vendor_historical_team_backfill.sql");
+  assert.equal(names.at(-32), "20261009010000_p3_w07a_r3_vendor_hidden_team_and_document_upload.sql");
 });
 
 test("both catalog authority paths can read the vendor catalog", async () => {
@@ -926,9 +926,9 @@ test("the ACL posture keeps vendor writes service-role only and the helpers unre
 
 test("the vendor slot remains append-only and no earlier migration is touched", async (t) => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-20), LEGACY_SCOPE_HOTFIX, "the later #76 hotfix appends after W02-B");
-  assert.equal(names.at(-21), NEW_MIGRATION, "#75 remains the vendor lifecycle slot");
-  assert.equal(names.at(-22), PREVIOUS_MIGRATION, "#75 appends directly after the P3.1-HF report #74");
+  assert.equal(names.at(-21), LEGACY_SCOPE_HOTFIX, "the later #76 hotfix appends after W02-B");
+  assert.equal(names.at(-22), NEW_MIGRATION, "#75 remains the vendor lifecycle slot");
+  assert.equal(names.at(-23), PREVIOUS_MIGRATION, "#75 appends directly after the P3.1-HF report #74");
   assert.equal(new Set(names).size, names.length, "the ledger carries no duplicate slot");
 
   const git = spawnSync("git", ["status", "--porcelain", "--", "supabase/migrations"],
