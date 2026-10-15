@@ -896,7 +896,7 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 95,
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 96,
     "the repository ledger contains #1 through #96; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
