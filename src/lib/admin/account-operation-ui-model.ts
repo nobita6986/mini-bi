@@ -21,8 +21,6 @@ import {
 
 const LOGIN_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const NAME_MAX = 256;
-const CODE_MAX = 64;
-const CODE = /^[^\s\u0000-\u001f\u007f]+$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function passwordOk(password: string): string | null {
@@ -115,18 +113,16 @@ export function buildReconcileRequest(idempotencyKey: string): RequestResult {
 export function buildPersonnelFromAccountRequest(input: {
   accountRef: string;
   expectedAccountVersion: number;
-  personnelCode: string;
+  loginId: string;
   personnelPosition: string;
   validFrom: string;
   reason: string;
   idempotencyKey: string;
 }): RequestResult {
-  const code = input.personnelCode.trim();
   const failure = validateUuid(input.accountRef)
     ?? validateVersion(input.expectedAccountVersion) ?? (input.expectedAccountVersion < 1
       ? "Dữ liệu chưa hợp lệ. Vui lòng tải lại." : null)
-    ?? (code === "" || code.length > CODE_MAX || !CODE.test(code)
-      ? "Mã nhân sự bắt buộc, không chứa khoảng trắng hoặc ký tự điều khiển, tối đa 64 ký tự." : null)
+    ?? (LOGIN_ID.test(input.loginId) ? null : "Tài khoản không có mã đăng nhập hợp lệ.")
     ?? (input.personnelPosition !== "STAFF" && input.personnelPosition !== "TEAM_LEADER"
       ? "Vị trí nhân sự không hợp lệ." : null)
     ?? (DATE.test(input.validFrom) ? null : "Ngày hiệu lực HRP không hợp lệ.")
@@ -137,7 +133,7 @@ export function buildPersonnelFromAccountRequest(input: {
     body: {
       account_ref: input.accountRef,
       expected_account_version: input.expectedAccountVersion,
-      personnel_code: code,
+      personnel_code: input.loginId,
       personnel_position: input.personnelPosition,
       valid_from: input.validFrom,
       reason: input.reason,
@@ -208,7 +204,7 @@ export function buildEligibleAccountsQuery(page: number): URLSearchParams | null
   });
 }
 
-/** Strict-project the eligible-accounts list (app_user_id + display_name only). */
+/** Strict-project the eligible account UUID, real name and login ID only. */
 export function projectEligibleAccounts(payload: unknown): EligibleAccountsEnvelope | null {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
   const record = payload as Record<string, unknown>;

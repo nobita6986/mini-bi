@@ -356,7 +356,7 @@ export function AccountManager() {
               <div className="mt-5 space-y-4">
                 <p>
                   Bạn sắp {dialog.nextEnabled ? "kích hoạt" : "ngừng hoạt động"} tài khoản{" "}
-                  <strong>{dialog.account.display_name}</strong>.
+                  <strong>{dialog.account.display_name ?? "Chưa cập nhật tên thật"}</strong>.
                 </p>
                 <form onSubmit={submit} className="space-y-4">
                   <ReasonField value={reason} disabled={locked} onChange={(value) => { setReason(value); setFormError(null); setNotice(null); }} />
@@ -450,7 +450,10 @@ export function AccountManager() {
                 <tbody>
                   {list.accounts.map((account) => (
                     <tr key={account.account_ref} className="border-b border-border/70 last:border-0">
-                      <td className="px-3 py-3 font-medium">{account.display_name}</td>
+                      <td className="px-3 py-3">
+                        <span className="block font-medium">{account.display_name ?? "Chưa cập nhật tên thật"}</span>
+                        {account.login_id ? <span className="block text-xs text-muted">{account.login_id}</span> : null}
+                      </td>
                       <td className="px-3 py-3"><EnabledBadge enabled={account.enabled} /></td>
                       <td className="px-3 py-3">
                         <div className="flex justify-end gap-2 whitespace-nowrap">
@@ -575,7 +578,7 @@ function AccountOperationDialogs({
 }) {
   const [loginId, setLoginId] = useState("");
   const [displayName, setDisplayName] = useState(
-    operation !== null && operation !== "create" ? operation.account.display_name : "");
+    operation !== null && operation !== "create" ? operation.account.display_name ?? "" : "");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [reason, setReason] = useState("");

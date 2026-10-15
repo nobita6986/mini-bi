@@ -17,6 +17,15 @@ test("Personnel UI calls the account-driven create plus canonical list/update/ac
   assert.doesNotMatch(source, /url:\s*"\/api\/admin\/catalog\/personnel"\s*,/);
 });
 
+test("create-from-account hides personnel-code input while existing profiles can still edit it", () => {
+  assert.match(source, /dialog\?\.kind === "edit" \? \(\s*<Field\s+id="personnel-code"/);
+  assert.match(source, /accountRef:\s*selectedAccount\.app_user_id/);
+  assert.match(source, /loginId:\s*selectedAccount\.login_id/);
+  assert.match(source, /\$\{account\.display_name\} · \$\{account\.login_id\}/);
+  assert.match(source, /Tài khoản chưa có tên thật/);
+  assert.match(source, /selectedAccount\.display_name\.trim\(\)\.toLowerCase\(\) === selectedAccount\.login_id\.toLowerCase\(\)/);
+});
+
 test("D3-C: eligible accounts paginate page 1..1000 and drop stale selections", () => {
   assert.match(source, /changeEligiblePage/);
   assert.match(source, /Trang trước/);

@@ -3,7 +3,8 @@ const REASON_MAX = 4000;
 
 export type ExistingAccount = {
   account_ref: string;
-  display_name: string;
+  display_name: string | null;
+  login_id: string | null;
   enabled: boolean;
   version: number;
 };
@@ -30,15 +31,19 @@ export type AccountAccessParsed<T> =
 export function projectExistingAccount(value: unknown): ExistingAccount | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
-  if (Object.keys(row).sort().join(",") !== "account_ref,display_name,enabled,version") return null;
+  if (Object.keys(row).sort().join(",") !== "account_ref,display_name,enabled,login_id,version") return null;
   if (typeof row.account_ref !== "string" || !UUID.test(row.account_ref)) return null;
-  if (typeof row.display_name !== "string" || row.display_name !== row.display_name.trim() ||
-      row.display_name === "" || row.display_name.length > 256) return null;
+  if (row.display_name !== null && (typeof row.display_name !== "string" ||
+      row.display_name !== row.display_name.trim() || row.display_name === "" ||
+      row.display_name.length > 256)) return null;
+  if (row.login_id !== null && (typeof row.login_id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(row.login_id))) return null;
   if (typeof row.enabled !== "boolean" || typeof row.version !== "number" ||
       !Number.isSafeInteger(row.version) || row.version < 1) return null;
   return {
     account_ref: row.account_ref,
-    display_name: row.display_name,
+    display_name: row.display_name as string | null,
+    login_id: row.login_id as string | null,
     enabled: row.enabled,
     version: row.version,
   };

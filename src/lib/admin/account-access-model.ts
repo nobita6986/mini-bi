@@ -5,7 +5,8 @@
  * module only validates UI payloads and strictly projects responses. It reuses
  * the canonical contract projectors so the browser can never widen the shape.
  * There is no local account vocabulary, label map or raw-key fallback: only the
- * server-projected `display_name` and `enabled` flag are ever surfaced. The
+ * server-projected `display_name`, optional `login_id` and `enabled` flag are
+ * the only identity/status fields surfaced. The
  * opaque `account_ref` is an internal route/request identity and `version` is
  * internal OCC state; neither is a display value.
  *

@@ -16,6 +16,7 @@ const KEY = "20000000-0000-4000-8000-000000000002";
 const account = {
   account_ref: REF,
   display_name: "Nguyễn Văn A",
+  login_id: "vana.td",
   enabled: true,
   version: 3,
 };
@@ -39,7 +40,7 @@ test("strict list projection retains only contracted account fields and echoes t
   const list = projectAccountListForQuery(listPayload(), { search: "", enabled: "all", page: 1 });
   assert.ok(list);
   assert.deepEqual(Object.keys(list.accounts[0]).sort(),
-    ["account_ref", "display_name", "enabled", "version"]);
+    ["account_ref", "display_name", "enabled", "login_id", "version"]);
   assert.equal(list.accounts[0].display_name, "Nguyễn Văn A");
   assert.equal(list.total, 1);
   // Echo mismatch fails closed.
@@ -66,6 +67,8 @@ test("list and item projections fail closed on any malformed or widened payload"
   assert.equal(projectAccountItem({ ok: true, account: { ...account, email: "a@b.c" } }), null);
   assert.equal(projectAccountItem({ ok: true, account: { ...account, display_name: "" } }), null);
   assert.equal(projectAccountItem({ ok: true, account: { ...account, display_name: " A " } }), null);
+  assert.deepEqual(projectAccountItem({ ok: true, account: { ...account, display_name: null } }),
+    { ...account, display_name: null });
   assert.equal(projectAccountItem({ ok: true, account: { ...account, account_ref: "not-a-uuid" } }), null);
   assert.equal(projectAccountItem({ ok: true, account: { ...account, version: 0 } }), null);
   assert.equal(projectAccountItem({ ok: true, account: { ...account, enabled: "true" } }), null);
@@ -75,7 +78,8 @@ test("list and item projections fail closed on any malformed or widened payload"
     { search: "", enabled: "all", page: 1 }), null);
   const ok = projectAccountItem({ ok: true, account });
   assert.ok(ok);
-  assert.deepEqual(Object.keys(ok).sort(), ["account_ref", "display_name", "enabled", "version"]);
+  assert.deepEqual(Object.keys(ok).sort(), ["account_ref", "display_name", "enabled", "login_id", "version"]);
+  assert.equal(projectAccountItem({ ok: true, account: { ...account, login_id: "bad@login" } }), null);
 });
 
 test("search, enabled filter and pagination use a bounded explicit API query", () => {

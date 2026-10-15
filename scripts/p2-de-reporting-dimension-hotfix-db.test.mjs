@@ -90,9 +90,9 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 99, "the ledger carries the W02-B vendor lifecycle #75 after P3.1-HF #74");
-  assert.equal(names.at(-27), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
-  assert.equal(names.at(-26), "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql");
+  assert.equal(names.length, 100, "the ledger carries the W02-B vendor lifecycle #75 after P3.1-HF #74");
+  assert.equal(names.at(-28), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  assert.equal(names.at(-27), "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql");
   // This is the regression for the earlier one-off P2 repair. Apply the
   // pre-hotfix ledger so its defect fixture remains reproducible; #73 has its
   // own focused lane and prevents this shape from being created again.
