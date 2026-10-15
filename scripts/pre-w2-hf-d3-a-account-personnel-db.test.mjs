@@ -45,7 +45,7 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 98, "the ledger carries the PRE-W2-HF-D3-A migration as #92");
-  assert.equal(names[names.length - (8)], D3A_MIGRATION,
+  assert.equal(names[names.length - (7)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
   return db;
 }
