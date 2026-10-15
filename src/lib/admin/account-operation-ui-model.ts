@@ -184,6 +184,13 @@ export function classifyAccountOperationResponse(
   if (status === 403) return { kind: "denied", message: "Bạn không có quyền thực hiện thao tác này." };
   if (status === 409) return { kind: "conflict", message: "Có xung đột hoặc thao tác đang được xử lý." };
   if (status === 400 || status === 422) return { kind: "invalid", message: "Thông tin gửi lên không hợp lệ." };
+  if (status === 500 && record?.code === "ACCOUNT_OPERATION_AUTH_APPLIED_UNRECORDED") {
+    return { kind: "unavailable", message: "Supabase Auth đã xác nhận đổi mật khẩu nhưng ứng dụng chưa ghi nhận kết quả. Không gửi lại yêu cầu này; hãy thử đăng nhập bằng mật khẩu mới trước." };
+  }
+  if (status === 500 && (record?.code === "ACCOUNT_OPERATION_INDETERMINATE" ||
+      record?.code === "ACCOUNT_OPERATION_RESULT_UNRECORDED")) {
+    return { kind: "unavailable", message: "Chưa xác định được kết quả đổi mật khẩu. Không gửi lại ngay; Admin cần kiểm tra trạng thái yêu cầu trước khi tạo yêu cầu mới." };
+  }
   return { kind: "unavailable", message: "Dịch vụ hiện không khả dụng." };
 }
 
