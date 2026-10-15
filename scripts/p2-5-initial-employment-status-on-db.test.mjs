@@ -23,7 +23,7 @@ test("initial employment status policy is migration #57 and patches every creati
   const { db, names } = await database();
   try {
     assert.equal(names.length, 98);
-    assert.equal(names.at(-41), MIGRATION);
+    assert.equal(names.at(-42), MIGRATION);
     const result = await db.query(`
       select p.proname, p.prosrc
         from pg_proc p join pg_namespace n on n.oid=p.pronamespace

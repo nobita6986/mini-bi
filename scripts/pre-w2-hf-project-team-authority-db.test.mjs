@@ -70,11 +70,11 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 98, "the append-only batch mapping migration follows #96");
-  assert.equal(names.at(-1), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
-  assert.equal(names.at(-2), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
-  assert.equal(names.at(-3), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
-  assert.equal(names.at(-4), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
-  assert.equal(names.at(-5), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
+  assert.equal(names.at(-2), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
+  assert.equal(names.at(-3), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
+  assert.equal(names.at(-4), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
+  assert.equal(names.at(-5), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-6), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 

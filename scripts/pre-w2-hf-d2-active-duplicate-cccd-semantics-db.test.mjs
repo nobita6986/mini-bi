@@ -48,7 +48,7 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 98, "the ledger carries the PRE-W2-HF-D2 migration as #88");
-  assert.equal(names[names.length - (10)], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
+  assert.equal(names[names.length - (11)], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
   return db;
 }
 
