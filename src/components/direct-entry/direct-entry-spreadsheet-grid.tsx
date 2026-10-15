@@ -44,6 +44,7 @@ import {
   sortedActiveLaborTypes,
 } from "@/lib/direct-entry/labor-type-catalog-ui";
 import type { DraftCatalogLaborType } from "@/lib/direct-entry/write-repository";
+import { workStatusUiLabel } from "@/lib/direct-entry/display-labels";
 import {
   formatDateToDDMM,
   formatFreeDateText,
@@ -314,14 +315,14 @@ function SelectCellEditor(
     >
       {options.map((option) => <option key={option} value={option}>
         {props.columnKey === "initial_status"
-          ? ({ "": "Đang làm việc (mặc định)", ON: "Đang làm việc",
-              UNCONFIRMED: "Đang chờ việc", OFF: "Đã nghỉ" } as Record<string, string>)[option]
+          ? option === "" ? "Đang làm việc (mặc định)" : workStatusUiLabel(option)
           : option === "" ? "—" : option}
       </option>)}
       {value !== "" && !options.includes(value) && (
         // PRE-W2-HF-UI-LABELS: du lieu cu ngoai danh muc (vd gioi tinh Khác) van hien
         // nhan cua no; chi cho CHON cac option trong danh muc.
-        <option value={value} disabled>{value}</option>
+        <option value={value} disabled>{props.columnKey === "initial_status"
+          ? workStatusUiLabel(value) : value}</option>
       )}
     </select>
   );
@@ -721,6 +722,11 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       const renderCell = ({ row }: RenderCellProps<SpreadsheetGridRow>) => {
         const issue = issueFor(row, column.key);
         const display = (() => {
+          const status = row.cells.initial_status ?? "";
+          if (column.key === "initial_status" &&
+            ["ON", "OFF", "UNCONFIRMED"].includes(status)) {
+            return workStatusUiLabel(status);
+          }
           if (row.displayValues && Object.hasOwn(row.displayValues, column.key)) {
             return row.displayValues[column.key];
           }
