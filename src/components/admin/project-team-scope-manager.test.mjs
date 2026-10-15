@@ -3,34 +3,56 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const component = readFileSync(new URL("./project-team-scope-manager.tsx", import.meta.url), "utf8");
+const model = readFileSync(new URL("../../lib/admin/project-team-scope-ui-model.ts", import.meta.url), "utf8");
 const page = readFileSync(new URL("../../app/admin/catalog/project-team-scopes/page.tsx", import.meta.url), "utf8");
 const navigation = readFileSync(new URL("../../lib/admin/admin-navigation.ts", import.meta.url), "utf8");
 
-test("mapping manager uses bounded no-store read and existing grant/revoke API", () => {
-  assert.match(component, /buildMappingListQuery\(/);
-  assert.match(component, /cache:\s*"no-store"/);
-  assert.match(component, /fetch\(`\/api\/admin\/catalog\/project-team-scopes\?/);
-  assert.match(component, /fetch\(url,\s*\{[\s\S]*?method:\s*"POST"/);
-  assert.match(component, /\/api\/admin\/catalog\/project-team-scopes\/\$\{encodeURIComponent\(dialog\.mapping\.mapping_id\)\}\/revoke/);
-  assert.match(component, /expectedPairVersion:\s*dialog\.mapping\.version/);
-  assert.match(component, /expectedPairVersion:\s*\/\^\(0\|\[1-9\]\\d\*\)\$\//);
-  assert.match(component, /Phiên bản cặp mapping/);
-  assert.match(component, /reason/);
-  assert.match(component, /newMappingKey\(\)/);
+test("mapping manager loads project and active-team choices from their existing server APIs", () => {
+  assert.match(component, /\/api\/direct-entry\/projects\?include_inactive=true/);
+  assert.match(component, /parseListResponse\(await response\.json\(\)\)/);
+  assert.match(component, /\/api\/admin\/catalog\/teams\?\$\{query\.toString\(\)\}/);
+  assert.match(component, /buildTeamListQuery\(\{ search: teamSearch, includeInactive: false, page: teamPage \}\)/);
+  assert.match(component, /projectTeamListForQuery\(await response\.json\(\)/);
+  assert.match(component, /type="checkbox" checked=\{checked\}/);
+  assert.match(component, /Tìm dự án/);
+  assert.match(component, /Tìm nhóm/);
+  assert.match(component, /selectedProjectIds/);
+  assert.match(component, /setProjectPage/);
+  assert.match(component, /setTeamPage/);
+  assert.match(component, /Thử tải lại/);
+  assert.match(component, /projectPicker\.kind === "denied"/);
+  assert.match(component, /teamPicker\.kind === "error"/);
+  assert.match(component, /<select required value=\{selectedTeam\?\.team_id/);
+  assert.match(component, /MAX_BATCH_PROJECTS/);
+  assert.match(component, /selectedProjectIds\.length >= MAX_BATCH_PROJECTS/);
 });
 
-test("mapping UI route and navigation are restricted to canonical Full Admin", () => {
+test("grant/revoke submit only versionless API bodies and use server-projected batch results", () => {
+  assert.match(component, /buildGrantRequest\(\{[\s\S]*?projectIds: selectedProjectIds,[\s\S]*?teamId: selectedTeam\?\.team_id/);
+  assert.match(component, /buildRevokeRequest\(\{[\s\S]*?mappingId: dialog\.mapping\.mapping_id,[\s\S]*?effectiveTo: revokeEffectiveTo/);
+  assert.match(component, /classifyGrantResponse\(/);
+  assert.match(component, /classifyRevokeResponse\(/);
+  assert.match(component, /\/api\/admin\/catalog\/project-team-scopes/);
+  assert.match(component, /\/\$\{encodeURIComponent\(dialog\.mapping\.mapping_id\)\}\/revoke/);
+  assert.match(model, /createdMessage/);
+  assert.match(model, /skippedMessage/);
+  assert.match(component, /Idempotency-Key/);
+  assert.match(component, /pendingIntent\.current/);
+  assert.doesNotMatch(component, /grantPairVersion|grantEffectiveFrom|expectedPairVersion/);
+  assert.doesNotMatch(component, /expected_pair_version|effective_from:\s*grant/);
+  assert.doesNotMatch(component, /Phiên bản cặp mapping/);
+});
+
+test("mapping page/nav stay Full Admin restricted and existing history/filter/error UX remains", () => {
   assert.match(page, /decideAccountAccessPageAccess\(\{ actor \}\)/);
   assert.doesNotMatch(page, /decideAdminAreaAccess/);
   assert.match(navigation, /project-team-scopes[^\n]*visible:\s*adminSecurityNavPredicate/);
   assert.match(component, /Chỉ Full Admin/);
-});
-
-test("mapping UI exposes history, project filtering, empty state, and safe denied/error states", () => {
   assert.match(component, /projectIdFilter/);
   assert.match(component, /includeHistory/);
   assert.match(component, /setPage\(/);
   assert.match(component, /Chưa có mapping nào/);
   assert.match(component, /state === "denied"/);
   assert.match(component, /state === "error"/);
+  assert.match(component, /Thu hồi/);
 });

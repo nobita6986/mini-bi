@@ -9,8 +9,8 @@ const FILTER_SOURCE = path.resolve("src/lib/reporting/p1-filter.ts");
 
  test("W05B migration is one append-only patch-live migration with fail-closed drift guards", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 96);
-  assert.equal(names.at(-12), "20261011180000_p3_w05b_a_team_reporting.sql");
+  assert.equal(names.length, 97);
+  assert.equal(names.at(-13), "20261011180000_p3_w05b_a_team_reporting.sql");
   const source = await readFile(MIGRATION, "utf8");
   assert.match(source, /pg_get_viewdef/);
   assert.match(source, /pg_get_functiondef/);

@@ -154,7 +154,7 @@ export async function grantProjectTeamScope(
   if (!actor.ok) return actor.response;
   const result = await deps.repository.grantScope({ ...actor.value, ...parsed.value });
   if (!result.ok) return errorResponse(result.kind);
-  return respond({ ok: true, scope: result.data }, 200);
+  return respond({ ok: true, batch: result.data }, 200);
 }
 
 export async function revokeProjectTeamScope(
