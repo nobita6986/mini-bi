@@ -1,9 +1,10 @@
-# Pre-W2-HF — Direct Entry reporting: decouple from cutoff + recruiter/provider `valid_from` (preflight / BLOCKED)
+# Pre-W2-HF — Direct Entry reporting: decouple from cutoff + recruiter/provider `valid_from` (superseded preflight)
 
-> Status: `PRE_W2_HF_DE_REPORTING_DECOUPLE_BLOCKED_PREFLIGHT_AWAITING_T0`
+> Status: `PRE_W2_HF_DE_REPORTING_DECOUPLE_PREFLIGHT_SUPERSEDED`
 > Base: `origin/main@785bafc` (94 migrations). Branch: `codex/pre-w2-hf-direct-entry-reporting-decouple` (off `origin/main`). Isolated worktree; primary checkout untouched.
-> Kind: read-only preflight. No source/SQL/test change, no migration apply, no DB access, no deploy, no UAT. Only this handoff is written.
-> Next append-only slot would be **#95 (NOT reserved)**.
+> This was an initial stop report. Owner clarified that the app's canonical reporting dataset is submitted Direct Entry only; no separate legacy aggregate is part of this report. The implementation contract and current status are in [the final handoff](pre-w2-hf-de-reporting-direct-entry-only-HANDOFF.md). Historical findings below are retained for traceability and are superseded where they conflict with that contract.
+> The original preflight did not modify source/SQL/tests or access a database. The follow-up implementation is local-only; no production/staging database, VPS, deploy, or UAT was touched.
+> Migration #95 is now implemented append-only; see final handoff for checksum and validation.
 
 ## 1. Executive conclusion — STOP for T0
 

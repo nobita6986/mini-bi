@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 94-migration ledger).
+ * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 95-migration ledger).
  *
  * Covers the mapping table + RPCs (bounded read, grant, revoke), the canonical Full
  * Admin authority boundary, the pair-version OCC and idempotency contract, half-open
@@ -7,8 +7,8 @@
  * Operations (read + assign/unassign), the D4 no-backfill start state, the D3
  * fail-closed revoke, and the ACL/self-check posture.
  *
- * NOTE: this file deliberately pins the ledger to 94 because it appends #94. The
- * cross-layer ledger integration for the whole suite is owned by T1C.
+ * NOTE: this file pins project-team authority at #94 and verifies the newer
+ * append-only reporting migration follows it.
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -68,9 +68,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 94, "the ledger carries the Project<->Team authority migration as #94");
-  assert.equal(names.at(-1), TEAM_AUTHORITY_MIGRATION, "the authority migration is the append-only tail");
-  assert.equal(names.at(-2), PREVIOUS_MIGRATION, "the authority migration is #94 after PRE-W2-HF-G #93");
+  assert.equal(names.length, 95, "the ledger carries reporting decoupling after Project<->Team authority #94");
+  assert.equal(names.at(-2), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-3), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 

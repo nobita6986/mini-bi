@@ -567,9 +567,7 @@ test("R1 acceptance: migration #40 applies cleanly on Production-shape DB (34/44
   }
 });
 
-test("R1 acceptance: runtime blocker count is 1+ on a pre-cutoff eligible DE row", async () => {
-  // Blocker 3: runtime blocker helper counts pre-cutoff eligible DE rows
-  // directly, independent of the masked projection view.
+test("R1 acceptance: diagnostic cutoff helper does not hide a historical DE projection row", async () => {
   const { db } = await buildDb();
   try {
     await seedFixture(db);
@@ -587,7 +585,7 @@ test("R1 acceptance: runtime blocker count is 1+ on a pre-cutoff eligible DE row
     const view = await db.query(
       "select count(*)::bigint as n from public.direct_entry_reporting_facts_v01"
     );
-    assert.equal(Number(view.rows[0].n), 0, "masked view is empty for pre-cutoff rows");
+    assert.equal(Number(view.rows[0].n), 1, "historical Direct Entry remains in the report projection");
   } finally {
     await db.close();
   }
@@ -897,29 +895,19 @@ test("R1 acceptance: source/status filter is not restored by cutover wiring", as
   }
 });
 
-test("R1 acceptance: cutover options catalog merges legacy + DE dimensions (no double entry)", async () => {
-  // Two same-key dimension rows (one from the legacy view, one from the
-  // DE view) must collapse to one catalog entry. buildDimensionOptions
-  // groups by (dimension, key) — the new options loader feeds the union
-  // through it, so no double entry can leak.
+test("R1 acceptance: report options catalog contains only Direct Entry dimensions", async () => {
   const { buildDimensionOptions } = await import("../src/lib/reporting/p1-reporting.ts");
-  const merged = [
-    { dimension: "project", key: "w04a project", display: "W04A Project", recruited_count: 5 },
+  const directEntry = [
     { dimension: "project", key: "w04a de-only project", display: "W04A DE-only Project", recruited_count: 1 },
-    { dimension: "recruiter", key: "w04a recruiter", display: "W04A Recruiter", recruited_count: 5 },
     { dimension: "recruiter", key: "w04a de-only recruiter", display: "W04A DE-only Recruiter", recruited_count: 1 },
-    { dimension: "provider", key: "hrp", display: "HRP", recruited_count: 5 },
     { dimension: "provider", key: "vendor", display: "Vendor", recruited_count: 1 },
-    { dimension: "employment", key: "thời vụ", display: "Thời vụ", recruited_count: 5 },
     { dimension: "employment", key: "chính thức", display: "Chính thức", recruited_count: 1 },
   ];
-  const catalog = buildDimensionOptions(merged);
-  assert.equal(catalog.projects.length, 2);
-  assert.ok(catalog.projects.some((o) => o.key === "w04a project"));
-  assert.ok(catalog.projects.some((o) => o.key === "w04a de-only project"));
-  assert.equal(catalog.recruiters.length, 2);
-  assert.equal(catalog.providers.length, 2);
-  assert.equal(catalog.employments.length, 2);
+  const catalog = buildDimensionOptions(directEntry);
+  assert.deepEqual(catalog.projects.map((option) => option.key), ["w04a de-only project"]);
+  assert.deepEqual(catalog.recruiters.map((option) => option.key), ["w04a de-only recruiter"]);
+  assert.deepEqual(catalog.providers.map((option) => option.key), ["vendor"]);
+  assert.deepEqual(catalog.employments.map((option) => option.key), ["chính thức"]);
 });
 
 // =============================================================================

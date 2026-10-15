@@ -104,7 +104,7 @@ test("W06D-R2 core: the unknown bucket is company-wide only", () => {
 
 test("W06D-R2 core: detail pages the sanitized seven-field rows with an opaque cursor", () => {
   const facts = teamAFacts();
-  const first = buildTeamDetail({ facts, wantsUnknown: false, cursor: null, limit: 2 });
+  const first = buildTeamDetail({ facts, cursor: null, limit: 2 });
   assert.equal(first.total, 3);
   assert.equal(first.rows.length, 2);
   assert.deepEqual(Object.keys(first.rows[0]).sort(), [
@@ -114,18 +114,18 @@ test("W06D-R2 core: detail pages the sanitized seven-field rows with an opaque c
   assert.equal(typeof first.nextCursor, "string");
   assert.equal(first.legacy_aggregate_total, null);
 
-  const second = buildTeamDetail({ facts, wantsUnknown: false, cursor: first.nextCursor, limit: 2 });
+  const second = buildTeamDetail({ facts, cursor: first.nextCursor, limit: 2 });
   assert.equal(second.rows.length, 1);
   assert.equal(second.nextCursor, null);
   assert.equal(second.total, 3);
 
   // A cursor beyond the last row is an empty page, never an error.
-  const beyond = buildTeamDetail({ facts: facts.slice(0, 2), wantsUnknown: false, cursor: first.nextCursor, limit: 2 });
+  const beyond = buildTeamDetail({ facts: facts.slice(0, 2), cursor: first.nextCursor, limit: 2 });
   assert.deepEqual(beyond.rows, []);
   assert.equal(beyond.nextCursor, null);
 });
 
-test("W06D-R2 core: the unknown bucket keeps legacy apart from the paginated anomaly rows", () => {
+test("W06D-R2 core: the unknown bucket ignores non-Direct-Entry facts", () => {
   const facts = [
     fact({ entry_id: uuid(1), team_id: null, team_code: null, team_display_name: null, team_active: null }),
     {
@@ -143,10 +143,8 @@ test("W06D-R2 core: the unknown bucket keeps legacy apart from the paginated ano
   const bucketFacts = selectBucketFacts(facts, decoded);
   assert.equal(bucketFacts.length, 2);
 
-  const detail = buildTeamDetail({ facts: bucketFacts, wantsUnknown: true, cursor: null, limit: 25 });
+  const detail = buildTeamDetail({ facts: bucketFacts, cursor: null, limit: 25 });
   assert.equal(detail.total, 1);
   assert.equal(detail.rows.length, 1);
-  assert.equal(detail.legacy_aggregate_total.recruited_count, 7);
-  assert.equal(detail.legacy_aggregate_total.from, "2026-09-20");
-  assert.equal(detail.legacy_aggregate_total.to, "2026-09-20");
+  assert.equal(detail.legacy_aggregate_total, null);
 });

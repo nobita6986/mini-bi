@@ -53,9 +53,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 94,
+  assert.equal(names.length, 95,
     "ledger = 88 base + cutoff #89 + HF-E #90 + HF-F #91 + D3-A #92 + HF-G #93");
-  assert.equal(names[names.length - 9], EXPORT_MIGRATION_NAME,
+  assert.equal(names[names.length - (10)], EXPORT_MIGRATION_NAME,
     "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
   return db;
 }

@@ -1,5 +1,5 @@
 import type { ReportingFact } from "./p1-reporting.ts";
-import { P2_W04A_CUTOVER_DATE, P2_W04A_DIRECT_ENTRY_SOURCE_ID } from "./p2-w04a-cutover.ts";
+import { P2_W04A_DIRECT_ENTRY_SOURCE_ID } from "./p2-w04a-cutover.ts";
 import { decodeTeamBucketKey } from "./p2-w05b-team-drill-down-parser.ts";
 
 /**
@@ -153,19 +153,15 @@ function toPublicRow(row: RowWithId): TeamReportRow {
 }
 
 /**
- * Build the sanitized detail for a bucket. The paginated rows are Direct Entry
- * entries only (exactly the seven allowlisted fields); the legacy aggregate for
- * `unknown` is a separate, non-paginated summary (I-5). A cursor beyond the
- * last row yields an empty page with `nextCursor = null`, never an error.
+ * Build the sanitized detail for a bucket from Direct Entry rows only. A cursor
+ * beyond the last row yields an empty page with `nextCursor = null`, never an error.
  */
 export function buildTeamDetail(input: {
   facts: readonly TeamFactRow[];
-  wantsUnknown: boolean;
   cursor: string | null;
   limit: number;
 }): TeamReportDetail {
   const deFacts = input.facts.filter((f) => f.source_id === P2_W04A_DIRECT_ENTRY_SOURCE_ID);
-  const legacyFacts = input.facts.filter((f) => f.source_id !== P2_W04A_DIRECT_ENTRY_SOURCE_ID);
   const sorted = deFacts.map(toDetailRow).sort(compareRows);
   const cursorFields = input.cursor === null ? null : decodeCursor(input.cursor);
   const after = cursorFields === null ? sorted : sorted.filter((row) => isAfterCursor(row, cursorFields));
@@ -176,23 +172,10 @@ export function buildTeamDetail(input: {
     ? encodeCursor({ recruiter_display: last.recruiter_display, business_date: last.business_date, entry_id: last.entry_id })
     : null;
 
-  let legacyTotal: TeamReportDetail["legacy_aggregate_total"] = null;
-  if (input.wantsUnknown) {
-    let from: string | null = null;
-    let to: string | null = null;
-    let count = 0;
-    for (const f of legacyFacts) {
-      count += f.recruited_count;
-      if (from === null || f.business_date < from) from = f.business_date;
-      if (to === null || f.business_date > to) to = f.business_date;
-    }
-    legacyTotal = { recruited_count: count, from, to, cutover_date: P2_W04A_CUTOVER_DATE };
-  }
-
   return {
     rows: page.map(toPublicRow),
     nextCursor,
     total: sorted.length,
-    legacy_aggregate_total: legacyTotal,
+    legacy_aggregate_total: null,
   };
 }

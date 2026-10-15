@@ -28,11 +28,11 @@ function sqlState(error, code) {
   return error && error.code === code;
 }
 
-test("W05B migration #85 exposes the 19-column projection, RPC and ACL", async () => {
+test("W05B migration exposes the 19-column projection, RPC and ACL", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    assert.equal(migrationNames.length, 94);
-    assert.equal(migrationNames.at(-10), MIGRATION);
+    assert.equal(migrationNames.length, 95);
+    assert.equal(migrationNames.at(-11), MIGRATION);
     const columns = await query(db, "select array_to_string(array_agg(attname order by attnum), ',') as columns from pg_attribute where attrelid='public.direct_entry_reporting_facts_v01'::regclass and attnum>0 and not attisdropped");
     assert.equal(columns[0].columns, "source_id,business_date,project_key,project_display,recruiter_key,recruiter_display,provider_type_key,provider_type_display,employment_type_key,employment_type_display,recruited_count,first_work_date,entry_id,submission_id,cutoff_date,team_id,team_code,team_display_name,team_active");
     const acl = await query(db, "select has_function_privilege('service_role',$1::regprocedure,'execute') as service_exec, has_function_privilege('anon',$1::regprocedure,'execute') as anon_exec, has_function_privilege('authenticated',$1::regprocedure,'execute') as auth_exec", ["public.direct_entry_reporting_team_drill_down(uuid,uuid,text,jsonb,text,integer)"]);
@@ -71,7 +71,7 @@ test("W05B known-team drill-down pages facts with exact seven-field rows", async
   }
 });
 
-test("W05B inactive, Vendor and Unknown buckets preserve attribution and I-5", async () => {
+test("W05B inactive, Vendor and Unknown buckets preserve Direct Entry attribution", async () => {
   const { db } = await buildDb();
   try {
     await seedReportingFixture(db);
@@ -87,8 +87,8 @@ test("W05B inactive, Vendor and Unknown buckets preserve attribution and I-5", a
 
     const unknown = await rpc(db, AUTH_ALL, APP_ALL, "unknown");
     assert.equal(unknown.total, 1);
-    assert.equal(unknown.legacy_aggregate_total.recruited_count, 7);
-    assert.equal(unknown.legacy_aggregate_total.recruited_count + unknown.total, 8);
+    assert.equal(unknown.legacy_aggregate_total, null);
+    assert.equal(unknown.total, 1);
     assert.equal(unknown.rows.length, 1);
     assert.equal(Object.keys(unknown.rows[0]).includes("team_active"), false);
   } finally {

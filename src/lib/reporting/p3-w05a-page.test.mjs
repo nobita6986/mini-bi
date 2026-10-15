@@ -24,23 +24,17 @@ test("E21: reporting server takes actor as a mandatory input and calls the scope
   assert.ok(!/\.from\("direct_entry_reporting_facts_v01"\)/.test(server), "facts must go through the scoped RPC, not the raw view");
 });
 
-test("R1: reporting server defers to the DB audience (no TS/UTC inference, no pre-RPC global metadata)", () => {
+test("R1: reporting server uses the DB-authorized Direct Entry projection only", () => {
   assert.ok(!/resolveReportingAudienceKind/.test(server), "no TS audience inference in the fetcher");
-  assert.ok(!/\.from\("data_sources"\)/.test(server), "data_sources must be read only inside the RPC");
-  assert.ok(!/\.from\("reporting_latest_sync_runs_v01"\)/.test(server), "sync runs must be read only inside the RPC");
-  assert.ok(!/\.from\("reporting_sources_with_current_facts_v01"\)/.test(server), "presence must be read only inside the RPC");
-  assert.match(server, /payload\.sources/);
-  assert.match(server, /payload\.latest_runs/);
-  assert.match(server, /payload\.presence/);
-  assert.match(server, /dbKind === "all"/);
+  assert.match(server, /direct_entry_reporting_scoped_facts/);
+  assert.match(server, /P2_W04A_DIRECT_ENTRY_SOURCE/);
+  assert.match(server, /filters\.source = undefined/);
+  assert.doesNotMatch(server, /readCutoverBlocker|data_sources|daily_recruitment_breakdown|reporting_latest_sync_runs_v01/);
 });
 
-test("R3: reporting server validates the all-source filter against the DB allowlist", () => {
-  assert.match(server, /validateAllSourceFilter\(/);
-  assert.match(server, /allowlist: dbSources\.map\(\(s\) => s\.id\)/);
-  assert.match(server, /if \(!sourceCheck\.ok\)/);
-  assert.match(server, /return \{ ok: false, code: sourceCheck\.code, message: sourceCheck\.message \}/);
-  assert.match(server, /dbKind === "all"/);
+test("R3: source filter cannot add or exclude Direct Entry facts", () => {
+  assert.match(server, /filters\.source = undefined/);
+  assert.doesNotMatch(server, /validateAllSourceFilter|dbSources|payload\.sources/);
 });
 
 test("E22: audience projection carries only kind + label (no UUID/grants/raw scope)", () => {
@@ -53,7 +47,8 @@ test("E22: audience projection carries only kind + label (no UUID/grants/raw sco
 });
 
 test("W05B: aggregate byTeam stays in the server read-model and never joins teams in the client", () => {
-  assert.match(server, /computeReporting\(sources, combinedFacts, filters, sourcesWithFacts\)/);
+  assert.match(server, /computeReporting\(/);
+  assert.match(server, /directEntryFacts/);
   assert.match(server, /payload\.facts/);
   assert.doesNotMatch(page, /direct_entry_reporting_facts_v01/);
   assert.doesNotMatch(page, /teams|team_id|team_code|team_display_name/);

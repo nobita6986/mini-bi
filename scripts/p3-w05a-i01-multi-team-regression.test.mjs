@@ -4,7 +4,7 @@
  * Proves the DB-authoritative audience for an actor holding SEVERAL effective
  * team scope grants: the audience is `team`, it carries exactly the effective
  * team ids, the facts are the union of those teams without double counting, and
- * no legacy source metadata/options leak into a team response.
+ * no external-source metadata/options leak into a team response.
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -51,7 +51,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 94, "the inventory includes the W02-B vendor lifecycle #75 after P3.1-HF #74 and alias hotfix #73");
+  assert.equal(names.length, 95, "the inventory includes the W02-B vendor lifecycle #75 after P3.1-HF #74 and alias hotfix #73");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }
@@ -124,13 +124,13 @@ async function seedFixture(db) {
   await insertEntry(db, { entry: E3, sub: S3, cand: C3, createdBy: APP_MULTI, project: "proj_b", date: "2026-10-11", code: "hrp-2026-000103", recruiter: REC_B1, team: TEAM_B, provider: "hrp", labor: "PERMANENT" });
   await insertEntry(db, { entry: E4, sub: S4, cand: C4, createdBy: APP_MULTI, project: "proj_c", date: "2026-10-12", code: "hrp-2026-000104", recruiter: REC_C1, team: TEAM_C, provider: "hrp", labor: "TEMPORARY" });
 
-  // Legacy aggregate outside the Direct Entry cutoff: must never reach a team.
+  // A retired aggregate row stays in the fixture to prove the live report ignores it.
   await db.query("insert into public.data_sources (id, drive_file_id, file_name, sheet_name, active, is_test) values ($1,'legacy','legacy.xlsx','Sheet1',true,false)", [DS1]);
   await db.query("insert into public.sync_runs (run_id, source_id, trigger_type, status, started_at, finished_at) values ($1,$2,'manual','succeeded','2026-10-05T00:00:00Z','2026-10-05T00:00:00Z')", [RUN1, DS1]);
   await db.query(
     "insert into public.daily_recruitment_breakdown " +
     "(source_id, business_date, project_key, project_display, recruiter_key, recruiter_display, provider_type_key, provider_type_display, employment_type_key, employment_type_display, recruited_count, sync_run_id, snapshot_at) " +
-    // The 2000-01-01 cutoff keeps legacy aggregates strictly before Direct Entry.
+    // This historical row is not part of the Direct Entry reporting dataset.
     "values ($1,'1999-12-31','legacy_proj','Legacy Project','legacy_rec','Legacy Recruiter','hrp','HRP','thời vụ','Thời vụ',7,$2,'2026-10-05T00:00:00Z')",
     [DS1, RUN1],
   );
@@ -177,7 +177,7 @@ test("W05A multi-team: facts are the union of both effective teams only", async 
     assert.deepEqual(ids, [E1, E2, E3].sort(), "team facts must be the union of TEAM_A and TEAM_B");
     assert.ok(!ids.includes(E4), "a TEAM_C entry is outside the effective team scope");
     for (const f of res.facts) {
-      assert.ok(["rec a1", "rec b1"].includes(f.recruiter_key), "no out-of-scope recruiter may appear");
+      assert.ok(["recruiter a1", "recruiter b1"].includes(f.recruiter_key), "no out-of-scope recruiter may appear");
       assert.ok(["project a", "project b"].includes(f.project_key), "no out-of-scope project may appear");
     }
   });
@@ -206,11 +206,11 @@ test("W05A multi-team: expired and future team grants never widen the scope", as
     assert.equal(audienceTeamScopeCount(aud), 2, "only the two effective grants count");
     const res = await factsOf(db, APP_MULTI, AUTH_MULTI);
     assert.equal(res.facts.some((f) => f.entry_id === E4), false, "the expired/future team contributes nothing");
-    assert.equal(res.facts.some((f) => f.team_id === TEAM_C || f.recruiter_key === "rec c1"), false);
+    assert.equal(res.facts.some((f) => f.team_id === TEAM_C || f.recruiter_key === "recruiter c1"), false);
   });
 });
 
-test("W05A multi-team: legacy metadata, presence and options stay empty for a team audience", async () => {
+test("W05A multi-team: external-source metadata and options stay empty for a team audience", async () => {
   await withFixture(async (db) => {
     const res = await factsOf(db, APP_MULTI, AUTH_MULTI);
     assert.deepEqual(res.sources, [], "a team audience must not receive the source registry");
@@ -221,9 +221,9 @@ test("W05A multi-team: legacy metadata, presence and options stay empty for a te
     const projects = opts.dimensions.filter((d) => d.dimension === "project").map((d) => d.key).sort();
     const recruiters = opts.dimensions.filter((d) => d.dimension === "recruiter").map((d) => d.key).sort();
     assert.deepEqual(projects, ["project a", "project b"]);
-    assert.deepEqual(recruiters, ["rec a1", "rec b1"]);
+    assert.deepEqual(recruiters, ["recruiter a1", "recruiter b1"]);
     assert.equal(projects.includes("project c"), false);
-    assert.equal(recruiters.includes("rec c1"), false);
+    assert.equal(recruiters.includes("recruiter c1"), false);
     assert.equal(opts.dimensions.some((d) => d.key === "legacy_proj" || d.key === "legacy_rec"), false);
   });
 });

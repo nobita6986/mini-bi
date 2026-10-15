@@ -5,8 +5,8 @@ import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
 import { INVALID_FILTER_CODE } from "./p1-filter";
 import { REPORTING_QUERY_FAILED_CODE } from "./p1-reporting";
-import type { ReportingData, ReportingSource, RunStatus } from "./p1-reporting";
-import { P2_W04A_DIRECT_ENTRY_SOURCE, readCutoverBlocker } from "./p2-w04a-cutover";
+import type { ReportingData } from "./p1-reporting";
+import { P2_W04A_DIRECT_ENTRY_SOURCE } from "./p2-w04a-cutover";
 import { computeScopedReportingData } from "./p2-w04a-reporting-server";
 import { parseTeamDrillDownRequest } from "./p2-w05b-team-drill-down-parser";
 import type { RequestParams } from "./p2-w05b-team-drill-down-parser";
@@ -34,22 +34,11 @@ import type { AudienceKind, TeamFactRow, TeamReportDetail } from "./p3-w06d-team
  *                        (i.e. inside the granted team scope); `unknown` denied;
  *   - audience `own`  -> denied.
  *
- * The response reuses the read path's masking, cutover reconciliation and the
- * sanitized seven-field row list; no cross-team data can leave through a denied
- * bucket, and `source` is not part of this contract.
+ * The response reuses the Direct Entry-only read path and sanitized seven-field
+ * row list; no cross-team data can leave through a denied bucket.
  */
 
 export type { TeamReportDetail, TeamReportRow } from "./p3-w06d-team-report-core";
-
-type ScopedSourceRow = {
-  id: string;
-  drive_file_id: string;
-  file_name: string;
-  active: boolean;
-  is_test: boolean;
-  last_seen_at: string | null;
-  last_successful_sync_at: string | null;
-};
 
 export type TeamReportEnvelope = {
   /** The scoped aggregate; null on a "load more" request (cursor present). */
@@ -95,10 +84,6 @@ export async function fetchCutoverTeamReport(
   try {
     const sb = createServiceSupabaseClient();
 
-    // Fail closed on the global cutover blocker, exactly like the read path.
-    const blocker = await readCutoverBlocker((name) => sb.rpc(name));
-    if (!blocker.ok) return unavailable();
-
     const factsRes = await sb.rpc("direct_entry_reporting_scoped_facts", {
       p_auth_subject: actor.auth_subject,
       p_app_user_id: actor.app_user_id,
@@ -109,15 +94,11 @@ export async function fetchCutoverTeamReport(
     const payload = (factsRes.data ?? {}) as {
       audience?: unknown;
       facts?: unknown[];
-      sources?: ScopedSourceRow[];
-      latest_runs?: { source_id: string; status: RunStatus }[];
-      presence?: string[];
     };
 
     // The DB-resolved audience is the sole authority. Fail closed when unusable.
     const audience = resolveReportingAudienceProjection(payload.audience);
     if (audience === null) return unavailable();
-    const dbKind = audience.kind;
     const scopedFacts = (payload.facts ?? []) as TeamFactRow[];
 
     const teamFacts = selectBucketFacts(scopedFacts, decoded);
@@ -125,27 +106,8 @@ export async function fetchCutoverTeamReport(
     if (authorization === "denied") return denied();
     if (authorization === "invalid") return invalid();
 
-    // Report sources: the company-wide audience keeps legacy source metadata so
-    // the legacy aggregate still counts for the `unknown` bucket; team/own
-    // reports are Direct-Entry-only.
-    const dbSources = (payload.sources ?? []) as ScopedSourceRow[];
-    const latestBySource = new Map<string, RunStatus>();
-    for (const r of payload.latest_runs ?? []) latestBySource.set(r.source_id, r.status);
-    const sources: ReportingSource[] = (dbKind === "all" ? dbSources : []).map((s) => ({
-      ...s,
-      latest_run_status: latestBySource.get(s.id) ?? null,
-    }));
-    sources.push(P2_W04A_DIRECT_ENTRY_SOURCE);
-
-    // Presence is scoped to the bucket so the empty-state reflects the bucket.
-    const bucketPresence = new Set<string>();
-    for (const f of teamFacts) bucketPresence.add(f.source_id);
-
     const built = computeScopedReportingData({
       facts: teamFacts,
-      sources,
-      sourcesWithFacts: bucketPresence,
-      overlapBlocker: blocker.count,
       filters,
     });
     if (!built.ok) return unavailable();
@@ -160,7 +122,7 @@ export async function fetchCutoverTeamReport(
       data: {
         report: cursor === null ? built.data : null,
         bucket: { key: bucketKey, display },
-        detail: buildTeamDetail({ facts: teamFacts, wantsUnknown: decoded.kind === "unknown", cursor, limit }),
+        detail: buildTeamDetail({ facts: teamFacts, cursor, limit }),
       },
     };
   } catch {

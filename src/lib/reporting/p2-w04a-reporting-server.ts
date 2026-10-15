@@ -9,29 +9,16 @@ import { computeReporting, reportingQueryFailed } from "./p1-reporting";
 import type {
   ReportingData,
   ReportingFact,
-  ReportingSource,
-  RunStatus,
 } from "./p1-reporting";
 import { resolveReportingAudienceProjection } from "./p3-w05a-audience";
 import type { ReportingAudience } from "./p3-w05a-audience";
-import { validateAllSourceFilter } from "./p3-w05a-source-filter";
 import {
-  combineReportingFacts,
-  cutoverBlockerError,
-  hasCutoverBlocker,
-  readCutoverBlocker,
-  maskDirectEntryFacts,
-  maskLegacyFacts,
   P2_W04A_CUTOVER_BLOCKER_CODE,
-  P2_W04A_CUTOVER_DATE,
   P2_W04A_CUTOVER_FAILED_CODE,
   P2_W04A_DIRECT_ENTRY_SOURCE,
   P2_W04A_DIRECT_ENTRY_SOURCE_ID,
 } from "./p2-w04a-cutover";
-import type {
-  CutoverReconciliation,
-  DirectEntryReportingFact,
-} from "./p2-w04a-cutover";
+import type { CutoverReconciliation } from "./p2-w04a-cutover";
 
 /**
  * P3-W05A-R1 - DB-authoritative scoped cutover read path.
@@ -47,16 +34,6 @@ type ScopedFactRow = ReportingFact & {
   entry_id?: string | null;
   submission_id?: string | null;
   cutoff_date?: string | null;
-};
-
-type ScopedSourceRow = {
-  id: string;
-  drive_file_id: string;
-  file_name: string;
-  active: boolean;
-  is_test: boolean;
-  last_seen_at: string | null;
-  last_successful_sync_at: string | null;
 };
 
 export type CutoverFetchResult =
@@ -87,26 +64,13 @@ export async function fetchCutoverReporting(
   try {
     const sb = createServiceSupabaseClient();
 
-    // 1. Runtime blocker check (one RPC call per request; global invariant).
-    //    P3-J01B-R1: the read is delegated to the cutover contract module, which
-    //    fails closed with the stable sanitized reporting error. A raw Supabase
-    //    code/message must never reach CutoverFetchResult, because the dashboard
-    //    renders `report.code + " · " + report.message` for an unknown failure.
-    const blocker = await readCutoverBlocker((name) => sb.rpc(name));
-    if (!blocker.ok) {
-      return { ok: false, code: blocker.code, message: blocker.message };
-    }
-
-    // 2. Parse filters. Source is validated as a UUID but not against scope
-    //    here: the scoped RPC is the authority and applies it only to the
-    //    legacy side for a DB-confirmed "all" audience.
+    // Parse only business dimensions; this report is based on Direct Entry.
     const parsed = parseReportingFilters(params, undefined);
     if (!parsed.ok) return { ok: false, code: parsed.code, message: parsed.message };
     const filters = parsed.filters;
+    filters.source = undefined;
 
-    // 3. Actor-scoped facts AND source metadata, both gated by the SAME
-    //    DB-resolved audience (no TS/UTC audience inference, no pre-RPC
-    //    global metadata read => no TOCTOU leak).
+    // Facts and audience remain gated together by the same DB-authoritative RPC.
     const factsRes = await sb.rpc("direct_entry_reporting_scoped_facts", {
       p_auth_subject: actor.auth_subject,
       p_app_user_id: actor.app_user_id,
@@ -119,9 +83,6 @@ export async function fetchCutoverReporting(
     const payload = (factsRes.data ?? {}) as {
       audience?: unknown;
       facts?: unknown[];
-      sources?: ScopedSourceRow[];
-      latest_runs?: { source_id: string; status: RunStatus }[];
-      presence?: string[];
     };
     const scopedFacts = (payload.facts ?? []) as ScopedFactRow[];
 
@@ -134,49 +95,9 @@ export async function fetchCutoverReporting(
       logSafeError("p3-w05a-audience", "audience payload missing or malformed");
       return reportingQueryFailed();
     }
-    const dbKind = audience.kind;
-    const dbSources = (payload.sources ?? []) as ScopedSourceRow[];
-
-    // Validate the legacy-only source filter against the DB-authoritative
-    // allowlist (active/non-test sources). Only a DB-confirmed "all" audience
-    // may filter by source; an unknown / test / inactive source is rejected as
-    // INVALID_FILTER (never a silently-empty report). own/team ignore the
-    // source filter (R2).
-    if (dbKind === "all") {
-      const sourceCheck = validateAllSourceFilter({
-        source: filters.source,
-        allowlist: dbSources.map((s) => s.id),
-      });
-      if (!sourceCheck.ok) {
-        return { ok: false, code: sourceCheck.code, message: sourceCheck.message };
-      }
-    } else {
-      filters.source = undefined;
-    }
-
-    // The DB-confirmed audience is the sole authority for metadata scope.
-    const rawSources: Omit<ReportingSource, "latest_run_status">[] =
-      dbKind === "all" ? dbSources : [];
-    const latestBySource = new Map<string, RunStatus>();
-    for (const r of payload.latest_runs ?? []) latestBySource.set(r.source_id, r.status);
-    const sourcesWithFacts = new Set<string>(payload.presence ?? []);
-
-    // 6. Sources for computeReporting: DB-provided legacy sources (all only)
-    //    + the Direct Entry synthetic source.
-    const sources: ReportingSource[] = rawSources.map((s) => ({
-      ...s,
-      latest_run_status: latestBySource.get(s.id) ?? null,
-    }));
-    sources.push(P2_W04A_DIRECT_ENTRY_SOURCE);
-
-    // 4/7/8. Split + defense-in-depth mask + reconcile + combine + compute are
-    //        expressed once in `computeScopedReportingData`, shared with the
-    //        team-scoped read (P3-W06D-R2).
+    // The report has one canonical source; no external-source metadata or cutoff.
     const built = computeScopedReportingData({
       facts: scopedFacts,
-      sources,
-      sourcesWithFacts,
-      overlapBlocker: blocker.count,
       filters,
     });
     if (!built.ok) {
@@ -195,61 +116,31 @@ export type ScopedReportingBuild =
   | { ok: false; code: string; message: string; reconciliation?: CutoverReconciliation };
 
 /**
- * P3-W05A / P3-W06D-R2 - build ReportingData from an already-authorized fact set.
+ * P3-W05A / P3-W06D-R2 - build ReportingData from an already-authorized Direct Entry fact set.
  *
  * Shared by the company/scope read path (`fetchCutoverReporting`) and the
- * team-scoped read (`fetchCutoverTeamReport`) so cutover masking, the
- * reconciliation and the read-model are expressed exactly once.
+ * team-scoped read (`fetchCutoverTeamReport`) so the canonical source and
+ * read-model are expressed exactly once.
  *
  * `facts` MUST already be scoped and authorized at the DB boundary (audience +
- * filters); this builder only applies the defense-in-depth date mask, sums and
- * runs the pure read-model. It never widens the fact set.
+ * filters); this builder runs the pure read-model without adding a second date
+ * eligibility rule or mixing another source.
  */
 export function computeScopedReportingData(input: {
   facts: ReportingFact[];
-  sources: ReportingSource[];
-  sourcesWithFacts: ReadonlySet<string>;
-  overlapBlocker: number;
   filters: ReportingFilters;
 }): ScopedReportingBuild {
-  const { facts, sources, overlapBlocker, filters } = input;
-  const legacyFactsRaw: ReportingFact[] = [];
-  const directEntryFactsRaw: DirectEntryReportingFact[] = [];
-  for (const f of facts) {
-    if (f.source_id === P2_W04A_DIRECT_ENTRY_SOURCE_ID) {
-      directEntryFactsRaw.push(f as unknown as DirectEntryReportingFact);
-    } else {
-      legacyFactsRaw.push(f as ReportingFact);
-    }
-  }
-  const maskedDirectEntry = maskDirectEntryFacts(directEntryFactsRaw);
-  const legacyFacts = maskLegacyFacts(legacyFactsRaw);
-
-  const sourcesWithFacts = new Set(input.sourcesWithFacts);
-  if (maskedDirectEntry.length > 0) sourcesWithFacts.add(P2_W04A_DIRECT_ENTRY_SOURCE_ID);
-
-  const legacy_subtotal = legacyFacts.reduce((a, f) => a + f.recruited_count, 0);
-  const direct_entry_subtotal = maskedDirectEntry.length;
-  const reconciliation: CutoverReconciliation = {
-    legacy_subtotal,
-    direct_entry_subtotal,
-    overlap_blocker: overlapBlocker,
-    combined_total: legacy_subtotal + direct_entry_subtotal,
-    cutoff_date: P2_W04A_CUTOVER_DATE,
-  };
-
-  if (hasCutoverBlocker(reconciliation)) {
-    const err = cutoverBlockerError(reconciliation);
-    console.error(
-      "[p3-w05a] cutover blocker: overlap=" + err.reconciliation.overlap_blocker +
-        " cutoff=" + err.reconciliation.cutoff_date +
-        " legacy=" + err.reconciliation.legacy_subtotal + " de=" + err.reconciliation.direct_entry_subtotal,
-    );
-    return { ok: false, code: err.code, message: err.message, reconciliation };
-  }
-
-  const combinedFacts = combineReportingFacts(legacyFacts, maskedDirectEntry);
-  const data = computeReporting(sources, combinedFacts, filters, sourcesWithFacts);
+  const { facts, filters } = input;
+  const directEntryFacts = facts.filter((fact) => fact.source_id === P2_W04A_DIRECT_ENTRY_SOURCE_ID);
+  const sourcesWithFacts = directEntryFacts.length > 0
+    ? new Set([P2_W04A_DIRECT_ENTRY_SOURCE_ID])
+    : new Set<string>();
+  const data = computeReporting(
+    [P2_W04A_DIRECT_ENTRY_SOURCE],
+    directEntryFacts,
+    filters,
+    sourcesWithFacts,
+  );
   return { ok: true, data };
 }
 

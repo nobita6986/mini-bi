@@ -102,7 +102,7 @@ async function seedLegacy(db) {
   await db.query(
     "insert into public.daily_recruitment_breakdown " +
     "(source_id, business_date, project_key, project_display, recruiter_key, recruiter_display, provider_type_key, provider_type_display, employment_type_key, employment_type_display, recruited_count, sync_run_id, snapshot_at) " +
-    // The 2000-01-01 cutoff keeps legacy aggregates strictly before Direct Entry.
+    // A legacy aggregate remains in storage but is not a source for this report.
     "values ($1,'1999-12-31','legacy_proj','Legacy Project','legacy_rec','Legacy Recruiter','hrp','HRP','thời vụ','Thời vụ',7,$2,'2026-10-05T00:00:00Z')",
     [DS1, RUN1],
   );
@@ -118,17 +118,19 @@ async function audience(db, app, auth) {
   return r.rows[0].data;
 }
 
-test("E1: all sees facts across multiple teams and legacy", async () => {
+test("E1: all sees Direct Entry facts across multiple teams only", async () => {
   const db = await buildDb();
   try {
     await seedBase(db); await seedEntries(db); await seedLegacy(db);
     const res = await facts(db, APP_ALL, AUTH_ALL);
     assert.equal(res.audience.audience, "all");
     const de = res.facts.filter((f) => f.entry_id !== null);
-    const legacy = res.facts.filter((f) => f.entry_id === null);
     assert.equal(de.length, 4);
-    assert.equal(legacy.reduce((a, f) => a + f.recruited_count, 0), 7);
-    assert.equal(res.facts.reduce((a, f) => a + f.recruited_count, 0), 11);
+    assert.equal(res.facts.length, 4);
+    assert.equal(res.facts.reduce((a, f) => a + f.recruited_count, 0), 4);
+    assert.deepEqual(res.sources, []);
+    assert.deepEqual(res.latest_runs, []);
+    assert.deepEqual(res.presence, []);
   } finally { await db.close(); }
 });
 
@@ -207,24 +209,38 @@ test("E3/E14: options and rankings use the same authorized row set as totals", a
     const projects = opts.dimensions.filter((d) => d.dimension === "project").map((d) => d.key);
     const recruiters = opts.dimensions.filter((d) => d.dimension === "recruiter").map((d) => d.key);
     assert.deepEqual(projects.sort(), ["project a"]);
-    assert.deepEqual(recruiters.sort(), ["rec a1", "rec a2"]);
+    assert.deepEqual(recruiters.sort(), ["recruiter a1", "recruiter a2"]);
     assert.equal(projects.includes("project b"), false, "no team B project in team A options");
-    assert.equal(recruiters.includes("rec b1"), false, "no team B recruiter in team A options");
+    assert.equal(recruiters.includes("recruiter b1"), false, "no team B recruiter in team A options");
     assert.deepEqual(opts.sources, [], "team audience has no legacy source options");
+
+    const all = await db.query(
+      "select public.direct_entry_reporting_scoped_options($1::uuid,$2::uuid) as data",
+      [AUTH_ALL, APP_ALL],
+    );
+    assert.equal(all.rows[0].data.dimensions.some((item) => item.key === "legacy_proj"), false);
+    assert.deepEqual(all.rows[0].data.sources, [], "all audience also receives no external-source options");
   } finally { await db.close(); }
 });
 
-test("E15: cutoff 2000-01-01 and pre-cutoff Direct Entry is excluded (blocker)", async () => {
+test("E15: historical Direct Entry is included without cutoff or date-effective alias lookup", async () => {
   const db = await buildDb();
   try {
     await seedBase(db); await seedEntries(db); await seedLegacy(db);
-    const cutoff = await db.query("select public.direct_entry_reporting_cutoff()::text as c");
-    assert.equal(cutoff.rows[0].c, "2000-01-01");
+    await db.query("update public.recruiter_provider_memberships set valid_from='1990-01-01' where recruiter_id=$1", [REC_A1]);
     await insertEntry(db, { entry: uuid(105), sub: uuid(205), cand: uuid(305), createdBy: APP_OWNA1, project: "proj_a", date: "1999-12-31", code: "hrp-1999-000005", recruiter: REC_A1, team: TEAM_A, provider: "hrp", labor: "TEMPORARY" });
-    const blocker = await db.query("select public.direct_entry_reporting_pre_cutover_blocker_count() as c");
-    assert.equal(Number(blocker.rows[0].c), 1, "pre-cutoff eligible row must trip the blocker");
+    const datedAlias = await db.query(
+      "select public.direct_entry_reporting_recruiter_alias_key($1::uuid, '1999-12-31'::date) as key",
+      [REC_A1],
+    );
+    assert.equal(datedAlias.rows[0].key, "__unknown__", "fixture has no effective recruiter alias on the historical date");
     const res = await facts(db, APP_ALL, AUTH_ALL);
-    assert.equal(res.facts.some((f) => f.entry_id === uuid(105)), false, "pre-cutoff entry excluded from facts");
+    const historical = res.facts.find((f) => f.entry_id === uuid(105));
+    assert.ok(historical, "historical first_work_date remains reportable");
+    assert.equal(historical.business_date, "1999-12-31");
+    assert.equal(historical.recruiter_key, "recruiter a1", "current recruiter display is independent of alias validity date");
+    assert.equal(historical.provider_type_key, "hrp", "provider comes from the stored Direct Entry row");
+    assert.equal(res.facts.some((f) => f.entry_id === null), false, "legacy aggregate is not mixed into report facts");
   } finally { await db.close(); }
 });
 
@@ -280,19 +296,16 @@ test("E18: scoped RPC/view ACL is service-role-only and raw tables stay denied",
   } finally { await db.close(); }
 });
 
-test("R1: DB gates source metadata by the resolved audience (no global metadata for team/own)", async () => {
+test("R1: report returns no external-source metadata for any audience", async () => {
   const db = await buildDb();
   try {
     await seedBase(db); await seedEntries(db); await seedLegacy(db);
 
     const allRes = await facts(db, APP_ALL, AUTH_ALL);
     assert.equal(allRes.audience.audience, "all");
-    assert.equal(allRes.sources.length, 1, "all receives the global source registry");
-    assert.equal(allRes.sources[0].id, DS1);
-    assert.equal(allRes.sources[0].file_name, "legacy.xlsx");
-    assert.equal(allRes.sources[0].drive_file_id, "legacy");
-    assert.deepEqual(allRes.latest_runs, [{ source_id: DS1, status: "succeeded" }]);
-    assert.deepEqual(allRes.presence, [DS1]);
+    assert.deepEqual(allRes.sources, []);
+    assert.deepEqual(allRes.latest_runs, []);
+    assert.deepEqual(allRes.presence, []);
 
     const teamRes = await facts(db, APP_TEAMA, AUTH_TEAMA);
     assert.equal(teamRes.audience.audience, "team");
@@ -356,20 +369,16 @@ test("R2: own/team ignore a legacy source filter (DE facts unchanged, metadata s
   } finally { await db.close(); }
 });
 
-test("R2: all keeps the legacy source filter (legacy-only, no DE facts)", async () => {
+test("R2: source filter cannot exclude Direct Entry or add external facts", async () => {
   const db = await buildDb();
   try {
     await seedBase(db); await seedEntries(db); await seedLegacy(db);
     const res = await facts(db, APP_ALL, AUTH_ALL, { source: DS1 });
     assert.equal(res.audience.audience, "all");
-    const de = res.facts.filter((f) => f.entry_id !== null);
-    const legacy = res.facts.filter((f) => f.entry_id === null);
-    assert.equal(de.length, 0, "all + source excludes DE facts (legacy-only filter)");
-    assert.equal(legacy.length, 1);
-    assert.equal(legacy[0].source_id, DS1);
-    assert.equal(legacy[0].recruited_count, 7);
-    assert.equal(res.sources.length, 1, "all still receives the source registry");
-    assert.deepEqual(res.presence, [DS1]);
+    assert.equal(res.facts.length, 4, "legacy source selection is ignored by the Direct Entry-only report");
+    assert.equal(res.facts.every((f) => f.entry_id !== null), true);
+    assert.deepEqual(res.sources, []);
+    assert.deepEqual(res.presence, []);
   } finally { await db.close(); }
 });
 
