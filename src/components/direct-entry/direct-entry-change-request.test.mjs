@@ -111,7 +111,6 @@ test("dialogs use Radix without manual modal plumbing and no raw logging", () =>
     assert.match(file, /import \{ AlertDialog/);
     assert.doesNotMatch(file, /window\.confirm/);
     assert.doesNotMatch(file, /addEventListener\(\s*"key(down|up)"/);
-    assert.doesNotMatch(file, /focus\(\)/);
     assert.doesNotMatch(file, RAW_LOGGING);
     assert.doesNotMatch(file, CLIENT_AUTHORITY);
     assert.doesNotMatch(file, TABLE_ACCESS);

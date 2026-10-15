@@ -32,6 +32,7 @@ const detailPayload = {
   state: "PENDING",
   version: 1,
   created_at: createdAt,
+  request_reason: null,
   items: [{ entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,
     proposal: { labor_type: "PERMANENT" }, labor_type_display: "Chính thức" }],
   can_withdraw: false,

@@ -20,7 +20,6 @@ import {
 import { projectProposerEntry } from "./change-request-proposer.ts";
 import {
   DOCUMENT_STAGING_MESSAGE,
-  LEAVE_REASON_HIDDEN_MESSAGE,
   PRESENCE_ONLY_MESSAGE,
 } from "./change-request-read-projection.ts";
 
@@ -422,16 +421,16 @@ test("PAYMENT full duoc quyet dinh, masked chi read-only, bank phai giai duoc", 
   assert.equal(unknownBank.reason, "CATALOG");
 });
 
-test("WORK_STATUS hien nhan trang thai + ngay hieu luc va ghi ro ly do bi an", () => {
+test("WORK_STATUS reviewer sees status, effective date and submitted leave reason", () => {
   const model = build({
     detail: { items: [detailItem({ target_kind: "WORK_STATUS", proposal: {
-      status: "OFF", effective_date: "2026-10-05" } })] },
+      status: "OFF", effective_date: "2026-10-05", leave_reason: "Đã kết thúc công việc" } })] },
     contexts: contextsOf(ENTRY_A, context()),
   });
   assert.equal(model.kind, "reviewable");
   assert.deepEqual(model.items[0].rows.map((row) => row.field),
     ["status", "effective_date", "leave_reason"]);
-  assert.equal(model.items[0].rows[2].after, LEAVE_REASON_HIDDEN_MESSAGE);
+  assert.equal(model.items[0].rows[2].after, "Đã kết thúc công việc");
   assert.equal(model.items[0].rows[0].before, "Đang chờ việc");
   assert.equal(model.items[0].rows[0].after, "Đã nghỉ");
 

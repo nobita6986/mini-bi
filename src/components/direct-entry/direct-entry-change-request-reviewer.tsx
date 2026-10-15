@@ -61,7 +61,8 @@ import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import styles from "./direct-entry-shell.module.css";
 
 const DETAIL_KEYS = [
-  "request_id", "state", "version", "created_at", "items", "can_withdraw", "can_decide",
+  "request_id", "state", "version", "created_at", "request_reason", "items",
+  "can_withdraw", "can_decide",
 ] as const;
 const DECISION_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const ENTRY_KEYS = ["entry"] as const;
@@ -94,6 +95,7 @@ export function DirectEntryChangeRequestReviewer({
   const [loadState, setLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [loadMessage, setLoadMessage] = useState("");
   const [model, setModel] = useState<ReviewerViewModel | null>(null);
+  const [requestReason, setRequestReason] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, setBusy] = useState<ChangeRequestDecision | null>(null);
@@ -136,6 +138,7 @@ export function DirectEntryChangeRequestReviewer({
       if (isNewRequest) {
         setLoadState("loading");
         setModel(null);
+        setRequestReason(null);
       }
       setLoadMessage("");
       if (isNewRequest) {
@@ -161,6 +164,12 @@ export function DirectEntryChangeRequestReviewer({
           // Payload khong qua duoc projection strict: fail-closed, khong render gi.
           if (cancelled) return;
           setModel(unsupportedReviewerViewModel(requestId, "PROPOSAL"));
+          setLoadState("ready");
+          return;
+        }
+        setRequestReason(detail.request_reason);
+        if (detail.state !== "PENDING") {
+          setModel({ kind: "terminal", request_id: detail.request_id, state: detail.state });
           setLoadState("ready");
           return;
         }
@@ -339,6 +348,15 @@ export function DirectEntryChangeRequestReviewer({
                   data-reason={model.reason}>
                   {reviewerUnsupportedMessage(model.reason)}
                 </p>
+              )}
+
+              {requestReason !== null && (
+                <section className={styles.proposerEntry} aria-label="Lý do đề xuất">
+                  <strong>Lý do đề xuất</strong>
+                  <p className={`${styles.submissionHint} ${styles.reviewerReason}`}>
+                    {requestReason}
+                  </p>
+                </section>
               )}
 
               {model?.kind === "terminal" && (

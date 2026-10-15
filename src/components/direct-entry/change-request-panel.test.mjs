@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const list = readFileSync(new URL("./direct-entry-change-request-list.tsx", import.meta.url), "utf8");
+const reviewer = readFileSync(new URL("./direct-entry-change-request-reviewer.tsx", import.meta.url), "utf8");
 const submissions = readFileSync(new URL("./direct-entry-submission-list.tsx", import.meta.url), "utf8");
 const workers = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
@@ -33,7 +34,7 @@ test("panel summary reports loaded count, pending count, loading, and failure in
   assert.match(panel, /count\} \{label\}/);
   assert.match(panel, /state === "loading" && <span role="status">Đang tải/);
   assert.match(panel, /state === "error"[\s\S]*Không tải được/);
-  assert.match(list, /count: pendingCount, label: "đang chờ xử lý"/);
+  assert.match(list, /count: displayedCount,[\s\S]*queueFilter === "PENDING" \? "đang chờ xử lý" : "đã xử lý"/);
   assert.match(list, /state === "ready" && requests\.length === 0/);
   assert.match(list, /state === "error" && `Không tải được danh sách yêu cầu thay đổi/);
   assert.match(submissions, /state === "ready" && submissions\.length === 0/);
@@ -48,10 +49,18 @@ test("native panel toggle neither fetches nor resets open state on list prop upd
   assert.match(submissions, /compact = false/);
 });
 
-test("compact cards use a responsive one/two/three-column grid without horizontal overflow", () => {
+test("review queue separates pending/history and fits compact cards in a scrollable 1-5 column grid", () => {
+  assert.match(list, /role="tablist" aria-label="Trạng thái yêu cầu thay đổi"/);
+  assert.match(list, /Chờ duyệt/);
+  assert.match(list, /Đã xử lý/);
+  assert.match(list, /onQueueFilterChange\(queueFilters\[next\]\)/);
+  assert.match(reviewer, /request_reason/);
+  assert.match(reviewer, /if \(detail\.state !== "PENDING"\)[\s\S]*kind: "terminal"/);
+  assert.match(css, /\.compactListViewport\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.compactList\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /@media \(min-width:\s*640px\)[\s\S]*?\.compactList\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(css, /@media \(min-width:\s*1200px\)[\s\S]*?\.compactList\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /@media \(min-width:\s*1200px\)[\s\S]*?\.compactList\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /@media \(min-width:\s*1600px\)[\s\S]*?\.compactList\s*\{[^}]*grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /\.compactPanel\s*\{[^}]*min-width:\s*0/s);
   assert.match(css, /\.compactCard\s*\{[^}]*min-width:\s*0/s);
   assert.match(css, /\.compactMeta[^}]*overflow-wrap:\s*anywhere/);

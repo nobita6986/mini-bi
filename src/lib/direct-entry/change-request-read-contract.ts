@@ -25,6 +25,8 @@ export const LIST_DEFAULT_PAGE_SIZE = 20;
 export const LIST_MAX_PAGE_SIZE = 50;
 export const LIST_MAX_ENTRY_IDS = 100;
 export const LIST_QUERY_KEYS = ["page_size", "cursor", "state"] as const;
+export const CHANGE_REQUEST_QUEUE_FILTERS = ["PENDING", "RESOLVED"] as const;
+export type ChangeRequestQueueFilter = (typeof CHANGE_REQUEST_QUEUE_FILTERS)[number];
 
 export const LIST_PAGE_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;
 export const LIST_ITEM_KEYS = [
@@ -32,7 +34,8 @@ export const LIST_ITEM_KEYS = [
   "can_withdraw", "can_decide",
 ] as const;
 export const DETAIL_KEYS = [
-  "request_id", "state", "version", "created_at", "items", "can_withdraw", "can_decide",
+  "request_id", "state", "version", "created_at", "request_reason", "items",
+  "can_withdraw", "can_decide",
 ] as const;
 // P3.1-W02C-R2: labor_type_display la field display-only NGOAI proposal. Proposal van giu
 // nguyen key nghiep vu trong write-shape; nhan do server resolve va khong bao gio duoc nhet
@@ -73,7 +76,7 @@ function isCanonicalTimestamp(value: unknown): value is string {
 export type ChangeRequestListQuery = {
   page_size: number;
   cursor: string | null;
-  state: ChangeRequestState | null;
+  state: ChangeRequestState | ChangeRequestQueueFilter | null;
 };
 
 export type ChangeRequestProjection<T> =
@@ -107,14 +110,15 @@ export function projectChangeRequestListQuery(
   if (rawCursor !== null && !CURSOR.test(rawCursor)) return QUERY_INVALID;
 
   const rawState = searchParams.get("state");
-  if (rawState !== null && !isSubmissionStateValue(rawState)) return QUERY_INVALID;
+  if (rawState !== null && !isSubmissionStateValue(rawState) &&
+      !CHANGE_REQUEST_QUEUE_FILTERS.some((state) => state === rawState)) return QUERY_INVALID;
 
   return {
     ok: true,
     value: {
       page_size: pageSize,
       cursor: rawCursor,
-      state: rawState as ChangeRequestState | null,
+      state: rawState as ChangeRequestListQuery["state"],
     },
   };
 }
@@ -237,7 +241,7 @@ export const READ_PROPOSAL_KEYS: Readonly<Record<ChangeRequestTargetKind, readon
       "worker_details",
     ],
     PAYMENT: ["state", "account_number", "bank_id", "account_holder_name"],
-    WORK_STATUS: ["status", "effective_date"],
+    WORK_STATUS: ["status", "effective_date", "leave_reason"],
     DOCUMENT: ["document_type", "size_bytes", "mime_type"],
   });
 
@@ -299,6 +303,7 @@ export type ChangeRequestDetail = {
   state: ChangeRequestState;
   version: number;
   created_at: string;
+  request_reason: string | null;
   items: ChangeRequestDetailItem[];
   can_withdraw: boolean;
   can_decide: boolean;
@@ -345,6 +350,9 @@ export function projectChangeRequestDetail(
   if (!isSubmissionStateValue(value.state)) return null;
   if (!isPositiveVersion(value.version)) return null;
   if (!isCanonicalTimestamp(value.created_at)) return null;
+  if (value.request_reason !== null &&
+      (typeof value.request_reason !== "string" || value.request_reason.trim().length < 1 ||
+       value.request_reason.length > 4000)) return null;
   if (!Array.isArray(value.items) || value.items.length < 1 ||
       value.items.length > LIST_MAX_ENTRY_IDS) return null;
   const items: ChangeRequestDetailItem[] = [];
@@ -363,6 +371,7 @@ export function projectChangeRequestDetail(
     state: value.state,
     version: value.version,
     created_at: value.created_at,
+    request_reason: value.request_reason,
     items,
     can_withdraw: value.can_withdraw,
     can_decide: value.can_decide,
