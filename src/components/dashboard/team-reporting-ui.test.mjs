@@ -19,15 +19,23 @@ const navTest = readFileSync(new URL("../../lib/admin/admin-navigation.test.mjs"
 const accountTest = readFileSync(new URL("../admin/account-manager.test.mjs", HERE), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../../../package.json", HERE), "utf8"));
 
-test("W06D: only DB-confirmed all reaches the two-tab shell", () => {
+test("W06D: DB audience still selects the correct report body", () => {
   assert.match(view, /resolveDashboardMode\(\{ ok: report\.ok, audience \}\)/);
   assert.match(view, /mode\.kind === "team"/);
   assert.match(view, /mode\.kind === "own"/);
   assert.match(view, /<BodDashboardTabs/);
-  assert.ok(view.indexOf('mode.kind === "team"') < view.indexOf("<BodDashboardTabs"));
-  assert.ok(view.indexOf('mode.kind === "own"') < view.indexOf("<BodDashboardTabs"));
+  assert.match(view, /if \(mode\.kind === "team"\)[\s\S]*?primaryTabLabel="Báo cáo theo nhóm"/);
+  assert.match(view, /if \(mode\.kind === "own"\)[\s\S]*?primaryTabLabel="Tổng quan cá nhân"/);
   assert.match(tabs, /Báo cáo tổng quát/);
   assert.match(tabs, /Báo cáo theo nhóm/);
+});
+
+test("every dashboard audience gets the CCCD sibling tab without widening scoped reports", () => {
+  assert.match(view, /primaryTabLabel="Báo cáo theo nhóm"/);
+  assert.match(view, /primaryTabLabel="Tổng quan cá nhân"/);
+  assert.match(tabs, /tab\.key === "team"\s*\?\s*primaryTabLabel === undefined/);
+  assert.match(tabs, /tab\.key === "duplicate-cccd"[\s\S]*canViewDuplicateCccd/);
+  assert.match(tabs, /<DuplicateCccdReportPanel \/>/);
 });
 
 test("W06D: tab URL/history and source normalization use the locked contract", () => {
@@ -234,7 +242,7 @@ test("W06D-R3: the CCCD tab and its panel are unchanged", () => {
   assert.match(tabs, /\{ key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" \}/);
   assert.match(tabs, /<DuplicateCccdReportPanel \/>/);
   assert.match(tabs, /canViewDuplicateCccd/);
-  assert.match(tabs, /tab\.key !== "duplicate-cccd" \|\| canViewDuplicateCccd/);
+  assert.match(tabs, /tab\.key === "duplicate-cccd"[\s\S]*canViewDuplicateCccd/);
   assert.match(tabs, /id="bod-panel-duplicate-cccd"/);
 });
 

@@ -59,12 +59,15 @@ const tabs: readonly TabDef[] = [
 
 export function BodDashboardTabs({
   general,
+  primaryTabLabel,
   data,
   generatedAt,
   optionsResult,
   canViewDuplicateCccd,
 }: {
   general: ReactNode;
+  /** Scoped dashboards get their own first tab, never the all-scope team report. */
+  primaryTabLabel?: string;
   data: ReportingData;
   generatedAt?: string;
   optionsResult: ReportingOptionsResult;
@@ -77,11 +80,17 @@ export function BodDashboardTabs({
   });
   const [isPending, startTransition] = useTransition();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const visibleTabs = tabs.filter(
-    (tab) => tab.key !== "duplicate-cccd" || canViewDuplicateCccd,
-  );
+  const visibleTabs = tabs.filter((tab) =>
+    tab.key === "duplicate-cccd"
+      ? canViewDuplicateCccd
+      : tab.key === "team"
+        ? primaryTabLabel === undefined
+        : true,
+  ).map((tab) => tab.key === "general" && primaryTabLabel
+    ? { ...tab, label: primaryTabLabel }
+    : tab);
   const activeTab: TabKey =
-    rawTab === "team"
+    primaryTabLabel === undefined && rawTab === "team"
       ? "team"
       : rawTab === "duplicate-cccd" && canViewDuplicateCccd
         ? "duplicate-cccd"
@@ -111,7 +120,7 @@ export function BodDashboardTabs({
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-4 sm:px-6" aria-busy={isPending}>
-      <div role="tablist" aria-label="Báo cáo BoD" className="flex flex-wrap gap-2 border-b border-border">
+      <div role="tablist" aria-label="Báo cáo" className="flex flex-wrap gap-2 border-b border-border">
         {visibleTabs.map((tab, index) => (
           <button
             key={tab.key}
@@ -137,7 +146,7 @@ export function BodDashboardTabs({
         <div id="bod-panel-general" role="tabpanel" aria-labelledby="bod-tab-general" tabIndex={0} className="pt-4">
           {general}
         </div>
-      ) : activeTab === "team" ? (
+      ) : activeTab === "team" && primaryTabLabel === undefined ? (
         <div id="bod-panel-team" role="tabpanel" aria-labelledby="bod-tab-team" tabIndex={0} className="pt-4">
           <TeamReportView
             data={data}

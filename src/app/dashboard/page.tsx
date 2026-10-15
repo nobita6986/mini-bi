@@ -90,7 +90,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       optionsResult={options}
       audience={report.ok ? report.audience : null}
       canViewDuplicateCccd={canViewDuplicateCccd}
-      duplicateCccdRequested={tab === "duplicate-cccd"}
     />
   );
 }
