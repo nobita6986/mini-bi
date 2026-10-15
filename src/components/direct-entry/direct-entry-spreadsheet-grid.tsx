@@ -192,7 +192,7 @@ export function spreadsheetSelectOptions(
   // the row still stores ""; choosing that visible option emits no change and
   // the value disappears when the editor closes.
   if (columnKey === "gender") return ["", ...DIRECT_ENTRY_GENDER_OPTIONS];
-  if (columnKey === "initial_status") return ["", "ON", "UNCONFIRMED", "OFF"];
+  if (columnKey === "initial_status") return ["", "ON", "UNCONFIRMED"];
   if (columnKey === "labor_type") {
     return ["", ...sortedActiveLaborTypes(catalogs?.laborTypes)
       .map((option) => option.labor_type_key)];
@@ -315,7 +315,8 @@ function SelectCellEditor(
     >
       {options.map((option) => <option key={option} value={option}>
         {props.columnKey === "initial_status"
-          ? option === "" ? "Đang làm việc (mặc định)" : workStatusUiLabel(option)
+          ? option === "" ? "Đang làm việc (mặc định)"
+            : option === "ON" ? "Đang làm việc" : workStatusUiLabel(option)
           : option === "" ? "—" : option}
       </option>)}
       {value !== "" && !options.includes(value) && (
@@ -725,7 +726,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
           const status = row.cells.initial_status ?? "";
           if (column.key === "initial_status" &&
             ["ON", "OFF", "UNCONFIRMED"].includes(status)) {
-            return workStatusUiLabel(status);
+            return status === "ON" ? "Đang làm việc" : workStatusUiLabel(status);
           }
           if (row.displayValues && Object.hasOwn(row.displayValues, column.key)) {
             return row.displayValues[column.key];
