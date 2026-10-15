@@ -56,13 +56,14 @@ test("one top-level /admin entry is independently authorized and is not a Direct
   }), false);
 });
 
-test("Admin internal navigation exposes catalog sections plus the Full-Admin-only accounts section", () => {
+test("Admin internal navigation exposes mapping only to Full Admin", () => {
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, href }) => ({ id, href })), [
     { id: "personnel", href: "/admin/catalog/personnel" },
     { id: "teams", href: "/admin/catalog/teams" },
     { id: "vendors", href: "/admin/catalog/vendors" },
     { id: "labor-types", href: "/admin/catalog/labor-types" },
     { id: "accounts", href: "/admin/access/accounts" },
+    { id: "project-team-scopes", href: "/admin/catalog/project-team-scopes" },
   ]);
   assert.deepEqual(ADMIN_SECTIONS.map(({ id, label }) => ({ id, label })), [
     { id: "personnel", label: "Nhân sự tuyển dụng" },
@@ -70,12 +71,13 @@ test("Admin internal navigation exposes catalog sections plus the Full-Admin-onl
     { id: "vendors", label: "Nhà cung cấp" },
     { id: "labor-types", label: "Loại hình lao động" },
     { id: "accounts", label: "Tài khoản truy cập" },
+    { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm" },
   ]);
   const serializableSections = ADMIN_SECTIONS.map(({ id, label, href }) => ({ id, label, href }));
-  const catalogOnly = serializableSections.filter(({ id }) => id !== "accounts");
-  // Accounting (catalog operator) sees the catalog sections but never Accounts.
+  const catalogOnly = serializableSections.filter(({ id }) => !["accounts", "project-team-scopes"].includes(id));
+  // Accounting (catalog operator) sees catalog sections, never accounts or project mappings.
   assert.deepEqual(visibleAdminSections(accountingCatalog), catalogOnly);
-  // The canonical Full Admin triple sees every section, including Accounts.
+  // The canonical Full Admin triple sees every section, including restricted sections.
   assert.deepEqual(visibleAdminSections(fullAdmin), serializableSections);
   assert.equal(visibleAdminSections(fullAdmin).some((section) => Object.values(section).some((value) => typeof value === "function")), false);
   // Project Admin (entry_admin@all without the triple) and unresolved actors see nothing.
@@ -95,6 +97,7 @@ test("catalog and access paths highlight exactly one internal tab", () => {
     ["/admin/catalog/labor-types/record", "labor-types"],
     ["/admin/access/accounts", "accounts"],
     ["/admin/access/accounts/record", "accounts"],
+    ["/admin/catalog/project-team-scopes", "project-team-scopes"],
   ]) {
     assert.deepEqual(
       ADMIN_SECTIONS.filter((section) => isAdminSectionActive(pathname, section.href)).map(({ id }) => id),
@@ -111,4 +114,5 @@ test("top-level Admin remains the active registry entry across catalog and acces
   assert.equal(findEntryByPath("/admin/catalog/vendors")?.id, "admin");
   assert.equal(findEntryByPath("/admin/catalog/labor-types")?.id, "admin");
   assert.equal(findEntryByPath("/admin/access/accounts")?.id, "admin");
+  assert.equal(findEntryByPath("/admin/catalog/project-team-scopes")?.id, "admin");
 });

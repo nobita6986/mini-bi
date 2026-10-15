@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
@@ -33,6 +33,7 @@ export function ProjectTeamScopeManager() {
   const [list, setList] = useState<ProjectTeamScopeList | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "denied" | "error">("loading");
   const [projectIdFilter, setProjectIdFilter] = useState("");
+  const [teamIdFilter, setTeamIdFilter] = useState("");
   const [includeHistory, setIncludeHistory] = useState(false);
   const [page, setPage] = useState(1);
   const [reloadToken, setReloadToken] = useState(0);
@@ -42,12 +43,13 @@ export function ProjectTeamScopeManager() {
   const [notice, setNotice] = useState<MappingUiOutcome | null>(null);
   const [grantProjectId, setGrantProjectId] = useState("");
   const [grantTeamId, setGrantTeamId] = useState("");
+  const [grantPairVersion, setGrantPairVersion] = useState("0");
   const [grantEffectiveFrom, setGrantEffectiveFrom] = useState("");
   const [revokeEffectiveTo, setRevokeEffectiveTo] = useState("");
   const [reason, setReason] = useState("");
 
   useEffect(() => {
-    const query = buildMappingListQuery({ projectId: projectIdFilter, includeHistory, page });
+    const query = buildMappingListQuery({ projectId: projectIdFilter, teamId: teamIdFilter, includeHistory, page });
     if (!query) return;
     const controller = new AbortController();
     void (async () => {
@@ -69,7 +71,7 @@ export function ProjectTeamScopeManager() {
       }
     })();
     return () => controller.abort();
-  }, [includeHistory, page, projectIdFilter, reloadToken]);
+  }, [includeHistory, page, projectIdFilter, reloadToken, teamIdFilter]);
 
   const reloadList = () => { setState("loading"); setReloadToken((v) => v + 1); };
 
@@ -79,7 +81,9 @@ export function ProjectTeamScopeManager() {
     if (!dialog) return;
     const key = newMappingKey();
     const request = dialog.kind === "grant"
-      ? buildGrantRequest({ projectId: grantProjectId, teamId: grantTeamId, expectedPairVersion: 0, effectiveFrom: grantEffectiveFrom, reason, idempotencyKey: key })
+      ? buildGrantRequest({ projectId: grantProjectId, teamId: grantTeamId,
+        expectedPairVersion: /^(0|[1-9]\d*)$/.test(grantPairVersion) ? Number(grantPairVersion) : Number.NaN,
+        effectiveFrom: grantEffectiveFrom, reason, idempotencyKey: key })
       : buildRevokeRequest({ mappingId: dialog.mapping.mapping_id, expectedPairVersion: dialog.mapping.version, effectiveTo: revokeEffectiveTo, reason, idempotencyKey: key });
     if (!request.ok) { setFormError(request.message); return; }
     const url = dialog.kind === "grant" ? "/api/admin/catalog/project-team-scopes" : `/api/admin/catalog/project-team-scopes/${encodeURIComponent(dialog.mapping.mapping_id)}/revoke`;
@@ -119,12 +123,15 @@ export function ProjectTeamScopeManager() {
           <label className="flex flex-col gap-1 text-sm font-medium flex-1">Project ID
             <input value={projectIdFilter} maxLength={128} onChange={(e) => setProjectIdFilter(e.target.value)} className={input} />
           </label>
+          <label className="flex flex-col gap-1 text-sm font-medium">Team ID
+            <input value={teamIdFilter} maxLength={36} onChange={(e) => setTeamIdFilter(e.target.value)} className={input} />
+          </label>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={includeHistory} onChange={(e) => { setIncludeHistory(e.target.checked); setPage(1); reloadList(); }} className="size-4 accent-primary" />
             Bao gồm lịch sử
           </label>
           <button type="submit" className={button}>Lọc</button>
-          <button type="button" className={primary} onClick={() => { setReason(""); setFormError(null); setDialog({ kind: "grant" }); }}>Cấp mapping</button>
+          <button type="button" className={primary} onClick={() => { setReason(""); setGrantPairVersion("0"); setFormError(null); setDialog({ kind: "grant" }); }}>Cấp mapping</button>
         </form>
 
         {state === "loading" ? <p role="status" className="py-8 text-center text-sm text-muted">Đang tải…</p> : null}
@@ -139,6 +146,7 @@ export function ProjectTeamScopeManager() {
                 <th scope="col" className="px-3 py-3 font-semibold">Nhóm</th>
                 <th scope="col" className="px-3 py-3 font-semibold">Hiệu lực</th>
                 <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
+                <th scope="col" className="px-3 py-3 font-semibold">Phiên bản cặp</th>
                 <th scope="col" className="px-3 py-3 text-right">Thao tác</th>
               </tr></thead>
               <tbody>
@@ -148,6 +156,7 @@ export function ProjectTeamScopeManager() {
                     <td className="px-3 py-3">{m.team_display_name} ({m.team_code})</td>
                     <td className="px-3 py-3">{m.valid_from} → {m.valid_to ?? "∞"}</td>
                     <td className="px-3 py-3">{m.state}</td>
+                    <td className="px-3 py-3">{m.version}</td>
                     <td className="px-3 py-3 text-right">
                       {m.valid_to === null ? (
                         <button type="button" className={button} disabled={busy}
@@ -191,13 +200,18 @@ export function ProjectTeamScopeManager() {
                   <label className="flex flex-col gap-1 text-sm font-medium">Team ID (UUID)
                     <input value={grantTeamId} maxLength={64} required onChange={(e) => setGrantTeamId(e.target.value)} className={input} />
                   </label>
+                  <label className="flex flex-col gap-1 text-sm font-medium">Phiên bản cặp mapping
+                    <input type="number" min="0" step="1" value={grantPairVersion} required
+                      onChange={(e) => setGrantPairVersion(e.target.value)} className={input} />
+                    <span className="text-xs text-muted">Dùng 0 nếu cặp này chưa từng được cấp; nếu đã có lịch sử, lọc theo Project ID + Team ID, bật lịch sử và nhập version mới nhất.</span>
+                  </label>
                   <label className="flex flex-col gap-1 text-sm font-medium">Ngày hiệu lực
                     <input type="date" value={grantEffectiveFrom} onChange={(e) => setGrantEffectiveFrom(e.target.value)} className={input} />
                   </label>
                 </>
               ) : dialog ? (
                 <>
-                  <p>Bạn sắp thu hồi mapping <strong>{dialog.mapping.project_display_name}</strong> ↔ <strong>{dialog.mapping.team_display_name}</strong>.</p>
+                  <p>Bạn sắp thu hồi mapping <strong>{dialog.mapping.project_display_name}</strong> ↔ <strong>{dialog.mapping.team_display_name}</strong> (version {dialog.mapping.version}).</p>
                   <label className="flex flex-col gap-1 text-sm font-medium">Ngày kết thúc (để trống = hôm nay)
                     <input type="date" value={revokeEffectiveTo} onChange={(e) => setRevokeEffectiveTo(e.target.value)} className={input} />
                   </label>

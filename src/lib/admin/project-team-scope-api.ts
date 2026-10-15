@@ -11,8 +11,6 @@ import type { ProjectTeamScopeRepository, ProjectTeamScopeErrorKind } from "./pr
 import {
   parseGrant,
   parseRevoke,
-  type GrantRequest,
-  type RevokeRequest,
 } from "./project-team-scope-contract.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -81,10 +79,16 @@ async function resolveActor(deps: ProjectTeamScopeDependencies): Promise<Parsed<
   }
 }
 
-async function readMutationBody(request: Request): Promise<Parsed<unknown>> {
+async function readMutationBody(request: Request, allowTeamId = false): Promise<Parsed<unknown>> {
   const body = await readBoundedJson(request);
   if (body === null) return { ok: false, response: fail("PROJECT_TEAM_SCOPE_INVALID", 400) };
-  if (!validateClientBusinessPayload(body).ok) return { ok: false, response: fail("CLIENT_AUTHORITY_FIELD_FORBIDDEN", 400) };
+  // `team_id` is a business key here, although the shared generic guard bans it
+  // because other APIs treat it as client-supplied authority. Exact request
+  // projectors below still validate its UUID and reject every extra field.
+  const authorityCheck = allowTeamId && isRecord(body)
+    ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "team_id"))
+    : body;
+  if (!validateClientBusinessPayload(authorityCheck).ok) return { ok: false, response: fail("CLIENT_AUTHORITY_FIELD_FORBIDDEN", 400) };
   return { ok: true, value: body };
 }
 
@@ -142,7 +146,7 @@ export async function grantProjectTeamScope(
 ): Promise<Response> {
   const preflight = mutationPreflight(request, flag);
   if (preflight) return preflight;
-  const body = await readMutationBody(request);
+  const body = await readMutationBody(request, true);
   if (!body.ok) return body.response;
   const parsed = parseGrant(body.value);
   if (!parsed.ok) return fail(parsed.code, 400);

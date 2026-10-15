@@ -7,18 +7,17 @@ import {
 } from "./project-team-scope-contract.ts";
 import {
   newIdempotencyKey,
-  validateReason,
-  validateUuid,
 } from "../direct-entry/project-operations-model.ts";
 
 export const MAPPING_PAGE_SIZE = 25;
 
-export type MappingFilter = { projectId: string; includeHistory: boolean; page: number };
+export type MappingFilter = { projectId: string; teamId?: string; includeHistory: boolean; page: number };
 
 export function buildMappingListQuery(input: MappingFilter): URLSearchParams | null {
   if (!Number.isSafeInteger(input.page) || input.page < 1 || input.page > 1000) return null;
   const params = new URLSearchParams({ page: String(input.page), page_size: String(MAPPING_PAGE_SIZE) });
   if (input.projectId.trim()) params.set("project_id", input.projectId.trim());
+  if (input.teamId?.trim()) params.set("team_id", input.teamId.trim());
   if (input.includeHistory) params.set("include_history", "true");
   return params;
 }

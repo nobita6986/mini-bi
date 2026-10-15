@@ -77,17 +77,20 @@ test("Admin area: catalog operator OR Full Admin triple + effective all", () => 
   assert.equal(adminAreaNavPredicate(makeActor(["team_manager_assign"], [{ kind: "all", reference: "all" }])), false);
 });
 
-test("F5: projectAdminNavPredicate = entry_admin + all scope, KHONG can 2 token kia", () => {
+test("Project Operations nav also admits Team Leader; Project Admin remains entry_admin + all", () => {
   // DB W02 (direct_entry_assert_project_admin) chi can entry_admin + all scope.
   assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "all", reference: "all" }])), true);
   assert.equal(projectAdminNavPredicate(makeActor(["entry_admin", "recruiter_master_manage", "team_master_manage"],
     [{ kind: "all", reference: "all" }])), true, "them 2 token khong anh huong");
+  assert.equal(projectAdminNavPredicate(makeActor(["team_manager_assign"],
+    [{ kind: "team", reference: "team-1" }])), true);
   // entry_own/entry_team KHONG duoc render page roi moi cho API 403.
   assert.equal(projectAdminNavPredicate(makeActor(["entry_own"], [{ kind: "all", reference: "all" }])), false);
   assert.equal(projectAdminNavPredicate(makeActor(["entry_team"], [{ kind: "all", reference: "all" }])), false);
   // entry_admin nhung KHONG co scope all => fail.
   assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [{ kind: "team", reference: "t" }])), false);
   assert.equal(projectAdminNavPredicate(makeActor(["entry_admin"], [])), false);
+  assert.equal(projectAdminNavPredicate(makeActor([], [{ kind: "team", reference: "team-1" }])), false);
 });
 
 test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", () => {

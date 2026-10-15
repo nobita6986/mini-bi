@@ -244,7 +244,20 @@ test("page boundary: gate flag truoc + dung project admin decision (F5)", () => 
   assert.match(page, /decideProjectOperationsPageAccess/);
   assert.match(page, /case "NOT_FOUND":[\s\S]{0,40}notFound\(\)/);
   assert.match(page, /redirect\("\/login\?next=\/direct-entry\/projects"\)/);
-  assert.match(page, /case "ALLOW":[\s\S]{0,80}<ProjectOperations \/>/);
+  assert.match(page, /case "ALLOW":[\s\S]{0,180}<ProjectOperations canManageProjectMasterForEmptyList=\{canManageProjectMasterFromActor\(actor\)\} \/>/);
+});
+
+test("Project↔Team flags gate leader project-master and PM assignment controls", () => {
+  assert.match(source, /const canManageProjectMaster = projects\.length > 0\s+\? projects\[0\]\?\.can_manage_project_master === true\s+: state === "empty" && canManageProjectMasterForEmptyList/);
+  assert.match(source, /: state === "empty" && canManageProjectMasterForEmptyList/,
+    "server fallback is used only after a successful empty-list response");
+  assert.match(source, /\{canManageProjectMaster \?/,
+    "create-project control must use the server-projected project-master authority");
+  assert.match(source, /project\.can_manage_project_master\s*\?/);
+  assert.ok((source.match(/detail\.can_assign_managers\s*\?/g) ?? []).length >= 2,
+    "assign and revoke controls must both use the DB-projected flag");
+  assert.doesNotMatch(source, /team_manager_assign|role\s*===|email\s*===/,
+    "the client must not infer Team Leader authority from role or identity labels");
 });
 
 test("model la noi duy nhat build request va khong chua truong quyen", () => {

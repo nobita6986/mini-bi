@@ -122,10 +122,12 @@ async function fetchProjectList(): Promise<ListResult> {
   return { status: response.status, payload: await readJson(response) };
 }
 
-export function ProjectOperations() {
+export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canManageProjectMasterForEmptyList: boolean }) {
   const [state, setState] = useState<ViewState>("loading");
   const [projects, setProjects] = useState<ProjectView[]>([]);
-  const canManageProjectMaster = projects.length > 0 && projects[0]?.can_manage_project_master === true;
+  const canManageProjectMaster = projects.length > 0
+    ? projects[0]?.can_manage_project_master === true
+    : state === "empty" && canManageProjectMasterForEmptyList;
   const [detail, setDetail] = useState<ProjectDetailView | null>(null);
   const [detailState, setDetailState] = useState<DetailState>("idle");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
