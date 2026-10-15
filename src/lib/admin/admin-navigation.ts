@@ -21,6 +21,7 @@ export const ADMIN_SECTIONS: readonly AdminSectionConfig[] = [
   { id: "vendors", label: "Nhà cung cấp", href: "/admin/catalog/vendors", visible: adminAreaNavPredicate },
   { id: "labor-types", label: "Loại hình lao động", href: "/admin/catalog/labor-types", visible: adminAreaNavPredicate },
   { id: "accounts", label: "Tài khoản truy cập", href: "/admin/access/accounts", visible: adminSecurityNavPredicate },
+  { id: "project-team-scopes", label: "Mapping Dự án ↔ Nhóm", href: "/admin/catalog/project-team-scopes", visible: adminSecurityNavPredicate },
 ];
 
 export function isAdminSectionActive(pathname: string, href: string): boolean {

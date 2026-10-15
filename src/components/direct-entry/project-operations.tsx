@@ -687,22 +687,26 @@ export function ProjectOperations() {
                   <ProjectStatusBadge active={detail.project_active} />
                 </div>
               </div>
+              {detail.can_assign_managers ? (
               <button type="button" className={primaryClass}
                 disabled={conflict !== null || reloadBusy}
                 onClick={() => openDialog({ kind: "assign" })}>
                 <UserPlus aria-hidden="true" className="h-4 w-4" />
                 Gán quản lý
               </button>
+              ) : null}
               <AssignmentGroup title="Đang phụ trách" assignments={view.current}
                 empty="Chưa có quản lý nào đang phụ trách." icon="current"
                 managerLabel={managerLabel}
                 actionsDisabled={conflict !== null || reloadBusy}
-                onRevoke={(assignment) => openDialog({ kind: "unassign", assignment })} />
+                onRevoke={detail.can_assign_managers
+                  ? (assignment) => openDialog({ kind: "unassign", assignment }) : undefined} />
               <AssignmentGroup title="Sắp hiệu lực" assignments={view.future}
                 empty="Chưa có phân công nào chờ ngày bắt đầu." icon="future"
                 managerLabel={managerLabel}
                 actionsDisabled={conflict !== null || reloadBusy}
-                onRevoke={(assignment) => openDialog({ kind: "unassign", assignment })} />
+                onRevoke={detail.can_assign_managers
+                  ? (assignment) => openDialog({ kind: "unassign", assignment }) : undefined} />
               <AssignmentGroup title="Lịch sử phân công" assignments={view.history}
                 empty="Chưa có lịch sử phân công." icon="history"
                 managerLabel={managerLabel} actionsDisabled={conflict !== null || reloadBusy} />
