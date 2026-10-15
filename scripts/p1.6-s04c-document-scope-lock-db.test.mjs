@@ -174,7 +174,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // W03A-R2 (#83/#84) adds the account list/detail read boundary.
   // PRE-W2-P1 (#86) adds one service-role-only worker-export RPC.
   // PRE-W2-HF-D3-A (#92) adds nine service-role RPCs and three internal helpers.
-  // Measured: 231 total, 110 service-role executable and 121 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [231, 110, 121]);
+  // Measured: 240 total, 113 service-role executable and 127 internal (#94).
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [240, 113, 127]);
   await db.close();
 });
