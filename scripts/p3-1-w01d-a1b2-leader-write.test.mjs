@@ -1816,9 +1816,9 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     exists: true, service_exec: false, anon_exec: false,
     authenticated_exec: false, public_exec: false,
   });
-  assert.equal((allMigrations.at(-2).sql.match(
+  assert.equal((allMigrations.at(-1).sql.match(
     /^\s*select public\.direct_entry_transition_legacy_team_leaders\(/gm) ?? []).length, 1);
-  assert.doesNotMatch(allMigrations.at(-2).sql,
+  assert.doesNotMatch(allMigrations.at(-1).sql,
     /select\s+public\.direct_entry_seed_team_scope_grants\s*\(/i);
   const seedMigrationIndex = names.findIndex((name) => name === "20261008080000_p3_w05a_actor_scoped_reporting.sql");
   assert.ok(seedMigrationIndex >= 0);
