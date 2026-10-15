@@ -100,6 +100,10 @@ test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia 
   assert.match(source, /Đang làm việc \(mặc định\)/);
   assert.match(source, /workStatusUiLabel\(option\)/);
   assert.match(source, /workStatusUiLabel\(status\)/);
+  assert.match(source, /option === "ON" \? "Đang làm việc"/);
+  assert.match(source, /status === "ON" \? "Đang làm việc"/);
+  assert.match(source, /if \(columnKey === "initial_status"\) return \["", "ON", "UNCONFIRMED"\]/,
+    "dropdown chỉ cho chọn mặc định/đang làm hoặc đang chờ việc; OFF vẫn chỉ hiển thị cho dữ liệu hiện có");
   // Option project/recruiter den tu catalog truyen vao, khong hard-code ID.
   assert.match(source, /catalogs\?\.projects \?\? \[\]/);
   assert.match(source, /catalogs\?\.recruiters \?\? \[\]/);
