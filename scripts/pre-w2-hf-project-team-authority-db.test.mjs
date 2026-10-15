@@ -672,4 +672,3 @@ test("PRE-W2-HF Project<->Team: revoke is immediate and rejects future effective
     await db.close();
   }
 });
-
