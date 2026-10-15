@@ -14,6 +14,7 @@ import {
   parseCreatePersonnelFromAccount,
   parseEditDisplayName,
   parseResetPassword,
+  projectClaimEnvelope,
 } from "./account-operation-contract.ts";
 import {
   createAccount,
@@ -29,6 +30,30 @@ const INTENT = "93000000-0000-4000-8000-000000000001";
 const TOKEN = "94000000-0000-4000-8000-000000000001";
 const CREATED_AUTH = "95000000-0000-4000-8000-000000000001";
 const REV = "96000000-0000-4000-8000-000000000001";
+
+test("D3: claim RPC projection accepts its exact envelope including claimed", () => {
+  assert.deepEqual(projectClaimEnvelope({
+    intent_id: INTENT,
+    intent_token: TOKEN,
+    kind: "RESET_PASSWORD",
+    state: "IN_FLIGHT",
+    claimed: true,
+  }), {
+    intent_id: INTENT,
+    intent_token: TOKEN,
+    kind: "RESET_PASSWORD",
+    state: "IN_FLIGHT",
+    claimed: true,
+  });
+  assert.equal(projectClaimEnvelope({
+    intent_id: INTENT,
+    intent_token: TOKEN,
+    kind: "RESET_PASSWORD",
+    state: "IN_FLIGHT",
+    claimed: true,
+    extra: "unexpected",
+  }), null);
+});
 
 function session(actor = { auth_subject: AUTH_SUBJECT, app_user_id: APP_USER }) {
   return async () => ({ actor: { ok: true, actor } });
