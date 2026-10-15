@@ -180,9 +180,12 @@ export function projectIntentEnvelope(v: unknown): IntentEnvelope | null {
 
 export type ClaimEnvelope = IntentEnvelope & { claimed: boolean };
 export function projectClaimEnvelope(v: unknown): ClaimEnvelope | null {
-  const base = projectIntentEnvelope(v);
-  if (!base || typeof (v as Record<string, unknown>).claimed !== "boolean") return null;
-  return { ...base, claimed: (v as Record<string, unknown>).claimed as boolean };
+  if (!isRecord(v) || !exact(v, ["intent_id", "intent_token", "kind", "state", "claimed"])) return null;
+  const base = projectIntentEnvelope({
+    intent_id: v.intent_id, intent_token: v.intent_token, kind: v.kind, state: v.state,
+  });
+  if (!base || typeof v.claimed !== "boolean") return null;
+  return { ...base, claimed: v.claimed };
 }
 
 export type ReadIntentEnvelope = {
