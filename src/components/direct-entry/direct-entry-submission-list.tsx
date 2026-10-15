@@ -11,6 +11,7 @@ import { useState } from "react";
 import { AlertDialog } from "radix-ui";
 
 import { DirectEntryCompactPanel } from "@/components/direct-entry/direct-entry-compact-panel";
+import { DirectEntryQueueTabs } from "@/components/direct-entry/direct-entry-queue-tabs";
 import {
   actionsForSubmission,
   formatHcmDateTime,
@@ -18,11 +19,19 @@ import {
   SUBMISSION_STATE_LABELS,
   type SubmissionAction,
 } from "@/lib/direct-entry/submission-lifecycle";
-import type { SubmissionReadItem } from "@/lib/direct-entry/submission-read-contract";
+import type {
+  SubmissionQueueFilter,
+  SubmissionReadItem,
+} from "@/lib/direct-entry/submission-read-contract";
 import type { DuplicateCccdPreflight } from "@/lib/direct-entry/submission-duplicate-cccd-contract";
 
 import { DirectEntryDuplicateCccdDialog } from "./direct-entry-duplicate-cccd-dialog";
 import styles from "./direct-entry-shell.module.css";
+
+const QUEUE_TABS = [
+  { value: "ACTIVE", label: "Đang gửi" },
+  { value: "HISTORY", label: "Lịch sử gửi" },
+] as const;
 
 export type TransitionOutcome = "applied" | "duplicate-changed" | "failed";
 
@@ -41,6 +50,8 @@ export type SubmissionListProps = {
   busySubmissionId: string | null;
   blockedSubmissionIds: ReadonlySet<string>;
   compact?: boolean;
+  queueFilter: SubmissionQueueFilter;
+  onQueueFilterChange: (filter: SubmissionQueueFilter) => void;
   onLoadMore: () => void;
   /**
    * Preflight read-only truoc khi trinh duyet. Tra ve null khi server tu choi hoac du lieu
@@ -67,6 +78,8 @@ export function DirectEntrySubmissionList({
   busySubmissionId,
   blockedSubmissionIds,
   compact = false,
+  queueFilter,
+  onQueueFilterChange,
   onLoadMore,
   onPreflight,
   onTransition,
@@ -159,15 +172,28 @@ export function DirectEntrySubmissionList({
         )}
       </div>
 
+      <DirectEntryQueueTabs
+        ariaLabel="Trạng thái đợt nhập liệu"
+        panelId="submission-queue-panel"
+        value={queueFilter}
+        tabs={QUEUE_TABS}
+        onChange={(filter) => {
+          setBlockedNotice(null);
+          onQueueFilterChange(filter);
+        }}
+      >
       <div className={styles.notice} aria-live="polite">
         {state === "loading" && "Đang tải danh sách đợt nhập liệu…"}
         {state === "error" && `Không tải được danh sách đợt nhập liệu (${message}).`}
         {state === "ready" && submissions.length === 0 &&
-          "Chưa có đợt nhập liệu nào. Dòng mới sẽ tạo đợt ở trạng thái bản nháp khi được lưu."}
+          (queueFilter === "ACTIVE"
+            ? "Không có đợt nhập liệu đang gửi. Dòng mới sẽ tạo đợt ở trạng thái bản nháp khi được lưu."
+            : "Chưa có đợt nhập liệu nào trong lịch sử gửi.")}
       </div>
 
       {blockedNotice && <p className={styles.submissionBlocked} role="alert">{blockedNotice}</p>}
 
+      <div className={compact ? styles.compactListViewport : undefined}>
       <ul className={compact ? styles.compactList : styles.submissionList}>
         {submissions.map((submission) => {
           const actions = actionsForSubmission(submission);
@@ -240,6 +266,8 @@ export function DirectEntrySubmissionList({
           );
         })}
       </ul>
+      </div>
+      </DirectEntryQueueTabs>
 
       <AlertDialog.Root open={pending !== null} onOpenChange={(open) => {
         if (!open) setPending(null);
@@ -297,16 +325,8 @@ export function DirectEntrySubmissionList({
     <DirectEntryCompactPanel
       title="Đợt nhập liệu"
       loadedCount={submissions.length}
-      badges={[
-        {
-          count: submissions.filter(({ state: itemState }) => itemState === "DRAFT").length,
-          label: SUBMISSION_STATE_LABELS.DRAFT,
-        },
-        {
-          count: submissions.filter(({ state: itemState }) => itemState === "REVIEW").length,
-          label: SUBMISSION_STATE_LABELS.REVIEW,
-        },
-      ]}
+      badges={[{ count: submissions.length,
+        label: queueFilter === "ACTIVE" ? "đang gửi" : "trong lịch sử" }]}
       state={state}
     >
       {content}

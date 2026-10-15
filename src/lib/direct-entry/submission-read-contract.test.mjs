@@ -51,12 +51,15 @@ function query(text) {
   return projectSubmissionListQuery(new URLSearchParams(text));
 }
 
-test("list query accepts only page_size, cursor and the three lifecycle states", () => {
+test("list query accepts lifecycle states and the two server-side queue filters", () => {
   assert.deepEqual(query("").value, { page_size: LIST_DEFAULT_PAGE_SIZE, cursor: null, state: null });
   assert.equal(query("page_size=1").value.page_size, 1);
   assert.equal(query("page_size=" + LIST_MAX_PAGE_SIZE).value.page_size, LIST_MAX_PAGE_SIZE);
   assert.equal(query("cursor=" + cursor).value.cursor, cursor);
   for (const state of ["DRAFT", "REVIEW", "SUBMITTED"]) {
+    assert.equal(query("state=" + state).value.state, state);
+  }
+  for (const state of ["ACTIVE", "HISTORY"]) {
     assert.equal(query("state=" + state).value.state, state);
   }
   assert.deepEqual(query("page_size=2&state=REVIEW&cursor=" + cursor).value, {

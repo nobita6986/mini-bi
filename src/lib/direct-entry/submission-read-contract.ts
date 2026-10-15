@@ -18,6 +18,8 @@ export const LIST_DEFAULT_PAGE_SIZE = 20;
 export const LIST_MAX_PAGE_SIZE = 50;
 export const LIST_MAX_ENTRIES = 500;
 export const LIST_QUERY_KEYS = ["page_size", "cursor", "state"] as const;
+export const SUBMISSION_QUEUE_FILTERS = ["ACTIVE", "HISTORY"] as const;
+export type SubmissionQueueFilter = (typeof SUBMISSION_QUEUE_FILTERS)[number];
 
 export const LIST_PAGE_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
 export const LIST_ITEM_KEYS = [
@@ -63,7 +65,7 @@ function matchesTransitionMatrix(state: SubmissionState, value: unknown): value 
 export type SubmissionReadQuery = {
   page_size: number;
   cursor: string | null;
-  state: SubmissionState | null;
+  state: SubmissionState | SubmissionQueueFilter | null;
 };
 
 export type SubmissionReadProjection<T> =
@@ -96,14 +98,15 @@ export function projectSubmissionListQuery(
   if (rawCursor !== null && !CURSOR.test(rawCursor)) return QUERY_INVALID;
 
   const rawState = searchParams.get("state");
-  if (rawState !== null && !isSubmissionState(rawState)) return QUERY_INVALID;
+  if (rawState !== null && !isSubmissionState(rawState) &&
+      !(SUBMISSION_QUEUE_FILTERS as readonly string[]).includes(rawState)) return QUERY_INVALID;
 
   return {
     ok: true,
     value: {
       page_size: pageSize,
       cursor: rawCursor,
-      state: rawState as SubmissionState | null,
+      state: rawState as SubmissionState | SubmissionQueueFilter | null,
     },
   };
 }

@@ -108,7 +108,7 @@ test("session and actor mapping fail closed before the repository", async () => 
 test("list and detail success return the exact projection with no-store", async () => {
   const listDeps = dependencies();
   const listed = await listOwnSubmissions(
-    request("/api/direct-entry/submissions?page_size=20&state=DRAFT&cursor=" + cursor),
+    request("/api/direct-entry/submissions?page_size=20&state=ACTIVE&cursor=" + cursor),
     "true", listDeps,
   );
   assert.equal(listed.status, 200);
@@ -123,7 +123,7 @@ test("list and detail success return the exact projection with no-store", async 
       app_user_id: actor.app_user_id,
       page_size: 20,
       cursor,
-      state: "DRAFT",
+      state: "ACTIVE",
     },
   }]);
 
