@@ -125,4 +125,9 @@ test("lưới nhập liệu và hộp xem trước dùng helper nhan, không n�
     "../../components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx");
   assert.match(previewSource, /workStatusUiLabel/);
   assert.match(previewSource, /genderUiLabel/);
+  const gridSource = source(
+    "../../components/direct-entry/direct-entry-spreadsheet-grid.tsx");
+  assert.match(gridSource, /import \{ workStatusUiLabel \} from "@\/lib\/direct-entry\/display-labels"/);
+  assert.match(gridSource, /column\.key === "initial_status"[\s\S]*?workStatusUiLabel\(status\)/);
+  assert.match(gridSource, /option === "" \? "Đang làm việc \(mặc định\)" : workStatusUiLabel\(option\)/);
 });
