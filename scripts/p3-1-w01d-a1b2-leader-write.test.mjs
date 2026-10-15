@@ -366,7 +366,7 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 98);
+  assert.equal(names.length, 99);
   const leaderMigrationAt = names.indexOf(MIGRATION_71);
   const legacyScopeHotfixAt = names.indexOf(LEGACY_SCOPE_HOTFIX);
   assert.equal(leaderMigrationAt, 70);
@@ -1189,9 +1189,9 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const names = state.names;
   const inventoryBefore = state.baseline;
   const allMigrations = state.migrations.slice(0, state.leaderMigrationAt + 1);
-  assert.equal(names.length, 98);
-  assert.equal(names.at(-28), MIGRATION_71);
-  assert.equal(names.at(-23), LEGACY_SCOPE_HOTFIX);
+  assert.equal(names.length, 99);
+  assert.equal(names.at(-30), MIGRATION_71);
+  assert.equal(names.at(-25), LEGACY_SCOPE_HOTFIX);
   today = (await db.query(
     "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
   assert.equal(state.transitionFixtures.length, 3);
@@ -1816,9 +1816,9 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
     exists: true, service_exec: false, anon_exec: false,
     authenticated_exec: false, public_exec: false,
   });
-  assert.equal((allMigrations.at(-1).sql.match(
+  assert.equal((allMigrations.at(-2).sql.match(
     /^\s*select public\.direct_entry_transition_legacy_team_leaders\(/gm) ?? []).length, 1);
-  assert.doesNotMatch(allMigrations.at(-1).sql,
+  assert.doesNotMatch(allMigrations.at(-2).sql,
     /select\s+public\.direct_entry_seed_team_scope_grants\s*\(/i);
   const seedMigrationIndex = names.findIndex((name) => name === "20261008080000_p3_w05a_actor_scoped_reporting.sql");
   assert.ok(seedMigrationIndex >= 0);

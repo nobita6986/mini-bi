@@ -131,6 +131,7 @@ function detailBody(items) {
     state: "PENDING",
     version: 1,
     created_at: createdAt,
+    request_reason: null,
     items,
     can_withdraw: false,
     can_decide: true,

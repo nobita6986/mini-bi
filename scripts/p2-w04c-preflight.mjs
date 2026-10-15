@@ -23,7 +23,7 @@ function stop(code, detail) {
 
 async function main() {
   const migrations = await readMigrations(path.resolve("supabase/migrations"));
-  if (migrations.length !== EXPECTED_LOCAL || migrations.at(-1)?.name !== MIGRATION) {
+  if (migrations.length !== EXPECTED_LOCAL || migrations.at(-2)?.name !== MIGRATION) {
     stop("LOCAL_MIGRATION_INVENTORY_DRIFT",
       `expected ${EXPECTED_LOCAL} migrations ending in ${MIGRATION}`);
   }

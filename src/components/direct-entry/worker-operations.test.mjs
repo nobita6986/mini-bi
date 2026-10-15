@@ -52,7 +52,7 @@ test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projec
   assert.match(source, /parseWorkerPageResponse/);
   assert.match(source, /workersQuery\(\{[\s\S]{0,80}scope, \.\.\.workerFilters, cursor/);
   assert.match(source, /submissionsQuery\(cursor\)/);
-  assert.match(source, /requestsQuery\(cursor\)/);
+  assert.match(source, /requestsQuery\(cursor, queue\)/);
 });
 
 test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi tab/filter", () => {
