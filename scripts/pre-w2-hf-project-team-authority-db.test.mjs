@@ -1,5 +1,5 @@
 /**
- * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 97-migration ledger).
+ * PRE-W2-HF Project <-> Team authority - DB regression (PGlite over the 98-migration ledger).
  *
  * Covers the mapping table + RPCs (bounded read, grant, revoke), the canonical Full
  * Admin authority boundary, the pair-version OCC and idempotency contract, half-open
@@ -69,7 +69,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 97, "the append-only batch mapping migration follows #96");
+  assert.equal(names.length, 98, "the append-only batch mapping migration follows #96");
   assert.equal(names.at(-1), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
   assert.equal(names.at(-2), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
   assert.equal(names.at(-3), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");

@@ -16,8 +16,6 @@ export const MIN_PASSWORD_BYTES = 8;
 export const MAX_PASSWORD_BYTES = 1024;
 const REASON_MAX = 4000;
 const NAME_MAX = 256;
-const CODE_MAX = 64;
-const CODE = /^[^\s\u0000-\u001f\u007f]+$/;
 
 export type PersonnelPosition = "STAFF" | "TEAM_LEADER";
 export type AccountOperationKind = "CREATE_ACCOUNT" | "RESET_PASSWORD";
@@ -133,6 +131,7 @@ export function parseReconcile(body: unknown): Parsed<ReconcileRequest> {
 export type CreatePersonnelFromAccountRequest = {
   account_ref: string;
   expected_account_version: number;
+  /** Login ID selected in the eligible-account list; DB revalidates against Auth. */
   personnel_code: string;
   personnel_position: PersonnelPosition;
   valid_from: string;
@@ -148,17 +147,18 @@ export function parseCreatePersonnelFromAccount(body: unknown): Parsed<CreatePer
   }
   const account_ref = uuid(body.account_ref);
   const expected_account_version = version(body.expected_account_version);
-  const code = text(body.personnel_code, CODE_MAX);
+  const personnel_code = typeof body.personnel_code === "string" && LOGIN_ID.test(body.personnel_code)
+    ? body.personnel_code : null;
   const personnel_position = body.personnel_position === "STAFF" || body.personnel_position === "TEAM_LEADER"
     ? body.personnel_position : null;
   const valid_from = typeof body.valid_from === "string" && DATE.test(body.valid_from) ? body.valid_from : null;
   const reason = text(body.reason, REASON_MAX);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!account_ref || expected_account_version === null || expected_account_version < 1 ||
-      !code || !CODE.test(code) || !personnel_position || !valid_from || !reason || !idempotency_key) {
+  if (!account_ref || expected_account_version === null || expected_account_version < 1 || !personnel_code ||
+      !personnel_position || !valid_from || !reason || !idempotency_key) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
-  return { ok: true, value: { account_ref, expected_account_version, personnel_code: code,
+  return { ok: true, value: { account_ref, expected_account_version, personnel_code,
     personnel_position, valid_from, reason, idempotency_key } };
 }
 
@@ -299,7 +299,7 @@ export function projectPersonnelFromAccountEnvelope(v: unknown): PersonnelFromAc
   };
 }
 
-export type EligibleAccount = { app_user_id: string; display_name: string };
+export type EligibleAccount = { app_user_id: string; display_name: string; login_id: string };
 export type EligibleAccountsEnvelope = {
   page: number;
   page_size: number;
@@ -314,9 +314,11 @@ export function projectEligibleAccountsEnvelope(v: unknown): EligibleAccountsEnv
   if (typeof v.has_more !== "boolean" || !Array.isArray(v.accounts)) return null;
   const accounts: EligibleAccount[] = [];
   for (const raw of v.accounts) {
-    if (!isRecord(raw) || !exact(raw, ["app_user_id", "display_name"]) ||
-        !uuid(raw.app_user_id) || typeof raw.display_name !== "string") return null;
-    accounts.push({ app_user_id: raw.app_user_id as string, display_name: raw.display_name as string });
+    if (!isRecord(raw) || !exact(raw, ["app_user_id", "display_name", "login_id"]) ||
+        !uuid(raw.app_user_id) || typeof raw.display_name !== "string" ||
+        typeof raw.login_id !== "string" || !LOGIN_ID.test(raw.login_id)) return null;
+    accounts.push({ app_user_id: raw.app_user_id as string, display_name: raw.display_name as string,
+      login_id: raw.login_id as string });
   }
   return { page: v.page, page_size: v.page_size, total: v.total, has_more: v.has_more, accounts };
 }

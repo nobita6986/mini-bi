@@ -43,15 +43,15 @@ test("D3-B UI: edit display name and reset password build exact bodies", () => {
 
 test("D3-B UI: personnel-from-account keeps display_name server-side (not a field)", () => {
   const built = buildPersonnelFromAccountRequest({
-    accountRef: ACCOUNT, expectedAccountVersion: 1, personnelCode: "NV001",
+    accountRef: ACCOUNT, expectedAccountVersion: 1, loginId: "staff01",
     personnelPosition: "STAFF", validFrom: "2026-10-01", reason: "create", idempotencyKey: KEY,
   });
   assert.equal(built.ok, true);
   assert.equal("display_name" in built.body, false, "display_name must not be sent from the browser");
-  assert.equal(built.body.personnel_code, "NV001");
+  assert.equal(built.body.personnel_code, "staff01", "account login ID becomes personnel code");
 });
 
-test("D3-C UI: eligible accounts projection only exposes app_user_id + display_name", () => {
+test("D3-C UI: eligible accounts projection exposes real name + login ID without email", () => {
   const query = buildEligibleAccountsQuery(1);
   assert.ok(query);
   assert.equal(query.get("page"), "1");
@@ -59,12 +59,13 @@ test("D3-C UI: eligible accounts projection only exposes app_user_id + display_n
 
   const list = projectEligibleAccounts({
     ok: true,
-    list: { page: 1, page_size: 25, total: 1, has_more: false, accounts: [{ app_user_id: ACCOUNT, display_name: "Nguyen Van A" }] },
+    list: { page: 1, page_size: 25, total: 1, has_more: false, accounts: [{ app_user_id: ACCOUNT, display_name: "Nguyen Van A", login_id: "staff01" }] },
   });
   assert.equal(list.accounts.length, 1);
   assert.equal(list.accounts[0].display_name, "Nguyen Van A");
+  assert.equal(list.accounts[0].login_id, "staff01");
   // No email/login/auth_subject/internal link ids in the projection.
-  assert.equal(projectEligibleAccounts({ ok: true, list: { page: 1, page_size: 25, total: 1, has_more: false, accounts: [{ app_user_id: ACCOUNT, display_name: "X", email: "x@hrpartner.vn" }] } }), null);
+  assert.equal(projectEligibleAccounts({ ok: true, list: { page: 1, page_size: 25, total: 1, has_more: false, accounts: [{ app_user_id: ACCOUNT, display_name: "X", login_id: "staff01", email: "x@hrpartner.vn" }] } }), null);
 });
 
 test("D3-B UI: response classifier surfaces needs-reconcile states without password/ref leak", () => {

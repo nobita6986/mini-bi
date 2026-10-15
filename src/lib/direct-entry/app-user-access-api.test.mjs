@@ -25,6 +25,7 @@ const ACTOR = {
 const ACCOUNT = {
   account_ref: "40000000-0000-4000-8000-000000000103",
   display_name: "Target",
+  login_id: "target.td",
   enabled: true,
   version: 1,
 };
@@ -49,7 +50,7 @@ function json(body, headers = {}) {
 }
 
 test("strict projection rejects raw identity and extra fields", () => {
-  assert.deepEqual(Object.keys(projectExistingAccount(ACCOUNT)).sort(), ["account_ref", "display_name", "enabled", "version"]);
+  assert.deepEqual(Object.keys(projectExistingAccount(ACCOUNT)).sort(), ["account_ref", "display_name", "enabled", "login_id", "version"]);
   assert.deepEqual(Object.keys(projectExistingAccountList(LIST)).sort(), ["accounts", "enabled", "page", "page_size", "search", "total"]);
   assert.equal(projectExistingAccount({ ...ACCOUNT, email: "x@example.test" }), null);
   assert.equal(projectExistingAccount({ ...ACCOUNT, account_label: "TK-abcdef12" }), null);

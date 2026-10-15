@@ -26,6 +26,7 @@ import {
 
 const AUTH_SUBJECT = "91000000-0000-4000-8000-000000000001";
 const APP_USER = "92000000-0000-4000-8000-000000000001";
+const LOGIN_ID = "staff01";
 const INTENT = "93000000-0000-4000-8000-000000000001";
 const TOKEN = "94000000-0000-4000-8000-000000000001";
 const CREATED_AUTH = "95000000-0000-4000-8000-000000000001";
@@ -133,13 +134,17 @@ test("D3: create/reset/edit/personnel request validators are strict", () => {
   assert.equal(parseEditDisplayName({ display_name: "New Name", expected_version: 0, reason: "rename", idempotency_key: AUTH_SUBJECT }).ok, false);
 
   assert.equal(parseCreatePersonnelFromAccount({
-    account_ref: APP_USER, expected_account_version: 1, personnel_code: "NV001",
+    account_ref: APP_USER, expected_account_version: 1, personnel_code: LOGIN_ID,
     personnel_position: "STAFF", valid_from: "2026-10-01", reason: "create", idempotency_key: AUTH_SUBJECT,
   }).ok, true);
   assert.equal(parseCreatePersonnelFromAccount({
-    account_ref: APP_USER, expected_account_version: 1, personnel_code: "NV 001",
+    account_ref: APP_USER, expected_account_version: 1, personnel_code: LOGIN_ID,
     personnel_position: "STAFF", valid_from: "2026-10-01", reason: "create", idempotency_key: AUTH_SUBJECT,
-  }).ok, false, "personnel code must reject whitespace");
+  }).value.personnel_code, LOGIN_ID);
+  assert.equal(parseCreatePersonnelFromAccount({
+    account_ref: APP_USER, expected_account_version: 1, personnel_code: "Bad Login",
+    personnel_position: "STAFF", valid_from: "2026-10-01", reason: "create", idempotency_key: AUTH_SUBJECT,
+  }).ok, false, "client cannot choose a personnel code");
 });
 
 /* ---------- create account saga ---------- */
@@ -227,15 +232,24 @@ test("D3: missing session actor returns 403", async () => {
 
 /* ---------- personnel from account ---------- */
 test("D3: personnel from account returns the created personnel, display_name server-side", async () => {
-  const d = deps();
+  let createInput;
+  const d = deps({ repository: repository({
+    async createPersonnelFromAccount(input) {
+      createInput = input;
+      return { ok: true, data: { recruiter_id: CREATED_AUTH, display_name: "Nguyen Van A",
+        personnel_code: input.personnel_code, personnel_position: "STAFF", version: 1, link_id: REV,
+        membership_id: INTENT, app_user_version: 2, app_user_revision_id: REV, personnel_revision_id: REV } };
+    },
+  }) });
   const response = await createPersonnelFromAccount(fakeRequest({
-    account_ref: APP_USER, expected_account_version: 1, personnel_code: "NV001",
+    account_ref: APP_USER, expected_account_version: 1, personnel_code: LOGIN_ID,
     personnel_position: "STAFF", valid_from: "2026-10-01", reason: "create", idempotency_key: AUTH_SUBJECT,
   }), "true", d);
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.personnel.display_name, "Nguyen Van A");
-  assert.equal(body.personnel.personnel_code, "NV001");
+  assert.equal(body.personnel.personnel_code, LOGIN_ID);
+  assert.equal(createInput.personnel_code, LOGIN_ID, "API forwards the selected login ID for DB revalidation");
 });
 
 /* ---------- personnel-from-account taxonomy ---------- */
@@ -245,7 +259,7 @@ test("D3-C: personnel-from-account maps denied/conflict/invalid to the sanitized
       repository: repository({ async createPersonnelFromAccount() { return { ok: false, kind }; } }),
     });
     const response = await createPersonnelFromAccount(fakeRequest({
-      account_ref: APP_USER, expected_account_version: 1, personnel_code: "NV001",
+      account_ref: APP_USER, expected_account_version: 1, personnel_code: LOGIN_ID,
       personnel_position: "STAFF", valid_from: "2026-10-01", reason: "create", idempotency_key: AUTH_SUBJECT,
     }), "true", d);
     assert.equal(response.status, status, kind);

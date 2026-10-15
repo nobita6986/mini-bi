@@ -8,6 +8,7 @@ import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const NEW_MIGRATION = "20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql";
+const REAL_NAME_MIGRATION = "20261015140000_pre_w2_hf_account_real_name_display.sql";
 const ADMIN_AUTH = "10000000-0000-4000-8000-000000000101";
 const ADMIN_APP = "20000000-0000-4000-8000-000000000101";
 const ACCOUNTING_AUTH = "10000000-0000-4000-8000-000000000102";
@@ -34,7 +35,8 @@ async function rpc(database, name, values) {
   return (await rows(database, `select public.${name}($1::uuid,$2::uuid,$3::text,$4::text,$5::integer,$6::integer) as result`, values))[0].result;
 }
 async function seed(database) {
-  await database.query("insert into auth.users(id) values ($1),($2),($3),($4)", [ADMIN_AUTH, ACCOUNTING_AUTH, TARGET_AUTH, DISABLED_ADMIN_AUTH]);
+  await database.exec("alter table auth.users add column if not exists email text");
+  await database.query("insert into auth.users(id,email) values ($1,'admin@hrpartner.vn'),($2,'accounting@hrpartner.vn'),($3,'target.td@hrpartner.vn'),($4,'disabled@hrpartner.vn')", [ADMIN_AUTH, ACCOUNTING_AUTH, TARGET_AUTH, DISABLED_ADMIN_AUTH]);
   await database.query(`
     insert into public.direct_entry_app_users(app_user_id,auth_subject,display_name,enabled)
     values ($1,$2,'Admin',true),($3,$4,'Accounting',true),($5,$6,'Target',true),($7,$8,'Disabled Admin',false)`,
@@ -52,25 +54,28 @@ async function denied(operation, code = "42501") {
 
 test("R2 migration #83 is append-only and read RPC ACL/projection is exact", async () => {
   const names = await migrations();
-  assert.equal(names.length, 97);
-  assert.equal(names.at(-14), NEW_MIGRATION);
+  assert.equal(names.length, 98);
+  assert.equal(names.at(-15), NEW_MIGRATION);
+  assert.equal(names.at(-1), REAL_NAME_MIGRATION);
   const database = await db();
   await seed(database);
   const result = await rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, null, "all", 1, 25]);
   assert.deepEqual(Object.keys(result).sort(), ["accounts", "enabled", "page", "page_size", "search", "total"]);
-  assert.deepEqual(Object.keys(result.accounts[0]).sort(), ["account_ref", "display_name", "enabled", "version"]);
+  assert.deepEqual(Object.keys(result.accounts[0]).sort(), ["account_ref", "display_name", "enabled", "login_id", "version"]);
   assert.equal(result.accounts[0].display_name, "Accounting");
+  assert.equal(result.accounts[0].login_id, "accounting");
   assert.equal(result.accounts[0].account_ref, ACCOUNTING_APP);
   const serialized = JSON.stringify(result);
-  for (const forbidden of ["auth_subject", "email", "capability", "scope", "reason", "audit", "account_label"]) {
+  for (const forbidden of ["auth_subject", "@hrpartner.vn", "capability", "scope", "reason", "audit", "account_label"]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
   const acl = await rows(database, `
     select to_regprocedure('public.direct_entry_list_app_users_admin(uuid,uuid,text,integer,integer)') is null as old_absent,
            has_function_privilege('service_role','public.direct_entry_list_app_users_admin(uuid,uuid,text,text,integer,integer)','execute') as list_exec,
            has_function_privilege('service_role','public.direct_entry_get_app_user_admin(uuid,uuid,uuid)','execute') as detail_exec,
+           has_function_privilege('service_role','public.direct_entry_app_user_projection(public.direct_entry_app_users)','execute') as projection_exec,
            has_function_privilege('authenticated','public.direct_entry_list_app_users_admin(uuid,uuid,text,text,integer,integer)','execute') as auth_exec`);
-  assert.deepEqual(acl[0], { old_absent: true, list_exec: true, detail_exec: true, auth_exec: false });
+  assert.deepEqual(acl[0], { old_absent: true, list_exec: true, detail_exec: true, projection_exec: false, auth_exec: false });
   await database.close();
 });
 
@@ -89,7 +94,7 @@ test("R2 list filters, bounds, stable order and detail are Full-Admin-only", asy
   const disabled = await rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, null, "false", 1, 25]);
   assert.equal(disabled.total, 1);
   const detail = (await rows(database, "select public.direct_entry_get_app_user_admin($1::uuid,$2::uuid,$3::uuid) as result", [ADMIN_AUTH, ADMIN_APP, TARGET_APP]))[0].result;
-  assert.deepEqual(Object.keys(detail).sort(), ["account_ref", "display_name", "enabled", "version"]);
+  assert.deepEqual(Object.keys(detail).sort(), ["account_ref", "display_name", "enabled", "login_id", "version"]);
   await denied(rpc(database, "direct_entry_list_app_users_admin", [ACCOUNTING_AUTH, ACCOUNTING_APP, null, "all", 1, 25]));
   await denied(rpc(database, "direct_entry_list_app_users_admin", [DISABLED_ADMIN_AUTH, DISABLED_ADMIN_APP, null, "all", 1, 25]));
   await denied(rpc(database, "direct_entry_list_app_users_admin", ["10000000-0000-4000-8000-000000000199", ADMIN_APP, null, "all", 1, 25]));
@@ -100,6 +105,29 @@ test("R2 list filters, bounds, stable order and detail are Full-Admin-only", asy
   await assert.rejects(rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, null, "bad", 1, 25]), (error) => error.code === "22023");
   await assert.rejects(rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, null, "all", 0, 25]), (error) => error.code === "22023");
   await assert.rejects(rows(database, "select public.direct_entry_get_app_user_admin($1::uuid,$2::uuid,$3::uuid)", [ADMIN_AUTH, ADMIN_APP, "20000000-0000-4000-8000-000000000199"]), (error) => error.code === "P0002");
+  await database.close();
+});
+
+test("account read shows linked recruiter real name and only the Auth login local-part", async () => {
+  const database = await db();
+  await seed(database);
+  const recruiterId = "30000000-0000-4000-8000-000000000103";
+  await database.query("insert into public.recruiters(recruiter_id,display_name) values ($1,'Bạch Thu Lan')", [recruiterId]);
+  await database.query(`
+    insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from)
+    values ($1,$2,true,'2026-01-01')`, [TARGET_APP, recruiterId]);
+  const list = await rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, "Bạch Thu Lan", "all", 1, 25]);
+  assert.deepEqual(list.accounts.map(({ display_name, login_id }) => ({ display_name, login_id })), [
+    { display_name: "Bạch Thu Lan", login_id: "target.td" },
+  ]);
+  const detail = (await rows(database, "select public.direct_entry_get_app_user_admin($1::uuid,$2::uuid,$3::uuid) as result", [ADMIN_AUTH, ADMIN_APP, TARGET_APP]))[0].result;
+  assert.equal(detail.display_name, "Bạch Thu Lan");
+  assert.equal(detail.login_id, "target.td");
+  await database.query("update public.direct_entry_app_users set display_name='accounting' where app_user_id=$1", [ACCOUNTING_APP]);
+  const missingName = (await rows(database, "select public.direct_entry_get_app_user_admin($1::uuid,$2::uuid,$3::uuid) as result", [ADMIN_AUTH, ADMIN_APP, ACCOUNTING_APP]))[0].result;
+  assert.equal(missingName.display_name, null);
+  assert.equal(missingName.login_id, "accounting");
+  assert.equal(JSON.stringify(detail).includes("@hrpartner.vn"), false);
   await database.close();
 });
 

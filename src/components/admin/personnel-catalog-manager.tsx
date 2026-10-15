@@ -441,10 +441,14 @@ export function PersonnelCatalogManager() {
         setFormError("Chọn một tài khoản đang hoạt động và chưa liên kết để tạo nhân sự.");
         return;
       }
+      if (selectedAccount.display_name.trim().toLowerCase() === selectedAccount.login_id.toLowerCase()) {
+        setFormError("Tài khoản chưa có tên thật. Hãy cập nhật tên hiển thị trong mục Tài khoản trước.");
+        return;
+      }
       request = buildPersonnelFromAccountRequest({
         accountRef: selectedAccount.app_user_id,
         expectedAccountVersion: accountVersion,
-        personnelCode: form.personnelCode,
+        loginId: selectedAccount.login_id,
         personnelPosition: form.personnelPosition,
         validFrom: form.validFrom,
         reason: form.reason,
@@ -657,14 +661,16 @@ export function PersonnelCatalogManager() {
               ) : (
                 <form onSubmit={submitMutation} className="mt-5 space-y-4">
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <Field
-                      id="personnel-code"
-                      label="Mã nhân sự"
-                      value={form.personnelCode}
-                      maxLength={64}
-                      required
-                      onChange={(value) => changeForm("personnelCode", value)}
-                    />
+                    {dialog?.kind === "edit" ? (
+                      <Field
+                        id="personnel-code"
+                        label="Mã nhân sự"
+                        value={form.personnelCode}
+                        maxLength={64}
+                        required
+                        onChange={(value) => changeForm("personnelCode", value)}
+                      />
+                    ) : null}
                     {dialog?.kind === "create" ? (
                       <label className="block text-sm font-medium text-foreground" htmlFor="personnel-account">
                         Tài khoản
@@ -683,7 +689,9 @@ export function PersonnelCatalogManager() {
                           <option value="">Chọn tài khoản</option>
                           {eligibleAccounts.map((account) => (
                             <option key={account.app_user_id} value={account.app_user_id}>
-                              {account.display_name}
+                              {account.display_name.trim().toLowerCase() === account.login_id.toLowerCase()
+                                ? `Chưa cập nhật tên thật · ${account.login_id}`
+                                : `${account.display_name} · ${account.login_id}`}
                             </option>
                           ))}
                         </select>
