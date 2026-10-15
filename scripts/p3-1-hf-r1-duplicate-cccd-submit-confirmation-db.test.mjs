@@ -87,8 +87,8 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 100, "the ledger carries W03A-R2 #84 and append-only migrations through #100");
-  assert.equal(names[names.length - (26)], HOTFIX_MIGRATION, "the contract ships in #74");
-  assert.equal(names[names.length - (27)], PREVIOUS_MIGRATION, "#74 stays append-only");
+  assert.equal(names[names.length - (27)], HOTFIX_MIGRATION, "the contract ships in #74");
+  assert.equal(names[names.length - (28)], PREVIOUS_MIGRATION, "#74 stays append-only");
   return db;
 }
 
