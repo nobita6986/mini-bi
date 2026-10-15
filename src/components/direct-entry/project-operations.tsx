@@ -125,6 +125,7 @@ async function fetchProjectList(): Promise<ListResult> {
 export function ProjectOperations() {
   const [state, setState] = useState<ViewState>("loading");
   const [projects, setProjects] = useState<ProjectView[]>([]);
+  const canManageProjectMaster = projects.length > 0 && projects[0]?.can_manage_project_master === true;
   const [detail, setDetail] = useState<ProjectDetailView | null>(null);
   const [detailState, setDetailState] = useState<DetailState>("idle");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -464,11 +465,11 @@ export function ProjectOperations() {
               Tạo và cập nhật dự án, theo dõi phân công hiện tại, lịch sắp hiệu lực và lịch sử quản lý.
             </p>
           </div>
-          <button type="button" className={primaryClass} disabled={conflict !== null || reloadBusy}
+          {canManageProjectMaster ? (<button type="button" className={primaryClass} disabled={conflict !== null || reloadBusy}
             onClick={() => openDialog({ kind: "create" })}>
             <Plus aria-hidden="true" className="h-4 w-4" />
             Tạo dự án
-          </button>
+          </button>) : null}
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-3">
           <SummaryMetric label="Tổng dự án" value={projects.length} />
@@ -566,6 +567,7 @@ export function ProjectOperations() {
                         <td className="px-3 py-3">
                           <div className="flex min-w-0 items-center gap-2">
                             <span className="min-w-0 break-words font-semibold text-foreground">{project.display_name}</span>
+                            {project.can_manage_project_master ? (
                             <button type="button"
                               aria-label={`Chỉnh sửa dự án ${project.display_name}`}
                               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted transition-colors hover:bg-muted/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
@@ -573,6 +575,7 @@ export function ProjectOperations() {
                               onClick={() => { void openProjectAction(project, "rename"); }}>
                               <Pencil aria-hidden="true" className="h-4 w-4" />
                             </button>
+                            ) : null}
                           </div>
                           <span className="mt-0.5 block font-mono text-xs text-muted">{project.project_id}</span>
                         </td>
@@ -586,12 +589,14 @@ export function ProjectOperations() {
                                 <UsersRound aria-hidden="true" className="h-4 w-4" />}
                               Xem quản lý
                             </button>
+                            {project.can_manage_project_master ? (
                             <button type="button" className={project.active ? dangerClass : buttonClass}
                               disabled={projectActionId !== null || conflict !== null || reloadBusy}
                               onClick={() => { void openProjectAction(project, "set-active"); }}>
                               <Power aria-hidden="true" className="h-4 w-4" />
                               {project.active ? "Ngừng" : "Kích hoạt"}
                             </button>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
