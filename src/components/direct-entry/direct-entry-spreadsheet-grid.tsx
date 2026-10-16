@@ -782,10 +782,8 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
       if (column.editor === "select" || column.editor === "catalog") {
         return {
           key: column.key, name: headerLabel, width: scaledWidth, resizable: true,
-          editable: (row: SpreadsheetGridRow) => column.key === "provider_type"
-            ? row.clientStaged
-            : isEditable(row, column.key) &&
-              (column.key !== "recruiter_id" || row.providerType !== ""),
+          editable: (row: SpreadsheetGridRow) => isEditable(row, column.key) &&
+            (column.key !== "recruiter_id" || row.providerType !== ""),
           renderCell,
           renderEditCell: (editProps: RenderEditCellProps<SpreadsheetGridRow>) => (
             column.key === "project_id" || column.key === "recruiter_id"

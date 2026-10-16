@@ -26,6 +26,7 @@ function slice(startMarker, endMarker) {
 const pasteHandler = slice("const onStagedPaste = useCallback", "const onStagedUndo = useCallback");
 const saveHandler = slice("const onStagedSave = useCallback", "const updateDate = useCallback");
 const reloadDraftHandler = slice("const reloadDrafts = useCallback", "const runTransition = useCallback");
+const editDraftHandler = slice("const reloadSubmissionDraft = useCallback", "const saveRow = useCallback");
 
 test("live render spreadsheet grid va khoi tao 30 staged rows client-only", () => {
   assert.match(live, /<DirectEntrySpreadsheetGrid/);
@@ -79,7 +80,7 @@ test("validation chay tren staged rows va map issue ve dung o", () => {
   assert.match(live, /Lưu các dòng hợp lệ/);
   // P1.7-H07: nut Save luon click duoc (khong bi khoa theo canSave)
   // de kich hoat required validation va nguoi dung thay nguyen nhan.
-  assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy \|\| !hasActiveLaborTypes\}/);
+  assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy \|\|\s*\(editingDraftSubmissionId === null && !hasActiveLaborTypes\)\}/);
   assert.match(live, /\{stagedBusy \? "Đang nhập…" : "Lưu các dòng hợp lệ"\}/);
   assert.match(live, /aria-busy=\{stagedBusy\}/);
 });
@@ -107,8 +108,19 @@ test("success reload tu server va chi clear staged sau khi server xac nhan", () 
   assert.match(saveHandler, /if \(result\.kind === "saved"\)/);
   assert.match(saveHandler, /await reloadDrafts\(\);/);
   const savedBranch = saveHandler.indexOf('if (result.kind === "saved")');
-  const clearStaged = saveHandler.indexOf("setStagedModel(createSpreadsheetRowModel())");
+  const clearStaged = saveHandler.indexOf("setStagedModel(createSpreadsheetRowModel())", savedBranch);
   assert.ok(clearStaged > savedBranch, "clear staged chi trong nhanh saved");
+});
+
+test("save draft batch updates its dirty persisted rows, then leaves the entry grid empty", () => {
+  assert.match(saveHandler, /editingDraftSubmissionId !== null/);
+  assert.match(saveHandler, /row\.submissionId === editingDraftSubmissionId/);
+  assert.match(saveHandler, /row\.state === "dirty" \|\| row\.state === "error"/);
+  assert.match(saveHandler, /await saveRow\(row\.rowId\)/);
+  assert.match(saveHandler, /setEditingDraftSubmissionId\(null\)/);
+  assert.match(saveHandler, /setStagedModel\(createSpreadsheetRowModel\(\)\)/);
+  assert.match(live, /rows\s*\.filter\(\(row\) => editingDraftSubmissionId !== null &&\s*row\.submissionId === editingDraftSubmissionId\)/);
+  assert.match(live, /\(editingDraftSubmissionId === null\s*\? stagedModel\.rows : \[\]\)\.map/);
 });
 
 test("persisted rows keep submission lock; only the active own DRAFT unlocks the full edit set", () => {
@@ -123,9 +135,20 @@ test("persisted rows keep submission lock; only the active own DRAFT unlocks the
 test("draft reload requires exact versioned projection and makes one batch call without detail N+1", () => {
   assert.match(live, /value\.projection_version !== DRAFT_LIST_PROJECTION_VERSION/);
   assert.match(live, /return projectOwnDrafts\(\{/);
-  assert.equal((reloadDraftHandler.match(/\/api\/direct-entry\/drafts/g) ?? []).length, 2,
-    "each of the reload and card-edit paths makes one batch request");
+  assert.equal((reloadDraftHandler.match(/\/api\/direct-entry\/drafts/g) ?? []).length, 1,
+    "draft reload makes one batch request");
   assert.equal(/\/api\/direct-entry\/entries\//.test(reloadDraftHandler), false);
+  assert.equal((editDraftHandler.match(/\/api\/direct-entry\/drafts/g) ?? []).length, 1);
+  assert.match(editDraftHandler, /selectNonEmptySpreadsheetRows\(stagedModel\)/);
+  assert.match(editDraftHandler, /setEditingDraftSubmissionId\(submission\.submission_id\)/);
+  assert.match(editDraftHandler, /setStagedModel\(createSpreadsheetRowModel\(\)\)/);
+});
+
+test("provider selector is editable whenever a row's edit allowlist includes provider_type", () => {
+  const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
+  assert.match(grid, /editable: \(row: SpreadsheetGridRow\) => isEditable\(row, column\.key\)/);
+  assert.match(live, /"project_id", "first_work_date", "display_name", "provider_type", "recruiter_id"/);
+  assert.match(live, /providerType,\s*recruiterId: recruiter\.recruiter_id/);
 });
 
 test("masked display values are excluded from spreadsheet copy and write sources", () => {

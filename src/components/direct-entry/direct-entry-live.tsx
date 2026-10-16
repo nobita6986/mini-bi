@@ -523,29 +523,6 @@ export function DirectEntryLive() {
     setRows((current) => mergeReloadedDrafts(current, serverRows));
   }, []);
 
-  const reloadSubmissionDraft = useCallback(async (submission: SubmissionReadItem) => {
-    try {
-      const response = await fetch("/api/direct-entry/drafts", {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-      const payload = parseOwnDrafts(await readJson(response));
-      if (!response.ok || !payload) throw new Error("DRAFTS_UNAVAILABLE");
-      const drafts = payload.filter((draft) => draft.submission_id === submission.submission_id);
-      if (drafts.length !== submission.entry_count) throw new Error("DRAFT_ROWS_INCOMPLETE");
-      const refreshed = drafts.map(draftRowFromProjection);
-      setRows((current) => [
-        ...current.filter((row) => row.submissionId !== submission.submission_id),
-        ...refreshed,
-      ]);
-      setEditingDraftSubmissionId(submission.submission_id);
-      setSelectedClientRowIdInternal(refreshed[0]?.rowId ?? null);
-      setLifecycleMessage("Đã tải lại " + refreshed.length + " dòng của bản nháp để sửa.");
-    } catch {
-      setLifecycleMessage("Không tải đủ dữ liệu bản nháp để sửa. Hãy thử lại.");
-    }
-  }, []);
-
   /**
    * P3.1-HF-R1: tra ve "applied" | "duplicate-changed" | "failed" de danh sach submission biet
    * co phai preflight lai khi server bao tap conflict da thay doi.
@@ -947,39 +924,78 @@ export function DirectEntryLive() {
   }, [fetchConflictCopy]);
 
   const [stagedModel, setStagedModel] = useState<SpreadsheetRowModel>(() => createSpreadsheetRowModel());
+  const [stagedValidationTriggered, setStagedValidationTriggered] = useState(false);
+
+  const reloadSubmissionDraft = useCallback(async (submission: SubmissionReadItem) => {
+    if (selectNonEmptySpreadsheetRows(stagedModel).length > 0) {
+      setLifecycleMessage("Hãy lưu hoặc xóa các dòng đang nhập trước khi mở bản nháp để sửa.");
+      return;
+    }
+    if (editingDraftSubmissionId !== null &&
+        rowsRef.current.some((row) => row.submissionId === editingDraftSubmissionId &&
+          (row.state === "dirty" || row.state === "error" || row.state === "saving" ||
+            row.state === "conflict"))) {
+      setLifecycleMessage("Hãy lưu các thay đổi của bản nháp đang sửa trước khi tải lại dữ liệu.");
+      return;
+    }
+    try {
+      const response = await fetch("/api/direct-entry/drafts", {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const payload = parseOwnDrafts(await readJson(response));
+      if (!response.ok || !payload) throw new Error("DRAFTS_UNAVAILABLE");
+      const drafts = payload.filter((draft) => draft.submission_id === submission.submission_id);
+      if (drafts.length !== submission.entry_count) throw new Error("DRAFT_ROWS_INCOMPLETE");
+      const refreshed = drafts.map(draftRowFromProjection);
+      setRows((current) => [
+        ...current.filter((row) => row.submissionId !== submission.submission_id),
+        ...refreshed,
+      ]);
+      setStagedModel(createSpreadsheetRowModel());
+      setStagedValidationTriggered(false);
+      setEditingDraftSubmissionId(submission.submission_id);
+      setSelectedClientRowIdInternal(refreshed[0]?.rowId ?? null);
+      setLifecycleMessage("Đã tải lại " + refreshed.length + " dòng của bản nháp để sửa.");
+    } catch {
+      setLifecycleMessage("Không tải đủ dữ liệu bản nháp để sửa. Hãy thử lại.");
+    }
+  }, [editingDraftSubmissionId, stagedModel]);
 
   // P1.7-H05 §9.A & §9.B: handlers cho nut "Thêm dòng" / "Thêm nhanh NLĐ" duoc
   // dinh nghia ben duoi sau khi stagedMessage, setStagedMessage, quickEditClientRowId
   // va setQuickEditClientRowId da duoc khai bao (tranh "Cannot access variable
   // before it is declared" do React Compiler).
 
-  const saveRow = useCallback(async (rowId: string) => {
+  const saveRow = useCallback(async (rowId: string): Promise<boolean> => {
     const current = rowsRef.current.find((row) => row.rowId === rowId);
     if (!current || current.state === "saving" || current.state === "conflict" ||
-        inFlight.current.has(rowId)) return;
+        inFlight.current.has(rowId)) return false;
     if (current.entryId && !isRowEditable(current, submissionsRef.current)) {
       setRows((existing) => existing.map((row) => row.rowId === rowId
         ? { ...row, state: "error", message:
           "Đợt này không còn ở bản nháp nên không lưu trực tiếp được. Hãy tải lại danh sách." }
         : row));
-      return;
+      return false;
     }
-    const catalog = catalogCache.current.get(current.firstWorkDate);
+    const catalog = catalogCache.current.get(current.firstWorkDate) ??
+      catalogCache.current.values().next().value;
     if (!catalog) {
       setCatalogErrors((errors) => ({
         ...errors,
         [current.firstWorkDate]: errors[current.firstWorkDate] ?? "CATALOG_UNAVAILABLE",
       }));
-      return;
+      return false;
     }
-    const validation = validateEmployeeCode(current.employeeCode, current.firstWorkDate);
+    const validEmployeeCode = current.entryId !== null ||
+      validateEmployeeCode(current.employeeCode, current.firstWorkDate).length === 0;
     const valid = isRealCalendarDate(current.firstWorkDate) &&
       current.workerName.trim().length > 0 &&
       catalog.projects.some(({ project_id }) => project_id === current.projectId) &&
       catalog.recruiters.some(({ recruiter_id }) => recruiter_id === current.recruiterId) &&
       (catalog.labor_types ?? []).some(({ labor_type_key }) =>
         labor_type_key === current.laborType) &&
-      validation.length === 0;
+      validEmployeeCode;
     if (!valid) {
       updateRow(rowId, { recruiterId: catalog.recruiters.some(({ recruiter_id }) =>
         recruiter_id === current.recruiterId) ? current.recruiterId : "",
@@ -987,7 +1003,7 @@ export function DirectEntryLive() {
       setRows((existing) => existing.map((row) => row.rowId === rowId
         ? { ...row, state: "error", message: "Kiểm tra ngày, mã, họ tên, dự án và người tuyển." }
         : row));
-      return;
+      return false;
     }
     inFlight.current.add(rowId);
     const pending: PendingDraftWrite = current.pendingWrite ?? {
@@ -1032,7 +1048,7 @@ export function DirectEntryLive() {
         setRows((existing) => existing.map((row) => row.rowId === rowId
           ? markDraftConflict(row, pending, conflictCopy)
           : row));
-        return;
+        return false;
       }
       if (!response.ok || !isRecord(payload) || payload.ok !== true) {
         const code = isRecord(payload) && typeof payload.code === "string" ? payload.code : "SAVE_FAILED";
@@ -1103,11 +1119,13 @@ export function DirectEntryLive() {
           ? { ...row, state: "clean" }
           : row));
       }, 1600);
+      return true;
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "SAVE_FAILED";
       setRows((existing) => existing.map((row) => row.rowId === rowId
         ? failDraftWrite(row, pending, code)
         : row));
+      return false;
     } finally {
       inFlight.current.delete(rowId);
     }
@@ -1190,7 +1208,6 @@ export function DirectEntryLive() {
   // hợp lệ". Truoc do chi hien thi loi format/catalog (co the gap ngay khi
   // go), con loi required-missing bi tri hoan. Sau khi save attempt, neu
   // user chinh sua cell va lam mat required thi error phai bien mat ngay.
-  const [stagedValidationTriggered, setStagedValidationTriggered] = useState(false);
   // P1.7-H07: tuong tu cho quick save - "validation clientRowId" chi chay
   // sau khi user bam "Lưu NLĐ" trong quick editor; cac lan edit/typing
   // truoc do khong hien thi required error.
@@ -1378,7 +1395,10 @@ export function DirectEntryLive() {
     const projectOptions = spreadsheetProjectOptions(fallbackCatalog ?? undefined);
     const projectLabelFor = (value: string, fallback = value) =>
       findCatalogOptionByStoredValue(projectOptions, value)?.label ?? fallback;
-    const persisted: SpreadsheetGridRow[] = rows.map((row) => {
+    const persisted: SpreadsheetGridRow[] = rows
+      .filter((row) => editingDraftSubmissionId !== null &&
+        row.submissionId === editingDraftSubmissionId)
+      .map((row) => {
       const draftEditActive = editingDraftSubmissionId !== null &&
         row.submissionId === editingDraftSubmissionId;
       const editable = row.state !== "saving" && row.state !== "conflict" &&
@@ -1435,7 +1455,8 @@ export function DirectEntryLive() {
         saveStatus: stateText(row.state),
       };
     });
-    const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => {
+    const staged: SpreadsheetGridRow[] = (editingDraftSubmissionId === null
+      ? stagedModel.rows : []).map((row) => {
       // P3-W07C-R6: catalog cua moi dong la catalog hien tai, KHONG theo first_work_date.
       const catalog = fallbackCatalog;
       const recruiter = catalog?.recruiters.find((option) =>
@@ -1863,7 +1884,41 @@ export function DirectEntryLive() {
   /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
   const onStagedSave = useCallback(async () => {
     if (stagedInFlight.current) return;
-    if (!hasActiveLaborTypes) {
+    if (editingDraftSubmissionId !== null) {
+      const changedRows = rowsRef.current.filter((row) =>
+        row.submissionId === editingDraftSubmissionId &&
+        (row.state === "dirty" || row.state === "error"));
+      if (changedRows.length === 0) {
+        setStagedMessageWithTone("Chưa có thay đổi nào trong bản nháp này.", "info");
+        return;
+      }
+      stagedInFlight.current = true;
+      setStagedBusy(true);
+      setStagedMessageWithTone("", "");
+      try {
+        for (const row of changedRows) {
+          if (!await saveRow(row.rowId)) {
+            setStagedMessageWithTone("Một số dòng chưa lưu được. Hãy kiểm tra thông báo từng dòng rồi thử lại.", "error");
+            return;
+          }
+        }
+        setEditingDraftSubmissionId(null);
+        setStagedModel(createSpreadsheetRowModel());
+        setStagedValidationTriggered(false);
+        setSelectedClientRowId(null);
+        setStagedMessageWithTone("Đã cập nhật bản nháp thành công.", "success");
+        try {
+          await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
+        } catch {
+          setLifecycleMessage("Đã lưu thay đổi. Không tải lại được danh sách; hãy làm mới trang để đồng bộ.");
+        }
+      } finally {
+        stagedInFlight.current = false;
+        setStagedBusy(false);
+      }
+      return;
+    }
+    if (editingDraftSubmissionId === null && !hasActiveLaborTypes) {
       setStagedMessageWithTone(
         "Chưa có loại hình lao động đang hoạt động từ danh mục máy chủ; không thể lưu dòng mới.",
         "error",
@@ -1953,8 +2008,8 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [hasActiveLaborTypes, loadSubmissions, reloadDrafts, selectedClientRowId, setStagedModel,
-    setStagedMessageWithTone, stagedValidation]);
+  }, [editingDraftSubmissionId, hasActiveLaborTypes, loadSubmissions, reloadDrafts,
+    saveRow, selectedClientRowId, setStagedModel, setStagedMessageWithTone, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -2367,7 +2422,8 @@ export function DirectEntryLive() {
                   </button>
                   <button type="button" className={styles.primaryButton}
                     data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
-                    disabled={loadState !== "ready" || stagedBusy || !hasActiveLaborTypes}
+                    disabled={loadState !== "ready" || stagedBusy ||
+                      (editingDraftSubmissionId === null && !hasActiveLaborTypes)}
                     aria-busy={stagedBusy}>
                     {stagedBusy ? "Đang nhập…" : "Lưu các dòng hợp lệ"}
                   </button>
