@@ -41,9 +41,10 @@ const detailPayload = {
   can_decide: true,
 };
 
-test("read repository exposes only the two read RPCs", () => {
+test("read repository exposes only the approved read RPCs", () => {
   assert.deepEqual([...CHANGE_REQUEST_READ_RPC_NAMES], [
     "direct_entry_list_change_requests",
+    "direct_entry_list_global_change_request_history",
     "direct_entry_read_change_request",
   ]);
   for (const forbidden of [
@@ -96,6 +97,38 @@ test("detail calls only the read RPC and projects strictly", async () => {
       p_request_id: requestId,
     },
   }]);
+});
+
+test("global history uses its dedicated bounded read RPC and requires decision metadata", async () => {
+  const auditItem = {
+    ...listItem,
+    state: "APPROVED",
+    can_decide: false,
+    decided_by_display_name: "Synthetic Approver",
+    decided_at: "2026-10-03T10:04:00.000000Z",
+  };
+  const calls = [];
+  const repository = createChangeRequestReadRepository(async (name, args) => {
+    calls.push({ name, args });
+    return { data: { ...listPayload, requests: [auditItem] }, error: null };
+  });
+  const result = await repository.listGlobalChangeRequestHistory({
+    ...actor, page_size: 20, cursor, days: 7,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{
+    name: "direct_entry_list_global_change_request_history",
+    args: {
+      p_auth_subject: actor.auth_subject,
+      p_app_user_id: actor.app_user_id,
+      p_page_size: 20,
+      p_cursor: cursor,
+      p_days: 7,
+    },
+  }]);
+  assert.deepEqual(await repository.listGlobalChangeRequestHistory({
+    ...actor, page_size: 20, cursor, days: null,
+  }), { ok: true, data: { ...listPayload, requests: [auditItem] } });
 });
 
 test("SQLSTATE classification stays fail-closed for reads", async () => {

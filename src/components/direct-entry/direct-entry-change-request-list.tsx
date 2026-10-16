@@ -26,6 +26,7 @@ import styles from "./direct-entry-shell.module.css";
 const QUEUE_TABS = [
   { value: "PENDING", label: "Chờ duyệt" },
   { value: "RESOLVED", label: "Đã xử lý" },
+  { value: "GLOBAL_AUDIT", label: "Lịch sử duyệt" },
 ] as const;
 
 export type ChangeRequestListProps = {
@@ -36,7 +37,9 @@ export type ChangeRequestListProps = {
   busyRequestId: string | null;
   compact?: boolean;
   queueFilter: ChangeRequestQueueFilter;
+  canViewGlobalHistory?: boolean;
   onQueueFilterChange: (filter: ChangeRequestQueueFilter) => void;
+  onGlobalHistoryAgeFilterChange?: (filter: ResolvedAgeFilter) => void;
   onLoadMore: () => void;
   onWithdraw: (request: ChangeRequestListItem) => void;
   onReview: (request: ChangeRequestListItem) => void;
@@ -44,9 +47,15 @@ export type ChangeRequestListProps = {
 
 type ResolvedAgeFilter = "3" | "7" | "30" | "all";
 
-function isWithinResolvedAge(request: ChangeRequestListItem, filter: ResolvedAgeFilter): boolean {
+function isWithinResolvedAge(
+  request: ChangeRequestListItem,
+  filter: ResolvedAgeFilter,
+  audit: boolean,
+): boolean {
+  const timestamp = audit ? request.decided_at : request.created_at;
+  if (typeof timestamp !== "string") return false;
   return filter === "all" ||
-    Date.parse(request.created_at) >= Date.now() - Number(filter) * 24 * 60 * 60 * 1000;
+    Date.parse(timestamp) >= Date.now() - Number(filter) * 24 * 60 * 60 * 1000;
 }
 
 /** Chi PENDING + can_decide (server-derived) moi hien nut "Xem xet". */
@@ -64,10 +73,12 @@ function ChangeRequestListContent({
   busyRequestId,
   compact = false,
   queueFilter,
+  canViewGlobalHistory,
   resolvedAgeFilter,
   onResolvedAgeFilterChange,
   loadedRequestCount,
   onQueueFilterChange,
+  onGlobalHistoryAgeFilterChange,
   onLoadMore,
   onWithdraw,
   onReview,
@@ -114,14 +125,18 @@ function ChangeRequestListContent({
         ariaLabel="Trạng thái yêu cầu thay đổi"
         panelId="change-request-queue-panel"
         value={queueFilter}
-        tabs={QUEUE_TABS}
+        tabs={canViewGlobalHistory ? QUEUE_TABS : QUEUE_TABS.slice(0, 2)}
         onChange={onQueueFilterChange}
       >
-      {queueFilter === "RESOLVED" && (
+      {(queueFilter === "RESOLVED" || queueFilter === "GLOBAL_AUDIT") && (
         <label className={styles.field}>
-          Lịch sử đã xử lý
+          {queueFilter === "GLOBAL_AUDIT" ? "Lịch sử duyệt" : "Lịch sử đã xử lý"}
           <select aria-label="Khoảng thời gian đề xuất đã xử lý" value={resolvedAgeFilter}
-            onChange={(event) => onResolvedAgeFilterChange(event.target.value as ResolvedAgeFilter)}>
+            onChange={(event) => {
+              const filter = event.target.value as ResolvedAgeFilter;
+              onResolvedAgeFilterChange(filter);
+              onGlobalHistoryAgeFilterChange?.(filter);
+            }}>
             <option value="3">3 ngày gần nhất</option>
             <option value="7">7 ngày gần nhất</option>
             <option value="30">30 ngày gần nhất</option>
@@ -133,9 +148,13 @@ function ChangeRequestListContent({
         {state === "loading" && "Đang tải danh sách yêu cầu thay đổi…"}
         {state === "error" && `Không tải được danh sách yêu cầu thay đổi (${message}).`}
         {state === "ready" && requests.length === 0 && loadedRequestCount === 0 &&
-          "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi."}
+          (queueFilter === "GLOBAL_AUDIT"
+            ? "Chưa có lịch sử duyệt trong khoảng thời gian đang chọn."
+            : "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi.")}
         {state === "ready" && requests.length === 0 && loadedRequestCount > 0 &&
-          "Không có đề xuất đã xử lý trong khoảng thời gian đang chọn."}
+          (queueFilter === "GLOBAL_AUDIT"
+            ? "Chưa có lịch sử duyệt trong khoảng thời gian đang chọn."
+            : "Không có đề xuất đã xử lý trong khoảng thời gian đang chọn.")}
       </div>
 
       <div className={compact ? styles.compactListViewport : undefined}>
@@ -159,6 +178,12 @@ function ChangeRequestListContent({
               <p className={styles.submissionHint} data-testid="change-request-proposer">
                 Người đề xuất: {request.proposer_display_name}
               </p>
+              {queueFilter === "GLOBAL_AUDIT" && typeof request.decided_by_display_name === "string" &&
+                typeof request.decided_at === "string" && (
+                <p className={styles.submissionHint} data-testid="change-request-decision-audit">
+                  Người xử lý: {request.decided_by_display_name} · {formatHcmDateTime(request.decided_at)}
+                </p>
+              )}
               <dl className={compact ? styles.compactMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{request.item_count}</dd></div>
                 <div><dt>Tạo lúc</dt><dd>{formatHcmDateTime(request.created_at)}</dd></div>
@@ -248,8 +273,9 @@ function ChangeRequestListContent({
 
 export function DirectEntryChangeRequestList(props: ChangeRequestListProps) {
   const [resolvedAgeFilter, setResolvedAgeFilter] = useState<ResolvedAgeFilter>("3");
-  const visibleRequests = props.queueFilter === "RESOLVED"
-    ? props.requests.filter((request) => isWithinResolvedAge(request, resolvedAgeFilter))
+  const visibleRequests = props.queueFilter === "RESOLVED" || props.queueFilter === "GLOBAL_AUDIT"
+    ? props.requests.filter((request) =>
+      isWithinResolvedAge(request, resolvedAgeFilter, props.queueFilter === "GLOBAL_AUDIT"))
     : props.requests;
   const contentProps = {
     ...props,
@@ -266,7 +292,8 @@ export function DirectEntryChangeRequestList(props: ChangeRequestListProps) {
       title="Yêu cầu thay đổi"
       loadedCount={visibleRequests.length}
       badges={[{ count: displayedCount,
-        label: props.queueFilter === "PENDING" ? "đang chờ xử lý" : "đã xử lý" }]}
+        label: props.queueFilter === "PENDING" ? "đang chờ xử lý"
+          : props.queueFilter === "GLOBAL_AUDIT" ? "lịch sử duyệt" : "đã xử lý" }]}
       state={props.state}
     >
       <ChangeRequestListContent {...contentProps} compact />

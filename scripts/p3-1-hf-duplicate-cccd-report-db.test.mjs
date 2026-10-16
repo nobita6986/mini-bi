@@ -77,10 +77,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 108, "the ledger carries W03A-R2 #84 and append-only migrations through #108");
-  assert.equal(names[names.length - (1 + 34)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
-  assert.equal(names[names.length - (1 + 35)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
-  assert.equal(names[names.length - (1 + 47)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.length, 109, "the ledger carries W03A-R2 #84 and append-only migrations through #109");
+  assert.equal(names[names.length - (1 + 35)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
+  assert.equal(names[names.length - (1 + 36)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
+  assert.equal(names[names.length - (1 + 48)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 

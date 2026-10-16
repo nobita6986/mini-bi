@@ -73,6 +73,14 @@ export function canReviewChangeRequests(input: {
     input.capabilities.includes("change_review");
 }
 
+export function canViewGlobalChangeRequestHistory(
+  capabilities: readonly string[] | null,
+  scopes: readonly { kind: string }[] = [],
+): boolean {
+  if (capabilities === null || !scopes.some((scope) => scope.kind === "all")) return false;
+  return capabilities.includes("change_review") || capabilities.includes("entry_admin");
+}
+
 export function canDirectlyCorrectWorkers(input: WorkerOperationsActor | null): boolean {
   return input !== null && input.scopes.some((scope) => scope.kind === "all") &&
     input.capabilities.some((capability) =>

@@ -42,6 +42,10 @@ export const ACTORS = Object.freeze({
     auth_subject: "10000000-0000-4000-8000-000000000005",
     app_user_id: "20000000-0000-4000-8000-000000000005",
   },
+  admin: {
+    auth_subject: "10000000-0000-4000-8000-000000000007",
+    app_user_id: "20000000-0000-4000-8000-000000000007",
+  },
 });
 
 export async function createMigratedDatabase() {
@@ -166,6 +170,7 @@ export async function seedChangeRequestFixture(db, {
   await insertActor(db, ACTORS.reviewerAll, ["change_review", "pii_view"], "all", null);
   await insertActor(db, ACTORS.reviewerNoCapability, [], "team", TEAM_A);
   await insertActor(db, ACTORS.outsider, ["change_review"], "own", null);
+  await insertActor(db, ACTORS.admin, ["entry_admin"], "all", null);
 
   const rows = [
     { code: "hrp-2026-300001", recruiterId: RECRUITER_A },
@@ -263,6 +268,14 @@ export function listChangeRequests(db, actor, { pageSize = 20, cursor = null, st
     [actor.auth_subject, actor.app_user_id, pageSize, cursor, state]);
 }
 
+export function listGlobalChangeRequestHistory(db, actor, {
+  pageSize = 20, cursor = null, days = 3,
+} = {}) {
+  return mutate(db,
+    "select public.direct_entry_list_global_change_request_history($1::uuid,$2::uuid,$3::integer,$4::text,$5::integer) as data",
+    [actor.auth_subject, actor.app_user_id, pageSize, cursor, days]);
+}
+
 export function readChangeRequest(db, actor, requestId) {
   return mutate(db,
     "select public.direct_entry_read_change_request($1::uuid,$2::uuid,$3::uuid) as data",
@@ -277,6 +290,16 @@ export async function setRequestCreatedAt(db, requestId, stamp) {
   await db.exec("alter table public.direct_entry_change_requests disable trigger direct_entry_change_request_transition");
   try {
     await db.query("update public.direct_entry_change_requests set created_at = $2::timestamptz where request_id = $1",
+      [requestId, stamp]);
+  } finally {
+    await db.exec("alter table public.direct_entry_change_requests enable trigger direct_entry_change_request_transition");
+  }
+}
+
+export async function setRequestDecidedAt(db, requestId, stamp) {
+  await db.exec("alter table public.direct_entry_change_requests disable trigger direct_entry_change_request_transition");
+  try {
+    await db.query("update public.direct_entry_change_requests set decided_at = $2::timestamptz where request_id = $1",
       [requestId, stamp]);
   } finally {
     await db.exec("alter table public.direct_entry_change_requests enable trigger direct_entry_change_request_transition");

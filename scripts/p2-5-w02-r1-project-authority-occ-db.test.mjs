@@ -57,10 +57,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 108, "the ledger carries append-only migrations through #108");
-  assert.equal(names[names.length - (1 + 57)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (1 + 55)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (1 + 56)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names.length, 109, "the ledger carries append-only migrations through #109");
+  assert.equal(names[names.length - (1 + 58)], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - (1 + 56)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (1 + 57)], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
@@ -895,8 +895,8 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 108,
-    "the repository ledger contains append-only migrations through #108; Production status is verified separately");
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 109,
+    "the repository ledger contains append-only migrations through #109; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
   // grouped-apply mode that could make the two files atomic.

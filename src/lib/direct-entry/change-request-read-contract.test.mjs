@@ -66,8 +66,8 @@ function query(text) {
   return projectChangeRequestListQuery(new URLSearchParams(text));
 }
 
-test("list query accepts only page_size, cursor and the locked state vocabulary", () => {
-  assert.deepEqual(query("").value, { page_size: LIST_DEFAULT_PAGE_SIZE, cursor: null, state: null });
+test("list query accepts the exact state and history-window vocabulary", () => {
+  assert.deepEqual(query("").value, { page_size: LIST_DEFAULT_PAGE_SIZE, cursor: null, state: null, days: null });
   assert.equal(query("page_size=1").value.page_size, 1);
   assert.equal(query("page_size=" + LIST_MAX_PAGE_SIZE).value.page_size, LIST_MAX_PAGE_SIZE);
   assert.equal(query("cursor=" + cursor).value.cursor, cursor);
@@ -75,8 +75,12 @@ test("list query accepts only page_size, cursor and the locked state vocabulary"
     assert.equal(query("state=" + state).value.state, state);
   }
   assert.deepEqual(query("page_size=2&state=PENDING&cursor=" + cursor).value, {
-    page_size: 2, cursor, state: "PENDING",
+    page_size: 2, cursor, state: "PENDING", days: null,
   });
+  assert.deepEqual(query("state=GLOBAL_AUDIT&days=3").value,
+    { page_size: LIST_DEFAULT_PAGE_SIZE, cursor: null, state: "GLOBAL_AUDIT", days: 3 });
+  assert.deepEqual(query("state=GLOBAL_AUDIT&days=all").value,
+    { page_size: LIST_DEFAULT_PAGE_SIZE, cursor: null, state: "GLOBAL_AUDIT", days: null });
 });
 
 test("invalid or unknown list query parameters fail closed", () => {
@@ -85,10 +89,31 @@ test("invalid or unknown list query parameters fail closed", () => {
     "page_size=020",
     "cursor=not-a-cursor", "cursor=20261003100400000000", "cursor=",
     "state=pending", "state=UNKNOWN", "state=",
+    "state=GLOBAL_AUDIT", "state=GLOBAL_AUDIT&days=2", "state=PENDING&days=3", "days=all",
     "order=created_at", "offset=10", "limit=5", "column=state", "sql=1",
     "page_size=2&page_size=3",
   ]) {
     assert.deepEqual(query(text), { ok: false, code: "CHANGE_REQUEST_QUERY_INVALID" }, text);
+  }
+});
+
+test("global audit projection requires decision actor and timestamp and accepts no extra fields", () => {
+  const auditItem = {
+    ...listItem({ state: "APPROVED", can_withdraw: false, can_decide: false }),
+    decided_by_display_name: "Approver",
+    decided_at: "2026-10-16T10:00:00.000000Z",
+  };
+  const page = listPage({ requests: [auditItem] });
+  assert.deepEqual(projectChangeRequestListPage(page, { page_size: LIST_DEFAULT_PAGE_SIZE, audit: true }), page);
+  assert.equal(projectChangeRequestListPage(page, { page_size: LIST_DEFAULT_PAGE_SIZE }), null);
+  for (const invalid of [
+    { ...auditItem, decided_by_display_name: " " },
+    { ...auditItem, decided_at: "2026-10-16T10:00:00Z" },
+    Object.fromEntries(Object.entries(auditItem).filter(([key]) => key !== "decided_at")),
+    { ...auditItem, extra: true },
+  ]) {
+    assert.equal(projectChangeRequestListPage(listPage({ requests: [invalid] }),
+      { page_size: LIST_DEFAULT_PAGE_SIZE, audit: true }), null);
   }
 });
 test("list page projection is exact and rejects coerced values", () => {

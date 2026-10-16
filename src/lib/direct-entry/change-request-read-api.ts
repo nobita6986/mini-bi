@@ -83,12 +83,20 @@ export async function listChangeRequests(
 
   let result: Awaited<ReturnType<ChangeRequestReadRepository["listChangeRequests"]>>;
   try {
-    result = await dependencies.repository.listChangeRequests({
-      ...session.actor,
-      page_size: parsed.value.page_size,
-      cursor: parsed.value.cursor,
-      state: parsed.value.state,
-    });
+    result = parsed.value.state === "GLOBAL_AUDIT"
+      ? await dependencies.repository.listGlobalChangeRequestHistory({
+        ...session.actor,
+        page_size: parsed.value.page_size,
+        cursor: parsed.value.cursor,
+        days: parsed.value.days,
+      })
+      : await dependencies.repository.listChangeRequests({
+        ...session.actor,
+        page_size: parsed.value.page_size,
+        cursor: parsed.value.cursor,
+        state: parsed.value.state,
+        days: parsed.value.days,
+      });
   } catch {
     console.error("[direct-entry] change request list failed");
     return fail("CHANGE_REQUEST_UNAVAILABLE", 500);

@@ -59,6 +59,7 @@ test("read boundary never touches tables, mutation RPCs or client authority", ()
     assert.doesNotMatch(repository, new RegExp(forbidden), forbidden);
   }
   assert.match(repository, /direct_entry_list_change_requests/);
+  assert.match(repository, /direct_entry_list_global_change_request_history/);
   assert.match(repository, /direct_entry_read_change_request/);
   assert.doesNotMatch(api, /request\.headers\.get\("idempotency-key"\)/);
   assert.doesNotMatch(api, /await request\.json\(\)/);
