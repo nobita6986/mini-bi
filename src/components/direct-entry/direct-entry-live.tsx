@@ -1493,7 +1493,7 @@ export function DirectEntryLive() {
       cells: row.cells,
       displayValues: Object.keys(placeholderValues).length > 0
         ? placeholderValues : undefined,
-      editableFields: SPREADSHEET_WRITABLE_FIELD_KEYS,
+      editableFields: ["provider_type", ...SPREADSHEET_WRITABLE_FIELD_KEYS],
       employeeCode: row.cells.employee_code ?? "",
       displayName: row.cells.display_name ?? "",
       projectLabel: projectLabelFor(row.cells.project_id ?? ""),
