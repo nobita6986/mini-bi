@@ -109,7 +109,7 @@ test("assertions 1-2: 108 migrations, #71 stays append-only, and #72 remains W02
   const names = await readMigrationNames();
   assert.equal(names.length, 108, "the ledger carries the complete 108-migration ledger");
   assert.equal(names[70], NEW_MIGRATION, "#71 remains the W01D migration");
-  assert.equal(names.at(-(36 + 1)), W02A_MIGRATION, "#72 remains the W02-A migration");
+  assert.equal(names.at(-37), W02A_MIGRATION, "#72 remains the W02-A migration");
   assert.equal(names.filter((name) => name.startsWith("20261009070000")).length, 1,
     "exactly one migration occupies the #71 slot");
   assert.equal(names.filter((name) => name.startsWith("20261009060000")).length, 1,

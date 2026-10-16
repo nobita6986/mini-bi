@@ -255,7 +255,7 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   inventoryBefore = state.baseline;
   allMigrationsForNames = state.migrations.slice(0, state.leaderMigrationAt + 1);
   assert.equal(migrationNames.length, 108);
-  assert.equal(migrationNames.at(-35), MIGRATION_71);
+  assert.equal(migrationNames.at(-38), MIGRATION_71);
   assert.equal(migrationNames.some((name) => name.startsWith("202610100")), false);
 
   await db.query(
