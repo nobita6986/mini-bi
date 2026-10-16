@@ -75,7 +75,11 @@ import {
   projectOwnDrafts,
   type OwnDraft,
 } from "@/lib/direct-entry/draft-list-contract";
-import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
+import type {
+  DraftCatalog,
+  DraftPaymentAccountField,
+  DraftProfileField,
+} from "@/lib/direct-entry/write-repository";
 import {
   activeLaborTypeLabel,
   firstActiveLaborTypeKey,
@@ -140,6 +144,16 @@ const CHANGE_REQUEST_LIST_KEYS = ["requests", "page_size", "has_more", "next_cur
 const CHANGE_REQUEST_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const SUBMISSION_LIST_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
 const SUBMISSION_TRANSITION_KEYS = ["submission_id", "state", "version"] as const;
+const DRAFT_EDITABLE_GRID_FIELDS = Object.freeze([
+  "project_id", "first_work_date", "display_name", "provider_type", "recruiter_id",
+  "labor_type", "initial_status", "phone", "national_id", "gender", "date_of_birth",
+  "national_id_issued_at", "address", "account_number", "bank_name",
+  "account_holder_name", "general_note",
+]);
+const GENDER_CODES: Record<string, string> = { Nam: "MALE", "Nữ": "FEMALE", Khác: "OTHER" };
+const WORK_STATUS_CODES: Record<string, "ON" | "UNCONFIRMED"> = {
+  "Đang làm": "ON", "Đang làm việc": "ON", "Đang chờ việc": "UNCONFIRMED",
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -249,14 +263,49 @@ function createPayload(row: LiveDraftRow) {
 }
 
 function updatePayload(fields: EditableDraftFields) {
+  const worker = fields.profile.worker_details;
+  const optional = (field: { state: string; value?: string }) => field.state === "provided"
+    ? { state: "provided", value: field.value }
+    : { state: field.state };
+  const text = (field: { state: string; value?: string }) =>
+    field.state === "provided" ? field.value : null;
+  const paymentText = fields.profile.payment;
+  const hasPaymentText = paymentText && [
+    paymentText.account_number, paymentText.bank_name, paymentText.account_holder_name,
+  ].some((field) => field.state === "provided" && field.value?.trim());
   return {
     project_id: fields.projectId,
     first_work_date: fields.firstWorkDate,
     employee_code: fields.employeeCode,
-    worker_details: { display_name: fields.workerName },
+    worker_details: {
+      display_name: fields.workerName,
+      gender: optional(worker.gender),
+      date_of_birth: optional(worker.date_of_birth),
+      national_id: optional(worker.national_id),
+      national_id_issued_at: optional(worker.national_id_issued_at),
+      national_id_issued_place: optional(worker.national_id_issued_place),
+      address: optional(worker.address),
+      phone: optional(worker.phone),
+    },
     recruiter_id: fields.recruiterId,
     labor_type: fields.laborType,
+    general_note: text(fields.profile.general_note),
+    ...(fields.profile.payment ? { payment: {
+      state: hasPaymentText ? "provided" : "intentionally_blank",
+      account_number: hasPaymentText ? text(paymentText.account_number) : null,
+      bank_name: hasPaymentText ? text(paymentText.bank_name) : null,
+      account_holder_name: hasPaymentText ? text(paymentText.account_holder_name) : null,
+    } } : {}),
   };
+}
+
+function changedProfileField<T extends DraftProfileField | DraftPaymentAccountField>(
+  field: T, value: string, canonical?: string,
+): T {
+  const next = canonical ?? value;
+  if (field.state === "provided" && field.value === next) return field;
+  if (next !== "") return { state: "provided" as const, value: next } as T;
+  return (field.state === "provided" ? { state: "intentionally_blank" as const } : field) as T;
 }
 
 function optionsFor(catalog: DraftCatalog | undefined): PickerOption[] {
@@ -319,6 +368,7 @@ export function DirectEntryLive() {
   const inFlight = useRef(new Set<string>());
   const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
   const submissionsRef = useRef<SubmissionReadItem[]>([]);
+  const [editingDraftSubmissionId, setEditingDraftSubmissionId] = useState<string | null>(null);
   const [submissionQueue, setSubmissionQueue] = useState<SubmissionQueueFilter>("ACTIVE");
   const submissionQueueRef = useRef<SubmissionQueueFilter>("ACTIVE");
   const submissionLoadRequestRef = useRef(0);
@@ -471,6 +521,29 @@ export function DirectEntryLive() {
     if (!response.ok || !payload) throw new Error("DRAFTS_UNAVAILABLE");
     const serverRows = payload.map(draftRowFromProjection);
     setRows((current) => mergeReloadedDrafts(current, serverRows));
+  }, []);
+
+  const reloadSubmissionDraft = useCallback(async (submission: SubmissionReadItem) => {
+    try {
+      const response = await fetch("/api/direct-entry/drafts", {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const payload = parseOwnDrafts(await readJson(response));
+      if (!response.ok || !payload) throw new Error("DRAFTS_UNAVAILABLE");
+      const drafts = payload.filter((draft) => draft.submission_id === submission.submission_id);
+      if (drafts.length !== submission.entry_count) throw new Error("DRAFT_ROWS_INCOMPLETE");
+      const refreshed = drafts.map(draftRowFromProjection);
+      setRows((current) => [
+        ...current.filter((row) => row.submissionId !== submission.submission_id),
+        ...refreshed,
+      ]);
+      setEditingDraftSubmissionId(submission.submission_id);
+      setSelectedClientRowIdInternal(refreshed[0]?.rowId ?? null);
+      setLifecycleMessage("Đã tải lại " + refreshed.length + " dòng của bản nháp để sửa.");
+    } catch {
+      setLifecycleMessage("Không tải đủ dữ liệu bản nháp để sửa. Hãy thử lại.");
+    }
   }, []);
 
   /**
@@ -988,8 +1061,38 @@ export function DirectEntryLive() {
             typeof payload.submission_version !== "number") {
           throw new Error("SAVE_RESPONSE_INVALID");
         }
-        const entryVersion = payload.entry_version;
+        let entryVersion = payload.entry_version;
         const submissionVersion = payload.submission_version;
+        const oldEmployment = current.saved?.profile.employment;
+        const nextEmployment = pending.fields.profile.employment;
+        if (nextEmployment && nextEmployment.status !== oldEmployment?.status) {
+          const statusResponse = await fetch(
+            `/api/direct-entry/entries/${encodeURIComponent(current.entryId!)}/employment-status`,
+            {
+              method: "PATCH",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": `${pending.key}:status`,
+              },
+              body: JSON.stringify({
+                expected_entry_version: entryVersion,
+                status: nextEmployment.status,
+                effective_date: nextEmployment.effective_date,
+                leave_date: null,
+                leave_reason_text: null,
+                reason: "Cập nhật trạng thái trong bản nháp",
+              }),
+            },
+          );
+          const statusResult = await readJson(statusResponse);
+          if (!statusResponse.ok || !isRecord(statusResult) || statusResult.ok !== true ||
+              typeof statusResult.entry_version !== "number") {
+            throw new Error(isRecord(statusResult) && typeof statusResult.code === "string"
+              ? statusResult.code : "STATUS_UPDATE_FAILED");
+          }
+          entryVersion = statusResult.entry_version;
+        }
         setRows((existing) => existing.map((row) => {
           if (row.rowId !== rowId) return row;
           return acceptDraftUpdate(row, pending, { entryVersion, submissionVersion });
@@ -1276,8 +1379,10 @@ export function DirectEntryLive() {
     const projectLabelFor = (value: string, fallback = value) =>
       findCatalogOptionByStoredValue(projectOptions, value)?.label ?? fallback;
     const persisted: SpreadsheetGridRow[] = rows.map((row) => {
+      const draftEditActive = editingDraftSubmissionId !== null &&
+        row.submissionId === editingDraftSubmissionId;
       const editable = row.state !== "saving" && row.state !== "conflict" &&
-        isRowEditable(row, submissions);
+        isRowEditable(row, submissions) && (row.submissionId === null || draftEditActive);
       const profileCells = projectDraftProfileGridCells(row.profile);
       const employment = row.profile.employment;
       const employmentStatus = employment?.status ?? row.employmentStatus;
@@ -1319,10 +1424,9 @@ export function DirectEntryLive() {
           initial_status: employmentStatusLabel,
         },
         editableFields: editable
-          // P1.7-H05-R1: Mã NLĐ do server cấp; khong sua tren UI. 4 optional
-          // field (STK/Bank/AccountHolder/Note) chi editable khi staged; duoc
-          // hien thi read-only tren persisted (projection qua profileCells).
-          ? ["first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"]
+          ? (draftEditActive ? DRAFT_EDITABLE_GRID_FIELDS : [
+              "first_work_date", "display_name", "project_id", "recruiter_id", "labor_type",
+            ])
           : [],
         employeeCode: row.employeeCode,
         displayName: row.workerName,
@@ -1376,7 +1480,7 @@ export function DirectEntryLive() {
       saveStatus: spreadsheetRowIsBlank(row) ? "" : "Chưa lưu",
     }); });
     return [...persisted, ...staged];
-  }, [cccdCache, currentCatalog, rows, stagedModel, submissions]);
+  }, [cccdCache, currentCatalog, editingDraftSubmissionId, rows, stagedModel, submissions]);
 
   /**
    * P1.7-H06: selected spreadsheet row lookup. Tra ra cho contextual action
@@ -1457,9 +1561,63 @@ export function DirectEntryLive() {
       if (safePatch.display_name !== undefined) draftPatch.workerName = safePatch.display_name;
       if (safePatch.project_id !== undefined) draftPatch.projectId = safePatch.project_id;
       if (safePatch.recruiter_id !== undefined) draftPatch.recruiterId = safePatch.recruiter_id;
-      if (safePatch.labor_type !== undefined) {
-        draftPatch.laborType = safePatch.labor_type;
+      if (safePatch.labor_type !== undefined) draftPatch.laborType = safePatch.labor_type;
+      if (safePatch.provider_type === "hrp" || safePatch.provider_type === "vendor") {
+        const recruiter = currentCatalog?.recruiters.find((option) =>
+          option.provider_type === safePatch.provider_type);
+        if (!recruiter) return;
+        draftPatch.providerType = recruiter.provider_type;
+        draftPatch.recruiterId = recruiter.recruiter_id;
       }
+      const workerKeys = ["phone", "national_id", "gender", "date_of_birth",
+        "national_id_issued_at", "national_id_issued_place", "address"] as const;
+      const worker = { ...persistedRow.profile.worker_details };
+      let workerChanged = false;
+      for (const key of workerKeys) {
+        if (safePatch[key] === undefined) continue;
+        const currentField = worker[key];
+        const canonical = key === "gender" ? GENDER_CODES[safePatch[key]] : undefined;
+        worker[key] = changedProfileField(currentField, safePatch[key], canonical) as typeof currentField;
+        workerChanged = true;
+      }
+      if (safePatch.display_name !== undefined) {
+        draftPatch.workerName = safePatch.display_name;
+        worker.display_name = { state: "provided", value: safePatch.display_name };
+        workerChanged = true;
+      }
+      let profile = persistedRow.profile;
+      if (workerChanged) profile = { ...profile, worker_details: worker };
+      if (safePatch.general_note !== undefined) {
+        profile = { ...profile, general_note: safePatch.general_note === ""
+          ? { state: "intentionally_blank" } : { state: "provided", value: safePatch.general_note } };
+      }
+      if (safePatch.initial_status !== undefined && profile.employment) {
+        const status = WORK_STATUS_CODES[safePatch.initial_status];
+        if (status) profile = { ...profile, employment: { ...profile.employment, status } };
+      }
+      const paymentKeys = ["account_number", "bank_name", "account_holder_name"] as const;
+      if (paymentKeys.some((key) => safePatch[key] !== undefined)) {
+        const previous = profile.payment;
+        const payment = previous ?? {
+          state: "intentionally_blank" as const,
+          account_number: { state: "intentionally_blank" as const },
+          bank_name: { state: "intentionally_blank" as const },
+          account_holder_name: { state: "intentionally_blank" as const },
+          version: 0,
+        };
+        profile = { ...profile, payment: {
+          ...payment,
+          account_number: safePatch.account_number === undefined ? payment.account_number
+            : changedProfileField(payment.account_number, safePatch.account_number),
+          bank_name: safePatch.bank_name === undefined ? payment.bank_name
+          : changedProfileField(payment.bank_name, safePatch.bank_name) as DraftProfileField,
+          account_holder_name: safePatch.account_holder_name === undefined
+            ? payment.account_holder_name
+            : changedProfileField(payment.account_holder_name, safePatch.account_holder_name) as DraftProfileField,
+          state: "provided",
+        } };
+      }
+      if (profile !== persistedRow.profile) draftPatch.profile = profile;
       if (Object.keys(draftPatch).length === 0) return;
       setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
       // P3-W07C-R6: doi ngay bat dau lam viec KHONG phat request catalog theo ngay moi.
@@ -1470,18 +1628,30 @@ export function DirectEntryLive() {
       current, clientRowId, safePatch, new Date(),
       firstActiveLaborTypeKey(currentCatalog?.labor_types),
     ));
-  }, [currentCatalog?.labor_types, rows, setStagedModel]);
+  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, rows, setStagedModel]);
 
   const onStagedProviderTypeChange = useCallback((
     clientRowId: string,
     providerType: "hrp" | "vendor" | "",
   ) => {
+    const persistedRow = rows.find((row) => row.rowId === clientRowId);
+    if (persistedRow) {
+      if (!providerType) return;
+      const recruiter = currentCatalog?.recruiters.find((option) =>
+        option.provider_type === providerType);
+      if (!recruiter) return;
+      setRows((current) => updateLiveDraftRow(current, clientRowId, {
+        providerType,
+        recruiterId: recruiter.recruiter_id,
+      }));
+      return;
+    }
     setStagedModel((current) =>
       updateSpreadsheetRowProviderType(
         current, clientRowId, providerType, new Date(),
         firstActiveLaborTypeKey(currentCatalog?.labor_types),
       ));
-  }, [currentCatalog?.labor_types, setStagedModel]);
+  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, rows, setStagedModel]);
 
   const onStagedPasteRejected = useCallback((reason: SpreadsheetPasteRejection) => {
     setStagedRejection(PASTE_REJECTION_MESSAGES[reason]);
@@ -1980,6 +2150,7 @@ export function DirectEntryLive() {
             onLoadMore={() => void loadSubmissions("append")}
             onPreflight={preflightDuplicateCccd}
             onTransition={(input) => runTransition(input)}
+            onEditDraft={(submission) => void reloadSubmissionDraft(submission)}
             onRequestChange={(submission) => setProposerSubmission(submission)}
             onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
           />
@@ -2719,7 +2890,7 @@ export function DirectEntryLive() {
                     <small>{selectedRow.laborTypeDisplay} · không còn hoạt động</small>
                   )}
                 </Field>
-                <DirectEntryPaymentEditor
+                {editingDraftSubmissionId !== selectedRow.submissionId && <DirectEntryPaymentEditor
                   key={`${selectedRow.rowId}:${selectedRow.entryId ?? "new"}`}
                   entryId={selectedRow.entryId}
                   entryVersion={selectedRow.entryVersion}
@@ -2730,7 +2901,7 @@ export function DirectEntryLive() {
                     !selectedRowLocked}
                   canView={capabilities.includes("payment_view")}
                   onEntryVersionChange={onPaymentEntryVersionChange}
-                />
+                />}
                 <DirectEntryDocumentEditor
                   key={`documents-${selectedRow.rowId}:${selectedRow.entryId ?? "new"}`}
                   entryId={selectedRow.entryId}

@@ -544,7 +544,7 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
     },
     async updateDraftRow(input) {
       try {
-        const { data, error } = await callRpc("direct_entry_update_draft_row", {
+        const { data, error } = await callRpc("direct_entry_update_own_draft_row", {
           p_auth_subject: input.auth_subject,
           p_app_user_id: input.app_user_id,
           p_entry_id: input.entry_id,

@@ -45,7 +45,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 103, "the ledger carries append-only migrations through #103");
+  assert.equal(names.length, 104, "the ledger carries append-only migrations through #103");
   assert.equal(names[names.length - (12)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
   assert.equal(names.at(-4), DEFAULT_CAPABILITIES_MIGRATION);

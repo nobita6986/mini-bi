@@ -64,7 +64,7 @@ test("state labels cover the three lifecycle states", () => {
 test("action matrix comes from the server transitions and never from client state", () => {
   const draftActions = actionsForSubmission(submission());
   assert.deepEqual(draftActions.map((action) => action.target_state), ["SUBMITTED"]);
-  assert.equal(draftActions[0].label, "Gửi chính thức");
+  assert.equal(draftActions[0].label, "Gửi duyệt");
   assert.match(draftActions[0].confirm_description, /trạng thái cuối/);
 
   const reviewActions = actionsForSubmission(submission({

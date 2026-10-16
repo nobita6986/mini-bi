@@ -203,7 +203,7 @@ test("repository maps catalog, drafts, and update only to their named RPCs and f
     assert.deepEqual(calls.map(({ name }) => name), [
       "direct_entry_input_catalog",
       "direct_entry_list_own_drafts",
-      "direct_entry_update_draft_row",
+      "direct_entry_update_own_draft_row",
     ]);
     assert.equal(calls[0].args.p_auth_subject, actor.auth_subject);
     assert.equal(calls[0].args.p_app_user_id, actor.app_user_id);
@@ -386,4 +386,26 @@ test("PATCH treats omission as preserve and requires an explicit representation 
     expected_version: 1, patch: { worker_details: { address: null } },
   }), draft.entry_id, "true", implicitClear)).status, 400);
   assert.equal(implicitClear.calls.length, 0);
+});
+
+test("PATCH accepts ordinary text fields for bank details without a payment capability contract", async () => {
+  const dependencies = deps();
+  const payment = {
+    state: "provided",
+    account_number: "00001234",
+    bank_name: "Ngân hàng thử nghiệm",
+    account_holder_name: "Nguyễn Văn A",
+  };
+  const response = await patchDraftEntry(
+    patchRequest({ expected_version: 1, patch: { payment } }),
+    draft.entry_id, "true", dependencies,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(dependencies.calls.at(-1).input.patch, { payment });
+
+  const invalid = await patchDraftEntry(
+    patchRequest({ expected_version: 1, patch: { payment: { ...payment, account_number: "x".repeat(65) } } }),
+    draft.entry_id, "true", deps(),
+  );
+  assert.equal(invalid.status, 400);
 });

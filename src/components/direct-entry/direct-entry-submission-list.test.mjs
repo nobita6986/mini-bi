@@ -27,6 +27,12 @@ test("confirmation uses Radix AlertDialog without manual modal plumbing", () => 
   assert.doesNotMatch(listComponent + liveComponent, /createFocusTrap|focus-trap|aria-modal="true"/);
 });
 
+test("DRAFT cards expose edit before the renamed submit action", () => {
+  assert.match(listComponent, /submission\.state === "DRAFT"[\s\S]*?Sửa/);
+  assert.match(listComponent, /onEditDraft\(submission\)/);
+  assert.match(helper, /label: "Gửi duyệt"/);
+});
+
 test("UI boundary sends only contract fields and never client authority", () => {
   for (const file of [listComponent, liveComponent, helper]) {
     assert.doesNotMatch(file, CLIENT_AUTHORITY);
@@ -43,7 +49,7 @@ test("UI boundary sends only contract fields and never client authority", () => 
   assert.match(liveComponent, /idempotency_key: resolved\.key,/);
   const bodyStart = liveComponent.indexOf("body: JSON.stringify({") + "body: JSON.stringify({".length;
   const body = liveComponent.slice(bodyStart, liveComponent.indexOf("}),", bodyStart));
-  assert.equal((body.match(/: /g) ?? []).length, 3, "body chi co dung ba truong contract");
+  assert.equal((body.match(/: /g) ?? []).length, 2, "body chi co dung hai truong contract");
   assert.match(liveComponent, /cache: "no-store"/);
   assert.match(liveComponent, /credentials: "same-origin"/);
 });

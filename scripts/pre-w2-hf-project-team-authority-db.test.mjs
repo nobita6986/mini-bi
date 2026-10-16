@@ -69,7 +69,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 103, "the ledger includes PRE-W2-HF batch workflow #103");
+  assert.equal(names.length, 104, "the ledger includes PRE-W2-HF batch workflow #103");
   assert.equal(names.at(-1), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
     "direct-entry batch workflow is the append-only #103 migration");
   assert.equal(names.at(-2), "20261015170000_pre_w2_uploader_submission_queues.sql",

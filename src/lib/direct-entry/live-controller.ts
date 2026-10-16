@@ -8,6 +8,8 @@ export type EditableDraftFields = {
   projectId: string;
   recruiterId: string;
   laborType: LaborType;
+  providerType: "hrp" | "vendor" | null;
+  profile: DraftProfileProjection;
 };
 
 export type DraftSaveState = "clean" | "dirty" | "saving" | "saved" | "conflict" | "error";
@@ -43,13 +45,11 @@ export type LiveDraftRow = EditableDraftFields & {
   submissionId: string | null;
   entryVersion: number | null;
   submissionVersion: number | null;
-  providerType: "hrp" | "vendor" | null;
   teamId: string | null;
   teamDisplayName: string;
   projectDisplayName: string;
   recruiterDisplayName: string;
   employmentStatus: "UNCONFIRMED" | "ON" | "OFF" | null;
-  profile: DraftProfileProjection;
   state: DraftSaveState;
   saved: EditableDraftFields | null;
   pendingWrite: PendingDraftWrite | null;
@@ -65,6 +65,8 @@ export function draftRowFromProjection(draft: OwnDraft): LiveDraftRow {
     projectId: draft.project_id,
     recruiterId: draft.recruiter_id,
     laborType: draft.labor_type,
+    providerType: draft.provider_type,
+    profile: draft.profile,
   };
   return {
     ...fields,
@@ -74,13 +76,11 @@ export function draftRowFromProjection(draft: OwnDraft): LiveDraftRow {
     submissionId: draft.submission_id,
     entryVersion: draft.entry_version,
     submissionVersion: draft.submission_version,
-    providerType: draft.provider_type,
     teamId: draft.team_id,
     teamDisplayName: draft.team_display_name,
     projectDisplayName: draft.project_display_name,
     recruiterDisplayName: draft.recruiter_display_name,
     employmentStatus: draft.employment_status,
-    profile: draft.profile,
     state: "clean",
     saved: { ...fields },
     pendingWrite: null,
@@ -141,6 +141,8 @@ export function editableFields(row: LiveDraftRow): EditableDraftFields {
     projectId: row.projectId,
     recruiterId: row.recruiterId,
     laborType: row.laborType,
+    providerType: row.providerType,
+    profile: row.profile,
   };
 }
 
@@ -153,7 +155,9 @@ export function fieldsDiffer(
     left.workerName !== right.workerName ||
     left.projectId !== right.projectId ||
     left.recruiterId !== right.recruiterId ||
-    left.laborType !== right.laborType;
+    left.laborType !== right.laborType ||
+    left.providerType !== right.providerType ||
+    JSON.stringify(left.profile) !== JSON.stringify(right.profile);
 }
 
 export function updateLiveDraftRow(
@@ -190,6 +194,8 @@ export function changedDraftFields(
     ["projectId", "Dự án"],
     ["recruiterId", "Người tuyển"],
     ["laborType", "Loại hình lao động"],
+    ["providerType", "HRP/Vendor"],
+    ["profile", "Thông tin hồ sơ"],
   ];
   return labels.filter(([key]) => local[key] !== server[key]).map(([, label]) => label);
 }

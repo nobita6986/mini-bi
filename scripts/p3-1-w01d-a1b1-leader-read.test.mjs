@@ -104,7 +104,7 @@ async function createDatabase() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 103);
+  assert.equal(names.length, 104);
   const leaderMigrationAt = names.indexOf(MIGRATION_71);
   assert.equal(leaderMigrationAt, 70);
   const migrations = await Promise.all(names.map(async (name) => ({
@@ -254,7 +254,7 @@ test("P3.1-W01D-A1b1 read authority, interval contract, ACL and inventory", asyn
   migrationNames = state.names;
   inventoryBefore = state.baseline;
   allMigrationsForNames = state.migrations.slice(0, state.leaderMigrationAt + 1);
-  assert.equal(migrationNames.length, 103);
+  assert.equal(migrationNames.length, 104);
   assert.equal(migrationNames.at(-33), MIGRATION_71);
   assert.equal(migrationNames.some((name) => name.startsWith("202610100")), false);
 
