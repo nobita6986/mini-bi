@@ -20,6 +20,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const ROOT = process.cwd();
@@ -56,7 +57,7 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 102, "the ledger carries append-only migrations through #102");
+  assert.equal(names.length, 103, "the ledger carries append-only migrations through #103");
   assert.equal(names[names.length - (52)], W02_MIGRATION, "W02 is #51");
   assert.equal(names[names.length - (50)], W04_MIGRATION, "W04 is #53");
   assert.equal(names[names.length - (51)], W03_MIGRATION, "P2.5-W03 stays at #52");
@@ -251,9 +252,7 @@ async function insertSubmittedEntry(db, { project, recruiter = REC_D, createdBy 
         national_id: { state: "omitted" }, address: { state: "omitted" },
         phone: { state: "omitted" } }),
       recruiter, TEAM]);
-  await db.query(
-    "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-    [submission]);
+  await seedLegacyReviewSubmission(db, submission);
   await db.query(
     "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
     [submission]);
@@ -896,8 +895,8 @@ test("R1: #50/#51 keep ledger order and cannot be grouped atomically", async () 
       name + " closes its own transaction with an inner COMMIT");
   }
   assert.ok(W07E_MIGRATION < W02_MIGRATION, "#51 always applies after #50");
-  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 102,
-    "the repository ledger contains append-only migrations through #102; Production status is verified separately");
+  assert.equal((await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).length, 103,
+    "the repository ledger contains append-only migrations through #103; Production status is verified separately");
 
   // The repo's only apply path is one transaction PER FILE, so there is no
   // grouped-apply mode that could make the two files atomic.

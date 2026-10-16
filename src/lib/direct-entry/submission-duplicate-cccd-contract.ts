@@ -1,5 +1,5 @@
 /**
- * P3.1-HF-R1 - Hop dong canh bao CCCD trung khi DRAFT -> REVIEW.
+ * P3.1-HF-R1 - Hop dong canh bao CCCD trung khi DRAFT -> SUBMITTED.
  *
  * Pure projection: khong I/O, khong doc session, khong goi DB. Server (RPC
  * public.direct_entry_submission_duplicate_cccd_preflight) la nguon su that; module nay:
@@ -20,7 +20,7 @@ export const DUPLICATE_CCCD_CONFLICT_KEYS = [
   "conflict_ref", "draft_display_name", "project_display", "employment_status", "cccd_last4",
 ] as const;
 
-/** Hai key acknowledgement: chi hop le cho DRAFT -> REVIEW, va phai di cung nhau. */
+/** Hai key acknowledgement: chi hop le cho DRAFT -> SUBMITTED, va phai di cung nhau. */
 export const DUPLICATE_CCCD_ACK_KEYS = [
   "duplicate_cccd_fingerprint", "duplicate_cccd_count",
 ] as const;
@@ -164,4 +164,3 @@ export function duplicateCccdModalMessage(conflict: DuplicateCccdConflict): stri
   }
   return "NLĐ " + name + " có số CCCD trùng với một hồ sơ " + subject + ".";
 }
-

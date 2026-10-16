@@ -15,7 +15,7 @@ const idempotencyKey = "submission-transition-synthetic-key";
 function validBody(overrides = {}) {
   return {
     expected_version: 3,
-    target_state: "REVIEW",
+    target_state: "SUBMITTED",
     idempotency_key: idempotencyKey,
     ...overrides,
   };
@@ -74,6 +74,8 @@ test("gate, CSRF, submissionId, content-type and authority fields fail before se
   assert.equal((await transitionSubmission(
     request(validBody({ extra: 1 })), submissionId, "true", deps)).status, 400);
   assert.equal((await transitionSubmission(
+    request(validBody({ target_state: "REVIEW" })), submissionId, "true", deps)).status, 400);
+  assert.equal((await transitionSubmission(
     request({ ...validBody(), actor: { app_user_id: actor.app_user_id } }), submissionId, "true", deps)).status, 400);
   assert.equal((await transitionSubmission(
     request(validBody({ idempotency_key: "other-key" }), { "idempotency-key": idempotencyKey }), submissionId, "true", deps)).status, 400);
@@ -111,7 +113,7 @@ test("session and actor mapping fail closed before the repository is called", as
 });
 
 test("valid transitions use only the server-derived actor and return the exact projection", async () => {
-  for (const target of ["REVIEW", "DRAFT", "SUBMITTED"]) {
+  for (const target of ["DRAFT", "SUBMITTED"]) {
     const deps = dependencies();
     const response = await transitionSubmission(
       request(validBody({ target_state: target })), submissionId, "true", deps);
@@ -139,7 +141,7 @@ test("idempotency replay and changed payload stay distinct at the boundary", asy
   const deps = dependencies({
     async transitionSubmission(input) {
       seen.push(input.idempotency_key + "|" + input.target_state + "|" + input.expected_version);
-      if (input.target_state !== "REVIEW") return { ok: false, kind: "conflict" };
+      if (input.target_state !== "SUBMITTED") return { ok: false, kind: "conflict" };
       return {
         ok: true,
         data: { submission_id: input.submission_id, state: input.target_state, version: 4 },
@@ -149,12 +151,12 @@ test("idempotency replay and changed payload stay distinct at the boundary", asy
   const first = await transitionSubmission(request(validBody()), submissionId, "true", deps);
   assert.equal(first.status, 200);
   const replay = await transitionSubmission(request(validBody()), submissionId, "true", deps);
-  assert.deepEqual(await replay.json(), { ok: true, submission_id: submissionId, state: "REVIEW", version: 4 });
+  assert.deepEqual(await replay.json(), { ok: true, submission_id: submissionId, state: "SUBMITTED", version: 4 });
   const changed = await transitionSubmission(
     request(validBody({ target_state: "DRAFT" })), submissionId, "true", deps);
   assert.equal(changed.status, 409);
   assert.equal((await changed.json()).code, "SUBMISSION_CONFLICT");
-  assert.deepEqual(seen, [idempotencyKey + "|REVIEW|3", idempotencyKey + "|REVIEW|3", idempotencyKey + "|DRAFT|3"]);
+  assert.deepEqual(seen, [idempotencyKey + "|SUBMITTED|3", idempotencyKey + "|SUBMITTED|3", idempotencyKey + "|DRAFT|3"]);
 });
 
 test("repository kinds map to a consistent sanitized HTTP vocabulary", async () => {

@@ -594,25 +594,17 @@ export async function executeImportPlan(client, plan, context) {
   let transitions = 0;
   for (const item of submissions) {
     if (item.targetState !== "SUBMITTED") continue;
-    // DRAFT -> REVIEW bang version cua create, REVIEW -> SUBMITTED bang version cua REVIEW.
-    const review = await client.query(
+    const submitted = await client.query(
       "select public.direct_entry_transition_submission(" +
       "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
       [item.chunk.uploader.auth_subject, item.chunk.uploader.app_user_id, item.submissionId,
-        item.version, "REVIEW",
-        deterministicUuid("t0-import-transition", context.batchId, item.submissionId, "REVIEW")]);
-    const reviewVersion = review.rows[0]?.data?.version;
-    if (typeof reviewVersion !== "number" || !Number.isInteger(reviewVersion) ||
-        reviewVersion <= item.version) {
+        item.version, "SUBMITTED",
+        deterministicUuid("t0-import-transition", context.batchId, item.submissionId, "SUBMITTED")]);
+    const submittedVersion = submitted.rows[0]?.data?.version;
+    if (typeof submittedVersion !== "number" || !Number.isInteger(submittedVersion) ||
+        submittedVersion !== item.version + 1) {
       throw new ImportValidationError("RPC_RESULT_INVALID");
     }
-    transitions += 1;
-    await client.query(
-      "select public.direct_entry_transition_submission(" +
-      "$1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) as data",
-      [item.chunk.uploader.auth_subject, item.chunk.uploader.app_user_id, item.submissionId,
-        reviewVersion, "SUBMITTED",
-        deterministicUuid("t0-import-transition", context.batchId, item.submissionId, "SUBMITTED")]);
     transitions += 1;
   }
   return { entryIds, employeeCodes, submissions, transitionCount: transitions,

@@ -3,14 +3,14 @@
  *
  * Luu y nghiep vu: luu ho so (create, update, paste, import, full profile, autosave,
  * save draft, rehire) KHONG bao gio bao loi hay hoi gi chi vi CCCD trung. Chi mot
- * duong duy nhat - DRAFT -> REVIEW - moi kiem tra va co the yeu cau nguoi dung xac nhan.
+ * duong duy nhat - DRAFT -> SUBMITTED - moi kiem tra va co the yeu cau nguoi dung xac nhan.
  *
  * Lane nay khoa bon nhom hop dong:
  *   A. status matrix: chi ON / UNCONFIRMED (ke ca thieu event => UNCONFIRMED) moi canh
  *      bao; OFF khong bao gio duoc canh bao;
  *   B. pham vi match: cung project, khac project, cung submission, self-match, soft
  *      delete, CCCD khong canonical, va bien the dinh dang;
- *   C. workflow: save/import van luu binh thuong, DRAFT -> REVIEW co conflict thi
+ *   C. workflow: save/import van luu binh thuong, DRAFT -> SUBMITTED co conflict thi
  *      confirmation-required voi zero residue, xac nhan dung fingerprint thi moi doi
  *      trang thai, fingerprint gia/stale khong bypass, idempotent replay va double-click
  *      khong tao transition/audit thu hai, va cac transition khac khong chay canh bao;
@@ -24,6 +24,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { replaceFunctionSourceForMutationProbe } from "./lib/mutate-pglite-function-source.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const HOTFIX_MIGRATION = "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql";
@@ -72,7 +73,7 @@ const OWNER_CAPABILITIES = [
 
 const CONFIRMATION_REQUIRED = /duplicate cccd acknowledgement required/;
 const CONFIRMATION_MALFORMED = /duplicate cccd acknowledgement is malformed/;
-const CONFIRMATION_TARGET = /duplicate cccd acknowledgement needs the review target/;
+const CONFIRMATION_TARGET = /duplicate cccd acknowledgement needs the submitted target/;
 
 async function buildDb() {
   const db = new PGlite();
@@ -86,9 +87,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102, "the ledger carries W03A-R2 #84 and append-only migrations through #102");
-  assert.equal(names[names.length - (29)], HOTFIX_MIGRATION, "the contract ships in #74");
-  assert.equal(names[names.length - (30)], PREVIOUS_MIGRATION, "#74 stays append-only");
+  assert.equal(names.length, 103, "the ledger carries append-only migrations through #103");
+  assert.equal(names[names.length - (30)], HOTFIX_MIGRATION, "the contract ships in #74");
+  assert.equal(names[names.length - (31)], PREVIOUS_MIGRATION, "#74 stays append-only");
   return db;
 }
 
@@ -185,8 +186,9 @@ async function seedExisting(db, {
   try {
     await db.query("insert into public.direct_entry_candidates (candidate_id) values ($1)", [candidate]);
     await db.query(
-      "insert into public.direct_entry_submissions (submission_id, created_by_user_id, state)" +
-      " values ($1,$2,'DRAFT')", [submission, OWNER_APP]);
+      "insert into public.direct_entry_submissions" +
+      " (submission_id, created_by_user_id, state, version, submitted_at)" +
+      " values ($1,$2,'SUBMITTED',3,now())", [submission, OWNER_APP]);
     await db.query(
       "insert into public.direct_entries (entry_id, submission_id, candidate_id, created_by_user_id," +
       " project_id, first_work_date, employee_code, worker_details, recruiter_id, team_id," +
@@ -194,12 +196,6 @@ async function seedExisting(db, {
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',null)",
       [entry, submission, candidate, OWNER_APP, project, date, code,
         JSON.stringify({ display_name: name, ...workerDetails(cccd) }), REC_A, TEAM]);
-    await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submission]);
-    await db.query(
-      "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
-      [submission]);
     let previous = null;
     let version = 1;
     for (const [status, supersedes, eventDate] of statuses) {
@@ -217,13 +213,13 @@ async function seedExisting(db, {
 }
 
 /** Mot submission DRAFT voi 1..n dong - duong vao cua preflight va confirm. */
-async function seedDraft(db, rows, { creator = OWNER_APP } = {}) {
+async function seedDraft(db, rows, { creator = OWNER_APP, state = "DRAFT", version = 1 } = {}) {
   const submission = nextId(2000);
   await db.exec("begin");
   try {
     await db.query(
-      "insert into public.direct_entry_submissions (submission_id, created_by_user_id, state)" +
-      " values ($1,$2,'DRAFT')", [submission, creator]);
+      "insert into public.direct_entry_submissions (submission_id, created_by_user_id, state, version)" +
+      " values ($1,$2,$3,$4)", [submission, creator, state, version]);
     const entryIds = [];
     for (const row of rows) {
       const candidate = nextId(1000);
@@ -281,7 +277,7 @@ async function preflight(db, { auth = OWNER_AUTH, app = OWNER_APP, submissionId 
 }
 
 async function legacyTransition(db, {
-  auth = OWNER_AUTH, app = OWNER_APP, submissionId, version, target = "REVIEW", key = null,
+  auth = OWNER_AUTH, app = OWNER_APP, submissionId, version, target = "SUBMITTED", key = null,
 }) {
   return (await db.query(
     "select public.direct_entry_transition_submission" +
@@ -290,7 +286,7 @@ async function legacyTransition(db, {
 }
 
 async function confirmedTransition(db, {
-  auth = OWNER_AUTH, app = OWNER_APP, submissionId, version, target = "REVIEW",
+  auth = OWNER_AUTH, app = OWNER_APP, submissionId, version, target = "SUBMITTED",
   key = null, fingerprint, conflicts,
 }) {
   return (await db.query(
@@ -394,10 +390,10 @@ test("P3.1-HF-R1 A1-A3: ON, UNCONFIRMED and a missing event all require confirma
         fingerprint: view.fingerprint, conflicts: view.conflict_count,
       });
       assert.equal(applied.status, "applied", item.label);
-      assert.equal(applied.state, "REVIEW", item.label);
+      assert.equal(applied.state, "SUBMITTED", item.label);
       assert.equal(applied.version, 2, item.label);
       assert.deepEqual(await submissionRow(db, draft.submissionId),
-        { state: "REVIEW", version: 2 }, item.label);
+        { state: "SUBMITTED", version: 2 }, item.label);
     }
   } finally {
     await db.close();
@@ -426,7 +422,7 @@ test("P3.1-HF-R1 A4-A5-A10: OFF never warns, so those transitions run without co
       const applied = await legacyTransition(db, {
         submissionId: draft.submissionId, version: 1, key: idemKey("off"),
       });
-      assert.equal(applied.state, "REVIEW", item.label);
+      assert.equal(applied.state, "SUBMITTED", item.label);
       assert.equal(applied.version, 2, item.label);
       const audit = await auditRows(db, draft.submissionId);
       assert.equal(audit.length, 1, item.label);
@@ -446,7 +442,7 @@ test("P3.1-HF-R1 A4-A5-A10: OFF never warns, so those transitions run without co
     const allOffApplied = await legacyTransition(db, {
       submissionId: allOff.submissionId, version: 1, key: idemKey("off10"),
     });
-    assert.equal(allOffApplied.state, "REVIEW", "A10");
+    assert.equal(allOffApplied.state, "SUBMITTED", "A10");
   } finally {
     await db.close();
   }
@@ -477,7 +473,7 @@ test("P3.1-HF-R1 A6-A7: the newest version decides (OFF -> ON correction, ON -> 
     assert.notEqual(reopened.entryId, changed.entryId);
     const applied = await confirmedTransition(db, { submissionId: draftB.submissionId, version: 1,
       fingerprint: viewB.fingerprint, conflicts: viewB.conflict_count });
-    assert.equal(applied.state, "REVIEW", "A7");
+    assert.equal(applied.state, "SUBMITTED", "A7");
   } finally {
     await db.close();
   }
@@ -659,7 +655,7 @@ test("P3.1-HF-R1 B17-B18: formatting variants and two rows of one submission sti
 });
 
 // ---------------------------------------------------------------------------
-// C. Workflow - canh bao chi nam tren DRAFT -> REVIEW.
+// C. Workflow - canh bao chi nam tren DRAFT -> SUBMITTED.
 // ---------------------------------------------------------------------------
 test("P3.1-HF-R1 C19-C20: create, import v2 and the legacy import all save a duplicate", async () => {
   const db = await buildDb();
@@ -728,8 +724,8 @@ test("P3.1-HF-R1 C21-C23: confirmation-required, cancel and a matching acknowled
     const applied = await confirmedTransition(db, { submissionId: draft.submissionId, version: 1,
       key: idemKey("c23"), fingerprint: view.fingerprint, conflicts: view.conflict_count });
     assert.deepEqual(applied, { status: "applied", submission_id: draft.submissionId,
-      state: "REVIEW", version: 2 }, "C23");
-    assert.deepEqual(await submissionRow(db, draft.submissionId), { state: "REVIEW", version: 2 });
+      state: "SUBMITTED", version: 2 }, "C23");
+    assert.deepEqual(await submissionRow(db, draft.submissionId), { state: "SUBMITTED", version: 2 });
     const audit = await auditRows(db, draft.submissionId);
     assert.equal(audit.length, 1, "C23: dung mot audit");
     assert.equal(audit[0].outcome, "APPLIED", "C23");
@@ -770,7 +766,7 @@ test("P3.1-HF-R1 C24: a conflict set that changes between preflight and confirm 
     const applied = await confirmedTransition(db, { submissionId: draft.submissionId, version: 1,
       key: idemKey("c24-live"), fingerprint: before.fingerprint,
       conflicts: before.conflict_count });
-    assert.equal(applied.state, "REVIEW", "C24: het conflict thi transition binh thuong");
+    assert.equal(applied.state, "SUBMITTED", "C24: het conflict thi transition binh thuong");
     const staleAudit = await auditRows(db, draft.submissionId);
     assert.equal(staleAudit.length, 1, "C24");
     assert.equal(staleAudit[0].reason_text, "Submission state transition",
@@ -803,7 +799,7 @@ test("P3.1-HF-R1 C24: a conflict set that changes between preflight and confirm 
     const confirmed = await confirmedTransition(db, { submissionId: draftB.submissionId, version: 1,
       key: idemKey("c24-final"), fingerprint: grownView.fingerprint,
       conflicts: grownView.conflict_count });
-    assert.equal(confirmed.state, "REVIEW", "C24: xac nhan lai voi tap moi");
+    assert.equal(confirmed.state, "SUBMITTED", "C24: xac nhan lai voi tap moi");
   } finally {
     await db.close();
   }
@@ -839,13 +835,13 @@ test("P3.1-HF-R1 C25: a forged, mismatched or malformed acknowledgement is refus
     // C25: fingerprint gia khong pha hong gi - xac nhan dung van chay.
     const applied = await confirmedTransition(db, { submissionId: draft.submissionId, version: 1,
       key: idemKey("c25-ok"), fingerprint: view.fingerprint, conflicts: view.conflict_count });
-    assert.equal(applied.state, "REVIEW", "C25");
+    assert.equal(applied.state, "SUBMITTED", "C25");
   } finally {
     await db.close();
   }
 });
 
-test("P3.1-HF-R1 C25b: the confirmed entry point accepts only a REVIEW target", async () => {
+test("P3.1-HF-R1 C25b: the confirmed entry point accepts only a SUBMITTED target", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -856,8 +852,8 @@ test("P3.1-HF-R1 C25b: the confirmed entry point accepts only a REVIEW target", 
     assert.equal(view.conflict_count, 1, "C25b");
     const key = idemKey("c25b-target");
     await assertRejects(() => confirmedTransition(db, { submissionId: draft.submissionId, version: 1,
-      key, target: "DRAFT", fingerprint: view.fingerprint, conflicts: view.conflict_count }),
-      CONFIRMATION_TARGET, "C25b: chi REVIEW moi duoc xac nhan");
+      key, target: "REVIEW", fingerprint: view.fingerprint, conflicts: view.conflict_count }),
+      CONFIRMATION_TARGET, "C25b: chi SUBMITTED moi duoc xac nhan");
     await assertZeroResidue(db, draft.submissionId, { version: 1, key });
   } finally {
     await db.close();
@@ -918,8 +914,8 @@ test("P3.1-HF-R1 C26-C27: a direct RPC, a legacy caller and every unmapped actor
     const cleanView = await preflight(db, { submissionId: clean.submissionId });
     assert.equal(cleanView.conflict_count, 0, "C27");
     const ok = await legacyTransition(db, { submissionId: clean.submissionId, version: 1 });
-    assert.equal(ok.state, "REVIEW", "C27");
-    // Preflight chi phuc vu DRAFT -> REVIEW.
+    assert.equal(ok.state, "SUBMITTED", "C27");
+    // Preflight chi phuc vu DRAFT -> SUBMITTED.
     await assertRejects(() => preflight(db, { submissionId: clean.submissionId }),
       /not a draft/, "C27: submission khong con la DRAFT");
   } finally {
@@ -941,7 +937,7 @@ test("P3.1-HF-R1 C28-C29: an exact replay and a double click create one transiti
     const first = await confirmedTransition(db, request);
     const replay = await confirmedTransition(db, request);
     assert.deepEqual(replay, first, "C28: replay tra dung ket qua cu");
-    assert.deepEqual(await submissionRow(db, draft.submissionId), { state: "REVIEW", version: 2 },
+    assert.deepEqual(await submissionRow(db, draft.submissionId), { state: "SUBMITTED", version: 2 },
       "C29: double click chi doi trang thai mot lan");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events where resource_ref = $1",
@@ -958,34 +954,111 @@ test("P3.1-HF-R1 C28-C29: an exact replay and a double click create one transiti
   }
 });
 
-test("P3.1-HF-R1 C30: REVIEW -> DRAFT and REVIEW -> SUBMITTED never ask again", async () => {
+test("P3.1-HF-R1 C30: legacy REVIEW transitions remain and new DRAFT cannot enter REVIEW", async () => {
   const db = await buildDb();
   try {
     await seed(db);
     await seedExisting(db, { cccd: "345678900", name: "R1 Existing Lifecycle", project: PROJ_A,
       date: "2026-01-05", statuses: [["ON", null]] });
-    const draft = await seedDraft(db, [{ cccd: "345678900", name: "R1 Draft Lifecycle" }]);
-    const first = await preflight(db, { submissionId: draft.submissionId });
-    await confirmedTransition(db, { submissionId: draft.submissionId, version: 1,
-      fingerprint: first.fingerprint, conflicts: first.conflict_count });
+    const draft = await seedDraft(db, [{ cccd: "345678900", name: "R1 Legacy REVIEW" }],
+      { state: "REVIEW", version: 2 });
 
-    // REVIEW -> DRAFT: khong chay lai canh bao.
+    // Batch REVIEW da ton tai van duoc tra ve DRAFT.
     const back = await legacyTransition(db, { submissionId: draft.submissionId, version: 2,
       target: "DRAFT" });
     assert.equal(back.state, "DRAFT", "C30");
-    // DRAFT -> REVIEW lai: conflict van con nen phai xac nhan.
-    await assertRejects(() => legacyTransition(db, { submissionId: draft.submissionId, version: 3 }),
-      CONFIRMATION_REQUIRED, "C30");
+    // DRAFT moi khong the tao buoc REVIEW; tu choi khong ghi audit/revision.
+    const rejectedKey = idemKey("c30-invalid-review");
+    const beforeRejected = {
+      audit: await count(db,
+        "select count(*) from public.direct_entry_audit_events" +
+        " where resource_ref = $1 and action = 'submission_transition'", [draft.submissionId]),
+      revisions: await count(db,
+        "select count(*) from public.direct_entry_submission_revisions" +
+        " where submission_id = $1 and version > 1", [draft.submissionId]),
+    };
+    await assertRejects(() => legacyTransition(db, {
+      submissionId: draft.submissionId, version: 3, target: "REVIEW", key: rejectedKey,
+    }),
+      /invalid submission mutation/, "C30");
+    assert.deepEqual(await submissionRow(db, draft.submissionId), { state: "DRAFT", version: 3 });
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events" +
+      " where resource_ref = $1 and action = 'submission_transition'", [draft.submissionId]),
+    beforeRejected.audit);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_submission_revisions" +
+      " where submission_id = $1 and version > 1", [draft.submissionId]), beforeRejected.revisions);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_rpc_idempotency where idempotency_key = $1",
+      [rejectedKey]), 0);
+
+    // Sau khi chuyen lai DRAFT, CCCD confirmation van bat buoc cho SUBMITTED.
     const second = await preflight(db, { submissionId: draft.submissionId });
-    await confirmedTransition(db, { submissionId: draft.submissionId, version: 3,
-      fingerprint: second.fingerprint, conflicts: second.conflict_count });
-    // REVIEW -> SUBMITTED: khong chay lai canh bao.
-    const submitted = await legacyTransition(db, { submissionId: draft.submissionId, version: 4,
-      target: "SUBMITTED" });
-    assert.equal(submitted.state, "SUBMITTED", "C30");
+    const key = idemKey("c30-direct-submit");
+    await assertRejects(() => legacyTransition(db, {
+      submissionId: draft.submissionId, version: 3, key,
+    }), CONFIRMATION_REQUIRED, "C30 DRAFT submit");
+    assert.deepEqual(await submissionRow(db, draft.submissionId), { state: "DRAFT", version: 3 });
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events" +
+      " where resource_ref = $1 and action = 'submission_transition'", [draft.submissionId]),
+    beforeRejected.audit);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_submission_revisions" +
+      " where submission_id = $1 and version > 1", [draft.submissionId]), beforeRejected.revisions);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_rpc_idempotency where idempotency_key = $1",
+      [key]), 0);
+    const confirmed = await confirmedTransition(db, {
+      submissionId: draft.submissionId, version: 3,
+      fingerprint: second.fingerprint, conflicts: second.conflict_count,
+    });
+    assert.equal(confirmed.state, "SUBMITTED", "C30 DRAFT submit");
+
+    // REVIEW batch cu co the submit truc tiep theo authority da co, khong can ack moi.
+    const review = await seedDraft(db, [{ cccd: "345678900", name: "R1 Legacy REVIEW submit" }],
+      { state: "REVIEW", version: 2 });
+    const submitted = await legacyTransition(db, {
+      submissionId: review.submissionId, version: 2, target: "SUBMITTED",
+    });
+    assert.equal(submitted.state, "SUBMITTED", "C30 legacy REVIEW submit");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events where resource_ref = $1",
-      [draft.submissionId]), 4, "C30: bon transition, bon audit");
+      [draft.submissionId]), 2, "C30: rejected REVIEW edge wrote no extra audit");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events where resource_ref = $1",
+      [review.submissionId]), 1, "C30 legacy REVIEW submit audit");
+  } finally {
+    await db.close();
+  }
+});
+
+test("mutation probe: removing duplicate confirmation permits a conflicting DRAFT submit", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await seedExisting(db, {
+      cccd: "456789012",
+      name: "R1 Mutation Existing",
+      project: PROJ_A,
+      date: "2026-01-05",
+      statuses: [["ON", null]],
+    });
+    const draft = await seedDraft(db, [
+      { cccd: "456789012", name: "R1 Mutation Duplicate" },
+    ]);
+    await replaceFunctionSourceForMutationProbe(db,
+      "public.direct_entry_transition_submission_apply(uuid,uuid,uuid,integer,text,text,text,integer)",
+      "      if v_conflict_count > 0 then",
+      "      if false then");
+    const mutant = await legacyTransition(db, {
+      submissionId: draft.submissionId,
+      version: 1,
+      key: idemKey("mutation-duplicate-confirmation"),
+    });
+    assert.equal(mutant.state, "SUBMITTED",
+      "without the duplicate confirmation check, the DB accepts a conflicting submit");
   } finally {
     await db.close();
   }
@@ -1107,9 +1180,3 @@ test("P3.1-HF-R1 D37: only the shared body writes a submission state, and no rai
     await db.close();
   }
 });
-
-
-
-
-
-

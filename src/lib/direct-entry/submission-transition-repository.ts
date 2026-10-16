@@ -34,7 +34,7 @@ export type SubmissionTransitionInput = ActorRef & {
   target_state: SubmissionState;
   idempotency_key: string;
   /**
-   * P3.1-HF-R1: acknowledgement bat buoc khi DRAFT -> REVIEW con conflict. Co cap nay thi
+   * P3.1-HF-R1: acknowledgement bat buoc khi DRAFT -> SUBMITTED con conflict. Co cap nay thi
    * repository goi entry point da xac nhan va server tu kiem tra lai tap conflict.
    */
   duplicate_cccd_fingerprint?: string;

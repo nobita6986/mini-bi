@@ -90,7 +90,7 @@ const submitted = await listOwnSubmissions(db, ACTORS.owner, { pageSize: 50, sta
 assert.deepEqual(submitted.data.items.map((item) => item.submission_id), [submissions.submitted]);
 pass("loc state tra dung tap con cho ca ba trang thai");
 
-assert.deepEqual(byId.get(submissions.draft).allowed_transitions, ["REVIEW"]);
+assert.deepEqual(byId.get(submissions.draft).allowed_transitions, ["SUBMITTED"]);
 assert.deepEqual(byId.get(submissions.review).allowed_transitions, ["DRAFT", "SUBMITTED"]);
 assert.deepEqual(byId.get(submissions.submitted).allowed_transitions, []);
 assert.equal(byId.get(submissions.submitted).submitted_at !== null, true);

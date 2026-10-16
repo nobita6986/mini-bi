@@ -34,7 +34,7 @@ function submission(overrides = {}) {
     created_at: createdAt,
     updated_at: createdAt,
     submitted_at: null,
-    allowed_transitions: ["REVIEW"],
+    allowed_transitions: ["SUBMITTED"],
     ...overrides,
   };
 }
@@ -63,9 +63,9 @@ test("state labels cover the three lifecycle states", () => {
 
 test("action matrix comes from the server transitions and never from client state", () => {
   const draftActions = actionsForSubmission(submission());
-  assert.deepEqual(draftActions.map((action) => action.target_state), ["REVIEW"]);
-  assert.equal(draftActions[0].label, "Gửi duyệt");
-  assert.match(draftActions[0].confirm_description, /tạm khóa chỉnh sửa/);
+  assert.deepEqual(draftActions.map((action) => action.target_state), ["SUBMITTED"]);
+  assert.equal(draftActions[0].label, "Gửi chính thức");
+  assert.match(draftActions[0].confirm_description, /trạng thái cuối/);
 
   const reviewActions = actionsForSubmission(submission({
     state: "REVIEW",
@@ -83,7 +83,7 @@ test("action matrix comes from the server transitions and never from client stat
   assert.deepEqual(submitted, []);
 
   // Mang sai tu server khong tao hanh dong nao (khong tu suy dien tu state).
-  assert.deepEqual(actionsForSubmission(submission({ allowed_transitions: ["SUBMITTED"] })), []);
+  assert.deepEqual(actionsForSubmission(submission({ allowed_transitions: ["REVIEW"] })), []);
   assert.deepEqual(actionsForSubmission(submission({ allowed_transitions: [] })), []);
   assert.deepEqual(actionsForSubmission(submission({
     state: "SUBMITTED",

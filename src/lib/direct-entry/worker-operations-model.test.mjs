@@ -362,7 +362,7 @@ test("W06: parse worker page fail-closed, khong nhan shape sai", () => {
 test("W06: parse submission page fail-closed", () => {
   const item = { submission_id: REQUEST, state: "DRAFT", version: 2, entry_count: 1,
     created_at: "2026-10-01T00:00:00.000000Z", updated_at: "2026-10-02T00:00:00.000000Z",
-    submitted_at: null, allowed_transitions: ["REVIEW"],
+    submitted_at: null, allowed_transitions: ["SUBMITTED"],
     project_scoped: false };
   const parsed = parseSubmissionPageResponse({ ok: true, items: [item], page_size: 25,
     has_more: false, next_cursor: null }, { page_size: 25 });

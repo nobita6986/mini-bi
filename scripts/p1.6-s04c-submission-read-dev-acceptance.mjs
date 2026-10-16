@@ -188,7 +188,7 @@ async function runReads(client, before) {
     .map((item) => item.submission_id), [subs.submitted]);
   pass("state filter returns the exact subset for each state");
 
-  assert.deepEqual(byId.get(subs.draft).allowed_transitions, ["REVIEW"]);
+  assert.deepEqual(byId.get(subs.draft).allowed_transitions, ["SUBMITTED"]);
   assert.deepEqual(byId.get(subs.review).allowed_transitions, ["DRAFT", "SUBMITTED"]);
   assert.deepEqual(byId.get(subs.submitted).allowed_transitions, []);
   assert.notEqual(byId.get(subs.submitted).submitted_at, null);

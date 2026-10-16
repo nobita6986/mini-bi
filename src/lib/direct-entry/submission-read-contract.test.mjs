@@ -27,7 +27,7 @@ function item(overrides = {}) {
     created_at: createdAt,
     updated_at: updatedAt,
     submitted_at: null,
-    allowed_transitions: ["REVIEW"],
+    allowed_transitions: ["SUBMITTED"],
     project_scoped: false,
     ...overrides,
   };
@@ -79,7 +79,7 @@ test("list query accepts lifecycle states and the two server-side queue filters"
 
 test("state to allowed_transitions matrix is exact for all three states", () => {
   for (const [state, transitions, submitted] of [
-    ["DRAFT", ["REVIEW"], null],
+    ["DRAFT", ["SUBMITTED"], null],
     ["REVIEW", ["DRAFT", "SUBMITTED"], null],
     ["SUBMITTED", [], submittedAt],
   ]) {

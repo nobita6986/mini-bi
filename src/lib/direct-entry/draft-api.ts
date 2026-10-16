@@ -21,6 +21,11 @@ import { readBoundedJson } from "./write-api.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PATCH_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "worker_details", "recruiter_id", "labor_type",
+  "general_note",
+]);
+const WORKER_PATCH_KEYS = new Set([
+  "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
+  "national_id_issued_place", "address", "phone",
 ]);
 
 type Dependencies = {
@@ -28,14 +33,15 @@ type Dependencies = {
   repository: DirectEntryRepository;
 };
 
-type DraftPatch = {
+type DraftPatch = Partial<{
   project_id: string;
   first_work_date: string;
   employee_code: string;
-  worker_details: Pick<WorkerDetails, "display_name">;
+  worker_details: Partial<WorkerDetails>;
   recruiter_id: string;
   labor_type: LaborType;
-};
+  general_note: string | null;
+}>;
 
 function respond(body: unknown, status: number): Response {
   return Response.json(body, {
@@ -52,16 +58,66 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isWorkerNamePatch(value: unknown): value is Pick<WorkerDetails, "display_name"> {
-  if (!isRecord(value) || Object.keys(value).length !== 1 ||
-      typeof value.display_name !== "string") return false;
-  return validateWorkerDetails({
-    display_name: value.display_name,
-    date_of_birth: { state: "omitted" },
-    national_id: { state: "omitted" },
-    address: { state: "omitted" },
-    phone: { state: "omitted" },
-  }).length === 0;
+function projectOptionalText(value: unknown): WorkerDetails["date_of_birth"] | null {
+  if (!isRecord(value)) return null;
+  if ((value.state === "omitted" || value.state === "unknown" ||
+       value.state === "intentionally_blank") && Object.keys(value).length === 1) {
+    return { state: value.state };
+  }
+  if (value.state === "provided" && typeof value.value === "string" &&
+      Object.keys(value).length === 2) {
+    return { state: "provided", value: value.value };
+  }
+  return null;
+}
+
+function projectWorkerPatch(value: unknown): Partial<WorkerDetails> | null {
+  if (!isRecord(value) || Object.keys(value).length === 0 ||
+      Object.keys(value).some((key) => !WORKER_PATCH_KEYS.has(key))) return null;
+
+  const patch: Partial<WorkerDetails> = {};
+  if (Object.hasOwn(value, "display_name")) {
+    if (typeof value.display_name !== "string") return null;
+    patch.display_name = value.display_name;
+  }
+  if (Object.hasOwn(value, "gender")) {
+    const gender = value.gender;
+    if (!isRecord(gender)) return null;
+    if ((gender.state === "omitted" || gender.state === "unknown" ||
+         gender.state === "intentionally_blank") && Object.keys(gender).length === 1) {
+      patch.gender = { state: gender.state };
+    } else if (gender.state === "provided" && Object.keys(gender).length === 2) {
+      if (gender.value === "MALE") patch.gender = { state: "provided", value: "MALE" };
+      else if (gender.value === "FEMALE") patch.gender = { state: "provided", value: "FEMALE" };
+      else if (gender.value === "OTHER") patch.gender = { state: "provided", value: "OTHER" };
+      else return null;
+    } else return null;
+  }
+  for (const key of ["date_of_birth", "national_id", "national_id_issued_at",
+    "national_id_issued_place", "address", "phone"] as const) {
+    if (!Object.hasOwn(value, key)) continue;
+    const field = projectOptionalText(value[key]);
+    if (!field) return null;
+    switch (key) {
+      case "date_of_birth": patch.date_of_birth = field; break;
+      case "national_id": patch.national_id = field; break;
+      case "national_id_issued_at": patch.national_id_issued_at = field; break;
+      case "national_id_issued_place": patch.national_id_issued_place = field; break;
+      case "address": patch.address = field; break;
+      case "phone": patch.phone = field; break;
+    }
+  }
+  const candidate: WorkerDetails = {
+    display_name: patch.display_name ?? "Synthetic",
+    gender: patch.gender,
+    date_of_birth: patch.date_of_birth ?? { state: "omitted" },
+    national_id: patch.national_id ?? { state: "omitted" },
+    national_id_issued_at: patch.national_id_issued_at,
+    national_id_issued_place: patch.national_id_issued_place,
+    address: patch.address ?? { state: "omitted" },
+    phone: patch.phone ?? { state: "omitted" },
+  };
+  return validateWorkerDetails(candidate).length === 0 ? patch : null;
 }
 
 function projectPatch(value: unknown): {
@@ -72,25 +128,48 @@ function projectPatch(value: unknown): {
       !Object.hasOwn(value, "expected_version") || !Object.hasOwn(value, "patch") ||
       typeof value.expected_version !== "number" ||
       !Number.isSafeInteger(value.expected_version) || value.expected_version < 1 ||
-      !isRecord(value.patch) || Object.keys(value.patch).length !== PATCH_KEYS.size ||
+      !isRecord(value.patch) || Object.keys(value.patch).length === 0 ||
       Object.keys(value.patch).some((key) => !PATCH_KEYS.has(key))) return null;
   const patch = value.patch;
-  if (typeof patch.project_id !== "string" ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(patch.project_id) ||
-      typeof patch.first_work_date !== "string" || !isRealCalendarDate(patch.first_work_date) ||
-      typeof patch.employee_code !== "string" ||
-      validateEmployeeCode(patch.employee_code, patch.first_work_date).length > 0 ||
-      typeof patch.recruiter_id !== "string" || !UUID.test(patch.recruiter_id) ||
-      !isCanonicalLaborTypeKey(patch.labor_type) ||
-      !isWorkerNamePatch(patch.worker_details)) return null;
-  const projectedPatch: DraftPatch = {
-    project_id: patch.project_id,
-    first_work_date: patch.first_work_date,
-    employee_code: patch.employee_code,
-    worker_details: patch.worker_details,
-    recruiter_id: patch.recruiter_id,
-    labor_type: patch.labor_type,
-  };
+  const projectedPatch: DraftPatch = {};
+  if (Object.hasOwn(patch, "project_id")) {
+    if (typeof patch.project_id !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(patch.project_id)) return null;
+    projectedPatch.project_id = patch.project_id;
+  }
+  if (Object.hasOwn(patch, "first_work_date")) {
+    if (typeof patch.first_work_date !== "string" || !isRealCalendarDate(patch.first_work_date)) {
+      return null;
+    }
+    projectedPatch.first_work_date = patch.first_work_date;
+  }
+  if (Object.hasOwn(patch, "employee_code")) {
+    if (typeof patch.employee_code !== "string" ||
+        (projectedPatch.first_work_date !== undefined &&
+         validateEmployeeCode(patch.employee_code, projectedPatch.first_work_date).length > 0)) {
+      return null;
+    }
+    projectedPatch.employee_code = patch.employee_code;
+  }
+  if (Object.hasOwn(patch, "recruiter_id")) {
+    if (typeof patch.recruiter_id !== "string" || !UUID.test(patch.recruiter_id)) return null;
+    projectedPatch.recruiter_id = patch.recruiter_id;
+  }
+  if (Object.hasOwn(patch, "labor_type")) {
+    if (!isCanonicalLaborTypeKey(patch.labor_type)) return null;
+    projectedPatch.labor_type = patch.labor_type;
+  }
+  if (Object.hasOwn(patch, "worker_details")) {
+    const workerDetails = projectWorkerPatch(patch.worker_details);
+    if (!workerDetails) return null;
+    projectedPatch.worker_details = workerDetails;
+  }
+  if (Object.hasOwn(patch, "general_note")) {
+    if (patch.general_note !== null &&
+        (typeof patch.general_note !== "string" || patch.general_note.trim() === "" ||
+         patch.general_note.length > 4000)) return null;
+    projectedPatch.general_note = patch.general_note as string | null;
+  }
   return { expected_version: value.expected_version, patch: projectedPatch };
 }
 
@@ -205,19 +284,23 @@ export async function patchDraftEntry(
       auth_subject: session.actor.actor.auth_subject,
       app_user_id: session.actor.actor.app_user_id,
     };
-    const catalogResult = await dependencies.repository.loadInputCatalog({
-      ...trustedActor,
-      effective_date: parsed.patch.first_work_date,
-    });
-    if (!catalogResult.ok) {
-      if (catalogResult.kind === "denied") return fail("ACTOR_NOT_AVAILABLE", 403);
-      console.error("[direct-entry] draft catalog validation unavailable");
-      return fail("CATALOG_UNAVAILABLE", 500);
-    }
-    const catalog = catalogResult.data;
-    if (!catalog.projects.some(({ project_id }) => project_id === parsed.patch.project_id) ||
-        !catalog.recruiters.some(({ recruiter_id }) => recruiter_id === parsed.patch.recruiter_id)) {
-      return fail("DRAFT_MASTER_INVALID", 400);
+    if (parsed.patch.first_work_date !== undefined) {
+      const catalogResult = await dependencies.repository.loadInputCatalog({
+        ...trustedActor,
+        effective_date: parsed.patch.first_work_date,
+      });
+      if (!catalogResult.ok) {
+        if (catalogResult.kind === "denied") return fail("ACTOR_NOT_AVAILABLE", 403);
+        console.error("[direct-entry] draft catalog validation unavailable");
+        return fail("CATALOG_UNAVAILABLE", 500);
+      }
+      const catalog = catalogResult.data;
+      if ((parsed.patch.project_id !== undefined &&
+           !catalog.projects.some(({ project_id }) => project_id === parsed.patch.project_id)) ||
+          (parsed.patch.recruiter_id !== undefined &&
+           !catalog.recruiters.some(({ recruiter_id }) => recruiter_id === parsed.patch.recruiter_id))) {
+        return fail("DRAFT_MASTER_INVALID", 400);
+      }
     }
     const result = await dependencies.repository.updateDraftRow({
       ...trustedActor,

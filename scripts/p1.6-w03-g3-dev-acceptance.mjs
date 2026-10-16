@@ -942,13 +942,9 @@ async function runChangeAndPrivilegedProbes() {
       [submission],
     );
     let submissionVersion = submissionRow.rows[0].version;
-    const review = await transitionSubmission(
-      0, 0, submission, submissionVersion++, "REVIEW", idempotencyKey("CR_REVIEW"),
-    );
     const submitted = await transitionSubmission(
       0, 0, submission, submissionVersion, "SUBMITTED", idempotencyKey("CR_SUBMIT"),
     );
-    assert.equal(review.state, "REVIEW");
     assert.equal(submitted.state, "SUBMITTED");
 
     action = "create and withdraw change request";
@@ -1230,32 +1226,12 @@ async function runLifecycleAndStatusProbes() {
       "select version from public.direct_entry_submissions where submission_id=$1",
       [submission],
     )).rows[0].version;
-    await transitionSubmission(0, 0, submission, submissionVersion++, "REVIEW", idempotencyKey("REVIEW"));
     await expectDenied(
-      "REVIEW payment mutation denied",
-      async () => updatePayment(0, 0, entries[2], await entryVersion(entries[2]), 0,
-        { state: "intentionally_blank", account_number: null, bank_id: null, account_holder_name: null },
-        `${manifest.namespace} reason`, idempotencyKey("REVIEW_PAYMENT")),
-      /REVIEW submissions are read-only/i,
+      "new DRAFT-to-REVIEW transition denied",
+      () => transitionSubmission(0, 0, submission, submissionVersion, "REVIEW",
+        idempotencyKey("NEW_REVIEW_DENIED")),
+      /invalid submission mutation|state/i,
     );
-    await expectDenied(
-      "REVIEW document mutation denied",
-      async () => createDocument(0, 0, entries[2], await entryVersion(entries[2]),
-        "CCCD_FRONT", idempotencyKey("REVIEW_DOCUMENT"), "a".repeat(64),
-        `${manifest.namespace} reason`),
-      /REVIEW submissions are read-only/i,
-    );
-    await expectDenied(
-      "REVIEW status mutation denied",
-      async () => serviceRpc(
-        "select public.direct_entry_apply_employment_status($1,$2,$3,$4,'ON','2020-01-16',null,$5,$6) as result",
-        [manifest.ids.authSubjects[0], manifest.ids.appUsers[0], entries[2],
-          await entryVersion(entries[2]), `${manifest.namespace} reason`,
-          idempotencyKey("REVIEW_STATUS")],
-      ),
-      /REVIEW submissions are read-only/i,
-    );
-    await transitionSubmission(0, 0, submission, submissionVersion++, "DRAFT", idempotencyKey("BACK_TO_DRAFT"));
     const beforeNoop = await client.query(
       "select state,version from public.direct_entry_submissions where submission_id=$1",
       [submission],
@@ -1274,10 +1250,10 @@ async function runLifecycleAndStatusProbes() {
     );
     assert.deepEqual(afterNoop.rows[0], beforeNoop.rows[0]);
     await expectDenied(
-      "invalid direct DRAFT to SUBMITTED transition denied",
-      async () => transitionSubmission(0, 0, submission, submissionVersion, "SUBMITTED",
-        idempotencyKey("INVALID_DRAFT_SUBMIT")),
-      /invalid submission mutation|invalid input|state/i,
+      "stale direct DRAFT to SUBMITTED transition denied",
+      async () => transitionSubmission(0, 0, submission, beforeNoop.rows[0].version - 1, "SUBMITTED",
+        idempotencyKey("STALE_DRAFT_SUBMIT")),
+      /invalid submission mutation|stale version/i,
     );
 
     const entry = entries[2];
@@ -1701,11 +1677,7 @@ async function runFailureInjectionProbes() {
       [manifest.ownerSubmission],
     )).rows[0].version;
     await transitionSubmission(
-      0, 0, manifest.ownerSubmission, submissionVersion, "REVIEW",
-      idempotencyKey("ATOMIC_REVIEW"),
-    );
-    await transitionSubmission(
-      0, 0, manifest.ownerSubmission, submissionVersion + 1, "SUBMITTED",
+      0, 0, manifest.ownerSubmission, submissionVersion, "SUBMITTED",
       idempotencyKey("ATOMIC_SUBMIT"),
     );
     const ordered = await client.query(

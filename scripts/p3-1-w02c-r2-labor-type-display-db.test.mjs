@@ -188,9 +188,7 @@ async function addSubmittedEntry(db, { employeeCode, laborType, firstWorkDate })
     throw error;
   }
   const suffix = employeeCode.slice(-6);
-  const toReview = transitionInput(ACTORS.proposer, submissionId, 1, "REVIEW", "r2a_" + suffix);
-  await db.query(toReview.sql, toReview.values);
-  const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", "r2b_" + suffix);
+  const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 1, "SUBMITTED", "r2b_" + suffix);
   await db.query(toSubmitted.sql, toSubmitted.values);
   return entryId;
 }
@@ -208,7 +206,7 @@ async function createRequest(db, items, suffix) {
 // ma tung test can.
 // ---------------------------------------------------------------------------
 const { db, migrationNames } = await createMigratedDatabase();
-assert.equal(migrationNames.at(-23), R2_MIGRATION, "#80 la migration display projection");
+assert.equal(migrationNames.at(-24), R2_MIGRATION, "#80 la migration display projection");
 
 const fixture = await seedChangeRequestFixture(db);
 assert.equal(typeof fixture.entryA.entry_id, "string", "fixture chung phai seed xong");

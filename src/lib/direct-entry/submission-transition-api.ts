@@ -101,9 +101,8 @@ export async function transitionSubmission(
       return fail("ACTOR_NOT_AVAILABLE", 403);
     }
 
-    // 8. Repository/RPC voi actor do server suy ra. Hai dang request duoc phep:
-    //    * 3 key  -> duong cu (DRAFT -> REVIEW khong conflict, REVIEW -> DRAFT, SUBMITTED);
-    //    * 5 key  -> entry point da xac nhan, server se tu kiem tra lai tap conflict.
+    // 8. Repository/RPC voi actor do server suy ra. Acknowledgement chi di cung SUBMITTED;
+    //    SQL se tinh lai conflict sau khi khoa submission.
     const result = await dependencies.repository.transitionSubmission({
       auth_subject: actor.auth_subject,
       app_user_id: actor.app_user_id,

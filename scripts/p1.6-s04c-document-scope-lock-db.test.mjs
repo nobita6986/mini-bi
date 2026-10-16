@@ -67,7 +67,7 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   }
   assert.equal(migrations.filter(({ name }) => name < scopeMigration).length, 33);
 
-  const fixture = await seedChangeRequestFixture(db);
+  const fixture = await seedChangeRequestFixture(db, { submissionWorkflow: "legacy" });
   const created = await createChangeRequest(db, ACTORS.proposer,
     [item(fixture.entryA.entry_id, fixture.entryA.version, DOCUMENT_PROPOSAL, "DOCUMENT")],
     "synthetic legacy document request", "legacy_document_request");
@@ -90,11 +90,11 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   await db.close();
 });
 
-test("102-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
+test("103-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
   // P3.1-W03A #82 adds three internal helpers plus two lifecycle RPCs;
   // W03A-R2 #83/#84 add two read RPCs and one internal label helper net.
-  assert.equal(migrationNames.length, 102);
+  assert.equal(migrationNames.length, 103);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -175,7 +175,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // PRE-W2-P1 (#86) adds one service-role-only worker-export RPC.
   // PRE-W2-HF-D3-A (#92) adds nine service-role RPCs and three internal helpers.
   // #97 adds one RPC name and retains the service-role grants for legacy callers.
-  // Measured: 241 total, 115 service-role executable and 126 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [241, 115, 126]);
+  // PRE-W2-HF #103 adds one service-role-only DRAFT employment-status wrapper.
+  // Measured: 242 total, 116 service-role executable and 126 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [242, 116, 126]);
   await db.close();
 });

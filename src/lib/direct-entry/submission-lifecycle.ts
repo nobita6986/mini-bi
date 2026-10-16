@@ -27,7 +27,7 @@ export type SubmissionAction = {
   confirm_label: string;
 };
 
-export const TRANSITION_ACTIONS: Readonly<Record<SubmissionState, SubmissionAction>> = Object.freeze({
+export const TRANSITION_ACTIONS: Readonly<Partial<Record<SubmissionState, SubmissionAction>>> = Object.freeze({
   DRAFT: {
     target_state: "DRAFT",
     label: "Trả về bản nháp",
@@ -35,14 +35,6 @@ export const TRANSITION_ACTIONS: Readonly<Record<SubmissionState, SubmissionActi
     confirm_description:
       "Đợt nhập liệu sẽ mở lại để chỉnh sửa. Dữ liệu đang có trên máy chủ được giữ nguyên.",
     confirm_label: "Trả về bản nháp",
-  },
-  REVIEW: {
-    target_state: "REVIEW",
-    label: "Gửi duyệt",
-    confirm_title: "Gửi duyệt đợt nhập liệu?",
-    confirm_description:
-      "Sau khi gửi duyệt, đợt nhập liệu tạm khóa chỉnh sửa cho tới khi được trả về bản nháp.",
-    confirm_label: "Gửi duyệt",
   },
   SUBMITTED: {
     target_state: "SUBMITTED",

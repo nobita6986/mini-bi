@@ -175,6 +175,22 @@ test("ho so day du: map worker/payment/employment dung contract", () => {
   assert.deepEqual(waitingRow.employment, { initial_status: "UNCONFIRMED" });
 });
 
+test("client payload preserves employment status at past, current, and future work dates", () => {
+  for (const [code, date] of [
+    ["hrp-2026-000201", "2026-10-15"],
+    ["hrp-2026-000202", "2026-10-16"],
+    ["hrp-2026-000203", "2026-10-17"],
+  ]) {
+    const empty = preview(tsv([row(code, date)]));
+    assert.equal(buildFullProfileRequestBody(empty.rows).rows[0].employment, null);
+    const on = preview(tsv([row(code, date, { "Tình trạng làm việc hiện tại": "Đang làm" })]));
+    assert.deepEqual(buildFullProfileRequestBody(on.rows).rows[0].employment, { initial_status: "ON" });
+    const waiting = preview(tsv([row(code, date, { "Tình trạng làm việc hiện tại": "Đang chờ việc" })]));
+    assert.deepEqual(buildFullProfileRequestBody(waiting.rows).rows[0].employment,
+      { initial_status: "UNCONFIRMED" });
+  }
+});
+
 test("thu tu cot tuy y va cot tuy chon vang mat deu cho cung request", () => {
   const shuffled = tsv([[["Tên NV Tuyển dụng", RECRUITER.label], ["Họ và tên", NAME],
     ["Loại hình LĐ", "Thời vụ"], ["Mã NLĐ", "hrp-2026-000123"],

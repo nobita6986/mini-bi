@@ -69,22 +69,24 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102, "the ledger includes migrations through uploader submission queues #102");
-  assert.equal(names.at(-1), "20261015170000_pre_w2_uploader_submission_queues.sql",
+  assert.equal(names.length, 103, "the ledger includes PRE-W2-HF batch workflow #103");
+  assert.equal(names.at(-1), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
+    "direct-entry batch workflow is the append-only #103 migration");
+  assert.equal(names.at(-2), "20261015170000_pre_w2_uploader_submission_queues.sql",
     "uploader submission queues is the append-only #102 migration");
-  assert.equal(names.at(-2), "20261015160000_pre_w2_initial_status_any_start_date.sql",
+  assert.equal(names.at(-3), "20261015160000_pre_w2_initial_status_any_start_date.sql",
     "initial-status hotfix is the append-only #101 migration");
-  assert.equal(names.at(-4), "20261015140000_pre_w2_hf_account_real_name_display.sql",
+  assert.equal(names.at(-5), "20261015140000_pre_w2_hf_account_real_name_display.sql",
     "account real-name display is the append-only #99 migration");
-  assert.equal(names.at(-3), "20261015150000_pre_w2_worker_data_capabilities_default.sql",
+  assert.equal(names.at(-4), "20261015150000_pre_w2_worker_data_capabilities_default.sql",
     "worker-data capabilities is the append-only #100 migration");
-  assert.equal(names.at(-5), "20261015140000_pre_w2_change_request_review_queue.sql",
+  assert.equal(names.at(-6), "20261015140000_pre_w2_change_request_review_queue.sql",
     "review queue remains the append-only #98 migration");
-  assert.equal(names.at(-6), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
-  assert.equal(names.at(-7), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
-  assert.equal(names.at(-8), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
-  assert.equal(names.at(-9), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
-  assert.equal(names.at(-10), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
+  assert.equal(names.at(-7), BATCH_MIGRATION, "batch mapping is the append-only #97 migration");
+  assert.equal(names.at(-8), "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql");
+  assert.equal(names.at(-9), "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql");
+  assert.equal(names.at(-10), TEAM_AUTHORITY_MIGRATION, "the authority migration remains #94");
+  assert.equal(names.at(-11), PREVIOUS_MIGRATION, "Project<->Team authority #94 follows PRE-W2-HF-G #93");
   return db;
 }
 

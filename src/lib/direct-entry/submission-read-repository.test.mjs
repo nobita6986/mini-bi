@@ -24,7 +24,7 @@ const listItem = {
   created_at: createdAt,
   updated_at: createdAt,
   submitted_at: null,
-  allowed_transitions: ["REVIEW"],
+  allowed_transitions: ["SUBMITTED"],
   project_scoped: false,
 };
 const listPayload = { items: [listItem], page_size: 20, has_more: false, next_cursor: null };

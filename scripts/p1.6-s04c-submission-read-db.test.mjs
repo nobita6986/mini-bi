@@ -18,14 +18,16 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 102 migrations and read RPC ACLs", async () => {
+test("from-scratch apply 103 migrations and read RPC ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // W05A #48, W07C-R7 #49, W07E #50, P2.5-W02 #51, P2.5-W03 #52, P2.5-W04 #53,
   // P2.5-W06A #54, P2.5-W05 #55, W05-R1 #56 and initial-ON #57.
-  assert.equal(migrations.migrationNames.length, 102);
+  assert.equal(migrations.migrationNames.length, 103);
   assert.equal(migrations.migrationNames.at(-1),
-    "20261015170000_pre_w2_uploader_submission_queues.sql");
+    "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql");
   assert.equal(migrations.migrationNames.at(-2),
+    "20261015170000_pre_w2_uploader_submission_queues.sql");
+  assert.equal(migrations.migrationNames.at(-3),
     "20261015160000_pre_w2_initial_status_any_start_date.sql");
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.ok(migrations.migrationNames.includes("20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql"));
@@ -69,7 +71,7 @@ test("owner sees all three lifecycle states with exact transitions and entry cou
   assert.equal(listed.error, null);
   const byId = new Map(listed.data.items.map((item) => [item.submission_id, item]));
   assert.equal(byId.get(submissions.draft).state, "DRAFT");
-  assert.deepEqual(byId.get(submissions.draft).allowed_transitions, ["REVIEW"]);
+  assert.deepEqual(byId.get(submissions.draft).allowed_transitions, ["SUBMITTED"]);
   assert.equal(byId.get(submissions.draft).submitted_at, null);
   assert.equal(byId.get(submissions.review).state, "REVIEW");
   assert.deepEqual(byId.get(submissions.review).allowed_transitions, ["DRAFT", "SUBMITTED"]);

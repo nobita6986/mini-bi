@@ -16,6 +16,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const HF_C_MIGRATION = "20261013130000_pre_w2_hf_c_global_duplicate_cccd_read_access.sql";
@@ -53,7 +54,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102, "the ledger carries the PRE-W2-HF-C migration as #87");
+  assert.equal(names.length, 103, "the ledger carries the PRE-W2-HF-C migration as #87");
   assert.equal(names[names.length - (16)], HF_C_MIGRATION,
     "HF-C #87 stays before D2 #88, cutoff #89, export #90 and status HF-F #91");
   return db;
@@ -147,9 +148,7 @@ async function addProfile(db, { cccd, name, code, date = "2026-01-05" }) {
       " actor_user_id, reason_id, supersedes_event_id)" +
       " values ($1,'ON',$2::date,null,null,1,$3,$4,null)",
       [entry, date, ADMIN_APP, reasonId]);
-    await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submission]);
+    await seedLegacyReviewSubmission(db, submission);
     await db.query(
       "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
       [submission]);
