@@ -1,6 +1,10 @@
 # W2-S0-C-R2 — Wave 2 contract, security & integration survey (targeted repair)
 
-> **Status:** `W2_S0_C_R2_CONTRACT_SECURITY_INTEGRATION_SURVEY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `ACCEPTED_HISTORICAL_BASELINE_REBASELINED_ON_CURRENT_MAIN`
+> **Current authority notice (2026-10-16):** accepted through PR #10, then
+> revalidated against `main@ec704f4` in
+> `docs/handoffs/w2-s0-current-main-rebaseline.md`. The ledger is now 110; the
+> #86 observation below is historical and reserved nothing.
 > **Revision:** R2 — targeted repair of R1 (`8e9d879`) against the Wave 2 master
 >   plan `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md`: corrects the refund
 >   source states (`REFUND_REQUIRED` is reachable only from `PROOF_REJECTED`) and

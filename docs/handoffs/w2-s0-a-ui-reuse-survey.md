@@ -1,6 +1,10 @@
 # W2-S0-A — Wave 2 UI Reuse Survey
 
-> **Status:** `W2_S0_A_UI_REUSE_SURVEY_R3_PORTRAIT_TWO_AXIS_CONSISTENCY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `ACCEPTED_HISTORICAL_BASELINE_REBASELINED_ON_CURRENT_MAIN`
+> **Current authority notice (2026-10-16):** accepted through PR #10, then
+> revalidated against `main@ec704f4` in
+> `docs/handoffs/w2-s0-current-main-rebaseline.md`. Exact line references below
+> are historical; implementation must resolve current symbols from main.
 > **Type:** docs-only survey. No implementation, no source change, no migration,
 > no API/RPC/schema change, no mock API, no new dependency, no browser/UAT.
 > **Deliverable:** this file only.
