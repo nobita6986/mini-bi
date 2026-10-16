@@ -110,6 +110,7 @@ function entryProjection(overrides = {}) {
     payment: null,
     employment_status: { status: "UNCONFIRMED", effective_date: "2026-10-15", version: 1 },
     documents: [],
+    worker_portrait: null,
     ...overrides,
   };
 }
@@ -187,6 +188,8 @@ test("entry payload: nhan rong/thieu/sai kieu lam ca projection unavailable", ()
   for (const [label, value] of Object.entries(rejected)) {
     assert.equal(projectEntry(value), null, label);
   }
+  assert.equal(projectEntry(withoutKey(entryProjection(), "worker_portrait")), null,
+    "portrait projection remains required even when no portrait exists");
 });
 
 test("change request detail: nhan phai khop voi su hien dien cua labor type trong proposal", () => {
@@ -256,6 +259,7 @@ test("key set: row Worker Directory va entry payload deu mang ca key lan nhan", 
   // Ca hai deu la thanh vien BAT BUOC cua key set: thieu mot trong hai la unavailable.
   assert.equal(projectEntry(withoutKey(entryProjection(), "labor_type")), null);
   assert.equal(projectEntry(withoutKey(entryProjection(), "labor_type_display")), null);
+  assert.equal(projectEntry(withoutKey(entryProjection(), "worker_portrait")), null);
   assert.equal(projectWorkerDirectoryRow(withoutKey(workerRow(), "labor_type")), null);
   assert.equal(projectWorkerDirectoryRow(withoutKey(workerRow(), "labor_type_display")), null);
 

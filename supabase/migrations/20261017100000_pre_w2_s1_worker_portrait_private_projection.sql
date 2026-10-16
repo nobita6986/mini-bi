@@ -249,14 +249,29 @@ select public.direct_entry_w2s1_replace_function_source(
       p_auth_subject, p_app_user_id, v_entry.created_by_user_id,
       v_entry.team_id, v_entry.first_work_date
     );$old$,
-  $new$    v_scope := public.direct_entry_resolve_submission_read_scope(
-      p_auth_subject, p_app_user_id, v_entry.entry_id
-    );
-    if v_scope is null then
-      v_scope := public.direct_entry_assert_entry_access(
-        p_auth_subject, p_app_user_id, 'entry_privileged_edit',
-        v_entry.created_by_user_id, v_entry.team_id, v_entry.first_work_date
+  $new$    if p_purpose = 'download' then
+      perform public.direct_entry_assert_draft_access(
+        p_auth_subject, p_app_user_id, v_entry.created_by_user_id,
+        v_entry.team_id, v_entry.first_work_date
       );
+    else
+      select * into v_document from public.direct_entry_document_versions d
+       where d.document_id = p_document_id and d.candidate_id = v_entry.candidate_id;
+      if not found then
+        raise exception 'document not found' using errcode = 'P0002';
+      end if;
+      if v_document.document_type <> 'WORKER_PORTRAIT' then
+        raise exception 'private preview is portrait-only' using errcode = 'P0002';
+      end if;
+      v_scope := public.direct_entry_resolve_submission_read_scope(
+        p_auth_subject, p_app_user_id, v_entry.entry_id
+      );
+      if v_scope is null then
+        v_scope := public.direct_entry_assert_entry_access(
+          p_auth_subject, p_app_user_id, 'entry_privileged_edit',
+          v_entry.created_by_user_id, v_entry.team_id, v_entry.first_work_date
+        );
+      end if;
     end if;$new$,
   1
 );

@@ -52,10 +52,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 110, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (1 + 49)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names[names.length - (1 + 50)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names[names.length - (1 + 51)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
+  assert.equal(names.length, 111, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (1 + 50)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (1 + 51)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names[names.length - (1 + 52)], R1_MIGRATION, "P2.5-HF-R1 remains #59");
   return db;
 }
 

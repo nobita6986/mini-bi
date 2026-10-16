@@ -41,7 +41,7 @@ Read the portrait from:
 
 `GET /api/direct-entry/entries/{entryId}/documents/{documentId}/preview`
 
-The route returns the image bytes directly (JPEG or PNG), not a storage key or signed URL. It requires the authenticated session, `document_view`, the existing server-side entry read scope or exact `entry_privileged_edit` scope, and a current accepted portrait. The server checks lifecycle, size, content signature, and SHA-256 before returning `private, no-store` bytes.
+The route returns the image bytes directly (JPEG or PNG), not a storage key or signed URL. It requires the authenticated session, `document_view`, the existing server-side entry read scope or (only for portrait preview) the exact `entry_privileged_edit` capability and matching entry scope, and a current accepted portrait. `download` always remains guarded by `direct_entry_assert_draft_access`; project-manager read scope does not grant CCCD/contract download. The server checks lifecycle, size, content signature, and SHA-256 before returning `private, no-store` bytes.
 
 The generic `/download` route deliberately does not issue portrait signed URLs. Clients should use the `current.document_id` from the entry projection and the private `/preview` route.
 
@@ -51,7 +51,7 @@ Entry revision snapshots now include portrait origin and the accepted current `(
 
 ## Changed files
 
-- `supabase/migrations/20261017100000_pre_w2_s1_worker_portrait_private_projection.sql` — append-only DB changes for portrait lifecycle/projection/snapshot and the narrowly scoped privileged-edit read fallback.
+- `supabase/migrations/20261017100000_pre_w2_s1_worker_portrait_private_projection.sql` — append-only DB changes for portrait lifecycle/projection/snapshot and a preview-only, portrait-only privileged-edit fallback; downloads retain draft-scope authorization.
 - `src/app/api/direct-entry/entries/[entryId]/documents/[documentId]/preview/route.ts` — private portrait preview route.
 - `src/lib/contracts/direct-entry-v1.ts` — direct-entry portrait document type.
 - `src/lib/direct-entry/document-api.ts`, `document-upload-contract.ts`, `document-r2-contract.ts`, `r2-document-storage.ts`, `document-finalize-api.ts`, `write-api.ts`, and `write-repository.ts` — existing upload/finalize/read pipeline integration, sanitized storage promotion, and preview.

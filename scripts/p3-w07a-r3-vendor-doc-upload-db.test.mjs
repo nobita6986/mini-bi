@@ -35,8 +35,8 @@ async function buildDb() {
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
-  assert.equal(names.length, 110);
-  assert.equal(names.at(-(45 + 1)), MIGRATION);
+  assert.equal(names.length, 111);
+  assert.equal(names.at(-(46 + 1)), MIGRATION);
   return db;
 }
 
@@ -193,6 +193,9 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
     assert.equal(firstReserve.upload_status, "QUEUED");
     let projection = await readEntry(db, MANAGER_AUTH, MANAGER_APP, entryId);
     assert.equal(projection.scope_kind, "project");
+    assert.deepEqual(projection.worker_portrait, {
+      origin: null, added_at: null, status: "MISSING", current: null,
+    });
     assert.ok(projectEntry(projection), "worker detail API accepts the sanitized document projection");
 
     const finalized = (await db.query(
@@ -206,6 +209,9 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
     projection = await readEntry(db, MANAGER_AUTH, MANAGER_APP, entryId);
     assert.equal(projection.documents.length, 1);
     assert.equal(projection.documents[0].validation_status, "VALIDATED");
+    assert.deepEqual(projection.worker_portrait, {
+      origin: null, added_at: null, status: "MISSING", current: null,
+    });
     assert.equal("storage_key" in projection.documents[0], false);
     assert.equal("filename" in projection.documents[0], false);
     assert.ok(projectEntry(projection));

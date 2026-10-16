@@ -17,8 +17,8 @@ test("W05A team-scope seed remains migration-only and is superseded by W01D", as
     const names = (await readdir(MIGRATION_DIR))
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    assert.equal(names.length, 110);
-    assert.equal(names.at(-(39 + 1)), "20261009070000_p3_1_w01d_team_leader_lifecycle.sql");
+    assert.equal(names.length, 111);
+    assert.equal(names.at(-(40 + 1)), "20261009070000_p3_1_w01d_team_leader_lifecycle.sql");
 
     const sources = await Promise.all(names.map(async (name) => ({
       name,

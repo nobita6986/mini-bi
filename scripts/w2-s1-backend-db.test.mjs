@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ACTORS,
   createMigratedDatabase,
+  mutate,
   seedSubmissionReadFixture,
 } from "./lib/s04c-submission-read-fixture.mjs";
 
@@ -24,13 +25,18 @@ await db.query(
 );
 await db.query(
   "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-  " values ($1,'entry_privileged_edit','2020-01-01')",
+  " values ($1,'entry_privileged_edit','2020-01-01'),($1,'document_view','2020-01-01')",
   [privileged.app_user_id],
 );
 await db.query(
   "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
   " values ($1,'all','2020-01-01')",
   [privileged.app_user_id],
+);
+await db.query(
+  "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+  " values ($1,'document_view','2020-01-01')",
+  [ACTORS.otherOwner.app_user_id],
 );
 
 test("migration 111 appends to the verified ledger and keeps its security boundaries", async () => {
@@ -150,4 +156,112 @@ test("portrait upload uses the existing reservation/finalize lifecycle and snaps
       size_bytes: 256,
     },
   });
+});
+
+test("document context keeps downloads draft-scoped and limits privileged fallback to portrait preview", async () => {
+  const projectManager = {
+    auth_subject: "11000000-0000-4000-8000-000000000007",
+    app_user_id: "21000000-0000-4000-8000-000000000007",
+  };
+  await db.query("insert into auth.users(id) values ($1)", [projectManager.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+    " values ($1,$2,true,'Synthetic Project Manager')",
+    [projectManager.app_user_id, projectManager.auth_subject],
+  );
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+    " values ($1,'document_view','2020-01-01')",
+    [projectManager.app_user_id],
+  );
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links" +
+    "(app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+    [projectManager.app_user_id, "93000000-0000-4000-8000-0000000000c1"],
+  );
+  await db.query(
+    "insert into public.direct_entry_project_manager_assignments(project_id,manager_recruiter_id)" +
+    " values ('s02c_project','93000000-0000-4000-8000-0000000000c1')",
+  );
+
+  const submittedEntryId = fixture.submitted.entryIds[0];
+  const { rows: candidateRows } = await db.query(
+    "select candidate_id from public.direct_entries where entry_id=$1",
+    [submittedEntryId],
+  );
+  const cccdId = "b3000000-0000-4000-8000-000000000001";
+  await db.query(
+    "insert into public.direct_entry_document_versions" +
+    "(document_id,candidate_id,document_type,version,idempotency_key,checksum_sha256," +
+    "size_bytes,mime_type,storage_key,upload_status,scan_status,created_by_user_id)" +
+    " values ($1,$2,'CCCD_FRONT',1,'w2s1_scope_cccd', $3,128,'image/jpeg',$4," +
+    "'READY','CLEAN',$5)",
+    [
+      cccdId, candidateRows[0].candidate_id, "c".repeat(64),
+      `p1.6/${candidateRows[0].candidate_id}/CCCD_FRONT/1/${cccdId}`,
+      ACTORS.owner.app_user_id,
+    ],
+  );
+  await db.query(
+    "insert into public.direct_entry_document_events" +
+    "(document_id,upload_status,scan_status,validation_status,attempts)" +
+    " values ($1,'READY','CLEAN','VALIDATED',1)",
+    [cccdId],
+  );
+
+  const ownerDownload = await db.query(
+    "select public.direct_entry_document_direct_context(" +
+    "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'download') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, submittedEntryId, cccdId],
+  );
+  assert.equal(ownerDownload.rows[0].data.document_type, "CCCD_FRONT");
+  assert.equal(ownerDownload.rows[0].data.storage_key,
+    `p1.6/${candidateRows[0].candidate_id}/CCCD_FRONT/1/${cccdId}`,
+    "a creator with valid draft scope and document_view retains the existing download context");
+
+  const deniedManagerDownload = await mutate(
+    db,
+    "select public.direct_entry_document_direct_context(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'download') data",
+    [projectManager.auth_subject, projectManager.app_user_id, submittedEntryId, cccdId],
+  );
+  assert.equal(deniedManagerDownload.error?.code, "42501",
+    "project-manager read scope plus document_view is not a substitute for draft download scope");
+  assert.equal(deniedManagerDownload.data, null,
+    "a denied manager download returns no context and therefore no storage_key");
+
+  const { rows: portraitRows } = await db.query(
+    "select d.document_id from public.direct_entry_document_versions d" +
+    " join public.direct_entries e on e.candidate_id=d.candidate_id" +
+    " join public.direct_entry_current_documents cd on cd.document_id=d.document_id" +
+    " where e.entry_id=$1 and d.document_type='WORKER_PORTRAIT'",
+    [entryId],
+  );
+  const portraitId = portraitRows[0].document_id;
+  const privilegedPreview = await db.query(
+    "select public.direct_entry_document_direct_context(" +
+    "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'preview') data",
+    [privileged.auth_subject, privileged.app_user_id, entryId, portraitId],
+  );
+  assert.equal(privilegedPreview.rows[0].data.document_type, "WORKER_PORTRAIT");
+  assert.equal(typeof privilegedPreview.rows[0].data.storage_key, "string");
+
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_document_direct_context(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'preview') data",
+      [privileged.auth_subject, privileged.app_user_id, submittedEntryId, cccdId],
+    ),
+    (error) => error.code === "P0002",
+    "even a scoped entry_privileged_edit actor cannot use private preview for CCCD",
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_document_direct_context(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'preview') data",
+      [ACTORS.otherOwner.auth_subject, ACTORS.otherOwner.app_user_id, entryId, portraitId],
+    ),
+    (error) => error.code === "42501",
+    "portrait preview remains denied outside the resolved or privileged entry scope",
+  );
 });

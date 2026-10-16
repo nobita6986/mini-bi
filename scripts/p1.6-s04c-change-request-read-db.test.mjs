@@ -35,7 +35,7 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 110);
+  assert.equal(migrations.migrationNames.length, 111);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
@@ -333,7 +333,7 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
   await assert.rejects(db.query(
     "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid)",
     [leader.auth_subject, leader.app_user_id, fixture.entryB.entry_id],
-  ), /entry scope\/capability denied/,
+  ), (error) => error.code === "42501",
   "team-leader review does not grant access to entries outside the assigned team request");
 
   const rejected = await decideChangeRequest(db, leader, requests.single, "reject", 1,

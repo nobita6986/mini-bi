@@ -116,6 +116,7 @@ function entryProjection(laborType, laborTypeDisplay = LABOR_TYPE_DISPLAY_FIXTUR
     payment: null,
     employment_status: { status: "UNCONFIRMED", effective_date: FIRST_WORK_DATE, version: 1 },
     documents: [],
+    worker_portrait: null,
   };
 }
 
