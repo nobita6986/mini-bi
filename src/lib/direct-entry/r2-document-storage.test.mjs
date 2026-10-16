@@ -42,10 +42,26 @@ test("missing, malformed or wrong-environment config fails closed before any net
   assert.deepEqual(rec.sent, []);
 });
 
-test("bucket is chosen server-side per environment", () => {
+test("bucket is chosen server-side per environment", async () => {
   assert.equal(loadR2Config(env())?.bucket, "hrp-bi-preview");
   assert.equal(loadR2Config(env({ VERCEL_ENV: "production" })), null);
   assert.equal(loadR2Config(env({ VERCEL_ENV: "production", R2_BUCKET_NAME: "hrp-bi-product" }))?.bucket, "hrp-bi-product");
+  const stagingOnVercelProduction = env({
+    VERCEL_ENV: "production",
+    DOCUMENT_STORAGE_ENVIRONMENT: "preview",
+  });
+  assert.equal(loadR2Config(stagingOnVercelProduction)?.environment, "preview");
+  assert.equal(loadR2Config(stagingOnVercelProduction)?.bucket, "hrp-bi-preview");
+  assert.equal(loadR2Config(env({
+    VERCEL_ENV: "production",
+    DOCUMENT_STORAGE_ENVIRONMENT: "staging",
+  })), null, "unknown override fails closed");
+  const rec = recorder();
+  await createR2DocumentStorage(stagingOnVercelProduction, rec).createUploadUrl({
+    storage_key: key, mime_type: "image/png", size_bytes: 512,
+  });
+  assert.equal(rec.sent[0].presign.input.Bucket, "hrp-bi-preview");
+  assert.equal(rec.sent[0].presign.input.Key, `preview/staging/${key}`);
 });
 
 test("presigned PUT is bound to staging key, content type, length and expires within five minutes", async () => {
