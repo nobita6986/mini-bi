@@ -254,6 +254,39 @@ test("historical OFF requires a valid leave date and reason", () => {
   }])).ok, false);
 });
 
+test("empty initial status defaults ON while ON and UNCONFIRMED survive every work-date boundary", () => {
+  for (const first_work_date of ["2026-10-15", "2026-10-16", "2026-10-17"]) {
+    for (const employment of [
+      undefined,
+      null,
+      {},
+      { initial_status: "" },
+      { initial_status: null },
+      { initial_status: "ON" },
+      { initial_status: "UNCONFIRMED" },
+    ]) {
+      const row = {
+        ...baseRow,
+        employee_code: "hrp-2026-000001",
+        first_work_date,
+        ...(employment === undefined ? {} : { employment }),
+      };
+      const parsed = parseFullProfilePayload(payload([row]));
+      assert.equal(parsed.ok, true, `${first_work_date}/${JSON.stringify(employment)}`);
+      if (parsed.ok) {
+        const expected = employment?.initial_status === "UNCONFIRMED" ? "UNCONFIRMED" : "ON";
+        assert.equal(parsed.payload.rows[0].employment?.initial_status ?? "ON", expected);
+      }
+    }
+  }
+  assert.equal(parseFullProfilePayload(payload([{
+    ...baseRow, employment: { initial_status: "OFF", leave_date: "2026-10-17", leave_reason_text: "Synthetic" },
+  }])).ok, true);
+  assert.equal(parseFullProfilePayload(payload([{
+    ...baseRow, employment: { initial_status: "UNKNOWN" },
+  }])).ok, false);
+});
+
 test("general note remains omitted unless explicitly provided and bounded", () => {
   const omitted = parseFullProfilePayload(payload());
   assert.equal(omitted.ok, true);

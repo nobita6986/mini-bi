@@ -11,7 +11,7 @@
  *   7. sanitized response (private, no-store)
  *
  * GET khong mutation nen khong co CSRF/origin check (theo pattern read hien co cua Direct
- * Entry); duong mutation duy nhat - confirm DRAFT -> REVIEW - van di qua POST transition
+ * Entry); duong mutation duy nhat - confirm DRAFT -> SUBMITTED - van di qua POST transition
  * voi day du same-origin/CSRF, exact-key projection, OCC va idempotency.
  * Khong danh gia capability/scope o application; khong doc bang truc tiep; khong log identity,
  * fingerprint hay raw error.

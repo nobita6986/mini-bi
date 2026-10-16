@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
+import { replaceFunctionSourceForMutationProbe } from "./lib/mutate-pglite-function-source.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const W07C_R7_MIGRATION = "20261008090000_p3_w07c_r7_membership_independent_of_work_date.sql";
@@ -96,8 +97,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 102,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #102");
+  assert.equal(totalCount, 103,
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #103");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -388,6 +389,82 @@ test("migration #39 generates employee codes transactionally and replays idempot
   }
 });
 
+test("initial status defaults/preserves values for past, current and future first-work dates", async () => {
+  const db = await database();
+  try {
+    const { rows: dateRows } = await db.query(`
+      select public.direct_entry_authorization_date()::text as today,
+             (public.direct_entry_authorization_date() - 1)::text as past,
+             (public.direct_entry_authorization_date() + 1)::text as future
+    `);
+    const { past, today, future } = dateRows[0];
+    const inputs = [];
+    let index = 940001;
+    for (const first_work_date of [past, today, future]) {
+      for (const [employment, expected] of [
+        [null, "ON"],
+        [{ initial_status: "ON" }, "ON"],
+        [{ initial_status: "UNCONFIRMED" }, "UNCONFIRMED"],
+      ]) {
+        inputs.push({
+          row: generatedRow(index++, { first_work_date, employment }),
+          first_work_date,
+          expected,
+        });
+      }
+      if (first_work_date !== future) {
+        inputs.push({
+          row: generatedRow(index++, {
+            first_work_date,
+            employment: {
+              initial_status: "OFF",
+              leave_date: today,
+              leave_reason_text: "Synthetic valid OFF",
+            },
+          }),
+          first_work_date,
+          expected: "OFF",
+        });
+      }
+    }
+    const created = await generatedRpc(db, inputs.map(({ row }) => row),
+      "91600000-0000-4000-8000-000000000940");
+    const persisted = [];
+    for (const entryId of created.entry_ids) {
+      const { rows } = await db.query(`
+      select e.first_work_date::text as first_work_date, s.status
+        from public.direct_entries e
+        join lateral (
+          select status from public.direct_entry_employment_status_events
+           where entry_id = e.entry_id order by version desc limit 1
+        ) s on true
+       where e.entry_id = $1::uuid
+      `, [entryId]);
+      persisted.push(rows[0]);
+    }
+    assert.deepEqual(persisted, inputs.map(({ first_work_date, expected }) => ({
+      first_work_date, status: expected,
+    })));
+
+    const beforeInvalidOff = await count(db, "direct_entries");
+    await assert.rejects(
+      generatedRpc(db, [generatedRow(940020, {
+        first_work_date: future,
+        employment: {
+          initial_status: "OFF",
+          leave_date: today,
+          leave_reason_text: "Synthetic future OFF",
+        },
+      })], "91600000-0000-4000-8000-000000000941"),
+      (error) => error.code === "22023",
+    );
+    assert.equal(await count(db, "direct_entries"), beforeInvalidOff,
+      "OFF date rejection rolls the batch back without residue");
+  } finally {
+    await db.close();
+  }
+});
+
 test("P3-W07C-R7 historical work dates use current recruiter membership and date-only draft edits preserve assignment", async () => {
   const db = await database();
   try {
@@ -482,6 +559,259 @@ test("P3-W07C-R7 historical work dates use current recruiter membership and date
   }
 });
 
+test("draft edits merge allowlisted fields, preserve payment, enforce OCC and stop after submit", async () => {
+  const db = await database();
+  try {
+    const { rows: dateRows } = await db.query(
+      "select public.direct_entry_authorization_date()::text as today",
+    );
+    const created = await generatedRpc(db, [generatedRow(950001, {
+      first_work_date: dateRows[0].today,
+      worker_details: {
+        ...generatedRow(950001).worker_details,
+        national_id: { state: "provided", value: "198765432" },
+        address: { state: "provided", value: "Synthetic original address" },
+        phone: { state: "provided", value: "0900000001" },
+      },
+      general_note: { state: "provided", value: "Synthetic original note" },
+      payment: { state: "provided", account_number: "000098765432" },
+    })], "91600000-0000-4000-8000-000000000950");
+    const entryId = created.entry_ids[0];
+    const submissionId = (await db.query(
+      "select submission_id::text from public.direct_entries where entry_id=$1::uuid",
+      [entryId],
+    )).rows[0].submission_id;
+    const update = (version, patch, key) => serviceRpc(db, `
+      select public.direct_entry_update_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text
+      ) as result
+    `, [IDS.auth, IDS.user, entryId, version, JSON.stringify(patch), key]);
+    const state = async () => {
+      const { rows } = await db.query(`
+        select e.version as entry_version, e.worker_details, e.general_note,
+               p.account_number,
+               (select count(*)::integer from public.direct_entry_revisions r
+                 where r.entry_id=e.entry_id) as revisions,
+               (select count(*)::integer from public.direct_entry_submission_revisions r
+                 where r.submission_id=e.submission_id) as submission_revisions,
+               (select count(*)::integer from public.direct_entry_audit_events a
+                 where a.resource_ref=e.entry_id::text and a.action='draft_row_update') as audits
+          from public.direct_entries e
+          left join public.direct_entry_payments p using(entry_id)
+         where e.entry_id=$1::uuid
+      `, [entryId]);
+      return rows[0];
+    };
+    const patch = {
+      worker_details: {
+        address: { state: "intentionally_blank" },
+        phone: { state: "provided", value: "0900000002" },
+      },
+      general_note: null,
+    };
+    const before = await state();
+    assert.deepEqual(await update(1, patch, "draft-edit-partial-950"), {
+      entry_id: entryId, version: 2, submission_version: 2,
+    });
+    const saved = await state();
+    assert.equal(saved.entry_version, 2);
+    assert.equal(saved.general_note, null);
+    assert.equal(saved.worker_details.national_id.value, "198765432");
+    assert.deepEqual(saved.worker_details.address, { state: "intentionally_blank" });
+    assert.deepEqual(saved.worker_details.phone, { state: "provided", value: "0900000002" });
+    assert.deepEqual(saved.worker_details.gender, { state: "provided", value: "OTHER" });
+    assert.equal(saved.account_number, "000098765432");
+    assert.equal(saved.revisions, before.revisions + 1);
+    assert.equal(saved.submission_revisions, before.submission_revisions + 1);
+    assert.equal(saved.audits, before.audits + 1);
+
+    await assert.rejects(
+      update(1, { worker_details: { display_name: "Synthetic stale update" } },
+        "draft-edit-stale-950"),
+      (error) => error.code === "40001",
+    );
+    assert.deepEqual(await state(), saved, "stale OCC rejection creates no mutation or audit");
+    assert.equal((await db.query(
+      "select count(*)::integer as count from public.direct_entry_rpc_idempotency " +
+      "where idempotency_key=$1", ["draft-edit-stale-950"],
+    )).rows[0].count, 0);
+
+    await serviceRpc(db, `
+      select public.direct_entry_transition_submission(
+        $1::uuid,$2::uuid,$3::uuid,2,'SUBMITTED',$4::text
+      ) as result
+    `, [IDS.auth, IDS.user, submissionId, "draft-edit-submit-950"]);
+    const submittedState = await state();
+    await assert.rejects(
+      update(2, { general_note: "late edit" }, "draft-edit-after-submit-950"),
+      (error) => error.code === "42501",
+    );
+    assert.deepEqual(await state(), submittedState, "SUBMITTED entries reject draft patches");
+  } finally {
+    await db.close();
+  }
+});
+
+test("DRAFT employment-status wrapper preserves capability, OCC, audit and DRAFT-only guards", async () => {
+  const db = await database();
+  try {
+    const { rows: dateRows } = await db.query(`
+      select public.direct_entry_authorization_date()::text as today,
+             (public.direct_entry_authorization_date() - 1)::text as past
+    `);
+    const { today, past } = dateRows[0];
+    const created = await generatedRpc(db, [generatedRow(951001, { first_work_date: past })],
+      "91600000-0000-4000-8000-000000000951");
+    const entryId = created.entry_ids[0];
+    const submissionId = (await db.query(
+      "select submission_id::text from public.direct_entries where entry_id=$1::uuid",
+      [entryId],
+    )).rows[0].submission_id;
+    const apply = (auth, app, version, status, key) => serviceRpc(db, `
+      select public.direct_entry_apply_draft_employment_status(
+        $1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::date,$7::text,$8::text,$9::text
+      ) as result
+    `, [auth, app, entryId, version, status, today,
+      status === "OFF" ? "Synthetic leave" : null, "Synthetic status edit", key]);
+    const applied = await apply(IDS.auth, IDS.user, 1, "OFF", "draft-status-apply-951");
+    assert.deepEqual(applied, {
+      entry_id: entryId, entry_version: 2, status_version: 2, status: "OFF",
+    });
+
+    const beforeDenied = await db.query(`
+      select e.version,
+             (select count(*)::integer from public.direct_entry_employment_status_events s
+               where s.entry_id=e.entry_id) as statuses,
+             (select count(*)::integer from public.direct_entry_revisions r
+               where r.entry_id=e.entry_id) as revisions,
+             (select count(*)::integer from public.direct_entry_audit_events a
+               where a.resource_ref=e.entry_id::text and a.action='employment_status_apply') as audits
+        from public.direct_entries e where e.entry_id=$1::uuid
+    `, [entryId]);
+    await assert.rejects(
+      apply(IDS.paymentAuth, IDS.paymentUser, 2, "ON", "draft-status-no-capability-951"),
+      (error) => error.code === "42501",
+    );
+    await assert.rejects(
+      apply(IDS.auth, IDS.user, 1, "ON", "draft-status-stale-951"),
+      (error) => error.code === "40001",
+    );
+    const afterDenied = await db.query(`
+      select e.version,
+             (select count(*)::integer from public.direct_entry_employment_status_events s
+               where s.entry_id=e.entry_id) as statuses,
+             (select count(*)::integer from public.direct_entry_revisions r
+               where r.entry_id=e.entry_id) as revisions,
+             (select count(*)::integer from public.direct_entry_audit_events a
+               where a.resource_ref=e.entry_id::text and a.action='employment_status_apply') as audits
+        from public.direct_entries e where e.entry_id=$1::uuid
+    `, [entryId]);
+    assert.deepEqual(afterDenied.rows, beforeDenied.rows);
+    for (const key of ["draft-status-no-capability-951", "draft-status-stale-951"]) {
+      assert.equal((await db.query(
+        "select count(*)::integer as count from public.direct_entry_rpc_idempotency " +
+        "where idempotency_key=$1", [key],
+      )).rows[0].count, 0);
+    }
+
+    await serviceRpc(db, `
+      select public.direct_entry_transition_submission(
+        $1::uuid,$2::uuid,$3::uuid,1,'SUBMITTED',$4::text
+      ) as result
+    `, [IDS.auth, IDS.user, submissionId, "draft-status-submit-951"]);
+    await assert.rejects(
+      apply(IDS.auth, IDS.user, 2, "ON", "draft-status-after-submit-951"),
+      (error) => error.code === "42501",
+    );
+    assert.deepEqual((await db.query(`
+      select version,
+             (select count(*)::integer from public.direct_entry_employment_status_events s
+               where s.entry_id=e.entry_id) as statuses
+        from public.direct_entries e where e.entry_id=$1::uuid
+    `, [entryId])).rows[0], { version: 2, statuses: 2 });
+  } finally {
+    await db.close();
+  }
+});
+
+test("mutation probes show status, capability and OCC regressions when guards are removed", async () => {
+  const db = await database();
+  try {
+    const { rows: dateRows } = await db.query(`
+      select public.direct_entry_authorization_date()::text as today,
+             (public.direct_entry_authorization_date() - 1)::text as past
+    `);
+    const { today, past } = dateRows[0];
+    const created = await generatedRpc(db, [
+      generatedRow(952001, { first_work_date: past }),
+      generatedRow(952002, { first_work_date: past }),
+      generatedRow(952003, { first_work_date: past }),
+    ], "91600000-0000-4000-8000-000000000952");
+    const statusCall = (auth, app, entryId, version, key) => serviceRpc(db, `
+      select public.direct_entry_apply_draft_employment_status(
+        $1::uuid,$2::uuid,$3::uuid,$4::integer,'OFF',$5::date,
+        'Synthetic mutation probe','Synthetic status mutation',$6::text
+      ) as result
+    `, [auth, app, entryId, version, today, key]);
+
+    await replaceFunctionSourceForMutationProbe(db,
+      "public.direct_entry_apply_employment_status(uuid,uuid,uuid,integer,text,date,text,text,text)",
+      `  v_scope := public.direct_entry_assert_entry_access(
+    p_auth_subject, p_app_user_id, 'employment_status.apply',
+    v_entry.created_by_user_id, v_entry.team_id, v_entry.first_work_date
+  );`,
+      "  v_scope := 'all';");
+    assert.equal((await statusCall(IDS.paymentAuth, IDS.paymentUser, created.entry_ids[0], 1,
+      "status-permission-mutant")).status, "OFF",
+    "without the capability check, an actor lacking employment_status.apply can write status");
+
+    const { rows: submissions } = await db.query(`
+      select entry_id::text as entry_id, submission_id::text as submission_id
+        from public.direct_entries where entry_id=any($1::uuid[])
+       order by employee_code
+    `, [created.entry_ids]);
+    const staleEntry = created.entry_ids[2];
+    await serviceRpc(db, `
+      select public.direct_entry_update_draft_row(
+        $1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,$5::text
+      ) as result
+    `, [IDS.auth, IDS.user, staleEntry, JSON.stringify({ general_note: "Synthetic first edit" }),
+      "occ-mutant-first"]);
+    await replaceFunctionSourceForMutationProbe(db,
+      "public.direct_entry_update_draft_row(uuid,uuid,uuid,integer,jsonb,text)",
+      "  if p_expected_version is null or p_expected_version <> v_entry.version then",
+      "  if false then");
+    const stale = await serviceRpc(db, `
+      select public.direct_entry_update_draft_row(
+        $1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,$5::text
+      ) as result
+    `, [IDS.auth, IDS.user, staleEntry, JSON.stringify({ general_note: "Synthetic stale edit" }),
+      "occ-mutant-stale"]);
+    assert.equal(stale.version, 3,
+      "without the OCC guard, a stale version overwrites the prior draft edit");
+
+    const submittedEntry = submissions[1];
+    await serviceRpc(db, `
+      select public.direct_entry_transition_submission(
+        $1::uuid,$2::uuid,$3::uuid,3,'SUBMITTED',$4::text
+      ) as result
+    `, [IDS.auth, IDS.user, submittedEntry.submission_id, "status-state-mutant-submit"]);
+    await replaceFunctionSourceForMutationProbe(db,
+      "public.direct_entry_apply_draft_employment_status(uuid,uuid,uuid,integer,text,date,text,text,text)",
+      "  if v_submission_state <> 'DRAFT' then",
+      "  if false then");
+    await replaceFunctionSourceForMutationProbe(db,
+      "public.direct_entry_apply_employment_status(uuid,uuid,uuid,integer,text,date,text,text,text)",
+      "  perform public.direct_entry_assert_not_review(v_entry.submission_id);",
+      "  perform null;");
+    assert.equal((await statusCall(IDS.auth, IDS.user, submittedEntry.entry_id, 1,
+      "status-state-mutant")).status, "OFF",
+    "without the DRAFT guard, a submitted entry accepts an employment-status write");
+  } finally {
+    await db.close();
+  }
+});
+
 test("P3-W07C-R7 source patch accepts CRLF legacy scope helper bodies", async () => {
   const db = await databaseUpTo(W07C_R7_MIGRATION, { crlfLegacyScopeHelpers: true });
   try {
@@ -535,7 +865,9 @@ test("P3-W07C-R7 replacement project manager can read and edit an old draft only
     assert.equal(drafts.drafts.length, 1,
       "current project assignment exposes the old owner's DRAFT row");
     assert.equal(drafts.drafts[0].entry_id, entryId);
-    assert.equal(drafts.drafts[0].worker_display_name, "Synthetic Worker 930002");
+    assert.equal(drafts.drafts[0].worker_display_name, "");
+    assert.deepEqual(drafts.drafts[0].profile.worker_details.display_name,
+      { state: "redacted", present: true });
 
     const read = await serviceRpc(db, `
       select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as result
@@ -656,6 +988,8 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // direct_entry_transition_submission_apply) and two service-role-only RPCs (the
     // duplicate preflight and the acknowledged transition), and re-creates the legacy
     // six-argument transition as a thin wrapper over the shared body.
+    // PRE-W2-HF #103 adds one service-role-only DRAFT employment-status wrapper
+    // and replaces the existing confirmed-submission RPC without widening grants.
     // P3.1-W02C (#79) adds nine internal helpers (the immutable guard, the active
     // lookup, the bounded active options projection, the fixed snapshot, the admin
     // projection, the OCC lock, the revision writer, the version bump helper and the
@@ -670,10 +1004,10 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // adds nine service-role RPCs and three internal helpers. PRE-W2-HF #97 adds
     // one batch RPC name while retaining the versioned grant/revoke service ACLs;
     // the versionless revoke overload preserves the exposed revoke name. Measured:
-    // 241 total / 114 service-role / 127 internal names, none exposed internally.
+    // 242 total / 115 service-role / 127 internal names, none exposed internally.
     assert.deepEqual(result.rows[0], {
-      total: 241,
-      service_role: 114,
+      total: 242,
+      service_role: 115,
       internal: 127,
       exposed_internal: 0,
     });
@@ -914,7 +1248,8 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
     assert.ok(paymentFirst);
     assert.equal(paymentFirst.worker_display_name, "");
     assert.deepEqual(paymentFirst.profile.payment.account_number,
-      { state: "provided", value: "000012345678" });
+      { state: "masked", value: "••••••••5678" });
+    assert.equal(JSON.stringify(paymentOnlyList).includes("000012345678"), false);
     assert.deepEqual(paymentFirst.profile.worker_details.national_id,
       { state: "redacted", present: true });
     const paymentOff = paymentOnlyList.drafts.find(({ employee_code }) =>

@@ -264,11 +264,9 @@ test("R5B-R2: deterministic keys are unique per chunk and per transition", () =>
   const keys = new Set(plan.map((chunk) => chunk.idempotencyKey));
   assert.equal(keys.size, 4, "each create chunk has its own idempotency key");
   const first = "11111111-1111-4111-8111-111111111111";
-  const review = deterministicUuid("t0-import-transition", BATCH_A, first, "REVIEW");
   const submitted = deterministicUuid("t0-import-transition", BATCH_A, first, "SUBMITTED");
-  assert.notEqual(review, submitted, "REVIEW and SUBMITTED use different keys");
-  assert.equal(review, deterministicUuid("t0-import-transition", BATCH_A, first, "REVIEW"));
-  assert.equal(keys.has(review), false);
+  assert.equal(submitted, deterministicUuid("t0-import-transition", BATCH_A, first, "SUBMITTED"));
+  assert.equal(keys.has(submitted), false);
 });
 
 test("R5B-R2: reason is validated before any connection", async () => {
@@ -347,7 +345,7 @@ test("R5B-R2: check rollback, apply commit, SUBMITTED transitions and zero resid
   try {
     await seed(db);
     // Two SUBMITTED rows share one uploader + target_state -> ONE chunk -> ONE submission and
-    // exactly two transitions (not four); the DRAFT row is a second chunk that never transitions.
+    // one direct transition; the DRAFT row is a second chunk that never transitions.
     const mixed = await manifestFile([
       row({ source_row_id: "1", target_state: "SUBMITTED" }),
       row({ source_row_id: "3", target_state: "SUBMITTED", national_id: "123123123123",
@@ -360,13 +358,13 @@ test("R5B-R2: check rollback, apply commit, SUBMITTED transitions and zero resid
     assert.equal(check.committed, false);
     assert.equal(check.groups, 2);
     assert.equal(check.chunks, 2);
-    assert.equal(check.transitions, 2, "one submission transitions exactly twice");
+    assert.equal(check.transitions, 1, "one submission transitions directly once");
     assert.equal(await entryCount(db), 0, "check mode rolls back");
 
     const apply = await runImport(await optionsFor(mixed, BATCH_A), dependenciesFor(db).deps);
     assert.equal(apply.ok, true, JSON.stringify(apply));
     assert.equal(await entryCount(db), 3);
-    assert.equal(apply.transitions, 2);
+    assert.equal(apply.transitions, 1);
     assert.equal(Number((await db.query("select count(*)::int as n from" +
       " public.direct_entry_submissions")).rows[0].n), 2, "one submission per chunk");
     const states = (await db.query("select s.state, count(*)::int as n from public.direct_entries e" +

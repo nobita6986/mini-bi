@@ -12,6 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 import {
   audienceTeamScopeCount,
@@ -51,7 +52,7 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 102, "the inventory includes the W02-B vendor lifecycle #75 after P3.1-HF #74 and alias hotfix #73");
+  assert.equal(names.length, 103, "the inventory includes the W02-B vendor lifecycle #75 after P3.1-HF #74 and alias hotfix #73");
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   return db;
 }
@@ -66,7 +67,7 @@ async function insertEntry(db, { entry, sub, cand, createdBy, project, date, cod
       "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
       [entry, sub, cand, createdBy, project, date, code, JSON.stringify(workerDetails("Worker " + code)), recruiter, team, provider, labor],
     );
-    await db.query("update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1", [sub]);
+    await seedLegacyReviewSubmission(db, sub);
     await db.query("update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1", [sub]);
     await db.exec("commit");
   } catch (e) {

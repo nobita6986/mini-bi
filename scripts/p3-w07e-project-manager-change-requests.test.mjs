@@ -81,13 +81,10 @@ async function createSubmittedRow(db, projectId, employeeCode, key) {
     [employeeCode],
   );
   assert.equal(rows.length, 1);
-  for (const [target, suffix] of [["REVIEW", "review"], ["SUBMITTED", "submit"]]) {
-    const transition = transitionInput(
-      ACTORS.proposer, rows[0].submission_id, target === "REVIEW" ? 1 : 2, target,
-      key + "_" + suffix,
-    );
-    await db.query(transition.sql, transition.values);
-  }
+  const transition = transitionInput(
+    ACTORS.proposer, rows[0].submission_id, 1, "SUBMITTED", key + "_submit",
+  );
+  await db.query(transition.sql, transition.values);
   return rows[0];
 }
 
@@ -95,7 +92,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
   const migrated = await createMigratedDatabase();
   const db = migrated.db;
   try {
-    assert.equal(migrated.migrationNames.length, 102);
+    assert.equal(migrated.migrationNames.length, 103);
     const initialWorkerDetails = worker("S02B worker1");
     initialWorkerDetails.date_of_birth = { state: "provided", value: "01/01/2000" };
     initialWorkerDetails.national_id = { state: "provided", value: "000000000000" };

@@ -49,7 +49,7 @@
     "test:p1.6-w04-s03a-dev": "node scripts/p1.6-w04-s03a-dev-acceptance.mjs",
     "test:p1.6-w04-s03b": "node --conditions=react-server --test src/app/api/direct-entry/write-routes.test.mjs src/lib/direct-entry/write-api.test.mjs",
     "test:p1.6-w04-s03b-dev": "node --conditions=react-server scripts/p1.6-w04-s03b-dev-acceptance.mjs",
-    "test:p1.6-w04-s03cd": "node --conditions=react-server --test src/app/api/direct-entry/s03cd-routes.test.mjs src/lib/direct-entry/draft-api.test.mjs src/lib/direct-entry/live-controller.test.mjs scripts/p1.6-w04-s03cd-db.test.mjs",
+    "test:p1.6-w04-s03cd": "node --conditions=react-server --test src/app/api/direct-entry/s03cd-routes.test.mjs src/app/api/direct-entry/draft-employment-status-route.test.mjs src/lib/direct-entry/draft-api.test.mjs src/lib/direct-entry/draft-employment-status-api.test.mjs src/lib/direct-entry/live-controller.test.mjs scripts/p1.6-w04-s03cd-db.test.mjs",
     "test:p1.6-w04-s03cd-dev": "node --conditions=react-server scripts/p1.6-w04-s03cd-dev-acceptance.mjs",
     "test:p1.6-w04-s04a": "node --conditions=react-server --test src/app/api/direct-entry/payment-route.test.mjs src/lib/direct-entry/payment-contract.test.mjs src/lib/direct-entry/payment-api.test.mjs src/lib/direct-entry/payment-repository.test.mjs src/lib/direct-entry/payment-ui.test.mjs src/lib/auth/direct-entry-v2.test.mjs scripts/p1.6-w04-s04a-db.test.mjs",
     "test:p1.6-w04-s04b-s01": "node --conditions=react-server --test src/app/api/direct-entry/documents-route.test.mjs src/lib/direct-entry/document-upload-contract.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs",

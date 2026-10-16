@@ -126,7 +126,7 @@ test("HF-R2: acknowledgement carries fingerprint + count and no raw CCCD or forb
   const projected = clientProjection(body);
   const acknowledgement = {
     expected_version: projected.version,
-    target_state: "REVIEW",
+    target_state: "SUBMITTED",
     idempotency_key: "ack-key-hf-r2",
     duplicate_cccd_fingerprint: projected.fingerprint,
     duplicate_cccd_count: projected.conflict_count,

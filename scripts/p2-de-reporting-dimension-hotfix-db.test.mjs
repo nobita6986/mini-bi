@@ -20,6 +20,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 import {
   REPAIR_DISTRIBUTION_SQL,
@@ -90,9 +91,9 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 102, "the ledger carries the W02-B vendor lifecycle #75 after P3.1-HF #74");
-  assert.equal(names.at(-30), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
-  assert.equal(names.at(-29), "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql");
+  assert.equal(names.length, 103, "the ledger carries the W02-B vendor lifecycle #75 after P3.1-HF #74");
+  assert.equal(names.at(-31), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  assert.equal(names.at(-30), "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql");
   // This is the regression for the earlier one-off P2 repair. Apply the
   // pre-hotfix ledger so its defect fixture remains reproducible; #73 has its
   // own focused lane and prevents this shape from being created again.
@@ -172,7 +173,7 @@ async function insertEntry(db, { project, recruiter, provider, date, submit = tr
       [entry, sub, cand, APP_ALL, project, date, code,
         JSON.stringify(workerDetails("Worker " + entrySeq)), recruiter, TEAM, provider]);
     if (submit) {
-      await db.query("update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1", [sub]);
+      await seedLegacyReviewSubmission(db, sub);
       await db.query("update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1", [sub]);
     }
     await db.exec("commit");

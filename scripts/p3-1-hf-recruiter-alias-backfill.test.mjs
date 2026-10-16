@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
@@ -22,7 +23,7 @@ async function databaseBeforeHotfix() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = await migrationNames();
-  assert.equal(names.length, 102);
+  assert.equal(names.length, 103);
   // The pre-hotfix cut must stop at #73. Later append-only migrations must stay
   // visible in this pinned tail so the test never applies them before #73.
   const hotfixAt = names.indexOf(MIGRATION);
@@ -57,6 +58,7 @@ async function databaseBeforeHotfix() {
     "20261015150000_pre_w2_worker_data_capabilities_default.sql",
     "20261015160000_pre_w2_initial_status_any_start_date.sql",
     "20261015170000_pre_w2_uploader_submission_queues.sql",
+    "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
@@ -113,11 +115,7 @@ async function insertReportingFact(db, recruiterId, suffix) {
         phone: { state: "omitted" },
       }), recruiterId, TEAM],
   );
-    await db.query(
-    "update public.direct_entry_submissions set state='REVIEW',version=2" +
-    " where submission_id=$1::uuid",
-    [submission],
-  );
+    await seedLegacyReviewSubmission(db, submission);
     await db.query(
     "update public.direct_entry_submissions set state='SUBMITTED',version=3" +
     " where submission_id=$1::uuid",

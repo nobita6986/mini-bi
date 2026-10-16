@@ -296,14 +296,14 @@ async function runAcceptance(client, reportingBefore) {
     },
   };
   const gated = await callTransition(
-    gateRepository, submissionId, transitionBody(1, "REVIEW", key("gate")), session, { flag: undefined },
+    gateRepository, submissionId, transitionBody(1, "SUBMITTED", key("gate")), session, { flag: undefined },
   );
   assert.equal(gated.status, 404);
   assert.equal(gateCalls, 0);
   pass("gate off returns 404 before session or repository");
 
   // 2. CSRF/same-origin.
-  const csrf = await callTransition(repository, submissionId, transitionBody(1, "REVIEW", key("csrf")), session, {
+  const csrf = await callTransition(repository, submissionId, transitionBody(1, "SUBMITTED", key("csrf")), session, {
     headers: { origin: "https://attacker.test" },
   });
   assert.equal(csrf.status, 403);
@@ -311,14 +311,14 @@ async function runAcceptance(client, reportingBefore) {
 
   // 3. submissionId khong hop le.
   assert.equal((await callTransition(
-    repository, submissionId, transitionBody(1, "REVIEW", key("uuid")), session, { id: "not-a-uuid" },
+    repository, submissionId, transitionBody(1, "SUBMITTED", key("uuid")), session, { id: "not-a-uuid" },
   )).status, 400);
   pass("malformed submissionId returns 400");
 
   // 4. Truong authority tu client.
   const authority = await callTransition(
     repository, submissionId,
-    { ...transitionBody(1, "REVIEW", key("auth")), created_by_user_id: actor.app_user_id },
+    { ...transitionBody(1, "SUBMITTED", key("auth")), created_by_user_id: actor.app_user_id },
     session,
   );
   assert.equal(authority.status, 400);
@@ -327,32 +327,49 @@ async function runAcceptance(client, reportingBefore) {
 
   // 5-6. Session fail-closed.
   assert.equal((await callTransition(
-    repository, submissionId, transitionBody(1, "REVIEW", key("unauth")),
+    repository, submissionId, transitionBody(1, "SUBMITTED", key("unauth")),
     { actor: { ok: false, reason: "UNAUTHENTICATED" }, response_headers: {} },
   )).status, 401);
   assert.equal((await callTransition(
-    repository, submissionId, transitionBody(1, "REVIEW", key("disabled")),
+    repository, submissionId, transitionBody(1, "SUBMITTED", key("disabled")),
     { actor: { ok: false, reason: "ACTOR_DISABLED" }, response_headers: {} },
   )).status, 403);
   assert.deepEqual(await snapshot(client, submissionId, actor.app_user_id), before);
   pass("unauthenticated 401 and disabled actor 403 leave the submission untouched");
 
-  // 7. DRAFT -> REVIEW.
+  // 7. New DRAFT batches may not create a REVIEW step.
   const review = await callTransition(repository, submissionId, transitionBody(1, "REVIEW", key("review")), session);
-  assert.equal(review.status, 200);
-  assert.deepEqual(await review.json(), {
-    ok: true, submission_id: submissionId, state: "REVIEW", version: 2,
-  });
-  const atReview = await snapshot(client, submissionId, actor.app_user_id);
-  assert.equal(atReview.state, "REVIEW");
-  assert.equal(atReview.version, 2);
-  assert.equal(atReview.revisions, before.revisions + 1);
-  assert.equal(atReview.audits, before.audits + 1);
-  assert.equal(atReview.idempotencies, before.idempotencies + 1);
-  assert.equal(atReview.max_revision_version, 2);
-  pass("DRAFT -> REVIEW returns 200 with version 2 and one new revision plus audit row");
+  assert.equal(review.status, 400);
+  assert.equal((await review.json()).code, "SUBMISSION_TRANSITION_INVALID");
+  assert.deepEqual(await snapshot(client, submissionId, actor.app_user_id), before);
+  pass("new DRAFT -> REVIEW is rejected before any DB mutation");
 
-  // 8. REVIEW chan mutation draft.
+  // 8. OCC is checked before a direct submit mutates the DRAFT.
+  const stale = await callTransition(
+    repository, submissionId, transitionBody(2, "SUBMITTED", key("stale")), session,
+  );
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).code, "SUBMISSION_CONFLICT");
+  assert.deepEqual(await snapshot(client, submissionId, actor.app_user_id), before);
+  pass("stale expected_version returns 409 without changing the DRAFT");
+
+  // 9. Direct DRAFT -> SUBMITTED.
+  const submitKey = key("submit");
+  const submitted = await callTransition(
+    repository, submissionId, transitionBody(1, "SUBMITTED", submitKey), session,
+  );
+  assert.equal(submitted.status, 200);
+  assert.deepEqual(await submitted.json(), {
+    ok: true, submission_id: submissionId, state: "SUBMITTED", version: 2,
+  });
+  const atSubmitted = await snapshot(client, submissionId, actor.app_user_id);
+  assert.equal(atSubmitted.state, "SUBMITTED");
+  assert.equal(atSubmitted.version, 2);
+  assert.notEqual(atSubmitted.submitted_at, null);
+  assert.equal(atSubmitted.max_revision_version, 2);
+  pass("DRAFT -> SUBMITTED reaches version 2 with submitted_at recorded");
+
+  // 10. A submitted row is read-only.
   let blocked = null;
   try {
     await roleQuery(client, "service_role",
@@ -367,90 +384,42 @@ async function runAcceptance(client, reportingBefore) {
     "select version from public.direct_entries where entry_id=$1", [data.entry.entry_id],
   );
   assert.equal(entryAfterBlock.rows[0].version, data.entry.version);
-  pass("draft row update is denied with 42501 while the submission is in REVIEW");
+  pass("draft row update is denied with 42501 after the submission");
 
-  // 9. OCC stale.
-  const stale = await callTransition(repository, submissionId, transitionBody(1, "DRAFT", key("stale")), session);
-  assert.equal(stale.status, 409);
-  assert.equal((await stale.json()).code, "SUBMISSION_CONFLICT");
-  pass("stale expected_version returns 409 SUBMISSION_CONFLICT");
-
-  // 10. REVIEW -> DRAFT.
-  const backToDraft = await callTransition(
-    repository, submissionId, transitionBody(2, "DRAFT", key("return")), session,
-  );
-  assert.equal(backToDraft.status, 200);
-  assert.deepEqual(await backToDraft.json(), {
-    ok: true, submission_id: submissionId, state: "DRAFT", version: 3,
-  });
-  pass("REVIEW -> DRAFT returns 200 with version 3");
-
-  // 11. DRAFT -> SUBMITTED bi DB tu choi (khong co duong tat o application).
-  const shortcut = await callTransition(
-    repository, submissionId, transitionBody(3, "SUBMITTED", key("shortcut")), session,
-  );
-  assert.equal(shortcut.status, 409);
-  assert.equal((await shortcut.json()).code, "SUBMISSION_CONFLICT");
-  const stillDraft = await snapshot(client, submissionId, actor.app_user_id);
-  assert.equal(stillDraft.state, "DRAFT");
-  assert.equal(stillDraft.version, 3);
-  pass("DRAFT -> SUBMITTED is denied by the database and leaves state DRAFT");
-
-  // 12. DRAFT -> REVIEW lai.
+  // 11. SUBMITTED la terminal.
   assert.equal((await callTransition(
-    repository, submissionId, transitionBody(3, "REVIEW", key("review2")), session,
-  )).status, 200);
-
-  // 13. REVIEW -> SUBMITTED voi key duoc replay o buoc 15.
-  const submitKey = key("submit");
-  const submitted = await callTransition(
-    repository, submissionId, transitionBody(4, "SUBMITTED", submitKey), session,
-  );
-  assert.equal(submitted.status, 200);
-  assert.deepEqual(await submitted.json(), {
-    ok: true, submission_id: submissionId, state: "SUBMITTED", version: 5,
-  });
-  const atSubmitted = await snapshot(client, submissionId, actor.app_user_id);
-  assert.equal(atSubmitted.state, "SUBMITTED");
-  assert.equal(atSubmitted.version, 5);
-  assert.notEqual(atSubmitted.submitted_at, null);
-  assert.equal(atSubmitted.max_revision_version, 5);
-  pass("DRAFT -> REVIEW -> SUBMITTED reaches version 5 with submitted_at recorded");
-
-  // 14. SUBMITTED la terminal.
-  assert.equal((await callTransition(
-    repository, submissionId, transitionBody(5, "DRAFT", key("terminal")), session,
+    repository, submissionId, transitionBody(2, "DRAFT", key("terminal")), session,
   )).status, 409);
   const noop = await callTransition(
-    repository, submissionId, transitionBody(5, "SUBMITTED", key("noop")), session,
+    repository, submissionId, transitionBody(2, "SUBMITTED", key("noop")), session,
   );
   assert.equal(noop.status, 400);
   assert.equal((await noop.json()).code, "SUBMISSION_TRANSITION_INVALID");
   pass("SUBMITTED cannot transition again (409 terminal) and same-state is a 400 no-op");
 
-  // 15. Replay idempotent.
+  // 12. Replay idempotent.
   const replay = await callTransition(
-    repository, submissionId, transitionBody(4, "SUBMITTED", submitKey), session,
+    repository, submissionId, transitionBody(1, "SUBMITTED", submitKey), session,
   );
   assert.equal(replay.status, 200);
   assert.deepEqual(await replay.json(), {
-    ok: true, submission_id: submissionId, state: "SUBMITTED", version: 5,
+    ok: true, submission_id: submissionId, state: "SUBMITTED", version: 2,
   });
   const afterReplay = await snapshot(client, submissionId, actor.app_user_id);
   assert.deepEqual(afterReplay, atSubmitted);
   pass("idempotent replay returns the same outcome with no extra revision or audit row");
 
-  // 16. Cung key nhung payload doi.
+  // 13. Cung key nhung payload doi.
   const conflict = await callTransition(
-    repository, submissionId, transitionBody(4, "DRAFT", submitKey), session,
+    repository, submissionId, transitionBody(1, "DRAFT", submitKey), session,
   );
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).code, "SUBMISSION_CONFLICT");
   pass("same idempotency key with a changed target or version returns 409");
 
-  // 17. Actor ngoai scope.
+  // 14. Actor ngoai scope.
   const outsider = await callTransition(
-    repository, submissionId, transitionBody(4, "SUBMITTED", key("outsider")), sessionFor(data.outsider),
+    repository, submissionId, transitionBody(2, "SUBMITTED", key("outsider")), sessionFor(data.outsider),
   );
   assert.equal(outsider.status, 403);
   assert.equal((await outsider.json()).code, "SUBMISSION_DENIED");
@@ -467,14 +436,14 @@ async function runAcceptance(client, reportingBefore) {
     " where a.resource_ref=$1 and a.action='submission_transition'",
     [submissionId],
   );
-  assert.deepEqual(ledger[0], { transitions: 4, linked: 4, applied: 4, with_capability: 4 });
+  assert.deepEqual(ledger[0], { transitions: 1, linked: 1, applied: 1, with_capability: 1 });
   const { rows: revisions } = await client.query(
     "select version, actor_user_id from public.direct_entry_submission_revisions" +
     " where submission_id=$1 order by version",
     [submissionId],
   );
-  // Revision 1 do create_batch tao; bon transition tao revision 2..5.
-  assert.deepEqual(revisions.map(({ version }) => version), [1, 2, 3, 4, 5]);
+  // Revision 1 is from create_batch; direct submit appends revision 2.
+  assert.deepEqual(revisions.map(({ version }) => version), [1, 2]);
   assert.deepEqual([...new Set(revisions.map(({ actor_user_id }) => actor_user_id))], [actor.app_user_id]);
   pass("four revisions and four audit rows agree on version sequence and actor");
 

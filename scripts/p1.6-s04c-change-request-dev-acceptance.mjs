@@ -277,12 +277,10 @@ async function createBatch(client, actor, projectId, recruiterId, codes) {
 }
 
 async function submitSubmission(client, actor, submissionId, version) {
-  for (const [target, expected] of [["REVIEW", version], ["SUBMITTED", version + 1]]) {
-    await roleQuery(client, "service_role",
-      "select public.direct_entry_transition_submission($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) data",
-      [actor.auth_subject, actor.app_user_id, submissionId, expected, target, key("submit" + target)],
-    );
-  }
+  await roleQuery(client, "service_role",
+    "select public.direct_entry_transition_submission($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::text,$6::text) data",
+    [actor.auth_subject, actor.app_user_id, submissionId, version, "SUBMITTED", key("submit")],
+  );
 }
 
 async function fixture(client) {

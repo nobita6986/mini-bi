@@ -6,12 +6,11 @@
  * public.direct_entry_transition_submission enforce - module nay KHONG tao authority thu hai.
  *
  * Ma tran trang thai da khoa o docs/contracts/p1.6-direct-entry-v1.md muc 4:
- *   DRAFT -> REVIEW
+ *   DRAFT -> SUBMITTED
  *   REVIEW -> DRAFT
  *   REVIEW -> SUBMITTED
  *   SUBMITTED la terminal (khong transition tiep).
- * DRAFT -> SUBMITTED khong nam trong ma tran; DB trigger direct_entry_submission_transition
- * tu choi bang SQLSTATE 40001 nen application khong the bypass.
+ * REVIEW remains readable for existing batches, but new REVIEW transitions are forbidden.
  */
 
 export const SUBMISSION_STATES = ["DRAFT", "REVIEW", "SUBMITTED"] as const;
@@ -23,7 +22,7 @@ export const SUBMISSION_TERMINAL_STATE: SubmissionState = "SUBMITTED";
 /** Ma tran chuyen trang thai hop le (chi de kiem tra tinh dung dan, khong thay the DB). */
 export const SUBMISSION_TRANSITIONS: Readonly<Record<SubmissionState, readonly SubmissionState[]>> =
   Object.freeze({
-    DRAFT: Object.freeze(["REVIEW"] as const),
+    DRAFT: Object.freeze(["SUBMITTED"] as const),
     REVIEW: Object.freeze(["DRAFT", "SUBMITTED"] as const),
     SUBMITTED: Object.freeze([] as const),
   });
@@ -35,7 +34,7 @@ export const SUBMISSION_TRANSITION_REQUEST_KEYS = [
 ] as const;
 
 /**
- * P3.1-HF-R1: dang request thu hai, chi hop le khi target la REVIEW. Cap fingerprint + count
+ * P3.1-HF-R1: request co fingerprint + count chi hop le khi target la SUBMITTED. Cac key
  * phai di cung nhau va duoc server doi chieu lai voi tap conflict authoritative; mot boolean
  * "confirmed" don le khong bao gio duoc chap nhan.
  */
@@ -182,7 +181,7 @@ export function findForbiddenClientField(value: unknown, path = ""): { field: st
 
 export type SubmissionTransitionRequest = {
   expected_version: number;
-  target_state: SubmissionState;
+  target_state: Exclude<SubmissionState, "REVIEW">;
   idempotency_key: string;
   duplicate_cccd_fingerprint?: string;
   duplicate_cccd_count?: number;
@@ -208,6 +207,7 @@ export function projectSubmissionTransitionRequest(
   const { expected_version: expectedVersion, target_state: targetState, idempotency_key: key } = value;
   if (!isPositiveVersion(expectedVersion)) return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
   if (!isSubmissionState(targetState)) return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
+  if (targetState === "REVIEW") return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
   if (typeof key !== "string") return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
   if (key.length < 1 || key.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
     return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
@@ -225,8 +225,8 @@ export function projectSubmissionTransitionRequest(
       },
     };
   }
-  // Acknowledgement chi co nghia cho DRAFT -> REVIEW (server kiem tra lai trang thai that).
-  if (targetState !== "REVIEW") return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
+  // Acknowledgement chi co nghia cho DRAFT -> SUBMITTED.
+  if (targetState !== "SUBMITTED") return { ok: false, code: "SUBMISSION_TRANSITION_INVALID" };
   const fingerprint = value.duplicate_cccd_fingerprint;
   const count = value.duplicate_cccd_count;
   if (typeof fingerprint !== "string" || !ACK_FINGERPRINT.test(fingerprint)) {

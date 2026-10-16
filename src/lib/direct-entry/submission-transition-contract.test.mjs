@@ -18,21 +18,21 @@ const submissionId = "b1000000-0000-4000-8000-000000000001";
 function validRequest(overrides = {}) {
   return {
     expected_version: 1,
-    target_state: "REVIEW",
+    target_state: "SUBMITTED",
     idempotency_key: "submission-transition-synthetic-key",
     ...overrides,
   };
 }
 
-test("transition matrix: DRAFT -> REVIEW, REVIEW -> DRAFT, REVIEW -> SUBMITTED only", () => {
+test("transition matrix: DRAFT sends directly; existing REVIEW remains compatible", () => {
   assert.deepEqual([...SUBMISSION_STATES], ["DRAFT", "REVIEW", "SUBMITTED"]);
-  assert.deepEqual([...allowedTargetStates("DRAFT")], ["REVIEW"]);
+  assert.deepEqual([...allowedTargetStates("DRAFT")], ["SUBMITTED"]);
   assert.deepEqual([...allowedTargetStates("REVIEW")], ["DRAFT", "SUBMITTED"]);
   assert.deepEqual([...allowedTargetStates("SUBMITTED")], []);
-  assert.equal(isAllowedTransition("DRAFT", "REVIEW"), true);
+  assert.equal(isAllowedTransition("DRAFT", "REVIEW"), false);
+  assert.equal(isAllowedTransition("DRAFT", "SUBMITTED"), true);
   assert.equal(isAllowedTransition("REVIEW", "DRAFT"), true);
   assert.equal(isAllowedTransition("REVIEW", "SUBMITTED"), true);
-  assert.equal(isAllowedTransition("DRAFT", "SUBMITTED"), false);
   assert.equal(isAllowedTransition("SUBMITTED", "DRAFT"), false);
   assert.equal(isAllowedTransition("SUBMITTED", "REVIEW"), false);
   assert.equal(isAllowedTransition("SUBMITTED", "SUBMITTED"), false);
@@ -45,8 +45,8 @@ test("transition matrix: DRAFT -> REVIEW, REVIEW -> DRAFT, REVIEW -> SUBMITTED o
   assert.equal(isSubmissionState("review"), false);
 });
 
-test("exact valid requests pass for all three target states", () => {
-  for (const target of ["REVIEW", "DRAFT", "SUBMITTED"]) {
+test("only DRAFT and SUBMITTED are accepted targets; REVIEW remains a readable state", () => {
+  for (const target of ["DRAFT", "SUBMITTED"]) {
     const result = projectSubmissionTransitionRequest(validRequest({ target_state: target }));
     assert.equal(result.ok, true, target);
     assert.deepEqual(result.value, {
@@ -55,6 +55,7 @@ test("exact valid requests pass for all three target states", () => {
       idempotency_key: "submission-transition-synthetic-key",
     });
   }
+  assert.equal(projectSubmissionTransitionRequest(validRequest({ target_state: "REVIEW" })).ok, false);
   const key = projectSubmissionTransitionRequest(validRequest({ idempotency_key: "9f1c2d3e-0000-4000-8000-000000000001" }));
   assert.equal(key.ok, true);
   assert.equal(key.value.idempotency_key, "9f1c2d3e-0000-4000-8000-000000000001");
@@ -98,7 +99,7 @@ test("authority and derived fields are rejected as forbidden, including nested o
   assert.deepEqual(findForbiddenClientField({ items: [{ ok: 1 }, { owner: "x" }] }), {
     field: "items[1].owner",
   });
-  assert.equal(findForbiddenClientField({ expected_version: 1, target_state: "REVIEW" }), null);
+  assert.equal(findForbiddenClientField({ expected_version: 1, target_state: "SUBMITTED" }), null);
 });
 
 test("malformed expected_version, target_state and idempotency_key fail closed", () => {

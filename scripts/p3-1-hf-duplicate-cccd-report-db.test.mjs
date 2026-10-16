@@ -20,6 +20,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const HOTFIX_MIGRATION = "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql";
@@ -76,10 +77,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102, "the ledger carries W03A-R2 #84 and append-only migrations through #102");
-  assert.equal(names[names.length - (29)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
-  assert.equal(names[names.length - (30)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
-  assert.equal(names[names.length - (42)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.length, 103, "the ledger carries W03A-R2 #84 and append-only migrations through #103");
+  assert.equal(names[names.length - (30)], HOTFIX_MIGRATION, "P3.1-HF #74 stays append-only before W02-B #75 and the leader-scope hotfix #76");
+  assert.equal(names[names.length - (31)], PREVIOUS_MIGRATION, "P3.1-HF stays append-only");
+  assert.equal(names[names.length - (43)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 
@@ -179,9 +180,7 @@ async function seedEpisode(db, {
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY',null)",
       [entry, submission, candidate, ADMIN_APP, project, date, code,
         JSON.stringify({ display_name: name, ...workerDetails(cccd) }), REC_A, TEAM]);
-    await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submission]);
+    await seedLegacyReviewSubmission(db, submission);
     await db.query(
       "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
       [submission]);

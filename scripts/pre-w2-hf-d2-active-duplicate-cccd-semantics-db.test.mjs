@@ -14,6 +14,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const D2_MIGRATION = "20261013140000_pre_w2_hf_d2_active_duplicate_cccd_semantics.sql";
@@ -47,8 +48,8 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102, "the ledger carries the PRE-W2-HF-D2 migration as #88");
-  assert.equal(names[names.length - (15)], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
+  assert.equal(names.length, 103, "the ledger carries the PRE-W2-HF-D2 migration as #88");
+  assert.equal(names[names.length - (16)], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
   return db;
 }
 
@@ -125,9 +126,7 @@ async function seedEpisode(db, { cccd, name, project = PROJ_A, date = "2026-01-0
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
       [entry, submission, candidate, ADMIN_APP, project, date, code,
         JSON.stringify({ display_name: name, ...workerDetails(cccd) }), REC_A, TEAM]);
-    await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submission]);
+    await seedLegacyReviewSubmission(db, submission);
     await db.query(
       "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
       [submission]);

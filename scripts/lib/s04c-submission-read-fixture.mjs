@@ -8,6 +8,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 
@@ -188,8 +189,8 @@ export async function seedSubmissionReadFixture(db) {
     ["hrp-2026-400003", "hrp-2026-400004"], RECRUITER_A, "submitted");
   const draftTied = await createSubmission(db, ACTORS.owner, ["hrp-2026-400005"], RECRUITER_A, "tied");
 
-  await transition(db, ACTORS.owner, review.submissionId, 1, "REVIEW", "review_a");
-  await transition(db, ACTORS.owner, submitted.submissionId, 1, "REVIEW", "submitted_a");
+  await seedLegacyReviewSubmission(db, review.submissionId);
+  await seedLegacyReviewSubmission(db, submitted.submissionId);
   await transition(db, ACTORS.owner, submitted.submissionId, 2, "SUBMITTED", "submitted_b");
 
   await setSubmissionCreatedAt(db, draft.submissionId, SUBMISSION_STAMPS.draft);

@@ -45,10 +45,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102, "the ledger carries append-only migrations through #102");
-  assert.equal(names[names.length - (11)], D3A_MIGRATION,
+  assert.equal(names.length, 103, "the ledger carries append-only migrations through #103");
+  assert.equal(names[names.length - (12)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
-  assert.equal(names.at(-3), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-4), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
 }
 
@@ -56,7 +56,7 @@ async function buildDbBeforeDefaultCapabilities() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-3), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-4), DEFAULT_CAPABILITIES_MIGRATION);
   for (const name of names.slice(0, -3)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }

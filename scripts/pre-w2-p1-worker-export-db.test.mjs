@@ -19,6 +19,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const EXPORT_MIGRATION_NAME = "20261013120000_pre_w2_p1_worker_export.sql";
@@ -53,9 +54,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 102,
+  assert.equal(names.length, 103,
     "ledger includes worker-data capabilities #100, initial-status hotfix #101 and uploader queues #102");
-  assert.equal(names[names.length - (17)], EXPORT_MIGRATION_NAME,
+  assert.equal(names[names.length - (18)], EXPORT_MIGRATION_NAME,
     "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
   return db;
 }
@@ -156,9 +157,7 @@ async function addWorker(db, {
         "hrp-" + year + "-" + String(300000 + n), JSON.stringify(workerDetails), recruiter, TEAM,
         generalNote ?? null]);
     if (state !== "DRAFT") {
-      await db.query(
-        "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-        [submission]);
+      await seedLegacyReviewSubmission(db, submission);
     }
     if (state === "SUBMITTED") {
       await db.query(
@@ -444,9 +443,7 @@ test("PRE-W2-P1: the 10,000/10,001 row cap fails closed with a persisted REJECTE
         " $4, $5, 'hrp', 'TEMPORARY'" +
         " from generate_series(1, 10000) g",
         [uuid(8800), UPLOADER_APP, PROJ_A, REC_A, TEAM]);
-      await db.query(
-        "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-        [uuid(8800)]);
+      await seedLegacyReviewSubmission(db, uuid(8800));
       await db.query(
         "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
         [uuid(8800)]);

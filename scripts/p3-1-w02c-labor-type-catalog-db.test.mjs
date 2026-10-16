@@ -1245,12 +1245,12 @@ test("18: the ACL posture is service-role only, with revoked helpers and forced 
 
 test("19: the retired closed set is gone and a legacy value aborts migration #79", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-24), NEW_MIGRATION, "#79 stays the catalog migration");
-  assert.equal(names.at(-23), R2_MIGRATION, "#80 stays the display projection migration");
-  assert.equal(names.at(-22), R3_MIGRATION, "#81 remains before W03A");
-  assert.equal(names.at(-21), "20261011150000_p3_1_w03a_app_user_lifecycle.sql", "#82 is the W03A migration");
-  assert.equal(names.at(-20), "20261011160000_p3_1_w03a_r2_account_read.sql", "#83 is the W03A-R2 read migration");
-  assert.equal(names.at(-19), "20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql", "#84 repairs the W03A-R2 read contract");
+  assert.equal(names.at(-25), NEW_MIGRATION, "#79 stays the catalog migration");
+  assert.equal(names.at(-24), R2_MIGRATION, "#80 stays the display projection migration");
+  assert.equal(names.at(-23), R3_MIGRATION, "#81 remains before W03A");
+  assert.equal(names.at(-22), "20261011150000_p3_1_w03a_app_user_lifecycle.sql", "#82 is the W03A migration");
+  assert.equal(names.at(-21), "20261011160000_p3_1_w03a_r2_account_read.sql", "#83 is the W03A-R2 read migration");
+  assert.equal(names.at(-20), "20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql", "#84 repairs the W03A-R2 read contract");
   assert.equal(new Set(names).size, names.length, "the ledger carries no duplicate slot");
 
   const closedSetQuery =
@@ -1501,10 +1501,7 @@ test("23: the worker directory projects a SUBMITTED row carrying PROBATION", asy
   const entryId = await insertEntry(db, { employeeCode: "hrp-2026-420002",
     laborType: "PROBATION", submissionId });
   await db.query("commit");
-  // DRAFT -> REVIEW -> SUBMITTED is the only legal path (the transition guard
-  // rejects any other edge and any non +1 version).
-  await db.query("update public.direct_entry_submissions set state = 'REVIEW',"
-    + " version = version + 1 where submission_id = $1::uuid", [submissionId]);
+  // New batches submit directly from DRAFT; REVIEW remains only for legacy batches.
   await db.query("update public.direct_entry_submissions set state = 'SUBMITTED',"
     + " version = version + 1 where submission_id = $1::uuid", [submissionId]);
 

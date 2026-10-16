@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 
@@ -107,13 +108,9 @@ async function createEntry(db, firstWorkDate, employeeCode) {
 }
 
 async function submitSubmission(db, submissionId) {
-  const idemBase = "w04a-" + submissionId.slice(0, 8);
   await db.query("select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
     ["10000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000001",
-      submissionId, 1, "REVIEW", idemBase + "-review"]);
-  await db.query("select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
-    ["10000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000001",
-      submissionId, 2, "SUBMITTED", idemBase + "-submit"]);
+      submissionId, 1, "SUBMITTED", "w04a-" + submissionId.slice(0, 8) + "-submit"]);
 }
 
 test("W04A acceptance: legacy 1999-12-31 IS counted (business_date < cutoff)", async () => {
@@ -223,10 +220,7 @@ test("W04A acceptance: REVIEW entry is not counted", async () => {
       "select submission_id from public.direct_entries where entry_id = $1",
       [entryId],
     );
-    // Move to REVIEW only.
-    await db.query("select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
-      ["10000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000001",
-        submissionRes.rows[0].submission_id, 1, "REVIEW", "w04a-review-only"]);
+    await seedLegacyReviewSubmission(db, submissionRes.rows[0].submission_id);
 
     await setRole(db, "service_role");
     const view = await db.query("select count(*) as n from public.direct_entry_reporting_facts_v01");
@@ -719,12 +713,7 @@ test("R1 acceptance: dimension options view emits DE-only dimensions (project/re
     await db.query(
       "select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
       [deAuthSubject, deAppUserId,
-        submissionRes.rows[0].submission_id, 1, "REVIEW", "w04a-r1-deopt-1-review"]
-    );
-    await db.query(
-      "select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
-      [deAuthSubject, deAppUserId,
-        submissionRes.rows[0].submission_id, 2, "SUBMITTED", "w04a-r1-deopt-1-submit"]
+        submissionRes.rows[0].submission_id, 1, "SUBMITTED", "w04a-r1-deopt-1-submit"]
     );
     await setRole(db, "service_role");
     const project = await db.query(

@@ -11,6 +11,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 import { projectEntry } from "../src/lib/direct-entry/write-api.ts";
 import { projectEntryDetail } from "../src/lib/direct-entry/document-detail-projection.ts";
 
@@ -34,8 +35,8 @@ async function buildDb() {
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
-  assert.equal(names.length, 102);
-  assert.equal(names.at(-38), MIGRATION);
+  assert.equal(names.length, 103);
+  assert.equal(names.at(-39), MIGRATION);
   return db;
 }
 
@@ -228,10 +229,7 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
         " values ($1::uuid,'own','2020-01-01')",
       [MANAGER_APP],
     );
-    await db.query(
-      "select public.direct_entry_transition_submission($1::uuid,$2::uuid,$3::uuid,1,'REVIEW','vendor-review-01')",
-      [MANAGER_AUTH, MANAGER_APP, submissionId],
-    );
+    await seedLegacyReviewSubmission(db, submissionId);
     const versionBeforeDeniedReviewUpload = (await db.query(
       "select version from public.direct_entries where entry_id=$1::uuid", [entryId],
     )).rows[0].version;

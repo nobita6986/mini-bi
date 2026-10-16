@@ -17,7 +17,7 @@ function input(overrides = {}) {
     ...actor,
     submission_id: submissionId,
     expected_version: 3,
-    target_state: "REVIEW",
+    target_state: "SUBMITTED",
     idempotency_key: "submission-transition-synthetic-key",
     ...overrides,
   };
@@ -27,12 +27,12 @@ test("repository calls only the existing transition RPC with server actor and pr
   const calls = [];
   const repository = createSubmissionTransitionRepository(async (name, args) => {
     calls.push({ name, args });
-    return { data: { submission_id: submissionId, state: "REVIEW", version: 4 }, error: null };
+    return { data: { submission_id: submissionId, state: "SUBMITTED", version: 4 }, error: null };
   });
   const result = await repository.transitionSubmission(input());
   assert.deepEqual(result, {
     ok: true,
-    data: { submission_id: submissionId, state: "REVIEW", version: 4 },
+    data: { submission_id: submissionId, state: "SUBMITTED", version: 4 },
   });
   assert.deepEqual(calls, [{
     name: "direct_entry_transition_submission",
@@ -41,13 +41,13 @@ test("repository calls only the existing transition RPC with server actor and pr
       p_app_user_id: actor.app_user_id,
       p_submission_id: submissionId,
       p_expected_version: 3,
-      p_target_state: "REVIEW",
+      p_target_state: "SUBMITTED",
       p_idempotency_key: "submission-transition-synthetic-key",
     },
   }]);
 });
 
-test("REVIEW -> DRAFT and REVIEW -> SUBMITTED pass the target state through unchanged", async () => {
+test("direct submit and legacy REVIEW targets pass through unchanged", async () => {
   const calls = [];
   const repository = createSubmissionTransitionRepository(async (name, args) => {
     calls.push(args);

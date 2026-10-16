@@ -15,6 +15,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const R2_MIGRATION = "20261008200000_p2_5_hf_r2_cccd_canonicalization_guard.sql";
@@ -42,9 +43,9 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 102, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (42)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names[names.length - (43)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.length, 103, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (43)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (44)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
   return db;
 }
 
@@ -153,9 +154,7 @@ async function seedEpisode(db, { cccd, name, project = PROJ_A, date = "2026-01-0
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
       [entry, submission, candidate, ADMIN_APP, project, date, code,
         JSON.stringify({ display_name: name, ...workerDetails(cccd) }), REC_A, TEAM]);
-    await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submission]);
+    await seedLegacyReviewSubmission(db, submission);
     await db.query(
       "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
       [submission]);

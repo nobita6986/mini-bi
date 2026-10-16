@@ -15,6 +15,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const AUTH_PROLOGUE =
@@ -92,7 +93,7 @@ async function addSubmittedEntry(db) {
           date_of_birth: { state: "unknown" }, national_id: { state: "unknown" },
           address: { state: "provided", value: "RV address " + n }, phone: { state: "unknown" } }),
         REC_PM, TEAM]);
-    await db.query("update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1", [submission]);
+    await seedLegacyReviewSubmission(db, submission);
     await db.query("update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1", [submission]);
     // Initial employment status event (UNCONFIRMED at first_work_date).
     const reason = await db.query(

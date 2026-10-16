@@ -137,6 +137,20 @@ export type DirectEntryRepository = {
     patch: Record<string, unknown>;
     idempotency_key: string;
   }): Promise<OperationResult<{ entry_id: string; version: number; submission_version: number }>>;
+  applyDraftEmploymentStatus(input: ActorRef & {
+    entry_id: string;
+    expected_entry_version: number;
+    status: "UNCONFIRMED" | "ON" | "OFF";
+    effective_date: string;
+    leave_reason_text: string | null;
+    reason: string;
+    idempotency_key: string;
+  }): Promise<OperationResult<{
+    entry_id: string;
+    entry_version: number;
+    status_version: number;
+    status: "UNCONFIRMED" | "ON" | "OFF";
+  }>>;
   updatePayment(input: ActorRef & {
     entry_id: string;
     expected_entry_version: number;
@@ -431,7 +445,7 @@ function serviceRoleRpc(): Rpc {
 
 function classify(
   error: { code?: string; message?: string },
-  operation: "create" | "read" | "catalog" | "list" | "update" | "payment" | "document",
+  operation: "create" | "read" | "catalog" | "list" | "update" | "payment" | "document" | "status",
 ) {
   if (operation === "create") {
     if (error.code === "23505") return "conflict";
@@ -449,7 +463,9 @@ function classify(
     if (error.code === "40001" || error.code === "23505") return "conflict";
     if (error.code === "42501") return "denied";
     if (error.code === "P0002") return "not-found";
-    if ((operation === "payment" || operation === "document") && error.code === "23514") return "invalid";
+    if ((operation === "update" || operation === "payment" ||
+         operation === "document" || operation === "status") &&
+        error.code === "23514") return "invalid";
     if (error.code === "22023") {
       return error.message === "idempotency key reused with different input"
         ? "conflict"
@@ -543,6 +559,45 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
           : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] update draft RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async applyDraftEmploymentStatus(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_apply_draft_employment_status", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_entry_id: input.entry_id,
+          p_expected_entry_version: input.expected_entry_version,
+          p_status: input.status,
+          p_effective_date: input.effective_date,
+          p_leave_reason: input.leave_reason_text,
+          p_reason: input.reason,
+          p_idempotency_key: input.idempotency_key,
+        });
+        if (error) return { ok: false, kind: classify(error, "status") };
+        if (!isRecord(data) ||
+            Object.keys(data).sort().join(",") !==
+              ["entry_id", "entry_version", "status", "status_version"].sort().join(",") ||
+            data.entry_id !== input.entry_id ||
+            typeof data.entry_version !== "number" ||
+            data.entry_version !== input.expected_entry_version + 1 ||
+            typeof data.status_version !== "number" ||
+            !Number.isSafeInteger(data.status_version) || data.status_version < 1 ||
+            data.status !== input.status) {
+          return { ok: false, kind: "unavailable" };
+        }
+        return {
+          ok: true,
+          data: {
+            entry_id: input.entry_id,
+            entry_version: data.entry_version,
+            status_version: data.status_version,
+            status: input.status,
+          },
+        };
+      } catch {
+        console.error("[direct-entry] draft employment status RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

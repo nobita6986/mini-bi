@@ -114,6 +114,7 @@ export function transitionInput(actor, submissionId, expectedVersion, targetStat
 export async function seedChangeRequestFixture(db, {
   manageTransaction = true,
   workerDetailsForFirstEntry = null,
+  submissionWorkflow = "direct",
 } = {}) {
   if (manageTransaction) await db.query("begin");
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
@@ -194,10 +195,15 @@ export async function seedChangeRequestFixture(db, {
   const entryB = entries.rows[1];
   const submissionId = entryA.submission_id;
 
-  const toReview = transitionInput(ACTORS.proposer, submissionId, 1, "REVIEW", "a");
-  await db.query(toReview.sql, toReview.values);
-  const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", "b");
-  await db.query(toSubmitted.sql, toSubmitted.values);
+  if (submissionWorkflow === "legacy") {
+    const toReview = transitionInput(ACTORS.proposer, submissionId, 1, "REVIEW", "review");
+    await db.query(toReview.sql, toReview.values);
+    const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", "submit");
+    await db.query(toSubmitted.sql, toSubmitted.values);
+  } else {
+    const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 1, "SUBMITTED", "submit");
+    await db.query(toSubmitted.sql, toSubmitted.values);
+  }
   if (manageTransaction) await db.query("commit");
 
   return { entryA, entryB, submissionId };

@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const AUTH_PROLOGUE =
@@ -46,7 +47,7 @@ async function insertEntry(db, { entry, submission, candidate, createdBy, projec
       "insert into public.direct_entries(entry_id,submission_id,candidate_id,created_by_user_id,project_id,first_work_date,employee_code,worker_details,recruiter_id,team_id,provider_type,labor_type) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
       [entry, submission, candidate, createdBy, project, date, code, JSON.stringify({ display_name: "Worker " + code, date_of_birth: OMITTED, national_id: OMITTED, address: OMITTED, phone: OMITTED }), recruiter, team, provider, labor],
     );
-    await db.query("update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1", [submission]);
+    await seedLegacyReviewSubmission(db, submission);
     await db.query("update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1", [submission]);
     await db.exec("commit");
   } catch (error) {

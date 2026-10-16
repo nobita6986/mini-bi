@@ -181,9 +181,7 @@ export async function seedPolicyEntries(db, suffix) {
     entries[name] = byCode.get(code);
   }
   const submissionId = rows.rows[0].submission_id;
-  const toReview = transitionInput(ACTORS.proposer, submissionId, 1, "REVIEW", suffix + "_r");
-  await db.query(toReview.sql, toReview.values);
-  const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", suffix + "_s");
+  const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 1, "SUBMITTED", suffix + "_s");
   await db.query(toSubmitted.sql, toSubmitted.values);
   // New batches start ON; the status proposal below is a valid transition from
   // that server-created baseline (legacy UNCONFIRMED remains accepted).

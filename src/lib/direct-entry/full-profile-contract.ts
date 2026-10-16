@@ -258,14 +258,20 @@ function normalizeEmployment(
 ): FullProfileRpcRow["employment"] {
   if (value === undefined || value === null) return null;
   if (!isRecord(value) ||
-      !hasOnlyKeys(value, new Set(["initial_status", "leave_date", "leave_reason_text"])) ||
-      !["UNCONFIRMED", "ON", "OFF"].includes(String(value.initial_status))) {
+      !hasOnlyKeys(value, new Set(["initial_status", "leave_date", "leave_reason_text"]))) {
+    issues.push({ code: "BATCH_INVALID", path });
+    return null;
+  }
+  const status = value.initial_status == null ||
+    (typeof value.initial_status === "string" && value.initial_status.trim() === "")
+    ? "ON" : value.initial_status;
+  if (status !== "UNCONFIRMED" && status !== "ON" && status !== "OFF") {
     issues.push({ code: "BATCH_INVALID", path });
     return null;
   }
   const leaveDate = value.leave_date;
   const leaveReason = value.leave_reason_text;
-  if (value.initial_status === "OFF") {
+  if (status === "OFF") {
     if (typeof leaveDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(leaveDate) ||
         !isRealCalendarDate(leaveDate) || typeof leaveReason !== "string" ||
         leaveReason.trim().length < 1 || leaveReason.length > 4000) {
@@ -277,7 +283,7 @@ function normalizeEmployment(
     return null;
   }
   return {
-    initial_status: value.initial_status as "UNCONFIRMED" | "ON" | "OFF",
+    initial_status: status,
     leave_date: typeof leaveDate === "string" ? leaveDate : null,
     leave_reason_text: typeof leaveReason === "string" ? leaveReason : null,
   };

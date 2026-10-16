@@ -18,6 +18,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
+import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const R4 = "20261009020000_p3_w07a_r4_vendor_historical_team_backfill.sql";
@@ -124,10 +125,7 @@ async function seed(db, { reservedTeamId }) {
       );
     }
     await db.exec("commit");
-    await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submissionId],
-    );
+    await seedLegacyReviewSubmission(db, submissionId);
     await db.query(
       "update public.direct_entry_submissions" +
       " set state='SUBMITTED', version=3, submitted_at=now() where submission_id=$1",
@@ -166,8 +164,8 @@ async function auditCount(db) {
 
 test("P3-W07A-R4: #66 is followed by P3.1-W01A #67 and P3.1-W01B #68, and the historical Vendor rows are corrected", async () => {
   const names = await ledger();
-  assert.equal(names.length, 102, "ledger carries the latest 102 migrations");
-  assert.equal(names[names.length - (37)], R4, "later P3.1 migrations append after P3-W07A-R4 #66");
+  assert.equal(names.length, 103, "ledger carries the latest 103 migrations");
+  assert.equal(names[names.length - (38)], R4, "later P3.1 migrations append after P3-W07A-R4 #66");
 
   const db = new PGlite();
   try {

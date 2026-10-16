@@ -55,14 +55,14 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 102, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names.at(-38), VENDOR_DOCUMENT_MIGRATION, "P3-W07A-R3 remains #65");
-  assert.equal(names.at(-39), R7_MIGRATION, "P2.5-HF-R7 remains #64");
-  assert.equal(names.at(-40), R6_MIGRATION, "P2.5-HF-R6 remains #63");
-  assert.equal(names.at(-42), R3_MIGRATION, "P2.5-HF-R3 remains #61");
-  assert.equal(names.at(-43), R2_MIGRATION, "P2.5-HF-R2 remains #60");
-  assert.equal(names.at(-45), HF_MIGRATION, "P2.5-HF remains #58");
-  assert.equal(names.at(-46), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
+  assert.equal(names.length, 103, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names.at(-39), VENDOR_DOCUMENT_MIGRATION, "P3-W07A-R3 remains #65");
+  assert.equal(names.at(-40), R7_MIGRATION, "P2.5-HF-R7 remains #64");
+  assert.equal(names.at(-41), R6_MIGRATION, "P2.5-HF-R6 remains #63");
+  assert.equal(names.at(-43), R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names.at(-44), R2_MIGRATION, "P2.5-HF-R2 remains #60");
+  assert.equal(names.at(-46), HF_MIGRATION, "P2.5-HF remains #58");
+  assert.equal(names.at(-47), INITIAL_ON_MIGRATION, "P2.5-HF follows #57");
   return db;
 }
 
@@ -241,10 +241,7 @@ async function seedEpisode(db, { cccd, name, project = PROJ_A, date = "2026-01-0
       [entry, submission, candidate, ADMIN_APP, project, date, code,
         JSON.stringify({ display_name: name, ...workerDetails(cccd) }), REC_A, TEAM]);
     await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submission]);
-    await db.query(
-      "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
+      "update public.direct_entry_submissions set state='SUBMITTED', version=2 where submission_id=$1",
       [submission]);
     // The status validator only accepts UNCONFIRMED or ON as the initial event, so a
     // prior OFF episode is ON then OFF (an append-only history, never an update).
@@ -689,10 +686,7 @@ test("HF: the authority helper, the dropped episode guard and the SUBMITTED boun
       "select submission_id from public.direct_entries where entry_id = $1::uuid",
       [entryId])).rows[0].submission_id;
     await db.query(
-      "update public.direct_entry_submissions set state='REVIEW', version=2 where submission_id=$1",
-      [submissionId]);
-    await db.query(
-      "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
+      "update public.direct_entry_submissions set state='SUBMITTED', version=2 where submission_id=$1",
       [submissionId]);
     const before = await residue(db);
     await assert.rejects(
