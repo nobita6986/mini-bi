@@ -58,9 +58,9 @@ async function buildDb() {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   assert.equal(names.length, 103, "the ledger carries append-only migrations through #103");
-  assert.equal(names[names.length - (52)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (50)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (51)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.equal(names[names.length - (53)], W02_MIGRATION, "W02 is #51");
+  assert.equal(names[names.length - (51)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (52)], W03_MIGRATION, "P2.5-W03 stays at #52");
   return db;
 }
 
