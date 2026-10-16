@@ -275,7 +275,11 @@ test("empty initial status defaults ON while ON and UNCONFIRMED survive every wo
       assert.equal(parsed.ok, true, `${first_work_date}/${JSON.stringify(employment)}`);
       if (parsed.ok) {
         const expected = employment?.initial_status === "UNCONFIRMED" ? "UNCONFIRMED" : "ON";
-        assert.equal(parsed.payload.rows[0].employment?.initial_status ?? "ON", expected);
+        const normalized = parsed.payload.rows[0].employment;
+        assert.equal(normalized?.initial_status ?? "ON", expected);
+        if (normalized !== null) {
+          assert.deepEqual(Object.keys(normalized).sort(), ["initial_status"]);
+        }
       }
     }
   }

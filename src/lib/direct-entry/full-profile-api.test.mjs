@@ -120,7 +120,7 @@ test("valid payload calls only the full-profile repository with trusted actor an
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
-test("empty employment status is normalized to ON before the repository/RPC boundary", async () => {
+test("non-OFF employment status omits leave-only keys before the repository/RPC boundary", async () => {
   const dependencies = deps();
   const response = await postFullProfileBatch(request({
     ...payload,
@@ -128,9 +128,19 @@ test("empty employment status is normalized to ON before the repository/RPC boun
   }), "true", dependencies);
   assert.equal(response.status, 201);
   assert.deepEqual(dependencies.calls[0].payload.rows[0].employment, {
-    initial_status: "ON", leave_date: null, leave_reason_text: null,
+    initial_status: "ON",
   });
   assert.equal((await response.json()).ok, true);
+
+  const unconfirmedDependencies = deps();
+  const unconfirmedResponse = await postFullProfileBatch(request({
+    ...payload,
+    rows: [{ ...row, employment: { initial_status: "UNCONFIRMED" } }],
+  }), "true", unconfirmedDependencies);
+  assert.equal(unconfirmedResponse.status, 201);
+  assert.deepEqual(unconfirmedDependencies.calls[0].payload.rows[0].employment, {
+    initial_status: "UNCONFIRMED",
+  });
 });
 
 test("worker-profile/1.1 returns validated server-generated codes without client code input", async () => {
