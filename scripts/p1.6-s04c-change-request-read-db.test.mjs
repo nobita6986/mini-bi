@@ -32,7 +32,13 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 105);
+  assert.equal(migrations.migrationNames.length, 108);
+  assert.ok(migrations.migrationNames.includes(
+    "20261016120000_pre_w2_team_leader_change_request_entry_read.sql"));
+  assert.ok(migrations.migrationNames.includes(
+    "20261016130000_pre_w2_personnel_catalog_team_names.sql"));
+  assert.ok(migrations.migrationNames.includes(
+    "20261016140000_pre_w2_team_leader_apply_change_item.sql"));
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
@@ -273,9 +279,46 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
   const detail = await readChangeRequest(db, leader, requests.single);
   assert.equal(detail.error, null);
   assert.equal(detail.data.items[0].proposal.worker_details.display_name, "S02B worker1");
+  const currentEntry = await db.query(
+    "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as data",
+    [leader.auth_subject, leader.app_user_id, fixture.entryA.entry_id],
+  );
+  assert.equal(currentEntry.rows[0].data.entry_id, fixture.entryA.entry_id,
+    "the assigned team leader can read the current row for its review request");
+  assert.equal(currentEntry.rows[0].data.worker_details.display_name, "S02B worker1",
+    "PII still follows the explicit pii_view capability");
+  await assert.rejects(db.query(
+    "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid)",
+    [leader.auth_subject, leader.app_user_id, fixture.entryB.entry_id],
+  ), /entry scope\/capability denied/,
+  "team-leader review does not grant access to entries outside the assigned team request");
 
   const rejected = await decideChangeRequest(db, leader, requests.single, "reject", 1,
     "Dữ liệu hiện tại đã thay đổi", "s02b_team_leader_stale_reject");
   assert.equal(rejected.error, null, "rejection is allowed even though the entry version is stale");
   assert.equal(rejected.data.state, "REJECTED");
+  const resolvedEntry = await db.query(
+    "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as data",
+    [leader.auth_subject, leader.app_user_id, fixture.entryA.entry_id],
+  );
+  assert.equal(resolvedEntry.rows[0].data.entry_id, fixture.entryA.entry_id,
+    "the leader can still read history for the assigned team after a decision");
+
+  const currentProfile = await db.query(
+    "select version, worker_details from public.direct_entries where entry_id = $1",
+    [fixture.entryA.entry_id],
+  );
+  const approvedRequest = await createChangeRequest(db, ACTORS.proposer, [item(
+    fixture.entryA.entry_id,
+    currentProfile.rows[0].version,
+    { worker_details: {
+      ...currentProfile.rows[0].worker_details,
+      address: { state: "provided", value: "Team Leader approved address" },
+    } },
+  )], "Team leader approval", "s02b_team_leader_approve");
+  assert.equal(approvedRequest.error, null);
+  const approved = await decideChangeRequest(db, leader, approvedRequest.data.request_id,
+    "approve", 1, "Đã đối chiếu", "s02b_team_leader_approve_decision");
+  assert.equal(approved.error, null, "the assigned team leader can approve a team request");
+  assert.equal(approved.data.state, "APPROVED");
 });

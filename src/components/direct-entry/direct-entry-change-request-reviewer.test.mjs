@@ -37,6 +37,13 @@ test("detail duoc strict-project va map ngay sang view model an toan", () => {
   assert.match(reviewer, /entry\.project_name/);
   assert.match(helper, /worker_name: context\?\.workerDetails\?\.display_name \?\? null/);
   assert.match(reviewer, /projectEntrySensitiveContext\(slice\.entry\)/);
+  assert.match(reviewer, /projectEntrySensitiveContext\(slice\.entry\)/);
+  assert.match(reviewer, /context\?\.workerDetails\) names\.set/);
+  assert.match(reviewer, /historyNames\.get\(item\.entry_id\)/);
+  assert.match(reviewer, /optionalValueText\(optionalValue\)/);
+  assert.match(reviewer, /genderUiLabel\(optionalValue\.value\)/);
+  assert.doesNotMatch(reviewer, /String\(fieldValue \?\? "—"\)/);
+  assert.match(reviewer, /const terminal = detail\.state !== "PENDING"/);
   assert.match(helper, /export function buildReviewerViewModel\(/);
   assert.match(helper, /item\.target_kind === "ENTRY_FIELD"/);
   assert.match(helper, /projectWorkerDetails\(workerValue\)/);
@@ -107,6 +114,7 @@ test("decision request dung URL, body contract va header idempotency", () => {
   assert.match(helper, /projectChangeRequestDecision\(\{/);
   assert.match(reviewer, /projectChangeRequestStateResult\(/);
   assert.match(reviewer, /state: reviewDecisionState\(decision\)/);
+  assert.match(reviewer, /onDecided\(message\);\s*onOpenChange\(false\);/);
   assert.doesNotMatch(reviewer + helper, CLIENT_AUTHORITY);
   assert.doesNotMatch(reviewer + helper, TABLE_ACCESS);
   assert.doesNotMatch(reviewer + helper, RAW_LOGGING);

@@ -47,9 +47,13 @@ import {
 } from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectEntrySensitiveContext,
+  optionalValueText,
   projectWorkerDetails,
+  WORKER_FIELD_LABELS,
   type EntrySensitiveContext,
 } from "@/lib/direct-entry/change-request-read-projection";
+import { genderUiLabel } from "@/lib/direct-entry/display-labels";
+import type { OptionalValue } from "@/lib/contracts/direct-entry-v1";
 import {
   clearIntentKey,
   EMPTY_INTENT_KEY,
@@ -83,9 +87,17 @@ function historyRows(item: ChangeRequestDetailItem, catalog?: DraftCatalog): Arr
     if (key === "worker_details") {
       const detail = projectWorkerDetails(value);
       if (!detail) return [[label, "Đã đề xuất cập nhật thông tin cá nhân"]];
-      return Object.entries(detail).map(([field, fieldValue]): [string, string] => [
-        HISTORY_FIELD_LABELS[field] ?? "Thông tin cá nhân", String(fieldValue ?? "—"),
-      ]);
+      return Object.entries(detail).map(([field, fieldValue]): [string, string] => {
+        if (field === "display_name") {
+          return [WORKER_FIELD_LABELS.display_name, fieldValue as string];
+        }
+        const workerField = field as Exclude<keyof typeof WORKER_FIELD_LABELS, "display_name">;
+        const optionalValue = fieldValue as OptionalValue<string>;
+        const valueText = field === "gender" && optionalValue.state === "provided"
+          ? genderUiLabel(optionalValue.value)
+          : optionalValueText(optionalValue);
+        return [WORKER_FIELD_LABELS[workerField], valueText];
+      });
     }
     if (key === "project_id") return [[label, catalog?.projects.find((item) => item.project_id === value)?.display_name ?? "Dự án đã chọn"]];
     if (key === "recruiter_id") return [[label, catalog?.recruiters.find((item) => item.recruiter_id === value)?.display_name ?? "Người tuyển đã chọn"]];
@@ -129,6 +141,7 @@ export function DirectEntryChangeRequestReviewer({
   const [model, setModel] = useState<ReviewerViewModel | null>(null);
   const [requestReason, setRequestReason] = useState<string | null>(null);
   const [historyItems, setHistoryItems] = useState<readonly ChangeRequestDetailItem[]>([]);
+  const [historyNames, setHistoryNames] = useState<ReadonlyMap<string, string>>(new Map());
   const [canViewOwnRequest, setCanViewOwnRequest] = useState(false);
   const [reason, setReason] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
@@ -174,6 +187,7 @@ export function DirectEntryChangeRequestReviewer({
         setModel(null);
         setRequestReason(null);
         setHistoryItems([]);
+        setHistoryNames(new Map());
         setCanViewOwnRequest(false);
       }
       setLoadMessage("");
@@ -206,23 +220,29 @@ export function DirectEntryChangeRequestReviewer({
         setRequestReason(detail.request_reason);
         setHistoryItems(detail.items);
         setCanViewOwnRequest(detail.can_withdraw);
-        if (detail.state !== "PENDING") {
-          setModel({ kind: "terminal", request_id: detail.request_id, state: detail.state });
-          setLoadState("ready");
-          return;
-        }
+        const terminal = detail.state !== "PENDING";
         const entries = new Map<string, ProposerEntryProjection>();
         const contexts = new Map<string, EntrySensitiveContext>();
+        const names = new Map<string, string>();
         // Phan loai dung nguyen nhan khi khong doc duoc entry, de dialog bao dung taxonomy
         // thay vi nhan chung "can phien ban giao dien hoac quyen xem khac".
         let entryFailure: ReviewerUnsupportedReason | null = null;
         for (const item of detail.items) {
-          const response = await fetch(
-            "/api/direct-entry/entries/" + encodeURIComponent(item.entry_id),
-            { cache: "no-store", credentials: "same-origin" },
-          );
+          let response: Response;
+          try {
+            response = await fetch(
+              "/api/direct-entry/entries/" + encodeURIComponent(item.entry_id),
+              { cache: "no-store", credentials: "same-origin" },
+            );
+          } catch (cause) {
+            if (terminal) continue;
+            throw cause;
+          }
           const body = await readJson(response);
           const slice = projectionSlice(body, ENTRY_KEYS);
+          const context = slice ? projectEntrySensitiveContext(slice.entry) : null;
+          if (context?.workerDetails) names.set(item.entry_id, context.workerDetails.display_name);
+          if (terminal) continue;
           const entry = slice ? projectProposerEntry(slice.entry) : null;
           if (!response.ok) {
             entryFailure ??= (response.status === 403 || response.status === 404)
@@ -237,8 +257,14 @@ export function DirectEntryChangeRequestReviewer({
           entries.set(entry.entry_id, entry);
           // Ngu canh nhay cam (worker_details/payment/employment_status) strict-project rieng;
           // server da redact theo capability nen field khong duoc phep coi nhu KHONG CO.
-          const context = slice ? projectEntrySensitiveContext(slice.entry) : null;
           if (context) contexts.set(entry.entry_id, context);
+        }
+        if (cancelled) return;
+        setHistoryNames(names);
+        if (terminal) {
+          setModel({ kind: "terminal", request_id: detail.request_id, state: detail.state });
+          setLoadState("ready");
+          return;
         }
         if (entryFailure !== null && entries.size < detail.items.length) {
           if (cancelled) return;
@@ -328,6 +354,7 @@ export function DirectEntryChangeRequestReviewer({
         const message = reviewDecisionMessage(decision, shortRef(updated.request_id));
         setStatusMessage(message);
         onDecided(message);
+        onOpenChange(false);
         return;
       }
       const status = response.status;
@@ -348,7 +375,7 @@ export function DirectEntryChangeRequestReviewer({
     } finally {
       setBusy(null);
     }
-  }, [canDecide, canReject, model, onConflict, onDecided, reason, request]);
+  }, [canDecide, canReject, model, onConflict, onDecided, onOpenChange, reason, request]);
 
   const entryCount = useMemo(
     () => (model && "items" in model ? model.items.length : 0),
@@ -411,6 +438,7 @@ export function DirectEntryChangeRequestReviewer({
                     <strong>Nội dung đề xuất</strong>
                     {historyItems.map((item) => (
                       <div key={item.entry_id} className={styles.proposerEntry}>
+                        <strong>{historyNames.get(item.entry_id) ?? "Người lao động"}</strong>
                         <p className={styles.submissionHint}>
                           {REVIEW_TARGET_KIND_LABELS[item.target_kind] ?? "Yêu cầu thay đổi"}
                         </p>
@@ -428,6 +456,7 @@ export function DirectEntryChangeRequestReviewer({
                   <strong>Nội dung đề xuất</strong>
                   {historyItems.map((item) => (
                     <div key={item.entry_id} className={styles.proposerEntry}>
+                      <strong>{historyNames.get(item.entry_id) ?? "Người lao động"}</strong>
                       <p className={styles.submissionHint}>
                         {REVIEW_TARGET_KIND_LABELS[item.target_kind] ?? "Yêu cầu thay đổi"}
                       </p>
