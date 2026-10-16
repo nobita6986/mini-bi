@@ -100,6 +100,8 @@ test("editor select/catalog lay option tu vocabulary hien huu, khong dinh nghia 
   assert.match(source, /Đang làm việc \(mặc định\)/);
   assert.match(source, /workStatusUiLabel\(option\)/);
   assert.match(source, /workStatusUiLabel\(status\)/);
+  assert.match(source, /\["ON", "OFF", "UNCONFIRMED", "PENDING"\]\.includes\(status\)/,
+    "giá trị PENDING phải render bằng nhãn tiếng Việt, không lộ mã nội bộ trong ô");
   assert.doesNotMatch(source, /option === "ON" \? "Đang làm việc"/,
     "Đang làm việc không còn là lựa chọn riêng trong dropdown");
   assert.match(source, /status === "ON" \? "Đang làm việc"/);
