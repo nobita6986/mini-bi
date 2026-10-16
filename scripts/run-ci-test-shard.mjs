@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-const SHARD_COUNT = 4;
+const SHARD_COUNT = 6;
 const POSTGRES_TARGET = "postgres";
 const POSTGRES_TEST_FILES = new Set([
   "scripts/p3-1-w02a-concurrency.test.mjs",
@@ -12,23 +12,29 @@ const POSTGRES_TEST_FILES = new Set([
 ]);
 // shortcut: weights come from the latest successful main CI run; refresh when shard times drift.
 const TEST_WEIGHTS = {
-  "test:p3-w05a": 41.3,
-  "test:p3-1-hf-r1-duplicate-cccd-submit-confirmation": 37.6,
+  "test:p3-w05a": 72.5,
+  "test:p2.5-w02": 60.4,
+  "test:p3-1-hf-r1-duplicate-cccd-submit-confirmation": 50.6,
+  "test:pre-w2-hf-d3-a-account-personnel-db": 45.3,
+  "test:p1.6-i04c2b": 34.5,
+  "test:p2-de-dim-hotfix": 34.3,
+  "test:p1.6-i04c3-s01": 32.9,
   "test:p1.6-w03": 28.7,
-  "test:p2-de-dim-hotfix": 27.2,
-  "test:p1.6-i04c3-s01": 26.9,
+  "test:pre-w2-p1-worker-export-backend": 24.2,
   "test:p3-1-hf-duplicate-cccd-report": 23.3,
-  "test:p2.5-w02": 20.5,
+  "test:p1.6-w04-s04c-s03b3-r1": 22.7,
+  "test:pre-w2-hf-project-team-authority-db": 22.4,
+  "test:pre-w2-hf-d2-active-duplicate-cccd-semantics": 21.3,
   "test:p2.5-hf-create-rehire": 20.1,
+  "test:p2.5-hf-r5": 19.8,
   "test:p2.5-w03": 19.4,
-  "test:p1.6-i04c2b": 18.2,
   "test:p2.5-w05": 17.8,
   "test:p2.5-hf-r2": 16.6,
   "test:main": 16.4,
   "test:p3-1-w02c-labor-type-catalog": 15.8,
+  "test:p3-1-w01d-a2-leader-server": 15.3,
   "test:p1.6-w04-s04c-s02b": 13.3,
   "test:p1.6-w04-s04c-s02c": 13.3,
-  "test:p1.6-w04-s04c-s03b3-r1": 13.2,
   "test:p3-1-w01c-a-team-catalog": 13.2,
   "test:p3-1-w02c-r2-labor-type-display": 13.2,
   "test:p3-1-w01b-personnel": 13.2,
@@ -36,21 +42,28 @@ const TEST_WEIGHTS = {
   "test:p3-w07a-r2-contract-hotfix": 12.3,
   "test:p3-1-w02c-r3-own-draft-display": 12.1,
   "test:p3-1-w02b-vendor-catalog": 12.1,
+  "test:p3-1-w03a-r2-account-read": 12,
+  "test:p3-w05b-a-team-reporting": 12,
   "test:p3-1-w01d-a1a-leader-schema": 12,
   "test:t0-import": 11.8,
-  "test:p2.5-hf-r5": 10.2,
   "test:p3-1-w03a-app-user-lifecycle": 9.7,
   "test:p2.5-hf-r3": 9.4,
   "test:p2.5-w06a": 9.3,
+  "test:pre-w2-hf-c-global-duplicate-cccd-read-access": 9.2,
   "test:p3-1-w01d-a1b2-leader-write": 8.8,
-  "test:p3-1-w01d-a2-leader-server": 7.7,
+  "test:p3-w07b-project-scope": 8.7,
+  "test:p3-1-hf-recruiter-alias": 8.3,
   "test:p3-1-w01a-capability-contract": 7.3,
   "test:p2.5-reviewer-hotfix": 7.1,
-  "test:p3-1-w03a-r2-account-read": 7,
+  "test:p1.6-w04-s03a": 6.9,
   "test:p2.5-hf-r1": 6.1,
-  "test:p3-w05b-a-team-reporting": 6.1,
   "test:p2.5-status-default": 5.3,
-  "test:pre-w2-hf-project-team-authority-db": 15.7,
+  "test:p3-1-w01d-a1b1-leader-read": 5.1,
+  "test:p3-1-w02a-team-leader-project-manager": 5,
+  "test:p3-w07a-r4": 4.7,
+  "test:p3-w07a-r3-vendor-doc-upload": 4.6,
+  "test:p1.6-i04c3-r3a": 4.3,
+  "test:p3-1-w02c-ui-dynamic-catalog": 4,
 };
 
 const target = process.argv[2];
@@ -199,14 +212,36 @@ if (listOnly) {
   process.exit(0);
 }
 
+const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+if (summaryPath) {
+  appendFileSync(summaryPath,
+    `### ${targetLabel}\n\n| Test suite | Actual | Estimated | Result |\n`
+      + "|---|---:|---:|---|\n", "utf8");
+}
+
 for (const plan of selected) {
+  const startedAt = Date.now();
+  const finishPlan = (result) => {
+    if (!summaryPath) return;
+    const actual = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const estimated = (TEST_WEIGHTS[plan.name] ?? 1).toFixed(1);
+    appendFileSync(summaryPath,
+      `| ${plan.name} | ${actual}s | ${estimated}s | ${result} |\n`, "utf8");
+  };
   for (const command of plan.commands) {
     const args = [...command.nodeArgs, "--test", ...command.testFiles];
     console.log(
       `\n[CI ${targetLabel}] ${plan.name}: node ${args.join(" ")}`,
     );
     const result = spawnSync(process.execPath, args, { stdio: "inherit" });
-    if (result.error) throw result.error;
-    if (result.status !== 0) process.exit(result.status ?? 1);
+    if (result.error) {
+      finishPlan("error");
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      finishPlan("failed");
+      process.exit(result.status ?? 1);
+    }
   }
+  finishPlan("passed");
 }

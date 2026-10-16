@@ -54,13 +54,13 @@ jobs:
         run: pnpm docs:check
 
   tests:
-    name: PGlite tests (shard ${{ matrix.shard }}/4)
+    name: PGlite tests (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
         with:
