@@ -226,11 +226,12 @@ export function projectWorkStatusReadProposal(value: unknown): WorkStatusReadVie
     return null;
   }
   let leaveReason: string | null = null;
-  if (value.leave_reason !== undefined) {
+  if (value.leave_reason !== undefined && value.leave_reason !== null) {
     if (typeof value.leave_reason !== "string" || value.leave_reason.trim().length < 1 ||
         value.leave_reason.length > 4000) return null;
     leaveReason = value.leave_reason;
   }
+  if (value.status === "OFF" && value.leave_reason === null) return null;
   return { status: value.status, effectiveDate: value.effective_date, leaveReason };
 }
 

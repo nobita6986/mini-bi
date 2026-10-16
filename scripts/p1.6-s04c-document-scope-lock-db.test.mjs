@@ -94,7 +94,7 @@ test("108-migration DB rejects DOCUMENT RPC and table inserts without residue", 
   const { db, migrationNames } = await createMigratedDatabase();
   // P3.1-W03A #82 adds three internal helpers plus two lifecycle RPCs;
   // W03A-R2 #83/#84 add two read RPCs and one internal label helper net.
-  assert.equal(migrationNames);
+  assert.equal(migrationNames.length, 108);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);

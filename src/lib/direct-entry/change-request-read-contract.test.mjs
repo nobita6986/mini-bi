@@ -162,6 +162,16 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
   });
   assert.deepEqual(projectChangeRequestDetail(payment, { request_id: requestId }), payment);
 
+  const onStatusWithCanonicalNull = detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,
+      proposal: { status: "ON", effective_date: "2026-10-01", leave_reason: null },
+      labor_type_display: null,
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(onStatusWithCanonicalNull, { request_id: requestId }),
+    onStatusWithCanonicalNull);
+
   // S03B4A: response doc da lam sach van qua duoc projection (masked/presence-only/omit).
   const masked = detailBody({
     items: [{

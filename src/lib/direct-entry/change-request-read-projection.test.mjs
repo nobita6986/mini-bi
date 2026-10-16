@@ -127,6 +127,12 @@ test("paymentReadRows dung nhan catalog va fail-closed khi khong giai duoc bank"
 });
 
 test("WORK_STATUS read projection omits reason for proposers and accepts it for reviewers", () => {
+  assert.deepEqual(projectWorkStatusReadProposal({
+    status: "ON", effective_date: "2026-10-01", leave_reason: null,
+  }), { status: "ON", effectiveDate: "2026-10-01", leaveReason: null });
+  assert.equal(projectWorkStatusReadProposal({
+    status: "OFF", effective_date: "2026-10-01", leave_reason: null,
+  }), null);
   const view = projectWorkStatusReadProposal({ status: "OFF", effective_date: "2026-10-01" });
   assert.deepEqual(view, { status: "OFF", effectiveDate: "2026-10-01", leaveReason: null });
   const reviewerView = projectWorkStatusReadProposal({

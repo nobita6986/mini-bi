@@ -6,8 +6,7 @@
  * - Chi goi change-request detail endpoint khi nguoi dung mo "Xem xet" (khong tai truoc).
  * - Detail duoc strict-project bang projectChangeRequestDetail roi map ngay sang view model an toan;
  *   khong luu/khong render raw JSON, khong hien thi UUID lam noi dung chinh.
- * - Before/after chi gom 5 field khong PII; entry projection lay qua projectProposerEntry (S03B1)
- *   nen khong doc thong tin ca nhan, thanh toan hay tai lieu.
+ * - Before/after strict-project; ten NLĐ chi lay tu worker projection da redact theo pii_view.
  * - can_decide chi la display hint; quyet dinh that do server/RPC quyet dinh.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -403,6 +402,7 @@ export function DirectEntryChangeRequestReviewer({
             <Dialog.Description className={styles.drawerDescription}>
               Yêu cầu {shortRef(request.request_id)} · {CHANGE_REQUEST_STATE_LABELS[request.state]}
               {entryCount > 0 ? " · " + entryCount + " dòng" : ""}
+              {" · Người đề xuất: " + request.proposer_display_name}
             </Dialog.Description>
 
             <div className={styles.drawerFields}>
@@ -485,7 +485,10 @@ export function DirectEntryChangeRequestReviewer({
                 <>
                   {model.items.map((entry) => (
                     <div key={entry.entry_id} className={styles.proposerEntry}>
-                      <strong>{entry.entry_code}</strong>
+                      <strong>{entry.worker_name ?? "Tên người lao động chưa được cấp quyền hiển thị"}</strong>
+                      <p className={styles.submissionHint} data-testid="reviewer-item-project">
+                        Dự án: {entry.project_name ?? "Chưa tải được tên dự án"}
+                      </p>
                       <p className={styles.submissionHint} data-testid="reviewer-item-kind">
                         {REVIEW_TARGET_KIND_LABELS[entry.targetKind] ?? entry.targetKind}
                       </p>
@@ -501,7 +504,7 @@ export function DirectEntryChangeRequestReviewer({
                       ) : (
                         <table className={styles.reviewerTable}>
                           <caption className={styles.submissionHint}>
-                            So sánh giá trị hiện tại và giá trị đề xuất của dòng {entry.entry_code}
+                            So sánh giá trị hiện tại và giá trị đề xuất của {entry.worker_name ?? "người lao động"}
                           </caption>
                           <thead>
                             <tr><th scope="col">Trường</th><th scope="col">Hiện tại</th><th scope="col">Đề xuất</th></tr>

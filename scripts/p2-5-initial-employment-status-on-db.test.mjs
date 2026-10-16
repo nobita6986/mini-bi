@@ -22,7 +22,7 @@ async function database() {
 test("initial employment status policy is migration #57 and patches every creation path", async () => {
   const { db, names } = await database();
   try {
-    assert.equal(names);
+    assert.equal(names.length, 108);
     assert.equal(names.at(-(48 + 1)), MIGRATION);
     assert.equal(names.at(-(4 + 1)), "20261015160000_pre_w2_initial_status_any_start_date.sql",
       "initial-status hotfix remains append-only migration #101");

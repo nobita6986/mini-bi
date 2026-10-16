@@ -144,6 +144,8 @@ test("chi PENDING + can_decide=true + can_withdraw=false moi duoc quyet dinh", (
   const reviewable = build();
   assert.equal(reviewable.kind, "reviewable");
   assert.equal(reviewable.items.length, 1);
+  assert.equal(reviewable.items[0].worker_name, null);
+  assert.equal(reviewable.items[0].project_name, "Dự án Synthetic");
   assert.equal(reviewable.items[0].rows.length, 1);
   assert.deepEqual(reviewable.items[0].rows[0], {
     field: "employee_code",
@@ -161,6 +163,18 @@ test("chi PENDING + can_decide=true + can_withdraw=false moi duoc quyet dinh", (
     assert.equal(model.kind, "unsupported");
     assert.equal(model.reason, "NOT_DECIDABLE");
   }
+});
+
+test("ten NLĐ lay tu worker context duoc cap quyen, khong thay bang ma ho so", () => {
+  const model = build({
+    contexts: contextsOf(ENTRY_A, context({ workerDetails: workerDetails({
+      display_name: "Tên thật Synthetic",
+    }) })),
+  });
+  assert.equal(model.kind, "reviewable");
+  assert.equal(model.items[0].worker_name, "Tên thật Synthetic");
+  assert.equal(model.items[0].project_name, "Dự án Synthetic");
+  assert.equal("entry_code" in model.items[0], false);
 });
 
 test("trang thai terminal khong co quyet dinh", () => {
