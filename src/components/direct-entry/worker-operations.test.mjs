@@ -202,10 +202,12 @@ test("W06: nav entry 'worker-operations' duoc dang ky trong registry hien co", (
   assert.match(registry, /label: "Người lao động"/);
 });
 
-test("W06-R1: review queue tai su dung list/reviewer hien co, chi khi canReview", () => {
+test("W06-R1: review queue tai su dung list/reviewer hien co cho owner, team lead va reviewer", () => {
   assert.match(source, /DirectEntryChangeRequestList/);
   assert.match(source, /DirectEntryChangeRequestReviewer/);
-  assert.match(source, /\{canReview \? \(/);
+  assert.match(source, /\{canViewRequests \? \(/);
+  assert.match(source, /actor\?\.capabilities\.includes\("change_request_create"\)/);
+  assert.match(source, /actor\?\.capabilities\.includes\("team_manager_assign"\)/);
   assert.match(source, /onReview=\{/);
   // Khong nhung editor Direct Entry.
   assert.equal(/DirectEntryLive|DirectEntryShell|DirectEntrySpreadsheetGrid/.test(source), false);

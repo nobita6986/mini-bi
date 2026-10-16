@@ -31,7 +31,7 @@ export type ChangeRequestQueueFilter = (typeof CHANGE_REQUEST_QUEUE_FILTERS)[num
 export const LIST_PAGE_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;
 export const LIST_ITEM_KEYS = [
   "request_id", "state", "version", "created_at", "item_count", "entry_ids",
-  "can_withdraw", "can_decide",
+  "can_withdraw", "can_decide", "proposer_display_name", "summary",
 ] as const;
 export const DETAIL_KEYS = [
   "request_id", "state", "version", "created_at", "request_reason", "items",
@@ -132,6 +132,8 @@ export type ChangeRequestListItem = {
   entry_ids: string[];
   can_withdraw: boolean;
   can_decide: boolean;
+  proposer_display_name: string;
+  summary: string;
 };
 
 export type ChangeRequestListPage = {
@@ -162,6 +164,9 @@ function projectListItem(value: unknown): ChangeRequestListItem | null {
   if (entryIds.length !== value.item_count) return null;
   if (typeof value.can_withdraw !== "boolean" || typeof value.can_decide !== "boolean") return null;
   if (value.can_withdraw === true && value.can_decide === true) return null;
+  if (typeof value.proposer_display_name !== "string" ||
+      value.proposer_display_name.trim().length < 1 || value.proposer_display_name.length > 120) return null;
+  if (typeof value.summary !== "string" || value.summary.trim().length < 1 || value.summary.length > 160) return null;
   return {
     request_id: value.request_id,
     state: value.state,
@@ -171,6 +176,8 @@ function projectListItem(value: unknown): ChangeRequestListItem | null {
     entry_ids: entryIds,
     can_withdraw: value.can_withdraw,
     can_decide: value.can_decide,
+    proposer_display_name: value.proposer_display_name,
+    summary: value.summary,
   };
 }
 

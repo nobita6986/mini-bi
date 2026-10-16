@@ -101,6 +101,7 @@ test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", (
   assert.equal(workerOperationsNavPredicate(makeActor(["entry_admin"], all)), true);
   // Nguoi de xuat / PM.
   assert.equal(workerOperationsNavPredicate(makeActor(["change_request_create"], [{ kind: "own" }])), true);
+  assert.equal(workerOperationsNavPredicate(makeActor(["team_manager_assign"], [{ kind: "team", reference: "t" }])), true);
   // Uploader hien huu.
   assert.equal(workerOperationsNavPredicate(makeActor(["entry_own"], [{ kind: "own" }])), true);
   assert.equal(workerOperationsNavPredicate(makeActor(["entry_team"], [{ kind: "team" }])), true);

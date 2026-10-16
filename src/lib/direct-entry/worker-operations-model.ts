@@ -281,6 +281,8 @@ export function initialWorkerTab(
   }
   const isEntryActor = actor.capabilities.some((capability) =>
     ["entry_own", "entry_team", "entry_admin"].includes(capability));
+  if (!isEntryActor && actor.capabilities.includes("team_manager_assign") &&
+      actor.scopes.some((scope) => scope.kind === "team")) return "managed";
   if (!isEntryActor && actor.capabilities.includes("change_request_create")) return "managed";
   return "uploader";
 }

@@ -90,11 +90,11 @@ test("migration #34 refuses existing DOCUMENT items before changing schema", asy
   await db.close();
 });
 
-test("103-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
+test("105-migration DB rejects DOCUMENT RPC and table inserts without residue", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
   // P3.1-W03A #82 adds three internal helpers plus two lifecycle RPCs;
   // W03A-R2 #83/#84 add two read RPCs and one internal label helper net.
-  assert.equal(migrationNames.length, 104);
+  assert.equal(migrationNames.length, 105);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -176,7 +176,8 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // PRE-W2-HF-D3-A (#92) adds nine service-role RPCs and three internal helpers.
   // #97 adds one RPC name and retains the service-role grants for legacy callers.
   // PRE-W2-HF #103 adds one status wrapper; #104 adds one own-draft RPC and helper.
-  // Measured: 243 total, 117 service-role executable and 126 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [243, 117, 126]);
+  // PRE-W2-HF #105 adds one internal team-review authority helper, not a new RPC.
+  // Measured: 244 total, 117 service-role executable and 127 internal.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [244, 117, 127]);
   await db.close();
 });

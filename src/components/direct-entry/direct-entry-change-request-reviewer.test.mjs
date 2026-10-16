@@ -42,7 +42,7 @@ test("detail duoc strict-project va map ngay sang view model an toan", () => {
   assert.match(reviewer, /unsupportedReviewerViewModel\(requestId, "PROPOSAL"\)/);
 });
 
-test("de xuat khong ho tro hien dung taxonomy va khong co hanh dong quyet dinh", () => {
+test("de xuat khong ho tro hien taxonomy; chi cho tu choi khi server cap quyen", () => {
   assert.match(reviewer, /data-testid="reviewer-unsupported"/);
   // P2.5 hotfix: copy theo tung ly do fail-closed thay vi mot nhan chung mo ho.
   assert.match(reviewer, /data-reason=\{model\.reason\}/);
@@ -52,12 +52,17 @@ test("de xuat khong ho tro hien dung taxonomy va khong co hanh dong quyet dinh",
   assert.match(helper, /"ENTRY_DENIED"/);
   assert.match(helper, /"ENTRY_UNAVAILABLE"/);
   assert.match(reviewer, /const canDecide = loadState === "ready" && model\?\.kind === "reviewable";/);
+  assert.match(reviewer, /const canReject = request\?\.state === "PENDING" && request\.can_decide === true/);
+  assert.match(reviewer, /model\?\.kind === "unsupported" \|\|[\s\S]{0,100}loadState === "error"/);
+  assert.match(reviewer, /\{canReject && !canDecide && model\?\.kind !== "stale"/);
+  assert.match(reviewer, /Lý do từ chối/);
   assert.match(reviewer, /onCloseAutoFocus=\{/);
   assert.match(reviewer, /opener\.focus\(\)/);
-  const decisionButtons = reviewer.slice(reviewer.indexOf("{canDecide && ("));
+  const decisionButtons = reviewer.slice(reviewer.indexOf("{(canDecide || canReject) && ("));
   assert.match(decisionButtons, /REVIEW_DECISION_LABELS\.reject/);
   assert.match(decisionButtons, /REVIEW_DECISION_LABELS\.approve/);
-  assert.doesNotMatch(reviewer.slice(0, reviewer.indexOf("{canDecide && (")), /REVIEW_DECISION_LABELS\.approve/);
+  assert.match(reviewer, /\{canDecide && <button/);
+  assert.match(reviewer, /const expectedVersion = model && "version" in model \? model\.version : request\.version;/);
 });
 
 test("before/after chi qua projector strict, khong raw JSON va khong key cam", () => {

@@ -183,6 +183,9 @@ export function WorkerOperations({
   const [requestPage, setRequestPage] =
     useState<TabPage<ChangeRequestListItem>>(emptyTabPage);
   const [requestQueue, setRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
+  const canViewRequests = canReview || actor?.capabilities.includes("change_request_create") === true ||
+    (actor?.capabilities.includes("team_manager_assign") === true &&
+      actor.scopes.some((scope) => scope.kind === "team"));
   const [notice, setNotice] = useState<Notice | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
@@ -337,14 +340,14 @@ export function WorkerOperations({
   }, [tab, filters, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
 
   useEffect(() => {
-    if (!canReview) return;
+    if (!canViewRequests) return;
     let active = true;
     fetchRequests(null, requestQueue).then(
       (outcome) => { if (active) applyRequestPage(outcome, false); },
       () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
     );
     return () => { active = false; };
-  }, [canReview, fetchRequests, applyRequestPage, requestQueue]);
+  }, [canViewRequests, fetchRequests, applyRequestPage, requestQueue]);
 
   /* ---------- load more ---------- */
 
@@ -403,7 +406,7 @@ export function WorkerOperations({
         () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
       if (generation === workerQueryGeneration.current) applyWorkerPage(scope, outcome, false);
     }
-    if (canReview) {
+    if (canViewRequests) {
       await reloadRequestPage();
     }
   }
@@ -497,7 +500,7 @@ export function WorkerOperations({
       ) : null}
 
       {/* P2.5-HF-R3: hang doi "Yeu cau thay doi" dat TRUOC danh sach NLD. */}
-      {canReview && requestPage.state === "ready" && requestPage.message !== null ? (
+      {canViewRequests && requestPage.state === "ready" && requestPage.message !== null ? (
         <div role="alert" className={"flex flex-col gap-2 " + errorClass}>
           <span>{requestPage.message}</span>
           <button type="button" className={buttonClass} onClick={() => void reloadRequestPage()}>
@@ -505,7 +508,7 @@ export function WorkerOperations({
           </button>
         </div>
       ) : null}
-      {canReview ? (
+      {canViewRequests ? (
         <DirectEntryChangeRequestList
           queueFilter={requestQueue}
           onQueueFilterChange={(queue) => {
@@ -692,7 +695,7 @@ export function WorkerOperations({
         onConflict={() => { setDrawerRow(null); setConflict(WORKER_CONFLICT_MESSAGE); }}
       />
 
-      {canReview ? (
+      {canViewRequests ? (
         <DirectEntryChangeRequestReviewer
           request={reviewRequest}
           onOpenChange={(open) => { if (!open) setReviewRequest(null); }}

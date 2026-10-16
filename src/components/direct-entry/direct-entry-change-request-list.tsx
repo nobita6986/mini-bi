@@ -125,26 +125,36 @@ function ChangeRequestListContent({
                   Mã {shortRef(request.request_id)}
                 </span>
               </div>
+              <p className={styles.changeRequestSummary} data-testid="change-request-summary">
+                {request.summary}
+              </p>
+              <p className={styles.submissionHint} data-testid="change-request-proposer">
+                Người đề xuất: {request.proposer_display_name}
+              </p>
               <dl className={compact ? styles.compactMeta : styles.submissionMeta}>
                 <div><dt>Số dòng</dt><dd>{request.item_count}</dd></div>
                 <div><dt>Tạo lúc</dt><dd>{formatHcmDateTime(request.created_at)}</dd></div>
               </dl>
               <div className={compact ? styles.compactActions : styles.submissionActions}>
                 {canWithdrawChangeRequest(request) && (
-                  <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    aria-busy={busy}
-                    disabled={busy}
-                    onClick={() => setPendingWithdraw(request)}
-                  >
-                    {busy ? "Đang rút…" : "Rút yêu cầu"}
-                  </button>
+                  <>
+                    <button type="button" className={styles.secondaryButton}
+                      onClick={() => onReview(request)}>Xem chi tiết</button>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      aria-busy={busy}
+                      disabled={busy}
+                      onClick={() => setPendingWithdraw(request)}
+                    >
+                      {busy ? "Đang rút…" : "Rút yêu cầu"}
+                    </button>
+                  </>
                 )}
                 {canReviewChangeRequest(request) && (
                   <button
                     type="button"
-                    className={styles.secondaryButton}
+                    className={styles.primaryButton}
                     onClick={() => onReview(request)}
                   >
                     Xem xét

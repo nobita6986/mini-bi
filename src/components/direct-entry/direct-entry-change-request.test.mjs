@@ -8,6 +8,7 @@ function source(relative) {
 
 const proposer = source("./direct-entry-change-request-proposer.tsx");
 const list = source("./direct-entry-change-request-list.tsx");
+const styles = source("./direct-entry-shell.module.css");
 const submissionList = source("./direct-entry-submission-list.tsx");
 const live = source("./direct-entry-live.tsx");
 const helper = source("../../lib/direct-entry/change-request-proposer.ts");
@@ -96,6 +97,11 @@ test("idempotency intent covers payload, 409 does not retry, 5xx keeps the key",
 });
 
 test("withdraw action is gated by the server flag and never creates review buttons", () => {
+  assert.match(list, /request\.summary/);
+  assert.match(list, /request\.proposer_display_name/);
+  assert.match(list, /className=\{styles\.changeRequestSummary\}/);
+  assert.match(styles, /\.changeRequestSummary\s*\{[^}]*color:\s*var\(--primary\)/s);
+  assert.match(list, /className=\{styles\.primaryButton\}[\s\S]{0,200}Xem xét/);
   assert.match(list, /canWithdrawChangeRequest\(request\) && \(/);
   assert.match(list, /Rút yêu cầu/);
   assert.doesNotMatch(list, /onApprove|onReject|onDecide|Duyệt yêu cầu|Từ chối yêu cầu/);

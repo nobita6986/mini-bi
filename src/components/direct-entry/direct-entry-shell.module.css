@@ -1075,6 +1075,13 @@
   overflow-wrap: anywhere;
 }
 
+.changeRequestSummary {
+  margin: 4px 0 0;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .changeRequestTabActive {
   border-bottom-color: var(--primary);
   color: var(--foreground);
