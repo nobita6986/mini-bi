@@ -39,10 +39,12 @@ await db.query(
   [ACTORS.otherOwner.app_user_id],
 );
 
-test("migration 111 appends to the verified ledger and keeps its security boundaries", async () => {
-  assert.equal(migrations.migrationNames.length, 111);
-  assert.equal(migrations.migrationNames.at(-1),
+test("migration 112 appends after #111 and keeps its security boundaries", async () => {
+  assert.equal(migrations.migrationNames.length, 112);
+  assert.equal(migrations.migrationNames.at(-2),
     "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
+  assert.equal(migrations.migrationNames.at(-1),
+    "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
   for (const role of ["anon", "authenticated", "service_role"]) {
     const { rows } = await db.query(
       "select has_table_privilege($1,'public.direct_entry_candidates','UPDATE') allowed",
