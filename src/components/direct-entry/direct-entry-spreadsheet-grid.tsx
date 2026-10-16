@@ -192,7 +192,7 @@ export function spreadsheetSelectOptions(
   // the row still stores ""; choosing that visible option emits no change and
   // the value disappears when the editor closes.
   if (columnKey === "gender") return ["", ...DIRECT_ENTRY_GENDER_OPTIONS];
-  if (columnKey === "initial_status") return ["", "ON", "UNCONFIRMED"];
+  if (columnKey === "initial_status") return ["", "PENDING"];
   if (columnKey === "labor_type") {
     return ["", ...sortedActiveLaborTypes(catalogs?.laborTypes)
       .map((option) => option.labor_type_key)];
@@ -316,14 +316,14 @@ function SelectCellEditor(
       {options.map((option) => <option key={option} value={option}>
         {props.columnKey === "initial_status"
           ? option === "" ? "Đang làm việc (mặc định)"
-            : option === "ON" ? "Đang làm việc" : workStatusUiLabel(option)
+            : workStatusUiLabel(option)
           : option === "" ? "—" : option}
       </option>)}
       {value !== "" && !options.includes(value) && (
         // PRE-W2-HF-UI-LABELS: du lieu cu ngoai danh muc (vd gioi tinh Khác) van hien
         // nhan cua no; chi cho CHON cac option trong danh muc.
         <option value={value} disabled>{props.columnKey === "initial_status"
-          ? workStatusUiLabel(value) : value}</option>
+          ? workStatusUiLabel(value === "UNCONFIRMED" ? "PENDING" : value) : value}</option>
       )}
     </select>
   );

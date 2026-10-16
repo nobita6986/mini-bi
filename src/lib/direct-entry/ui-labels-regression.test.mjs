@@ -49,6 +49,7 @@ test("nhan trang thai lam viec duoc thong nhat tren moi be mat", () => {
     ON: "Đang làm",
     OFF: "Đã nghỉ",
     UNCONFIRMED: "Đang chờ việc",
+    PENDING: "Đang chờ việc",
   });
   // Cac helper hien co deu tro ve cung mot bang nhan, khong con bang trung lap.
   assert.equal(WORK_STATUS_LABELS.UNCONFIRMED, "Đang chờ việc");
@@ -61,6 +62,7 @@ test("nhan trang thai lam viec duoc thong nhat tren moi be mat", () => {
   });
   // Gia tri khong hop le -> fallback tieng Viet, khong bao gio tra ma/tieng Anh.
   assert.equal(workStatusUiLabel("khong_hop_le"), "Chưa có trạng thái");
+  assert.equal(workStatusUiLabel("PENDING"), "Đang chờ việc");
 });
 
 test("nhan gioi tinh la tieng Viet va khong bao gio tra ma enum", () => {
@@ -73,7 +75,9 @@ test("nhan gioi tinh la tieng Viet va khong bao gio tra ma enum", () => {
   assert.equal(genderUiLabel(null), "");
   assert.equal(genderUiLabel("KHONG_CO"), "—");
   for (const code of ["MALE", "FEMALE", "OTHER"]) assert.notEqual(genderUiLabel(code), code);
-  for (const code of ["ON", "OFF", "UNCONFIRMED"]) assert.notEqual(workStatusUiLabel(code), code);
+  for (const code of ["ON", "OFF", "UNCONFIRMED", "PENDING"]) {
+    assert.notEqual(workStatusUiLabel(code), code);
+  }
 });
 
 test("luong de xuat/duyet sua NLĐ hien gioi tinh tieng Viet, khong hien MALE/FEMALE", () => {
@@ -115,6 +119,24 @@ test("paste doc nhan tieng Viet nhung write model giu enum canonical", () => {
   assert.equal(workStatusUiLabel(row.employment.initial_status.value), "Đang chờ việc");
 });
 
+test("ID PENDING trong ô nhập được chuẩn hoá về enum lưu trữ UNCONFIRMED", () => {
+  const parsed = parseWorkerProfilePaste({
+    text: singleRowTsv([
+      ["Mã NLĐ", "hrp-2026-000123"],
+      ["Dự án", PROJECT],
+      ["Ngày bắt đầu làm việc", "2026-10-15"],
+      ["Họ và tên", NAME],
+      ["Tên NV Tuyển dụng", "Tuyển dụng giả"],
+      ["Loại hình LĐ", "Thời vụ"],
+      ["Tình trạng làm việc hiện tại", "PENDING"],
+    ]),
+    referenceDate: REFERENCE_DATE,
+  });
+  assert.equal(parsed.errorCount, 0);
+  assert.deepEqual(parsed.rows[0].employment.initial_status,
+    { state: "provided", value: "UNCONFIRMED" });
+});
+
 test("lưới nhập liệu và hộp xem trước dùng helper nhan, không nối '· hiệu lực'", () => {
   const liveSource = source("../../components/direct-entry/direct-entry-live.tsx");
   assert.equal(liveSource.includes("· hiệu lực"), false,
@@ -129,5 +151,5 @@ test("lưới nhập liệu và hộp xem trước dùng helper nhan, không n�
     "../../components/direct-entry/direct-entry-spreadsheet-grid.tsx");
   assert.match(gridSource, /import \{ workStatusUiLabel \} from "@\/lib\/direct-entry\/display-labels"/);
   assert.match(gridSource, /column\.key === "initial_status"[\s\S]*?workStatusUiLabel\(status\)/);
-  assert.match(gridSource, /option === "" \? "Đang làm việc \(mặc định\)"[\s\S]*?option === "ON" \? "Đang làm việc"/);
+  assert.match(gridSource, /option === "" \? "Đang làm việc \(mặc định\)"[\s\S]*?workStatusUiLabel\(option\)/);
 });
