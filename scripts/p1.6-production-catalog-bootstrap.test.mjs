@@ -177,7 +177,7 @@ async function reportingBaseline(db) {
   return rows[0];
 }
 
-test("103 migrations apply from scratch and expose only the approved RPC boundary", async () => {
+test("104 migrations apply from scratch and expose only the approved RPC boundary", async () => {
   const db = await database();
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql"));
   // W05A #48, W07C-R7 #49, W07E #50, W02 #51, W03 #52, W04 #53,
