@@ -58,6 +58,7 @@ async function databaseBeforeHotfix() {
     "20261015150000_pre_w2_worker_data_capabilities_default.sql",
     "20261015160000_pre_w2_initial_status_any_start_date.sql",
     "20261015170000_pre_w2_uploader_submission_queues.sql",
+    "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
