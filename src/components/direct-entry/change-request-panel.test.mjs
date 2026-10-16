@@ -151,7 +151,7 @@ test("spreadsheet actions live once at the end of the grid toolbar", () => {
   assert.match(gridCss, /\.toolbarActions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*margin-left:\s*auto/s);
   assert.match(gridCss, /\.toolbarActions > button\s*\{[^}]*min-height:\s*35px;[^}]*padding:\s*0 10px;[^}]*white-space:\s*nowrap;/s);
   assert.match(live, /className=\{styles\.secondaryButton\}\s*data-testid="add-rows-batch"\s*onClick=\{addStagedRows\}\s*disabled=\{loadState !== "ready" \|\| !canAddStagedRows\(stagedModel\)\}/);
-  assert.match(live, /className=\{styles\.primaryButton\}\s*data-testid="spreadsheet-save" onClick=\{\(\) => void onStagedSave\(\)\}\s*disabled=\{loadState !== "ready" \|\| stagedBusy \|\| !hasActiveLaborTypes\}\s*aria-busy=\{stagedBusy\}/);
+  assert.match(live, /className=\{styles\.primaryButton\}\s*data-testid="spreadsheet-save" onClick=\{\(\) => void onStagedSave\(\)\}\s*disabled=\{loadState !== "ready" \|\| stagedBusy \|\|\s*\(editingDraftSubmissionId === null && !hasActiveLaborTypes\)\}\s*aria-busy=\{stagedBusy\}/);
   assert.match(grid, /data-testid="spreadsheet-undo" onClick=\{onUndo\}/);
   assert.match(grid, /data-testid="spreadsheet-paste-notice"/);
   assert.match(grid, /data-testid="spreadsheet-error-summary"/);
