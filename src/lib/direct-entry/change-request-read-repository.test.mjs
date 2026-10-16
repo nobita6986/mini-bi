@@ -25,6 +25,8 @@ const listItem = {
   entry_ids: [entryA],
   can_withdraw: false,
   can_decide: true,
+  proposer_display_name: "Synthetic Proposer",
+  summary: "Đổi thông tin lao động",
 };
 const listPayload = { requests: [listItem], page_size: 20, has_more: false, next_cursor: null };
 const detailPayload = {
