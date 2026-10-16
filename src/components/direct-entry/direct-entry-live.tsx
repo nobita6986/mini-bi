@@ -1924,11 +1924,11 @@ export function DirectEntryLive() {
             aria-label="Chọn tệp workbook .xlsx"
           />
           <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
-            onClick={() => void downloadXlsxTemplate()}>
+            onClick={() => void downloadXlsxTemplate()} hidden>
             Tải file Excel mẫu
           </button>
           <button type="button" className={`${styles.secondaryButton} ${styles.excelButton}`}
-            onClick={() => xlsxInputRef.current?.click()}>
+            onClick={() => xlsxInputRef.current?.click()} hidden>
             Nhập file Excel
           </button>
           <button type="button" className={`${styles.secondaryButton} ${styles.quickAddButton}`}
@@ -2198,7 +2198,7 @@ export function DirectEntryLive() {
                     data-testid="spreadsheet-save" onClick={() => void onStagedSave()}
                     disabled={loadState !== "ready" || stagedBusy || !hasActiveLaborTypes}
                     aria-busy={stagedBusy}>
-                    Lưu các dòng hợp lệ
+                    {stagedBusy ? "Đang nhập…" : "Lưu các dòng hợp lệ"}
                   </button>
                 </>
               }
