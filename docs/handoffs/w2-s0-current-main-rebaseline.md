@@ -16,10 +16,13 @@
   label and its focused assertion; no W2 contract fact changed.
 - The accepted S0 memos entered `main` through PR #10 at
   `50690d3334d076c0c9cb32c0eee966ab29215b45`.
-- The reconciled external master plan is
+- The external master plan read for the survey was
   `C:\CodeApp\BI-wave-2-master-plan-2026-10-13.md`, SHA-256
   `EBC29E75DD4ED8ED6CB16256F0FC6B7131CB854BCA00A4B4E29F8A31EE0B7E19`
-  (699 lines).
+  (699 lines). After PR #56 merged, T0 changed only its incorporation ledger;
+  the post-merge plan is SHA-256
+  `FB8057A0FCB885D0AF0F2948A68F102C87C330AD30B2AA64F24DD1D5D60AA9DA`
+  (700 lines), with no contract change.
 - Delta reviewed: `50690d3..ec704f4` = 303 paths, `+22523/-1798`.
 - Migration ledger on the frozen main: **110** files; last =
   `20261016160000_pre_w2_personnel_from_account_default_access.sql`.
