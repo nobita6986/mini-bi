@@ -64,9 +64,11 @@ export type FullProfileRpcRow = {
     account_holder_name?: string | null;
   };
   employment: null | {
-    initial_status: "UNCONFIRMED" | "ON" | "OFF";
-    leave_date: string | null;
-    leave_reason_text: string | null;
+    initial_status: "UNCONFIRMED" | "ON";
+  } | {
+    initial_status: "OFF";
+    leave_date: string;
+    leave_reason_text: string;
   };
 };
 
@@ -278,15 +280,17 @@ function normalizeEmployment(
       issues.push({ code: "OFF_REQUIRES_DATE_AND_REASON", path });
       return null;
     }
-  } else if (leaveDate !== undefined || leaveReason !== undefined) {
+    return {
+      initial_status: status,
+      leave_date: leaveDate,
+      leave_reason_text: leaveReason,
+    };
+  }
+  if (leaveDate !== undefined || leaveReason !== undefined) {
     issues.push({ code: "BATCH_INVALID", path });
     return null;
   }
-  return {
-    initial_status: status,
-    leave_date: typeof leaveDate === "string" ? leaveDate : null,
-    leave_reason_text: typeof leaveReason === "string" ? leaveReason : null,
-  };
+  return { initial_status: status };
 }
 
 export function parseFullProfilePayload(value: unknown): FullProfileParseResult {
