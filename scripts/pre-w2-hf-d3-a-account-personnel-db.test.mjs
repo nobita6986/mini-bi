@@ -45,10 +45,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 109, "the ledger carries append-only migrations through #109");
-  assert.equal(names[names.length - (1 + 17)], D3A_MIGRATION,
+  assert.equal(names.length, 110, "the ledger carries append-only migrations through #110");
+  assert.equal(names[names.length - (2 + 17)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
-  assert.equal(names.at(-(9 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-(10 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
 }
 
@@ -56,7 +56,7 @@ async function buildDbBeforeDefaultCapabilities() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-(9 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-(10 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
   for (const name of names.slice(0, -3)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -85,6 +85,17 @@ async function buildDbBeforeDefaultCapabilities() {
 
   await db.exec(await readFile(path.join(MIGRATION_DIR, DEFAULT_CAPABILITIES_MIGRATION), "utf8"));
   return { db, app, today, future };
+}
+
+async function buildDbBeforePersonnelDefaultAccess() {
+  const db = new PGlite();
+  await db.exec(AUTH_PROLOGUE);
+  const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
+  assert.equal(names.length, 110);
+  for (const name of names.slice(0, -1)) {
+    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  }
+  return { db, migration: await readFile(path.join(MIGRATION_DIR, names.at(-1)), "utf8") };
 }
 
 async function insertActor(db, auth, app, { capabilities = [], scopes = [], enabled = true } = {}) {
@@ -166,6 +177,44 @@ test("worker-data defaults cover existing accounts without changing their scopes
       "select count(*) from public.direct_entry_audit_events" +
       " where action='capability_default_grant' and outcome='APPLIED'"), 2,
     "only the two missing grant intervals are recorded by the migration");
+  } finally {
+    await db.close();
+  }
+});
+
+test("PRE-W2-HF: backfill default HRP access only for effective linked accounts", async () => {
+  const { db, migration } = await buildDbBeforePersonnelDefaultAccess();
+  try {
+    const auth = uuid(911), app = uuid(912), recruiter = uuid(913);
+    const today = (await db.query("select public.direct_entry_authorization_date()::text as today")).rows[0].today;
+    await db.query("insert into auth.users (id,email) values ($1,$2)",
+      [auth, `${loginForAuth(auth)}@hrpartner.vn`]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Existing HRP Account')", [app, auth]);
+    await db.query(
+      "insert into public.recruiters (recruiter_id,display_name,personnel_code,personnel_position,active)" +
+      " values ($1,'Existing HRP Worker',$2,'STAFF',true)", [recruiter, loginForAuth(auth)]);
+    await db.query(
+      "insert into public.recruiter_provider_memberships (recruiter_id,provider_type,valid_from)" +
+      " values ($1,'hrp',$2::date)", [recruiter, today]);
+    await db.query(
+      "insert into public.direct_entry_app_user_recruiter_links (app_user_id,recruiter_id,verified,valid_from)"+
+      " values ($1,$2,true,$3::date)", [app, recruiter, today]);
+
+    await db.exec(migration);
+
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants where app_user_id=$1 and valid_from <= $2::date"+
+      " and (valid_to is null or $2::date < valid_to)", [app, today]), 10);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants where app_user_id=$1 and scope_kind='own'"+
+      " and valid_from <= $2::date and (valid_to is null or $2::date < valid_to)", [app, today]), 1);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants where app_user_id=$1 and scope_kind in ('team','all')", [app]), 0);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants where app_user_id=$1"+
+      " and capability in ('team_manager_assign','entry_admin','change_review')", [app]), 0);
   } finally {
     await db.close();
   }
@@ -268,7 +317,8 @@ test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabiliti
     await claim(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token]);
 
     const createdAuth = uuid(70);
-    await db.query("insert into auth.users (id) values ($1)", [createdAuth]);
+    await db.query("insert into auth.users (id, email) values ($1, $2)",
+      [createdAuth, `${loginForAuth(createdAuth)}@hrpartner.vn`]);
 
     const finalizeKey = idemKey();
     const f = await finalize(db, [ADMIN_AUTH, ADMIN_APP, b.intent_id, b.intent_token,
@@ -297,6 +347,24 @@ test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabiliti
     "each default grant is audit-recorded under the creating Full Admin");
     assert.equal(await count(db, "select count(*) from public.direct_entry_scope_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links where app_user_id = $1", [f.app_user_id]), 0);
+
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, f.app_user_id, f.version,
+      loginForAuth(createdAuth), "STAFF", "2026-01-05", "create personnel", idemKey()]);
+    for (const capability of [
+      "entry_create", "entry_own", "submission_create", "change_request_create",
+      "employment_status.request", "document_upload", "document_view",
+      "pii_view", "payment_view", "pii_export",
+    ]) {
+      assert.equal(await count(db,
+        "select count(*) from public.direct_entry_capability_grants" +
+        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
+        " and (valid_to is null or current_date < valid_to)", [f.app_user_id, capability]), 1,
+        `${capability} is effective after account creation followed by personnel creation`);
+    }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants" +
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
+      " and (valid_to is null or current_date < valid_to)", [f.app_user_id]), 1);
 
     const revision = (await db.query(
       "select action from public.direct_entry_app_user_revisions where app_user_id = $1", [f.app_user_id])).rows[0];
@@ -479,6 +547,30 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
       "select count(*)::int as n from public.direct_entry_audit_events where action = 'link_create' and app_user_id = $1",
       [ADMIN_APP])).rows[0].n;
     assert.equal(linkAudit, 1);
+    for (const capability of [
+      "entry_create", "entry_own", "submission_create", "change_request_create",
+      "employment_status.request", "document_upload", "document_view",
+      "pii_view", "payment_view", "pii_export",
+    ]) {
+      assert.equal(await count(db,
+        "select count(*) from public.direct_entry_capability_grants" +
+        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
+        " and (valid_to is null or current_date < valid_to)", [TARGET_APP, capability]), 1,
+        `${capability} is granted to account-created HRP personnel`);
+    }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants" +
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
+      " and (valid_to is null or current_date < valid_to)", [TARGET_APP]), 1,
+    "account-created HRP personnel has own scope");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events" +
+      " where app_user_id=$1 and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 9,
+    "each missing baseline capability is audited under the creating admin");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_audit_events" +
+      " where app_user_id=$1 and action='scope_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 0,
+    "the existing own scope is preserved without duplicate audit");
 
     // Legacy personnel-code collision still fails atomically.
     const secondAuth = uuid(82), secondApp = uuid(83);
@@ -490,6 +582,41 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
         "2026-01-05", "create personnel again", idemKey()]),
       (error) => error.code === "23505");
     assert.equal(await count(db, "select count(*) from public.recruiters"), before);
+  } finally {
+    await db.close();
+  }
+});
+
+test("PRE-W2-HF: account-created team leaders get only the HRP own-entry baseline", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    const auth = uuid(85), app = uuid(86);
+    await insertActor(db, auth, app);
+    await createPersonnel(db, [ADMIN_AUTH, ADMIN_APP, app, 1, loginForAuth(auth), "TEAM_LEADER",
+      "2026-01-05", "create team leader", idemKey()]);
+
+    for (const capability of [
+      "entry_create", "entry_own", "submission_create", "change_request_create",
+      "employment_status.request", "document_upload", "document_view",
+      "pii_view", "payment_view", "pii_export",
+    ]) {
+      assert.equal(await count(db,
+        "select count(*) from public.direct_entry_capability_grants" +
+        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
+        " and (valid_to is null or current_date < valid_to)", [app, capability]), 1);
+    }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants" +
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
+      " and (valid_to is null or current_date < valid_to)", [app]), 1);
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id=$1 and capability in ('team_manager_assign','entry_admin','change_review')", [app]), 0,
+    "catalog title TEAM_LEADER does not grant team/admin/reviewer authority");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_scope_grants where app_user_id=$1 and scope_kind in ('team','all')", [app]), 0,
+    "team-leader team authority must be assigned through its dedicated workflow");
   } finally {
     await db.close();
   }
