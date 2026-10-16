@@ -112,11 +112,12 @@ test("review and withdraw continue to use server-projected permission and existi
   assert.match(workers, /onDecided=\{\(message\) => \{[\s\S]{0,180}reloadRequestPage\(\)/);
 });
 
-test("mobile hides both Excel CTAs and keeps quick-add visible without changing workflows", () => {
+test("Excel CTAs stay hidden at every breakpoint and quick-add remains visible on mobile", () => {
   const mobileStyles = css.slice(css.indexOf("@media (max-width: 767px)"));
   const desktopStyles = css.slice(0, css.indexOf("@media (max-width: 767px)"));
   assert.match(live, /className=\{`\$\{styles\.secondaryButton\} \$\{styles\.excelButton\}`\}\s*onClick=\{\(\) => void downloadXlsxTemplate\(\)\}/);
   assert.match(live, /className=\{`\$\{styles\.secondaryButton\} \$\{styles\.excelButton\}`\}\s*onClick=\{\(\) => xlsxInputRef\.current\?\.click\(\)\}/);
+  assert.equal((live.match(/className=\{`\$\{styles\.secondaryButton\} \$\{styles\.excelButton\}`\}[\s\S]{0,100}?hidden>/g) ?? []).length, 2);
   assert.match(live, /className=\{`\$\{styles\.secondaryButton\} \$\{styles\.quickAddButton\}`\}\s*data-testid="quick-add-row"/);
   assert.match(desktopStyles, /\.excelButton\s*\{\s*display:\s*inline-flex;/);
   assert.match(desktopStyles, /\.quickAddButton\s*\{\s*display:\s*none;\s*\}/);
