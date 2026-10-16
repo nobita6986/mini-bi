@@ -80,6 +80,8 @@ test("validation chay tren staged rows va map issue ve dung o", () => {
   // P1.7-H07: nut Save luon click duoc (khong bi khoa theo canSave)
   // de kich hoat required validation va nguoi dung thay nguyen nhan.
   assert.match(live, /disabled=\{loadState !== "ready" \|\| stagedBusy \|\| !hasActiveLaborTypes\}/);
+  assert.match(live, /\{stagedBusy \? "Đang nhập…" : "Lưu các dòng hợp lệ"\}/);
+  assert.match(live, /aria-busy=\{stagedBusy\}/);
 });
 
 test("save dung full-profile batch, mot request, co chan double submit", () => {
@@ -187,11 +189,11 @@ test("persisted actions reopen the existing drawer; mobile, CCCD/payment/documen
   }
 });
 
-test("XLSX import/template and mobile staged editor stay on the spreadsheet workflow", () => {
+test("hidden XLSX CTAs retain import/template handlers and mobile staged editor stays available", () => {
   assert.match(live, /workerProfileXlsxToTsv\(file\)/);
   assert.match(live, /createWorkerProfileTemplate\(\)/);
-  assert.match(live, /Nhập file Excel/);
-  assert.match(live, /Tải file Excel mẫu/);
+  assert.match(live, /onClick=\{\(\) => void downloadXlsxTemplate\(\)\} hidden/);
+  assert.match(live, /onClick=\{\(\) => xlsxInputRef\.current\?\.click\(\)\} hidden/);
   // P1.7-H05: employeeCode do server tu sinh (migration #39), UI chi hien thi
   // khi row da persisted.
   assert.match(live, /employeeCodeMode: "server-generated"|Máy chủ sẽ cấp mã khi lưu/);

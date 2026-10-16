@@ -17,17 +17,20 @@ import {
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
 
-test("header keeps spreadsheet access and mobile quick-add without legacy paste controls", () => {
+test("header keeps quick-add; Excel CTAs are hidden while import/template handlers remain", () => {
   const headerStart = live.indexOf("<header className={styles.header}>");
   const headerEnd = live.indexOf("</header>", headerStart);
   const header = live.slice(headerStart, headerEnd);
   assert.ok(headerStart > 0 && headerEnd > headerStart);
   assert.equal((header.match(/<button\b/g) ?? []).length, 3);
-  for (const action of [
-    "Tải file Excel mẫu",
-    "Nhập file Excel",
-    "Thêm nhanh NLĐ",
-  ]) assert.ok(header.includes(action), action);
+  assert.match(header, /Tải file Excel mẫu[\s\S]*?<\/button>/);
+  assert.match(header, /Nhập file Excel[\s\S]*?<\/button>/);
+  assert.equal((header.match(/\shidden>/g) ?? []).length, 2);
+  assert.match(header, /data-testid="quick-add-row"/);
+  assert.match(live, /const downloadXlsxTemplate = useCallback/);
+  assert.match(live, /const onXlsxFile = useCallback/);
+  assert.match(live, /workerProfileXlsxToTsv\(file\)/);
+  assert.match(live, /createWorkerProfileTemplate\(\)/);
   for (const hidden of [
     "P1.6 · Direct Entry · S03CD",
     "Dán từ Excel",

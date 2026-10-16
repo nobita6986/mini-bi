@@ -13,12 +13,17 @@ const importModule = source("../../lib/direct-entry/excel-paste-import.ts");
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id|team_id)\s*:/;
 
-test("legacy paste dialog remains reviewable but is not wired into the live toolbar", () => {
+test("Excel actions are hidden from live toolbar while existing import/template handlers remain", () => {
   const start = live.indexOf("<header className={styles.header}>");
   const end = live.indexOf("</header>", start);
   const actions = live.slice(start, end);
-  assert.match(actions, /Tải file Excel mẫu/);
-  assert.match(actions, /Nhập file Excel/);
+  assert.match(actions, /onClick=\{\(\) => void downloadXlsxTemplate\(\)\} hidden/);
+  assert.match(actions, /onClick=\{\(\) => xlsxInputRef\.current\?\.click\(\)\} hidden/);
+  assert.equal((actions.match(/\shidden>/g) ?? []).length, 2);
+  assert.match(live, /const downloadXlsxTemplate = useCallback/);
+  assert.match(live, /const onXlsxFile = useCallback/);
+  assert.match(live, /workerProfileXlsxToTsv\(file\)/);
+  assert.match(live, /createWorkerProfileTemplate\(\)/);
   assert.match(actions, /Thêm nhanh NLĐ/);
   assert.equal((actions.match(/<button\b/g) ?? []).length, 3);
   assert.doesNotMatch(actions, /Thêm dòng|Lưu các dòng hợp lệ/);
