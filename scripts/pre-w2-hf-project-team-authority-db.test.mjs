@@ -69,7 +69,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 109, "the ledger includes global review history #109");
+  assert.equal(names.length, 110, "the ledger includes global review history #109");
   assert.equal(names.at(-(6 + 1)), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
     "direct-entry batch workflow is the append-only #103 migration");
   assert.equal(names.at(-(7 + 1)), "20261015170000_pre_w2_uploader_submission_queues.sql",

@@ -184,7 +184,7 @@ await addActor(db, { ...ENTRY_OPERATOR, capabilities: ["entry_create"], scopes: 
 
 test("assertions 1: the ledger carries #75 append-only after the P3.1-HF report", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 109, "the ledger carries the complete 109-migration ledger");
+  assert.equal(names.length, 110, "the ledger carries the complete 110-migration ledger");
   assert.equal(names.at(-(33 + 1)), LEGACY_SCOPE_HOTFIX, "#76 is the append-only leader-scope hotfix");
   assert.equal(names.at(-(34 + 1)), NEW_MIGRATION, "#75 remains the P3.1-W02-B vendor lifecycle migration");
   assert.equal(names.at(-(35 + 1)), PREVIOUS_MIGRATION, "#75 stays append-only after #74");
