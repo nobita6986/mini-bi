@@ -1,6 +1,10 @@
 # W2-S0-B-R1 — Wave 2 backend/API reuse survey (targeted repair)
 
-> **Status:** `W2_S0_B_R1_BACKEND_API_REUSE_CONSISTENCY_PASS_AWAITING_T0_REVIEW`
+> **Status:** `ACCEPTED_HISTORICAL_BASELINE_REBASELINED_ON_CURRENT_MAIN`
+> **Current authority notice (2026-10-16):** accepted through PR #10, then
+> revalidated against `main@ec704f4` in
+> `docs/handoffs/w2-s0-current-main-rebaseline.md`. The ledger is now 110; the
+> #87 observation below is historical and reserved nothing.
 > **Revision:** R1 — targeted repair of the W2-S0-B survey (`7ba2de5`) against the
 >   current Wave 2 master plan. Append-only on the same branch (no amend / no
 >   rebase / no force-push).
