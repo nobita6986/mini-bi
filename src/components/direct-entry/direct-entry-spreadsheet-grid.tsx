@@ -725,7 +725,7 @@ export function DirectEntrySpreadsheetGrid(props: DirectEntrySpreadsheetGridProp
         const display = (() => {
           const status = row.cells.initial_status ?? "";
           if (column.key === "initial_status" &&
-            ["ON", "OFF", "UNCONFIRMED"].includes(status)) {
+            ["ON", "OFF", "UNCONFIRMED", "PENDING"].includes(status)) {
             return status === "ON" ? "Đang làm việc" : workStatusUiLabel(status);
           }
           if (row.displayValues && Object.hasOwn(row.displayValues, column.key)) {
