@@ -177,7 +177,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // #97 adds one RPC name and retains the service-role grants for legacy callers.
   // PRE-W2-HF #103 adds one status wrapper; #104 adds one own-draft RPC and helper.
   // PRE-W2-HF #105 adds one internal team-review authority helper, not a new RPC.
-  // Measured: 244 total, 117 service-role executable and 127 internal.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [244, 117, 127]);
+  // #109 adds one service-role RPC; the rest of the inventory remains unchanged.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [245, 118, 127]);
   await db.close();
 });

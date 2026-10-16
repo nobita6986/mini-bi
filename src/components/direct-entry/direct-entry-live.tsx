@@ -850,10 +850,7 @@ export function DirectEntryLive() {
             ? [{ kind: scope.kind }]
             : [])
           : [];
-        setCanViewGlobalHistory(canViewGlobalChangeRequestHistory({
-          capabilities: session.actor.capabilities,
-          scopes,
-        }));
+        setCanViewGlobalHistory(canViewGlobalChangeRequestHistory(session.actor.capabilities, scopes));
         void loadSubmissions("replace");
         void loadChangeRequests("replace");
         const [draftResponse, catalog] = await Promise.all([
