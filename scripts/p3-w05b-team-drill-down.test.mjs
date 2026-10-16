@@ -31,7 +31,7 @@ function sqlState(error, code) {
 test("W05B migration exposes the 19-column projection, RPC and ACL", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    assert.equal(migrationNames);
+    assert.equal(migrationNames.length, 109);
     assert.equal(migrationNames.at(-21), MIGRATION);
     const columns = await query(db, "select array_to_string(array_agg(attname order by attnum), ',') as columns from pg_attribute where attrelid='public.direct_entry_reporting_facts_v01'::regclass and attnum>0 and not attisdropped");
     assert.equal(columns[0].columns, "source_id,business_date,project_key,project_display,recruiter_key,recruiter_display,provider_type_key,provider_type_display,employment_type_key,employment_type_display,recruited_count,first_work_date,entry_id,submission_id,cutoff_date,team_id,team_code,team_display_name,team_active");

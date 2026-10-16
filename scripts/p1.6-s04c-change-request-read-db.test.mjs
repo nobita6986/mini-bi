@@ -36,6 +36,9 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
   assert.equal(migrations.migrationNames.length, 109);
+  assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
+  assert.ok(migrations.migrationNames.includes(
+    "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261016120000_pre_w2_team_leader_change_request_entry_read.sql"));
   assert.ok(migrations.migrationNames.includes(
@@ -44,9 +47,6 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
     "20261016140000_pre_w2_team_leader_apply_change_item.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261016150000_pre_w2_global_change_request_review_history.sql"));
-  assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
-  assert.ok(migrations.migrationNames.includes(
-    "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
   for (const signature of [LIST_RPC, READ_RPC, AUDIT_RPC]) {
     const { rows } = await db.query(
       "select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as config," +

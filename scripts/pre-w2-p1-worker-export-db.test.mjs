@@ -54,7 +54,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names,
+  assert.equal(names.length, 109,
     "ledger includes worker-data capabilities #100, initial-status hotfix #101 and uploader queues #102");
   assert.equal(names[names.length - (1 + 19)], EXPORT_MIGRATION_NAME,
     "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
