@@ -6,13 +6,14 @@
  * va (b) khong lap lai bang nhan o nhieu noi.
  */
 
-export type WorkStatusUiCode = "ON" | "OFF" | "UNCONFIRMED";
+export type WorkStatusUiCode = "ON" | "OFF" | "UNCONFIRMED" | "PENDING";
 export type GenderUiCode = "MALE" | "FEMALE" | "OTHER";
 
 export const WORK_STATUS_UI_LABELS: Readonly<Record<WorkStatusUiCode, string>> = Object.freeze({
   ON: "Đang làm",
   OFF: "Đã nghỉ",
   UNCONFIRMED: "Đang chờ việc",
+  PENDING: "Đang chờ việc",
 });
 
 /** Fallback tieng Viet cho trang thai thieu/khong hop le (khong bao gio tra ma enum). */
