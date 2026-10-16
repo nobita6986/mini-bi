@@ -80,7 +80,13 @@ const SECRET_ACCESS_KEY = /^[A-Za-z0-9/+=_-]{16,256}$/;
 
 export function resolveDocumentEnvironment(
   env: Record<string, string | undefined>,
-): DocumentEnvironment {
+): DocumentEnvironment | null {
+  const configured = env.DOCUMENT_STORAGE_ENVIRONMENT;
+  if (configured !== undefined) {
+    const value = configured.trim();
+    if (value === "preview" || value === "production") return value;
+    return null;
+  }
   return env.VERCEL_ENV === "production" ? "production" : "preview";
 }
 
@@ -90,7 +96,7 @@ export function loadR2Config(env: Record<string, string | undefined>): R2Config 
   const accessKeyId = env.R2_ACCESS_KEY_ID?.trim();
   const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim();
   const environment = resolveDocumentEnvironment(env);
-  if (!accountId || !bucket || !accessKeyId || !secretAccessKey ||
+  if (!environment || !accountId || !bucket || !accessKeyId || !secretAccessKey ||
       !ACCOUNT_ID.test(accountId) || !ACCESS_KEY_ID.test(accessKeyId) ||
       !SECRET_ACCESS_KEY.test(secretAccessKey) ||
       bucket !== DOCUMENT_BUCKETS[environment]) return null;
