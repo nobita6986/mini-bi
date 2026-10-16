@@ -223,6 +223,17 @@ test("repository maps catalog, drafts, and update only to their named RPCs and f
       patch,
       idempotency_key: "synthetic-update-02",
     }), { ok: false, kind: "unavailable" });
+
+    const invalidDraft = createDirectEntryWriteRepository(async () => ({
+      data: null, error: { code: "23514" },
+    }));
+    assert.deepEqual(await invalidDraft.updateDraftRow({
+      ...actor,
+      entry_id: draft.entry_id,
+      expected_version: 1,
+      patch: { employee_code: "invalid" },
+      idempotency_key: "synthetic-update-invalid",
+    }), { ok: false, kind: "invalid" });
 });
 
 test("catalog gate and effective date validation happen before session or RPC", async () => {
@@ -320,6 +331,17 @@ test("PATCH loads effective-date master data then updates with server actor and 
   assert.equal((await patchDraftEntry(
     patchRequest({ expected_version: 1, patch }), draft.entry_id, "true", conflict,
   )).status, 409);
+  const invalidPatch = deps({
+    async updateDraftRow() { return { ok: false, kind: "invalid" }; },
+  });
+  const invalidResponse = await patchDraftEntry(
+    patchRequest({ expected_version: 1, patch: { employee_code: "hrp-2025-900001" } }),
+    draft.entry_id,
+    "true",
+    invalidPatch,
+  );
+  assert.equal(invalidResponse.status, 400);
+  assert.equal((await invalidResponse.json()).code, "DRAFT_PATCH_INVALID");
   const invalidMaster = deps();
   invalidMaster.repository.loadInputCatalog = async (input) => {
     invalidMaster.calls.push({ operation: "catalog", input });
@@ -329,4 +351,39 @@ test("PATCH loads effective-date master data then updates with server actor and 
     patchRequest({ expected_version: 1, patch }), draft.entry_id, "true", invalidMaster,
   )).status, 400);
   assert.equal(invalidMaster.calls.length, 1);
+});
+
+test("PATCH treats omission as preserve and requires an explicit representation to clear fields", async () => {
+  const partial = {
+    expected_version: 1,
+    patch: {
+      employee_code: "hrp-2026-900002",
+      worker_details: {
+        address: { state: "intentionally_blank" },
+        phone: { state: "provided", value: "0900000001" },
+      },
+      general_note: null,
+    },
+  };
+  const dependencies = deps();
+  const response = await patchDraftEntry(
+    patchRequest(partial), draft.entry_id, "true", dependencies,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(dependencies.calls, [{
+    operation: "update",
+    input: {
+      ...actor,
+      entry_id: draft.entry_id,
+      expected_version: 1,
+      patch: partial.patch,
+      idempotency_key: "synthetic-update-01",
+    },
+  }]);
+
+  const implicitClear = deps();
+  assert.equal((await patchDraftEntry(patchRequest({
+    expected_version: 1, patch: { worker_details: { address: null } },
+  }), draft.entry_id, "true", implicitClear)).status, 400);
+  assert.equal(implicitClear.calls.length, 0);
 });
