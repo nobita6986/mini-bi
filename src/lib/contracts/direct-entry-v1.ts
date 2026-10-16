@@ -99,6 +99,7 @@ export type EmploymentStatusEvent = {
 };
 
 export type DocumentType = "CCCD_FRONT" | "CCCD_BACK" | "EMPLOYMENT_CONTRACT";
+export type DirectEntryDocumentType = DocumentType | "WORKER_PORTRAIT";
 export type DocumentUploadStatus =
   | "QUEUED"
   | "UPLOADING"

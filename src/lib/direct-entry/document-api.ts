@@ -3,8 +3,8 @@ import "server-only";
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
-import { DOCUMENT_MIME_TYPES, type DocumentType } from "../contracts/direct-entry-v1.ts";
-import { DOCUMENT_MAX_BYTES, isDocumentType } from "./document-upload-contract.ts";
+import { DOCUMENT_MIME_TYPES, type DirectEntryDocumentType } from "../contracts/direct-entry-v1.ts";
+import { DOCUMENT_MAX_BYTES, isDirectEntryDocumentType } from "./document-upload-contract.ts";
 import type { DocumentObjectStorage } from "./r2-document-storage.ts";
 import type { DirectEntryRepository, OperationResult } from "./write-repository.ts";
 
@@ -93,7 +93,7 @@ export async function resolveActor(
 }
 
 type ReserveBody = {
-  document_type: DocumentType;
+  document_type: DirectEntryDocumentType;
   expected_entry_version: number;
   size_bytes: number;
   mime_type: (typeof DOCUMENT_MIME_TYPES)[number];
@@ -103,7 +103,7 @@ type ReserveBody = {
 function parseReserveBody(body: Record<string, unknown>): ReserveBody | { code: string } {
   if (!validateClientBusinessPayload(body).ok) return { code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN" };
   if (Object.keys(body).some((key) => !RESERVE_KEYS.has(key))) return { code: "DOCUMENT_REQUEST_INVALID" };
-  if (!isDocumentType(body.document_type)) return { code: "DOCUMENT_TYPE_INVALID" };
+  if (!isDirectEntryDocumentType(body.document_type)) return { code: "DOCUMENT_TYPE_INVALID" };
   if (!isEntryVersion(body.expected_entry_version)) return { code: "DOCUMENT_REQUEST_INVALID" };
   const size = body.size_bytes;
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > DOCUMENT_MAX_BYTES) {
@@ -111,6 +111,9 @@ function parseReserveBody(body: Record<string, unknown>): ReserveBody | { code: 
   }
   const mime = DOCUMENT_MIME_TYPES.find((candidate) => candidate === body.mime_type);
   if (!mime) return { code: "DOCUMENT_MIME_INVALID" };
+  if (body.document_type === "WORKER_PORTRAIT" && mime === "application/pdf") {
+    return { code: "DOCUMENT_MIME_INVALID" };
+  }
   const reason = body.reason;
   if (reason !== undefined && reason !== null &&
       (typeof reason !== "string" || reason.trim().length < 1 || reason.length > 4000)) {

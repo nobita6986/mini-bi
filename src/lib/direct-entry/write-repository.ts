@@ -5,7 +5,7 @@ import {
   projectPaymentUpdateResult,
   type PaymentInput,
 } from "./payment-contract.ts";
-import type { DocumentType } from "../contracts/direct-entry-v1.ts";
+import type { DirectEntryDocumentType } from "../contracts/direct-entry-v1.ts";
 import {
   projectOwnDrafts,
 } from "./draft-list-contract.ts";
@@ -52,12 +52,13 @@ export type DocumentReservation = DocumentLifecycle & {
 
 export type DocumentContext = DocumentLifecycle & {
   document_id: string;
-  document_type: DocumentType;
+  document_type: DirectEntryDocumentType;
   version: number;
   entry_version: number;
   size_bytes: number;
   mime_type: "application/pdf" | "image/jpeg" | "image/png";
   storage_key: string;
+  checksum_sha256: string | null;
 };
 
 export type DocumentFinalization = DocumentLifecycle & {
@@ -166,7 +167,7 @@ export type DirectEntryRepository = {
   reserveDocumentUpload(input: ActorRef & {
     entry_id: string;
     expected_entry_version: number;
-    document_type: DocumentType;
+    document_type: DirectEntryDocumentType;
     idempotency_key: string;
     size_bytes: number;
     mime_type: string;
@@ -175,7 +176,7 @@ export type DirectEntryRepository = {
   getDocumentContext(input: ActorRef & {
     entry_id: string;
     document_id: string;
-    purpose: "finalize" | "download";
+    purpose: "finalize" | "download" | "preview";
   }): Promise<OperationResult<DocumentContext>>;
   finalizeDocument(input: ActorRef & {
     entry_id: string;
@@ -212,13 +213,15 @@ const SCAN_STATUSES: readonly DocumentLifecycle["scan_status"][] = [
 const VALIDATION_STATUSES: readonly DocumentLifecycle["validation_status"][] = [
   "PENDING", "VALIDATED", "REJECTED",
 ];
-const DOCUMENT_TYPES: readonly DocumentType[] = ["CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"];
+const DOCUMENT_TYPES: readonly DirectEntryDocumentType[] = [
+  "CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT", "WORKER_PORTRAIT",
+];
 const DOCUMENT_MIMES: readonly DocumentContext["mime_type"][] = [
   "application/pdf", "image/jpeg", "image/png",
 ];
 const STORAGE_KEY_PATTERN = new RegExp(
   "^p1\\.6/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/" +
-    "(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT)/[1-9]\\d*/" +
+    "(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT|WORKER_PORTRAIT)/[1-9]\\d*/" +
     "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
   "i",
 );
@@ -256,11 +259,14 @@ function projectDocumentReservation(value: unknown): DocumentReservation | null 
 function projectDocumentContext(value: unknown, documentId: string): DocumentContext | null {
   if (!isRecord(value) || !hasExactKeys(value, [
     "document_id", "document_type", "version", "storage_key", "size_bytes", "mime_type",
-    "upload_status", "scan_status", "validation_status", "entry_version",
+    "checksum_sha256", "upload_status", "scan_status", "validation_status", "entry_version",
   ]) || value.document_id !== documentId ||
       !isPositiveVersion(value.version) || !isPositiveVersion(value.entry_version) ||
       !isPositiveVersion(value.size_bytes) || typeof value.storage_key !== "string" ||
-      !STORAGE_KEY_PATTERN.test(value.storage_key)) return null;
+      !STORAGE_KEY_PATTERN.test(value.storage_key) ||
+      (value.checksum_sha256 !== null &&
+        (typeof value.checksum_sha256 !== "string" ||
+          !/^[a-f0-9]{64}$/.test(value.checksum_sha256)))) return null;
   const type = DOCUMENT_TYPES.find((candidate) => candidate === value.document_type);
   const mime = DOCUMENT_MIMES.find((candidate) => candidate === value.mime_type);
   const lifecycle = projectLifecycle(value);
@@ -274,6 +280,7 @@ function projectDocumentContext(value: unknown, documentId: string): DocumentCon
       size_bytes: value.size_bytes,
       mime_type: mime,
       storage_key: value.storage_key,
+      checksum_sha256: value.checksum_sha256,
     }
     : null;
 }

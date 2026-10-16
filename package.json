@@ -128,7 +128,8 @@
     "test:p3-1-w04-b-team-leader-ui": "node --test src/lib/admin/team-leader-model.test.mjs src/components/admin/team-leader-manager.test.mjs",
     "test:p3-1-w01d-a1b2-leader-write": "node --test scripts/p3-1-w01d-a1b2-leader-write.test.mjs",
     "test:p3-1-w02a-team-leader-project-manager": "node --test scripts/p3-1-w02a-team-leader-project-manager.test.mjs scripts/p3-1-w02a-concurrency.test.mjs",
-    "test:pre-w2-hf-ui-labels": "node --conditions=react-server --test src/lib/direct-entry/ui-labels-regression.test.mjs"
+    "test:pre-w2-hf-ui-labels": "node --conditions=react-server --test src/lib/direct-entry/ui-labels-regression.test.mjs",
+    "test:w2-s1-backend": "node --conditions=react-server --test src/lib/direct-entry/write-api.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs src/lib/direct-entry/r2-document-storage.test.mjs src/lib/direct-entry/worker-portrait-sanitizer.test.mjs scripts/w2-s1-backend-db.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
@@ -145,6 +146,7 @@
     "react-dom": "19.2.8",
     "recharts": "^3.10.1",
     "server-only": "^0.0.1",
+    "sharp": "0.35.5",
     "zod": "^4.6.5"
   },
   "devDependencies": {

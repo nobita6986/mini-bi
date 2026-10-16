@@ -1,6 +1,7 @@
 import "server-only";
 
 import { inspectDocumentContent, sha256Hex } from "./document-r2-contract.ts";
+import { sanitizeWorkerPortrait } from "./worker-portrait-sanitizer.ts";
 import {
   fail,
   isEntryVersion,
@@ -96,7 +97,6 @@ export async function finalizeDirectEntryDocument(
 
     const bytes = await storage.readStaged(document.storage_key);
     if (!bytes || bytes.length !== head.size_bytes) return reject("DOCUMENT_CONTENT_INVALID");
-    const checksum = sha256Hex(bytes);
     const inspection = inspectDocumentContent({
       document_type: document.document_type,
       mime_type: document.mime_type,
@@ -104,7 +104,24 @@ export async function finalizeDirectEntryDocument(
     });
     if (!inspection.ok) return reject(inspection.code);
 
-    await storage.promote({ storage_key: document.storage_key, mime_type: document.mime_type });
+    let finalBytes = bytes;
+    if (document.document_type === "WORKER_PORTRAIT") {
+      const sanitized = await sanitizeWorkerPortrait(bytes, document.mime_type);
+      if (!sanitized.ok) return reject("DOCUMENT_CONTENT_INVALID");
+      finalBytes = sanitized.bytes;
+      const sanitizedInspection = inspectDocumentContent({
+        document_type: document.document_type,
+        mime_type: document.mime_type,
+        bytes: finalBytes,
+      });
+      if (!sanitizedInspection.ok) return reject(sanitizedInspection.code);
+    }
+    const checksum = sha256Hex(finalBytes);
+    await storage.promote({
+      storage_key: document.storage_key,
+      mime_type: document.mime_type,
+      ...(document.document_type === "WORKER_PORTRAIT" ? { sanitized_bytes: finalBytes } : {}),
+    });
     const finalized = await repository.finalizeDocument({
       ...trusted,
       entry_id: entryId,
@@ -113,7 +130,7 @@ export async function finalizeDirectEntryDocument(
       idempotency_key: idempotencyKey,
       outcome: "validated",
       checksum_sha256: checksum,
-      size_bytes: bytes.length,
+      size_bytes: finalBytes.length,
       mime_type: document.mime_type,
     });
     if (!finalized.ok) {
@@ -153,7 +170,8 @@ export async function downloadDirectEntryDocument(
     });
     if (!context.ok) return mapFailure(context.kind);
     const document = context.data;
-    if (document.upload_status !== "READY" || document.validation_status !== "VALIDATED" ||
+    if (document.document_type === "WORKER_PORTRAIT" ||
+        document.upload_status !== "READY" || document.validation_status !== "VALIDATED" ||
         (document.scan_status !== "NOT_REQUIRED" && document.scan_status !== "CLEAN")) {
       return fail("ENTRY_NOT_FOUND", 404);
     }
@@ -173,6 +191,67 @@ export async function downloadDirectEntryDocument(
     });
   } catch {
     console.error("[direct-entry] document download failed");
+    return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
+  }
+}
+
+export async function previewWorkerPortraitDocument(
+  request: Request,
+  entryId: string,
+  documentId: string,
+  flag: string | undefined,
+  dependencies: DocumentApiDependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  if (!UUID.test(entryId)) return fail("ENTRY_ID_INVALID", 400);
+  if (!UUID.test(documentId)) return fail("DOCUMENT_ID_INVALID", 400);
+  void request;
+  try {
+    const actor = await resolveActor(dependencies, "document_view");
+    if (!actor.ok) return actor.response;
+    if (!dependencies.storage.available()) return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
+    const context = await dependencies.repository.getDocumentContext({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      entry_id: entryId,
+      document_id: documentId,
+      purpose: "preview",
+    });
+    if (!context.ok) return mapFailure(context.kind);
+    const document = context.data;
+    if (document.document_type !== "WORKER_PORTRAIT" ||
+        (document.mime_type !== "image/jpeg" && document.mime_type !== "image/png") ||
+        document.upload_status !== "READY" || document.validation_status !== "VALIDATED" ||
+        (document.scan_status !== "NOT_REQUIRED" && document.scan_status !== "CLEAN") ||
+        !document.checksum_sha256) {
+      return fail("ENTRY_NOT_FOUND", 404);
+    }
+
+    const bytes = await dependencies.storage.readFinal(document.storage_key);
+    if (!bytes || bytes.byteLength !== document.size_bytes ||
+        sha256Hex(bytes) !== document.checksum_sha256 ||
+        !inspectDocumentContent({
+          document_type: document.document_type,
+          mime_type: document.mime_type,
+          bytes,
+        }).ok) {
+      console.error("[direct-entry] portrait object integrity check failed");
+      return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
+    }
+    return new Response(Buffer.from(bytes), {
+      status: 200,
+      headers: {
+        "Content-Type": document.mime_type,
+        "Content-Length": String(bytes.byteLength),
+        "Content-Disposition": "inline",
+        "Cache-Control": "private, no-store",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+      },
+    });
+  } catch {
+    console.error("[direct-entry] portrait preview unavailable");
     return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
   }
 }

@@ -260,6 +260,7 @@ test("read validates UUID before session and keeps the restricted projection", a
     payment: null,
     employment_status: { status: "UNCONFIRMED", effective_date: "2026-10-15", version: 1 },
     documents: [],
+    worker_portrait: { origin: null, added_at: null, status: "MISSING", current: null },
   };
   const completedDocument = {
     document_id: "a3000000-0000-4000-8000-000000000001",
@@ -272,6 +273,30 @@ test("read validates UUID before session and keeps the restricted projection", a
     validation_status: "VALIDATED",
   };
   assert.ok(projectEntry({ ...projection, documents: [completedDocument] }));
+  assert.ok(projectEntry({
+    ...projection,
+    worker_portrait: {
+      origin: "LEGACY_ADDED",
+      added_at: "2026-10-17T10:00:00.000Z",
+      status: "READY",
+      current: {
+        document_id: "b3000000-0000-4000-8000-000000000001",
+        version: 2,
+        checksum_sha256: "a".repeat(64),
+        mime_type: "image/jpeg",
+        size_bytes: 768,
+      },
+    },
+  }));
+  assert.equal(projectEntry({
+    ...projection,
+    worker_portrait: {
+      origin: "LEGACY_ADDED",
+      added_at: null,
+      status: "READY",
+      current: null,
+    },
+  }), null, "portrait origin time pairing is checked strictly");
   const legacyDocument = { ...completedDocument };
   delete legacyDocument.validation_status;
   assert.equal(projectEntry({ ...projection, documents: [legacyDocument] }), null,

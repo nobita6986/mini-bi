@@ -9,7 +9,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { DocumentType } from "../contracts/direct-entry-v1.ts";
+import type { DirectEntryDocumentType } from "../contracts/direct-entry-v1.ts";
 import {
   DOCUMENT_BUCKETS,
   DOCUMENT_DOWNLOAD_URL_TTL_SECONDS,
@@ -51,12 +51,17 @@ export type DocumentObjectStorage = {
   }): Promise<SignedDocumentUrl>;
   headStaged(storageKey: string): Promise<StagedObjectHead>;
   readStaged(storageKey: string): Promise<Uint8Array | null>;
-  promote(input: { storage_key: string; mime_type: DocumentMimeType }): Promise<void>;
+  readFinal(storageKey: string): Promise<Uint8Array | null>;
+  promote(input: {
+    storage_key: string;
+    mime_type: DocumentMimeType;
+    sanitized_bytes?: Uint8Array;
+  }): Promise<void>;
   deleteStaged(storageKey: string): Promise<void>;
   createDownloadUrl(input: {
     storage_key: string;
     mime_type: DocumentMimeType;
-    document_type: DocumentType;
+    document_type: DirectEntryDocumentType;
     version: number;
   }): Promise<SignedDocumentUrl>;
 };
@@ -108,6 +113,7 @@ export const unavailableDocumentObjectStorage: DocumentObjectStorage = {
   async createUploadUrl() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async headStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async readStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
+  async readFinal() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async promote() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async deleteStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async createDownloadUrl() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
@@ -210,7 +216,42 @@ export function createR2DocumentStorage(
         throw error;
       }
     },
+    async readFinal(storageKey) {
+      try {
+        const result = await getClient().send(new GetObjectCommand({
+          Bucket: config.bucket,
+          Key: finalObjectKey(config.environment, storageKey),
+        })) as {
+          ContentLength?: number;
+          Body?: { transformToByteArray(): Promise<Uint8Array> };
+        };
+        if (!result.Body || typeof result.ContentLength !== "number" ||
+            result.ContentLength < 1 || result.ContentLength > DOCUMENT_MAX_UPLOAD_BYTES) {
+          throw new Error("DOCUMENT_STORAGE_UNAVAILABLE");
+        }
+        const bytes = await result.Body.transformToByteArray();
+        if (bytes.byteLength !== result.ContentLength ||
+            bytes.byteLength > DOCUMENT_MAX_UPLOAD_BYTES) {
+          throw new Error("DOCUMENT_STORAGE_UNAVAILABLE");
+        }
+        return bytes;
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
     async promote(input) {
+      if (input.sanitized_bytes) {
+        await getClient().send(new PutObjectCommand({
+          Bucket: config.bucket,
+          Key: finalObjectKey(config.environment, input.storage_key),
+          Body: Buffer.from(input.sanitized_bytes),
+          ContentLength: input.sanitized_bytes.byteLength,
+          ContentType: input.mime_type,
+          ContentDisposition: "attachment",
+        }));
+        return;
+      }
       const source = stagingObjectKey(config.environment, input.storage_key);
       await getClient().send(new CopyObjectCommand({
         Bucket: config.bucket,
