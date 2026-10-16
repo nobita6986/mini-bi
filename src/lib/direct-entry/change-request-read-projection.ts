@@ -361,7 +361,7 @@ export function paymentReadRows(input: {
   return rows;
 }
 
-/** Bang before -> after cho WORK_STATUS; reviewer duoc doc ly do neu server cho phep. */
+/** Bang before -> after cho WORK_STATUS; chi ap dung ly do khi de xuat nghi viec. */
 export function workStatusReadRows(input: {
   before: { status: WorkerStatus; effective_date: string } | null;
   after: WorkStatusReadView;
@@ -378,8 +378,10 @@ export function workStatusReadRows(input: {
     rows.push({ field: "effective_date", label: "Ngày hiệu lực", before: beforeDate,
       after: after.effectiveDate });
   }
-  rows.push({ field: "leave_reason", label: "Lý do chi tiết", before: HIDDEN,
-    after: after.leaveReason ?? LEAVE_REASON_HIDDEN_MESSAGE });
+  if (after.status === "OFF") {
+    rows.push({ field: "leave_reason", label: "Lý do nghỉ việc", before: HIDDEN,
+      after: after.leaveReason ?? LEAVE_REASON_HIDDEN_MESSAGE });
+  }
   return rows;
 }
 

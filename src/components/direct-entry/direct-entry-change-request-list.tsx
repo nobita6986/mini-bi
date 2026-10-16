@@ -42,6 +42,13 @@ export type ChangeRequestListProps = {
   onReview: (request: ChangeRequestListItem) => void;
 };
 
+type ResolvedAgeFilter = "3" | "7" | "30" | "all";
+
+function isWithinResolvedAge(request: ChangeRequestListItem, filter: ResolvedAgeFilter): boolean {
+  return filter === "all" ||
+    Date.parse(request.created_at) >= Date.now() - Number(filter) * 24 * 60 * 60 * 1000;
+}
+
 /** Chi PENDING + can_decide (server-derived) moi hien nut "Xem xet". */
 function canReviewChangeRequest(
   request: Pick<ChangeRequestListItem, "state" | "can_decide">,
@@ -57,11 +64,18 @@ function ChangeRequestListContent({
   busyRequestId,
   compact = false,
   queueFilter,
+  resolvedAgeFilter,
+  onResolvedAgeFilterChange,
+  loadedRequestCount,
   onQueueFilterChange,
   onLoadMore,
   onWithdraw,
   onReview,
-}: ChangeRequestListProps) {
+}: ChangeRequestListProps & {
+  resolvedAgeFilter: ResolvedAgeFilter;
+  onResolvedAgeFilterChange: (filter: ResolvedAgeFilter) => void;
+  loadedRequestCount: number;
+}) {
   const [pendingWithdraw, setPendingWithdraw] = useState<ChangeRequestListItem | null>(null);
 
   return (
@@ -103,11 +117,25 @@ function ChangeRequestListContent({
         tabs={QUEUE_TABS}
         onChange={onQueueFilterChange}
       >
+      {queueFilter === "RESOLVED" && (
+        <label className={styles.field}>
+          Lịch sử đã xử lý
+          <select aria-label="Khoảng thời gian đề xuất đã xử lý" value={resolvedAgeFilter}
+            onChange={(event) => onResolvedAgeFilterChange(event.target.value as ResolvedAgeFilter)}>
+            <option value="3">3 ngày gần nhất</option>
+            <option value="7">7 ngày gần nhất</option>
+            <option value="30">30 ngày gần nhất</option>
+            <option value="all">Toàn bộ lịch sử</option>
+          </select>
+        </label>
+      )}
       <div className={styles.notice} aria-live="polite">
         {state === "loading" && "Đang tải danh sách yêu cầu thay đổi…"}
         {state === "error" && `Không tải được danh sách yêu cầu thay đổi (${message}).`}
-        {state === "ready" && requests.length === 0 &&
+        {state === "ready" && requests.length === 0 && loadedRequestCount === 0 &&
           "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi."}
+        {state === "ready" && requests.length === 0 && loadedRequestCount > 0 &&
+          "Không có đề xuất đã xử lý trong khoảng thời gian đang chọn."}
       </div>
 
       <div className={compact ? styles.compactListViewport : undefined}>
@@ -219,18 +247,29 @@ function ChangeRequestListContent({
 }
 
 export function DirectEntryChangeRequestList(props: ChangeRequestListProps) {
-  if (!props.compact) return <ChangeRequestListContent {...props} />;
+  const [resolvedAgeFilter, setResolvedAgeFilter] = useState<ResolvedAgeFilter>("3");
+  const visibleRequests = props.queueFilter === "RESOLVED"
+    ? props.requests.filter((request) => isWithinResolvedAge(request, resolvedAgeFilter))
+    : props.requests;
+  const contentProps = {
+    ...props,
+    requests: visibleRequests,
+    resolvedAgeFilter,
+    onResolvedAgeFilterChange: setResolvedAgeFilter,
+    loadedRequestCount: props.requests.length,
+  };
+  if (!props.compact) return <ChangeRequestListContent {...contentProps} />;
 
-  const displayedCount = props.requests.length;
+  const displayedCount = visibleRequests.length;
   return (
     <DirectEntryCompactPanel
       title="Yêu cầu thay đổi"
-      loadedCount={props.requests.length}
+      loadedCount={visibleRequests.length}
       badges={[{ count: displayedCount,
         label: props.queueFilter === "PENDING" ? "đang chờ xử lý" : "đã xử lý" }]}
       state={props.state}
     >
-      <ChangeRequestListContent {...props} compact />
+      <ChangeRequestListContent {...contentProps} compact />
     </DirectEntryCompactPanel>
   );
 }

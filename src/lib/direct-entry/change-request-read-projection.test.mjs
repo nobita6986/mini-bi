@@ -140,11 +140,18 @@ test("WORK_STATUS read projection omits reason for proposers and accepts it for 
     before: { status: "UNCONFIRMED", effective_date: "2026-09-01" }, after: view,
   });
   assert.deepEqual(rows.map((row) => row.field), ["status", "effective_date", "leave_reason"]);
+  assert.equal(rows[2].label, "Lý do nghỉ việc");
   assert.equal(rows[2].after, LEAVE_REASON_HIDDEN_MESSAGE);
   const reviewerRows = workStatusReadRows({
     before: { status: "ON", effective_date: "2026-09-01" }, after: reviewerView,
   });
   assert.equal(reviewerRows[2].after, "Nghỉ theo đề nghị của NLĐ");
+
+  const onView = projectWorkStatusReadProposal({ status: "ON", effective_date: "2026-10-01" });
+  assert.ok(onView);
+  assert.deepEqual(workStatusReadRows({
+    before: { status: "UNCONFIRMED", effective_date: "2026-09-01" }, after: onView,
+  }).map((row) => row.field), ["status", "effective_date"]);
 });
 
 test("DOCUMENT read projection chi tra metadata an toan", () => {

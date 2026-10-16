@@ -54,10 +54,17 @@ test("review queue separates pending/history and fits compact cards in a scrolla
   assert.match(list, /ariaLabel="Trạng thái yêu cầu thay đổi"/);
   assert.match(list, /Chờ duyệt/);
   assert.match(list, /Đã xử lý/);
+  assert.match(list, /useState<ResolvedAgeFilter>\("3"\)/);
+  assert.match(list, /value="3">3 ngày gần nhất/);
+  assert.match(list, /value="7">7 ngày gần nhất/);
+  assert.match(list, /value="30">30 ngày gần nhất/);
+  assert.match(list, /value="all">Toàn bộ lịch sử/);
+  assert.match(list, /isWithinResolvedAge\(request, resolvedAgeFilter\)/);
   assert.match(queueTabs, /role="tablist" aria-label=\{ariaLabel\}/);
   assert.match(queueTabs, /onChange\(tabs\[next\]\.value\)/);
   assert.match(reviewer, /request_reason/);
-  assert.match(reviewer, /if \(detail\.state !== "PENDING"\)[\s\S]*kind: "terminal"/);
+  assert.match(reviewer, /const terminal = detail\.state !== "PENDING"/);
+  assert.match(reviewer, /if \(terminal\) \{[\s\S]*kind: "terminal"/);
   assert.match(css, /\.compactListViewport\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.compactList\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /@media \(min-width:\s*640px\)[\s\S]*?\.compactList\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
