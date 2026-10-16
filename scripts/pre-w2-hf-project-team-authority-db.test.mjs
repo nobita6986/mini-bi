@@ -69,7 +69,7 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 105, "the ledger includes own-draft edit #104 and team-review #105");
+  assert.equal(names, "the ledger includes own-draft edit #104, team-review #105, and append-only #106-#108");
   assert.equal(names.at(-(2 + 1)), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
     "direct-entry batch workflow is the append-only #103 migration");
   assert.equal(names.at(-(3 + 1)), "20261015170000_pre_w2_uploader_submission_queues.sql",

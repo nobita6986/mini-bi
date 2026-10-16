@@ -48,9 +48,13 @@ import {
 } from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectEntrySensitiveContext,
+  optionalValueText,
   projectWorkerDetails,
+  WORKER_FIELD_LABELS,
   type EntrySensitiveContext,
 } from "@/lib/direct-entry/change-request-read-projection";
+import { genderUiLabel } from "@/lib/direct-entry/display-labels";
+import type { OptionalValue } from "@/lib/contracts/direct-entry-v1";
 import {
   clearIntentKey,
   EMPTY_INTENT_KEY,
@@ -84,9 +88,17 @@ function historyRows(item: ChangeRequestDetailItem, catalog?: DraftCatalog): Arr
     if (key === "worker_details") {
       const detail = projectWorkerDetails(value);
       if (!detail) return [[label, "Đã đề xuất cập nhật thông tin cá nhân"]];
-      return Object.entries(detail).map(([field, fieldValue]): [string, string] => [
-        HISTORY_FIELD_LABELS[field] ?? "Thông tin cá nhân", String(fieldValue ?? "—"),
-      ]);
+      return Object.entries(detail).map(([field, fieldValue]): [string, string] => {
+        if (field === "display_name") {
+          return [WORKER_FIELD_LABELS.display_name, fieldValue as string];
+        }
+        const workerField = field as Exclude<keyof typeof WORKER_FIELD_LABELS, "display_name">;
+        const optionalValue = fieldValue as OptionalValue<string>;
+        const valueText = field === "gender" && optionalValue.state === "provided"
+          ? genderUiLabel(optionalValue.value)
+          : optionalValueText(optionalValue);
+        return [WORKER_FIELD_LABELS[workerField], valueText];
+      });
     }
     if (key === "project_id") return [[label, catalog?.projects.find((item) => item.project_id === value)?.display_name ?? "Dự án đã chọn"]];
     if (key === "recruiter_id") return [[label, catalog?.recruiters.find((item) => item.recruiter_id === value)?.display_name ?? "Người tuyển đã chọn"]];
@@ -343,6 +355,7 @@ export function DirectEntryChangeRequestReviewer({
         const message = reviewDecisionMessage(decision, shortRef(updated.request_id));
         setStatusMessage(message);
         onDecided(message);
+        onOpenChange(false);
         return;
       }
       const status = response.status;
@@ -363,7 +376,7 @@ export function DirectEntryChangeRequestReviewer({
     } finally {
       setBusy(null);
     }
-  }, [canDecide, canReject, model, onConflict, onDecided, reason, request]);
+  }, [canDecide, canReject, model, onConflict, onDecided, onOpenChange, reason, request]);
 
   const entryCount = useMemo(
     () => (model && "items" in model ? model.items.length : 0),

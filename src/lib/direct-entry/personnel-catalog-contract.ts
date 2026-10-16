@@ -3,8 +3,7 @@
  *
  * Payload dung chinh xac theo migration #68
  * (20261009040000_p3_1_w01b_personnel_catalog.sql):
- * - list/get tra 8 key: recruiter_id, display_name, personnel_code,
- *   personnel_position, active, version, hrp_valid_from, revision_count;
+ * - list/get tra cac truong nhan su va danh sach team_names hien hanh;
  * - create tra them hrp_valid_from + created (9 key);
  * - update/set-active tra 7 key (khong co hrp_valid_from).
  *
@@ -25,6 +24,7 @@ export type AdminPersonnel = {
   version: number;
   hrp_valid_from: string | null;
   revision_count: number;
+  team_names: readonly string[];
 };
 
 export type AdminPersonnelList = {
@@ -82,14 +82,14 @@ function day(value: unknown): string | null | undefined {
 }
 
 const ITEM_KEYS = ["recruiter_id", "display_name", "personnel_code", "personnel_position",
-  "active", "version", "hrp_valid_from", "revision_count"] as const;
+  "active", "version", "hrp_valid_from", "revision_count", "team_names"] as const;
 const LIST_KEYS = ["authorization_date", "include_inactive", "search", "page", "page_size",
   "total", "personnel"] as const;
 const MUTATION_KEYS = ["recruiter_id", "display_name", "personnel_code", "personnel_position",
   "active", "version", "revision_id"] as const;
 const CREATE_KEYS = [...MUTATION_KEYS, "hrp_valid_from", "created"] as const;
 
-/** Personnel row 8 key (list item + get). */
+/** Personnel row (list item + get), including currently effective teams. */
 export function personnelCatalogItem(value: unknown): AdminPersonnel | null {
   if (!isRecord(value) || !exactKeys(value, ITEM_KEYS)) return null;
   const recruiter_id = str(value.recruiter_id);
@@ -100,13 +100,16 @@ export function personnelCatalogItem(value: unknown): AdminPersonnel | null {
   const version = int(value.version);
   const hrp_valid_from = day(value.hrp_valid_from);
   const revision_count = int(value.revision_count);
+  const team_names = Array.isArray(value.team_names) &&
+      value.team_names.every((item) => typeof item === "string" && item.trim() !== "")
+    ? value.team_names as string[] : null;
   if (recruiter_id === null || display_name === null || personnel_code === undefined ||
       personnel_position === undefined || active === null || version === null ||
-      hrp_valid_from === undefined || revision_count === null) {
+      hrp_valid_from === undefined || revision_count === null || team_names === null) {
     return null;
   }
   return { recruiter_id, display_name, personnel_code, personnel_position, active, version,
-    hrp_valid_from, revision_count };
+    hrp_valid_from, revision_count, team_names };
 }
 
 export function personnelCatalogList(value: unknown): AdminPersonnelList | null {

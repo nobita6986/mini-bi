@@ -898,11 +898,12 @@ export function PersonnelCatalogManager() {
           ) : (
             <>
               <div role="region" aria-label="Bảng danh sách nhân sự" tabIndex={0} className="overflow-x-auto rounded-md border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
-                <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
                   <caption className="sr-only">Danh sách hồ sơ nhân sự</caption>
                   <thead className="bg-muted/20">
                     <tr>
                       <th scope="col" className="px-3 py-3 font-semibold">Nhân sự</th>
+                      <th scope="col" className="px-3 py-3 font-semibold">Nhóm</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Vị trí</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
                       <th scope="col" className="px-3 py-3 font-semibold">Hiệu lực HRP</th>
@@ -918,6 +919,7 @@ export function PersonnelCatalogManager() {
                             {personnel.personnel_code ?? "Chưa có mã nhân sự"}
                           </span>
                         </th>
+                        <td className="px-3 py-3">{personnel.team_names.join(", ") || "Chưa xếp nhóm"}</td>
                         <td className="px-3 py-3">{positionLabel(personnel.personnel_position)}</td>
                         <td className="px-3 py-3">
                           <span className={personnel.active

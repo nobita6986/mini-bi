@@ -172,7 +172,7 @@ await db.query(
   [EXPIRED_HRP_RECRUITER]);
 
 const ITEM_KEYS = ["recruiter_id", "display_name", "personnel_code", "personnel_position",
-  "active", "version", "hrp_valid_from", "revision_count"];
+  "active", "version", "hrp_valid_from", "revision_count", "team_names"];
 
 function sortedKeys(value) {
   return Object.keys(value).sort().join(",");
@@ -365,6 +365,7 @@ test("unassigned personnel stay visible in the admin catalog with bounded search
   assert.equal(list.personnel[0].personnel_code, "nv.w01b.unassigned");
   assert.equal(list.personnel[0].hrp_valid_from, "2026-01-05");
   assert.equal(list.personnel[0].revision_count, 1);
+  assert.deepEqual(list.personnel[0].team_names, []);
   const teamMemberships = (await db.query(
     "select count(*)::int as n from public.recruiter_team_memberships where recruiter_id = $1::uuid",
     [list.personnel[0].recruiter_id])).rows[0].n;
@@ -400,6 +401,17 @@ test("unassigned personnel stay visible in the admin catalog with bounded search
   });
   assert.equal(sortedKeys(detail), ITEM_KEYS.slice().sort().join(","));
   assert.equal(detail.personnel_code, "nv.w01b.unassigned");
+  await db.exec("begin; savepoint personnel_team_names");
+  await db.query(
+    "insert into public.recruiter_team_memberships (recruiter_id,team_id,valid_from)"
+      + " values ($1::uuid,$2::uuid,'2026-01-05')",
+    [detail.recruiter_id, TEAM_ID]);
+  const groupedDetail = await rpc(db, "direct_entry_get_personnel_admin", {
+    p_auth_subject: FULL_ADMIN.auth, p_app_user_id: FULL_ADMIN.app,
+    p_recruiter_id: detail.recruiter_id,
+  });
+  assert.deepEqual(groupedDetail.team_names, ["Synthetic Team"]);
+  await db.exec("rollback to savepoint personnel_team_names; release savepoint personnel_team_names; commit");
 
   const missing = await rpcError(db, "direct_entry_get_personnel_admin", {
     p_auth_subject: FULL_ADMIN.auth, p_app_user_id: FULL_ADMIN.app,

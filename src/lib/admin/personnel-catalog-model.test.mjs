@@ -28,6 +28,7 @@ function personnel(overrides = {}) {
     version: 3,
     hrp_valid_from: "2026-10-01",
     revision_count: 1,
+    team_names: [],
     ...overrides,
   };
 }

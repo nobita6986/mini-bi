@@ -32,7 +32,7 @@ const OTHER = "77777777-7777-4777-8777-777777777777";
 
 const ITEM = { recruiter_id: RECRUITER, display_name: "Synthetic Person",
   personnel_code: "nv.one", personnel_position: "STAFF", active: true, version: 2,
-  hrp_valid_from: "2026-01-05", revision_count: 2 };
+  hrp_valid_from: "2026-01-05", revision_count: 2, team_names: [] };
 const MUTATION = { recruiter_id: RECRUITER, display_name: "Synthetic Person",
   personnel_code: "nv.one", personnel_position: "STAFF", active: true, version: 3,
   revision_id: REV };

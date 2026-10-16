@@ -61,6 +61,8 @@ test("loading, denied, unavailable, empty, error and conflict are separate acces
   assert.match(source, /role="status"/);
   assert.match(source, /role="alert"/);
   assert.match(source, /<table/);
+  assert.match(source, />Nhóm<\/th>/);
+  assert.match(source, /personnel\.team_names\.join\(", "\) \|\| "Chưa xếp nhóm"/);
 });
 
 test("mutation errors stay visible in the dialog and an OCC conflict can be dismissed safely", () => {

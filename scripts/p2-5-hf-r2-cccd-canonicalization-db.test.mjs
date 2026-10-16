@@ -43,7 +43,7 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 105, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
   assert.equal(names[names.length - (1 + 44)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   assert.equal(names[names.length - (1 + 45)], R2_MIGRATION, "P2.5-HF-R2 remains #60");
   return db;
