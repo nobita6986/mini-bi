@@ -59,6 +59,7 @@ import {
 import type { CccdDocumentSummary } from "@/lib/direct-entry/cccd-document-pair";
 import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
 import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
+import { canViewGlobalChangeRequestHistory } from "@/lib/direct-entry/worker-operations-model";
 import {
   projectChangeRequestListPage,
   type ChangeRequestListItem,
@@ -140,6 +141,7 @@ const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
 
 const SUBMISSION_PAGE_SIZE = 50;
 const CHANGE_REQUEST_PAGE_SIZE = 50;
+type ChangeRequestAgeFilter = "3" | "7" | "30" | "all";
 const CHANGE_REQUEST_LIST_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;
 const CHANGE_REQUEST_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const SUBMISSION_LIST_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
@@ -365,6 +367,7 @@ export function DirectEntryLive() {
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadMessage, setLoadMessage] = useState("");
   const [capabilities, setCapabilities] = useState<string[]>([]);
+  const [canViewGlobalHistory, setCanViewGlobalHistory] = useState(false);
   const inFlight = useRef(new Set<string>());
   const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
   const submissionsRef = useRef<SubmissionReadItem[]>([]);
@@ -383,6 +386,7 @@ export function DirectEntryLive() {
   const [changeRequests, setChangeRequests] = useState<ChangeRequestListItem[]>([]);
   const [changeRequestQueue, setChangeRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
   const changeRequestQueueRef = useRef<ChangeRequestQueueFilter>("PENDING");
+  const changeRequestHistoryAgeRef = useRef<ChangeRequestAgeFilter>("3");
   const [changeRequestListState, setChangeRequestListState] =
     useState<"loading" | "ready" | "error">("loading");
   const [changeRequestListMessage, setChangeRequestListMessage] = useState("");
@@ -682,6 +686,7 @@ export function DirectEntryLive() {
 
   const loadChangeRequests = useCallback(async (
     mode: "replace" | "append", queue = changeRequestQueueRef.current,
+    age = changeRequestHistoryAgeRef.current,
   ) => {
     const loadId = ++changeRequestLoadRef.current;
     setChangeRequestListState("loading");
@@ -690,9 +695,8 @@ export function DirectEntryLive() {
       setChangeRequestHasMore(false);
     }
     try {
-      const params = new URLSearchParams({
-        page_size: String(CHANGE_REQUEST_PAGE_SIZE), state: queue,
-      });
+      const params = new URLSearchParams({ page_size: String(CHANGE_REQUEST_PAGE_SIZE), state: queue });
+      if (queue === "GLOBAL_AUDIT") params.set("days", age);
       if (mode === "append" && changeRequestCursorRef.current) {
         params.set("cursor", changeRequestCursorRef.current);
       }
@@ -703,7 +707,7 @@ export function DirectEntryLive() {
       const body = await readJson(response);
       const page = projectChangeRequestListPage(
         projectionSlice(body, CHANGE_REQUEST_LIST_KEYS),
-        { page_size: CHANGE_REQUEST_PAGE_SIZE },
+        { page_size: CHANGE_REQUEST_PAGE_SIZE, audit: queue === "GLOBAL_AUDIT" },
       );
       if (!response.ok || !page) throw new Error("CHANGE_REQUESTS_UNAVAILABLE");
       if (loadId !== changeRequestLoadRef.current) return;
@@ -841,6 +845,15 @@ export function DirectEntryLive() {
           throw new Error("SESSION_UNAVAILABLE");
         }
         setCapabilities(session.actor.capabilities);
+        const scopes = Array.isArray(session.actor.scopes)
+          ? session.actor.scopes.flatMap((scope) => isRecord(scope) && typeof scope.kind === "string"
+            ? [{ kind: scope.kind }]
+            : [])
+          : [];
+        setCanViewGlobalHistory(canViewGlobalChangeRequestHistory({
+          capabilities: session.actor.capabilities,
+          scopes,
+        }));
         void loadSubmissions("replace");
         void loadChangeRequests("replace");
         const [draftResponse, catalog] = await Promise.all([
@@ -2213,6 +2226,7 @@ export function DirectEntryLive() {
           <DirectEntryChangeRequestList
             compact
             queueFilter={changeRequestQueue}
+            canViewGlobalHistory={canViewGlobalHistory}
             onQueueFilterChange={(queue) => {
               if (queue === changeRequestQueue) return;
               changeRequestCursorRef.current = null;
@@ -2221,6 +2235,13 @@ export function DirectEntryLive() {
               setChangeRequestHasMore(false);
               setChangeRequestQueue(queue);
               void loadChangeRequests("replace", queue);
+            }}
+            onGlobalHistoryAgeFilterChange={(age) => {
+              changeRequestHistoryAgeRef.current = age;
+              if (changeRequestQueueRef.current === "GLOBAL_AUDIT") {
+                changeRequestCursorRef.current = null;
+                void loadChangeRequests("replace", "GLOBAL_AUDIT", age);
+              }
             }}
             state={changeRequestListState}
             message={changeRequestListMessage}

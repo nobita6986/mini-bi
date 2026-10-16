@@ -35,7 +35,7 @@ test("panel summary reports loaded count, pending count, loading, and failure in
   assert.match(panel, /count\} \{label\}/);
   assert.match(panel, /state === "loading" && <span role="status">Đang tải/);
   assert.match(panel, /state === "error"[\s\S]*Không tải được/);
-  assert.match(list, /count: displayedCount,[\s\S]*queueFilter === "PENDING" \? "đang chờ xử lý" : "đã xử lý"/);
+  assert.match(list, /count: displayedCount,[\s\S]*queueFilter === "GLOBAL_AUDIT" \? "lịch sử duyệt"/);
   assert.match(list, /state === "ready" && requests\.length === 0/);
   assert.match(list, /state === "error" && `Không tải được danh sách yêu cầu thay đổi/);
   assert.match(submissions, /state === "ready" && submissions\.length === 0/);
@@ -54,12 +54,16 @@ test("review queue separates pending/history and fits compact cards in a scrolla
   assert.match(list, /ariaLabel="Trạng thái yêu cầu thay đổi"/);
   assert.match(list, /Chờ duyệt/);
   assert.match(list, /Đã xử lý/);
+  assert.match(list, /Lịch sử duyệt/);
+  assert.match(list, /canViewGlobalHistory \? QUEUE_TABS/);
+  assert.match(list, /onGlobalHistoryAgeFilterChange\?\.\(filter\)/);
+  assert.match(list, /data-testid="change-request-decision-audit"/);
   assert.match(list, /useState<ResolvedAgeFilter>\("3"\)/);
   assert.match(list, /value="3">3 ngày gần nhất/);
   assert.match(list, /value="7">7 ngày gần nhất/);
   assert.match(list, /value="30">30 ngày gần nhất/);
   assert.match(list, /value="all">Toàn bộ lịch sử/);
-  assert.match(list, /isWithinResolvedAge\(request, resolvedAgeFilter\)/);
+  assert.match(list, /isWithinResolvedAge\(request, resolvedAgeFilter, props\.queueFilter === "GLOBAL_AUDIT"\)/);
   assert.match(queueTabs, /role="tablist" aria-label=\{ariaLabel\}/);
   assert.match(queueTabs, /onChange\(tabs\[next\]\.value\)/);
   assert.match(reviewer, /request_reason/);

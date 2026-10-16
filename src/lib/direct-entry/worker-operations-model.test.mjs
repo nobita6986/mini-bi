@@ -13,6 +13,7 @@ import {
   beginLoad,
   canDirectlyCorrectWorkers,
   canReviewChangeRequests,
+  canViewGlobalChangeRequestHistory,
   emptyTabPage,
   failLoad,
   initialWorkerTab,
@@ -88,6 +89,14 @@ test("W06-R1: review queue chi khi change_review + all scope", () => {
     "all scope thieu capability => khong mo");
   assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "team" }] }), false);
   assert.equal(canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "all" }] }), true);
+});
+
+test("PRE-W2 global change history is limited to global reviewers and admins", () => {
+  assert.equal(canViewGlobalChangeRequestHistory(null), false);
+  assert.equal(canViewGlobalChangeRequestHistory({ capabilities: ["change_review"], scopes: [{ kind: "team" }] }), false);
+  assert.equal(canViewGlobalChangeRequestHistory({ capabilities: ["team_manager_assign"], scopes: [{ kind: "all" }] }), false);
+  assert.equal(canViewGlobalChangeRequestHistory({ capabilities: ["change_review"], scopes: [{ kind: "all" }] }), true);
+  assert.equal(canViewGlobalChangeRequestHistory({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), true);
 });
 
 test("HF-R4: direct correction visibility uses only privileged capability plus all scope", () => {

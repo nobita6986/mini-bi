@@ -1,7 +1,7 @@
 /**
  * P1.6-W04-S04C-S02B - Repository boundary cho doc/list change request.
  *
- * - Chi goi hai RPC doc duoc grant: direct_entry_list_change_requests, direct_entry_read_change_request.
+ * - Chi goi cac RPC doc duoc grant; actor va pham vi moi request van do DB kiem tra.
  * - Khong doc table truc tiep (.from), khong goi mutation/helper RPC, khong doc truoc DB.
  * - Actor lay tu server session mapping, khong bao gio tu client.
  * - Malformed/unknown response => unavailable (khong bao gio success).
@@ -35,12 +35,18 @@ export const classifyChangeRequestReadError = classifySubmissionTransitionError;
 
 export const CHANGE_REQUEST_READ_RPC_NAMES: readonly string[] = Object.freeze([
   "direct_entry_list_change_requests",
+  "direct_entry_list_global_change_request_history",
   "direct_entry_read_change_request",
 ]);
 
 export type ChangeRequestReadRepository = {
   listChangeRequests(input: ActorRef & ChangeRequestListQuery):
     Promise<ChangeRequestReadOutcome<ChangeRequestListPage>>;
+  listGlobalChangeRequestHistory(input: ActorRef & {
+    page_size: number;
+    cursor: string | null;
+    days: 3 | 7 | 30 | null;
+  }): Promise<ChangeRequestReadOutcome<ChangeRequestListPage>>;
   readChangeRequest(input: ActorRef & { request_id: string }):
     Promise<ChangeRequestReadOutcome<ChangeRequestDetail>>;
 };
@@ -76,6 +82,29 @@ export function createChangeRequestReadRepository(rpc?: Rpc): ChangeRequestReadR
         return projection ? { ok: true, data: projection } : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] change request list RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async listGlobalChangeRequestHistory(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_list_global_change_request_history", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_page_size: input.page_size,
+          p_cursor: input.cursor,
+          p_days: input.days,
+        });
+        if (error) {
+          const kind = classifyChangeRequestReadError(error);
+          return { ok: false, kind: kind === "conflict" ? "unavailable" : kind };
+        }
+        const projection = projectChangeRequestListPage(data, {
+          page_size: input.page_size,
+          audit: true,
+        });
+        return projection ? { ok: true, data: projection } : { ok: false, kind: "unavailable" };
+      } catch {
+        console.error("[direct-entry] global change request history RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

@@ -10,13 +10,16 @@ import {
   decideChangeRequest,
   item,
   listChangeRequests,
+  listGlobalChangeRequestHistory,
   readChangeRequest,
+  setRequestDecidedAt,
   seedChangeRequestFixture,
   seedChangeRequests,
 } from "./lib/s04c-read-fixture.mjs";
 
 const LIST_RPC = "public.direct_entry_list_change_requests(uuid,uuid,integer,text,text)";
 const READ_RPC = "public.direct_entry_read_change_request(uuid,uuid,uuid)";
+const AUDIT_RPC = "public.direct_entry_list_global_change_request_history(uuid,uuid,integer,text,integer)";
 const HELPER_RPCS = [
   "public.direct_entry_assert_actor_mapping(uuid,uuid)",
   "public.direct_entry_has_entry_access(uuid,text,uuid,uuid,date)",
@@ -32,17 +35,19 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 108);
+  assert.equal(migrations.migrationNames.length, 109);
   assert.ok(migrations.migrationNames.includes(
     "20261016120000_pre_w2_team_leader_change_request_entry_read.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261016130000_pre_w2_personnel_catalog_team_names.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261016140000_pre_w2_team_leader_apply_change_item.sql"));
+  assert.ok(migrations.migrationNames.includes(
+    "20261016150000_pre_w2_global_change_request_review_history.sql"));
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
-  for (const signature of [LIST_RPC, READ_RPC]) {
+  for (const signature of [LIST_RPC, READ_RPC, AUDIT_RPC]) {
     const { rows } = await db.query(
       "select p.prosecdef, coalesce(array_to_string(p.proconfig, ','), '') as config," +
       " coalesce(bool_or(a.grantee = 0 and a.privilege_type = 'EXECUTE'), false) as public_exec," +
@@ -85,6 +90,44 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
       assert.equal(rows[0].allowed, false, role + " on " + table);
     }
   }
+});
+
+test("global audit is read-only, paginated, time-bounded, and limited to global reviewers/admins", async () => {
+  const oldDecisionAt = (await db.query("select now() - interval '10 days' as stamp")).rows[0].stamp;
+  await setRequestDecidedAt(db, requests.rejected, oldDecisionAt);
+  const reviewer = await listGlobalChangeRequestHistory(db, ACTORS.reviewerAll, { days: 3 });
+  assert.equal(reviewer.error, null);
+  assert.equal(reviewer.data.requests.length, 1);
+  assert.ok(reviewer.data.requests.every((item) => ["APPROVED", "REJECTED"].includes(item.state)));
+  assert.ok(reviewer.data.requests.every((item) => item.decided_by_display_name === "Synthetic Account"));
+  assert.ok(reviewer.data.requests.every((item) => typeof item.decided_at === "string"));
+  assert.ok(reviewer.data.requests.every((item) => item.can_decide === false && item.can_withdraw === false));
+
+  const admin = await listGlobalChangeRequestHistory(db, ACTORS.admin, { days: null });
+  assert.equal(admin.error, null);
+  assert.equal(admin.data.requests.length, 2);
+  const detail = await readChangeRequest(db, ACTORS.admin, requests.approved);
+  assert.equal(detail.error, null, "all-scope entry admins may inspect terminal audit details");
+  assert.equal(detail.data.can_decide, false, "audit detail must never grant decision authority");
+  assert.equal(detail.data.request_reason, "S02B request approved");
+  const pendingDetail = await readChangeRequest(db, ACTORS.admin, requests.single);
+  assert.equal(pendingDetail.error.code, "P0002", "audit-only access excludes pending requests");
+
+  for (const actor of [ACTORS.reviewer, ACTORS.reviewerNoCapability, ACTORS.outsider]) {
+    const denied = await listGlobalChangeRequestHistory(db, actor, { days: 7 });
+    assert.equal(denied.error.code, "42501");
+  }
+  assert.equal((await listGlobalChangeRequestHistory(db, ACTORS.reviewerAll, { days: 2 })).error.code, "22023");
+
+  const first = await listGlobalChangeRequestHistory(db, ACTORS.admin, { pageSize: 1, days: null });
+  assert.equal(first.data.requests.length, 1);
+  assert.equal(first.data.has_more, true);
+  const second = await listGlobalChangeRequestHistory(db, ACTORS.admin, {
+    pageSize: 1, cursor: first.data.next_cursor, days: null,
+  });
+  assert.equal(second.data.requests.length, 1);
+  assert.equal(second.data.has_more, false);
+  assert.notEqual(first.data.requests[0].request_id, second.data.requests[0].request_id);
 });
 
 test("proposer sees own requests with withdraw rights only while pending", async () => {

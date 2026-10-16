@@ -24,8 +24,8 @@ import {
 export const LIST_DEFAULT_PAGE_SIZE = 20;
 export const LIST_MAX_PAGE_SIZE = 50;
 export const LIST_MAX_ENTRY_IDS = 100;
-export const LIST_QUERY_KEYS = ["page_size", "cursor", "state"] as const;
-export const CHANGE_REQUEST_QUEUE_FILTERS = ["PENDING", "RESOLVED"] as const;
+export const LIST_QUERY_KEYS = ["page_size", "cursor", "state", "days"] as const;
+export const CHANGE_REQUEST_QUEUE_FILTERS = ["PENDING", "RESOLVED", "GLOBAL_AUDIT"] as const;
 export type ChangeRequestQueueFilter = (typeof CHANGE_REQUEST_QUEUE_FILTERS)[number];
 
 export const LIST_PAGE_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;
@@ -77,6 +77,12 @@ export type ChangeRequestListQuery = {
   page_size: number;
   cursor: string | null;
   state: ChangeRequestState | ChangeRequestQueueFilter | null;
+  days: 3 | 7 | 30 | null;
+};
+
+export type ChangeRequestAuditListItem = ChangeRequestListItem & {
+  decided_by_display_name: string;
+  decided_at: string;
 };
 
 export type ChangeRequestProjection<T> =
@@ -86,7 +92,7 @@ export type ChangeRequestProjection<T> =
 const QUERY_INVALID = { ok: false, code: "CHANGE_REQUEST_QUERY_INVALID" } as const;
 
 /**
- * Query list: chi nhan dung ba tham so page_size | cursor | state.
+ * Query list: only page_size | cursor | state | days are accepted.
  * Tham so la khac (order, column, limit, offset, sql...) bi tu choi de khong co duong
  * client dieu khien SQL/order.
  */
@@ -112,6 +118,13 @@ export function projectChangeRequestListQuery(
   const rawState = searchParams.get("state");
   if (rawState !== null && !isSubmissionStateValue(rawState) &&
       !CHANGE_REQUEST_QUEUE_FILTERS.some((state) => state === rawState)) return QUERY_INVALID;
+  const rawDays = searchParams.get("days");
+  let days: ChangeRequestListQuery["days"] = null;
+  if (rawDays !== null && rawDays !== "all") {
+    if (rawDays !== "3" && rawDays !== "7" && rawDays !== "30") return QUERY_INVALID;
+    days = Number(rawDays) as 3 | 7 | 30;
+  }
+  if (rawState === "GLOBAL_AUDIT" ? rawDays === null : rawDays !== null) return QUERY_INVALID;
 
   return {
     ok: true,
@@ -119,6 +132,7 @@ export function projectChangeRequestListQuery(
       page_size: pageSize,
       cursor: rawCursor,
       state: rawState as ChangeRequestListQuery["state"],
+      days,
     },
   };
 }
@@ -134,6 +148,8 @@ export type ChangeRequestListItem = {
   can_decide: boolean;
   proposer_display_name: string;
   summary: string;
+  decided_by_display_name?: string | null;
+  decided_at?: string | null;
 };
 
 export type ChangeRequestListPage = {
@@ -143,8 +159,11 @@ export type ChangeRequestListPage = {
   next_cursor: string | null;
 };
 
-function projectListItem(value: unknown): ChangeRequestListItem | null {
-  if (!isRecord(value) || !hasExactKeys(value, LIST_ITEM_KEYS)) return null;
+function projectListItem(value: unknown, audit = false): ChangeRequestListItem | null {
+  const auditKeys = ["decided_by_display_name", "decided_at"] as const;
+  if (!isRecord(value) || !hasExactKeys(value, audit ? [...LIST_ITEM_KEYS, ...auditKeys] : LIST_ITEM_KEYS)) {
+    return null;
+  }
   if (typeof value.request_id !== "string" || !UUID.test(value.request_id)) return null;
   if (!isSubmissionStateValue(value.state)) return null;
   if (!isPositiveVersion(value.version)) return null;
@@ -167,6 +186,9 @@ function projectListItem(value: unknown): ChangeRequestListItem | null {
   if (typeof value.proposer_display_name !== "string" ||
       value.proposer_display_name.trim().length < 1 || value.proposer_display_name.length > 120) return null;
   if (typeof value.summary !== "string" || value.summary.trim().length < 1 || value.summary.length > 160) return null;
+  if (audit && (typeof value.decided_by_display_name !== "string" ||
+      value.decided_by_display_name.trim().length < 1 || value.decided_by_display_name.length > 120 ||
+      !isCanonicalTimestamp(value.decided_at))) return null;
   return {
     request_id: value.request_id,
     state: value.state,
@@ -178,12 +200,16 @@ function projectListItem(value: unknown): ChangeRequestListItem | null {
     can_decide: value.can_decide,
     proposer_display_name: value.proposer_display_name,
     summary: value.summary,
+    ...(audit ? {
+      decided_by_display_name: value.decided_by_display_name as string,
+      decided_at: value.decided_at as string,
+    } : {}),
   };
 }
 
 export function projectChangeRequestListPage(
   value: unknown,
-  expected: { page_size: number },
+  expected: { page_size: number; audit?: boolean },
 ): ChangeRequestListPage | null {
   if (!isRecord(value) || !hasExactKeys(value, LIST_PAGE_KEYS)) return null;
   if (!Array.isArray(value.requests) || value.requests.length > expected.page_size) return null;
@@ -191,7 +217,7 @@ export function projectChangeRequestListPage(
   if (typeof value.has_more !== "boolean") return null;
   const requests: ChangeRequestListItem[] = [];
   for (const raw of value.requests) {
-    const item = projectListItem(raw);
+    const item = projectListItem(raw, expected.audit === true);
     if (!item) return null;
     requests.push(item);
   }

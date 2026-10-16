@@ -26,7 +26,7 @@ import {
 } from "./lib/s04c-submission-read-fixture.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
-const EXPECTED_SERVICE_RPC_COUNT = 29;
+const EXPECTED_SERVICE_RPC_COUNT = 30;
 const READ_RPCS = [
   "public.direct_entry_list_own_submissions(uuid,uuid,integer,text,text)",
   "public.direct_entry_read_own_submission(uuid,uuid,uuid)",

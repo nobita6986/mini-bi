@@ -61,6 +61,12 @@ function dependencies(overrides = {}) {
           next_cursor: null,
         } };
       },
+      async listGlobalChangeRequestHistory(input) {
+        calls.push({ name: "audit", input });
+        return { ok: true, data: {
+          requests: [], page_size: input.page_size, has_more: false, next_cursor: null,
+        } };
+      },
       async readChangeRequest(input) {
         calls.push({ name: "read", input });
         return { ok: true, data: detail };
@@ -139,6 +145,7 @@ test("list success returns the exact projection with no-store", async () => {
       page_size: 20,
       cursor,
       state: "PENDING",
+      days: null,
     },
   }]);
 
@@ -151,6 +158,7 @@ test("list success returns the exact projection with no-store", async () => {
     page_size: 20,
     cursor: null,
     state: null,
+    days: null,
   });
   assert.equal(fallback.status, 200);
 });
@@ -165,6 +173,28 @@ test("detail success returns the exact projection", async () => {
   assert.deepEqual(deps.calls, [{
     name: "read",
     input: { auth_subject: actor.auth_subject, app_user_id: actor.app_user_id, request_id: requestId },
+  }]);
+});
+
+test("global history uses the dedicated server-authorized repository read", async () => {
+  const deps = dependencies();
+  const response = await listChangeRequests(
+    request("/api/direct-entry/change-requests?state=GLOBAL_AUDIT&days=7&page_size=25"),
+    "true", deps,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true, requests: [], page_size: 25, has_more: false, next_cursor: null,
+  });
+  assert.deepEqual(deps.calls, [{
+    name: "audit",
+    input: {
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      page_size: 25,
+      cursor: null,
+      days: 7,
+    },
   }]);
 });
 
