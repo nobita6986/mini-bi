@@ -32,6 +32,10 @@ test("detail duoc strict-project va map ngay sang view model an toan", () => {
   assert.match(reviewer, /projectProposerEntry\(slice\.entry\)/);
   assert.match(reviewer, /buildReviewerViewModel\(\{/);
   assert.match(reviewer, /contexts, bankLabel: bankLabelFromCatalog/);
+  assert.match(reviewer, /Người đề xuất: /);
+  assert.match(reviewer, /entry\.worker_name/);
+  assert.match(reviewer, /entry\.project_name/);
+  assert.match(helper, /worker_name: context\?\.workerDetails\?\.display_name \?\? null/);
   assert.match(reviewer, /projectEntrySensitiveContext\(slice\.entry\)/);
   assert.match(helper, /export function buildReviewerViewModel\(/);
   assert.match(helper, /item\.target_kind === "ENTRY_FIELD"/);

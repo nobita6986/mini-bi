@@ -71,7 +71,8 @@ export type ReviewerFieldRow = {
 /** Mot item da duoc render an toan trong dialog reviewer. */
 export type ReviewerItemView = {
   entry_id: string;
-  entry_code: string;
+  worker_name: string | null;
+  project_name: string | null;
   targetKind: string;
   rows: ReviewerFieldRow[];
   /** Chi true khi item nay du du lieu + capability hint de quyet dinh. */
@@ -229,7 +230,8 @@ function buildReviewerItemView(input: {
   const { item, entry, context, format, bankLabel } = input;
   const base = {
     entry_id: entry.entry_id,
-    entry_code: entry.employee_code,
+    worker_name: context?.workerDetails?.display_name ?? null,
+    project_name: format(entry, "project_id", entry.project_id),
     targetKind: item.target_kind,
   };
   if (item.target_kind === "ENTRY_FIELD") {
