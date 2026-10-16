@@ -104,8 +104,10 @@ test("Desktop grid edit: onCellsChange (qua updateSpreadsheetRowCells) activate"
   // (qua onSpreadsheetCellsChange handler).
   assert.match(live, /onCellsChange=\{onSpreadsheetCellsChange\}/,
     "grid onCellsChange phai duoc wire vao onSpreadsheetCellsChange");
-  assert.match(live,
-    /onSpreadsheetCellsChange = useCallback\([\s\S]{0,1500}setStagedModel\(\(current\) => updateSpreadsheetRowCells\(/,
+  const handlerStart = live.indexOf("const onSpreadsheetCellsChange = useCallback(");
+  const handlerEnd = live.indexOf("const onStagedProviderTypeChange", handlerStart);
+  assert.match(live.slice(handlerStart, handlerEnd),
+    /setStagedModel\(\(current\) => updateSpreadsheetRowCells\(/,
     "onSpreadsheetCellsChange phai goi updateSpreadsheetRowCells (activation contract)");
 
   const model = createSpreadsheetRowModel();
