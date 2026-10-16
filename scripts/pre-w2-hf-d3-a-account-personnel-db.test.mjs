@@ -46,9 +46,9 @@ async function buildDb() {
     }
   }
   assert.equal(names.length, 109, "the ledger carries append-only migrations through #109");
-  assert.equal(names[names.length - (1 + 13)], D3A_MIGRATION,
+  assert.equal(names[names.length - (1 + 17)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
-  assert.equal(names.at(-(5 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-(9 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
 }
 
@@ -56,7 +56,7 @@ async function buildDbBeforeDefaultCapabilities() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-(5 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-(9 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
   for (const name of names.slice(0, -3)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
