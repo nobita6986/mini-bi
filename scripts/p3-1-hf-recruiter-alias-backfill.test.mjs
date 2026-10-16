@@ -65,6 +65,7 @@ async function databaseBeforeHotfix() {
     "20261016130000_pre_w2_personnel_catalog_team_names.sql",
     "20261016140000_pre_w2_team_leader_apply_change_item.sql",
     "20261016150000_pre_w2_global_change_request_review_history.sql",
+    "20261016160000_pre_w2_personnel_from_account_default_access.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
