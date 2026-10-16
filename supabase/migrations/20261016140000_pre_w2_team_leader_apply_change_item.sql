@@ -30,6 +30,10 @@ begin
 end;
 $$;
 
+revoke all on function public.direct_entry_apply_change_item(
+  uuid, uuid, uuid, public.direct_entries, text, jsonb, uuid
+) from public, anon, authenticated, service_role;
+
 do $$
 declare
   v_sig regprocedure := 'public.direct_entry_apply_change_item(uuid,uuid,uuid,public.direct_entries,text,jsonb,uuid)'::regprocedure;
