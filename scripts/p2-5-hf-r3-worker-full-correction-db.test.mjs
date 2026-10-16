@@ -48,7 +48,7 @@ async function buildDb() {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
   assert.equal(names.length, 103, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (42)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
+  assert.equal(names[names.length - (43)], R3_MIGRATION, "P2.5-HF-R3 remains #61");
   return db;
 }
 
@@ -166,12 +166,14 @@ async function seedEpisode(db, { cccd, name = "R3 Worker", project = PROJ_A, dat
       " values ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,$10,'hrp','TEMPORARY')",
       [entry, submission, candidate, ADMIN_APP, project, date, code,
         JSON.stringify(workerDetails(cccd, name)), REC_A, TEAM]);
-    if (submissionState === "SUBMITTED") {
+    if (submissionState === "SUBMITTED" || submissionState === "REVIEW") {
       await seedLegacyReviewSubmission(db, submission);
-      await db.query(
-        "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
-        [submission]);
-    } else {
+      if (submissionState === "SUBMITTED") {
+        await db.query(
+          "update public.direct_entry_submissions set state='SUBMITTED', version=3 where submission_id=$1",
+          [submission]);
+      }
+    } else if (submissionState !== "DRAFT") {
       // Insert straight into the requested state: the submission transition trigger is not
       // the subject of this test.
       await db.query(
