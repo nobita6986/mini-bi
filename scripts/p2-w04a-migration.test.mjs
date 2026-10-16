@@ -31,8 +31,9 @@ test("P2-W04C migration is append-only after the 46-migration baseline", async (
     // P2.5-W03 (#52), W04 #53, W06A #54, W05 #55, W05-R1 #56, initial-ON #57,
     // the P2.5-HF chain #58 through #64, P3-W07A-R3 #65, P3-W07A-R4 #66,
     // P3.1-W01A #67, W01B #68, W01C-A #69, W01C-B #70, W01D-A1a #71, W02-A #72,
-    // alias hotfix #73 and the P3.1-HF duplicate-CCCD report #74.
-    assert.equal(migrationNames.length, 99);
+    // alias hotfix #73, duplicate-CCCD report #74, W02-B #75, leader-scope #76,
+    // and append-only migrations through PRE-W2-HF #105.
+    assert.equal(migrationNames.length, 105);
     assert.equal(
       migrationNames[47],
       "20261008080000_p3_w05a_actor_scoped_reporting.sql",
@@ -341,7 +342,7 @@ test("R1 migration self-protection: legacy aggregate rows cause the rebaseline t
   }
   // Later main migrations (W05A, W07C-R7, W07E, P2.5-W02 and P2.5-W03) are present
   // after W04B in the source inventory; this test skipped applying only W04B.
-  assert.equal(names.length, 104);
+  assert.equal(names.length, 105);
 });
 
 test("R1 migration self-protection: eligible DE pre new-cutoff causes the rebaseline to roll back", async () => {

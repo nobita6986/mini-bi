@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   ACTORS,
   REQUEST_STAMPS,
+  RECRUITER_A,
   createMigratedDatabase,
   createChangeRequest,
+  decideChangeRequest,
   item,
   listChangeRequests,
   readChangeRequest,
@@ -30,7 +32,7 @@ test("from-scratch migration apply covers the new read migration and its ACLs", 
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // Main carries W07C-R2 (#45), W07C-R3 (#46) and P2-W04C (#47); W05A appends
   // as #49 after W07C-R7; W07E #50, P2.5-W02 #51 and P2.5-W03 #52.
-  assert.equal(migrations.migrationNames.length, 104);
+  assert.equal(migrations.migrationNames.length, 105);
   assert.ok(migrations.migrationNames.includes("20261005010000_p1_6_w04_s04c_change_request_reads.sql"));
   assert.ok(migrations.migrationNames.includes(
     "20261005030000_p1_6_w04_s04c_s03b3_r1_change_policy_closure.sql"));
@@ -225,13 +227,55 @@ test("list projection exposes no sensitive columns", async () => {
   for (const item of listed.data.requests) {
     assert.deepEqual(Object.keys(item).sort(), [
       "can_decide", "can_withdraw", "created_at", "entry_ids", "item_count",
-      "request_id", "state", "version",
+      "proposer_display_name", "request_id", "state", "summary", "version",
     ]);
     assert.equal(item.item_count, item.entry_ids.length);
+    assert.equal(item.proposer_display_name, "Synthetic Account");
+    assert.equal(typeof item.summary, "string");
   }
   const serialized = JSON.stringify(listed.data);
   for (const forbidden of ["reason", "idempotency", "auth_subject", "app_user_id",
     "proposer_user_id", "decided_by_user_id", "audit", "account_number", "national_id"]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
+});
+
+test("assigned Team Leader sees only same-team requests and can reject a stale one", async () => {
+  const leader = {
+    auth_subject: "10000000-0000-4000-8000-000000000006",
+    app_user_id: "20000000-0000-4000-8000-000000000006",
+  };
+  await db.query("insert into auth.users(id) values ($1)", [leader.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Team Leader')", [leader.app_user_id, leader.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'team_manager_assign','2020-01-01'),($1,'pii_view','2020-01-01')",
+    [leader.app_user_id]);
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
+      " values ($1,'team',$2,'2020-01-01')", [leader.app_user_id, fixture.entryA.team_id]);
+  await db.query(
+    "insert into public.direct_entry_team_leader_assignments" +
+      " (team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,'2020-01-01')",
+    [fixture.entryA.team_id, leader.app_user_id, RECRUITER_A]);
+  assert.equal((await db.query(
+    "select public.direct_entry_has_capability($1,'change_review') as allowed", [leader.app_user_id],
+  )).rows[0].allowed, false, "team review does not create a global reviewer capability");
+
+  const listed = await listChangeRequests(db, leader, { pageSize: 50 });
+  assert.equal(listed.error, null);
+  const byId = new Map(listed.data.requests.map((item) => [item.request_id, item]));
+  assert.equal(byId.get(requests.single).can_decide, true);
+  assert.equal(byId.has(requests.multi), false, "mixed-team requests are not visible to one leader");
+  assert.equal(byId.get(requests.single).proposer_display_name, "Synthetic Account");
+  const detail = await readChangeRequest(db, leader, requests.single);
+  assert.equal(detail.error, null);
+  assert.equal(detail.data.items[0].proposal.worker_details.display_name, "S02B worker1");
+
+  const rejected = await decideChangeRequest(db, leader, requests.single, "reject", 1,
+    "Dữ liệu hiện tại đã thay đổi", "s02b_team_leader_stale_reject");
+  assert.equal(rejected.error, null, "rejection is allowed even though the entry version is stale");
+  assert.equal(rejected.data.state, "REJECTED");
 });

@@ -43,10 +43,12 @@ import {
 } from "@/lib/direct-entry/change-request-reviewer";
 import {
   projectChangeRequestDetail,
+  type ChangeRequestDetailItem,
   type ChangeRequestListItem,
 } from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectEntrySensitiveContext,
+  projectWorkerDetails,
   type EntrySensitiveContext,
 } from "@/lib/direct-entry/change-request-read-projection";
 import {
@@ -66,6 +68,37 @@ const DETAIL_KEYS = [
 ] as const;
 const DECISION_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const ENTRY_KEYS = ["entry"] as const;
+const HISTORY_FIELD_LABELS: Readonly<Record<string, string>> = {
+  project_id: "Dự án", first_work_date: "Ngày bắt đầu làm việc", employee_code: "Mã người lao động",
+  recruiter_id: "Người tuyển", labor_type: "Loại hình lao động", worker_details: "Thông tin cá nhân",
+  status: "Trạng thái làm việc", effective_date: "Ngày hiệu lực", leave_reason: "Lý do nghỉ việc",
+  state: "Trạng thái thanh toán", account_number: "Số tài khoản", bank_id: "Ngân hàng",
+  account_holder_name: "Tên chủ tài khoản", document_type: "Loại tài liệu",
+  size_bytes: "Dung lượng", mime_type: "Định dạng",
+};
+
+function historyRows(item: ChangeRequestDetailItem, catalog?: DraftCatalog): Array<[string, string]> {
+  return Object.entries(item.proposal).flatMap<[string, string]>(([key, value]): [string, string][] => {
+    const label = HISTORY_FIELD_LABELS[key] ?? "Thông tin đề xuất";
+    if (key === "labor_type" && item.labor_type_display) return [[label, item.labor_type_display]];
+    if (key === "worker_details") {
+      const detail = projectWorkerDetails(value);
+      if (!detail) return [[label, "Đã đề xuất cập nhật thông tin cá nhân"]];
+      return Object.entries(detail).map(([field, fieldValue]): [string, string] => [
+        HISTORY_FIELD_LABELS[field] ?? "Thông tin cá nhân", String(fieldValue ?? "—"),
+      ]);
+    }
+    if (key === "project_id") return [[label, catalog?.projects.find((item) => item.project_id === value)?.display_name ?? "Dự án đã chọn"]];
+    if (key === "recruiter_id") return [[label, catalog?.recruiters.find((item) => item.recruiter_id === value)?.display_name ?? "Người tuyển đã chọn"]];
+    if (key === "bank_id") return [[label, catalog?.banks.find((item) => item.bank_id === value)?.display_name ?? "Ngân hàng đã chọn"]];
+    if (key === "status" && value === "ON") return [[label, "Đang làm việc"]];
+    if (key === "status" && value === "UNCONFIRMED") return [[label, "Đang chờ việc"]];
+    if (key === "status" && value === "OFF") return [[label, "Đã nghỉ"]];
+    if (value === null) return [[label, "—"]];
+    if (typeof value === "string" || typeof value === "number") return [[label, String(value)]];
+    return [[label, "Đã có nội dung đề xuất"]];
+  });
+}
 
 export type ChangeRequestReviewerProps = {
   request: ChangeRequestListItem | null;
@@ -96,6 +129,8 @@ export function DirectEntryChangeRequestReviewer({
   const [loadMessage, setLoadMessage] = useState("");
   const [model, setModel] = useState<ReviewerViewModel | null>(null);
   const [requestReason, setRequestReason] = useState<string | null>(null);
+  const [historyItems, setHistoryItems] = useState<readonly ChangeRequestDetailItem[]>([]);
+  const [canViewOwnRequest, setCanViewOwnRequest] = useState(false);
   const [reason, setReason] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, setBusy] = useState<ChangeRequestDecision | null>(null);
@@ -139,6 +174,8 @@ export function DirectEntryChangeRequestReviewer({
         setLoadState("loading");
         setModel(null);
         setRequestReason(null);
+        setHistoryItems([]);
+        setCanViewOwnRequest(false);
       }
       setLoadMessage("");
       if (isNewRequest) {
@@ -168,6 +205,8 @@ export function DirectEntryChangeRequestReviewer({
           return;
         }
         setRequestReason(detail.request_reason);
+        setHistoryItems(detail.items);
+        setCanViewOwnRequest(detail.can_withdraw);
         if (detail.state !== "PENDING") {
           setModel({ kind: "terminal", request_id: detail.request_id, state: detail.state });
           setLoadState("ready");
@@ -229,11 +268,14 @@ export function DirectEntryChangeRequestReviewer({
   // Nut quyet dinh van duoc render khi dang gui (disabled + "Dang gui…"), chi an khi request
   // khong con o trang thai cho quyet dinh.
   const canDecide = loadState === "ready" && model?.kind === "reviewable";
+  const canReject = request?.state === "PENDING" && request.can_decide === true &&
+    (canDecide || model?.kind === "stale" || model?.kind === "unsupported" ||
+      model?.kind === "readonly" || loadState === "error");
 
   const decide = useCallback(async (decision: ChangeRequestDecision) => {
-    if (!request || !model || model.kind !== "reviewable") return;
+    if (!request || (decision === "approve" && !canDecide) || (decision === "reject" && !canReject)) return;
     const requestId = request.request_id;
-    const expectedVersion = model.version;
+    const expectedVersion = model && "version" in model ? model.version : request.version;
     const trimmed = normalizeReason(reason);
     if (trimmed === null) {
       setStatusMessage("Lý do quyết định là bắt buộc và tối đa 4000 ký tự.");
@@ -307,7 +349,7 @@ export function DirectEntryChangeRequestReviewer({
     } finally {
       setBusy(null);
     }
-  }, [model, onConflict, onDecided, reason, request]);
+  }, [canDecide, canReject, model, onConflict, onDecided, reason, request]);
 
   const entryCount = useMemo(
     () => (model && "items" in model ? model.items.length : 0),
@@ -360,10 +402,41 @@ export function DirectEntryChangeRequestReviewer({
               )}
 
               {model?.kind === "terminal" && (
-                <p className={styles.submissionTerminalNote} data-testid="reviewer-terminal">
-                  Yêu cầu đã ở trạng thái {CHANGE_REQUEST_STATE_LABELS[model.state]} và không còn chờ
-                  quyết định.
-                </p>
+                <>
+                  <p className={styles.submissionTerminalNote} data-testid="reviewer-terminal">
+                    Yêu cầu đã ở trạng thái {CHANGE_REQUEST_STATE_LABELS[model.state]} và không còn chờ
+                    quyết định.
+                  </p>
+                  <section aria-label="Nội dung đề xuất" data-testid="change-request-history-detail">
+                    <strong>Nội dung đề xuất</strong>
+                    {historyItems.map((item) => (
+                      <div key={item.entry_id} className={styles.proposerEntry}>
+                        <p className={styles.submissionHint}>
+                          {REVIEW_TARGET_KIND_LABELS[item.target_kind] ?? "Yêu cầu thay đổi"}
+                        </p>
+                        <dl>{historyRows(item, catalogFor(hcmTodayDate())).map(([label, value], index) => (
+                          <div key={label + index}><dt>{label}</dt><dd>{value}</dd></div>
+                        ))}</dl>
+                      </div>
+                    ))}
+                  </section>
+                </>
+              )}
+
+              {canViewOwnRequest && model?.kind === "unsupported" && historyItems.length > 0 && (
+                <section aria-label="Nội dung đề xuất" data-testid="change-request-history-detail">
+                  <strong>Nội dung đề xuất</strong>
+                  {historyItems.map((item) => (
+                    <div key={item.entry_id} className={styles.proposerEntry}>
+                      <p className={styles.submissionHint}>
+                        {REVIEW_TARGET_KIND_LABELS[item.target_kind] ?? "Yêu cầu thay đổi"}
+                      </p>
+                      <dl>{historyRows(item, catalogFor(hcmTodayDate())).map(([label, value], index) => (
+                        <div key={label + index}><dt>{label}</dt><dd>{value}</dd></div>
+                      ))}</dl>
+                    </div>
+                  ))}
+                </section>
               )}
 
               {model?.kind === "stale" && (
@@ -418,7 +491,7 @@ export function DirectEntryChangeRequestReviewer({
                     </div>
                   ))}
 
-                  {model.kind === "reviewable" && (
+                  {(model.kind === "reviewable" || model.kind === "stale") && (
                     <div className={styles.field}>
                       <label htmlFor="change-request-decision-reason">Lý do quyết định</label>
                       <textarea
@@ -442,6 +515,23 @@ export function DirectEntryChangeRequestReviewer({
                 </>
               )}
 
+              {canReject && !canDecide && model?.kind !== "stale" && (
+                <div className={styles.field}>
+                  <label htmlFor="change-request-decision-reason">Lý do từ chối</label>
+                  <textarea
+                    id="change-request-decision-reason"
+                    aria-label="Lý do từ chối"
+                    rows={3}
+                    maxLength={4000}
+                    value={reason}
+                    onChange={(event) => {
+                      setReason(event.target.value);
+                      setStatusMessage("");
+                    }}
+                  />
+                </div>
+              )}
+
               {statusMessage && (
                 <p role="alert" data-testid="reviewer-status">{statusMessage}</p>
               )}
@@ -461,7 +551,7 @@ export function DirectEntryChangeRequestReviewer({
                   Đóng
                 </button>
               </Dialog.Close>
-              {canDecide && (
+              {(canDecide || canReject) && (
                 <>
                   <button
                     type="button"
@@ -478,7 +568,7 @@ export function DirectEntryChangeRequestReviewer({
                   >
                     {busy === "reject" ? "Đang gửi…" : REVIEW_DECISION_LABELS.reject}
                   </button>
-                  <button
+                  {canDecide && <button
                     type="button"
                     className={styles.primaryButton}
                     aria-busy={busy === "approve"}
@@ -492,7 +582,7 @@ export function DirectEntryChangeRequestReviewer({
                     }}
                   >
                     {busy === "approve" ? "Đang gửi…" : REVIEW_DECISION_LABELS.approve}
-                  </button>
+                  </button>}
                 </>
               )}
             </div>

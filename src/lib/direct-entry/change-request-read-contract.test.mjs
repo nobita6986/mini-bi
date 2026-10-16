@@ -26,6 +26,8 @@ function listItem(overrides = {}) {
     entry_ids: [entryA],
     can_withdraw: true,
     can_decide: false,
+    proposer_display_name: "Người đề xuất thử nghiệm",
+    summary: "Trạng thái làm việc",
     ...overrides,
   };
 }
@@ -121,6 +123,8 @@ test("list page projection is exact and rejects coerced values", () => {
     listPage({ requests: [listItem({ entry_ids: [] })] }),
     listPage({ requests: [listItem({ can_withdraw: 1 })] }),
     listPage({ requests: [listItem({ can_decide: "false" })] }),
+    listPage({ requests: [listItem({ proposer_display_name: " " })] }),
+    listPage({ requests: [listItem({ summary: "" })] }),
     listPage({ requests: [listItem({ can_withdraw: true, can_decide: true })] }),
     listPage({ requests: [listItem({ created_at: "2026-10-03T10:00:00Z" })] }),
     listPage({ requests: [listItem({ request_id: "not-a-uuid" })] }),

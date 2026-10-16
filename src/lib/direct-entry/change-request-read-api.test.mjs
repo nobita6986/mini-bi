@@ -22,6 +22,8 @@ const listItem = {
   entry_ids: [entryA],
   can_withdraw: true,
   can_decide: false,
+  proposer_display_name: "PM thử nghiệm",
+  summary: "Thông tin người lao động",
 };
 const detail = {
   request_id: requestId,

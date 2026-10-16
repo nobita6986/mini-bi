@@ -97,8 +97,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 104,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #104");
+  assert.equal(totalCount, 105,
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #105");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -1051,7 +1051,8 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // six-argument transition as a thin wrapper over the shared body.
     // PRE-W2-HF #103 adds one service-role-only DRAFT employment-status wrapper
     // and replaces the existing confirmed-submission RPC without widening grants.
-    // PRE-W2-HF #104 adds one service-role-only own-DRAFT patch wrapper.
+    // PRE-W2-HF #104 adds one service-role-only own-DRAFT patch wrapper; #105
+    // adds the internal, assignment-bound team-review resolver.
     // P3.1-W02C (#79) adds nine internal helpers (the immutable guard, the active
     // lookup, the bounded active options projection, the fixed snapshot, the admin
     // projection, the OCC lock, the revision writer, the version bump helper and the
@@ -1066,11 +1067,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // adds nine service-role RPCs and three internal helpers. PRE-W2-HF #97 adds
     // one batch RPC name while retaining the versioned grant/revoke service ACLs;
     // the versionless revoke overload preserves the exposed revoke name. Measured:
-    // 243 total / 116 service-role / 127 internal names, none exposed internally.
+    // 244 total / 116 service-role / 128 internal names, none exposed internally.
     assert.deepEqual(result.rows[0], {
-      total: 243,
+      total: 244,
       service_role: 116,
-      internal: 127,
+      internal: 128,
       exposed_internal: 0,
     });
   } finally {

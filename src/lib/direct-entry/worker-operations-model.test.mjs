@@ -120,6 +120,7 @@ test("W06-R2: initial tab tu actor projection — reviewer vao thang scope=all",
   assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "all");
   // PM-only (change_request_create, khong phai entry actor) => "managed".
   assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), "managed");
   // entry_* thong thuong => "uploader".
   assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), "uploader");
   assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), "uploader");
@@ -219,7 +220,8 @@ test("W06-R2: review payload phai qua projectChangeRequestListPage, fail-closed"
   const valid = { ok: true, requests: [{
     request_id: REQUEST, state: "PENDING", version: 2,
     created_at: "2026-10-01T00:00:00.000000Z", item_count: 1, entry_ids: [ENTRY],
-    can_withdraw: false, can_decide: true }],
+    can_withdraw: false, can_decide: true,
+    proposer_display_name: "Admin", summary: "Trạng thái làm việc" }],
     page_size: 20, has_more: false, next_cursor: null };
   const parsed = parseChangeRequestPageResponse(valid, { page_size: 20 });
   assert.equal(parsed.requests.length, 1);

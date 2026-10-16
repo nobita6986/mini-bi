@@ -4,8 +4,8 @@
  * Proves the append-only migration #67 (20261009030000_p3_1_w01a_capability_contract_foundation.sql)
  * and the direct-entry-auth/1.3 contract agree on exactly the same 23 capability tokens, that the
  * extension keeps every existing grant, that unknown tokens are still rejected, and that the two
- * new tokens carry the locked reason / expected version / scope-kind policy without opening any
- * Direct Entry, project-operations or full-Admin surface.
+ * new tokens carry the locked reason / expected version / scope-kind policy without opening
+ * Direct Entry or full-Admin surfaces.
  *
  * No Production access, no network, no browser: PGlite applies the real local migrations.
  */
@@ -334,7 +334,7 @@ test("an all-scope grant never substitutes the team scope of team_manager_assign
   );
 });
 
-test("new tokens stay scoped; Team Leader can open only the Project Operations page", () => {
+test("Team Leader opens team review and Project Operations, but not Direct Entry or Admin", () => {
   const projected = {
     capabilities: ["catalog_master_manage"],
     scopes: [{ kind: "all" }, { kind: "team" }, { kind: "own" }],
@@ -346,7 +346,7 @@ test("new tokens stay scoped; Team Leader can open only the Project Operations p
 
   const teamLeader = { capabilities: ["team_manager_assign"], scopes: [TEAM_SCOPE] };
   assert.equal(directEntryNavPredicate(teamLeader), false);
-  assert.equal(workerOperationsNavPredicate(teamLeader), false);
+  assert.equal(workerOperationsNavPredicate(teamLeader), true);
   assert.equal(projectAdminNavPredicate(teamLeader), true);
   assert.equal(adminAuthorityNavPredicate(teamLeader), false);
 

@@ -110,6 +110,8 @@ export const workerOperationsReviewPredicate: NavCapabilityPredicate = (actor) =
 export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
   if (workerOperationsAllScopePredicate(actor)) return true;
   if (actor.capabilities.includes("change_request_create")) return true;
+  if (actor.capabilities.includes("team_manager_assign") &&
+      actor.scopes.some((scope) => scope.kind === "team")) return true;
   return actor.capabilities.some((capability) =>
     DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
 };

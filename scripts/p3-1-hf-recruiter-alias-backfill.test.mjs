@@ -23,7 +23,7 @@ async function databaseBeforeHotfix() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = await migrationNames();
-  assert.equal(names.length, 104);
+  assert.equal(names.length, 105);
   // The pre-hotfix cut must stop at #73. Later append-only migrations must stay
   // visible in this pinned tail so the test never applies them before #73.
   const hotfixAt = names.indexOf(MIGRATION);
@@ -60,6 +60,7 @@ async function databaseBeforeHotfix() {
     "20261015170000_pre_w2_uploader_submission_queues.sql",
     "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
     "20261016100000_pre_w2_hf_direct_entry_own_draft_edit.sql",
+    "20261016110000_pre_w2_change_request_team_review_history.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
