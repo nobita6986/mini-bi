@@ -122,13 +122,7 @@ async function createAndSubmit(db, firstWorkDate, employeeCode) {
     "select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
     ["10000000-0000-4000-8000-000000000001",
       "20000000-0000-4000-8000-000000000001",
-      submissionId, 1, "REVIEW", idem + "-review"],
-  );
-  await db.query(
-    "select public.direct_entry_transition_submission($1, $2, $3, $4, $5, $6) as data",
-    ["10000000-0000-4000-8000-000000000001",
-      "20000000-0000-4000-8000-000000000001",
-      submissionId, 2, "SUBMITTED", idem + "-submit"],
+      submissionId, 1, "SUBMITTED", idem + "-submit"],
   );
 }
 
@@ -307,8 +301,8 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 103);
-  assert.equal(names[names.length - (42)],
+  assert.equal(names.length, 104);
+  assert.equal(names[names.length - (44)],
     "20261008210000_p2_5_hf_r3_worker_full_correction.sql");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",

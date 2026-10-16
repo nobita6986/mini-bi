@@ -111,19 +111,20 @@ test("success reload tu server va chi clear staged sau khi server xac nhan", () 
   assert.ok(clearStaged > savedBranch, "clear staged chi trong nhanh saved");
 });
 
-test("persisted rows read-only theo submission lock, khong mo field ngoai safe mutation", () => {
+test("persisted rows keep submission lock; only the active own DRAFT unlocks the full edit set", () => {
   assert.match(live, /const editable = row\.state !== "saving" && row\.state !== "conflict" &&/);
   assert.match(live, /isRowEditable\(row, submissions\)/);
-  // R1: employee_code do server cap, khong editable; 4 optional field (STK/Bank/
-  // AccountHolder/Note) chi editable o staged, persisted chi hien thi projection.
-  assert.match(live, /editableFields: editable[\s\S]*\?\s*\["first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]/);
-  assert.equal(/editableFields: editable[\s\S]{0,400}account_number/.test(live), false);
+  assert.match(live, /row\.submissionId === editingDraftSubmissionId/);
+  assert.match(live, /editableFields: editable[\s\S]*draftEditActive \? DRAFT_EDITABLE_GRID_FIELDS/);
+  assert.match(live, /"account_number", "bank_name",\s*"account_holder_name", "general_note"/);
+  assert.match(live, /method: "PATCH"/);
 });
 
 test("draft reload requires exact versioned projection and makes one batch call without detail N+1", () => {
   assert.match(live, /value\.projection_version !== DRAFT_LIST_PROJECTION_VERSION/);
   assert.match(live, /return projectOwnDrafts\(\{/);
-  assert.equal((reloadDraftHandler.match(/\/api\/direct-entry\/drafts/g) ?? []).length, 1);
+  assert.equal((reloadDraftHandler.match(/\/api\/direct-entry\/drafts/g) ?? []).length, 2,
+    "each of the reload and card-edit paths makes one batch request");
   assert.equal(/\/api\/direct-entry\/entries\//.test(reloadDraftHandler), false);
 });
 
@@ -131,9 +132,7 @@ test("masked display values are excluded from spreadsheet copy and write sources
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /const value = args\.row\.cells\[args\.column\.key\] \?\? ""/);
   assert.equal(/const value = args\.row\.displayValues/.test(grid), false);
-  // R1: employee_code do server cap, khong editable tren UI; 4 optional field
-  // (STK/Bank/AccountHolder/Note) chi editable o staged, persisted chi hien thi.
-  assert.match(live, /editableFields: editable[\s\S]*\?\s*\["first_work_date", "display_name", "project_id", "recruiter_id", "labor_type"\]/);
+  assert.match(live, /DRAFT_EDITABLE_GRID_FIELDS/);
   assert.doesNotMatch(live, /editableFields: editable\s*\n\s*\?\s*\["employee_code"/);
   assert.match(live, /CLIPBOARD_PERSISTED_ROW/);
 });

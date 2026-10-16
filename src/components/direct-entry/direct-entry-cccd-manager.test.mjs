@@ -63,9 +63,9 @@ test("khong co N+1: tai trang khong goi entry detail cho tung dong", () => {
   const loadEffect = live.slice(live.indexOf("async function load() {"), live.indexOf("void load();"));
   assert.equal(loadEffect.includes("/api/direct-entry/entries/"), false,
     "buoc tai trang khong goi detail tung dong");
-  // Chi co dung hai cho goi entries detail trong live: PATCH luu mot dong va conflict copy khi nguoi dung mo.
+  // Hai entry detail paths plus the separate persisted-row employment-status route.
   const entriesCalls = [...live.matchAll(/\/api\/direct-entry\/entries\/\$\{encodeURIComponent\(/g)];
-  assert.equal(entriesCalls.length, 2);
+  assert.equal(entriesCalls.length, 3);
   assert.equal((live.match(/fetchConflictCopy/g) ?? []).length > 0, true);
   assert.equal((manager.match(/fetchEntryDetail\(/g) ?? []).length, 3,
     "1 lan mo ho so + 1 lan nguoi dung bam Tai lai + 1 lan reload sau upload");

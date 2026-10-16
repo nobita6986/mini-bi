@@ -21,7 +21,7 @@ import { readBoundedJson } from "./write-api.ts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PATCH_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "worker_details", "recruiter_id", "labor_type",
-  "general_note",
+  "general_note", "payment",
 ]);
 const WORKER_PATCH_KEYS = new Set([
   "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
@@ -41,6 +41,12 @@ type DraftPatch = Partial<{
   recruiter_id: string;
   labor_type: LaborType;
   general_note: string | null;
+  payment: {
+    state: "provided" | "unknown" | "intentionally_blank" | "omitted";
+    account_number: string | null;
+    bank_name: string | null;
+    account_holder_name: string | null;
+  };
 }>;
 
 function respond(body: unknown, status: number): Response {
@@ -120,6 +126,28 @@ function projectWorkerPatch(value: unknown): Partial<WorkerDetails> | null {
   return validateWorkerDetails(candidate).length === 0 ? patch : null;
 }
 
+function projectPaymentPatch(value: unknown): DraftPatch["payment"] | null {
+  if (!isRecord(value) || Object.keys(value).sort().join(",") !==
+      "account_holder_name,account_number,bank_name,state" ||
+      (value.state !== "provided" && value.state !== "unknown" &&
+       value.state !== "intentionally_blank" && value.state !== "omitted")) return null;
+  const texts = [value.account_number, value.bank_name, value.account_holder_name];
+  if (texts.some((text) => text !== null &&
+      (typeof text !== "string" || text.length > 256 || /[\u0000-\u001f\u007f]/.test(text)))) {
+    return null;
+  }
+  if (value.account_number !== null && typeof value.account_number === "string" &&
+      value.account_number.length > 64) return null;
+  const hasValue = texts.some((text) => typeof text === "string" && text.trim() !== "");
+  if (value.state === "provided" ? !hasValue : texts.some((text) => text !== null)) return null;
+  return {
+    state: value.state,
+    account_number: value.account_number as string | null,
+    bank_name: value.bank_name as string | null,
+    account_holder_name: value.account_holder_name as string | null,
+  };
+}
+
 function projectPatch(value: unknown): {
   expected_version: number;
   patch: DraftPatch;
@@ -169,6 +197,11 @@ function projectPatch(value: unknown): {
         (typeof patch.general_note !== "string" || patch.general_note.trim() === "" ||
          patch.general_note.length > 4000)) return null;
     projectedPatch.general_note = patch.general_note as string | null;
+  }
+  if (Object.hasOwn(patch, "payment")) {
+    const payment = projectPaymentPatch(patch.payment);
+    if (!payment) return null;
+    projectedPatch.payment = payment;
   }
   return { expected_version: value.expected_version, patch: projectedPatch };
 }

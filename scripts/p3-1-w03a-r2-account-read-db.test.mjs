@@ -54,9 +54,9 @@ async function denied(operation, code = "42501") {
 
 test("R2 migration #83 is append-only and read RPC ACL/projection is exact", async () => {
   const names = await migrations();
-  assert.equal(names.length, 103);
-  assert.equal(names.at(-20), NEW_MIGRATION);
-  assert.equal(names.at(-5), REAL_NAME_MIGRATION);
+  assert.equal(names.length, 104);
+  assert.equal(names.at(-21), NEW_MIGRATION);
+  assert.equal(names.at(-6), REAL_NAME_MIGRATION);
   const database = await db();
   await seed(database);
   const result = await rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, null, "all", 1, 25]);

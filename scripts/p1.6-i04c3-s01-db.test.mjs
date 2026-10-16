@@ -97,8 +97,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 103,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #103");
+  assert.equal(totalCount, 104,
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #104");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -582,14 +582,19 @@ test("draft edits merge allowlisted fields, preserve payment, enforce OCC and st
       [entryId],
     )).rows[0].submission_id;
     const update = (version, patch, key) => serviceRpc(db, `
-      select public.direct_entry_update_draft_row(
+      select public.direct_entry_update_own_draft_row(
         $1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text
       ) as result
     `, [IDS.auth, IDS.user, entryId, version, JSON.stringify(patch), key]);
+    const updateAs = (appUserId, version, nextPatch, key) => serviceRpc(db, `
+      select public.direct_entry_update_own_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, $4::integer, $5::jsonb, $6::text
+      ) as result
+    `, [IDS.auth, appUserId, entryId, version, JSON.stringify(nextPatch), key]);
     const state = async () => {
       const { rows } = await db.query(`
         select e.version as entry_version, e.worker_details, e.general_note,
-               p.account_number,
+               p.account_number, p.bank_name, p.account_holder_name,
                (select count(*)::integer from public.direct_entry_revisions r
                  where r.entry_id=e.entry_id) as revisions,
                (select count(*)::integer from public.direct_entry_submission_revisions r
@@ -608,8 +613,17 @@ test("draft edits merge allowlisted fields, preserve payment, enforce OCC and st
         phone: { state: "provided", value: "0900000002" },
       },
       general_note: null,
+      payment: {
+        state: "provided", account_number: "0000123456",
+        bank_name: "Synthetic bank text", account_holder_name: "Synthetic Holder",
+      },
     };
     const before = await state();
+    await assert.rejects(
+      updateAs(IDS.paymentUser, 1, { general_note: "wrong owner" }, "draft-edit-other-owner-950"),
+      (error) => error.code === "42501",
+    );
+    assert.deepEqual(await state(), before, "other users cannot edit this DRAFT");
     assert.deepEqual(await update(1, patch, "draft-edit-partial-950"), {
       entry_id: entryId, version: 2, submission_version: 2,
     });
@@ -620,7 +634,9 @@ test("draft edits merge allowlisted fields, preserve payment, enforce OCC and st
     assert.deepEqual(saved.worker_details.address, { state: "intentionally_blank" });
     assert.deepEqual(saved.worker_details.phone, { state: "provided", value: "0900000002" });
     assert.deepEqual(saved.worker_details.gender, { state: "provided", value: "OTHER" });
-    assert.equal(saved.account_number, "000098765432");
+    assert.equal(saved.account_number, "0000123456");
+    assert.equal(saved.bank_name, "Synthetic bank text");
+    assert.equal(saved.account_holder_name, "Synthetic Holder");
     assert.equal(saved.revisions, before.revisions + 1);
     assert.equal(saved.submission_revisions, before.submission_revisions + 1);
     assert.equal(saved.audits, before.audits + 1);
@@ -647,6 +663,51 @@ test("draft edits merge allowlisted fields, preserve payment, enforce OCC and st
       (error) => error.code === "42501",
     );
     assert.deepEqual(await state(), submittedState, "SUBMITTED entries reject draft patches");
+  } finally {
+    await db.close();
+  }
+});
+
+test("own DRAFT projection exposes ordinary profile and bank text without PII/payment capabilities", async () => {
+  const db = await database();
+  try {
+    const { rows: dateRows } = await db.query(
+      "select public.direct_entry_authorization_date()::text as today",
+    );
+    const created = await generatedRpc(db, [generatedRow(950001, {
+      first_work_date: dateRows[0].today,
+      worker_details: {
+        ...generatedRow(950001).worker_details,
+        national_id: { state: "provided", value: "198765432" },
+        address: { state: "provided", value: "Synthetic address" },
+        phone: { state: "provided", value: "0900000001" },
+      },
+      general_note: { state: "provided", value: "Synthetic note" },
+      payment: {
+        state: "provided", account_number: "000098765432",
+      },
+    })], "91600000-0000-4000-8000-000000000950");
+    await db.query(
+      "update public.direct_entry_payments set bank_name='Synthetic bank text', " +
+      "account_holder_name='Synthetic Holder' where entry_id=$1::uuid", [created.entry_ids[0]],
+    );
+    await db.query(
+      "delete from public.direct_entry_capability_grants where app_user_id=$1::uuid " +
+      "and capability in ('pii_view','payment_view')", [IDS.user],
+    );
+    const projection = await listDrafts(db, IDS.auth, IDS.user);
+    const draft = projection.drafts.find(({ entry_id }) => entry_id === created.entry_ids[0]);
+    assert.ok(draft);
+    assert.deepEqual(draft.profile.worker_details.national_id, {
+      state: "provided", value: "198765432",
+    });
+    assert.deepEqual(draft.profile.worker_details.address, {
+      state: "provided", value: "Synthetic address",
+    });
+    assert.equal(draft.profile.payment.account_number.value, "000098765432");
+    assert.equal(draft.profile.payment.bank_name.value, "Synthetic bank text");
+    assert.equal(draft.profile.payment.account_holder_name.value, "Synthetic Holder");
+    assert.equal(Object.hasOwn(draft.profile.payment, "bank_id"), false);
   } finally {
     await db.close();
   }
@@ -756,11 +817,11 @@ test("mutation probes show status, capability and OCC regressions when guards ar
 
     await replaceFunctionSourceForMutationProbe(db,
       "public.direct_entry_apply_employment_status(uuid,uuid,uuid,integer,text,date,text,text,text)",
-      `  v_scope := public.direct_entry_assert_entry_access(
-    p_auth_subject, p_app_user_id, 'employment_status.apply',
-    v_entry.created_by_user_id, v_entry.team_id, v_entry.first_work_date
-  );`,
-      "  v_scope := 'all';");
+      `    v_scope := public.direct_entry_assert_entry_access(
+      p_auth_subject, p_app_user_id, 'employment_status.apply',
+      v_entry.created_by_user_id, v_entry.team_id, v_entry.first_work_date
+    );`,
+      "    v_scope := 'all';");
     assert.equal((await statusCall(IDS.paymentAuth, IDS.paymentUser, created.entry_ids[0], 1,
       "status-permission-mutant")).status, "OFF",
     "without the capability check, an actor lacking employment_status.apply can write status");
@@ -990,6 +1051,7 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // six-argument transition as a thin wrapper over the shared body.
     // PRE-W2-HF #103 adds one service-role-only DRAFT employment-status wrapper
     // and replaces the existing confirmed-submission RPC without widening grants.
+    // PRE-W2-HF #104 adds one service-role-only own-DRAFT patch wrapper.
     // P3.1-W02C (#79) adds nine internal helpers (the immutable guard, the active
     // lookup, the bounded active options projection, the fixed snapshot, the admin
     // projection, the OCC lock, the revision writer, the version bump helper and the
@@ -1004,10 +1066,10 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // adds nine service-role RPCs and three internal helpers. PRE-W2-HF #97 adds
     // one batch RPC name while retaining the versioned grant/revoke service ACLs;
     // the versionless revoke overload preserves the exposed revoke name. Measured:
-    // 242 total / 115 service-role / 127 internal names, none exposed internally.
+    // 243 total / 116 service-role / 127 internal names, none exposed internally.
     assert.deepEqual(result.rows[0], {
-      total: 242,
-      service_role: 115,
+      total: 243,
+      service_role: 116,
       internal: 127,
       exposed_internal: 0,
     });

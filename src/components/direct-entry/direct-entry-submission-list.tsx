@@ -59,6 +59,7 @@ export type SubmissionListProps = {
    */
   onPreflight: (submission: SubmissionReadItem) => Promise<DuplicateCccdPreflight | null>;
   onTransition: (input: SubmissionTransitionRequest) => Promise<TransitionOutcome>;
+  onEditDraft: (submission: SubmissionReadItem) => void;
   onRequestChange: (submission: SubmissionReadItem) => void;
   onManageDocuments: (submission: SubmissionReadItem) => void;
 };
@@ -83,6 +84,7 @@ export function DirectEntrySubmissionList({
   onLoadMore,
   onPreflight,
   onTransition,
+  onEditDraft,
   onRequestChange,
   onManageDocuments,
 }: SubmissionListProps) {
@@ -222,6 +224,16 @@ export function DirectEntrySubmissionList({
                 </p>
               )}
               <div className={compact ? styles.compactActions : styles.submissionActions}>
+                {submission.state === "DRAFT" && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    disabled={busy}
+                    onClick={() => onEditDraft(submission)}
+                  >
+                    Sửa
+                  </button>
+                )}
                 {actions.map((action) => {
                   const checking = checkingId === submission.submission_id;
                   const working = busy || checking;

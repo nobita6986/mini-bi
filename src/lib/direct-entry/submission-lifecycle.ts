@@ -38,11 +38,11 @@ export const TRANSITION_ACTIONS: Readonly<Partial<Record<SubmissionState, Submis
   },
   SUBMITTED: {
     target_state: "SUBMITTED",
-    label: "Gửi chính thức",
-    confirm_title: "Gửi chính thức đợt nhập liệu?",
+    label: "Gửi duyệt",
+    confirm_title: "Gửi duyệt đợt nhập liệu?",
     confirm_description:
       "Đã gửi chính thức là trạng thái cuối: không thể sửa trực tiếp. Mọi thay đổi sau đó phải đi qua yêu cầu thay đổi.",
-    confirm_label: "Gửi chính thức",
+    confirm_label: "Gửi duyệt",
   },
 });
 
