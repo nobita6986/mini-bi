@@ -82,3 +82,38 @@ test("migration #112 repairs the previously published #111 function offline", as
     await db.close();
   }
 });
+
+test("migration #112 rolls back when the document context source has drifted", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(
+      "create role anon; create role authenticated; create role service_role;" +
+      " create schema auth; create table auth.users (id uuid primary key);",
+    );
+    const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
+    for (const name of names.slice(0, -1)) {
+      await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+    }
+
+    const signature = "public.direct_entry_document_direct_context(uuid,uuid,uuid,uuid,text)";
+    const { rows } = await db.query("select pg_get_functiondef($1::regprocedure) definition", [signature]);
+    const drifted = rows[0].definition
+      .replace("if p_purpose = 'download' then", "if p_purpose = 'download_v2' then")
+      .replace("'entry_privileged_edit'", "'entry_privileged_edit_v2'");
+    assert.notEqual(drifted, rows[0].definition, "the fixture introduces an unsupported source change");
+    await db.exec(drifted);
+
+    await assert.rejects(
+      db.exec(await readFile(path.join(MIGRATION_DIR, MIGRATION_112), "utf8")),
+      (error) => error.code === "55000",
+    );
+    await db.exec("rollback");
+
+    const afterRollback = (await db.query(
+      "select pg_get_functiondef($1::regprocedure) definition", [signature],
+    )).rows[0].definition;
+    assert.equal(afterRollback, drifted, "failed migration leaves the pre-migration function unchanged");
+  } finally {
+    await db.close();
+  }
+});

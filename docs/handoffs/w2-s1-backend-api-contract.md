@@ -51,7 +51,14 @@ Entry revision snapshots now include portrait origin and the accepted current `(
 
 ## Migration ledger and authorization repair
 
-Migration #111 remains unchanged (SHA-256 `8DDAF787D4A0C7C19AB2C1104F74ED01668B32C04ACFAB753BF7AC90885033EB`). Append-only migration #112 (SHA-256 `2C6BAE32B9CF3D5253E36E1E4AAC66FCCEA029429DF6D85B51256A5FE6DBC5D7`) reasserts the `document_direct_context` authorization on databases where the previously published #111 body may already have been applied: every `download` uses `direct_entry_assert_draft_access`; only `preview` of a `WORKER_PORTRAIT` can use the scoped `entry_privileged_edit` fallback. The migration fails closed on unexpected function-source drift and is covered by an offline PGlite regression that simulates the earlier #111 function body.
+Migration checksums below use the repository's `migrationChecksum()` from `scripts/lib/migration-validation.mjs` (SHA-256 after LF newline normalization), not the hash of raw checkout bytes:
+
+- #111 `20261017100000_pre_w2_s1_worker_portrait_private_projection.sql`: `7e19aecfb9417645a80120704be790d67a13986788a777cac30c7b62de8c66ff`
+- #112 `20261017110000_pre_w2_s1_document_direct_context_access_guard.sql`: `82607beb7157d90e6aeea0e667715e1ae1ca73ed76e801f15d32cffe4dcba8cd`
+
+Migration #111 remains unchanged. Append-only migration #112 reasserts the `document_direct_context` authorization on databases where the previously published #111 body may already have been applied: every `download` uses `direct_entry_assert_draft_access`; only `preview` of a `WORKER_PORTRAIT` can use the scoped `entry_privileged_edit` fallback. The migration fails closed on unexpected function-source drift; offline PGlite regressions cover repair of the earlier #111 function body and rollback on a `55000` drift failure.
+
+Validation status for the follow-up commit: the full `pnpm test` chain, PostgreSQL targets, and `pnpm build` have not been rerun at this commit. They passed on parent commit `26324596d5929d305077b3ef37f191dea181fbab` (`pnpm test`: 3,354/3,354; PostgreSQL: 2/2; build: pass). No real database migration or deployment was performed.
 
 ## Changed files
 
