@@ -360,14 +360,14 @@ test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabiliti
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
-        " and (valid_to is null or current_date < valid_to)", [f.app_user_id, capability]), 1,
+        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
+        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [f.app_user_id, capability]), 1,
         `${capability} is effective after account creation followed by personnel creation`);
     }
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
-      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
-      " and (valid_to is null or current_date < valid_to)", [f.app_user_id]), 1);
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
+      " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [f.app_user_id]), 1);
 
     const revision = (await db.query(
       "select action from public.direct_entry_app_user_revisions where app_user_id = $1", [f.app_user_id])).rows[0];
@@ -557,14 +557,14 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
-        " and (valid_to is null or current_date < valid_to)", [TARGET_APP, capability]), 1,
+        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
+        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [TARGET_APP, capability]), 1,
         `${capability} is granted to account-created HRP personnel`);
     }
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
-      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
-      " and (valid_to is null or current_date < valid_to)", [TARGET_APP]), 1,
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
+      " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [TARGET_APP]), 1,
     "account-created HRP personnel has own scope");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events" +
@@ -606,13 +606,13 @@ test("PRE-W2-HF: account-created team leaders get only the HRP own-entry baselin
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
-        " and (valid_to is null or current_date < valid_to)", [app, capability]), 1);
+        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
+        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [app, capability]), 1);
     }
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
-      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
-      " and (valid_to is null or current_date < valid_to)", [app]), 1);
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
+      " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [app]), 1);
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_capability_grants" +
       " where app_user_id=$1 and capability in ('team_manager_assign','entry_admin','change_review')", [app]), 0,
