@@ -261,3 +261,105 @@ const STAGE_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
 export function portraitStageErrorMessage(code: string): string {
   return STAGE_MESSAGES[code] ?? "Không xử lý được ảnh hồ sơ. Hãy thử lại.";
 }
+
+/* ------------------------------------------------- ràng buộc stage ↔ dòng */
+
+/**
+ * `sourceRow` la VI TRI trong bang dan, khong phai danh tinh: khi nguoi dung sua noi dung,
+ * thay dong hoac sap xep lai, vi tri co the tro sang NLD khac. Vi vay stage phai duoc rang
+ * buoc bang (sourceRow + chu ky noi dung dong) chu khong chi bang sourceRow.
+ *
+ * Chu ky chi giu dang bam dong bo (khong giu ban sao PII cua dong cu trong memory) va KHONG
+ * bao gio duoc gui len server.
+ */
+export type PortraitRowIdentity = {
+  sourceRow: number;
+  employeeCode: string;
+  displayName: string;
+  firstWorkDate: string;
+  projectId: string | null;
+  recruiterId: string | null;
+  laborType: string;
+  nationalId: string;
+  dateOfBirth: string;
+  phone: string;
+};
+
+/** Bam dong bo hai chieu (32+32 bit) chi de so sanh trong memory, khong dung cho bao mat. */
+function syncBindingHash(payload: string): string {
+  let left = 0x811c9dc5;
+  let right = 0x1000193;
+  for (let index = 0; index < payload.length; index += 1) {
+    const code = payload.charCodeAt(index);
+    left = Math.imul(left ^ code, 0x01000193) >>> 0;
+    right = Math.imul(right ^ code, 0x85ebca6b) >>> 0;
+  }
+  return left.toString(16).padStart(8, "0") + right.toString(16).padStart(8, "0");
+}
+
+export function portraitRowBinding(identity: PortraitRowIdentity): string {
+  const payload = [
+    String(identity.sourceRow),
+    identity.employeeCode,
+    identity.displayName,
+    identity.firstWorkDate,
+    identity.projectId ?? "-",
+    identity.recruiterId ?? "-",
+    identity.laborType,
+    identity.nationalId,
+    identity.dateOfBirth,
+    identity.phone,
+  ].join("\u001f");
+  return identity.sourceRow + "#" + syncBindingHash(payload);
+}
+
+export type PortraitStageBindingSlot = {
+  binding: string;
+  status: "staging" | "staged" | "error";
+  stageId: string | null;
+};
+
+/**
+ * Chi nhung dong CO binding khop CHINH XAC voi noi dung hien tai moi duoc mang `portrait_stage_id`.
+ * Dong bi sua/thay/sap xep lai => binding lech => stage cu khong bao gio duoc gui cho ho so khac.
+ */
+export function selectBindablePortraitStages(input: {
+  rowBindings: ReadonlyMap<number, string>;
+  slots: ReadonlyMap<number, PortraitStageBindingSlot>;
+}): Map<number, string> {
+  const bindable = new Map<number, string>();
+  for (const [sourceRow, slot] of input.slots) {
+    if (slot.status !== "staged" || slot.stageId === null) continue;
+    if (input.rowBindings.get(sourceRow) !== slot.binding) continue;
+    bindable.set(sourceRow, slot.stageId);
+  }
+  return bindable;
+}
+
+/** Stage da tao nhung binding khong con khop => phai huy/don (khong de mo coi). */
+export function selectStalePortraitStages(input: {
+  rowBindings: ReadonlyMap<number, string>;
+  slots: ReadonlyMap<number, PortraitStageBindingSlot>;
+}): { sourceRow: number; stageId: string }[] {
+  const stale: { sourceRow: number; stageId: string }[] = [];
+  for (const [sourceRow, slot] of input.slots) {
+    if (slot.status !== "staged" || slot.stageId === null) continue;
+    if (input.rowBindings.get(sourceRow) === slot.binding) continue;
+    stale.push({ sourceRow, stageId: slot.stageId });
+  }
+  return stale;
+}
+
+/**
+ * Ket qua stage tra ve MUON (sau khi dong doi hoac hop thoai da dong) khong duoc dung:
+ * epoch doi (dong/sua du lieu) hoac binding hien tai khong con khop => vo hieu hoa + don stage.
+ */
+export function isStalePortraitStageRequest(input: {
+  requestEpoch: number;
+  currentEpoch: number;
+  requestBinding: string;
+  currentBinding: string | null;
+}): boolean {
+  if (input.requestEpoch !== input.currentEpoch) return true;
+  return input.currentBinding !== input.requestBinding;
+}

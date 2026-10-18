@@ -111,8 +111,38 @@ test("W2S1: dialog gui stage_id theo tung dong va KHONG gui bytes trong payload 
 test("W2S1: dialog huy stage chua gan khi nguoi dung dong hop thoai", () => {
   assert.match(dialog, /cancelWorkerPortraitStage\(\{ stageId: slot\.stageId, fetchImpl: fetch \}\)/);
   assert.match(dialog, /for \(const slot of portraits\.values\(\)\)/);
-  assert.match(dialog, /if \(slot\.status === "staged"\)/);
+  // Dong => don MOI stage da tao nhung chua gan (ke ca stage khong con khop dong nao).
+  assert.match(dialog, /if \(slot\.stageId !== null\) \{/);
   assert.match(dialog, /\}, \[onOpenChange, portraits\]\);/);
+});
+
+test("REGRESSION: stage rang buoc bang BINDING noi dung dong, khong chi sourceRow", () => {
+  assert.match(dialog, /function rowBinding\(row: WorkerProfilePreviewRow\): string/);
+  assert.match(dialog, /portraitRowBinding\(\{/);
+  assert.match(dialog, /nationalId: raw\(row\.row\.worker\.national_id\)/);
+  assert.match(dialog, /displayName: row\.row\.display_name/);
+  assert.match(dialog, /const rowBindings = useMemo/);
+  // Danh sach stage gui len di qua selector binding.
+  assert.match(dialog, /selectBindablePortraitStages\(\{ rowBindings, slots: portraits \}\)/);
+  assert.doesNotMatch(dialog, /if \(slot\.status === "staged"\) map\.set\(sourceRow, slot\.stageId\)/);
+  assert.match(client, /export function selectBindablePortraitStages/);
+  assert.match(client, /if \(input\.rowBindings\.get\(sourceRow\) !== slot\.binding\) continue;/);
+});
+
+test("REGRESSION: ket qua stage ve muon sau edit/close bi vo hieu hoa va stage da tao duoc don", () => {
+  // Epoch moi khi doi du lieu / dong hop thoai.
+  assert.match(dialog, /const stageEpoch = useRef\(0\)/);
+  assert.match(dialog, /stageEpoch\.current \+= 1;/);
+  // Vo hieu hoa ket qua den muon: epoch doi hoac binding khong con khop.
+  assert.match(dialog, /isStalePortraitStageRequest\(\{/);
+  assert.match(dialog, /currentEpoch: stageEpoch\.current/);
+  assert.match(dialog, /currentBinding: rowBindingsRef\.current\.get\(sourceRow\) \?\? null/);
+  assert.match(dialog, /if \(result\.kind === "staged"\) dropStaleStage\(sourceRow, result\.stageId\);/);
+  // Don stage da tao nhung khong con khop dong nao.
+  assert.match(dialog, /selectStalePortraitStages\(\{ rowBindings, slots: portraits \}\)/);
+  assert.match(dialog, /for \(const stale of staleStages\) dropStaleStage\(stale\.sourceRow, stale\.stageId\);/);
+  assert.match(dialog, /void cancelWorkerPortraitStage\(\{ stageId, fetchImpl: fetch \}\)\.then\(\(\) => \{/);
+  assert.match(client, /export function isStalePortraitStageRequest/);
 });
 
 test("W2S1: ket qua khong xac dinh => recovery quyet dinh trang thai UI (khong doan)", () => {

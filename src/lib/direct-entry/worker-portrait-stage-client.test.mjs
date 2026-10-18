@@ -8,11 +8,15 @@ import {
   PORTRAIT_STAGE_ORPHAN_MESSAGE,
   PORTRAIT_STAGE_RECOVER_ENDPOINT,
   cancelWorkerPortraitStage,
+  isStalePortraitStageRequest,
   portraitPromotionState,
+  portraitRowBinding,
   portraitStageErrorMessage,
   projectPortraitStage,
   projectPortraitStageRecovery,
   recoverWorkerPortraitStage,
+  selectBindablePortraitStages,
+  selectStalePortraitStages,
   stageWorkerPortrait,
 } from "./worker-portrait-stage-client.ts";
 import { checkWorkerPortraitFile } from "./worker-detail-projection.ts";
@@ -212,4 +216,111 @@ test("dung chung ham kiem tra tep voi portrait panel (mot nguon duy nhat)", () =
   assert.deepEqual(checkWorkerPortraitFile(portraitFile(1024, "image/jpeg")),
     { ok: true, mimeType: "image/jpeg" });
   assert.deepEqual(checkWorkerPortraitFile(null), { ok: false, code: "DOCUMENT_FILE_REQUIRED" });
+});
+
+/* ------------------------------- rang buoc stage ↔ dong (khong theo vi tri) */
+
+function identity(overrides = {}) {
+  return {
+    sourceRow: 1,
+    employeeCode: "hrp-2026-000001",
+    displayName: "Nguyễn Văn A",
+    firstWorkDate: "2026-01-05",
+    projectId: "p1",
+    recruiterId: "r1",
+    laborType: "FULL_TIME",
+    nationalId: "012345678901",
+    dateOfBirth: "1990-01-01",
+    phone: "0900000000",
+    ...overrides,
+  };
+}
+
+test("portraitRowBinding: doi noi dung hoac doi vi tri deu doi binding", () => {
+  const base = portraitRowBinding(identity());
+  assert.equal(portraitRowBinding(identity()), base, "cung noi dung => cung binding");
+  for (const changed of [
+    { displayName: "Nguyễn Văn B" },
+    { nationalId: "012345678902" },
+    { employeeCode: "hrp-2026-000002" },
+    { projectId: "p2" },
+    { recruiterId: "r2" },
+    { firstWorkDate: "2026-02-01" },
+    { dateOfBirth: "1991-01-01" },
+    { phone: "0911111111" },
+    { sourceRow: 2 },
+  ]) {
+    assert.notEqual(portraitRowBinding(identity(changed)), base,
+      "binding phai doi khi " + JSON.stringify(changed));
+  }
+  // Binding khong chua PII dang doc duoc.
+  for (const secret of ["Nguyễn Văn A", "012345678901", "0900000000"]) {
+    assert.equal(base.includes(secret), false);
+  }
+});
+
+test("REGRESSION: stage A staged cho dong A, doi dong thanh NLD B => batch KHONG chua stage A cho B", () => {
+  const bindingA = portraitRowBinding(identity({ displayName: "Nguyễn Văn A" }));
+  const bindingB = portraitRowBinding(identity({ displayName: "Nguyễn Văn B" }));
+  const slots = new Map([[1, { binding: bindingA, status: "staged", stageId: STAGE_ID }]]);
+
+  // Dong 1 van la A => duoc gui.
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings: new Map([[1, bindingA]]), slots,
+  })], [[1, STAGE_ID]]);
+
+  // Dong 1 bi sua/thay bang B => stage A KHONG duoc gui cho B, va bi coi la cu de don.
+  const rowBindingsB = new Map([[1, bindingB]]);
+  assert.deepEqual([...selectBindablePortraitStages({ rowBindings: rowBindingsB, slots })], []);
+  assert.deepEqual(selectStalePortraitStages({ rowBindings: rowBindingsB, slots }),
+    [{ sourceRow: 1, stageId: STAGE_ID }]);
+
+  // Sap xep lai: noi dung A chuyen sang dong 2 => dong 1 khong con khop => khong gui; stage cu bi don.
+  const reordered = new Map([[2, bindingA]]);
+  assert.deepEqual([...selectBindablePortraitStages({ rowBindings: reordered, slots })], []);
+  assert.deepEqual(selectStalePortraitStages({ rowBindings: reordered, slots }),
+    [{ sourceRow: 1, stageId: STAGE_ID }]);
+
+  // Xoa het du lieu (preview null) => khong con dong nao khop => stage cu bi don.
+  assert.deepEqual(selectStalePortraitStages({ rowBindings: new Map(), slots }),
+    [{ sourceRow: 1, stageId: STAGE_ID }]);
+});
+
+test("selectBindablePortraitStages: chi slot da stage moi duoc gui; staging/error khong gui", () => {
+  const binding = portraitRowBinding(identity());
+  const rowBindings = new Map([[1, binding]]);
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings,
+    slots: new Map([[1, { binding, status: "staging", stageId: null }]]),
+  })], []);
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings,
+    slots: new Map([[1, { binding, status: "error", stageId: null }]]),
+  })], []);
+  // Slot chua co stageId (chua tao xong) khong duoc gui va cung khong co gi de don.
+  assert.deepEqual(selectStalePortraitStages({
+    rowBindings,
+    slots: new Map([[1, { binding: "khac", status: "staging", stageId: null }]]),
+  }), []);
+});
+
+test("REGRESSION: ket qua stage ve muon (dong doi / dialog dong) bi vo hieu hoa", () => {
+  const binding = portraitRowBinding(identity());
+  // Cung epoch + cung binding => con hieu luc.
+  assert.equal(isStalePortraitStageRequest({
+    requestEpoch: 3, currentEpoch: 3, requestBinding: binding, currentBinding: binding,
+  }), false);
+  // Dong du lieu / dialog dong => epoch doi.
+  assert.equal(isStalePortraitStageRequest({
+    requestEpoch: 3, currentEpoch: 4, requestBinding: binding, currentBinding: binding,
+  }), true);
+  // Noi dung dong doi (binding khac) du epoch khong doi.
+  assert.equal(isStalePortraitStageRequest({
+    requestEpoch: 3, currentEpoch: 3, requestBinding: binding,
+    currentBinding: portraitRowBinding(identity({ displayName: "B" })),
+  }), true);
+  // Dong khong con ton tai.
+  assert.equal(isStalePortraitStageRequest({
+    requestEpoch: 3, currentEpoch: 3, requestBinding: binding, currentBinding: null,
+  }), true);
 });
