@@ -10,6 +10,11 @@
   sửa/thay/sắp xếp lại bảng, ảnh cũ có thể bị gửi cho NLĐ khác. Nay stage được **ràng buộc bằng binding nội dung dòng**
   và mọi **kết quả stage về muộn** (sau khi dòng đổi hoặc hộp thoại đóng) đều bị vô hiệu hóa + dọn an toàn.
   **Policy khóa ảnh hồ sơ không thay đổi.**
+- **Sửa tiếp (commit nối tiếp mới nhất):** vòng đời stage chuyển thành **reducer thuần**
+  (`reducePortraitStageLifecycle`) để test được **hành vi**. Hai lỗi được sửa: (a) trước đây ID bị xóa khỏi state
+  **ngay cả khi DELETE thất bại** ⇒ mất ID, không thể dọn lại; (b) đóng hộp thoại xóa sạch state **trước khi** hủy xong
+  ⇒ mở lại có thể tái sử dụng stage đã gửi DELETE. Nay **chỉ xóa ID khi đã hủy được hoặc đã xác định trạng thái cuối**;
+  mọi trường hợp còn lại giữ ID ở trạng thái `stale` để thử dọn lại và **không bao giờ** được gửi vào batch.
 
 ## 0. Kiểm tra trước/sau merge
 
@@ -38,10 +43,15 @@ Client **không** gửi actor/auth subject/app user/capability/scope/team, **kh�
   `stageWorkerPortrait`, `cancelWorkerPortraitStage`, `recoverWorkerPortraitStage` (fetch tiêm vào) + `projectPortraitStage`, `projectPortraitStageRecovery`, `classifyPortraitStageResponse`, `classifyPortraitStageCancelResponse`, `portraitPromotionState`, thông báo lỗi. Dùng lại `checkWorkerPortraitFile` của `worker-detail-projection.ts` (một nguồn duy nhất cho kiểm tra tệp).
   **Ràng buộc vòng đời:** `portraitRowBinding` (binding = `sourceRow` + băm nội dung dòng, không giữ bản sao PII),
   `selectBindablePortraitStages` (chỉ dòng còn khớp binding mới được gửi `portrait_stage_id`),
-  `selectStalePortraitStages` (stage đã tạo nhưng không còn khớp ⇒ phải hủy), `isStalePortraitStageRequest`
-  (epoch đổi hoặc binding lệch ⇒ kết quả về muộn bị vô hiệu hóa).
-- `src/lib/direct-entry/worker-portrait-stage-client.test.mjs` — test thuần (gồm 2 regression vòng đời stage: đổi dòng A→B, kết quả về muộn).
-- `src/components/direct-entry/worker-portrait-staging-ui.test.mjs` — test nối UI ↔ builder (gồm 2 regression: binding nội dung, vô hiệu hóa + dọn stage về muộn).
+  `selectStalePortraitStages` (stage đã tạo nhưng không còn khớp ⇒ phải hủy/dọn),
+  `reducePortraitStageLifecycle` (reducer thuần cho vòng đời stage: `stage-start` / `stage-result` / `invalidate` /
+  `cancel-result`), `INVALIDATED_PORTRAIT_BINDING` (gán khi vô hiệu hóa để stage cũ không bao giờ khớp lại),
+  `EMPTY_PORTRAIT_STAGE_LIFECYCLE`.
+- `src/lib/direct-entry/worker-portrait-stage-client.test.mjs` — test thuần + **test hành vi reducer** (không mất ID khi DELETE lỗi,
+  xác nhận hủy mới xóa ID, đóng hộp thoại giữ ID nhưng vô hiệu hóa binding, kết quả về muộn).
+  (`isStalePortraitStageRequest` của bản trước đã được **thay bằng reducer** — reducer còn giữ được ID để dọn.)
+- `src/components/direct-entry/worker-portrait-staging-ui.test.mjs` — test nối UI ↔ builder + **test hành vi ở mức payload thật**
+  (dùng `reducePortraitStageLifecycle` → `selectBindablePortraitStages` → `buildFullProfileRequestBody`, không chỉ so chuỗi source).
 
 ### Sửa
 
@@ -59,9 +69,16 @@ Client **không** gửi actor/auth subject/app user/capability/scope/team, **kh�
   dự án, người tuyển, loại hình LĐ, CCCD, ngày sinh, điện thoại). Khi gửi batch, **chỉ** dòng còn khớp binding mới mang
   `portrait_stage_id`; dòng bị sửa/thay bằng NLĐ khác hoặc bị sắp xếp lại ⇒ binding lệch ⇒ ảnh cũ **không** được gửi
   cho hồ sơ mới và bị hủy ngay (không để mồ côi).
-- **Request đang chạy trả về muộn:** mỗi lần đổi dữ liệu / đóng hộp thoại là một epoch mới; kết quả stage về sau đó
-  (epoch đổi hoặc binding lệch) bị **vô hiệu hóa**: không ghi vào state, không hiện thông báo, và nếu server **đã tạo**
-  stage thì gọi DELETE để dọn. Đóng hộp thoại hủy **mọi** stage đã tạo nhưng chưa gắn (kể cả stage không còn khớp dòng nào).
+- **Request đang chạy trả về muộn:** mỗi lần đổi dữ liệu / đóng hộp thoại, reducer `invalidate` **vô hiệu hóa binding
+  ngay** (chuyển mọi stage đã tạo sang `stale`, **giữ nguyên `stage_id`**) và tăng epoch. Kết quả stage về sau đó
+  (dòng đã đổi hoặc hộp thoại đã đóng) **không** ghi vào slot hiện tại; nếu server **đã tạo** stage thì stage đó được
+  ghi nhận là `stale` để dọn — **không làm mất ID**.
+- **Xóa ID chỉ khi chắc chắn:** `cancel-result` chỉ xóa slot khi hủy **đã xác nhận** (`204` ⇒ `cancelled`) hoặc đã xác định
+  **trạng thái cuối** (`404` không thuộc phạm vi actor, `409` đang CLAIMED/ATTACHED). Lỗi mạng/5xx ⇒ giữ ID ở `stale`,
+  hiện nút **"Thử dọn ảnh cũ chưa hủy được"** (`profile-portrait-cleanup-retry`) và nút "Dọn lại ảnh cũ" theo từng dòng.
+- **Đóng rồi mở lại:** state không bị xóa trước khi hủy xong; stage còn lại ở `stale` với binding
+  `INVALIDATED_PORTRAIT_BINDING` nên **dù dán lại đúng dữ liệu cũ cũng không tái sử dụng** stage đã gửi DELETE
+  (payload batch không có `portrait_stage_id` cho stage đó).
 - **Hủy stage:** nút Hủy ảnh khi stage còn `STAGED`; stage `CLAIMED`/`ATTACHED` bị server từ chối (409) ⇒ UI **không** báo đã hủy mà trả về trạng thái thật + thông báo.
 - **Lỗi/retry:** tệp rỗng/sai MIME/vượt dung lượng bị chặn **tại client trước khi gọi mạng**; lỗi mạng/5xx/2xx không đọc được ⇒ "thử lại", không báo thành công.
 - **Recovery sau kết quả không xác định:** gọi `/recover` cho từng stage rồi suy trạng thái:
@@ -76,7 +93,7 @@ Client **không** gửi actor/auth subject/app user/capability/scope/team, **kh�
 
 | Gate | Kết quả |
 | --- | --- |
-| `pnpm test:w2-s1-worker-portrait-ui` (4 file) | **59/59 PASS** |
+| `pnpm test:w2-s1-worker-portrait-ui` (4 file) | **66/66 PASS** |
 | `pnpm test:w2-s1-backend` (backend PR #60, không đổi) | 76 PASS / 0 fail |
 | `pnpm test:p1.6-i04c3-r3b` (`full-profile-batch`) | 25 PASS / 0 fail |
 | `pnpm test:p1.6-i04c3-r4-s02` (`banking-metadata`, đọc dialog) | 14 PASS / 0 fail |
@@ -97,17 +114,26 @@ Hai regression bắt buộc cho lỗi vòng đời:
 - **A→B:** stage ảnh A gắn cho dòng 1; sau khi đổi nội dung dòng 1 thành NLĐ B, `selectBindablePortraitStages` trả **rỗng**
   (batch **không** chứa stage A cho B) và `selectStalePortraitStages` trả đúng stage A để **hủy/dọn**. Bao gồm cả trường hợp
   **sắp xếp lại** (nội dung A chuyển sang dòng khác) và xóa hết dữ liệu.
-- **Về muộn:** `isStalePortraitStageRequest` trả `true` khi epoch đổi (sửa dữ liệu / đóng hộp thoại) **hoặc** binding lệch
-  (nội dung dòng đổi) **hoặc** dòng không còn tồn tại; dialog khi đó **không** ghi state, **không** hiện thông báo và gọi
-  DELETE để dọn stage server đã tạo (`dropStaleStage`).
+- **Về muộn:** kết quả stage về sau khi dòng đổi / hộp thoại đóng **không** ghi vào slot hiện tại; nếu server đã tạo stage
+  thì nó được giữ ở `stale` để dọn — **không làm mất ID**.
 - Binding thay đổi khi bất kỳ trường định danh nào đổi (họ tên, CCCD, mã NLĐ, dự án, người tuyển, ngày bắt đầu, ngày sinh,
   điện thoại) **hoặc** khi vị trí dòng đổi; binding không chứa PII đọc được.
+
+**Test HÀNH VI (không chỉ chuỗi source/helper rời):** các test dựng chuỗi action thật trên reducer rồi cho state đi qua
+`selectBindablePortraitStages` → `buildFullProfileRequestBody` (builder payload thật) và khẳng định trên **payload gửi lên**:
+
+1. đối chứng — stage còn khớp dòng thì payload có `portrait_stage_id`;
+2. A→B — đổi dòng thì payload **không** có `portrait_stage_id` của stage A;
+3. **DELETE lỗi mạng/5xx** — ID **không** mất, stage **không** vào payload, bấm dọn lại và hủy xác nhận thì mới sạch;
+4. **đóng–mở lại** — DELETE thành công ⇒ sạch; DELETE lỗi ⇒ còn ID nhưng **dán lại đúng dữ liệu cũ vẫn không** đưa stage đó vào payload;
+5. kết quả về muộn (cả `staged` lẫn lỗi) không gắn lại vào dòng/dữ liệu khác.
 
 ## 5. Blocker còn lại
 
 - **B1 — Không có TTL/reaper/cleanup tự động cho stage mồ côi (phía server).** Contract ghi rõ. UI đã dọn trong các nhánh
-  kiểm soát được: hủy khi đóng hộp thoại, hủy khi dòng đổi (binding lệch), hủy khi kết quả stage về muộn sau khi dòng đổi/đóng.
-  Trường hợp còn hở: người dùng **tắt tab/trình duyệt** đang khi request stage chạy — không có cơ hội gọi DELETE.
+  kiểm soát được: hủy khi đóng hộp thoại, hủy khi dòng đổi (binding lệch), hủy khi kết quả stage về muộn, và nút
+  "Thử dọn ảnh cũ chưa hủy được" khi DELETE lỗi (ID được giữ lại để thử tiếp). Trường hợp còn hở: người dùng
+  **tắt tab/trình duyệt** trong khi request stage đang chạy — không có cơ hội gọi DELETE.
 - **B2 — Tạo stage không có idempotency key (phía backend).** Nếu request create lỗi mạng **sau khi** server đã ghi, client
   không biết `stage_id` để hủy ⇒ có thể sinh stage mồ côi (liên quan B1). UI báo "chưa xác định" và cho thử lại (tạo stage mới).
   T0/T1B nên chốt có cần key cho bước create hay không.

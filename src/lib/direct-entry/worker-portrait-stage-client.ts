@@ -315,7 +315,7 @@ export function portraitRowBinding(identity: PortraitRowIdentity): string {
 
 export type PortraitStageBindingSlot = {
   binding: string;
-  status: "staging" | "staged" | "error";
+  status: "staging" | "staged" | "error" | "stale";
   stageId: string | null;
 };
 
@@ -336,30 +336,129 @@ export function selectBindablePortraitStages(input: {
   return bindable;
 }
 
-/** Stage da tao nhung binding khong con khop => phai huy/don (khong de mo coi). */
+/**
+ * Stage DA TAO (co `stageId`) nhung binding khong con khop dong nao => phai huy/don.
+ * Bao gom ca slot da bi vo hieu hoa (`stale`) de con thu don lai; KHONG bao gom slot dang chay
+ * (chua co id) va KHONG bao gom stage dang con khop (dang dung de gui).
+ */
 export function selectStalePortraitStages(input: {
   rowBindings: ReadonlyMap<number, string>;
   slots: ReadonlyMap<number, PortraitStageBindingSlot>;
 }): { sourceRow: number; stageId: string }[] {
   const stale: { sourceRow: number; stageId: string }[] = [];
   for (const [sourceRow, slot] of input.slots) {
-    if (slot.status !== "staged" || slot.stageId === null) continue;
+    if (slot.stageId === null) continue;
     if (input.rowBindings.get(sourceRow) === slot.binding) continue;
     stale.push({ sourceRow, stageId: slot.stageId });
   }
   return stale;
 }
 
+/* ---------------------------------------------- vòng đời stage (reducer thuần) */
+
 /**
- * Ket qua stage tra ve MUON (sau khi dong doi hoac hop thoai da dong) khong duoc dung:
- * epoch doi (dong/sua du lieu) hoac binding hien tai khong con khop => vo hieu hoa + don stage.
+ * Binding "da vo hieu hoa": gan vao moi slot bi vo hieu hoa (doi du lieu / dong hop thoai) nen
+ * stage do KHONG BAO GIO khop lai voi bat ky dong nao (ke ca khi nguoi dung dan lai dung du lieu cu).
  */
-export function isStalePortraitStageRequest(input: {
-  requestEpoch: number;
-  currentEpoch: number;
-  requestBinding: string;
-  currentBinding: string | null;
-}): boolean {
-  if (input.requestEpoch !== input.currentEpoch) return true;
-  return input.currentBinding !== input.requestBinding;
+export const INVALIDATED_PORTRAIT_BINDING = "__invalidated__";
+
+export type PortraitStageSlot =
+  | { status: "staging"; binding: string; stageId: null }
+  | { status: "staged"; binding: string; stageId: string; sizeBytes: number }
+  | { status: "error"; binding: string; stageId: null; code: string }
+  | { status: "stale"; binding: typeof INVALIDATED_PORTRAIT_BINDING; stageId: string; sizeBytes: number };
+
+export type PortraitStageLifecycle = {
+  epoch: number;
+  slots: ReadonlyMap<number, PortraitStageSlot>;
+};
+
+export const EMPTY_PORTRAIT_STAGE_LIFECYCLE: PortraitStageLifecycle = Object.freeze({
+  epoch: 0,
+  slots: new Map<number, PortraitStageSlot>(),
+});
+
+export type PortraitStageAction =
+  | { kind: "stage-start"; sourceRow: number; binding: string }
+  | {
+      kind: "stage-result";
+      sourceRow: number;
+      binding: string;
+      result: { kind: "staged"; stageId: string; sizeBytes: number } | { kind: "error"; code: string };
+    }
+  | { kind: "invalidate" }
+  | { kind: "cancel-result"; sourceRow: number; stageId: string; confirmed: boolean };
+
+export function reducePortraitStageLifecycle(
+  state: PortraitStageLifecycle,
+  action: PortraitStageAction,
+): PortraitStageLifecycle {
+  const slots = new Map(state.slots);
+  if (action.kind === "stage-start") {
+    slots.set(action.sourceRow, { status: "staging", binding: action.binding, stageId: null });
+    return { epoch: state.epoch, slots };
+  }
+  if (action.kind === "invalidate") {
+    // Doi du lieu / dong hop thoai: vo hieu hoa binding NGAY. Slot da co stageId chuyen sang
+    // "stale" va VAN GIU ID de don; slot dang chay bi bo khoi state (ket qua ve muon se duoc
+    // ghi nhan lai thanh "stale" de don, xem nhanh stage-result).
+    for (const [sourceRow, slot] of state.slots) {
+      if (slot.stageId === null) {
+        slots.delete(sourceRow);
+        continue;
+      }
+      slots.set(sourceRow, {
+        status: "stale",
+        binding: INVALIDATED_PORTRAIT_BINDING,
+        stageId: slot.stageId,
+        sizeBytes: slot.status === "staged" ? slot.sizeBytes : 0,
+      });
+    }
+    return { epoch: state.epoch + 1, slots };
+  }
+  if (action.kind === "cancel-result") {
+    const current = slots.get(action.sourceRow);
+    if (current === undefined || current.stageId !== action.stageId) return state;
+    if (action.confirmed) {
+      // Chi xoa ID khoi state khi DA xac nhan huy hoac da xac dinh trang thai cuoi (khong huy duoc).
+      slots.delete(action.sourceRow);
+      return { epoch: state.epoch, slots };
+    }
+    // Loi retry/khong xac dinh: GIU ID, giu trang thai de thu don lai, khong bao gio bindable.
+    slots.set(action.sourceRow, {
+      status: "stale",
+      binding: INVALIDATED_PORTRAIT_BINDING,
+      stageId: action.stageId,
+      sizeBytes: current.status === "staged" || current.status === "stale" ? current.sizeBytes : 0,
+    });
+    return { epoch: state.epoch, slots };
+  }
+  // stage-result
+  const current = slots.get(action.sourceRow);
+  const stillCurrent = current !== undefined && current.status === "staging" &&
+    current.binding === action.binding;
+  if (!stillCurrent) {
+    if (action.result.kind === "error") return state;
+    // Dong da doi / hop thoai da dong nhung server DA tao stage => giu ID de don (khong mat).
+    slots.set(action.sourceRow, {
+      status: "stale",
+      binding: INVALIDATED_PORTRAIT_BINDING,
+      stageId: action.result.stageId,
+      sizeBytes: action.result.sizeBytes,
+    });
+    return { epoch: state.epoch, slots };
+  }
+  if (action.result.kind === "error") {
+    slots.set(action.sourceRow, {
+      status: "error", binding: action.binding, stageId: null, code: action.result.code,
+    });
+    return { epoch: state.epoch, slots };
+  }
+  slots.set(action.sourceRow, {
+    status: "staged",
+    binding: action.binding,
+    stageId: action.result.stageId,
+    sizeBytes: action.result.sizeBytes,
+  });
+  return { epoch: state.epoch, slots };
 }

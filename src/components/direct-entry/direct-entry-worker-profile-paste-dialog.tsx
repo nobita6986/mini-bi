@@ -32,16 +32,21 @@ import {
   type FullProfileSaved,
 } from "@/lib/direct-entry/full-profile-batch";
 import {
+  EMPTY_PORTRAIT_STAGE_LIFECYCLE,
   PORTRAIT_PROMOTION_PENDING_MESSAGE,
   PORTRAIT_PROMOTION_UNSAVED_MESSAGE,
   PORTRAIT_STAGE_ORPHAN_MESSAGE,
   type PortraitPromotionState,
+  type PortraitStageAction,
+  type PortraitStageCancelResult,
+  type PortraitStageLifecycle,
+  type PortraitStageSlot as PortraitRowSlot,
   cancelWorkerPortraitStage,
-  isStalePortraitStageRequest,
   portraitPromotionState,
   portraitRowBinding,
   portraitStageErrorMessage,
   recoverWorkerPortraitStage,
+  reducePortraitStageLifecycle,
   selectBindablePortraitStages,
   selectStalePortraitStages,
   stageWorkerPortrait,
@@ -95,26 +100,26 @@ export type WorkerProfilePastePanelProps = {
   portraits: ReadonlyMap<number, PortraitRowSlot>;
   /** Thong bao rieng cho viec stage/huy anh (khong lan voi thong bao batch). */
   portraitMessage: string;
+  /** Con stage da tao nhung chua don duoc (DELETE loi) => cho phep thu don lai. */
+  hasStalePortrait: boolean;
   closeSlot?: React.ReactNode;
   onTextChange(value: string): void;
   onToggleColumnsHelp(): void;
   onToggleRow(sourceRow: number): void;
   onStagePortrait(sourceRow: number, file: File): void;
   onCancelPortrait(sourceRow: number, stageId: string): void;
+  onRetryPortraitCleanup(): void;
   onSubmit(): void;
 };
 
 /**
- * W2S1: trang thai anh ho so tam cua MOT dong. Chi nam trong memory trang:
- * khong persist, khong chua bytes/PII, chi giu ma stage do server cap.
+ * W2S1: trang thai anh ho so tam cua MOT dong do reducer thuan quan ly
+ * (`reducePortraitStageLifecycle`). Chi nam trong memory trang: khong persist, khong chua
+ * bytes/PII, chi giu ma stage do server cap.
  *
  * `binding` rang buoc stage voi NOI DUNG dong tai thoi diem gui anh, khong chi voi vi tri
  * `sourceRow` (vi tri co the tro sang NLD khac sau khi sua/thay/sap xep lai bang).
  */
-export type PortraitRowSlot =
-  | { status: "staging"; binding: string; stageId: null }
-  | { status: "staged"; binding: string; stageId: string; sizeBytes: number }
-  | { status: "error"; binding: string; stageId: null; code: string };
 
 /** Chu ky noi dung dong (an danh) de rang buoc stage voi dung NLD. */
 function rowBinding(row: WorkerProfilePreviewRow): string {
@@ -184,6 +189,9 @@ function PortraitSlot({
         {slot?.status === "staged"
           ? "Ảnh đang ở bản nháp; máy chủ sẽ gắn vào hồ sơ khi lưu thành công." : null}
         {slot?.status === "error" ? portraitStageErrorMessage(slot.code) : null}
+        {slot?.status === "stale"
+          ? "Ảnh cũ đã bị vô hiệu hóa vì dòng dữ liệu đã thay đổi và chưa hủy được trên máy chủ. " +
+            "Ảnh này sẽ không được gắn vào hồ sơ nào; hãy thử dọn lại." : null}
       </p>
       {slot?.status === "staged" ? (
         <button
@@ -194,6 +202,17 @@ function PortraitSlot({
           onClick={() => onCancel(sourceRow, slot.stageId)}
         >
           Hủy ảnh
+        </button>
+      ) : null}
+      {slot?.status === "stale" ? (
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          disabled={busy}
+          data-testid={"profile-portrait-cleanup-" + sourceRow}
+          onClick={() => onCancel(sourceRow, slot.stageId)}
+        >
+          Dọn lại ảnh cũ
         </button>
       ) : null}
     </div>
@@ -319,12 +338,14 @@ export function WorkerProfilePastePanel({
   savedEntryCount,
   portraits,
   portraitMessage,
+  hasStalePortrait,
   closeSlot,
   onTextChange,
   onToggleColumnsHelp,
   onToggleRow,
   onStagePortrait,
   onCancelPortrait,
+  onRetryPortraitCleanup,
   onSubmit,
 }: WorkerProfilePastePanelProps) {
   const errorCount = preview?.errorCount ?? 0;
@@ -472,6 +493,17 @@ export function WorkerProfilePastePanel({
         </p>
       )}
 
+      {hasStalePortrait && (
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          data-testid="profile-portrait-cleanup-retry"
+          onClick={onRetryPortraitCleanup}
+        >
+          Thử dọn ảnh cũ chưa hủy được
+        </button>
+      )}
+
       {submitMessage !== "" && (
         <p
           className={submitMessageKind === "error" || submitMessageKind === "conflict"
@@ -579,11 +611,15 @@ export function DirectEntryWorkerProfilePasteDialog({
   const [submitMessageKind, setSubmitMessageKind] =
     useState<"idle" | "error" | "conflict" | "saved">("idle");
   const [savedEntryCount, setSavedEntryCount] = useState(0);
-  /** W2S1: anh ho so tam theo `sourceRow`; giu stage_id toi khi luu xong hoac bi huy. */
-  const [portraits, setPortraits] = useState<ReadonlyMap<number, PortraitRowSlot>>(new Map());
+  /** W2S1: anh ho so tam do reducer thuan quan ly; giu stage_id toi khi huy duoc/xac dinh cuoi. */
+  const [stageState, setStageState] = useState<PortraitStageLifecycle>(EMPTY_PORTRAIT_STAGE_LIFECYCLE);
   const [portraitMessage, setPortraitMessage] = useState("");
-  /** Moi lan doi du lieu/dong hop thoai la mot epoch moi: ket qua stage tra ve muon bi vo hieu hoa. */
-  const stageEpoch = useRef(0);
+  /** Tang len khi nguoi dung bam "Thu don anh cu" (thu DELETE lai cho stage chua don duoc). */
+  const [cleanupNonce, setCleanupNonce] = useState(0);
+  const portraits = stageState.slots;
+  const dispatchStage = useCallback((action: PortraitStageAction) => {
+    setStageState((current) => reducePortraitStageLifecycle(current, action));
+  }, []);
   // Key chong gui trung: chi nam trong memory cua trang, khong persist, khong chua PII.
   const intentKey = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const inFlight = useRef(false);
@@ -607,8 +643,6 @@ export function DirectEntryWorkerProfilePasteDialog({
     for (const row of preview?.rows ?? []) map.set(row.sourceRow, rowBinding(row));
     return map;
   }, [preview]);
-  const rowBindingsRef = useRef(rowBindings);
-  useEffect(() => { rowBindingsRef.current = rowBindings; }, [rowBindings]);
 
   /**
    * CHI nhung dong con khop CHINH XAC binding moi duoc mang `portrait_stage_id`.
@@ -624,55 +658,60 @@ export function DirectEntryWorkerProfilePasteDialog({
     [portraits, rowBindings],
   );
 
-  const dropStaleStage = useCallback((sourceRow: number, stageId: string) => {
-    // Stage da tao nhung dong da doi => don ngay, khong de mo coi va khong the gan lai.
-    void cancelWorkerPortraitStage({ stageId, fetchImpl: fetch }).then(() => {
-      setPortraits((current) => {
-        const slot = current.get(sourceRow);
-        if (slot === undefined || slot.stageId !== stageId) return current;
-        const next = new Map(current);
-        next.delete(sourceRow);
-        return next;
-      });
+  /** Huy/don MOT stage; tra ve ket qua that de caller quyet dinh thong bao. */
+  const cancelPortraitStage = useCallback(async (
+    sourceRow: number,
+    stageId: string,
+  ): Promise<PortraitStageCancelResult> => {
+    const result = await cancelWorkerPortraitStage({ stageId, fetchImpl: fetch });
+    // CHI xoa ID khoi state khi da huy duoc hoac da xac dinh trang thai cuoi (404: khong thuoc
+    // pham vi cua actor, 409: dang CLAIMED/ATTACHED). Loi retry/khong xac dinh => reducer giu ID
+    // o trang thai "stale" de thu don lai; stage do khong bao gio duoc gui vao batch.
+    dispatchStage({
+      kind: "cancel-result",
+      sourceRow,
+      stageId,
+      confirmed: result.kind === "cancelled" || result.kind === "not-cancellable",
     });
-  }, []);
+    return result;
+  }, [dispatchStage]);
 
+  // Don moi stage da tao nhung khong con khop dong nao (ke ca slot "stale" chua don duoc).
   useEffect(() => {
-    for (const stale of staleStages) dropStaleStage(stale.sourceRow, stale.stageId);
-  }, [dropStaleStage, staleStages]);
+    let active = true;
+    void (async () => {
+      for (const stale of staleStages) {
+        if (!active) return;
+        const result = await cancelPortraitStage(stale.sourceRow, stale.stageId);
+        if (!active) return;
+        if (result.kind === "retry" || result.kind === "rejected") {
+          setPortraitMessage(portraitStageErrorMessage(result.code));
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [cancelPortraitStage, cleanupNonce, staleStages]);
 
   /** Gui MOT tep len ban nhap (stage), rang buoc voi noi dung dong tai thoi diem gui. */
   const stagePortrait = useCallback((sourceRow: number, file: File) => {
-    const binding = rowBindingsRef.current.get(sourceRow);
+    const binding = rowBindings.get(sourceRow);
     if (binding === undefined) return;
-    const requestEpoch = stageEpoch.current;
     setPortraitMessage("");
-    setPortraits((current) => new Map(current).set(sourceRow, {
-      status: "staging", binding, stageId: null,
-    }));
+    dispatchStage({ kind: "stage-start", sourceRow, binding });
     void stageWorkerPortrait({ file, fetchImpl: fetch }).then((result) => {
-      // Ket qua ve muon sau khi dong doi / hop thoai dong => vo hieu hoa va don stage da tao.
-      if (isStalePortraitStageRequest({
-        requestEpoch,
-        currentEpoch: stageEpoch.current,
-        requestBinding: binding,
-        currentBinding: rowBindingsRef.current.get(sourceRow) ?? null,
-      })) {
-        if (result.kind === "staged") dropStaleStage(sourceRow, result.stageId);
-        return;
-      }
-      if (result.kind === "staged") {
-        setPortraits((current) => new Map(current).set(sourceRow, {
-          status: "staged", binding, stageId: result.stageId, sizeBytes: result.sizeBytes,
-        }));
-        return;
-      }
-      setPortraits((current) => new Map(current).set(sourceRow, {
-        status: "error", binding, stageId: null, code: result.code,
-      }));
-      setPortraitMessage(portraitStageErrorMessage(result.code));
+      // Reducer quyet dinh: neu dong da doi / hop thoai da dong thi ket qua bi vo hieu hoa, va
+      // stage server DA tao duoc giu lai (stale) de don thay vi lam mat ID.
+      dispatchStage({
+        kind: "stage-result",
+        sourceRow,
+        binding,
+        result: result.kind === "staged"
+          ? { kind: "staged", stageId: result.stageId, sizeBytes: result.sizeBytes }
+          : { kind: "error", code: result.code },
+      });
+      if (result.kind !== "staged") setPortraitMessage(portraitStageErrorMessage(result.code));
     });
-  }, [dropStaleStage]);
+  }, [dispatchStage, rowBindings]);
 
   const submitBlockers = useMemo(
     () => fullProfileSubmitBlockers({
@@ -681,29 +720,15 @@ export function DirectEntryWorkerProfilePasteDialog({
     [capabilities, preview, stagedStageIds, submitting],
   );
 
-  /** Huy stage chua gan. Stage CLAIMED/ATTACHED khong huy duoc => tra ve trang thai that. */
+  /** Nut Huy anh / Don lai anh cu trong tung dong. */
   const cancelPortrait = useCallback((sourceRow: number, stageId: string) => {
     setPortraitMessage("");
-    void cancelWorkerPortraitStage({ stageId, fetchImpl: fetch }).then((result) => {
-      if (result.kind === "cancelled") {
-        setPortraits((current) => {
-          const next = new Map(current);
-          next.delete(sourceRow);
-          return next;
-        });
-        setPortraitMessage(PORTRAIT_STAGE_ORPHAN_MESSAGE);
-        return;
-      }
-      setPortraits((current) => {
-        const previous = current.get(sourceRow);
-        const sizeBytes = previous?.status === "staged" ? previous.sizeBytes : 0;
-        const binding = previous?.binding ?? rowBindingsRef.current.get(sourceRow);
-        if (binding === undefined) return current;
-        return new Map(current).set(sourceRow, { status: "staged", binding, stageId, sizeBytes });
-      });
-      setPortraitMessage(portraitStageErrorMessage(result.code));
+    void cancelPortraitStage(sourceRow, stageId).then((result) => {
+      setPortraitMessage(result.kind === "cancelled"
+        ? PORTRAIT_STAGE_ORPHAN_MESSAGE
+        : portraitStageErrorMessage(result.code));
     });
-  }, []);
+  }, [cancelPortraitStage]);
 
   /**
    * Hoi DB trang thai THAT cua tung stage sau khi ket qua lan luu khong xac dinh, roi suy ra
@@ -722,11 +747,8 @@ export function DirectEntryWorkerProfilePasteDialog({
       }
       const state = portraitPromotionState(recovered.recovery);
       if (state === "cancelled") {
-        setPortraits((current) => {
-          const next = new Map(current);
-          next.delete(sourceRow);
-          return next;
-        });
+        // Trang thai cuoi (da huy) => duoc phep xoa ID khoi state.
+        dispatchStage({ kind: "cancel-result", sourceRow, stageId, confirmed: true });
       }
       if (worst === null || rank[state] > rank[worst]) worst = state;
     }
@@ -736,7 +758,7 @@ export function DirectEntryWorkerProfilePasteDialog({
       setPortraitMessage(PORTRAIT_PROMOTION_UNSAVED_MESSAGE);
     }
     return worst;
-  }, [stagedStageIds]);
+  }, [dispatchStage, stagedStageIds]);
 
   const submit = useCallback(async () => {
     // Chan double submit: busy flag + ref (khong tin vao re-render).
@@ -773,8 +795,10 @@ export function DirectEntryWorkerProfilePasteDialog({
       if (result.kind === "saved") {
         // Chi ket thuc intent khi server da xac nhan bang projection hop le.
         intentKey.current = clearIntentKey(intentKey.current, intent);
-        // Server da claim + gan anh (ATTACHED); khong con stage tam nao de don.
-        setPortraits(new Map());
+        // Server da claim + gan anh (ATTACHED): trang thai cuoi => duoc phep bo state stage tam.
+        for (const [sourceRow, stageId] of stagedStageIds) {
+          dispatchStage({ kind: "cancel-result", sourceRow, stageId, confirmed: true });
+        }
         setPortraitMessage("");
         setSavedEntryCount(result.entryIds.length);
         setText("");
@@ -810,20 +834,15 @@ export function DirectEntryWorkerProfilePasteDialog({
       inFlight.current = false;
       setSubmitting(false);
     }
-  }, [capabilities, onConflict, onSaved, preview, reconcilePortraits, stagedStageIds, submitting]);
+  }, [capabilities, dispatchStage, onConflict, onSaved, preview, reconcilePortraits, stagedStageIds, submitting]);
 
   const handleOpenChange = useCallback((next: boolean) => {
     if (!next) {
-      // W2S1: nguoi dung huy nhap lieu => vo hieu hoa moi request dang chay va goi DELETE cho
-      // MOI stage da tao nhung chua gan (ke ca stage khong con khop dong nao).
-      // Stage dang CLAIMED/ATTACHED bi tu choi (409) va duoc server xu ly theo idempotency.
-      stageEpoch.current += 1;
-      for (const slot of portraits.values()) {
-        if (slot.stageId !== null) {
-          void cancelWorkerPortraitStage({ stageId: slot.stageId, fetchImpl: fetch });
-        }
-      }
-      setPortraits(new Map());
+      // W2S1: dong => vo hieu hoa binding + state cu NGAY (reducer chuyen moi stage da tao sang
+      // "stale" nhung GIU NGUYEN ID) roi de effect thu don bang DELETE. Khong xoa ID truoc khi
+      // huy xong: stage chua don duoc con lai dang "stale", co the thu lai, va khong bao gio duoc
+      // gui vao batch (mo lai dialog cung khong tai su dung stage da gui DELETE).
+      dispatchStage({ kind: "invalidate" });
       setPortraitMessage("");
       setText("");
       setColumnsHelpOpen(false);
@@ -835,18 +854,19 @@ export function DirectEntryWorkerProfilePasteDialog({
       inFlight.current = false;
     }
     onOpenChange(next);
-  }, [onOpenChange, portraits]);
+  }, [dispatchStage, onOpenChange]);
 
   const handleTextChange = useCallback((value: string) => {
     setText(value);
-    // Doi du lieu => epoch moi: moi ket qua stage dang chay tro thanh cu va bi vo hieu hoa.
-    stageEpoch.current += 1;
+    // Doi du lieu => vo hieu hoa binding cu ngay: moi ket qua stage dang chay tro thanh cu va
+    // khong bao gio duoc gan vao dong nao nua (stage da tao duoc giu lai de don).
+    dispatchStage({ kind: "invalidate" });
     // Doi du lieu => ket thuc intent cu; key cu khong bao gio duoc dung lai cho payload khac.
     intentKey.current = EMPTY_INTENT_KEY;
     setSubmitMessage("");
     setSubmitMessageKind("idle");
     setSavedEntryCount(0);
-  }, []);
+  }, [dispatchStage]);
 
   const handleToggleRow = useCallback((sourceRow: number) => {
     setExpandedRows((current) => current.includes(sourceRow)
@@ -886,6 +906,7 @@ export function DirectEntryWorkerProfilePasteDialog({
             savedEntryCount={savedEntryCount}
             portraits={portraits}
             portraitMessage={portraitMessage}
+            hasStalePortrait={staleStages.length > 0}
             closeSlot={
               <Dialog.Close asChild>
                 <button type="button" className={styles.secondaryButton}>Đóng</button>
@@ -896,6 +917,7 @@ export function DirectEntryWorkerProfilePasteDialog({
             onToggleRow={handleToggleRow}
             onStagePortrait={stagePortrait}
             onCancelPortrait={cancelPortrait}
+            onRetryPortraitCleanup={() => setCleanupNonce((value) => value + 1)}
             onSubmit={() => void submit()}
           />
         </Dialog.Content>

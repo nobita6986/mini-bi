@@ -2,19 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  EMPTY_PORTRAIT_STAGE_LIFECYCLE,
+  INVALIDATED_PORTRAIT_BINDING,
   PORTRAIT_PROMOTION_PENDING_MESSAGE,
   PORTRAIT_PROMOTION_UNSAVED_MESSAGE,
   PORTRAIT_STAGE_ENDPOINT,
   PORTRAIT_STAGE_ORPHAN_MESSAGE,
   PORTRAIT_STAGE_RECOVER_ENDPOINT,
   cancelWorkerPortraitStage,
-  isStalePortraitStageRequest,
   portraitPromotionState,
   portraitRowBinding,
   portraitStageErrorMessage,
   projectPortraitStage,
   projectPortraitStageRecovery,
   recoverWorkerPortraitStage,
+  reducePortraitStageLifecycle,
   selectBindablePortraitStages,
   selectStalePortraitStages,
   stageWorkerPortrait,
@@ -304,23 +306,105 @@ test("selectBindablePortraitStages: chi slot da stage moi duoc gui; staging/erro
   }), []);
 });
 
-test("REGRESSION: ket qua stage ve muon (dong doi / dialog dong) bi vo hieu hoa", () => {
+/* --------------------- vòng đời stage: hành vi của reducer (không mất ID) */
+
+function runLifecycle(actions) {
+  return actions.reduce(reducePortraitStageLifecycle, EMPTY_PORTRAIT_STAGE_LIFECYCLE);
+}
+
+function stagedActions(sourceRow, binding) {
+  return [
+    { kind: "stage-start", sourceRow, binding },
+    {
+      kind: "stage-result", sourceRow, binding,
+      result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 2048 },
+    },
+  ];
+}
+
+test("HÀNH VI: stage thành công thì bindable; xác nhận hủy mới xóa ID", () => {
   const binding = portraitRowBinding(identity());
-  // Cung epoch + cung binding => con hieu luc.
-  assert.equal(isStalePortraitStageRequest({
-    requestEpoch: 3, currentEpoch: 3, requestBinding: binding, currentBinding: binding,
-  }), false);
-  // Dong du lieu / dialog dong => epoch doi.
-  assert.equal(isStalePortraitStageRequest({
-    requestEpoch: 3, currentEpoch: 4, requestBinding: binding, currentBinding: binding,
-  }), true);
-  // Noi dung dong doi (binding khac) du epoch khong doi.
-  assert.equal(isStalePortraitStageRequest({
-    requestEpoch: 3, currentEpoch: 3, requestBinding: binding,
-    currentBinding: portraitRowBinding(identity({ displayName: "B" })),
-  }), true);
-  // Dong khong con ton tai.
-  assert.equal(isStalePortraitStageRequest({
-    requestEpoch: 3, currentEpoch: 3, requestBinding: binding, currentBinding: null,
-  }), true);
+  let state = runLifecycle(stagedActions(1, binding));
+  assert.equal(state.slots.get(1).status, "staged");
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings: new Map([[1, binding]]), slots: state.slots,
+  })], [[1, STAGE_ID]]);
+
+  state = runLifecycle([
+    ...stagedActions(1, binding),
+    { kind: "cancel-result", sourceRow: 1, stageId: STAGE_ID, confirmed: true },
+  ]);
+  assert.equal(state.slots.size, 0, "da xac nhan huy => duoc xoa ID khoi state");
+});
+
+test("HÀNH VI: DELETE lỗi (retry) KHÔNG xóa ID; giữ state để thử dọn lại", () => {
+  const binding = portraitRowBinding(identity());
+  const state = runLifecycle([
+    ...stagedActions(1, binding),
+    { kind: "invalidate" },
+    { kind: "cancel-result", sourceRow: 1, stageId: STAGE_ID, confirmed: false },
+  ]);
+  const slot = state.slots.get(1);
+  assert.equal(slot.status, "stale");
+  assert.equal(slot.stageId, STAGE_ID, "khong duoc lam mat stage ID khi DELETE loi");
+  assert.equal(slot.binding, INVALIDATED_PORTRAIT_BINDING);
+  // Stage nay khong bao gio duoc gui, ke ca khi dong hien tai trung lai binding cu.
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings: new Map([[1, binding]]), slots: state.slots,
+  })], []);
+  assert.deepEqual(selectStalePortraitStages({
+    rowBindings: new Map([[1, binding]]), slots: state.slots,
+  }), [{ sourceRow: 1, stageId: STAGE_ID }], "van phai con de thu don lai");
+});
+
+test("HÀNH VI: đóng dialog vô hiệu hóa binding ngay nhưng giữ ID khi chưa hủy xong", () => {
+  const binding = portraitRowBinding(identity());
+  const state = runLifecycle([...stagedActions(1, binding), { kind: "invalidate" }]);
+  assert.equal(state.epoch, 1, "moi lan dong/doi du lieu la mot epoch moi");
+  assert.equal(state.slots.get(1).status, "stale");
+  assert.equal(state.slots.get(1).stageId, STAGE_ID);
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings: new Map([[1, binding]]), slots: state.slots,
+  })], [], "mo lai voi dung du lieu cu cung khong tai su dung stage da gui DELETE");
+});
+
+test("HÀNH VI: kết quả stage về muộn sau khi đóng không gắn lại, nhưng vẫn giữ ID để dọn", () => {
+  const binding = portraitRowBinding(identity());
+  const lateOk = runLifecycle([
+    { kind: "stage-start", sourceRow: 3, binding },
+    { kind: "invalidate" },
+    {
+      kind: "stage-result", sourceRow: 3, binding,
+      result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1024 },
+    },
+  ]);
+  assert.equal(lateOk.slots.get(3).status, "stale");
+  assert.equal(lateOk.slots.get(3).stageId, STAGE_ID);
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings: new Map([[3, binding]]), slots: lateOk.slots,
+  })], []);
+
+  const lateError = runLifecycle([
+    { kind: "stage-start", sourceRow: 4, binding: portraitRowBinding(identity({ sourceRow: 4 })) },
+    { kind: "invalidate" },
+    {
+      kind: "stage-result", sourceRow: 4, binding: portraitRowBinding(identity({ sourceRow: 4 })),
+      result: { kind: "error", code: "PORTRAIT_STAGE_NETWORK" },
+    },
+  ]);
+  assert.equal(lateError.slots.has(4), false, "ket qua loi ve muon khong tao slot");
+});
+
+test("HÀNH VI: kết quả về muộn của dòng KHÁC không ghi đè slot hiện tại", () => {
+  const bindingA = portraitRowBinding(identity());
+  const bindingB = portraitRowBinding(identity({ displayName: "B" }));
+  const state = runLifecycle([
+    { kind: "stage-start", sourceRow: 1, binding: bindingB },
+    {
+      kind: "stage-result", sourceRow: 1, binding: bindingA,
+      result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
+    },
+  ]);
+  assert.equal(state.slots.get(1).status, "stale", "ket qua cua noi dung cu khong duoc gan");
+  assert.equal(state.slots.get(1).stageId, STAGE_ID);
 });
