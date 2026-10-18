@@ -105,7 +105,7 @@ test("dong hop le duoc resolve catalog va khong co issue", () => {
   assert.equal(validation.rows[0]?.recruiterLabel, RECRUITER.label);
 });
 
-test("issue duoc gan dung clientRowId va column key, khong lo gia tri PII", () => {
+test("issue duoc gan dung clientRowId va column key; dong hop le van duoc phep luu rieng", () => {
   let model = createSpreadsheetRowModel();
   model = withRow(model, 0, {
     project_id: PROJECT.label,
@@ -132,8 +132,9 @@ test("issue duoc gan dung clientRowId va column key, khong lo gia tri PII", () =
   assert.equal(issues[0]?.message.includes("12345"), false, "message khong echo gia tri");
   assert.equal(validation.firstError?.clientRowId, targetId);
   assert.equal(validation.firstError?.columnKey, "national_id");
-  assert.equal(validation.canSave, false);
-  // Dong hop le khong bi gan loi.
+  assert.equal(validation.validRowCount, 1);
+  assert.equal(validation.canSave, true, "chi submit row hop le; row loi van o lai de sua");
+  // Dong hop le khong bi gan loi va dong sai CCCD van duoc giu lai.
   assert.equal(spreadsheetCellIssuesFor(validation, rowIdAt(model, 0), "national_id").length, 0);
 });
 

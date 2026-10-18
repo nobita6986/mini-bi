@@ -195,7 +195,8 @@ export function buildSpreadsheetValidation(input: {
     validRowCount: preview.validRows,
     errorCount: preview.errorCount,
     warningCount: preview.warningCount,
-    canSave: preview.canProceed && preview.validRows > 0,
+    // W2S1.1: batch save gui cac dong hop le; dong loi o lai staged model de sua.
+    canSave: preview.validRows > 0,
     catalogDates: preview.catalogDates,
     firstError: firstError && firstError.clientRowId !== null && firstError.columnKey !== null
       ? { clientRowId: firstError.clientRowId, columnKey: firstError.columnKey }

@@ -37,6 +37,7 @@ export type DdmmDateInputProps = {
    */
   onDraftChange?: (iso: string | null) => void;
   ariaLabel: string;
+  required?: boolean;
   disabled?: boolean;
   autoFocus?: boolean;
   /** Goi khi editor dong (Enter/blur/Escape) de react-data-grid dong cell editor. */
@@ -45,7 +46,7 @@ export type DdmmDateInputProps = {
 };
 
 export function DdmmDateInput(props: DdmmDateInputProps) {
-  const { value, onCommit, ariaLabel, disabled = false, autoFocus = false, onClose, className } = props;
+  const { value, onCommit, ariaLabel, required = false, disabled = false, autoFocus = false, onClose, className } = props;
   const [draft, setDraft] = useState(() => formatDateToDDMM(value));
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -108,6 +109,7 @@ export function DdmmDateInput(props: DdmmDateInputProps) {
       inputMode="numeric"
       placeholder={DDMM_DATE_PLACEHOLDER}
       aria-label={ariaLabel}
+      required={required}
       disabled={disabled}
       value={draft}
       onChange={(event) => {

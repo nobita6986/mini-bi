@@ -149,6 +149,17 @@
   min-width: 0;
 }
 
+.inputModeSwitch {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.gridSection[data-input-mode="form"] {
+  display: none;
+}
+
 /* P1.7-H06: contextual action bar tren desktop, dat giua header va grid.
    Bar hien thi dong dang chon (hoac nhac chon khi rong) va hai nut:
    "Hồ sơ NLĐ" + "Xóa dòng". */
@@ -360,6 +371,111 @@
 
 .mobileSection {
   display: none;
+}
+
+.mobileSection[data-input-mode="form"] {
+  display: none;
+}
+
+.formFieldset {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  margin: 12px 0 0;
+  border: 0;
+  padding: 0;
+}
+
+.formOptionalDetails {
+  border-top: 1px solid var(--border, #d4d4d8);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.formOptionalDetails summary {
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.formUploadSection {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border, #d4d4d8);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.formUploadSection h4 {
+  margin: 0;
+}
+
+.formRowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.multiEntryForm {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 20px;
+}
+
+.multiEntryFormHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.multiEntryFormHeader h2,
+.multiEntryFormHeader p {
+  margin: 0;
+}
+
+.multiEntryFormHeader p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.multiEntryFormActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--border, #d4d4d8);
+  padding-top: 14px;
+}
+
+.initialUploadLabel {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.initialUploadLabel input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--foreground);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.initialUploadLabel input:focus-visible,
+.formOptionalDetails summary:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .mobileList {
@@ -813,7 +929,28 @@
     justify-content: center;
   }
 
+  .multiEntryFormHeader {
+    flex-direction: column;
+  }
+
+  .multiEntryFormHeader > button,
+  .multiEntryFormActions > button {
+    width: 100%;
+  }
+
+  .formRowActions {
+    justify-content: stretch;
+  }
+
+  .formRowActions > button {
+    flex: 1 1 auto;
+  }
+
   .gridSection {
+    display: none;
+  }
+
+  .inputModeSwitch {
     display: none;
   }
 

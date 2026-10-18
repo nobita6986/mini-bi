@@ -43,6 +43,10 @@ type Props = {
   canView: boolean;
   /** Ly do thay the, chi dung khi boundary hien huu yeu cau (entry SUBMITTED). */
   requireReason?: boolean;
+  /** Files picked in the W2S1.1 form before the server entry ID existed. */
+  initialFiles?: Partial<Record<CccdDocumentType, File>>;
+  /** Called only after the server has accepted a selected slot (complete or pending scan). */
+  onInitialFilesAccepted?(types: readonly CccdDocumentType[]): void;
   onStatus(entryId: string, entryVersion: number, documents: readonly CccdDocumentSummary[]): void;
   onEntryVersionChange(rowId: string, entryVersion: number): void;
 };
@@ -73,11 +77,26 @@ function isAllowedMime(value: string): boolean {
   return CCCD_MIME_TYPES.some((mime) => mime === value);
 }
 
+function initialSlot(file: File | undefined): SlotInput {
+  if (!file) return EMPTY_SLOT;
+  if (file.size < 1 || file.size > CCCD_MAX_BYTES) {
+    return { blob: null, sizeBytes: file.size, mimeType: file.type,
+      error: friendlyError("DOCUMENT_SIZE_INVALID") };
+  }
+  if (!isAllowedMime(file.type)) {
+    return { blob: null, sizeBytes: file.size, mimeType: file.type,
+      error: friendlyError("DOCUMENT_MIME_INVALID") };
+  }
+  return { blob: file, sizeBytes: file.size, mimeType: file.type, error: null };
+}
+
 export function DirectEntryCccdManager({
   row,
   canEdit,
   canView,
   requireReason,
+  initialFiles,
+  onInitialFilesAccepted,
   onStatus,
   onEntryVersionChange,
 }: Props) {
@@ -88,10 +107,10 @@ export function DirectEntryCccdManager({
   // ban dau da dung va khong can reset bang effect.
   const [loadState, setLoadState] =
     useState<"idle" | "loading" | "ready" | "error">(entryId === null ? "idle" : "loading");
-  const [slots, setSlots] = useState<Record<CccdDocumentType, SlotInput>>({
-    CCCD_FRONT: EMPTY_SLOT,
-    CCCD_BACK: EMPTY_SLOT,
-  });
+  const [slots, setSlots] = useState<Record<CccdDocumentType, SlotInput>>(() => ({
+    CCCD_FRONT: initialSlot(initialFiles?.CCCD_FRONT),
+    CCCD_BACK: initialSlot(initialFiles?.CCCD_BACK),
+  }));
   const [results, setResults] = useState<Partial<Record<CccdDocumentType, CccdSlotResult>>>({});
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -243,6 +262,10 @@ export function DirectEntryCccdManager({
         }
         return next;
       });
+      const acceptedTypes = result.slots
+        .filter((slot) => slot.status !== "failed")
+        .map((slot) => slot.documentType);
+      if (acceptedTypes.length > 0) onInitialFilesAccepted?.(acceptedTypes);
       if (reloaded.projection !== null) {
         setDetail(reloaded.projection);
       } else {
@@ -263,7 +286,7 @@ export function DirectEntryCccdManager({
     } finally {
       setBusy(false);
     }
-  }, [busy, canEdit, detail, entryId, reason, requireReason, slots]);
+  }, [busy, canEdit, detail, entryId, onInitialFilesAccepted, reason, requireReason, slots]);
 
   const completion = useMemo(
     () => cccdSlotComplete(detail?.documents ?? []),
