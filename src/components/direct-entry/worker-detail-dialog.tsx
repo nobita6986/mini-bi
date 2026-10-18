@@ -314,7 +314,6 @@ function WorkerDetailBody({
         entryVersion={entryVersion ?? detail.entryVersion}
         portrait={detail.portrait}
         canUpload={canUploadDocuments}
-        requireReason
         onEntryVersionChange={(version) => setEntryVersion(version)}
         onPortraitChanged={() => setReloadKey((value) => value + 1)}
       />

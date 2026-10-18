@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * W2S1 - Panel anh ho so (WORKER_PORTRAIT) cho chi tiet NLĐ.
+ * W2S1 - Panel ảnh NLĐ (WORKER_PORTRAIT) cho chi tiết NLĐ.
  *
  * Chi dung pipeline tai lieu hien co: reserve (`POST .../documents`) -> PUT presigned
  * -> finalize (`.../finalize`). Doc lai qua projection `worker_portrait` do server tra ve;
@@ -27,7 +27,7 @@ import {
 } from "@/lib/direct-entry/worker-detail-projection";
 import styles from "./direct-entry-shell.module.css";
 
-const REASON_MAX_LENGTH = 4000;
+const WORKER_PORTRAIT_AUDIT_REASON = "Tải ảnh NLĐ";
 
 type UploadState = "idle" | "uploading" | "conflict" | "error" | "saved";
 type PreviewState = "loading" | "ready" | "error";
@@ -35,19 +35,19 @@ type PreviewState = "loading" | "ready" | "error";
 const ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   DOCUMENT_STORAGE_UNAVAILABLE: "Kho lưu trữ chưa sẵn sàng. Tệp vẫn ở trên thiết bị; bạn có thể thử lại.",
   DOCUMENT_VERSION_CONFLICT: "Dữ liệu đã thay đổi trên máy chủ. Hãy tải lại trạng thái rồi thử lại.",
-  DOCUMENT_DENIED: "Bạn không có quyền tải ảnh hồ sơ cho dòng này.",
+  DOCUMENT_DENIED: "Bạn không có quyền tải ảnh NLĐ cho dòng này.",
   DOCUMENT_FILE_REQUIRED: "Hãy chọn một tệp ảnh trước khi tải lên.",
   DOCUMENT_SIZE_INVALID: "Ảnh phải lớn hơn 0 và không vượt quá 10 MiB.",
   DOCUMENT_MIME_INVALID: "Chỉ chấp nhận ảnh JPEG hoặc PNG.",
   DOCUMENT_CONTENT_INVALID: "Nội dung tệp không khớp định dạng ảnh đã chọn.",
   DOCUMENT_UPLOAD_MISSING: "Chưa nhận được tệp trên kho lưu trữ. Hãy thử lại.",
-  DOCUMENT_FINALIZE_UNAVAILABLE: "Chưa hoàn tất ghi nhận ảnh hồ sơ. Hãy thử lại.",
+  DOCUMENT_FINALIZE_UNAVAILABLE: "Chưa hoàn tất ghi nhận ảnh NLĐ. Hãy thử lại.",
   DOCUMENT_RESPONSE_INVALID: "Máy chủ trả về kết quả không đọc được. Hãy thử lại.",
 });
 
 function friendlyError(code: string | null): string {
-  if (code === null) return "Không tải được ảnh hồ sơ. Hãy thử lại.";
-  return ERROR_MESSAGES[code] ?? "Không thể xử lý ảnh hồ sơ. Hãy thử lại.";
+  if (code === null) return "Không tải được ảnh NLĐ. Hãy thử lại.";
+  return ERROR_MESSAGES[code] ?? "Không thể xử lý ảnh NLĐ. Hãy thử lại.";
 }
 
 function formatSize(size: number): string {
@@ -73,8 +73,6 @@ export type WorkerPortraitPanelProps = {
   portrait: WorkerPortraitProjection | null;
   /** Capability `document_upload` do server-resolved actor truyen xuong. */
   canUpload: boolean;
-  /** Entry SUBMITTED: thay anh phai co ly do (giong luong CCCD/contract hien co). */
-  requireReason: boolean;
   onEntryVersionChange(entryVersion: number): void;
   /** Goi sau khi server da ghi nhan; parent tai lai projection. */
   onPortraitChanged(): void;
@@ -85,19 +83,16 @@ export function WorkerPortraitPanel({
   entryVersion,
   portrait,
   canUpload,
-  requireReason,
   onEntryVersionChange,
   onPortraitChanged,
 }: WorkerPortraitPanelProps) {
   const [previewState, setPreviewState] = useState<PreviewState>("loading");
   const [previewRetry, setPreviewRetry] = useState(0);
   const [file, setFile] = useState<File | null>(null);
-  const [reason, setReason] = useState("");
   const [state, setState] = useState<UploadState>("idle");
   const [message, setMessage] = useState("");
   const pendingKey = useRef<{
     file: File;
-    reason: string;
     key: string;
     expectedEntryVersion: number;
   } | null>(null);
@@ -140,19 +135,10 @@ export function WorkerPortraitPanel({
       setMessage(friendlyError(check.code));
       return;
     }
-    const trimmedReason = requireReason ? reason.trim() : null;
-    if (requireReason && (trimmedReason === null || trimmedReason.length < 1 ||
-        trimmedReason.length > REASON_MAX_LENGTH)) {
-      setState("error");
-      setMessage("Lý do tải ảnh hồ sơ là bắt buộc và tối đa 4000 ký tự.");
-      return;
-    }
     if (!pendingKey.current || pendingKey.current.file !== file ||
-        pendingKey.current.expectedEntryVersion !== entryVersion ||
-        (requireReason && pendingKey.current.reason !== trimmedReason)) {
+        pendingKey.current.expectedEntryVersion !== entryVersion) {
       pendingKey.current = {
         file,
-        reason: trimmedReason ?? "",
         key: crypto.randomUUID(),
         expectedEntryVersion: entryVersion,
       };
@@ -176,7 +162,7 @@ export function WorkerPortraitPanel({
         expected_entry_version: pending.expectedEntryVersion,
         size_bytes: file.size,
         mime_type: check.mimeType,
-        ...(requireReason && pending.reason ? { reason: pending.reason } : {}),
+        reason: WORKER_PORTRAIT_AUDIT_REASON,
       });
       if (reserved.response.status === 409) {
         setState("conflict");
@@ -225,9 +211,8 @@ export function WorkerPortraitPanel({
       if (typeof finalized.payload.entry_version === "number") nextVersion = finalized.payload.entry_version;
       pendingKey.current = null;
       setFile(null);
-      setReason("");
       setState("saved");
-      setMessage("Máy chủ đã ghi nhận ảnh hồ sơ. Đang tải lại trạng thái mới…");
+      setMessage("Máy chủ đã ghi nhận ảnh NLĐ. Đang tải lại trạng thái mới…");
       onEntryVersionChange(nextVersion);
       onPortraitChanged();
     } catch (cause) {
@@ -241,7 +226,7 @@ export function WorkerPortraitPanel({
     return (
       <section className={styles.documentSection} data-testid="worker-portrait-panel"
         aria-labelledby={`portrait-title-${entryId}`}>
-        <h3 className={styles.documentTitle} id={`portrait-title-${entryId}`}>Ảnh hồ sơ</h3>
+        <h3 className={styles.documentTitle} id={`portrait-title-${entryId}`}>Ảnh NLĐ</h3>
         <p className={styles.documentStatus} role="status">
           {PORTRAIT_HIDDEN_MESSAGE}
         </p>
@@ -252,7 +237,7 @@ export function WorkerPortraitPanel({
   return (
     <section className={styles.documentSection} data-testid="worker-portrait-panel"
       aria-labelledby={`portrait-title-${entryId}`}>
-      <h3 className={styles.documentTitle} id={`portrait-title-${entryId}`}>Ảnh hồ sơ</h3>
+      <h3 className={styles.documentTitle} id={`portrait-title-${entryId}`}>Ảnh NLĐ</h3>
       <dl className={styles.submissionMeta}>
         <dt>Trạng thái</dt>
         <dd>{WORKER_PORTRAIT_STATUS_LABELS[portrait.status]}</dd>
@@ -272,15 +257,15 @@ export function WorkerPortraitPanel({
           <img
             key={`${current.document_id}:${previewRetry}`}
             src={workerPortraitPreviewUrl(entryId, current.document_id)}
-            alt="Ảnh hồ sơ của người lao động"
+            alt="Ảnh NLĐ"
             className={styles.portraitImage}
             onLoad={() => setPreviewState("ready")}
             onError={() => setPreviewState("error")}
           />
           <figcaption className={styles.documentStatus}>
-            {previewState === "loading" ? "Đang tải ảnh hồ sơ…" : null}
-            {previewState === "ready" ? "Ảnh hồ sơ hiện hành." : null}
-            {previewState === "error" ? "Không tải được ảnh hồ sơ." : null}
+            {previewState === "loading" ? "Đang tải ảnh NLĐ…" : null}
+            {previewState === "ready" ? "Ảnh NLĐ hiện hành." : null}
+            {previewState === "error" ? "Không tải được ảnh NLĐ." : null}
           </figcaption>
           {previewState === "error" ? (
             <button type="button" className={styles.secondaryButton}
@@ -290,27 +275,19 @@ export function WorkerPortraitPanel({
           ) : null}
         </figure>
       ) : (
-        <p className={styles.documentStatus} role="status">Chưa có ảnh hồ sơ được chấp nhận.</p>
+        <p className={styles.documentStatus} role="status">Chưa có ảnh NLĐ được chấp nhận.</p>
       )}
 
       {uploadAllowed ? (
         <div className={styles.drawerFields}>
-          {requireReason ? (
-            <label className={styles.field}>
-              <span>Lý do tải ảnh hồ sơ</span>
-              <textarea aria-label="Lý do tải ảnh hồ sơ" rows={3} maxLength={REASON_MAX_LENGTH}
-                disabled={busy} value={reason}
-                onChange={(event) => { setReason(event.currentTarget.value); pendingKey.current = null; }} />
-            </label>
-          ) : null}
           <label className={styles.field}>
-            <span>Ảnh hồ sơ (JPEG/PNG · tối đa 10 MiB)</span>
+            <span>Ảnh NLĐ (JPEG/PNG · tối đa 10 MiB)</span>
             <span className={styles.filePickerControl}>
               <input
                 id={`portrait-file-${entryId}`}
                 className={styles.filePickerInput}
                 type="file"
-                aria-label="Chọn ảnh hồ sơ"
+                aria-label="Chọn ảnh NLĐ"
                 accept="image/jpeg,image/png"
                 disabled={busy}
                 onChange={(event) => {
@@ -328,7 +305,7 @@ export function WorkerPortraitPanel({
               Đã chọn ảnh · {formatSize(file.size)} · {file.type || "không rõ định dạng"}
             </p>
           ) : null}
-          {busy ? <progress aria-label="Đang gửi ảnh hồ sơ" /> : null}
+          {busy ? <progress aria-label="Đang gửi ảnh NLĐ" /> : null}
           {message !== "" ? (
             <p className={state === "error" || state === "conflict" || state === "saved"
               ? styles.documentError : styles.documentStatus}
@@ -345,7 +322,7 @@ export function WorkerPortraitPanel({
           <button type="button" className={styles.secondaryButton}
             disabled={busy || !selectedFileCheck.ok || state === "conflict"}
             onClick={() => void upload()}>
-            {busy ? "Đang tải ảnh…" : state === "error" ? "Thử lại" : "Tải ảnh hồ sơ"}
+            {busy ? "Đang tải ảnh…" : state === "error" ? "Thử lại" : "Tải ảnh NLĐ"}
           </button>
         </div>
       ) : canUpload && uploadLockedMessage !== null ? (

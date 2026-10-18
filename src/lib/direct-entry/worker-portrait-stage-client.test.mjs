@@ -221,9 +221,9 @@ test("portraitPromotionState: ho so da luu nhung promote chua xong la CLAIMED =>
 });
 
 test("thong bao loi lay dung nguon, khong lo chi tiet ky thuat", () => {
-  assert.equal(portraitStageErrorMessage("DOCUMENT_DENIED"), "Bạn không có quyền tải ảnh hồ sơ.");
+  assert.equal(portraitStageErrorMessage("DOCUMENT_DENIED"), "Bạn không có quyền tải ảnh NLĐ.");
   assert.match(portraitStageErrorMessage("PORTRAIT_STAGE_NETWORK"), /thử lại/);
-  assert.equal(portraitStageErrorMessage("MA_LA"), "Không xử lý được ảnh hồ sơ. Hãy thử lại.");
+  assert.equal(portraitStageErrorMessage("MA_LA"), "Không xử lý được ảnh NLĐ. Hãy thử lại.");
 });
 
 test("dung chung ham kiem tra tep voi portrait panel (mot nguon duy nhat)", () => {

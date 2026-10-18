@@ -347,7 +347,7 @@ test("W2S1: ket qua khong xac dinh => recovery quyet dinh trang thai UI (khong d
   assert.match(dialog, /PORTRAIT_PROMOTION_UNSAVED_MESSAGE/);
   assert.match(dialog, /PORTRAIT_STAGE_ORPHAN_MESSAGE/);
   assert.match(dialog, /data-testid="profile-portrait-message"/);
-  assert.match(PORTRAIT_PROMOTION_PENDING_MESSAGE, /đã được lưu nhưng ảnh hồ sơ chưa hoàn tất/);
+  assert.match(PORTRAIT_PROMOTION_PENDING_MESSAGE, /đã được lưu nhưng ảnh NLĐ chưa hoàn tất/);
 });
 
 test("W2S1: retry giu nguyen stage + idempotency key cua batch", () => {
