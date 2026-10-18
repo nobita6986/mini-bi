@@ -461,48 +461,6 @@ test("change_request_create alone cannot claim a portrait stage or create a work
     response_headers: {},
   });
 
-  test("batch conflict preserves a stage when the same key already has a committed result", async () => {
-    const stageId = "b2000000-0000-4000-8000-000000000002";
-    const calls = [];
-    const dependencies = deps();
-    dependencies.resolveSession = async () => ({
-      actor: { ok: true, actor: { ...actor, capabilities: ["document_upload"] } },
-      response_headers: {},
-    });
-    dependencies.portraitStages = {
-      async claim(input) {
-        calls.push(["claim", input]);
-        return { ok: true, data: {
-          stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
-          checksum_sha256: "a".repeat(64), status: "CLAIMED",
-          claim_idempotency_key: key, entry_id: null, document_id: null,
-        } };
-      },
-      async recover(input) {
-        calls.push(["recover", input]);
-        return { ok: true, data: {
-          stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
-          checksum_sha256: "a".repeat(64), status: "CLAIMED",
-          claim_idempotency_key: key, entry_id: null, document_id: null,
-        } };
-      },
-      async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
-    };
-    dependencies.documentRepository = {};
-    dependencies.documentStorage = {
-      ...dependencies.documentStorage,
-      async deleteEnrollmentPortraitStage(id) { calls.push(["deleteStage", id]); },
-    };
-    dependencies.repository.createFullProfileBatchWithPortraitStages = async () => ({
-      ok: false, kind: "conflict",
-    });
-
-    const response = await postFullProfileBatch(request({
-      ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
-    }), "true", dependencies);
-    assert.equal(response.status, 409);
-    assert.deepEqual(calls.map(([name]) => name), ["claim", "recover"]);
-  });
   dependencies.portraitStages = {
     async claim(input) { calls.push(["claim", input]); return { ok: true, data: {} }; },
   };
@@ -515,4 +473,47 @@ test("change_request_create alone cannot claim a portrait stage or create a work
   }), "true", dependencies);
   assert.equal(response.status, 403);
   assert.deepEqual(calls, []);
+});
+
+test("batch conflict preserves a stage when the same key already has a committed result", async () => {
+  const stageId = "b2000000-0000-4000-8000-000000000002";
+  const calls = [];
+  const dependencies = deps();
+  dependencies.resolveSession = async () => ({
+    actor: { ok: true, actor: { ...actor, capabilities: ["document_upload"] } },
+    response_headers: {},
+  });
+  dependencies.portraitStages = {
+    async claim(input) {
+      calls.push(["claim", input]);
+      return { ok: true, data: {
+        stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
+        checksum_sha256: "a".repeat(64), status: "CLAIMED",
+        claim_idempotency_key: key, entry_id: null, document_id: null,
+      } };
+    },
+    async recover(input) {
+      calls.push(["recover", input]);
+      return { ok: true, data: {
+        stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
+        checksum_sha256: "a".repeat(64), status: "CLAIMED",
+        claim_idempotency_key: key, entry_id: null, document_id: null,
+      } };
+    },
+    async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
+  };
+  dependencies.documentRepository = {};
+  dependencies.documentStorage = {
+    ...dependencies.documentStorage,
+    async deleteEnrollmentPortraitStage(id) { calls.push(["deleteStage", id]); },
+  };
+  dependencies.repository.createFullProfileBatchWithPortraitStages = async () => ({
+    ok: false, kind: "conflict",
+  });
+
+  const response = await postFullProfileBatch(request({
+    ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
+  }), "true", dependencies);
+  assert.equal(response.status, 409);
+  assert.deepEqual(calls.map(([name]) => name), ["claim", "recover"]);
 });
