@@ -67,7 +67,7 @@ test("retained legacy dialog has no request side effects; live save uses the ato
   assert.equal((dialog.match(/fetch\(/g) ?? []).length, 0, "preview khong goi API");
   assert.equal(dialog.includes("/api/direct-entry"), false);
   assert.doesNotMatch(live, /postPasteBatch\(|submitPasteGroup|buildPasteBatchPayload/);
-  assert.match(live, /buildServerGeneratedFullProfileRequestBody\(preview\.rows\)/);
+  assert.match(live, /buildServerGeneratedFullProfileRequestBody\(preview\.rows,\s*portraitStageIdsBySourceRow\)/);
   assert.match(live, /postFullProfileBatch\(\{/);
   assert.match(live, /body: JSON\.stringify\(\{ rows: \[createPayload\(rowWithFields\(current, pending\.fields\)\)\] \}\)/);
 });
