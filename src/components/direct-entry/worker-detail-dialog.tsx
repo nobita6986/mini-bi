@@ -181,7 +181,7 @@ function WorkerDetailBody({
         {detail.worker.kind === "redacted" ? (
           <p className={styles.documentStatus} role="status">
             Thông tin cá nhân (CCCD, ngày sinh, địa chỉ, điện thoại) được ẩn theo quyền
-            {" "}truy cập PII.
+            {" "}truy cập.
           </p>
         ) : (
           <dl className={styles.profileFieldList}>

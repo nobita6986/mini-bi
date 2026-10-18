@@ -15,16 +15,18 @@
 import { useRef, useState } from "react";
 
 import {
+  PORTRAIT_HIDDEN_MESSAGE,
   WORKER_PORTRAIT_STATUS_LABELS,
+  checkWorkerPortraitFile,
   workerPortraitOriginLabel,
   workerPortraitPreviewUrl,
+  workerPortraitUploadPolicy,
+  workerPortraitUploadPolicyMessage,
   workerPortraitUploadUrl,
   type WorkerPortraitProjection,
 } from "@/lib/direct-entry/worker-detail-projection";
 import styles from "./direct-entry-shell.module.css";
 
-const PORTRAIT_MIME_TYPES = ["image/jpeg", "image/png"] as const;
-const PORTRAIT_MAX_BYTES = 10 * 1024 * 1024;
 const REASON_MAX_LENGTH = 4000;
 
 type UploadState = "idle" | "uploading" | "conflict" | "error" | "saved";
@@ -34,6 +36,7 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   DOCUMENT_STORAGE_UNAVAILABLE: "Kho lưu trữ chưa sẵn sàng. Tệp vẫn ở trên thiết bị; bạn có thể thử lại.",
   DOCUMENT_VERSION_CONFLICT: "Dữ liệu đã thay đổi trên máy chủ. Hãy tải lại trạng thái rồi thử lại.",
   DOCUMENT_DENIED: "Bạn không có quyền tải ảnh hồ sơ cho dòng này.",
+  DOCUMENT_FILE_REQUIRED: "Hãy chọn một tệp ảnh trước khi tải lên.",
   DOCUMENT_SIZE_INVALID: "Ảnh phải lớn hơn 0 và không vượt quá 10 MiB.",
   DOCUMENT_MIME_INVALID: "Chỉ chấp nhận ảnh JPEG hoặc PNG.",
   DOCUMENT_CONTENT_INVALID: "Nội dung tệp không khớp định dạng ảnh đã chọn.",
@@ -53,10 +56,6 @@ function formatSize(size: number): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isAllowedMime(value: string): boolean {
-  return (PORTRAIT_MIME_TYPES as readonly string[]).includes(value);
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -104,33 +103,48 @@ export function WorkerPortraitPanel({
   } | null>(null);
 
   const current = portrait?.current ?? null;
-  const uploadAllowed = canUpload && portrait !== null;
+  const policy = workerPortraitUploadPolicy(portrait);
+  const uploadAllowed = canUpload && policy.allow;
+  const uploadLockedMessage = policy.allow ? null : workerPortraitUploadPolicyMessage(policy.reason);
+  const selectedFileCheck = checkWorkerPortraitFile(file);
   const busy = state === "uploading";
 
   function selectFile(nextFile: File | null): void {
     pendingKey.current = null;
     setMessage("");
     setState("idle");
-    setFile(nextFile);
-    if (nextFile === null) return;
-    if (nextFile.size < 1 || nextFile.size > PORTRAIT_MAX_BYTES) {
-      setState("error");
-      setMessage(friendlyError("DOCUMENT_SIZE_INVALID"));
+    const check = checkWorkerPortraitFile(nextFile);
+    if (!check.ok) {
+      setFile(null);
+      if (nextFile !== null) {
+        setState("error");
+        setMessage(friendlyError(check.code));
+      }
       return;
     }
-    if (!isAllowedMime(nextFile.type)) {
-      setState("error");
-      setMessage(friendlyError("DOCUMENT_MIME_INVALID"));
-    }
+    setFile(nextFile);
   }
 
   async function upload(): Promise<void> {
-    if (!uploadAllowed || !file || busy || entryVersion < 1) return;
+    if (!uploadAllowed || busy || entryVersion < 1) return;
+    if (file === null) {
+      setState("error");
+      setMessage(friendlyError("DOCUMENT_FILE_REQUIRED"));
+      return;
+    }
+    // Validate lai ngay trong ham upload, khong chi dua vao trang thai cua control.
+    const check = checkWorkerPortraitFile(file);
+    if (!check.ok) {
+      setFile(null);
+      setState("error");
+      setMessage(friendlyError(check.code));
+      return;
+    }
     const trimmedReason = requireReason ? reason.trim() : null;
     if (requireReason && (trimmedReason === null || trimmedReason.length < 1 ||
         trimmedReason.length > REASON_MAX_LENGTH)) {
       setState("error");
-      setMessage("Lý do thay ảnh hồ sơ là bắt buộc và tối đa 4000 ký tự.");
+      setMessage("Lý do tải ảnh hồ sơ là bắt buộc và tối đa 4000 ký tự.");
       return;
     }
     if (!pendingKey.current || pendingKey.current.file !== file ||
@@ -161,7 +175,7 @@ export function WorkerPortraitPanel({
         document_type: "WORKER_PORTRAIT",
         expected_entry_version: pending.expectedEntryVersion,
         size_bytes: file.size,
-        mime_type: file.type,
+        mime_type: check.mimeType,
         ...(requireReason && pending.reason ? { reason: pending.reason } : {}),
       });
       if (reserved.response.status === 409) {
@@ -229,7 +243,7 @@ export function WorkerPortraitPanel({
         aria-labelledby={`portrait-title-${entryId}`}>
         <h3 className={styles.documentTitle} id={`portrait-title-${entryId}`}>Ảnh hồ sơ</h3>
         <p className={styles.documentStatus} role="status">
-          Ảnh hồ sơ được ẩn theo quyền truy cập.
+          {PORTRAIT_HIDDEN_MESSAGE}
         </p>
       </section>
     );
@@ -283,8 +297,8 @@ export function WorkerPortraitPanel({
         <div className={styles.drawerFields}>
           {requireReason ? (
             <label className={styles.field}>
-              <span>Lý do thay ảnh hồ sơ</span>
-              <textarea aria-label="Lý do thay ảnh hồ sơ" rows={3} maxLength={REASON_MAX_LENGTH}
+              <span>Lý do tải ảnh hồ sơ</span>
+              <textarea aria-label="Lý do tải ảnh hồ sơ" rows={3} maxLength={REASON_MAX_LENGTH}
                 disabled={busy} value={reason}
                 onChange={(event) => { setReason(event.currentTarget.value); pendingKey.current = null; }} />
             </label>
@@ -329,11 +343,16 @@ export function WorkerPortraitPanel({
             </button>
           ) : null}
           <button type="button" className={styles.secondaryButton}
-            disabled={busy || file === null || state === "conflict"}
+            disabled={busy || !selectedFileCheck.ok || state === "conflict"}
             onClick={() => void upload()}>
             {busy ? "Đang tải ảnh…" : state === "error" ? "Thử lại" : "Tải ảnh hồ sơ"}
           </button>
         </div>
+      ) : canUpload && uploadLockedMessage !== null ? (
+        <p className={styles.documentStatus} role="status"
+          data-testid="worker-portrait-upload-locked">
+          {uploadLockedMessage}
+        </p>
       ) : null}
     </section>
   );

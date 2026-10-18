@@ -8,6 +8,11 @@ const operations = readFileSync(new URL("./worker-operations.tsx", import.meta.u
 const workersPage = readFileSync(
   new URL("../../app/direct-entry/workers/page.tsx", import.meta.url), "utf8");
 
+/** Bo comment de kiem tra CHUOI NGUOI DUNG NHIN THAY (khong tinh comment giai thich noi bo). */
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
 test("W2S1: danh sách NLĐ mở chi tiết qua dialog dùng chung, không tạo route thứ hai", () => {
   assert.match(operations, /import \{ WorkerDetailDialog \} from "@\/components\/direct-entry\/worker-detail-dialog"/);
   assert.match(operations, /<WorkerDetailDialog/);
@@ -76,7 +81,7 @@ test("W2S1: CCCD/hợp đồng chỉ hiện tình trạng; KHÔNG dùng portrait
 
 test("W2S1: panel ảnh hồ sơ chỉ render preview trong panel và ẩn khi thiếu document_view", () => {
   assert.match(panel, /portrait === null/);
-  assert.match(panel, /Ảnh hồ sơ được ẩn theo quyền truy cập\./);
+  assert.match(panel, /\{PORTRAIT_HIDDEN_MESSAGE\}/);
   assert.match(panel, /data-testid="worker-portrait-panel"/);
   assert.match(panel, /src=\{workerPortraitPreviewUrl\(entryId, current\.document_id\)\}/);
   assert.match(panel, /alt="Ảnh hồ sơ của người lao động"/);
@@ -87,7 +92,7 @@ test("W2S1: upload ảnh hồ sơ theo đúng pipeline reserve -> PUT -> finaliz
   assert.match(panel, /document_type: "WORKER_PORTRAIT"/);
   assert.match(panel, /expected_entry_version: pending\.expectedEntryVersion/);
   assert.match(panel, /size_bytes: file\.size/);
-  assert.match(panel, /mime_type: file\.type/);
+  assert.match(panel, /mime_type: check\.mimeType/);
   assert.match(panel, /"Idempotency-Key": key/);
   assert.match(panel, /`\$\{pending\.key\}:finalize`/);
   assert.match(panel, /workerPortraitUploadUrl\(entryId, documentId\)/);
@@ -107,11 +112,42 @@ test("W2S1: không báo thành công giả — chỉ chốt sau khi finalize tr�
 });
 
 test("W2S1: panel xử lý retry/conflict và chỉ nhận JPEG/PNG", () => {
-  assert.match(panel, /const PORTRAIT_MIME_TYPES = \["image\/jpeg", "image\/png"\] as const/);
+  assert.match(panel, /checkWorkerPortraitFile/);
   assert.match(panel, /accept="image\/jpeg,image\/png"/);
   assert.match(panel, /DOCUMENT_VERSION_CONFLICT/);
   assert.match(panel, /Tải lại trạng thái/);
   assert.match(panel, /state === "error" \? "Thử lại" : "Tải ảnh hồ sơ"/);
   assert.doesNotMatch(panel, /storage_key|X-Amz|signedUrl|signed_url/);
   assert.doesNotMatch(panel, /\.rpc\(/);
+});
+
+test("W2S1: ảnh thay thế không thành current — chỉ gửi ảnh đầu tiên, khoá khi đã có current", () => {
+  assert.match(panel, /const current = portrait\?\.current \?\? null;/);
+  assert.match(panel, /const policy = workerPortraitUploadPolicy\(portrait\);/);
+  assert.match(panel, /const uploadAllowed = canUpload && policy\.allow;/);
+  assert.match(panel, /const uploadLockedMessage = policy\.allow \? null : workerPortraitUploadPolicyMessage\(policy\.reason\);/);
+  assert.match(panel, /data-testid="worker-portrait-upload-locked"/);
+  assert.match(panel, /\{uploadLockedMessage\}/);
+  // Khong co duong ghi `current` cuc bo: current khong phai state, chi doc tu projection server.
+  assert.doesNotMatch(panel, /setCurrent/);
+  assert.doesNotMatch(panel, /const \[current/);
+});
+
+test("W2S1: tệp rỗng/sai MIME/vượt dung lượng bị xoá khỏi state và không thể gửi", () => {
+  assert.match(panel, /const selectedFileCheck = checkWorkerPortraitFile\(file\);/);
+  assert.match(panel, /disabled=\{busy \|\| !selectedFileCheck\.ok \|\| state === "conflict"\}/);
+  // selectFile: tep khong hop le bi xoa khoi state (khong giu lai de gui).
+  assert.match(panel,
+    /const check = checkWorkerPortraitFile\(nextFile\);[\s\S]*?setFile\(null\);[\s\S]*?return;[\s\S]*?\n    \}/);
+  // upload: validate lai ngay trong ham upload truoc khi reserve.
+  assert.match(panel,
+    /const check = checkWorkerPortraitFile\(file\);[\s\S]*?setFile\(null\);[\s\S]*?setMessage\(friendlyError\(check\.code\)\);[\s\S]*?return;/);
+  assert.match(panel, /mime_type: check\.mimeType/);
+  assert.doesNotMatch(panel, /mime_type: file\.type/);
+});
+
+test("W2S1: nội dung người dùng nhìn thấy không dùng thuật ngữ PII", () => {
+  assert.doesNotMatch(dialog, /ẩn theo quyền truy cập PII/);
+  assert.doesNotMatch(stripComments(dialog), /PII/);
+  assert.doesNotMatch(stripComments(panel), /PII/);
 });

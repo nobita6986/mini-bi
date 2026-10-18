@@ -2,14 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  PORTRAIT_HIDDEN_MESSAGE,
+  PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE,
+  WORKER_PORTRAIT_MAX_BYTES,
+  WORKER_PORTRAIT_STATUS_LABELS,
+  checkWorkerPortraitFile,
   fetchWorkerDetail,
   projectWorkerDetail,
   projectWorkerPortrait,
-  WORKER_PORTRAIT_STATUS_LABELS,
   workerDocumentReady,
   workerDocumentStatusLabel,
   workerPortraitOriginLabel,
   workerPortraitPreviewUrl,
+  workerPortraitUploadPolicy,
+  workerPortraitUploadPolicyMessage,
   workerPortraitUploadUrl,
 } from "./worker-detail-projection.ts";
 
@@ -267,4 +273,79 @@ test("fetchWorkerDetail: 404 (không tìm thấy/ngoài scope) và 403 đều fa
     return new Response("not-json", { status: 200 });
   }), null);
   assert.equal(malformedCalls, 1);
+});
+
+test("checkWorkerPortraitFile: rỗng / sai MIME / vượt dung lượng đều bị từ chối trước khi gửi", () => {
+  assert.deepEqual(checkWorkerPortraitFile(null), { ok: false, code: "DOCUMENT_FILE_REQUIRED" });
+  assert.deepEqual(checkWorkerPortraitFile(undefined), { ok: false, code: "DOCUMENT_FILE_REQUIRED" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: 0, type: "image/png" }),
+    { ok: false, code: "DOCUMENT_SIZE_INVALID" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: -1, type: "image/png" }),
+    { ok: false, code: "DOCUMENT_SIZE_INVALID" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: WORKER_PORTRAIT_MAX_BYTES + 1, type: "image/jpeg" }),
+    { ok: false, code: "DOCUMENT_SIZE_INVALID" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: 1024, type: "application/pdf" }),
+    { ok: false, code: "DOCUMENT_MIME_INVALID" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: 1024, type: "" }),
+    { ok: false, code: "DOCUMENT_MIME_INVALID" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: 1024, type: "image/jpeg" }),
+    { ok: true, mimeType: "image/jpeg" });
+  assert.deepEqual(checkWorkerPortraitFile({ size: WORKER_PORTRAIT_MAX_BYTES, type: "image/png" }),
+    { ok: true, mimeType: "image/png" });
+});
+
+test("ảnh thay thế bị khoá: có current => không có đường upload thay thế", () => {
+  const withCurrent = projectWorkerPortrait(portraitFixture());
+  assert.ok(withCurrent);
+  assert.deepEqual(workerPortraitUploadPolicy(withCurrent),
+    { allow: false, reason: "REPLACEMENT_REQUIRES_APPROVAL" });
+  assert.equal(workerPortraitUploadPolicyMessage("REPLACEMENT_REQUIRES_APPROVAL"),
+    PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE);
+  assert.match(PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE, /được duyệt/);
+});
+
+test("ảnh cũ vẫn là current cho tới khi ảnh mới được duyệt", () => {
+  // Reserve/finalize ảnh mới thành công KHÔNG tự đổi current: server vẫn chỉ current là bản cũ,
+  // còn ảnh mới chỉ ở vòng đời xử lý.
+  const uploading = projectWorkerDetail(entryBody({
+    worker_portrait: portraitFixture({ status: "SCANNING" }),
+  }), ENTRY_ID);
+  assert.ok(uploading);
+  assert.equal(uploading.portrait.current.document_id, DOC_A);
+  assert.equal(uploading.portrait.current.version, 1);
+  assert.equal(uploading.portrait.status, "SCANNING");
+  // Còn current cũ => khoá thay thế (mạnh hơn trạng thái đang xử lý).
+  assert.deepEqual(workerPortraitUploadPolicy(uploading.portrait),
+    { allow: false, reason: "REPLACEMENT_REQUIRES_APPROVAL" });
+
+  // Kể cả khi ảnh mới đã READY, current do server trả về vẫn là bản cũ => vẫn không thay thế được.
+  const readyOldCurrent = projectWorkerDetail(entryBody({
+    worker_portrait: portraitFixture({
+      status: "READY",
+      current: { ...portraitFixture().current, document_id: DOC_B, version: 1 },
+    }),
+  }), ENTRY_ID);
+  assert.ok(readyOldCurrent);
+  assert.equal(readyOldCurrent.portrait.current.document_id, DOC_B);
+  assert.deepEqual(workerPortraitUploadPolicy(readyOldCurrent.portrait),
+    { allow: false, reason: "REPLACEMENT_REQUIRES_APPROVAL" });
+});
+
+test("chỉ cho gửi ảnh đầu tiên khi chưa có current", () => {
+  const empty = { origin: null, added_at: null, status: "MISSING", current: null };
+  assert.deepEqual(workerPortraitUploadPolicy(projectWorkerPortrait(empty)), { allow: true });
+  assert.deepEqual(workerPortraitUploadPolicy(projectWorkerPortrait({ ...empty, status: "FAILED" })),
+    { allow: true });
+  for (const status of ["QUEUED", "UPLOADING", "SCANNING"]) {
+    const portrait = projectWorkerPortrait({ ...empty, status });
+    assert.ok(portrait);
+    assert.deepEqual(workerPortraitUploadPolicy(portrait), { allow: false, reason: "IN_FLIGHT" });
+  }
+  assert.equal(workerPortraitUploadPolicyMessage("IN_FLIGHT"),
+    "Ảnh đã gửi đang được xử lý. Chờ kết quả trước khi gửi ảnh khác.");
+});
+
+test("workerPortraitUploadPolicy: thiếu document_view (portrait null) => HIDDEN, không upload", () => {
+  assert.deepEqual(workerPortraitUploadPolicy(null), { allow: false, reason: "HIDDEN" });
+  assert.equal(workerPortraitUploadPolicyMessage("HIDDEN"), PORTRAIT_HIDDEN_MESSAGE);
 });

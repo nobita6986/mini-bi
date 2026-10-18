@@ -357,6 +357,75 @@ export function workerPortraitOriginLabel(origin: WorkerPortraitOrigin | null, a
   return "Chưa xác định nguồn ảnh";
 }
 
+/**
+ * Chinh sach gui anh ho so.
+ *
+ * Reserve/finalize thanh cong KHONG lam anh moi tro thanh `current`: contract W2S1 yeu cau anh
+ * THAY THE phai qua buoc duyet (ly do nhap khong thay cho buoc duyet). Vi backend hien chua co
+ * API duyet anh thay the, UI chi cho gui anh DAU TIEN (`current === null`) va khoa thay the khi
+ * da co `current`. `current` luon doc tu projection server tra ve, khong bao gio ghi cuc bo.
+ */
+export const WORKER_PORTRAIT_IN_FLIGHT_STATUSES = ["QUEUED", "UPLOADING", "SCANNING"] as const;
+
+export type WorkerPortraitUploadPolicyReason =
+  | "HIDDEN"
+  | "REPLACEMENT_REQUIRES_APPROVAL"
+  | "IN_FLIGHT";
+
+export type WorkerPortraitUploadPolicy =
+  | { allow: true }
+  | { allow: false; reason: WorkerPortraitUploadPolicyReason };
+
+export const PORTRAIT_HIDDEN_MESSAGE = "Ảnh hồ sơ được ẩn theo quyền truy cập.";
+export const PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE =
+  "Ảnh hồ sơ hiện hành chỉ được thay thế sau khi ảnh mới được duyệt. Luồng duyệt ảnh thay thế " +
+  "chưa khả dụng — đang chờ API duyệt; không thể tải ảnh thay thế ở đây.";
+export const PORTRAIT_IN_FLIGHT_MESSAGE =
+  "Ảnh đã gửi đang được xử lý. Chờ kết quả trước khi gửi ảnh khác.";
+
+export function workerPortraitUploadPolicy(
+  portrait: WorkerPortraitProjection | null,
+): WorkerPortraitUploadPolicy {
+  if (portrait === null) return { allow: false, reason: "HIDDEN" };
+  if (portrait.current !== null) return { allow: false, reason: "REPLACEMENT_REQUIRES_APPROVAL" };
+  if ((WORKER_PORTRAIT_IN_FLIGHT_STATUSES as readonly string[]).includes(portrait.status)) {
+    return { allow: false, reason: "IN_FLIGHT" };
+  }
+  return { allow: true };
+}
+
+export function workerPortraitUploadPolicyMessage(
+  reason: WorkerPortraitUploadPolicyReason,
+): string {
+  if (reason === "HIDDEN") return PORTRAIT_HIDDEN_MESSAGE;
+  if (reason === "IN_FLIGHT") return PORTRAIT_IN_FLIGHT_MESSAGE;
+  return PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE;
+}
+
+export const WORKER_PORTRAIT_MAX_BYTES = 10 * 1024 * 1024;
+export const WORKER_PORTRAIT_MIME_TYPES = ["image/jpeg", "image/png"] as const;
+
+export type WorkerPortraitFileCheck =
+  | { ok: true; mimeType: "image/jpeg" | "image/png" }
+  | { ok: false; code: "DOCUMENT_FILE_REQUIRED" | "DOCUMENT_SIZE_INVALID" | "DOCUMENT_MIME_INVALID" };
+
+/**
+ * Kiem tra tep truoc khi gui: file rong, vuot dung luong hoac sai MIME deu bi tu choi tai client
+ * (server van la authority cuoi). Dung lai trong ca buoc chon tep lan trong ham upload.
+ */
+export function checkWorkerPortraitFile(
+  file: { size: number; type: string } | null | undefined,
+): WorkerPortraitFileCheck {
+  if (!file) return { ok: false, code: "DOCUMENT_FILE_REQUIRED" };
+  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > WORKER_PORTRAIT_MAX_BYTES) {
+    return { ok: false, code: "DOCUMENT_SIZE_INVALID" };
+  }
+  if (!(WORKER_PORTRAIT_MIME_TYPES as readonly string[]).includes(file.type)) {
+    return { ok: false, code: "DOCUMENT_MIME_INVALID" };
+  }
+  return { ok: true, mimeType: file.type as "image/jpeg" | "image/png" };
+}
+
 /** Trang thai chi co o tai lieu (khong co o portrait); vong doi dung chung o tren. */
 const DOCUMENT_ONLY_STATUS_LABELS: Readonly<Record<string, string>> = Object.freeze({
   MISSING: "Chưa có hồ sơ",
