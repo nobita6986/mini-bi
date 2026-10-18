@@ -18,18 +18,18 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 114 migrations and read RPC ACLs", async () => {
+test("from-scratch apply 116 migrations and read RPC ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // W05A #48, W07C-R7 #49, W07E #50, P2.5-W02 #51, P2.5-W03 #52, P2.5-W04 #53,
   // P2.5-W06A #54, P2.5-W05 #55, W05-R1 #56 and initial-ON #57.
-  assert.equal(migrations.migrationNames.length, 114);
-  assert.equal(migrations.migrationNames.at(-11),
-    "20261016100000_pre_w2_hf_direct_entry_own_draft_edit.sql");
-  assert.equal(migrations.migrationNames.at(-12),
-    "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql");
+  assert.equal(migrations.migrationNames.length, 116);
   assert.equal(migrations.migrationNames.at(-13),
-    "20261015170000_pre_w2_uploader_submission_queues.sql");
+    "20261016100000_pre_w2_hf_direct_entry_own_draft_edit.sql");
   assert.equal(migrations.migrationNames.at(-14),
+    "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql");
+  assert.equal(migrations.migrationNames.at(-15),
+    "20261015170000_pre_w2_uploader_submission_queues.sql");
+  assert.equal(migrations.migrationNames.at(-16),
     "20261015160000_pre_w2_initial_status_any_start_date.sql");
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.ok(migrations.migrationNames.includes("20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql"));

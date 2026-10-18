@@ -6,6 +6,7 @@ type Rpc = (name: string, args: Record<string, unknown>) => Promise<{
 }>;
 
 type ActorRef = { auth_subject: string; app_user_id: string };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type WorkerPortraitStage = {
   stage_id: string;
@@ -21,6 +22,11 @@ export type WorkerPortraitStage = {
 export type StageOperation<T = undefined> =
   | { ok: true; data: T }
   | { ok: false; kind: "conflict" | "denied" | "invalid" | "unavailable" };
+
+export type CreateWorkerPortraitStageResult = {
+  stage: WorkerPortraitStage;
+  replayed: boolean;
+};
 
 function serviceRoleRpc(): Rpc {
   const client = import("../supabase/server").then(({ createServiceSupabaseClient }) =>
@@ -72,19 +78,26 @@ export function createWorkerPortraitStageRepository(rpc?: Rpc) {
   return {
     async create(input: ActorRef & {
       stage_id: string; mime_type: "image/jpeg" | "image/png";
-      size_bytes: number; checksum_sha256: string;
-    }): Promise<StageOperation<WorkerPortraitStage>> {
-      const result = await call("direct_entry_create_worker_portrait_stage", {
+      size_bytes: number; checksum_sha256: string; idempotency_key: string;
+    }): Promise<StageOperation<CreateWorkerPortraitStageResult>> {
+      const result = await call("direct_entry_create_worker_portrait_stage_idempotent", {
         p_auth_subject: input.auth_subject,
         p_app_user_id: input.app_user_id,
         p_stage_id: input.stage_id,
         p_mime_type: input.mime_type,
         p_size_bytes: input.size_bytes,
         p_checksum_sha256: input.checksum_sha256,
+        p_idempotency_key: input.idempotency_key,
       });
       if (!result.ok) return result;
-      const data = projectStage(result.data);
-      return data ? { ok: true, data } : { ok: false, kind: "unavailable" };
+      if (typeof result.data !== "object" || result.data === null || Array.isArray(result.data)) {
+        return { ok: false, kind: "unavailable" };
+      }
+      const response = result.data as Record<string, unknown>;
+      const stage = projectStage(response.stage);
+      return typeof response.replayed === "boolean" && stage !== null
+        ? { ok: true, data: { stage, replayed: response.replayed } }
+        : { ok: false, kind: "unavailable" };
     },
     async claim(input: ActorRef & {
       stage_id: string; idempotency_key: string;
@@ -135,6 +148,27 @@ export function createWorkerPortraitStageRepository(rpc?: Rpc) {
       if (!result.ok) return result;
       const data = projectStage(result.data);
       return data ? { ok: true as const, data } : { ok: false as const, kind: "unavailable" as const };
+    },
+    async claimExpiredCleanup(input: { claim_token: string; limit: number }) {
+      const result = await call("direct_entry_claim_expired_worker_portrait_stage_cleanup", {
+        p_claim_token: input.claim_token,
+        p_limit: input.limit,
+      });
+      if (!result.ok) return result;
+      return Array.isArray(result.data) && result.data.every((stageId) =>
+        typeof stageId === "string" && UUID.test(stageId)
+      )
+        ? { ok: true as const, data: result.data as string[] }
+        : { ok: false as const, kind: "unavailable" as const };
+    },
+    async completeCleanup(input: { stage_id: string; claim_token: string }) {
+      const result = await call("direct_entry_complete_worker_portrait_stage_cleanup", {
+        p_stage_id: input.stage_id,
+        p_claim_token: input.claim_token,
+      });
+      return result.ok && result.data === true
+        ? { ok: true as const, data: true as const }
+        : { ok: false as const, kind: "unavailable" as const };
     },
   };
 }

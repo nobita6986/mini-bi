@@ -107,6 +107,10 @@ export async function postWorkerPortraitStage(
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data;")) {
     return fail("CONTENT_TYPE_INVALID", 400);
   }
+  const idempotencyKey = request.headers.get("idempotency-key")?.trim();
+  if (!idempotencyKey || !UUID.test(idempotencyKey)) {
+    return fail("IDEMPOTENCY_KEY_INVALID", 400);
+  }
 
   const actor = await resolveUploadActor(dependencies);
   if (!actor.ok) return actor.response;
@@ -136,7 +140,6 @@ export async function postWorkerPortraitStage(
     return fail("DOCUMENT_REQUEST_INVALID", 400);
   }
 
-  let writtenStageId: string | null = null;
   try {
     const original = new Uint8Array(await file.arrayBuffer());
     const inspected = inspectDocumentContent({
@@ -150,44 +153,41 @@ export async function postWorkerPortraitStage(
     });
     if (!sanitizedInspection.ok) return fail(sanitizedInspection.code, 422);
 
-    const stageId = randomUUID();
-    writtenStageId = stageId;
     const checksum = sha256Hex(sanitized.bytes);
-    await dependencies.storage.writeEnrollmentPortraitStage({
-      stage_id: stageId,
-      mime_type: file.type,
-      bytes: sanitized.bytes,
-    });
     const staged = await dependencies.repository.create({
       ...actor.actor,
-      stage_id: stageId,
+      stage_id: randomUUID(),
       mime_type: file.type,
       size_bytes: sanitized.bytes.byteLength,
       checksum_sha256: checksum,
+      idempotency_key: idempotencyKey.toLowerCase(),
     });
     if (!staged.ok) {
-      await dependencies.storage.deleteEnrollmentPortraitStage(stageId);
-      writtenStageId = null;
-      return fail(staged.kind === "denied" ? "DOCUMENT_DENIED" : "PORTRAIT_STAGE_UNAVAILABLE",
-        staged.kind === "denied" ? 403 : staged.kind === "invalid" ? 400 : 503);
+      return fail(
+        staged.kind === "denied" ? "DOCUMENT_DENIED" :
+          staged.kind === "conflict" ? "IDEMPOTENCY_CONFLICT" :
+            staged.kind === "invalid" ? "DOCUMENT_REQUEST_INVALID" : "PORTRAIT_STAGE_UNAVAILABLE",
+        staged.kind === "denied" ? 403 :
+          staged.kind === "invalid" ? 400 :
+            staged.kind === "conflict" ? 409 : 503);
     }
-    writtenStageId = null;
+    const { stage, replayed } = staged.data;
+    if (stage.status === "STAGED") {
+      await dependencies.storage.writeEnrollmentPortraitStage({
+        stage_id: stage.stage_id,
+        mime_type: stage.mime_type,
+        bytes: sanitized.bytes,
+      });
+    }
     return Response.json({
       ok: true,
-      stage_id: stageId,
-      mime_type: file.type,
-      size_bytes: sanitized.bytes.byteLength,
-      status: "STAGED",
-    }, { status: 201, headers: { "Cache-Control": "private, no-store" } });
+      stage_id: stage.stage_id,
+      mime_type: stage.mime_type,
+      size_bytes: stage.size_bytes,
+      status: stage.status,
+    }, { status: replayed ? 200 : 201, headers: { "Cache-Control": "private, no-store" } });
   } catch {
     console.error("[direct-entry] portrait staging failed");
-    if (writtenStageId !== null) {
-      try {
-        await dependencies.storage.deleteEnrollmentPortraitStage(writtenStageId);
-      } catch {
-        console.error("[direct-entry] portrait staging cleanup failed");
-      }
-    }
     return fail("PORTRAIT_STAGE_UNAVAILABLE", 503);
   }
 }

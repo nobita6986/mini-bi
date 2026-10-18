@@ -39,15 +39,17 @@ await db.query(
   [ACTORS.otherOwner.app_user_id],
 );
 
-test("migration #114 follows the W2S1 portrait stage migration without changing earlier guards", async () => {
-  assert.equal(migrations.migrationNames.length, 114);
-  assert.equal(migrations.migrationNames.at(-2),
-    "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql");
-  assert.equal(migrations.migrationNames.at(-1),
-    "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql");
+test("migration #115 follows W2S1 recovery without changing earlier guards", async () => {
+  assert.equal(migrations.migrationNames.length, 116);
   assert.equal(migrations.migrationNames.at(-4),
-    "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
+    "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql");
   assert.equal(migrations.migrationNames.at(-3),
+    "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql");
+  assert.equal(migrations.migrationNames.at(-2),
+    "20261018130000_w2_s1_portrait_stage_create_idempotency.sql");
+  assert.equal(migrations.migrationNames.at(-6),
+    "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
+  assert.equal(migrations.migrationNames.at(-5),
     "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
   for (const role of ["anon", "authenticated", "service_role"]) {
     const { rows } = await db.query(
@@ -320,6 +322,68 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
     claim_idempotency_key: null,
     entry_id: null,
     document_id: null,
+  });
+
+  test("portrait stage creation is idempotent per actor and rejects changed content", async () => {
+    const uploadActor = {
+      auth_subject: "11000000-0000-4000-8000-000000000009",
+      app_user_id: "21000000-0000-4000-8000-000000000009",
+    };
+    await db.query("insert into auth.users(id) values ($1)", [uploadActor.auth_subject]);
+    await db.query(
+      "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Idempotency Actor')",
+      [uploadActor.app_user_id, uploadActor.auth_subject],
+    );
+    await db.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'document_upload','2020-01-01')",
+      [uploadActor.app_user_id],
+    );
+    const idemKey = "b6000000-0000-4000-8000-000000000001";
+    const contentHash = "c".repeat(64);
+    const rpc = (actor, candidateStageId, checksum = contentHash) => db.query(
+      "select public.direct_entry_create_worker_portrait_stage_idempotent(" +
+      "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4,$5) data",
+      [actor.auth_subject, actor.app_user_id, candidateStageId, checksum, idemKey],
+    );
+
+    const concurrent = await Promise.all([
+      rpc(uploadActor, "b7000000-0000-4000-8000-000000000001"),
+      rpc(uploadActor, "b7000000-0000-4000-8000-000000000002"),
+    ]);
+    const first = concurrent[0].rows[0].data;
+    const second = concurrent[1].rows[0].data;
+    assert.equal(first.stage.stage_id, second.stage.stage_id,
+      "concurrent same-key calls resolve to one owner-bound stage");
+    assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
+    assert.equal((await db.query(
+      "select count(*)::integer count from public.direct_entry_worker_portrait_stages" +
+      " where created_by_user_id=$1 and create_idempotency_key=$2",
+      [uploadActor.app_user_id, idemKey],
+    )).rows[0].count, 1);
+
+    const retry = await rpc(uploadActor, "b7000000-0000-4000-8000-000000000003");
+    assert.equal(retry.rows[0].data.stage.stage_id, first.stage.stage_id);
+    assert.equal(retry.rows[0].data.replayed, true,
+      "retry after losing the original response returns the same stage");
+    await assert.rejects(
+      rpc(uploadActor, "b7000000-0000-4000-8000-000000000004", "d".repeat(64)),
+      (error) => error.code === "40001",
+      "reusing a key with a different checksum conflicts");
+
+    const otherActor = {
+      auth_subject: ACTORS.otherOwner.auth_subject,
+      app_user_id: ACTORS.otherOwner.app_user_id,
+    };
+    await db.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'document_upload','2020-01-01')",
+      [otherActor.app_user_id],
+    );
+    const isolated = await rpc(otherActor, "b7000000-0000-4000-8000-000000000005");
+    assert.notEqual(isolated.rows[0].data.stage.stage_id, first.stage.stage_id,
+      "identical keys are isolated by actor");
   });
   await assert.rejects(
     db.query(
