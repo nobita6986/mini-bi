@@ -11,7 +11,8 @@
   tài liệu của hồ sơ đã gửi, request gửi giá trị cố định `Tải ảnh NLĐ`. Luồng tải các tài liệu khác không đổi.
 - Reaper TTL 24 giờ đã có migration/runner nhưng **chưa có scheduler**, nên việc dọn tự động chưa hoạt động.
   UAT người dùng và kiểm tra accessibility trên thiết bị/screen reader cũng chưa thực hiện.
-- Follow-up hiện tại đang ở nhánh `codex/w2s1-s1-closeout`, tạo từ `origin/main`; các thay đổi UI/copy chưa commit.
+- Follow-up UI/copy đã được merge qua PR #61: commit `7aa7f81` → merge commit `defb872`; CI PR và CI sau merge trên
+  `main` đều xanh. Không có thay đổi chưa commit từ follow-up này.
 
 - Nhánh: `feature/w2s1-portrait-staging-ui`
 - Worktree: `C:\CodeApp\BI\.worktrees\w2s1-portrait-staging-ui`
@@ -173,7 +174,7 @@ Luồng dán hồ sơ cũ không được render; hai CTA tạo NLĐ đang hoạ
 | `node scripts/apply-migrations.mjs --offline` | 116 migration VALID; không truy cập DB |
 | `git diff --check` | PASS |
 | `pnpm build` | PASS |
-| `pnpm secrets:check` | Chưa chạy — cấu hình `C:\CodeApp\supabase-bi.txt` không có trong môi trường này |
+| `pnpm secrets:check` | Không chạy local vì thiếu `C:\CodeApp\supabase-bi.txt`; CI PR #61 và CI `main` chạy quality gate có secret scan và đều PASS |
 
 Coverage chính: tệp không hợp lệ **không** gọi mạng; multipart đúng một field `file`; không có field authority; DELETE chỉ `{stage_id}`; 404/409 ⇒ "không hủy được"; recovery fail-closed (`CLAIMED` phải có key, khác `CLAIMED` không được có key); `CLAIMED` ⇒ trạng thái "đã lưu, ảnh chưa xong"; row chỉ mang `portrait_stage_id` khi có ảnh; CTA đòi `document_upload` khi có ảnh; dialog hủy stage khi đóng.
 
@@ -222,10 +223,11 @@ Hai regression bắt buộc cho lỗi vòng đời:
 - Follow-up nhãn và ô lý do chỉ sửa UI/client body; không sửa API/RPC/SQL/migration, capability/authorization/scope.
 - Không sửa master plan, không sửa `.codegraph`, không đổi lịch sử PR #60.
 - Migration đã apply chỉ trên DB staging `oyykqfxkyqhxgrfntokl`; Production/VPS không bị truy cập hay thay đổi.
-- Follow-up chưa commit/push; chờ focused gate và CI xanh trước khi tích hợp. Không tạo scheduler hay chạy reaper trong
-  lượt này.
+- Follow-up commit `7aa7f81` đã được merge qua PR #61 tại `defb872` sau khi toàn bộ PR checks xanh; CI sau merge trên
+  `main` cũng PASS. Không có migration mới trong follow-up, không tạo scheduler hay chạy reaper trong lượt đó.
 
 ## 8. Revision log
 
 - 2026-10-18: đồng bộ trạng thái với `main@ff65036`, sửa kiểm kê hai luồng live, xác nhận #113–#116 chỉ apply trên staging,
   ghi rõ scheduler/UAT còn thiếu; đổi nhãn UI thành “Ảnh NLĐ” và bỏ ô nhập lý do bằng cách gửi audit reason cố định.
+- 2026-10-18: PR #61 (`7aa7f81`) merge vào `main` bằng `defb872`; CI sau merge xanh. Follow-up không thêm migration hay thay đổi DB.
