@@ -63,7 +63,7 @@ async function waitUntilBlocked(observer, applicationName) {
     if (rows[0]?.wait_event_type === "Lock") return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  assert.fail(`session ${applicationName} did not block on a PostgreSQL row lock`);
+  assert.fail(`session ${applicationName} did not block on a PostgreSQL lock`);
 }
 
 async function applyMigrations(client) {
@@ -76,7 +76,7 @@ async function applyMigrations(client) {
   for (const name of names) await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
 }
 
-test("stage recovery and portrait completion serialize safely under competing row locks", async (t) => {
+test("portrait stage recovery serializes with completion and the batch-aware RPC", async (t) => {
   const initdb = binary("initdb");
   const pgCtl = binary("pg_ctl");
   if (!initdb || !pgCtl) {
@@ -98,6 +98,8 @@ test("stage recovery and portrait completion serialize safely under competing ro
   let observer;
   let recoveryRequest;
   let completionRequest;
+  let batchRecoveryRequest;
+  let batchRequest;
   try {
     run(initdb, [
       "--username=postgres", "--auth-local=trust", "--auth-host=trust",
@@ -202,10 +204,90 @@ test("stage recovery and portrait completion serialize safely under competing ro
       assert.equal(results[0].status, "fulfilled", "recovery can win before completion");
       assert.equal(results[1].status, "rejected", "completion cannot attach after recovery");
     }
+
+    const batchStageId = "b8000000-0000-4000-8000-000000000002";
+    const batchKey = "b9000000-0000-4000-8000-000000000002";
+    await observer.query(
+      "select public.direct_entry_create_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4)",
+      [OWNER.auth_subject, OWNER.app_user_id, batchStageId, checksum],
+    );
+    await observer.query(
+      "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,$4)",
+      [OWNER.auth_subject, OWNER.app_user_id, batchStageId, batchKey],
+    );
+
+    await blocker.query("begin");
+    await blocker.query(
+      "select pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2, 0))",
+      [OWNER.app_user_id, batchKey],
+    );
+    batchRecoveryRequest = recovery.query(
+      "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid) data",
+      [OWNER.auth_subject, OWNER.app_user_id, batchStageId],
+    );
+    batchRequest = completion.query(
+      "select public.direct_entry_create_full_profile_batch_with_portrait_stages(" +
+      "$1::uuid,$2::uuid,'worker-profile/1.1',$3::jsonb,$4::text,array[$5::uuid]) data",
+      [
+        OWNER.auth_subject, OWNER.app_user_id,
+        JSON.stringify([{
+          project_id: "s02c_project",
+          first_work_date: "2026-10-20",
+          provider_type: "hrp",
+          recruiter_id: "93000000-0000-4000-8000-0000000000c1",
+          labor_type: "TEMPORARY",
+          display_name: "Concurrent batch worker",
+          worker_details: {
+            gender: { state: "provided", value: "OTHER" },
+            date_of_birth: { state: "omitted" },
+            national_id: { state: "omitted" },
+            national_id_issued_at: { state: "omitted" },
+            national_id_issued_place: { state: "omitted" },
+            address: { state: "omitted" },
+            phone: { state: "omitted" },
+          },
+          general_note: { state: "omitted" },
+          payment: null,
+          employment: null,
+        }]),
+        batchKey, batchStageId,
+      ],
+    );
+    await waitUntilBlocked(observer, "w2s1-recovery");
+    await waitUntilBlocked(observer, "w2s1-completion");
+    await blocker.query("commit");
+
+    const batchResults = await Promise.allSettled([batchRecoveryRequest, batchRequest]);
+    const { rows: [batchStage] } = await observer.query(
+      "select status,claim_idempotency_key from public.direct_entry_worker_portrait_stages" +
+      " where stage_id=$1",
+      [batchStageId],
+    );
+    if (batchStage.status === "STAGED") {
+      assert.equal(batchResults[0].status, "fulfilled",
+        "recovery may acquire the advisory lock before batch creation");
+      assert.equal(batchResults[0].value.rows[0].data.status, "STAGED");
+      assert.equal(batchResults[1].status, "rejected",
+        "the batch RPC cannot create workers from a stage released by recovery");
+      assert.equal(batchStage.claim_idempotency_key, null);
+    } else {
+      assert.equal(batchStage.status, "CLAIMED");
+      assert.equal(batchStage.claim_idempotency_key, batchKey);
+      assert.equal(batchResults[1].status, "fulfilled",
+        "batch creation may acquire the advisory lock before recovery");
+      assert.equal(batchResults[1].value.rows[0].data.entry_ids.length, 1);
+      assert.equal(batchResults[0].status, "fulfilled",
+        "recovery preserves the claim when the batch result has committed");
+      assert.equal(batchResults[0].value.rows[0].data.status, "CLAIMED");
+      assert.equal(batchResults[0].value.rows[0].data.claim_idempotency_key, batchKey);
+    }
   } finally {
     await blocker?.query("rollback").catch(() => {});
     await recoveryRequest?.catch(() => {});
     await completionRequest?.catch(() => {});
+    await batchRecoveryRequest?.catch(() => {});
+    await batchRequest?.catch(() => {});
     await observer?.end().catch(() => {});
     await recovery?.end().catch(() => {});
     await completion?.end().catch(() => {});
