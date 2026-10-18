@@ -379,17 +379,39 @@
 
 .formFieldset {
   display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   min-width: 0;
-  gap: 14px;
+  gap: 12px;
   margin: 12px 0 0;
   border: 0;
   padding: 0;
 }
 
+.formFieldset > .field,
+.formOptionalGrid > .field {
+  box-sizing: border-box;
+  min-width: 0;
+  align-content: start;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  padding: 12px;
+}
+
+.formFieldset > .quickErrorList,
+.formFieldset > .formUploadSection,
+.formFieldset > .formOptionalDetails {
+  grid-column: 1 / -1;
+}
+
 .formOptionalDetails {
-  border-top: 1px solid var(--border, #d4d4d8);
-  margin-top: 14px;
-  padding-top: 12px;
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  margin: 0;
+  padding: 12px;
 }
 
 .formOptionalDetails summary {
@@ -399,16 +421,47 @@
   font-weight: 700;
 }
 
-.formUploadSection {
-  display: grid;
-  gap: 12px;
-  border-top: 1px solid var(--border, #d4d4d8);
-  margin-top: 14px;
-  padding-top: 12px;
+.formOptionalGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 12px;
 }
 
-.formUploadSection h4 {
+.formUploadSection {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
   margin: 0;
+  padding: 14px;
+}
+
+.formUploadSection h3 {
+  margin: 0;
+}
+
+.formUploadGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+}
+
+.formUploadCard {
+  box-sizing: border-box;
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid var(--border, #d4d4d8);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background, #f8fafc) 55%, var(--surface, #fff));
+  padding: 12px;
+}
+
+.formUploadCard > * {
+  min-width: 0;
 }
 
 .formRowActions {
@@ -425,6 +478,8 @@
   width: 100%;
   min-width: 0;
   margin: 0 0 20px;
+  container-name: multi-entry-form;
+  container-type: inline-size;
 }
 
 .multiEntryFormHeader {
@@ -492,6 +547,41 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+@container multi-entry-form (max-width: 1199px) {
+  .formFieldset {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .formUploadGrid,
+  .formOptionalGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container multi-entry-form (max-width: 899px) {
+  .formFieldset,
+  .formUploadGrid,
+  .formOptionalGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container multi-entry-form (max-width: 539px) {
+  .formFieldset,
+  .formUploadGrid,
+  .formOptionalGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container multi-entry-form (max-width: 429px) {
+  .formFieldset,
+  .formUploadGrid,
+  .formOptionalGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .mobileStagedCard {
