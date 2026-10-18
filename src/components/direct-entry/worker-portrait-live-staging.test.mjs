@@ -223,7 +223,7 @@ test("RECOVERY: ho so da luu nhung anh chua xong => pending (khong bao 'chua luu
 
 test("LIVE wiring: hai luồng dùng chung controller và payload mang stage_id", () => {
   // Bang nhieu dong.
-  assert.match(live, /buildServerGeneratedFullProfileRequestBody\(preview\.rows, portraitStageIdsBySourceRow\)/);
+  assert.match(live, /buildServerGeneratedFullProfileRequestBody\(validPreviewRows, portraitStageIdsBySourceRow\)/);
   // Quick-add chi gui row dang mo.
   assert.match(live, /buildServerGeneratedFullProfileRequestBody\(\s*\n\s*\[matchingPreview\],/);
   assert.match(live, /const portraitStages = useWorkerPortraitStages\(\{ rowBindings: portraitRowBindings \}\)/);

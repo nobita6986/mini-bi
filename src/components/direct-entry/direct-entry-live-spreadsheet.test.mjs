@@ -109,8 +109,9 @@ test("success reload tu server va chi clear staged sau khi server xac nhan", () 
   assert.match(saveHandler, /if \(result\.kind === "saved"\)/);
   assert.match(saveHandler, /await reloadDrafts\(\);/);
   const savedBranch = saveHandler.indexOf('if (result.kind === "saved")');
-  const clearStaged = saveHandler.indexOf("setStagedModel(createSpreadsheetRowModel())", savedBranch);
-  assert.ok(clearStaged > savedBranch, "clear staged chi trong nhanh saved");
+  const removeSavedRows = saveHandler.indexOf("deleteSpreadsheetRow(model, clientRowId)", savedBranch);
+  assert.ok(removeSavedRows > savedBranch, "chi bo cac dong server da xac nhan trong nhanh saved");
+  assert.match(saveHandler, /setStagedModel\(\(current\) => savedClientRowIds\.reduce\(/);
 });
 
 test("save draft batch updates its dirty persisted rows, then leaves the entry grid empty", () => {

@@ -16,6 +16,10 @@ type Props = {
   canView: boolean;
   /** S03B4B-R2C: entry SUBMITTED bat buoc co ly do truoc khi reserve. */
   requireReason?: boolean;
+  /** File picked in the W2S1.1 form before the server entry ID existed. */
+  initialFile?: File | null;
+  /** Called after the existing reserve → PUT → finalize flow accepts the file. */
+  onInitialFileAccepted?(): void;
   onEntryVersionChange(rowId: string, version: number): void;
 };
 
@@ -76,14 +80,22 @@ export function DirectEntryDocumentEditor({
   canEdit,
   canView,
   requireReason,
+  initialFile,
+  onInitialFileAccepted,
   onEntryVersionChange,
 }: Props) {
   const [documents, setDocuments] = useState<DocumentDetailSummary[]>([]);
   const [loadError, setLoadError] = useState(false);
   const documentType: DocumentType = "EMPLOYMENT_CONTRACT";
-  const [file, setFile] = useState<File | null>(null);
-  const [state, setState] = useState<"idle" | "uploading" | "queued" | "error" | "conflict">("idle");
-  const [message, setMessage] = useState("");
+  const initialFileError = initialFile && (initialFile.size < 1 || initialFile.size > MAX_BYTES)
+    ? friendlyError("DOCUMENT_SIZE_INVALID")
+    : initialFile && !MIME_TYPES.has(initialFile.type)
+      ? friendlyError("DOCUMENT_MIME_INVALID")
+      : "";
+  const [file, setFile] = useState<File | null>(() => initialFile ?? null);
+  const [state, setState] = useState<"idle" | "uploading" | "queued" | "error" | "conflict">
+    (() => initialFileError ? "error" : "idle");
+  const [message, setMessage] = useState(() => initialFileError);
   const [reason, setReason] = useState("");
   const pendingKey = useRef<{
     file: File;
@@ -229,6 +241,7 @@ export function DirectEntryDocumentEditor({
       }
       if (typeof finalized.payload.entry_version === "number") nextVersion = finalized.payload.entry_version;
       onEntryVersionChange(rowId, nextVersion);
+      onInitialFileAccepted?.();
       setState("queued");
       setMessage("Đã kiểm tra định dạng và ghi nhận tài liệu.");
       await loadDocuments();

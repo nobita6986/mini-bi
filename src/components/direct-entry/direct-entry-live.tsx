@@ -6,6 +6,8 @@ import { Dialog } from "radix-ui";
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
 import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
+import { DirectEntryMultiEntryForm } from "@/components/direct-entry/direct-entry-multi-entry-form";
+import { DirectEntryInitialWorkerUploads } from "@/components/direct-entry/direct-entry-initial-worker-uploads";
 import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
@@ -14,7 +16,11 @@ import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
   type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
-import { validateEmployeeCode } from "@/lib/contracts/direct-entry-v1";
+import {
+  DOCUMENT_MAX_BYTES_HARD_LIMIT,
+  DOCUMENT_MIME_TYPES,
+  validateEmployeeCode,
+} from "@/lib/contracts/direct-entry-v1";
 import { projectDuplicateCccdPreflight } from "@/lib/direct-entry/submission-duplicate-cccd-contract";
 import type { DuplicateCccdPreflight } from "@/lib/direct-entry/submission-duplicate-cccd-contract";
 import {
@@ -57,6 +63,7 @@ import {
   type CccdStatusCache,
 } from "@/lib/direct-entry/cccd-status";
 import type { CccdDocumentSummary } from "@/lib/direct-entry/cccd-document-pair";
+import type { CccdDocumentType } from "@/lib/direct-entry/cccd-document-pair";
 import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
 import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
 import { canViewGlobalChangeRequestHistory } from "@/lib/direct-entry/worker-operations-model";
@@ -137,7 +144,18 @@ import {
 } from "@/lib/direct-entry/worker-portrait-stage-client";
 import { useWorkerPortraitStages } from "./use-worker-portrait-stages";
 import { WorkerPortraitStageSlot } from "./worker-portrait-stage-slot";
+import {
+  hasInitialWorkerUploads,
+  mapSavedWorkerInitialUploads,
+  type InitialWorkerUploadFiles,
+} from "@/lib/direct-entry/worker-initial-upload-queue";
 import styles from "./direct-entry-shell.module.css";
+
+const EMPTY_INITIAL_WORKER_UPLOADS: InitialWorkerUploadFiles = Object.freeze({
+  cccdFront: null,
+  cccdBack: null,
+  contract: null,
+});
 
 /** Message tu choi paste, da duoc viet san; khong chua gia tri nguoi dung. */
 const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
@@ -943,7 +961,29 @@ export function DirectEntryLive() {
   }, [fetchConflictCopy]);
 
   const [stagedModel, setStagedModel] = useState<SpreadsheetRowModel>(() => createSpreadsheetRowModel());
+  const [inputMode, setInputMode] = useState<"form" | "grid">("form");
+  const [visibleFormRowIds, setVisibleFormRowIds] = useState<string[]>(() =>
+    stagedModel.rows[0] ? [stagedModel.rows[0].clientRowId] : []);
+  // File objects remain in memory only; never serialize them into row cells, storage, or batch JSON.
+  const [stagedInitialUploads, setStagedInitialUploads] = useState<
+    Record<string, InitialWorkerUploadFiles>>({});
+  const [pendingInitialUploadsByEntryId, setPendingInitialUploadsByEntryId] = useState<
+    Record<string, InitialWorkerUploadFiles>>({});
+  const [initialUploadSelectionErrors, setInitialUploadSelectionErrors] = useState<
+    Record<string, string>>({});
   const [stagedValidationTriggered, setStagedValidationTriggered] = useState(false);
+
+  useEffect(() => {
+    const hasUnfinishedFiles = Object.values(stagedInitialUploads).some(hasInitialWorkerUploads) ||
+      Object.values(pendingInitialUploadsByEntryId).some(hasInitialWorkerUploads);
+    if (!hasUnfinishedFiles) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [pendingInitialUploadsByEntryId, stagedInitialUploads]);
 
   const reloadSubmissionDraft = useCallback(async (submission: SubmissionReadItem) => {
     if (selectNonEmptySpreadsheetRows(stagedModel).length > 0) {
@@ -974,6 +1014,7 @@ export function DirectEntryLive() {
       setStagedModel(createSpreadsheetRowModel());
       setStagedValidationTriggered(false);
       setEditingDraftSubmissionId(submission.submission_id);
+      setInputMode("grid");
       setSelectedClientRowIdInternal(refreshed[0]?.rowId ?? null);
       setLifecycleMessage("Đã tải lại " + refreshed.length + " dòng của bản nháp để sửa.");
     } catch {
@@ -1893,6 +1934,129 @@ export function DirectEntryLive() {
     setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
   }, []);
 
+  const addFormRow = useCallback(() => {
+    const visible = new Set(visibleFormRowIds);
+    let nextModel = stagedModel;
+    let target = nextModel.rows.find((row) =>
+      !visible.has(row.clientRowId) && spreadsheetRowIsBlank(row));
+    if (!target && nextModel.rows.length < SPREADSHEET_MAX_DATA_ROWS) {
+      nextModel = ensureSpreadsheetRowCount(
+        nextModel,
+        nextModel.rows.length + 1,
+        firstActiveLaborTypeKey(currentCatalog?.labor_types),
+      );
+      target = nextModel.rows[nextModel.rows.length - 1];
+    }
+    if (!target) {
+      setStagedMessageWithTone("Đã đạt giới hạn 100 NLĐ trong một lượt nhập.", "info");
+      return;
+    }
+    nextModel = activateSpreadsheetRowLazyDefaults(
+      nextModel,
+      target.clientRowId,
+      new Date(),
+      firstActiveLaborTypeKey(currentCatalog?.labor_types),
+    );
+    setStagedModel(nextModel);
+    setVisibleFormRowIds((current) => current.includes(target!.clientRowId)
+      ? current : [...current, target!.clientRowId]);
+    setStagedMessageWithTone("", "");
+  }, [currentCatalog?.labor_types, setStagedMessageWithTone, stagedModel, visibleFormRowIds]);
+
+  const deleteFormRow = useCallback((clientRowId: string) => {
+    onStagedDelete(clientRowId);
+    setVisibleFormRowIds((current) => current.filter((id) => id !== clientRowId));
+    setStagedInitialUploads((current) => {
+      const next = { ...current };
+      delete next[clientRowId];
+      return next;
+    });
+    setInitialUploadSelectionErrors((current) => {
+      const next = { ...current };
+      delete next[clientRowId];
+      return next;
+    });
+  }, [onStagedDelete]);
+
+  const onInitialUploadFileChange = useCallback((
+    clientRowId: string,
+    slot: keyof InitialWorkerUploadFiles,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.currentTarget.files?.[0] ?? null;
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (file.size < 1 || file.size > DOCUMENT_MAX_BYTES_HARD_LIMIT) {
+      setInitialUploadSelectionErrors((current) => ({
+        ...current,
+        [clientRowId]: "Tệp phải lớn hơn 0 và không vượt quá 10 MiB.",
+      }));
+      return;
+    }
+    if (!(DOCUMENT_MIME_TYPES as readonly string[]).includes(file.type)) {
+      setInitialUploadSelectionErrors((current) => ({
+        ...current,
+        [clientRowId]: "Chỉ chấp nhận ảnh JPEG, PNG hoặc PDF.",
+      }));
+      return;
+    }
+    setStagedInitialUploads((current) => ({
+      ...current,
+      [clientRowId]: {
+        ...(current[clientRowId] ?? EMPTY_INITIAL_WORKER_UPLOADS),
+        [slot]: file,
+      },
+    }));
+    setInitialUploadSelectionErrors((current) => {
+      const next = { ...current };
+      delete next[clientRowId];
+      return next;
+    });
+  }, []);
+
+  const onInitialCccdFilesAccepted = useCallback((
+    entryId: string,
+    acceptedTypes: readonly CccdDocumentType[],
+  ) => {
+    setPendingInitialUploadsByEntryId((current) => {
+      const selected = current[entryId];
+      if (!selected) return current;
+      const nextSelected = { ...selected };
+      for (const type of acceptedTypes) {
+        if (type === "CCCD_FRONT") nextSelected.cccdFront = null;
+        if (type === "CCCD_BACK") nextSelected.cccdBack = null;
+      }
+      const next = { ...current };
+      if (hasInitialWorkerUploads(nextSelected)) next[entryId] = nextSelected;
+      else delete next[entryId];
+      return next;
+    });
+  }, []);
+
+  const onInitialContractFileAccepted = useCallback((entryId: string) => {
+    setPendingInitialUploadsByEntryId((current) => {
+      const selected = current[entryId];
+      if (!selected) return current;
+      const nextSelected = { ...selected, contract: null };
+      const next = { ...current };
+      if (hasInitialWorkerUploads(nextSelected)) next[entryId] = nextSelected;
+      else delete next[entryId];
+      return next;
+    });
+  }, []);
+
+  const skipPendingInitialCccd = useCallback((entryId: string) => {
+    setPendingInitialUploadsByEntryId((current) => {
+      const selected = current[entryId];
+      if (!selected) return current;
+      const nextSelected = { ...selected, cccdFront: null, cccdBack: null };
+      const next = { ...current };
+      if (hasInitialWorkerUploads(nextSelected)) next[entryId] = nextSelected;
+      else delete next[entryId];
+      return next;
+    });
+  }, []);
+
   const onMobileStagedChange = useCallback((
     clientRowId: string,
     field: string,
@@ -1951,6 +2115,7 @@ export function DirectEntryLive() {
         setEditingDraftSubmissionId(null);
         setStagedModel(createSpreadsheetRowModel());
         setStagedValidationTriggered(false);
+        setInputMode("form");
         setSelectedClientRowId(null);
         setStagedMessageWithTone("Đã cập nhật bản nháp thành công.", "success");
         try {
@@ -1981,10 +2146,27 @@ export function DirectEntryLive() {
       setStagedMessageWithTone("Chưa có dòng hợp lệ để lưu.", "info");
       return;
     }
-    const body = buildServerGeneratedFullProfileRequestBody(preview.rows, portraitStageIdsBySourceRow);
+    const validPreviewRows = preview.rows.filter((row) => row.canProceed);
+    const savedClientRowIds = stagedValidation.rows
+      .filter((row) => row.canProceed)
+      .map((row) => row.clientRowId);
+    if (validPreviewRows.length === 0 || validPreviewRows.length !== savedClientRowIds.length) {
+      setStagedMessageWithTone("Không thể ánh xạ an toàn các dòng hợp lệ. Hãy tải lại trước khi lưu.", "error");
+      return;
+    }
+    if (savedClientRowIds.some((rowId) => portraitStages.slots.get(rowId)?.status === "staging")) {
+      setStagedMessageWithTone("Đang tải ảnh NLĐ lên. Chờ hoàn tất rồi hãy lưu các dòng.", "info");
+      return;
+    }
+    const body = buildServerGeneratedFullProfileRequestBody(validPreviewRows, portraitStageIdsBySourceRow);
     if (body === null) {
       setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
+    }
+    const queuedUploadsByClientRowId = new Map<string, InitialWorkerUploadFiles>();
+    for (const clientRowId of savedClientRowIds) {
+      const selected = stagedInitialUploads[clientRowId];
+      if (hasInitialWorkerUploads(selected)) queuedUploadsByClientRowId.set(clientRowId, selected);
     }
     const digest = await fullProfileIntentDigest(body.rows);
     if (digest === null) {
@@ -2005,9 +2187,52 @@ export function DirectEntryLive() {
       });
       if (result.kind === "saved") {
         stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
-        // W2S1: server da claim + gan anh (ATTACHED) cho cac dong vua luu => bo state stage tam.
+        const savedRowSet = new Set(savedClientRowIds);
+        // The server has confirmed these rows regardless of whether the response
+        // can be mapped. Settle their stages and remove them from the editable
+        // queue before handling a malformed response, so retry cannot duplicate
+        // workers that were already created.
         for (const [rowKey, stageId] of portraitStages.bindableStageIds) {
-          portraitStages.settle(rowKey, stageId);
+          if (savedRowSet.has(rowKey)) portraitStages.settle(rowKey, stageId);
+        }
+        const clearSavedStagedRows = () => {
+          setStagedModel((current) => savedClientRowIds.reduce(
+            (model, clientRowId) => deleteSpreadsheetRow(model, clientRowId), current));
+          setVisibleFormRowIds((current) => current.filter((clientRowId) => !savedRowSet.has(clientRowId)));
+          setStagedInitialUploads((current) => {
+            const next = { ...current };
+            for (const clientRowId of savedClientRowIds) delete next[clientRowId];
+            return next;
+          });
+          setInitialUploadSelectionErrors((current) => {
+            const next = { ...current };
+            for (const clientRowId of savedClientRowIds) delete next[clientRowId];
+            return next;
+          });
+        };
+        const mappedInitialUploads = mapSavedWorkerInitialUploads({
+          clientRowIds: savedClientRowIds,
+          entryIds: result.entryIds,
+          uploadsByClientRowId: queuedUploadsByClientRowId,
+        });
+        if (mappedInitialUploads === null) {
+          clearSavedStagedRows();
+          stagedUndo.current = null;
+          setStagedCanUndo(false);
+          setSelectedClientRowId(null);
+          setSavedCtaClientRowId(null);
+          setStagedMessageWithTone(
+            "Máy chủ đã lưu hồ sơ nhưng phản hồi không khớp số dòng. Các dòng đã lưu được khóa để tránh tạo trùng; hãy tải lại danh sách rồi mở Hồ sơ NLĐ để tiếp tục tải tệp.",
+            "error",
+          );
+          await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
+          return;
+        }
+        if (mappedInitialUploads.size > 0) {
+          setPendingInitialUploadsByEntryId((current) => ({
+            ...current,
+            ...Object.fromEntries(mappedInitialUploads),
+          }));
         }
         stagedUndo.current = null;
         setStagedCanUndo(false);
@@ -2017,7 +2242,6 @@ export function DirectEntryLive() {
         // anh xa clientRowId (staged) -> entry_id server-returned de giu
         // selection cho persisted row tuong ung (việc mapping xem row index
         // hay tên đều bị hủy bỏ; chi dung entry_id server-issued).
-        const savedClientRowIds = stagedValidation.rows.map((row) => row.clientRowId);
         const savedEntryIds = result.entryIds;
         const stagedToEntry = new Map<string, string>();
         for (let index = 0; index < savedClientRowIds.length; index += 1) {
@@ -2025,10 +2249,17 @@ export function DirectEntryLive() {
           const eid = savedEntryIds[index];
           if (cid !== undefined && eid !== undefined) stagedToEntry.set(cid, eid);
         }
-        // Chi clear staged rows sau khi server xac nhan bang projection hop le.
-        setStagedModel(createSpreadsheetRowModel());
-        setStagedValidationTriggered(false);
-        setStagedMessageWithTone("Đã lưu thành công " + result.entryIds.length + " hồ sơ người lao động.", "success");
+        // Chỉ bỏ các dòng được máy chủ xác nhận; dòng lỗi và tệp kèm theo vẫn ở lại để sửa.
+        clearSavedStagedRows();
+        const invalidRowCount = stagedValidation.rows.filter((row) => !row.canProceed).length;
+        setStagedValidationTriggered(invalidRowCount > 0);
+        setStagedMessageWithTone(
+          "Đã lưu " + result.entryIds.length + " hồ sơ người lao động." +
+            (invalidRowCount > 0
+              ? " Còn " + invalidRowCount + " dòng chưa hợp lệ; hãy sửa các lỗi đang hiển thị rồi lưu tiếp."
+              : ""),
+          invalidRowCount > 0 ? "info" : "success",
+        );
         // The newly created row belongs to a newly created DRAFT submission.
         // Refresh both projections before resolving selection: document upload
         // stays fail-closed unless isRowEditable can confirm that submission is
@@ -2036,7 +2267,7 @@ export function DirectEntryLive() {
         await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
         // Map lai selection: chi giu persisted row co entry_id trung khop;
         // KHONG doan theo row index/ho ten/CCCD.
-        if (selectedClientRowId !== null) {
+        if (selectedClientRowId !== null && savedRowSet.has(selectedClientRowId)) {
           const expectedEntryId = stagedToEntry.get(selectedClientRowId);
           if (expectedEntryId !== undefined) {
             setSelectionAfterSaveEntryId(expectedEntryId);
@@ -2062,7 +2293,9 @@ export function DirectEntryLive() {
       setStagedBusy(false);
     }
   }, [editingDraftSubmissionId, hasActiveLaborTypes, loadSubmissions, reloadDrafts,
-    saveRow, selectedClientRowId, setStagedModel, setStagedMessageWithTone, stagedValidation]);
+    portraitStageIdsBySourceRow, portraitStages, reconcileStagedPortraits, saveRow,
+    selectedClientRowId, setSelectedClientRowId, setStagedMessage, setStagedModel,
+    setStagedMessageWithTone, stagedInitialUploads, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -2167,7 +2400,9 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [reloadDrafts, setStagedModel, setStagedMessageWithTone, stagedModel, stagedValidation, setQuickEditClientRowId]);
+  }, [portraitStages, reconcileStagedPortraits, reloadDrafts, setSelectedClientRowId,
+    setStagedMessage, setStagedModel, setStagedMessageWithTone, stagedModel,
+    stagedValidation, setQuickEditClientRowId]);
 
   const updateDate = useCallback((rowId: string, firstWorkDate: string) => {
     // P3-W07C-R6: doi ngay bat dau lam viec KHONG xoa recruiter da chon va KHONG
@@ -2303,7 +2538,42 @@ export function DirectEntryLive() {
             onWithdraw={(request) => void withdrawChangeRequest(request)}
             onReview={(request) => setReviewRequest(request)}
           />
-          <section className={styles.gridSection} aria-label="Bảng nhập liệu Direct Entry">
+          <div className={styles.inputModeSwitch} role="group" aria-label="Cách nhập liệu">
+            <button type="button" className={inputMode === "form" ? styles.primaryButton : styles.secondaryButton}
+              data-testid="input-mode-form" aria-pressed={inputMode === "form"}
+              disabled={stagedBusy} onClick={() => setInputMode("form")}>
+              Biểu mẫu
+            </button>
+            <button type="button" className={inputMode === "grid" ? styles.primaryButton : styles.secondaryButton}
+              data-testid="input-mode-grid" aria-pressed={inputMode === "grid"}
+              disabled={stagedBusy} onClick={() => setInputMode("grid")}>
+              Lưới
+            </button>
+          </div>
+          {inputMode === "form" && editingDraftSubmissionId === null && (
+            <DirectEntryMultiEntryForm
+              model={stagedModel}
+              visibleRowIds={visibleFormRowIds}
+              validation={stagedValidationForDisplay}
+              catalog={currentCatalog}
+              uploadsByRowId={stagedInitialUploads}
+              uploadErrors={initialUploadSelectionErrors}
+              busy={stagedBusy}
+              canSave={loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes}
+              message={stagedMessage}
+              messageTone={stagedTone}
+              portraitStages={portraitStages}
+              onActivateRow={activateStagedRowLazyDefaults}
+              onChange={onMobileStagedChange}
+              onProviderTypeChange={onStagedProviderTypeChange}
+              onUploadFileChange={onInitialUploadFileChange}
+              onAddRow={addFormRow}
+              onDeleteRow={deleteFormRow}
+              onSave={() => void onStagedSave()}
+            />
+          )}
+          <section className={styles.gridSection} data-input-mode={inputMode}
+            aria-label="Bảng nhập liệu Direct Entry">
             {(() => {
               /**
                * P1.7-H06: contextual action bar (desktop) hien thi dong dang chon
@@ -2503,6 +2773,18 @@ export function DirectEntryLive() {
               }
             />
           </section>
+          <DirectEntryInitialWorkerUploads
+            pendingByEntryId={pendingInitialUploadsByEntryId}
+            rows={rows}
+            submissions={submissions}
+            capabilities={capabilities}
+            onCccdFilesAccepted={onInitialCccdFilesAccepted}
+            onContractFileAccepted={onInitialContractFileAccepted}
+            onSkipCccd={skipPendingInitialCccd}
+            onStatus={setCccdStatus}
+            onEntryVersionChange={onPaymentEntryVersionChange}
+            onOpenDocuments={setDocumentsRowId}
+          />
           {xlsxMessage !== "" && <p className={styles.lifecycleStatus} role="status">{xlsxMessage}</p>}
           <DirectEntrySubmittedDocumentManager
             submission={manageDocumentsSubmission}
@@ -2537,7 +2819,8 @@ export function DirectEntryLive() {
               void reloadAfterChangeRequestMutation(changeRequestErrorMessage(401));
             }}
           />
-          <section className={styles.mobileSection} aria-label="Danh sách bản nháp">
+          <section className={styles.mobileSection} data-input-mode={inputMode}
+            aria-label="Biểu mẫu nhập NLĐ và danh sách bản nháp">
             {rows.length === 0 && <p>Chưa có bản nháp. Chọn “Thêm dòng” để bắt đầu.</p>}
             <ul className={styles.mobileList}>
               {rows.map((row) => (
