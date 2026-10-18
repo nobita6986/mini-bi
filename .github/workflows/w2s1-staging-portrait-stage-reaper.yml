@@ -1,0 +1,43 @@
+name: W2S1 staging portrait-stage reaper
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w2s1-staging-portrait-stage-reaper
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    name: Reap expired staging-only portrait stages
+    if: vars.W2S1_STAGING_REAPER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: w2s1-staging-reaper
+    env:
+      W2S1_PORTRAIT_STAGE_REAPER_ENABLED: "true"
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.W2S1_STAGING_SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.W2S1_STAGING_SUPABASE_SECRET_KEY }}
+      DOCUMENT_STORAGE_ENVIRONMENT: preview
+      R2_ACCOUNT_ID: ${{ secrets.W2S1_STAGING_R2_ACCOUNT_ID }}
+      R2_BUCKET_NAME: ${{ secrets.W2S1_STAGING_R2_BUCKET_NAME }}
+      R2_ACCESS_KEY_ID: ${{ secrets.W2S1_STAGING_R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.W2S1_STAGING_R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Reap expired staged portrait objects in Preview only
+        run: pnpm reap:w2-s1-portrait-stages

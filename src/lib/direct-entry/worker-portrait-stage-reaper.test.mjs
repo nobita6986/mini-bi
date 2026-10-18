@@ -1,11 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { runWorkerPortraitStageReaper } from "./worker-portrait-stage-reaper.ts";
+import {
+  isW2S1PortraitStageReaperStagingEnvironment,
+  runWorkerPortraitStageReaper,
+} from "./worker-portrait-stage-reaper.ts";
 
 const STAGE_A = "a1000000-0000-4000-8000-000000000001";
 const STAGE_B = "a1000000-0000-4000-8000-000000000002";
 const TOKEN = "b1000000-0000-4000-8000-000000000001";
+
+test("reaper configuration accepts only the isolated staging Supabase project and Preview bucket", () => {
+  const staging = {
+    NEXT_PUBLIC_SUPABASE_URL: "https://oyykqfxkyqhxgrfntokl.supabase.co",
+    DOCUMENT_STORAGE_ENVIRONMENT: "preview",
+    R2_BUCKET_NAME: "hrp-bi-preview",
+  };
+  assert.equal(isW2S1PortraitStageReaperStagingEnvironment(staging), true);
+  assert.equal(isW2S1PortraitStageReaperStagingEnvironment({
+    ...staging,
+    NEXT_PUBLIC_SUPABASE_URL: "https://production.supabase.co",
+  }), false);
+  assert.equal(isW2S1PortraitStageReaperStagingEnvironment({
+    ...staging,
+    DOCUMENT_STORAGE_ENVIRONMENT: "production",
+  }), false);
+  assert.equal(isW2S1PortraitStageReaperStagingEnvironment({
+    ...staging,
+    R2_BUCKET_NAME: "hrp-bi-product",
+  }), false);
+});
 
 function dependencies({ deleteFailure } = {}) {
   const calls = [];

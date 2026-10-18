@@ -4,10 +4,16 @@ import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import { createR2DocumentStorage } from "../src/lib/direct-entry/r2-document-storage.ts";
 import { createWorkerPortraitStageRepository } from "../src/lib/direct-entry/worker-portrait-stage-repository.ts";
-import { runWorkerPortraitStageReaper } from "../src/lib/direct-entry/worker-portrait-stage-reaper.ts";
+import {
+  isW2S1PortraitStageReaperStagingEnvironment,
+  runWorkerPortraitStageReaper,
+} from "../src/lib/direct-entry/worker-portrait-stage-reaper.ts";
 
 if (process.env.W2S1_PORTRAIT_STAGE_REAPER_ENABLED !== "true") {
   throw new Error("W2S1_PORTRAIT_STAGE_REAPER_ENABLED must be true");
+}
+if (!isW2S1PortraitStageReaperStagingEnvironment(process.env)) {
+  throw new Error("portrait reaper is restricted to the configured staging DB and Preview bucket");
 }
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

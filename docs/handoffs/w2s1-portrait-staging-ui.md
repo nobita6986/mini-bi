@@ -2,14 +2,17 @@
 
 ## Trạng thái hiện tại — 2026-10-18
 
-- PR #60 đã merge vào `main`; `origin/main` tại `ff650360e54ef7e737e5c44c1071c3eb9c0bd9ff`, CI sau merge xanh.
+- PR #60 đã merge vào `main`; tiếp đó PR #61 (UI/copy) và PR #62 (đồng bộ handoff) đã merge. `origin/main` tại
+  `53fba86656ac9d87b6a330b8e758a05e7ae96c42`; CI sau merge PR #62 xanh.
 - Migration #113–#116 đã được apply và checksum đối chiếu khớp **chỉ trên Supabase staging** `oyykqfxkyqhxgrfntokl`.
   Không truy cập hay thay đổi DB Production/VPS.
 - Portrait staging hiện hoạt động trong bảng nhập nhiều dòng và quick-add/quick editor. Dialog dán Excel cũ không
   được trang live render; composer nháp dùng `/api/direct-entry/batches` vẫn chưa nhận portrait stage.
 - UI gọi ảnh là **“Ảnh NLĐ”**. Không hỏi người dùng nhập lý do khi tải ảnh; vì API/DB vẫn yêu cầu lý do audit cho
   tài liệu của hồ sơ đã gửi, request gửi giá trị cố định `Tải ảnh NLĐ`. Luồng tải các tài liệu khác không đổi.
-- Reaper TTL 24 giờ đã có migration/runner nhưng **chưa có scheduler**, nên việc dọn tự động chưa hoạt động.
+- Reaper TTL 24 giờ đã có migration/runner. Trong nhánh follow-up hiện tại có workflow GitHub Actions chạy mỗi giờ,
+  nhưng job **mặc định bỏ qua** cho đến khi có credentials staging riêng và repo variable
+  `W2S1_STAGING_REAPER_ENABLED=true`; workflow chưa vào `main` và chưa chạy.
   UAT người dùng và kiểm tra accessibility trên thiết bị/screen reader cũng chưa thực hiện.
 - Follow-up UI/copy đã được merge qua PR #61: commit `7aa7f81` → merge commit `defb872`; CI PR và CI sau merge trên
   `main` đều xanh. Không có thay đổi chưa commit từ follow-up này.
@@ -202,9 +205,15 @@ Hai regression bắt buộc cho lỗi vòng đời:
 
 ## 6. Việc còn lại trước khi đóng S1
 
-- **B1 — Reaper chưa được lên lịch.** Migration #116 và runner đã có; UI cũng dọn trong các nhánh kiểm soát được:
+- **B1 — Chưa kích hoạt lịch reaper.** Migration #116, runner và workflow GitHub Actions mỗi giờ đã có trong follow-up
+  đang chờ CI/merge; UI cũng dọn trong các nhánh kiểm soát được:
   đóng hộp thoại, dòng đổi, kết quả stage về muộn, và nút thử lại khi DELETE lỗi. Stage `STAGED` mồ côi chỉ tự dọn
-  sau TTL nếu môi trường vận hành gọi runner theo lịch.
+  sau TTL khi workflow được bật. Workflow mặc định bỏ qua job; runner từ chối chạy nếu URL không đúng project staging
+  `oyykqfxkyqhxgrfntokl.supabase.co`, storage environment không phải `preview`, hoặc bucket không phải `hrp-bi-preview`.
+  Để kích hoạt cần tạo GitHub Environment `w2s1-staging-reaper`, thêm các secret `W2S1_STAGING_SUPABASE_URL`,
+  `W2S1_STAGING_SUPABASE_SECRET_KEY`, `W2S1_STAGING_R2_ACCOUNT_ID`, `W2S1_STAGING_R2_BUCKET_NAME`,
+  `W2S1_STAGING_R2_ACCESS_KEY_ID`, `W2S1_STAGING_R2_SECRET_ACCESS_KEY`, rồi đặt repo variable
+  `W2S1_STAGING_REAPER_ENABLED=true`. Không dùng repository secrets Production.
 - **B2 — (đã xử lý bằng merge `5c4e0bb`).** Backend idempotency (#115) đã vào nhánh UI qua merge `89f9d2d`; client gửi
   `Idempotency-Key`, giữ cùng `File` + key khi retry POST. Retry batch dùng key riêng của batch.
 - **B3 — Hợp đồng chỉ mở/tải, chưa preview embed.** Route download hiện hữu vẫn dùng được khi READY; preview embed không nằm trong contract đã duyệt. Đây là giới hạn UX, không cản việc đọc/tải tài liệu.
@@ -214,20 +223,23 @@ Hai regression bắt buộc cho lỗi vòng đời:
   dùng chung controller `use-worker-portrait-stages` + slot `worker-portrait-stage-slot`.
 - **B8 — Composer `POST /api/direct-entry/batches` (draft) chưa có portrait staging.** Contract backend hiện **không** nhận
   `portrait_stage_id` cho endpoint này; cần chốt riêng capability/claim atomicity/retry/promote. Không tự mở rộng API.
-- **B9 — Cần cấu hình scheduler riêng cho staging và Production.** Hiện chưa có scheduler ở môi trường nào ⇒ TTL chưa
-  có hiệu lực tự động. Trước khi cấu hình, phải xác thực từng môi trường và tuyệt đối không trỏ job staging vào DB
-  Production; Production chỉ được cấu hình sau khi có phê duyệt triển khai riêng.
+- **B9 — Workflow chỉ dành cho staging và chưa được kích hoạt.** Không cấu hình reaper Production; Production không
+  thuộc phạm vi cho phép. TTL tự dọn ở staging bắt đầu sau khi follow-up được merge, secret/variable staging được thiết lập,
+  và workflow chạy.
 
 ## 7. Xác nhận
 
 - Follow-up nhãn và ô lý do chỉ sửa UI/client body; không sửa API/RPC/SQL/migration, capability/authorization/scope.
 - Không sửa master plan, không sửa `.codegraph`, không đổi lịch sử PR #60.
 - Migration đã apply chỉ trên DB staging `oyykqfxkyqhxgrfntokl`; Production/VPS không bị truy cập hay thay đổi.
-- Follow-up commit `7aa7f81` đã được merge qua PR #61 tại `defb872` sau khi toàn bộ PR checks xanh; CI sau merge trên
-  `main` cũng PASS. Không có migration mới trong follow-up, không tạo scheduler hay chạy reaper trong lượt đó.
+- Follow-up commit `7aa7f81` đã được merge qua PR #61 tại `defb872`; PR #62 đồng bộ handoff tại `53fba86`. CI sau merge
+  trên `main` xanh. Reaper workflow chỉ được thêm ở follow-up hiện tại, chưa chạy và không có DB/object nào bị thay đổi.
 
 ## 8. Revision log
 
 - 2026-10-18: đồng bộ trạng thái với `main@ff65036`, sửa kiểm kê hai luồng live, xác nhận #113–#116 chỉ apply trên staging,
   ghi rõ scheduler/UAT còn thiếu; đổi nhãn UI thành “Ảnh NLĐ” và bỏ ô nhập lý do bằng cách gửi audit reason cố định.
 - 2026-10-18: PR #61 (`7aa7f81`) merge vào `main` bằng `defb872`; CI sau merge xanh. Follow-up không thêm migration hay thay đổi DB.
+- 2026-10-18: `main@53fba86` đã có handoff đồng bộ PR #62. Nhánh follow-up hiện tại thêm workflow reaper staging theo giờ
+  với gate mặc định tắt và kiểm tra cố định project Supabase staging + R2 Preview bucket. Không dùng secret Production;
+  scheduler chưa được merge/bật/chạy.
