@@ -16,6 +16,7 @@ import { Dialog } from "radix-ui";
 
 import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
+import { WorkerDetailDialog } from "@/components/direct-entry/worker-detail-dialog";
 import type { ChangeRequestQueueFilter } from "@/lib/direct-entry/change-request-read-contract";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
@@ -170,6 +171,8 @@ export function WorkerOperations({
   actor?: WorkerOperationsActor | null;
 }) {
   const tabs = visibleWorkerTabs(canSeeAllWorkers);
+  /** W2S1: capability document_upload do server-resolved actor quyet dinh, khong suy tu tab/role. */
+  const canUploadDocuments = actor?.capabilities.includes("document_upload") === true;
   const [tab, setTab] = useState<WorkerOperationsTab>(
     () => initialWorkerTab(actor, canSeeAllWorkers));
   const [filters, setFilters] = useState<WorkerDirectoryFilters>(
@@ -190,6 +193,8 @@ export function WorkerOperations({
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
   const [drawerMode, setDrawerMode] = useState<"proposal" | "correction">("proposal");
+  /** W2S1: mot dialog chi tiet NLĐ dung chung cho moi danh sach; khong route thu hai. */
+  const [detailRow, setDetailRow] = useState<WorkerDirectoryRow | null>(null);
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -197,6 +202,7 @@ export function WorkerOperations({
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   /** Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger. */
   const drawerOpenerRef = useRef<HTMLElement | null>(null);
+  const detailOpenerRef = useRef<HTMLElement | null>(null);
   const filterId = useId();
   const projectFilterId = useId();
   const recruiterFilterId = useId();
@@ -651,6 +657,10 @@ export function WorkerOperations({
           <>
             <WorkerTable rows={workerPage.items}
               canPrivilegedEdit={canPrivilegedEditWorkers}
+              onViewDetail={(row, opener) => {
+                detailOpenerRef.current = opener;
+                setDetailRow(row);
+              }}
               onPropose={(row, opener) => {
                 drawerOpenerRef.current = opener;
                 setDrawerMode("proposal");
@@ -693,6 +703,14 @@ export function WorkerOperations({
           setNotice({ kind: "success", message }); setDrawerRow(null); void reload();
         }}
         onConflict={() => { setDrawerRow(null); setConflict(WORKER_CONFLICT_MESSAGE); }}
+      />
+
+      <WorkerDetailDialog
+        key={detailRow === null ? "none" : detailRow.entry_id}
+        row={detailRow}
+        canUploadDocuments={canUploadDocuments}
+        openerRef={detailOpenerRef}
+        onOpenChange={(open) => { if (!open) setDetailRow(null); }}
       />
 
       {canViewRequests ? (
@@ -754,10 +772,12 @@ function SubmissionTable({ submissions }: { submissions: readonly SubmissionRead
 }
 
 function WorkerTable({
-  rows, canPrivilegedEdit, onPropose, onCorrect,
+  rows, canPrivilegedEdit, onViewDetail, onPropose, onCorrect,
 }: {
   rows: readonly WorkerDirectoryRow[];
   canPrivilegedEdit: boolean;
+  /** W2S1: mo dialog chi tiet dung chung; `allowed_actions.view` luon true theo server. */
+  onViewDetail: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
   /** P2.5-HF-R5A: nhan kem nut da bam de tra focus khi dong drawer. */
   onPropose: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
   onCorrect: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
@@ -808,24 +828,27 @@ function WorkerTable({
                   ) : null}
                 </td>
                 <td className="p-3">
-                  {cta.show || canPrivilegedEdit ? (
-                    <div className="flex flex-col items-start gap-2">
-                      {cta.show ? (
-                        <button type="button" className={primaryClass}
-                          onClick={(event) => onPropose(row, event.currentTarget)}>
-                          Đề xuất thay đổi
-                        </button>
-                      ) : null}
-                      {canPrivilegedEdit ? (
-                        <button type="button" className={buttonClass}
-                          onClick={(event) => onCorrect(row, event.currentTarget)}>
-                          Sửa trực tiếp
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <span className="text-xs text-muted">{cta.message}</span>
-                  )}
+                  <div className="flex flex-col items-start gap-2">
+                    <button type="button" className={buttonClass}
+                      onClick={(event) => onViewDetail(row, event.currentTarget)}>
+                      Xem chi tiết
+                    </button>
+                    {cta.show ? (
+                      <button type="button" className={primaryClass}
+                        onClick={(event) => onPropose(row, event.currentTarget)}>
+                        Đề xuất thay đổi
+                      </button>
+                    ) : null}
+                    {canPrivilegedEdit ? (
+                      <button type="button" className={buttonClass}
+                        onClick={(event) => onCorrect(row, event.currentTarget)}>
+                        Sửa trực tiếp
+                      </button>
+                    ) : null}
+                    {cta.show || canPrivilegedEdit ? null : (
+                      <span className="text-xs text-muted">{cta.message}</span>
+                    )}
+                  </div>
                 </td>
               </tr>
             );
