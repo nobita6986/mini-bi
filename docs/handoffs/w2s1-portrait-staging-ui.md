@@ -15,6 +15,11 @@
   **ngay cả khi DELETE thất bại** ⇒ mất ID, không thể dọn lại; (b) đóng hộp thoại xóa sạch state **trước khi** hủy xong
   ⇒ mở lại có thể tái sử dụng stage đã gửi DELETE. Nay **chỉ xóa ID khi đã hủy được hoặc đã xác định trạng thái cuối**;
   mọi trường hợp còn lại giữ ID ở trạng thái `stale` để thử dọn lại và **không bao giờ** được gửi vào batch.
+- **Sửa race response cũ ghi đè upload mới (commit nối tiếp này):** mỗi lần stage có **generation/request ID duy nhất**
+  (`stage-start`/`stage-result` mang `requestId`); `stage-result` **chỉ** cập nhật slot đang ở `staging` **đúng `requestId`**
+  — không còn so `sourceRow` + row binding (sau khi dán lại y hệt, binding trùng lại nên cách cũ để response A ghi đè B).
+  Response cũ trả về một stage **đã tạo trên server** được đưa vào **danh sách orphan riêng** để hủy, **không** ghi vào slot
+  và **không** làm mất stage mới.
 
 ## 0. Kiểm tra trước/sau merge
 
@@ -45,13 +50,15 @@ Client **không** gửi actor/auth subject/app user/capability/scope/team, **kh�
   `selectBindablePortraitStages` (chỉ dòng còn khớp binding mới được gửi `portrait_stage_id`),
   `selectStalePortraitStages` (stage đã tạo nhưng không còn khớp ⇒ phải hủy/dọn),
   `reducePortraitStageLifecycle` (reducer thuần cho vòng đời stage: `stage-start` / `stage-result` / `invalidate` /
-  `cancel-result`), `INVALIDATED_PORTRAIT_BINDING` (gán khi vô hiệu hóa để stage cũ không bao giờ khớp lại),
+  `cancel-result` / `orphan-cancel-result`), `INVALIDATED_PORTRAIT_BINDING` (gán khi vô hiệu hóa để stage cũ không bao giờ khớp lại),
+  `selectOrphanPortraitStages` + `PortraitStageOrphan` (danh sách stage server đã tạo nhưng response về muộn, cần hủy),
   `EMPTY_PORTRAIT_STAGE_LIFECYCLE`.
 - `src/lib/direct-entry/worker-portrait-stage-client.test.mjs` — test thuần + **test hành vi reducer** (không mất ID khi DELETE lỗi,
-  xác nhận hủy mới xóa ID, đóng hộp thoại giữ ID nhưng vô hiệu hóa binding, kết quả về muộn).
+  xác nhận hủy mới xóa ID, đóng hộp thoại giữ ID nhưng vô hiệu hóa binding, response muộn vào orphan, **race A→B cả hai thứ tự**).
   (`isStalePortraitStageRequest` của bản trước đã được **thay bằng reducer** — reducer còn giữ được ID để dọn.)
 - `src/components/direct-entry/worker-portrait-staging-ui.test.mjs` — test nối UI ↔ builder + **test hành vi ở mức payload thật**
-  (dùng `reducePortraitStageLifecycle` → `selectBindablePortraitStages` → `buildFullProfileRequestBody`, không chỉ so chuỗi source).
+  (dùng `reducePortraitStageLifecycle` → `selectBindablePortraitStages` → `buildFullProfileRequestBody`, không chỉ so chuỗi source),
+  gồm race A→B (payload **chỉ** chứa stage B) và thứ tự response ngược lại.
 
 ### Sửa
 
@@ -69,10 +76,11 @@ Client **không** gửi actor/auth subject/app user/capability/scope/team, **kh�
   dự án, người tuyển, loại hình LĐ, CCCD, ngày sinh, điện thoại). Khi gửi batch, **chỉ** dòng còn khớp binding mới mang
   `portrait_stage_id`; dòng bị sửa/thay bằng NLĐ khác hoặc bị sắp xếp lại ⇒ binding lệch ⇒ ảnh cũ **không** được gửi
   cho hồ sơ mới và bị hủy ngay (không để mồ côi).
-- **Request đang chạy trả về muộn:** mỗi lần đổi dữ liệu / đóng hộp thoại, reducer `invalidate` **vô hiệu hóa binding
-  ngay** (chuyển mọi stage đã tạo sang `stale`, **giữ nguyên `stage_id`**) và tăng epoch. Kết quả stage về sau đó
-  (dòng đã đổi hoặc hộp thoại đã đóng) **không** ghi vào slot hiện tại; nếu server **đã tạo** stage thì stage đó được
-  ghi nhận là `stale` để dọn — **không làm mất ID**.
+- **Request đang chạy trả về muộn:** mỗi lần stage cấp một **`requestId`** duy nhất; `stage-result` chỉ áp dụng khi slot
+  đang `staging` và **đúng `requestId`**. Mỗi lần đổi dữ liệu / đóng hộp thoại, reducer `invalidate` **vô hiệu hóa binding
+  ngay** (chuyển mọi stage đã tạo sang `stale`, **giữ nguyên `stage_id`**) và tăng epoch. Response cũ về sau **không** ghi
+  vào slot hiện tại; nếu server **đã tạo** stage, nó vào **danh sách orphan** để hủy — **không mất ID** và **không ghi đè
+  upload mới**.
 - **Xóa ID chỉ khi chắc chắn:** `cancel-result` chỉ xóa slot khi hủy **đã xác nhận** (`204` ⇒ `cancelled`) hoặc đã xác định
   **trạng thái cuối** (`404` không thuộc phạm vi actor, `409` đang CLAIMED/ATTACHED). Lỗi mạng/5xx ⇒ giữ ID ở `stale`,
   hiện nút **"Thử dọn ảnh cũ chưa hủy được"** (`profile-portrait-cleanup-retry`) và nút "Dọn lại ảnh cũ" theo từng dòng.
@@ -93,7 +101,7 @@ Client **không** gửi actor/auth subject/app user/capability/scope/team, **kh�
 
 | Gate | Kết quả |
 | --- | --- |
-| `pnpm test:w2-s1-worker-portrait-ui` (4 file) | **66/66 PASS** |
+| `pnpm test:w2-s1-worker-portrait-ui` (4 file) | **70/70 PASS** |
 | `pnpm test:w2-s1-backend` (backend PR #60, không đổi) | 76 PASS / 0 fail |
 | `pnpm test:p1.6-i04c3-r3b` (`full-profile-batch`) | 25 PASS / 0 fail |
 | `pnpm test:p1.6-i04c3-r4-s02` (`banking-metadata`, đọc dialog) | 14 PASS / 0 fail |
@@ -126,7 +134,10 @@ Hai regression bắt buộc cho lỗi vòng đời:
 2. A→B — đổi dòng thì payload **không** có `portrait_stage_id` của stage A;
 3. **DELETE lỗi mạng/5xx** — ID **không** mất, stage **không** vào payload, bấm dọn lại và hủy xác nhận thì mới sạch;
 4. **đóng–mở lại** — DELETE thành công ⇒ sạch; DELETE lỗi ⇒ còn ID nhưng **dán lại đúng dữ liệu cũ vẫn không** đưa stage đó vào payload;
-5. kết quả về muộn (cả `staged` lẫn lỗi) không gắn lại vào dòng/dữ liệu khác.
+5. kết quả về muộn (cả `staged` lẫn lỗi) không gắn lại vào dòng/dữ liệu khác — stage đã tạo nằm trong **danh sách orphan** để hủy;
+6. **RACE:** upload A đang chạy → invalidate → **dán lại cùng dòng** (binding trùng lại) → upload B → response A về sau ⇒ A **không**
+   bind, **không** ghi đè B, A vào cleanup; payload **chỉ** chứa `stage_id` của B. Thử **cả thứ tự ngược** (B về trước, A về sau) ⇒
+   payload vẫn chỉ có B, A vào cleanup.
 
 ## 5. Blocker còn lại
 

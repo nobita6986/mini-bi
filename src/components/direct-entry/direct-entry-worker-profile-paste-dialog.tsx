@@ -48,6 +48,7 @@ import {
   recoverWorkerPortraitStage,
   reducePortraitStageLifecycle,
   selectBindablePortraitStages,
+  selectOrphanPortraitStages,
   selectStalePortraitStages,
   stageWorkerPortrait,
 } from "@/lib/direct-entry/worker-portrait-stage-client";
@@ -657,6 +658,7 @@ export function DirectEntryWorkerProfilePasteDialog({
     () => selectStalePortraitStages({ rowBindings, slots: portraits }),
     [portraits, rowBindings],
   );
+  const orphanStages = useMemo(() => selectOrphanPortraitStages(stageState), [stageState]);
 
   /** Huy/don MOT stage; tra ve ket qua that de caller quyet dinh thong bao. */
   const cancelPortraitStage = useCallback(async (
@@ -676,7 +678,7 @@ export function DirectEntryWorkerProfilePasteDialog({
     return result;
   }, [dispatchStage]);
 
-  // Don moi stage da tao nhung khong con khop dong nao (ke ca slot "stale" chua don duoc).
+  // Don moi stage da tao nhung khong con khop dong nao, va ca stage mo coi (response cu).
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -688,23 +690,39 @@ export function DirectEntryWorkerProfilePasteDialog({
           setPortraitMessage(portraitStageErrorMessage(result.code));
         }
       }
+      for (const orphan of orphanStages) {
+        if (!active) return;
+        const result = await cancelWorkerPortraitStage({ stageId: orphan.stageId, fetchImpl: fetch });
+        if (!active) return;
+        dispatchStage({
+          kind: "orphan-cancel-result",
+          stageId: orphan.stageId,
+          confirmed: result.kind === "cancelled" || result.kind === "not-cancellable",
+        });
+        if (result.kind === "retry" || result.kind === "rejected") {
+          setPortraitMessage(portraitStageErrorMessage(result.code));
+        }
+      }
     })();
     return () => { active = false; };
-  }, [cancelPortraitStage, cleanupNonce, staleStages]);
+  }, [cancelPortraitStage, cleanupNonce, dispatchStage, orphanStages, staleStages]);
 
   /** Gui MOT tep len ban nhap (stage), rang buoc voi noi dung dong tai thoi diem gui. */
   const stagePortrait = useCallback((sourceRow: number, file: File) => {
     const binding = rowBindings.get(sourceRow);
     if (binding === undefined) return;
+    // Generation/request ID duy nhat cho MOI lan stage: response cu (ke ca khi dong da duoc dan
+    // lai y het va binding trung lai) khong the ghi de upload moi.
+    const requestId = crypto.randomUUID();
     setPortraitMessage("");
-    dispatchStage({ kind: "stage-start", sourceRow, binding });
+    dispatchStage({ kind: "stage-start", sourceRow, binding, requestId });
     void stageWorkerPortrait({ file, fetchImpl: fetch }).then((result) => {
-      // Reducer quyet dinh: neu dong da doi / hop thoai da dong thi ket qua bi vo hieu hoa, va
-      // stage server DA tao duoc giu lai (stale) de don thay vi lam mat ID.
+      // Reducer CHI cap nhat slot dang hoat dong dung requestId. Response cu ma server da tao
+      // stage se duoc dua vao danh sach don rieng, khong dung vao slot hien tai.
       dispatchStage({
         kind: "stage-result",
         sourceRow,
-        binding,
+        requestId,
         result: result.kind === "staged"
           ? { kind: "staged", stageId: result.stageId, sizeBytes: result.sizeBytes }
           : { kind: "error", code: result.code },
@@ -906,7 +924,7 @@ export function DirectEntryWorkerProfilePasteDialog({
             savedEntryCount={savedEntryCount}
             portraits={portraits}
             portraitMessage={portraitMessage}
-            hasStalePortrait={staleStages.length > 0}
+            hasStalePortrait={staleStages.length > 0 || orphanStages.length > 0}
             closeSlot={
               <Dialog.Close asChild>
                 <button type="button" className={styles.secondaryButton}>Đóng</button>

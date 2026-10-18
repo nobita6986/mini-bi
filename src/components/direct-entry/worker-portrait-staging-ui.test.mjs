@@ -15,6 +15,7 @@ import {
   portraitRowBinding,
   reducePortraitStageLifecycle,
   selectBindablePortraitStages,
+  selectOrphanPortraitStages,
 } from "../../lib/direct-entry/worker-portrait-stage-client.ts";
 
 const dialog = readFileSync(
@@ -25,6 +26,9 @@ const client = readFileSync(
   new URL("../../lib/direct-entry/worker-portrait-stage-client.ts", import.meta.url), "utf8");
 
 const STAGE_ID = "a1000000-0000-4000-8000-000000000001";
+const STAGE_B = "a1000000-0000-4000-8000-000000000002";
+const REQ_A = "request-a";
+const REQ_B = "request-b";
 const RECRUITER_ID = "a1000000-0000-4000-8000-000000000009";
 
 /* ------------------------------------------------------------- fixtures */
@@ -122,12 +126,12 @@ function runLifecycle(actions) {
   return actions.reduce(reducePortraitStageLifecycle, EMPTY_PORTRAIT_STAGE_LIFECYCLE);
 }
 
-function staged(sourceRow, binding) {
+function staged(sourceRow, binding, requestId = REQ_A, stageId = STAGE_ID) {
   return [
-    { kind: "stage-start", sourceRow, binding },
+    { kind: "stage-start", sourceRow, binding, requestId },
     {
-      kind: "stage-result", sourceRow, binding,
-      result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 2048 },
+      kind: "stage-result", sourceRow, requestId,
+      result: { kind: "staged", stageId, sizeBytes: 2048 },
     },
   ];
 }
@@ -197,24 +201,67 @@ test("HÀNH VI: chu trình đóng–mở lại không tái sử dụng stage đ�
     "mo lai voi dung du lieu cu van khong duoc dung lai stage da gui DELETE");
 });
 
-test("HÀNH VI: kết quả stage về muộn sau edit/close không gắn lại và vẫn còn ID để dọn", () => {
+test("HÀNH VI: kết quả stage về muộn sau edit/close vào danh sách cleanup riêng, không gắn lại", () => {
   const rowA = previewRow(1);
   const rowB = previewRow(1, { display_name: "Nguyễn Văn B", employee_code: "hrp-2026-000002" });
   const bindingA = bindingOfRow(rowA);
 
-  // Ket qua ok ve muon sau khi dong doi.
   const lateOk = runLifecycle([
-    { kind: "stage-start", sourceRow: 1, binding: bindingA },
+    { kind: "stage-start", sourceRow: 1, binding: bindingA, requestId: REQ_A },
     { kind: "invalidate" },
     {
-      kind: "stage-result", sourceRow: 1, binding: bindingA,
+      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
       result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1024 },
     },
   ]);
-  assert.equal(lateOk.slots.get(1).status, "stale");
-  assert.equal(lateOk.slots.get(1).stageId, STAGE_ID);
+  assert.equal(lateOk.slots.has(1), false, "khong tao/ghi de slot nao");
+  assert.deepEqual([...selectOrphanPortraitStages(lateOk)], [{ stageId: STAGE_ID, sizeBytes: 1024 }]);
   assert.equal("portrait_stage_id" in payloadStageField([rowB], lateOk), false);
   assert.equal("portrait_stage_id" in payloadStageField([rowA], lateOk), false);
+});
+
+test("RACE: upload A → invalidate → dán lại cùng dòng + upload B → A về sau: payload chỉ có B, A vào cleanup", () => {
+  const row = previewRow(1);
+  const binding = bindingOfRow(row); // dan lai Y HET => binding trung lai
+  const state = runLifecycle([
+    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "invalidate" },
+    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_B },
+    {
+      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
+      result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
+    },
+    {
+      kind: "stage-result", sourceRow: 1, requestId: REQ_B,
+      result: { kind: "staged", stageId: STAGE_B, sizeBytes: 2 },
+    },
+  ]);
+  assert.equal(payloadStageField([row], state).portrait_stage_id, STAGE_B,
+    "payload chi chua stage B, khong phai stage A");
+  assert.deepEqual([...selectOrphanPortraitStages(state)], [{ stageId: STAGE_ID, sizeBytes: 1 }],
+    "stage A van duoc giu de huy, khong bi mat");
+});
+
+test("RACE (thứ tự ngược): B về trước rồi A về sau => payload vẫn chỉ có B", () => {
+  const row = previewRow(1);
+  const binding = bindingOfRow(row);
+  const state = runLifecycle([
+    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "invalidate" },
+    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_B },
+    {
+      kind: "stage-result", sourceRow: 1, requestId: REQ_B,
+      result: { kind: "staged", stageId: STAGE_B, sizeBytes: 2 },
+    },
+    {
+      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
+      result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
+    },
+  ]);
+  assert.equal(state.slots.get(1).status, "staged");
+  assert.equal(state.slots.get(1).stageId, STAGE_B, "A khong duoc ghi de B");
+  assert.equal(payloadStageField([row], state).portrait_stage_id, STAGE_B);
+  assert.deepEqual([...selectOrphanPortraitStages(state)], [{ stageId: STAGE_ID, sizeBytes: 1 }]);
 });
 
 /* ------------------------------------------------- wiring dialog (một phần) */
@@ -257,15 +304,20 @@ test("W2S1: dialog gui stage_id theo tung dong va KHONG gui bytes trong payload 
 test("W2S1: dialog dùng reducer vòng đời; đóng hộp thoại vô hiệu hóa và dọn stage", () => {
   assert.match(dialog, /useState<PortraitStageLifecycle>\(EMPTY_PORTRAIT_STAGE_LIFECYCLE\)/);
   assert.match(dialog, /setStageState\(\(current\) => reducePortraitStageLifecycle\(current, action\)\)/);
+  // Moi lan stage co generation/request ID duy nhat.
+  assert.match(dialog, /const requestId = crypto\.randomUUID\(\);/);
+  assert.match(dialog, /dispatchStage\(\{ kind: "stage-start", sourceRow, binding, requestId \}\)/);
+  assert.match(dialog, /kind: "stage-result",\s*\n\s*sourceRow,\s*\n\s*requestId,/);
   assert.match(dialog, /dispatchStage\(\{ kind: "invalidate" \}\)/);
   assert.match(dialog, /kind: "cancel-result",[\s\S]{0,60}?sourceRow,[\s\S]{0,40}?stageId,/);
   assert.match(dialog, /confirmed: result\.kind === "cancelled" \|\| result\.kind === "not-cancellable",/);
-  assert.match(dialog, /hasStalePortrait=\{staleStages\.length > 0\}/);
+  // Stage mo coi (response cu) duoc don qua danh sach rieng.
+  assert.match(dialog, /selectOrphanPortraitStages\(stageState\)/);
+  assert.match(dialog, /kind: "orphan-cancel-result",/);
+  assert.match(dialog, /hasStalePortrait=\{staleStages\.length > 0 \|\| orphanStages\.length > 0\}/);
   assert.match(dialog, /data-testid="profile-portrait-cleanup-retry"/);
   assert.match(dialog, /onRetryPortraitCleanup=\{\(\) => setCleanupNonce\(\(value\) => value \+ 1\)\}/);
-  // Khong con xoa ID bang setPortraits truc tiep.
   assert.doesNotMatch(dialog, /setPortraits\(/);
-  // Stage da gan (saved) => trang thai cuoi, duoc phep bo state.
   assert.match(dialog, /result\.kind === "saved"[\s\S]{0,400}dispatchStage\(\{ kind: "cancel-result", sourceRow, stageId, confirmed: true \}\)/);
 });
 

@@ -363,31 +363,62 @@ export function selectStalePortraitStages(input: {
 export const INVALIDATED_PORTRAIT_BINDING = "__invalidated__";
 
 export type PortraitStageSlot =
-  | { status: "staging"; binding: string; stageId: null }
-  | { status: "staged"; binding: string; stageId: string; sizeBytes: number }
-  | { status: "error"; binding: string; stageId: null; code: string }
-  | { status: "stale"; binding: typeof INVALIDATED_PORTRAIT_BINDING; stageId: string; sizeBytes: number };
+  | { status: "staging"; binding: string; requestId: string; stageId: null }
+  | { status: "staged"; binding: string; requestId: string; stageId: string; sizeBytes: number }
+  | { status: "error"; binding: string; requestId: string; stageId: null; code: string }
+  | {
+      status: "stale";
+      binding: typeof INVALIDATED_PORTRAIT_BINDING;
+      requestId: string;
+      stageId: string;
+      sizeBytes: number;
+    };
+
+/**
+ * Stage ma SERVER DA TAO nhung ket qua tra ve khong con thuoc slot nao dang hoat dong (response cu
+ * den muon). Giu rieng de huy; KHONG BAO GIO ghi vao slot hien tai (neu khong se de mat stage moi).
+ */
+export type PortraitStageOrphan = { stageId: string; sizeBytes: number };
 
 export type PortraitStageLifecycle = {
   epoch: number;
   slots: ReadonlyMap<number, PortraitStageSlot>;
+  orphans: readonly PortraitStageOrphan[];
 };
 
 export const EMPTY_PORTRAIT_STAGE_LIFECYCLE: PortraitStageLifecycle = Object.freeze({
   epoch: 0,
   slots: new Map<number, PortraitStageSlot>(),
+  orphans: [],
 });
 
 export type PortraitStageAction =
-  | { kind: "stage-start"; sourceRow: number; binding: string }
+  /** `requestId` duy nhat cho MOI lan stage => response cu khong the ghi de upload moi. */
+  | { kind: "stage-start"; sourceRow: number; binding: string; requestId: string }
   | {
       kind: "stage-result";
       sourceRow: number;
-      binding: string;
+      requestId: string;
       result: { kind: "staged"; stageId: string; sizeBytes: number } | { kind: "error"; code: string };
     }
   | { kind: "invalidate" }
-  | { kind: "cancel-result"; sourceRow: number; stageId: string; confirmed: boolean };
+  | { kind: "cancel-result"; sourceRow: number; stageId: string; confirmed: boolean }
+  | { kind: "orphan-cancel-result"; stageId: string; confirmed: boolean };
+
+/** Stage mo coi dang cho don. */
+export function selectOrphanPortraitStages(
+  state: PortraitStageLifecycle,
+): readonly PortraitStageOrphan[] {
+  return state.orphans;
+}
+
+function addOrphan(
+  orphans: readonly PortraitStageOrphan[],
+  orphan: PortraitStageOrphan,
+): PortraitStageOrphan[] {
+  if (orphans.some((current) => current.stageId === orphan.stageId)) return orphans as PortraitStageOrphan[];
+  return [...orphans, orphan];
+}
 
 export function reducePortraitStageLifecycle(
   state: PortraitStageLifecycle,
@@ -395,13 +426,18 @@ export function reducePortraitStageLifecycle(
 ): PortraitStageLifecycle {
   const slots = new Map(state.slots);
   if (action.kind === "stage-start") {
-    slots.set(action.sourceRow, { status: "staging", binding: action.binding, stageId: null });
-    return { epoch: state.epoch, slots };
+    slots.set(action.sourceRow, {
+      status: "staging",
+      binding: action.binding,
+      requestId: action.requestId,
+      stageId: null,
+    });
+    return { epoch: state.epoch, slots, orphans: state.orphans };
   }
   if (action.kind === "invalidate") {
     // Doi du lieu / dong hop thoai: vo hieu hoa binding NGAY. Slot da co stageId chuyen sang
-    // "stale" va VAN GIU ID de don; slot dang chay bi bo khoi state (ket qua ve muon se duoc
-    // ghi nhan lai thanh "stale" de don, xem nhanh stage-result).
+    // "stale" va VAN GIU ID de don; slot dang chay bi bo khoi state => response cua no ve sau
+    // se khong khop requestId nao nua (xem nhanh stage-result) va duoc dua vao danh sach don.
     for (const [sourceRow, slot] of state.slots) {
       if (slot.stageId === null) {
         slots.delete(sourceRow);
@@ -410,11 +446,12 @@ export function reducePortraitStageLifecycle(
       slots.set(sourceRow, {
         status: "stale",
         binding: INVALIDATED_PORTRAIT_BINDING,
+        requestId: slot.requestId,
         stageId: slot.stageId,
         sizeBytes: slot.status === "staged" ? slot.sizeBytes : 0,
       });
     }
-    return { epoch: state.epoch + 1, slots };
+    return { epoch: state.epoch + 1, slots, orphans: state.orphans };
   }
   if (action.kind === "cancel-result") {
     const current = slots.get(action.sourceRow);
@@ -422,43 +459,58 @@ export function reducePortraitStageLifecycle(
     if (action.confirmed) {
       // Chi xoa ID khoi state khi DA xac nhan huy hoac da xac dinh trang thai cuoi (khong huy duoc).
       slots.delete(action.sourceRow);
-      return { epoch: state.epoch, slots };
+      return { epoch: state.epoch, slots, orphans: state.orphans };
     }
     // Loi retry/khong xac dinh: GIU ID, giu trang thai de thu don lai, khong bao gio bindable.
     slots.set(action.sourceRow, {
       status: "stale",
       binding: INVALIDATED_PORTRAIT_BINDING,
+      requestId: current.requestId,
       stageId: action.stageId,
       sizeBytes: current.status === "staged" || current.status === "stale" ? current.sizeBytes : 0,
     });
-    return { epoch: state.epoch, slots };
+    return { epoch: state.epoch, slots, orphans: state.orphans };
   }
-  // stage-result
+  if (action.kind === "orphan-cancel-result") {
+    if (!action.confirmed) return state; // giu lai de thu don lai
+    return {
+      epoch: state.epoch,
+      slots,
+      orphans: state.orphans.filter((orphan) => orphan.stageId !== action.stageId),
+    };
+  }
+  // stage-result: CHI cap nhat slot dang hoat dong DUNG requestId (khong chi sourceRow/binding).
   const current = slots.get(action.sourceRow);
-  const stillCurrent = current !== undefined && current.status === "staging" &&
-    current.binding === action.binding;
-  if (!stillCurrent) {
-    if (action.result.kind === "error") return state;
-    // Dong da doi / hop thoai da dong nhung server DA tao stage => giu ID de don (khong mat).
-    slots.set(action.sourceRow, {
-      status: "stale",
-      binding: INVALIDATED_PORTRAIT_BINDING,
-      stageId: action.result.stageId,
-      sizeBytes: action.result.sizeBytes,
-    });
-    return { epoch: state.epoch, slots };
+  const active = current !== undefined && current.status === "staging" &&
+    current.requestId === action.requestId;
+  if (!active) {
+    if (action.result.kind !== "staged") return state;
+    // Response cu nhung server DA tao stage: dua vao danh sach don, KHONG dung vao slot hien tai.
+    return {
+      epoch: state.epoch,
+      slots,
+      orphans: addOrphan(state.orphans, {
+        stageId: action.result.stageId,
+        sizeBytes: action.result.sizeBytes,
+      }),
+    };
   }
   if (action.result.kind === "error") {
     slots.set(action.sourceRow, {
-      status: "error", binding: action.binding, stageId: null, code: action.result.code,
+      status: "error",
+      binding: current.binding,
+      requestId: current.requestId,
+      stageId: null,
+      code: action.result.code,
     });
-    return { epoch: state.epoch, slots };
+    return { epoch: state.epoch, slots, orphans: state.orphans };
   }
   slots.set(action.sourceRow, {
     status: "staged",
-    binding: action.binding,
+    binding: current.binding,
+    requestId: current.requestId,
     stageId: action.result.stageId,
     sizeBytes: action.result.sizeBytes,
   });
-  return { epoch: state.epoch, slots };
+  return { epoch: state.epoch, slots, orphans: state.orphans };
 }
