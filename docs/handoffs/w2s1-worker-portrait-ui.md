@@ -5,7 +5,10 @@
 - Base: `origin/main` = `c660ce944caabf5415b4b796eb1e71ecd9a2de25` (PR #59, W2S1 backend đã merge)
 - Phạm vi: CHỈ UI + projection client + test/wiring. Không sửa backend/API/RPC/SQL/migration/cấu hình auth.
 - Không apply DB, không truy cập staging/Production/VPS, không deploy, không merge/push.
-- Lịch sử: `ec0f9a2` (bản đầu) → **commit nối tiếp này** sửa 4 điểm sau rà soát T0:
+- Lịch sử: `ec0f9a2` (bản đầu) → `8190aaf` (sửa 4 điểm sau rà soát T0) → **commit nối tiếp này**:
+  bổ sung `QUARANTINED` vào nhóm trạng thái đang xử lý (`WORKER_PORTRAIT_IN_FLIGHT_STATUSES`) để **khoá upload** khi
+  `current === null` mà ảnh trước đang bị cách ly/chờ xử lý.
+- 4 điểm đã sửa ở `8190aaf`:
   (1) ảnh thay thế không được thành `current` chỉ vì reserve/finalize thành công · (2) chặn gửi tệp rỗng/sai MIME/vượt dung lượng ·
   (3) bỏ thuật ngữ "PII" khỏi nội dung người dùng nhìn thấy · (4) cập nhật handoff (gồm accessibility).
 
@@ -23,7 +26,7 @@
     từ version/`SUPERSEDED`/thứ tự mảng; `projectWorkerPortrait` từ chối `current` khi `origin === null`.
   - `workerPortraitUploadPolicy(portrait)` + `workerPortraitUploadPolicyMessage(reason)` — **chính sách thay ảnh**:
     `current !== null` ⇒ `REPLACEMENT_REQUIRES_APPROVAL` (khoá thay thế); `current === null` nhưng vòng đời đang
-    xử lý (`QUEUED`/`UPLOADING`/`SCANNING`) ⇒ `IN_FLIGHT`; `portrait === null` ⇒ `HIDDEN`; còn lại ⇒ `allow`.
+    xử lý (`QUEUED`/`UPLOADING`/`QUARANTINED`/`SCANNING`) ⇒ `IN_FLIGHT`; `portrait === null` ⇒ `HIDDEN`; còn lại ⇒ `allow`.
     **Chỉ cho gửi ảnh ĐẦU TIÊN khi chưa có `current`.**
   - `checkWorkerPortraitFile(file)` + `WORKER_PORTRAIT_MAX_BYTES`/`WORKER_PORTRAIT_MIME_TYPES` — kiểm tra tệp
     (rỗng/quá 10 MiB/sai MIME ⇒ từ chối) dùng ở **cả** bước chọn tệp **và** trong hàm upload.
@@ -86,7 +89,7 @@
 
 | Gate | Kết quả |
 | --- | --- |
-| `pnpm test:w2-s1-worker-portrait-ui` | 34/34 PASS (21 projection + 13 source-contract) |
+| `pnpm test:w2-s1-worker-portrait-ui` | 35/35 PASS (22 projection + 13 source-contract) |
 | `pnpm test:p2.5-w06` (đọc `worker-operations.tsx`) | 63 PASS / 0 fail |
 | `pnpm test:p3-1-hf-change-request-panel` (đọc `worker-operations.tsx`) | 58 PASS / 0 fail |
 | `pnpm test:p3-1-w05-a-existing-account-ui` (`direct-entry-page-access`, trang workers) | 30 PASS / 0 fail |
@@ -110,7 +113,7 @@ Coverage test đáng chú ý (bổ sung ở commit nối tiếp in đậm):
   403/404/hỏng JSON ⇒ fail-closed (mức code).
 - **Ảnh cũ vẫn là `current` cho tới khi ảnh mới được duyệt**: server trả ảnh mới ở `SCANNING`/`READY` nhưng `current` vẫn là
   document cũ ⇒ projection giữ nguyên `document_id`/`version` cũ và policy trả `REPLACEMENT_REQUIRES_APPROVAL` (khoá thay thế).
-- **Chỉ gửi ảnh đầu tiên**: `current === null` + `MISSING`/`FAILED` ⇒ `allow`; `current === null` + `QUEUED`/`UPLOADING`/`SCANNING` ⇒ `IN_FLIGHT`;
+- **Chỉ gửi ảnh đầu tiên**: `current === null` + `MISSING`/`FAILED` ⇒ `allow`; `current === null` + `QUEUED`/`UPLOADING`/`QUARANTINED`/`SCANNING` ⇒ `IN_FLIGHT`;
   `portrait === null` ⇒ `HIDDEN`; panel không có state/setter cho `current`.
 - **Tệp không hợp lệ**: `checkWorkerPortraitFile` từ chối `null`/`undefined`/size 0/size âm/> 10 MiB/sai MIME;
   panel xoá tệp khỏi state và nút gửi bị disable; `upload()` validate lại.

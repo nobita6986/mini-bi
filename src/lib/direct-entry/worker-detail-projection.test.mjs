@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   PORTRAIT_HIDDEN_MESSAGE,
+  PORTRAIT_IN_FLIGHT_MESSAGE,
   PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE,
   WORKER_PORTRAIT_MAX_BYTES,
   WORKER_PORTRAIT_STATUS_LABELS,
@@ -336,13 +337,29 @@ test("chỉ cho gửi ảnh đầu tiên khi chưa có current", () => {
   assert.deepEqual(workerPortraitUploadPolicy(projectWorkerPortrait(empty)), { allow: true });
   assert.deepEqual(workerPortraitUploadPolicy(projectWorkerPortrait({ ...empty, status: "FAILED" })),
     { allow: true });
-  for (const status of ["QUEUED", "UPLOADING", "SCANNING"]) {
+  for (const status of ["QUEUED", "UPLOADING", "QUARANTINED", "SCANNING"]) {
     const portrait = projectWorkerPortrait({ ...empty, status });
     assert.ok(portrait);
     assert.deepEqual(workerPortraitUploadPolicy(portrait), { allow: false, reason: "IN_FLIGHT" });
   }
   assert.equal(workerPortraitUploadPolicyMessage("IN_FLIGHT"),
     "Ảnh đã gửi đang được xử lý. Chờ kết quả trước khi gửi ảnh khác.");
+});
+
+test("QUARANTINED là đang xử lý: current null + QUARANTINED => IN_FLIGHT, không cho upload", () => {
+  const portrait = projectWorkerPortrait({
+    origin: null, added_at: null, status: "QUARANTINED", current: null,
+  });
+  assert.ok(portrait);
+  assert.equal(portrait.status, "QUARANTINED");
+  assert.equal(portrait.current, null);
+  assert.deepEqual(workerPortraitUploadPolicy(portrait), { allow: false, reason: "IN_FLIGHT" });
+  assert.equal(workerPortraitUploadPolicy(portrait).allow, false);
+  assert.equal(workerPortraitUploadPolicyMessage("IN_FLIGHT"), PORTRAIT_IN_FLIGHT_MESSAGE);
+  // Có current cũ thì khoá thay thế vẫn mạnh hơn trạng thái đang xử lý.
+  assert.deepEqual(
+    workerPortraitUploadPolicy(projectWorkerPortrait(portraitFixture({ status: "QUARANTINED" }))),
+    { allow: false, reason: "REPLACEMENT_REQUIRES_APPROVAL" });
 });
 
 test("workerPortraitUploadPolicy: thiếu document_view (portrait null) => HIDDEN, không upload", () => {

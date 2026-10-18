@@ -365,7 +365,11 @@ export function workerPortraitOriginLabel(origin: WorkerPortraitOrigin | null, a
  * API duyet anh thay the, UI chi cho gui anh DAU TIEN (`current === null`) va khoa thay the khi
  * da co `current`. `current` luon doc tu projection server tra ve, khong bao gio ghi cuc bo.
  */
-export const WORKER_PORTRAIT_IN_FLIGHT_STATUSES = ["QUEUED", "UPLOADING", "SCANNING"] as const;
+/** Vong doi CHUA co ket qua cuoi => khong cho gui anh khac. QUARANTINED cung thuoc nhom nay:
+ *  anh dang bi cach ly/cho xu ly, gui them se tao ban ghi chong cheo. */
+export const WORKER_PORTRAIT_IN_FLIGHT_STATUSES = [
+  "QUEUED", "UPLOADING", "QUARANTINED", "SCANNING",
+] as const;
 
 export type WorkerPortraitUploadPolicyReason =
   | "HIDDEN"
