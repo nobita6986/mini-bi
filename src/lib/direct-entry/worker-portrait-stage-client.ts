@@ -237,7 +237,7 @@ export function portraitPromotionState(recovery: PortraitStageRecovery): Portrai
 }
 
 export const PORTRAIT_PROMOTION_PENDING_MESSAGE =
-  "Hồ sơ đã được lưu nhưng ảnh hồ sơ chưa hoàn tất trên máy chủ. Bấm Thử lại với cùng yêu cầu " +
+  "Hồ sơ đã được lưu nhưng ảnh NLĐ chưa hoàn tất trên máy chủ. Bấm Thử lại với cùng yêu cầu " +
   "để máy chủ hoàn tất ảnh; không chọn lại ảnh khác cho dòng này.";
 export const PORTRAIT_PROMOTION_UNSAVED_MESSAGE =
   "Chưa xác định được kết quả lưu. Ảnh vẫn đang ở bản nháp trên máy chủ; hãy thử lại.";
@@ -254,18 +254,18 @@ const STAGE_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   DOCUMENT_SIZE_INVALID: "Ảnh phải lớn hơn 0 và không vượt quá 10 MiB.",
   DOCUMENT_MIME_INVALID: "Chỉ chấp nhận ảnh JPEG hoặc PNG.",
   DOCUMENT_CONTENT_INVALID: "Nội dung tệp không khớp định dạng ảnh đã chọn.",
-  DOCUMENT_DENIED: "Bạn không có quyền tải ảnh hồ sơ.",
+  DOCUMENT_DENIED: "Bạn không có quyền tải ảnh NLĐ.",
   DOCUMENT_REQUEST_INVALID: "Yêu cầu tải ảnh không hợp lệ.",
   ENTRY_NOT_FOUND: "Không tìm thấy ảnh tạm này trong phạm vi của bạn.",
   DOCUMENT_VERSION_CONFLICT: "Ảnh đang được xử lý hoặc đã gắn vào hồ sơ nên không hủy được.",
-  NOT_FOUND: "Tính năng ảnh hồ sơ chưa được bật trên môi trường này.",
+  NOT_FOUND: "Tính năng ảnh NLĐ chưa được bật trên môi trường này.",
   CSRF_REJECTED: "Yêu cầu không cùng nguồn. Hãy tải lại trang rồi thử lại.",
   UNAUTHENTICATED: "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.",
   ACTOR_NOT_AVAILABLE: "Không xác định được người dùng hiện tại. Vui lòng đăng nhập lại.",
 });
 
 export function portraitStageErrorMessage(code: string): string {
-  return STAGE_MESSAGES[code] ?? "Không xử lý được ảnh hồ sơ. Hãy thử lại.";
+  return STAGE_MESSAGES[code] ?? "Không xử lý được ảnh NLĐ. Hãy thử lại.";
 }
 
 /* ------------------------------------------------- ràng buộc stage ↔ dòng */

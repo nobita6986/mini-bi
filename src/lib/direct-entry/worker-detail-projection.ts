@@ -380,9 +380,9 @@ export type WorkerPortraitUploadPolicy =
   | { allow: true }
   | { allow: false; reason: WorkerPortraitUploadPolicyReason };
 
-export const PORTRAIT_HIDDEN_MESSAGE = "Ảnh hồ sơ được ẩn theo quyền truy cập.";
+export const PORTRAIT_HIDDEN_MESSAGE = "Ảnh NLĐ được ẩn theo quyền truy cập.";
 export const PORTRAIT_REPLACEMENT_REQUIRES_APPROVAL_MESSAGE =
-  "Ảnh hồ sơ hiện hành chỉ được thay thế sau khi ảnh mới được duyệt. Luồng duyệt ảnh thay thế " +
+  "Ảnh NLĐ hiện hành chỉ được thay thế sau khi ảnh mới được duyệt. Luồng duyệt ảnh thay thế " +
   "chưa khả dụng — đang chờ API duyệt; không thể tải ảnh thay thế ở đây.";
 export const PORTRAIT_IN_FLIGHT_MESSAGE =
   "Ảnh đã gửi đang được xử lý. Chờ kết quả trước khi gửi ảnh khác.";

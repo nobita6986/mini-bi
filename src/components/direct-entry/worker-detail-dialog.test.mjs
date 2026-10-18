@@ -4,6 +4,11 @@ import { test } from "node:test";
 
 const dialog = readFileSync(new URL("./worker-detail-dialog.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("./worker-portrait-panel.tsx", import.meta.url), "utf8");
+const stageSlot = readFileSync(new URL("./worker-portrait-stage-slot.tsx", import.meta.url), "utf8");
+const legacyPasteDialog = readFileSync(
+  new URL("./direct-entry-worker-profile-paste-dialog.tsx", import.meta.url), "utf8");
+const projection = readFileSync(new URL("../../lib/direct-entry/worker-detail-projection.ts", import.meta.url), "utf8");
+const stageClient = readFileSync(new URL("../../lib/direct-entry/worker-portrait-stage-client.ts", import.meta.url), "utf8");
 const operations = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
 const workersPage = readFileSync(
   new URL("../../app/direct-entry/workers/page.tsx", import.meta.url), "utf8");
@@ -84,25 +89,37 @@ test("W2S1: CCCD preview dùng route riêng; KHÔNG dùng portrait preview cho C
   assert.match(dialog, /luồng tài liệu được bảo vệ hiện có/);
 });
 
-test("W2S1: panel ảnh hồ sơ chỉ render preview trong panel và ẩn khi thiếu document_view", () => {
+test("W2S1: panel ảnh NLĐ chỉ render preview trong panel và ẩn khi thiếu document_view", () => {
   assert.match(panel, /portrait === null/);
   assert.match(panel, /\{PORTRAIT_HIDDEN_MESSAGE\}/);
   assert.match(panel, /data-testid="worker-portrait-panel"/);
   assert.match(panel, /src=\{workerPortraitPreviewUrl\(entryId, current\.document_id\)\}/);
-  assert.match(panel, /alt="Ảnh hồ sơ của người lao động"/);
+  assert.match(panel, /alt="Ảnh NLĐ"/);
+  assert.match(panel, />Ảnh NLĐ<\/h3>/);
   assert.doesNotMatch(panel, /from "next\/image"/);
 });
 
-test("W2S1: upload ảnh hồ sơ theo đúng pipeline reserve -> PUT -> finalize", () => {
+test("W2S1: upload ảnh NLĐ theo đúng pipeline reserve -> PUT -> finalize, không hỏi lý do", () => {
   assert.match(panel, /document_type: "WORKER_PORTRAIT"/);
   assert.match(panel, /expected_entry_version: pending\.expectedEntryVersion/);
   assert.match(panel, /size_bytes: file\.size/);
   assert.match(panel, /mime_type: check\.mimeType/);
+  assert.match(panel, /reason: WORKER_PORTRAIT_AUDIT_REASON/);
+  assert.match(panel, /const WORKER_PORTRAIT_AUDIT_REASON = "Tải ảnh NLĐ"/);
+  assert.doesNotMatch(panel, /Lý do tải ảnh|requireReason|textarea/);
+  assert.match(dialog, /canUpload=\{canUploadDocuments\}/);
+  assert.doesNotMatch(dialog, /requireReason/);
   assert.match(panel, /"Idempotency-Key": key/);
   assert.match(panel, /`\$\{pending\.key\}:finalize`/);
   assert.match(panel, /workerPortraitUploadUrl\(entryId, documentId\)/);
   assert.match(panel, /method: "PUT", headers, body: file/);
   assert.match(panel, /const uploadInfo = reserved\.payload\.upload/);
+});
+
+test("W2S1: nhãn ảnh trong các bề mặt UI dùng thống nhất từ ngữ Ảnh NLĐ", () => {
+  const visibleCopy = stripComments([panel, stageSlot, legacyPasteDialog, projection, stageClient].join("\n"));
+  assert.match(visibleCopy, /Ảnh NLĐ/);
+  assert.doesNotMatch(visibleCopy, /Ảnh hồ sơ/);
 });
 
 test("W2S1: không báo thành công giả — chỉ chốt sau khi finalize trả ok", () => {
@@ -121,7 +138,7 @@ test("W2S1: panel xử lý retry/conflict và chỉ nhận JPEG/PNG", () => {
   assert.match(panel, /accept="image\/jpeg,image\/png"/);
   assert.match(panel, /DOCUMENT_VERSION_CONFLICT/);
   assert.match(panel, /Tải lại trạng thái/);
-  assert.match(panel, /state === "error" \? "Thử lại" : "Tải ảnh hồ sơ"/);
+  assert.match(panel, /state === "error" \? "Thử lại" : "Tải ảnh NLĐ"/);
   assert.doesNotMatch(panel, /storage_key|X-Amz|signedUrl|signed_url/);
   assert.doesNotMatch(panel, /\.rpc\(/);
 });

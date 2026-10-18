@@ -1,4 +1,17 @@
-# W2S1 — UI staging ảnh hồ sơ (nhập NLĐ mới) + CCCD preview
+# W2S1 — UI ảnh NLĐ (nhập NLĐ mới) + chi tiết hồ sơ
+
+## Trạng thái hiện tại — 2026-10-18
+
+- PR #60 đã merge vào `main`; `origin/main` tại `ff650360e54ef7e737e5c44c1071c3eb9c0bd9ff`, CI sau merge xanh.
+- Migration #113–#116 đã được apply và checksum đối chiếu khớp **chỉ trên Supabase staging** `oyykqfxkyqhxgrfntokl`.
+  Không truy cập hay thay đổi DB Production/VPS.
+- Portrait staging hiện hoạt động trong bảng nhập nhiều dòng và quick-add/quick editor. Dialog dán Excel cũ không
+  được trang live render; composer nháp dùng `/api/direct-entry/batches` vẫn chưa nhận portrait stage.
+- UI gọi ảnh là **“Ảnh NLĐ”**. Không hỏi người dùng nhập lý do khi tải ảnh; vì API/DB vẫn yêu cầu lý do audit cho
+  tài liệu của hồ sơ đã gửi, request gửi giá trị cố định `Tải ảnh NLĐ`. Luồng tải các tài liệu khác không đổi.
+- Reaper TTL 24 giờ đã có migration/runner nhưng **chưa có scheduler**, nên việc dọn tự động chưa hoạt động.
+  UAT người dùng và kiểm tra accessibility trên thiết bị/screen reader cũng chưa thực hiện.
+- Follow-up hiện tại đang ở nhánh `codex/w2s1-s1-closeout`, tạo từ `origin/main`; các thay đổi UI/copy chưa commit.
 
 - Nhánh: `feature/w2s1-portrait-staging-ui`
 - Worktree: `C:\CodeApp\BI\.worktrees\w2s1-portrait-staging-ui`
@@ -33,7 +46,7 @@
     `worker-portrait-stage-slot`; khoá dòng tổng quát `rowKey: string` (dán Excel dùng `String(sourceRow)`, live dùng `clientRowId`).
   - Payload chỉ mang `portrait_stage_id`; không bytes/storage key/authority. **Không** mở rộng `POST /batches`.
 
-## 0. Kiểm tra trước/sau merge
+## 0. Lịch sử merge (trạng thái hiện hành xem phần đầu tài liệu)
 
 - Trước merge: primary `main @ c660ce9` (không đụng); nhánh UI cũ `0db7e71` **worktree sạch**; nhánh mới `1467c6d` (WIP được `git stash` để worktree sạch đúng yêu cầu, pop lại sau merge).
 - Conflict khi merge: **chỉ `package.json`** (mục `scripts`). Cách resolve: giữ lane `test:w2-s1-backend` **của PR #60** (12 file, gồm `full-profile-api`, `worker-portrait-stage-api`, `w2-s1-stage-recovery-concurrency`, migration 112–114) và **thêm** lane `test:w2-s1-worker-portrait-ui`. Chuỗi `test` canonical đã tự gộp và chứa **cả hai** lane. Đây là thay đổi cơ học ở danh sách script — **không đổi hành vi/logic/contract**.
@@ -50,18 +63,19 @@
 | Gắn ảnh khi lưu | `POST /api/direct-entry/batches/full-profile`, mỗi row `portrait_stage_id`; server claim theo actor + `Idempotency-Key` của batch rồi reserve/copy/finalize sau khi RPC tạo draft thành công |
 | Preview CCCD | `GET /api/direct-entry/entries/{entryId}/documents/{documentId}/cccd-preview` (`document_view` + purpose `cccd_preview`, không fallback `entry_privileged_edit`) |
 
-Client **không** gửi actor/auth subject/app user/capability/scope/team, **không** gửi bytes/base64 ảnh trong payload batch, **không** gửi storage key/URL. Mỗi lần chọn file tạo key UUID mới; retry request không rõ kết quả giữ nguyên `File` và key trong memory. Cần backend migration #115/RPC idempotent trên nhánh API trước khi hợp nhất contract này.
+Client **không** gửi actor/auth subject/app user/capability/scope/team, **không** gửi bytes/base64 ảnh trong payload batch, **không** gửi storage key/URL. Mỗi lần chọn file tạo key UUID mới; retry request không rõ kết quả giữ nguyên `File` và key trong memory. Backend idempotency #115 đã nằm trên `main` và đã apply ở staging.
 
 ## 2. Kiểm kê luồng tạo NLĐ trên UI hiện hành
 
 | Đường dẫn/CTA | API tạo | Hỗ trợ portrait staging |
 | --- | --- | --- |
-| Bảng nhập nhiều dòng: `Thêm dòng` → `Lưu các dòng hợp lệ` | `POST /api/direct-entry/batches/full-profile` qua `postFullProfileBatch` | **Chưa**; bảng hiện hành không có slot ảnh |
-| Tạo một dòng: `Thêm nhanh NLĐ` → `Lưu NLĐ` | Cùng `POST /api/direct-entry/batches/full-profile`, chỉ gửi row đang mở | **Chưa**; quick editor không có slot ảnh |
+| Bảng nhập nhiều dòng: `Thêm dòng` → `Lưu các dòng hợp lệ` | `POST /api/direct-entry/batches/full-profile` qua `postFullProfileBatch` | **Có**; stage ràng buộc theo `clientRowId` và nội dung dòng |
+| Tạo một dòng: `Thêm nhanh NLĐ` → `Lưu NLĐ` | Cùng `POST /api/direct-entry/batches/full-profile`, chỉ gửi row đang mở | **Có**; dùng chung controller/slot staging |
 | Composer bản nháp cũ: `Lưu nháp` khi row chưa có `expectedVersion` | `POST /api/direct-entry/batches` | Có đường tạo riêng; **chưa** có portrait slot |
 | `Dán hồ sơ từ Excel` (`DirectEntryWorkerProfilePasteDialog`) | Không có CTA/caller từ trang live; test hiện hành cố ý xác nhận dialog không render | Stage code trong component legacy **không phải luồng dùng được trong app** |
 
-Vì vậy luồng dán hồ sơ đầy đủ **không phải** luồng tạo NLĐ duy nhất; thực tế dialog dán hồ sơ cũ hiện không được render. Cả các CTA tạo NLĐ đang hoạt động đều thiếu portrait staging. Không tự gắn stage vào các luồng này trong nhánh kiểm kê vì sẽ mở rộng scope UI đã chốt; cần T0/T1A quyết định luồng nào là entrypoint chính và yêu cầu portrait bắt buộc/phạm vi hỗ trợ. UI idempotency hiện được nối ở client dialog legacy nhưng chưa làm luồng tạo nào đang hiển thị trở nên có portrait.
+Luồng dán hồ sơ cũ không được render; hai CTA tạo NLĐ đang hoạt động đều đã có portrait staging. Composer nháp là
+đường riêng còn thiếu contract portrait; không tự mở rộng `POST /batches` khi chưa chốt claim/retry semantics.
 
 ## 3. Thay đổi theo file/symbol
 
@@ -85,19 +99,21 @@ Vì vậy luồng dán hồ sơ đầy đủ **không phải** luồng tạo NL�
 
 ### Sửa
 
+- `src/components/direct-entry/direct-entry-live.tsx` — nối portrait stage vào bảng nhập nhiều dòng và quick-add; stage chỉ vào payload của đúng dòng; save/retry gọi settle/recovery.
+- `src/components/direct-entry/use-worker-portrait-stages.ts` và `worker-portrait-stage-slot.tsx` — controller/vòng đời stage và slot dùng chung cho các luồng live.
 - `src/lib/direct-entry/full-profile-batch.ts` — `FullProfileRequestRow.portrait_stage_id?`; `buildFullProfileRow(row, portraitStageId?)` chỉ thêm field khi có ảnh; `buildFullProfileRequestBody(rows, portraitStageIds?)` + bản server-generated; `fullProfileRequiredCapabilities` thêm `document_upload` khi có ảnh; `FullProfileSubmitState.portraitStageIds` để CTA chặn đúng.
-- `src/components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx` — mỗi dòng có slot **Ảnh hồ sơ**: chọn ảnh ⇒ stage; trạng thái staging/đã-stage/lỗi + thông báo riêng; nút **Hủy ảnh** (DELETE); `stagedStageIds` đưa vào payload khi lưu; sau `retry`/`conflict`/`rejected` gọi **recovery** để biết trạng thái thật; đóng hộp thoại ⇒ DELETE mọi stage chưa gắn; `saved` ⇒ xóa state stage (server đã ATTACHED).
+- `src/components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx` — legacy dialog có slot **Ảnh NLĐ**: chọn ảnh ⇒ stage; trạng thái staging/đã-stage/lỗi + thông báo riêng; nút **Hủy ảnh** (DELETE); `stagedStageIds` đưa vào payload khi lưu; sau `retry`/`conflict`/`rejected` gọi **recovery** để biết trạng thái thật; đóng hộp thoại ⇒ DELETE mọi stage chưa gắn; `saved` ⇒ xóa state stage (server đã ATTACHED). Đây không phải luồng live.
 - `src/lib/direct-entry/worker-detail-projection.ts` — thêm `workerCccdPreviewUrl`, `workerCccdPreviewable` (không đổi hàm/hành vi cũ).
 - `src/components/direct-entry/worker-detail-dialog.tsx` — mục **Tình trạng từng loại hồ sơ** có khung ảnh CCCD (`CccdPreview`) dùng route `cccd-preview`; CCCD không sẵn sàng/ngoài phạm vi ⇒ hiện "không xem được" + nút thử lại. Hợp đồng READY có link mở/tải bằng route `/documents/{documentId}/download` hiện hữu; không tạo route preview mới, không dùng portrait preview cho CCCD.
 - `src/components/direct-entry/worker-detail-dialog.test.mjs` — regression cho CCCD preview riêng và link hợp đồng chỉ khi document READY.
 - `src/lib/direct-entry/worker-portrait-stage-client.ts` — gửi `Idempotency-Key`, kiểm tra UUID ở client.
-- `src/components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx` — mỗi lần chọn ảnh giữ `File` + UUID key trong memory; lỗi không xác định cho phép nút "Thử lại cùng ảnh" gửi lại đúng file/key. Thay đổi này nằm trong component legacy chưa được live page render.
+- `src/components/direct-entry/direct-entry-worker-profile-paste-dialog.tsx` — mỗi lần chọn ảnh giữ `File` + UUID key trong memory; lỗi không xác định cho phép nút "Thử lại cùng ảnh" gửi lại đúng file/key. Component này là legacy, không được live page render.
 - `src/components/direct-entry/worker-portrait-staging-ui.test.mjs` và `src/lib/direct-entry/worker-portrait-stage-client.test.mjs` — regression cho key header, key ổn định khi retry và từ chối key không hợp lệ.
 - `package.json` — lane `test:w2-s1-worker-portrait-ui` thêm 2 test mới (resolve merge như mục 0).
 
 ## 4. Trạng thái UI
 
-- **Staging:** chọn ảnh theo từng dòng → ảnh nằm ở bản nháp; hiện "Ảnh đang ở bản nháp; máy chủ sẽ gắn vào hồ sơ khi lưu thành công." Chưa lưu thì ảnh chưa thuộc hồ sơ.
+- **Staging:** chọn **Ảnh NLĐ** theo từng dòng → ảnh nằm ở bản nháp; hiện "Ảnh đang ở bản nháp; máy chủ sẽ gắn vào hồ sơ khi lưu thành công." Chưa lưu thì ảnh chưa thuộc hồ sơ.
 - **Ràng buộc ảnh ↔ NLĐ:** mỗi slot giữ `binding` = `sourceRow` + băm nội dung dòng (mã NLĐ, họ tên, ngày bắt đầu,
   dự án, người tuyển, loại hình LĐ, CCCD, ngày sinh, điện thoại). Khi gửi batch, **chỉ** dòng còn khớp binding mới mang
   `portrait_stage_id`; dòng bị sửa/thay bằng NLĐ khác hoặc bị sắp xếp lại ⇒ binding lệch ⇒ ảnh cũ **không** được gửi
@@ -115,21 +131,23 @@ Vì vậy luồng dán hồ sơ đầy đủ **không phải** luồng tạo NL�
   (payload batch không có `portrait_stage_id` cho stage đó).
 - **Hủy stage:** nút Hủy ảnh khi stage còn `STAGED`; stage `CLAIMED`/`ATTACHED` bị server từ chối (409) ⇒ UI **không** báo đã hủy mà trả về trạng thái thật + thông báo.
 - **Lỗi/retry:** tệp rỗng/sai MIME/vượt dung lượng bị chặn **tại client trước khi gọi mạng**; lỗi mạng/5xx/2xx không đọc được ⇒ "thử lại", không báo thành công.
-- **Idempotency create:** UUID mới cho mỗi lần chọn ảnh; lỗi kết quả không xác định giữ chính `File` và key để retry. Nếu người dùng đóng dialog/đổi nội dung, file/key bị xóa khỏi memory và stage response về muộn đi theo cleanup/orphan hiện có. Cơ chế backend yêu cầu migration #115 chưa có trong nhánh UI này.
+- **Idempotency create:** UUID mới cho mỗi lần chọn ảnh; lỗi kết quả không xác định giữ chính `File` và key để retry. Nếu người dùng đóng dialog/đổi nội dung, file/key bị xóa khỏi memory và stage response về muộn đi theo cleanup/orphan hiện có. Backend idempotency nằm ở migration #115.
 - **Recovery sau kết quả không xác định:** gọi `/recover` cho từng stage rồi suy trạng thái:
   - `CLAIMED` (có `idempotency_key`) ⇒ **hồ sơ đã lưu nhưng ảnh chưa hoàn tất** — "Bấm Thử lại với cùng yêu cầu…"; key của batch **được giữ nguyên**;
   - `STAGED` ⇒ lần lưu trước chưa commit, ảnh dùng lại được;
   - `ATTACHED`/`CANCELLED` ⇒ dọn state tương ứng.
 - **CCCD preview:** chỉ hiện khung ảnh khi tài liệu READY + VALIDATED + CLEAN/NOT_REQUIRED và là JPEG/PNG; ảnh ngoài phạm vi hoặc chưa sẵn sàng ⇒ hiện trạng thái "không xem được" (không tự suy quyền, không tự mở endpoint khác).
 - **Hợp đồng:** khi `EMPLOYMENT_CONTRACT` READY, dialog có thể mở/tải qua route download được bảo vệ dùng trong `direct-entry-document-editor`; quyền/scope tiếp tục do server quyết định. Các loại tài liệu khác không được projection chi tiết liệt kê vẫn dùng manager tài liệu hiện hữu và link download READY ở đó; không thêm route hay preview mới.
-- **Policy khóa thay ảnh hồ sơ** (panel portrait) giữ nguyên: `current !== null` ⇒ không có đường upload thay thế; `QUEUED`/`UPLOADING`/`QUARANTINED`/`SCANNING` ⇒ `IN_FLIGHT`.
+- **Policy khóa thay Ảnh NLĐ** (panel portrait) giữ nguyên: `current !== null` ⇒ không có đường upload thay thế; `QUEUED`/`UPLOADING`/`QUARANTINED`/`SCANNING` ⇒ `IN_FLIGHT`.
 - Guard `/download` chung, capability/scope hiện hành **không đổi**.
 
-## 4. Test và gate
+## 5. Test và gate
+
+### Gates kế thừa từ PR #60 / main
 
 | Gate | Kết quả |
 | --- | --- |
-| `pnpm test:w2-s1-worker-portrait-ui` (5 file, gồm live staging) | **80/80 PASS** |
+| `pnpm test:w2-s1-worker-portrait-ui` (5 file, gồm live staging) | 80/80 PASS trước follow-up |
 | `pnpm test:w2-s1-backend` (sau merge `5c4e0bb`) | **85 PASS / 0 fail** |
 | `pnpm test:p1.6-i04c3-r3a` (grid/live, đọc `direct-entry-live.tsx`) | **175 PASS / 0 fail** |
 | `pnpm test:p1.6-i04c3-r3b` (`full-profile-batch`) | 25 PASS / 0 fail |
@@ -140,9 +158,22 @@ Vì vậy luồng dán hồ sơ đầy đủ **không phải** luồng tạo NL�
 | `pnpm lint` | 0 error; 14 warning đều là cảnh báo sẵn có, không phát sinh từ file thay đổi trong review này |
 | `pnpm build` | PASS (chạy lại sau thay đổi review này; `Compiled successfully`) |
 | `pnpm docs:check` | PASS 6/6 |
-| `node scripts/apply-migrations.mjs --offline` | 114 migration VALID, **không truy cập DB** |
+| `node scripts/apply-migrations.mjs --offline` | 116 migration VALID, **không truy cập DB** |
 | `git diff --check` | sạch |
 | `pnpm secrets:check` | **KHÔNG CHẠY ĐƯỢC** — blocker B4 (thiếu `C:\CodeApp\supabase-bi.txt`, lỗi môi trường) |
+
+### Follow-up UI hiện tại
+
+| Gate | Kết quả |
+| --- | --- |
+| `pnpm test:w2-s1-worker-portrait-ui` | **81/81 PASS** (gồm nhãn nhất quán và không còn ô nhập lý do) |
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS — 0 lỗi, 14 cảnh báo hiện hữu |
+| `pnpm docs:check` | PASS 6/6 |
+| `node scripts/apply-migrations.mjs --offline` | 116 migration VALID; không truy cập DB |
+| `git diff --check` | PASS |
+| `pnpm build` | PASS |
+| `pnpm secrets:check` | Chưa chạy — cấu hình `C:\CodeApp\supabase-bi.txt` không có trong môi trường này |
 
 Coverage chính: tệp không hợp lệ **không** gọi mạng; multipart đúng một field `file`; không có field authority; DELETE chỉ `{stage_id}`; 404/409 ⇒ "không hủy được"; recovery fail-closed (`CLAIMED` phải có key, khác `CLAIMED` không được có key); `CLAIMED` ⇒ trạng thái "đã lưu, ảnh chưa xong"; row chỉ mang `portrait_stage_id` khi có ảnh; CTA đòi `document_upload` khi có ảnh; dialog hủy stage khi đóng.
 
@@ -168,27 +199,33 @@ Hai regression bắt buộc cho lỗi vòng đời:
    bind, **không** ghi đè B, A vào cleanup; payload **chỉ** chứa `stage_id` của B. Thử **cả thứ tự ngược** (B về trước, A về sau) ⇒
    payload vẫn chỉ có B, A vào cleanup.
 
-## 5. Blocker còn lại
+## 6. Việc còn lại trước khi đóng S1
 
-- **B1 — Không có TTL/reaper/cleanup tự động cho stage mồ côi (phía server).** Contract ghi rõ. UI đã dọn trong các nhánh
-  kiểm soát được: hủy khi đóng hộp thoại, hủy khi dòng đổi (binding lệch), hủy khi kết quả stage về muộn, và nút
-  "Thử dọn ảnh cũ chưa hủy được" khi DELETE lỗi (ID được giữ lại để thử tiếp). Trường hợp còn hở: người dùng
+- **B1 — Reaper chưa được lên lịch.** Migration #116 và runner đã có; UI cũng dọn trong các nhánh kiểm soát được:
+  đóng hộp thoại, dòng đổi, kết quả stage về muộn, và nút thử lại khi DELETE lỗi. Stage `STAGED` mồ côi chỉ tự dọn
+  sau TTL nếu môi trường vận hành gọi runner theo lịch.
 - **B2 — (đã xử lý bằng merge `5c4e0bb`).** Backend idempotency (#115) đã vào nhánh UI qua merge `89f9d2d`; client gửi
   `Idempotency-Key`, giữ cùng `File` + key khi retry POST. Retry batch dùng key riêng của batch.
-- **B3 — Không có preview riêng cho hợp đồng.** Mở/tải được qua route download hiện hữu khi READY; preview embed không được thêm. CCCD tiếp tục qua endpoint preview riêng.
+- **B3 — Hợp đồng chỉ mở/tải, chưa preview embed.** Route download hiện hữu vẫn dùng được khi READY; preview embed không nằm trong contract đã duyệt. Đây là giới hạn UX, không cản việc đọc/tải tài liệu.
 - **B4 — `pnpm secrets:check` không chạy được** (thiếu file cấu hình ngoài repo). Cần chạy lại ở môi trường có file; không phải phát hiện secret trong thay đổi này.
 - **B5 — Chưa UAT.** Chưa đăng nhập/mở hồ sơ thật; nhánh lỗi 403/404 của entry detail và CCCD preview mới có coverage ở mức code. Chưa audit a11y (screen reader/contrast/tab order) và chưa thử mobile thật.
 - **B6 — (đã xử lý).** Portrait staging đã nối vào **hai luồng đang render**: bảng nhiều dòng và quick-add/quick editor,
   dùng chung controller `use-worker-portrait-stages` + slot `worker-portrait-stage-slot`.
 - **B8 — Composer `POST /api/direct-entry/batches` (draft) chưa có portrait staging.** Contract backend hiện **không** nhận
   `portrait_stage_id` cho endpoint này; cần chốt riêng capability/claim atomicity/retry/promote. Không tự mở rộng API.
-- **B9 — TTL/reaper (#116) chưa được lên lịch vận hành.** Đã có RPC/worker one-shot (`pnpm reap:w2-s1-portrait-stages`)
-  nhưng chưa cấu hình cron/scheduler ở môi trường nào ⇒ stage `STAGED` mồ côi chưa được dọn tự động.
+- **B9 — Cần cấu hình scheduler riêng cho staging và Production.** Hiện chưa có scheduler ở môi trường nào ⇒ TTL chưa
+  có hiệu lực tự động. Trước khi cấu hình, phải xác thực từng môi trường và tuyệt đối không trỏ job staging vào DB
+  Production; Production chỉ được cấu hình sau khi có phê duyệt triển khai riêng.
 
-## 6. Xác nhận
+## 7. Xác nhận
 
-- Không sửa backend/API/RPC/SQL/migration, không đổi capability/authorization/scope, không tạo endpoint mới.
-- Không sửa master plan, không sửa `.codegraph`, không sửa nhánh/PR #60.
-- Không apply migration vào DB thật, không truy cập staging/Production/VPS, không deploy.
-- Chỉ dùng DB ephemeral cho test; không merge vào `main`.
-- Commit/push **chỉ trên nhánh UI** `feature/w2s1-portrait-staging-ui` sau khi toàn bộ gate đạt.
+- Follow-up nhãn và ô lý do chỉ sửa UI/client body; không sửa API/RPC/SQL/migration, capability/authorization/scope.
+- Không sửa master plan, không sửa `.codegraph`, không đổi lịch sử PR #60.
+- Migration đã apply chỉ trên DB staging `oyykqfxkyqhxgrfntokl`; Production/VPS không bị truy cập hay thay đổi.
+- Follow-up chưa commit/push; chờ focused gate và CI xanh trước khi tích hợp. Không tạo scheduler hay chạy reaper trong
+  lượt này.
+
+## 8. Revision log
+
+- 2026-10-18: đồng bộ trạng thái với `main@ff65036`, sửa kiểm kê hai luồng live, xác nhận #113–#116 chỉ apply trên staging,
+  ghi rõ scheduler/UAT còn thiếu; đổi nhãn UI thành “Ảnh NLĐ” và bỏ ô nhập lý do bằng cách gửi audit reason cố định.

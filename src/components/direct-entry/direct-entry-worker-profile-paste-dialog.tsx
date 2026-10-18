@@ -143,7 +143,7 @@ function rowBinding(row: WorkerProfilePreviewRow): string {
   });
 }
 
-export const PORTRAIT_SLOT_LABEL = "Ảnh hồ sơ (JPEG/PNG, tối đa 10 MiB)";
+export const PORTRAIT_SLOT_LABEL = "Ảnh NLĐ (JPEG/PNG, tối đa 10 MiB)";
 
 function PortraitSlot({
   sourceRow,
@@ -166,7 +166,7 @@ function PortraitSlot({
   const staging = slot?.status === "staging";
   return (
     <div className={styles.profileSection} data-testid={"profile-portrait-" + sourceRow}>
-      <h4>Ảnh hồ sơ</h4>
+      <h4>Ảnh NLĐ</h4>
       <label className={styles.field} htmlFor={inputId}>
         <span>{PORTRAIT_SLOT_LABEL}</span>
         <span className={styles.filePickerControl}>
