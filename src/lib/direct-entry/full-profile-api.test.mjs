@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import sharp from "sharp";
 
 import { postFullProfileBatch } from "./full-profile-api.ts";
+import { sha256Hex } from "./document-r2-contract.ts";
 
 const actor = {
   auth_subject: "91000000-0000-4000-8000-000000000001",
@@ -345,4 +347,102 @@ test("P3-W07C REGRESSION: loi Postgres khong xac dinh => BATCH_INVALID fallback 
     "fallback khong duoc chua gia tri sensitive tu raw error message");
   assert.equal(responseText.toLowerCase().includes("unique"), false,
     "fallback khong duoc chua thong tin SQL/constraint noi bo");
+});
+
+test("portrait stages are claimed before save and promoted only after the batch commits", async () => {
+  const stageId = "b2000000-0000-4000-8000-000000000001";
+  const documentId = "b3000000-0000-4000-8000-000000000001";
+  const entryId = rpcResult.entry_ids[0];
+  const storageKey =
+    `p1.6/c2000000-0000-4000-8000-000000000001/WORKER_PORTRAIT/1/${documentId}`;
+  const bytes = new Uint8Array(await sharp({
+    create: { width: 2, height: 2, channels: 3, background: "#336699" },
+  }).png().toBuffer());
+  const calls = [];
+  const dependencies = deps();
+  dependencies.resolveSession = async () => ({
+    actor: { ok: true, actor: { ...actor, capabilities: ["document_upload"] } },
+    response_headers: {},
+  });
+  dependencies.repository.createFullProfileBatch = async (input) => {
+    calls.push(["save", input]);
+    return { ok: true, data: rpcResult };
+  };
+  dependencies.portraitStages = {
+    async claim(input) {
+      calls.push(["claim", input]);
+      return { ok: true, data: {
+        stage_id: stageId, mime_type: "image/png", size_bytes: bytes.length,
+        checksum_sha256: sha256Hex(bytes), status: "CLAIMED",
+        claim_idempotency_key: key, entry_id: null, document_id: null,
+      } };
+    },
+    async release(input) { calls.push(["release", input]); return { ok: true, data: true }; },
+    async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
+    async complete(input) { calls.push(["complete", input]); return { ok: true, data: true }; },
+  };
+  dependencies.documentRepository = {
+    async readEntry(input) { calls.push(["readEntry", input]); return { ok: true, data: { version: 1 } }; },
+    async reserveDocumentUpload(input) {
+      calls.push(["reserve", input]);
+      return { ok: true, data: {
+        document_id: documentId, version: 1, entry_version: 2, reused: false,
+        storage_key: storageKey, upload_status: "QUEUED", scan_status: "PENDING",
+        validation_status: "PENDING",
+      } };
+    },
+    async getDocumentContext(input) {
+      calls.push(["context", input]);
+      return { ok: true, data: {
+        document_id: documentId, document_type: "WORKER_PORTRAIT", version: 1,
+        entry_version: 2, size_bytes: bytes.length, mime_type: "image/png",
+        storage_key: storageKey, checksum_sha256: null, upload_status: "QUEUED",
+        scan_status: "PENDING", validation_status: "PENDING",
+      } };
+    },
+    async finalizeDocument(input) {
+      calls.push(["finalize", input]);
+      return { ok: true, data: {
+        document_id: documentId, version: 1, entry_version: 3, reused: false,
+        upload_status: "READY", scan_status: "NOT_REQUIRED", validation_status: "VALIDATED",
+      } };
+    },
+  };
+  dependencies.documentStorage = {
+    available: () => true,
+    async readEnrollmentPortraitStage(id) { calls.push(["readStage", id]); return bytes; },
+    async copyEnrollmentPortraitStage(input) { calls.push(["copyStage", input]); },
+    async deleteEnrollmentPortraitStage(id) { calls.push(["deleteStage", id]); },
+    async headStaged() {
+      calls.push(["head"]);
+      return { kind: "found", size_bytes: bytes.length, content_type: "image/png" };
+    },
+    async readStaged() { calls.push(["read"]); return bytes; },
+    async promote(input) { calls.push(["promote", input]); },
+    async deleteStaged(id) { calls.push(["deleteStaged", id]); },
+    async createUploadUrl() { throw new Error("not used"); },
+    async readFinal() { return null; },
+    async writeEnrollmentPortraitStage() { throw new Error("not used"); },
+    async createDownloadUrl() { throw new Error("not used"); },
+  };
+
+  const response = await postFullProfileBatch(request({
+    ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
+  }), "true", dependencies);
+  assert.equal(response.status, 201);
+  const callNames = calls.map(([name]) => name);
+  assert.ok(callNames.indexOf("claim") < callNames.indexOf("save"));
+  assert.ok(callNames.indexOf("save") < callNames.indexOf("reserve"));
+  assert.ok(callNames.indexOf("reserve") < callNames.indexOf("copyStage"));
+  assert.ok(callNames.indexOf("finalize") < callNames.indexOf("complete"));
+  assert.ok(callNames.indexOf("complete") < callNames.indexOf("deleteStage"));
+  const saved = calls.find(([name]) => name === "save")[1];
+  assert.equal("portrait_stage_id" in saved.payload.rows[0], false,
+    "the staging identifier never reaches the business RPC");
+  assert.deepEqual(calls.find(([name]) => name === "reserve")[1], {
+    ...actor, entry_id: entryId, expected_entry_version: 1,
+    document_type: "WORKER_PORTRAIT", idempotency_key: stageId,
+    size_bytes: bytes.length, mime_type: "image/png", reason: null,
+  });
+  assert.doesNotMatch(await response.text(), /storage_key|p1\.6\/|signed|url/i);
 });

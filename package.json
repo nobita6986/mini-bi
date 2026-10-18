@@ -129,7 +129,7 @@
     "test:p3-1-w01d-a1b2-leader-write": "node --test scripts/p3-1-w01d-a1b2-leader-write.test.mjs",
     "test:p3-1-w02a-team-leader-project-manager": "node --test scripts/p3-1-w02a-team-leader-project-manager.test.mjs scripts/p3-1-w02a-concurrency.test.mjs",
     "test:pre-w2-hf-ui-labels": "node --conditions=react-server --test src/lib/direct-entry/ui-labels-regression.test.mjs",
-    "test:w2-s1-backend": "node --conditions=react-server --test src/lib/direct-entry/write-api.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/document-repository.test.mjs src/lib/direct-entry/r2-document-storage.test.mjs src/lib/direct-entry/worker-portrait-sanitizer.test.mjs scripts/w2-s1-backend-db.test.mjs scripts/w2-s1-migration-112.test.mjs"
+    "test:w2-s1-backend": "node --conditions=react-server --test src/lib/direct-entry/write-api.test.mjs src/lib/direct-entry/document-api.test.mjs src/lib/direct-entry/full-profile-api.test.mjs src/lib/direct-entry/worker-portrait-stage-api.test.mjs src/lib/direct-entry/document-repository.test.mjs src/lib/direct-entry/r2-document-storage.test.mjs src/lib/direct-entry/worker-portrait-sanitizer.test.mjs scripts/w2-s1-backend-db.test.mjs scripts/w2-s1-migration-112.test.mjs scripts/w2-s1-migration-113.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",

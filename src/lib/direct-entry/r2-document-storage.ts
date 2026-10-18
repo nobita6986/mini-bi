@@ -44,6 +44,18 @@ export type SignedDocumentUrl = {
 // All methods throw on provider failure; callers map that to DOCUMENT_STORAGE_UNAVAILABLE.
 export type DocumentObjectStorage = {
   available(): boolean;
+  writeEnrollmentPortraitStage(input: {
+    stage_id: string;
+    mime_type: "image/jpeg" | "image/png";
+    bytes: Uint8Array;
+  }): Promise<void>;
+  readEnrollmentPortraitStage(stageId: string): Promise<Uint8Array | null>;
+  copyEnrollmentPortraitStage(input: {
+    stage_id: string;
+    storage_key: string;
+    mime_type: "image/jpeg" | "image/png";
+  }): Promise<void>;
+  deleteEnrollmentPortraitStage(stageId: string): Promise<void>;
   createUploadUrl(input: {
     storage_key: string;
     mime_type: DocumentMimeType;
@@ -51,6 +63,11 @@ export type DocumentObjectStorage = {
   }): Promise<SignedDocumentUrl>;
   headStaged(storageKey: string): Promise<StagedObjectHead>;
   readStaged(storageKey: string): Promise<Uint8Array | null>;
+  writeStaged(input: {
+    storage_key: string;
+    mime_type: DocumentMimeType;
+    bytes: Uint8Array;
+  }): Promise<void>;
   readFinal(storageKey: string): Promise<Uint8Array | null>;
   promote(input: {
     storage_key: string;
@@ -82,6 +99,12 @@ export type R2Dependencies = {
 const ACCOUNT_ID = /^[a-f0-9]{32}$/i;
 const ACCESS_KEY_ID = /^[A-Za-z0-9]{16,128}$/;
 const SECRET_ACCESS_KEY = /^[A-Za-z0-9/+=_-]{16,256}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function enrollmentPortraitStageKey(environment: DocumentEnvironment, stageId: string): string {
+  if (!UUID.test(stageId)) throw new Error("portrait stage id invalid");
+  return `${environment}/enrollment-staging/${stageId}`;
+}
 
 export function resolveDocumentEnvironment(
   env: Record<string, string | undefined>,
@@ -110,9 +133,14 @@ export function loadR2Config(env: Record<string, string | undefined>): R2Config 
 
 export const unavailableDocumentObjectStorage: DocumentObjectStorage = {
   available: () => false,
+  async writeEnrollmentPortraitStage() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
+  async readEnrollmentPortraitStage() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
+  async copyEnrollmentPortraitStage() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
+  async deleteEnrollmentPortraitStage() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async createUploadUrl() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async headStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async readStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
+  async writeStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async readFinal() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async promote() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async deleteStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
@@ -154,6 +182,53 @@ export function createR2DocumentStorage(
 
   return {
     available: () => true,
+    async writeEnrollmentPortraitStage(input) {
+      await getClient().send(new PutObjectCommand({
+        Bucket: config.bucket,
+        Key: enrollmentPortraitStageKey(config.environment, input.stage_id),
+        Body: Buffer.from(input.bytes),
+        ContentType: input.mime_type,
+        ContentLength: input.bytes.byteLength,
+      }));
+    },
+    async readEnrollmentPortraitStage(stageId) {
+      try {
+        const result = await getClient().send(new GetObjectCommand({
+          Bucket: config.bucket,
+          Key: enrollmentPortraitStageKey(config.environment, stageId),
+        })) as {
+          ContentLength?: number;
+          Body?: { transformToByteArray(): Promise<Uint8Array> };
+        };
+        if (!result.Body || typeof result.ContentLength !== "number" ||
+            result.ContentLength > DOCUMENT_MAX_UPLOAD_BYTES) {
+          throw new Error("DOCUMENT_STORAGE_UNAVAILABLE");
+        }
+        const bytes = await result.Body.transformToByteArray();
+        if (bytes.byteLength !== result.ContentLength || bytes.byteLength > DOCUMENT_MAX_UPLOAD_BYTES) {
+          throw new Error("DOCUMENT_STORAGE_UNAVAILABLE");
+        }
+        return bytes;
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    async copyEnrollmentPortraitStage(input) {
+      await getClient().send(new CopyObjectCommand({
+        Bucket: config.bucket,
+        Key: stagingObjectKey(config.environment, input.storage_key),
+        CopySource: `${config.bucket}/${enrollmentPortraitStageKey(config.environment, input.stage_id)}`,
+        ContentType: input.mime_type,
+        MetadataDirective: "REPLACE",
+      }));
+    },
+    async deleteEnrollmentPortraitStage(stageId) {
+      await getClient().send(new DeleteObjectCommand({
+        Bucket: config.bucket,
+        Key: enrollmentPortraitStageKey(config.environment, stageId),
+      }));
+    },
     async createUploadUrl(input) {
       const url = await presign(
         getClient(),
@@ -215,6 +290,15 @@ export function createR2DocumentStorage(
         if (isNotFound(error)) return null;
         throw error;
       }
+    },
+    async writeStaged(input) {
+      await getClient().send(new PutObjectCommand({
+        Bucket: config.bucket,
+        Key: stagingObjectKey(config.environment, input.storage_key),
+        Body: Buffer.from(input.bytes),
+        ContentType: input.mime_type,
+        ContentLength: input.bytes.byteLength,
+      }));
     },
     async readFinal(storageKey) {
       try {

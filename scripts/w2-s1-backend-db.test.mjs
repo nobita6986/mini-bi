@@ -39,12 +39,14 @@ await db.query(
   [ACTORS.otherOwner.app_user_id],
 );
 
-test("migration 112 appends after #111 and keeps its security boundaries", async () => {
-  assert.equal(migrations.migrationNames.length, 112);
-  assert.equal(migrations.migrationNames.at(-2),
+test("migration 113 appends after #112 without changing the portrait access guard", async () => {
+  assert.equal(migrations.migrationNames.length, 113);
+  assert.equal(migrations.migrationNames.at(-3),
     "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
-  assert.equal(migrations.migrationNames.at(-1),
+  assert.equal(migrations.migrationNames.at(-2),
     "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
+  assert.equal(migrations.migrationNames.at(-1),
+    "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql");
   for (const role of ["anon", "authenticated", "service_role"]) {
     const { rows } = await db.query(
       "select has_table_privilege($1,'public.direct_entry_candidates','UPDATE') allowed",
@@ -265,5 +267,112 @@ test("document context keeps downloads draft-scoped and limits privileged fallba
     ),
     (error) => error.code === "42501",
     "portrait preview remains denied outside the resolved or privileged entry scope",
+  );
+});
+
+test("portrait enrollment stages enforce owner, MIME, replay, cancellation and attachment lifecycle", async () => {
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+    " select $1,'document_upload','2020-01-01' where not exists (" +
+    " select 1 from public.direct_entry_capability_grants where app_user_id=$1" +
+    " and capability='document_upload' and valid_to is null)",
+    [ACTORS.owner.app_user_id],
+  );
+  const stageId = "b5000000-0000-4000-8000-000000000001";
+  const created = await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId, "a".repeat(64)],
+  );
+  assert.deepEqual(created.rows[0].data, {
+    stage_id: stageId,
+    mime_type: "image/jpeg",
+    size_bytes: 256,
+    checksum_sha256: "a".repeat(64),
+    status: "STAGED",
+    claim_idempotency_key: null,
+    entry_id: null,
+    document_id: null,
+  });
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_create_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'application/pdf',256,$4)",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id,
+        "b5000000-0000-4000-8000-000000000002", "a".repeat(64)],
+    ),
+    (error) => error.code === "22023",
+  );
+
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key')",
+      [ACTORS.otherOwner.auth_subject, ACTORS.otherOwner.app_user_id, stageId],
+    ),
+    (error) => error.code === "42501",
+    "another actor cannot claim a staged image by guessing its UUID",
+  );
+  const claimed = await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+  );
+  assert.equal(claimed.rows[0].data.status, "CLAIMED");
+  assert.equal(claimed.rows[0].data.claim_idempotency_key, "save-key");
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'different-key')",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+    ),
+    (error) => error.code === "40001",
+    "a stage cannot be replayed into a second batch",
+  );
+  assert.equal((await db.query(
+    "select public.direct_entry_release_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+  )).rows[0].data, true);
+  assert.equal((await db.query(
+    "select public.direct_entry_cancel_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+  )).rows[0].data, true);
+  const cancelled = await db.query(
+    "select status from public.direct_entry_worker_portrait_stages where stage_id=$1",
+    [stageId],
+  );
+  assert.equal(cancelled.rows[0].status, "CANCELLED");
+
+  const attachmentStageId = "b5000000-0000-4000-8000-000000000003";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/png',256,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId, "b".repeat(64)],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key-2')",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+  );
+  const existingPortrait = (await db.query(
+    "select d.document_id from public.direct_entry_document_versions d" +
+    " join public.direct_entries e on e.candidate_id=d.candidate_id" +
+    " where e.entry_id=$1 and d.document_type='WORKER_PORTRAIT' order by d.version desc limit 1",
+    [entryId],
+  )).rows[0].document_id;
+  assert.equal((await db.query(
+    "select public.direct_entry_complete_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'save-key-2',$4::uuid,$5::uuid) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId, entryId, existingPortrait],
+  )).rows[0].data, true);
+  const attachedReplay = await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key-2') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+  );
+  assert.equal(attachedReplay.rows[0].data.status, "ATTACHED");
+  assert.equal(attachedReplay.rows[0].data.entry_id, entryId);
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_cancel_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid)",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+    ),
+    (error) => error.code === "40001",
+    "an attached portrait cannot be cancelled as an orphan",
   );
 });

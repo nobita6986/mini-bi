@@ -100,6 +100,33 @@ test("promote copies staging to a final opaque key as attachment and delete targ
   assert.equal(rec.sent[1].input.Key, `preview/staging/${key}`);
 });
 
+test("enrollment portraits use a private server-only staging key before entering the document pipeline", async () => {
+  const rec = recorder();
+  const storage = createR2DocumentStorage(env(), rec);
+  const stageId = "d2000000-0000-4000-8000-000000000001";
+  const bytes = Uint8Array.of(1, 2, 3);
+  await storage.writeEnrollmentPortraitStage({
+    stage_id: stageId, mime_type: "image/png", bytes,
+  });
+  await storage.copyEnrollmentPortraitStage({
+    stage_id: stageId, storage_key: key.replace("CCCD_FRONT", "WORKER_PORTRAIT"),
+    mime_type: "image/png",
+  });
+  await storage.deleteEnrollmentPortraitStage(stageId);
+  assert.equal(rec.sent[0].input.Key, `preview/enrollment-staging/${stageId}`);
+  assert.deepEqual(rec.sent[0].input.Body, Buffer.from(bytes));
+  assert.equal(rec.sent[0].input.ContentType, "image/png");
+  assert.equal(rec.sent[1].input.Key,
+    `preview/staging/${key.replace("CCCD_FRONT", "WORKER_PORTRAIT")}`);
+  assert.equal(rec.sent[1].input.CopySource,
+    `hrp-bi-preview/preview/enrollment-staging/${stageId}`);
+  assert.equal(rec.sent[1].input.ContentType, "image/png");
+  assert.equal(rec.sent[2].input.Key, `preview/enrollment-staging/${stageId}`);
+  await assert.rejects(storage.writeEnrollmentPortraitStage({
+    stage_id: "not-a-uuid", mime_type: "image/png", bytes,
+  }));
+});
+
 test("sanitized promotion writes server bytes directly to the private final key", async () => {
   const rec = recorder();
   const storage = createR2DocumentStorage(env(), rec);

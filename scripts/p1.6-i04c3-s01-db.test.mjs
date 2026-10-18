@@ -97,8 +97,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 112,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #112");
+  assert.equal(totalCount, 113,
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #113");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -1067,10 +1067,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // adds nine service-role RPCs and three internal helpers. PRE-W2-HF #97 adds
     // one batch RPC name while retaining the versioned grant/revoke service ACLs;
     // the versionless revoke overload preserves the exposed revoke name. Measured:
-    // #109 adds one service-role RPC: 245 total / 117 service-role / 128 internal.
+    // #109 adds one service-role RPC; #113 adds five: 250 total /
+    // 122 service-role / 128 internal.
     assert.deepEqual(result.rows[0], {
-      total: 245,
-      service_role: 117,
+      total: 250,
+      service_role: 122,
       internal: 128,
       exposed_internal: 0,
     });
