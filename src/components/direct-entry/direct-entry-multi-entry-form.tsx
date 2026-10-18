@@ -206,9 +206,52 @@ export function DirectEntryMultiEntryForm({
                       onChange={handleChange(rowId, "national_id")} />
                   </Field>
 
+                  <div className={styles.formUploadSection}>
+                    <h3>Tải hồ sơ lên</h3>
+                    <div className={styles.formUploadGrid}>
+                      <div className={styles.formUploadCard}>
+                        {hasPortraitBinding ? (
+                          <WorkerPortraitStageSlot rowKey={rowId} testIdSuffix={rowId}
+                            slot={portraitStages.slots.get(rowId)} busy={busy}
+                            onStage={portraitStages.stage} onCancel={portraitStages.cancel} />
+                        ) : (
+                          <p className={styles.documentStatus}>Nhập thông tin NLĐ trước khi chọn ảnh NLĐ.</p>
+                        )}
+                      </div>
+                      <label className={`${styles.initialUploadLabel} ${styles.formUploadCard}`}
+                        htmlFor={`initial-cccd-front-${rowId}`}>
+                        CCCD mặt trước (ảnh hoặc PDF)
+                        <input id={`initial-cccd-front-${rowId}`} type="file"
+                          accept="image/jpeg,image/png,application/pdf"
+                          aria-label={`CCCD mặt trước — NLĐ ${index + 1}`}
+                          onChange={(event) => onUploadFileChange(rowId, "cccdFront", event)} />
+                        {rowUploads?.cccdFront && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
+                      </label>
+                      <label className={`${styles.initialUploadLabel} ${styles.formUploadCard}`}
+                        htmlFor={`initial-cccd-back-${rowId}`}>
+                        CCCD mặt sau (ảnh hoặc PDF)
+                        <input id={`initial-cccd-back-${rowId}`} type="file"
+                          accept="image/jpeg,image/png,application/pdf"
+                          aria-label={`CCCD mặt sau — NLĐ ${index + 1}`}
+                          onChange={(event) => onUploadFileChange(rowId, "cccdBack", event)} />
+                        {rowUploads?.cccdBack && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
+                      </label>
+                      <label className={`${styles.initialUploadLabel} ${styles.formUploadCard}`}
+                        htmlFor={`initial-contract-${rowId}`}>
+                        Hợp đồng (ảnh hoặc PDF)
+                        <input id={`initial-contract-${rowId}`} type="file"
+                          accept="image/jpeg,image/png,application/pdf"
+                          aria-label={`Hợp đồng — NLĐ ${index + 1}`}
+                          onChange={(event) => onUploadFileChange(rowId, "contract", event)} />
+                        {rowUploads?.contract && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
+                      </label>
+                    </div>
+                    {uploadErrors[rowId] && <p role="alert" className={styles.documentError}>{uploadErrors[rowId]}</p>}
+                  </div>
+
                   <details className={styles.formOptionalDetails}>
                     <summary>Thông tin thêm: tài khoản ngân hàng, ghi chú và thông tin cá nhân</summary>
-                    <div className={styles.drawerFields}>
+                    <div className={`${styles.drawerFields} ${styles.formOptionalGrid}`}>
                       <Field label="STK">
                         <input inputMode="numeric" autoComplete="off" value={cells.account_number ?? ""}
                           onChange={handleChange(rowId, "account_number")} />
@@ -246,42 +289,6 @@ export function DirectEntryMultiEntryForm({
                       </Field>
                     </div>
                   </details>
-
-                  <div className={styles.formUploadSection}>
-                    <h3>Tải hồ sơ lên</h3>
-                    {hasPortraitBinding ? (
-                      <WorkerPortraitStageSlot rowKey={rowId} testIdSuffix={rowId}
-                        slot={portraitStages.slots.get(rowId)} busy={busy}
-                        onStage={portraitStages.stage} onCancel={portraitStages.cancel} />
-                    ) : (
-                      <p className={styles.documentStatus}>Nhập thông tin NLĐ trước khi chọn ảnh NLĐ.</p>
-                    )}
-                    <label className={styles.initialUploadLabel} htmlFor={`initial-cccd-front-${rowId}`}>
-                      CCCD mặt trước (ảnh hoặc PDF)
-                      <input id={`initial-cccd-front-${rowId}`} type="file"
-                        accept="image/jpeg,image/png,application/pdf"
-                        aria-label={`CCCD mặt trước — NLĐ ${index + 1}`}
-                        onChange={(event) => onUploadFileChange(rowId, "cccdFront", event)} />
-                      {rowUploads?.cccdFront && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
-                    </label>
-                    <label className={styles.initialUploadLabel} htmlFor={`initial-cccd-back-${rowId}`}>
-                      CCCD mặt sau (ảnh hoặc PDF)
-                      <input id={`initial-cccd-back-${rowId}`} type="file"
-                        accept="image/jpeg,image/png,application/pdf"
-                        aria-label={`CCCD mặt sau — NLĐ ${index + 1}`}
-                        onChange={(event) => onUploadFileChange(rowId, "cccdBack", event)} />
-                      {rowUploads?.cccdBack && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
-                    </label>
-                    <label className={styles.initialUploadLabel} htmlFor={`initial-contract-${rowId}`}>
-                      Hợp đồng (ảnh hoặc PDF)
-                      <input id={`initial-contract-${rowId}`} type="file"
-                        accept="image/jpeg,image/png,application/pdf"
-                        aria-label={`Hợp đồng — NLĐ ${index + 1}`}
-                        onChange={(event) => onUploadFileChange(rowId, "contract", event)} />
-                      {rowUploads?.contract && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
-                    </label>
-                    {uploadErrors[rowId] && <p role="alert" className={styles.documentError}>{uploadErrors[rowId]}</p>}
-                  </div>
                 </fieldset>
                 <div className={styles.formRowActions}>
                   <button type="button" className={styles.secondaryButton} disabled={busy}
