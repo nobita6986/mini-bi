@@ -1443,6 +1443,23 @@
   }
 }
 
+/* W2S1: anh ho so (WORKER_PORTRAIT) trong chi tiet NLĐ. */
+.portraitFigure {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin: 0;
+}
+
+.portraitImage {
+  width: min(280px, 100%);
+  max-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  object-fit: contain;
+}
+
 /* P1.6-I04C3-R3A: hop thoai "Dan ho so tu Excel" (preview ho so day du, card + accordion). */
 .profilePasteDialog {
   box-sizing: border-box;

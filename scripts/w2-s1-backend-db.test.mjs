@@ -39,11 +39,17 @@ await db.query(
   [ACTORS.otherOwner.app_user_id],
 );
 
-test("migration 112 appends after #111 and keeps its security boundaries", async () => {
-  assert.equal(migrations.migrationNames.length, 112);
+test("migration #115 follows W2S1 recovery without changing earlier guards", async () => {
+  assert.equal(migrations.migrationNames.length, 116);
+  assert.equal(migrations.migrationNames.at(-4),
+    "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql");
+  assert.equal(migrations.migrationNames.at(-3),
+    "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql");
   assert.equal(migrations.migrationNames.at(-2),
+    "20261018130000_w2_s1_portrait_stage_create_idempotency.sql");
+  assert.equal(migrations.migrationNames.at(-6),
     "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
-  assert.equal(migrations.migrationNames.at(-1),
+  assert.equal(migrations.migrationNames.at(-5),
     "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
   for (const role of ["anon", "authenticated", "service_role"]) {
     const { rows } = await db.query(
@@ -231,6 +237,31 @@ test("document context keeps downloads draft-scoped and limits privileged fallba
     "project-manager read scope plus document_view is not a substitute for draft download scope");
   assert.equal(deniedManagerDownload.data, null,
     "a denied manager download returns no context and therefore no storage_key");
+  const managerCccdPreview = await db.query(
+    "select public.direct_entry_document_direct_context(" +
+    "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'cccd_preview') data",
+    [projectManager.auth_subject, projectManager.app_user_id, submittedEntryId, cccdId],
+  );
+  assert.equal(managerCccdPreview.rows[0].data.document_type, "CCCD_FRONT",
+    "document_view with server-resolved entry scope permits CCCD preview");
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_document_direct_context(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'cccd_preview')",
+      [ACTORS.otherOwner.auth_subject, ACTORS.otherOwner.app_user_id, submittedEntryId, cccdId],
+    ),
+    (error) => error.code === "42501",
+    "CCCD preview is denied outside the entry scope",
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_document_direct_context(" +
+      "$1::uuid,$2::uuid,$3::uuid,$4::uuid,'cccd_preview')",
+      [ACTORS.noCapability.auth_subject, ACTORS.noCapability.app_user_id, submittedEntryId, cccdId],
+    ),
+    (error) => error.code === "42501",
+    "CCCD preview requires document_view",
+  );
 
   const { rows: portraitRows } = await db.query(
     "select d.document_id from public.direct_entry_document_versions d" +
@@ -265,5 +296,411 @@ test("document context keeps downloads draft-scoped and limits privileged fallba
     ),
     (error) => error.code === "42501",
     "portrait preview remains denied outside the resolved or privileged entry scope",
+  );
+});
+
+test("portrait enrollment stages enforce owner, MIME, replay, cancellation and attachment lifecycle", async () => {
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+    " select $1,'document_upload','2020-01-01' where not exists (" +
+    " select 1 from public.direct_entry_capability_grants where app_user_id=$1" +
+    " and capability='document_upload' and valid_to is null)",
+    [ACTORS.owner.app_user_id],
+  );
+  const stageId = "b5000000-0000-4000-8000-000000000001";
+  const created = await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId, "a".repeat(64)],
+  );
+  assert.deepEqual(created.rows[0].data, {
+    stage_id: stageId,
+    mime_type: "image/jpeg",
+    size_bytes: 256,
+    checksum_sha256: "a".repeat(64),
+    status: "STAGED",
+    claim_idempotency_key: null,
+    entry_id: null,
+    document_id: null,
+  });
+
+  test("portrait stage creation is idempotent per actor and rejects changed content", async () => {
+    const uploadActor = {
+      auth_subject: "11000000-0000-4000-8000-000000000009",
+      app_user_id: "21000000-0000-4000-8000-000000000009",
+    };
+    await db.query("insert into auth.users(id) values ($1)", [uploadActor.auth_subject]);
+    await db.query(
+      "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Idempotency Actor')",
+      [uploadActor.app_user_id, uploadActor.auth_subject],
+    );
+    await db.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'document_upload','2020-01-01')",
+      [uploadActor.app_user_id],
+    );
+    const idemKey = "b6000000-0000-4000-8000-000000000001";
+    const contentHash = "c".repeat(64);
+    const rpc = (actor, candidateStageId, checksum = contentHash) => db.query(
+      "select public.direct_entry_create_worker_portrait_stage_idempotent(" +
+      "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4,$5) data",
+      [actor.auth_subject, actor.app_user_id, candidateStageId, checksum, idemKey],
+    );
+
+    const concurrent = await Promise.all([
+      rpc(uploadActor, "b7000000-0000-4000-8000-000000000001"),
+      rpc(uploadActor, "b7000000-0000-4000-8000-000000000002"),
+    ]);
+    const first = concurrent[0].rows[0].data;
+    const second = concurrent[1].rows[0].data;
+    assert.equal(first.stage.stage_id, second.stage.stage_id,
+      "concurrent same-key calls resolve to one owner-bound stage");
+    assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
+    assert.equal((await db.query(
+      "select count(*)::integer count from public.direct_entry_worker_portrait_stages" +
+      " where created_by_user_id=$1 and create_idempotency_key=$2",
+      [uploadActor.app_user_id, idemKey],
+    )).rows[0].count, 1);
+
+    const retry = await rpc(uploadActor, "b7000000-0000-4000-8000-000000000003");
+    assert.equal(retry.rows[0].data.stage.stage_id, first.stage.stage_id);
+    assert.equal(retry.rows[0].data.replayed, true,
+      "retry after losing the original response returns the same stage");
+    await assert.rejects(
+      rpc(uploadActor, "b7000000-0000-4000-8000-000000000004", "d".repeat(64)),
+      (error) => error.code === "40001",
+      "reusing a key with a different checksum conflicts");
+
+    const otherActor = {
+      auth_subject: ACTORS.otherOwner.auth_subject,
+      app_user_id: ACTORS.otherOwner.app_user_id,
+    };
+    await db.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'document_upload','2020-01-01')",
+      [otherActor.app_user_id],
+    );
+    const isolated = await rpc(otherActor, "b7000000-0000-4000-8000-000000000005");
+    assert.notEqual(isolated.rows[0].data.stage.stage_id, first.stage.stage_id,
+      "identical keys are isolated by actor");
+  });
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_create_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'application/pdf',256,$4)",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id,
+        "b5000000-0000-4000-8000-000000000002", "a".repeat(64)],
+    ),
+    (error) => error.code === "22023",
+  );
+
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key')",
+      [ACTORS.otherOwner.auth_subject, ACTORS.otherOwner.app_user_id, stageId],
+    ),
+    (error) => error.code === "42501",
+    "another actor cannot claim a staged image by guessing its UUID",
+  );
+  const claimed = await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+  );
+  assert.equal(claimed.rows[0].data.status, "CLAIMED");
+  assert.equal(claimed.rows[0].data.claim_idempotency_key, "save-key");
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'different-key')",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+    ),
+    (error) => error.code === "40001",
+    "a stage cannot be replayed into a second batch",
+  );
+  assert.equal((await db.query(
+    "select public.direct_entry_release_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+  )).rows[0].data, true);
+  assert.equal((await db.query(
+    "select public.direct_entry_cancel_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, stageId],
+  )).rows[0].data, true);
+  const cancelled = await db.query(
+    "select status from public.direct_entry_worker_portrait_stages where stage_id=$1",
+    [stageId],
+  );
+  assert.equal(cancelled.rows[0].status, "CANCELLED");
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid)",
+      [ACTORS.otherOwner.auth_subject, ACTORS.otherOwner.app_user_id, stageId],
+    ),
+    (error) => error.code === "42501",
+    "another actor cannot recover a staged image by guessing its UUID",
+  );
+
+  const attachmentStageId = "b5000000-0000-4000-8000-000000000003";
+  const existingPortrait = (await db.query(
+    "select d.document_id,d.size_bytes,d.mime_type," +
+    "coalesce(o.checksum_sha256,d.checksum_sha256) checksum" +
+    " from public.direct_entry_document_versions d" +
+    " join public.direct_entries e on e.candidate_id=d.candidate_id" +
+    " left join public.direct_entry_document_objects o on o.document_id=d.document_id" +
+    " where e.entry_id=$1 and d.document_type='WORKER_PORTRAIT' order by d.version desc limit 1",
+    [entryId],
+  )).rows[0];
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,$4::text,$5::bigint,$6::text)",
+    [
+      ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId,
+      existingPortrait.mime_type, existingPortrait.size_bytes, existingPortrait.checksum,
+    ],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key-2')",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+  );
+  assert.equal((await db.query(
+    "select public.direct_entry_complete_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'save-key-2',$4::uuid,$5::uuid) data",
+    [
+      ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId,
+      entryId, existingPortrait.document_id,
+    ],
+  )).rows[0].data, true);
+  const attachedReplay = await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'save-key-2') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+  );
+  assert.equal(attachedReplay.rows[0].data.status, "ATTACHED");
+  assert.equal(attachedReplay.rows[0].data.entry_id, entryId);
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_cancel_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid)",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+    ),
+    (error) => error.code === "40001",
+    "an attached portrait cannot be cancelled as an orphan",
+  );
+  assert.equal((await db.query(
+    "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, attachmentStageId],
+  )).rows[0].data.status, "ATTACHED",
+  "recovering an attached stage cannot release its claim");
+
+  const lostKeyStage = "b5000000-0000-4000-8000-000000000004";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, lostKeyStage, "c".repeat(64)],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'lost-key')",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, lostKeyStage],
+  );
+  const recoveredLostKey = await db.query(
+    "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, lostKeyStage],
+  );
+  assert.equal(recoveredLostKey.rows[0].data.status, "STAGED",
+    "an uncommitted/absent batch result safely releases the lost claim");
+  const retriedClaim = await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'retry-key') data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, lostKeyStage],
+  );
+  assert.equal(retriedClaim.rows[0].data.status, "CLAIMED",
+    "a released stage can be claimed for a retry");
+
+  const committedStage = "b5000000-0000-4000-8000-000000000005";
+  const committedKey = "b6000000-0000-4000-8000-000000000001";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, committedStage, "d".repeat(64)],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, committedStage, committedKey],
+  );
+  await db.query(
+    "insert into public.direct_entry_rpc_idempotency" +
+    "(app_user_id,action,idempotency_key,request_hash,result)" +
+    " values ($1,'full_profile_batch_create_v2',$2,$3,'{\"entry_ids\":[]}'::jsonb)",
+    [ACTORS.owner.app_user_id, committedKey, "e".repeat(64)],
+  );
+  const recoveredCommitted = await db.query(
+    "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, committedStage],
+  );
+  assert.equal(recoveredCommitted.rows[0].data.status, "CLAIMED");
+  assert.equal(recoveredCommitted.rows[0].data.claim_idempotency_key, committedKey,
+    "a committed batch keeps the original key available for exact replay");
+  assert.equal((await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,$4) data",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, committedStage, committedKey],
+  )).rows[0].data.status, "CLAIMED");
+
+  const incompleteStage = "b5000000-0000-4000-8000-000000000008";
+  const incompleteKey = "b6000000-0000-4000-8000-000000000002";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, incompleteStage, "e".repeat(64)],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, incompleteStage, incompleteKey],
+  );
+  await db.query(
+    "insert into public.direct_entry_rpc_idempotency" +
+    "(app_user_id,action,idempotency_key,request_hash,result)" +
+    " values ($1,'full_profile_batch_create_v2',$2,$3,null)",
+    [ACTORS.owner.app_user_id, incompleteKey, "f".repeat(64)],
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_recover_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid)",
+      [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, incompleteStage],
+    ),
+    (error) => error.code === "40001",
+    "an idempotency record with an incomplete result fails closed",
+  );
+  assert.equal((await db.query(
+    "select status,claim_idempotency_key from public.direct_entry_worker_portrait_stages" +
+    " where stage_id=$1",
+    [incompleteStage],
+  )).rows[0].status, "CLAIMED",
+    "failed recovery never releases a possibly committed in-flight stage");
+
+  const changeRequestActor = {
+    auth_subject: "11000000-0000-4000-8000-000000000008",
+    app_user_id: "21000000-0000-4000-8000-000000000008",
+  };
+  await db.query("insert into auth.users(id) values ($1)", [changeRequestActor.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+    " values ($1,$2,true,'Change Request Only')",
+    [changeRequestActor.app_user_id, changeRequestActor.auth_subject],
+  );
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+    " values ($1,'change_request_create','2020-01-01')",
+    [changeRequestActor.app_user_id],
+  );
+  const deniedStage = "b5000000-0000-4000-8000-000000000006";
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_create_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4)",
+      [changeRequestActor.auth_subject, changeRequestActor.app_user_id, deniedStage, "f".repeat(64)],
+    ),
+    (error) => error.code === "42501",
+    "change_request_create cannot create an upload stage",
+  );
+  await db.query(
+    "insert into public.direct_entry_worker_portrait_stages" +
+    "(stage_id,created_by_user_id,mime_type,size_bytes,checksum_sha256)" +
+    " values ($1,$2,'image/jpeg',256,$3)",
+    [deniedStage, changeRequestActor.app_user_id, "f".repeat(64)],
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'change-key')",
+      [changeRequestActor.auth_subject, changeRequestActor.app_user_id, deniedStage],
+    ),
+    (error) => error.code === "42501",
+    "change_request_create cannot claim an upload stage",
+  );
+  const deniedBatch = await mutate(
+    db,
+    "select public.direct_entry_create_full_profile_batch_with_portrait_stages(" +
+    "$1::uuid,$2::uuid,'worker-profile/1.1','[]'::jsonb,$3,array[$4::uuid]) data",
+    [
+      changeRequestActor.auth_subject, changeRequestActor.app_user_id,
+      "b7000000-0000-4000-8000-000000000001", deniedStage,
+    ],
+  );
+  assert.equal(deniedBatch.error?.code, "42501",
+    "change_request_create cannot call the stage-aware batch RPC");
+  assert.equal((await db.query(
+    "select status from public.direct_entry_worker_portrait_stages where stage_id=$1",
+    [deniedStage],
+  )).rows[0].status, "STAGED",
+    "denied capability does not mutate the stage");
+
+  const mismatchedStage = "b5000000-0000-4000-8000-000000000007";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',257,$4)",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, mismatchedStage, "a".repeat(64)],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'mismatch-key')",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, mismatchedStage],
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_complete_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'mismatch-key',$4::uuid,$5::uuid)",
+      [
+        ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, mismatchedStage,
+        entryId, existingPortrait.document_id,
+      ],
+    ),
+    (error) => error.code === "40001",
+    "completion rejects a document whose size differs from the staged object",
+  );
+
+  const wrongChecksumStage = "b5000000-0000-4000-8000-000000000009";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,$4::text,$5::bigint,$6::text)",
+    [
+      ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, wrongChecksumStage,
+      existingPortrait.mime_type, existingPortrait.size_bytes, "9".repeat(64),
+    ],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'checksum-key')",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, wrongChecksumStage],
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_complete_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'checksum-key',$4::uuid,$5::uuid)",
+      [
+        ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, wrongChecksumStage,
+        entryId, existingPortrait.document_id,
+      ],
+    ),
+    (error) => error.code === "40001",
+    "completion rejects a document whose checksum differs from the staged object",
+  );
+
+  const wrongEntryStage = "b5000000-0000-4000-8000-00000000000a";
+  await db.query(
+    "select public.direct_entry_create_worker_portrait_stage(" +
+    "$1::uuid,$2::uuid,$3::uuid,$4::text,$5::bigint,$6::text)",
+    [
+      ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, wrongEntryStage,
+      existingPortrait.mime_type, existingPortrait.size_bytes, existingPortrait.checksum,
+    ],
+  );
+  await db.query(
+    "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,'entry-key')",
+    [ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, wrongEntryStage],
+  );
+  await assert.rejects(
+    db.query(
+      "select public.direct_entry_complete_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'entry-key',$4::uuid,$5::uuid)",
+      [
+        ACTORS.owner.auth_subject, ACTORS.owner.app_user_id, wrongEntryStage,
+        fixture.submitted.entryIds[0], existingPortrait.document_id,
+      ],
+    ),
+    (error) => error.code === "40001",
+    "completion rejects a portrait document attached to a different entry",
   );
 });

@@ -77,6 +77,11 @@ export type FullProfileRequestRow = {
   general_note: FullProfileOptionalText;
   payment: FullProfilePayment | null;
   employment: FullProfileEmployment | null;
+  /**
+   * W2S1: id anh ho so da stage truoc khi luu. CHI la ma stage do server cap; KHONG bao gio
+   * kem bytes/storage key/URL. Server bo truong nay truoc khi goi RPC nghiep vu.
+   */
+  portrait_stage_id?: string;
 };
 
 export type FullProfileRequestBody = {
@@ -161,7 +166,10 @@ export function buildAccountMetadata(input: AccountMetadataInput): FullProfilePa
  * Tra null khi catalog bat buoc chua resolve hoac metadata tai khoan khong hop le
  * (fail closed, khong doan).
  */
-export function buildFullProfileRow(row: WorkerProfilePreviewRow): FullProfileRequestRow | null {
+export function buildFullProfileRow(
+  row: WorkerProfilePreviewRow,
+  portraitStageId?: string,
+): FullProfileRequestRow | null {
   const { row: profile } = row;
   if (row.resolved.project_id === null || row.resolved.recruiter_id === null) return null;
 
@@ -207,15 +215,17 @@ export function buildFullProfileRow(row: WorkerProfilePreviewRow): FullProfileRe
     general_note: optionalText(profile.general_note),
     payment,
     employment,
+    ...(portraitStageId === undefined ? {} : { portrait_stage_id: portraitStageId }),
   };
 }
 
 export function buildFullProfileRequestBody(
   rows: readonly WorkerProfilePreviewRow[],
+  portraitStageIds?: ReadonlyMap<number, string>,
 ): FullProfileRequestBody | null {
   const projected: FullProfileRequestRow[] = [];
   for (const row of rows) {
-    const built = buildFullProfileRow(row);
+    const built = buildFullProfileRow(row, portraitStageIds?.get(row.sourceRow));
     if (built === null) return null;
     projected.push(built);
   }
@@ -225,10 +235,11 @@ export function buildFullProfileRequestBody(
 
 export function buildServerGeneratedFullProfileRequestBody(
   rows: readonly WorkerProfilePreviewRow[],
+  portraitStageIds?: ReadonlyMap<number, string>,
 ): ServerGeneratedFullProfileRequestBody | null {
   const projected: ServerGeneratedFullProfileRequestRow[] = [];
   for (const row of rows) {
-    const built = buildFullProfileRow(row);
+    const built = buildFullProfileRow(row, portraitStageIds?.get(row.sourceRow));
     const providerType = row.resolved.provider_type;
     if (built === null || (providerType !== "hrp" && providerType !== "vendor")) return null;
     const { employee_code: _employeeCode, ...withoutCode } = built;
@@ -263,6 +274,12 @@ export function fullProfileRequiredCapabilities(
   const required = ["entry_create", "submission_create"];
   if (rows.some((row) => row.payment !== null)) required.push("payment_view", "payment_edit");
   if (rows.some((row) => row.employment !== null)) required.push("employment_status.apply");
+  // W2S1: stage/claim/promote anh ho so bat buoc `document_upload`; `change_request_create`
+  // khong thay the quyen upload (migration #114).
+  if (rows.some((row) => typeof row.portrait_stage_id === "string" &&
+      row.portrait_stage_id !== "")) {
+    required.push("document_upload");
+  }
   return required;
 }
 
@@ -270,6 +287,8 @@ export type FullProfileSubmitState = {
   preview: WorkerProfilePreview | null;
   capabilities: readonly string[];
   submitting: boolean;
+  /** W2S1: stage_id theo `sourceRow`; chi de kiem tra CTA va build payload, khong gui bytes. */
+  portraitStageIds?: ReadonlyMap<number, string>;
 };
 
 /** Ly do CTA khong duoc bat. Rong => duoc phep gui. */
@@ -294,7 +313,7 @@ export function fullProfileSubmitBlockers(
     if (!isAccountMetadataValid(row.row.payment)) {
       blockers.push("PROFILE_ACCOUNT_METADATA_INVALID");
     }
-    const built = buildFullProfileRow(row);
+    const built = buildFullProfileRow(row, state.portraitStageIds?.get(row.sourceRow));
     if (built === null) blockers.push(
       isAccountMetadataValid(row.row.payment) ? "PROFILE_CATALOG_UNRESOLVED"
         : "PROFILE_ACCOUNT_METADATA_INVALID");

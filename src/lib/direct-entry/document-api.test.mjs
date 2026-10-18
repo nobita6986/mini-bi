@@ -6,6 +6,7 @@ import sharp from "sharp";
 import {
   downloadDirectEntryDocument,
   finalizeDirectEntryDocument,
+  previewCccdDocument,
   previewWorkerPortraitDocument,
 } from "./document-finalize-api.ts";
 import { sha256Hex } from "./document-r2-contract.ts";
@@ -232,6 +233,94 @@ test("download requires document_view and an eligible document, then redirects t
   assert.equal(res.headers.get("location"), "https://signed.example.test/get");
   assert.equal(res.headers.get("cache-control"), "private, no-store");
   assert.equal(ok.log.storage[0][1].version, 1);
+});
+
+test("CCCD image preview uses document_view and server-resolved scope to stream private bytes", async () => {
+  const d = deps({
+    bytes: png,
+    repo: {
+      async getDocumentContext(input) {
+        d.log.db.push(["context", input]);
+        return { ok: true, data: {
+          document_id: documentId,
+          document_type: "CCCD_FRONT",
+          version: 1,
+          entry_version: 2,
+          size_bytes: png.length,
+          mime_type: "image/png",
+          storage_key: storageKey,
+          checksum_sha256: sha256Hex(png),
+          upload_status: "READY",
+          scan_status: "CLEAN",
+          validation_status: "VALIDATED",
+        } };
+      },
+    },
+  });
+  const response = await previewCccdDocument(
+    makeRequest(null, { method: "GET" }), entryId, documentId, "true", d,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), png);
+  assert.equal(response.headers.get("content-type"), "image/png");
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("content-disposition"), "inline");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("location"), null);
+  assert.deepEqual(d.log.db[0][1], {
+    auth_subject: "91000000-0000-4000-8000-000000000001",
+    app_user_id: "92000000-0000-4000-8000-000000000001",
+    entry_id: entryId,
+    document_id: documentId,
+    purpose: "cccd_preview",
+  });
+  assert.deepEqual(d.log.storage.map(([action]) => action), ["readFinal"]);
+  assert.equal(response.headers.has("location"), false);
+});
+
+test("CCCD image preview keeps capability, scope, type and integrity denials fail-closed", async () => {
+  const request = makeRequest(null, { method: "GET" });
+  const noCapability = deps({ capabilities: [] });
+  assert.equal((await previewCccdDocument(request, entryId, documentId, "true", noCapability)).status, 403);
+  assert.equal(noCapability.log.db.length, 0);
+  assert.deepEqual(noCapability.log.storage, []);
+
+  const outOfScope = deps({ repo: {
+    async getDocumentContext() { return { ok: false, kind: "denied" }; },
+  } });
+  assert.equal((await previewCccdDocument(request, entryId, documentId, "true", outOfScope)).status, 404);
+  assert.deepEqual(outOfScope.log.storage, []);
+
+  for (const document_type of ["CCCD_BACK", "WORKER_PORTRAIT", "EMPLOYMENT_CONTRACT"]) {
+    const wrongType = deps({ repo: {
+      async getDocumentContext() {
+        return { ok: true, data: {
+          document_id: documentId, document_type, version: 1, entry_version: 2,
+          size_bytes: png.length, mime_type: "image/png", storage_key: storageKey,
+          checksum_sha256: sha256Hex(png), upload_status: "READY",
+          scan_status: "CLEAN", validation_status: "VALIDATED",
+        } };
+      },
+    } });
+    const result = await previewCccdDocument(request, entryId, documentId, "true", wrongType);
+    if (document_type === "CCCD_BACK") assert.equal(result.status, 200);
+    else {
+      assert.equal(result.status, 404);
+      assert.deepEqual(wrongType.log.storage, []);
+    }
+  }
+
+  const corrupt = deps({ repo: {
+    async getDocumentContext() {
+      return { ok: true, data: {
+        document_id: documentId, document_type: "CCCD_FRONT", version: 1, entry_version: 2,
+        size_bytes: png.length, mime_type: "image/png", storage_key: storageKey,
+        checksum_sha256: "0".repeat(64), upload_status: "READY",
+        scan_status: "CLEAN", validation_status: "VALIDATED",
+      } };
+    },
+  } });
+  assert.equal((await previewCccdDocument(request, entryId, documentId, "true", corrupt)).status, 503);
 });
 
 test("portrait finalize strips metadata, promotes sanitized bytes and records their checksum and size", async () => {

@@ -50,11 +50,13 @@ test("migration #112 repairs the previously published #111 function offline", as
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 112, "the repository ledger includes append-only migration #112");
-    assert.equal(names.at(-2), MIGRATION_111, "#111 remains unchanged immediately before #112");
-    assert.equal(names.at(-1), MIGRATION_112, "#112 is the latest append-only migration");
+    assert.equal(names.length, 116, "the current repository ledger includes append-only migrations #113 through #116");
+    assert.equal(names[names.indexOf(MIGRATION_112) - 1], MIGRATION_111,
+      "#111 remains unchanged immediately before #112");
+    assert.equal(names[names.indexOf(MIGRATION_112)], MIGRATION_112,
+      "#112 remains in its original ledger slot");
 
-    for (const name of names.slice(0, -1)) {
+    for (const name of names.slice(0, names.indexOf(MIGRATION_112))) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
 
@@ -91,7 +93,7 @@ test("migration #112 rolls back when the document context source has drifted", a
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    for (const name of names.slice(0, -1)) {
+    for (const name of names.slice(0, names.indexOf(MIGRATION_112))) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
 

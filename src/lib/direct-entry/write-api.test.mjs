@@ -379,6 +379,58 @@ test("read validates UUID before session and keeps the restricted projection", a
   }
 });
 
+test("entry detail remains readable with CCCD documents only for the authorized actor", async () => {
+  const entryId = "a2000000-0000-4000-8000-000000000001";
+  const cccd = {
+    document_id: "a3000000-0000-4000-8000-000000000001",
+    document_type: "CCCD_FRONT",
+    version: 1,
+    size_bytes: 1024,
+    mime_type: "image/jpeg",
+    upload_status: "READY",
+    scan_status: "CLEAN",
+    validation_status: "VALIDATED",
+  };
+  const deps = dependencies();
+  deps.repository.readEntry = async () => ({ ok: true, data: {
+    entry_id: entryId,
+    submission_id: batchResult.submission_id,
+    project_id: "project_synthetic_01",
+    first_work_date: "2026-10-15",
+    employee_code: "hrp-2026-000001",
+    worker_details: {
+      display_name: "Synthetic Worker",
+      gender: { state: "omitted" },
+      date_of_birth: { state: "omitted" },
+      national_id: { state: "omitted" },
+      national_id_issued_at: { state: "omitted" },
+      national_id_issued_place: { state: "omitted" },
+      address: { state: "omitted" },
+      phone: { state: "omitted" },
+    },
+    recruiter_id: validRow.recruiter_id,
+    team_id: "94000000-0000-4000-8000-000000000001",
+    provider_type: "hrp",
+    labor_type: "TEMPORARY",
+    labor_type_display: "Thời vụ",
+    general_note: null,
+    version: 1,
+    scope_kind: "own",
+    payment: null,
+    employment_status: { status: "ON", effective_date: "2026-10-15", version: 1 },
+    documents: [cccd],
+    worker_portrait: { origin: null, added_at: null, status: "MISSING", current: null },
+  } });
+  const allowed = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(allowed.status, 200);
+  assert.deepEqual((await allowed.json()).entry.documents, [cccd]);
+
+  deps.repository.readEntry = async () => ({ ok: false, kind: "denied" });
+  const denied = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(denied.status, 404);
+  assert.equal((await denied.json()).code, "ENTRY_NOT_FOUND");
+});
+
 test("repository calls create/read RPCs and sanitizes errors", async () => {
   const rpcCalls = [];
   const repository = createDirectEntryWriteRepository(async (name, args) => {

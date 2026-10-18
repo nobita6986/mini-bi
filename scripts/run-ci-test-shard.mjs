@@ -9,6 +9,7 @@ const POSTGRES_TARGET = "postgres";
 const POSTGRES_TEST_FILES = new Set([
   "scripts/p3-1-w02a-concurrency.test.mjs",
   "scripts/pre-w2-hf-project-team-authority-concurrency.test.mjs",
+  "scripts/w2-s1-stage-recovery-concurrency.test.mjs",
 ]);
 // shortcut: weights come from the latest successful main CI run; refresh when shard times drift.
 const TEST_WEIGHTS = {

@@ -17,11 +17,11 @@ const CATALOG_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ROOT_KEYS = new Set(["contract_version", "rows"]);
 const ROW_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
-  "display_name", "worker", "general_note", "payment", "employment",
+  "display_name", "worker", "general_note", "payment", "employment", "portrait_stage_id",
 ]);
 const SERVER_GENERATED_ROW_KEYS = new Set([
   "project_id", "first_work_date", "provider_type", "recruiter_id", "labor_type",
-  "display_name", "worker", "general_note", "payment", "employment",
+  "display_name", "worker", "general_note", "payment", "employment", "portrait_stage_id",
 ]);
 const WORKER_KEYS = new Set([
   "gender", "date_of_birth", "national_id", "national_id_issued_at",
@@ -40,6 +40,7 @@ export type OptionalText =
   | { state: "provided"; value: string };
 
 export type FullProfileRpcRow = {
+  portrait_stage_id?: string;
   project_id: string;
   first_work_date: string;
   employee_code: string;
@@ -327,6 +328,7 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
       project_id, first_work_date, employee_code, recruiter_id, labor_type, display_name,
     } = item;
     const provider_type = item.provider_type;
+    const portraitStageId = item.portrait_stage_id;
     if (typeof project_id !== "string" || !CATALOG_ID.test(project_id) ||
         typeof recruiter_id !== "string" || !UUID.test(recruiter_id) ||
         typeof first_work_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(first_work_date) ||
@@ -335,6 +337,8 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
         (generatedCodes && provider_type !== "hrp" && provider_type !== "vendor") ||
         typeof display_name !== "string" ||
         display_name.trim().length < 1 || display_name.length > 256 ||
+        (portraitStageId !== undefined &&
+          (typeof portraitStageId !== "string" || !UUID.test(portraitStageId))) ||
         !isCanonicalLaborTypeKey(labor_type)) {
       issues.push({ code: "BATCH_INVALID", path });
       return;
@@ -364,6 +368,7 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
     const payment = normalizePayment(item.payment, `${path}.payment`, issues);
     const employment = normalizeEmployment(item.employment, `${path}.employment`, issues);
     const normalizedRow = {
+      ...(typeof portraitStageId === "string" ? { portrait_stage_id: portraitStageId } : {}),
       project_id,
       first_work_date,
       recruiter_id,

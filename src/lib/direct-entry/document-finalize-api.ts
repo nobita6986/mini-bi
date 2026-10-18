@@ -255,3 +255,64 @@ export async function previewWorkerPortraitDocument(
     return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
   }
 }
+
+export async function previewCccdDocument(
+  request: Request,
+  entryId: string,
+  documentId: string,
+  flag: string | undefined,
+  dependencies: DocumentApiDependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  if (!UUID.test(entryId)) return fail("ENTRY_ID_INVALID", 400);
+  if (!UUID.test(documentId)) return fail("DOCUMENT_ID_INVALID", 400);
+  void request;
+  try {
+    const actor = await resolveActor(dependencies, "document_view");
+    if (!actor.ok) return actor.response;
+    if (!dependencies.storage.available()) return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
+    const context = await dependencies.repository.getDocumentContext({
+      auth_subject: actor.auth_subject,
+      app_user_id: actor.app_user_id,
+      entry_id: entryId,
+      document_id: documentId,
+      purpose: "cccd_preview",
+    });
+    if (!context.ok) return mapFailure(context.kind);
+    const document = context.data;
+    if ((document.document_type !== "CCCD_FRONT" && document.document_type !== "CCCD_BACK") ||
+        (document.mime_type !== "image/jpeg" && document.mime_type !== "image/png") ||
+        document.upload_status !== "READY" || document.validation_status !== "VALIDATED" ||
+        (document.scan_status !== "NOT_REQUIRED" && document.scan_status !== "CLEAN") ||
+        !document.checksum_sha256) {
+      return fail("ENTRY_NOT_FOUND", 404);
+    }
+
+    const bytes = await dependencies.storage.readFinal(document.storage_key);
+    if (!bytes || bytes.byteLength !== document.size_bytes ||
+        sha256Hex(bytes) !== document.checksum_sha256 ||
+        !inspectDocumentContent({
+          document_type: document.document_type,
+          mime_type: document.mime_type,
+          bytes,
+        }).ok) {
+      console.error("[direct-entry] CCCD preview integrity check failed");
+      return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
+    }
+    return new Response(Buffer.from(bytes), {
+      status: 200,
+      headers: {
+        "Content-Type": document.mime_type,
+        "Content-Length": String(bytes.byteLength),
+        "Content-Disposition": "inline",
+        "Cache-Control": "private, no-store",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+      },
+    });
+  } catch {
+    console.error("[direct-entry] CCCD preview unavailable");
+    return fail("DOCUMENT_STORAGE_UNAVAILABLE", 503);
+  }
+}

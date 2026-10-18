@@ -3,8 +3,14 @@ import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import {
   FULL_PROFILE_MAX_BODY_BYTES,
   parseFullProfilePayload,
+  type FullProfilePayload,
 } from "./full-profile-contract.ts";
 import type { createFullProfileRepository } from "./full-profile-repository.ts";
+import type { DirectEntryRepository } from "./write-repository.ts";
+import type { DocumentObjectStorage } from "./r2-document-storage.ts";
+import { inspectDocumentContent, sha256Hex } from "./document-r2-contract.ts";
+import type { createWorkerPortraitStageRepository } from "./worker-portrait-stage-repository.ts";
+import { finalizeDirectEntryDocument } from "./document-finalize-api.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SAFE_CLIENT_CODES = new Set([
@@ -24,8 +30,40 @@ const SAFE_CLIENT_CODES = new Set([
 type Repository = ReturnType<typeof createFullProfileRepository>;
 type Dependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
-  repository: Pick<Repository, "createFullProfileBatch">;
+  repository: Pick<Repository, "createFullProfileBatch"> &
+    Partial<Pick<Repository, "createFullProfileBatchWithPortraitStages">>;
+  portraitStages?: ReturnType<typeof createWorkerPortraitStageRepository>;
+  documentRepository?: DirectEntryRepository;
+  documentStorage?: DocumentObjectStorage;
 };
+
+async function reconcileRejectedPortraitStage(
+  stageId: string,
+  actor: { auth_subject: string; app_user_id: string },
+  dependencies: Dependencies,
+): Promise<void> {
+  const stages = dependencies.portraitStages;
+  const storage = dependencies.documentStorage;
+  if (!stages || !storage) return;
+  const recovered = await stages.recover({ ...actor, stage_id: stageId });
+  if (!recovered.ok) {
+    console.error("[direct-entry] rejected portrait stage recovery failed");
+    return;
+  }
+  if (recovered.data.status === "CLAIMED") return;
+  if (recovered.data.status === "STAGED") {
+    const cancelled = await stages.cancel({ ...actor, stage_id: stageId });
+    if (!cancelled.ok) {
+      console.error("[direct-entry] rejected portrait stage cancellation failed");
+      return;
+    }
+  }
+  try {
+    await storage.deleteEnrollmentPortraitStage(stageId);
+  } catch {
+    console.error("[direct-entry] rejected portrait stage object cleanup failed");
+  }
+}
 
 type ReadBodyResult =
   | { ok: true; value: unknown }
@@ -156,13 +194,84 @@ export async function postFullProfileBatch(
         ? fail("UNAUTHENTICATED", 401)
         : fail("ACTOR_NOT_AVAILABLE", 403);
     }
-    const result = await dependencies.repository.createFullProfileBatch({
+    const actor = {
       auth_subject: session.actor.actor.auth_subject,
       app_user_id: session.actor.actor.app_user_id,
-      payload: parsed.payload,
+    };
+    const stageRows = parsed.payload.rows.flatMap((row, index) =>
+      "portrait_stage_id" in row && row.portrait_stage_id
+        ? [{ index, stage_id: row.portrait_stage_id }]
+        : []);
+    if (new Set(stageRows.map(({ stage_id }) => stage_id)).size !== stageRows.length) {
+      return fail("BATCH_INVALID", 400);
+    }
+    if (stageRows.length > 0 &&
+        !session.actor.actor.capabilities.includes("document_upload")) {
+      return fail("DOCUMENT_DENIED", 403);
+    }
+    if (stageRows.length > 0 && (
+      !dependencies.portraitStages || !dependencies.documentRepository ||
+      !dependencies.documentStorage || !dependencies.repository.createFullProfileBatchWithPortraitStages
+    )) return fail("PORTRAIT_STAGE_UNAVAILABLE", 503);
+
+    const claimed = [];
+    for (const stage of stageRows) {
+      const result = await dependencies.portraitStages!.claim({
+        ...actor, stage_id: stage.stage_id, idempotency_key: idempotencyKey,
+      });
+      if (!result.ok) {
+        for (const previous of claimed) {
+          const recovered = await dependencies.portraitStages!.recover({
+            ...actor, stage_id: previous.stage_id,
+          });
+          if (!recovered.ok) {
+            console.error("[direct-entry] partially claimed portrait stage recovery failed");
+          }
+        }
+        if (result.kind === "denied") return fail("ENTRY_NOT_FOUND", 404);
+        if (result.kind === "conflict") return fail("DOCUMENT_VERSION_CONFLICT", 409);
+        return fail(result.kind === "invalid" ? "DOCUMENT_REQUEST_INVALID" : "PORTRAIT_STAGE_UNAVAILABLE",
+          result.kind === "invalid" ? 400 : 503);
+      }
+      claimed.push({ ...stage, data: result.data });
+    }
+
+    const stripStage = <T extends { portrait_stage_id?: string }>(row: T): Omit<T, "portrait_stage_id"> => {
+      const clean = { ...row };
+      delete clean.portrait_stage_id;
+      return clean;
+    };
+    const payload: FullProfilePayload = stageRows.length === 0
+      ? parsed.payload
+      : parsed.payload.contract_version === "worker-profile/1.0"
+        ? {
+          contract_version: parsed.payload.contract_version,
+          rows: parsed.payload.rows.map(stripStage),
+        }
+        : {
+          contract_version: parsed.payload.contract_version,
+          rows: parsed.payload.rows.map(stripStage),
+        };
+    const batchInput = {
+      auth_subject: session.actor.actor.auth_subject,
+      app_user_id: session.actor.actor.app_user_id,
+      payload,
       idempotency_key: idempotencyKey,
-    });
+    };
+    const result = stageRows.length > 0
+      ? await dependencies.repository.createFullProfileBatchWithPortraitStages!({
+        ...batchInput,
+        portrait_stage_ids: stageRows.map(({ stage_id }) => stage_id),
+      })
+      : await dependencies.repository.createFullProfileBatch(batchInput);
     if (!result.ok) {
+      if (result.kind !== "unavailable" && claimed.length > 0) {
+        for (const stage of claimed) {
+          await reconcileRejectedPortraitStage(
+            stage.stage_id, actor, dependencies,
+          );
+        }
+      }
       if (result.kind === "conflict") return fail("IDEMPOTENCY_CONFLICT", 409);
       if (result.kind === "denied") return fail("ACTOR_DENIED", 403);
       if (result.kind === "invalid") {
@@ -181,6 +290,92 @@ export async function postFullProfileBatch(
     if (!projection) {
       console.error("[direct-entry] full-profile batch returned malformed projection");
       return fail("BATCH_UNAVAILABLE", 500);
+    }
+    for (const stage of claimed) {
+      const claimedStage = stage.data;
+      const entryId = projection.entry_ids[stage.index];
+      if (claimedStage.status === "ATTACHED") {
+        if (claimedStage.entry_id !== entryId || !claimedStage.document_id) {
+          return fail("IDEMPOTENCY_CONFLICT", 409);
+        }
+        await dependencies.documentStorage!.deleteEnrollmentPortraitStage(stage.stage_id);
+        continue;
+      }
+
+      const stagedBytes = await dependencies.documentStorage!.readEnrollmentPortraitStage(stage.stage_id);
+      if (!stagedBytes || stagedBytes.byteLength !== claimedStage.size_bytes ||
+          sha256Hex(stagedBytes) !== claimedStage.checksum_sha256 ||
+          !inspectDocumentContent({
+            document_type: "WORKER_PORTRAIT",
+            mime_type: claimedStage.mime_type,
+            bytes: stagedBytes,
+          }).ok) {
+        console.error("[direct-entry] portrait stage integrity check failed");
+        return fail("PORTRAIT_PROMOTION_PENDING", 503);
+      }
+
+      const entry = await dependencies.documentRepository!.readEntry({
+        ...actor, entry_id: entryId,
+      });
+      if (!entry.ok || typeof entry.data !== "object" || entry.data === null ||
+          !("version" in entry.data) || typeof entry.data.version !== "number") {
+        console.error("[direct-entry] portrait enrollment entry lookup unavailable");
+        return fail("PORTRAIT_PROMOTION_PENDING", 503);
+      }
+      const reservation = await dependencies.documentRepository!.reserveDocumentUpload({
+        ...actor,
+        entry_id: entryId,
+        expected_entry_version: entry.data.version,
+        document_type: "WORKER_PORTRAIT",
+        idempotency_key: stage.stage_id,
+        size_bytes: claimedStage.size_bytes,
+        mime_type: claimedStage.mime_type,
+        reason: null,
+      });
+      if (!reservation.ok) return fail("PORTRAIT_PROMOTION_PENDING", 503);
+      if (reservation.data.upload_status === "QUEUED") {
+        await dependencies.documentStorage!.copyEnrollmentPortraitStage({
+          stage_id: stage.stage_id,
+          storage_key: reservation.data.storage_key,
+          mime_type: claimedStage.mime_type,
+        });
+        const finalizeRequest = new Request("https://direct-entry.internal/api/direct-entry", {
+          method: "POST",
+          headers: {
+            origin: "https://direct-entry.internal",
+            host: "direct-entry.internal",
+            "content-type": "application/json",
+            "idempotency-key": stage.stage_id,
+          },
+          body: JSON.stringify({ expected_entry_version: reservation.data.entry_version }),
+        });
+        const finalized = await finalizeDirectEntryDocument(
+          finalizeRequest, entryId, reservation.data.document_id, "true", {
+            resolveSession: dependencies.resolveSession,
+            repository: dependencies.documentRepository!,
+            storage: dependencies.documentStorage!,
+          },
+        );
+        if (!finalized.ok) {
+          console.error("[direct-entry] portrait enrollment finalization pending");
+          return fail("PORTRAIT_PROMOTION_PENDING", 503);
+        }
+      } else if (reservation.data.upload_status !== "READY" ||
+          reservation.data.validation_status !== "VALIDATED") {
+        return fail("PORTRAIT_PROMOTION_PENDING", 503);
+      }
+      const completed = await dependencies.portraitStages!.complete({
+        ...actor,
+        stage_id: stage.stage_id,
+        idempotency_key: idempotencyKey,
+        entry_id: entryId,
+        document_id: reservation.data.document_id,
+      });
+      if (!completed.ok) {
+        console.error("[direct-entry] portrait stage completion pending");
+        return fail("PORTRAIT_PROMOTION_PENDING", 503);
+      }
+      await dependencies.documentStorage!.deleteEnrollmentPortraitStage(stage.stage_id);
     }
     const { replayed, ...safeResult } = projection;
     return respond({ ok: true, ...safeResult }, replayed ? 200 : 201);
