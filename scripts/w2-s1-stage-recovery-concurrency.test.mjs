@@ -72,11 +72,11 @@ async function applyMigrations(client) {
     " create schema auth; create table auth.users (id uuid primary key);",
   );
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 114, "the ephemeral server applies the complete current ledger");
+  assert.equal(names.length, 116, "the ephemeral server applies the complete current ledger");
   for (const name of names) await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
 }
 
-test("portrait stage recovery serializes with completion and the batch-aware RPC", async (t) => {
+test("stage recovery and cleanup serialize with completion, batch RPC and stage claims", async (t) => {
   const initdb = binary("initdb");
   const pgCtl = binary("pg_ctl");
   if (!initdb || !pgCtl) {
@@ -163,6 +163,31 @@ test("portrait stage recovery serializes with completion and the batch-aware RPC
     recovery = await connect(port, databaseName, "w2s1-recovery");
     completion = await connect(port, databaseName, "w2s1-completion");
     observer = await connect(port, databaseName, "w2s1-observer");
+    const createKey = "b9000000-0000-4000-8000-000000000003";
+    const concurrentCreates = await Promise.all([
+      recovery.query(
+        "select public.direct_entry_create_worker_portrait_stage_idempotent(" +
+        "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4,$5) data",
+        [OWNER.auth_subject, OWNER.app_user_id, "b8000000-0000-4000-8000-000000000003",
+          checksum, createKey],
+      ),
+      completion.query(
+        "select public.direct_entry_create_worker_portrait_stage_idempotent(" +
+        "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4,$5) data",
+        [OWNER.auth_subject, OWNER.app_user_id, "b8000000-0000-4000-8000-000000000004",
+          checksum, createKey],
+      ),
+    ]);
+    const createResults = concurrentCreates.map((result) => result.rows[0].data);
+    assert.equal(createResults[0].stage.stage_id, createResults[1].stage.stage_id,
+      "simultaneous same-key requests return one stage id");
+    assert.deepEqual(createResults.map((result) => result.replayed).sort(), [false, true]);
+    assert.equal((await observer.query(
+      "select count(*)::integer count from public.direct_entry_worker_portrait_stages" +
+      " where created_by_user_id=$1 and create_idempotency_key=$2",
+      [OWNER.app_user_id, createKey],
+    )).rows[0].count, 1, "only one persistent stage is created");
+
     await blocker.query("begin");
     await blocker.query(
       "select stage_id from public.direct_entry_worker_portrait_stages where stage_id=$1 for update",
@@ -281,6 +306,47 @@ test("portrait stage recovery serializes with completion and the batch-aware RPC
         "recovery preserves the claim when the batch result has committed");
       assert.equal(batchResults[0].value.rows[0].data.status, "CLAIMED");
       assert.equal(batchResults[0].value.rows[0].data.claim_idempotency_key, batchKey);
+    }
+
+    const cleanupRaceStageId = "b8000000-0000-4000-8000-000000000005";
+    const cleanupRaceKey = "b9000000-0000-4000-8000-000000000005";
+    const cleanupToken = "c9000000-0000-4000-8000-000000000005";
+    await observer.query(
+      "select public.direct_entry_create_worker_portrait_stage(" +
+      "$1::uuid,$2::uuid,$3::uuid,'image/jpeg',256,$4)",
+      [OWNER.auth_subject, OWNER.app_user_id, cleanupRaceStageId, checksum],
+    );
+    await observer.query(
+      "update public.direct_entry_worker_portrait_stages" +
+      " set created_at=clock_timestamp()-interval '25 hours' where stage_id=$1",
+      [cleanupRaceStageId],
+    );
+    const [cleanupRace, batchClaimRace] = await Promise.allSettled([
+      recovery.query(
+        "select public.direct_entry_claim_expired_worker_portrait_stage_cleanup($1::uuid,50) ids",
+        [cleanupToken],
+      ),
+      completion.query(
+        "select public.direct_entry_claim_worker_portrait_stage($1::uuid,$2::uuid,$3::uuid,$4)",
+        [OWNER.auth_subject, OWNER.app_user_id, cleanupRaceStageId, cleanupRaceKey],
+      ),
+    ]);
+    const { rows: [cleanupRaceState] } = await observer.query(
+      "select status,claim_idempotency_key from public.direct_entry_worker_portrait_stages" +
+      " where stage_id=$1",
+      [cleanupRaceStageId],
+    );
+    assert.equal(cleanupRace.status, "fulfilled");
+    if (cleanupRaceState.status === "CANCELLED") {
+      assert.deepEqual(cleanupRace.value.rows[0].ids, [cleanupRaceStageId]);
+      assert.equal(batchClaimRace.status, "rejected",
+        "a stage atomically claimed for cleanup cannot be claimed into a batch");
+    } else {
+      assert.equal(cleanupRaceState.status, "CLAIMED");
+      assert.equal(cleanupRaceState.claim_idempotency_key, cleanupRaceKey);
+      assert.equal(batchClaimRace.status, "fulfilled",
+        "the batch claim wins without allowing the reaper to select the stage");
+      assert.deepEqual(cleanupRace.value.rows[0].ids, []);
     }
   } finally {
     await blocker?.query("rollback").catch(() => {});

@@ -60,11 +60,11 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 114, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (1 + 57)], STATUS_DEFAULT_MIGRATION, "initial-ON remains #57");
-  assert.equal(names[names.length - (1 + 58)], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
-  assert.equal(names[names.length - (1 + 59)], W05_MIGRATION, "W05-R1 follows W05 #55");
-  assert.equal(names[names.length - (1 + 60)], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
+  assert.equal(names.length, 116, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
+  assert.equal(names[names.length - (1 + 59)], STATUS_DEFAULT_MIGRATION, "initial-ON remains #57");
+  assert.equal(names[names.length - (1 + 60)], W05_R1_MIGRATION, "initial-ON follows W05-R1 #56");
+  assert.equal(names[names.length - (1 + 61)], W05_MIGRATION, "W05-R1 follows W05 #55");
+  assert.equal(names[names.length - (1 + 62)], W06A_MIGRATION, "W05-R1 ledger keeps W06A #54");
   return db;
 }
 
