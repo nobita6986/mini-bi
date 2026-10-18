@@ -1,15 +1,16 @@
 /**
  * W2S1 - Client boundary cho portrait STAGING khi nhap ho so moi.
  *
- * Dung dung contract da review (migration #113/#114):
- *   POST   /api/direct-entry/worker-portrait-stages            multipart, dung MOT field `file`
+ * Dung dung contract da review (migration #113–#115):
+ *   POST   /api/direct-entry/worker-portrait-stages            multipart `file` + Idempotency-Key
  *   DELETE /api/direct-entry/worker-portrait-stages            JSON { stage_id }
  *   POST   /api/direct-entry/worker-portrait-stages/recover     JSON { stage_id }
  *
  * Nguyen tac:
  * - Client KHONG gui actor/auth subject/app user/capability/scope/team; server resolve tu session.
  * - Client KHONG bao gio gui bytes portrait trong payload batch: batch chi mang `portrait_stage_id`.
- * - `stage_id` phai duoc giu toi khi luu xong; retry dung DUNG `Idempotency-Key` cua lan luu truoc.
+ * - Retry POST stage cho cùng một lần chọn ảnh dùng lại đúng `Idempotency-Key` đó.
+ * - `stage_id` phai duoc giu toi khi luu xong; retry batch dùng key riêng của lần lưu trước.
  * - Chi ket thuc/bo stage bang DELETE khi nguoi dung huy nhap lieu; stage CLAIMED/ATTACHED khong huy duoc.
  *
  * Module thuan: ngoai hai ham `stageWorkerPortrait`/`cancelWorkerPortraitStage`/
@@ -92,8 +93,12 @@ export type PortraitStageFetch = (url: string, init: RequestInit) => Promise<Res
  */
 export async function stageWorkerPortrait(input: {
   file: File;
+  idempotencyKey: string;
   fetchImpl: PortraitStageFetch;
 }): Promise<PortraitStageResult> {
+  if (!UUID.test(input.idempotencyKey)) {
+    return { kind: "rejected", code: "IDEMPOTENCY_KEY_INVALID" };
+  }
   const check = checkWorkerPortraitFile(input.file);
   if (!check.ok) return { kind: "rejected", code: check.code };
   const form = new FormData();
@@ -104,6 +109,7 @@ export async function stageWorkerPortrait(input: {
     response = await callFetch(PORTRAIT_STAGE_ENDPOINT, {
       method: "POST",
       credentials: "same-origin",
+      headers: { "Idempotency-Key": input.idempotencyKey },
       body: form,
     });
   } catch {
@@ -265,15 +271,15 @@ export function portraitStageErrorMessage(code: string): string {
 /* ------------------------------------------------- ràng buộc stage ↔ dòng */
 
 /**
- * `sourceRow` la VI TRI trong bang dan, khong phai danh tinh: khi nguoi dung sua noi dung,
- * thay dong hoac sap xep lai, vi tri co the tro sang NLD khac. Vi vay stage phai duoc rang
- * buoc bang (sourceRow + chu ky noi dung dong) chu khong chi bang sourceRow.
+ * `rowKey` la khoa dong do UI cap (vi tri dong khi dan Excel, hoac `clientRowId` o bang nhap
+ * truc tiep) — khong phai danh tinh on dinh. Vi vay stage phai rang buoc bang
+ * (rowKey + chu ky noi dung dong) chu khong chi bang rowKey.
  *
  * Chu ky chi giu dang bam dong bo (khong giu ban sao PII cua dong cu trong memory) va KHONG
  * bao gio duoc gui len server.
  */
 export type PortraitRowIdentity = {
-  sourceRow: number;
+  rowKey: string;
   employeeCode: string;
   displayName: string;
   firstWorkDate: string;
@@ -299,7 +305,7 @@ function syncBindingHash(payload: string): string {
 
 export function portraitRowBinding(identity: PortraitRowIdentity): string {
   const payload = [
-    String(identity.sourceRow),
+    identity.rowKey,
     identity.employeeCode,
     identity.displayName,
     identity.firstWorkDate,
@@ -310,7 +316,7 @@ export function portraitRowBinding(identity: PortraitRowIdentity): string {
     identity.dateOfBirth,
     identity.phone,
   ].join("\u001f");
-  return identity.sourceRow + "#" + syncBindingHash(payload);
+  return identity.rowKey + "#" + syncBindingHash(payload);
 }
 
 export type PortraitStageBindingSlot = {
@@ -324,14 +330,14 @@ export type PortraitStageBindingSlot = {
  * Dong bi sua/thay/sap xep lai => binding lech => stage cu khong bao gio duoc gui cho ho so khac.
  */
 export function selectBindablePortraitStages(input: {
-  rowBindings: ReadonlyMap<number, string>;
-  slots: ReadonlyMap<number, PortraitStageBindingSlot>;
-}): Map<number, string> {
-  const bindable = new Map<number, string>();
-  for (const [sourceRow, slot] of input.slots) {
+  rowBindings: ReadonlyMap<string, string>;
+  slots: ReadonlyMap<string, PortraitStageBindingSlot>;
+}): Map<string, string> {
+  const bindable = new Map<string, string>();
+  for (const [rowKey, slot] of input.slots) {
     if (slot.status !== "staged" || slot.stageId === null) continue;
-    if (input.rowBindings.get(sourceRow) !== slot.binding) continue;
-    bindable.set(sourceRow, slot.stageId);
+    if (input.rowBindings.get(rowKey) !== slot.binding) continue;
+    bindable.set(rowKey, slot.stageId);
   }
   return bindable;
 }
@@ -342,16 +348,85 @@ export function selectBindablePortraitStages(input: {
  * (chua co id) va KHONG bao gom stage dang con khop (dang dung de gui).
  */
 export function selectStalePortraitStages(input: {
-  rowBindings: ReadonlyMap<number, string>;
-  slots: ReadonlyMap<number, PortraitStageBindingSlot>;
-}): { sourceRow: number; stageId: string }[] {
-  const stale: { sourceRow: number; stageId: string }[] = [];
-  for (const [sourceRow, slot] of input.slots) {
+  rowBindings: ReadonlyMap<string, string>;
+  slots: ReadonlyMap<string, PortraitStageBindingSlot>;
+}): { rowKey: string; stageId: string }[] {
+  const stale: { rowKey: string; stageId: string }[] = [];
+  for (const [rowKey, slot] of input.slots) {
     if (slot.stageId === null) continue;
-    if (input.rowBindings.get(sourceRow) === slot.binding) continue;
-    stale.push({ sourceRow, stageId: slot.stageId });
+    if (input.rowBindings.get(rowKey) === slot.binding) continue;
+    stale.push({ rowKey, stageId: slot.stageId });
   }
   return stale;
+}
+
+/* ------------------------------------- glue cho luong nhap truc tiep (live) */
+
+/** Du lieu toi thieu cua mot dong preview (bang nhap / quick-add) de tinh binding. */
+export type PortraitLiveRowSource = {
+  sourceRow: number;
+  row: {
+    employee_code: string;
+    display_name: string;
+    first_work_date: string;
+    labor_type: string;
+    worker: {
+      national_id: { state: string; value?: string };
+      date_of_birth: { state: string; value?: string };
+      phone: { state: string; value?: string };
+    };
+  };
+  resolved: { project_id: string | null; recruiter_id: string | null };
+};
+
+function rawOptional(value: { state: string; value?: string }): string {
+  return value.state === "provided" && typeof value.value === "string"
+    ? value.value
+    : value.state;
+}
+
+/**
+ * Binding cho tung dong cua bang nhap truc tiep. Khoa on dinh la `clientRowId` (khong phai vi
+ * tri dong), nen sua/xoa/di chuyen dong deu lam binding lech va stage cu khong bi gan nham.
+ */
+export function buildPortraitRowBindings(input: {
+  rows: readonly { clientRowId: string }[];
+  previewRows: readonly PortraitLiveRowSource[];
+}): Map<string, string> {
+  const bindings = new Map<string, string>();
+  for (const [index, row] of input.rows.entries()) {
+    const preview = input.previewRows[index];
+    if (preview === undefined) continue;
+    bindings.set(row.clientRowId, portraitRowBinding({
+      rowKey: row.clientRowId,
+      employeeCode: preview.row.employee_code,
+      displayName: preview.row.display_name,
+      firstWorkDate: preview.row.first_work_date,
+      projectId: preview.resolved.project_id,
+      recruiterId: preview.resolved.recruiter_id,
+      laborType: preview.row.labor_type,
+      nationalId: rawOptional(preview.row.worker.national_id),
+      dateOfBirth: rawOptional(preview.row.worker.date_of_birth),
+      phone: rawOptional(preview.row.worker.phone),
+    }));
+  }
+  return bindings;
+}
+
+/** Doi `bindableStageIds` (theo clientRowId) sang `Map<sourceRow, stage_id>` cho payload batch. */
+export function buildPortraitStageIdsBySourceRow(input: {
+  bindableStageIds: ReadonlyMap<string, string>;
+  rows: readonly { clientRowId: string }[];
+  previewRows: readonly { sourceRow: number }[];
+}): Map<number, string> {
+  const stageIds = new Map<number, string>();
+  for (const [index, row] of input.rows.entries()) {
+    const stageId = input.bindableStageIds.get(row.clientRowId);
+    const preview = input.previewRows[index];
+    if (stageId === undefined || preview === undefined) continue;
+    stageIds.set(preview.sourceRow, stageId);
+  }
+  return stageIds;
 }
 
 /* ---------------------------------------------- vòng đời stage (reducer thuần) */
@@ -382,27 +457,27 @@ export type PortraitStageOrphan = { stageId: string; sizeBytes: number };
 
 export type PortraitStageLifecycle = {
   epoch: number;
-  slots: ReadonlyMap<number, PortraitStageSlot>;
+  slots: ReadonlyMap<string, PortraitStageSlot>;
   orphans: readonly PortraitStageOrphan[];
 };
 
 export const EMPTY_PORTRAIT_STAGE_LIFECYCLE: PortraitStageLifecycle = Object.freeze({
   epoch: 0,
-  slots: new Map<number, PortraitStageSlot>(),
+  slots: new Map<string, PortraitStageSlot>(),
   orphans: [],
 });
 
 export type PortraitStageAction =
   /** `requestId` duy nhat cho MOI lan stage => response cu khong the ghi de upload moi. */
-  | { kind: "stage-start"; sourceRow: number; binding: string; requestId: string }
+  | { kind: "stage-start"; rowKey: string; binding: string; requestId: string }
   | {
       kind: "stage-result";
-      sourceRow: number;
+      rowKey: string;
       requestId: string;
       result: { kind: "staged"; stageId: string; sizeBytes: number } | { kind: "error"; code: string };
     }
   | { kind: "invalidate" }
-  | { kind: "cancel-result"; sourceRow: number; stageId: string; confirmed: boolean }
+  | { kind: "cancel-result"; rowKey: string; stageId: string; confirmed: boolean }
   | { kind: "orphan-cancel-result"; stageId: string; confirmed: boolean };
 
 /** Stage mo coi dang cho don. */
@@ -426,7 +501,7 @@ export function reducePortraitStageLifecycle(
 ): PortraitStageLifecycle {
   const slots = new Map(state.slots);
   if (action.kind === "stage-start") {
-    slots.set(action.sourceRow, {
+    slots.set(action.rowKey, {
       status: "staging",
       binding: action.binding,
       requestId: action.requestId,
@@ -438,12 +513,12 @@ export function reducePortraitStageLifecycle(
     // Doi du lieu / dong hop thoai: vo hieu hoa binding NGAY. Slot da co stageId chuyen sang
     // "stale" va VAN GIU ID de don; slot dang chay bi bo khoi state => response cua no ve sau
     // se khong khop requestId nao nua (xem nhanh stage-result) va duoc dua vao danh sach don.
-    for (const [sourceRow, slot] of state.slots) {
+    for (const [rowKey, slot] of state.slots) {
       if (slot.stageId === null) {
-        slots.delete(sourceRow);
+        slots.delete(rowKey);
         continue;
       }
-      slots.set(sourceRow, {
+      slots.set(rowKey, {
         status: "stale",
         binding: INVALIDATED_PORTRAIT_BINDING,
         requestId: slot.requestId,
@@ -454,15 +529,15 @@ export function reducePortraitStageLifecycle(
     return { epoch: state.epoch + 1, slots, orphans: state.orphans };
   }
   if (action.kind === "cancel-result") {
-    const current = slots.get(action.sourceRow);
+    const current = slots.get(action.rowKey);
     if (current === undefined || current.stageId !== action.stageId) return state;
     if (action.confirmed) {
       // Chi xoa ID khoi state khi DA xac nhan huy hoac da xac dinh trang thai cuoi (khong huy duoc).
-      slots.delete(action.sourceRow);
+      slots.delete(action.rowKey);
       return { epoch: state.epoch, slots, orphans: state.orphans };
     }
     // Loi retry/khong xac dinh: GIU ID, giu trang thai de thu don lai, khong bao gio bindable.
-    slots.set(action.sourceRow, {
+    slots.set(action.rowKey, {
       status: "stale",
       binding: INVALIDATED_PORTRAIT_BINDING,
       requestId: current.requestId,
@@ -479,8 +554,8 @@ export function reducePortraitStageLifecycle(
       orphans: state.orphans.filter((orphan) => orphan.stageId !== action.stageId),
     };
   }
-  // stage-result: CHI cap nhat slot dang hoat dong DUNG requestId (khong chi sourceRow/binding).
-  const current = slots.get(action.sourceRow);
+  // stage-result: CHI cap nhat slot dang hoat dong DUNG requestId (khong chi rowKey/binding).
+  const current = slots.get(action.rowKey);
   const active = current !== undefined && current.status === "staging" &&
     current.requestId === action.requestId;
   if (!active) {
@@ -496,7 +571,7 @@ export function reducePortraitStageLifecycle(
     };
   }
   if (action.result.kind === "error") {
-    slots.set(action.sourceRow, {
+    slots.set(action.rowKey, {
       status: "error",
       binding: current.binding,
       requestId: current.requestId,
@@ -505,7 +580,7 @@ export function reducePortraitStageLifecycle(
     });
     return { epoch: state.epoch, slots, orphans: state.orphans };
   }
-  slots.set(action.sourceRow, {
+  slots.set(action.rowKey, {
     status: "staged",
     binding: current.binding,
     requestId: current.requestId,

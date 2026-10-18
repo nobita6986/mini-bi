@@ -132,7 +132,7 @@ test("H08-8 post-save: selectionAfterSaveEntryId resolve sang persisted row", ()
 /* ----- 8a. Sau khi tao draft, refresh submission projection truoc CTA ----- */
 test("H08-8a post-save refreshes submissions before enabling draft document upload", () => {
   const saveSuccess = live.match(
-    /if \(result\.kind === "saved"\) \{[\s\S]{0,1800}?await Promise\.all\(\[reloadDrafts\(\), loadSubmissions\("replace"\)\]\);[\s\S]{0,500}?setSelectionAfterSaveEntryId\(expectedEntryId\)/,
+    /if \(result\.kind === "saved"\) \{[\s\S]{0,2600}?await Promise\.all\(\[reloadDrafts\(\), loadSubmissions\("replace"\)\]\);[\s\S]{0,500}?setSelectionAfterSaveEntryId\(expectedEntryId\)/,
   );
   assert.ok(saveSuccess,
     "after save, reload the draft and its DRAFT submission before restoring the selected entry");

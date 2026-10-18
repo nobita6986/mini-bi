@@ -128,6 +128,15 @@ import {
   fullProfileIntentDigest,
   postFullProfileBatch,
 } from "@/lib/direct-entry/full-profile-batch";
+import {
+  PORTRAIT_PROMOTION_PENDING_MESSAGE,
+  buildPortraitRowBindings,
+  buildPortraitStageIdsBySourceRow,
+  portraitPromotionState,
+  recoverWorkerPortraitStage,
+} from "@/lib/direct-entry/worker-portrait-stage-client";
+import { useWorkerPortraitStages } from "./use-worker-portrait-stages";
+import { WorkerPortraitStageSlot } from "./worker-portrait-stage-slot";
 import styles from "./direct-entry-shell.module.css";
 
 /** Message tu choi paste, da duoc viet san; khong chua gia tri nguoi dung. */
@@ -1370,6 +1379,33 @@ export function DirectEntryLive() {
     existing: rows.map((row) => ({ employeeCode: row.employeeCode })),
   }), [rows, stagedCatalogSource, stagedModel, today]);
 
+  // W2S1: portrait staging cho CA bang nhap nhieu dong va quick-add — dung chung mot controller.
+  const portraitRowBindings = useMemo(() => buildPortraitRowBindings({
+    rows: stagedValidation.rows,
+    previewRows: stagedValidation.preview?.rows ?? [],
+  }), [stagedValidation]);
+  const portraitStages = useWorkerPortraitStages({ rowBindings: portraitRowBindings });
+  const portraitStageIdsBySourceRow = useMemo(() => buildPortraitStageIdsBySourceRow({
+    bindableStageIds: portraitStages.bindableStageIds,
+    rows: stagedValidation.rows,
+    previewRows: stagedValidation.preview?.rows ?? [],
+  }), [portraitStages.bindableStageIds, stagedValidation]);
+  /**
+   * Ket qua luu khong xac dinh: hoi DB trang thai THAT cua tung stage. `CLAIMED`/`ATTACHED`
+   * nghia la ho so DA luu nhung anh chua hoan tat => khong bao gio bao "chua luu".
+   */
+  const reconcileStagedPortraits = useCallback(async (): Promise<string | null> => {
+    let pending = false;
+    for (const [rowKey, stageId] of portraitStages.bindableStageIds) {
+      const recovered = await recoverWorkerPortraitStage({ stageId, fetchImpl: fetch });
+      if (recovered.kind !== "recovered") continue;
+      const state = portraitPromotionState(recovered.recovery);
+      if (state === "cancelled") portraitStages.settle(rowKey, stageId);
+      if (state === "pending" || state === "attached") pending = true;
+    }
+    return pending ? PORTRAIT_PROMOTION_PENDING_MESSAGE : null;
+  }, [portraitStages]);
+
   // P1.7-H07: chi hien thi issue `PASTE_VALUE_REQUIRED` (required-missing) sau
   // khi user bam "Lưu các dòng hợp lệ". Other validation issues (format,
   // catalog, paste structure) van hien thi ngay. Khi user chinh sua cell va
@@ -1945,7 +1981,7 @@ export function DirectEntryLive() {
       setStagedMessageWithTone("Chưa có dòng hợp lệ để lưu.", "info");
       return;
     }
-    const body = buildServerGeneratedFullProfileRequestBody(preview.rows);
+    const body = buildServerGeneratedFullProfileRequestBody(preview.rows, portraitStageIdsBySourceRow);
     if (body === null) {
       setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
@@ -1969,6 +2005,10 @@ export function DirectEntryLive() {
       });
       if (result.kind === "saved") {
         stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
+        // W2S1: server da claim + gan anh (ATTACHED) cho cac dong vua luu => bo state stage tam.
+        for (const [rowKey, stageId] of portraitStages.bindableStageIds) {
+          portraitStages.settle(rowKey, stageId);
+        }
         stagedUndo.current = null;
         setStagedCanUndo(false);
         setStagedNotice("");
@@ -2009,7 +2049,10 @@ export function DirectEntryLive() {
         return;
       }
       if (result.kind === "retry") {
-        setStagedMessage(fullProfileErrorMessage(result.code));
+        // W2S1: ket qua khong xac dinh => hoi DB trang thai that cua stage. Neu ho so DA luu
+        // nhung anh chua hoan tat thi bao dung, khong bao "chua luu" (khong bao luu gia).
+        const portraitPending = await reconcileStagedPortraits();
+        setStagedMessage(portraitPending ?? fullProfileErrorMessage(result.code));
         return;
       }
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
@@ -2061,7 +2104,12 @@ export function DirectEntryLive() {
       setStagedMessageWithTone("Dòng đang mở chưa hợp lệ; hãy kiểm tra lại dữ liệu.", "error");
       return;
     }
-    const body = buildServerGeneratedFullProfileRequestBody([matchingPreview]);
+    const body = buildServerGeneratedFullProfileRequestBody(
+      [matchingPreview],
+      portraitStages.bindableStageIds.has(clientRowId)
+        ? new Map([[matchingPreview.sourceRow, portraitStages.bindableStageIds.get(clientRowId)!]])
+        : undefined,
+    );
     if (body === null) {
       setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
@@ -2085,6 +2133,9 @@ export function DirectEntryLive() {
       });
       if (result.kind === "saved") {
         stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
+        // W2S1: server da claim + gan anh cho dong vua luu => bo state stage cua dong do.
+        const savedStageId = portraitStages.bindableStageIds.get(clientRowId);
+        if (savedStageId !== undefined) portraitStages.settle(clientRowId, savedStageId);
         // Chi remove row vua luu (goc clientRowId), giu nguyen cac staged row khac.
         setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
         setQuickEditClientRowId(null);
@@ -2104,7 +2155,10 @@ export function DirectEntryLive() {
         return;
       }
       if (result.kind === "retry") {
-        setStagedMessage(fullProfileErrorMessage(result.code));
+        // W2S1: ket qua khong xac dinh => hoi DB trang thai that cua stage. Neu ho so DA luu
+        // nhung anh chua hoan tat thi bao dung, khong bao "chua luu" (khong bao luu gia).
+        const portraitPending = await reconcileStagedPortraits();
+        setStagedMessage(portraitPending ?? fullProfileErrorMessage(result.code));
         return;
       }
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
@@ -2746,6 +2800,27 @@ export function DirectEntryLive() {
                   );
                 })()}
                 <div className={styles.quickDrawerFields}>
+                  <WorkerPortraitStageSlot
+                    rowKey={target.clientRowId}
+                    testIdSuffix={target.clientRowId}
+                    slot={portraitStages.slots.get(target.clientRowId)}
+                    busy={stagedBusy}
+                    onStage={portraitStages.stage}
+                    onCancel={portraitStages.cancel}
+                  />
+                  {portraitStages.staleCount > 0 && (
+                    <button type="button" className={styles.secondaryButton}
+                      data-testid="quick-portrait-cleanup-retry"
+                      onClick={portraitStages.retryCleanup}>
+                      Thử dọn ảnh cũ chưa hủy được
+                    </button>
+                  )}
+                  {portraitStages.message !== "" && (
+                    <p className={styles.documentStatus} role="status"
+                      data-testid="quick-portrait-message">
+                      {portraitStages.message}
+                    </p>
+                  )}
                   <Field label={<><span>Dự án</span><span className={styles.requiredStar} aria-hidden="true"> *</span></>}>
                     {target.cells.first_work_date === undefined || target.cells.first_work_date === ""
                       ? <p className={styles.derivedValue}>Nhập ngày bắt đầu trước</p>

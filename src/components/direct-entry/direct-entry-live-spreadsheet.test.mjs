@@ -95,8 +95,9 @@ test("save dung full-profile batch, mot request, co chan double submit", () => {
 });
 
 test("409 khong auto-retry, network/5xx giu intent key", () => {
-  // retry: giu nguyen key va khong clear intent.
-  assert.match(saveHandler, /if \(result\.kind === "retry"\) \{\s*\n\s*setStagedMessage\(fullProfileErrorMessage\(result\.code\)\);\s*\n\s*return;/);
+  // retry: giu nguyen key, KHONG clear intent, va khong bao "da luu"/"chua luu" khi chua ro.
+  assert.match(saveHandler,
+    /if \(result\.kind === "retry"\) \{\s*\n[\s\S]{0,500}?const portraitPending = await reconcileStagedPortraits\(\);\s*\n\s*setStagedMessage\(portraitPending \?\? fullProfileErrorMessage\(result\.code\)\);\s*\n\s*return;/);
   assert.equal(/setTimeout/.test(saveHandler), false, "khong auto-retry");
   const retryBranch = saveHandler.indexOf('if (result.kind === "retry")');
   const clearAfterRetry = saveHandler.indexOf('stagedIntent.current = clearIntentKey', retryBranch);

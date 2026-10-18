@@ -77,8 +77,11 @@ test("W2S1: CCCD preview dùng route riêng; KHÔNG dùng portrait preview cho C
   assert.match(dialog, /data-testid=\{`cccd-preview-\$\{documentId\}`\}/);
   // URL do projection module quyet dinh, khong hardcode trong dialog; khong dung portrait preview.
   assert.doesNotMatch(dialog, /workerPortraitPreviewUrl/);
-  assert.doesNotMatch(dialog, /"\/api\/direct-entry/);
-  assert.match(dialog, /quản lý tài liệu hiện có/);
+  assert.doesNotMatch(dialog, /fetch\("\/api\/direct-entry/);
+  assert.match(dialog, /workerDocumentReady\(document\)/);
+  assert.match(dialog, /type === "EMPLOYMENT_CONTRACT"/);
+  assert.match(dialog, /\/documents\/\$\{encodeURIComponent\(document\.document_id\)\}\/download/);
+  assert.match(dialog, /luồng tài liệu được bảo vệ hiện có/);
 });
 
 test("W2S1: panel ảnh hồ sơ chỉ render preview trong panel và ẩn khi thiếu document_view", () => {

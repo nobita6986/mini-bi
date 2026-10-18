@@ -63,16 +63,21 @@ test("stageWorkerPortrait: tep rong/sai MIME/vuot dung luong bi tu choi TRUOC kh
     [portraitFile(11 * 1024 * 1024), "DOCUMENT_SIZE_INVALID"],
     [portraitFile(1024, "application/pdf", "x.pdf"), "DOCUMENT_MIME_INVALID"],
   ]) {
-    const result = await stageWorkerPortrait({ file, fetchImpl });
+    const result = await stageWorkerPortrait({ file, idempotencyKey: KEY, fetchImpl });
     assert.deepEqual(result, { kind: "rejected", code });
   }
   assert.equal(calls, 0, "khong duoc gui tep khong hop le len may chu");
+  assert.deepEqual(await stageWorkerPortrait({
+    file: portraitFile(), idempotencyKey: "invalid", fetchImpl,
+  }), { kind: "rejected", code: "IDEMPOTENCY_KEY_INVALID" });
+  assert.equal(calls, 0);
 });
 
 test("stageWorkerPortrait: multipart dung MOT field `file`, khong gui truong authority", async () => {
   const calls = [];
   const result = await stageWorkerPortrait({
     file: portraitFile(),
+    idempotencyKey: KEY,
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
       return Response.json({
@@ -85,28 +90,34 @@ test("stageWorkerPortrait: multipart dung MOT field `file`, khong gui truong aut
   assert.equal(calls[0].url, PORTRAIT_STAGE_ENDPOINT);
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.credentials, "same-origin");
+  assert.deepEqual(calls[0].init.headers, { "Idempotency-Key": KEY });
   const body = calls[0].init.body;
   assert.ok(body instanceof FormData);
   assert.deepEqual([...body.keys()], ["file"]);
   assert.ok(body.get("file") instanceof File);
-  assert.equal(calls[0].init.headers, undefined, "khong tu dat header authority/idempotency cho stage");
+  assert.equal("Content-Type" in calls[0].init.headers, false,
+    "browser sets the multipart boundary; no authority fields are sent");
 });
 
 test("stageWorkerPortrait: loi mang/5xx/2xx khong doc duoc => retry (khong bao thanh cong)", async () => {
   assert.deepEqual(await stageWorkerPortrait({
     file: portraitFile(),
+    idempotencyKey: KEY,
     fetchImpl: async () => { throw new Error("down"); },
   }), { kind: "retry", code: "PORTRAIT_STAGE_NETWORK" });
   assert.deepEqual(await stageWorkerPortrait({
     file: portraitFile(),
+    idempotencyKey: KEY,
     fetchImpl: async () => Response.json({ ok: false, code: "PORTRAIT_STAGE_UNAVAILABLE" }, { status: 503 }),
   }), { kind: "retry", code: "PORTRAIT_STAGE_UNAVAILABLE" });
   assert.deepEqual(await stageWorkerPortrait({
     file: portraitFile(),
+    idempotencyKey: KEY,
     fetchImpl: async () => new Response("not-json", { status: 201 }),
   }), { kind: "retry", code: "PORTRAIT_STAGE_RESPONSE_INVALID" });
   assert.deepEqual(await stageWorkerPortrait({
     file: portraitFile(),
+    idempotencyKey: KEY,
     fetchImpl: async () => Response.json({ ok: false, code: "DOCUMENT_DENIED" }, { status: 403 }),
   }), { kind: "rejected", code: "DOCUMENT_DENIED" });
 });
@@ -225,7 +236,7 @@ test("dung chung ham kiem tra tep voi portrait panel (mot nguon duy nhat)", () =
 
 function identity(overrides = {}) {
   return {
-    sourceRow: 1,
+    rowKey: "1",
     employeeCode: "hrp-2026-000001",
     displayName: "Nguyễn Văn A",
     firstWorkDate: "2026-01-05",
@@ -251,7 +262,7 @@ test("portraitRowBinding: doi noi dung hoac doi vi tri deu doi binding", () => {
     { firstWorkDate: "2026-02-01" },
     { dateOfBirth: "1991-01-01" },
     { phone: "0911111111" },
-    { sourceRow: 2 },
+    { rowKey: "2" },
   ]) {
     assert.notEqual(portraitRowBinding(identity(changed)), base,
       "binding phai doi khi " + JSON.stringify(changed));
@@ -265,45 +276,45 @@ test("portraitRowBinding: doi noi dung hoac doi vi tri deu doi binding", () => {
 test("REGRESSION: stage A staged cho dong A, doi dong thanh NLD B => batch KHONG chua stage A cho B", () => {
   const bindingA = portraitRowBinding(identity({ displayName: "Nguyễn Văn A" }));
   const bindingB = portraitRowBinding(identity({ displayName: "Nguyễn Văn B" }));
-  const slots = new Map([[1, { binding: bindingA, status: "staged", stageId: STAGE_ID }]]);
+  const slots = new Map([["1", { binding: bindingA, status: "staged", stageId: STAGE_ID }]]);
 
   // Dong 1 van la A => duoc gui.
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[1, bindingA]]), slots,
-  })], [[1, STAGE_ID]]);
+    rowBindings: new Map([["1", bindingA]]), slots,
+  })], [["1", STAGE_ID]]);
 
   // Dong 1 bi sua/thay bang B => stage A KHONG duoc gui cho B, va bi coi la cu de don.
-  const rowBindingsB = new Map([[1, bindingB]]);
+  const rowBindingsB = new Map([["1", bindingB]]);
   assert.deepEqual([...selectBindablePortraitStages({ rowBindings: rowBindingsB, slots })], []);
   assert.deepEqual(selectStalePortraitStages({ rowBindings: rowBindingsB, slots }),
-    [{ sourceRow: 1, stageId: STAGE_ID }]);
+    [{ rowKey: "1", stageId: STAGE_ID }]);
 
   // Sap xep lai: noi dung A chuyen sang dong 2 => dong 1 khong con khop => khong gui; stage cu bi don.
-  const reordered = new Map([[2, bindingA]]);
+  const reordered = new Map([["2", bindingA]]);
   assert.deepEqual([...selectBindablePortraitStages({ rowBindings: reordered, slots })], []);
   assert.deepEqual(selectStalePortraitStages({ rowBindings: reordered, slots }),
-    [{ sourceRow: 1, stageId: STAGE_ID }]);
+    [{ rowKey: "1", stageId: STAGE_ID }]);
 
   // Xoa het du lieu (preview null) => khong con dong nao khop => stage cu bi don.
   assert.deepEqual(selectStalePortraitStages({ rowBindings: new Map(), slots }),
-    [{ sourceRow: 1, stageId: STAGE_ID }]);
+    [{ rowKey: "1", stageId: STAGE_ID }]);
 });
 
 test("selectBindablePortraitStages: chi slot da stage moi duoc gui; staging/error khong gui", () => {
   const binding = portraitRowBinding(identity());
-  const rowBindings = new Map([[1, binding]]);
+  const rowBindings = new Map([["1", binding]]);
   assert.deepEqual([...selectBindablePortraitStages({
     rowBindings,
-    slots: new Map([[1, { binding, status: "staging", stageId: null }]]),
+    slots: new Map([["1", { binding, status: "staging", stageId: null }]]),
   })], []);
   assert.deepEqual([...selectBindablePortraitStages({
     rowBindings,
-    slots: new Map([[1, { binding, status: "error", stageId: null }]]),
+    slots: new Map([["1", { binding, status: "error", stageId: null }]]),
   })], []);
   // Slot chua co stageId (chua tao xong) khong duoc gui va cung khong co gi de don.
   assert.deepEqual(selectStalePortraitStages({
     rowBindings,
-    slots: new Map([[1, { binding: "khac", status: "staging", stageId: null }]]),
+    slots: new Map([["1", { binding: "khac", status: "staging", stageId: null }]]),
   }), []);
 });
 
@@ -318,10 +329,11 @@ function runLifecycle(actions) {
 }
 
 function stagedActions(sourceRow, binding, requestId = REQ_A, stageId = STAGE_ID) {
+  const rowKey = String(sourceRow);
   return [
-    { kind: "stage-start", sourceRow, binding, requestId },
+    { kind: "stage-start", rowKey, binding, requestId },
     {
-      kind: "stage-result", sourceRow, requestId,
+      kind: "stage-result", rowKey, requestId,
       result: { kind: "staged", stageId, sizeBytes: 2048 },
     },
   ];
@@ -330,14 +342,14 @@ function stagedActions(sourceRow, binding, requestId = REQ_A, stageId = STAGE_ID
 test("HÀNH VI: stage thành công thì bindable; xác nhận hủy mới xóa ID", () => {
   const binding = portraitRowBinding(identity());
   let state = runLifecycle(stagedActions(1, binding));
-  assert.equal(state.slots.get(1).status, "staged");
+  assert.equal(state.slots.get("1").status, "staged");
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[1, binding]]), slots: state.slots,
-  })], [[1, STAGE_ID]]);
+    rowBindings: new Map([["1", binding]]), slots: state.slots,
+  })], [["1", STAGE_ID]]);
 
   state = runLifecycle([
     ...stagedActions(1, binding),
-    { kind: "cancel-result", sourceRow: 1, stageId: STAGE_ID, confirmed: true },
+    { kind: "cancel-result", rowKey: "1", stageId: STAGE_ID, confirmed: true },
   ]);
   assert.equal(state.slots.size, 0, "da xac nhan huy => duoc xoa ID khoi state");
 });
@@ -347,67 +359,67 @@ test("HÀNH VI: DELETE lỗi (retry) KHÔNG xóa ID; giữ state để thử d�
   const state = runLifecycle([
     ...stagedActions(1, binding),
     { kind: "invalidate" },
-    { kind: "cancel-result", sourceRow: 1, stageId: STAGE_ID, confirmed: false },
+    { kind: "cancel-result", rowKey: "1", stageId: STAGE_ID, confirmed: false },
   ]);
-  const slot = state.slots.get(1);
+  const slot = state.slots.get("1");
   assert.equal(slot.status, "stale");
   assert.equal(slot.stageId, STAGE_ID, "khong duoc lam mat stage ID khi DELETE loi");
   assert.equal(slot.binding, INVALIDATED_PORTRAIT_BINDING);
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[1, binding]]), slots: state.slots,
+    rowBindings: new Map([["1", binding]]), slots: state.slots,
   })], []);
   assert.deepEqual(selectStalePortraitStages({
-    rowBindings: new Map([[1, binding]]), slots: state.slots,
-  }), [{ sourceRow: 1, stageId: STAGE_ID }], "van phai con de thu don lai");
+    rowBindings: new Map([["1", binding]]), slots: state.slots,
+  }), [{ rowKey: "1", stageId: STAGE_ID }], "van phai con de thu don lai");
 });
 
 test("HÀNH VI: đóng dialog vô hiệu hóa binding ngay nhưng giữ ID khi chưa hủy xong", () => {
   const binding = portraitRowBinding(identity());
   const state = runLifecycle([...stagedActions(1, binding), { kind: "invalidate" }]);
   assert.equal(state.epoch, 1, "moi lan dong/doi du lieu la mot epoch moi");
-  assert.equal(state.slots.get(1).status, "stale");
-  assert.equal(state.slots.get(1).stageId, STAGE_ID);
+  assert.equal(state.slots.get("1").status, "stale");
+  assert.equal(state.slots.get("1").stageId, STAGE_ID);
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[1, binding]]), slots: state.slots,
+    rowBindings: new Map([["1", binding]]), slots: state.slots,
   })], []);
 });
 
 test("HÀNH VI: kết quả về muộn sau invalidate vào danh sách cleanup riêng, không ghi đè slot", () => {
   const binding = portraitRowBinding(identity());
   const lateOk = runLifecycle([
-    { kind: "stage-start", sourceRow: 3, binding, requestId: REQ_A },
+    { kind: "stage-start", rowKey: "3", binding, requestId: REQ_A },
     { kind: "invalidate" },
     {
-      kind: "stage-result", sourceRow: 3, requestId: REQ_A,
+      kind: "stage-result", rowKey: "3", requestId: REQ_A,
       result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1024 },
     },
   ]);
-  assert.equal(lateOk.slots.has(3), false, "khong tao/ghi de slot nao");
+  assert.equal(lateOk.slots.has("3"), false, "khong tao/ghi de slot nao");
   assert.deepEqual([...selectOrphanPortraitStages(lateOk)],
     [{ stageId: STAGE_ID, sizeBytes: 1024 }]);
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[3, binding]]), slots: lateOk.slots,
+    rowBindings: new Map([["3", binding]]), slots: lateOk.slots,
   })], []);
 
   const lateError = runLifecycle([
-    { kind: "stage-start", sourceRow: 4, binding: portraitRowBinding(identity({ sourceRow: 4 })), requestId: REQ_A },
+    { kind: "stage-start", rowKey: "4", binding: portraitRowBinding(identity({ rowKey: "4" })), requestId: REQ_A },
     { kind: "invalidate" },
     {
-      kind: "stage-result", sourceRow: 4, requestId: REQ_A,
+      kind: "stage-result", rowKey: "4", requestId: REQ_A,
       result: { kind: "error", code: "PORTRAIT_STAGE_NETWORK" },
     },
   ]);
-  assert.equal(lateError.slots.has(4), false);
+  assert.equal(lateError.slots.has("4"), false);
   assert.deepEqual([...selectOrphanPortraitStages(lateError)], []);
 });
 
 test("HÀNH VI: orphan chỉ bị xóa khỏi cleanup khi đã hủy/xác định cuối", () => {
   const binding = portraitRowBinding(identity());
   const base = [
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_A },
     { kind: "invalidate" },
     {
-      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
+      kind: "stage-result", rowKey: "1", requestId: REQ_A,
       result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
     },
   ];
@@ -420,67 +432,67 @@ test("HÀNH VI: orphan chỉ bị xóa khỏi cleanup khi đã hủy/xác địn
 test("RACE: upload A đang chạy → invalidate → dán lại cùng dòng + upload B → A về sau không ghi đè B", () => {
   const binding = portraitRowBinding(identity()); // dán lại Y HỆT => binding trùng lại
   const afterA = runLifecycle([
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_A },
     { kind: "invalidate" },
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_B },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_B },
   ]);
-  assert.equal(afterA.slots.get(1).requestId, REQ_B);
-  assert.equal(afterA.slots.get(1).status, "staging");
+  assert.equal(afterA.slots.get("1").requestId, REQ_B);
+  assert.equal(afterA.slots.get("1").status, "staging");
 
   // Response A ve SAU: khong khop requestId => vao cleanup, KHONG dung vao slot cua B.
   const afterLateA = runLifecycle([
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_A },
     { kind: "invalidate" },
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_B },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_B },
     {
-      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
+      kind: "stage-result", rowKey: "1", requestId: REQ_A,
       result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
     },
   ]);
-  assert.equal(afterLateA.slots.get(1).status, "staging", "B van dang chay, khong bi A ghi de");
-  assert.equal(afterLateA.slots.get(1).requestId, REQ_B);
-  assert.equal(afterLateA.slots.get(1).stageId, null);
+  assert.equal(afterLateA.slots.get("1").status, "staging", "B van dang chay, khong bi A ghi de");
+  assert.equal(afterLateA.slots.get("1").requestId, REQ_B);
+  assert.equal(afterLateA.slots.get("1").stageId, null);
   assert.deepEqual([...selectOrphanPortraitStages(afterLateA)], [{ stageId: STAGE_ID, sizeBytes: 1 }]);
 
   // B ve sau => B la stage duy nhat bindable.
   const done = runLifecycle([
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_A },
     { kind: "invalidate" },
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_B },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_B },
     {
-      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
+      kind: "stage-result", rowKey: "1", requestId: REQ_A,
       result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
     },
     {
-      kind: "stage-result", sourceRow: 1, requestId: REQ_B,
+      kind: "stage-result", rowKey: "1", requestId: REQ_B,
       result: { kind: "staged", stageId: STAGE_B, sizeBytes: 2 },
     },
   ]);
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[1, binding]]), slots: done.slots,
-  })], [[1, STAGE_B]]);
+    rowBindings: new Map([["1", binding]]), slots: done.slots,
+  })], [["1", STAGE_B]]);
   assert.deepEqual([...selectOrphanPortraitStages(done)], [{ stageId: STAGE_ID, sizeBytes: 1 }]);
 });
 
 test("RACE (thứ tự ngược): B về trước rồi A về sau => giữ B, A vào cleanup", () => {
   const binding = portraitRowBinding(identity());
   const state = runLifecycle([
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_A },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_A },
     { kind: "invalidate" },
-    { kind: "stage-start", sourceRow: 1, binding, requestId: REQ_B },
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_B },
     {
-      kind: "stage-result", sourceRow: 1, requestId: REQ_B,
+      kind: "stage-result", rowKey: "1", requestId: REQ_B,
       result: { kind: "staged", stageId: STAGE_B, sizeBytes: 2 },
     },
     {
-      kind: "stage-result", sourceRow: 1, requestId: REQ_A,
+      kind: "stage-result", rowKey: "1", requestId: REQ_A,
       result: { kind: "staged", stageId: STAGE_ID, sizeBytes: 1 },
     },
   ]);
-  assert.equal(state.slots.get(1).status, "staged");
-  assert.equal(state.slots.get(1).stageId, STAGE_B, "A khong duoc ghi de B");
+  assert.equal(state.slots.get("1").status, "staged");
+  assert.equal(state.slots.get("1").stageId, STAGE_B, "A khong duoc ghi de B");
   assert.deepEqual([...selectBindablePortraitStages({
-    rowBindings: new Map([[1, binding]]), slots: state.slots,
-  })], [[1, STAGE_B]]);
+    rowBindings: new Map([["1", binding]]), slots: state.slots,
+  })], [["1", STAGE_B]]);
   assert.deepEqual([...selectOrphanPortraitStages(state)], [{ stageId: STAGE_ID, sizeBytes: 1 }]);
 });

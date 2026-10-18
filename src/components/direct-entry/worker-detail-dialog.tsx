@@ -11,9 +11,8 @@
  * - PII/payment/document duoc redaction doc lap boi server; o day chi hien thi dung
  *   nhung gi server tra ve (redacted => ghi ro "an theo quyen").
  * - Anh ho so: upload/xem qua pipeline WORKER_PORTRAIT + private preview route.
- * - CCCD/hop dong: chi hien thi tinh trang va dung luong quan ly tai lieu hien co;
- *   KHONG dung portrait preview cho CCCD, khong tu tao endpoint. Phan xem truoc CCCD
- *   chua kha dung cho den khi contract preview rieng duoc duyet.
+ * - CCCD: preview qua route riêng có guard. Hợp đồng: tải qua route download hiện hữu,
+ *   giữ nguyên server authorization.
  */
 
 import { useEffect, useState } from "react";
@@ -50,8 +49,7 @@ const DOCUMENT_ORDER: readonly WorkerDetailDocumentType[] = [
 
 export const WORKER_DETAIL_PREVIEW_PENDING_NOTE =
   "Ảnh CCCD chỉ xem được khi máy chủ xác nhận hồ sơ đã sẵn sàng và bạn có quyền xem. " +
-  "Hợp đồng lao động chưa có route xem trước riêng; khi cần thay tài liệu, dùng luồng " +
-  "quản lý tài liệu hiện có.";
+  "Hợp đồng lao động được mở/tải qua luồng tài liệu được bảo vệ hiện có.";
 
 export const WORKER_DETAIL_LOAD_FAILED_MESSAGE = "Không tải được chi tiết người lao động.";
 
@@ -346,6 +344,17 @@ function WorkerDetailBody({
                     documentId={document.document_id}
                     label={DOCUMENT_TYPE_LABELS[type]}
                   />
+                ) : null}
+                {document !== null && type === "EMPLOYMENT_CONTRACT" &&
+                 workerDocumentReady(document) ? (
+                  <a
+                    className={styles.secondaryButton}
+                    data-testid={"worker-detail-document-download-" + document.document_id}
+                    href={`/api/direct-entry/entries/${encodeURIComponent(detail.entryId)}` +
+                      `/documents/${encodeURIComponent(document.document_id)}/download`}
+                  >
+                    Mở/tải hợp đồng lao động
+                  </a>
                 ) : null}
               </li>
             );
