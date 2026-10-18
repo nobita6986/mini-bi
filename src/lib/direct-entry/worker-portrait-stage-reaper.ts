@@ -1,6 +1,24 @@
 import { randomUUID } from "node:crypto";
 
 import type { DocumentObjectStorage } from "./r2-document-storage.ts";
+import { DOCUMENT_BUCKETS } from "./document-r2-contract.ts";
+
+export const W2S1_STAGING_SUPABASE_REF = "oyykqfxkyqhxgrfntokl";
+
+export function isW2S1PortraitStageReaperStagingEnvironment(
+  env: Record<string, string | undefined>,
+): boolean {
+  let url: URL;
+  try {
+    url = new URL(env.NEXT_PUBLIC_SUPABASE_URL ?? "");
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" &&
+    url.hostname === `${W2S1_STAGING_SUPABASE_REF}.supabase.co` &&
+    env.DOCUMENT_STORAGE_ENVIRONMENT === "preview" &&
+    env.R2_BUCKET_NAME === DOCUMENT_BUCKETS.preview;
+}
 
 type CleanupRepository = {
   claimExpiredCleanup(input: {
