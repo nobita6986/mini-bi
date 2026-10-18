@@ -364,7 +364,7 @@ test("portrait stages are claimed before save and promoted only after the batch 
     actor: { ok: true, actor: { ...actor, capabilities: ["document_upload"] } },
     response_headers: {},
   });
-  dependencies.repository.createFullProfileBatch = async (input) => {
+  dependencies.repository.createFullProfileBatchWithPortraitStages = async (input) => {
     calls.push(["save", input]);
     return { ok: true, data: rpcResult };
   };
@@ -377,8 +377,12 @@ test("portrait stages are claimed before save and promoted only after the batch 
         claim_idempotency_key: key, entry_id: null, document_id: null,
       } };
     },
-    async release(input) { calls.push(["release", input]); return { ok: true, data: true }; },
     async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
+    async recover(input) { calls.push(["recover", input]); return { ok: true, data: {
+      stage_id: input.stage_id, mime_type: "image/png", size_bytes: bytes.length,
+      checksum_sha256: sha256Hex(bytes), status: "CLAIMED",
+      claim_idempotency_key: key, entry_id: null, document_id: null,
+    } }; },
     async complete(input) { calls.push(["complete", input]); return { ok: true, data: true }; },
   };
   dependencies.documentRepository = {
@@ -444,5 +448,71 @@ test("portrait stages are claimed before save and promoted only after the batch 
     document_type: "WORKER_PORTRAIT", idempotency_key: stageId,
     size_bytes: bytes.length, mime_type: "image/png", reason: null,
   });
+  assert.deepEqual(calls.find(([name]) => name === "save")[1].portrait_stage_ids, [stageId]);
   assert.doesNotMatch(await response.text(), /storage_key|p1\.6\/|signed|url/i);
+});
+
+test("change_request_create alone cannot claim a portrait stage or create a worker", async () => {
+  const stageId = "b2000000-0000-4000-8000-000000000001";
+  const dependencies = deps();
+  const calls = [];
+  dependencies.resolveSession = async () => ({
+    actor: { ok: true, actor: { ...actor, capabilities: ["change_request_create"] } },
+    response_headers: {},
+  });
+
+  test("batch conflict preserves a stage when the same key already has a committed result", async () => {
+    const stageId = "b2000000-0000-4000-8000-000000000002";
+    const calls = [];
+    const dependencies = deps();
+    dependencies.resolveSession = async () => ({
+      actor: { ok: true, actor: { ...actor, capabilities: ["document_upload"] } },
+      response_headers: {},
+    });
+    dependencies.portraitStages = {
+      async claim(input) {
+        calls.push(["claim", input]);
+        return { ok: true, data: {
+          stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
+          checksum_sha256: "a".repeat(64), status: "CLAIMED",
+          claim_idempotency_key: key, entry_id: null, document_id: null,
+        } };
+      },
+      async recover(input) {
+        calls.push(["recover", input]);
+        return { ok: true, data: {
+          stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
+          checksum_sha256: "a".repeat(64), status: "CLAIMED",
+          claim_idempotency_key: key, entry_id: null, document_id: null,
+        } };
+      },
+      async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
+    };
+    dependencies.documentRepository = {};
+    dependencies.documentStorage = {
+      ...dependencies.documentStorage,
+      async deleteEnrollmentPortraitStage(id) { calls.push(["deleteStage", id]); },
+    };
+    dependencies.repository.createFullProfileBatchWithPortraitStages = async () => ({
+      ok: false, kind: "conflict",
+    });
+
+    const response = await postFullProfileBatch(request({
+      ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
+    }), "true", dependencies);
+    assert.equal(response.status, 409);
+    assert.deepEqual(calls.map(([name]) => name), ["claim", "recover"]);
+  });
+  dependencies.portraitStages = {
+    async claim(input) { calls.push(["claim", input]); return { ok: true, data: {} }; },
+  };
+  dependencies.repository.createFullProfileBatchWithPortraitStages = async (input) => {
+    calls.push(["batch", input]);
+    return { ok: true, data: rpcResult };
+  };
+  const response = await postFullProfileBatch(request({
+    ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
+  }), "true", dependencies);
+  assert.equal(response.status, 403);
+  assert.deepEqual(calls, []);
 });

@@ -276,7 +276,7 @@ export async function previewCccdDocument(
       app_user_id: actor.app_user_id,
       entry_id: entryId,
       document_id: documentId,
-      purpose: "download",
+      purpose: "cccd_preview",
     });
     if (!context.ok) return mapFailure(context.kind);
     const document = context.data;

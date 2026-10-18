@@ -5,6 +5,7 @@ import sharp from "sharp";
 import {
   deleteWorkerPortraitStage,
   postWorkerPortraitStage,
+  recoverWorkerPortraitStage,
 } from "./worker-portrait-stage-api.ts";
 
 const actor = {
@@ -21,12 +22,18 @@ async function portraitWithExif() {
   }).toBuffer());
 }
 
-function deps({ capabilities = ["document_upload"], createResult, cancelResult } = {}) {
+function deps({
+  capabilities = ["document_upload"], createResult, cancelResult, recoverResult,
+  deleteError,
+} = {}) {
   const calls = [];
   const storage = {
     available: () => true,
     async writeEnrollmentPortraitStage(input) { calls.push(["write", input]); },
-    async deleteEnrollmentPortraitStage(id) { calls.push(["delete", id]); },
+    async deleteEnrollmentPortraitStage(id) {
+      calls.push(["delete", id]);
+      if (deleteError) throw new Error("synthetic delete failure");
+    },
   };
   const repository = {
     async create(input) {
@@ -45,6 +52,19 @@ function deps({ capabilities = ["document_upload"], createResult, cancelResult }
     async cancel(input) {
       calls.push(["cancel", input]);
       return cancelResult ?? { ok: true, data: true };
+    },
+    async recover(input) {
+      calls.push(["recover", input]);
+      return recoverResult ?? { ok: true, data: {
+        stage_id: input.stage_id,
+        mime_type: "image/jpeg",
+        size_bytes: 256,
+        checksum_sha256: "a".repeat(64),
+        status: "STAGED",
+        claim_idempotency_key: null,
+        entry_id: null,
+        document_id: null,
+      } };
     },
   };
   return {
@@ -115,6 +135,10 @@ test("portrait stage rejects unsupported MIME and missing capability without sto
   const denied = deps({ capabilities: ["document_view"] });
   assert.equal((await postWorkerPortraitStage(uploadRequest(source), "true", denied)).status, 403);
   assert.deepEqual(denied.calls, []);
+
+  const changeRequestOnly = deps({ capabilities: ["change_request_create"] });
+  assert.equal((await postWorkerPortraitStage(uploadRequest(source), "true", changeRequestOnly)).status, 403);
+  assert.deepEqual(changeRequestOnly.calls, []);
 });
 
 test("failed stage registration removes the uploaded orphan", async () => {
@@ -135,4 +159,55 @@ test("stage cancellation requires owner scope and deletes bytes only after DB ca
   assert.equal((await deleteWorkerPortraitStage(deleteRequest(), "true", allowed)).status, 204);
   assert.deepEqual(allowed.calls.map(([name]) => name), ["cancel", "delete"]);
   assert.deepEqual(allowed.calls[0][1], { ...actor, stage_id: stageId });
+});
+
+test("recovery restores the claim key for a committed batch retry", async () => {
+  const d = deps({ recoverResult: { ok: true, data: {
+    stage_id: stageId,
+    mime_type: "image/jpeg",
+    size_bytes: 256,
+    checksum_sha256: "a".repeat(64),
+    status: "CLAIMED",
+    claim_idempotency_key: "b1000000-0000-4000-8000-000000000001",
+    entry_id: null,
+    document_id: null,
+  } } });
+  const response = await recoverWorkerPortraitStage(deleteRequest(), "true", d);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    stage_id: stageId,
+    status: "CLAIMED",
+    idempotency_key: "b1000000-0000-4000-8000-000000000001",
+  });
+  assert.deepEqual(d.calls.map(([name]) => name), ["recover"]);
+  assert.deepEqual(d.calls[0][1], { ...actor, stage_id: stageId });
+});
+
+test("recovery cleanup is idempotently retryable and owner-bound", async () => {
+  const denied = deps({ recoverResult: { ok: false, kind: "denied" } });
+  assert.equal((await recoverWorkerPortraitStage(deleteRequest(), "true", denied)).status, 404);
+  assert.deepEqual(denied.calls.map(([name]) => name), ["recover"]);
+
+  let failDelete = true;
+  const d = deps({ recoverResult: { ok: true, data: {
+    stage_id: stageId,
+    mime_type: "image/jpeg",
+    size_bytes: 256,
+    checksum_sha256: "a".repeat(64),
+    status: "ATTACHED",
+    claim_idempotency_key: "b1000000-0000-4000-8000-000000000001",
+    entry_id: "a2000000-0000-4000-8000-000000000001",
+    document_id: "a3000000-0000-4000-8000-000000000001",
+  } } });
+  d.storage.deleteEnrollmentPortraitStage = async (id) => {
+    d.calls.push(["delete", id]);
+    if (failDelete) {
+      failDelete = false;
+      throw new Error("synthetic delete failure");
+    }
+  };
+  assert.equal((await recoverWorkerPortraitStage(deleteRequest(), "true", d)).status, 503);
+  assert.equal((await recoverWorkerPortraitStage(deleteRequest(), "true", d)).status, 200);
+  assert.deepEqual(d.calls.map(([name]) => name), ["recover", "delete", "recover", "delete"]);
 });

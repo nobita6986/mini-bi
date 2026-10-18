@@ -235,7 +235,7 @@ test("download requires document_view and an eligible document, then redirects t
   assert.equal(ok.log.storage[0][1].version, 1);
 });
 
-test("CCCD image preview uses the existing download authorization and streams private bytes", async () => {
+test("CCCD image preview uses document_view and server-resolved scope to stream private bytes", async () => {
   const d = deps({
     bytes: png,
     repo: {
@@ -272,7 +272,7 @@ test("CCCD image preview uses the existing download authorization and streams pr
     app_user_id: "92000000-0000-4000-8000-000000000001",
     entry_id: entryId,
     document_id: documentId,
-    purpose: "download",
+    purpose: "cccd_preview",
   });
   assert.deepEqual(d.log.storage.map(([action]) => action), ["readFinal"]);
   assert.equal(response.headers.has("location"), false);

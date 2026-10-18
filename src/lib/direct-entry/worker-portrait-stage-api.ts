@@ -34,11 +34,6 @@ function fail(code: string, status: number): Response {
   });
 }
 
-function hasUploadCapability(capabilities: readonly string[]): boolean {
-  return capabilities.includes("document_upload") ||
-    capabilities.includes("change_request_create");
-}
-
 async function boundedBody(
   request: Request,
   limit: number,
@@ -90,7 +85,7 @@ async function resolveUploadActor(
         session.actor.reason === "UNAUTHENTICATED" ? 401 : 403),
     };
   }
-  if (requireCapability && !hasUploadCapability(session.actor.actor.capabilities)) {
+  if (requireCapability && !session.actor.actor.capabilities.includes("document_upload")) {
     return { ok: false as const, response: fail("DOCUMENT_DENIED", 403) };
   }
   const { auth_subject, app_user_id } = session.actor.actor;
@@ -245,6 +240,66 @@ export async function deleteWorkerPortraitStage(
     return new Response(null, { status: 204, headers: { "Cache-Control": "private, no-store" } });
   } catch {
     console.error("[direct-entry] portrait stage cleanup failed");
+    return fail("PORTRAIT_STAGE_UNAVAILABLE", 503);
+  }
+}
+
+export async function recoverWorkerPortraitStage(
+  request: Request,
+  flag: string | undefined,
+  dependencies: WorkerPortraitStageApiDependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  const origin = checkSameOriginRequest({
+    origin: request.headers.get("origin"),
+    host: request.headers.get("host"),
+    secFetchSite: request.headers.get("sec-fetch-site"),
+  });
+  if (!origin.ok) return fail("CSRF_REJECTED", 403);
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    return fail("CONTENT_TYPE_INVALID", 400);
+  }
+  const bounded = await boundedBody(request, MAX_JSON_BYTES);
+  if (!bounded.ok) return fail("BODY_INVALID", 400);
+  let stageId: unknown;
+  try {
+    const body: unknown = JSON.parse(new TextDecoder().decode(bounded.bytes));
+    if (typeof body !== "object" || body === null || Array.isArray(body) ||
+        Object.keys(body).length !== 1 || !Object.hasOwn(body, "stage_id")) {
+      return fail("DOCUMENT_REQUEST_INVALID", 400);
+    }
+    stageId = (body as Record<string, unknown>).stage_id;
+  } catch {
+    return fail("BODY_INVALID", 400);
+  }
+  if (typeof stageId !== "string" || !UUID.test(stageId)) {
+    return fail("DOCUMENT_REQUEST_INVALID", 400);
+  }
+
+  const actor = await resolveUploadActor(dependencies, false);
+  if (!actor.ok) return actor.response;
+  try {
+    const recovered = await dependencies.repository.recover({
+      ...actor.actor,
+      stage_id: stageId,
+    });
+    if (!recovered.ok) {
+      if (recovered.kind === "denied") return fail("ENTRY_NOT_FOUND", 404);
+      if (recovered.kind === "conflict") return fail("DOCUMENT_VERSION_CONFLICT", 409);
+      return fail("PORTRAIT_STAGE_UNAVAILABLE", 503);
+    }
+    const stage = recovered.data;
+    if (stage.status === "ATTACHED" || stage.status === "CANCELLED") {
+      await dependencies.storage.deleteEnrollmentPortraitStage(stage.stage_id);
+    }
+    return Response.json({
+      ok: true,
+      stage_id: stage.stage_id,
+      status: stage.status,
+      idempotency_key: stage.status === "CLAIMED" ? stage.claim_idempotency_key : null,
+    }, { status: 200, headers: { "Cache-Control": "private, no-store" } });
+  } catch {
+    console.error("[direct-entry] portrait stage recovery failed");
     return fail("PORTRAIT_STAGE_UNAVAILABLE", 503);
   }
 }

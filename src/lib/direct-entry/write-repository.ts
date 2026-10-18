@@ -176,7 +176,7 @@ export type DirectEntryRepository = {
   getDocumentContext(input: ActorRef & {
     entry_id: string;
     document_id: string;
-    purpose: "finalize" | "download" | "preview";
+    purpose: "finalize" | "download" | "preview" | "cccd_preview";
   }): Promise<OperationResult<DocumentContext>>;
   finalizeDocument(input: ActorRef & {
     entry_id: string;

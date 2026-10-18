@@ -122,5 +122,30 @@ export function createFullProfileRepository(rpc?: Rpc) {
         return { ok: false, kind: "unavailable" };
       }
     },
+    async createFullProfileBatchWithPortraitStages(input: ActorRef & {
+      payload: FullProfilePayload;
+      idempotency_key: string;
+      portrait_stage_ids: string[];
+    }): Promise<FullProfileRepositoryResult> {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const { data, error } = await resolvedRpc(
+          "direct_entry_create_full_profile_batch_with_portrait_stages",
+          {
+            p_auth_subject: input.auth_subject,
+            p_app_user_id: input.app_user_id,
+            p_contract_version: input.payload.contract_version,
+            p_rows: input.payload.rows,
+            p_idempotency_key: input.idempotency_key,
+            p_stage_ids: input.portrait_stage_ids,
+          },
+        );
+        if (error?.code === "42501") logDeniedBatch(error, input.payload);
+        return error ? classify(error) : { ok: true, data };
+      } catch {
+        console.error("[direct-entry] portrait full-profile batch RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
   };
 }

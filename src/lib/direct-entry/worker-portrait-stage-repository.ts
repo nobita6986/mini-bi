@@ -12,7 +12,7 @@ export type WorkerPortraitStage = {
   mime_type: "image/jpeg" | "image/png";
   size_bytes: number;
   checksum_sha256: string;
-  status: "STAGED" | "CLAIMED" | "ATTACHED";
+  status: "STAGED" | "CLAIMED" | "ATTACHED" | "CANCELLED";
   claim_idempotency_key: string | null;
   entry_id: string | null;
   document_id: string | null;
@@ -49,7 +49,8 @@ function projectStage(value: unknown): WorkerPortraitStage | null {
       typeof stage.size_bytes !== "number" || !Number.isSafeInteger(stage.size_bytes) ||
       stage.size_bytes < 1 || typeof stage.checksum_sha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(stage.checksum_sha256) ||
-      (stage.status !== "STAGED" && stage.status !== "CLAIMED" && stage.status !== "ATTACHED") ||
+      (stage.status !== "STAGED" && stage.status !== "CLAIMED" &&
+        stage.status !== "ATTACHED" && stage.status !== "CANCELLED") ||
       (stage.claim_idempotency_key !== null && typeof stage.claim_idempotency_key !== "string") ||
       (stage.entry_id !== null && typeof stage.entry_id !== "string") ||
       (stage.document_id !== null && typeof stage.document_id !== "string")) return null;
@@ -124,6 +125,16 @@ export function createWorkerPortraitStageRepository(rpc?: Rpc) {
         p_app_user_id: input.app_user_id,
         p_stage_id: input.stage_id,
       });
+    },
+    async recover(input: ActorRef & { stage_id: string }) {
+      const result = await call("direct_entry_recover_worker_portrait_stage", {
+        p_auth_subject: input.auth_subject,
+        p_app_user_id: input.app_user_id,
+        p_stage_id: input.stage_id,
+      });
+      if (!result.ok) return result;
+      const data = projectStage(result.data);
+      return data ? { ok: true as const, data } : { ok: false as const, kind: "unavailable" as const };
     },
   };
 }
