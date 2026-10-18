@@ -67,16 +67,18 @@ test("W2S1: dialog dùng đúng projection server, không gọi API/RPC trực t
   assert.doesNotMatch(dialog, /fetch\("\/api/);
   assert.doesNotMatch(dialog, /\.rpc\(/);
   assert.doesNotMatch(dialog, /storage_key|X-Amz|signedUrl|signed_url/);
-  assert.doesNotMatch(dialog, /next\/image/);
+  assert.doesNotMatch(dialog, /from "next\/image"/);
 });
 
-test("W2S1: CCCD/hợp đồng chỉ hiện tình trạng; KHÔNG dùng portrait preview cho CCCD", () => {
+test("W2S1: CCCD preview dùng route riêng; KHÔNG dùng portrait preview cho CCCD", () => {
   assert.match(dialog, /WORKER_DETAIL_PREVIEW_PENDING_NOTE/);
-  assert.match(dialog, /chưa khả dụng/);
+  assert.match(dialog, /workerCccdPreviewUrl\(entryId, documentId\)/);
+  assert.match(dialog, /workerCccdPreviewable\(document\)/);
+  assert.match(dialog, /data-testid=\{`cccd-preview-\$\{documentId\}`\}/);
+  // URL do projection module quyet dinh, khong hardcode trong dialog; khong dung portrait preview.
   assert.doesNotMatch(dialog, /workerPortraitPreviewUrl/);
-  assert.doesNotMatch(dialog, /\/preview/);
-  // Nút quản lý tài liệu hiện có được giữ nguyên nhãn (không tạo upload CCCD mới).
-  assert.match(dialog, /dùng luồng quản lý tài liệu hiện có/);
+  assert.doesNotMatch(dialog, /"\/api\/direct-entry/);
+  assert.match(dialog, /quản lý tài liệu hiện có/);
 });
 
 test("W2S1: panel ảnh hồ sơ chỉ render preview trong panel và ẩn khi thiếu document_view", () => {

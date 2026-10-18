@@ -1,0 +1,263 @@
+/**
+ * W2S1 - Client boundary cho portrait STAGING khi nhap ho so moi.
+ *
+ * Dung dung contract da review (migration #113/#114):
+ *   POST   /api/direct-entry/worker-portrait-stages            multipart, dung MOT field `file`
+ *   DELETE /api/direct-entry/worker-portrait-stages            JSON { stage_id }
+ *   POST   /api/direct-entry/worker-portrait-stages/recover     JSON { stage_id }
+ *
+ * Nguyen tac:
+ * - Client KHONG gui actor/auth subject/app user/capability/scope/team; server resolve tu session.
+ * - Client KHONG bao gio gui bytes portrait trong payload batch: batch chi mang `portrait_stage_id`.
+ * - `stage_id` phai duoc giu toi khi luu xong; retry dung DUNG `Idempotency-Key` cua lan luu truoc.
+ * - Chi ket thuc/bo stage bang DELETE khi nguoi dung huy nhap lieu; stage CLAIMED/ATTACHED khong huy duoc.
+ *
+ * Module thuan: ngoai hai ham `stageWorkerPortrait`/`cancelWorkerPortraitStage`/
+ * `recoverWorkerPortraitStage` (fetch tiem vao) khong co I/O.
+ */
+
+import { checkWorkerPortraitFile } from "./worker-detail-projection.ts";
+
+export const PORTRAIT_STAGE_ENDPOINT = "/api/direct-entry/worker-portrait-stages";
+export const PORTRAIT_STAGE_RECOVER_ENDPOINT =
+  "/api/direct-entry/worker-portrait-stages/recover";
+
+export const PORTRAIT_STAGE_STATUSES = ["STAGED", "CLAIMED", "ATTACHED", "CANCELLED"] as const;
+export type PortraitStageStatus = (typeof PORTRAIT_STAGE_STATUSES)[number];
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function codeOf(body: unknown, fallback: string): string {
+  return isRecord(body) && typeof body.code === "string" && body.code.length > 0
+    ? body.code
+    : fallback;
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ stage */
+
+export type PortraitStageStaged = {
+  kind: "staged";
+  stageId: string;
+  mimeType: "image/jpeg" | "image/png";
+  sizeBytes: number;
+};
+/** Loi tam thoi / ket qua khong xac dinh: giu tep de thu lai (stage cu van con neu da tao). */
+export type PortraitStageRetry = { kind: "retry"; code: string };
+/** 4xx nghiep vu: khong tu dong gui lai. */
+export type PortraitStageRejected = { kind: "rejected"; code: string };
+export type PortraitStageResult = PortraitStageStaged | PortraitStageRetry | PortraitStageRejected;
+
+/** Projection 201: strict, fail closed khi thua/thieu truong hoac khong phai STAGED. */
+export function projectPortraitStage(value: unknown): PortraitStageStaged | null {
+  if (!isRecord(value) || value.ok !== true) return null;
+  if (typeof value.stage_id !== "string" || !UUID.test(value.stage_id)) return null;
+  if (value.mime_type !== "image/jpeg" && value.mime_type !== "image/png") return null;
+  if (typeof value.size_bytes !== "number" || !Number.isSafeInteger(value.size_bytes) ||
+      value.size_bytes < 1) return null;
+  if (value.status !== "STAGED") return null;
+  return {
+    kind: "staged",
+    stageId: value.stage_id,
+    mimeType: value.mime_type,
+    sizeBytes: value.size_bytes,
+  };
+}
+
+export function classifyPortraitStageResponse(status: number, body: unknown): PortraitStageResult {
+  if (status >= 500) return { kind: "retry", code: codeOf(body, "PORTRAIT_STAGE_UNAVAILABLE") };
+  if (status >= 200 && status < 300) {
+    // 2xx nhung projection khong doc duoc: ket qua khong xac dinh => thu lai.
+    return projectPortraitStage(body) ?? { kind: "retry", code: "PORTRAIT_STAGE_RESPONSE_INVALID" };
+  }
+  return { kind: "rejected", code: codeOf(body, "PORTRAIT_STAGE_REJECTED") };
+}
+
+export type PortraitStageFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * Tao stage cho MOT tep anh. Kiem tra tep tai client truoc (rong/sai MIME/vuot dung luong);
+ * server van la authority cuoi cung. Body multipart chi co dung mot field `file`.
+ */
+export async function stageWorkerPortrait(input: {
+  file: File;
+  fetchImpl: PortraitStageFetch;
+}): Promise<PortraitStageResult> {
+  const check = checkWorkerPortraitFile(input.file);
+  if (!check.ok) return { kind: "rejected", code: check.code };
+  const form = new FormData();
+  form.append("file", input.file, "portrait");
+  const callFetch = input.fetchImpl;
+  let response: Response;
+  try {
+    response = await callFetch(PORTRAIT_STAGE_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+      body: form,
+    });
+  } catch {
+    return { kind: "retry", code: "PORTRAIT_STAGE_NETWORK" };
+  }
+  return classifyPortraitStageResponse(response.status, await readJson(response));
+}
+
+/* ----------------------------------------------------------------- cancel */
+
+export type PortraitStageCancelResult =
+  | { kind: "cancelled" }
+  | { kind: "not-cancellable"; code: string }
+  | { kind: "retry"; code: string }
+  | { kind: "rejected"; code: string };
+
+export function classifyPortraitStageCancelResponse(
+  status: number,
+  body: unknown,
+): PortraitStageCancelResult {
+  if (status === 204) return { kind: "cancelled" };
+  // 404 (khong phai chu stage) va 409 (dang CLAIMED/ATTACHED) => khong huy duoc, khong retry.
+  if (status === 404 || status === 409) {
+    return { kind: "not-cancellable", code: codeOf(body, status === 404 ? "ENTRY_NOT_FOUND" : "DOCUMENT_VERSION_CONFLICT") };
+  }
+  if (status >= 500) return { kind: "retry", code: codeOf(body, "PORTRAIT_STAGE_UNAVAILABLE") };
+  if (status >= 200 && status < 300) return { kind: "cancelled" };
+  return { kind: "rejected", code: codeOf(body, "PORTRAIT_STAGE_REJECTED") };
+}
+
+/** Huy stage dang STAGED cua chinh actor. Body JSON chi co `stage_id`. */
+export async function cancelWorkerPortraitStage(input: {
+  stageId: string;
+  fetchImpl: PortraitStageFetch;
+}): Promise<PortraitStageCancelResult> {
+  if (!UUID.test(input.stageId)) return { kind: "rejected", code: "PORTRAIT_STAGE_ID_INVALID" };
+  const callFetch = input.fetchImpl;
+  let response: Response;
+  try {
+    response = await callFetch(PORTRAIT_STAGE_ENDPOINT, {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage_id: input.stageId }),
+    });
+  } catch {
+    return { kind: "retry", code: "PORTRAIT_STAGE_NETWORK" };
+  }
+  return classifyPortraitStageCancelResponse(response.status, await readJson(response));
+}
+
+/* ---------------------------------------------------------------- recover */
+
+export type PortraitStageRecovery = {
+  stageId: string;
+  status: PortraitStageStatus;
+  /** Chi khac null khi status CLAIMED: key cua lan luu da commit, retry dung key nay. */
+  idempotencyKey: string | null;
+};
+
+export type PortraitStageRecoverResult =
+  | { kind: "recovered"; recovery: PortraitStageRecovery }
+  | { kind: "retry"; code: string };
+
+export function projectPortraitStageRecovery(value: unknown): PortraitStageRecovery | null {
+  if (!isRecord(value) || value.ok !== true) return null;
+  if (typeof value.stage_id !== "string" || !UUID.test(value.stage_id)) return null;
+  if (typeof value.status !== "string" ||
+      !(PORTRAIT_STAGE_STATUSES as readonly string[]).includes(value.status)) return null;
+  if (value.idempotency_key !== null &&
+      (typeof value.idempotency_key !== "string" || !UUID.test(value.idempotency_key))) return null;
+  if (value.status !== "CLAIMED" && value.idempotency_key !== null) return null;
+  if (value.status === "CLAIMED" && value.idempotency_key === null) return null;
+  return {
+    stageId: value.stage_id,
+    status: value.status as PortraitStageStatus,
+    idempotencyKey: value.idempotency_key as string | null,
+  };
+}
+
+/** Hoi DB trang thai that cua stage khi ket qua lan luu truoc khong xac dinh. */
+export async function recoverWorkerPortraitStage(input: {
+  stageId: string;
+  fetchImpl: PortraitStageFetch;
+}): Promise<PortraitStageRecoverResult> {
+  if (!UUID.test(input.stageId)) return { kind: "retry", code: "PORTRAIT_STAGE_ID_INVALID" };
+  const callFetch = input.fetchImpl;
+  let response: Response;
+  try {
+    response = await callFetch(PORTRAIT_STAGE_RECOVER_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage_id: input.stageId }),
+    });
+  } catch {
+    return { kind: "retry", code: "PORTRAIT_STAGE_NETWORK" };
+  }
+  const body = await readJson(response);
+  if (response.status === 404 || response.status === 409 || response.status >= 500) {
+    return { kind: "retry", code: codeOf(body, "PORTRAIT_STAGE_UNAVAILABLE") };
+  }
+  const recovery = response.ok ? projectPortraitStageRecovery(body) : null;
+  if (recovery === null) return { kind: "retry", code: "PORTRAIT_STAGE_RESPONSE_INVALID" };
+  return { kind: "recovered", recovery };
+}
+
+/* ------------------------------------------------------- trang thai UI */
+
+/**
+ * Trang thai PROMOTE cua anh sau mot lan gui batch, suy ra tu recovery (khong doan):
+ * - ATTACHED  => anh da gan vao entry, hoan tat;
+ * - CLAIMED   => DB da commit ket qua batch va dang giu claim: HO SO DA LUU nhung promote
+ *                chua xong; retry dung dung idempotency key da tra ve;
+ * - STAGED    => lan luu truoc khong commit; stage co the claim lai;
+ * - CANCELLED => stage da bi huy, khong con anh.
+ */
+export type PortraitPromotionState = "attached" | "pending" | "unsaved" | "cancelled";
+
+export function portraitPromotionState(recovery: PortraitStageRecovery): PortraitPromotionState {
+  if (recovery.status === "ATTACHED") return "attached";
+  if (recovery.status === "CLAIMED") return "pending";
+  if (recovery.status === "CANCELLED") return "cancelled";
+  return "unsaved";
+}
+
+export const PORTRAIT_PROMOTION_PENDING_MESSAGE =
+  "Hồ sơ đã được lưu nhưng ảnh hồ sơ chưa hoàn tất trên máy chủ. Bấm Thử lại với cùng yêu cầu " +
+  "để máy chủ hoàn tất ảnh; không chọn lại ảnh khác cho dòng này.";
+export const PORTRAIT_PROMOTION_UNSAVED_MESSAGE =
+  "Chưa xác định được kết quả lưu. Ảnh vẫn đang ở bản nháp trên máy chủ; hãy thử lại.";
+export const PORTRAIT_STAGE_ORPHAN_MESSAGE =
+  "Ảnh chưa được gắn vào hồ sơ và đã được dọn khỏi bản nháp trên máy chủ.";
+
+const STAGE_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  PORTRAIT_STAGE_NETWORK: "Không gửi được ảnh. Ảnh chưa được lưu; hãy thử lại.",
+  PORTRAIT_STAGE_UNAVAILABLE: "Máy chủ chưa nhận được ảnh. Hãy thử lại.",
+  PORTRAIT_STAGE_RESPONSE_INVALID: "Máy chủ trả về kết quả không đọc được. Hãy thử lại.",
+  PORTRAIT_STAGE_REJECTED: "Máy chủ từ chối ảnh này.",
+  PORTRAIT_STAGE_ID_INVALID: "Mã ảnh tạm không hợp lệ.",
+  DOCUMENT_FILE_REQUIRED: "Hãy chọn một tệp ảnh trước khi tải lên.",
+  DOCUMENT_SIZE_INVALID: "Ảnh phải lớn hơn 0 và không vượt quá 10 MiB.",
+  DOCUMENT_MIME_INVALID: "Chỉ chấp nhận ảnh JPEG hoặc PNG.",
+  DOCUMENT_CONTENT_INVALID: "Nội dung tệp không khớp định dạng ảnh đã chọn.",
+  DOCUMENT_DENIED: "Bạn không có quyền tải ảnh hồ sơ.",
+  DOCUMENT_REQUEST_INVALID: "Yêu cầu tải ảnh không hợp lệ.",
+  ENTRY_NOT_FOUND: "Không tìm thấy ảnh tạm này trong phạm vi của bạn.",
+  DOCUMENT_VERSION_CONFLICT: "Ảnh đang được xử lý hoặc đã gắn vào hồ sơ nên không hủy được.",
+  NOT_FOUND: "Tính năng ảnh hồ sơ chưa được bật trên môi trường này.",
+  CSRF_REJECTED: "Yêu cầu không cùng nguồn. Hãy tải lại trang rồi thử lại.",
+  UNAUTHENTICATED: "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.",
+  ACTOR_NOT_AVAILABLE: "Không xác định được người dùng hiện tại. Vui lòng đăng nhập lại.",
+});
+
+export function portraitStageErrorMessage(code: string): string {
+  return STAGE_MESSAGES[code] ?? "Không xử lý được ảnh hồ sơ. Hãy thử lại.";
+}

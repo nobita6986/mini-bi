@@ -16,12 +16,14 @@
  *   chua kha dung cho den khi contract preview rieng duoc duyet.
  */
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog } from "radix-ui";
 
 import type { WorkerDirectoryRow } from "@/lib/direct-entry/worker-directory-contract";
 import {
   fetchWorkerDetail,
+  workerCccdPreviewUrl,
+  workerCccdPreviewable,
   workerDocumentReady,
   workerDocumentStatusLabel,
   type WorkerDetailDocument,
@@ -47,8 +49,9 @@ const DOCUMENT_ORDER: readonly WorkerDetailDocumentType[] = [
 ];
 
 export const WORKER_DETAIL_PREVIEW_PENDING_NOTE =
-  "Xem ảnh CCCD và hợp đồng chưa khả dụng: đang chờ contract xem trước riêng do T1B rà soát và T0 duyệt. " +
-  "Khi cần thay tài liệu, dùng luồng quản lý tài liệu hiện có.";
+  "Ảnh CCCD chỉ xem được khi máy chủ xác nhận hồ sơ đã sẵn sàng và bạn có quyền xem. " +
+  "Hợp đồng lao động chưa có route xem trước riêng; khi cần thay tài liệu, dùng luồng " +
+  "quản lý tài liệu hiện có.";
 
 export const WORKER_DETAIL_LOAD_FAILED_MESSAGE = "Không tải được chi tiết người lao động.";
 
@@ -72,6 +75,56 @@ function latestByType(
     if (latest === null || document.version > latest.version) latest = document;
   }
   return latest;
+}
+
+/**
+ * W2S1: xem anh CCCD qua route RIENG `cccd-preview`. Endpoint van la authority cuoi cung:
+ * tai lieu khong san sang / ngoai scope / sai MIME deu tra loi va UI chi hien "khong xem duoc".
+ * KHONG dung portrait preview cho CCCD.
+ */
+function CccdPreview({
+  entryId,
+  documentId,
+  label,
+}: {
+  entryId: string;
+  documentId: string;
+  label: string;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [retry, setRetry] = useState(0);
+  return (
+    <figure className={styles.portraitFigure} data-testid={`cccd-preview-${documentId}`}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- route preview CCCD riêng tư cần session cookie; next/image optimizer chạy server-side nên không có cookie của phiên */}
+      <img
+        key={`${documentId}:${retry}`}
+        src={workerCccdPreviewUrl(entryId, documentId)}
+        alt={"Ảnh " + label + " của người lao động"}
+        className={styles.portraitImage}
+        onLoad={() => setState("ready")}
+        onError={() => setState("error")}
+      />
+      <figcaption className={styles.documentStatus}>
+        {state === "loading" ? "Đang tải ảnh " + label + "…" : null}
+        {state === "ready" ? "Ảnh " + label + " hiện hành." : null}
+        {state === "error"
+          ? "Không xem được ảnh (có thể ngoài phạm vi được phép hoặc hồ sơ chưa sẵn sàng)."
+          : null}
+      </figcaption>
+      {state === "error" ? (
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          onClick={() => {
+            setState("loading");
+            setRetry((value) => value + 1);
+          }}
+        >
+          Thử tải lại ảnh
+        </button>
+      ) : null}
+    </figure>
+  );
 }
 
 export type WorkerDetailDialogProps = {
@@ -272,23 +325,32 @@ function WorkerDetailBody({
         <h3 className={styles.documentTitle} id="worker-detail-documents">
           Tình trạng từng loại hồ sơ
         </h3>
-        <dl className={styles.profileFieldList}>
+        <ul className={styles.profileRowList} data-testid="worker-detail-documents">
           {DOCUMENT_ORDER.map((type) => {
             const document = latestByType(detail.documents, type);
             return (
-              <Fragment key={type}>
-                <dt>{DOCUMENT_TYPE_LABELS[type]}</dt>
-                <dd>
+              <li key={type} className={styles.profileSection}>
+                <p className={styles.documentStatus}>
+                  <strong>{DOCUMENT_TYPE_LABELS[type]}</strong>
+                  {" · "}
                   {document === null
                     ? "Chưa có hồ sơ"
                     : (workerDocumentReady(document) ? "Đã có · " : "Chưa sẵn sàng · ") +
                       workerDocumentStatusLabel(document.upload_status) +
                       " · v" + document.version}
-                </dd>
-              </Fragment>
+                </p>
+                {document !== null && type !== "EMPLOYMENT_CONTRACT" &&
+                 workerCccdPreviewable(document) ? (
+                  <CccdPreview
+                    entryId={detail.entryId}
+                    documentId={document.document_id}
+                    label={DOCUMENT_TYPE_LABELS[type]}
+                  />
+                ) : null}
+              </li>
             );
           })}
-        </dl>
+        </ul>
         <p className={styles.profileNote}>{WORKER_DETAIL_PREVIEW_PENDING_NOTE}</p>
       </section>
     </div>

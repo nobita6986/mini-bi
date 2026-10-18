@@ -458,6 +458,22 @@ export function workerPortraitPreviewUrl(entryId: string, documentId: string): s
     "/documents/" + encodeURIComponent(documentId) + "/preview";
 }
 
+/**
+ * Route preview RIENG cho CCCD (migration #114). Khac portrait: chi nhan CCCD
+ * READY + VALIDATED + CLEAN/NOT_REQUIRED, dung `document_view` + purpose `cccd_preview`,
+ * KHONG co fallback `entry_privileged_edit`. Khong bao gio dung portrait preview cho CCCD.
+ */
+export function workerCccdPreviewUrl(entryId: string, documentId: string): string {
+  return "/api/direct-entry/entries/" + encodeURIComponent(entryId) +
+    "/documents/" + encodeURIComponent(documentId) + "/cccd-preview";
+}
+
+/** Chi hien khung anh khi server coi tai lieu la san sang va la anh (JPEG/PNG). */
+export function workerCccdPreviewable(document: WorkerDetailDocument): boolean {
+  return workerDocumentReady(document) &&
+    (document.mime_type === "image/jpeg" || document.mime_type === "image/png");
+}
+
 export function workerPortraitUploadUrl(entryId: string, documentId?: string): string {
   const base = "/api/direct-entry/entries/" + encodeURIComponent(entryId) + "/documents";
   return documentId === undefined ? base : base + "/" + encodeURIComponent(documentId) + "/finalize";
