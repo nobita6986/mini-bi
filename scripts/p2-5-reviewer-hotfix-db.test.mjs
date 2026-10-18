@@ -149,8 +149,7 @@ test("ROOT CAUSE: reviewer bundle CANNOT read the SUBMITTED entry projection (42
   // The reviewer drawer reads this endpoint for the BEFORE values.
   await assert.rejects(
     () => readProjection(db, REV_AUTH, REV_APP, entry),
-    /entry scope.capability denied/,
-    // SQLSTATE 42501 -> "entry scope/capability denied"
+    (error) => error.code === "42501",
     "reviewer thieu entry_admin bi tu choi doc SUBMITTED entry");
   // entry_admin + all IS the audience that unlocks the read today.
   const admin = await readProjection(db, ADMIN_AUTH, ADMIN_APP, entry);
@@ -163,7 +162,7 @@ test("ROOT CAUSE: same denial for worker_details and PAYMENT review reads", asyn
   await seed(db);
   const { entry } = await addSubmittedEntry(db);
   await assert.rejects(() => readProjection(db, REV_AUTH, REV_APP, entry),
-    /entry scope.capability denied/,
+    (error) => error.code === "42501",
     "chi mot duong doc DUY NHAT bi chan cho moi target kind");
   await db.close();
 });

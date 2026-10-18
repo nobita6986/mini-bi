@@ -75,7 +75,8 @@ test("context and finalize bind to the RPCs and project NOT_REQUIRED without CLE
       return {
         data: {
           document_id: documentId, document_type: "CCCD_FRONT", version: 1, storage_key: storageKey,
-          size_bytes: 512, mime_type: "image/png", entry_version: 2, ...lifecycle,
+          size_bytes: 512, mime_type: "image/png", checksum_sha256: null,
+          entry_version: 2, ...lifecycle,
         },
         error: null,
       };

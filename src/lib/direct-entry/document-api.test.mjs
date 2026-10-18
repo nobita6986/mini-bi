@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { reserveDirectEntryDocument } from "./document-api.ts";
-import { downloadDirectEntryDocument, finalizeDirectEntryDocument } from "./document-finalize-api.ts";
+import sharp from "sharp";
+import {
+  downloadDirectEntryDocument,
+  finalizeDirectEntryDocument,
+  previewWorkerPortraitDocument,
+} from "./document-finalize-api.ts";
+import { sha256Hex } from "./document-r2-contract.ts";
 
 const entryId = "a2000000-0000-4000-8000-000000000001";
 const documentId = "b2000000-0000-4000-8000-000000000001";
@@ -30,13 +36,14 @@ function deps({ capabilities = ["document_upload", "document_view"], available =
     async createUploadUrl(input) { log.storage.push(["createUploadUrl", input]); return { url: "https://signed.example.test/put", expires_at: "2026-10-01T00:05:00.000Z", headers: { "Content-Type": input.mime_type } }; },
     async headStaged() { log.storage.push(["head"]); return head ?? { kind: "found", size_bytes: bytes.length, content_type: "image/png" }; },
     async readStaged() { log.storage.push(["read"]); return bytes; },
-    async promote() { log.storage.push(["promote"]); },
+    async promote(input) { log.storage.push(["promote", input]); },
     async deleteStaged() { log.storage.push(["delete"]); },
     async createDownloadUrl(input) { log.storage.push(["download", input]); return { url: "https://signed.example.test/get", expires_at: "x", headers: {} }; },
+    async readFinal() { log.storage.push(["readFinal"]); return bytes; },
   };
   const repository = {
     async reserveDocumentUpload(input) { log.db.push(["reserve", input]); return { ok: true, data: { document_id: documentId, version: 1, entry_version: 2, reused: false, storage_key: storageKey, ...queued } }; },
-    async getDocumentContext(input) { log.db.push(["context", input]); return { ok: true, data: { document_id: documentId, document_type: "CCCD_FRONT", version: 1, entry_version: 2, size_bytes: bytes.length, mime_type: "image/png", storage_key: storageKey, ...queued } }; },
+    async getDocumentContext(input) { log.db.push(["context", input]); return { ok: true, data: { document_id: documentId, document_type: "CCCD_FRONT", version: 1, entry_version: 2, size_bytes: bytes.length, mime_type: "image/png", storage_key: storageKey, checksum_sha256: null, ...queued } }; },
     async finalizeDocument(input) { log.db.push(["finalize", input]); return { ok: true, data: { document_id: documentId, version: 1, entry_version: 3, reused: false, ...(input.outcome === "validated" ? ready : { upload_status: "FAILED", scan_status: "NOT_REQUIRED", validation_status: "REJECTED" }) } }; },
     ...repo,
   };
@@ -101,6 +108,11 @@ test("claimed MIME, size, type, idempotency and capability are checked before mu
   assert.deepEqual(noCap.log.db, []);
   const off = deps();
   assert.equal((await reserveDirectEntryDocument(makeRequest(reserveBody), entryId, "false", off)).status, 404);
+  const portraitPdf = deps();
+  assert.equal((await reserveDirectEntryDocument(makeRequest({
+    ...reserveBody, document_type: "WORKER_PORTRAIT", mime_type: "application/pdf",
+  }), entryId, "true", portraitPdf)).status, 400);
+  assert.deepEqual(portraitPdf.log.db, []);
 });
 
 test("project-manager capability reaches the upload RPC while download remains separately gated", async () => {
@@ -220,4 +232,106 @@ test("download requires document_view and an eligible document, then redirects t
   assert.equal(res.headers.get("location"), "https://signed.example.test/get");
   assert.equal(res.headers.get("cache-control"), "private, no-store");
   assert.equal(ok.log.storage[0][1].version, 1);
+});
+
+test("portrait finalize strips metadata, promotes sanitized bytes and records their checksum and size", async () => {
+  const original = await sharp({
+    create: { width: 12, height: 10, channels: 3, background: { r: 12, g: 24, b: 36 } },
+  }).jpeg().withMetadata({ exif: { IFD0: { Artist: "synthetic-private-metadata" } } }).toBuffer();
+  const portraitKey = `p1.6/c2000000-0000-4000-8000-000000000001/WORKER_PORTRAIT/1/${documentId}`;
+  const d = deps({
+    bytes: new Uint8Array(original),
+    head: { kind: "found", size_bytes: original.length, content_type: "image/jpeg" },
+    repo: {
+      async getDocumentContext() {
+        return {
+          ok: true,
+          data: {
+            document_id: documentId, document_type: "WORKER_PORTRAIT", version: 1,
+            entry_version: 2, size_bytes: original.length, mime_type: "image/jpeg",
+            storage_key: portraitKey, checksum_sha256: null, ...queued,
+          },
+        };
+      },
+    },
+  });
+  const response = await finalizeDirectEntryDocument(finalizeReq(), entryId, documentId, "true", d);
+  assert.equal(response.status, 200);
+  const promoted = d.log.storage.find(([name]) => name === "promote")[1];
+  assert.ok(promoted.sanitized_bytes);
+  assert.equal(promoted.mime_type, "image/jpeg");
+  const outputMetadata = await sharp(promoted.sanitized_bytes).metadata();
+  assert.equal(outputMetadata.exif, undefined);
+  assert.notEqual(Buffer.from(promoted.sanitized_bytes).toString("latin1").includes("synthetic-private-metadata"), true);
+  const finalization = d.log.db.find(([name]) => name === "finalize")[1];
+  assert.equal(finalization.checksum_sha256, sha256Hex(promoted.sanitized_bytes));
+  assert.equal(finalization.size_bytes, promoted.sanitized_bytes.byteLength);
+});
+
+test("portrait preview streams private bytes only for an authorized current clean portrait", async () => {
+  const portrait = new Uint8Array(await sharp({
+    create: { width: 8, height: 8, channels: 3, background: { r: 20, g: 30, b: 40 } },
+  }).png().toBuffer());
+  const portraitKey = `p1.6/c2000000-0000-4000-8000-000000000001/WORKER_PORTRAIT/1/${documentId}`;
+  const contextCalls = [];
+  const portraitContext = {
+    async getDocumentContext(input) {
+      contextCalls.push(input);
+      return {
+        ok: true,
+        data: {
+          document_id: documentId, document_type: "WORKER_PORTRAIT", version: 1,
+          entry_version: 3, size_bytes: portrait.byteLength, mime_type: "image/png",
+          storage_key: portraitKey, checksum_sha256: sha256Hex(portrait), ...ready,
+        },
+      };
+    },
+  };
+  const denied = deps({ capabilities: ["document_upload"], repo: portraitContext });
+  assert.equal((await previewWorkerPortraitDocument(downloadReq(), entryId, documentId, "true", denied)).status, 403);
+  assert.equal(denied.log.storage.some(([name]) => name === "readFinal"), false);
+
+  const allowed = deps({
+    bytes: portrait,
+    repo: portraitContext,
+  });
+  const response = await previewWorkerPortraitDocument(downloadReq(), entryId, documentId, "true", allowed);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/png");
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), portrait);
+  assert.deepEqual(contextCalls[0], {
+    auth_subject: "91000000-0000-4000-8000-000000000001",
+    app_user_id: "92000000-0000-4000-8000-000000000001",
+    entry_id: entryId,
+    document_id: documentId,
+    purpose: "preview",
+  });
+
+  const stale = deps({
+    repo: { async getDocumentContext() { return { ok: false, kind: "not-found" }; } },
+  });
+  assert.equal((await previewWorkerPortraitDocument(downloadReq(), entryId, documentId, "true", stale)).status, 404);
+  assert.equal(stale.log.storage.some(([name]) => name === "readFinal"), false);
+});
+
+test("portrait cannot be downloaded through the generic signed-document URL", async () => {
+  const d = deps({
+    repo: {
+      async getDocumentContext() {
+        return {
+          ok: true,
+          data: {
+            document_id: documentId, document_type: "WORKER_PORTRAIT", version: 1,
+            entry_version: 3, size_bytes: 20, mime_type: "image/png",
+            storage_key: `p1.6/c2000000-0000-4000-8000-000000000001/WORKER_PORTRAIT/1/${documentId}`,
+            checksum_sha256: "a".repeat(64), ...ready,
+          },
+        };
+      },
+    },
+  });
+  assert.equal((await downloadDirectEntryDocument(downloadReq(), entryId, documentId, "true", d)).status, 404);
+  assert.equal(d.log.storage.some(([name]) => name === "download"), false);
 });

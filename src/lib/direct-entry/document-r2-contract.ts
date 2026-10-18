@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   DOCUMENT_MAX_BYTES_HARD_LIMIT,
   DOCUMENT_MIME_TYPES,
-  type DocumentType,
+  type DirectEntryDocumentType,
 } from "../contracts/direct-entry-v1.ts";
 import { checkDocumentFile } from "./document-upload-contract.ts";
 
@@ -20,7 +20,7 @@ export type DocumentMimeType = typeof DOCUMENT_MIME_TYPES[number];
 
 const STORAGE_KEY = new RegExp(
   "^p1\\.6/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/" +
-    "(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT)/[1-9]\\d*/" +
+    "(?:CCCD_FRONT|CCCD_BACK|EMPLOYMENT_CONTRACT|WORKER_PORTRAIT)/[1-9]\\d*/" +
     "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
   "i",
 );
@@ -46,7 +46,7 @@ const EXTENSIONS: Record<DocumentMimeType, string> = {
 };
 
 export function genericDownloadName(
-  documentType: DocumentType,
+  documentType: DirectEntryDocumentType,
   version: number,
   mimeType: DocumentMimeType,
 ): string {
@@ -73,7 +73,7 @@ function containsAscii(bytes: Uint8Array, needles: readonly string[], limit: num
 
 // Magic bytes plus structural trailers and embedded-markup rejection for polyglot files.
 export function inspectDocumentContent(input: {
-  document_type: DocumentType;
+  document_type: DirectEntryDocumentType;
   mime_type: string;
   bytes: Uint8Array;
 }): ContentInspection {

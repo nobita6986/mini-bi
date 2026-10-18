@@ -43,6 +43,7 @@ const readProjection = {
   payment: null,
   employment_status: { status: "UNCONFIRMED", effective_date: "2026-10-15", version: 1 },
   documents: [],
+  worker_portrait: null,
 };
 
 function request(body, headers = {}) {

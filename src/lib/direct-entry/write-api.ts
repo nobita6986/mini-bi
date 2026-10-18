@@ -238,7 +238,7 @@ const ENTRY_KEYS = new Set([
   "entry_id", "submission_id", "project_id", "first_work_date", "employee_code",
   "worker_details", "recruiter_id", "team_id", "provider_type", "labor_type",
   "labor_type_display", "general_note", "version", "scope_kind", "payment", "employment_status",
-  "documents",
+  "documents", "worker_portrait",
 ]);
 const WORKER_PROJECTION_KEYS = new Set([
   "display_name", "gender", "date_of_birth", "national_id", "national_id_issued_at",
@@ -249,6 +249,32 @@ const DOCUMENT_KEYS = new Set([
   "document_id", "document_type", "version", "size_bytes", "mime_type",
   "upload_status", "scan_status", "validation_status", "created_at", "updated_at",
 ]);
+const PORTRAIT_STATUSES = [
+  "MISSING", "QUEUED", "UPLOADING", "QUARANTINED", "SCANNING", "READY", "FAILED", "SUPERSEDED",
+] as const;
+const PORTRAIT_CURRENT_KEYS = [
+  "document_id", "version", "checksum_sha256", "mime_type", "size_bytes",
+] as const;
+
+function isWorkerPortraitProjection(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["origin", "added_at", "status", "current"]) ||
+      !(value.origin === null || value.origin === "ENROLLMENT" || value.origin === "LEGACY_ADDED") ||
+      !(value.added_at === null || (typeof value.added_at === "string" &&
+        Number.isFinite(Date.parse(value.added_at)))) ||
+      !(PORTRAIT_STATUSES as readonly unknown[]).includes(value.status) ||
+      !(value.current === null || isRecord(value.current))) return false;
+  if ((value.origin === "LEGACY_ADDED") !== (value.added_at !== null)) return false;
+  if (value.current === null) return true;
+  const current = value.current as Record<string, unknown>;
+  return hasExactKeys(current, [...PORTRAIT_CURRENT_KEYS]) &&
+    typeof current.document_id === "string" && UUID.test(current.document_id) &&
+    typeof current.version === "number" && Number.isSafeInteger(current.version) &&
+    current.version > 0 &&
+    typeof current.checksum_sha256 === "string" && /^[a-f0-9]{64}$/.test(current.checksum_sha256) &&
+    (current.mime_type === "image/jpeg" || current.mime_type === "image/png") &&
+    typeof current.size_bytes === "number" && Number.isSafeInteger(current.size_bytes) &&
+    current.size_bytes > 0 && value.origin !== null;
+}
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const present = Object.keys(value);
@@ -337,7 +363,8 @@ export function projectEntry(value: unknown): Record<string, unknown> | null {
       !isGeneralNoteReadProjection(value.general_note) ||
       !isPaymentReadProjection(value.payment) ||
       !isRecord(value.employment_status) ||
-      !Array.isArray(value.documents)) return null;
+      !Array.isArray(value.documents) ||
+      !(value.worker_portrait === null || isWorkerPortraitProjection(value.worker_portrait))) return null;
   const status = value.employment_status as Record<string, unknown>;
   if (Object.keys(status).some((key) => !STATUS_KEYS.has(key)) ||
       !["UNCONFIRMED", "ON", "OFF"].includes(String(status.status)) ||

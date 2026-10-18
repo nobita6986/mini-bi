@@ -100,6 +100,41 @@ test("promote copies staging to a final opaque key as attachment and delete targ
   assert.equal(rec.sent[1].input.Key, `preview/staging/${key}`);
 });
 
+test("sanitized promotion writes server bytes directly to the private final key", async () => {
+  const rec = recorder();
+  const storage = createR2DocumentStorage(env(), rec);
+  const sanitizedBytes = Uint8Array.of(0xff, 0xd8, 0xff, 0xd9);
+  await storage.promote({
+    storage_key: key.replace("CCCD_FRONT", "WORKER_PORTRAIT"),
+    mime_type: "image/jpeg",
+    sanitized_bytes: sanitizedBytes,
+  });
+  const command = rec.sent[0];
+  assert.equal(command.input.Key, `preview/final/${key.replace("CCCD_FRONT", "WORKER_PORTRAIT")}`);
+  assert.equal(command.input.ContentType, "image/jpeg");
+  assert.equal(command.input.ContentLength, sanitizedBytes.byteLength);
+  assert.deepEqual(command.input.Body, Buffer.from(sanitizedBytes));
+  assert.equal("CopySource" in command.input, false);
+});
+
+test("final object reads are size-bounded and use the server-derived final key", async () => {
+  const sent = [];
+  const bytes = Uint8Array.of(1, 2, 3);
+  const storage = createR2DocumentStorage(env(), {
+    client: {
+      async send(command) {
+        sent.push(command);
+        return {
+          ContentLength: bytes.byteLength,
+          Body: { async transformToByteArray() { return bytes; } },
+        };
+      },
+    },
+  });
+  assert.deepEqual(await storage.readFinal(key), bytes);
+  assert.equal(sent[0].input.Key, `preview/final/${key}`);
+});
+
 test("head maps not-found to missing and oversize reads are rejected", async () => {
   const missing = createR2DocumentStorage(env(), { client: { async send() { throw { name: "NotFound" }; } } });
   assert.deepEqual(await missing.headStaged(key), { kind: "missing" });

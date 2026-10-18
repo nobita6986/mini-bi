@@ -16,6 +16,7 @@ import { PGlite } from "@electric-sql/pglite";
 const MIGRATION_DIR = path.resolve("supabase/migrations");
 const D3A_MIGRATION = "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql";
 const DEFAULT_CAPABILITIES_MIGRATION = "20261015150000_pre_w2_worker_data_capabilities_default.sql";
+const PERSONNEL_DEFAULT_ACCESS_MIGRATION = "20261016160000_pre_w2_personnel_from_account_default_access.sql";
 
 const AUTH_PROLOGUE =
   "create role anon; create role authenticated; create role service_role;" +
@@ -45,10 +46,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 110, "the ledger carries append-only migrations through #110");
-  assert.equal(names[names.length - (2 + 17)], D3A_MIGRATION,
+  assert.equal(names.length, 112, "the ledger carries append-only migrations through #112");
+  assert.equal(names[names.length - (3 + 18)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
-  assert.equal(names.at(-(10 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-(12 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
 }
 
@@ -56,7 +57,7 @@ async function buildDbBeforeDefaultCapabilities() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-(10 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-(12 + 1)), DEFAULT_CAPABILITIES_MIGRATION);
   for (const name of names.slice(0, -3)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -91,11 +92,13 @@ async function buildDbBeforePersonnelDefaultAccess() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 110);
-  for (const name of names.slice(0, -1)) {
+  assert.equal(names.length, 112);
+  const migrationIndex = names.indexOf(PERSONNEL_DEFAULT_ACCESS_MIGRATION);
+  assert.notEqual(migrationIndex, -1, "the personnel default-access migration is present in the ledger");
+  for (const name of names.slice(0, migrationIndex)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  return { db, migration: await readFile(path.join(MIGRATION_DIR, names.at(-1)), "utf8") };
+  return { db, migration: await readFile(path.join(MIGRATION_DIR, PERSONNEL_DEFAULT_ACCESS_MIGRATION), "utf8") };
 }
 
 async function insertActor(db, auth, app, { capabilities = [], scopes = [], enabled = true } = {}) {
@@ -357,14 +360,14 @@ test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabiliti
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
-        " and (valid_to is null or current_date < valid_to)", [f.app_user_id, capability]), 1,
+        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
+        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [f.app_user_id, capability]), 1,
         `${capability} is effective after account creation followed by personnel creation`);
     }
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
-      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
-      " and (valid_to is null or current_date < valid_to)", [f.app_user_id]), 1);
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
+      " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [f.app_user_id]), 1);
 
     const revision = (await db.query(
       "select action from public.direct_entry_app_user_revisions where app_user_id = $1", [f.app_user_id])).rows[0];
@@ -554,14 +557,14 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
-        " and (valid_to is null or current_date < valid_to)", [TARGET_APP, capability]), 1,
+        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
+        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [TARGET_APP, capability]), 1,
         `${capability} is granted to account-created HRP personnel`);
     }
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
-      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
-      " and (valid_to is null or current_date < valid_to)", [TARGET_APP]), 1,
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
+      " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [TARGET_APP]), 1,
     "account-created HRP personnel has own scope");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events" +
@@ -603,13 +606,13 @@ test("PRE-W2-HF: account-created team leaders get only the HRP own-entry baselin
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= current_date" +
-        " and (valid_to is null or current_date < valid_to)", [app, capability]), 1);
+        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
+        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [app, capability]), 1);
     }
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
-      " where app_user_id=$1 and scope_kind='own' and valid_from <= current_date" +
-      " and (valid_to is null or current_date < valid_to)", [app]), 1);
+      " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
+      " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [app]), 1);
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_capability_grants" +
       " where app_user_id=$1 and capability in ('team_manager_assign','entry_admin','change_review')", [app]), 0,

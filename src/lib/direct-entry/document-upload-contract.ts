@@ -1,6 +1,7 @@
 import {
   DOCUMENT_MAX_BYTES_HARD_LIMIT,
   DOCUMENT_MIME_TYPES,
+  type DirectEntryDocumentType,
   type DocumentType,
 } from "../contracts/direct-entry-v1.ts";
 
@@ -12,15 +13,24 @@ const DOCUMENT_TYPES: readonly DocumentType[] = [
   "CCCD_BACK",
   "EMPLOYMENT_CONTRACT",
 ];
+const DIRECT_ENTRY_DOCUMENT_TYPES: readonly DirectEntryDocumentType[] = [
+  ...DOCUMENT_TYPES,
+  "WORKER_PORTRAIT",
+];
 type DocumentMimeType = typeof DOCUMENT_MIME_TYPES[number];
 
 export type DocumentFileCheck =
-  | { ok: true; document_type: DocumentType; mime_type: DocumentMimeType }
+  | { ok: true; document_type: DirectEntryDocumentType; mime_type: DocumentMimeType }
   | { ok: false; code: "DOCUMENT_TYPE_INVALID" | "DOCUMENT_FILE_REQUIRED" |
       "DOCUMENT_SIZE_INVALID" | "DOCUMENT_MIME_INVALID" | "DOCUMENT_CONTENT_INVALID" };
 
 export function isDocumentType(value: unknown): value is DocumentType {
   return typeof value === "string" && DOCUMENT_TYPES.some((type) => type === value);
+}
+
+export function isDirectEntryDocumentType(value: unknown): value is DirectEntryDocumentType {
+  return typeof value === "string" &&
+    DIRECT_ENTRY_DOCUMENT_TYPES.some((type) => type === value);
 }
 
 function isDocumentMimeType(value: unknown): value is DocumentMimeType {
@@ -34,7 +44,7 @@ export function checkDocumentFile(input: {
   size_bytes: number;
   bytes: Uint8Array;
 }): DocumentFileCheck {
-  if (!isDocumentType(input.document_type)) {
+  if (!isDirectEntryDocumentType(input.document_type)) {
     return { ok: false, code: "DOCUMENT_TYPE_INVALID" };
   }
   if (!Number.isSafeInteger(input.size_bytes) || input.size_bytes < 1 ||
@@ -42,6 +52,9 @@ export function checkDocumentFile(input: {
     return { ok: false, code: "DOCUMENT_SIZE_INVALID" };
   }
   if (!isDocumentMimeType(input.mime_type)) {
+    return { ok: false, code: "DOCUMENT_MIME_INVALID" };
+  }
+  if (input.document_type === "WORKER_PORTRAIT" && input.mime_type === "application/pdf") {
     return { ok: false, code: "DOCUMENT_MIME_INVALID" };
   }
 

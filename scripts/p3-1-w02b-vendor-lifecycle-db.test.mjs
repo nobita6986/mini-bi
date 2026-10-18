@@ -184,14 +184,14 @@ await addActor(db, { ...ENTRY_OPERATOR, capabilities: ["entry_create"], scopes: 
 
 test("assertions 1: the ledger carries #75 append-only after the P3.1-HF report", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 110, "the ledger carries the complete 110-migration ledger");
-  assert.equal(names.at(-(34 + 1)), LEGACY_SCOPE_HOTFIX, "#76 is the append-only leader-scope hotfix");
-  assert.equal(names.at(-(35 + 1)), NEW_MIGRATION, "#75 remains the P3.1-W02-B vendor lifecycle migration");
-  assert.equal(names.at(-(36 + 1)), PREVIOUS_MIGRATION, "#75 stays append-only after #74");
-  assert.equal(names.at(-(37 + 1)), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
-  assert.equal(names.at(-(38 + 1)), "20261009080000_p3_1_w02a_team_leader_project_manager_authority.sql");
-  assert.equal(names.at(-(44 + 1)), "20261009020000_p3_w07a_r4_vendor_historical_team_backfill.sql");
-  assert.equal(names.at(-(45 + 1)), "20261009010000_p3_w07a_r3_vendor_hidden_team_and_document_upload.sql");
+  assert.equal(names.length, 112, "the ledger carries the complete 112-migration ledger");
+  assert.equal(names.at(-(36 + 1)), LEGACY_SCOPE_HOTFIX, "#76 is the append-only leader-scope hotfix");
+  assert.equal(names.at(-(37 + 1)), NEW_MIGRATION, "#75 remains the P3.1-W02-B vendor lifecycle migration");
+  assert.equal(names.at(-(38 + 1)), PREVIOUS_MIGRATION, "#75 stays append-only after #74");
+  assert.equal(names.at(-(39 + 1)), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
+  assert.equal(names.at(-(40 + 1)), "20261009080000_p3_1_w02a_team_leader_project_manager_authority.sql");
+  assert.equal(names.at(-(46 + 1)), "20261009020000_p3_w07a_r4_vendor_historical_team_backfill.sql");
+  assert.equal(names.at(-(47 + 1)), "20261009010000_p3_w07a_r3_vendor_hidden_team_and_document_upload.sql");
 });
 
 test("both catalog authority paths can read the vendor catalog", async () => {
@@ -926,9 +926,9 @@ test("the ACL posture keeps vendor writes service-role only and the helpers unre
 
 test("the vendor slot remains append-only and no earlier migration is touched", async (t) => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-(34 + 1)), LEGACY_SCOPE_HOTFIX, "the later #76 hotfix appends after W02-B");
-  assert.equal(names.at(-(35 + 1)), NEW_MIGRATION, "#75 remains the vendor lifecycle slot");
-  assert.equal(names.at(-(36 + 1)), PREVIOUS_MIGRATION, "#75 appends directly after the P3.1-HF report #74");
+  assert.equal(names.at(-(36 + 1)), LEGACY_SCOPE_HOTFIX, "the later #76 hotfix appends after W02-B");
+  assert.equal(names.at(-(37 + 1)), NEW_MIGRATION, "#75 remains the vendor lifecycle slot");
+  assert.equal(names.at(-(38 + 1)), PREVIOUS_MIGRATION, "#75 appends directly after the P3.1-HF report #74");
   assert.equal(new Set(names).size, names.length, "the ledger carries no duplicate slot");
 
   const git = spawnSync("git", ["status", "--porcelain", "--", "supabase/migrations"],
@@ -946,6 +946,9 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
   const currentMigration = "20261015150000_pre_w2_worker_data_capabilities_default.sql";
   const directEntryWorkflowMigration = "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql";
   const changeRequestReviewHistoryMigration = "20261016110000_pre_w2_change_request_team_review_history.sql";
+  const workerPortraitMigration = "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql";
+  const workerPortraitAccessGuardMigration =
+    "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql";
   const dirty = git.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   assert.deepEqual(dirty.filter((line) =>
     !line.endsWith(NEW_MIGRATION) &&
@@ -958,7 +961,9 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
     !line.endsWith(projectTeamMigration) &&
     !line.endsWith(batchMappingMigration) &&
     !line.endsWith(currentMigration) &&
-    !line.endsWith(changeRequestReviewHistoryMigration)), [],
+    !line.endsWith(changeRequestReviewHistoryMigration) &&
+    !line.endsWith(workerPortraitMigration) &&
+    !line.endsWith(workerPortraitAccessGuardMigration)), [],
     "no earlier migration may be modified, deleted or renamed");
 
   const committed = spawnSync("git", ["show", `HEAD:supabase/migrations/${PREVIOUS_MIGRATION}`],
