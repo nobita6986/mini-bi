@@ -569,6 +569,24 @@ test("draft delete is soft, versioned, replayable, and cannot empty a batch", as
       ],
     );
     const [first, second] = batch[0].result.entry_ids;
+    await assert.rejects(db.query(
+      "select public.direct_entry_delete_draft_row($1,$2,$3,99,$4)",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000001",
+        first,
+        "delete_entry_stale_synthetic_01",
+      ],
+    ), /entry version conflict/i);
+    await assert.rejects(db.query(
+      "select public.direct_entry_delete_draft_row($1,$2,$3,1,$4)",
+      [
+        "10000000-0000-4000-8000-000000000002",
+        "20000000-0000-4000-8000-000000000002",
+        first,
+        "delete_entry_denied_synthetic_01",
+      ],
+    ), /capability denied|scope denied/i);
     const { rows: deleted } = await db.query(
       "select public.direct_entry_delete_draft_row($1,$2,$3,1,$4) as result",
       [
@@ -597,20 +615,70 @@ test("draft delete is soft, versioned, replayable, and cannot empty a batch", as
         "delete_final_row_synthetic_01",
       ],
     ), /cannot delete final draft row/i);
+    await assert.rejects(db.query(
+      "select public.direct_entry_read_projection($1,$2,$3)",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000001",
+        first,
+      ],
+    ), /entry not found/i);
+
+    const nonDraftPayload = JSON.stringify([20, 21].map((suffix) => ({
+      project_id: "project_synthetic_01",
+      first_work_date: "2020-01-15",
+      employee_code: `hrp-2020-${String(suffix).padStart(6, "0")}`,
+      worker_details: syntheticWorker(`Synthetic Non Draft ${suffix}`),
+      recruiter_id: "30000000-0000-4000-8000-000000000001",
+      labor_type: "TEMPORARY",
+    })));
+    const { rows: nonDraftBatch } = await db.query(
+      "select public.direct_entry_create_batch($1,$2,$3::jsonb,$4) as result",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000001",
+        nonDraftPayload,
+        "delete_non_draft_batch_synthetic_01",
+      ],
+    );
+    await db.query(
+      "select public.direct_entry_transition_submission($1,$2,$3,1,'REVIEW',$4)",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000001",
+        nonDraftBatch[0].result.submission_id,
+        "delete_non_draft_transition_synthetic_01",
+      ],
+    );
+    await assert.rejects(db.query(
+      "select public.direct_entry_delete_draft_row($1,$2,$3,1,$4)",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000001",
+        nonDraftBatch[0].result.entry_ids[0],
+        "delete_non_draft_synthetic_01",
+      ],
+    ), /draft submission is not editable/i);
     await db.exec("reset role");
     const { rows: stored } = await db.query(
       `select e.deleted_at is not null as deleted,
               e.version,
+              (select count(*) from public.direct_entries sibling
+                where sibling.submission_id=e.submission_id and sibling.deleted_at is null) as visible_rows,
               (select count(*) from public.direct_entry_revisions where entry_id=e.entry_id) as revisions,
               (select count(*) from public.direct_entry_submission_revisions
-                where submission_id=e.submission_id) as submission_revisions
+                where submission_id=e.submission_id) as submission_revisions,
+              (select count(*) from public.direct_entry_audit_events a
+                where a.resource_ref=e.entry_id::text and a.action='draft_row_delete') as delete_audits
          from public.direct_entries e where e.entry_id=$1`,
       [first],
     );
     assert.equal(stored[0].deleted, true);
     assert.equal(stored[0].version, 2);
+    assert.equal(stored[0].visible_rows, 1);
     assert.equal(stored[0].revisions, 2);
     assert.equal(stored[0].submission_revisions, 2);
+    assert.equal(stored[0].delete_audits, 1);
   } finally {
     await db.close();
   }

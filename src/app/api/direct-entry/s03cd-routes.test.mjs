@@ -35,3 +35,15 @@ test("PATCH shares the entry route and gates before awaiting params or session",
   assert.ok(patchStart >= 0 && gate >= 0 && notFound > gate && params > notFound && session > params);
   assert.match(patchSource, /patchDraftEntry\(/);
 });
+
+test("DELETE shares the entry route and gates before awaiting params or session", () => {
+  const source = sources.entries;
+  const deleteStart = source.indexOf("export async function DELETE");
+  const deleteSource = source.slice(deleteStart);
+  const gate = deleteSource.indexOf('process.env.DIRECT_ENTRY_API_ENABLED !== "true"');
+  const notFound = deleteSource.indexOf('code: "NOT_FOUND"');
+  const params = deleteSource.indexOf("await context.params");
+  const session = deleteSource.indexOf("getDirectEntryActor(");
+  assert.ok(deleteStart >= 0 && gate >= 0 && notFound > gate && params > notFound && session > params);
+  assert.match(deleteSource, /deleteDraftEntry\(/);
+});

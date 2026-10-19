@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getInputCatalog, getOwnDrafts, patchDraftEntry } from "./draft-api.ts";
+import { deleteDraftEntry, getInputCatalog, getOwnDrafts, patchDraftEntry } from "./draft-api.ts";
 import {
   DRAFT_LIST_PROJECTION_VERSION,
   createDirectEntryWriteRepository,
   projectDraftCatalog,
+  projectDraftDelete,
   projectDraftUpdate,
   projectOwnDrafts,
 } from "./write-repository.ts";
@@ -97,6 +98,10 @@ function deps(overrides = {}) {
           data: { entry_id: input.entry_id, version: 2, submission_version: 2 },
         };
       },
+      async deleteDraftRow(input) {
+        calls.push({ operation: "delete", input });
+        return { ok: true, data: { entry_id: input.entry_id, deleted: true, version: 2 } };
+      },
       ...overrides,
     },
   };
@@ -110,6 +115,20 @@ function patchRequest(body, headers = {}) {
       host: "example.test",
       "content-type": "application/json",
       "idempotency-key": "synthetic-update-01",
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function deleteRequest(body, headers = {}) {
+  return new Request("https://example.test/api/direct-entry/entries/a2000000-0000-4000-8000-000000000001", {
+    method: "DELETE",
+    headers: {
+      origin: "https://example.test",
+      host: "example.test",
+      "content-type": "application/json",
+      "idempotency-key": "synthetic-delete-01",
       ...headers,
     },
     body: JSON.stringify(body),
@@ -168,9 +187,17 @@ test("repository projections strictly reject malformed and unexpected fields", (
   assert.equal(projectDraftUpdate({
     entry_id: draft.entry_id, version: 2, submission_version: 2, audit: {},
   }, draft.entry_id), null);
+  assert.deepEqual(projectDraftDelete({
+    entry_id: draft.entry_id, deleted: true, version: 2,
+  }, draft.entry_id), {
+    entry_id: draft.entry_id, deleted: true, version: 2,
+  });
+  assert.equal(projectDraftDelete({
+    entry_id: draft.entry_id, deleted: true, version: 2, audit: {},
+  }, draft.entry_id), null);
 });
 
-test("repository maps catalog, drafts, and update only to their named RPCs and fails closed", async () => {
+test("repository maps catalog, drafts, update, and delete only to their named RPCs and fails closed", async () => {
     const calls = [];
     const repository = createDirectEntryWriteRepository(async (name, args) => {
       calls.push({ name, args });
@@ -179,10 +206,11 @@ test("repository maps catalog, drafts, and update only to their named RPCs and f
         data: { projection_version: DRAFT_LIST_PROJECTION_VERSION, drafts: [draft] },
         error: null,
       };
-      return {
+      if (name === "direct_entry_update_own_draft_row") return {
         data: { entry_id: draft.entry_id, version: 2, submission_version: 2 },
         error: null,
       };
+      return { data: { entry_id: draft.entry_id, deleted: true, version: 2 }, error: null };
     });
     assert.deepEqual(await repository.loadInputCatalog({
       auth_subject: actor.auth_subject,
@@ -200,16 +228,30 @@ test("repository maps catalog, drafts, and update only to their named RPCs and f
       ok: true,
       data: { entry_id: draft.entry_id, version: 2, submission_version: 2 },
     });
+    assert.deepEqual(await repository.deleteDraftRow({
+      ...actor,
+      entry_id: draft.entry_id,
+      expected_version: 1,
+      idempotency_key: "synthetic-delete-01",
+    }), {
+      ok: true,
+      data: { entry_id: draft.entry_id, deleted: true, version: 2 },
+    });
     assert.deepEqual(calls.map(({ name }) => name), [
       "direct_entry_input_catalog",
       "direct_entry_list_own_drafts",
       "direct_entry_update_own_draft_row",
+      "direct_entry_delete_draft_row",
     ]);
     assert.equal(calls[0].args.p_auth_subject, actor.auth_subject);
     assert.equal(calls[0].args.p_app_user_id, actor.app_user_id);
     assert.equal(calls[0].args.p_effective_date, catalog.effective_date);
     assert.equal(calls[2].args.p_expected_version, 1);
     assert.equal(calls[2].args.p_idempotency_key, "synthetic-update-01");
+    assert.equal(calls[3].args.p_auth_subject, actor.auth_subject);
+    assert.equal(calls[3].args.p_app_user_id, actor.app_user_id);
+    assert.equal(calls[3].args.p_expected_version, 1);
+    assert.equal(calls[3].args.p_idempotency_key, "synthetic-delete-01");
 
     const malformed = createDirectEntryWriteRepository(async () => ({ data: null, error: null }));
     assert.deepEqual(await malformed.loadInputCatalog({
@@ -223,6 +265,12 @@ test("repository maps catalog, drafts, and update only to their named RPCs and f
       patch,
       idempotency_key: "synthetic-update-02",
     }), { ok: false, kind: "unavailable" });
+    assert.deepEqual(await malformed.deleteDraftRow({
+      ...actor,
+      entry_id: draft.entry_id,
+      expected_version: 1,
+      idempotency_key: "synthetic-delete-02",
+    }), { ok: false, kind: "unavailable" });
 
     const invalidDraft = createDirectEntryWriteRepository(async () => ({
       data: null, error: { code: "23514" },
@@ -234,6 +282,12 @@ test("repository maps catalog, drafts, and update only to their named RPCs and f
       patch: { employee_code: "invalid" },
       idempotency_key: "synthetic-update-invalid",
     }), { ok: false, kind: "invalid" });
+    assert.deepEqual(await invalidDraft.deleteDraftRow({
+      ...actor,
+      entry_id: draft.entry_id,
+      expected_version: 1,
+      idempotency_key: "synthetic-delete-final-row",
+    }), { ok: false, kind: "final-row" });
 });
 
 test("catalog gate and effective date validation happen before session or RPC", async () => {
@@ -408,4 +462,64 @@ test("PATCH accepts ordinary text fields for bank details without a payment capa
     draft.entry_id, "true", deps(),
   );
   assert.equal(invalid.status, 400);
+});
+
+test("DELETE validates its mutation boundary before session or repository access", async () => {
+  const valid = { expected_version: 1 };
+  for (const [entryId, flag, request, status] of [
+    ["bad", "true", deleteRequest(valid), 400],
+    [draft.entry_id, undefined, deleteRequest(valid), 404],
+    [draft.entry_id, "true", deleteRequest(valid, { origin: "https://evil.test" }), 403],
+    [draft.entry_id, "true", deleteRequest(valid, { "content-type": "text/plain" }), 400],
+    [draft.entry_id, "true", deleteRequest(valid, { "idempotency-key": "x".repeat(129) }), 400],
+    [draft.entry_id, "true", deleteRequest({ expected_version: 0 }), 400],
+    [draft.entry_id, "true", deleteRequest({ expected_version: 1, app_user_id: actor.app_user_id }), 400],
+  ]) {
+    const dependencies = deps();
+    assert.equal((await deleteDraftEntry(request, entryId, flag, dependencies)).status, status);
+    assert.equal(dependencies.calls.length, 0);
+  }
+});
+
+test("DELETE forwards only the server actor, expected version, and idempotency key", async () => {
+  const dependencies = deps();
+  const response = await deleteDraftEntry(
+    deleteRequest({ expected_version: 1 }), draft.entry_id, "true", dependencies,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    entry_id: draft.entry_id,
+    deleted: true,
+    entry_version: 2,
+  });
+  assert.deepEqual(dependencies.calls, [{
+    operation: "delete",
+    input: {
+      ...actor,
+      entry_id: draft.entry_id,
+      expected_version: 1,
+      idempotency_key: "synthetic-delete-01",
+    },
+  }]);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
+test("DELETE maps conflict, final-row, denial, not-found, invalid and unavailable safely", async () => {
+  const expected = [
+    ["conflict", 409, "DRAFT_CONFLICT"],
+    ["final-row", 409, "DRAFT_FINAL_ROW"],
+    ["denied", 403, "ACTOR_DENIED"],
+    ["not-found", 404, "ENTRY_NOT_FOUND"],
+    ["invalid", 400, "DRAFT_DELETE_INVALID"],
+    ["unavailable", 500, "DRAFT_DELETE_UNAVAILABLE"],
+  ];
+  for (const [kind, status, code] of expected) {
+    const response = await deleteDraftEntry(
+      deleteRequest({ expected_version: 1 }), draft.entry_id, "true",
+      deps({ async deleteDraftRow() { return { ok: false, kind, detail: "private db" }; } }),
+    );
+    assert.equal(response.status, status, kind);
+    assert.deepEqual(await response.json(), { ok: false, code }, kind);
+  }
 });

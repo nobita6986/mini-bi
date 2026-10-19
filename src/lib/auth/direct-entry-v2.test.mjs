@@ -369,19 +369,64 @@ test("all team-grant intervals are checked for overlap, independent of session d
     }), { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" });
   }
 
-  const invalidInterval = structuredClone(fixture.leader);
-  invalidInterval.record.team_scope_grants.push({
+  const invertedInterval = structuredClone(fixture.leader);
+  invertedInterval.record.team_scope_grants.push({
     team_id: "team_synthetic_01",
     valid_from: "2026-10-10",
-    valid_to: "2026-10-10",
+    valid_to: "2026-10-09",
   });
   assert.deepEqual(await resolveActor({
     session: {
-      auth_subject: invalidInterval.auth_subject,
+      auth_subject: invertedInterval.auth_subject,
       provider: "supabase",
       authenticated_at: null,
     },
-    repository: repositoryFor(invalidInterval),
+    repository: repositoryFor(invertedInterval),
+    at: timestamp,
+  }), { ok: false, reason: "ACTOR_REPOSITORY_INVALID" });
+});
+
+test("zero-length scope markers are valid, inert, and ignored by overlap checks", async () => {
+  const markerOnly = structuredClone(fixture.leader);
+  markerOnly.record.team_scope_grants = [{
+    team_id: "team_synthetic_01",
+    valid_from: "2026-10-02",
+    valid_to: "2026-10-02",
+  }];
+  markerOnly.record.all_scope_grants = [{
+    valid_from: "2026-10-02",
+    valid_to: "2026-10-02",
+  }];
+  const markerOnlyActor = await actorFor(markerOnly);
+  assert.equal(markerOnlyActor.scopes.some((scope) => scope.kind === "team"), false);
+  assert.equal(markerOnlyActor.scopes.some((scope) => scope.kind === "all"), false);
+
+  const markerWithGrant = structuredClone(fixture.leader);
+  markerWithGrant.record.team_scope_grants.push({
+    team_id: "team_synthetic_01",
+    valid_from: "2026-09-01",
+    valid_to: "2026-09-01",
+  });
+  const actor = await actorFor(markerWithGrant);
+  assert.equal(actor.scopes.filter((scope) => scope.kind === "team").length, 1);
+  assert.equal(authorizeDirectEntry({
+    actor,
+    action: "entry_team",
+    resource: teamResource(),
+    timestamp,
+    expected_version: 1,
+  }).allowed, true);
+
+  const recruiterMarker = structuredClone(fixture.leader);
+  recruiterMarker.record.recruiter_links[0].valid_to =
+    recruiterMarker.record.recruiter_links[0].valid_from;
+  assert.deepEqual(await resolveActor({
+    session: {
+      auth_subject: recruiterMarker.auth_subject,
+      provider: "supabase",
+      authenticated_at: null,
+    },
+    repository: repositoryFor(recruiterMarker),
     at: timestamp,
   }), { ok: false, reason: "ACTOR_REPOSITORY_INVALID" });
 });

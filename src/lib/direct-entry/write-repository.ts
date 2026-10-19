@@ -33,7 +33,7 @@ export type OperationResult<T = unknown> =
   | { ok: true; data: T }
   | {
       ok: false;
-      kind: "conflict" | "denied" | "invalid" | "not-found" | "too-large" | "unavailable";
+      kind: "conflict" | "denied" | "final-row" | "invalid" | "not-found" | "too-large" | "unavailable";
     };
 
 export type DocumentLifecycle = {
@@ -138,6 +138,11 @@ export type DirectEntryRepository = {
     patch: Record<string, unknown>;
     idempotency_key: string;
   }): Promise<OperationResult<{ entry_id: string; version: number; submission_version: number }>>;
+  deleteDraftRow(input: ActorRef & {
+    entry_id: string;
+    expected_version: number;
+    idempotency_key: string;
+  }): Promise<OperationResult<{ entry_id: string; deleted: true; version: number }>>;
   applyDraftEmploymentStatus(input: ActorRef & {
     entry_id: string;
     expected_entry_version: number;
@@ -443,6 +448,16 @@ export function projectDraftUpdate(value: unknown, entryId: string): {
   };
 }
 
+export function projectDraftDelete(value: unknown, entryId: string): {
+  entry_id: string;
+  deleted: true;
+  version: number;
+} | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["entry_id", "deleted", "version"]) ||
+      value.entry_id !== entryId || value.deleted !== true || !isPositiveVersion(value.version)) return null;
+  return { entry_id: value.entry_id, deleted: true, version: value.version };
+}
+
 function serviceRoleRpc(): Rpc {
   const client = import("../supabase/server").then(({ createServiceSupabaseClient }) =>
     createServiceSupabaseClient()
@@ -452,7 +467,7 @@ function serviceRoleRpc(): Rpc {
 
 function classify(
   error: { code?: string; message?: string },
-  operation: "create" | "read" | "catalog" | "list" | "update" | "payment" | "document" | "status",
+  operation: "create" | "read" | "catalog" | "list" | "update" | "delete" | "payment" | "document" | "status",
 ) {
   if (operation === "create") {
     if (error.code === "23505") return "conflict";
@@ -470,8 +485,9 @@ function classify(
     if (error.code === "40001" || error.code === "23505") return "conflict";
     if (error.code === "42501") return "denied";
     if (error.code === "P0002") return "not-found";
+    if (operation === "delete" && error.code === "23514") return "final-row";
     if ((operation === "update" || operation === "payment" ||
-         operation === "document" || operation === "status") &&
+         operation === "delete" || operation === "document" || operation === "status") &&
         error.code === "23514") return "invalid";
     if (error.code === "22023") {
       return error.message === "idempotency key reused with different input"
@@ -566,6 +582,25 @@ export function createDirectEntryWriteRepository(rpc?: Rpc): DirectEntryReposito
           : { ok: false, kind: "unavailable" };
       } catch {
         console.error("[direct-entry] update draft RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
+    async deleteDraftRow(input) {
+      try {
+        const { data, error } = await callRpc("direct_entry_delete_draft_row", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_entry_id: input.entry_id,
+          p_expected_version: input.expected_version,
+          p_idempotency_key: input.idempotency_key,
+        });
+        if (error) return { ok: false, kind: classify(error, "delete") };
+        const projection = projectDraftDelete(data, input.entry_id);
+        return projection
+          ? { ok: true, data: projection }
+          : { ok: false, kind: "unavailable" };
+      } catch {
+        console.error("[direct-entry] delete draft row RPC failed");
         return { ok: false, kind: "unavailable" };
       }
     },

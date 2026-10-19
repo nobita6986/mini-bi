@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   ACTORS,
+  PROJECT_ID,
   REQUEST_STAMPS,
   RECRUITER_A,
+  RECRUITER_B,
+  TEAM_B,
   createMigratedDatabase,
   createChangeRequest,
   decideChangeRequest,
@@ -294,6 +297,10 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
     auth_subject: "10000000-0000-4000-8000-000000000006",
     app_user_id: "20000000-0000-4000-8000-000000000006",
   };
+  const otherLeader = {
+    auth_subject: "10000000-0000-4000-8000-000000000008",
+    app_user_id: "20000000-0000-4000-8000-000000000008",
+  };
   await db.query("insert into auth.users(id) values ($1)", [leader.auth_subject]);
   await db.query(
     "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
@@ -309,6 +316,21 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
     "insert into public.direct_entry_team_leader_assignments" +
       " (team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,'2020-01-01')",
     [fixture.entryA.team_id, leader.app_user_id, RECRUITER_A]);
+  await db.query("insert into auth.users(id) values ($1)", [otherLeader.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Other Team Leader')", [otherLeader.app_user_id, otherLeader.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'team_manager_assign','2020-01-01'),($1,'pii_view','2020-01-01')",
+    [otherLeader.app_user_id]);
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
+      " values ($1,'team',$2,'2020-01-01')", [otherLeader.app_user_id, TEAM_B]);
+  await db.query(
+    "insert into public.direct_entry_team_leader_assignments" +
+      " (team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,'2020-01-01')",
+    [TEAM_B, otherLeader.app_user_id, RECRUITER_B]);
   assert.equal((await db.query(
     "select public.direct_entry_has_capability($1,'change_review') as allowed", [leader.app_user_id],
   )).rows[0].allowed, false, "team review does not create a global reviewer capability");
@@ -319,6 +341,10 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
   assert.equal(byId.get(requests.single).can_decide, true);
   assert.equal(byId.has(requests.multi), false, "mixed-team requests are not visible to one leader");
   assert.equal(byId.get(requests.single).proposer_display_name, "Synthetic Account");
+  const otherTeamList = await listChangeRequests(db, otherLeader, { pageSize: 50 });
+  assert.equal(otherTeamList.error, null);
+  assert.equal(otherTeamList.data.requests.some((item) => item.request_id === requests.single), false,
+    "a leader outside the target team cannot see the request");
   const detail = await readChangeRequest(db, leader, requests.single);
   assert.equal(detail.error, null);
   assert.equal(detail.data.items[0].proposal.worker_details.display_name, "S02B worker1");
@@ -335,6 +361,11 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
     [leader.auth_subject, leader.app_user_id, fixture.entryB.entry_id],
   ), (error) => error.code === "42501",
   "team-leader review does not grant access to entries outside the assigned team request");
+  await assert.rejects(db.query(
+    "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid)",
+    [otherLeader.auth_subject, otherLeader.app_user_id, fixture.entryA.entry_id],
+  ), (error) => error.code === "42501",
+  "a leader outside the target team cannot load the entry baseline");
 
   const rejected = await decideChangeRequest(db, leader, requests.single, "reject", 1,
     "Dữ liệu hiện tại đã thay đổi", "s02b_team_leader_stale_reject");
@@ -351,7 +382,31 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
     "select version, worker_details from public.direct_entries where entry_id = $1",
     [fixture.entryA.entry_id],
   );
-  const approvedRequest = await createChangeRequest(db, ACTORS.proposer, [item(
+  const otherTeamProposer = {
+    auth_subject: "10000000-0000-4000-8000-000000000009",
+    app_user_id: "20000000-0000-4000-8000-000000000009",
+  };
+  await db.query("insert into auth.users(id) values ($1)", [otherTeamProposer.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Other Team Proposer')",
+    [otherTeamProposer.app_user_id, otherTeamProposer.auth_subject]);
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'change_request_create','2020-01-01'),($1,'pii_view','2020-01-01')",
+    [otherTeamProposer.app_user_id]);
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
+      " values ($1,'own','2020-01-01')", [otherTeamProposer.app_user_id]);
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links" +
+      " (app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+    [otherTeamProposer.app_user_id, RECRUITER_B]);
+  await db.query(
+    "insert into public.direct_entry_project_manager_assignments" +
+      " (project_id,manager_recruiter_id,valid_from) values ($1,$2,'2020-01-01')",
+    [PROJECT_ID, RECRUITER_B]);
+  const approvedRequest = await createChangeRequest(db, otherTeamProposer, [item(
     fixture.entryA.entry_id,
     currentProfile.rows[0].version,
     { worker_details: {
@@ -360,6 +415,12 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
     } },
   )], "Team leader approval", "s02b_team_leader_approve");
   assert.equal(approvedRequest.error, null);
+  const crossTeamDetail = await readChangeRequest(db, leader, approvedRequest.data.request_id);
+  assert.equal(crossTeamDetail.error, null,
+    "review follows the target entry team, not the proposer team");
+  const otherTeamDetail = await readChangeRequest(db, otherLeader, approvedRequest.data.request_id);
+  assert.equal(otherTeamDetail.error.code, "P0002",
+    "the proposer team does not become the reviewer audience");
   const approved = await decideChangeRequest(db, leader, approvedRequest.data.request_id,
     "approve", 1, "Đã đối chiếu", "s02b_team_leader_approve_decision");
   assert.equal(approved.error, null, "the assigned team leader can approve a team request");
