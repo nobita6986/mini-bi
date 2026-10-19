@@ -23,7 +23,10 @@ export const WORKER_DIRECTORY_QUERY_KEYS = [
 ] as const;
 
 export const WORKER_DIRECTORY_PAGE_KEYS = [
-  "items", "scope", "page_size", "has_more", "next_cursor", "authorization_date",
+  "items", "scope", "page_size", "has_more", "next_cursor", "authorization_date", "summary",
+] as const;
+export const WORKER_DIRECTORY_SUMMARY_KEYS = [
+  "total_workers", "project_count", "recruiter_count",
 ] as const;
 export const WORKER_DIRECTORY_ROW_KEYS = [
   "entry_id", "entry_version", "submission_state", "employee_code", "display_name",
@@ -149,6 +152,12 @@ export type WorkerDirectoryLastDecision = {
   decided_at: string;
 };
 
+export type WorkerDirectorySummary = {
+  total_workers: number;
+  project_count: number;
+  recruiter_count: number;
+};
+
 export type WorkerDirectoryAllowedActions = {
   view: true;
   view_pii: boolean;
@@ -186,7 +195,25 @@ export type WorkerDirectoryPage = {
   has_more: boolean;
   next_cursor: string | null;
   authorization_date: string;
+  summary: WorkerDirectorySummary;
 };
+
+function projectWorkerDirectorySummary(value: unknown): WorkerDirectorySummary | null {
+  if (!isRecord(value) || !hasExactKeys(value, WORKER_DIRECTORY_SUMMARY_KEYS)) return null;
+  const totalWorkers = value.total_workers;
+  const projectCount = value.project_count;
+  const recruiterCount = value.recruiter_count;
+  if (typeof totalWorkers !== "number" || !Number.isSafeInteger(totalWorkers) || totalWorkers < 0 ||
+      typeof projectCount !== "number" || !Number.isSafeInteger(projectCount) || projectCount < 0 ||
+      typeof recruiterCount !== "number" || !Number.isSafeInteger(recruiterCount) || recruiterCount < 0) {
+    return null;
+  }
+  return {
+    total_workers: totalWorkers,
+    project_count: projectCount,
+    recruiter_count: recruiterCount,
+  };
+}
 
 function projectPayment(value: unknown): WorkerDirectoryPayment | null | undefined {
   if (value === null) return null;
@@ -336,6 +363,8 @@ export function projectWorkerDirectoryPage(
   if (typeof value.authorization_date !== "string" || !ISO_DATE.test(value.authorization_date)) {
     return null;
   }
+  const summary = projectWorkerDirectorySummary(value.summary);
+  if (summary === null) return null;
 
   const items: WorkerDirectoryRow[] = [];
   for (const raw of value.items) {
@@ -351,5 +380,6 @@ export function projectWorkerDirectoryPage(
     has_more: value.has_more,
     next_cursor: value.next_cursor,
     authorization_date: value.authorization_date,
+    summary,
   };
 }

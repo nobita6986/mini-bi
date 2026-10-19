@@ -19,7 +19,7 @@ test("migration #113 is append-only, service-only and transactionally rolls back
     await db.exec(AUTH_PROLOGUE);
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
     const migrationIndex = names.indexOf(MIGRATION_113);
-    assert.equal(names.length, 120);
+    assert.equal(names.length, 121);
     assert.equal(names[migrationIndex + 1], "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql");
     assert.equal(names[migrationIndex - 1], "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
     for (const name of names.slice(0, migrationIndex)) {

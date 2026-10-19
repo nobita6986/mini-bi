@@ -64,7 +64,8 @@ function row(overrides = {}) {
 }
 function page(items) {
   return { ok: true, items, scope: "recruited", page_size: 25, has_more: false,
-    next_cursor: null, authorization_date: AUTH };
+    next_cursor: null, authorization_date: AUTH,
+    summary: { total_workers: items.length, project_count: 1, recruiter_count: 1 } };
 }
 
 test("W06-R1: bon view khong tron quan he; scope=all chi khi server cho phep", () => {
@@ -249,11 +250,16 @@ test("W06-R2: review payload phai qua projectChangeRequestListPage, fail-closed"
 
 test("W06-R2: malformed worker/submission envelope fail-closed", () => {
   assert.equal(parseWorkerPageResponse({ ok: true, items: [], scope: "all", page_size: 25,
-    has_more: true, next_cursor: null, authorization_date: AUTH },
+    has_more: true, next_cursor: null, authorization_date: AUTH,
+    summary: { total_workers: 0, project_count: 0, recruiter_count: 0 } },
     { scope: "all", page_size: 25 }), null, "has_more phai co cursor");
   assert.equal(parseWorkerPageResponse({ ok: true, items: [], scope: "all", page_size: 25,
-    has_more: false, next_cursor: null }, { scope: "all", page_size: 25 }), null,
+    has_more: false, next_cursor: null, summary: { total_workers: 0, project_count: 0,
+      recruiter_count: 0 } }, { scope: "all", page_size: 25 }), null,
     "thieu authorization_date");
+  assert.equal(parseWorkerPageResponse({ ok: true, items: [], scope: "all", page_size: 25,
+    has_more: false, next_cursor: null, authorization_date: AUTH },
+  { scope: "all", page_size: 25 }), null, "missing summary fails closed");
   assert.equal(parseSubmissionPageResponse({ ok: true, items: [], page_size: 25,
     has_more: true, next_cursor: null }, { page_size: 25 }), null);
 });

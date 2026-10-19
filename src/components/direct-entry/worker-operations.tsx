@@ -74,7 +74,10 @@ import type {
   SubmissionReadItem,
   WorkerDirectoryRow,
 } from "@/lib/direct-entry/worker-operations-model";
-import { WORKER_EMPLOYMENT_STATUSES } from "@/lib/direct-entry/worker-directory-contract.ts";
+import {
+  WORKER_EMPLOYMENT_STATUSES,
+  type WorkerDirectorySummary,
+} from "@/lib/direct-entry/worker-directory-contract.ts";
 import {
   buildChangeRequestItem,
   buildEntryFieldProposal,
@@ -105,7 +108,12 @@ import { sortedActiveLaborTypes } from "@/lib/direct-entry/labor-type-catalog-ui
 const API = "/api/direct-entry";
 
 type WorkerScopeTab = "recruited" | "managed" | "all";
-type Incoming<T> = { items: readonly T[]; next_cursor: string | null; has_more: boolean };
+type Incoming<T> = {
+  items: readonly T[];
+  next_cursor: string | null;
+  has_more: boolean;
+  summary?: WorkerDirectorySummary;
+};
 type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: PageState; message: string | null };
 type Notice = { kind: "success" | "error"; message: string };
 
@@ -181,6 +189,7 @@ export function WorkerOperations({
     useState<"loading" | "ready" | "denied" | "unavailable">("loading");
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
     () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), all: emptyTabPage() }));
+  const [workerSummary, setWorkerSummary] = useState<WorkerDirectorySummary | null>(null);
   const [submissionPage, setSubmissionPage] =
     useState<TabPage<SubmissionReadItem>>(emptyTabPage);
   const [requestPage, setRequestPage] =
@@ -253,14 +262,15 @@ export function WorkerOperations({
     const payload = await readJson(response);
     if (response.status !== 200) {
       if (relationDenialIsEmpty(scope, response.status)) {
-        return { ok: true, page: { items: [], next_cursor: null, has_more: false } };
+        return { ok: true, page: { items: [], next_cursor: null, has_more: false,
+          summary: { total_workers: 0, project_count: 0, recruiter_count: 0 } } };
       }
       return httpFailure(response.status);
     }
     const parsed = parseWorkerPageResponse(payload, { scope, page_size: WORKER_PAGE_SIZE });
     if (parsed === null) return { ok: false, state: "error", message: workerListErrorMessage(200) };
     return { ok: true, page: { items: parsed.items, next_cursor: parsed.next_cursor,
-      has_more: parsed.has_more } };
+      has_more: parsed.has_more, summary: parsed.summary } };
   }, []);
 
   const fetchSubmissions = useCallback(async (
@@ -295,6 +305,8 @@ export function WorkerOperations({
   const applyWorkerPage = useCallback((
     scope: WorkerScopeTab, outcome: FetchOutcome<WorkerDirectoryRow>, append: boolean,
   ) => {
+    if (outcome.ok) setWorkerSummary(outcome.page.summary ?? null);
+    else if (!append) setWorkerSummary(null);
     setWorkerPages((pages) => ({
       ...pages,
       [scope]: outcome.ok
@@ -377,6 +389,7 @@ export function WorkerOperations({
       return;
     }
     workerQueryGeneration.current += 1;
+    setWorkerSummary(null);
     setFilters({ status: "", projectId: "", recruiterId: "" });
     if (next === "uploader") setSubmissionPage(resetTabPage());
     else setWorkerPages((pages) => ({ ...pages, [next as WorkerScopeTab]: resetTabPage() }));
@@ -388,6 +401,7 @@ export function WorkerOperations({
     const scope = tabScope(tab);
     if (scope === null) return;
     workerQueryGeneration.current += 1;
+    setWorkerSummary(null);
     const next = updateWorkerDirectoryFilter({
       page: workerPages[scope], filters, field, value,
     });
@@ -407,6 +421,7 @@ export function WorkerOperations({
       const scope = tab as WorkerScopeTab;
       workerQueryGeneration.current += 1;
       const generation = workerQueryGeneration.current;
+      setWorkerSummary(null);
       setWorkerPages((pages) => ({ ...pages, [scope]: resetTabPage() }));
       const outcome = await fetchWorkers(scope, filters, null).catch(
         () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
@@ -605,6 +620,20 @@ export function WorkerOperations({
               </p>
             ) : null}
           </>
+        )}
+
+        {tab === "uploader" ? null : (
+          <p role="status" aria-live="polite" data-testid="worker-filter-summary"
+            className="text-sm text-muted">
+            {workerSummary === null ? "Đang tính tổng theo bộ lọc…" : (
+              <>
+                Tổng số NLĐ: {workerSummary.total_workers.toLocaleString("vi-VN")} — trong{" "}
+                {workerSummary.project_count.toLocaleString("vi-VN")} dự án và{" "}
+                {workerSummary.recruiter_count.toLocaleString("vi-VN")} người tuyển; trạng thái làm việc: {" "}
+                {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}.
+              </>
+            )}
+          </p>
         )}
 
         {canExportThisTab && exportScope !== null ? (

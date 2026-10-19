@@ -40,6 +40,7 @@ const row = {
 const payload = {
   items: [row], scope: "managed", page_size: 25, has_more: false, next_cursor: null,
   authorization_date: "2026-10-08",
+  summary: { total_workers: 1, project_count: 1, recruiter_count: 1 },
 };
 const query = {
   scope: "managed", project_id: null, recruiter_id: null,

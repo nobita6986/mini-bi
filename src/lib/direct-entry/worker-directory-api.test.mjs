@@ -56,6 +56,7 @@ function dependencies(overrides = {}) {
           data: {
             items: [row], scope: input.scope, page_size: input.page_size,
             has_more: false, next_cursor: null, authorization_date: "2026-10-08",
+            summary: { total_workers: 1, project_count: 1, recruiter_count: 1 },
           },
         };
       },
@@ -139,6 +140,7 @@ test("success returns the exact page projection with no-store", async () => {
   assert.deepEqual(await response.json(), {
     ok: true, scope: "managed", items: [row], page_size: 50, has_more: false,
     next_cursor: null, authorization_date: "2026-10-08",
+    summary: { total_workers: 1, project_count: 1, recruiter_count: 1 },
   });
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   assert.deepEqual(deps.calls, [{

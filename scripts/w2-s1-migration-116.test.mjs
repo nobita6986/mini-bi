@@ -23,10 +23,10 @@ test("migration #116 expires only STAGED older than 24h and leases cleanup retri
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 120);
-    assert.equal(names.at(-5), MIGRATION_116);
-    assert.equal(names.at(-6), MIGRATION_115);
-    for (const name of names.slice(0, -5)) {
+    assert.equal(names.length, 121);
+    assert.equal(names.at(-6), MIGRATION_116);
+    assert.equal(names.at(-7), MIGRATION_115);
+    for (const name of names.slice(0, -6)) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await db.exec(await readFile(path.join(MIGRATION_DIR, MIGRATION_116), "utf8"));
