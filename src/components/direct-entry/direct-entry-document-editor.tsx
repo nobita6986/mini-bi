@@ -6,6 +6,8 @@ import {
   fetchEntryDetail,
   type DocumentDetailSummary,
 } from "@/lib/direct-entry/document-detail-projection";
+import { WorkerPortraitPanel } from "@/components/direct-entry/worker-portrait-panel";
+import type { WorkerPortraitProjection } from "@/lib/direct-entry/worker-detail-projection";
 import styles from "./direct-entry-shell.module.css";
 
 type Props = {
@@ -14,6 +16,10 @@ type Props = {
   rowId: string;
   canEdit: boolean;
   canView: boolean;
+  /** Render the existing WORKER_PORTRAIT editor inside a draft-edit panel. */
+  showPortrait?: boolean;
+  /** Separate server-resolved upload affordance for the portrait panel. */
+  portraitCanUpload?: boolean;
   /** S03B4B-R2C: entry SUBMITTED bat buoc co ly do truoc khi reserve. */
   requireReason?: boolean;
   /** File picked in the W2S1.1 form before the server entry ID existed. */
@@ -79,12 +85,16 @@ export function DirectEntryDocumentEditor({
   rowId,
   canEdit,
   canView,
+  showPortrait = false,
+  portraitCanUpload,
   requireReason,
   initialFile,
   onInitialFileAccepted,
   onEntryVersionChange,
 }: Props) {
   const [documents, setDocuments] = useState<DocumentDetailSummary[]>([]);
+  const [workerPortrait, setWorkerPortrait] =
+    useState<WorkerPortraitProjection | null | undefined>(undefined);
   const [loadError, setLoadError] = useState(false);
   const documentType: DocumentType = "EMPLOYMENT_CONTRACT";
   const initialFileError = initialFile && (initialFile.size < 1 || initialFile.size > MAX_BYTES)
@@ -113,6 +123,7 @@ export function DirectEntryDocumentEditor({
       return;
     }
     setDocuments(parsed.documents);
+    setWorkerPortrait(parsed.workerPortrait);
     onEntryVersionChange(rowId, parsed.entryVersion);
     setLoadError(false);
   }, [canView, entryId, onEntryVersionChange, rowId]);
@@ -127,6 +138,7 @@ export function DirectEntryDocumentEditor({
         return;
       }
       setDocuments(parsed.documents);
+      setWorkerPortrait(parsed.workerPortrait);
       onEntryVersionChange(rowId, parsed.entryVersion);
       setLoadError(false);
     });
@@ -299,6 +311,27 @@ export function DirectEntryDocumentEditor({
                 );
               })}
             </ul>}
+      {showPortrait && (
+        !entryId ? (
+          <p className={styles.documentStatus}>Lưu bản nháp trước khi thêm ảnh NLĐ.</p>
+        ) : !canView ? (
+          <p className={styles.documentStatus}>Trạng thái ảnh NLĐ được ẩn theo quyền truy cập.</p>
+        ) : loadError ? null
+          : workerPortrait === undefined ? (
+            <p className={styles.documentError} role="alert">
+              Chưa đọc được trạng thái ảnh NLĐ; chưa thể tải ảnh an toàn.
+            </p>
+          ) : (
+            <WorkerPortraitPanel
+              entryId={entryId}
+              entryVersion={entryVersion ?? 0}
+              portrait={workerPortrait}
+              canUpload={portraitCanUpload ?? canEdit}
+              onEntryVersionChange={(version) => onEntryVersionChange(rowId, version)}
+              onPortraitChanged={() => void loadDocuments()}
+            />
+          )
+      )}
       <div className={styles.documentControls}>
         {requireReason && (
           <label className={styles.field}>

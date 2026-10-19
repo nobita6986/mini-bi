@@ -45,6 +45,7 @@ function deps({
       calls.push(["create", input]);
       const stage = {
         stage_id: input.stage_id,
+        document_type: input.document_type,
         mime_type: input.mime_type,
         size_bytes: input.size_bytes,
         checksum_sha256: input.checksum_sha256,
@@ -85,9 +86,10 @@ function deps({
   };
 }
 
-function uploadRequest(bytes, mimeType = "image/jpeg", idempotencyKey = key) {
+function uploadRequest(bytes, mimeType = "image/jpeg", idempotencyKey = key, documentType) {
   const form = new FormData();
   form.append("file", new Blob([bytes], { type: mimeType }), "client-filename.jpg");
+  if (documentType !== undefined) form.append("document_type", documentType);
   return new Request("https://example.test/api/direct-entry/worker-portrait-stages", {
     method: "POST",
     headers: {
@@ -127,11 +129,37 @@ test("portrait is sanitized into private staging before any entry is created", a
   assert.deepEqual(d.calls[0][1], {
     ...actor,
     stage_id: body.stage_id,
+    document_type: "WORKER_PORTRAIT",
     mime_type: "image/jpeg",
     size_bytes: stagedBytes.byteLength,
     checksum_sha256: (await import("./document-r2-contract.ts")).sha256Hex(stagedBytes),
     idempotency_key: key,
   });
+});
+
+test("CCCD and contract PDFs stage as their declared document type without portrait rewriting", async () => {
+  const pdf = new TextEncoder().encode("%PDF-1.4\n1 0 obj<<>>endobj\n%%EOF");
+  for (const documentType of ["CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"]) {
+    const d = deps();
+    const response = await postWorkerPortraitStage(
+      uploadRequest(pdf, "application/pdf", key, documentType), "true", d,
+    );
+    const body = await response.json();
+    assert.equal(response.status, 201, JSON.stringify(body));
+    assert.equal(body.document_type, documentType);
+    assert.equal(body.mime_type, "application/pdf");
+    assert.deepEqual(d.calls[0][1], {
+      ...actor,
+      stage_id: body.stage_id,
+      document_type: documentType,
+      mime_type: "application/pdf",
+      size_bytes: pdf.byteLength,
+      checksum_sha256: (await import("./document-r2-contract.ts")).sha256Hex(pdf),
+      idempotency_key: key,
+    });
+    assert.deepEqual([...d.stagedObjects.values()][0], pdf,
+      "PDF bytes are staged privately as-is; portrait re-encoding is not applied");
+  }
 });
 
 test("portrait stage retries after a lost response reuse the stage and private object", async () => {
@@ -150,6 +178,7 @@ test("portrait stage retries after a lost response reuse the stage and private o
     }
     const stage = {
       stage_id: input.stage_id,
+      document_type: input.document_type,
       mime_type: input.mime_type,
       size_bytes: input.size_bytes,
       checksum_sha256: input.checksum_sha256,
@@ -188,7 +217,7 @@ test("portrait stage rejects a reused key with different sanitized content befor
       ? { ok: true, data: { stage: existing, replayed: true } }
       : { ok: false, kind: "conflict" };
     const stage = {
-      stage_id: input.stage_id, mime_type: input.mime_type,
+      stage_id: input.stage_id, document_type: input.document_type, mime_type: input.mime_type,
       size_bytes: input.size_bytes, checksum_sha256: input.checksum_sha256,
       status: "STAGED", claim_idempotency_key: null, entry_id: null, document_id: null,
     };

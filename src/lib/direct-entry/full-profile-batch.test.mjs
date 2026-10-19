@@ -139,6 +139,20 @@ test("server-generated request uses recruiter provider assertion and never sends
   assert.equal(JSON.stringify(body).includes("invalid-client-code"), false);
 });
 
+test("multi-entry form defaults omitted employment status to ON and preserves waiting status", () => {
+  const emptyStatus = preview(tsv([row("invalid-client-code")]), {
+    employeeCodeMode: "server-generated",
+  });
+  const defaulted = buildServerGeneratedFullProfileRequestBody(emptyStatus.rows, undefined, "ON");
+  assert.deepEqual(defaulted.rows[0].employment, { initial_status: "ON" });
+
+  const waitingStatus = preview(tsv([row("invalid-client-code", "2026-10-15", {
+    "Trạng thái làm việc": "Đang chờ việc",
+  })]), { employeeCodeMode: "server-generated" });
+  const preserved = buildServerGeneratedFullProfileRequestBody(waitingStatus.rows, undefined, "ON");
+  assert.deepEqual(preserved.rows[0].employment, { initial_status: "UNCONFIRMED" });
+});
+
 test("ho so day du: map worker/payment/employment dung contract", () => {
   const p = preview(tsv([row("hrp-2026-000123", "2026-10-15", {
     "Giới tính": "Nữ", DOB: "20/05/1990", "CMT/CCCD": NID, "Ngày cấp": "2020-06-01",

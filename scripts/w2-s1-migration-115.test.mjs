@@ -17,10 +17,10 @@ test("migration #115 appends portrait-stage create idempotency without changing 
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 116);
-    assert.equal(names.at(-2), MIGRATION_115);
-    assert.equal(names.at(-3), MIGRATION_114);
-    for (const name of names.slice(0, -2)) {
+    assert.equal(names.length, 119);
+    assert.equal(names.at(-5), MIGRATION_115);
+    assert.equal(names.at(-6), MIGRATION_114);
+    for (const name of names.slice(0, -5)) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await db.exec(await readFile(path.join(MIGRATION_DIR, MIGRATION_115), "utf8"));

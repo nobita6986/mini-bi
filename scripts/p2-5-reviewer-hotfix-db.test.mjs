@@ -1,13 +1,10 @@
 /**
  * P2.5 reviewer/accounting hotfix - root cause regression (PGlite over #1-#56).
  *
- * FINDING 1 root cause: the minimal reviewer bundle (change_review + pii_view +
- * payment_view + effective all scope, NO entry_admin) CAN read the change-request
- * detail and CAN decide, but CANNOT read the SUBMITTED entry projection that the
- * reviewer drawer needs for the BEFORE values. The entry read is gated by
- * draft scope (entry_own/entry_team/entry_admin) or an effective PM assignment,
- * so a reviewer falls through to 42501 -> the drawer shows the generic
- * "Yeu cau nay can phien ban giao dien hoac quyen xem khac." message.
+ * The reviewer bundle (change_review + pii_view + payment_view + effective all
+ * scope, NO entry_admin) can read and decide change requests. W2S1 also allows
+ * this bounded all-scope reviewer audience to read the submitted entry
+ * projection; pii/payment/document fields remain independently capability-gated.
  */
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -59,6 +56,7 @@ async function insertActor(db, auth, app, capabilities, scopeKind = null) {
 async function seed(db) {
   await db.query("insert into public.teams (team_id, code, display_name) values ($1,'TEAM_RV','Team RV')", [TEAM]);
   await db.query("insert into public.direct_entry_projects (project_id, display_name) values ($1,'Project RV')", [PROJ_A]);
+  await db.query("insert into public.direct_entry_banks (bank_id, display_name) values ('bank_rv','Bank RV')");
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter PM')", [REC_PM]);
   await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1,'hrp','2020-01-01')", [REC_PM]);
   await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1,$2,'2020-01-01')", [REC_PM, TEAM]);
@@ -142,27 +140,53 @@ test("reviewer bundle CAN read the change-request detail and the decision path",
   await db.close();
 });
 
-test("ROOT CAUSE: reviewer bundle CANNOT read the SUBMITTED entry projection (42501)", async () => {
+test("reviewer bundle CAN read the bounded SUBMITTED entry projection without entry_admin", async () => {
   const db = await buildDb();
   await seed(db);
   const { entry } = await addSubmittedEntry(db);
   // The reviewer drawer reads this endpoint for the BEFORE values.
-  await assert.rejects(
-    () => readProjection(db, REV_AUTH, REV_APP, entry),
-    (error) => error.code === "42501",
-    "reviewer thieu entry_admin bi tu choi doc SUBMITTED entry");
-  // entry_admin + all IS the audience that unlocks the read today.
+  const reviewer = await readProjection(db, REV_AUTH, REV_APP, entry);
+  assert.equal(reviewer.rows[0].data.scope_kind, "all");
+  assert.match(reviewer.rows[0].data.worker_details.display_name, /^RV Worker \d+$/,
+    "pii_view keeps worker details available to the authorized reviewer");
+  assert.deepEqual(reviewer.rows[0].data.documents, [],
+    "document_view remains an independent field gate");
+
+  // entry_admin + all remains a separately authorized audience.
   const admin = await readProjection(db, ADMIN_AUTH, ADMIN_APP, entry);
-  assert.ok(admin.rows[0].data, "entry_admin + all doc duoc");
+  assert.ok(admin.rows[0].data, "entry_admin + all can read the projection");
   await db.close();
 });
 
-test("ROOT CAUSE: same denial for worker_details and PAYMENT review reads", async () => {
+test("all-scope change reviewers without field capabilities receive a redacted projection", async () => {
   const db = await buildDb();
   await seed(db);
+  const restrictedAuth = uuid(50), restrictedApp = uuid(51);
+  await insertActor(db, restrictedAuth, restrictedApp, ["change_review"], "all");
   const { entry } = await addSubmittedEntry(db);
-  await assert.rejects(() => readProjection(db, REV_AUTH, REV_APP, entry),
-    (error) => error.code === "42501",
-    "chi mot duong doc DUY NHAT bi chan cho moi target kind");
+  await db.query(
+    "insert into public.direct_entry_payments(entry_id,state,account_number,bank_id,account_holder_name)" +
+      " values ($1,'provided','12345678','bank_rv','Synthetic Holder')",
+    [entry]);
+  const reviewer = await readProjection(db, REV_AUTH, REV_APP, entry);
+  assert.equal(reviewer.rows[0].data.payment.account_number, "12345678",
+    "payment_view allows the authorized reviewer to read payment details");
+  assert.equal(reviewer.rows[0].data.payment.bank_id, "bank_rv");
+
+  const restricted = await readProjection(db, restrictedAuth, restrictedApp, entry);
+  const data = restricted.rows[0].data;
+  assert.equal(data.scope_kind, "all");
+  assert.deepEqual(data.worker_details.display_name, { present: true },
+    "missing pii_view returns presence only, not the worker name");
+  assert.equal(data.worker_details.address.value, undefined,
+    "missing pii_view does not expose the address value");
+  assert.equal(data.payment.account_number, "••••5678",
+    "missing payment_view masks the payment account number");
+  assert.equal(data.payment.bank_id, undefined,
+    "missing payment_view does not expose the bank");
+  assert.equal(data.payment.account_holder_name, undefined,
+    "missing payment_view does not expose the account holder");
+  assert.deepEqual(data.documents, [],
+    "missing document_view returns no document metadata");
   await db.close();
 });

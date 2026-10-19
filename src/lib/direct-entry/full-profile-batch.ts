@@ -20,7 +20,7 @@ import {
   SERVER_GENERATED_EMPLOYEE_CODE_CONTRACT_VERSION,
   WORKER_PROFILE_CONTRACT_VERSION,
 } from "./full-profile-contract.ts";
-import type { LaborType } from "../contracts/direct-entry-v1.ts";
+import type { DocumentType, LaborType } from "../contracts/direct-entry-v1.ts";
 import type { WorkerProfileOptional } from "./worker-profile-paste.ts";
 import type {
   WorkerProfilePreview,
@@ -82,6 +82,8 @@ export type FullProfileRequestRow = {
    * kem bytes/storage key/URL. Server bo truong nay truoc khi goi RPC nghiep vu.
    */
   portrait_stage_id?: string;
+  /** Stage CCCD/Hợp đồng theo đúng loại; chỉ chứa ID tạm do máy chủ cấp. */
+  document_stage_ids?: Partial<Record<DocumentType, string>>;
 };
 
 export type FullProfileRequestBody = {
@@ -169,6 +171,8 @@ export function buildAccountMetadata(input: AccountMetadataInput): FullProfilePa
 export function buildFullProfileRow(
   row: WorkerProfilePreviewRow,
   portraitStageId?: string,
+  defaultInitialStatus?: "UNCONFIRMED" | "ON",
+  documentStageIds?: Partial<Record<DocumentType, string>>,
 ): FullProfileRequestRow | null {
   const { row: profile } = row;
   if (row.resolved.project_id === null || row.resolved.recruiter_id === null) return null;
@@ -194,6 +198,8 @@ export function buildFullProfileRow(
     } else {
       employment = { initial_status: status.value };
     }
+  } else if (defaultInitialStatus !== undefined) {
+    employment = { initial_status: defaultInitialStatus };
   }
 
   return {
@@ -216,16 +222,23 @@ export function buildFullProfileRow(
     payment,
     employment,
     ...(portraitStageId === undefined ? {} : { portrait_stage_id: portraitStageId }),
+    ...(documentStageIds && Object.keys(documentStageIds).length > 0
+      ? { document_stage_ids: documentStageIds } : {}),
   };
 }
 
 export function buildFullProfileRequestBody(
   rows: readonly WorkerProfilePreviewRow[],
   portraitStageIds?: ReadonlyMap<number, string>,
+  defaultInitialStatus?: "UNCONFIRMED" | "ON",
+  documentStageIds?: ReadonlyMap<number, Partial<Record<DocumentType, string>>>,
 ): FullProfileRequestBody | null {
   const projected: FullProfileRequestRow[] = [];
   for (const row of rows) {
-    const built = buildFullProfileRow(row, portraitStageIds?.get(row.sourceRow));
+    const built = buildFullProfileRow(
+      row, portraitStageIds?.get(row.sourceRow), defaultInitialStatus,
+      documentStageIds?.get(row.sourceRow),
+    );
     if (built === null) return null;
     projected.push(built);
   }
@@ -236,10 +249,15 @@ export function buildFullProfileRequestBody(
 export function buildServerGeneratedFullProfileRequestBody(
   rows: readonly WorkerProfilePreviewRow[],
   portraitStageIds?: ReadonlyMap<number, string>,
+  defaultInitialStatus?: "UNCONFIRMED" | "ON",
+  documentStageIds?: ReadonlyMap<number, Partial<Record<DocumentType, string>>>,
 ): ServerGeneratedFullProfileRequestBody | null {
   const projected: ServerGeneratedFullProfileRequestRow[] = [];
   for (const row of rows) {
-    const built = buildFullProfileRow(row, portraitStageIds?.get(row.sourceRow));
+    const built = buildFullProfileRow(
+      row, portraitStageIds?.get(row.sourceRow), defaultInitialStatus,
+      documentStageIds?.get(row.sourceRow),
+    );
     const providerType = row.resolved.provider_type;
     if (built === null || (providerType !== "hrp" && providerType !== "vendor")) return null;
     const { employee_code: _employeeCode, ...withoutCode } = built;
