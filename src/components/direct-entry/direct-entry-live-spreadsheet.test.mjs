@@ -49,6 +49,7 @@ const editDraftHandler = slice("const reloadSubmissionDraft = useCallback", "con
 test("live render spreadsheet grid va khoi tao 30 staged rows client-only", () => {
   assert.match(live, /<DirectEntrySpreadsheetGrid/);
   assert.match(live, /useState<SpreadsheetRowModel>\(\(\) => createSpreadsheetRowModel\(\)\)/);
+  assert.match(live, /const \[inputMode, setInputMode\] = useState<"form" \| "grid">\("grid"\)/);
   assert.equal(SPREADSHEET_INITIAL_ROW_COUNT, 30);
   assert.equal(SPREADSHEET_SPARE_ROW_COUNT, 10);
   assert.equal(SPREADSHEET_MAX_DATA_ROWS, 100);

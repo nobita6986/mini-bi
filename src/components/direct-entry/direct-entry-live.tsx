@@ -947,7 +947,7 @@ export function DirectEntryLive() {
   }, [fetchConflictCopy]);
 
   const [stagedModel, setStagedModel] = useState<SpreadsheetRowModel>(() => createSpreadsheetRowModel());
-  const [inputMode, setInputMode] = useState<"form" | "grid">("form");
+  const [inputMode, setInputMode] = useState<"form" | "grid">("grid");
   const [visibleFormRowIds, setVisibleFormRowIds] = useState<string[]>(() =>
     stagedModel.rows[0] ? [stagedModel.rows[0].clientRowId] : []);
   const [pendingInitialUploadsByEntryId, setPendingInitialUploadsByEntryId] = useState<

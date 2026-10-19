@@ -108,3 +108,12 @@ test("403/404 giữ phân loại rejected để UI giữ row", async () => {
     assert.deepEqual(result, { kind: "rejected", code });
   }
 });
+
+test("retry phân biệt lỗi mạng, server và phản hồi để người dùng biết bước tiếp", () => {
+  assert.match(draftRowDeleteErrorMessage({ kind: "retry", code: "DRAFT_DELETE_NETWORK" }),
+    /Mất kết nối/);
+  assert.match(draftRowDeleteErrorMessage({ kind: "retry", code: "DRAFT_DELETE_UNAVAILABLE" }),
+    /Máy chủ chưa xác nhận/);
+  assert.match(draftRowDeleteErrorMessage({ kind: "retry", code: "DRAFT_DELETE_RESPONSE_INVALID" }),
+    /Phản hồi máy chủ/);
+});
