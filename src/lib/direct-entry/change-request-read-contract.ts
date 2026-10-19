@@ -276,6 +276,7 @@ export const READ_PROPOSAL_KEYS: Readonly<Record<ChangeRequestTargetKind, readon
     PAYMENT: ["state", "account_number", "bank_id", "account_holder_name"],
     WORK_STATUS: ["status", "effective_date", "leave_reason"],
     DOCUMENT: ["document_type", "size_bytes", "mime_type"],
+    ENTRY_VOID: [],
   });
 
 const ENTRY_FIELD_NON_PII_KEYS = [
@@ -296,6 +297,7 @@ export function projectReadProposal(
   value: unknown,
 ): Record<string, unknown> | null {
   if (!isRecord(value)) return null;
+  if (kind === "ENTRY_VOID") return Object.keys(value).length === 0 ? {} : null;
   const allowed: readonly string[] | undefined = READ_PROPOSAL_KEYS[kind];
   if (!allowed || !hasOnlyKeys(value, allowed) || Object.keys(value).length < 1) return null;
   if (kind === "ENTRY_FIELD") {

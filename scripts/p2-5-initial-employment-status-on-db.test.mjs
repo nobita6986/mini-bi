@@ -22,13 +22,13 @@ async function database() {
 test("initial employment status policy is migration #57 and patches every creation path", async () => {
   const { db, names } = await database();
   try {
-    assert.equal(names.length, 119);
-    assert.equal(names.at(-(62 + 1)), MIGRATION);
-    assert.equal(names.at(-(18 + 1)), "20261015160000_pre_w2_initial_status_any_start_date.sql",
+    assert.equal(names.length, 120);
+    assert.equal(names.at(-(63 + 1)), MIGRATION);
+    assert.equal(names.at(-(19 + 1)), "20261015160000_pre_w2_initial_status_any_start_date.sql",
       "initial-status hotfix remains append-only migration #101");
-    assert.equal(names.at(-(17 + 1)), "20261015170000_pre_w2_uploader_submission_queues.sql",
+    assert.equal(names.at(-(18 + 1)), "20261015170000_pre_w2_uploader_submission_queues.sql",
       "uploader submission queues is append-only migration #102");
-    assert.equal(names.at(-(16 + 1)), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
+    assert.equal(names.at(-(17 + 1)), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
       "direct-entry batch workflow is append-only migration #103");
     const result = await db.query(`
       select p.proname, p.prosrc

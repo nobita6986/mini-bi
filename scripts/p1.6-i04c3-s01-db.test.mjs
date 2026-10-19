@@ -97,8 +97,8 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 119,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #119");
+  assert.equal(totalCount, 120,
+    "the ledger carries W03A account-read repair #84 and append-only migrations through #120");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);
@@ -1070,12 +1070,12 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // #109 adds one service-role RPC; #113 adds five, #114 adds two, #115 adds one,
     // and #116 adds two; #118 adds three service-role-only worker-document
     // staging RPCs and #119 tightens the batch stage-count bound in place. The
-    // current migration set measures 258 total / 129
-    // service-role / 129 internal, with no exposed internal functions.
+    // current migration set measures 259 distinct names / 129 service-role /
+    // 130 internal; #120 adds one private download helper, with no exposed internal functions.
     assert.deepEqual(result.rows[0], {
-      total: 258,
+      total: 259,
       service_role: 129,
-      internal: 129,
+      internal: 130,
       exposed_internal: 0,
     });
   } finally {

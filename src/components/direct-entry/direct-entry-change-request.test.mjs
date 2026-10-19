@@ -37,9 +37,10 @@ test("S03B1 list/proposer never fetch the change-request detail endpoint", () =>
 });
 
 test("proposer chi gui cac target kind duoc phep, ENTRY_FIELD giu dung 5 field non-PII", () => {
-  // S03B4A: proposer ho tro them worker_details/PAYMENT/WORK_STATUS nhung moi item van di qua
+  // S03B4A va ENTRY_VOID: moi item van di qua validator cua create contract;
+  // DOCUMENT khong duoc chon (chua co staging boundary).
   // validator cua create contract; DOCUMENT khong duoc chon (chua co staging boundary).
-  assert.match(proposer, /const PROPOSER_KINDS: readonly ProposerTargetKind\[\] =\n  \["ENTRY_FIELD", "WORKER", "PAYMENT", "WORK_STATUS"\]/);
+  assert.match(proposer, /const PROPOSER_KINDS: readonly ProposerTargetKind\[\] =\n  \["ENTRY_FIELD", "WORKER", "PAYMENT", "WORK_STATUS", "ENTRY_VOID"\]/);
   assert.match(proposer, /<option value="DOCUMENT" disabled>\{DOCUMENT_STAGING_MESSAGE\}<\/option>/);
   assert.match(proposer, /buildChangeRequestItem\(\{/);
   assert.match(proposer, /buildWorkerDetailsProposal\(/);
