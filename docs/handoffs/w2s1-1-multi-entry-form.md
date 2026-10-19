@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation is in a dedicated worktree on `codex/w2s1-1-multi-entry-form`, based on `main` at `7cfa0477b23deed5425f54e35a8951d7d82e62a4`. Implementation commit `01842e63babdd455f7de00519f2e5c7046d94999` is pushed and PR #64 is open. All CI checks passed for the implementation code. This memo is a handoff record; any follow-up status should be taken from PR #64 checks. No migration was applied and no database was accessed. CI created a Vercel Preview; no Production deployment was performed.
+The form-first entry and card-grid UI were merged through PRs #64 and #65. This handoff does not declare W2S1.1 closed: real-device UAT and accessibility checks remain outstanding. No migration was applied and no database was accessed by those PRs. CI created Vercel Preview deployments; no Production deployment was performed.
 
 ## Scope delivered
 
@@ -35,15 +35,17 @@ Implementation is in a dedicated worktree on `codex/w2s1-1-multi-entry-form`, ba
 - `pnpm build`: pass.
 - `pnpm docs:check`: 6/6 pass.
 - `git diff --check`: pass.
-- `pnpm secrets:check`: not run; required external `C:\CodeApp\supabase-bi.txt` is absent in this workspace.
+- `pnpm secrets:check`: not run as part of this documentation-only reaper decision update.
 - Real-device UAT, screen-reader testing, contrast review, and touch-target verification remain outstanding.
 - Malformed success-response handling is fail-closed: rows the server confirmed as saved are removed from the editable queue even if returned entry IDs cannot be mapped, preventing duplicate creation; files must then be attached from the existing worker documents surface after reload.
 
 ## Reaper schedule status
 
-The repository already has `.github/workflows/w2s1-staging-portrait-stage-reaper.yml`: hourly schedule, staging-only guard, and 24-hour expiry policy. The workflow is disabled unless repository variable `W2S1_STAGING_REAPER_ENABLED` is exactly `true` and requires these secrets in the `w2s1-staging-reaper` GitHub environment: `W2S1_STAGING_SUPABASE_URL`, `W2S1_STAGING_SUPABASE_SECRET_KEY`, `W2S1_STAGING_R2_ACCOUNT_ID`, `W2S1_STAGING_R2_BUCKET_NAME`, `W2S1_STAGING_R2_ACCESS_KEY_ID`, and `W2S1_STAGING_R2_SECRET_ACCESS_KEY`.
+Owner decision (2026-10-19): do not configure or run a reaper for Vercel Preview. Leave `.github/workflows/w2s1-staging-portrait-stage-reaper.yml` disabled and do not provision a Vercel-target GitHub environment, secrets, or enablement variable. W2S1.1 upload/save remains functional without the schedule; abandoned stage objects in the test bucket will not be removed automatically, which is accepted for this low-volume test environment. Do not use a broad bucket purge as a substitute.
 
-Read-only inspection found no repository Actions variables and no `w2s1-staging-reaper` environment yet. The Vercel `mini-bi` Preview environment lists the required staging/preview variable names, but Vercel CLI reports secret values cannot be pulled. Therefore no GitHub secret or variable has been created, and the reaper has not been enabled or run. Do not substitute repository-wide generic R2 credentials: their target bucket has not been verified as the preview bucket. Complete environment secret provisioning from the authorized staging/preview settings, verify the exact Supabase ref `oyykqfxkyqhxgrfntokl` and R2 bucket `hrp-bi-preview`, then set repository variable `W2S1_STAGING_REAPER_ENABLED=true` to enable the workflow. Never use Production/VPS credentials or buckets.
+VPS deployment requirement: before enabling W2S1 staged document uploads on a persistent VPS, deploy a dedicated scheduled reaper there. Preferred host arrangement is a separate `systemd` oneshot service plus an hourly `systemd` timer, independent of web requests. Run it as a restricted service account with environment credentials stored outside the repository and readable only by that account. The job claims only `STAGED` items older than the 24-hour TTL, deletes the corresponding temporary object, and records cleanup completion; `CLAIMED` and `ATTACHED` stages and worker/business records must never be reaped. Failed cleanup must remain retryable and observable in logs/monitoring.
+
+The current runner and target guard are staging-only: they require Supabase ref `oyykqfxkyqhxgrfntokl` and bucket `hrp-bi-preview`. They are not production/VPS-ready and must fail closed on other targets. Before any VPS activation, add and test an explicit environment-specific target allowlist for that VPS's exact Supabase ref and R2 bucket, with separate credentials and timer configuration for `bi-test` versus Production. Never share or substitute credentials/buckets across environments. Enable the timer only after the matching release/migrations are installed and a controlled run confirms the expected target and cleanup result.
 
 ## Manual UAT checklist before closing S1.1
 
@@ -53,3 +55,7 @@ Read-only inspection found no repository Actions variables and no `w2s1-staging-
 4. Verify draft/edit permissions, version conflict, retry, skip-CCCD path, and contract continuation; ensure unauthorized rows do not gain an upload path.
 5. Keyboard-only: reach every field/action in logical order, operate native selects/file inputs, identify required fields/errors, and confirm visible focus. At 200% zoom and narrow viewport, confirm no clipped controls or horizontal page overflow.
 6. Screen reader and contrast check: labels, required markers, per-row errors, upload status, save/retry announcements, and touch targets. Record device/browser and results.
+
+## Revision log
+
+- 2026-10-19 — Owner decision: Vercel Preview does not need a configured reaper; its staging-only scheduled workflow remains disabled. Added VPS release requirement for a separate hourly `systemd` timer and explicit per-environment target guards. The existing runner remains staging-only and cannot be pointed at Production. No database access, migration apply, or deployment was performed for this documentation change.
