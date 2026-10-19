@@ -44,6 +44,7 @@ const row = {
 const page = {
   items: [row], scope: "managed", page_size: 25, has_more: false, next_cursor: null,
   authorization_date: "2026-10-08",
+  summary: { total_workers: 1, project_count: 1, recruiter_count: 1 },
 };
 
 function query(search) {
@@ -136,6 +137,9 @@ test("page projection enforces scope, page size and cursor consistency", () => {
     "has_more without cursor": { ...page, has_more: true },
     "cursor without has_more": { ...page, next_cursor: cursor },
     "bad authorization date": { ...page, authorization_date: "08/10/2026" },
+    "negative summary count": { ...page, summary: { ...page.summary, total_workers: -1 } },
+    "unsafe summary count": { ...page, summary: { ...page.summary, project_count: Number.MAX_SAFE_INTEGER + 1 } },
+    "extra summary key": { ...page, summary: { ...page.summary, leaked: 1 } },
     // P3.1-W02C-R1: an unknown but well-formed key is the database's business; this
     // projection only rejects a key that is not a canonical key at all.
     "bad item": { ...page, items: [{ ...row, labor_type: "contractor" }] },

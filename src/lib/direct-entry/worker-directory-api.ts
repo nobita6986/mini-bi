@@ -105,5 +105,6 @@ export async function listWorkers(
     has_more: result.data.has_more,
     next_cursor: result.data.next_cursor,
     authorization_date: result.data.authorization_date,
+    summary: result.data.summary,
   }, 200);
 }

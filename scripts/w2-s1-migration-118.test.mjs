@@ -22,10 +22,10 @@ test("W2S1 migrations #118-#119 stage worker documents and allow up to four per 
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 120);
-    assert.equal(names.at(-3), MIGRATION_118);
-    assert.equal(names.at(-2), MIGRATION_119);
-    for (const name of names.slice(0, -3)) {
+    assert.equal(names.length, 121);
+    assert.equal(names.at(-4), MIGRATION_118);
+    assert.equal(names.at(-3), MIGRATION_119);
+    for (const name of names.slice(0, -4)) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await db.exec(await readFile(path.join(MIGRATION_DIR, MIGRATION_118), "utf8"));

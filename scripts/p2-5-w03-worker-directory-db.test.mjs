@@ -54,10 +54,10 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 120, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (1 + 67)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (1 + 68)], W03_MIGRATION, "W03 is #52");
-  assert.equal(names[names.length - (1 + 69)], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.equal(names.length, 121, "the ledger includes worker-directory summary #121");
+  assert.equal(names[names.length - (1 + 68)], W04_MIGRATION, "W04 is #53");
+  assert.equal(names[names.length - (1 + 69)], W03_MIGRATION, "W03 is #52");
+  assert.equal(names[names.length - (1 + 70)], W02_MIGRATION, "W03 depends on W02 #51");
   return db;
 }
 
@@ -432,6 +432,9 @@ test("W03-R1: the all audience accepts entry_admin or change_review, always with
     const reviewerPage = await listWorkers(db, {
       auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" });
     assert.deepEqual(codes(reviewerPage.items), ALL_CODES);
+    assert.deepEqual(reviewerPage.summary,
+      { total_workers: 2, project_count: 2, recruiter_count: 2 },
+      "all-scope summary remains restricted to the same authorized audience");
 
     // 3. entry_admin without an all scope -> deny.
     await grantCapability(db, MGR_A_APP, "entry_admin");
@@ -513,7 +516,9 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
     await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
     const codesInOrder = [];
     for (const day of ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"]) {
-      const entry = await addWorker(db, { project: PROJ_A, workDate: day });
+      const entry = await addWorker(db, {
+        project: PROJ_A, recruiter: day === "2026-10-03" ? REC_B : REC_A, workDate: day,
+      });
       codesInOrder.push(entry);
     }
     await addWorker(db, { project: PROJ_A, workDate: "2026-10-06", state: "REVIEW" });
@@ -524,6 +529,8 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
     const first = await listWorkers(db, { scope: "managed", pageSize: 2 });
     assert.equal(first.page_size, 2);
     assert.equal(first.has_more, true);
+    assert.deepEqual(first.summary, { total_workers: 6, project_count: 1, recruiter_count: 2 },
+      "summary covers every authorized, filtered row rather than only this page");
     assert.deepEqual(first.items.map((row) => row.first_work_date),
       ["2026-10-07", "2026-10-05"], "newest first, stable ordering");
     assert.match(first.next_cursor, /^[0-9]{8}:[0-9a-f-]{36}$/);
@@ -533,6 +540,8 @@ test("W03: pagination is keyset, stable and bounded; filters are server-side", a
     let guard = 0;
     while (cursor !== null && guard < 10) {
       const page = await listWorkers(db, { scope: "managed", pageSize: 2, cursor });
+      assert.deepEqual(page.summary, first.summary,
+        "summary stays cursor-independent on every page");
       seen.push(...page.items.map((row) => row.entry_id));
       cursor = page.next_cursor;
       guard += 1;
@@ -586,6 +595,8 @@ test("W03: the employment status filter reads the latest status event", async ()
     const off = await listWorkers(db, { scope: "managed", employment: "OFF" });
     assert.deepEqual(off.items.map((row) => row.entry_id), [worker]);
     assert.equal(off.items[0].employment_status, "OFF");
+    assert.deepEqual(off.summary, { total_workers: 1, project_count: 1, recruiter_count: 1 },
+      "summary follows the selected employment status");
     const unconfirmed = await listWorkers(db, { scope: "managed", employment: "UNCONFIRMED" });
     assert.deepEqual(unconfirmed.items.map((row) => row.entry_id), [untouched],
       "the filter follows the latest status event");

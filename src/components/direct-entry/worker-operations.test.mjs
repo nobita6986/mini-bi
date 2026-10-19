@@ -68,6 +68,17 @@ test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi t
   assert.match(source, /setSubmissionPage\(resetTabPage\(\)\)/);
 });
 
+test("worker directory displays server-filtered totals, not only the loaded page", () => {
+  assert.match(source, /summary: parsed\.summary/);
+  assert.match(source, /data-testid="worker-filter-summary"/);
+  for (const field of ["total_workers", "project_count", "recruiter_count"]) {
+    assert.match(source, new RegExp("workerSummary\\." + field));
+  }
+  assert.match(source, /filters\.status === "" \? "Tất cả" : workerStatusLabel\(filters\.status\)/);
+  assert.match(source, /setWorkerSummary\(null\)/,
+    "filter/tab changes clear the previous query's summary while the next response loads");
+});
+
 test("W06-R2: review payload di qua projectChangeRequestListPage, khong cast raw", () => {
   assert.match(source, /parseChangeRequestPageResponse/);
   assert.match(source, /parsed\.requests/);

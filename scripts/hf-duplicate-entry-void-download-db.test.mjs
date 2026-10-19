@@ -98,7 +98,7 @@ async function callDuplicateReport(db) {
 test("#120 preserves document_view while adding bounded submitted-row download fallback", async () => {
   const { db, migrationNames } = await createMigratedDatabase();
   try {
-    assert.equal(migrationNames.at(-1), VOID_MIGRATION);
+    assert.equal(migrationNames.at(-2), VOID_MIGRATION);
     const fixture = await seedChangeRequestFixture(db);
     const viewer = {
       auth_subject: "10000000-0000-4000-8000-000000000020",

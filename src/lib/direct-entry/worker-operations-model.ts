@@ -238,7 +238,7 @@ export function parseWorkerPageResponse(
   const body = payload as Record<string, unknown>;
   if (body.ok !== true) return null;
   const slice: Record<string, unknown> = {};
-  for (const key of ["items", "scope", "page_size", "has_more", "next_cursor", "authorization_date"]) {
+  for (const key of ["items", "scope", "page_size", "has_more", "next_cursor", "authorization_date", "summary"]) {
     if (!(key in body)) return null;
     slice[key] = body[key];
   }

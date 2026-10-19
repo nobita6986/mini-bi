@@ -105,11 +105,11 @@ await db.query(
 // ---------------------------------------------------------------------------
 // Assertions 1-2: ledger inventory and append-only discipline.
 // ---------------------------------------------------------------------------
-test("assertions 1-2: 120 migrations, #71 stays append-only, and #72 remains W02-A", async () => {
+test("assertions 1-2: 121 migrations, #71 stays append-only, and #72 remains W02-A", async () => {
   const names = await readMigrationNames();
-  assert.equal(names.length, 120, "the ledger carries the complete 120-migration ledger");
+  assert.equal(names.length, 121, "the ledger carries the complete 121-migration ledger");
   assert.equal(names[70], NEW_MIGRATION, "#71 remains the W01D migration");
-  assert.equal(names.at(-(48 + 1)), W02A_MIGRATION, "#72 remains the W02-A migration");
+  assert.equal(names.at(-(50)), W02A_MIGRATION, "#72 remains the W02-A migration");
   assert.equal(names.filter((name) => name.startsWith("20261009070000")).length, 1,
     "exactly one migration occupies the #71 slot");
   assert.equal(names.filter((name) => name.startsWith("20261009060000")).length, 1,
