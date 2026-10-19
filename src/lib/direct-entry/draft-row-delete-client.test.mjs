@@ -40,6 +40,25 @@ test("delete gửi đúng method/header/body OCC và chỉ nhận projection 200
   assert.equal(calls[0].init.body, '{"expected_version":7}');
 });
 
+test("fetchImpl được gọi độc lập để native Window.fetch không sai receiver", async () => {
+  const result = await deleteDraftRow({
+    entryId,
+    expectedVersion: 7,
+    idempotencyKey: key,
+    fetchImpl: async function () {
+      assert.equal(this, undefined);
+      return Response.json({
+        ok: true,
+        entry_id: entryId,
+        deleted: true,
+        entry_version: 8,
+      });
+    },
+  });
+
+  assert.deepEqual(result, { kind: "deleted", entryId, entryVersion: 8 });
+});
+
 test("conflict và final-row là lỗi terminal rõ ràng", async () => {
   for (const code of ["DRAFT_CONFLICT", "DRAFT_FINAL_ROW"]) {
     const result = await deleteDraftRow({
