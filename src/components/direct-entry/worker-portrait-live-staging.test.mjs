@@ -223,16 +223,19 @@ test("RECOVERY: ho so da luu nhung anh chua xong => pending (khong bao 'chua luu
 
 test("LIVE wiring: hai luồng dùng chung controller và payload mang stage_id", () => {
   // Bang nhieu dong.
-  assert.match(live, /buildServerGeneratedFullProfileRequestBody\(validPreviewRows, portraitStageIdsBySourceRow\)/);
+  assert.match(live, /buildServerGeneratedFullProfileRequestBody\([\s\S]{0,220}validPreviewRows,[\s\S]{0,150}portraitStageIdsBySourceRow,[\s\S]{0,150}documentStageIdsBySourceRow,/);
   // Quick-add chi gui row dang mo.
   assert.match(live, /buildServerGeneratedFullProfileRequestBody\(\s*\n\s*\[matchingPreview\],/);
   assert.match(live, /const portraitStages = useWorkerPortraitStages\(\{ rowBindings: portraitRowBindings \}\)/);
+  for (const documentType of ["CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"]) {
+    assert.match(live, new RegExp(`documentType: "${documentType}"`));
+  }
   assert.match(live, /const portraitRowBindings = useMemo\(\(\) => buildPortraitRowBindings\(\{/);
   assert.match(live, /const portraitStageIdsBySourceRow = useMemo\(\(\) => buildPortraitStageIdsBySourceRow\(\{/);
   // Saved => settle; retry => recovery truoc khi bao loi.
-  assert.match(live, /portraitStages\.settle\(rowKey, stageId\)/);
-  assert.match(live, /portraitStages\.settle\(clientRowId, savedStageId\)/);
-  assert.match(live, /const portraitPending = await reconcileStagedPortraits\(\);/);
+  assert.match(live, /controller\.settle\(rowKey, stageId\)/);
+  assert.match(live, /const savedStageId = controller\.bindableStageIds\.get\(clientRowId\)/);
+  assert.match(live, /const documentPending = await reconcileStagedDocuments\(\);/);
   assert.match(live, /recoverWorkerPortraitStage\(\{ stageId, fetchImpl: fetch \}\)/);
   // Quick editor co slot anh + nut don.
   assert.match(live, /<WorkerPortraitStageSlot/);
@@ -242,9 +245,14 @@ test("LIVE wiring: hai luồng dùng chung controller và payload mang stage_id"
   // Controller dùng chung: khoá dòng string + requestId.
   assert.match(hook, /const requestId = crypto\.randomUUID\(\);/);
   assert.match(hook, /idempotencyKey: crypto\.randomUUID\(\)/);
+  assert.match(hook, /retryStage\(rowKey: string\)/);
+  assert.match(hook, /runStage\(rowKey, pending\)/);
+  assert.match(hook, /retryableRows/);
   assert.match(hook, /selectBindablePortraitStages/);
   assert.match(hook, /selectOrphanPortraitStages/);
-  assert.match(slot, /accept="image\/jpeg,image\/png"/);
+  assert.match(slot, /accept=\{isPortrait \? "image\/jpeg,image\/png" : "image\/jpeg,image\/png,application\/pdf"\}/);
+  assert.match(slot, /Thử lại cùng tệp/);
+  assert.match(slot, /disabled=\{busy \|\| staging \|\| retryable\}/);
 });
 
 test("LIVE: không mở rộng POST /batches (composer draft vẫn là luồng riêng)", () => {

@@ -9,6 +9,7 @@
 import {
   portraitStageErrorMessage,
   type PortraitStageSlot,
+  type WorkerStageDocumentType,
 } from "@/lib/direct-entry/worker-portrait-stage-client";
 import styles from "./direct-entry-shell.module.css";
 
@@ -21,32 +22,64 @@ export type PortraitSlotProps = {
   testIdSuffix: string;
   slot: PortraitStageSlot | undefined;
   busy: boolean;
+  retryable: boolean;
   onStage(rowKey: string, file: File): void;
+  onRetry(rowKey: string): void;
   onCancel(rowKey: string, stageId: string): void;
 };
 
-export function WorkerPortraitStageSlot({
+const DOCUMENT_SLOT_LABELS: Readonly<Record<WorkerStageDocumentType, string>> = {
+  WORKER_PORTRAIT: "Ảnh NLĐ (JPEG/PNG, tối đa 10 MiB)",
+  CCCD_FRONT: "CCCD mặt trước (ảnh hoặc PDF, tối đa 10 MiB)",
+  CCCD_BACK: "CCCD mặt sau (ảnh hoặc PDF, tối đa 10 MiB)",
+  EMPLOYMENT_CONTRACT: "Hợp đồng (ảnh hoặc PDF, tối đa 10 MiB)",
+};
+
+function documentErrorMessage(code: string, documentType: WorkerStageDocumentType): string {
+  if (documentType === "WORKER_PORTRAIT") return portraitStageErrorMessage(code);
+  if (code === "DOCUMENT_SIZE_INVALID") return "Tệp phải lớn hơn 0 và không vượt quá 10 MiB.";
+  if (code === "DOCUMENT_MIME_INVALID") return "Chỉ chấp nhận JPEG, PNG hoặc PDF.";
+  if (code === "DOCUMENT_CONTENT_INVALID") return "Nội dung tệp không khớp định dạng đã chọn.";
+  if (code === "DOCUMENT_DENIED") return "Bạn không có quyền tải hồ sơ NLĐ.";
+  return "Không xử lý được tệp hồ sơ. Hãy thử lại.";
+}
+
+export function WorkerPortraitStageSlot(props: PortraitSlotProps) {
+  return <WorkerDocumentStageSlot {...props} documentType="WORKER_PORTRAIT" />;
+}
+
+export type WorkerDocumentStageSlotProps = PortraitSlotProps & {
+  documentType: WorkerStageDocumentType;
+};
+
+export function WorkerDocumentStageSlot({
   rowKey,
   testIdSuffix,
   slot,
   busy,
+  retryable,
   onStage,
+  onRetry,
   onCancel,
-}: PortraitSlotProps) {
-  const inputId = "portrait-stage-" + testIdSuffix;
+  documentType,
+}: WorkerDocumentStageSlotProps) {
+  const inputId = "document-stage-" + documentType.toLowerCase() + "-" + testIdSuffix;
   const staging = slot?.status === "staging";
+  const isPortrait = documentType === "WORKER_PORTRAIT";
+  const title = isPortrait ? "Ảnh NLĐ" : DOCUMENT_SLOT_LABELS[documentType].split(" (")[0];
+  const statusPrefix = isPortrait ? "profile-portrait-" : "profile-document-" + documentType.toLowerCase() + "-";
   return (
-    <div className={styles.profileSection} data-testid={"profile-portrait-" + testIdSuffix}>
-      <h4>Ảnh NLĐ</h4>
+    <div className={styles.profileSection} data-testid={statusPrefix + testIdSuffix}>
+      <h4>{title}</h4>
       <label className={styles.field} htmlFor={inputId}>
-        <span>{PORTRAIT_SLOT_LABEL}</span>
+        <span>{DOCUMENT_SLOT_LABELS[documentType]}</span>
         <span className={styles.filePickerControl}>
           <input
             id={inputId}
             className={styles.filePickerInput}
             type="file"
-            accept="image/jpeg,image/png"
-            disabled={busy || staging}
+            accept={isPortrait ? "image/jpeg,image/png" : "image/jpeg,image/png,application/pdf"}
+            disabled={busy || staging || retryable}
             onChange={(event) => {
               const file = event.currentTarget.files?.[0] ?? null;
               event.currentTarget.value = "";
@@ -54,33 +87,44 @@ export function WorkerPortraitStageSlot({
             }}
           />
           <span className={styles.filePickerButton} aria-hidden="true">
-            {slot?.status === "staged" ? "Chọn ảnh khác" : "Chọn ảnh"}
+            {slot?.status === "staged" ? "Chọn tệp khác" : "Chọn tệp"}
           </span>
         </span>
       </label>
       <p
         className={slot?.status === "error" ? styles.documentError : styles.documentStatus}
         role={slot?.status === "error" ? "alert" : "status"}
-        data-testid={"profile-portrait-status-" + testIdSuffix}
+        data-testid={statusPrefix + "status-" + testIdSuffix}
       >
-        {slot === undefined ? "Chưa chọn ảnh cho dòng này." : null}
-        {staging ? "Đang gửi ảnh lên bản nháp của máy chủ…" : null}
+        {slot === undefined ? (isPortrait ? "Chưa chọn ảnh cho dòng này." : "Chưa chọn tệp cho dòng này.") : null}
+        {staging ? "Đang tải lên bản nháp của máy chủ…" : null}
         {slot?.status === "staged"
-          ? "Ảnh đang ở bản nháp; máy chủ sẽ gắn vào hồ sơ khi lưu thành công." : null}
-        {slot?.status === "error" ? portraitStageErrorMessage(slot.code) : null}
+          ? "Tệp đang ở bản nháp; máy chủ sẽ gắn vào hồ sơ khi lưu thành công." : null}
+        {slot?.status === "error" ? documentErrorMessage(slot.code, documentType) : null}
         {slot?.status === "stale"
-          ? "Ảnh cũ đã bị vô hiệu hóa vì dòng dữ liệu đã thay đổi và chưa hủy được trên máy chủ. " +
-            "Ảnh này sẽ không được gắn vào hồ sơ nào; hãy thử dọn lại." : null}
+          ? "Tệp cũ đã bị vô hiệu hóa vì dòng dữ liệu đã thay đổi và chưa hủy được trên máy chủ. " +
+            "Tệp này sẽ không được gắn vào hồ sơ nào; hãy thử dọn lại." : null}
       </p>
+      {slot?.status === "error" && retryable ? (
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          disabled={busy}
+          data-testid={statusPrefix + "retry-" + testIdSuffix}
+          onClick={() => onRetry(rowKey)}
+        >
+          Thử lại cùng tệp
+        </button>
+      ) : null}
       {slot?.status === "staged" ? (
         <button
           type="button"
           className={styles.secondaryButton}
           disabled={busy}
-          data-testid={"profile-portrait-cancel-" + testIdSuffix}
+          data-testid={statusPrefix + "cancel-" + testIdSuffix}
           onClick={() => onCancel(rowKey, slot.stageId)}
         >
-          Hủy ảnh
+          Hủy tệp
         </button>
       ) : null}
       {slot?.status === "stale" ? (
@@ -88,10 +132,10 @@ export function WorkerPortraitStageSlot({
           type="button"
           className={styles.secondaryButton}
           disabled={busy}
-          data-testid={"profile-portrait-cleanup-" + testIdSuffix}
+          data-testid={statusPrefix + "cleanup-" + testIdSuffix}
           onClick={() => onCancel(rowKey, slot.stageId)}
         >
-          Dọn lại ảnh cũ
+          Dọn lại tệp cũ
         </button>
       ) : null}
     </div>

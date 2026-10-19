@@ -6,6 +6,7 @@
  * (checksum, storage_key, bucket, signed URL, ...) => tra null (fail-closed), khong render.
  */
 import type { DocumentType } from "../contracts/direct-entry-v1.ts";
+import { projectWorkerPortrait, type WorkerPortraitProjection } from "./worker-detail-projection.ts";
 
 /** Cung allow-list voi projectEntry cua server (write-api.ts). */
 const DOCUMENT_KEYS = new Set([
@@ -33,6 +34,8 @@ export type DocumentDetailSummary = {
 export type EntryDetailProjection = {
   documents: DocumentDetailSummary[];
   entryVersion: number;
+  /** Optional for legacy callers; present on W2-S1 entry projections. */
+  workerPortrait?: WorkerPortraitProjection | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,7 +82,18 @@ export function projectEntryDetail(
       validation_status: document.validation_status,
     });
   }
-  return { documents, entryVersion: entry.version };
+  let workerPortrait: WorkerPortraitProjection | null | undefined;
+  if ("worker_portrait" in entry) {
+    workerPortrait = entry.worker_portrait === null
+      ? null
+      : projectWorkerPortrait(entry.worker_portrait) ?? undefined;
+    if (entry.worker_portrait !== null && workerPortrait === undefined) return null;
+  }
+  return {
+    documents,
+    entryVersion: entry.version,
+    ...(workerPortrait === undefined ? {} : { workerPortrait }),
+  };
 }
 
 export type DetailFetch = (url: string, init?: RequestInit) => Promise<Response>;

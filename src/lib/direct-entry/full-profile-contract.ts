@@ -2,6 +2,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import {
   isCanonicalLaborTypeKey,
   validateEmployeeCode,
+  type DocumentType,
   type LaborType,
 } from "../contracts/direct-entry-v1.ts";
 import { isCanonicalNationalId } from "../contracts/national-id.ts";
@@ -18,10 +19,12 @@ const ROOT_KEYS = new Set(["contract_version", "rows"]);
 const ROW_KEYS = new Set([
   "project_id", "first_work_date", "employee_code", "recruiter_id", "labor_type",
   "display_name", "worker", "general_note", "payment", "employment", "portrait_stage_id",
+  "document_stage_ids",
 ]);
 const SERVER_GENERATED_ROW_KEYS = new Set([
   "project_id", "first_work_date", "provider_type", "recruiter_id", "labor_type",
   "display_name", "worker", "general_note", "payment", "employment", "portrait_stage_id",
+  "document_stage_ids",
 ]);
 const WORKER_KEYS = new Set([
   "gender", "date_of_birth", "national_id", "national_id_issued_at",
@@ -41,6 +44,7 @@ export type OptionalText =
 
 export type FullProfileRpcRow = {
   portrait_stage_id?: string;
+  document_stage_ids?: Partial<Record<DocumentType, string>>;
   project_id: string;
   first_work_date: string;
   employee_code: string;
@@ -329,6 +333,19 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
     } = item;
     const provider_type = item.provider_type;
     const portraitStageId = item.portrait_stage_id;
+    const documentStageValue = item.document_stage_ids;
+    let documentStageIds: Partial<Record<DocumentType, string>> | undefined;
+    if (documentStageValue !== undefined) {
+      if (!isRecord(documentStageValue) || Object.keys(documentStageValue).length < 1 ||
+          Object.keys(documentStageValue).some((key) =>
+            !["CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT"].includes(key)) ||
+          Object.values(documentStageValue).some((stageId) =>
+            typeof stageId !== "string" || !UUID.test(stageId))) {
+        issues.push({ code: "BATCH_INVALID", path: `${path}.document_stage_ids` });
+      } else {
+        documentStageIds = documentStageValue as Partial<Record<DocumentType, string>>;
+      }
+    }
     if (typeof project_id !== "string" || !CATALOG_ID.test(project_id) ||
         typeof recruiter_id !== "string" || !UUID.test(recruiter_id) ||
         typeof first_work_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(first_work_date) ||
@@ -369,6 +386,7 @@ export function parseFullProfilePayload(value: unknown): FullProfileParseResult 
     const employment = normalizeEmployment(item.employment, `${path}.employment`, issues);
     const normalizedRow = {
       ...(typeof portraitStageId === "string" ? { portrait_stage_id: portraitStageId } : {}),
+      ...(documentStageIds ? { document_stage_ids: documentStageIds } : {}),
       project_id,
       first_work_date,
       recruiter_id,

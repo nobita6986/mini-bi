@@ -17,8 +17,6 @@ import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import {
-  DOCUMENT_MAX_BYTES_HARD_LIMIT,
-  DOCUMENT_MIME_TYPES,
   validateEmployeeCode,
 } from "@/lib/contracts/direct-entry-v1";
 import { projectDuplicateCccdPreflight } from "@/lib/direct-entry/submission-duplicate-cccd-contract";
@@ -136,26 +134,19 @@ import {
   postFullProfileBatch,
 } from "@/lib/direct-entry/full-profile-batch";
 import {
-  PORTRAIT_PROMOTION_PENDING_MESSAGE,
   buildPortraitRowBindings,
   buildPortraitStageIdsBySourceRow,
   portraitPromotionState,
   recoverWorkerPortraitStage,
 } from "@/lib/direct-entry/worker-portrait-stage-client";
+import type { WorkerStageDocumentType } from "@/lib/direct-entry/worker-portrait-stage-client";
 import { useWorkerPortraitStages } from "./use-worker-portrait-stages";
 import { WorkerPortraitStageSlot } from "./worker-portrait-stage-slot";
 import {
   hasInitialWorkerUploads,
-  mapSavedWorkerInitialUploads,
   type InitialWorkerUploadFiles,
 } from "@/lib/direct-entry/worker-initial-upload-queue";
 import styles from "./direct-entry-shell.module.css";
-
-const EMPTY_INITIAL_WORKER_UPLOADS: InitialWorkerUploadFiles = Object.freeze({
-  cccdFront: null,
-  cccdBack: null,
-  contract: null,
-});
 
 /** Message tu choi paste, da duoc viet san; khong chua gia tri nguoi dung. */
 const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
@@ -964,18 +955,12 @@ export function DirectEntryLive() {
   const [inputMode, setInputMode] = useState<"form" | "grid">("form");
   const [visibleFormRowIds, setVisibleFormRowIds] = useState<string[]>(() =>
     stagedModel.rows[0] ? [stagedModel.rows[0].clientRowId] : []);
-  // File objects remain in memory only; never serialize them into row cells, storage, or batch JSON.
-  const [stagedInitialUploads, setStagedInitialUploads] = useState<
-    Record<string, InitialWorkerUploadFiles>>({});
   const [pendingInitialUploadsByEntryId, setPendingInitialUploadsByEntryId] = useState<
     Record<string, InitialWorkerUploadFiles>>({});
-  const [initialUploadSelectionErrors, setInitialUploadSelectionErrors] = useState<
-    Record<string, string>>({});
   const [stagedValidationTriggered, setStagedValidationTriggered] = useState(false);
 
   useEffect(() => {
-    const hasUnfinishedFiles = Object.values(stagedInitialUploads).some(hasInitialWorkerUploads) ||
-      Object.values(pendingInitialUploadsByEntryId).some(hasInitialWorkerUploads);
+    const hasUnfinishedFiles = Object.values(pendingInitialUploadsByEntryId).some(hasInitialWorkerUploads);
     if (!hasUnfinishedFiles) return;
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -983,7 +968,7 @@ export function DirectEntryLive() {
     };
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
-  }, [pendingInitialUploadsByEntryId, stagedInitialUploads]);
+  }, [pendingInitialUploadsByEntryId]);
 
   const reloadSubmissionDraft = useCallback(async (submission: SubmissionReadItem) => {
     if (selectNonEmptySpreadsheetRows(stagedModel).length > 0) {
@@ -1426,26 +1411,61 @@ export function DirectEntryLive() {
     previewRows: stagedValidation.preview?.rows ?? [],
   }), [stagedValidation]);
   const portraitStages = useWorkerPortraitStages({ rowBindings: portraitRowBindings });
+  const cccdFrontStages = useWorkerPortraitStages({
+    rowBindings: portraitRowBindings, documentType: "CCCD_FRONT",
+  });
+  const cccdBackStages = useWorkerPortraitStages({
+    rowBindings: portraitRowBindings, documentType: "CCCD_BACK",
+  });
+  const contractStages = useWorkerPortraitStages({
+    rowBindings: portraitRowBindings, documentType: "EMPLOYMENT_CONTRACT",
+  });
   const portraitStageIdsBySourceRow = useMemo(() => buildPortraitStageIdsBySourceRow({
     bindableStageIds: portraitStages.bindableStageIds,
     rows: stagedValidation.rows,
     previewRows: stagedValidation.preview?.rows ?? [],
   }), [portraitStages.bindableStageIds, stagedValidation]);
+  const documentStageIdsBySourceRow = useMemo(() => {
+    const stageIds = new Map<number, Partial<Record<"CCCD_FRONT" | "CCCD_BACK" | "EMPLOYMENT_CONTRACT", string>>>();
+    const previewRows = stagedValidation.preview?.rows ?? [];
+    for (const [index, row] of stagedValidation.rows.entries()) {
+      const preview = previewRows[index];
+      if (preview === undefined) continue;
+      const documents: Partial<Record<"CCCD_FRONT" | "CCCD_BACK" | "EMPLOYMENT_CONTRACT", string>> = {};
+      const cccdFront = cccdFrontStages.bindableStageIds.get(row.clientRowId);
+      const cccdBack = cccdBackStages.bindableStageIds.get(row.clientRowId);
+      const contract = contractStages.bindableStageIds.get(row.clientRowId);
+      if (cccdFront !== undefined) documents.CCCD_FRONT = cccdFront;
+      if (cccdBack !== undefined) documents.CCCD_BACK = cccdBack;
+      if (contract !== undefined) documents.EMPLOYMENT_CONTRACT = contract;
+      if (Object.keys(documents).length > 0) stageIds.set(preview.sourceRow, documents);
+    }
+    return stageIds;
+  }, [cccdBackStages.bindableStageIds, cccdFrontStages.bindableStageIds,
+    contractStages.bindableStageIds, stagedValidation]);
   /**
    * Ket qua luu khong xac dinh: hoi DB trang thai THAT cua tung stage. `CLAIMED`/`ATTACHED`
    * nghia la ho so DA luu nhung anh chua hoan tat => khong bao gio bao "chua luu".
    */
-  const reconcileStagedPortraits = useCallback(async (): Promise<string | null> => {
+  const reconcileStagedDocuments = useCallback(async (): Promise<string | null> => {
     let pending = false;
-    for (const [rowKey, stageId] of portraitStages.bindableStageIds) {
-      const recovered = await recoverWorkerPortraitStage({ stageId, fetchImpl: fetch });
-      if (recovered.kind !== "recovered") continue;
-      const state = portraitPromotionState(recovered.recovery);
-      if (state === "cancelled") portraitStages.settle(rowKey, stageId);
-      if (state === "pending" || state === "attached") pending = true;
+    const controllers: readonly [WorkerStageDocumentType, typeof portraitStages][] = [
+      ["WORKER_PORTRAIT", portraitStages],
+      ["CCCD_FRONT", cccdFrontStages],
+      ["CCCD_BACK", cccdBackStages],
+      ["EMPLOYMENT_CONTRACT", contractStages],
+    ];
+    for (const [, controller] of controllers) {
+      for (const [rowKey, stageId] of controller.bindableStageIds) {
+        const recovered = await recoverWorkerPortraitStage({ stageId, fetchImpl: fetch });
+        if (recovered.kind !== "recovered") continue;
+        const state = portraitPromotionState(recovered.recovery);
+        if (state === "cancelled") controller.settle(rowKey, stageId);
+        if (state === "pending" || state === "attached") pending = true;
+      }
     }
-    return pending ? PORTRAIT_PROMOTION_PENDING_MESSAGE : null;
-  }, [portraitStages]);
+    return pending ? "Hồ sơ đã lưu; máy chủ vẫn đang hoàn tất một số tệp. Hãy tải lại danh sách sau ít phút." : null;
+  }, [cccdBackStages, cccdFrontStages, contractStages, portraitStages]);
 
   // P1.7-H07: chi hien thi issue `PASTE_VALUE_REQUIRED` (required-missing) sau
   // khi user bam "Lưu các dòng hợp lệ". Other validation issues (format,
@@ -1966,53 +1986,7 @@ export function DirectEntryLive() {
   const deleteFormRow = useCallback((clientRowId: string) => {
     onStagedDelete(clientRowId);
     setVisibleFormRowIds((current) => current.filter((id) => id !== clientRowId));
-    setStagedInitialUploads((current) => {
-      const next = { ...current };
-      delete next[clientRowId];
-      return next;
-    });
-    setInitialUploadSelectionErrors((current) => {
-      const next = { ...current };
-      delete next[clientRowId];
-      return next;
-    });
   }, [onStagedDelete]);
-
-  const onInitialUploadFileChange = useCallback((
-    clientRowId: string,
-    slot: keyof InitialWorkerUploadFiles,
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.currentTarget.files?.[0] ?? null;
-    event.currentTarget.value = "";
-    if (!file) return;
-    if (file.size < 1 || file.size > DOCUMENT_MAX_BYTES_HARD_LIMIT) {
-      setInitialUploadSelectionErrors((current) => ({
-        ...current,
-        [clientRowId]: "Tệp phải lớn hơn 0 và không vượt quá 10 MiB.",
-      }));
-      return;
-    }
-    if (!(DOCUMENT_MIME_TYPES as readonly string[]).includes(file.type)) {
-      setInitialUploadSelectionErrors((current) => ({
-        ...current,
-        [clientRowId]: "Chỉ chấp nhận ảnh JPEG, PNG hoặc PDF.",
-      }));
-      return;
-    }
-    setStagedInitialUploads((current) => ({
-      ...current,
-      [clientRowId]: {
-        ...(current[clientRowId] ?? EMPTY_INITIAL_WORKER_UPLOADS),
-        [slot]: file,
-      },
-    }));
-    setInitialUploadSelectionErrors((current) => {
-      const next = { ...current };
-      delete next[clientRowId];
-      return next;
-    });
-  }, []);
 
   const onInitialCccdFilesAccepted = useCallback((
     entryId: string,
@@ -2154,19 +2128,21 @@ export function DirectEntryLive() {
       setStagedMessageWithTone("Không thể ánh xạ an toàn các dòng hợp lệ. Hãy tải lại trước khi lưu.", "error");
       return;
     }
-    if (savedClientRowIds.some((rowId) => portraitStages.slots.get(rowId)?.status === "staging")) {
-      setStagedMessageWithTone("Đang tải ảnh NLĐ lên. Chờ hoàn tất rồi hãy lưu các dòng.", "info");
+    const stageControllers = [portraitStages, cccdFrontStages, cccdBackStages, contractStages];
+    if (savedClientRowIds.some((rowId) => stageControllers.some(
+      (controller) => controller.slots.get(rowId)?.status === "staging"))) {
+      setStagedMessageWithTone("Đang tải hồ sơ lên bản nháp. Chờ hoàn tất rồi hãy lưu các dòng.", "info");
       return;
     }
-    const body = buildServerGeneratedFullProfileRequestBody(validPreviewRows, portraitStageIdsBySourceRow);
+    const body = buildServerGeneratedFullProfileRequestBody(
+      validPreviewRows,
+      portraitStageIdsBySourceRow,
+      inputMode === "form" ? "ON" : undefined,
+      documentStageIdsBySourceRow,
+    );
     if (body === null) {
       setStagedMessageWithTone(fullProfileErrorMessage("BATCH_INVALID"), "error");
       return;
-    }
-    const queuedUploadsByClientRowId = new Map<string, InitialWorkerUploadFiles>();
-    for (const clientRowId of savedClientRowIds) {
-      const selected = stagedInitialUploads[clientRowId];
-      if (hasInitialWorkerUploads(selected)) queuedUploadsByClientRowId.set(clientRowId, selected);
     }
     const digest = await fullProfileIntentDigest(body.rows);
     if (digest === null) {
@@ -2192,48 +2168,16 @@ export function DirectEntryLive() {
         // can be mapped. Settle their stages and remove them from the editable
         // queue before handling a malformed response, so retry cannot duplicate
         // workers that were already created.
-        for (const [rowKey, stageId] of portraitStages.bindableStageIds) {
-          if (savedRowSet.has(rowKey)) portraitStages.settle(rowKey, stageId);
+        for (const controller of stageControllers) {
+          for (const [rowKey, stageId] of controller.bindableStageIds) {
+            if (savedRowSet.has(rowKey)) controller.settle(rowKey, stageId);
+          }
         }
         const clearSavedStagedRows = () => {
           setStagedModel((current) => savedClientRowIds.reduce(
             (model, clientRowId) => deleteSpreadsheetRow(model, clientRowId), current));
           setVisibleFormRowIds((current) => current.filter((clientRowId) => !savedRowSet.has(clientRowId)));
-          setStagedInitialUploads((current) => {
-            const next = { ...current };
-            for (const clientRowId of savedClientRowIds) delete next[clientRowId];
-            return next;
-          });
-          setInitialUploadSelectionErrors((current) => {
-            const next = { ...current };
-            for (const clientRowId of savedClientRowIds) delete next[clientRowId];
-            return next;
-          });
         };
-        const mappedInitialUploads = mapSavedWorkerInitialUploads({
-          clientRowIds: savedClientRowIds,
-          entryIds: result.entryIds,
-          uploadsByClientRowId: queuedUploadsByClientRowId,
-        });
-        if (mappedInitialUploads === null) {
-          clearSavedStagedRows();
-          stagedUndo.current = null;
-          setStagedCanUndo(false);
-          setSelectedClientRowId(null);
-          setSavedCtaClientRowId(null);
-          setStagedMessageWithTone(
-            "Máy chủ đã lưu hồ sơ nhưng phản hồi không khớp số dòng. Các dòng đã lưu được khóa để tránh tạo trùng; hãy tải lại danh sách rồi mở Hồ sơ NLĐ để tiếp tục tải tệp.",
-            "error",
-          );
-          await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
-          return;
-        }
-        if (mappedInitialUploads.size > 0) {
-          setPendingInitialUploadsByEntryId((current) => ({
-            ...current,
-            ...Object.fromEntries(mappedInitialUploads),
-          }));
-        }
         stagedUndo.current = null;
         setStagedCanUndo(false);
         setStagedNotice("");
@@ -2249,7 +2193,7 @@ export function DirectEntryLive() {
           const eid = savedEntryIds[index];
           if (cid !== undefined && eid !== undefined) stagedToEntry.set(cid, eid);
         }
-        // Chỉ bỏ các dòng được máy chủ xác nhận; dòng lỗi và tệp kèm theo vẫn ở lại để sửa.
+        // Chỉ bỏ các dòng được máy chủ xác nhận; dòng lỗi và stage của chúng vẫn ở lại để sửa.
         clearSavedStagedRows();
         const invalidRowCount = stagedValidation.rows.filter((row) => !row.canProceed).length;
         setStagedValidationTriggered(invalidRowCount > 0);
@@ -2282,8 +2226,8 @@ export function DirectEntryLive() {
       if (result.kind === "retry") {
         // W2S1: ket qua khong xac dinh => hoi DB trang thai that cua stage. Neu ho so DA luu
         // nhung anh chua hoan tat thi bao dung, khong bao "chua luu" (khong bao luu gia).
-        const portraitPending = await reconcileStagedPortraits();
-        setStagedMessage(portraitPending ?? fullProfileErrorMessage(result.code));
+        const documentPending = await reconcileStagedDocuments();
+        setStagedMessage(documentPending ?? fullProfileErrorMessage(result.code));
         return;
       }
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
@@ -2292,10 +2236,11 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [editingDraftSubmissionId, hasActiveLaborTypes, loadSubmissions, reloadDrafts,
-    portraitStageIdsBySourceRow, portraitStages, reconcileStagedPortraits, saveRow,
+  }, [editingDraftSubmissionId, hasActiveLaborTypes, inputMode, loadSubmissions, reloadDrafts,
+    cccdBackStages, cccdFrontStages, contractStages, documentStageIdsBySourceRow,
+    portraitStageIdsBySourceRow, portraitStages, reconcileStagedDocuments, saveRow,
     selectedClientRowId, setSelectedClientRowId, setStagedMessage, setStagedModel,
-    setStagedMessageWithTone, stagedInitialUploads, stagedValidation]);
+    setStagedMessageWithTone, stagedValidation]);
 
   /**
    * P1.7-H05-R1: nut "Lưu NLĐ" trong quick editor chi validate va gui DUNG ROW
@@ -2337,10 +2282,19 @@ export function DirectEntryLive() {
       setStagedMessageWithTone("Dòng đang mở chưa hợp lệ; hãy kiểm tra lại dữ liệu.", "error");
       return;
     }
+    const stageControllers = [portraitStages, cccdFrontStages, cccdBackStages, contractStages];
+    if (stageControllers.some((controller) => controller.slots.get(clientRowId)?.status === "staging")) {
+      setStagedMessageWithTone("Đang tải hồ sơ lên bản nháp. Chờ hoàn tất rồi hãy lưu NLĐ.", "info");
+      return;
+    }
     const body = buildServerGeneratedFullProfileRequestBody(
       [matchingPreview],
       portraitStages.bindableStageIds.has(clientRowId)
         ? new Map([[matchingPreview.sourceRow, portraitStages.bindableStageIds.get(clientRowId)!]])
+        : undefined,
+      undefined,
+      documentStageIdsBySourceRow.has(matchingPreview.sourceRow)
+        ? new Map([[matchingPreview.sourceRow, documentStageIdsBySourceRow.get(matchingPreview.sourceRow)!]])
         : undefined,
     );
     if (body === null) {
@@ -2366,9 +2320,11 @@ export function DirectEntryLive() {
       });
       if (result.kind === "saved") {
         stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
-        // W2S1: server da claim + gan anh cho dong vua luu => bo state stage cua dong do.
-        const savedStageId = portraitStages.bindableStageIds.get(clientRowId);
-        if (savedStageId !== undefined) portraitStages.settle(clientRowId, savedStageId);
+        // Máy chủ đã xác nhận gắn các tệp của dòng này; bỏ chúng khỏi state stage.
+        for (const controller of stageControllers) {
+          const savedStageId = controller.bindableStageIds.get(clientRowId);
+          if (savedStageId !== undefined) controller.settle(clientRowId, savedStageId);
+        }
         // Chi remove row vua luu (goc clientRowId), giu nguyen cac staged row khac.
         setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
         setQuickEditClientRowId(null);
@@ -2390,8 +2346,8 @@ export function DirectEntryLive() {
       if (result.kind === "retry") {
         // W2S1: ket qua khong xac dinh => hoi DB trang thai that cua stage. Neu ho so DA luu
         // nhung anh chua hoan tat thi bao dung, khong bao "chua luu" (khong bao luu gia).
-        const portraitPending = await reconcileStagedPortraits();
-        setStagedMessage(portraitPending ?? fullProfileErrorMessage(result.code));
+        const documentPending = await reconcileStagedDocuments();
+        setStagedMessage(documentPending ?? fullProfileErrorMessage(result.code));
         return;
       }
       stagedIntent.current = clearIntentKey(stagedIntent.current, intent);
@@ -2400,7 +2356,8 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [portraitStages, reconcileStagedPortraits, reloadDrafts, setSelectedClientRowId,
+  }, [cccdBackStages, cccdFrontStages, contractStages, documentStageIdsBySourceRow,
+    portraitStages, reconcileStagedDocuments, reloadDrafts, setSelectedClientRowId,
     setStagedMessage, setStagedModel, setStagedMessageWithTone, stagedModel,
     stagedValidation, setQuickEditClientRowId]);
 
@@ -2411,6 +2368,12 @@ export function DirectEntryLive() {
   }, [updateRow]);
 
   const selectedRowLocked = selectedRow !== null && !isRowEditable(selectedRow, submissions);
+  const selectedRowCanViewDocuments = capabilities.includes("document_view") ||
+    (selectedRow !== null && !selectedRowLocked && capabilities.includes("document_upload") &&
+      (capabilities.includes("entry_own") || capabilities.includes("entry_admin")));
+  const selectedRowCanUploadDocuments = selectedRow !== null && !selectedRowLocked &&
+    capabilities.includes("document_upload") &&
+    (capabilities.includes("entry_own") || capabilities.includes("entry_admin"));
   // P1.7-H07: khi row chua co first_work_date, dropdown Project/Recruiter
   // van phai mo va lay option tu default catalog (hom nay hoac catalog
   // dau tien co san). Re-resolve catalog theo ngay khi user nhap ngay.
@@ -2556,17 +2519,17 @@ export function DirectEntryLive() {
               visibleRowIds={visibleFormRowIds}
               validation={stagedValidationForDisplay}
               catalog={currentCatalog}
-              uploadsByRowId={stagedInitialUploads}
-              uploadErrors={initialUploadSelectionErrors}
               busy={stagedBusy}
               canSave={loadState === "ready" && stagedValidation.canSave && hasActiveLaborTypes}
               message={stagedMessage}
               messageTone={stagedTone}
               portraitStages={portraitStages}
+              cccdFrontStages={cccdFrontStages}
+              cccdBackStages={cccdBackStages}
+              contractStages={contractStages}
               onActivateRow={activateStagedRowLazyDefaults}
               onChange={onMobileStagedChange}
               onProviderTypeChange={onStagedProviderTypeChange}
-              onUploadFileChange={onInitialUploadFileChange}
               onAddRow={addFormRow}
               onDeleteRow={deleteFormRow}
               onSave={() => void onStagedSave()}
@@ -3088,7 +3051,9 @@ export function DirectEntryLive() {
                     testIdSuffix={target.clientRowId}
                     slot={portraitStages.slots.get(target.clientRowId)}
                     busy={stagedBusy}
+                    retryable={portraitStages.retryableRows.has(target.clientRowId)}
                     onStage={portraitStages.stage}
+                    onRetry={portraitStages.retryStage}
                     onCancel={portraitStages.cancel}
                   />
                   {portraitStages.staleCount > 0 && (
@@ -3339,11 +3304,13 @@ export function DirectEntryLive() {
                   entryId={selectedRow.entryId}
                   entryVersion={selectedRow.entryVersion}
                   rowId={selectedRow.rowId}
+                  showPortrait
+                  portraitCanUpload={selectedRowCanUploadDocuments}
                   canEdit={capabilities.includes("entry_own") &&
                     capabilities.includes("document_upload") &&
                     selectedRow.state !== "saving" && selectedRow.state !== "conflict" &&
                     !selectedRowLocked}
-                  canView={capabilities.includes("document_view")}
+                  canView={selectedRowCanViewDocuments}
                   onEntryVersionChange={onPaymentEntryVersionChange}
                 />
                 {selectedRow.message && <p role="alert">{selectedRow.message}</p>}

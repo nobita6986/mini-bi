@@ -1,4 +1,5 @@
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
+import { createHash } from "node:crypto";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import {
   FULL_PROFILE_MAX_BODY_BYTES,
@@ -39,6 +40,7 @@ type Dependencies = {
 
 async function reconcileRejectedPortraitStage(
   stageId: string,
+  idempotencyKey: string,
   actor: { auth_subject: string; app_user_id: string },
   dependencies: Dependencies,
 ): Promise<void> {
@@ -50,7 +52,15 @@ async function reconcileRejectedPortraitStage(
     console.error("[direct-entry] rejected portrait stage recovery failed");
     return;
   }
-  if (recovered.data.status === "CLAIMED") return;
+  if (recovered.data.status === "CLAIMED") {
+    const released = await stages.release({
+      ...actor, stage_id: stageId, idempotency_key: idempotencyKey,
+    });
+    if (!released.ok || released.data !== true) {
+      console.error("[direct-entry] rejected worker document stage release failed");
+    }
+    return;
+  }
   if (recovered.data.status === "STAGED") {
     const cancelled = await stages.cancel({ ...actor, stage_id: stageId });
     if (!cancelled.ok) {
@@ -78,6 +88,25 @@ function respond(body: unknown, status: number): Response {
 
 function fail(code: string, status: number): Response {
   return respond({ ok: false, code }, status);
+}
+
+function deriveStageBatchIdempotencyKey(
+  requestKey: string,
+  stages: readonly { index: number; stage_id: string; document_type: string }[],
+): string {
+  const canonicalStages = [...stages]
+    .sort((left, right) => left.index - right.index ||
+      left.document_type.localeCompare(right.document_type) || left.stage_id.localeCompare(right.stage_id))
+    .map((stage) => `${stage.index}:${stage.document_type}:${stage.stage_id.toLowerCase()}`)
+    .join("\n");
+  const digest = createHash("sha256")
+    .update(requestKey.toLowerCase() + "\n" + canonicalStages, "utf8")
+    .digest();
+  const bytes = Uint8Array.from(digest.subarray(0, 16));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function readBoundedJson(request: Request): Promise<ReadBodyResult> {
@@ -198,13 +227,22 @@ export async function postFullProfileBatch(
       auth_subject: session.actor.actor.auth_subject,
       app_user_id: session.actor.actor.app_user_id,
     };
-    const stageRows = parsed.payload.rows.flatMap((row, index) =>
-      "portrait_stage_id" in row && row.portrait_stage_id
-        ? [{ index, stage_id: row.portrait_stage_id }]
-        : []);
+    const stageRows = parsed.payload.rows.flatMap((row, index) => {
+      const stages: { index: number; stage_id: string; document_type: string }[] = [];
+      if (row.portrait_stage_id) {
+        stages.push({ index, stage_id: row.portrait_stage_id, document_type: "WORKER_PORTRAIT" });
+      }
+      for (const [documentType, stageId] of Object.entries(row.document_stage_ids ?? {})) {
+        stages.push({ index, stage_id: stageId, document_type: documentType });
+      }
+      return stages;
+    });
     if (new Set(stageRows.map(({ stage_id }) => stage_id)).size !== stageRows.length) {
       return fail("BATCH_INVALID", 400);
     }
+    const stageBatchIdempotencyKey = stageRows.length === 0
+      ? idempotencyKey
+      : deriveStageBatchIdempotencyKey(idempotencyKey, stageRows);
     if (stageRows.length > 0 &&
         !session.actor.actor.capabilities.includes("document_upload")) {
       return fail("DOCUMENT_DENIED", 403);
@@ -217,15 +255,15 @@ export async function postFullProfileBatch(
     const claimed = [];
     for (const stage of stageRows) {
       const result = await dependencies.portraitStages!.claim({
-        ...actor, stage_id: stage.stage_id, idempotency_key: idempotencyKey,
+        ...actor, stage_id: stage.stage_id, idempotency_key: stageBatchIdempotencyKey,
       });
       if (!result.ok) {
         for (const previous of claimed) {
-          const recovered = await dependencies.portraitStages!.recover({
-            ...actor, stage_id: previous.stage_id,
+          const released = await dependencies.portraitStages!.release({
+            ...actor, stage_id: previous.stage_id, idempotency_key: stageBatchIdempotencyKey,
           });
-          if (!recovered.ok) {
-            console.error("[direct-entry] partially claimed portrait stage recovery failed");
+          if (!released.ok || released.data !== true) {
+            console.error("[direct-entry] partially claimed worker document stage release failed");
           }
         }
         if (result.kind === "denied") return fail("ENTRY_NOT_FOUND", 404);
@@ -233,12 +271,25 @@ export async function postFullProfileBatch(
         return fail(result.kind === "invalid" ? "DOCUMENT_REQUEST_INVALID" : "PORTRAIT_STAGE_UNAVAILABLE",
           result.kind === "invalid" ? 400 : 503);
       }
+      if (result.data.document_type !== stage.document_type) {
+        const released = await dependencies.portraitStages!.release({
+          ...actor, stage_id: stage.stage_id, idempotency_key: stageBatchIdempotencyKey,
+        });
+        if (!released.ok || released.data !== true) {
+          console.error("[direct-entry] mismatched worker document stage release failed");
+        }
+        return fail("DOCUMENT_REQUEST_INVALID", 400);
+      }
       claimed.push({ ...stage, data: result.data });
     }
 
-    const stripStage = <T extends { portrait_stage_id?: string }>(row: T): Omit<T, "portrait_stage_id"> => {
+    const stripStage = <T extends {
+      portrait_stage_id?: string;
+      document_stage_ids?: Partial<Record<"CCCD_FRONT" | "CCCD_BACK" | "EMPLOYMENT_CONTRACT", string>>;
+    }>(row: T): Omit<T, "portrait_stage_id" | "document_stage_ids"> => {
       const clean = { ...row };
       delete clean.portrait_stage_id;
+      delete clean.document_stage_ids;
       return clean;
     };
     const payload: FullProfilePayload = stageRows.length === 0
@@ -256,7 +307,7 @@ export async function postFullProfileBatch(
       auth_subject: session.actor.actor.auth_subject,
       app_user_id: session.actor.actor.app_user_id,
       payload,
-      idempotency_key: idempotencyKey,
+      idempotency_key: stageBatchIdempotencyKey,
     };
     const result = stageRows.length > 0
       ? await dependencies.repository.createFullProfileBatchWithPortraitStages!({
@@ -268,7 +319,7 @@ export async function postFullProfileBatch(
       if (result.kind !== "unavailable" && claimed.length > 0) {
         for (const stage of claimed) {
           await reconcileRejectedPortraitStage(
-            stage.stage_id, actor, dependencies,
+            stage.stage_id, stageBatchIdempotencyKey, actor, dependencies,
           );
         }
       }
@@ -294,6 +345,10 @@ export async function postFullProfileBatch(
     for (const stage of claimed) {
       const claimedStage = stage.data;
       const entryId = projection.entry_ids[stage.index];
+      if (claimedStage.document_type !== stage.document_type) {
+        console.error("[direct-entry] worker document stage type mismatch");
+        return fail("IDEMPOTENCY_CONFLICT", 409);
+      }
       if (claimedStage.status === "ATTACHED") {
         if (claimedStage.entry_id !== entryId || !claimedStage.document_id) {
           return fail("IDEMPOTENCY_CONFLICT", 409);
@@ -306,7 +361,7 @@ export async function postFullProfileBatch(
       if (!stagedBytes || stagedBytes.byteLength !== claimedStage.size_bytes ||
           sha256Hex(stagedBytes) !== claimedStage.checksum_sha256 ||
           !inspectDocumentContent({
-            document_type: "WORKER_PORTRAIT",
+            document_type: claimedStage.document_type,
             mime_type: claimedStage.mime_type,
             bytes: stagedBytes,
           }).ok) {
@@ -326,7 +381,7 @@ export async function postFullProfileBatch(
         ...actor,
         entry_id: entryId,
         expected_entry_version: entry.data.version,
-        document_type: "WORKER_PORTRAIT",
+            document_type: claimedStage.document_type,
         idempotency_key: stage.stage_id,
         size_bytes: claimedStage.size_bytes,
         mime_type: claimedStage.mime_type,
@@ -367,7 +422,7 @@ export async function postFullProfileBatch(
       const completed = await dependencies.portraitStages!.complete({
         ...actor,
         stage_id: stage.stage_id,
-        idempotency_key: idempotencyKey,
+        idempotency_key: stageBatchIdempotencyKey,
         entry_id: entryId,
         document_id: reservation.data.document_id,
       });

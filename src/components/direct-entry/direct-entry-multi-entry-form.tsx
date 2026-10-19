@@ -6,11 +6,12 @@ import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-
 import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import type { SpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
 import type { SpreadsheetRowModel } from "@/lib/direct-entry/spreadsheet-row-model";
-import type { InitialWorkerUploadFiles } from "@/lib/direct-entry/worker-initial-upload-queue";
 import { formatFreeDateText } from "@/lib/direct-entry/direct-entry-date-format";
 import type { WorkerPortraitStagesController } from "./use-worker-portrait-stages";
-import { WorkerPortraitStageSlot } from "./worker-portrait-stage-slot";
+import { WorkerDocumentStageSlot, WorkerPortraitStageSlot } from "./worker-portrait-stage-slot";
 import styles from "./direct-entry-shell.module.css";
+
+const FORM_EMPLOYMENT_STATUS_CHOICES = ["Đang làm", "Đang chờ việc"] as const;
 
 function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return <label className={styles.field}><span>{label}</span>{children}</label>;
@@ -29,21 +30,17 @@ type Props = {
   visibleRowIds: readonly string[];
   validation: SpreadsheetValidation;
   catalog: DraftCatalog | null;
-  uploadsByRowId: Readonly<Record<string, InitialWorkerUploadFiles>>;
-  uploadErrors: Readonly<Record<string, string>>;
   busy: boolean;
   canSave: boolean;
   message: string;
   messageTone: "error" | "success" | "info" | "";
   portraitStages: WorkerPortraitStagesController;
+  cccdFrontStages: WorkerPortraitStagesController;
+  cccdBackStages: WorkerPortraitStagesController;
+  contractStages: WorkerPortraitStagesController;
   onActivateRow(rowId: string): void;
   onChange(rowId: string, field: string, value: string): void;
   onProviderTypeChange(rowId: string, providerType: "hrp" | "vendor" | ""): void;
-  onUploadFileChange(
-    rowId: string,
-    slot: keyof InitialWorkerUploadFiles,
-    event: ChangeEvent<HTMLInputElement>,
-  ): void;
   onAddRow(): void;
   onDeleteRow(rowId: string): void;
   onSave(): void;
@@ -54,17 +51,17 @@ export function DirectEntryMultiEntryForm({
   visibleRowIds,
   validation,
   catalog,
-  uploadsByRowId,
-  uploadErrors,
   busy,
   canSave,
   message,
   messageTone,
   portraitStages,
+  cccdFrontStages,
+  cccdBackStages,
+  contractStages,
   onActivateRow,
   onChange,
   onProviderTypeChange,
-  onUploadFileChange,
   onAddRow,
   onDeleteRow,
   onSave,
@@ -76,6 +73,13 @@ export function DirectEntryMultiEntryForm({
     ...visibleRowIds,
     ...validation.rows.map((row) => row.clientRowId),
   ]));
+  const hasUnsupportedEmploymentStatus = formRowIds.some((rowId) => {
+    const row = model.rows.find((candidate) => candidate.clientRowId === rowId);
+    if (!row) return false;
+    const status = statusLabel(row.cells.initial_status ?? "");
+    return status !== "" &&
+      !(FORM_EMPLOYMENT_STATUS_CHOICES as readonly string[]).includes(status);
+  });
 
   return (
     <section className={styles.multiEntryForm} aria-labelledby="multi-entry-form-title"
@@ -100,10 +104,11 @@ export function DirectEntryMultiEntryForm({
           const validationRow = validation.rows.find((candidate) => candidate.clientRowId === rowId);
           const errors = validation.cellIssues.filter((issue) =>
             issue.clientRowId === rowId && issue.severity === "error");
-          const currentStatus = statusLabel(cells.initial_status ?? "");
-          const rowUploads = uploadsByRowId[rowId];
-          const hasPortraitBinding = validation.rows.some((candidate) => candidate.clientRowId === rowId);
-          const statusChoices = ["", "Đang chờ việc", "Đang làm", "Đã nghỉ"];
+          const rawStatus = statusLabel(cells.initial_status ?? "");
+          const unsupportedStatus = rawStatus !== "" &&
+            !(FORM_EMPLOYMENT_STATUS_CHOICES as readonly string[]).includes(rawStatus);
+          const currentStatus = unsupportedStatus ? "" : rawStatus || "Đang làm";
+          const hasDocumentBinding = validation.rows.some((candidate) => candidate.clientRowId === rowId);
           const fieldLabel = (label: string) => (
             <><span>{label}</span><span className={styles.requiredStar} aria-hidden="true"> *</span>
               <span className="sr-only"> (bắt buộc)</span></>
@@ -172,27 +177,16 @@ export function DirectEntryMultiEntryForm({
                       onCommit={(iso) => onChange(rowId, "first_work_date", iso)} />
                   </Field>
                   <Field label="Trạng thái làm việc">
-                    <select value={currentStatus} onChange={handleChange(rowId, "initial_status")}>
-                      <option value="">Chọn trạng thái</option>
-                      <option value="Đang chờ việc">Đang chờ việc</option>
+                    <select required value={currentStatus}
+                      onChange={handleChange(rowId, "initial_status")}>
+                      {unsupportedStatus && <option value="" disabled>Chọn lại trạng thái</option>}
                       <option value="Đang làm">Đang làm</option>
-                      <option value="Đã nghỉ">Đã nghỉ</option>
-                      {!statusChoices.includes(currentStatus) && currentStatus !== "" &&
-                        <option value={currentStatus} disabled>{currentStatus} — cần kiểm tra</option>}
+                      <option value="Đang chờ việc">Đang chờ việc</option>
                     </select>
+                    {unsupportedStatus && <span role="alert">
+                      Hãy chọn “Đang làm” hoặc “Đang chờ việc” để tiếp tục.
+                    </span>}
                   </Field>
-                  {currentStatus === "Đã nghỉ" && (
-                    <>
-                      <Field label="Ngày nghỉ thực tế">
-                        <DdmmDateInput ariaLabel="Ngày nghỉ thực tế" value={cells.leave_date ?? ""}
-                          onCommit={(iso) => onChange(rowId, "leave_date", iso)} />
-                      </Field>
-                      <Field label="Lý do nghỉ">
-                        <textarea value={cells.leave_reason_text ?? ""}
-                          onChange={handleChange(rowId, "leave_reason_text")} />
-                      </Field>
-                    </>
-                  )}
                   <Field label={fieldLabel("Họ và tên")}>
                     <input autoComplete="name" value={cells.display_name ?? ""}
                       onChange={handleChange(rowId, "display_name")} />
@@ -210,43 +204,35 @@ export function DirectEntryMultiEntryForm({
                     <h3>Tải hồ sơ lên</h3>
                     <div className={styles.formUploadGrid}>
                       <div className={styles.formUploadCard}>
-                        {hasPortraitBinding ? (
+                        {hasDocumentBinding ? (
                           <WorkerPortraitStageSlot rowKey={rowId} testIdSuffix={rowId}
                             slot={portraitStages.slots.get(rowId)} busy={busy}
-                            onStage={portraitStages.stage} onCancel={portraitStages.cancel} />
+                            retryable={portraitStages.retryableRows.has(rowId)}
+                            onStage={portraitStages.stage} onRetry={portraitStages.retryStage}
+                            onCancel={portraitStages.cancel} />
                         ) : (
-                          <p className={styles.documentStatus}>Nhập thông tin NLĐ trước khi chọn ảnh NLĐ.</p>
+                          <p className={styles.documentStatus}>Nhập thông tin NLĐ trước khi chọn tệp.</p>
                         )}
                       </div>
-                      <label className={`${styles.initialUploadLabel} ${styles.formUploadCard}`}
-                        htmlFor={`initial-cccd-front-${rowId}`}>
-                        CCCD mặt trước (ảnh hoặc PDF)
-                        <input id={`initial-cccd-front-${rowId}`} type="file"
-                          accept="image/jpeg,image/png,application/pdf"
-                          aria-label={`CCCD mặt trước — NLĐ ${index + 1}`}
-                          onChange={(event) => onUploadFileChange(rowId, "cccdFront", event)} />
-                        {rowUploads?.cccdFront && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
-                      </label>
-                      <label className={`${styles.initialUploadLabel} ${styles.formUploadCard}`}
-                        htmlFor={`initial-cccd-back-${rowId}`}>
-                        CCCD mặt sau (ảnh hoặc PDF)
-                        <input id={`initial-cccd-back-${rowId}`} type="file"
-                          accept="image/jpeg,image/png,application/pdf"
-                          aria-label={`CCCD mặt sau — NLĐ ${index + 1}`}
-                          onChange={(event) => onUploadFileChange(rowId, "cccdBack", event)} />
-                        {rowUploads?.cccdBack && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
-                      </label>
-                      <label className={`${styles.initialUploadLabel} ${styles.formUploadCard}`}
-                        htmlFor={`initial-contract-${rowId}`}>
-                        Hợp đồng (ảnh hoặc PDF)
-                        <input id={`initial-contract-${rowId}`} type="file"
-                          accept="image/jpeg,image/png,application/pdf"
-                          aria-label={`Hợp đồng — NLĐ ${index + 1}`}
-                          onChange={(event) => onUploadFileChange(rowId, "contract", event)} />
-                        {rowUploads?.contract && <span>Đã chọn tệp; sẽ tải sau khi hồ sơ NLĐ được tạo.</span>}
-                      </label>
+                      {hasDocumentBinding ? <WorkerDocumentStageSlot rowKey={rowId}
+                        testIdSuffix={rowId + "-cccd-front"} documentType="CCCD_FRONT"
+                        slot={cccdFrontStages.slots.get(rowId)} busy={busy}
+                        retryable={cccdFrontStages.retryableRows.has(rowId)}
+                        onStage={cccdFrontStages.stage} onRetry={cccdFrontStages.retryStage}
+                        onCancel={cccdFrontStages.cancel} /> : null}
+                      {hasDocumentBinding ? <WorkerDocumentStageSlot rowKey={rowId}
+                        testIdSuffix={rowId + "-cccd-back"} documentType="CCCD_BACK"
+                        slot={cccdBackStages.slots.get(rowId)} busy={busy}
+                        retryable={cccdBackStages.retryableRows.has(rowId)}
+                        onStage={cccdBackStages.stage} onRetry={cccdBackStages.retryStage}
+                        onCancel={cccdBackStages.cancel} /> : null}
+                      {hasDocumentBinding ? <WorkerDocumentStageSlot rowKey={rowId}
+                        testIdSuffix={rowId + "-contract"} documentType="EMPLOYMENT_CONTRACT"
+                        slot={contractStages.slots.get(rowId)} busy={busy}
+                        retryable={contractStages.retryableRows.has(rowId)}
+                        onStage={contractStages.stage} onRetry={contractStages.retryStage}
+                        onCancel={contractStages.cancel} /> : null}
                     </div>
-                    {uploadErrors[rowId] && <p role="alert" className={styles.documentError}>{uploadErrors[rowId]}</p>}
                   </div>
 
                   <details className={styles.formOptionalDetails}>
@@ -305,12 +291,16 @@ export function DirectEntryMultiEntryForm({
           onClick={portraitStages.retryCleanup}>Thử dọn ảnh NLĐ cũ chưa hủy được</button>
       )}
       {portraitStages.message !== "" && <p className={styles.documentStatus} role="status">{portraitStages.message}</p>}
+      {hasUnsupportedEmploymentStatus && <p role="alert" className={styles.documentError}>
+        Trạng thái chỉ nhận “Đang làm” hoặc “Đang chờ việc”. Hãy chọn lại ở các dòng được báo lỗi.
+      </p>}
       <footer className={styles.multiEntryFormActions}>
         <button type="button" className={styles.secondaryButton} disabled={busy} onClick={onAddRow}>
           + Thêm NLĐ nữa
         </button>
         <button type="button" className={styles.primaryButton} data-testid="form-save-valid-rows"
-          disabled={busy || !canSave} aria-busy={busy} onClick={onSave}>
+          disabled={busy || !canSave || hasUnsupportedEmploymentStatus}
+          aria-busy={busy} onClick={onSave}>
           {busy ? "Đang lưu…" : "Lưu các NLĐ hợp lệ"}
         </button>
       </footer>

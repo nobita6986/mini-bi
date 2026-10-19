@@ -20,6 +20,7 @@ import {
   selectBindablePortraitStages,
   selectOrphanPortraitStages,
   selectStalePortraitStages,
+  stageWorkerDocument,
   stageWorkerPortrait,
 } from "./worker-portrait-stage-client.ts";
 import { checkWorkerPortraitFile } from "./worker-detail-projection.ts";
@@ -34,23 +35,33 @@ function portraitFile(bytes = 1024, type = "image/png", name = "p.png") {
 
 test("projectPortraitStage: chi nhan projection STAGED hop le, fail closed nguoc lai", () => {
   const ok = projectPortraitStage({
-    ok: true, stage_id: STAGE_ID, mime_type: "image/png", size_bytes: 1024, status: "STAGED",
+    ok: true, stage_id: STAGE_ID, document_type: "WORKER_PORTRAIT",
+    mime_type: "image/png", size_bytes: 1024, status: "STAGED",
   });
   assert.deepEqual(ok, {
-    kind: "staged", stageId: STAGE_ID, mimeType: "image/png", sizeBytes: 1024,
+    kind: "staged", stageId: STAGE_ID, documentType: "WORKER_PORTRAIT",
+    mimeType: "image/png", sizeBytes: 1024,
   });
   assert.equal(projectPortraitStage({
-    ok: true, stage_id: "not-a-uuid", mime_type: "image/png", size_bytes: 1, status: "STAGED",
+    ok: true, stage_id: "not-a-uuid", document_type: "WORKER_PORTRAIT",
+    mime_type: "image/png", size_bytes: 1, status: "STAGED",
   }), null);
   assert.equal(projectPortraitStage({
-    ok: true, stage_id: STAGE_ID, mime_type: "application/pdf", size_bytes: 1, status: "STAGED",
+    ok: true, stage_id: STAGE_ID, document_type: "WORKER_PORTRAIT",
+    mime_type: "application/pdf", size_bytes: 1, status: "STAGED",
   }), null);
   assert.equal(projectPortraitStage({
-    ok: true, stage_id: STAGE_ID, mime_type: "image/png", size_bytes: 0, status: "STAGED",
+    ok: true, stage_id: STAGE_ID, document_type: "WORKER_PORTRAIT",
+    mime_type: "image/png", size_bytes: 0, status: "STAGED",
   }), null);
   assert.equal(projectPortraitStage({
-    ok: true, stage_id: STAGE_ID, mime_type: "image/png", size_bytes: 1, status: "CLAIMED",
+    ok: true, stage_id: STAGE_ID, document_type: "WORKER_PORTRAIT",
+    mime_type: "image/png", size_bytes: 1, status: "CLAIMED",
   }), null);
+  assert.equal(projectPortraitStage({
+    ok: true, stage_id: STAGE_ID, document_type: "CCCD_FRONT",
+    mime_type: "image/png", size_bytes: 1, status: "STAGED",
+  }), null, "stage document type is server-validated, not inferred by the client");
   assert.equal(projectPortraitStage({ ok: false, code: "DOCUMENT_DENIED" }), null);
 });
 
@@ -81,7 +92,8 @@ test("stageWorkerPortrait: multipart dung MOT field `file`, khong gui truong aut
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
       return Response.json({
-        ok: true, stage_id: STAGE_ID, mime_type: "image/png", size_bytes: 1024, status: "STAGED",
+        ok: true, stage_id: STAGE_ID, document_type: "WORKER_PORTRAIT",
+        mime_type: "image/png", size_bytes: 1024, status: "STAGED",
       }, { status: 201 });
     },
   });
@@ -93,10 +105,34 @@ test("stageWorkerPortrait: multipart dung MOT field `file`, khong gui truong aut
   assert.deepEqual(calls[0].init.headers, { "Idempotency-Key": KEY });
   const body = calls[0].init.body;
   assert.ok(body instanceof FormData);
-  assert.deepEqual([...body.keys()], ["file"]);
+  assert.deepEqual([...body.keys()], ["file", "document_type"]);
   assert.ok(body.get("file") instanceof File);
+  assert.equal(body.get("document_type"), "WORKER_PORTRAIT");
   assert.equal("Content-Type" in calls[0].init.headers, false,
     "browser sets the multipart boundary; no authority fields are sent");
+});
+
+test("stageWorkerDocument uploads a CCCD PDF to a typed private draft stage", async () => {
+  const pdf = new File(["%PDF-1.4\n1 0 obj<<>>endobj\n%%EOF"], "id.pdf", { type: "application/pdf" });
+  let requestBody;
+  const result = await stageWorkerDocument({
+    file: pdf,
+    documentType: "CCCD_FRONT",
+    idempotencyKey: KEY,
+    fetchImpl: async (_url, init) => {
+      requestBody = init.body;
+      return Response.json({
+        ok: true, stage_id: OTHER_ID, document_type: "CCCD_FRONT",
+        mime_type: "application/pdf", size_bytes: pdf.size, status: "STAGED",
+      }, { status: 201 });
+    },
+  });
+  assert.equal(result.kind, "staged");
+  assert.equal(result.documentType, "CCCD_FRONT");
+  assert.ok(requestBody instanceof FormData);
+  assert.deepEqual([...requestBody.keys()], ["file", "document_type"]);
+  assert.equal(requestBody.get("document_type"), "CCCD_FRONT");
+  assert.ok(requestBody.get("file") instanceof File);
 });
 
 test("stageWorkerPortrait: loi mang/5xx/2xx khong doc duoc => retry (khong bao thanh cong)", async () => {
@@ -352,6 +388,28 @@ test("HÀNH VI: stage thành công thì bindable; xác nhận hủy mới xóa I
     { kind: "cancel-result", rowKey: "1", stageId: STAGE_ID, confirmed: true },
   ]);
   assert.equal(state.slots.size, 0, "da xac nhan huy => duoc xoa ID khoi state");
+});
+
+test("HÀNH VI: thay tệp khi stage cũ còn nháp sẽ giữ stage cũ trong danh sách cần dọn", () => {
+  const binding = portraitRowBinding(identity());
+  const replacementId = "a1000000-0000-4000-8000-000000000003";
+  const state = runLifecycle([
+    ...stagedActions(1, binding),
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_B },
+  ]);
+  assert.equal(state.slots.get("1").status, "staging");
+  assert.equal(state.slots.get("1").stageId, null);
+  assert.deepEqual([...selectOrphanPortraitStages(state)], [{ stageId: STAGE_ID, sizeBytes: 2048 }]);
+  const completed = runLifecycle([
+    ...stagedActions(1, binding),
+    { kind: "stage-start", rowKey: "1", binding, requestId: REQ_B },
+    { kind: "stage-result", rowKey: "1", requestId: REQ_B,
+      result: { kind: "staged", stageId: replacementId, sizeBytes: 4096 } },
+  ]);
+  assert.deepEqual([...selectBindablePortraitStages({
+    rowBindings: new Map([["1", binding]]), slots: completed.slots,
+  })], [["1", replacementId]]);
+  assert.deepEqual([...selectOrphanPortraitStages(completed)], [{ stageId: STAGE_ID, sizeBytes: 2048 }]);
 });
 
 test("HÀNH VI: DELETE lỗi (retry) KHÔNG xóa ID; giữ state để thử dọn lại", () => {

@@ -5,6 +5,7 @@ import { fetchEntryDetail, projectEntryDetail } from "./document-detail-projecti
 
 const ENTRY = "c1000000-0000-4000-8000-00000000000a";
 const DOC = "d1000000-0000-4000-8000-0000000000f1";
+const PORTRAIT = "d1000000-0000-4000-8000-0000000000f2";
 
 function document(overrides = {}) {
   return {
@@ -31,6 +32,25 @@ test("projection hop le: chi giu cac truong trong allow-list", () => {
   assert.deepEqual(Object.keys(result.documents[0]).sort(),
     ["document_id", "document_type", "mime_type", "scan_status", "size_bytes", "upload_status",
       "validation_status", "version"]);
+});
+
+test("entry detail preserves the validated worker portrait projection for the edit panel", () => {
+  const workerPortrait = {
+    origin: "ENROLLMENT",
+    added_at: null,
+    status: "READY",
+    current: {
+      document_id: PORTRAIT,
+      version: 2,
+      checksum_sha256: "a".repeat(64),
+      mime_type: "image/jpeg",
+      size_bytes: 2048,
+    },
+  };
+  const projection = projectEntryDetail(body({ worker_portrait: workerPortrait }), ENTRY);
+  assert.deepEqual(projection.workerPortrait, workerPortrait);
+  assert.equal(projectEntryDetail(body({ worker_portrait: { ...workerPortrait, storage_key: "private/key" } }),
+    ENTRY), null);
 });
 
 test("fail-closed: entry_id lech, version sai, documents sai kieu", () => {

@@ -46,14 +46,14 @@ export type DocumentObjectStorage = {
   available(): boolean;
   writeEnrollmentPortraitStage(input: {
     stage_id: string;
-    mime_type: "image/jpeg" | "image/png";
+    mime_type: DocumentMimeType;
     bytes: Uint8Array;
   }): Promise<void>;
   readEnrollmentPortraitStage(stageId: string): Promise<Uint8Array | null>;
   copyEnrollmentPortraitStage(input: {
     stage_id: string;
     storage_key: string;
-    mime_type: "image/jpeg" | "image/png";
+    mime_type: DocumentMimeType;
   }): Promise<void>;
   deleteEnrollmentPortraitStage(stageId: string): Promise<void>;
   createUploadUrl(input: {
