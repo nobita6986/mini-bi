@@ -30,6 +30,19 @@ function slice(startMarker, endMarker) {
 const pasteHandler = slice("const onStagedPaste = useCallback", "const onStagedUndo = useCallback");
 const deleteHandler = slice("const onPersistedDelete = useCallback", "const addFormRow = useCallback");
 const saveHandler = slice("const onStagedSave = useCallback", "const updateDate = useCallback");
+const updateRowHandler = slice("const updateRow = useCallback", "const fetchConflictCopy = useCallback");
+const spreadsheetEditHandler = slice(
+  "const onSpreadsheetCellsChange = useCallback",
+  "const onStagedProviderTypeChange = useCallback",
+);
+const providerEditHandler = slice(
+  "const onStagedProviderTypeChange = useCallback",
+  "const onStagedPasteRejected = useCallback",
+);
+const mobileEditHandler = slice(
+  "const onMobileStagedChange = useCallback",
+  "const handleMobileStagedProjectChange = useCallback",
+);
 const reloadDraftHandler = slice("const reloadDrafts = useCallback", "const runTransition = useCallback");
 const editDraftHandler = slice("const reloadSubmissionDraft = useCallback", "const saveRow = useCallback");
 
@@ -70,8 +83,24 @@ test("undo dung snapshot W01 va khoi phuc dung truoc paste", () => {
   assert.match(livePaste, /captureClipboardUndoSnapshot\(/);
   assert.match(live, /undoLiveGridPaste\(/);
   assert.match(live, /const onStagedUndo = useCallback/);
-  assert.match(live, /stagedUndo\.current = null;/);
+  assert.match(live, /setStagedUndo\(null\)/);
   assert.match(live, /canUndo=\{stagedCanUndo\}/);
+});
+
+test("paste rồi sửa field khác hủy one-shot undo trước mutation để không mất edit mới", () => {
+  assert.match(pasteHandler, /setStagedUndo\(result\.undo\);\s*\n\s*setStagedCanUndo\(true\)/);
+  assert.match(live, /const invalidateStagedUndo = useCallback\(\(\) => \{\s*\n\s*setStagedUndo\(null\);\s*\n\s*setStagedCanUndo\(false\)/);
+  assert.match(live, /const onStagedUndo = useCallback[\s\S]*if \(snapshot === null\) return;/);
+  for (const [label, handler, mutation] of [
+    ["persisted drawer", updateRowHandler, "setRows("],
+    ["desktop grid", spreadsheetEditHandler, "setRows("],
+    ["provider", providerEditHandler, "setRows("],
+    ["mobile/form", mobileEditHandler, "setStagedModel("],
+  ]) {
+    const invalidate = handler.indexOf("invalidateStagedUndo()");
+    const mutate = handler.indexOf(mutation);
+    assert.ok(invalidate >= 0 && mutate > invalidate, label + " phải hủy undo trước mutation");
+  }
 });
 
 test("validation chay tren staged rows va map issue ve dung o", () => {
