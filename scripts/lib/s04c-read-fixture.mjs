@@ -205,9 +205,11 @@ export async function seedChangeRequestFixture(db, {
     await db.query(toReview.sql, toReview.values);
     const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 2, "SUBMITTED", "submit");
     await db.query(toSubmitted.sql, toSubmitted.values);
-  } else {
+  } else if (submissionWorkflow === "direct") {
     const toSubmitted = transitionInput(ACTORS.proposer, submissionId, 1, "SUBMITTED", "submit");
     await db.query(toSubmitted.sql, toSubmitted.values);
+  } else if (submissionWorkflow !== "draft") {
+    throw new Error("unsupported synthetic submission workflow");
   }
   if (manageTransaction) await db.query("commit");
 

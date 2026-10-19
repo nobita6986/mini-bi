@@ -31,7 +31,7 @@ function sqlState(error, code) {
 test("W05B migration exposes the 19-column projection, RPC and ACL", async () => {
   const { db, migrationNames } = await buildDb();
   try {
-    assert.equal(migrationNames.length, 121);
+    assert.equal(migrationNames.length, 122);
     // Pin the historical ledger slot (85th migration), independent of later appends.
     assert.equal(migrationNames[84], MIGRATION);
     const columns = await query(db, "select array_to_string(array_agg(attname order by attnum), ',') as columns from pg_attribute where attrelid='public.direct_entry_reporting_facts_v01'::regclass and attnum>0 and not attisdropped");

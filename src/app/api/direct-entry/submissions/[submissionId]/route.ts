@@ -8,6 +8,8 @@ import "server-only";
  */
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
+import { deleteDraftSubmission } from "@/lib/direct-entry/submission-delete-api";
+import { createSubmissionDeleteRepository } from "@/lib/direct-entry/submission-delete-repository";
 import { readOwnSubmission } from "@/lib/direct-entry/submission-read-api";
 import { createSubmissionReadRepository } from "@/lib/direct-entry/submission-read-repository";
 
@@ -28,5 +30,22 @@ export async function GET(
   return readOwnSubmission(request, submissionId, "true", {
     resolveSession: () => getDirectEntryActor(createDirectEntryActorRepository()),
     repository: createSubmissionReadRepository(),
+  });
+}
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ submissionId: string }> },
+): Promise<Response> {
+  if (process.env.DIRECT_ENTRY_API_ENABLED !== "true") {
+    return Response.json({ ok: false, code: "NOT_FOUND" }, {
+      status: 404,
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  }
+  const { submissionId } = await context.params;
+  return deleteDraftSubmission(request, submissionId, "true", {
+    resolveSession: () => getDirectEntryActor(createDirectEntryActorRepository()),
+    repository: createSubmissionDeleteRepository(),
   });
 }

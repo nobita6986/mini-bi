@@ -94,7 +94,7 @@ test("114-migration DB rejects DOCUMENT RPC and table inserts without residue", 
   const { db, migrationNames } = await createMigratedDatabase();
   // P3.1-W03A #82 adds three internal helpers plus two lifecycle RPCs;
   // W03A-R2 #83/#84 add two read RPCs and one internal label helper net.
-  assert.equal(migrationNames.length, 121);
+  assert.equal(migrationNames.length, 122);
   assert.ok(migrationNames.includes(scopeMigration));
 
   const fixture = await seedChangeRequestFixture(db);
@@ -183,6 +183,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // #118 adds three typed worker-document stage RPCs; #119 changes only the
   // stage-count bound in the batch RPC and adds no function name. #120 adds one
   // private contract-download scope helper; it grants no runtime role access.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [259, 130, 129]);
+  // #122 adds three service-role-only deletion/cleanup RPCs and one internal stage guard.
+  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [263, 133, 130]);
   await db.close();
 });

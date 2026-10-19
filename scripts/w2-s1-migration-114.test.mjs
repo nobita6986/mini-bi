@@ -13,8 +13,8 @@ const AUTH_PROLOGUE =
 async function applyBefore114(db) {
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-8), MIGRATION_114);
-  assert.equal(names.length, 121);
+  assert.equal(names.at(-9), MIGRATION_114);
+  assert.equal(names.length, 122);
   const migrationIndex = names.indexOf(MIGRATION_114);
   for (const name of names.slice(0, migrationIndex)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));

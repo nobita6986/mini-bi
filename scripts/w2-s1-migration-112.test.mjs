@@ -50,7 +50,7 @@ test("migration #112 repairs the previously published #111 function offline", as
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 121, "the current repository ledger includes append-only migrations #113 through #121");
+    assert.equal(names.length, 122, "the current repository ledger includes append-only migrations #113 through #122");
     assert.equal(names[names.indexOf(MIGRATION_112) - 1], MIGRATION_111,
       "#111 remains unchanged immediately before #112");
     assert.equal(names[names.indexOf(MIGRATION_112)], MIGRATION_112,

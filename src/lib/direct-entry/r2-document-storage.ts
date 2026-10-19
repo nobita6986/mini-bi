@@ -75,6 +75,7 @@ export type DocumentObjectStorage = {
     sanitized_bytes?: Uint8Array;
   }): Promise<void>;
   deleteStaged(storageKey: string): Promise<void>;
+  deleteFinal(storageKey: string): Promise<void>;
   createDownloadUrl(input: {
     storage_key: string;
     mime_type: DocumentMimeType;
@@ -144,6 +145,7 @@ export const unavailableDocumentObjectStorage: DocumentObjectStorage = {
   async readFinal() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async promote() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async deleteStaged() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
+  async deleteFinal() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
   async createDownloadUrl() { throw new Error("DOCUMENT_STORAGE_UNAVAILABLE"); },
 };
 
@@ -350,6 +352,12 @@ export function createR2DocumentStorage(
       await getClient().send(new DeleteObjectCommand({
         Bucket: config.bucket,
         Key: stagingObjectKey(config.environment, storageKey),
+      }));
+    },
+    async deleteFinal(storageKey) {
+      await getClient().send(new DeleteObjectCommand({
+        Bucket: config.bucket,
+        Key: finalObjectKey(config.environment, storageKey),
       }));
     },
     async createDownloadUrl(input) {
