@@ -135,7 +135,8 @@ export type SpreadsheetPasteRejection =
   | "CLIPBOARD_COLUMN_OVERFLOW"
   | "CLIPBOARD_ANCHOR_INVALID"
   | "CLIPBOARD_EMPTY"
-  | "CLIPBOARD_PERSISTED_ROW";
+  | "CLIPBOARD_PROTECTED_CELL"
+  | "CLIPBOARD_TARGET_INVALID";
 
 export type SpreadsheetPasteRequest = {
   mapping: Extract<ClipboardMapResult, { ok: true }>;
