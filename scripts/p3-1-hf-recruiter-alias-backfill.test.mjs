@@ -75,6 +75,7 @@ async function databaseBeforeHotfix() {
     "20261018150000_w2_s1_worker_directory_detail_read_scope.sql",
     "20261018160000_w2_s1_worker_document_staging.sql",
     "20261018170000_w2_s1_multi_document_stage_batch_limit.sql",
+    "20261019100000_hf_duplicate_entry_void_and_directory_document_download.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
