@@ -13,6 +13,7 @@ function source(relative) {
 
 const listComponent = source("./direct-entry-submission-list.tsx");
 const liveComponent = source("./direct-entry-live.tsx");
+const shellStyles = source("./direct-entry-shell.module.css");
 const helper = source("../../lib/direct-entry/submission-lifecycle.ts");
 
 const TABLE_ACCESS = /\.from\s*\(/;
@@ -285,6 +286,23 @@ test("PRE-W2-HF: chỉ card DRAFT mới có nút Xóa đợt nhập liệu", () 
     const ui = renderList({ submissions: [{ ...submission, state, allowed_transitions: [] }] });
     assert.equal(ui.deleteButton(), undefined, state + " khong duoc co nut xoa dot");
   }
+});
+
+test("PRE-W2-HF: nút Gửi duyệt rộng bằng nhóm nút Sửa/Xóa", () => {
+  const ui = renderList();
+  const group = findElement(ui.tree(), (node) =>
+    node.props?.["data-testid"] === "draft-submission-actions");
+  assert.ok(group, "nhóm Sửa/Xóa của bản nháp được render");
+  const editDeleteRow = group.props.children[0];
+  assert.equal(editDeleteRow.type, "div");
+  assert.equal(editDeleteRow.props.children[0].type, "button");
+  assert.equal(editDeleteRow.props.children[1].type, "button");
+  const submit = findElement(group, (node) => node.type === "button" && node.key === "SUBMITTED");
+  assert.ok(submit, "nút Gửi duyệt nằm cùng nhóm bố cục");
+  assert.match(listComponent, /styles\.draftSubmissionActions/);
+  assert.match(listComponent, /styles\.draftSubmissionSubmit/);
+  assert.match(shellStyles, /\.draftSubmissionActions\s*\{[^}]*display:\s*grid;[^}]*width:\s*fit-content/s);
+  assert.match(shellStyles, /\.draftSubmissionSubmit\s*\{[^}]*width:\s*100%;/s);
 });
 
 test("PRE-W2-HF: ẩn nút xóa với đợt chỉ được thấy theo phạm vi dự án", () => {

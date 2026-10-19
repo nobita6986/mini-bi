@@ -83,8 +83,9 @@ export async function deleteDraftSubmission(input: {
     return { kind: "rejected", code: "SUBMISSION_DELETE_INVALID" };
   }
   let response: Response;
+  const callFetch = input.fetchImpl;
   try {
-    response = await input.fetchImpl(
+    response = await callFetch(
       `/api/direct-entry/submissions/${encodeURIComponent(input.submissionId)}`,
       {
         method: "DELETE",
