@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+import * as lifecycle from "../../lib/direct-entry/submission-lifecycle.ts";
 
 function source(relative) {
   return readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -13,6 +17,166 @@ const helper = source("../../lib/direct-entry/submission-lifecycle.ts");
 const TABLE_ACCESS = /\.from\s*\(/;
 const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabilities|scope|owner_user_id|created_by_user_id)\s*:/;
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
+
+// Execute the actual component and click its rendered handlers; only hooks and visual wrappers are stubbed.
+const compiledList = ts.transpileModule(listComponent, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+const require = createRequire(import.meta.url);
+const submission = {
+  submission_id: "00000000-0000-4000-8000-000000000001", state: "DRAFT", version: 1,
+  allowed_transitions: ["SUBMITTED"], entry_count: 1, updated_at: "2026-10-19T00:00:00Z",
+};
+const preflight = { submission_id: submission.submission_id, version: 3,
+  fingerprint: "a".repeat(64), conflict_count: 1, conflicts: [] };
+
+function findElement(node, predicate) {
+  if (Array.isArray(node)) return node.map((item) => findElement(item, predicate)).find(Boolean);
+  if (!node || typeof node !== "object") return undefined;
+  if (predicate(node)) return node;
+  return findElement(node.props?.children, predicate);
+}
+
+function renderList(overrides = {}) {
+  const state = [];
+  let cursor = 0;
+  const reads = [], writes = [];
+  const props = {
+    state: "ready", submissions: [submission], hasMore: false, busySubmissionId: null,
+    blockedSubmissionIds: new Set(), queueFilter: "ACTIVE",
+    onPreflight: async (value) => { reads.push(value); return preflight; },
+    onTransition: async (value) => { writes.push(value); return "applied"; },
+    ...overrides,
+  };
+  const exports = {};
+  runInNewContext(compiledList, { exports, require(name) {
+    if (name === "react") return { useState(initial) {
+      const slot = cursor++;
+      if (!(slot in state)) state[slot] = initial;
+      return [state[slot], (value) => { state[slot] = value; }];
+    } };
+    if (name === "react/jsx-runtime") return require(name);
+    if (name === "radix-ui") return { AlertDialog: new Proxy({}, { get: (_, key) => "AlertDialog." + key }) };
+    if (name.endsWith("submission-lifecycle")) return lifecycle;
+    if (name.endsWith("direct-entry-compact-panel")) return { DirectEntryCompactPanel: "CompactPanel" };
+    if (name.endsWith("direct-entry-queue-tabs")) return { DirectEntryQueueTabs: "QueueTabs" };
+    if (name.endsWith("direct-entry-duplicate-cccd-dialog")) return { DirectEntryDuplicateCccdDialog: "DuplicateDialog" };
+    if (name.endsWith(".module.css")) return { default: {} };
+    throw new Error("Unexpected component dependency: " + name);
+  } });
+  function tree() { cursor = 0; return exports.DirectEntrySubmissionList(props); }
+  function find(type) { return findElement(tree(), (node) => node.type === type); }
+  return {
+    reads, writes, props, tree,
+    duplicate: () => find("DuplicateDialog").props,
+    generic: () => find("AlertDialog.Root").props,
+    async submit(target = "SUBMITTED") {
+      const button = findElement(tree(), (node) => node.type === "button" && node.key === target);
+      assert.ok(button, "server-allowed action is rendered");
+      button.props.onClick();
+      await new Promise(setImmediate);
+    },
+    async confirm() {
+      const action = find("AlertDialog.Action");
+      assert.ok(action, "generic confirmation is rendered");
+      action.props.children.props.onClick();
+      await new Promise(setImmediate);
+    },
+    async confirmDuplicate() {
+      find("DuplicateDialog").props.onConfirm();
+      await new Promise(setImmediate);
+    },
+  };
+}
+
+test("DRAFT submit preflights, then sends the acknowledged fingerprint and current version", async () => {
+  const ui = renderList();
+  await ui.submit();
+  assert.equal(ui.reads.length, 1);
+  assert.equal(ui.generic().open, false);
+  assert.equal(ui.duplicate().preflight, preflight);
+  assert.equal(ui.writes.length, 0, "opening the warning must not submit");
+  await ui.confirmDuplicate();
+  assert.equal(ui.writes.length, 1);
+  assert.equal(ui.writes[0].action.target_state, "SUBMITTED");
+  assert.equal(ui.writes[0].submission.version, preflight.version);
+  assert.equal(ui.writes[0].acknowledgement.fingerprint, preflight.fingerprint);
+  assert.equal(ui.writes[0].acknowledgement.count, 1);
+});
+
+test("unsaved DRAFT rows block submit before preflight or confirmation", async () => {
+  const ui = renderList({ blockedSubmissionIds: new Set([submission.submission_id]) });
+  await ui.submit();
+  assert.equal(ui.reads.length, 0);
+  assert.equal(ui.writes.length, 0);
+  assert.equal(ui.generic().open, false);
+  assert.equal(ui.duplicate().preflight, null);
+  assert.ok(findElement(ui.tree(), (node) => typeof node.props?.children === "string" &&
+    node.props.children.includes("Còn dòng chưa được máy chủ xác nhận")));
+});
+
+test("preflight unavailable keeps both confirmation paths closed", async () => {
+  const ui = renderList({ onPreflight: async () => null });
+  await ui.submit();
+  assert.equal(ui.generic().open, false);
+  assert.equal(ui.duplicate().preflight, null);
+  assert.equal(ui.writes.length, 0);
+});
+
+test("no conflicts uses normal confirmation with the preflight version", async () => {
+  const ui = renderList({ onPreflight: async () => ({ ...preflight, conflict_count: 0 }) });
+  await ui.submit();
+  assert.equal(ui.generic().open, true);
+  assert.equal(ui.writes.length, 0);
+  await ui.confirm();
+  assert.equal(ui.writes.length, 1);
+  assert.equal(ui.writes[0].submission.version, preflight.version);
+  assert.equal(ui.writes[0].acknowledgement, undefined);
+});
+
+test("a conflict appearing after normal confirmation reopens duplicate confirmation without auto-submit", async () => {
+  const writes = [];
+  let reads = 0;
+  const ui = renderList({
+    onPreflight: async () => ({ ...preflight, conflict_count: reads++ === 0 ? 0 : 1 }),
+    onTransition: async (input) => { writes.push(input); return "duplicate-changed"; },
+  });
+  await ui.submit();
+  await ui.confirm();
+  assert.equal(reads, 2);
+  assert.equal(writes.length, 1, "never auto-submit the refreshed conflicts");
+  assert.equal(ui.generic().open, false);
+  assert.equal(ui.duplicate().preflight.conflict_count, 1);
+});
+
+test("stale duplicate confirmation refreshes fingerprint/version and needs another explicit confirmation", async () => {
+  let reads = 0;
+  const writes = [];
+  const fresh = { ...preflight, version: 4, fingerprint: "b".repeat(64) };
+  const ui = renderList({
+    onPreflight: async () => reads++ === 0 ? preflight : fresh,
+    onTransition: async (input) => { writes.push(input); return writes.length === 1 ? "duplicate-changed" : "applied"; },
+  });
+  await ui.submit();
+  await ui.confirmDuplicate();
+  assert.equal(writes.length, 1);
+  assert.equal(ui.duplicate().preflight, fresh);
+  await ui.confirmDuplicate();
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].submission.version, 4);
+  assert.equal(writes[1].acknowledgement.fingerprint, fresh.fingerprint);
+});
+
+test("legacy REVIEW transitions do not request a DRAFT-only preflight", async () => {
+  for (const target of ["DRAFT", "SUBMITTED"]) {
+    const ui = renderList({ submissions: [{ ...submission, state: "REVIEW", allowed_transitions: [target] }] });
+    await ui.submit(target);
+    assert.equal(ui.reads.length, 0);
+    await ui.confirm();
+    assert.equal(ui.writes[0].action.target_state, target);
+    assert.equal(ui.writes[0].acknowledgement, undefined);
+  }
+});
 
 test("confirmation uses Radix AlertDialog without manual modal plumbing", () => {
   assert.match(listComponent, /import \{ AlertDialog \} from "radix-ui"/);

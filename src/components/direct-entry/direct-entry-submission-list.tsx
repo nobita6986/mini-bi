@@ -94,28 +94,39 @@ export function DirectEntrySubmissionList({
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
   async function requestAction(submission: SubmissionReadItem, action: SubmissionAction) {
-    if (action.target_state === "REVIEW" && blockedSubmissionIds.has(submission.submission_id)) {
+    const submittingDraft = submission.state === "DRAFT" && action.target_state === "SUBMITTED";
+    if (submittingDraft && blockedSubmissionIds.has(submission.submission_id)) {
       setBlockedNotice(
         "Còn dòng chưa được máy chủ xác nhận trong đợt này. Hãy lưu nháp trước khi gửi duyệt.",
       );
       return;
     }
     setBlockedNotice(null);
-    if (action.target_state !== "REVIEW") {
+    if (!submittingDraft) {
       setPending({ submission, action });
       return;
     }
-    // DRAFT -> REVIEW: server kiem tra CCCD trung TRUOC. Chi khi server bao co conflict thi
-    // modal xac nhan moi duoc mo, va modal luon dung dung du lieu server tra ve.
+    // Legacy REVIEW batches cannot use the DRAFT-only duplicate preflight.
     setCheckingId(submission.submission_id);
     const preflight = await onPreflight(submission);
     setCheckingId(null);
     if (preflight === null) return;
+    const currentSubmission = { ...submission, version: preflight.version };
     if (preflight.conflict_count > 0) {
-      setPendingDuplicate({ submission, action, preflight });
+      setPendingDuplicate({ submission: currentSubmission, action, preflight });
       return;
     }
-    setPending({ submission, action });
+    setPending({ submission: currentSubmission, action });
+  }
+
+  async function confirmPending() {
+    const current = pending;
+    if (current === null) return;
+    setPending(null);
+    const outcome = await onTransition(current);
+    if (outcome === "duplicate-changed") {
+      await requestAction(current.submission, current.action);
+    }
   }
 
   async function confirmDuplicate() {
@@ -130,11 +141,9 @@ export function DirectEntrySubmissionList({
       },
     });
     if (outcome === "duplicate-changed") {
-      // Tap conflict da doi o server: khong submit, tai lai bang preflight moi va hoi lai.
-      const refreshed = await onPreflight(current.submission);
-      setPendingDuplicate(refreshed !== null && refreshed.conflict_count > 0
-        ? { submission: current.submission, action: current.action, preflight: refreshed }
-        : null);
+      // Refresh the server version and conflict set; require another explicit confirmation.
+      setPendingDuplicate(null);
+      await requestAction(current.submission, current.action);
       return;
     }
     setPendingDuplicate(null);
@@ -305,11 +314,7 @@ export function DirectEntrySubmissionList({
                   <button
                     type="button"
                     className={styles.primaryButton}
-                    onClick={() => {
-                      const current = pending;
-                      setPending(null);
-                      void onTransition({ submission: current.submission, action: current.action });
-                    }}
+                    onClick={() => void confirmPending()}
                   >
                     {pending.action.confirm_label}
                   </button>
