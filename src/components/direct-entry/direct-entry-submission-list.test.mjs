@@ -41,12 +41,13 @@ function findElement(node, predicate) {
 function renderList(overrides = {}) {
   const state = [];
   let cursor = 0;
-  const reads = [], writes = [];
+  const reads = [], writes = [], deletes = [];
   const props = {
     state: "ready", submissions: [submission], hasMore: false, busySubmissionId: null,
     blockedSubmissionIds: new Set(), queueFilter: "ACTIVE",
     onPreflight: async (value) => { reads.push(value); return preflight; },
     onTransition: async (value) => { writes.push(value); return "applied"; },
+    onDeleteDraft: async (value) => { deletes.push(value); },
     ...overrides,
   };
   const exports = {};
@@ -67,10 +68,29 @@ function renderList(overrides = {}) {
   } });
   function tree() { cursor = 0; return exports.DirectEntrySubmissionList(props); }
   function find(type) { return findElement(tree(), (node) => node.type === type); }
+  function deleteButton() {
+    return findElement(tree(), (node) => node.props?.["data-testid"] === "submission-delete-draft");
+  }
+  function confirmDeleteButton() {
+    return findElement(tree(), (node) => node.props?.["data-testid"] === "submission-delete-confirm");
+  }
   return {
-    reads, writes, props, tree,
+    reads, writes, deletes, props, tree,
     duplicate: () => find("DuplicateDialog").props,
     generic: () => find("AlertDialog.Root").props,
+    deleteButton,
+    confirmDeleteButton,
+    openDelete() {
+      const button = deleteButton();
+      assert.ok(button, "DRAFT card co nut xoa dot");
+      button.props.onClick();
+    },
+    async confirmDelete() {
+      const button = confirmDeleteButton();
+      assert.ok(button, "hop thoai xac nhan xoa dang mo");
+      button.props.onClick();
+      await new Promise(setImmediate);
+    },
     async submit(target = "SUBMITTED") {
       const button = findElement(tree(), (node) => node.type === "button" && node.key === target);
       assert.ok(button, "server-allowed action is rendered");
@@ -254,4 +274,59 @@ test("no test or mock route exists inside the app router", () => {
   assert.equal(directEntryRoutes.length > 0, true);
   const suspicious = directEntryRoutes.filter((file) => /mock|fixture|synthetic|_test/i.test(file));
   assert.deepEqual(suspicious, []);
+});
+
+/* -------------------- PRE-W2-HF: xoa dot nhap lieu (xoa mem DRAFT) */
+
+test("PRE-W2-HF: chỉ card DRAFT mới có nút Xóa đợt nhập liệu", () => {
+  const draft = renderList();
+  assert.ok(draft.deleteButton(), "DRAFT co nut xoa dot");
+  for (const state of ["SUBMITTED", "REVIEW"]) {
+    const ui = renderList({ submissions: [{ ...submission, state, allowed_transitions: [] }] });
+    assert.equal(ui.deleteButton(), undefined, state + " khong duoc co nut xoa dot");
+  }
+});
+
+test("PRE-W2-HF: ẩn nút xóa với đợt chỉ được thấy theo phạm vi dự án", () => {
+  const ui = renderList({ submissions: [{ ...submission, project_scoped: true }] });
+  assert.equal(ui.deleteButton(), undefined);
+});
+
+test("PRE-W2-HF: mở xác nhận không xóa; xác nhận gọi đúng đợt một lần", async () => {
+  const ui = renderList();
+  ui.openDelete();
+  assert.equal(ui.deletes.length, 0, "mo confirm khong goi API");
+  assert.ok(ui.confirmDeleteButton(), "hop thoai xac nhan dang mo");
+  await ui.confirmDelete();
+  assert.equal(ui.deletes.length, 1);
+  assert.equal(ui.deletes[0].submission_id, submission.submission_id);
+  assert.equal(ui.deletes[0].version, submission.version);
+});
+
+test("PRE-W2-HF: request đang chạy khóa nút xóa (disabled + aria-busy)", () => {
+  const ui = renderList({ busySubmissionId: submission.submission_id });
+  assert.equal(ui.deleteButton().props.disabled, true);
+  assert.equal(ui.deleteButton().props["aria-busy"], true);
+});
+
+test("PRE-W2-HF: bản xác nhận nói rõ đây là bản nháp và không tuyên bố đã xóa storage", () => {
+  assert.match(listComponent, /Xóa đợt nhập liệu\?/);
+  assert.match(listComponent, /đang ở trạng thái bản nháp/);
+  assert.match(listComponent, /không thể hoàn tác/);
+  assert.match(listComponent, /hàng đợi dọn/);
+  assert.doesNotMatch(listComponent, /đã xóa khỏi (kho|storage|bucket)/i);
+  assert.match(listComponent, /data-testid="submission-delete-confirm"/);
+});
+
+test("PRE-W2-HF: live gửi expected_version + Idempotency-Key và chỉ bỏ đợt sau khi server xác nhận", () => {
+  assert.match(liveComponent,
+    /deleteDraftSubmission\(\{[\s\S]{0,240}expectedVersion: submission\.version,[\s\S]{0,240}idempotencyKey: resolved\.key/);
+  const deletedBranch = liveComponent.indexOf('if (result.kind === "deleted")');
+  const remove = liveComponent.indexOf("setSubmissions((current) => current.filter(", deletedBranch);
+  const failure = liveComponent.indexOf("draftSubmissionDeleteErrorMessage(result)", deletedBranch);
+  assert.ok(deletedBranch > 0 && remove > deletedBranch && failure > remove,
+    "chi bo dot trong nhanh deleted; nhanh loi chi bao message");
+  assert.match(liveComponent, /onDeleteDraft=\{\(submission\) => onDeleteDraftSubmission\(submission\)\}/);
+  assert.match(liveComponent, /data-testid="submission-delete-notice"/);
+  assert.match(liveComponent, /setBusySubmissionId\(submission\.submission_id\)/);
 });

@@ -110,6 +110,10 @@ import {
   draftRowDeleteErrorMessage,
 } from "@/lib/direct-entry/draft-row-delete-client";
 import {
+  deleteDraftSubmission,
+  draftSubmissionDeleteErrorMessage,
+} from "@/lib/direct-entry/draft-submission-delete-client";
+import {
   SPREADSHEET_WRITABLE_FIELD_KEYS,
   SPREADSHEET_MAX_DATA_ROWS,
   SPREADSHEET_DEFAULT_DATE_FIELD_KEY,
@@ -380,12 +384,16 @@ export function DirectEntryLive() {
   const submissionLoadRequestRef = useRef(0);
   const [submissionListState, setSubmissionListState] = useState<"loading" | "ready" | "error">("loading");
   const [submissionListMessage, setSubmissionListMessage] = useState("");
+  /** PRE-W2-HF: thong bao rieng cho xoa dot nhap lieu (khong lan voi loi tai danh sach). */
+  const [submissionDeleteNotice, setSubmissionDeleteNotice] =
+    useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [submissionHasMore, setSubmissionHasMore] = useState(false);
   const [busySubmissionId, setBusySubmissionId] = useState<string | null>(null);
   const [lifecycleMessage, setLifecycleMessage] = useState("");
   const cursorRef = useRef<string | null>(null);
   const intentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const deleteIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const deleteSubmissionIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
   const [stagedUndo, setStagedUndo] = useState<LiveGridPasteUndoSnapshot | null>(null);
   const [stagedCanUndo, setStagedCanUndo] = useState(false);
@@ -1952,6 +1960,76 @@ export function DirectEntryLive() {
     }
   }, [deletingRowId, invalidateStagedUndo, loadSubmissions, setStagedMessageWithTone]);
 
+  /**
+   * PRE-W2-HF: xoa mem mot dot DRAFT thuoc actor. Chi bo dot khoi danh sach khi server xac nhan;
+   * conflict/quyen/mang/loi server => giu nguyen dot va bao ro rang.
+   */
+  const onDeleteDraftSubmission = useCallback(async (submission: SubmissionReadItem) => {
+    if (busySubmissionId !== null) return;
+    if (submission.state !== "DRAFT" || !Number.isSafeInteger(submission.version) ||
+        submission.version < 1) {
+      setSubmissionDeleteNotice({
+        kind: "error",
+        message: "Chỉ xóa được đợt nhập liệu đang ở trạng thái bản nháp.",
+      });
+      return;
+    }
+    const intent = `delete_draft_submission:${submission.submission_id}:${submission.version}`;
+    const resolved = resolveIntentKey(
+      deleteSubmissionIntentKeys.current.get(submission.submission_id) ?? EMPTY_INTENT_KEY,
+      intent,
+      () => crypto.randomUUID(),
+    );
+    deleteSubmissionIntentKeys.current.set(submission.submission_id, resolved.state);
+    setBusySubmissionId(submission.submission_id);
+    setSubmissionDeleteNotice(null);
+    try {
+      const result = await deleteDraftSubmission({
+        submissionId: submission.submission_id,
+        expectedVersion: submission.version,
+        idempotencyKey: resolved.key,
+        fetchImpl: fetch,
+      });
+      if (result.kind === "deleted") {
+        deleteSubmissionIntentKeys.current.set(
+          submission.submission_id,
+          clearIntentKey(resolved.state, intent),
+        );
+        setSubmissions((current) => current.filter(
+          (item) => item.submission_id !== submission.submission_id,
+        ));
+        // Bo tham chieu UI dang tro toi dot vua xoa + rows cua dot do.
+        setEditingDraftSubmissionId((current) =>
+          current === submission.submission_id ? null : current);
+        setManageDocumentsSubmission((current) =>
+          current?.submission_id === submission.submission_id ? null : current);
+        setProposerSubmission((current) =>
+          current?.submission_id === submission.submission_id ? null : current);
+        invalidateStagedUndo();
+        setRows((current) =>
+          current.filter((row) => row.submissionId !== submission.submission_id));
+        setSubmissionDeleteNotice({
+          kind: "success",
+          message: "Đã xóa đợt nhập liệu khỏi danh sách.",
+        });
+        void loadSubmissions("replace");
+        return;
+      }
+      if (result.kind !== "retry") {
+        deleteSubmissionIntentKeys.current.set(
+          submission.submission_id,
+          clearIntentKey(resolved.state, intent),
+        );
+      }
+      setSubmissionDeleteNotice({
+        kind: "error",
+        message: draftSubmissionDeleteErrorMessage(result),
+      });
+    } finally {
+      setBusySubmissionId(null);
+    }
+  }, [busySubmissionId, invalidateStagedUndo, loadSubmissions]);
+
   const addFormRow = useCallback(() => {
     const visible = new Set(visibleFormRowIds);
     let nextModel = stagedModel;
@@ -2498,7 +2576,18 @@ export function DirectEntryLive() {
             onEditDraft={(submission) => void reloadSubmissionDraft(submission)}
             onRequestChange={(submission) => setProposerSubmission(submission)}
             onManageDocuments={(submission) => setManageDocumentsSubmission(submission)}
+            onDeleteDraft={(submission) => onDeleteDraftSubmission(submission)}
           />
+          {submissionDeleteNotice !== null && (
+            <p
+              role={submissionDeleteNotice.kind === "error" ? "alert" : "status"}
+              data-testid="submission-delete-notice"
+              className={submissionDeleteNotice.kind === "error"
+                ? styles.submissionBlocked : styles.submissionHint}
+            >
+              {submissionDeleteNotice.message}
+            </p>
+          )}
           {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
           <DirectEntryChangeRequestList
             compact

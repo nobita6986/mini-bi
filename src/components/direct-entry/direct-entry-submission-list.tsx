@@ -62,6 +62,11 @@ export type SubmissionListProps = {
   onEditDraft: (submission: SubmissionReadItem) => void;
   onRequestChange: (submission: SubmissionReadItem) => void;
   onManageDocuments: (submission: SubmissionReadItem) => void;
+  /**
+   * PRE-W2-HF: xoa mem mot dot DRAFT cua chinh actor. Component chi mo confirm; viec goi API,
+   * idempotency va cap nhat danh sach do parent dam nhiem (server la authority cuoi).
+   */
+  onDeleteDraft: (submission: SubmissionReadItem) => Promise<void>;
 };
 
 type PendingConfirm = { submission: SubmissionReadItem; action: SubmissionAction };
@@ -87,8 +92,10 @@ export function DirectEntrySubmissionList({
   onEditDraft,
   onRequestChange,
   onManageDocuments,
+  onDeleteDraft,
 }: SubmissionListProps) {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SubmissionReadItem | null>(null);
   const [pendingDuplicate, setPendingDuplicate] = useState<PendingDuplicate | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
@@ -147,6 +154,14 @@ export function DirectEntrySubmissionList({
       return;
     }
     setPendingDuplicate(null);
+  }
+
+  async function confirmDelete() {
+    const current = pendingDelete;
+    if (current === null) return;
+    // Parent quyet dinh thanh cong/that bai va cap nhat danh sach/message.
+    await onDeleteDraft(current);
+    setPendingDelete(null);
   }
 
   const duplicateBusy = pendingDuplicate !== null &&
@@ -234,14 +249,28 @@ export function DirectEntrySubmissionList({
               )}
               <div className={compact ? styles.compactActions : styles.submissionActions}>
                 {submission.state === "DRAFT" && (
-                  <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    disabled={busy}
-                    onClick={() => onEditDraft(submission)}
-                  >
-                    Sửa
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      disabled={busy}
+                      onClick={() => onEditDraft(submission)}
+                    >
+                      Sửa
+                    </button>
+                    {!submission.project_scoped && (
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        data-testid="submission-delete-draft"
+                        aria-busy={busy}
+                        disabled={busy}
+                        onClick={() => setPendingDelete(submission)}
+                      >
+                        Xóa đợt nhập liệu
+                      </button>
+                    )}
+                  </>
                 )}
                 {actions.map((action) => {
                   const checking = checkingId === submission.submission_id;
@@ -317,6 +346,46 @@ export function DirectEntrySubmissionList({
                     onClick={() => void confirmPending()}
                   >
                     {pending.action.confirm_label}
+                  </button>
+                </AlertDialog.Action>
+              </div>
+            </AlertDialog.Content>
+          )}
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+
+      {/* PRE-W2-HF: xac nhan xoa mem dot nhap lieu (chi DRAFT). */}
+      <AlertDialog.Root open={pendingDelete !== null} onOpenChange={(open) => {
+        if (!open) setPendingDelete(null);
+      }}>
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={styles.drawerOverlay} />
+          {pendingDelete && (
+            <AlertDialog.Content className={styles.confirmDialog}>
+              <AlertDialog.Title className={styles.drawerTitle}>
+                Xóa đợt nhập liệu?
+              </AlertDialog.Title>
+              <AlertDialog.Description className={styles.drawerDescription}>
+                Đợt này đang ở trạng thái bản nháp. Xóa sẽ bỏ đợt khỏi danh sách và không thể hoàn tác.
+                {" "}Các tệp đã tải lên chỉ được đưa vào hàng đợi dọn phía máy chủ, chưa chắc đã được
+                {" "}xóa khỏi kho lưu trữ ngay.
+              </AlertDialog.Description>
+              <p className={styles.submissionHint}>
+                {SUBMISSION_STATE_LABELS[pendingDelete.state]} · {pendingDelete.entry_count} dòng
+              </p>
+              <div className={styles.drawerActions}>
+                <AlertDialog.Cancel asChild>
+                  <button type="button" className={styles.secondaryButton}>Hủy</button>
+                </AlertDialog.Cancel>
+                <AlertDialog.Action asChild>
+                  <button
+                    type="button"
+                    className={styles.primaryButton}
+                    data-testid="submission-delete-confirm"
+                    disabled={busySubmissionId === pendingDelete.submission_id}
+                    onClick={() => void confirmDelete()}
+                  >
+                    Xóa bản nháp
                   </button>
                 </AlertDialog.Action>
               </div>
