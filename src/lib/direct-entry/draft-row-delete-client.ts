@@ -80,6 +80,15 @@ export async function deleteDraftRow(input: {
 
 export function draftRowDeleteErrorMessage(result: Exclude<DraftRowDeleteResult, { kind: "deleted" }>): string {
   if (result.kind === "retry") {
+    if (result.code === "DRAFT_DELETE_NETWORK") {
+      return "Mất kết nối khi xóa. Chưa xác định được kết quả; dòng vẫn được giữ, hãy thử lại khi kết nối ổn định.";
+    }
+    if (result.code === "DRAFT_DELETE_UNAVAILABLE") {
+      return "Máy chủ chưa xác nhận việc xóa. Dòng vẫn được giữ; hãy thử lại, hệ thống sẽ dùng cùng yêu cầu.";
+    }
+    if (result.code === "DRAFT_DELETE_RESPONSE_INVALID") {
+      return "Phản hồi máy chủ chưa xác nhận việc xóa. Dòng vẫn được giữ; hãy tải lại bản nháp để đồng bộ.";
+    }
     return "Chưa xác định được kết quả xóa. Dòng vẫn được giữ; hãy thử lại.";
   }
   if (result.code === "DRAFT_FINAL_ROW") return "Không thể xóa hàng cuối của bản nháp.";
