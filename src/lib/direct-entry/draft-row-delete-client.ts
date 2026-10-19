@@ -44,8 +44,9 @@ export async function deleteDraftRow(input: {
     return { kind: "rejected", code: "DRAFT_DELETE_INVALID" };
   }
   let response: Response;
+  const callFetch = input.fetchImpl;
   try {
-    response = await input.fetchImpl(
+    response = await callFetch(
       `/api/direct-entry/entries/${encodeURIComponent(input.entryId)}`,
       {
         method: "DELETE",
