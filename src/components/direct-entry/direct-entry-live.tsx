@@ -81,11 +81,7 @@ import {
   projectOwnDrafts,
   type OwnDraft,
 } from "@/lib/direct-entry/draft-list-contract";
-import type {
-  DraftCatalog,
-  DraftPaymentAccountField,
-  DraftProfileField,
-} from "@/lib/direct-entry/write-repository";
+import type { DraftCatalog } from "@/lib/direct-entry/write-repository";
 import {
   activeLaborTypeLabel,
   firstActiveLaborTypeKey,
@@ -103,10 +99,16 @@ import {
 import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import { buildSpreadsheetValidation } from "@/lib/direct-entry/direct-entry-grid-validation";
 import {
-  captureClipboardUndoSnapshot,
-  restoreClipboardUndoSnapshot,
-  type ClipboardUndoSnapshot,
-} from "@/lib/direct-entry/direct-entry-grid-clipboard";
+  DRAFT_EDITABLE_GRID_FIELDS,
+  applyLiveGridPaste,
+  patchLiveDraftRowFromGrid,
+  undoLiveGridPaste,
+  type LiveGridPasteUndoSnapshot,
+} from "@/lib/direct-entry/live-grid-paste";
+import {
+  deleteDraftRow,
+  draftRowDeleteErrorMessage,
+} from "@/lib/direct-entry/draft-row-delete-client";
 import {
   SPREADSHEET_WRITABLE_FIELD_KEYS,
   SPREADSHEET_MAX_DATA_ROWS,
@@ -154,7 +156,10 @@ const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
   CLIPBOARD_COLUMN_OVERFLOW: "Vùng dán vượt quá cột cuối của bảng nên đã bị từ chối toàn bộ.",
   CLIPBOARD_ANCHOR_INVALID: "Chưa xác định được ô neo để dán.",
   CLIPBOARD_EMPTY: "Clipboard không có dữ liệu văn bản.",
-  CLIPBOARD_PERSISTED_ROW: "Để tránh sửa nhầm bản nháp đã lưu, chỉ dán ma trận vào vùng dòng chưa lưu.",
+  CLIPBOARD_PROTECTED_CELL:
+    "Vùng dán có ô đang khóa hoặc không được phép sửa nên đã bị từ chối toàn bộ.",
+  CLIPBOARD_TARGET_INVALID:
+    "Vùng dán không còn khớp với các dòng hiện tại nên đã bị từ chối toàn bộ.",
 };
 
 const SUBMISSION_PAGE_SIZE = 50;
@@ -164,17 +169,6 @@ const CHANGE_REQUEST_LIST_KEYS = ["requests", "page_size", "has_more", "next_cur
 const CHANGE_REQUEST_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const SUBMISSION_LIST_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
 const SUBMISSION_TRANSITION_KEYS = ["submission_id", "state", "version"] as const;
-const DRAFT_EDITABLE_GRID_FIELDS = Object.freeze([
-  "project_id", "first_work_date", "display_name", "provider_type", "recruiter_id",
-  "labor_type", "initial_status", "phone", "national_id", "gender", "date_of_birth",
-  "national_id_issued_at", "address", "account_number", "bank_name",
-  "account_holder_name", "general_note",
-]);
-const GENDER_CODES: Record<string, string> = { Nam: "MALE", "Nữ": "FEMALE", Khác: "OTHER" };
-const WORK_STATUS_CODES: Record<string, "ON" | "UNCONFIRMED"> = {
-  "Đang làm": "ON", "Đang làm việc": "ON", "Đang chờ việc": "UNCONFIRMED",
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -319,15 +313,6 @@ function updatePayload(fields: EditableDraftFields) {
   };
 }
 
-function changedProfileField<T extends DraftProfileField | DraftPaymentAccountField>(
-  field: T, value: string, canonical?: string,
-): T {
-  const next = canonical ?? value;
-  if (field.state === "provided" && field.value === next) return field;
-  if (next !== "") return { state: "provided" as const, value: next } as T;
-  return (field.state === "provided" ? { state: "intentionally_blank" as const } : field) as T;
-}
-
 function optionsFor(catalog: DraftCatalog | undefined): PickerOption[] {
   return catalog?.recruiters.map((recruiter) => ({
     id: recruiter.recruiter_id,
@@ -400,6 +385,14 @@ export function DirectEntryLive() {
   const [lifecycleMessage, setLifecycleMessage] = useState("");
   const cursorRef = useRef<string | null>(null);
   const intentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const deleteIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [stagedUndo, setStagedUndo] = useState<LiveGridPasteUndoSnapshot | null>(null);
+  const [stagedCanUndo, setStagedCanUndo] = useState(false);
+  const invalidateStagedUndo = useCallback(() => {
+    setStagedUndo(null);
+    setStagedCanUndo(false);
+  }, []);
   const lifecycleStatusRef = useRef<HTMLParagraphElement | null>(null);
   const [changeRequests, setChangeRequests] = useState<ChangeRequestListItem[]>([]);
   const [changeRequestQueue, setChangeRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
@@ -835,12 +828,13 @@ export function DirectEntryLive() {
   }, [rows, submissions]);
 
   const onPaymentEntryVersionChange = useCallback((rowId: string, entryVersion: number) => {
+    invalidateStagedUndo();
     const next = rowsRef.current.map((row) =>
       row.rowId === rowId ? { ...row, entryVersion } : row,
     );
     rowsRef.current = next;
     setRows(next);
-  }, []);
+  }, [invalidateStagedUndo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -907,8 +901,9 @@ export function DirectEntryLive() {
     rowId: string,
     patch: Partial<EditableDraftFields>,
   ) => {
+    invalidateStagedUndo();
     setRows((current) => updateLiveDraftRow(current, rowId, patch));
-  }, []);
+  }, [invalidateStagedUndo]);
 
   const fetchConflictCopy = useCallback(async (entryId: string): Promise<ConflictCopy | null> => {
     const projectionResponse = await fetch(
@@ -992,6 +987,7 @@ export function DirectEntryLive() {
       const drafts = payload.filter((draft) => draft.submission_id === submission.submission_id);
       if (drafts.length !== submission.entry_count) throw new Error("DRAFT_ROWS_INCOMPLETE");
       const refreshed = drafts.map(draftRowFromProjection);
+      invalidateStagedUndo();
       setRows((current) => [
         ...current.filter((row) => row.submissionId !== submission.submission_id),
         ...refreshed,
@@ -1005,7 +1001,7 @@ export function DirectEntryLive() {
     } catch {
       setLifecycleMessage("Không tải đủ dữ liệu bản nháp để sửa. Hãy thử lại.");
     }
-  }, [editingDraftSubmissionId, stagedModel]);
+  }, [editingDraftSubmissionId, invalidateStagedUndo, stagedModel]);
 
   // P1.7-H05 §9.A & §9.B: handlers cho nut "Thêm dòng" / "Thêm nhanh NLĐ" duoc
   // dinh nghia ben duoi sau khi stagedMessage, setStagedMessage, quickEditClientRowId
@@ -1016,6 +1012,7 @@ export function DirectEntryLive() {
     const current = rowsRef.current.find((row) => row.rowId === rowId);
     if (!current || current.state === "saving" || current.state === "conflict" ||
         inFlight.current.has(rowId)) return false;
+    invalidateStagedUndo();
     if (current.entryId && !isRowEditable(current, submissionsRef.current)) {
       setRows((existing) => existing.map((row) => row.rowId === rowId
         ? { ...row, state: "error", message:
@@ -1174,7 +1171,7 @@ export function DirectEntryLive() {
     } finally {
       inFlight.current.delete(rowId);
     }
-  }, [fetchConflictCopy, updateRow]);
+  }, [fetchConflictCopy, invalidateStagedUndo, updateRow]);
 
   const setCccdStatus = useCallback((
     entryId: string,
@@ -1185,6 +1182,7 @@ export function DirectEntryLive() {
   }, []);
 
   const loadLatest = useCallback((rowId: string) => {
+    invalidateStagedUndo();
     setRows((current) => current.map((row) => {
       if (row.rowId !== rowId || !row.conflictCopy) return row;
       const catalog = catalogCache.current.get(row.conflictCopy.fields.firstWorkDate);
@@ -1205,15 +1203,16 @@ export function DirectEntryLive() {
       };
     }));
     setSelectedRowId(null);
-  }, []);
+  }, [invalidateStagedUndo]);
 
   const keepLocal = useCallback((rowId: string) => {
+    invalidateStagedUndo();
     setRows((current) => current.map((row) => {
       if (row.rowId !== rowId || !row.conflictCopy) return row;
       return keepLocalDraft(row);
     }));
     setSelectedRowId(null);
-  }, []);
+  }, [invalidateStagedUndo]);
 
   /* ------------------------------------------------------- P1.7-W02 spreadsheet */
   // Row staging client-only: khong tron clientRowId voi entry_id va khong tao server draft.
@@ -1221,7 +1220,6 @@ export function DirectEntryLive() {
   const [stagedMessage, setStagedMessageRaw] = useState("");
   const [stagedRejection, setStagedRejection] = useState("");
   const [stagedBusy, setStagedBusy] = useState(false);
-  const [stagedCanUndo, setStagedCanUndo] = useState(false);
   // P3-W07C: trang thai tone tuong minh cho `spreadsheet-save-message` (error/success/info).
   // - error: chu do, role="alert".
   // - success: khong do, role="status".
@@ -1266,7 +1264,6 @@ export function DirectEntryLive() {
   const [directEntryGridZoomLevel, setDirectEntryGridZoomLevel] = useState(100);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
   const stagedIntent = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
-  const stagedUndo = useRef<ClipboardUndoSnapshot | null>(null);
   const stagedInFlight = useRef(false);
 
   /**
@@ -1275,6 +1272,7 @@ export function DirectEntryLive() {
    */
   const ADD_STAGED_ROW_BATCH = 10;
   const addStagedRows = useCallback(() => {
+    invalidateStagedUndo();
     setStagedModel((current) => {
       // R1: check dua tren tong staged rows hien co, khong phai so non-empty.
       // Gioi han 100 row; neu con duoi 10 vi tri thi KHONG them mot phan.
@@ -1287,7 +1285,7 @@ export function DirectEntryLive() {
         firstActiveLaborTypeKey(catalogs[today]?.labor_types),
       );
     });
-  }, [catalogs, today, setStagedMessageWithTone, setStagedModel]);
+  }, [catalogs, invalidateStagedUndo, today, setStagedMessageWithTone, setStagedModel]);
 
   /**
    * P3-W07C: kich hoat lazy defaults cho staged row khi user co y thuc tuong
@@ -1324,10 +1322,12 @@ export function DirectEntryLive() {
    * defaults (neu chua). P3-W07C-R3: chi con lazy default cho first_work_date.
    */
   const openQuickEditor = useCallback((clientRowId: string) => {
+    invalidateStagedUndo();
     activateStagedRowLazyDefaults(clientRowId);
     setQuickEditClientRowId(clientRowId);
-  }, [activateStagedRowLazyDefaults, setQuickEditClientRowId]);
+  }, [activateStagedRowLazyDefaults, invalidateStagedUndo, setQuickEditClientRowId]);
   const addQuickStagedRow = useCallback(() => {
+    invalidateStagedUndo();
     // P3-W07C-R1: tinh target rowId + activated model TRUOC khi setState.
     // setQuickEditClientRowId duoc goi ben ngoai setStagedModel updater
     // (tranh side effect trong React state updater). activatedModel dam bao
@@ -1359,7 +1359,8 @@ export function DirectEntryLive() {
       return next;
     });
     if (targetClientRowId !== null) setQuickEditClientRowId(targetClientRowId);
-  }, [catalogs, today, setStagedModel, setStagedMessageWithTone, setQuickEditClientRowId]);
+  }, [catalogs, invalidateStagedUndo, today, setStagedModel, setStagedMessageWithTone,
+    setQuickEditClientRowId]);
 
 
   /**
@@ -1562,8 +1563,7 @@ export function DirectEntryLive() {
         saveStatus: stateText(row.state),
       };
     });
-    const staged: SpreadsheetGridRow[] = (editingDraftSubmissionId === null
-      ? stagedModel.rows : []).map((row) => {
+    const staged: SpreadsheetGridRow[] = stagedModel.rows.map((row) => {
       // P3-W07C-R6: catalog cua moi dong la catalog hien tai, KHONG theo first_work_date.
       const catalog = fallbackCatalog;
       const recruiter = catalog?.recruiters.find((option) =>
@@ -1677,6 +1677,7 @@ export function DirectEntryLive() {
     clientRowId: string,
     patch: Readonly<Record<string, string>>,
   ) => {
+    invalidateStagedUndo();
     // P1.7-H05-R1: Mã NLĐ do server cấp; bo qua patch.employee_code de tranh
     // phat sinh mutation tren UI.
     const safePatch: Readonly<Record<string, string>> = patch.employee_code !== undefined
@@ -1684,70 +1685,9 @@ export function DirectEntryLive() {
       : patch;
     const persistedRow = rows.find((row) => row.rowId === clientRowId);
     if (persistedRow) {
-      const draftPatch: Partial<EditableDraftFields> = {};
-      if (safePatch.first_work_date !== undefined) draftPatch.firstWorkDate = safePatch.first_work_date;
-      if (safePatch.display_name !== undefined) draftPatch.workerName = safePatch.display_name;
-      if (safePatch.project_id !== undefined) draftPatch.projectId = safePatch.project_id;
-      if (safePatch.recruiter_id !== undefined) draftPatch.recruiterId = safePatch.recruiter_id;
-      if (safePatch.labor_type !== undefined) draftPatch.laborType = safePatch.labor_type;
-      if (safePatch.provider_type === "hrp" || safePatch.provider_type === "vendor") {
-        const recruiter = currentCatalog?.recruiters.find((option) =>
-          option.provider_type === safePatch.provider_type);
-        if (!recruiter) return;
-        draftPatch.providerType = recruiter.provider_type;
-        draftPatch.recruiterId = recruiter.recruiter_id;
-      }
-      const workerKeys = ["phone", "national_id", "gender", "date_of_birth",
-        "national_id_issued_at", "national_id_issued_place", "address"] as const;
-      const worker = { ...persistedRow.profile.worker_details };
-      let workerChanged = false;
-      for (const key of workerKeys) {
-        if (safePatch[key] === undefined) continue;
-        const currentField = worker[key];
-        const canonical = key === "gender" ? GENDER_CODES[safePatch[key]] : undefined;
-        worker[key] = changedProfileField(currentField, safePatch[key], canonical) as typeof currentField;
-        workerChanged = true;
-      }
-      if (safePatch.display_name !== undefined) {
-        draftPatch.workerName = safePatch.display_name;
-        worker.display_name = { state: "provided", value: safePatch.display_name };
-        workerChanged = true;
-      }
-      let profile = persistedRow.profile;
-      if (workerChanged) profile = { ...profile, worker_details: worker };
-      if (safePatch.general_note !== undefined) {
-        profile = { ...profile, general_note: safePatch.general_note === ""
-          ? { state: "intentionally_blank" } : { state: "provided", value: safePatch.general_note } };
-      }
-      if (safePatch.initial_status !== undefined && profile.employment) {
-        const status = WORK_STATUS_CODES[safePatch.initial_status];
-        if (status) profile = { ...profile, employment: { ...profile.employment, status } };
-      }
-      const paymentKeys = ["account_number", "bank_name", "account_holder_name"] as const;
-      if (paymentKeys.some((key) => safePatch[key] !== undefined)) {
-        const previous = profile.payment;
-        const payment = previous ?? {
-          state: "intentionally_blank" as const,
-          account_number: { state: "intentionally_blank" as const },
-          bank_name: { state: "intentionally_blank" as const },
-          account_holder_name: { state: "intentionally_blank" as const },
-          version: 0,
-        };
-        profile = { ...profile, payment: {
-          ...payment,
-          account_number: safePatch.account_number === undefined ? payment.account_number
-            : changedProfileField(payment.account_number, safePatch.account_number),
-          bank_name: safePatch.bank_name === undefined ? payment.bank_name
-          : changedProfileField(payment.bank_name, safePatch.bank_name) as DraftProfileField,
-          account_holder_name: safePatch.account_holder_name === undefined
-            ? payment.account_holder_name
-            : changedProfileField(payment.account_holder_name, safePatch.account_holder_name) as DraftProfileField,
-          state: "provided",
-        } };
-      }
-      if (profile !== persistedRow.profile) draftPatch.profile = profile;
-      if (Object.keys(draftPatch).length === 0) return;
-      setRows((current) => updateLiveDraftRow(current, clientRowId, draftPatch));
+      setRows((current) => current.map((row) => row.rowId === clientRowId
+        ? patchLiveDraftRowFromGrid(row, safePatch, currentCatalog?.recruiters ?? [])
+        : row));
       // P3-W07C-R6: doi ngay bat dau lam viec KHONG phat request catalog theo ngay moi.
       return;
     }
@@ -1756,7 +1696,8 @@ export function DirectEntryLive() {
       current, clientRowId, safePatch, new Date(),
       firstActiveLaborTypeKey(currentCatalog?.labor_types),
     ));
-  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, rows, setStagedModel]);
+  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, invalidateStagedUndo, rows,
+    setStagedModel]);
 
   const onStagedProviderTypeChange = useCallback((
     clientRowId: string,
@@ -1768,18 +1709,21 @@ export function DirectEntryLive() {
       const recruiter = currentCatalog?.recruiters.find((option) =>
         option.provider_type === providerType);
       if (!recruiter) return;
+      invalidateStagedUndo();
       setRows((current) => updateLiveDraftRow(current, clientRowId, {
         providerType,
         recruiterId: recruiter.recruiter_id,
       }));
       return;
     }
+    invalidateStagedUndo();
     setStagedModel((current) =>
       updateSpreadsheetRowProviderType(
         current, clientRowId, providerType, new Date(),
         firstActiveLaborTypeKey(currentCatalog?.labor_types),
       ));
-  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, rows, setStagedModel]);
+  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, invalidateStagedUndo, rows,
+    setStagedModel]);
 
   const onStagedPasteRejected = useCallback((reason: SpreadsheetPasteRejection) => {
     setStagedRejection(PASTE_REJECTION_MESSAGES[reason]);
@@ -1788,51 +1732,29 @@ export function DirectEntryLive() {
 
   /** Paste chi doi React state: khong fetch, khong storage, khong log gia tri. */
   const onStagedPaste = useCallback((request: SpreadsheetPasteRequest) => {
-    const liveDraftRowCount = rows.length;
-    if (request.mapping.cells.some((cell) => cell.rowIndex < liveDraftRowCount)) {
-      setStagedRejection(PASTE_REJECTION_MESSAGES.CLIPBOARD_PERSISTED_ROW);
+    const laborTypeDefault = firstActiveLaborTypeKey(currentCatalog?.labor_types);
+    const result = applyLiveGridPaste({
+      mapping: request.mapping,
+      gridRows: spreadsheetRows,
+      liveRows: rows,
+      stagedModel,
+      recruiters: currentCatalog?.recruiters ?? [],
+      laborTypeDefault,
+      now: new Date(),
+    });
+    if (!result.ok) {
+      setStagedRejection(PASTE_REJECTION_MESSAGES[result.code]);
       setStagedMessageWithTone("", "");
       return;
     }
-    const rebase = <T extends { rowIndex: number },>(cells: readonly T[]) =>
-      cells.map((cell) => ({ ...cell, rowIndex: cell.rowIndex - liveDraftRowCount }));
-    const mapping = {
-      ...request.mapping,
-      cells: rebase(request.mapping.cells),
-      writeCells: rebase(request.mapping.writeCells),
-      validationCells: rebase(request.mapping.validationCells),
-      ignoredCells: rebase(request.mapping.ignoredCells),
-    };
-    const snapshot = captureClipboardUndoSnapshot({
-      mapping,
-      currentRowCount: stagedModel.rows.length,
-      readCell: (rowIndex, columnKey) => stagedModel.rows[rowIndex]?.cells[columnKey],
-    });
-    const maxRowIndex = mapping.cells.reduce(
-      (maximum, cell) => Math.max(maximum, cell.rowIndex), 0);
-    let next = ensureSpreadsheetRowCount(
-      stagedModel, maxRowIndex + 1, firstActiveLaborTypeKey(currentCatalog?.labor_types),
-    );
-    const patches = new Map<number, Record<string, string>>();
-    for (const cell of mapping.writeCells) {
-      const bucket = patches.get(cell.rowIndex) ?? {};
-      bucket[cell.columnKey] = cell.value;
-      patches.set(cell.rowIndex, bucket);
-    }
-    for (const [rowIndex, patch] of patches) {
-      const target = next.rows[rowIndex];
-      if (target) next = updateSpreadsheetRowCells(
-        next, target.clientRowId, patch, new Date(),
-        firstActiveLaborTypeKey(currentCatalog?.labor_types),
-      );
-    }
-    stagedUndo.current = snapshot;
+    setStagedUndo(result.undo);
     setStagedCanUndo(true);
-    setStagedModel(next);
+    setRows(result.liveRows);
+    setStagedModel(result.stagedModel);
     setStagedRejection("");
     setStagedNotice(`Đã dán ${request.rowCount} hàng × ${request.columnCount} cột`);
-  }, [currentCatalog?.labor_types, rows.length, setStagedModel, stagedModel,
-    setStagedMessageWithTone, setStagedRejection, setStagedNotice]);
+  }, [currentCatalog?.labor_types, currentCatalog?.recruiters, rows, spreadsheetRows,
+    stagedModel, setStagedMessageWithTone, setStagedRejection, setStagedNotice]);
 
   const onXlsxFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
@@ -1858,6 +1780,7 @@ export function DirectEntryLive() {
       setXlsxMessage("Tệp thiếu header hoặc không có dòng dữ liệu hợp lệ.");
       return;
     }
+    invalidateStagedUndo();
     try {
       setStagedModel((current) => {
         if (selectNonEmptySpreadsheetRows(current).length + parsed.rows.length > 100) {
@@ -1909,11 +1832,11 @@ export function DirectEntryLive() {
       setXlsxMessage("Đã đạt giới hạn 100 dòng; chưa nhập tệp.");
       return;
     }
-    setStagedCanUndo(false);
     setStagedNotice("");
     setStagedRejection("");
     setXlsxMessage(`Đã nhập ${imported.rowCount} dòng vào bảng. Kiểm tra lỗi trước khi lưu.`);
-  }, [currentCatalog, setStagedModel, setStagedNotice, setStagedRejection, today]);
+  }, [currentCatalog, invalidateStagedUndo, setStagedModel, setStagedNotice,
+    setStagedRejection, today]);
 
   const downloadXlsxTemplate = useCallback(async () => {
     try {
@@ -1931,28 +1854,103 @@ export function DirectEntryLive() {
   }, []);
 
   const onStagedUndo = useCallback(() => {
-    const snapshot = stagedUndo.current;
+    const snapshot = stagedUndo;
     if (snapshot === null) return;
-    setStagedModel((current) => ({
-      ...current,
-      rows: restoreClipboardUndoSnapshot({
-        rows: current.rows,
-        snapshot,
-        writeCell: (cells, rowIndex, columnKey, value) => cells.map((row, index) =>
-          index === rowIndex
-            ? { ...row, cells: { ...row.cells, [columnKey]: value ?? "" } }
-            : row),
-      }),
-    }));
-    stagedUndo.current = null;
+    const restored = undoLiveGridPaste({
+      snapshot,
+      liveRows: rows,
+      stagedModel,
+      laborTypeDefault: firstActiveLaborTypeKey(currentCatalog?.labor_types),
+      now: new Date(),
+    });
+    setRows(restored.liveRows);
+    setStagedModel(restored.stagedModel);
+    setStagedUndo(null);
     setStagedCanUndo(false);
     setStagedNotice("");
     setStagedRejection("");
-  }, [setStagedModel, setStagedCanUndo, setStagedNotice, setStagedRejection]);
+  }, [currentCatalog?.labor_types, rows, stagedModel, stagedUndo,
+    setStagedCanUndo, setStagedNotice, setStagedRejection]);
 
   const onStagedDelete = useCallback((clientRowId: string) => {
+    invalidateStagedUndo();
     setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
-  }, []);
+  }, [invalidateStagedUndo]);
+
+  const onPersistedDelete = useCallback(async (rowId: string) => {
+    if (deletingRowId !== null) return;
+    const row = rowsRef.current.find((candidate) => candidate.rowId === rowId);
+    const submission = row?.submissionId
+      ? submissionsRef.current.find((candidate) => candidate.submission_id === row.submissionId)
+      : null;
+    if (!row?.entryId || !row.entryVersion || row.entryVersion < 1 ||
+        submission?.state !== "DRAFT" || !isRowEditable(row, submissionsRef.current)) {
+      setStagedMessageWithTone(
+        "Chỉ xóa được dòng đã lưu thuộc bản nháp còn chỉnh sửa được.",
+        "error",
+      );
+      return;
+    }
+    if (submission.entry_count <= 1) {
+      const message = "Không thể xóa hàng cuối của bản nháp.";
+      setRows((current) => current.map((candidate) => candidate.rowId === rowId
+        ? { ...candidate, message }
+        : candidate));
+      setStagedMessageWithTone(message, "error");
+      return;
+    }
+    if (!window.confirm(`Xóa dòng ${row.employeeCode || row.workerName}? Thao tác này không thể hoàn tác.`)) {
+      return;
+    }
+    invalidateStagedUndo();
+    const intent = `delete_draft_row:${row.entryId}:${row.entryVersion}`;
+    const resolved = resolveIntentKey(
+      deleteIntentKeys.current.get(row.entryId) ?? EMPTY_INTENT_KEY,
+      intent,
+      () => crypto.randomUUID(),
+    );
+    deleteIntentKeys.current.set(row.entryId, resolved.state);
+    setDeletingRowId(rowId);
+    setRows((current) => current.map((candidate) => candidate.rowId === rowId
+      ? { ...candidate, message: null }
+      : candidate));
+    setStagedMessageWithTone("", "");
+    try {
+      const result = await deleteDraftRow({
+        entryId: row.entryId,
+        expectedVersion: row.entryVersion,
+        idempotencyKey: resolved.key,
+        fetchImpl: fetch,
+      });
+      if (result.kind === "deleted") {
+        deleteIntentKeys.current.set(row.entryId, clearIntentKey(resolved.state, intent));
+        setRows((current) => current.filter((candidate) => candidate.rowId !== rowId));
+        setPendingInitialUploadsByEntryId((current) => {
+          if (!(row.entryId! in current)) return current;
+          const next = { ...current };
+          delete next[row.entryId!];
+          return next;
+        });
+        setSelectedClientRowIdInternal((current) => current === rowId ? null : current);
+        setSelectedRowId((current) => current === rowId ? null : current);
+        setDocumentsRowId((current) => current === rowId ? null : current);
+        setSavedCtaClientRowId((current) => current === rowId ? null : current);
+        setStagedMessageWithTone("Đã xóa dòng khỏi bản nháp.", "success");
+        void loadSubmissions("replace");
+        return;
+      }
+      if (result.kind !== "retry") {
+        deleteIntentKeys.current.set(row.entryId, clearIntentKey(resolved.state, intent));
+      }
+      const message = draftRowDeleteErrorMessage(result);
+      setRows((current) => current.map((candidate) => candidate.rowId === rowId
+        ? { ...candidate, message }
+        : candidate));
+      setStagedMessageWithTone(message, "error");
+    } finally {
+      setDeletingRowId(null);
+    }
+  }, [deletingRowId, invalidateStagedUndo, loadSubmissions, setStagedMessageWithTone]);
 
   const addFormRow = useCallback(() => {
     const visible = new Set(visibleFormRowIds);
@@ -1971,6 +1969,7 @@ export function DirectEntryLive() {
       setStagedMessageWithTone("Đã đạt giới hạn 100 NLĐ trong một lượt nhập.", "info");
       return;
     }
+    invalidateStagedUndo();
     nextModel = activateSpreadsheetRowLazyDefaults(
       nextModel,
       target.clientRowId,
@@ -1981,7 +1980,8 @@ export function DirectEntryLive() {
     setVisibleFormRowIds((current) => current.includes(target!.clientRowId)
       ? current : [...current, target!.clientRowId]);
     setStagedMessageWithTone("", "");
-  }, [currentCatalog?.labor_types, setStagedMessageWithTone, stagedModel, visibleFormRowIds]);
+  }, [currentCatalog?.labor_types, invalidateStagedUndo, setStagedMessageWithTone, stagedModel,
+    visibleFormRowIds]);
 
   const deleteFormRow = useCallback((clientRowId: string) => {
     onStagedDelete(clientRowId);
@@ -2036,6 +2036,7 @@ export function DirectEntryLive() {
     field: string,
     value: string,
   ) => {
+    invalidateStagedUndo();
     // P3-W07C-R2: `date_of_birth` va `national_id_issued_at` la TEXT thuong
     // (raw DD/MM/YYYY hoac DD-MM-YYYY). Giu nguyen chuoi user nhap vao
     // `row.cells`; preview enforces only the text contract (non-empty/length),
@@ -2046,7 +2047,7 @@ export function DirectEntryLive() {
       firstActiveLaborTypeKey(currentCatalog?.labor_types),
     ));
     // P3-W07C-R6: doi ngay KHONG phat request catalog theo ngay vua nhap.
-  }, [currentCatalog?.labor_types, setStagedModel]);
+  }, [currentCatalog?.labor_types, invalidateStagedUndo, setStagedModel]);
 
   // P1.7-H05: capture handler trong bien cuc bo truoc khi render de tranh
   // React Compiler canh bao "Cannot access refs during render" khi closure
@@ -2068,11 +2069,22 @@ export function DirectEntryLive() {
   /** Mot request cho ca batch; 409 khong auto-retry; network/5xx giu nguyen intent key. */
   const onStagedSave = useCallback(async () => {
     if (stagedInFlight.current) return;
+    invalidateStagedUndo();
     if (editingDraftSubmissionId !== null) {
       const changedRows = rowsRef.current.filter((row) =>
         row.submissionId === editingDraftSubmissionId &&
         (row.state === "dirty" || row.state === "error"));
+      const hasStagedRows = selectNonEmptySpreadsheetRows(stagedModel).length > 0;
       if (changedRows.length === 0) {
+        if (hasStagedRows) {
+          setEditingDraftSubmissionId(null);
+          setSelectedClientRowId(null);
+          setStagedMessageWithTone(
+            "Các dòng mới vẫn được giữ để lưu thành lượt nhập riêng.",
+            "info",
+          );
+          return;
+        }
         setStagedMessageWithTone("Chưa có thay đổi nào trong bản nháp này.", "info");
         return;
       }
@@ -2087,11 +2099,13 @@ export function DirectEntryLive() {
           }
         }
         setEditingDraftSubmissionId(null);
-        setStagedModel(createSpreadsheetRowModel());
+        if (!hasStagedRows) setStagedModel(createSpreadsheetRowModel());
         setStagedValidationTriggered(false);
         setInputMode("form");
         setSelectedClientRowId(null);
-        setStagedMessageWithTone("Đã cập nhật bản nháp thành công.", "success");
+        setStagedMessageWithTone(hasStagedRows
+          ? "Đã cập nhật bản nháp. Các dòng mới vẫn được giữ để lưu thành lượt nhập riêng."
+          : "Đã cập nhật bản nháp thành công.", "success");
         try {
           await Promise.all([reloadDrafts(), loadSubmissions("replace")]);
         } catch {
@@ -2178,8 +2192,6 @@ export function DirectEntryLive() {
             (model, clientRowId) => deleteSpreadsheetRow(model, clientRowId), current));
           setVisibleFormRowIds((current) => current.filter((clientRowId) => !savedRowSet.has(clientRowId)));
         };
-        stagedUndo.current = null;
-        setStagedCanUndo(false);
         setStagedNotice("");
         setStagedRejection("");
         // P1.7-H06: server cam tra entryIds theo dung thu tu rows gui len; tao
@@ -2236,10 +2248,11 @@ export function DirectEntryLive() {
       stagedInFlight.current = false;
       setStagedBusy(false);
     }
-  }, [editingDraftSubmissionId, hasActiveLaborTypes, inputMode, loadSubmissions, reloadDrafts,
+  }, [editingDraftSubmissionId, hasActiveLaborTypes, inputMode, invalidateStagedUndo,
+    loadSubmissions, reloadDrafts,
     cccdBackStages, cccdFrontStages, contractStages, documentStageIdsBySourceRow,
     portraitStageIdsBySourceRow, portraitStages, reconcileStagedDocuments, saveRow,
-    selectedClientRowId, setSelectedClientRowId, setStagedMessage, setStagedModel,
+    selectedClientRowId, setSelectedClientRowId, setStagedMessage, setStagedModel, stagedModel,
     setStagedMessageWithTone, stagedValidation]);
 
   /**
@@ -2255,6 +2268,7 @@ export function DirectEntryLive() {
    */
   const onQuickSaveRow = useCallback(async (clientRowId: string) => {
     if (stagedInFlight.current) return;
+    invalidateStagedUndo();
     // P1.7-H07: trigger required-missing error hien thi tren cell khi user
     // bam "Lưu NLĐ" trong quick editor. Sau do, neu user chinh sua cell va
     // required value quay lai, error tu bien mat (validation re-runs theo
@@ -2357,6 +2371,7 @@ export function DirectEntryLive() {
       setStagedBusy(false);
     }
   }, [cccdBackStages, cccdFrontStages, contractStages, documentStageIdsBySourceRow,
+    invalidateStagedUndo,
     portraitStages, reconcileStagedDocuments, reloadDrafts, setSelectedClientRowId,
     setStagedMessage, setStagedModel, setStagedMessageWithTone, stagedModel,
     stagedValidation, setQuickEditClientRowId]);
@@ -2368,6 +2383,19 @@ export function DirectEntryLive() {
   }, [updateRow]);
 
   const selectedRowLocked = selectedRow !== null && !isRowEditable(selectedRow, submissions);
+  const selectedRowSubmission = selectedRow?.submissionId
+    ? submissions.find((submission) => submission.submission_id === selectedRow.submissionId) ?? null
+    : null;
+  const selectedRowDeleteEligible = selectedRow !== null
+    && selectedRow.entryId !== null
+    && selectedRow.entryVersion !== null
+    && selectedRow.state !== "saving"
+    && selectedRow.state !== "conflict"
+    && !selectedRowLocked
+    && selectedRowSubmission?.state === "DRAFT";
+  const selectedRowIsFinalDraftRow = selectedRowSubmission !== null
+    && selectedRowDeleteEligible
+    && selectedRowSubmission.entry_count <= 1;
   const selectedRowCanViewDocuments = capabilities.includes("document_view") ||
     (selectedRow !== null && !selectedRowLocked && capabilities.includes("document_upload") &&
       (capabilities.includes("entry_own") || capabilities.includes("entry_admin")));
@@ -2568,6 +2596,20 @@ export function DirectEntryLive() {
                 : null;
               const selectedDraftEditable = selectedLiveRow !== null
                 && isRowEditable(selectedLiveRow, submissions);
+              const selectedSubmission = selectedLiveRow?.submissionId
+                ? submissions.find((submission) =>
+                  submission.submission_id === selectedLiveRow.submissionId) ?? null
+                : null;
+              const selectedDeleteEligible = selectedLiveRow?.entryId !== null
+                && selectedLiveRow?.entryVersion !== null
+                && selectedLiveRow !== null
+                && selectedLiveRow.state !== "saving"
+                && selectedLiveRow.state !== "conflict"
+                && selectedDraftEditable
+                && selectedSubmission?.state === "DRAFT";
+              const selectedIsFinalDraftRow = selectedSubmission !== null
+                && selectedDeleteEligible
+                && selectedSubmission.entry_count <= 1;
               // Assigned project managers may open and upload documents only
               // for their own DRAFT rows. This is a UI affordance; the server
               // independently checks owner + effective project assignment.
@@ -2652,18 +2694,27 @@ export function DirectEntryLive() {
                       data-testid="contextual-delete"
                       className={`${styles.contextualActionButton} ${styles.contextualActionButtonDanger}`}
                       aria-label="Xóa dòng"
-                      disabled={selected === null || !selectedIsStaged}
+                      aria-busy={deletingRowId === selected?.clientRowId}
+                      disabled={selected === null || deletingRowId !== null ||
+                        (selectedIsPersisted && (!selectedDeleteEligible || selectedIsFinalDraftRow))}
                       title={selected === null
                         ? "Chọn một dòng đang nhập trước"
-                        : !selectedIsStaged
-                          ? "Chỉ xóa được bản nháp đang nhập"
-                          : undefined}
+                        : selectedIsPersisted && selectedIsFinalDraftRow
+                          ? "Không thể xóa hàng cuối của bản nháp"
+                          : selectedIsPersisted && !selectedDeleteEligible
+                            ? "Chỉ xóa được dòng thuộc bản nháp còn chỉnh sửa được"
+                            : undefined}
                       onClick={() => {
                         if (selected === null) return;
-                        if (!selectedIsStaged) return;
-                        onStagedDelete(selected.clientRowId);
+                        if (selectedIsStaged) {
+                          onStagedDelete(selected.clientRowId);
+                          return;
+                        }
+                        if (selectedDeleteEligible && !selectedIsFinalDraftRow) {
+                          void onPersistedDelete(selected.clientRowId);
+                        }
                       }}>
-                      Xóa dòng
+                      {deletingRowId === selected?.clientRowId ? "Đang xóa…" : "Xóa dòng"}
                     </button>
                   </div>
                 </div>
@@ -3342,6 +3393,21 @@ export function DirectEntryLive() {
                 <Dialog.Close asChild>
                   <button type="button" className={styles.secondaryButton}>Quay lại danh sách</button>
                 </Dialog.Close>
+                {selectedRow.entryId !== null && (
+                  <button type="button" className={styles.contextualActionButtonDanger}
+                    data-testid="drawer-delete-row"
+                    aria-busy={deletingRowId === selectedRow.rowId}
+                    disabled={deletingRowId !== null || !selectedRowDeleteEligible ||
+                      selectedRowIsFinalDraftRow}
+                    title={selectedRowIsFinalDraftRow
+                      ? "Không thể xóa hàng cuối của bản nháp"
+                      : !selectedRowDeleteEligible
+                        ? "Chỉ xóa được dòng thuộc bản nháp còn chỉnh sửa được"
+                        : undefined}
+                    onClick={() => void onPersistedDelete(selectedRow.rowId)}>
+                    {deletingRowId === selectedRow.rowId ? "Đang xóa…" : "Xóa dòng"}
+                  </button>
+                )}
                 <button type="button" className={styles.primaryButton}
                   onClick={() => void saveRow(selectedRow.rowId)}
                   disabled={selectedRow.state === "saving" || selectedRow.state === "conflict" ||

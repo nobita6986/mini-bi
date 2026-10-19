@@ -14,6 +14,10 @@ import {
 } from "../../lib/direct-entry/spreadsheet-row-model.ts";
 
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
+const livePaste = readFileSync(
+  new URL("../../lib/direct-entry/live-grid-paste.ts", import.meta.url),
+  "utf8",
+);
 
 function slice(startMarker, endMarker) {
   const start = live.indexOf(startMarker);
@@ -24,7 +28,21 @@ function slice(startMarker, endMarker) {
 }
 
 const pasteHandler = slice("const onStagedPaste = useCallback", "const onStagedUndo = useCallback");
+const deleteHandler = slice("const onPersistedDelete = useCallback", "const addFormRow = useCallback");
 const saveHandler = slice("const onStagedSave = useCallback", "const updateDate = useCallback");
+const updateRowHandler = slice("const updateRow = useCallback", "const fetchConflictCopy = useCallback");
+const spreadsheetEditHandler = slice(
+  "const onSpreadsheetCellsChange = useCallback",
+  "const onStagedProviderTypeChange = useCallback",
+);
+const providerEditHandler = slice(
+  "const onStagedProviderTypeChange = useCallback",
+  "const onStagedPasteRejected = useCallback",
+);
+const mobileEditHandler = slice(
+  "const onMobileStagedChange = useCallback",
+  "const handleMobileStagedProjectChange = useCallback",
+);
 const reloadDraftHandler = slice("const reloadDrafts = useCallback", "const runTransition = useCallback");
 const editDraftHandler = slice("const reloadSubmissionDraft = useCallback", "const saveRow = useCallback");
 
@@ -51,11 +69,10 @@ test("zero drafts van co 30 dong trong, va paste gan cuoi bang tu noi rong", () 
     model.rows.map((r) => r.clientRowId));
 });
 
-test("paste cap nhat staged rows va khong goi mang", () => {
-  assert.match(pasteHandler, /updateSpreadsheetRowCells\(/);
-  assert.match(pasteHandler, /ensureSpreadsheetRowCount\(/);
-  assert.match(pasteHandler, /request\.mapping\.cells\.some\(\(cell\) => cell\.rowIndex < liveDraftRowCount\)/);
-  assert.match(pasteHandler, /cell\.rowIndex - liveDraftRowCount/);
+test("paste cap nhat saved/staged atomic va khong goi mang", () => {
+  assert.match(pasteHandler, /applyLiveGridPaste\(/);
+  assert.match(pasteHandler, /setRows\(result\.liveRows\)/);
+  assert.match(pasteHandler, /setStagedModel\(result\.stagedModel\)/);
   assert.equal(/\bfetch\s*\(/.test(pasteHandler), false, "paste khong fetch");
   assert.equal(/localStorage|sessionStorage|navigator\.clipboard/.test(pasteHandler), false);
   assert.match(pasteHandler, /setStagedNotice\(/);
@@ -63,11 +80,27 @@ test("paste cap nhat staged rows va khong goi mang", () => {
 });
 
 test("undo dung snapshot W01 va khoi phuc dung truoc paste", () => {
-  assert.match(live, /captureClipboardUndoSnapshot\(/);
-  assert.match(live, /restoreClipboardUndoSnapshot\(/);
+  assert.match(livePaste, /captureClipboardUndoSnapshot\(/);
+  assert.match(live, /undoLiveGridPaste\(/);
   assert.match(live, /const onStagedUndo = useCallback/);
-  assert.match(live, /stagedUndo\.current = null;/);
+  assert.match(live, /setStagedUndo\(null\)/);
   assert.match(live, /canUndo=\{stagedCanUndo\}/);
+});
+
+test("paste rồi sửa field khác hủy one-shot undo trước mutation để không mất edit mới", () => {
+  assert.match(pasteHandler, /setStagedUndo\(result\.undo\);\s*\n\s*setStagedCanUndo\(true\)/);
+  assert.match(live, /const invalidateStagedUndo = useCallback\(\(\) => \{\s*\n\s*setStagedUndo\(null\);\s*\n\s*setStagedCanUndo\(false\)/);
+  assert.match(live, /const onStagedUndo = useCallback[\s\S]*if \(snapshot === null\) return;/);
+  for (const [label, handler, mutation] of [
+    ["persisted drawer", updateRowHandler, "setRows("],
+    ["desktop grid", spreadsheetEditHandler, "setRows("],
+    ["provider", providerEditHandler, "setRows("],
+    ["mobile/form", mobileEditHandler, "setStagedModel("],
+  ]) {
+    const invalidate = handler.indexOf("invalidateStagedUndo()");
+    const mutate = handler.indexOf(mutation);
+    assert.ok(invalidate >= 0 && mutate > invalidate, label + " phải hủy undo trước mutation");
+  }
 });
 
 test("validation chay tren staged rows va map issue ve dung o", () => {
@@ -114,7 +147,7 @@ test("success reload tu server va chi clear staged sau khi server xac nhan", () 
   assert.match(saveHandler, /setStagedModel\(\(current\) => savedClientRowIds\.reduce\(/);
 });
 
-test("save draft batch updates its dirty persisted rows, then leaves the entry grid empty", () => {
+test("save draft batch updates dirty persisted rows and preserves mixed staged rows", () => {
   const draftSave = saveHandler.slice(
     saveHandler.indexOf("if (editingDraftSubmissionId !== null)"),
     saveHandler.indexOf("if (editingDraftSubmissionId === null && !hasActiveLaborTypes)"),
@@ -122,12 +155,12 @@ test("save draft batch updates its dirty persisted rows, then leaves the entry g
   assert.match(draftSave, /row\.submissionId === editingDraftSubmissionId/);
   assert.match(draftSave, /row\.state === "dirty" \|\| row\.state === "error"/);
   assert.match(draftSave, /await saveRow\(row\.rowId\)/);
-  assert.ok(draftSave.indexOf("setEditingDraftSubmissionId(null)")
+  assert.ok(draftSave.lastIndexOf("setEditingDraftSubmissionId(null)")
     > draftSave.indexOf("for (const row of changedRows)"));
-  assert.ok(draftSave.indexOf("setStagedModel(createSpreadsheetRowModel())")
-    > draftSave.indexOf("setEditingDraftSubmissionId(null)"));
+  assert.match(draftSave, /const hasStagedRows = selectNonEmptySpreadsheetRows\(stagedModel\)/);
+  assert.match(draftSave, /if \(!hasStagedRows\) setStagedModel\(createSpreadsheetRowModel\(\)\)/);
   assert.match(live, /rows\s*\.filter\(\(row\) => editingDraftSubmissionId !== null &&\s*row\.submissionId === editingDraftSubmissionId\)/);
-  assert.match(live, /\(editingDraftSubmissionId === null\s*\? stagedModel\.rows : \[\]\)\.map/);
+  assert.match(live, /const staged: SpreadsheetGridRow\[\] = stagedModel\.rows\.map/);
 });
 
 test("persisted rows keep submission lock; only the active own DRAFT unlocks the full edit set", () => {
@@ -135,7 +168,7 @@ test("persisted rows keep submission lock; only the active own DRAFT unlocks the
   assert.match(live, /isRowEditable\(row, submissions\)/);
   assert.match(live, /row\.submissionId === editingDraftSubmissionId/);
   assert.match(live, /editableFields: editable[\s\S]*draftEditActive \? DRAFT_EDITABLE_GRID_FIELDS/);
-  assert.match(live, /"account_number", "bank_name",\s*"account_holder_name", "general_note"/);
+  assert.match(livePaste, /"account_number", "bank_name",\s*"account_holder_name", "general_note"/);
   assert.match(live, /method: "PATCH"/);
 });
 
@@ -154,9 +187,9 @@ test("draft reload requires exact versioned projection and makes one batch call 
 test("provider selector is editable whenever a row's edit allowlist includes provider_type", () => {
   const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
   assert.match(grid, /editable: \(row: SpreadsheetGridRow\) => isEditable\(row, column\.key\)/);
-  assert.match(live, /editableFields: \["provider_type", \.\.\.SPREADSHEET_WRITABLE_FIELD_KEYS\]/);
-  assert.match(live, /"project_id", "first_work_date", "display_name", "provider_type", "recruiter_id"/);
-  assert.match(live, /providerType,\s*recruiterId: recruiter\.recruiter_id/);
+  assert.match(livePaste, /"provider_type", \.\.\.SPREADSHEET_WRITABLE_FIELD_KEYS/);
+  assert.match(livePaste, /"project_id", "first_work_date", "display_name", "provider_type", "recruiter_id"/);
+  assert.match(livePaste, /draftPatch\.providerType = recruiter\.provider_type/);
 });
 
 test("masked display values are excluded from spreadsheet copy and write sources", () => {
@@ -165,7 +198,7 @@ test("masked display values are excluded from spreadsheet copy and write sources
   assert.equal(/const value = args\.row\.displayValues/.test(grid), false);
   assert.match(live, /DRAFT_EDITABLE_GRID_FIELDS/);
   assert.doesNotMatch(live, /editableFields: editable\s*\n\s*\?\s*\["employee_code"/);
-  assert.match(live, /CLIPBOARD_PERSISTED_ROW/);
+  assert.match(live, /CLIPBOARD_PROTECTED_CELL/);
 });
 
 test("spreadsheet is the only live desktop grid and profile hydration is passed to it", () => {
@@ -217,6 +250,18 @@ test("persisted actions reopen the existing drawer; mobile, CCCD/payment/documen
     "DirectEntryWorkerDocuments", "onEntryVersionChange=", "setDocumentsRowId"]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
+});
+
+test("persisted DRAFT delete chỉ bỏ row sau server success; lỗi và final-row giữ nguyên row", () => {
+  assert.match(deleteHandler, /submission\.entry_count <= 1/);
+  assert.match(deleteHandler, /deleteDraftRow\(\{[\s\S]*expectedVersion: row\.entryVersion,[\s\S]*idempotencyKey: resolved\.key/);
+  const deletedBranch = deleteHandler.indexOf('if (result.kind === "deleted")');
+  const removeRow = deleteHandler.indexOf("current.filter((candidate) => candidate.rowId !== rowId)");
+  const failureBranch = deleteHandler.indexOf('if (result.kind !== "retry")');
+  assert.ok(deletedBranch > 0 && removeRow > deletedBranch && failureBranch > removeRow);
+  assert.match(deleteHandler, /current\.map\(\(candidate\) => candidate\.rowId === rowId\s*\? \{ \.\.\.candidate, message \}/);
+  assert.match(live, /selectedIsStaged[\s\S]*onStagedDelete\(selected\.clientRowId\)[\s\S]*onPersistedDelete\(selected\.clientRowId\)/);
+  assert.match(live, /data-testid="drawer-delete-row"/);
 });
 
 test("hidden XLSX CTAs retain import/template handlers and mobile staged editor stays available", () => {

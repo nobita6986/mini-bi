@@ -241,6 +241,17 @@ function isValidInterval(from: unknown, to: unknown): from is string {
       (typeof to === "string" && isRealCalendarDate(to) && to > from));
 }
 
+function isValidScopeGrantInterval(from: unknown, to: unknown): from is string {
+  return typeof from === "string" &&
+    isRealCalendarDate(from) &&
+    (to === null ||
+      (typeof to === "string" && isRealCalendarDate(to) && to >= from));
+}
+
+function isScopeGrantMarker(grant: AllScopeGrant): boolean {
+  return grant.valid_to === grant.valid_from;
+}
+
 function isEffectiveAt(from: string, to: string | null, date: string): boolean {
   return isWithinInterval(date, from, to);
 }
@@ -264,16 +275,17 @@ function isTeam(value: unknown): value is TeamIdentity {
 function isTeamScopeGrant(value: unknown): value is TeamScopeGrant {
   return isRecord(value) &&
     isSafeRef(value.team_id) &&
-    isValidInterval(value.valid_from, value.valid_to);
+    isValidScopeGrantInterval(value.valid_from, value.valid_to);
 }
 
 function isAllScopeGrant(value: unknown): value is AllScopeGrant {
-  return isRecord(value) && isValidInterval(value.valid_from, value.valid_to);
+  return isRecord(value) && isValidScopeGrantInterval(value.valid_from, value.valid_to);
 }
 
 function hasOverlappingTeamScopeGrants(grants: readonly TeamScopeGrant[]): boolean {
   const byTeam = new Map<string, TeamScopeGrant[]>();
   for (const grant of grants) {
+    if (isScopeGrantMarker(grant)) continue;
     const group = byTeam.get(grant.team_id) ?? [];
     group.push(grant);
     byTeam.set(grant.team_id, group);
@@ -388,6 +400,7 @@ async function resolveActorInternal(input: {
     valid_to: null,
   }];
   for (const grant of record.team_scope_grants as TeamScopeGrant[]) {
+    if (isScopeGrantMarker(grant)) continue;
     const team = (record.teams as TeamIdentity[]).find((item) =>
       item.team_id === grant.team_id
     );
@@ -402,6 +415,7 @@ async function resolveActorInternal(input: {
     });
   }
   for (const grant of record.all_scope_grants as AllScopeGrant[]) {
+    if (isScopeGrantMarker(grant)) continue;
     scopes.push({
       kind: "all",
       reference: "all",

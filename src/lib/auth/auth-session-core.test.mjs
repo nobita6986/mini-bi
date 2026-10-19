@@ -7,6 +7,7 @@ import {
   createAuthLogoutResponse,
   createAuthSessionResponse,
 } from "./auth-session-core.ts";
+import { resolveActor } from "./direct-entry-v2.ts";
 // P3-W08A regression matrix: re-registered here so the suite runs as
 // part of the canonical `pnpm test:server` path. The W08A test file
 // imports this module's *production* code (`./auth-session-core.ts`)
@@ -170,6 +171,47 @@ test("login verifies returned auth id and returns only the minimal actor project
     },
   });
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
+test("login accepts an actor with an inert team-scope marker beside its active grant", async () => {
+  const authSubject = "11111111-1111-4111-8111-111111111111";
+  const appUserId = "22222222-2222-4222-8222-222222222222";
+  const teamId = "33333333-3333-4333-8333-333333333333";
+  const response = await createAuthLoginResponse(request("/api/auth/login", credentials), {
+    ...baseDependencies(),
+    createClient: async () => successClient({
+      signInWithPassword: async () => ({ data: { user: { id: authSubject } }, error: null }),
+    }),
+    repository: {
+      async loadByAuthSubject() {
+        return {
+          auth_subject: authSubject,
+          app_user_id: appUserId,
+          display_name: "Synthetic Marker Account",
+          enabled: true,
+          capabilities: ["entry_team"],
+          recruiter_links: [],
+          teams: [{ team_id: teamId, code: "T01", display: "Synthetic team", active: true }],
+          team_scope_grants: [
+            { team_id: teamId, valid_from: "2026-01-01", valid_to: null },
+            { team_id: teamId, valid_from: "2026-10-19", valid_to: "2026-10-19" },
+          ],
+          all_scope_grants: [],
+        };
+      },
+    },
+    resolveActor,
+    now: () => "2026-10-19T00:00:00.000Z",
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.actor.app_user_id, appUserId);
+  assert.deepEqual(body.actor.scopes.filter((scope) => scope.kind === "team"), [{
+    kind: "team",
+    reference: teamId,
+    valid_from: "2026-01-01",
+    valid_to: null,
+  }]);
 });
 
 test("login accepts an HR Partner account ID and maps it to the internal @hrpartner.vn email", async () => {

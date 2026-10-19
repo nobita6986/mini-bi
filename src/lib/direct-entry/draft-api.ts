@@ -206,6 +206,13 @@ function projectPatch(value: unknown): {
   return { expected_version: value.expected_version, patch: projectedPatch };
 }
 
+function projectDelete(value: unknown): { expected_version: number } | null {
+  if (!isRecord(value) || Object.keys(value).length !== 1 ||
+      typeof value.expected_version !== "number" ||
+      !Number.isSafeInteger(value.expected_version) || value.expected_version < 1) return null;
+  return { expected_version: value.expected_version };
+}
+
 export async function getInputCatalog(
   effectiveDate: string | null,
   flag: string | undefined,
@@ -359,5 +366,73 @@ export async function patchDraftEntry(
   } catch {
     console.error("[direct-entry] draft update request failed");
     return fail("DRAFT_UPDATE_UNAVAILABLE", 500);
+  }
+}
+
+export async function deleteDraftEntry(
+  request: Request,
+  entryId: string,
+  flag: string | undefined,
+  dependencies: Dependencies,
+): Promise<Response> {
+  if (flag !== "true") return fail("NOT_FOUND", 404);
+  if (!UUID.test(entryId)) return fail("ENTRY_ID_INVALID", 400);
+  const origin = checkSameOriginRequest({
+    origin: request.headers.get("origin"),
+    host: request.headers.get("host"),
+    secFetchSite: request.headers.get("sec-fetch-site"),
+  });
+  if (!origin.ok) return fail("CSRF_REJECTED", 403);
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    return fail("CONTENT_TYPE_INVALID", 400);
+  }
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey === null || idempotencyKey.trim() === "" || idempotencyKey.length > 128) {
+    return fail("IDEMPOTENCY_KEY_INVALID", 400);
+  }
+  const body = await readBoundedJson(request);
+  if (body === null) return fail("BODY_INVALID", 400);
+  try {
+    if (!validateClientBusinessPayload(body).ok) {
+      return fail("CLIENT_AUTHORITY_FIELD_FORBIDDEN", 400);
+    }
+  } catch {
+    return fail("DRAFT_DELETE_INVALID", 400);
+  }
+  const parsed = projectDelete(body);
+  if (!parsed) return fail("DRAFT_DELETE_INVALID", 400);
+
+  try {
+    const session = await dependencies.resolveSession();
+    if (!session.actor.ok) {
+      return session.actor.reason === "UNAUTHENTICATED"
+        ? fail("UNAUTHENTICATED", 401)
+        : fail("ACTOR_NOT_AVAILABLE", 403);
+    }
+    const result = await dependencies.repository.deleteDraftRow({
+      auth_subject: session.actor.actor.auth_subject,
+      app_user_id: session.actor.actor.app_user_id,
+      entry_id: entryId,
+      expected_version: parsed.expected_version,
+      idempotency_key: idempotencyKey,
+    });
+    if (!result.ok) {
+      if (result.kind === "conflict") return fail("DRAFT_CONFLICT", 409);
+      if (result.kind === "final-row") return fail("DRAFT_FINAL_ROW", 409);
+      if (result.kind === "denied") return fail("ACTOR_DENIED", 403);
+      if (result.kind === "not-found") return fail("ENTRY_NOT_FOUND", 404);
+      if (result.kind === "invalid") return fail("DRAFT_DELETE_INVALID", 400);
+      console.error("[direct-entry] draft deletion unavailable");
+      return fail("DRAFT_DELETE_UNAVAILABLE", 500);
+    }
+    return respond({
+      ok: true,
+      entry_id: result.data.entry_id,
+      deleted: true,
+      entry_version: result.data.version,
+    }, 200);
+  } catch {
+    console.error("[direct-entry] draft deletion request failed");
+    return fail("DRAFT_DELETE_UNAVAILABLE", 500);
   }
 }
