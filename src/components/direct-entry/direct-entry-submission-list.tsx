@@ -247,9 +247,12 @@ export function DirectEntrySubmissionList({
                     : "Đã gửi chính thức là trạng thái cuối. Thay đổi sau đó phải đi qua yêu cầu thay đổi."}
                 </p>
               )}
-              <div className={compact ? styles.compactActions : styles.submissionActions}>
+              <div className={submission.state === "DRAFT"
+                ? styles.draftSubmissionActions
+                : compact ? styles.compactActions : styles.submissionActions}
+              data-testid={submission.state === "DRAFT" ? "draft-submission-actions" : undefined}>
                 {submission.state === "DRAFT" && (
-                  <>
+                  <div className={styles.draftSubmissionActionRow}>
                     <button
                       type="button"
                       className={styles.secondaryButton}
@@ -270,7 +273,7 @@ export function DirectEntrySubmissionList({
                         Xóa đợt nhập liệu
                       </button>
                     )}
-                  </>
+                  </div>
                 )}
                 {actions.map((action) => {
                   const checking = checkingId === submission.submission_id;
@@ -279,7 +282,11 @@ export function DirectEntrySubmissionList({
                     <button
                       key={action.target_state}
                       type="button"
-                      className={action.target_state === "SUBMITTED" ? styles.primaryButton : styles.secondaryButton}
+                      className={action.target_state === "SUBMITTED"
+                        ? submission.state === "DRAFT"
+                          ? `${styles.primaryButton} ${styles.draftSubmissionSubmit}`
+                          : styles.primaryButton
+                        : styles.secondaryButton}
                       aria-busy={working}
                       disabled={working}
                       onClick={() => void requestAction(submission, action)}

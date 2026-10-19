@@ -63,6 +63,26 @@ test("request: DELETE đúng route, body chỉ có expected_version, có Idempot
   }
 });
 
+test("fetchImpl tương thích window.fetch được gọi tách receiver", async () => {
+  const result = await deleteDraftSubmission({
+    submissionId: SUBMISSION_ID,
+    expectedVersion: 3,
+    idempotencyKey: KEY,
+    fetchImpl: async function () {
+      assert.equal(this, undefined);
+      return Response.json(successBody(), { status: 200 });
+    },
+  });
+
+  assert.deepEqual(result, {
+    kind: "deleted",
+    submissionId: SUBMISSION_ID,
+    version: 4,
+    entriesDeleted: 2,
+    cleanupObjectsQueued: 3,
+  });
+});
+
 test("projection 200: strict, thiếu/thừa trường hoặc sai shape => retry (không báo đã xóa)", async () => {
   for (const body of [
     successBody({ ok: false }),

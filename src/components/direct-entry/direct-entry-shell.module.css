@@ -1206,6 +1206,27 @@
   min-height: 38px;
 }
 
+.draftSubmissionActions {
+  display: grid;
+  grid-template-columns: minmax(0, max-content);
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: auto;
+}
+
+.draftSubmissionActionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.draftSubmissionSubmit {
+  box-sizing: border-box;
+  width: 100%;
+}
+
 .compactPanel {
   display: block;
   min-width: 0;
