@@ -35,8 +35,8 @@ async function buildDb() {
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
-  assert.equal(names.length, 116);
-  assert.equal(names.at(-(49 + 3)), MIGRATION);
+  assert.equal(names.length, 120);
+  assert.equal(names.at(-(49 + 7)), MIGRATION);
   return db;
 }
 

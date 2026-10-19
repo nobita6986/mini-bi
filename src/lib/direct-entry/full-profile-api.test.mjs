@@ -372,14 +372,17 @@ test("portrait stages are claimed before save and promoted only after the batch 
     async claim(input) {
       calls.push(["claim", input]);
       return { ok: true, data: {
-        stage_id: stageId, mime_type: "image/png", size_bytes: bytes.length,
+        stage_id: stageId, document_type: "WORKER_PORTRAIT",
+        mime_type: "image/png", size_bytes: bytes.length,
         checksum_sha256: sha256Hex(bytes), status: "CLAIMED",
-        claim_idempotency_key: key, entry_id: null, document_id: null,
+        claim_idempotency_key: input.idempotency_key, entry_id: null, document_id: null,
       } };
     },
+    async release(input) { calls.push(["release", input]); return { ok: true, data: true }; },
     async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
     async recover(input) { calls.push(["recover", input]); return { ok: true, data: {
-      stage_id: input.stage_id, mime_type: "image/png", size_bytes: bytes.length,
+      stage_id: input.stage_id, document_type: "WORKER_PORTRAIT",
+      mime_type: "image/png", size_bytes: bytes.length,
       checksum_sha256: sha256Hex(bytes), status: "CLAIMED",
       claim_idempotency_key: key, entry_id: null, document_id: null,
     } }; },
@@ -433,7 +436,7 @@ test("portrait stages are claimed before save and promoted only after the batch 
   const response = await postFullProfileBatch(request({
     ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
   }), "true", dependencies);
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 201, `stage calls: ${JSON.stringify(calls.map(([name]) => name))}`);
   const callNames = calls.map(([name]) => name);
   assert.ok(callNames.indexOf("claim") < callNames.indexOf("save"));
   assert.ok(callNames.indexOf("save") < callNames.indexOf("reserve"));
@@ -443,6 +446,10 @@ test("portrait stages are claimed before save and promoted only after the batch 
   const saved = calls.find(([name]) => name === "save")[1];
   assert.equal("portrait_stage_id" in saved.payload.rows[0], false,
     "the staging identifier never reaches the business RPC");
+  assert.equal("document_stage_ids" in saved.payload.rows[0], false);
+  assert.notEqual(calls.find(([name]) => name === "claim")[1].idempotency_key, key,
+    "stage batch key is derived from the client request key and exact stage assignment");
+  assert.equal(saved.idempotency_key, calls.find(([name]) => name === "claim")[1].idempotency_key);
   assert.deepEqual(calls.find(([name]) => name === "reserve")[1], {
     ...actor, entry_id: entryId, expected_entry_version: 1,
     document_type: "WORKER_PORTRAIT", idempotency_key: stageId,
@@ -475,6 +482,53 @@ test("change_request_create alone cannot claim a portrait stage or create a work
   assert.deepEqual(calls, []);
 });
 
+test("typed CCCD stage is stripped from business rows and bound to the batch idempotency key", async () => {
+  const stageId = "b2000000-0000-4000-8000-000000000003";
+  const calls = [];
+  const dependencies = deps();
+  dependencies.resolveSession = async () => ({
+    actor: { ok: true, actor: { ...actor, capabilities: ["document_upload"] } },
+    response_headers: {},
+  });
+  dependencies.documentRepository = {};
+  dependencies.documentStorage = {};
+  dependencies.portraitStages = {
+    async claim(input) {
+      calls.push(["claim", input]);
+      return { ok: true, data: {
+        stage_id: stageId, document_type: "CCCD_FRONT", mime_type: "application/pdf",
+        size_bytes: 20, checksum_sha256: "a".repeat(64), status: "CLAIMED",
+        claim_idempotency_key: input.idempotency_key, entry_id: null, document_id: null,
+      } };
+    },
+    async recover(input) {
+      calls.push(["recover", input]);
+      return { ok: true, data: {
+        stage_id: stageId, document_type: "CCCD_FRONT", mime_type: "application/pdf",
+        size_bytes: 20, checksum_sha256: "a".repeat(64), status: "CLAIMED",
+        claim_idempotency_key: calls.find(([name]) => name === "claim")[1].idempotency_key,
+        entry_id: null, document_id: null,
+      } };
+    },
+    async release(input) { calls.push(["release", input]); return { ok: true, data: true }; },
+  };
+  dependencies.repository.createFullProfileBatchWithPortraitStages = async (input) => {
+    calls.push(["batch", input]);
+    return { ok: false, kind: "conflict" };
+  };
+
+  const response = await postFullProfileBatch(request({
+    ...payload, rows: [{ ...row, document_stage_ids: { CCCD_FRONT: stageId } }],
+  }), "true", dependencies);
+  assert.equal(response.status, 409, `stage calls: ${JSON.stringify(calls.map(([name]) => name))}`);
+  const batchInput = calls.find(([name]) => name === "batch")[1];
+  assert.deepEqual(batchInput.portrait_stage_ids, [stageId]);
+  assert.equal("document_stage_ids" in batchInput.payload.rows[0], false,
+    "temporary IDs do not reach the business RPC row");
+  assert.equal(batchInput.idempotency_key, calls.find(([name]) => name === "claim")[1].idempotency_key);
+  assert.deepEqual(calls.map(([name]) => name), ["claim", "batch", "recover", "release"]);
+});
+
 test("batch conflict preserves a stage when the same key already has a committed result", async () => {
   const stageId = "b2000000-0000-4000-8000-000000000002";
   const calls = [];
@@ -487,19 +541,22 @@ test("batch conflict preserves a stage when the same key already has a committed
     async claim(input) {
       calls.push(["claim", input]);
       return { ok: true, data: {
-        stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
+        stage_id: stageId, document_type: "WORKER_PORTRAIT",
+        mime_type: "image/jpeg", size_bytes: 1,
         checksum_sha256: "a".repeat(64), status: "CLAIMED",
-        claim_idempotency_key: key, entry_id: null, document_id: null,
+        claim_idempotency_key: input.idempotency_key, entry_id: null, document_id: null,
       } };
     },
     async recover(input) {
       calls.push(["recover", input]);
       return { ok: true, data: {
-        stage_id: stageId, mime_type: "image/jpeg", size_bytes: 1,
+        stage_id: stageId, document_type: "WORKER_PORTRAIT",
+        mime_type: "image/jpeg", size_bytes: 1,
         checksum_sha256: "a".repeat(64), status: "CLAIMED",
         claim_idempotency_key: key, entry_id: null, document_id: null,
       } };
     },
+    async release(input) { calls.push(["release", input]); return { ok: true, data: true }; },
     async cancel(input) { calls.push(["cancel", input]); return { ok: true, data: true }; },
   };
   dependencies.documentRepository = {};
@@ -515,5 +572,5 @@ test("batch conflict preserves a stage when the same key already has a committed
     ...payload, rows: [{ ...row, portrait_stage_id: stageId }],
   }), "true", dependencies);
   assert.equal(response.status, 409);
-  assert.deepEqual(calls.map(([name]) => name), ["claim", "recover"]);
+  assert.deepEqual(calls.map(([name]) => name), ["claim", "recover", "release"]);
 });

@@ -223,6 +223,19 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     }],
   });
   assert.deepEqual(projectChangeRequestDetail(document, { request_id: requestId }), document);
+  const entryVoid = detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "ENTRY_VOID", expected_version: 1,
+      proposal: {}, labor_type_display: null,
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(entryVoid, { request_id: requestId }), entryVoid);
+  assert.equal(projectChangeRequestDetail(detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "ENTRY_VOID", expected_version: 1,
+      proposal: { voided_at: "client-forged" }, labor_type_display: null,
+    }],
+  }), { request_id: requestId }), null);
 
   // Presence-only marker cua worker_details (server redact khi thieu pii_view) van la record hop le.
   const presenceOnly = detailBody({

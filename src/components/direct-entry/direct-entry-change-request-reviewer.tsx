@@ -81,6 +81,9 @@ const HISTORY_FIELD_LABELS: Readonly<Record<string, string>> = {
 };
 
 function historyRows(item: ChangeRequestDetailItem, catalog?: DraftCatalog): Array<[string, string]> {
+  if (item.target_kind === "ENTRY_VOID") {
+    return [["Kết quả", "Hồ sơ được đánh dấu hủy riêng; dữ liệu và lịch sử được giữ lại."]];
+  }
   return Object.entries(item.proposal).flatMap<[string, string]>(([key, value]): [string, string][] => {
     const label = HISTORY_FIELD_LABELS[key] ?? "Thông tin đề xuất";
     if (key === "labor_type" && item.labor_type_display) return [[label, item.labor_type_display]];

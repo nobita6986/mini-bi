@@ -40,16 +40,16 @@ await db.query(
 );
 
 test("migration #115 follows W2S1 recovery without changing earlier guards", async () => {
-  assert.equal(migrations.migrationNames.length, 116);
-  assert.equal(migrations.migrationNames.at(-4),
+  assert.equal(migrations.migrationNames.length, 120);
+  assert.equal(migrations.migrationNames.at(-8),
     "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql");
-  assert.equal(migrations.migrationNames.at(-3),
+  assert.equal(migrations.migrationNames.at(-7),
     "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql");
-  assert.equal(migrations.migrationNames.at(-2),
-    "20261018130000_w2_s1_portrait_stage_create_idempotency.sql");
   assert.equal(migrations.migrationNames.at(-6),
+    "20261018130000_w2_s1_portrait_stage_create_idempotency.sql");
+  assert.equal(migrations.migrationNames.at(-10),
     "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
-  assert.equal(migrations.migrationNames.at(-5),
+  assert.equal(migrations.migrationNames.at(-9),
     "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
   for (const role of ["anon", "authenticated", "service_role"]) {
     const { rows } = await db.query(

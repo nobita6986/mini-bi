@@ -134,22 +134,29 @@ export async function postWorkerPortraitStage(
   }
   const keys = [...form.keys()];
   const file = form.get("file");
-  if (keys.length !== 1 || keys[0] !== "file" || !(file instanceof File) ||
-      (file.type !== "image/jpeg" && file.type !== "image/png") ||
+  const requestedType = form.get("document_type");
+  const documentType = requestedType === null ? "WORKER_PORTRAIT" : requestedType;
+  if ((keys.length !== 1 && keys.length !== 2) || !keys.includes("file") ||
+      (keys.length === 2 && !keys.includes("document_type")) || !(file instanceof File) ||
+      (documentType !== "WORKER_PORTRAIT" && documentType !== "CCCD_FRONT" &&
+        documentType !== "CCCD_BACK" && documentType !== "EMPLOYMENT_CONTRACT") ||
+      (file.type !== "image/jpeg" && file.type !== "image/png" &&
+        file.type !== "application/pdf") ||
+      (documentType === "WORKER_PORTRAIT" && file.type === "application/pdf") ||
       file.size < 1 || file.size > DOCUMENT_MAX_BYTES) {
     return fail("DOCUMENT_REQUEST_INVALID", 400);
   }
 
   try {
     const original = new Uint8Array(await file.arrayBuffer());
-    const inspected = inspectDocumentContent({
-      document_type: "WORKER_PORTRAIT", mime_type: file.type, bytes: original,
-    });
+    const inspected = inspectDocumentContent({ document_type: documentType, mime_type: file.type, bytes: original });
     if (!inspected.ok) return fail(inspected.code, 422);
-    const sanitized = await sanitizeWorkerPortrait(original, file.type);
+    const sanitized = documentType === "WORKER_PORTRAIT"
+      ? await sanitizeWorkerPortrait(original, file.type as "image/jpeg" | "image/png")
+      : { ok: true as const, bytes: original };
     if (!sanitized.ok) return fail("DOCUMENT_CONTENT_INVALID", 422);
     const sanitizedInspection = inspectDocumentContent({
-      document_type: "WORKER_PORTRAIT", mime_type: file.type, bytes: sanitized.bytes,
+      document_type: documentType, mime_type: file.type, bytes: sanitized.bytes,
     });
     if (!sanitizedInspection.ok) return fail(sanitizedInspection.code, 422);
 
@@ -157,7 +164,8 @@ export async function postWorkerPortraitStage(
     const staged = await dependencies.repository.create({
       ...actor.actor,
       stage_id: randomUUID(),
-      mime_type: file.type,
+      document_type: documentType,
+      mime_type: file.type as "image/jpeg" | "image/png" | "application/pdf",
       size_bytes: sanitized.bytes.byteLength,
       checksum_sha256: checksum,
       idempotency_key: idempotencyKey.toLowerCase(),
@@ -182,6 +190,7 @@ export async function postWorkerPortraitStage(
     return Response.json({
       ok: true,
       stage_id: stage.stage_id,
+      document_type: stage.document_type,
       mime_type: stage.mime_type,
       size_bytes: stage.size_bytes,
       status: stage.status,

@@ -18,10 +18,16 @@
  */
 
 import { checkWorkerPortraitFile } from "./worker-detail-projection.ts";
+import { DOCUMENT_MAX_BYTES_HARD_LIMIT } from "../contracts/direct-entry-v1.ts";
 
 export const PORTRAIT_STAGE_ENDPOINT = "/api/direct-entry/worker-portrait-stages";
 export const PORTRAIT_STAGE_RECOVER_ENDPOINT =
   "/api/direct-entry/worker-portrait-stages/recover";
+
+export const WORKER_STAGE_DOCUMENT_TYPES = [
+  "WORKER_PORTRAIT", "CCCD_FRONT", "CCCD_BACK", "EMPLOYMENT_CONTRACT",
+] as const;
+export type WorkerStageDocumentType = (typeof WORKER_STAGE_DOCUMENT_TYPES)[number];
 
 export const PORTRAIT_STAGE_STATUSES = ["STAGED", "CLAIMED", "ATTACHED", "CANCELLED"] as const;
 export type PortraitStageStatus = (typeof PORTRAIT_STAGE_STATUSES)[number];
@@ -51,7 +57,8 @@ async function readJson(response: Response): Promise<unknown> {
 export type PortraitStageStaged = {
   kind: "staged";
   stageId: string;
-  mimeType: "image/jpeg" | "image/png";
+  documentType: WorkerStageDocumentType;
+  mimeType: "image/jpeg" | "image/png" | "application/pdf";
   sizeBytes: number;
 };
 /** Loi tam thoi / ket qua khong xac dinh: giu tep de thu lai (stage cu van con neu da tao). */
@@ -61,26 +68,38 @@ export type PortraitStageRejected = { kind: "rejected"; code: string };
 export type PortraitStageResult = PortraitStageStaged | PortraitStageRetry | PortraitStageRejected;
 
 /** Projection 201: strict, fail closed khi thua/thieu truong hoac khong phai STAGED. */
-export function projectPortraitStage(value: unknown): PortraitStageStaged | null {
+export function projectPortraitStage(
+  value: unknown,
+  expectedDocumentType: WorkerStageDocumentType = "WORKER_PORTRAIT",
+): PortraitStageStaged | null {
   if (!isRecord(value) || value.ok !== true) return null;
   if (typeof value.stage_id !== "string" || !UUID.test(value.stage_id)) return null;
-  if (value.mime_type !== "image/jpeg" && value.mime_type !== "image/png") return null;
+  if (value.document_type !== expectedDocumentType) return null;
+  if (value.mime_type !== "image/jpeg" && value.mime_type !== "image/png" &&
+      value.mime_type !== "application/pdf") return null;
+  if (expectedDocumentType === "WORKER_PORTRAIT" && value.mime_type === "application/pdf") return null;
   if (typeof value.size_bytes !== "number" || !Number.isSafeInteger(value.size_bytes) ||
       value.size_bytes < 1) return null;
   if (value.status !== "STAGED") return null;
   return {
     kind: "staged",
     stageId: value.stage_id,
+    documentType: expectedDocumentType,
     mimeType: value.mime_type,
     sizeBytes: value.size_bytes,
   };
 }
 
-export function classifyPortraitStageResponse(status: number, body: unknown): PortraitStageResult {
+export function classifyPortraitStageResponse(
+  status: number,
+  body: unknown,
+  expectedDocumentType: WorkerStageDocumentType = "WORKER_PORTRAIT",
+): PortraitStageResult {
   if (status >= 500) return { kind: "retry", code: codeOf(body, "PORTRAIT_STAGE_UNAVAILABLE") };
   if (status >= 200 && status < 300) {
     // 2xx nhung projection khong doc duoc: ket qua khong xac dinh => thu lai.
-    return projectPortraitStage(body) ?? { kind: "retry", code: "PORTRAIT_STAGE_RESPONSE_INVALID" };
+    return projectPortraitStage(body, expectedDocumentType) ??
+      { kind: "retry", code: "PORTRAIT_STAGE_RESPONSE_INVALID" };
   }
   return { kind: "rejected", code: codeOf(body, "PORTRAIT_STAGE_REJECTED") };
 }
@@ -96,13 +115,29 @@ export async function stageWorkerPortrait(input: {
   idempotencyKey: string;
   fetchImpl: PortraitStageFetch;
 }): Promise<PortraitStageResult> {
+  return stageWorkerDocument({ ...input, documentType: "WORKER_PORTRAIT" });
+}
+
+export async function stageWorkerDocument(input: {
+  file: File;
+  documentType: WorkerStageDocumentType;
+  idempotencyKey: string;
+  fetchImpl: PortraitStageFetch;
+}): Promise<PortraitStageResult> {
   if (!UUID.test(input.idempotencyKey)) {
     return { kind: "rejected", code: "IDEMPOTENCY_KEY_INVALID" };
   }
-  const check = checkWorkerPortraitFile(input.file);
-  if (!check.ok) return { kind: "rejected", code: check.code };
+  if (input.documentType === "WORKER_PORTRAIT") {
+    const check = checkWorkerPortraitFile(input.file);
+    if (!check.ok) return { kind: "rejected", code: check.code };
+  } else if (input.file.size < 1 || input.file.size > DOCUMENT_MAX_BYTES_HARD_LIMIT) {
+    return { kind: "rejected", code: "DOCUMENT_SIZE_INVALID" };
+  } else if (!(["image/jpeg", "image/png", "application/pdf"] as string[]).includes(input.file.type)) {
+    return { kind: "rejected", code: "DOCUMENT_MIME_INVALID" };
+  }
   const form = new FormData();
-  form.append("file", input.file, "portrait");
+  form.append("file", input.file, "worker-document");
+  form.append("document_type", input.documentType);
   const callFetch = input.fetchImpl;
   let response: Response;
   try {
@@ -115,7 +150,7 @@ export async function stageWorkerPortrait(input: {
   } catch {
     return { kind: "retry", code: "PORTRAIT_STAGE_NETWORK" };
   }
-  return classifyPortraitStageResponse(response.status, await readJson(response));
+  return classifyPortraitStageResponse(response.status, await readJson(response), input.documentType);
 }
 
 /* ----------------------------------------------------------------- cancel */
@@ -501,13 +536,20 @@ export function reducePortraitStageLifecycle(
 ): PortraitStageLifecycle {
   const slots = new Map(state.slots);
   if (action.kind === "stage-start") {
+    const previous = slots.get(action.rowKey);
     slots.set(action.rowKey, {
       status: "staging",
       binding: action.binding,
       requestId: action.requestId,
       stageId: null,
     });
-    return { epoch: state.epoch, slots, orphans: state.orphans };
+    const orphans = previous?.stageId
+      ? addOrphan(state.orphans, {
+        stageId: previous.stageId,
+        sizeBytes: previous.status === "staged" || previous.status === "stale" ? previous.sizeBytes : 0,
+      })
+      : state.orphans;
+    return { epoch: state.epoch, slots, orphans };
   }
   if (action.kind === "invalidate") {
     // Doi du lieu / dong hop thoai: vo hieu hoa binding NGAY. Slot da co stageId chuyen sang

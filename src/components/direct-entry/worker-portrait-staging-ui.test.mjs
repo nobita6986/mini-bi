@@ -302,6 +302,21 @@ test("W2S1: row chi mang portrait_stage_id khi co anh, khong bao gio mang bytes/
   assert.doesNotMatch(batch, /portrait_bytes:|base64:|storage_key:|signed_url:/);
 });
 
+test("W2S1.1: CCCD và hợp đồng chỉ gửi stage ID đúng loại, không gửi nội dung tệp", () => {
+  const row = previewRow(1);
+  const request = buildFullProfileRequestBody([row], undefined, undefined, new Map([[1, {
+    CCCD_FRONT: STAGE_ID,
+    EMPLOYMENT_CONTRACT: STAGE_B,
+  }]]));
+  assert.deepEqual(request.rows[0].document_stage_ids, {
+    CCCD_FRONT: STAGE_ID,
+    EMPLOYMENT_CONTRACT: STAGE_B,
+  });
+  const serialized = JSON.stringify(request);
+  assert.doesNotMatch(serialized, /bytes|base64|storage_key|signed_url/);
+  assert.match(batch, /document_stage_ids\?: Partial<Record<DocumentType, string>>/);
+});
+
 test("W2S1: dialog gui stage_id theo tung dong va KHONG gui bytes trong payload batch", () => {
   assert.match(dialog, /buildFullProfileRequestBody\(preview\.rows, stagedStageIds\)/);
   assert.match(dialog, /portraitStageIds: stagedStageIds,/);
@@ -361,6 +376,7 @@ test("W2S1: stage client khong tu gui truong authority/scope va dung dung endpoi
   assert.match(client, new RegExp(PORTRAIT_STAGE_RECOVER_ENDPOINT.replace(/\//g, "\\/")));
   assert.doesNotMatch(client, /"auth_subject"|"app_user_id"|"capability"|"scope"|"team_id"/);
   assert.doesNotMatch(batch, /"auth_subject"|"app_user_id"|"capability"|"scope"|"team_id"/);
-  assert.match(client, /form\.append\("file", input\.file, "portrait"\)/);
+  assert.match(client, /form\.append\("file", input\.file, "worker-document"\)/);
+  assert.match(client, /form\.append\("document_type", input\.documentType\)/);
   assert.match(client, /body: JSON\.stringify\(\{ stage_id: input\.stageId \}\)/);
 });

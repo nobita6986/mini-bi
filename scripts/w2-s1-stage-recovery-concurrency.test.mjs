@@ -72,7 +72,7 @@ async function applyMigrations(client) {
     " create schema auth; create table auth.users (id uuid primary key);",
   );
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 116, "the ephemeral server applies the complete current ledger");
+  assert.equal(names.length, 120, "the ephemeral server applies the complete current ledger");
   for (const name of names) await client.query(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
 }
 

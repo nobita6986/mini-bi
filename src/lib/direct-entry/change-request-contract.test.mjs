@@ -96,6 +96,19 @@ test("DOCUMENT create and mixed DOCUMENT create fail closed as a whole", () => {
     "item projection remains available for historical/read compatibility");
 });
 
+test("ENTRY_VOID accepts one exact entry with an empty proposal and rejects mixed/extra payloads", () => {
+  const voidItem = item({ target_kind: "ENTRY_VOID", proposal: {} });
+  const valid = projectChangeRequestCreate(createBody({ items: [voidItem] }));
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.value.items, [voidItem]);
+  assert.equal(projectChangeRequestCreate(createBody({
+    items: [voidItem, item({ entry_id: entryB })],
+  })).ok, false, "void requests are never multi-entry or mixed");
+  assert.equal(projectChangeRequestCreate(createBody({
+    items: [item({ target_kind: "ENTRY_VOID", proposal: { entry_id: entryA } })],
+  })).ok, false, "client cannot send a target selector inside the proposal");
+});
+
 test("empty, oversized and duplicate items fail closed", () => {
   assert.equal(projectChangeRequestCreate(createBody({ items: [] })).ok, false);
   assert.equal(projectChangeRequestCreate(createBody({ items: {} })).ok, false);

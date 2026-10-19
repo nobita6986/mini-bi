@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   ACTORS,
+  RECRUITER_A,
   SUBMISSION_STAMPS,
   createMigratedDatabase,
   listOwnSubmissions,
@@ -18,18 +19,18 @@ const db = migrations.db;
 const fixture = await seedSubmissionReadFixture(db);
 const submissions = fixture.submissions;
 
-test("from-scratch apply 116 migrations and read RPC ACLs", async () => {
+test("from-scratch apply 120 migrations and read RPC ACLs", async () => {
   // P2-W04B migration #44 rebaselines the cutoff to 2026-10-06.
   // W05A #48, W07C-R7 #49, W07E #50, P2.5-W02 #51, P2.5-W03 #52, P2.5-W04 #53,
   // P2.5-W06A #54, P2.5-W05 #55, W05-R1 #56 and initial-ON #57.
-  assert.equal(migrations.migrationNames.length, 116);
-  assert.equal(migrations.migrationNames.at(-13),
+  assert.equal(migrations.migrationNames.length, 120);
+  assert.equal(migrations.migrationNames.at(-17),
     "20261016100000_pre_w2_hf_direct_entry_own_draft_edit.sql");
-  assert.equal(migrations.migrationNames.at(-14),
+  assert.equal(migrations.migrationNames.at(-18),
     "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql");
-  assert.equal(migrations.migrationNames.at(-15),
+  assert.equal(migrations.migrationNames.at(-19),
     "20261015170000_pre_w2_uploader_submission_queues.sql");
-  assert.equal(migrations.migrationNames.at(-16),
+  assert.equal(migrations.migrationNames.at(-20),
     "20261015160000_pre_w2_initial_status_any_start_date.sql");
   assert.ok(migrations.migrationNames.includes("20261005020000_p1_6_w04_s04c_submission_reads.sql"));
   assert.ok(migrations.migrationNames.includes("20261008030000_p2_w04b_post_purge_cutover_rebaseline.sql"));
@@ -66,6 +67,77 @@ test("from-scratch apply 116 migrations and read RPC ACLs", async () => {
       assert.equal(rows[0].allowed, false, role + " on " + table);
     }
   }
+});
+
+test("worker-directory recruiter and all audiences can read matching submitted details only", async () => {
+  const recruiterViewer = {
+    auth_subject: "11000000-0000-4000-8000-000000000006",
+    app_user_id: "21000000-0000-4000-8000-000000000006",
+  };
+  const allViewer = {
+    auth_subject: "11000000-0000-4000-8000-000000000007",
+    app_user_id: "21000000-0000-4000-8000-000000000007",
+  };
+  const outOfScopeViewer = {
+    auth_subject: "11000000-0000-4000-8000-000000000008",
+    app_user_id: "21000000-0000-4000-8000-000000000008",
+  };
+  for (const actor of [recruiterViewer, allViewer, outOfScopeViewer]) {
+    await db.query("insert into auth.users(id) values ($1)", [actor.auth_subject]);
+    await db.query(
+      "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
+        " values ($1,$2,true,'Synthetic worker-directory viewer')",
+      [actor.app_user_id, actor.auth_subject],
+    );
+  }
+  for (const actor of [recruiterViewer, outOfScopeViewer]) {
+    await db.query(
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+        " values ($1,'document_view','2020-01-01')",
+      [actor.app_user_id],
+    );
+  }
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from)" +
+      " values ($1,$2,true,'2020-01-01')",
+    [recruiterViewer.app_user_id, RECRUITER_A],
+  );
+  await db.query(
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
+      " values ($1,'change_review','2020-01-01')",
+    [allViewer.app_user_id],
+  );
+  await db.query(
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
+      " values ($1,'all','2020-01-01')",
+    [allViewer.app_user_id],
+  );
+
+  const entryId = fixture.submitted.entryIds[0];
+  for (const [actor, directoryScope] of [
+    [recruiterViewer, "recruited"],
+    [allViewer, "all"],
+  ]) {
+    const directory = await db.query(
+      "select public.direct_entry_list_workers($1::uuid,$2::uuid,$3::text,null,null,null,null,25) as data",
+      [actor.auth_subject, actor.app_user_id, directoryScope],
+    );
+    assert.ok(directory.rows[0].data.items.some((item) => item.entry_id === entryId), directoryScope);
+    const detail = await db.query(
+      "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as data",
+      [actor.auth_subject, actor.app_user_id, entryId],
+    );
+    assert.equal(detail.rows[0].data.entry_id, entryId, directoryScope);
+  }
+
+  await assert.rejects(
+    () => db.query(
+      "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as data",
+      [outOfScopeViewer.auth_subject, outOfScopeViewer.app_user_id, entryId],
+    ),
+      (error) => error.code === "P0002" || error.code === "42501",
+    "a worker-directory detail read must not leak to an actor outside the row audience",
+  );
 });
 
 test("owner sees all three lifecycle states with exact transitions and entry counts", async () => {

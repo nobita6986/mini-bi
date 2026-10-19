@@ -23,6 +23,7 @@ export const CHANGE_REQUEST_TARGET_KINDS = [
   "PAYMENT",
   "WORK_STATUS",
   "DOCUMENT",
+  "ENTRY_VOID",
 ] as const;
 
 export type ChangeRequestTargetKind = (typeof CHANGE_REQUEST_TARGET_KINDS)[number];
@@ -52,6 +53,7 @@ export const PROPOSAL_KEYS: Readonly<Record<ChangeRequestTargetKind, readonly st
   PAYMENT: ["state", "account_number", "bank_id", "account_holder_name"],
   WORK_STATUS: ["status", "effective_date", "leave_reason"],
   DOCUMENT: ["document_type", "idempotency_key", "checksum_sha256", "size_bytes", "mime_type"],
+  ENTRY_VOID: [],
 });
 
 const PROPOSAL_VOCABULARY: readonly string[] = Object.freeze([...new Set(Object.values(PROPOSAL_KEYS).flat())]);
@@ -318,6 +320,7 @@ export function projectChangeRequestProposal(
   if (kind === "ENTRY_FIELD") return projectEntryFieldProposal(value);
   if (kind === "PAYMENT") return projectPaymentProposal(value);
   if (kind === "WORK_STATUS") return projectWorkStatusProposal(value);
+  if (kind === "ENTRY_VOID") return Object.keys(value).length === 0 ? {} : null;
   return projectDocumentProposal(value);
 }
 
@@ -348,6 +351,9 @@ export function projectChangeRequestCreate(
   if (value.items.some((item) => isRecord(item) && item.target_kind === "DOCUMENT")) {
     return { ok: false, code: "DOCUMENT_CHANGE_REQUEST_UNSUPPORTED" };
   }
+  if (value.items.some((item) => isRecord(item) && item.target_kind === "ENTRY_VOID") &&
+      (value.items.length !== 1 || !isRecord(value.items[0]) ||
+       value.items[0].target_kind !== "ENTRY_VOID")) return INVALID;
   const items: ChangeRequestItem[] = [];
   const seen = new Set<string>();
   for (const raw of value.items) {

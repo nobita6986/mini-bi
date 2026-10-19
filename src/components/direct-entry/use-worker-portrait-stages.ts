@@ -15,7 +15,7 @@
  * `bindableStageIds` la nguon DUY NHAT de dua `portrait_stage_id` vao payload batch.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   EMPTY_PORTRAIT_STAGE_LIFECYCLE,
@@ -26,7 +26,8 @@ import {
   selectBindablePortraitStages,
   selectOrphanPortraitStages,
   selectStalePortraitStages,
-  stageWorkerPortrait,
+  stageWorkerDocument,
+  type WorkerStageDocumentType,
   type PortraitStageAction,
   type PortraitStageCancelResult,
   type PortraitStageLifecycle,
@@ -40,9 +41,12 @@ export type WorkerPortraitStagesController = {
   bindableStageIds: ReadonlyMap<string, string>;
   /** So stage da tao nhung chua don duoc (slot stale + orphan). */
   staleCount: number;
+  /** Dong co the retry bang cung tep + Idempotency-Key sau loi tam thoi. */
+  retryableRows: ReadonlySet<string>;
   /** Thong bao gan nhat cho viec stage/huy/don. */
   message: string;
   stage(rowKey: string, file: File): void;
+  retryStage(rowKey: string): void;
   cancel(rowKey: string, stageId: string): void;
   /** Vo hieu hoa toan bo binding hien tai (doi du lieu / dong hop thoai). */
   invalidate(): void;
@@ -55,13 +59,17 @@ export type WorkerPortraitStagesController = {
 
 export function useWorkerPortraitStages(input: {
   rowBindings: ReadonlyMap<string, string>;
+  documentType?: WorkerStageDocumentType;
   fetchImpl?: typeof fetch;
 }): WorkerPortraitStagesController {
   const fetchImpl = input.fetchImpl ?? fetch;
+  const documentType = input.documentType ?? "WORKER_PORTRAIT";
   const rowBindings = input.rowBindings;
   const [state, setState] = useState<PortraitStageLifecycle>(EMPTY_PORTRAIT_STAGE_LIFECYCLE);
   const [message, setMessage] = useState("");
   const [cleanupNonce, setCleanupNonce] = useState(0);
+  const pendingUploads = useRef(new Map<string, { file: File; idempotencyKey: string; binding: string }>());
+  const [retryableRows, setRetryableRows] = useState<ReadonlySet<string>>(() => new Set());
 
   const dispatch = useCallback((action: PortraitStageAction) => {
     setState((current) => reducePortraitStageLifecycle(current, action));
@@ -77,6 +85,34 @@ export function useWorkerPortraitStages(input: {
     [rowBindings, slots],
   );
   const orphanStages = useMemo(() => selectOrphanPortraitStages(state), [state]);
+
+  const markRetryable = useCallback((rowKey: string, retryable: boolean) => {
+    setRetryableRows((current) => {
+      if (current.has(rowKey) === retryable) return current;
+      const next = new Set(current);
+      if (retryable) next.add(rowKey);
+      else next.delete(rowKey);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const currentBindings = new Map(rowBindings);
+    let changed = false;
+    for (const [rowKey, upload] of pendingUploads.current) {
+      if (currentBindings.get(rowKey) !== upload.binding) {
+        pendingUploads.current.delete(rowKey);
+        changed = true;
+      }
+    }
+    if (changed) setRetryableRows((current) => {
+      const next = new Set(current);
+      for (const rowKey of next) {
+        if (!pendingUploads.current.has(rowKey)) next.delete(rowKey);
+      }
+      return next;
+    });
+  }, [rowBindings]);
 
   /** Huy stage; CHI xoa khoi state khi huy duoc hoac da xac dinh trang thai cuoi. */
   const cancelStage = useCallback(async (
@@ -122,19 +158,23 @@ export function useWorkerPortraitStages(input: {
     return () => { active = false; };
   }, [cancelStage, cleanupNonce, dispatch, fetchImpl, orphanStages, staleStages]);
 
-  const stage = useCallback((rowKey: string, file: File) => {
-    const binding = rowBindings.get(rowKey);
-    if (binding === undefined) return;
+  const runStage = useCallback((rowKey: string, pending: {
+    file: File; idempotencyKey: string; binding: string;
+  }) => {
     // Generation/request ID duy nhat cho MOI lan stage: response cu khong the ghi de upload moi.
     const requestId = crypto.randomUUID();
     setMessage("");
-    dispatch({ kind: "stage-start", rowKey, binding, requestId });
-    void stageWorkerPortrait({
-      file,
+    markRetryable(rowKey, false);
+    dispatch({ kind: "stage-start", rowKey, binding: pending.binding, requestId });
+    void stageWorkerDocument({
+      file: pending.file,
+      documentType,
       // Idempotency contract: key giu nguyen cho dung lan gui nay (retry dung lai cung key).
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: pending.idempotencyKey,
       fetchImpl,
     }).then((result) => {
+      const stillCurrent = pendingUploads.current.get(rowKey)?.idempotencyKey === pending.idempotencyKey;
+      const bindingStillMatches = rowBindings.get(rowKey) === pending.binding;
       dispatch({
         kind: "stage-result",
         rowKey,
@@ -143,9 +183,32 @@ export function useWorkerPortraitStages(input: {
           ? { kind: "staged", stageId: result.stageId, sizeBytes: result.sizeBytes }
           : { kind: "error", code: result.code },
       });
+      if (stillCurrent && !bindingStillMatches) pendingUploads.current.delete(rowKey);
+      if (result.kind === "retry" && stillCurrent && bindingStillMatches) {
+        markRetryable(rowKey, true);
+      } else if (stillCurrent) {
+        pendingUploads.current.delete(rowKey);
+        markRetryable(rowKey, false);
+      }
       if (result.kind !== "staged") setMessage(portraitStageErrorMessage(result.code));
     });
-  }, [dispatch, fetchImpl, rowBindings]);
+  }, [dispatch, documentType, fetchImpl, markRetryable, rowBindings]);
+
+  const stage = useCallback((rowKey: string, file: File) => {
+    const binding = rowBindings.get(rowKey);
+    if (binding === undefined) return;
+    const pending = { file, binding, idempotencyKey: crypto.randomUUID() };
+    pendingUploads.current.set(rowKey, pending);
+    runStage(rowKey, pending);
+  }, [rowBindings, runStage]);
+
+  const retryStage = useCallback((rowKey: string) => {
+    const pending = pendingUploads.current.get(rowKey);
+    const slot = slots.get(rowKey);
+    if (!pending || slot?.status !== "error" || slot.binding !== pending.binding ||
+        !retryableRows.has(rowKey) || rowBindings.get(rowKey) !== pending.binding) return;
+    runStage(rowKey, pending);
+  }, [retryableRows, rowBindings, runStage, slots]);
 
   const cancel = useCallback((rowKey: string, stageId: string) => {
     setMessage("");
@@ -157,6 +220,8 @@ export function useWorkerPortraitStages(input: {
   }, [cancelStage]);
 
   const invalidate = useCallback(() => {
+    pendingUploads.current.clear();
+    setRetryableRows(new Set());
     dispatch({ kind: "invalidate" });
   }, [dispatch]);
 
@@ -171,8 +236,10 @@ export function useWorkerPortraitStages(input: {
     slots,
     bindableStageIds,
     staleCount: staleStages.length + orphanStages.length,
+    retryableRows,
     message,
     stage,
+    retryStage,
     cancel,
     invalidate,
     settle,
