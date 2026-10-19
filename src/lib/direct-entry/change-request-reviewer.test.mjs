@@ -177,6 +177,18 @@ test("ten NLĐ lay tu worker context duoc cap quyen, khong thay bang ma ho so", 
   assert.equal("entry_code" in model.items[0], false);
 });
 
+test("ENTRY_VOID reviewer shows a distinct audited cancellation outcome and remains decidable", () => {
+  const model = build({ detail: {
+    items: [{ entry_id: ENTRY_A, target_kind: "ENTRY_VOID", expected_version: 2,
+      proposal: {}, labor_type_display: null }],
+  } });
+  assert.equal(model.kind, "reviewable");
+  assert.equal(model.items[0].targetKind, "ENTRY_VOID");
+  assert.equal(model.items[0].rows[0].after,
+    "Đánh dấu hủy riêng, giữ lịch sử và giảm đúng một lượt tuyển");
+  assert.match(model.items[0].message, /không đồng nghĩa với Đã nghỉ/);
+});
+
 test("trang thai terminal khong co quyet dinh", () => {
   for (const state of ["APPROVED", "REJECTED", "WITHDRAWN"]) {
     const model = build({ detail: { state, can_decide: false } });

@@ -78,17 +78,18 @@ import { sortedActiveLaborTypes } from "@/lib/direct-entry/labor-type-catalog-ui
 import styles from "./direct-entry-shell.module.css";
 
 /** Target kind UI ho tro trong S03B4A. DOCUMENT chua co staging boundary => khong chon duoc. */
-type ProposerTargetKind = "ENTRY_FIELD" | "WORKER" | "PAYMENT" | "WORK_STATUS";
+type ProposerTargetKind = "ENTRY_FIELD" | "WORKER" | "PAYMENT" | "WORK_STATUS" | "ENTRY_VOID";
 
 const PROPOSER_KIND_LABELS: Readonly<Record<ProposerTargetKind, string>> = Object.freeze({
   ENTRY_FIELD: "Thông tin dòng nhập liệu",
   WORKER: "Thông tin cá nhân người lao động",
   PAYMENT: "Thông tin tài khoản ngân hàng",
   WORK_STATUS: "Trạng thái làm việc",
+  ENTRY_VOID: "Đề nghị hủy hồ sơ trùng",
 });
 
 const PROPOSER_KINDS: readonly ProposerTargetKind[] =
-  ["ENTRY_FIELD", "WORKER", "PAYMENT", "WORK_STATUS"];
+  ["ENTRY_FIELD", "WORKER", "PAYMENT", "WORK_STATUS", "ENTRY_VOID"];
 
 type SensitiveBuildError = ProposalBuildError | "ENTRY_SELECT_REQUIRED" | "ITEM_INVALID";
 
@@ -287,7 +288,9 @@ export function DirectEntryChangeRequestProposer({
     const context = contexts[singleEntry.entry_id] ?? null;
     let built: { ok: true; proposal: Record<string, unknown> } |
       { ok: false; code: ProposalBuildError };
-    if (kind === "WORKER") {
+    if (kind === "ENTRY_VOID") {
+      built = { ok: true, proposal: {} };
+    } else if (kind === "WORKER") {
       const baseline = context?.workerDetails ?? null;
       if (!baseline) return { ok: false, code: "WORKER_UNAVAILABLE" };
       built = buildWorkerDetailsProposal(baseline,
@@ -443,7 +446,14 @@ export function DirectEntryChangeRequestProposer({
   }, [buildResult, itemsToSend, kind, onConflict, onCreated, onOpenChange, onUnauthorized,
     reason, sensitiveBuild]);
 
-  const summaryLines = proposerDrafts.map((draft) => {
+  const summaryLines = kind === "ENTRY_VOID"
+    ? (singleEntry === null ? [] : [
+      (contexts[singleEntry.entry_id]?.workerDetails?.display_name ?? "Người lao động") +
+      " · " + singleEntry.employee_code + " · " + singleEntry.first_work_date +
+      " · " + (catalogFor(hcmTodayDate())?.projects.find((item) =>
+        item.project_id === singleEntry.project_id)?.display_name ?? "Dự án đã chọn"),
+    ])
+    : proposerDrafts.map((draft) => {
     const entry = entries.find((item) => item.entry_id === draft.entry_id);
     const changed = changedProposerFields(draft.baseline, draft.draft)
       .map((field) => PROPOSER_FIELD_LABELS[field]).join(", ");
@@ -604,7 +614,9 @@ export function DirectEntryChangeRequestProposer({
 
             {kind !== "ENTRY_FIELD" && entryState === "ready" && entries.length > 0 && (
               <fieldset className={styles.proposerFields}>
-                <legend>Chọn một dòng để đề xuất</legend>
+                <legend>
+                  {kind === "ENTRY_VOID" ? "Chọn chính xác một hồ sơ trùng" : "Chọn một dòng để đề xuất"}
+                </legend>
                 {entries.map((entry) => (
                   <label key={entry.entry_id} className={styles.proposerChoice}>
                     <input
@@ -795,7 +807,9 @@ export function DirectEntryChangeRequestProposer({
 
             {entryState === "ready" && entries.length > 0 && (
               <div className={styles.field}>
-                <label htmlFor="change-request-reason">Lý do thay đổi</label>
+                <label htmlFor="change-request-reason">
+                  {kind === "ENTRY_VOID" ? "Lý do đề nghị hủy hồ sơ trùng" : "Lý do thay đổi"}
+                </label>
                 <textarea
                   id="change-request-reason"
                   aria-label="Lý do thay đổi"
@@ -807,12 +821,20 @@ export function DirectEntryChangeRequestProposer({
               </div>
             )}
 
-            {entryState === "ready" && proposerDrafts.length > 0 && (
+            {entryState === "ready" && (proposerDrafts.length > 0 || kind === "ENTRY_VOID") && (
               <div className={styles.proposerSummary} aria-live="polite">
-                <strong>Tóm tắt {proposerDrafts.length} dòng sẽ gửi</strong>
+                <strong>
+                  {kind === "ENTRY_VOID" ? "Hồ sơ được đề nghị hủy" :
+                    `Tóm tắt ${proposerDrafts.length} dòng sẽ gửi`}
+                </strong>
                 <ul>
                   {summaryLines.map((line, index) => <li key={index}>{line}</li>)}
                 </ul>
+                {kind === "ENTRY_VOID" && (
+                  <p className={styles.submissionHint}>
+                    Chỉ đánh dấu hồ sơ này đã hủy sau khi được duyệt; dữ liệu và lịch sử vẫn được giữ.
+                  </p>
+                )}
                 {buildResult.ok && (
                   <p className={styles.submissionHint}>
                     Trường thay đổi: {summarizeProposal(
@@ -851,7 +873,7 @@ export function DirectEntryChangeRequestProposer({
                 setConfirmOpen(true);
               }}
             >
-              {busy ? "Đang gửi…" : "Xem lại và gửi"}
+              {busy ? "Đang gửi…" : kind === "ENTRY_VOID" ? "Xem lại đề nghị hủy" : "Xem lại và gửi"}
             </button>
           </div>
 
@@ -860,11 +882,12 @@ export function DirectEntryChangeRequestProposer({
               <AlertDialog.Overlay className={styles.drawerOverlay} />
               <AlertDialog.Content className={styles.confirmDialog}>
                 <AlertDialog.Title className={styles.drawerTitle}>
-                  Gửi yêu cầu thay đổi?
+                  {kind === "ENTRY_VOID" ? "Gửi đề nghị hủy hồ sơ trùng?" : "Gửi yêu cầu thay đổi?"}
                 </AlertDialog.Title>
                 <AlertDialog.Description className={styles.drawerDescription}>
-                  Yêu cầu được gửi trong một lần cho tất cả {itemsToSend?.length ?? 0} dòng đã chọn
-                  {" "}(atomic). Nếu một dòng không hợp lệ, toàn bộ yêu cầu không được tạo.
+                  {kind === "ENTRY_VOID"
+                    ? "Nếu được duyệt, hồ sơ này được đánh dấu hủy riêng (không phải Đã nghỉ), được giữ trong lịch sử và không còn tính vào báo cáo tuyển dụng."
+                    : `Yêu cầu được gửi trong một lần cho tất cả ${itemsToSend?.length ?? 0} dòng đã chọn (atomic). Nếu một dòng không hợp lệ, toàn bộ yêu cầu không được tạo.`}
                 </AlertDialog.Description>
                 <ul className={styles.proposerConfirmList}>
                   {summaryLines.map((line, index) => <li key={index}>{line}</li>)}
@@ -879,7 +902,7 @@ export function DirectEntryChangeRequestProposer({
                       className={styles.primaryButton}
                       onClick={() => { setConfirmOpen(false); void submit(); }}
                     >
-                      Gửi yêu cầu
+                      {kind === "ENTRY_VOID" ? "Gửi đề nghị hủy" : "Gửi yêu cầu"}
                     </button>
                   </AlertDialog.Action>
                 </div>

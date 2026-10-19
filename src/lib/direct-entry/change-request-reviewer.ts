@@ -142,6 +142,7 @@ export const REVIEW_TARGET_KIND_LABELS: Readonly<Record<string, string>> = Objec
   PAYMENT: "Thông tin thanh toán",
   WORK_STATUS: "Trạng thái làm việc",
   DOCUMENT: "Tài liệu",
+  ENTRY_VOID: "Đề nghị hủy hồ sơ trùng",
 });
 
 /** Nhan chung khi server chi tra account number da mask (thieu payment_view). */
@@ -234,6 +235,20 @@ function buildReviewerItemView(input: {
     project_name: format(entry, "project_id", entry.project_id),
     targetKind: item.target_kind,
   };
+  if (item.target_kind === "ENTRY_VOID") {
+    if (Object.keys(item.proposal).length !== 0) return "PROPOSAL";
+    return {
+      ...base,
+      rows: [{
+        field: "voided_at",
+        label: "Kết quả nếu được duyệt",
+        before: "Hồ sơ đang được tính vào báo cáo tuyển dụng",
+        after: "Đánh dấu hủy riêng, giữ lịch sử và giảm đúng một lượt tuyển",
+      }],
+      decidable: true,
+      message: "Trạng thái hủy không đồng nghĩa với Đã nghỉ; hồ sơ không bị xóa.",
+    };
+  }
   if (item.target_kind === "ENTRY_FIELD") {
     const allowedKeys = [...PROPOSER_FIELD_ORDER, "worker_details"] as readonly string[];
     const keys = Object.keys(item.proposal);
