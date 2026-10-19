@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import * as lifecycle from "../../lib/direct-entry/submission-lifecycle.ts";
 
@@ -248,7 +249,7 @@ test("no test or mock route exists inside the app router", () => {
     }
     return found;
   }
-  const appFiles = walk(new URL("../../app", import.meta.url).pathname.replace(/^\//, ""));
+  const appFiles = walk(fileURLToPath(new URL("../../app", import.meta.url)));
   const directEntryRoutes = appFiles.filter((file) => file.includes("/api/direct-entry/"));
   assert.equal(directEntryRoutes.length > 0, true);
   const suspicious = directEntryRoutes.filter((file) => /mock|fixture|synthetic|_test/i.test(file));
