@@ -287,6 +287,11 @@ test("PRE-W2-HF: chỉ card DRAFT mới có nút Xóa đợt nhập liệu", () 
   }
 });
 
+test("PRE-W2-HF: ẩn nút xóa với đợt chỉ được thấy theo phạm vi dự án", () => {
+  const ui = renderList({ submissions: [{ ...submission, project_scoped: true }] });
+  assert.equal(ui.deleteButton(), undefined);
+});
+
 test("PRE-W2-HF: mở xác nhận không xóa; xác nhận gọi đúng đợt một lần", async () => {
   const ui = renderList();
   ui.openDelete();

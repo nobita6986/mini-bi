@@ -258,16 +258,18 @@ export function DirectEntrySubmissionList({
                     >
                       Sửa
                     </button>
-                    <button
-                      type="button"
-                      className={styles.secondaryButton}
-                      data-testid="submission-delete-draft"
-                      aria-busy={busy}
-                      disabled={busy}
-                      onClick={() => setPendingDelete(submission)}
-                    >
-                      Xóa đợt nhập liệu
-                    </button>
+                    {!submission.project_scoped && (
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        data-testid="submission-delete-draft"
+                        aria-busy={busy}
+                        disabled={busy}
+                        onClick={() => setPendingDelete(submission)}
+                      >
+                        Xóa đợt nhập liệu
+                      </button>
+                    )}
                   </>
                 )}
                 {actions.map((action) => {
