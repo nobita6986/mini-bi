@@ -9,6 +9,8 @@ import {
 const STAGE_A = "a1000000-0000-4000-8000-000000000001";
 const STAGE_B = "a1000000-0000-4000-8000-000000000002";
 const TOKEN = "b1000000-0000-4000-8000-000000000001";
+const CLEANUP_A = "c1000000-0000-4000-8000-000000000001";
+const DOCUMENT_KEY = "p1.6/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/CCCD_FRONT/1/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 test("reaper configuration accepts only the isolated staging Supabase project and Preview bucket", () => {
   const staging = {
@@ -44,12 +46,22 @@ function dependencies({ deleteFailure } = {}) {
         calls.push(["complete", input]);
         return { ok: true, data: true };
       },
+      async claimSubmissionObjectCleanup(input) {
+        calls.push(["claim-submission", input]);
+        return { ok: true, data: [] };
+      },
+      async completeSubmissionObjectCleanup(input) {
+        calls.push(["complete-submission", input]);
+        return { ok: true, data: true };
+      },
     },
     storage: {
       async deleteEnrollmentPortraitStage(stageId) {
         calls.push(["delete", stageId]);
         if (stageId === deleteFailure) throw new Error("synthetic storage failure");
       },
+      async deleteStaged(storageKey) { calls.push(["delete-staged", storageKey]); },
+      async deleteFinal(storageKey) { calls.push(["delete-final", storageKey]); },
     },
   };
 }
@@ -68,6 +80,7 @@ test("reaper deletes each claimed object by stage id, then acknowledges cleanup"
     ["complete", { stage_id: STAGE_A, claim_token: TOKEN }],
     ["delete", STAGE_B],
     ["complete", { stage_id: STAGE_B, claim_token: TOKEN }],
+    ["claim-submission", { claim_token: TOKEN, limit: 50 }],
   ]);
 });
 
@@ -90,9 +103,63 @@ test("database claim failures are surfaced instead of reported as a successful e
       repository: {
         async claimExpiredCleanup() { return { ok: false, kind: "unavailable" }; },
         async completeCleanup() { return { ok: true, data: true }; },
+        async claimSubmissionObjectCleanup() { return { ok: true, data: [] }; },
+        async completeSubmissionObjectCleanup() { return { ok: true, data: true }; },
       },
-      storage: { async deleteEnrollmentPortraitStage() {} },
+      storage: {
+        async deleteEnrollmentPortraitStage() {},
+        async deleteStaged() {},
+        async deleteFinal() {},
+      },
     }),
     /PORTRAIT_STAGE_REAPER_CLAIM_FAILED/,
   );
+});
+
+test("submission cleanup deletes the matching object type and leaves failed items retryable", async () => {
+  const calls = [];
+  const d = dependencies();
+  d.repository.claimSubmissionObjectCleanup = async () => ({
+    ok: true,
+    data: [
+      { cleanup_id: CLEANUP_A, object_kind: "DOCUMENT_STAGED", stage_id: null, storage_key: DOCUMENT_KEY },
+      {
+        cleanup_id: "c1000000-0000-4000-8000-000000000002",
+        object_kind: "DOCUMENT_FINAL",
+        stage_id: null,
+        storage_key: DOCUMENT_KEY,
+      },
+      {
+        cleanup_id: "c1000000-0000-4000-8000-000000000003",
+        object_kind: "PORTRAIT_STAGE",
+        stage_id: STAGE_A,
+        storage_key: null,
+      },
+    ],
+  });
+  d.repository.completeSubmissionObjectCleanup = async (input) => {
+    calls.push(["complete-submission", input]);
+    return { ok: true, data: true };
+  };
+  d.storage.deleteStaged = async (key) => {
+    calls.push(["delete-staged", key]);
+    throw new Error("storage failure");
+  };
+  d.storage.deleteFinal = async (key) => calls.push(["delete-final", key]);
+
+  const result = await runWorkerPortraitStageReaper({
+    ...d,
+    createClaimToken: () => TOKEN,
+  });
+  assert.deepEqual(result, { claimed: 5, deleted: 4, failed: 1 });
+  assert.deepEqual(calls, [
+    ["delete-staged", DOCUMENT_KEY],
+    ["delete-final", DOCUMENT_KEY],
+    ["complete-submission", {
+      cleanup_id: "c1000000-0000-4000-8000-000000000002", claim_token: TOKEN,
+    }],
+    ["complete-submission", {
+      cleanup_id: "c1000000-0000-4000-8000-000000000003", claim_token: TOKEN,
+    }],
+  ]);
 });

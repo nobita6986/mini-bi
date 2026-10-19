@@ -46,10 +46,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 121, "the ledger carries append-only migrations through #121");
-  assert.equal(names[names.length - (3 + 27)], D3A_MIGRATION,
+  assert.equal(names.length, 122, "the ledger carries append-only migrations through #122");
+  assert.equal(names[names.length - (3 + 28)], D3A_MIGRATION,
     "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
-  assert.equal(names.at(-(22)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-23), DEFAULT_CAPABILITIES_MIGRATION);
   return db;
 }
 
@@ -57,7 +57,7 @@ async function buildDbBeforeDefaultCapabilities() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-(22)), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.equal(names.at(-23), DEFAULT_CAPABILITIES_MIGRATION);
   for (const name of names.slice(0, -4)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
@@ -92,7 +92,7 @@ async function buildDbBeforePersonnelDefaultAccess() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 121);
+  assert.equal(names.length, 122);
   const migrationIndex = names.indexOf(PERSONNEL_DEFAULT_ACCESS_MIGRATION);
   assert.notEqual(migrationIndex, -1, "the personnel default-access migration is present in the ledger");
   for (const name of names.slice(0, migrationIndex)) {

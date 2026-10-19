@@ -29,6 +29,13 @@ export type CreateWorkerPortraitStageResult = {
   replayed: boolean;
 };
 
+export type SubmissionObjectCleanup = {
+  cleanup_id: string;
+  object_kind: "PORTRAIT_STAGE" | "DOCUMENT_STAGED" | "DOCUMENT_FINAL";
+  stage_id: string | null;
+  storage_key: string | null;
+};
+
 function serviceRoleRpc(): Rpc {
   const client = import("../supabase/server").then(({ createServiceSupabaseClient }) =>
     createServiceSupabaseClient()
@@ -172,6 +179,47 @@ export function createWorkerPortraitStageRepository(rpc?: Rpc) {
     async completeCleanup(input: { stage_id: string; claim_token: string }) {
       const result = await call("direct_entry_complete_worker_portrait_stage_cleanup", {
         p_stage_id: input.stage_id,
+        p_claim_token: input.claim_token,
+      });
+      return result.ok && result.data === true
+        ? { ok: true as const, data: true as const }
+        : { ok: false as const, kind: "unavailable" as const };
+    },
+    async claimSubmissionObjectCleanup(input: { claim_token: string; limit: number }) {
+      const result = await call("direct_entry_claim_submission_object_cleanup", {
+        p_claim_token: input.claim_token,
+        p_limit: input.limit,
+      });
+      if (!result.ok) return result;
+      if (!Array.isArray(result.data)) return { ok: false as const, kind: "unavailable" as const };
+      const rows: SubmissionObjectCleanup[] = [];
+      for (const value of result.data) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          return { ok: false as const, kind: "unavailable" as const };
+        }
+        const row = value as Record<string, unknown>;
+        if (typeof row.cleanup_id !== "string" || !UUID.test(row.cleanup_id) ||
+            (row.object_kind !== "PORTRAIT_STAGE" &&
+             row.object_kind !== "DOCUMENT_STAGED" && row.object_kind !== "DOCUMENT_FINAL") ||
+            (row.stage_id !== null && (typeof row.stage_id !== "string" || !UUID.test(row.stage_id))) ||
+            (row.storage_key !== null && typeof row.storage_key !== "string") ||
+            (row.object_kind === "PORTRAIT_STAGE"
+              ? typeof row.stage_id !== "string" || row.storage_key !== null
+              : row.stage_id !== null || typeof row.storage_key !== "string")) {
+          return { ok: false as const, kind: "unavailable" as const };
+        }
+        rows.push({
+          cleanup_id: row.cleanup_id,
+          object_kind: row.object_kind,
+          stage_id: row.stage_id,
+          storage_key: row.storage_key,
+        });
+      }
+      return { ok: true as const, data: rows };
+    },
+    async completeSubmissionObjectCleanup(input: { cleanup_id: string; claim_token: string }) {
+      const result = await call("direct_entry_complete_submission_object_cleanup", {
+        p_cleanup_id: input.cleanup_id,
         p_claim_token: input.claim_token,
       });
       return result.ok && result.data === true
