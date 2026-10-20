@@ -1,6 +1,6 @@
 # S0-T0 acceptance — TEST security hotfix
 
-**Status:** Database ACL work and CI implementation are complete on the Product Owner-designated TEST target. Final merge is pending the CI run for this report closeout. Authenticated end-to-end workflow smoke is not yet verified because the application opened at login and no designated test session/account was available.
+**Status:** Database ACL work and full CI are complete on the Product Owner-designated TEST target; PR #79 is ready for T0-authorized merge. Authenticated end-to-end workflow smoke is not verified because the application opened at login and no designated test session/account was available.
 
 ## Scope and baseline
 
@@ -14,7 +14,7 @@
 |---|---|---|
 | T1-A ledger reconciliation | PR #77 merged at `81358b7243747c0c6b02f0c9a87fe126fdf1943a` | Verified #122 DDL effects and source checksum, inserted the missing ledger record without replaying non-idempotent DDL. |
 | T1-B S0-A ledger ACL | PR #78 merged at `60cc1fe2968d6085679599139a951eb98f395e39` | Ledger ACL narrowed; owner/runner retained. |
-| T1-C RPC ACL | PR #79 open; branch commit `8ff8b8a94db7e56c49417c13f87cc0f5afc7d23c` | Guarded migration applied successfully after the owner-grant fix; final ACL postconditions passed. |
+| T1-C RPC ACL | PR #79 open; code commit `8ff8b8a94db7e56c49417c13f87cc0f5afc7d23c`, report commit `17c7198e8ca44957c1de6060ffef593ebc5cc52a` | Guarded migration applied successfully after the owner-grant fix; final ACL postconditions passed. |
 
 ## Verified final TEST state
 
@@ -28,7 +28,7 @@
 ## Validation and remaining acceptance gate
 
 - Native PostgreSQL T1-C regression: 1 passed, 0 failed. S0-A tests and the listed API/reporting regression suites passed in prior CI.
-- Full PR #79 CI run `39360000473` passed six PGlite shards, real PostgreSQL, static quality, typecheck, lint, build, and Vercel preview. The report-only closeout commit needs its own green CI run before merge.
+- Full CI run `39360983034` on report commit `17c7198e8ca44957c1de6060ffef593ebc5cc52a` passed six PGlite shards, real PostgreSQL, static quality, typecheck, lint, migration validation, docs checks, build, secret scan, and aggregate Quality job. Prior code CI run `39360000473` also passed; PR #79 is ready for merge.
 - Vercel alias navigation reached `Đăng nhập — HR Partner` at `/login?next=/dashboard`. No authenticated account/session was available, so the requested application workflow smoke set (draft/submit/delete/change request, worker directory/export, account management, reports) remains unverified. No user credential was guessed, retrieved, or transmitted.
 - PostgREST schema exposure was not confirmed. Database ACL results are verified; API reachability is not claimed.
 

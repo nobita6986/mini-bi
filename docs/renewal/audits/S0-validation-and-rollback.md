@@ -2,11 +2,11 @@
 
 ## Validation
 
-- Initial S0 baseline: `c29adc58ea2b41d2ed66a908f6a66a545952986f`; main after PR #78: `60cc1fe2968d6085679599139a951eb98f395e39`; PR #79 contains the final T1-C implementation pending final CI/merge.
+- Initial S0 baseline: `c29adc58ea2b41d2ed66a908f6a66a545952986f`; main after PR #78: `60cc1fe2968d6085679599139a951eb98f395e39`; PR #79 is ready for T0-authorized merge after full CI run `39360983034` passed on commit `17c7198`.
 - PR #78 S0-A is merged. CI run `39357744549` passed all six PGlite shards, the real-PostgreSQL job, static quality/build, and Vercel.
 - Local S0-A regression passed 2/2 against PGlite and native PostgreSQL 18. The GitHub PostgreSQL test now uses a temporary Unix-socket directory; CI verified this fix.
 - Local T1-C native PostgreSQL ACL regression passed 1/1; i04c 18/18; S04C inventory 3/3; W05 reporting 16/16; W05 review authority 8/8.
-- PR #79 CI run `39360000473` passed six PGlite shards, native PostgreSQL, static quality, typecheck, lint, build, and Vercel preview. A final CI run is required for the report-only closeout commit.
+- PR #79 CI run `39360000473` passed all code checks. Final report-commit run `39360983034` also passed six PGlite shards, native PostgreSQL, static quality, typecheck, lint, migration validation, build, secret scan, docs checks, and aggregate Quality.
 - Authorized TEST preflight found 123 rows/latest S0-A. The guarded T1-C transaction committed; read-only postflight found 124 rows/latest T1-C, checksum `7382013e39521601ae1c08de22e7579dc289a8e113ea8c362f8be6ba66e3417f`, zero client/PUBLIC EXECUTE and service-role allowlist 140.
 - Vercel test alias `https://bi2.hrpartner.vn` loaded the login page. No test-authenticated account/session was available, so authenticated workflow smoke remains outstanding. No direct RPC calls or personnel/business-row reads were made.
 

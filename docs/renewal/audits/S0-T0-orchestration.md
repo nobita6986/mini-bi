@@ -37,7 +37,7 @@
 
 - **T1-A complete:** the DB had the #122 migration effects but lacked its custom-ledger row. T1-A verified checksum `2a4d37d591d8aa88d7ab00a9ad0696723e49a4577f430f237b86a619f5d2f15c` and catalog effects, then reconciled the row without replaying non-idempotent DDL. PR #77 is merged.
 - **T1-B/S0-A complete:** PR #78 is merged with all CI checks green. Test-ref ledger is at 123 rows, latest version S0-A, checksum `f06317af919d572cc0fe816549d2741c5442c1e6d96371800a452bf4861fd2b4`. Effective ledger rights for anon/authenticated/service_role are all false; owner postgres remains.
-- **T1-C implemented and applied to TEST:** PR #79 contains the reviewed Mini BI RPC EXECUTE allowlist migration and native PostgreSQL regression. The first guarded apply rolled back on a grantor/owner mismatch; a transaction-scoped role-membership repair was tested and applied. CI run `39360000473` passed before the documentation closeout commit; see the acceptance report for the final run.
+- **T1-C implemented and applied to TEST:** PR #79 contains the reviewed Mini BI RPC EXECUTE allowlist migration and native PostgreSQL regression. The first guarded apply rolled back on a grantor/owner mismatch; a transaction-scoped role-membership repair was tested and applied. Full CI run `39360983034` passed for report commit `17c7198`; see the acceptance report for the verification matrix.
 - **S0-B defaults:** no default privileges were changed. The database has schema-specific defaults for postgres and supabase_admin; creator-specific hardening remains a separate decision, while the RPC regression checks that current/later Mini BI routines do not expose EXECUTE to PUBLIC/anon/authenticated.
 - No personnel rows or live RPCs were used. The TEST alias `https://bi2.hrpartner.vn` opened the login page; no test-authenticated session/account was available, so business-workflow smoke checks remain unverified. See `S0-T0-acceptance.md` for final CI, apply, and acceptance status.
 
@@ -45,7 +45,7 @@
 
 - TEST ledger: 124 rows, source/checksum reconciled through `20261020180000_s0_t1_c_rpc_acl_allowlist.sql`; S0-A and S0-T1-C checksums are recorded in the reports.
 - TEST ACL after S0-T1-C: no effective `anon` or `authenticated` EXECUTE and no explicit PUBLIC EXECUTE on the 302 Mini BI routines; `service_role` has the exact 140-signature allowlist. The ledger is owner-only for `postgres`; runtime-role table privileges remain denied.
-- CI and the native PostgreSQL regression passed on PR #79 before the final report-only commit; the resulting CI run must pass before merge.
+- CI run `39360983034` and the native PostgreSQL regression passed on report commit `17c7198`; PR #79 is ready for merge.
 - The application alias resolves to the login page. Authenticated workflow smoke is blocked on access to a designated test account/session; no credentials were guessed or retrieved.
 - Default-privilege changes are deferred to separate S0-B review. The CI migration-chain test enforces object-level Mini BI RPC ACLs; it does not fix shared creator defaults.
 - No production project, migration, configuration, business-row read, or direct RPC invocation was used.
