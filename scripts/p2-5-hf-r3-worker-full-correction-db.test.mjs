@@ -2,9 +2,8 @@
  * P2.5-HF-R3 - sua toan bo truong ho so (PM de xuat) + Admin/BoD-Ke toan sua truc tiep.
  *
  * Policy T0 (R3):
- *   (1) PM co assignment hieu luc duoc DE XUAT moi truong nghiep vu, ke ca truong #53 da khoa
- *       (ten, ma NV, du an, ngay dau, nguoi tuyen/nhom, loai hinh lao dong, thong tin ho so) -
- *       van qua request + reason + OCC + idempotency + approval. Khong direct-write cho PM.
+ *   (1) PM co assignment hieu luc duoc de xuat thay doi qua workflow; R1.2 them direct edit
+ *       chi trong du an dang duoc phan cong. Ho so ngoai du an van bi tu choi.
  *   (2) Admin (entry_admin + all) va BoD/Ke toan (entry_privileged_edit + all) duoc SUA TRUC TIEP
  *       ho so da gui, bat buoc reason + OCC + revision + audit bat bien. Submission dang REVIEW
  *       van bi khoa.
@@ -363,7 +362,9 @@ test("R3: the direct correction actor matrix fails closed with zero residue", as
   const db = await buildDb();
   try {
     await seed(db);
-    const seeded = await seedEpisode(db, { cccd: "700000000002", name: "R3 Matrix" });
+    const seeded = await seedEpisode(db, {
+      cccd: "700000000002", name: "R3 Matrix", project: PROJ_B,
+    });
     const version = await entryVersion(db, seeded.entryId);
     const patch = { labor_type: "PERMANENT" };
     for (const [label, auth, app, code] of [

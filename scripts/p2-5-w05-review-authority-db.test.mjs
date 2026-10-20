@@ -515,9 +515,9 @@ test("W05: directory propose_change follows the assignment, not the placeholder"
     assert.equal(managed.items[0].is_project_manager, true);
     assert.deepEqual(managed.items[0].allowed_actions, {
       view: true, view_pii: true, view_payment: true,
-      direct_edit: false,
+      direct_edit: true,
       propose_change: true, propose_change_code: null,
-    }, "the assigned manager may propose on their SUBMITTED row");
+    }, "the assigned manager may propose and receives the server-projected direct-edit action");
 
     for (const [auth, app, scope] of [[ADMIN_AUTH, ADMIN_APP, "all"],
       [REV_ALL_AUTH, REV_ALL_APP, "all"]]) {

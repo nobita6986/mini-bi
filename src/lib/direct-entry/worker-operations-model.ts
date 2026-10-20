@@ -313,6 +313,7 @@ export function resetTabPage<T>(): TabPage<T> {
 }
 
 export type WorkerDirectoryFilters = {
+  search: string;
   status: string;
   projectId: string;
   recruiterId: string;
@@ -380,6 +381,7 @@ export function failLoad<T>(
 
 export function workersQuery(input: {
   scope: WorkerDirectoryScope;
+  search?: string;
   status: string;
   projectId?: string;
   recruiterId?: string;
@@ -387,6 +389,7 @@ export function workersQuery(input: {
 }): string {
   let query = "?scope=" + input.scope + "&page_size=" + String(WORKER_PAGE_SIZE);
   if (input.status !== "") query += "&employment_status=" + encodeURIComponent(input.status);
+  if (input.search?.trim()) query += "&search=" + encodeURIComponent(input.search.trim());
   if (input.projectId) query += "&project_id=" + encodeURIComponent(input.projectId);
   if (input.recruiterId) query += "&recruiter_id=" + encodeURIComponent(input.recruiterId);
   if (input.cursor !== null) query += "&cursor=" + encodeURIComponent(input.cursor);

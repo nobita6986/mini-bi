@@ -45,7 +45,7 @@ const payload = {
 };
 const query = {
   scope: "managed", project_id: null, recruiter_id: null,
-  employment_status: null, cursor: null, page_size: 25,
+  employment_status: null, search: null, cursor: null, page_size: 25,
 };
 
 test("the worker directory repository exposes exactly one read RPC", () => {
@@ -72,7 +72,8 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
   data = { ...payload, scope: "recruited" };
   const requested = {
     ...actor, ...query, scope: "recruited", project_id: "proj_a",
-    recruiter_id: recruiterId, employment_status: "ON", cursor: "20261008:" + entryId,
+    recruiter_id: recruiterId, employment_status: "ON", search: "000021",
+    cursor: "20261008:" + entryId,
   };
   const result = await repository.listWorkers(requested);
   assert.equal(result.ok, true);
@@ -86,6 +87,7 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
       p_project_id: "proj_a",
       p_recruiter_id: recruiterId,
       p_employment_status: "ON",
+      p_search: "000021",
       p_cursor: "20261008:" + entryId,
       p_page_size: 25,
     },

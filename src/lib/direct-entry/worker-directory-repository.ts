@@ -62,6 +62,7 @@ export function createWorkerDirectoryRepository(rpc?: Rpc): WorkerDirectoryRepos
           p_project_id: input.project_id,
           p_recruiter_id: input.recruiter_id,
           p_employment_status: input.employment_status,
+          p_search: input.search,
           p_cursor: input.cursor,
           p_page_size: input.page_size,
         });

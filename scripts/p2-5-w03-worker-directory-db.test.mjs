@@ -651,7 +651,7 @@ test("W03-R1: payment follows worker scope; raw profile PII is never projected",
 });
 
 // ---------------------------------------------------------------------------
-// 6. allowed_actions is server-supplied; propose_change stays closed until W04.
+// 6. allowed_actions is server-supplied for current assignment authority.
 // ---------------------------------------------------------------------------
 test("W03: allowed_actions is server-supplied and follows the assignment authority", async () => {
   const db = await buildDb();
@@ -660,8 +660,8 @@ test("W03: allowed_actions is server-supplied and follows the assignment authori
     await assignManager(db, { project: PROJ_A, recruiter: REC_A, key: "assign-a" });
     const entry = await addWorker(db, { project: PROJ_A, recruiter: REC_A, workDate: "2026-10-01" });
 
-    // P2.5-W05 (#55): the row action is the W04 server authority, so a current
-    // project manager may propose and nobody else may.
+    // P2.5-W05 (#55): a current project manager may edit and propose through
+    // existing server authority; the UI prioritizes direct edit for the row.
     for (const scope of ["managed", "recruited"]) {
       const page = await listWorkers(db, { scope });
       for (const row of page.items) {
@@ -669,7 +669,7 @@ test("W03: allowed_actions is server-supplied and follows the assignment authori
           view: true,
           view_pii: true,
           view_payment: true,
-          direct_edit: false,
+          direct_edit: true,
           propose_change: true,
           propose_change_code: null,
         }, scope + " must advertise propose_change for the assigned manager");

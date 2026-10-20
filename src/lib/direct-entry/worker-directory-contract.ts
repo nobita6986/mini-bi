@@ -19,7 +19,7 @@ export type WorkerDirectoryScope = (typeof WORKER_DIRECTORY_SCOPES)[number];
 export const WORKER_DIRECTORY_DEFAULT_PAGE_SIZE = 25;
 export const WORKER_DIRECTORY_MAX_PAGE_SIZE = 100;
 export const WORKER_DIRECTORY_QUERY_KEYS = [
-  "scope", "project_id", "recruiter_id", "employment_status", "cursor", "page_size",
+  "scope", "project_id", "recruiter_id", "employment_status", "search", "cursor", "page_size",
 ] as const;
 
 export const WORKER_DIRECTORY_PAGE_KEYS = [
@@ -45,6 +45,7 @@ export const WORKER_DIRECTORY_ACTION_KEYS = [
 ] as const;
 
 export const WORKER_EMPLOYMENT_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
+export const WORKER_DIRECTORY_SEARCH_MAX_LENGTH = 100;
 export const WORKER_PAYMENT_STATES = [
   "omitted", "unknown", "intentionally_blank", "provided",
 ] as const;
@@ -72,6 +73,7 @@ export type WorkerDirectoryQuery = {
   project_id: string | null;
   recruiter_id: string | null;
   employment_status: (typeof WORKER_EMPLOYMENT_STATUSES)[number] | null;
+  search: string | null;
   cursor: string | null;
   page_size: number;
 };
@@ -84,7 +86,7 @@ const QUERY_INVALID = { ok: false, code: "WORKER_QUERY_INVALID" } as const;
 
 /**
  * Query directory: chi nhan dung scope | project_id | recruiter_id | employment_status |
- * cursor | page_size. Tham so khac (order, offset, limit, column, sql...) bi tu choi de
+ * search | cursor | page_size. Tham so khac (order, offset, limit, column, sql...) bi tu choi de
  * client khong dieu khien duoc SQL/sort/paging.
  */
 export function projectWorkerDirectoryQuery(
@@ -111,6 +113,14 @@ export function projectWorkerDirectoryQuery(
   }
   const rawCursor = searchParams.get("cursor");
   if (rawCursor !== null && !CURSOR.test(rawCursor)) return QUERY_INVALID;
+  const rawSearch = searchParams.get("search");
+  if (rawSearch !== null &&
+      ([...rawSearch].length > WORKER_DIRECTORY_SEARCH_MAX_LENGTH ||
+       /[\u0000-\u001f\u007f-\u009f]/u.test(rawSearch))) return QUERY_INVALID;
+  const search = rawSearch?.trim() || null;
+  if (search !== null && [...search].length > WORKER_DIRECTORY_SEARCH_MAX_LENGTH) {
+    return QUERY_INVALID;
+  }
 
   const rawPageSize = searchParams.get("page_size");
   let pageSize = WORKER_DIRECTORY_DEFAULT_PAGE_SIZE;
@@ -127,6 +137,7 @@ export function projectWorkerDirectoryQuery(
       project_id: rawProject,
       recruiter_id: rawRecruiter,
       employment_status: rawEmployment as WorkerDirectoryQuery["employment_status"],
+      search,
       cursor: rawCursor,
       page_size: pageSize,
     },

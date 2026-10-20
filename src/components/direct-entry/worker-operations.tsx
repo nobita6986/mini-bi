@@ -4,20 +4,17 @@
  * P2.5-W06-R2 - Worker Operations UI.
  *
  * Cac view KHONG tron quyen. Moi tab giu page state rieng: 403 cua mot audience chi la
- * loi CUC BO trong tab do, khong thao ca trang/review queue/tab khac.
+ * loi CUC BO trong tab do, khong thao ca trang/tab khac.
  *
- * Pagination: projectSubmissionListPage / projectWorkerDirectoryPage /
- * projectChangeRequestListPage; append dedupe theo stable id; doi tab/filter reset cursor.
+ * Pagination: projectSubmissionListPage / projectWorkerDirectoryPage;
+ * append dedupe theo stable id; doi tab/filter reset cursor.
  * Direct-edit and proposal CTAs use their server-projected row actions.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
 
-import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
-import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import { WorkerDetailDialog } from "@/components/direct-entry/worker-detail-dialog";
-import type { ChangeRequestQueueFilter } from "@/lib/direct-entry/change-request-read-contract";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
   WORKER_CONFLICT_MESSAGE,
@@ -26,21 +23,17 @@ import {
   WORKER_PAGE_SIZE,
   WORKER_PROPOSE_TARGETS,
   WORKER_PROPOSE_TARGET_LABELS,
-  WORKER_REQUEST_PAGE_SIZE,
   applyPage,
   bankAccountSummary,
   emptyTabPage,
   failLoad,
   initialWorkerTab,
   lastDecisionLabel,
-  parseChangeRequestPageResponse,
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
   pendingRequestLabel,
   proposeCta,
   relationDenialIsEmpty,
-  requestRowKey,
-  requestsQuery,
   resetTabPage,
   submissionRowKey,
   submissionsQuery,
@@ -69,11 +62,7 @@ import {
   WORKER_EXPORT_REASON_MAX,
   type WorkerExportScope,
 } from "@/lib/direct-entry/worker-export-ui-model";
-import type {
-  ChangeRequestListItem,
-  SubmissionReadItem,
-  WorkerDirectoryRow,
-} from "@/lib/direct-entry/worker-operations-model";
+import type { SubmissionReadItem, WorkerDirectoryRow } from "@/lib/direct-entry/worker-operations-model";
 import {
   WORKER_EMPLOYMENT_STATUSES,
   type WorkerDirectorySummary,
@@ -164,7 +153,6 @@ function httpFailure(status: number): FetchOutcome<never> {
 export function WorkerOperations({
   canSeeAllWorkers = false,
   canSeeTeamWorkers = false,
-  canReview = false,
   canExport = false,
   canExportAll = false,
   actor = null,
@@ -172,7 +160,6 @@ export function WorkerOperations({
   canSeeAllWorkers?: boolean;
   /** Server-projected team audience controls only tab visibility; the RPC rechecks access. */
   canSeeTeamWorkers?: boolean;
-  canReview?: boolean;
   /** Resolved business actor may use recruited/managed/team export; the RPC enforces row authority. */
   canExport?: boolean;
   /** Admin/BoD/Kế toán xuat toan bo (all scope): export caps + all scope + (entry_admin|change_review). */
@@ -185,7 +172,7 @@ export function WorkerOperations({
   const [tab, setTab] = useState<WorkerOperationsTab>(
     () => initialWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers));
   const [filters, setFilters] = useState<WorkerDirectoryFilters>(
-    { status: "", projectId: "", recruiterId: "" });
+    { search: "", status: "", projectId: "", recruiterId: "" });
   const [filterCatalogState, setFilterCatalogState] =
     useState<"loading" | "ready" | "denied" | "unavailable">("loading");
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
@@ -193,18 +180,12 @@ export function WorkerOperations({
   const [workerSummary, setWorkerSummary] = useState<WorkerDirectorySummary | null>(null);
   const [submissionPage, setSubmissionPage] =
     useState<TabPage<SubmissionReadItem>>(emptyTabPage);
-  const [requestPage, setRequestPage] =
-    useState<TabPage<ChangeRequestListItem>>(emptyTabPage);
-  const [requestQueue, setRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
-  const canViewRequests = canReview || canSeeTeamWorkers ||
-    actor?.capabilities.includes("change_request_create") === true;
   const [notice, setNotice] = useState<Notice | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
   const [drawerMode, setDrawerMode] = useState<"proposal" | "correction">("proposal");
   /** W2S1: mot dialog chi tiet NLĐ dung chung cho moi danh sach; khong route thu hai. */
   const [detailRow, setDetailRow] = useState<WorkerDirectoryRow | null>(null);
-  const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
@@ -215,6 +196,7 @@ export function WorkerOperations({
   const filterId = useId();
   const projectFilterId = useId();
   const recruiterFilterId = useId();
+  const searchId = useId();
   const workerQueryGeneration = useRef(0);
   const today = hcmTodayDate();
   const filterCatalog = catalogs[today];
@@ -286,20 +268,6 @@ export function WorkerOperations({
       has_more: parsed.has_more } };
   }, []);
 
-  const fetchRequests = useCallback(async (
-    cursor: string | null,
-    queue: ChangeRequestQueueFilter = "PENDING",
-  ): Promise<FetchOutcome<ChangeRequestListItem>> => {
-    const response = await fetch(API + "/change-requests" + requestsQuery(cursor, queue),
-      { headers: { accept: "application/json" } });
-    const payload = await readJson(response);
-    if (response.status !== 200) return httpFailure(response.status);
-    const parsed = parseChangeRequestPageResponse(payload, { page_size: WORKER_REQUEST_PAGE_SIZE });
-    if (parsed === null) return { ok: false, state: "error", message: workerListErrorMessage(200) };
-    return { ok: true, page: { items: parsed.requests, next_cursor: parsed.next_cursor,
-      has_more: parsed.has_more } };
-  }, []);
-
   /* ---------- appliers ---------- */
 
   const applyWorkerPage = useCallback((
@@ -323,21 +291,6 @@ export function WorkerOperations({
       : failLoad(page, outcome.state, outcome.message));
   }, []);
 
-  const applyRequestPage = useCallback((
-    outcome: FetchOutcome<ChangeRequestListItem>, append: boolean,
-  ) => {
-    setRequestPage((page) => outcome.ok
-      ? applyPage(page, outcome.page, requestRowKey, append)
-      : failLoad(page, outcome.state, outcome.message));
-  }, [setRequestPage]);
-
-  const reloadRequestPage = useCallback(async (): Promise<void> => {
-    setRequestPage(resetTabPage());
-    const outcome = await fetchRequests(null, requestQueue).catch(
-      () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
-    applyRequestPage(outcome, false);
-  }, [fetchRequests, applyRequestPage, requestQueue, setRequestPage]);
-
   /* ---------- effect: page 1 cho tab hien tai (moi tab doc lap) ---------- */
 
   useEffect(() => {
@@ -356,16 +309,6 @@ export function WorkerOperations({
     }
     return () => { active = false; };
   }, [tab, filters, fetchSubmissions, fetchWorkers, applySubmissionPage, applyWorkerPage]);
-
-  useEffect(() => {
-    if (!canViewRequests) return;
-    let active = true;
-    fetchRequests(null, requestQueue).then(
-      (outcome) => { if (active) applyRequestPage(outcome, false); },
-      () => { if (active) setRequestPage((page) => failLoad(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE)); },
-    );
-    return () => { active = false; };
-  }, [canViewRequests, fetchRequests, applyRequestPage, requestQueue]);
 
   /* ---------- load more ---------- */
 
@@ -390,7 +333,7 @@ export function WorkerOperations({
     }
     workerQueryGeneration.current += 1;
     setWorkerSummary(null);
-    setFilters({ status: "", projectId: "", recruiterId: "" });
+    setFilters({ search: "", status: "", projectId: "", recruiterId: "" });
     if (next === "uploader") setSubmissionPage(resetTabPage());
     else setWorkerPages((pages) => ({ ...pages, [next as WorkerScopeTab]: resetTabPage() }));
     setTab(next);
@@ -427,9 +370,6 @@ export function WorkerOperations({
         () => ({ ok: false as const, state: "unavailable" as PageState, message: WORKER_LOAD_FAILED_MESSAGE }));
       if (generation === workerQueryGeneration.current) applyWorkerPage(scope, outcome, false);
     }
-    if (canViewRequests) {
-      await reloadRequestPage();
-    }
   }
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number): void {
@@ -442,28 +382,6 @@ export function WorkerOperations({
     if (next < 0) return;
     event.preventDefault();
     selectTab(tabs[next]);
-  }
-
-  async function withdrawRequest(request: ChangeRequestListItem): Promise<void> {
-    setBusyRequestId(request.request_id);
-    try {
-      const response = await fetch(
-        API + "/change-requests/" + encodeURIComponent(request.request_id) + "/withdraw",
-        { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ expected_version: request.version,
-            idempotency_key: crypto.randomUUID() }) });
-      setBusyRequestId(null);
-      if (response.status === 409) { setConflict(WORKER_CONFLICT_MESSAGE); return; }
-      if (response.status !== 200 && response.status !== 201) {
-        setNotice({ kind: "error", message: "Không rút được yêu cầu thay đổi." });
-        return;
-      }
-      setNotice({ kind: "success", message: "Đã rút yêu cầu thay đổi." });
-      await reloadRequestPage();
-    } catch {
-      setBusyRequestId(null);
-      setNotice({ kind: "error", message: "Không rút được yêu cầu thay đổi." });
-    }
   }
 
   const scope = tabScope(tab);
@@ -479,6 +397,9 @@ export function WorkerOperations({
         <h1 className="text-xl font-semibold">Người lao động</h1>
         <p className="text-sm text-muted">
           Tra cứu theo đúng quan hệ của bạn. Quyền sửa và đề xuất thay đổi do hệ thống quyết định.
+        </p>
+        <p className="text-sm text-muted">
+          Các tab là những quan hệ có thể chồng lấp; cùng một NLĐ xuất hiện ở nhiều tab không phải hồ sơ trùng.
         </p>
       </header>
 
@@ -520,38 +441,6 @@ export function WorkerOperations({
         </p>
       ) : null}
 
-      {/* P2.5-HF-R3: hang doi "Yeu cau thay doi" dat TRUOC danh sach NLD. */}
-      {canViewRequests && requestPage.state === "ready" && requestPage.message !== null ? (
-        <div role="alert" className={"flex flex-col gap-2 " + errorClass}>
-          <span>{requestPage.message}</span>
-          <button type="button" className={buttonClass} onClick={() => void reloadRequestPage()}>
-            Thử lại
-          </button>
-        </div>
-      ) : null}
-      {canViewRequests ? (
-        <DirectEntryChangeRequestList
-          queueFilter={requestQueue}
-          onQueueFilterChange={(queue) => {
-            if (queue === requestQueue) return;
-            setRequestQueue(queue);
-            setRequestPage(resetTabPage());
-          }}
-          state={requestPage.state === "ready" || requestPage.state === "empty"
-            ? "ready" : requestPage.state === "loading" || requestPage.state === "idle"
-              ? "loading" : "error"}
-          message={requestPage.message ?? ""}
-          requests={requestPage.items}
-          hasMore={requestPage.hasMore}
-          busyRequestId={busyRequestId}
-          compact
-          onLoadMore={() => void loadMore(requestPage,
-            (cursor) => fetchRequests(cursor, requestQueue), applyRequestPage)}
-          onWithdraw={(request) => { void withdrawRequest(request); }}
-          onReview={(request) => setReviewRequest(request)}
-        />
-      ) : null}
-
       <section
         role="tabpanel"
         id={"workers-panel-" + tab}
@@ -563,6 +452,19 @@ export function WorkerOperations({
 
         {tab === "uploader" ? null : (
           <>
+            <div className="flex flex-col gap-1">
+              <label htmlFor={searchId} className="text-sm font-medium">Tìm kiếm người lao động</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input id={searchId} type="search" className={inputClass}
+                  placeholder="Tìm theo tên hoặc mã người lao động..."
+                  maxLength={100} value={filters.search}
+                  onChange={(event) => changeFilter("search", event.target.value)} />
+                <button type="button" className={buttonClass} disabled={filters.search === ""}
+                  onClick={() => changeFilter("search", "")}>
+                  Xóa tìm kiếm
+                </button>
+              </div>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div className="flex flex-col gap-1">
                 <label htmlFor={filterId} className="text-sm font-medium">Trạng thái làm việc</label>
@@ -631,17 +533,20 @@ export function WorkerOperations({
                 {workerSummary.project_count.toLocaleString("vi-VN")} dự án và{" "}
                 {workerSummary.recruiter_count.toLocaleString("vi-VN")} người tuyển; trạng thái làm việc: {" "}
                 {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}.
+                {filters.search.trim() === "" ? null : <> Từ khóa: “{filters.search.trim()}”.</>}
               </>
             )}
           </p>
         )}
 
         {canExportThisTab && exportScope !== null ? (
-          <div className="flex justify-end">
-            <button type="button" className={primaryClass}
-              onClick={() => setExportOpen(true)}>
+          <div className="flex flex-col items-start gap-1 sm:items-end">
+            <button type="button" className={primaryClass} onClick={() => setExportOpen(true)}>
               Xuất Excel
             </button>
+            <p className="text-xs text-muted">
+              Xuất theo tab và bộ lọc trạng thái, dự án, người tuyển; không áp dụng từ khóa tìm kiếm.
+            </p>
           </div>
         ) : null}
 
@@ -650,7 +555,9 @@ export function WorkerOperations({
         ) : null}
         {activePage.state === "empty" ? (
           <p role="status" className={infoClass}>
-            0 người lao động trong quan hệ này.
+            {filters.search.trim() === ""
+              ? "0 người lao động trong quan hệ này."
+              : "Không tìm thấy người lao động phù hợp với từ khóa và bộ lọc hiện tại."}
           </p>
         ) : null}
         {activePage.state === "error" || activePage.state === "denied" ||
@@ -741,20 +648,6 @@ export function WorkerOperations({
         onOpenChange={(open) => { if (!open) setDetailRow(null); }}
       />
 
-      {canViewRequests ? (
-        <DirectEntryChangeRequestReviewer
-          request={reviewRequest}
-          onOpenChange={(open) => { if (!open) setReviewRequest(null); }}
-          catalogFor={catalogFor}
-          ensureCatalog={ensureCatalog}
-          onDecided={(message) => {
-            setNotice({ kind: "success", message });
-            setReviewRequest(null);
-            void reloadRequestPage();
-          }}
-          onConflict={(message) => { setConflict(message); setReviewRequest(null); }}
-        />
-      ) : null}
     </main>
   );
 }
@@ -828,6 +721,7 @@ function WorkerTable({
         <tbody>
           {rows.map((row) => {
             const cta = proposeCta(row);
+            const canDirectEdit = row.allowed_actions.direct_edit;
             const bank = bankAccountSummary(row.payment);
             return (
               <tr key={row.entry_id} className="border-b last:border-0 align-top">
@@ -860,19 +754,19 @@ function WorkerTable({
                       onClick={(event) => onViewDetail(row, event.currentTarget)}>
                       Xem chi tiết
                     </button>
-                    {cta.show ? (
+                    {!canDirectEdit && cta.show ? (
                       <button type="button" className={primaryClass}
                         onClick={(event) => onPropose(row, event.currentTarget)}>
                         Đề xuất thay đổi
                       </button>
                     ) : null}
-                    {row.allowed_actions.direct_edit ? (
+                    {canDirectEdit ? (
                       <button type="button" className={buttonClass}
                         onClick={(event) => onCorrect(row, event.currentTarget)}>
                         Sửa trực tiếp
                       </button>
                     ) : null}
-                    {cta.show || row.allowed_actions.direct_edit ? null : (
+                    {cta.show || canDirectEdit ? null : (
                       <span className="text-xs text-muted">{cta.message}</span>
                     )}
                   </div>

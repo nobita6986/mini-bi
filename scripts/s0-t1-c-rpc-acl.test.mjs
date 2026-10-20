@@ -17,6 +17,9 @@ import { Client } from "pg";
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
 const ACL_MIGRATION = "20261020180000_s0_t1_c_rpc_acl_allowlist.sql";
+const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
+const R1_2_SERVICE_RPC =
+  "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
 const TARGET_PATTERN = "^(direct_entry_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 function binary(name) {
@@ -317,10 +320,21 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
 
       const expectedSignatures = [...migration.matchAll(/^\s+'(public\.[^']+)'[,]?$/gm)]
         .map((match) => match[1]);
+      const r1_2Migration = await readFile(path.join(MIGRATION_DIR, R1_2_MIGRATION), "utf8");
+      const r1_2Normalized = r1_2Migration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      const r1_2Grant = "grant execute on function " + R1_2_SERVICE_RPC.toLowerCase() + " to service_role;";
+      const r1_2Revoke = "revoke all on function " + R1_2_SERVICE_RPC.toLowerCase() +
+        " from public, anon, authenticated, service_role;";
+      assert.ok(r1_2Normalized.includes(r1_2Grant),
+        "R1.2 explicitly grants only its new search RPC to service_role");
+      assert.ok(r1_2Normalized.includes(r1_2Revoke),
+        "R1.2 revokes client and inherited role access before adding the service grant");
+      expectedSignatures.push(R1_2_SERVICE_RPC);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
-        "select pg_catalog.to_regprocedure(signature)::oid::bigint as oid"
+        "select signature, pg_catalog.to_regprocedure(signature)::oid::bigint as oid"
           + " from unnest($1::text[]) as signatures(signature) order by 1",
         [expectedSignatures],
       );
@@ -330,8 +344,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const sourceServiceOidSet = new Set(sourceService.map((row) => String(row.oid)));
       const allowlistMissingFromSource = resolvedExpected
         .filter((row) => !sourceServiceOidSet.has(String(row.oid))).map((row) => row.signature);
-      assert.deepEqual(allowlistMissingFromSource, [],
-        "the explicit allowlist does not add EXECUTE to new functions beyond source service_role permissions");
+      assert.deepEqual(allowlistMissingFromSource, [R1_2_SERVICE_RPC],
+        "only the explicitly reviewed post-S0 search RPC adds a service_role grant after the S0 baseline");
       const removedSourceService = sourceService
         .filter((row) => !expectedOidSet.has(String(row.oid))).map((row) => row.signature).sort();
 

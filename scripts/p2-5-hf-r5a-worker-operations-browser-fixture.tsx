@@ -14,8 +14,6 @@ const TEAM_ID = "00000003-0000-4000-8000-000000000003";
 const AUTHORIZATION_DATE = "2026-10-08";
 const CURSOR_ALL = "20261008:c1000000-0000-4000-8000-000000000025";
 const CURSOR_MANAGED = "20261008:c1000000-0000-4000-8000-000000000031";
-const CURSOR_REQUEST_PAGE_2 = "20261008100400000000:d1000000-0000-4000-8000-000000000002";
-const CURSOR_REQUEST_PAGE_3 = "20261009100400000000:d1000000-0000-4000-8000-000000000003";
 
 type Row = Record<string, unknown>;
 type Call = {
@@ -32,10 +30,7 @@ let catalogDenied = false;
 let catalogMode = "ready";
 let conflictNext = false;
 let failSubmissions = false;
-let failRequests = false;
 let directEditAllowed = false;
-let requestResponseGateOpen = false;
-const requestResponseWaiters: Array<() => void> = [];
 
 function row(index: number, name?: string): Row {
   return {
@@ -78,13 +73,16 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function workerPage(scope: string, cursor: string | null): Response {
+function workerPage(scope: string, cursor: string | null, search: string | null): Response {
   if (denyScope === scope) return json({ ok: false, code: "WORKER_SCOPE_DENIED" }, 403);
   if (cursor !== null && failLoadMore) {
     failLoadMore = false;
     return json({ ok: false, code: "WORKER_UNAVAILABLE" }, 500);
   }
-  const rows = rowsForScope(scope);
+  const query = search?.trim().toLocaleLowerCase("vi") ?? "";
+  const rows = rowsForScope(scope).filter((item) => query === "" ||
+    String(item.display_name).toLocaleLowerCase("vi").includes(query) ||
+    String(item.employee_code).toLocaleLowerCase("vi").includes(query));
   let items = rows;
   let has_more = false;
   let next_cursor: string | null = null;
@@ -165,7 +163,8 @@ if (typeof window !== "undefined") {
     calls.push({ url: url.pathname + url.search, method, body, headers });
 
     if (url.pathname === "/api/direct-entry/workers") {
-      return workerPage(url.searchParams.get("scope") ?? "", url.searchParams.get("cursor"));
+      return workerPage(url.searchParams.get("scope") ?? "", url.searchParams.get("cursor"),
+        url.searchParams.get("search"));
     }
     if (url.pathname === "/api/direct-entry/submissions") {
       // P2.5-HF-R5A-R1: loi mang that (fetch reject) de phu dung nhanh .catch cua component.
@@ -186,46 +185,6 @@ if (typeof window !== "undefined") {
           allowed_transitions: [], project_scoped: false }],
         page_size: 25, has_more: true,
         next_cursor: "20261004090100000000:b1000000-0000-4000-8000-000000000002" });
-    }
-    if (url.pathname === "/api/direct-entry/change-requests" && method === "GET") {
-      if (!requestResponseGateOpen) {
-        await new Promise<void>((resolve) => requestResponseWaiters.push(resolve));
-      }
-      if (failRequests) throw new TypeError("Failed to fetch");
-      if (url.searchParams.get("cursor") === CURSOR_REQUEST_PAGE_2) {
-        return json({ ok: true,
-          requests: [
-            { request_id: "d1000000-0000-4000-8000-000000000001", state: "PENDING",
-              version: 2, created_at: "2026-10-03T10:00:00.000000Z", item_count: 1,
-              entry_ids: ["c1000000-0000-4000-8000-000000000001"],
-              can_withdraw: true, can_decide: false, proposer_display_name: "Nhân viên TEST",
-              summary: "Cập nhật thông tin hồ sơ" },
-            { request_id: "d1000000-0000-4000-8000-000000000002", state: "PENDING",
-            version: 1, created_at: "2026-10-03T09:00:00.000000Z", item_count: 1,
-            entry_ids: ["c1000000-0000-4000-8000-000000000002"],
-            can_withdraw: false, can_decide: true, proposer_display_name: "Nhân viên TEST",
-              summary: "Điều chỉnh trạng thái làm việc" },
-          ],
-          page_size: 20, has_more: true, next_cursor: CURSOR_REQUEST_PAGE_3 });
-      }
-      if (url.searchParams.get("cursor") === CURSOR_REQUEST_PAGE_3) {
-        return json({ ok: true,
-          requests: [{ request_id: "d1000000-0000-4000-8000-000000000003", state: "PENDING",
-            version: 1, created_at: "2026-10-02T09:00:00.000000Z", item_count: 1,
-            entry_ids: ["c1000000-0000-4000-8000-000000000003"],
-            can_withdraw: false, can_decide: true, proposer_display_name: "Nhân viên TEST",
-            summary: "Điều chỉnh dữ liệu hồ sơ" }],
-          page_size: 20, has_more: false, next_cursor: null });
-      }
-      return json({ ok: true,
-        requests: [{ request_id: "d1000000-0000-4000-8000-000000000001", state: "PENDING",
-          version: 2, created_at: "2026-10-03T10:00:00.000000Z", item_count: 1,
-          entry_ids: ["c1000000-0000-4000-8000-000000000001"],
-          // Contract: mot yeu cau khong the vua rut duoc vua duyet duoc.
-          can_withdraw: true, can_decide: false, proposer_display_name: "Nhân viên TEST",
-          summary: "Cập nhật thông tin hồ sơ" }],
-        page_size: 20, has_more: true,
-        next_cursor: "20261008100400000000:d1000000-0000-4000-8000-000000000002" });
     }
     if (url.pathname === "/api/direct-entry/catalog") {
       const effectiveDate = url.searchParams.get("effective_date") ?? "";
@@ -255,28 +214,6 @@ if (typeof window !== "undefined") {
     failNextLoadMore: () => { failLoadMore = true; },
     failSubmissions: () => { failSubmissions = true; },
     allowSubmissions: () => { failSubmissions = false; },
-    failRequests: () => { failRequests = true; },
-    allowRequests: () => { failRequests = false; },
-    releaseRequestResponses: () => {
-      requestResponseGateOpen = true;
-      for (const release of requestResponseWaiters.splice(0)) release();
-    },
-    queueText: () => document.querySelector<HTMLElement>(
-      'section[aria-label="Danh sách yêu cầu thay đổi"]')?.innerText ?? "",
-    queueSummaryText: () => document.querySelector<HTMLElement>(
-      'section[aria-label="Danh sách yêu cầu thay đổi"]')?.closest("details")
-      ?.querySelector("summary")?.textContent ?? "",
-    queueCards: () => document.querySelector<HTMLElement>(
-      'section[aria-label="Danh sách yêu cầu thay đổi"]')?.querySelectorAll("li").length ?? 0,
-    queueCardTexts: () => Array.from(document.querySelectorAll<HTMLElement>(
-      'section[aria-label="Danh sách yêu cầu thay đổi"] li'), (item) => item.textContent?.trim() ?? ""),
-    openRequestQueue: () => {
-      const details = document.querySelector<HTMLElement>(
-        'section[aria-label="Danh sách yêu cầu thay đổi"]')?.closest("details");
-      if (!details) return false;
-      if (!details.open) details.querySelector("summary")?.click();
-      return details.open;
-    },
     alertTexts: () => Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]'),
       (alert) => alert.innerText.trim()),
     alertHasButton: (label: string) =>
@@ -376,19 +313,6 @@ if (typeof window !== "undefined") {
       (alert) => alert.textContent ?? ""),
     focusText: () => document.activeElement?.textContent?.trim() ?? null,
     focusedId: () => document.activeElement?.id ?? null,
-    queueBeforeList: () => {
-      const queues = Array.from(document.querySelectorAll<HTMLElement>("main > details"))
-        .filter((panel) => panel.querySelector(
-          'section[aria-label="Danh sách yêu cầu thay đổi"]') !== null);
-      const queue = queues[0] ?? null;
-      const nodes = Array.from(document.querySelectorAll("main > *"));
-      return {
-        present: queue !== null,
-        queueIndex: queue === null ? -1 : nodes.indexOf(queue),
-        panelIndex: nodes.findIndex((node) => node.getAttribute("role") === "tabpanel"),
-        queueCount: queues.length,
-      };
-    },
     tabpanelSelectCount: () =>
       document.querySelectorAll('[role="tabpanel"] select').length,
     fillStatusFilter: (value: string) => {
@@ -418,7 +342,6 @@ export default function WorkerOperationsBrowserFixture() {
       key={mountKey}
       canSeeAllWorkers={true}
       canSeeTeamWorkers={true}
-      canReview={true}
       actor={{ capabilities: ["entry_admin", "change_review"], scopes: [{ kind: "all" }] }}
     />
   );

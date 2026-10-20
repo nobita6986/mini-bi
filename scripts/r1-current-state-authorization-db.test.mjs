@@ -141,7 +141,7 @@ async function insertSyntheticProjectEntry(db, state = "DRAFT", options = {}) {
   const {
     entryId = uuid(7), candidateId = uuid(8), submissionId = uuid(9),
     ownerApp = APP, projectId = PROJECT_PM, employeeSuffix = "000901",
-    recruiterId = REC_A, teamId = TEAM_A,
+    recruiterId = REC_A, teamId = TEAM_A, displayName = "Synthetic PM Draft",
   } = options;
   const year = (await db.query(
     "select to_char(public.direct_entry_authorization_date(), 'YYYY') as year",
@@ -163,7 +163,7 @@ async function insertSyntheticProjectEntry(db, state = "DRAFT", options = {}) {
          $7::jsonb, $8, $9, 'hrp', 'TEMPORARY'
        )`,
       [entryId, submissionId, candidateId, ownerApp, projectId, `hrp-${year}-${employeeSuffix}`, JSON.stringify({
-        display_name: "Synthetic PM Draft",
+        display_name: displayName,
         date_of_birth: { state: "omitted" },
         national_id: { state: "omitted" },
         address: { state: "omitted" },
@@ -1094,6 +1094,181 @@ test("R1.1 projects team edit scope and preserves strict current-team direct-edi
       ),
       (error) => error.code === "42501",
       "ambiguous current recruiter links fail closed even when their history intervals do not overlap",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("R1.2 search and direct edit use current scope across overlapping directory audiences", async () => {
+  const { db } = await buildDb();
+  try {
+    const seededManager = await seedProjectManager(db);
+    const manager = { auth: seededManager.managerAuth, app: seededManager.managerApp };
+    await addCurrentCapability(db, APP, "entry_privileged_edit");
+    await db.query(
+      `insert into public.recruiter_provider_memberships
+         (recruiter_id, provider_type, valid_from, is_current)
+       values ($1, 'hrp', '2020-01-01', true)`, [REC_B],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships
+         (recruiter_id, team_id, valid_from, is_current)
+       values ($1, $2, '2020-01-01', true)`, [REC_B, TEAM_A],
+    );
+    const otherProject = "r1-2-synthetic-project-b";
+    await db.query(
+      `insert into public.direct_entry_projects(project_id, display_name, active)
+       values ($1, 'Synthetic Project B', true)`, [otherProject],
+    );
+
+    const projectTeamEntry = await insertSyntheticProjectEntry(db, "SUBMITTED", {
+      entryId: uuid(91), candidateId: uuid(92), submissionId: uuid(93),
+      projectId: PROJECT_PM, employeeSuffix: "000021", recruiterId: REC_B, teamId: TEAM_A,
+      displayName: "NGUYỄN VĂN ÁNH",
+    });
+    const projectOnlyEntry = await insertSyntheticProjectEntry(db, "SUBMITTED", {
+      entryId: uuid(94), candidateId: uuid(95), submissionId: uuid(96),
+      projectId: PROJECT_PM, employeeSuffix: "000022", recruiterId: REC_B, teamId: TEAM_A,
+    });
+    const outsideEntry = await insertSyntheticProjectEntry(db, "SUBMITTED", {
+      entryId: uuid(97), candidateId: uuid(98), submissionId: uuid(99),
+      projectId: otherProject, employeeSuffix: "000023", recruiterId: REC_B, teamId: TEAM_A,
+    });
+    const statusReason = (await db.query(
+      `select public.direct_entry_reason($1, 'Synthetic initial status') as reason_id`, [APP],
+    )).rows[0].reason_id;
+    const authDate = (await db.query(
+      `select public.direct_entry_authorization_date()::text as date`,
+    )).rows[0].date;
+    await db.query(
+      `insert into public.direct_entry_employment_status_events
+         (entry_id, status, effective_date, version, actor_user_id, reason_id)
+       values ($1, 'UNCONFIRMED', $3, 1, $4, $5),
+              ($2, 'UNCONFIRMED', $3, 1, $4, $5)`,
+      [projectTeamEntry.entryId, projectOnlyEntry.entryId, authDate, APP, statusReason],
+    );
+
+    const directory = async (actor, scope, search = null, cursor = null, pageSize = 25,
+      projectId = null, recruiterId = null, status = null) => (await db.query(
+      `select public.direct_entry_list_workers(
+        $1::uuid, $2::uuid, $3::text, $4::text, $5::uuid, $6::text, $7::text, $8::integer, $9::text
+      ) as data`,
+      [actor.auth, actor.app, scope, projectId, recruiterId, status, cursor, pageSize, search],
+    )).rows[0].data;
+
+    const managedPage = await directory(manager, "managed");
+    assert.deepEqual(managedPage.items.map((row) => row.entry_id).sort(),
+      [projectTeamEntry.entryId, projectOnlyEntry.entryId].sort());
+    assert.ok(managedPage.items.every((row) => row.allowed_actions.direct_edit),
+      "current PM direct-edit authority is projected for every row in the assigned project");
+    const recruitedPage = await directory(manager, "recruited");
+    const actionByEntry = new Map(recruitedPage.items.map((row) => [row.entry_id, row.allowed_actions.direct_edit]));
+    assert.equal(actionByEntry.get(projectTeamEntry.entryId), true);
+    assert.equal(actionByEntry.get(projectOnlyEntry.entryId), true);
+    assert.equal(actionByEntry.get(outsideEntry.entryId), false,
+      "a PM's managed tab is not used to authorize a row in another project");
+
+    const accentedSearch = await directory(manager, "recruited", "nguyễn văn");
+    assert.deepEqual(accentedSearch.items.map((row) => row.entry_id), [projectTeamEntry.entryId],
+      "database search is case-insensitive for Vietnamese names");
+    const filteredSearch = await directory(manager, "recruited", "00002", null, 25,
+      PROJECT_PM, REC_B, "UNCONFIRMED");
+    assert.equal(filteredSearch.summary.total_workers, 2,
+      "search summary reflects search plus status, project, recruiter and scope filters");
+    assert.equal((await directory(manager, "recruited", "%")).summary.total_workers, 0,
+      "wildcard characters are literal and are not expanded by SQL");
+
+    let cursor = null;
+    const pagedIds = [];
+    for (let index = 0; index < 3; index += 1) {
+      const result = await directory(manager, "recruited", "00002", cursor, 1);
+      assert.equal(result.summary.total_workers, 3);
+      assert.equal(result.items.length, 1);
+      pagedIds.push(result.items[0].entry_id);
+      cursor = result.next_cursor;
+      assert.equal(result.has_more, index < 2);
+    }
+    assert.equal(new Set(pagedIds).size, 3, "search pagination neither repeats nor skips rows");
+    assert.equal((await directory(manager, "recruited", "000021")).items[0].employee_code,
+      `hrp-${projectTeamEntry.year}-000021`, "employee-code search preserves leading zeroes");
+
+    await assert.rejects(directory(manager, "recruited", "x".repeat(101)),
+      (error) => error.code === "22023", "the RPC enforces the bounded search contract too");
+    const outsider = { auth: uuid(101), app: uuid(102) };
+    await addActor(db, outsider.auth, outsider.app, "Synthetic Out-of-Scope Staff");
+    await assert.rejects(directory(outsider, "recruited", "000021"),
+      (error) => error.code === "42501", "search does not expand recruiter or project scope");
+
+    const pmEdit = (await db.query(
+      `select public.direct_entry_privileged_edit(
+        $1, $2, $3, 1, $4::jsonb, null, 'r1-2-pm-edit') as result`,
+      [manager.auth, manager.app, projectOnlyEntry.entryId, JSON.stringify({
+        employment_status: { status: "ON", effective_date: authDate },
+      })],
+    )).rows[0].result;
+    assert.equal(pmEdit.version, 2, "current PM can mutate an assigned-project entry");
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_privileged_edit(
+          $1, $2, $3, 1, $4::jsonb, null, 'r1-2-pm-outside')`,
+        [manager.auth, manager.app, outsideEntry.entryId, JSON.stringify({
+          employment_status: { status: "ON", effective_date: authDate },
+        })],
+      ),
+      (error) => error.code === "42501", "current PM cannot edit a different unassigned project",
+    );
+
+    const overlapHas = (await db.query(
+      `select public.direct_entry_has_entry_access($1, 'entry_privileged_edit', $2, $3, $4) as allowed,
+              public.direct_entry_assert_entry_access($5, $1, 'entry_privileged_edit', $2, $3, $4) as scope`,
+      [APP, APP, TEAM_A, authDate, AUTH],
+    )).rows[0];
+    assert.deepEqual(overlapHas, { allowed: true, scope: "all" },
+      "overlapping all/team grants remain valid and Full Admin scope takes precedence");
+    const adminPage = await directory({ auth: AUTH, app: APP }, "all");
+    assert.equal(adminPage.items.find((row) => row.entry_id === projectOnlyEntry.entryId)
+      .allowed_actions.direct_edit, true, "Full Admin action is projected despite overlapping grants");
+    const adminEdit = (await db.query(
+      `select public.direct_entry_privileged_edit(
+        $1, $2, $3, 1, $4::jsonb, null, 'r1-2-admin-edit') as result`,
+      [AUTH, APP, projectTeamEntry.entryId, JSON.stringify({
+        employment_status: { status: "ON", effective_date: authDate },
+      })],
+    )).rows[0].result;
+    assert.equal(adminEdit.version, 2, "Full Admin can edit a row while an additional team grant is current");
+    assert.equal((await db.query(
+      `select scope_kind from public.direct_entry_audit_events
+        where app_user_id=$1 and action='entry_privileged_edit' and resource_ref=$2
+          and outcome='APPLIED' order by created_at desc limit 1`, [APP, projectTeamEntry.entryId],
+    )).rows[0].scope_kind, "all", "Full Admin edit is audited in the all scope");
+
+    const assignment = (await db.query(
+      `select assignment_id, version from public.direct_entry_project_manager_assignments
+        where project_id=$1 and manager_recruiter_id=$2 and is_current`,
+      [PROJECT_PM, REC_B],
+    )).rows[0];
+    const projectVersion = (await db.query(
+      `select version from public.direct_entry_projects where project_id=$1`, [PROJECT_PM],
+    )).rows[0].version;
+    await db.query(
+      `select public.direct_entry_unassign_project_manager(
+        $1, $2, $3, $4, $5, 'Synthetic R1.2 revoke', 'r1-2-pm-revoke')`,
+      [AUTH, APP, assignment.assignment_id, assignment.version, projectVersion],
+    );
+    const afterRevoke = await directory(manager, "recruited");
+    assert.equal(afterRevoke.items.find((row) => row.entry_id === projectOnlyEntry.entryId)
+      .allowed_actions.direct_edit, false, "revoked PM authority is removed on the next projection");
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_privileged_edit(
+          $1, $2, $3, 2, $4::jsonb, null, 'r1-2-pm-after-revoke')`,
+        [manager.auth, manager.app, projectOnlyEntry.entryId, JSON.stringify({
+          employment_status: { status: "OFF", effective_date: authDate,
+            leave_reason: "Synthetic required leave reason" },
+        })],
+      ),
+      (error) => error.code === "42501", "revoked PM access is denied by the mutation RPC immediately",
     );
   } finally {
     await db.close();

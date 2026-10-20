@@ -186,6 +186,10 @@ test("W06-R2: query builder chi gui cursor khi co (khong mang cursor scope cu)",
     "?scope=recruited&page_size=25");
   assert.equal(workersQuery({ scope: "all", status: "ON", cursor: "c1" }),
     "?scope=all&page_size=25&employment_status=ON&cursor=c1");
+  assert.equal(workersQuery({ scope: "managed", search: "  Nguyễn  ", status: "ON",
+    projectId: "proj_a", recruiterId: RECRUITER, cursor: null }),
+  "?scope=managed&page_size=25&employment_status=ON&search=Nguy%E1%BB%85n&project_id=proj_a&recruiter_id=" +
+    RECRUITER);
   assert.equal(submissionsQuery(null), "?page_size=25");
   assert.equal(submissionsQuery("c2"), "?page_size=25&cursor=c2");
   assert.equal(requestsQuery(null), "?page_size=20&state=PENDING");
@@ -201,20 +205,30 @@ test("HF-R4: project and recruiter filters stay server-side and reset the page c
   }, workerRowKey, false);
   const changed = updateWorkerDirectoryFilter({
     page: loaded,
-    filters: { status: "ON", projectId: "old-project", recruiterId: RECRUITER },
+    filters: { search: "000021", status: "ON", projectId: "old-project", recruiterId: RECRUITER },
     field: "projectId",
     value: "new-project",
   });
   assert.deepEqual(changed.filters, {
-    status: "ON", projectId: "new-project", recruiterId: RECRUITER,
+    search: "000021", status: "ON", projectId: "new-project", recruiterId: RECRUITER,
   });
   assert.deepEqual(changed.page, {
     items: [], cursor: null, hasMore: false, state: "loading", message: null,
   });
   assert.equal(workersQuery({ scope: "managed", ...changed.filters,
     cursor: "next:cursor" }),
-  "?scope=managed&page_size=25&employment_status=ON&project_id=new-project&recruiter_id=" +
+  "?scope=managed&page_size=25&employment_status=ON&search=000021&project_id=new-project&recruiter_id=" +
     RECRUITER + "&cursor=next%3Acursor");
+
+  const searchChanged = updateWorkerDirectoryFilter({
+    page: loaded,
+    filters: changed.filters,
+    field: "search",
+    value: "Nguyễn",
+  });
+  assert.equal(searchChanged.filters.search, "Nguyễn");
+  assert.equal(searchChanged.page.cursor, null, "search change resets the pagination cursor");
+  assert.deepEqual(searchChanged.page.items, []);
 });
 
 test("W06-R2: review payload phai qua projectChangeRequestListPage, fail-closed", () => {

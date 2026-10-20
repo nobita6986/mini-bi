@@ -86,6 +86,8 @@ test("query validation fails before session, and never accepts client identity",
     "/api/direct-entry/workers?scope=all&project_id=bad%20project",
     "/api/direct-entry/workers?scope=all&recruiter_id=nope",
     "/api/direct-entry/workers?scope=all&employment_status=MAYBE",
+    "/api/direct-entry/workers?scope=all&search=" + "x".repeat(101),
+    "/api/direct-entry/workers?scope=all&search=%0A",
     "/api/direct-entry/workers?scope=all&order=first_work_date",
     "/api/direct-entry/workers?scope=all&app_user_id=" + actor.app_user_id,
     "/api/direct-entry/workers?scope=all&auth_subject=" + actor.auth_subject,
@@ -136,7 +138,7 @@ test("success returns the exact page projection with no-store", async () => {
   const deps = dependencies();
   const response = await listWorkers(
     request("/api/direct-entry/workers?scope=managed&project_id=proj_a&recruiter_id=" +
-      recruiterId + "&employment_status=ON&cursor=" + cursor + "&page_size=50"),
+      recruiterId + "&employment_status=ON&search=hrp-2026-000021&cursor=" + cursor + "&page_size=50"),
     "true", deps);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
@@ -154,6 +156,7 @@ test("success returns the exact page projection with no-store", async () => {
       project_id: "proj_a",
       recruiter_id: recruiterId,
       employment_status: "ON",
+      search: "hrp-2026-000021",
       cursor,
       page_size: 50,
     },
@@ -168,6 +171,7 @@ test("success returns the exact page projection with no-store", async () => {
     project_id: null,
     recruiter_id: null,
     employment_status: null,
+    search: null,
     cursor: null,
     page_size: 25,
   });
