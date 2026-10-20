@@ -248,22 +248,18 @@ async function runAcceptance(client, reportingBefore) {
     "DOCUMENT rejection must not leave request/item/revision/audit/idempotency writes");
   pass("DOCUMENT RPC create bi CHECK tu choi, khong phat sinh request/item/revision/audit/idempotency");
 
-  // 1. Negative policy matrix: thieu capability thi 42501 va khong co mutation nao.
+  // 1. A reviewer without change_review is denied without changing any rows.
   const revisionsBefore = await revisionCount(client, entries.pii.entry_id);
   const negative = [
-    ["worker_details thieu pii_view (approve)", POLICY_ACTORS.entryOnly, requests.pii, "approve"],
-    ["worker_details thieu pii_view (reject)", POLICY_ACTORS.entryOnly, requests.pii, "reject"],
-    ["PAYMENT thieu payment_view", POLICY_ACTORS.entryOnly, requests.payment, "approve"],
-    ["mixed thieu dung mot capability", POLICY_ACTORS.paymentView, requests.mixed, "approve"],
+    ["worker_details thieu change_review (approve)", POLICY_ACTORS.entryOnly, requests.pii, "approve"],
+    ["worker_details thieu change_review (reject)", POLICY_ACTORS.entryOnly, requests.pii, "reject"],
+    ["PAYMENT thieu change_review", POLICY_ACTORS.entryOnly, requests.payment, "approve"],
+    ["mixed thieu change_review", POLICY_ACTORS.entryOnly, requests.mixed, "approve"],
   ];
-  // P2.5-W05-R1: PAYMENT needs only payment_view and WORK_STATUS only change_review, so
-  // the apply-side tokens (payment_edit / employment_status.apply) are no longer part of
-  // the review matrix and are deliberately absent from the negative list.
   for (const [label, actor, requestId, decision] of negative) {
     const outcome = await attempt(client, () => decideRpc(client, actor, requestId, decision, 1,
       "S03B3R1 DEV " + label, key("denied")));
     assert.equal(outcome.error?.code, "42501", label + " :: " + json(outcome.error));
-    assert.equal(outcome.error.message.includes("capability denied"), true, label);
   }
   const directApply = await attempt(client, () => applyItemRpc(client, POLICY_ACTORS.entryOnly,
     requests.payment, entries.payment.entry_id, "PAYMENT", PAYMENT_PROPOSAL));
@@ -282,50 +278,42 @@ async function runAcceptance(client, reportingBefore) {
   assert.match(selfReview.error.message, /proposer cannot review own request/);
   pass("self-review van bi DB tu choi");
 
-  // 3. Positive: ENTRY_FIELD 5 truong non-PII chi can change_review.
+  // 3. Positive: change_review plus current all scope covers each supported target.
   const approveKey = key("approve");
-  const approved = await decideRpc(client, POLICY_ACTORS.entryOnly, requests.nonPiiApprove,
+  const approved = await decideRpc(client, POLICY_ACTORS.reviewerAll, requests.nonPiiApprove,
     "approve", 1, "S03B3R1 DEV approve", approveKey);
   assert.equal(approved.state, "APPROVED");
-  const replayed = await decideRpc(client, POLICY_ACTORS.entryOnly, requests.nonPiiApprove,
+  const replayed = await decideRpc(client, POLICY_ACTORS.reviewerAll, requests.nonPiiApprove,
     "approve", 1, "S03B3R1 DEV approve", approveKey);
   assert.deepEqual(replayed, approved, "replay cung key phai tra cung ket qua");
-  const rejected = await decideRpc(client, POLICY_ACTORS.entryOnly, requests.nonPiiReject,
+  const rejected = await decideRpc(client, POLICY_ACTORS.reviewerAll, requests.nonPiiReject,
     "reject", 1, "S03B3R1 DEV reject", key("reject"));
   assert.equal(rejected.state, "REJECTED");
-  const replayOtherKey = await attempt(client, () => decideRpc(client, POLICY_ACTORS.entryOnly,
+  const replayOtherKey = await attempt(client, () => decideRpc(client, POLICY_ACTORS.reviewerAll,
     requests.nonPiiReject, "reject", 1, "S03B3R1 DEV reject", key("reject_other")));
   assert.equal(replayOtherKey.error?.code, "40001", json(replayOtherKey.error));
-  pass("ENTRY_FIELD non-PII duoc duyet/tu choi voi change_review; replay khac key bi OCC chan");
+  pass("change_review + all scope duyet/từ chối; replay khác key bị OCC chặn");
 
-  // 4. Positive voi day du capability cho tung target kind.
+  // 4. The same reviewer can decide each workflow target without PII/payment capabilities.
   for (const [label, actor, requestId] of [
-    ["ENTRY_FIELD.worker_details", POLICY_ACTORS.piiView, requests.pii],
-    ["PAYMENT", POLICY_ACTORS.paymentFull, requests.payment],
-    ["WORK_STATUS", POLICY_ACTORS.allCapabilities, requests.status],
+    ["ENTRY_FIELD.worker_details", POLICY_ACTORS.reviewerAll, requests.pii],
+    ["PAYMENT", POLICY_ACTORS.reviewerAll, requests.payment],
+    ["WORK_STATUS", POLICY_ACTORS.reviewerAll, requests.status],
   ]) {
     const decided = await decideRpc(client, actor, requestId, "approve", 1,
       "S03B3R1 DEV approve " + label, key("approve_kind"));
     assert.equal(decided.state, "APPROVED", label);
   }
-  pass("reviewer du capability duyet duoc ca ba target kind duoc ho tro");
+  pass("change_review + all scope duyet được cả ba target kind được hỗ trợ");
 
-  // 5. Read projection FULL / MASKED / PRESENCE_ONLY / OMIT.
-  const fullPayment = await readRequest(client, POLICY_ACTORS.paymentFull, requests.payment);
+  // 5. Reviewer projection follows resource scope; no PII/payment capability masks apply.
+  const fullPayment = await readRequest(client, POLICY_ACTORS.reviewerAll, requests.payment);
   assert.deepEqual(fullPayment.items[0].proposal, {
     state: "provided", account_number: PAYMENT_PROPOSAL.account_number,
     bank_id: PAYMENT_PROPOSAL.bank_id, account_holder_name: PAYMENT_PROPOSAL.account_holder_name,
   });
-  const masked = (await readRequest(client, POLICY_ACTORS.entryOnly, requests.payment))
-    .items[0].proposal;
-  assert.notEqual(masked.account_number, PAYMENT_PROPOSAL.account_number);
-  assert.equal(masked.account_number.endsWith("6789"), true);
-  assert.equal("bank_id" in masked, false);
-  assert.equal("account_holder_name" in masked, false);
-  const fullPii = await readRequest(client, POLICY_ACTORS.piiView, requests.pii);
+  const fullPii = await readRequest(client, POLICY_ACTORS.reviewerAll, requests.pii);
   assert.equal(fullPii.items[0].proposal.worker_details.display_name, "Synthetic worker");
-  const presencePii = await readRequest(client, POLICY_ACTORS.entryOnly, requests.pii);
-  assert.deepEqual(presencePii.items[0].proposal, { worker_details: { present: true } });
   const historicalDocument = await client.query(
     "select public.direct_entry_change_request_proposal_projection(" +
     "'DOCUMENT', $1::jsonb, false, false, true) as full," +
@@ -337,13 +325,14 @@ async function runAcceptance(client, reportingBefore) {
     { document_type: "EMPLOYMENT_CONTRACT", size_bytes: 2048, mime_type: "application/pdf" });
   assert.deepEqual(historicalDocument.rows[0].limited,
     { document_type: "EMPLOYMENT_CONTRACT" });
-  const statusDetail = await readRequest(client, ACTORS.proposer, requests.status);
+  const statusDetail = await readRequest(client, POLICY_ACTORS.reviewerAll, requests.status);
   assert.deepEqual(statusDetail.items[0].proposal,
-    { status: "OFF", effective_date: seeded.proposals.workStatus.effective_date });
-  for (const detail of [fullPayment, masked, fullPii, presencePii, statusDetail]) {
+    { status: "OFF", effective_date: seeded.proposals.workStatus.effective_date,
+      leave_reason: LEAVE_REASON_TEXT });
+  for (const detail of [fullPayment, fullPii, statusDetail]) {
     const text = json(detail);
     for (const forbidden of ["checksum_sha256", "idempotency_key", "storage_key",
-      "leave_reason", "reason_id", "auth_subject"]) {
+      "reason_id", "auth_subject"]) {
       assert.equal(text.includes(forbidden), false, forbidden);
     }
   }

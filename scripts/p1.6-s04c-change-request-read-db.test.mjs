@@ -302,36 +302,60 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
     auth_subject: "10000000-0000-4000-8000-000000000008",
     app_user_id: "20000000-0000-4000-8000-000000000008",
   };
+  const leaderRecruiter = "30000000-0000-4000-8000-000000000006";
+  const otherLeaderRecruiter = "30000000-0000-4000-8000-000000000008";
   await db.query("insert into auth.users(id) values ($1)", [leader.auth_subject]);
   await db.query(
     "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
       " values ($1,$2,true,'Team Leader')", [leader.app_user_id, leader.auth_subject]);
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'team_manager_assign','2020-01-01'),($1,'pii_view','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'team_manager_assign','2020-01-01',true)",
     [leader.app_user_id]);
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
-      " values ($1,'team',$2,'2020-01-01')", [leader.app_user_id, fixture.entryA.team_id]);
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from,is_current)" +
+      " values ($1,'team',$2,'2020-01-01',true)", [leader.app_user_id, fixture.entryA.team_id]);
+  await db.query("insert into public.recruiters(recruiter_id,display_name) values ($1,'Team Leader')",
+    [leaderRecruiter]);
+  await db.query(
+    "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from,is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [leaderRecruiter]);
+  await db.query(
+    "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [leaderRecruiter, fixture.entryA.team_id]);
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from,is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)", [leader.app_user_id, leaderRecruiter]);
   await db.query(
     "insert into public.direct_entry_team_leader_assignments" +
-      " (team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,'2020-01-01')",
-    [fixture.entryA.team_id, leader.app_user_id, RECRUITER_A]);
+      " (team_id,leader_app_user_id,leader_recruiter_id,valid_from,is_current) values ($1,$2,$3,'2020-01-01',true)",
+    [fixture.entryA.team_id, leader.app_user_id, leaderRecruiter]);
   await db.query("insert into auth.users(id) values ($1)", [otherLeader.auth_subject]);
   await db.query(
     "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled,display_name)" +
       " values ($1,$2,true,'Other Team Leader')", [otherLeader.app_user_id, otherLeader.auth_subject]);
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'team_manager_assign','2020-01-01'),($1,'pii_view','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'team_manager_assign','2020-01-01',true)",
     [otherLeader.app_user_id]);
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
-      " values ($1,'team',$2,'2020-01-01')", [otherLeader.app_user_id, TEAM_B]);
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from,is_current)" +
+      " values ($1,'team',$2,'2020-01-01',true)", [otherLeader.app_user_id, TEAM_B]);
+  await db.query("insert into public.recruiters(recruiter_id,display_name) values ($1,'Other Team Leader')",
+    [otherLeaderRecruiter]);
+  await db.query(
+    "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from,is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [otherLeaderRecruiter]);
+  await db.query(
+    "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [otherLeaderRecruiter, TEAM_B]);
+  await db.query(
+    "insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from,is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)", [otherLeader.app_user_id, otherLeaderRecruiter]);
   await db.query(
     "insert into public.direct_entry_team_leader_assignments" +
-      " (team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,'2020-01-01')",
-    [TEAM_B, otherLeader.app_user_id, RECRUITER_B]);
+      " (team_id,leader_app_user_id,leader_recruiter_id,valid_from,is_current) values ($1,$2,$3,'2020-01-01',true)",
+    [TEAM_B, otherLeader.app_user_id, otherLeaderRecruiter]);
   assert.equal((await db.query(
     "select public.direct_entry_has_capability($1,'change_review') as allowed", [leader.app_user_id],
   )).rows[0].allowed, false, "team review does not create a global reviewer capability");
@@ -356,7 +380,7 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
   assert.equal(currentEntry.rows[0].data.entry_id, fixture.entryA.entry_id,
     "the assigned team leader can read the current row for its review request");
   assert.equal(currentEntry.rows[0].data.worker_details.display_name, "S02B worker1",
-    "PII still follows the explicit pii_view capability");
+    "current team scope grants the review projection without a PII capability");
   await assert.rejects(db.query(
     "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid)",
     [leader.auth_subject, leader.app_user_id, fixture.entryB.entry_id],
@@ -393,19 +417,19 @@ test("assigned Team Leader sees only same-team requests and can reject a stale o
       " values ($1,$2,true,'Other Team Proposer')",
     [otherTeamProposer.app_user_id, otherTeamProposer.auth_subject]);
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'change_request_create','2020-01-01'),($1,'pii_view','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'change_request_create','2020-01-01',true)",
     [otherTeamProposer.app_user_id]);
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
-      " values ($1,'own','2020-01-01')", [otherTeamProposer.app_user_id]);
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current)" +
+      " values ($1,'own','2020-01-01',true)", [otherTeamProposer.app_user_id]);
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-      " (app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+      " (app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,'2020-01-01',true)",
     [otherTeamProposer.app_user_id, RECRUITER_B]);
   await db.query(
     "insert into public.direct_entry_project_manager_assignments" +
-      " (project_id,manager_recruiter_id,valid_from) values ($1,$2,'2020-01-01')",
+      " (project_id,manager_recruiter_id,valid_from,is_current) values ($1,$2,'2020-01-01',true)",
     [PROJECT_ID, RECRUITER_B]);
   const approvedRequest = await createChangeRequest(db, otherTeamProposer, [item(
     fixture.entryA.entry_id,

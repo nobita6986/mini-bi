@@ -187,6 +187,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // private contract-download scope helper; it grants no runtime role access.
   // #122 adds three service-role-only deletion/cleanup RPCs and one internal stage guard.
   // S0-T1-C closes direct grants to helper routines; count signatures, not overload names.
-  assert.deepEqual([rows.length, serviceRpcs, internalRpcs], [264, 106, 158]);
+  // R1 current-state authorization adds two private trigger/guard routines.
+  assert.deepEqual([rows.length, serviceRpcs, internalRpcs], [266, 106, 160]);
   await db.close();
 });

@@ -47,12 +47,12 @@ async function seedProjectManager(db) {
   );
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,'2020-01-01',true)",
     [PROJECT_MANAGER.app_user_id, RECRUITER_B],
   );
   await db.query(
-    "insert into public.direct_entry_project_manager_assignments(project_id,manager_recruiter_id)" +
-    " values ($1,$2)",
+    "insert into public.direct_entry_project_manager_assignments(project_id,manager_recruiter_id,is_current)" +
+    " values ($1,$2,true)",
     [PROJECT_ID, RECRUITER_B],
   );
   const { rows } = await db.query(
@@ -100,6 +100,10 @@ test("current project assignment exposes submitted rows for proposals, but not d
     const fixture = await seedChangeRequestFixture(db, {
       workerDetailsForFirstEntry: initialWorkerDetails,
     });
+    await db.query(
+      "delete from public.direct_entry_capability_grants where app_user_id=$1 and capability='pii_view'",
+      [ACTORS.reviewerAll.app_user_id],
+    );
     await seedProjectManager(db);
 
     await db.query(
@@ -192,26 +196,18 @@ test("current project assignment exposes submitted rows for proposals, but not d
       "W07E reviewer approval test", "w07e_project_reviewer");
     assert.equal(finalProposal.error, null);
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'change_review','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'change_review','2020-01-01',true)",
       [PROJECT_MANAGER.app_user_id],
     );
     await db.query(
-      "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
-      " values ($1,'all','2020-01-01')",
+      "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current)" +
+      " values ($1,'all','2020-01-01',true)",
       [PROJECT_MANAGER.app_user_id],
     );
     const selfReview = await decideChangeRequest(db, PROJECT_MANAGER, finalProposal.data.request_id,
       "approve", 1, "Self-review must fail", "w07e_self_review");
     assert.equal(selfReview.error.code, "42501");
-    // P2.5-W04: reviewing a worker_details proposal needs change_review + pii_view.
-    await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " select $1::uuid,'pii_view','2020-01-01'" +
-      " where not exists (select 1 from public.direct_entry_capability_grants g" +
-      "  where g.app_user_id=$1::uuid and g.capability='pii_view')",
-      [ACTORS.reviewerAll.app_user_id],
-    );
     const approved = await decideChangeRequest(db, ACTORS.reviewerAll, finalProposal.data.request_id,
       "approve", 1, "Authorized reviewer approval", "w07e_reviewer_approve");
     assert.equal(approved.error, null);
@@ -237,8 +233,7 @@ test("current project assignment exposes submitted rows for proposals, but not d
       " from public.direct_entries where entry_id=$1", [fixture.entryA.entry_id]);
     assert.equal(beforeWorkerApproval.rows[0].date_of_birth, "01/01/2000");
 
-    // Reviewer authorization stays explicit and target-specific; assignment does
-    // not grant pii_view to the proposer or reviewer (already granted above).
+    // Current all-scope plus change_review authorizes review without a PII capability.
     const workerApproved = await decideChangeRequest(db, ACTORS.reviewerAll,
       workerChange.data.request_id, "approve", 1, "Authorized PII reviewer approval",
       "w07e_reviewer_worker_approve");

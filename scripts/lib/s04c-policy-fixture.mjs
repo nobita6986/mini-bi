@@ -46,45 +46,12 @@ export const POLICY_ACTORS = Object.freeze({
   entryOnly: {
     auth_subject: "10000000-0000-4000-8000-000000000101",
     app_user_id: "20000000-0000-4000-8000-000000000201",
-    capabilities: ["change_review"],
+    capabilities: [],
   },
-  piiView: {
+  reviewerAll: {
     auth_subject: "10000000-0000-4000-8000-000000000102",
     app_user_id: "20000000-0000-4000-8000-000000000202",
-    capabilities: ["change_review", "pii_view"],
-  },
-  paymentView: {
-    auth_subject: "10000000-0000-4000-8000-000000000103",
-    app_user_id: "20000000-0000-4000-8000-000000000203",
-    capabilities: ["change_review", "payment_view"],
-  },
-  paymentFull: {
-    auth_subject: "10000000-0000-4000-8000-000000000104",
-    app_user_id: "20000000-0000-4000-8000-000000000204",
-    capabilities: ["change_review", "payment_view", "payment_edit"],
-  },
-  statusApply: {
-    auth_subject: "10000000-0000-4000-8000-000000000105",
-    app_user_id: "20000000-0000-4000-8000-000000000205",
-    capabilities: ["change_review", "employment_status.apply"],
-  },
-  documentView: {
-    auth_subject: "10000000-0000-4000-8000-000000000106",
-    app_user_id: "20000000-0000-4000-8000-000000000206",
-    capabilities: ["change_review", "document_view"],
-  },
-  documentFull: {
-    auth_subject: "10000000-0000-4000-8000-000000000107",
-    app_user_id: "20000000-0000-4000-8000-000000000207",
-    capabilities: ["change_review", "document_view", "document_upload"],
-  },
-  allCapabilities: {
-    auth_subject: "10000000-0000-4000-8000-000000000108",
-    app_user_id: "20000000-0000-4000-8000-000000000208",
-    capabilities: [
-      "change_review", "pii_view", "payment_view", "payment_edit",
-      "employment_status.apply", "document_view", "document_upload",
-    ],
+    capabilities: ["change_review"],
   },
 });
 
@@ -119,14 +86,14 @@ export async function insertPolicyActor(db, actor) {
   );
   for (const capability of actor.capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,$2,'2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,$2,'2020-01-01',true)",
       [actor.app_user_id, capability],
     );
   }
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
-    " values ($1,'all','2020-01-01')",
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current)" +
+    " values ($1,'all','2020-01-01',true)",
     [actor.app_user_id],
   );
 }
