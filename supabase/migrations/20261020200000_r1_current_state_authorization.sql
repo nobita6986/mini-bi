@@ -18,6 +18,39 @@ alter table public.direct_entry_project_team_scopes
 alter table public.direct_entry_team_leader_assignments
   add column is_current boolean not null default false;
 
+-- is_current is derived authority state; it must not advance the project/team pair version.
+create or replace function public.direct_entry_project_team_scopes_history_guard()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'project team mapping history is append-only' using errcode = '55000';
+  end if;
+  if (to_jsonb(new) - 'is_current') = (to_jsonb(old) - 'is_current') then
+    return new;
+  end if;
+  if new.mapping_id <> old.mapping_id
+     or new.project_id <> old.project_id
+     or new.team_id <> old.team_id
+     or new.valid_from <> old.valid_from
+     or new.reason_id <> old.reason_id
+     or new.granted_by_user_id <> old.granted_by_user_id
+     or new.created_at <> old.created_at then
+    raise exception 'project team mapping identity is immutable' using errcode = '55000';
+  end if;
+  if old.valid_to is not null and new.valid_to is distinct from old.valid_to then
+    raise exception 'a revoked project team mapping cannot be reopened' using errcode = '55000';
+  end if;
+  if new.version <> old.version + 1 then
+    raise exception 'project team mapping mutation must advance the pair version'
+      using errcode = '55000';
+  end if;
+  return new;
+end;
+$$;
+
 -- Marker map and lifecycle owners:
 -- * capability_grants: account creation/team-leader designation sets true;
 --   team-leader revoke and app-user disable clear it.

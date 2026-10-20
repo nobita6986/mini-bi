@@ -4,6 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import { buildDb } from "./lib/p3-w05b-team-fixture.mjs";
 
@@ -14,6 +16,8 @@ const TEAM_A = uuid(11), TEAM_B = uuid(12);
 const REC_A = uuid(21), REC_B = uuid(22), REC_C = uuid(23);
 const PROJECT = "r1-synthetic-project";
 const PROJECT_PM = "r1-synthetic-pm-project";
+const PRE_R1_BASELINE = "20261019130000_pre_w2_hf_draft_submission_delete.sql";
+const R1_MIGRATION = "20261020200000_r1_current_state_authorization.sql";
 
 async function addActor(db, auth, app, name) {
   await db.query("insert into auth.users (id) values ($1)", [auth]);
@@ -178,6 +182,45 @@ async function insertSyntheticProjectEntry(db, state = "DRAFT", options = {}) {
   return { entryId, year };
 }
 
+test("R1 current-state backfill handles an existing project-team mapping", async () => {
+  const { db } = await buildDb({ throughMigration: PRE_R1_BASELINE });
+  try {
+    await addActor(db, AUTH, APP, "Synthetic Pre-R1 Admin");
+    for (const capability of ["entry_admin", "recruiter_master_manage", "team_master_manage"]) {
+      await db.query(
+        `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)
+         values ($1, $2, '2020-01-01')`, [APP, capability],
+      );
+    }
+    await db.query(
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)
+       values ($1, 'all', '2020-01-01')`, [APP],
+    );
+    await db.query(
+      `insert into public.teams (team_id, code, display_name, active)
+       values ($1, 'R1_CUTOVER_TEAM', 'Synthetic Cutover Team', true)`, [TEAM_A],
+    );
+    await db.query(
+      `insert into public.direct_entry_projects (project_id, display_name, active)
+       values ($1, 'Synthetic Cutover Project', true)`, [PROJECT],
+    );
+    const result = (await db.query(
+      `select public.direct_entry_grant_project_team_scope(
+        $1::uuid, $2::uuid, $3::text, $4::uuid, 0, '2020-01-01'::date, $5::text, $6::text) as result`,
+      [AUTH, APP, PROJECT, TEAM_A, "Synthetic R1 cutover seed", "r1-cutover-seed"],
+    )).rows[0].result;
+    const migration = await readFile(path.resolve("supabase/migrations", R1_MIGRATION), "utf8");
+    await db.exec(migration);
+    assert.deepEqual((await db.query(
+      `select is_current, version from public.direct_entry_project_team_scopes where mapping_id=$1`,
+      [result.mapping_id],
+    )).rows[0], { is_current: true, version: 1 },
+    "backfill activates the existing mapping without changing its business pair version");
+  } finally {
+    await db.close();
+  }
+});
+
 test("actor context and capability/scope helpers use only explicit current rows", async () => {
   const { db } = await buildDb();
   try {
@@ -269,6 +312,18 @@ test("project-team grant/revoke is transactional current state, not an interval 
       `select is_current, reason_id from public.direct_entry_project_team_scopes where mapping_id=$1`, [mappingId],
     )).rows[0], { is_current: true, reason_id: null },
     "the grant remains current without a placeholder reason row");
+    const pairVersion = (await db.query(
+      `select version from public.direct_entry_project_team_scopes where mapping_id=$1`, [mappingId],
+    )).rows[0].version;
+    await db.query(
+      `update public.direct_entry_project_team_scopes set is_current=false where mapping_id=$1`, [mappingId],
+    );
+    await db.query(
+      `update public.direct_entry_project_team_scopes set is_current=true where mapping_id=$1`, [mappingId],
+    );
+    assert.equal((await db.query(
+      `select version from public.direct_entry_project_team_scopes where mapping_id=$1`, [mappingId],
+    )).rows[0].version, pairVersion, "current-state marker changes leave the project/team pair version untouched");
     assert.equal((await db.query(
       "select public.direct_entry_project_team_scope_effective($1,$2) as allowed", [PROJECT, TEAM_A],
     )).rows[0].allowed, true);

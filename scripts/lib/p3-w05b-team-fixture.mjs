@@ -30,11 +30,17 @@ export const SOURCE = uuid(61);
 export const RUN = uuid(62);
 const OMITTED = { state: "omitted" };
 
-export async function buildDb() {
+export async function buildDb({ throughMigration } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const migrationNames = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  for (const name of migrationNames) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+  if (throughMigration && !migrationNames.includes(throughMigration)) {
+    throw new Error(`Unknown migration: ${throughMigration}`);
+  }
+  for (const name of migrationNames) {
+    await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
+    if (name === throughMigration) break;
+  }
   return { db, migrationNames };
 }
 
