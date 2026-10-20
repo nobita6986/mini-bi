@@ -235,6 +235,39 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const triggersBefore = await triggerSnapshot(client);
       const defaultsBefore = await aclDefaultsSnapshot(client);
 
+      await client.query(
+        "create role s0_t1c_runner nologin;"
+          + " grant postgres to s0_t1c_runner with admin false, inherit true, set false;"
+          + " grant direct_entry_catalog_bootstrap_executor to s0_t1c_runner"
+          + " with admin true, inherit false, set false;",
+      );
+      const { rows: runnerMembershipBefore } = await client.query(
+        `select m.grantor::regrole::text as grantor, m.admin_option, m.inherit_option, m.set_option
+           from pg_catalog.pg_auth_members m
+          where m.member = 's0_t1c_runner'::regrole
+            and m.roleid = 'direct_entry_catalog_bootstrap_executor'::regrole
+          order by grantor`,
+      );
+      assert.equal(runnerMembershipBefore.length, 1);
+      assert.equal(runnerMembershipBefore[0].set_option, false,
+        "the migration runner has ADMIN but not SET on the executor role");
+      const { rows: runnerSetBefore } = await client.query(
+        `select pg_catalog.pg_has_role('s0_t1c_runner',
+          'direct_entry_catalog_bootstrap_executor', 'SET') as can_set_executor`,
+      );
+      assert.equal(runnerSetBefore[0].can_set_executor, false,
+        "the migration runner must use the temporary scoped membership path");
+
+      // Reproduce the live bootstrap-owner ACL drift before broad staging grants.
+      await client.query("set role direct_entry_catalog_bootstrap_executor");
+      await client.query(
+        "grant execute on function public.direct_entry_catalog_bootstrap_projection(),"
+          + " public.direct_entry_catalog_bootstrap_plan(uuid,uuid),"
+          + " public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)"
+          + " to public, anon, authenticated, service_role",
+      );
+      await client.query("reset role");
+
       // Model the broad staging ACL with catalog-only grants inside this disposable cluster.
       await client.query(
         "create function public.s0_t1c_unrelated_probe() returns integer language sql immutable as $$ select 1 $$;"
@@ -245,9 +278,32 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       assert.equal(broadened.filter((row) => row.authenticated_exec).length, broadened.length);
       assert.equal(broadened.filter((row) => row.service_exec).length, broadened.length);
       const migration = await readFile(path.join(MIGRATION_DIR, ACL_MIGRATION), "utf8");
-      await client.query("begin");
-      await client.query(migration);
-      await client.query("commit");
+      await client.query("set session authorization s0_t1c_runner");
+      try {
+        await client.query("begin");
+        await client.query(migration);
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback").catch(() => {});
+        throw error;
+      } finally {
+        await client.query("reset session authorization");
+      }
+      const { rows: runnerMembershipAfter } = await client.query(
+        `select m.grantor::regrole::text as grantor, m.admin_option, m.inherit_option, m.set_option
+           from pg_catalog.pg_auth_members m
+          where m.member = 's0_t1c_runner'::regrole
+            and m.roleid = 'direct_entry_catalog_bootstrap_executor'::regrole
+          order by grantor`,
+      );
+      assert.deepEqual(runnerMembershipAfter, runnerMembershipBefore,
+        "the migration removes its temporary SET membership and preserves the original role grant");
+      const { rows: runnerSetAfter } = await client.query(
+        `select pg_catalog.pg_has_role('s0_t1c_runner',
+          'direct_entry_catalog_bootstrap_executor', 'SET') as can_set_executor`,
+      );
+      assert.equal(runnerSetAfter[0].can_set_executor, false,
+        "the temporary SET capability does not survive migration commit");
       const policiesAfterAcl = await policySnapshot(client);
       const triggersAfterAcl = await triggerSnapshot(client);
       const defaultsAfterAcl = await aclDefaultsSnapshot(client);
@@ -291,10 +347,16 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         `select pg_catalog.has_function_privilege('direct_entry_catalog_bootstrap_executor',
           'public.direct_entry_catalog_bootstrap_plan(uuid,uuid)', 'EXECUTE') as plan_exec,
           pg_catalog.has_function_privilege('direct_entry_catalog_bootstrap_executor',
-          'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)', 'EXECUTE') as apply_exec`,
+          'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)', 'EXECUTE') as apply_exec,
+          pg_catalog.has_function_privilege('direct_entry_catalog_bootstrap_executor',
+          'public.direct_entry_catalog_bootstrap_projection()', 'EXECUTE') as projection_exec,
+          pg_catalog.pg_has_role('s0_t1c_runner',
+          'direct_entry_catalog_bootstrap_executor', 'MEMBER') as membership_unchanged`,
       );
       assert.equal(bootstrapOwner[0].plan_exec, true, "catalog bootstrap executor retains its intended plan rights");
       assert.equal(bootstrapOwner[0].apply_exec, true, "catalog bootstrap executor retains its intended apply rights");
+      assert.equal(bootstrapOwner[0].projection_exec, true, "catalog bootstrap executor retains owner rights to its private projection helper");
+      assert.equal(bootstrapOwner[0].membership_unchanged, true, "the migration does not alter executor role membership");
 
       // Open-schema functions outside Mini BI's name families are untouched.
       const { rows: unrelated } = await client.query(

@@ -1,10 +1,11 @@
 -- S0-T1-C: close Mini BI function EXECUTE grants to an explicit server allowlist.
 --
 -- The target name families are Mini BI-owned functions in public. This leaves
--- unrelated Supabase/public-schema functions untouched. Function owners and the
--- catalog-bootstrap executor's owner grants are not changed. Trigger and RLS
--- policy definitions are also left intact; trigger execution does not require
--- callers to hold EXECUTE on the trigger function after CREATE TRIGGER.
+-- unrelated Supabase/public-schema functions untouched. Function ownership and
+-- implicit owner execution are unchanged; grants issued by the catalog-bootstrap
+-- executor are revoked by their recorded grantor. Trigger and RLS policy
+-- definitions are also left intact; trigger execution does not require callers
+-- to hold EXECUTE on the trigger function after CREATE TRIGGER.
 --
 -- Calls from the app use the server-only service client. Actor parameters remain
 -- derived from the authenticated server session and are still checked inside
@@ -33,10 +34,85 @@ begin
   end loop;
 end;
 $$;
+-- A deployment login can belong to several privilege paths, so the broad revoke
+-- above may not target ACL rows recorded as granted by the bootstrap executor.
+-- Use a transaction-scoped SET membership only when the installer lacks it, then
+-- remove the exact temporary membership before this migration can commit.
+do $$
+declare
+  v_executor oid;
+begin
+  if current_user <> session_user then
+    raise exception 'S0-T1-C requires the migration login role to remain current_user';
+  end if;
+  select r.oid into v_executor
+    from pg_catalog.pg_roles r
+   where r.rolname = 'direct_entry_catalog_bootstrap_executor';
+  if v_executor is null then
+    raise exception 'S0-T1-C catalog bootstrap executor role is missing';
+  end if;
+  perform pg_catalog.set_config('mini_bi.s0_t1c_added_executor_membership', 'false', true);
+  if not pg_catalog.pg_has_role(session_user, v_executor, 'SET') then
+    if exists (
+      select 1 from pg_catalog.pg_auth_members m
+       where m.member = session_user::regrole
+         and m.roleid = v_executor
+         and m.grantor = current_user::regrole
+    ) then
+      raise exception 'S0-T1-C cannot temporarily elevate an existing direct executor membership';
+    end if;
+    execute pg_catalog.format(
+      'GRANT direct_entry_catalog_bootstrap_executor TO %I WITH ADMIN FALSE, INHERIT FALSE, SET TRUE',
+      session_user
+    );
+    perform pg_catalog.set_config('mini_bi.s0_t1c_added_executor_membership', 'true', true);
+  end if;
+end;
+$$;
+set local role direct_entry_catalog_bootstrap_executor;
+do $$
+declare
+  v_proc record;
+  v_object_kind text;
+begin
+  for v_proc in
+    select p.oid, p.prokind
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.prokind in ('f', 'p')
+       and p.proowner = current_user::regrole
+       and p.proname ~ '^(direct_entry_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)'
+  loop
+    v_object_kind := case when v_proc.prokind = 'p' then 'PROCEDURE' else 'FUNCTION' end;
+    execute pg_catalog.format(
+      'REVOKE EXECUTE ON %s %s FROM PUBLIC, anon, authenticated, service_role',
+      v_object_kind,
+      v_proc.oid::pg_catalog.regprocedure
+    );
+  end loop;
+end;
+$$;
+grant execute on function public.direct_entry_catalog_bootstrap_plan(uuid, uuid) to service_role;
+grant execute on function public.direct_entry_apply_catalog_bootstrap(uuid, uuid, text, text, text) to service_role;
+reset role;
+do $$
+begin
+  if current_setting('mini_bi.s0_t1c_added_executor_membership', true) = 'true' then
+    execute pg_catalog.format(
+      'REVOKE direct_entry_catalog_bootstrap_executor FROM %I GRANTED BY %I',
+      session_user,
+      current_user
+    );
+  end if;
+end;
+$$;
 do $$
 declare
   v_signature text;
   v_proc pg_catalog.regprocedure;
+  v_owner oid;
+  v_executor oid;
   v_allowlist constant text[] := array[
     'public.ai_provider_config_activate(text, integer, text)',
     'public.ai_provider_config_active()',
@@ -180,12 +256,25 @@ declare
     'public.upsert_daily_recruitment_run_v02(uuid, uuid, text, timestamptz, text, integer, integer, integer, integer, integer, text, text)'
   ];
 begin
+  select r.oid into v_executor
+    from pg_catalog.pg_roles r
+   where r.rolname = 'direct_entry_catalog_bootstrap_executor';
   foreach v_signature in array v_allowlist loop
     v_proc := pg_catalog.to_regprocedure(v_signature);
     if v_proc is null then
       raise exception 'S0-T1-C allowlist function is missing: %', v_signature;
     end if;
-    execute pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO service_role', v_proc);
+    select p.proowner into v_owner from pg_catalog.pg_proc p where p.oid = v_proc::oid;
+    if v_owner = v_executor then
+      if v_proc not in (
+        'public.direct_entry_catalog_bootstrap_plan(uuid, uuid)'::pg_catalog.regprocedure,
+        'public.direct_entry_apply_catalog_bootstrap(uuid, uuid, text, text, text)'::pg_catalog.regprocedure
+      ) then
+        raise exception 'S0-T1-C unexpected executor-owned allowlist function: %', v_signature;
+      end if;
+    else
+      execute pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO service_role', v_proc);
+    end if;
   end loop;
 end;
 $$;
