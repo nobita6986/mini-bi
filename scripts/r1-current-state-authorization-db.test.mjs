@@ -13,6 +13,7 @@ const FUTURE_AUTH = uuid(3), FUTURE_APP = uuid(4);
 const TEAM_A = uuid(11), TEAM_B = uuid(12);
 const REC_A = uuid(21), REC_B = uuid(22);
 const PROJECT = "r1-synthetic-project";
+const PROJECT_PM = "r1-synthetic-pm-project";
 
 async function addActor(db, auth, app, name) {
   await db.query("insert into auth.users (id) values ($1)", [auth]);
@@ -175,6 +176,63 @@ test("project-team grant/revoke is transactional current state, not an interval 
         where resource_ref=$1 and action in ('project_team_scope_grant','project_team_scope_revoke')
           and outcome='APPLIED'`, [mappingId],
     )).rows[0].n, 2);
+  } finally {
+    await db.close();
+  }
+});
+
+test("project deactivation preserves PM history authority until explicit unassign", async () => {
+  const { db } = await buildDb();
+  try {
+    await seedActorsAndResources(db);
+    const managerAuth = uuid(5), managerApp = uuid(6);
+    await addActor(db, managerAuth, managerApp, "Synthetic Project Manager");
+    await db.query(
+      `insert into public.direct_entry_app_user_recruiter_links
+         (app_user_id, recruiter_id, verified, valid_from, is_current)
+       values ($1, $2, true, '2020-01-01', true)`, [managerApp, REC_B],
+    );
+
+    await db.query(
+      `select public.direct_entry_create_project(
+        $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text)`,
+      [AUTH, APP, PROJECT_PM, "Synthetic PM Project", "create for PM history test", "r1-pm-create"],
+    );
+    const assignment = (await db.query(
+      `select public.direct_entry_assign_project_manager(
+        $1::uuid, $2::uuid, $3::text, $4::uuid, null, 1, $5::text, $6::text) as result`,
+      [AUTH, APP, PROJECT_PM, REC_B, "assign synthetic PM", "r1-pm-assign"],
+    )).rows[0].result;
+
+    await db.query(
+      `select public.direct_entry_set_project_active(
+        $1::uuid, $2::uuid, $3::text, false, 2, $4::text, $5::text)`,
+      [AUTH, APP, PROJECT_PM, "deactivate synthetic project", "r1-pm-deactivate"],
+    );
+    assert.deepEqual((await db.query(
+      `select is_current, valid_to::text as valid_to from public.direct_entry_project_manager_assignments
+        where assignment_id = $1`, [assignment.assignment_id],
+    )).rows[0], { is_current: true, valid_to: null });
+    assert.equal((await db.query(
+      `select public.direct_entry_actor_can_access_project($1, $2) as allowed`,
+      [managerApp, PROJECT_PM],
+    )).rows[0].allowed, true,
+    "deactivation hides new-work choices but keeps the manager's history authority");
+
+    await db.query(
+      `select public.direct_entry_unassign_project_manager(
+        $1::uuid, $2::uuid, $3::uuid, 1, 3, $4::text, $5::text)`,
+      [AUTH, APP, assignment.assignment_id, "unassign synthetic PM", "r1-pm-unassign"],
+    );
+    assert.deepEqual((await db.query(
+      `select is_current, valid_to::text as valid_to from public.direct_entry_project_manager_assignments
+        where assignment_id = $1`, [assignment.assignment_id],
+    )).rows[0], { is_current: false, valid_to: await db.query(
+      "select public.direct_entry_authorization_date()::text as today").then((r) => r.rows[0].today) });
+    assert.equal((await db.query(
+      `select public.direct_entry_actor_can_access_project($1, $2) as allowed`,
+      [managerApp, PROJECT_PM],
+    )).rows[0].allowed, false, "explicit unassign revokes the history authority");
   } finally {
     await db.close();
   }

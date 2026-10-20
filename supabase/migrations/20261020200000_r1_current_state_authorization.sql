@@ -33,7 +33,8 @@ alter table public.direct_entry_team_leader_assignments
 --   sets true only for the single provider period covering its import snapshot;
 --   historical/future periods remain false and are never auto-promoted.
 -- * project_manager_assignments: project-manager assignment sets true;
---   assignment revoke and project/recruiter disable clear it.
+--   assignment revoke and recruiter disable clear it. Project deactivation only
+--   prevents new work; it does not revoke access to existing project history.
 -- * project_team_scopes: project-team grant sets true; revoke and
 --   project/team disable clear it.
 -- * team_leader_assignments: team-leader designation sets true; revoke and
@@ -113,7 +114,6 @@ begin
   )
   update public.direct_entry_project_manager_assignments a
      set is_current = c.n = 1
-       and exists (select 1 from public.direct_entry_projects p where p.project_id = a.project_id and p.active)
        and exists (select 1 from public.recruiters r where r.recruiter_id = a.manager_recruiter_id and r.active)
        and exists (select 1 from public.direct_entry_app_user_recruiter_links l join public.direct_entry_app_users u
                     on u.app_user_id = l.app_user_id and u.enabled
@@ -289,7 +289,6 @@ begin
       end if;
     elsif tg_table_name = 'direct_entry_projects' then
       if old.active and not new.active then
-        update public.direct_entry_project_manager_assignments set is_current = false where project_id = new.project_id;
         update public.direct_entry_project_team_scopes set is_current = false where project_id = new.project_id;
       end if;
     elsif tg_table_name = 'vendors' then

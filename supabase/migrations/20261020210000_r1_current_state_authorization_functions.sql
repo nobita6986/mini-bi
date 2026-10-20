@@ -153,7 +153,6 @@ as $function$
       on l.recruiter_id = a.manager_recruiter_id and l.app_user_id = p_app_user_id and l.verified and l.is_current
     join public.direct_entry_app_users u on u.app_user_id = l.app_user_id and u.enabled
     join public.recruiters r on r.recruiter_id = a.manager_recruiter_id and r.active
-    join public.direct_entry_projects p on p.project_id = a.project_id and p.active
     where p_app_user_id is not null and a.is_current and (p_project_id is null or a.project_id = p_project_id)
   )
 $function$;
