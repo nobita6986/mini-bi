@@ -15,52 +15,27 @@
  * Khong danh gia capability/scope o application; khong doc truoc DB.
  */
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
+import {
+  failJson as fail,
+  isUuid,
+  noStoreJson as respond,
+  resolveTrustedSessionActor,
+} from "../http/direct-entry-api-guard.ts";
 import { projectChangeRequestListQuery } from "./change-request-read-contract.ts";
 import type { ChangeRequestReadRepository } from "./change-request-read-repository.ts";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type ChangeRequestReadDependencies = {
   resolveSession(): Promise<DirectEntrySessionResult>;
   repository: ChangeRequestReadRepository;
 };
 
-type TrustedActor = { auth_subject: string; app_user_id: string };
-
-function respond(body: unknown, status: number): Response {
-  return Response.json(body, {
-    status,
-    headers: { "Cache-Control": "private, no-store" },
-  });
-}
-
-function fail(code: string, status: number): Response {
-  return respond({ ok: false, code }, status);
-}
-
 async function resolveTrustedActor(
   dependencies: ChangeRequestReadDependencies,
-): Promise<{ ok: true; actor: TrustedActor } | { ok: false; response: Response }> {
-  try {
-    const session = await dependencies.resolveSession();
-    if (!session.actor.ok) {
-      return {
-        ok: false,
-        response: session.actor.reason === "UNAUTHENTICATED"
-          ? fail("UNAUTHENTICATED", 401)
-          : fail("ACTOR_NOT_AVAILABLE", 403),
-      };
-    }
-    const actor = session.actor.actor;
-    if (!actor || typeof actor.auth_subject !== "string" || !UUID.test(actor.auth_subject) ||
-        typeof actor.app_user_id !== "string" || !UUID.test(actor.app_user_id)) {
-      return { ok: false, response: fail("ACTOR_NOT_AVAILABLE", 403) };
-    }
-    return { ok: true, actor: { auth_subject: actor.auth_subject, app_user_id: actor.app_user_id } };
-  } catch {
-    console.error("[direct-entry] change request read session unavailable");
-    return { ok: false, response: fail("CHANGE_REQUEST_UNAVAILABLE", 500) };
-  }
+) {
+  return resolveTrustedSessionActor(dependencies.resolveSession, {
+    unavailableCode: "CHANGE_REQUEST_UNAVAILABLE",
+    logLabel: "change request read",
+  });
 }
 
 export async function listChangeRequests(
@@ -125,7 +100,7 @@ export async function readChangeRequest(
 ): Promise<Response> {
   if (flag !== "true") return fail("NOT_FOUND", 404);
 
-  if (typeof requestId !== "string" || !UUID.test(requestId)) {
+  if (!isUuid(requestId)) {
     return fail("CHANGE_REQUEST_ID_INVALID", 400);
   }
   if (new URL(request.url).searchParams.keys().next().done !== true) {

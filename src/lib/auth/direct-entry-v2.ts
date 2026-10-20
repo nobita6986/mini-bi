@@ -480,6 +480,14 @@ function isAllowedByScope(
   return matchingScopeCount === 1;
 }
 
+/**
+ * Pure reference contract evaluator for unit/audit tests (`direct-entry-v2.test.mjs`).
+ *
+ * NOTE (R2.1): Runtime authorization for all Direct Entry and Admin operations is
+ * enforced inside PostgreSQL `SECURITY DEFINER` RPCs (current-state authorization
+ * since R1/R1.1/R1.2/R2.1), NOT by calling `authorizeDirectEntry` in route handlers.
+ * Keep this function exclusively for contract-shape & audit-record regression tests.
+ */
 export function authorizeDirectEntry(input: AuthorizationInput): AuthorizationDecision {
   const requiredCapability = input.action;
   let code = "ALLOW";

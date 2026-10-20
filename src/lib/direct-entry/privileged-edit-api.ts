@@ -13,10 +13,15 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
 import { isCanonicalLaborTypeKey } from "../contracts/direct-entry-v1.ts";
 import { isCanonicalNationalId } from "../contracts/national-id.ts";
+import {
+  failJson as fail,
+  noStoreJson as respond,
+  resolveTrustedSessionActor,
+  UUID_REGEX as UUID,
+} from "../http/direct-entry-api-guard.ts";
 import { readBoundedJson } from "./write-api.ts";
 import type { PrivilegedEditRepository } from "./privileged-edit-repository.ts";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROJECT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const ISO_DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 // P3.1-W02C-R1: khong con closed set o day. Hinh dang canonical key do predicate dung chung
@@ -40,14 +45,6 @@ export type PrivilegedEditRequest = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function respond(body: unknown, status: number): Response {
-  return Response.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
-}
-
-function fail(code: string, status: number): Response {
-  return respond({ ok: false, code }, status);
 }
 
 /**
@@ -134,23 +131,12 @@ export async function privilegedEditEntry(
   const parsed = projectPrivilegedEditRequest(body);
   if (!parsed) return fail("PRIVILEGED_EDIT_INVALID", 400);
 
-  let session: DirectEntrySessionResult;
-  try {
-    session = await dependencies.resolveSession();
-  } catch {
-    console.error("[direct-entry] privileged edit session unavailable");
-    return fail("PRIVILEGED_EDIT_UNAVAILABLE", 500);
-  }
-  if (!session.actor.ok) {
-    return session.actor.reason === "UNAUTHENTICATED"
-      ? fail("UNAUTHENTICATED", 401)
-      : fail("ACTOR_NOT_AVAILABLE", 403);
-  }
-  const actor = session.actor.actor;
-  if (!actor || typeof actor.auth_subject !== "string" || !UUID.test(actor.auth_subject) ||
-      typeof actor.app_user_id !== "string" || !UUID.test(actor.app_user_id)) {
-    return fail("ACTOR_NOT_AVAILABLE", 403);
-  }
+  const session = await resolveTrustedSessionActor(dependencies.resolveSession, {
+    unavailableCode: "PRIVILEGED_EDIT_UNAVAILABLE",
+    logLabel: "privileged edit",
+  });
+  if (!session.ok) return session.response;
+  const actor = session.actor;
 
   let result: Awaited<ReturnType<PrivilegedEditRepository["edit"]>>;
   try {

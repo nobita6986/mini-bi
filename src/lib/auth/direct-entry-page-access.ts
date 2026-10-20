@@ -92,23 +92,30 @@ export function decideAccountAccessPageAccess(input: {
 
 const ENTRY_CAPABILITIES = ["entry_own", "entry_team", "entry_admin"] as const;
 
+function decideUiCapabilityPageAccess(input: {
+  uiEnabled: boolean;
+  actor: ActorResolution | null;
+  allowed: NavCapabilityPredicate;
+}): DirectEntryPageDecision {
+  if (!input.uiEnabled) return "NOT_FOUND";
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: input.allowed,
+  });
+}
+
 export function decideDirectEntryPageAccess(input: {
   uiEnabled: boolean;
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  if (!input.uiEnabled) return "NOT_FOUND";
-  const actor = input.actor;
-  if (!actor) return "TEMPORARY_UNAVAILABLE";
-  if (!actor.ok) {
-    if (actor.reason === "UNAUTHENTICATED") return "REDIRECT_LOGIN";
-    if (actor.reason === "ACTOR_MAPPING_MISSING" || actor.reason === "ACTOR_DISABLED") {
-      return "ACCOUNT_UNAVAILABLE";
-    }
-    return "TEMPORARY_UNAVAILABLE";
-  }
-  const hasEntryCapability = actor.actor.capabilities.some((capability) =>
-    (ENTRY_CAPABILITIES as readonly string[]).includes(capability));
-  return hasEntryCapability ? "ALLOW" : "ACCESS_DENIED";
+  return decideUiCapabilityPageAccess({
+    uiEnabled: input.uiEnabled,
+    actor: input.actor,
+    allowed: (actor) =>
+      actor.capabilities.some((capability) =>
+        (ENTRY_CAPABILITIES as readonly string[]).includes(capability),
+      ),
+  });
 }
 
 /**
@@ -121,17 +128,11 @@ export function decideProjectOperationsPageAccess(input: {
   uiEnabled: boolean;
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  if (!input.uiEnabled) return "NOT_FOUND";
-  const actor = input.actor;
-  if (!actor) return "TEMPORARY_UNAVAILABLE";
-  if (!actor.ok) {
-    if (actor.reason === "UNAUTHENTICATED") return "REDIRECT_LOGIN";
-    if (actor.reason === "ACTOR_MAPPING_MISSING" || actor.reason === "ACTOR_DISABLED") {
-      return "ACCOUNT_UNAVAILABLE";
-    }
-    return "TEMPORARY_UNAVAILABLE";
-  }
-  return projectAdminNavPredicate(actor.actor) ? "ALLOW" : "ACCESS_DENIED";
+  return decideUiCapabilityPageAccess({
+    uiEnabled: input.uiEnabled,
+    actor: input.actor,
+    allowed: projectAdminNavPredicate,
+  });
 }
 
 /** Server-side fallback for an empty project list; mirrors #72's catalog-operator/admin authority order. */
@@ -151,17 +152,11 @@ export function decideWorkerOperationsPageAccess(input: {
   uiEnabled: boolean;
   actor: ActorResolution | null;
 }): DirectEntryPageDecision {
-  if (!input.uiEnabled) return "NOT_FOUND";
-  const actor = input.actor;
-  if (!actor) return "TEMPORARY_UNAVAILABLE";
-  if (!actor.ok) {
-    if (actor.reason === "UNAUTHENTICATED") return "REDIRECT_LOGIN";
-    if (actor.reason === "ACTOR_MAPPING_MISSING" || actor.reason === "ACTOR_DISABLED") {
-      return "ACCOUNT_UNAVAILABLE";
-    }
-    return "TEMPORARY_UNAVAILABLE";
-  }
-  return workerOperationsNavPredicate(actor.actor) ? "ALLOW" : "ACCESS_DENIED";
+  return decideUiCapabilityPageAccess({
+    uiEnabled: input.uiEnabled,
+    actor: input.actor,
+    allowed: workerOperationsNavPredicate,
+  });
 }
 
 /**

@@ -1079,13 +1079,25 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // staging RPCs and #119 tightens the batch stage-count bound in place. The
     // R1 adds two internal current-state trigger routines. R1.1 adds one strict
     // current-team authority helper; R1.2 adds two internal helpers and one service-role search RPC.
-    // All 270 direct_entry signatures split into 107 service-role entry points and 163 internal routines.
-    assert.deepEqual(result.rows[0], {
-      total: 270,
-      service_role: 107,
-      internal: 163,
-      exposed_internal: 0,
-    });
+    // R2.1 replaces brittle hardcoded function-count totals with security invariants:
+    // every direct_entry_% signature is partitioned into service_role entry points and
+    // internal helpers, with zero exposure to anon, authenticated, or PUBLIC.
+    const row = result.rows[0];
+    assert.equal(row.exposed_internal, 0, "no internal helper may be executable by anon/authenticated/PUBLIC");
+    assert.equal(row.total, row.service_role + row.internal, "service_role + internal must partition total signatures");
+    assert.ok(row.service_role > 0 && row.internal > 0, "both service_role RPCs and internal helpers must be present");
+    const exposedService = await db.query(`
+      select p.proname
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname like 'direct_entry_%'
+         and (has_function_privilege('anon', p.oid, 'EXECUTE')
+           or has_function_privilege('authenticated', p.oid, 'EXECUTE')
+           or exists (
+             select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+              where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+           ))
+    `);
+    assert.deepEqual(exposedService.rows, [], "no direct_entry_% routine may be executable by anon/authenticated/PUBLIC");
   } finally {
     await db.close();
   }
