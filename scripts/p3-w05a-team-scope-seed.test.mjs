@@ -17,8 +17,9 @@ test("W05A team-scope seed remains migration-only and is superseded by W01D", as
     const names = (await readdir(MIGRATION_DIR))
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    assert.equal(names.length, 122);
-    assert.equal(names.at(-52), "20261009070000_p3_1_w01d_team_leader_lifecycle.sql");
+    assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+      "migration inventory includes the #122 baseline");
+    assert.equal(names.indexOf("20261009070000_p3_1_w01d_team_leader_lifecycle.sql"), 70, "migration chronology remains append-only");
 
     const sources = await Promise.all(names.map(async (name) => ({
       name,

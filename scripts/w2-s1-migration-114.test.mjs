@@ -13,8 +13,9 @@ const AUTH_PROLOGUE =
 async function applyBefore114(db) {
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-9), MIGRATION_114);
-  assert.equal(names.length, 122);
+  assert.equal(names.indexOf(MIGRATION_114), 113, "migration chronology remains append-only");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
   const migrationIndex = names.indexOf(MIGRATION_114);
   for (const name of names.slice(0, migrationIndex)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));

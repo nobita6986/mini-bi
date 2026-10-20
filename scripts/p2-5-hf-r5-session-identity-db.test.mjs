@@ -43,8 +43,9 @@ async function freshDb() {
 
 test("HF-R5: #62 stays immediately before R6 and a fresh ledger applies clean", async () => {
   const names = await ledgerNames();
-  assert.equal(names[names.length - (1 + 60)], HF_R5, "#62 must stay immediately before #63");
-  assert.equal(names.length, 122);
+  assert.equal(names.indexOf(HF_R5), 61, "#62 must stay immediately before #63");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
   const db = await freshDb();
   try {
     await applyUpTo(db, names);

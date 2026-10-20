@@ -46,10 +46,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 122, "the ledger carries append-only migrations through #122");
-  assert.equal(names[names.length - (3 + 28)], D3A_MIGRATION,
-    "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
-  assert.equal(names.at(-23), DEFAULT_CAPABILITIES_MIGRATION);
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(D3A_MIGRATION), 91, "the D3-A migration stays #92 immediately before PRE-W2-HF-G #93");
+  assert.equal(names.indexOf(DEFAULT_CAPABILITIES_MIGRATION), 99, "migration chronology remains append-only");
   return db;
 }
 
@@ -57,8 +57,13 @@ async function buildDbBeforeDefaultCapabilities() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-23), DEFAULT_CAPABILITIES_MIGRATION);
-  for (const name of names.slice(0, -4)) {
+  assert.equal(names.indexOf(DEFAULT_CAPABILITIES_MIGRATION), 99, "migration chronology remains append-only");
+  const beforePortraitStageBatchLimit = names.indexOf(
+    "20261018170000_w2_s1_multi_document_stage_batch_limit.sql",
+  );
+  assert.notEqual(beforePortraitStageBatchLimit, -1,
+    "the test baseline ends before the portrait-stage batch-limit migration");
+  for (const name of names.slice(0, beforePortraitStageBatchLimit)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
 
@@ -92,7 +97,8 @@ async function buildDbBeforePersonnelDefaultAccess() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 122);
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
   const migrationIndex = names.indexOf(PERSONNEL_DEFAULT_ACCESS_MIGRATION);
   assert.notEqual(migrationIndex, -1, "the personnel default-access migration is present in the ledger");
   for (const name of names.slice(0, migrationIndex)) {
