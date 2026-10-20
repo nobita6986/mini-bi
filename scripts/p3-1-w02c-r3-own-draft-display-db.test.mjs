@@ -503,3 +503,88 @@ test("5: key khong co catalog row => JSON null, khong bo qua va khong bia nhan",
     && draft.labor_type_display.length > 0), true, "moi draft deu mang nhan khong rong");
   assert.deepEqual(accepted.map((draft) => draft.entry_id).sort(), EXPECTED_ENTRY_IDS);
 });
+
+test("6: payment account RPC payloads project safely in a mixed draft list", async () => {
+  const maskedEntry = await insertDraftRow(db, {
+    createdBy: ACTORS.outsider, employeeCode: "hrp-2026-600006",
+    laborType: ACTIVE_KEY, firstWorkDate: "2026-10-18",
+  });
+  const legacyWhitespaceEntry = await insertDraftRow(db, {
+    createdBy: ACTORS.outsider, employeeCode: "hrp-2026-600007",
+    laborType: ACTIVE_KEY, firstWorkDate: "2026-10-19",
+  });
+  const malformedMaskEntry = await insertDraftRow(db, {
+    createdBy: ACTORS.outsider, employeeCode: "hrp-2026-600008",
+    laborType: ACTIVE_KEY, firstWorkDate: "2026-10-20",
+  });
+  assert.equal(maskedEntry.code, null);
+  assert.equal(legacyWhitespaceEntry.code, null);
+  assert.equal(malformedMaskEntry.code, null);
+
+  await db.query(
+    "insert into public.direct_entry_payments"
+    + " (entry_id, state, account_number, bank_id, account_holder_name) values"
+    + " ($1, 'provided', $2, 's02b_bank', 'Synthetic holder'),"
+    + " ($3, 'provided', $4, 's02b_bank', 'Synthetic holder'),"
+    + " ($5, 'provided', $6, 's02b_bank', 'Synthetic holder'),"
+    + " ($7, 'provided', $8, 's02b_bank', 'Synthetic holder'),"
+    + " ($9, 'provided', $10, 's02b_bank', 'Synthetic holder'),"
+    + " ($11, 'provided', $12, 's02b_bank', 'Synthetic holder')",
+    [ACTIVE_ENTRY, "000012340056", INACTIVE_ENTRY, "00001234 ", DYNAMIC_ENTRY, "ABCD123X",
+      maskedEntry.entryId, "000012340056", legacyWhitespaceEntry.entryId, "00001234",
+      malformedMaskEntry.entryId, "ABCD123X"],
+  );
+
+  const ownPayload = await listOwnDrafts(db);
+  const ownProjected = projectOwnDrafts(ownPayload);
+  assert.ok(ownProjected, "synthetic RPC rows must project even with unreadable account values");
+  const ownByEntry = new Map(ownProjected.map((draft) => [draft.entry_id, draft]));
+  assert.deepEqual(ownByEntry.get(ACTIVE_ENTRY).profile.payment.account_number,
+    { state: "provided", value: "000012340056" }, "leading zeroes remain unchanged");
+  assert.deepEqual(ownByEntry.get(INACTIVE_ENTRY).profile.payment.account_number,
+    { state: "provided", value: "00001234" },
+    "database write guard trims edge whitespace without changing leading zeroes");
+  assert.deepEqual(ownByEntry.get(DYNAMIC_ENTRY).profile.payment.account_number,
+    { state: "redacted", present: true }, "malformed raw account becomes hidden");
+  assert.equal(JSON.stringify(ownProjected).includes("ABCD123X"), false,
+    "malformed raw account must not escape the projector");
+
+  const maskedPayload = await listOwnDrafts(db);
+  const legacyMaskIndex = maskedPayload.drafts.findIndex(
+    (draft) => draft.entry_id === legacyWhitespaceEntry.entryId);
+  assert.notEqual(legacyMaskIndex, -1, "the synthetic row must be present in the RPC result");
+  const legacyWhitespaceAccount = "00001234    ";
+  const legacyMask = (await db.query(
+    "select repeat('•', greatest(length($1::text) - 4, 0)) || right($1::text, 4) as value",
+    [legacyWhitespaceAccount],
+  )).rows[0].value;
+  assert.equal(legacyMask, "••••••••    ", "match the RPC mask for an all-whitespace suffix");
+  const legacyWhitespacePayload = (await db.query(
+    "select jsonb_set($1::jsonb, $2::text[], $3::jsonb) as data",
+    [JSON.stringify(maskedPayload),
+      ["drafts", String(legacyMaskIndex), "profile", "payment", "account_number"],
+      JSON.stringify({ state: "masked", value: legacyMask })],
+  )).rows[0].data;
+  const maskedProjected = projectOwnDrafts(legacyWhitespacePayload);
+  assert.ok(maskedProjected, "a malformed account string must not reject other drafts");
+  assert.equal(maskedProjected.length, EXPECTED_ENTRY_IDS.length + 3);
+  const maskedByEntry = new Map(maskedProjected.map((draft) => [draft.entry_id, draft]));
+  assert.deepEqual(maskedByEntry.get(maskedEntry.entryId).profile.payment.account_number,
+    { state: "masked", value: "••••••••0056" }, "valid SQL mask is retained");
+  assert.deepEqual(maskedByEntry.get(legacyWhitespaceEntry.entryId).profile.payment.account_number,
+    { state: "redacted", present: true },
+    "a masked value with an all-whitespace suffix becomes hidden");
+  assert.deepEqual(maskedByEntry.get(malformedMaskEntry.entryId).profile.payment.account_number,
+    { state: "redacted", present: true }, "unreadable masked suffix becomes hidden");
+  assert.equal(JSON.stringify(maskedProjected).includes("ABCD123X"), false,
+    "the raw malformed account must not escape the masked RPC projection");
+  assert.equal(JSON.stringify(maskedProjected).includes(legacyWhitespaceAccount), false,
+    "legacy account text must not escape the masked RPC projection");
+
+  const malformedObject = (await db.query(
+    "select jsonb_set($1::jsonb, '{drafts,0,profile,payment,account_number}', $2::jsonb) as data",
+    [JSON.stringify(legacyWhitespacePayload), JSON.stringify({ state: "masked", value: 1234 })],
+  )).rows[0].data;
+  assert.equal(projectOwnDrafts(malformedObject), null,
+    "malformed account object from PostgreSQL remains fail-closed");
+});
