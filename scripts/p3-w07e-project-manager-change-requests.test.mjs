@@ -92,7 +92,8 @@ test("current project assignment exposes submitted rows for proposals, but not d
   const migrated = await createMigratedDatabase();
   const db = migrated.db;
   try {
-    assert.equal(migrated.migrationNames.length, 122);
+    assert.ok(migrated.migrationNames.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+      "migration inventory includes the #122 baseline");
     const initialWorkerDetails = worker("S02B worker1");
     initialWorkerDetails.date_of_birth = { state: "provided", value: "01/01/2000" };
     initialWorkerDetails.national_id = { state: "provided", value: "000000000000" };

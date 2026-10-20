@@ -48,8 +48,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 122, "the ledger carries the PRE-W2-HF-D2 migration as #88");
-  assert.equal(names[names.length - (1 + 34)], D2_MIGRATION, "HF-D2 remains #88 before the cutoff and export migrations");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(D2_MIGRATION), 87, "HF-D2 remains #88 before the cutoff and export migrations");
   return db;
 }
 

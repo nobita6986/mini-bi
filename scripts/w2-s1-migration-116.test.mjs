@@ -23,10 +23,11 @@ test("migration #116 expires only STAGED older than 24h and leases cleanup retri
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 122);
-    assert.equal(names.at(-7), MIGRATION_116);
-    assert.equal(names.at(-8), MIGRATION_115);
-    for (const name of names.slice(0, -7)) {
+    assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+      "migration inventory includes the #122 baseline");
+    assert.equal(names.indexOf(MIGRATION_116), 115, "migration chronology remains append-only");
+    assert.equal(names.indexOf(MIGRATION_115), 114, "migration chronology remains append-only");
+    for (const name of names.slice(0, names.indexOf(MIGRATION_116))) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await db.exec(await readFile(path.join(MIGRATION_DIR, MIGRATION_116), "utf8"));

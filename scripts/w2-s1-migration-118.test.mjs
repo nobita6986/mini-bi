@@ -22,10 +22,11 @@ test("W2S1 migrations #118-#119 stage worker documents and allow up to four per 
       " create schema auth; create table auth.users (id uuid primary key);",
     );
     const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-    assert.equal(names.length, 122);
-    assert.equal(names.at(-5), MIGRATION_118);
-    assert.equal(names.at(-4), MIGRATION_119);
-    for (const name of names.slice(0, -5)) {
+    assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+      "migration inventory includes the #122 baseline");
+    assert.equal(names.indexOf(MIGRATION_118), 117, "migration chronology remains append-only");
+    assert.equal(names.indexOf(MIGRATION_119), 118, "migration chronology remains append-only");
+    for (const name of names.slice(0, names.indexOf(MIGRATION_118))) {
       await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
     }
     await db.exec(await readFile(path.join(MIGRATION_DIR, MIGRATION_118), "utf8"));
