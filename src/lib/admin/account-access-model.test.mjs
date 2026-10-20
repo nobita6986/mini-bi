@@ -93,7 +93,7 @@ test("search, enabled filter and pagination use a bounded explicit API query", (
   assert.equal(buildAccountListQuery({ search: "x", enabled: "bogus", page: 1 }), null);
 });
 
-test("enable/disable body carries exactly expected_version, reason and idempotency_key", () => {
+test("enable/disable body carries exactly expected_version, optional reason and idempotency_key", () => {
   const result = buildAccountStateRequest({ expectedVersion: 3, reason: "Ngừng theo yêu cầu", idempotencyKey: KEY });
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -101,8 +101,12 @@ test("enable/disable body carries exactly expected_version, reason and idempoten
     ["expected_version", "idempotency_key", "reason"]);
   assert.equal(result.body.expected_version, 3);
   assert.equal(result.body.idempotency_key, KEY);
-  // Mandatory reason, authoritative version >= 1, UUID idempotency key.
-  assert.equal(buildAccountStateRequest({ expectedVersion: 3, reason: "   ", idempotencyKey: KEY }).ok, false);
+  // Optional reason is canonicalized; OCC and idempotency validation stay strict.
+  for (const input of [{}, { reason: null }, { reason: "" }, { reason: "   " }]) {
+    const optional = buildAccountStateRequest({ expectedVersion: 3, ...input, idempotencyKey: KEY });
+    assert.equal(optional.ok, true);
+    if (optional.ok) assert.equal(optional.body.reason, null);
+  }
   assert.equal(buildAccountStateRequest({ expectedVersion: 0, reason: "x", idempotencyKey: KEY }).ok, false);
   assert.equal(buildAccountStateRequest({ expectedVersion: 1.5, reason: "x", idempotencyKey: KEY }).ok, false);
   assert.equal(buildAccountStateRequest({ expectedVersion: 3, reason: "x", idempotencyKey: "not-a-uuid" }).ok, false);

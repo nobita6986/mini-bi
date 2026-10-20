@@ -184,10 +184,9 @@ export function DirectEntryCccdManager({
 
   const upload = useCallback(async (types: readonly CccdDocumentType[]) => {
     if (entryId === null || detail === null || busy || !canEdit) return;
-    const trimmedReason = requireReason ? reason.trim() : null;
-    if (requireReason && (trimmedReason === null || trimmedReason.length < 1 ||
-        trimmedReason.length > REASON_MAX_LENGTH)) {
-      setMessage("Lý do thay thế tài liệu là bắt buộc và tối đa 4000 ký tự.");
+    const trimmedReason = requireReason ? (reason.trim() || null) : null;
+    if (requireReason && reason.length > REASON_MAX_LENGTH) {
+      setMessage("Lý do tối đa 4000 ký tự.");
       return;
     }
     const files: CccdUploadFile[] = [];
@@ -331,7 +330,7 @@ export function DirectEntryCccdManager({
         )}
         {requireReason && (
           <label className={styles.field}>
-            <span>Lý do thay thế tài liệu</span>
+            <span>Lý do thay thế tài liệu (không bắt buộc)</span>
             <textarea aria-label="Lý do thay thế tài liệu" rows={3} maxLength={REASON_MAX_LENGTH}
               disabled={!canEdit || busy}
               value={reason}

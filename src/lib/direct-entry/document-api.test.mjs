@@ -69,7 +69,28 @@ test("reservation signs a PUT only after the DB reservation and returns no bucke
   assert.equal(body.validation_status, "PENDING");
   assert.doesNotMatch(JSON.stringify(body), /p1\.6\/|hrp-bi|checksum|bucket|storage_key/);
   assert.equal(d.log.db[0][1].size_bytes, png.length);
+  assert.equal(d.log.db[0][1].reason, null);
   assert.equal("checksum_sha256" in d.log.db[0][1], false);
+});
+
+test("document action reason is optional and malformed or oversized values are rejected", async () => {
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...reserveBody };
+    if (reason !== undefined) body.reason = reason;
+    const d = deps();
+    const response = await reserveDirectEntryDocument(makeRequest(body), entryId, "true", d);
+    assert.equal(response.status, 201);
+    assert.equal(d.log.db[0][1].reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const d = deps();
+    const response = await reserveDirectEntryDocument(
+      makeRequest({ ...reserveBody, reason }), entryId, "true", d,
+    );
+    assert.equal(response.status, 400);
+    assert.equal(d.log.sessions, 0);
+    assert.deepEqual(d.log.db, []);
+  }
 });
 
 test("missing storage config fails closed before any DB or storage call", async () => {

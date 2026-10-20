@@ -161,25 +161,34 @@ test("assign and move use canonical path and exact body without a team identifie
     assert.equal("team_id" in result.request.body, false);
     assert.equal(result.request.idempotencyKey, KEY);
   }
-  assert.equal(buildAssignMembershipRequest({
+  const noReason = buildAssignMembershipRequest({
+    recruiterId: RECRUITER_A, teamId: TEAM_A, validFrom: "2026-10-09",
+    expectedVersion: 4, idempotencyKey: KEY,
+  });
+  assert.equal(noReason.ok, true);
+  if (noReason.ok) assert.equal(noReason.request.body.reason, null);
+  const invalidDate = buildAssignMembershipRequest({
     recruiterId: RECRUITER_A,
     teamId: TEAM_A,
     validFrom: "2026-02-30",
     expectedVersion: 4,
     reason: "Lý do",
     idempotencyKey: KEY,
-  }).ok, false);
-  assert.equal(buildAssignMembershipRequest({
+  });
+  assert.equal(invalidDate.ok, false);
+  const blankReason = buildAssignMembershipRequest({
     recruiterId: RECRUITER_A,
     teamId: TEAM_A,
     validFrom: "2026-10-09",
     expectedVersion: 4,
     reason: " ",
     idempotencyKey: KEY,
-  }).ok, false);
+  });
+  assert.equal(blankReason.ok, true);
+  if (blankReason.ok) assert.equal(blankReason.request.body.reason, null);
 });
 
-test("unassign and scheduled cancellation use exact request body and required values", () => {
+test("unassign and scheduled cancellation use exact request body and valid dates", () => {
   const request = buildUnassignMembershipRequest({
     recruiterId: RECRUITER_A,
     validTo: "2026-10-09",
@@ -196,20 +205,28 @@ test("unassign and scheduled cancellation use exact request body and required va
     assert.equal("team_id" in request.request.body, false);
     assert.equal(request.request.idempotencyKey, KEY);
   }
-  assert.equal(buildUnassignMembershipRequest({
+  const invalidDate = buildUnassignMembershipRequest({
     recruiterId: RECRUITER_A,
     validTo: "2026-02-30",
     expectedVersion: 4,
     reason: "Lý do",
     idempotencyKey: KEY,
-  }).ok, false);
-  assert.equal(buildUnassignMembershipRequest({
+  });
+  assert.equal(invalidDate.ok, false);
+  const noReason = buildUnassignMembershipRequest({
+    recruiterId: RECRUITER_A, validTo: "2026-10-09", expectedVersion: 4, idempotencyKey: KEY,
+  });
+  assert.equal(noReason.ok, true);
+  if (noReason.ok) assert.equal(noReason.request.body.reason, null);
+  const blankReason = buildUnassignMembershipRequest({
     recruiterId: RECRUITER_A,
     validTo: "2026-10-09",
     expectedVersion: 4,
     reason: "",
     idempotencyKey: KEY,
-  }).ok, false);
+  });
+  assert.equal(blankReason.ok, true);
+  if (blankReason.ok) assert.equal(blankReason.request.body.reason, null);
 });
 
 test("mutation classification fails closed and distinguishes denial, absence and OCC", () => {

@@ -41,7 +41,7 @@ function validRow(overrides = {}) {
   };
 }
 
-test("the request accepts the exact allowlist and optional/null filters", () => {
+test("the request accepts the exact allowlist and optional/null filters and reasons", () => {
   assert.deepEqual(projectWorkerExportRequest({ scope: "recruited", reason: "  ly do  " }), {
     scope: "recruited", project_id: null, recruiter_id: null, employment_status: null,
     reason: "ly do",
@@ -55,15 +55,21 @@ test("the request accepts the exact allowlist and optional/null filters", () => 
   assert.deepEqual(projectWorkerExportRequest({ scope: "all", reason: "audit all" }), {
     scope: "all", project_id: null, recruiter_id: null, employment_status: null, reason: "audit all",
   });
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { scope: "team" };
+    if (reason !== undefined) body.reason = reason;
+    assert.deepEqual(projectWorkerExportRequest(body), {
+      scope: "team", project_id: null, recruiter_id: null, employment_status: null, reason: null,
+    });
+  }
 });
 
 test("the request rejects unknown keys, wrong types, invalid enums and filters", () => {
   for (const body of [
     null,
     [],
-    { scope: "recruited" },
-    { scope: "recruited", reason: "" },
     { scope: "recruited", reason: "x".repeat(4001) },
+    { scope: "recruited", reason: 123 },
     { scope: "everything", reason: "x" },
     { scope: "recruited", reason: "x", idempotency_key: "abc" },
     { scope: "recruited", reason: "x", auth_subject: "s" },

@@ -12,6 +12,7 @@ import { projectTeamItem } from "./team-catalog-model.ts";
 import type { AdminTeam } from "../direct-entry/team-catalog-contract.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -105,7 +106,7 @@ type MutationInput = {
   teamId: string;
   effectiveDate: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 };
 
@@ -129,7 +130,7 @@ export function buildTeamLeaderDesignation(input: MutationInput & {
         leader_app_user_id: input.leaderAppUserId,
         effective_date: input.effectiveDate,
         expected_version: input.expectedVersion,
-        reason: input.reason,
+        reason: normalizeOptionalActionReason(input.reason),
         idempotency_key: input.idempotencyKey,
       },
     },
@@ -154,7 +155,7 @@ export function buildTeamLeaderRevocation(input: MutationInput): {
       body: {
         effective_date: input.effectiveDate,
         expected_version: input.expectedVersion,
-        reason: input.reason,
+        reason: normalizeOptionalActionReason(input.reason),
         idempotency_key: input.idempotencyKey,
       },
     },

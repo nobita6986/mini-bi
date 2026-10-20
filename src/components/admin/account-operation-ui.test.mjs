@@ -8,7 +8,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./account-manager.tsx", import.meta.url), "utf8");
 const model = readFileSync(new URL("../../lib/admin/account-operation-ui-model.ts", import.meta.url), "utf8");
 
-test("D3-B: create/edit/reset dialogs wire the D3-B routes and mandatory reason", () => {
+test("D3-B: create/edit/reset dialogs wire the D3-B routes and optional reason", () => {
   assert.match(source, /Tạo tài khoản/);
   assert.match(source, /Sửa tên/);
   assert.match(source, /Đặt lại mật khẩu/);
@@ -19,6 +19,7 @@ test("D3-B: create/edit/reset dialogs wire the D3-B routes and mandatory reason"
   assert.match(source, /buildEditDisplayNameRequest/);
   assert.match(source, /buildResetPasswordRequest/);
   assert.match(source, /ReasonField/);
+  assert.match(source, /Lý do thao tác \(không bắt buộc\)/);
 });
 
 test("D3-B: passwords are typed password and never logged", () => {

@@ -187,7 +187,8 @@ export const PROPOSER_REASON_MAX_LENGTH = 4000;
 export function normalizeReason(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (trimmed.length < 1 || trimmed.length > PROPOSER_REASON_MAX_LENGTH) return null;
+  if (trimmed.length < 1) return null;
+  if (value.length > PROPOSER_REASON_MAX_LENGTH) return value;
   return trimmed;
 }
 

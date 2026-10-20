@@ -19,10 +19,10 @@ export type AccountAccessRepository = {
   listAccounts(input: AccountActorRef & AccountListQuery): Promise<AccountAccessOutcome<ExistingAccountList>>;
   getAccount(input: AccountActorRef & { target_app_user_id: string }): Promise<AccountAccessOutcome<ExistingAccount>>;
   enableAccount(input: AccountActorRef & {
-    target_app_user_id: string; expected_version: number; reason: string; idempotency_key: string;
+    target_app_user_id: string; expected_version: number; reason: string | null; idempotency_key: string;
   }): Promise<AccountAccessOutcome<null>>;
   disableAccount(input: AccountActorRef & {
-    target_app_user_id: string; expected_version: number; reason: string; idempotency_key: string;
+    target_app_user_id: string; expected_version: number; reason: string | null; idempotency_key: string;
   }): Promise<AccountAccessOutcome<null>>;
 };
 

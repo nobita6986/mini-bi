@@ -3,6 +3,7 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import type { DirectEntryRepository } from "./write-repository.ts";
+import { projectOptionalActionReason } from "./action-reason.ts";
 import { readBoundedJson } from "./write-api.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -22,7 +23,7 @@ type StatusRequest = {
   effective_date: string;
   leave_date: string | null;
   leave_reason_text: string | null;
-  reason: string;
+  reason: string | null;
 };
 
 function respond(body: unknown, status: number): Response {
@@ -42,17 +43,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function projectRequest(value: unknown): StatusRequest | null {
   if (!isRecord(value) ||
-      Object.keys(value).sort().join(",") !== [...REQUEST_KEYS].sort().join(",") ||
+      Object.keys(value).some((key) => !REQUEST_KEYS.includes(key)) ||
+      REQUEST_KEYS.filter((key) => key !== "reason").some((key) => !(key in value)) ||
       typeof value.expected_entry_version !== "number" ||
       !Number.isSafeInteger(value.expected_entry_version) || value.expected_entry_version < 1 ||
       (value.status !== "UNCONFIRMED" && value.status !== "ON" && value.status !== "OFF") ||
       typeof value.effective_date !== "string" || !isRealCalendarDate(value.effective_date) ||
       (value.leave_date !== null &&
         (typeof value.leave_date !== "string" || !isRealCalendarDate(value.leave_date))) ||
-      (value.leave_reason_text !== null && typeof value.leave_reason_text !== "string") ||
-      typeof value.reason !== "string" || value.reason.trim() === "" || value.reason.length > 4000) {
+      (value.leave_reason_text !== null && typeof value.leave_reason_text !== "string")) {
     return null;
   }
+  const reason = projectOptionalActionReason(value.reason);
+  if (!reason.ok) return null;
   if (value.status === "OFF") {
     if (value.leave_date !== value.effective_date ||
         typeof value.leave_reason_text !== "string" ||
@@ -68,7 +71,7 @@ function projectRequest(value: unknown): StatusRequest | null {
     effective_date: value.effective_date,
     leave_date: value.leave_date,
     leave_reason_text: value.leave_reason_text,
-    reason: value.reason,
+    reason: reason.value,
   };
 }
 

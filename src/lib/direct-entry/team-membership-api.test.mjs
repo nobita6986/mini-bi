@@ -167,11 +167,35 @@ test("request projections are strict about keys, values and OCC", () => {
   assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, team: TEAM }).ok, false);
   assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, valid_from: "01/02/2026" }).ok, false);
   assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, valid_from: null }).ok, false);
-  assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, reason: "" }).ok, false);
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...ASSIGN_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const parsed = teamMembershipAssignRequest(body);
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) assert.equal(parsed.value.reason, null);
+  }
+  assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, reason: 123 }).ok, false);
+  assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, reason: "x".repeat(4001) }).ok, false);
   assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, idempotency_key: "nope" }).ok, false);
   assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, extra: 1 }).ok, false);
   assert.equal(teamMembershipAssignRequest({ ...ASSIGN_BODY, valid_to: DAY }).ok, false,
     "an assign request never carries valid_to");
+  for (const [parse, valid] of [
+    [teamMembershipAssignRequest, ASSIGN_BODY],
+    [teamMembershipUnassignRequest, UNASSIGN_BODY],
+  ]) {
+    for (const reason of [undefined, null, "", "  "]) {
+      const body = { ...valid };
+      if (reason === undefined) delete body.reason;
+      else body.reason = reason;
+      const parsed = parse(body);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal(parsed.value.reason, null);
+    }
+    assert.equal(parse({ ...valid, reason: 123 }).ok, false);
+    assert.equal(parse({ ...valid, reason: "x".repeat(4001) }).ok, false);
+  }
 
   // FIX R1: ISO shape is not enough - the date must exist in the calendar.
   for (const invalid of ["2026-02-30", "2026-13-01", "2026-00-10", "2026-04-31", "2026-11-00"]) {

@@ -6,7 +6,7 @@
  *   2. same-origin/CSRF (mutation)
  *   3. content-type + JSON bounded
  *   4. quet authority de quy (client khong duoc gui actor/role/capability/scope)
- *   5. strict request projection (reason bat buoc, OCC, idempotency)
+ *   5. strict request projection (optional action reason, OCC, idempotency)
  *   6. resolve session server-side -> actor CHI tu session
  *   7. repository/RPC
  *   8. response sanitized (khong forward raw DB message)
@@ -20,6 +20,7 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { readBoundedJson } from "./write-api.ts";
 import type { PersonnelCatalogRepository } from "./personnel-catalog-repository.ts";
 import type { PersonnelPosition } from "./personnel-catalog-contract.ts";
+import { hasExactKeysWithOptionalReason, projectOptionalActionReason } from "./action-reason.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,7 +53,7 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+  return hasExactKeysWithOptionalReason(value, keys);
 }
 function text(value: unknown, max: number): string | null {
   return typeof value === "string" && value.trim() !== "" && value.length <= max ? value : null;
@@ -190,7 +191,7 @@ export function personnelCatalogListQuery(url: URL): Parsed<ListPersonnelQuery> 
 export type CreatePersonnelRequest = {
   expected_version: 0; personnel_code: string; display_name: string;
   personnel_position: PersonnelPosition; valid_from: string;
-  reason: string; idempotency_key: string;
+  reason: string | null; idempotency_key: string;
 };
 export function personnelCatalogCreateRequest(body: unknown): Parsed<CreatePersonnelRequest> {
   const value = record(body);
@@ -203,21 +204,21 @@ export function personnelCatalogCreateRequest(body: unknown): Parsed<CreatePerso
   const display_name = text(value.display_name, NAME_MAX);
   const personnel_position = position(value.personnel_position);
   const valid_from = day(value.valid_from);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
   // create mo mot aggregate moi: expected_version phai dung bang 0. valid_from la
   // bat buoc va tuong minh - khong bao gio coalesce sang authorization date.
   if (expected_version !== 0 || !personnel_code || !display_name || !personnel_position ||
-      !valid_from || !reason || !idempotency_key) {
+      !valid_from || !reason.ok || !idempotency_key) {
     return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
   }
   return { ok: true, value: { expected_version: 0, personnel_code, display_name,
-    personnel_position, valid_from, reason, idempotency_key } };
+    personnel_position, valid_from, reason: reason.value, idempotency_key } };
 }
 
 export type UpdatePersonnelRequest = {
   expected_version: number; personnel_code: string; display_name: string;
-  personnel_position: PersonnelPosition; reason: string; idempotency_key: string;
+  personnel_position: PersonnelPosition; reason: string | null; idempotency_key: string;
 };
 export function personnelCatalogUpdateRequest(body: unknown): Parsed<UpdatePersonnelRequest> {
   const value = record(body);
@@ -229,18 +230,18 @@ export function personnelCatalogUpdateRequest(body: unknown): Parsed<UpdatePerso
   const personnel_code = code(value.personnel_code);
   const display_name = text(value.display_name, NAME_MAX);
   const personnel_position = position(value.personnel_position);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
   if (expected_version === null || expected_version < 1 || !personnel_code || !display_name ||
-      !personnel_position || !reason || !idempotency_key) {
+      !personnel_position || !reason.ok || !idempotency_key) {
     return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
   }
   return { ok: true, value: { expected_version, personnel_code, display_name,
-    personnel_position, reason, idempotency_key } };
+    personnel_position, reason: reason.value, idempotency_key } };
 }
 
 export type SetActivePersonnelRequest = {
-  active: boolean; expected_version: number; reason: string; idempotency_key: string;
+  active: boolean; expected_version: number; reason: string | null; idempotency_key: string;
 };
 export function personnelCatalogSetActiveRequest(body: unknown): Parsed<SetActivePersonnelRequest> {
   const value = record(body);
@@ -249,18 +250,18 @@ export function personnelCatalogSetActiveRequest(body: unknown): Parsed<SetActiv
     return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
   }
   const expected_version = version(value.expected_version);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
-  if (expected_version === null || expected_version < 1 || !reason || !idempotency_key) {
+  if (expected_version === null || expected_version < 1 || !reason.ok || !idempotency_key) {
     return { ok: false, response: fail("PERSONNEL_INVALID", 400) };
   }
-  return { ok: true, value: { active: value.active, expected_version, reason, idempotency_key } };
+  return { ok: true, value: { active: value.active, expected_version, reason: reason.value, idempotency_key } };
 }
 
 async function runMutation<T>(
   request: Request,
   dependencies: PersonnelCatalogDependencies,
-  parsed: Parsed<{ reason: string; idempotency_key: string }>,
+  parsed: Parsed<{ reason: string | null; idempotency_key: string }>,
   run: (actor: TrustedActor) => Promise<{ ok: true; data: T } | { ok: false; kind: string }>,
 ): Promise<Response> {
   if (!parsed.ok) return parsed.response;
@@ -322,7 +323,7 @@ export async function getPersonnelCatalog(
 
 async function mutationPipeline(
   request: Request, flag: string | undefined, dependencies: PersonnelCatalogDependencies,
-  parse: (body: unknown) => Parsed<{ reason: string; idempotency_key: string }>,
+  parse: (body: unknown) => Parsed<{ reason: string | null; idempotency_key: string }>,
   run: (actor: TrustedActor, value: never) => Promise<{ ok: true; data: unknown } | { ok: false; kind: string }>,
 ): Promise<Response> {
   const blocked = mutationPreflight(request, flag);

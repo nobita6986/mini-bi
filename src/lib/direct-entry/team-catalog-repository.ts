@@ -42,15 +42,15 @@ export type TeamCatalogRepository = {
   getTeam(input: AdminActorRef & { team_id: string }): Promise<TeamCatalogOutcome<AdminTeam>>;
   createTeam(input: AdminActorRef & {
     expected_version: number; code: string; display_name: string;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<TeamCatalogOutcome<AdminTeamCreateResult>>;
   updateTeam(input: AdminActorRef & {
     team_id: string; expected_version: number; display_name: string;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<TeamCatalogOutcome<AdminTeamMutation>>;
   setTeamActive(input: AdminActorRef & {
     team_id: string; active: boolean; expected_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<TeamCatalogOutcome<AdminTeamMutation>>;
 };
 

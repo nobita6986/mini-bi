@@ -1,8 +1,8 @@
 /**
- * PRE-W2-P1 + HF-E + HF-G - Hop dong server cho xuat Excel full-PII (recruited / managed / all).
+ * PRE-W2-P1 + HF-E + HF-G - Hop dong server cho xuat Excel full-PII (recruited / managed / team / all).
  *
  * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
- * Authority do RPC public.direct_entry_export_workers quyet dinh: recruited/managed require
+ * Authority do RPC public.direct_entry_export_workers quyet dinh: recruited/managed/team require
  * their DB-verified row audience; `all` additionally requires current all scope and the existing
  * `entry_admin` or `change_review` action.
  * Client khong bao gio tu khai
@@ -11,7 +11,9 @@
  * Fail-closed: dung key, dung kieu, khong fallback rong; khong type assertion. Mot envelope
  * sai hinh => null (khong bao gio tao file rong tu du lieu khong ro nguon).
  */
-export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
+import { projectOptionalActionReason } from "./action-reason.ts";
+
+export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "team", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
 export const WORKER_EXPORT_EMPLOYMENT_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
@@ -19,7 +21,7 @@ export const WORKER_EXPORT_PROVIDER_TYPES = ["HRP", "Vendor"] as const;
 
 export const WORKER_EXPORT_ROW_LIMIT = 10000;
 
-/** Body allowlist. `scope` + `reason` required; the three filters optional/null. */
+/** Body allowlist. `scope` required; filters and action reason optional/null. */
 export const WORKER_EXPORT_BODY_KEYS = [
   "scope", "project_id", "recruiter_id", "employment_status", "reason",
 ] as const;
@@ -89,12 +91,12 @@ export type WorkerExportRequest = {
   project_id: string | null;
   recruiter_id: string | null;
   employment_status: (typeof WORKER_EXPORT_EMPLOYMENT_STATUSES)[number] | null;
-  reason: string;
+  reason: string | null;
 };
 
 /**
- * Strict request projection. Unknown keys, wrong value types, an invalid enum/filter or a
- * missing/blank `reason` are refused. `project_id`/`recruiter_id`/`employment_status` may be
+ * Strict request projection. Unknown keys, wrong value types or an invalid enum/filter are refused.
+ * `project_id`/`recruiter_id`/`employment_status` and action `reason` may be
  * absent or null (worker-directory convention). No idempotency key.
  */
 export function projectWorkerExportRequest(body: unknown): WorkerExportRequest | null {
@@ -108,10 +110,8 @@ export function projectWorkerExportRequest(body: unknown): WorkerExportRequest |
       !(WORKER_EXPORT_SCOPES as readonly string[]).includes(scope)) {
     return null;
   }
-  const reason = body.reason;
-  if (typeof reason !== "string" || reason.trim().length === 0 || reason.length > 4000) {
-    return null;
-  }
+  const reason = projectOptionalActionReason(body.reason);
+  if (!reason.ok) return null;
   const projectId = body.project_id ?? null;
   if (projectId !== null && (typeof projectId !== "string" || !PROJECT_ID.test(projectId))) {
     return null;
@@ -132,7 +132,7 @@ export function projectWorkerExportRequest(body: unknown): WorkerExportRequest |
     project_id: projectId,
     recruiter_id: recruiterId,
     employment_status: employmentStatus as WorkerExportRequest["employment_status"],
-    reason: reason.trim(),
+    reason: reason.value,
   };
 }
 

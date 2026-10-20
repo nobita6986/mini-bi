@@ -99,8 +99,8 @@ export function DirectEntrySubmittedDocumentManager({
           <Dialog.Content className={styles.drawer} data-testid="submitted-document-manager">
             <Dialog.Title className={styles.drawerTitle}>Quản lý tài liệu</Dialog.Title>
             <Dialog.Description className={styles.drawerDescription}>
-              Tải lên thay thế tài liệu cho đợt đã gửi chính thức. Mỗi lần thay thế cần lý do và
-              được ghi nhận đầy đủ lịch sử.
+              Tải lên thay thế tài liệu cho đợt đã gửi chính thức. Có thể nhập lý do; mọi lần thay
+              thế vẫn được ghi nhận đầy đủ lịch sử.
             </Dialog.Description>
             <div className={styles.drawerFields}>
               <div className={styles.notice} aria-live="polite">

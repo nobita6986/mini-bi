@@ -305,7 +305,7 @@ export function AccountManager() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Tài khoản</h1>
-          <p className="mt-1 text-sm text-muted">Quản lý trạng thái hoạt động của tài khoản hiện có. Mọi thay đổi cần có lý do.</p>
+          <p className="mt-1 text-sm text-muted">Quản lý trạng thái hoạt động của tài khoản hiện có. Lý do thao tác không bắt buộc.</p>
         </div>
         <div className="flex gap-2">
           <button type="button" className={primaryButton}
@@ -330,7 +330,7 @@ export function AccountManager() {
                   {dialog?.nextEnabled ? "Kích hoạt tài khoản" : "Ngừng hoạt động tài khoản"}
                 </Dialog.Title>
                 <Dialog.Description id="account-dialog-description" className="mt-1 text-sm text-muted">
-                  Mọi thay đổi cần có lý do; thao tác không xóa dữ liệu hay lịch sử.
+                  Lý do thao tác không bắt buộc; thao tác không xóa dữ liệu hay lịch sử.
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild>
@@ -525,8 +525,8 @@ export function AccountManager() {
 function ReasonField({ value, disabled, onChange }: { value: string; disabled: boolean; onChange(value: string): void }) {
   return (
     <label htmlFor="account-reason" className="flex flex-col gap-1 text-sm font-medium">
-      Lý do thay đổi
-      <textarea id="account-reason" value={value} maxLength={4000} required rows={3} disabled={disabled}
+      Lý do thao tác (không bắt buộc)
+      <textarea id="account-reason" value={value} maxLength={4000} rows={3} disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className="rounded-md border border-border bg-surface px-3 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
     </label>
@@ -643,7 +643,7 @@ function AccountOperationDialogs({
               <Dialog.Description id="account-op-dialog-description" className="mt-1 text-sm text-muted">
                 {isCreate
                   ? "Tài khoản được tạo với email <mã đăng nhập>@hrpartner.vn và mật khẩu riêng."
-                  : "Mọi thay đổi cần lý do; không đổi email/login và không lưu mật khẩu."}
+                  : "Lý do thao tác không bắt buộc; không đổi email/login và không lưu mật khẩu."}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>

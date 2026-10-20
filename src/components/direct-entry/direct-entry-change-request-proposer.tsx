@@ -31,6 +31,7 @@ import {
 import {
   projectChangeRequestCreate,
   projectChangeRequestCreated,
+  REASON_MAX_LENGTH,
   type ChangeRequestItem,
 } from "@/lib/direct-entry/change-request-contract";
 import {
@@ -264,8 +265,6 @@ export function DirectEntryChangeRequestProposer({
   );
 
   const buildResult = useMemo(() => buildProposerItems(proposerDrafts), [proposerDrafts]);
-  const normalizedReason = normalizeReason(reason);
-
   const activeBankIds = useMemo(() => {
     const ids = new Set<string>();
     // P3-W07C-R6-R1: bank id lay tu catalog HIEN TAI (actor-scoped); khong con
@@ -328,7 +327,7 @@ export function DirectEntryChangeRequestProposer({
     return sensitiveBuild.ok ? [sensitiveBuild.item] : null;
   }, [buildResult, kind, sensitiveBuild]);
 
-  const canSubmit = itemsToSend !== null && normalizedReason !== null && !busy &&
+  const canSubmit = itemsToSend !== null && reason.length <= REASON_MAX_LENGTH && !busy &&
     entryState === "ready";
 
   /** Chọn một dòng cho target kind nhạy cảm và khởi tạo form từ context server đã xác thực. */
@@ -379,8 +378,8 @@ export function DirectEntryChangeRequestProposer({
       return;
     }
     const normalized = normalizeReason(reason);
-    if (normalized === null) {
-      setStatusMessage("Lý do thay đổi là bắt buộc và tối đa 4000 ký tự.");
+    if (reason.length > REASON_MAX_LENGTH) {
+      setStatusMessage("Lý do tối đa 4000 ký tự.");
       return;
     }
     const signature = JSON.stringify({ items: itemsToSend, reason: normalized });
@@ -808,7 +807,7 @@ export function DirectEntryChangeRequestProposer({
             {entryState === "ready" && entries.length > 0 && (
               <div className={styles.field}>
                 <label htmlFor="change-request-reason">
-                  {kind === "ENTRY_VOID" ? "Lý do đề nghị hủy hồ sơ trùng" : "Lý do thay đổi"}
+                  {kind === "ENTRY_VOID" ? "Lý do đề nghị hủy hồ sơ trùng (không bắt buộc)" : "Lý do thay đổi (không bắt buộc)"}
                 </label>
                 <textarea
                   id="change-request-reason"
@@ -866,8 +865,8 @@ export function DirectEntryChangeRequestProposer({
                     : sensitiveErrorMessage(sensitiveBuild.ok ? "ITEM_INVALID" : sensitiveBuild.code));
                   return;
                 }
-                if (normalizeReason(reason) === null) {
-                  setStatusMessage("Lý do thay đổi là bắt buộc và tối đa 4000 ký tự.");
+                if (reason.length > REASON_MAX_LENGTH) {
+                  setStatusMessage("Lý do tối đa 4000 ký tự.");
                   return;
                 }
                 setConfirmOpen(true);

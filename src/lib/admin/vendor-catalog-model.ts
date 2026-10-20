@@ -14,6 +14,7 @@ import {
 } from "../direct-entry/vendor-catalog-contract.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -133,7 +134,7 @@ export function buildVendorCreateRequest(input: {
   vendorId: string;
   displayName: string;
   effectiveDate: string;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateVendorId(input.vendorId) ?? validateDisplayName(input.displayName)
@@ -147,7 +148,7 @@ export function buildVendorCreateRequest(input: {
       vendor_id: input.vendorId.trim(),
       display_name: input.displayName.trim(),
       valid_from: input.effectiveDate,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -156,7 +157,7 @@ export function buildVendorCreateRequest(input: {
 export function buildVendorUpdateRequest(input: {
   displayName: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateDisplayName(input.displayName)
@@ -170,7 +171,7 @@ export function buildVendorUpdateRequest(input: {
     body: {
       expected_version: input.expectedVersion,
       display_name: input.displayName.trim(),
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -179,7 +180,7 @@ export function buildVendorUpdateRequest(input: {
 export function buildVendorSetActiveRequest(input: {
   active: boolean;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = typeof input.active !== "boolean"
@@ -194,7 +195,7 @@ export function buildVendorSetActiveRequest(input: {
     body: {
       active: input.active,
       expected_version: input.expectedVersion,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };

@@ -116,6 +116,32 @@ test("batch grant and revoke derive actor from session and forward no client OCC
   const revokeResponse = await revokeProjectTeamScope(post("/api", revokeBody), "true", revoke.value);
   assert.equal(revokeResponse.status, 200);
   assert.deepEqual(revoke.calls.repository[0], ["revoke", { ...ACTOR, ...revokeBody }]);
+
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...grantBody };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const optional = dependencies({ ok: true, data: BATCH });
+    const response = await grantProjectTeamScope(post("/api", body), "true", optional.value);
+    assert.equal(response.status, 200);
+    assert.equal(optional.calls.repository[0][1].reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const invalid = dependencies({ ok: true, data: BATCH });
+    assert.equal((await grantProjectTeamScope(post("/api", { ...grantBody, reason }),
+      "true", invalid.value)).status, 400);
+    assert.equal(invalid.calls.session, 0);
+  }
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...revokeBody };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const optional = dependencies({ ok: true, data: { mapping_id: MAPPING,
+      project_id: "project-1", team_id: TEAM, valid_to: "2026-10-15", version: 2, revoked: true } });
+    const response = await revokeProjectTeamScope(post("/api", body), "true", optional.value);
+    assert.equal(response.status, 200);
+    assert.equal(optional.calls.repository[0][1].reason, null);
+  }
 });
 
 test("flag, CSRF, and content-type reject before session or repository", async () => {

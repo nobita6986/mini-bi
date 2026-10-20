@@ -35,10 +35,10 @@ test("co du cac trang thai loading/empty/error/denied", () => {
   assert.match(source, /Không tải được danh sách dự án/);
 });
 
-test("ly do la bat buoc o moi dialog thay doi", () => {
-  assert.match(source, /aria-required="true"/);
-  assert.match(source, /<textarea[\s\S]*?required aria-required="true"/);
-  assert.match(source, /Bắt buộc cho mọi thao tác thay đổi/);
+test("ly do thao tac la tuy chon o moi dialog thay doi", () => {
+  assert.match(source, /Lý do thao tác \(không bắt buộc\)/);
+  assert.doesNotMatch(source, /aria-required="true"|<textarea[^>]*\brequired/);
+  assert.doesNotMatch(source, /Bắt buộc cho mọi thao tác thay đổi/);
   for (const kind of ["create", "rename", "set-active", "assign", "unassign"]) {
     assert.ok(source.includes('kind: "' + kind + '"'), "thieu dialog " + kind);
   }

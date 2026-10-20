@@ -378,7 +378,7 @@ export function LaborTypeCatalogManager() {
                         : dialog?.active ? "Kích hoạt loại hình lao động" : "Ngừng hoạt động loại hình lao động"}
                   </Dialog.Title>
                   <Dialog.Description id="labor-type-dialog-description" className="mt-1 text-sm text-muted">
-                    Mọi thay đổi cần có lý do; mã loại hình lao động không thể thay đổi sau khi tạo.
+                    Lý do thao tác không bắt buộc; mã loại hình lao động không thể thay đổi sau khi tạo.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -586,8 +586,8 @@ function Field({ id, label, value, maxLength, required, type = "text", onChange 
 function ReasonField({ value, onChange }: { value: string; onChange(value: string): void }) {
   return (
     <label htmlFor="labor-type-reason" className="flex flex-col gap-1 text-sm font-medium">
-      Lý do thay đổi
-      <textarea id="labor-type-reason" value={value} maxLength={4000} required rows={3}
+      Lý do thay đổi (không bắt buộc)
+      <textarea id="labor-type-reason" value={value} maxLength={4000} rows={3}
         onChange={(event) => onChange(event.target.value)}
         className="rounded-md border border-border bg-surface px-3 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
     </label>

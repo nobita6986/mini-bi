@@ -147,6 +147,34 @@ test("D3: create/reset/edit/personnel request validators are strict", () => {
   }).ok, false, "client cannot choose a personnel code");
 });
 
+test("action reasons normalize absent, null and blank to NULL across account operations", () => {
+  const parseCases = [
+    [parseCreateAccount, VALID_CREATE],
+    [parseResetPassword, { password: "new-pass-123", password_confirm: "new-pass-123",
+      reason: "reset", idempotency_key: AUTH_SUBJECT }],
+    [parseEditDisplayName, { display_name: "New Name", expected_version: 2,
+      reason: "rename", idempotency_key: AUTH_SUBJECT }],
+    [parseCreatePersonnelFromAccount, { account_ref: APP_USER, expected_account_version: 1,
+      personnel_code: LOGIN_ID, personnel_position: "STAFF", valid_from: "2026-10-01",
+      reason: "create", idempotency_key: AUTH_SUBJECT }],
+  ];
+  for (const [parse, valid] of parseCases) {
+    for (const reason of [undefined, null, "", "  "]) {
+      const body = { ...valid };
+      if (reason === undefined) delete body.reason;
+      else body.reason = reason;
+      const parsed = parse(body);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal(parsed.value.reason, null);
+    }
+    assert.equal(parse({ ...valid, reason: 123 }).ok, false);
+    assert.equal(parse({ ...valid, reason: "x".repeat(4001) }).ok, false);
+    const maximum = parse({ ...valid, reason: "x".repeat(4000) });
+    assert.equal(maximum.ok, true);
+    if (maximum.ok) assert.equal(maximum.value.reason.length, 4000);
+  }
+});
+
 /* ---------- create account saga ---------- */
 test("D3: create account success returns the finalized account without leaking password", async () => {
   const d = deps();
