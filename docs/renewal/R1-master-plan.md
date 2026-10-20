@@ -81,13 +81,14 @@ Current scope is an explicit status on the existing grant/assignment relation. R
 
 | Workstream | Owns | Does not own |
 |---|---|---|
+| T0 — integration | `package.json` full-test wiring, integration branch, cross-workstream review and final CI evidence | Product code owned by T1-A/B/C; TEST/production deployment or migration without approval |
 | T1-A — TS authorization contract | `src/lib/auth/direct-entry-v2.ts`, `src/lib/contracts/direct-entry-v1.ts` capability union only, page/navigation predicates and their tests; actor/capability/scope types | SQL migrations; worker projections and export implementation |
 | T1-B — DB authorization | New forward-only SQL migration(s), SQL helpers/RPC bodies/ACL self-checks, DB regression tests, `scripts/p3-1-w01a-capability-contract.test.mjs` | TS auth contract or React/API implementation |
 | T1-C — API, worker views, export | Worker detail/list/export API, repositories, projections, UI predicates, redaction and export tests | Central auth contract and migration files; coordinate needed signature changes with T1-B |
 
 T1-A/B/C share this contract but must not concurrently edit the same modules. T1-B owns all `supabase/migrations/**`; T1-A owns the central authorization contract; T1-C owns worker projections and routes. Cross-workstream changes are proposed as small follow-up commits after interface agreement.
 
-The shared interface is frozen: `direct_entry_resolve_actor_context` keeps its RPC name, arguments, JSON envelope, and array keys; SQL returns only explicitly current authority rows, and T1-A consumes those arrays as current without date filtering. Worker list/export RPC names, arguments, and response envelopes remain stable. T1-B may retain inert date fields and legacy view echoes for compatibility; T1-A/T1-C must not consume them as authorization gates.
+The shared interface is frozen: `direct_entry_resolve_actor_context` keeps its RPC name, arguments, JSON envelope, and array keys; SQL returns only explicitly current authority rows, and T1-A consumes those arrays as current without date filtering. Worker list/export RPC names, arguments, and response envelopes remain stable. T1-B may retain inert date fields and legacy view echoes for compatibility; T1-A/T1-C must not consume them as authorization gates. T0 alone owns package-level full-test/CI wiring so parallel T1 branches do not contend on shared configuration.
 
 ## 5. Order and rollout gates
 
