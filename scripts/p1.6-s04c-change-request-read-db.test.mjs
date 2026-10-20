@@ -5,7 +5,6 @@ import {
   ACTORS,
   PROJECT_ID,
   REQUEST_STAMPS,
-  RECRUITER_A,
   RECRUITER_B,
   TEAM_B,
   createMigratedDatabase,
