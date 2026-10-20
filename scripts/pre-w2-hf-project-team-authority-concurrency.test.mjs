@@ -139,14 +139,14 @@ async function seed(client) {
       MANAGER2_APP, MANAGER2_AUTH],
   );
   await client.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)"
-      + " values ($1,'entry_admin',$2),($1,'recruiter_master_manage',$2),($1,'team_master_manage',$2),"
-      + "($3,'team_manager_assign',$2),($4,'entry_create',$2),($5,'entry_create',$2)",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)"
+      + " values ($1,'entry_admin',$2,true),($1,'recruiter_master_manage',$2,true),($1,'team_master_manage',$2,true),"
+      + "($3,'team_manager_assign',$2,true),($4,'entry_create',$2,true),($5,'entry_create',$2,true)",
     [ADMIN_APP, PAST, LEADER_APP, MANAGER_APP, MANAGER2_APP],
   );
   await client.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)"
-      + " values ($1,'all',null,$2),($3,'team',$4,$2),($5,'own',null,$2),($6,'own',null,$2)",
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from,is_current)"
+      + " values ($1,'all',null,$2,true),($3,'team',$4,$2,true),($5,'own',null,$2,true),($6,'own',null,$2,true)",
     [ADMIN_APP, PAST, LEADER_APP, TEAM_A, MANAGER_APP, MANAGER2_APP],
   );
   await client.query(
@@ -157,19 +157,19 @@ async function seed(client) {
     [LEADER_RECRUITER, MANAGER_RECRUITER, MANAGER2_RECRUITER],
   );
   await client.query(
-    "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from)"
-      + " values ($1,'hrp',$2),($3,'hrp',$2),($4,'hrp',$2)",
+    "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from,is_current)"
+      + " values ($1,'hrp',$2,true),($3,'hrp',$2,true),($4,'hrp',$2,true)",
     [LEADER_RECRUITER, PAST, MANAGER_RECRUITER, MANAGER2_RECRUITER],
   );
   await client.query(
-    "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)"
-      + " values ($1,$2,$3),($4,$2,$3),($5,$2,$3)",
+    "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,is_current)"
+      + " values ($1,$2,$3,true),($4,$2,$3,true),($5,$2,$3,true)",
     [LEADER_RECRUITER, TEAM_A, PAST, MANAGER_RECRUITER, MANAGER2_RECRUITER],
   );
   await client.query(
     "insert into public.direct_entry_app_user_recruiter_links"
-      + "(app_user_id,recruiter_id,verified,valid_from)"
-      + " values ($1,$3,true,$2),($4,$5,true,$2),($6,$7,true,$2)",
+      + "(app_user_id,recruiter_id,verified,valid_from,is_current)"
+      + " values ($1,$3,true,$2,true),($4,$5,true,$2,true),($6,$7,true,$2,true)",
     [LEADER_APP, PAST, LEADER_RECRUITER, MANAGER_APP, MANAGER_RECRUITER,
       MANAGER2_APP, MANAGER2_RECRUITER],
   );
@@ -177,7 +177,7 @@ async function seed(client) {
   await client.query("select set_config('direct_entry.team_leader_marker','on',true)");
   await client.query(
     "insert into public.direct_entry_team_leader_assignments"
-      + "(team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,$4)",
+      + "(team_id,leader_app_user_id,leader_recruiter_id,valid_from,is_current) values ($1,$2,$3,$4,true)",
     [TEAM_A, LEADER_APP, LEADER_RECRUITER, PAST],
   );
   await client.query("commit");

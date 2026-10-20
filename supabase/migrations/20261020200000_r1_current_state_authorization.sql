@@ -8198,10 +8198,12 @@ begin
   if not found then
     raise exception 'draft row not found' using errcode = 'P0002';
   end if;
-  v_scope := public.direct_entry_assert_draft_access(
-    p_auth_subject, p_app_user_id, v_entry.created_by_user_id,
-    v_entry.team_id, v_entry.first_work_date
+  v_scope := public.direct_entry_resolve_draft_scope(
+    p_auth_subject, p_app_user_id, p_entry_id
   );
+  if v_scope is null then
+    raise exception 'draft scope/capability denied' using errcode = '42501';
+  end if;
   v_prior := public.direct_entry_idempotency_begin(
     p_app_user_id, 'draft_row_update', p_idempotency_key,
     public.direct_entry_payload_hash(jsonb_build_object(
@@ -8256,10 +8258,13 @@ begin
       )) then
     raise exception 'inactive draft master' using errcode = '22023';
   end if;
-  perform public.direct_entry_assert_draft_access(
-    p_auth_subject, p_app_user_id, v_entry.created_by_user_id,
-    v_team, v_new_work_date, v_scope
+  v_scope := public.direct_entry_resolve_draft_scope(
+    p_auth_subject, p_app_user_id, p_entry_id,
+    coalesce(p_patch->>'project_id', v_entry.project_id)
   );
+  if v_scope is null then
+    raise exception 'draft scope/capability denied' using errcode = '42501';
+  end if;
   update public.direct_entries set
     project_id = case when p_patch ? 'project_id' then p_patch->>'project_id' else project_id end,
     first_work_date = case when p_patch ? 'first_work_date' then (p_patch->>'first_work_date')::date else first_work_date end,
@@ -8343,7 +8348,6 @@ AS $function$
       on m.recruiter_id = r.recruiter_id
    where m.provider_type = 'vendor'
      and m.vendor_id = p_vendor_id
-     and m.is_current
      and (
        select count(*)
          from public.recruiter_provider_memberships x

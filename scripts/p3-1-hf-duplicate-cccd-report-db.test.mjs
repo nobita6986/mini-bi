@@ -92,13 +92,13 @@ async function insertActor(db, auth, app, capabilities, scopeKinds = []) {
     " values ($1,$2,true,'Hotfix Account')", [app, auth]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   for (const scopeKind of scopeKinds) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
-      " values ($1,$2,$3,'2020-01-01')",
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)" +
+      " values ($1,$2,$3,'2020-01-01',true)",
       [app, scopeKind, scopeKind === "team" ? TEAM : null]);
   }
 }
@@ -115,11 +115,11 @@ async function seed(db) {
   await db.query(
     "insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter HF')", [REC_A]);
   await db.query(
-    "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-    " values ($1,'hrp','2020-01-01')", [REC_A]);
+    "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+    " values ($1,'hrp','2020-01-01',true)", [REC_A]);
   await db.query(
-    "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-    " values ($1,$2,'2020-01-01')", [REC_A, TEAM]);
+    "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+    " values ($1,$2,'2020-01-01',true)", [REC_A, TEAM]);
 
   // own scope as well: the v1 full-profile batch and the legacy batch keep their per-row
   // creation authority (P2.5-HF), which needs a live own grant at the work date.
