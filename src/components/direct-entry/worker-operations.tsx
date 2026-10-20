@@ -3,12 +3,12 @@
 /**
  * P2.5-W06-R2 - Worker Operations UI.
  *
- * Bon view KHONG tron quyen. Moi tab giu page state rieng: 403 cua mot audience chi la
+ * Cac view KHONG tron quyen. Moi tab giu page state rieng: 403 cua mot audience chi la
  * loi CUC BO trong tab do, khong thao ca trang/review queue/tab khac.
  *
  * Pagination: projectSubmissionListPage / projectWorkerDirectoryPage /
  * projectChangeRequestListPage; append dedupe theo stable id; doi tab/filter reset cursor.
- * CTA de xuat chi render khi server tra allowed_actions.propose_change === true.
+ * Direct-edit and proposal CTAs use their server-projected row actions.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -107,7 +107,7 @@ import { sortedActiveLaborTypes } from "@/lib/direct-entry/labor-type-catalog-ui
 
 const API = "/api/direct-entry";
 
-type WorkerScopeTab = "recruited" | "managed" | "all";
+type WorkerScopeTab = "recruited" | "managed" | "team" | "all";
 type Incoming<T> = {
   items: readonly T[];
   next_cursor: string | null;
@@ -163,41 +163,41 @@ function httpFailure(status: number): FetchOutcome<never> {
 
 export function WorkerOperations({
   canSeeAllWorkers = false,
+  canSeeTeamWorkers = false,
   canReview = false,
-  canPrivilegedEditWorkers = false,
   canExport = false,
   canExportAll = false,
   actor = null,
 }: {
   canSeeAllWorkers?: boolean;
+  /** Server-projected team audience controls only tab visibility; the RPC rechecks access. */
+  canSeeTeamWorkers?: boolean;
   canReview?: boolean;
-  canPrivilegedEditWorkers?: boolean;
-  /** Resolved business actor may use recruited/managed export; the RPC enforces row authority. */
+  /** Resolved business actor may use recruited/managed/team export; the RPC enforces row authority. */
   canExport?: boolean;
   /** Admin/BoD/Kế toán xuat toan bo (all scope): export caps + all scope + (entry_admin|change_review). */
   canExportAll?: boolean;
   actor?: WorkerOperationsActor | null;
 }) {
-  const tabs = visibleWorkerTabs(canSeeAllWorkers);
+  const tabs = visibleWorkerTabs(canSeeAllWorkers, canSeeTeamWorkers);
   /** W2S1: capability document_upload do server-resolved actor quyet dinh, khong suy tu tab/role. */
   const canUploadDocuments = actor?.capabilities.includes("document_upload") === true;
   const [tab, setTab] = useState<WorkerOperationsTab>(
-    () => initialWorkerTab(actor, canSeeAllWorkers));
+    () => initialWorkerTab(actor, canSeeAllWorkers, canSeeTeamWorkers));
   const [filters, setFilters] = useState<WorkerDirectoryFilters>(
     { status: "", projectId: "", recruiterId: "" });
   const [filterCatalogState, setFilterCatalogState] =
     useState<"loading" | "ready" | "denied" | "unavailable">("loading");
   const [workerPages, setWorkerPages] = useState<Record<WorkerScopeTab, TabPage<WorkerDirectoryRow>>>(
-    () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), all: emptyTabPage() }));
+    () => ({ recruited: emptyTabPage(), managed: emptyTabPage(), team: emptyTabPage(), all: emptyTabPage() }));
   const [workerSummary, setWorkerSummary] = useState<WorkerDirectorySummary | null>(null);
   const [submissionPage, setSubmissionPage] =
     useState<TabPage<SubmissionReadItem>>(emptyTabPage);
   const [requestPage, setRequestPage] =
     useState<TabPage<ChangeRequestListItem>>(emptyTabPage);
   const [requestQueue, setRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
-  const canViewRequests = canReview || actor?.capabilities.includes("change_request_create") === true ||
-    (actor?.capabilities.includes("team_manager_assign") === true &&
-      actor.scopes.some((scope) => scope.kind === "team"));
+  const canViewRequests = canReview || canSeeTeamWorkers ||
+    actor?.capabilities.includes("change_request_create") === true;
   const [notice, setNotice] = useState<Notice | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   const [drawerRow, setDrawerRow] = useState<WorkerDirectoryRow | null>(null);
@@ -478,7 +478,7 @@ export function WorkerOperations({
       <header className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold">Người lao động</h1>
         <p className="text-sm text-muted">
-          Tra cứu theo đúng quan hệ của bạn. Quyền đề xuất thay đổi do hệ thống quyết định.
+          Tra cứu theo đúng quan hệ của bạn. Quyền sửa và đề xuất thay đổi do hệ thống quyết định.
         </p>
       </header>
 
@@ -685,7 +685,6 @@ export function WorkerOperations({
         {workerPage !== null && workerPage.state === "ready" ? (
           <>
             <WorkerTable rows={workerPage.items}
-              canPrivilegedEdit={canPrivilegedEditWorkers}
               onViewDetail={(row, opener) => {
                 detailOpenerRef.current = opener;
                 setDetailRow(row);
@@ -801,10 +800,9 @@ function SubmissionTable({ submissions }: { submissions: readonly SubmissionRead
 }
 
 function WorkerTable({
-  rows, canPrivilegedEdit, onViewDetail, onPropose, onCorrect,
+  rows, onViewDetail, onPropose, onCorrect,
 }: {
   rows: readonly WorkerDirectoryRow[];
-  canPrivilegedEdit: boolean;
   /** W2S1: mo dialog chi tiet dung chung; `allowed_actions.view` luon true theo server. */
   onViewDetail: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
   /** P2.5-HF-R5A: nhan kem nut da bam de tra focus khi dong drawer. */
@@ -868,13 +866,13 @@ function WorkerTable({
                         Đề xuất thay đổi
                       </button>
                     ) : null}
-                    {canPrivilegedEdit ? (
+                    {row.allowed_actions.direct_edit ? (
                       <button type="button" className={buttonClass}
                         onClick={(event) => onCorrect(row, event.currentTarget)}>
                         Sửa trực tiếp
                       </button>
                     ) : null}
-                    {cta.show || canPrivilegedEdit ? null : (
+                    {cta.show || row.allowed_actions.direct_edit ? null : (
                       <span className="text-xs text-muted">{cta.message}</span>
                     )}
                   </div>
@@ -1040,7 +1038,7 @@ function ProposeDrawer({
   async function submit(): Promise<void> {
     if (row === null || baseline === null) return;
     const trimmed = reason.trim();
-    if (trimmed === "") { setMessage("Lý do là bắt buộc."); return; }
+    const actionReason = trimmed === "" ? null : trimmed;
     let proposal: Record<string, unknown> | null = null;
     let targetKind: "ENTRY_FIELD" | "PAYMENT" | "WORK_STATUS" = "ENTRY_FIELD";
     if (mode === "correction" || target === "WORKER") {
@@ -1099,7 +1097,7 @@ function ProposeDrawer({
             body: JSON.stringify({
               expected_entry_version: baseline.version,
               patch,
-              reason: trimmed,
+              reason: actionReason,
             }),
           });
           setBusy(false);
@@ -1112,7 +1110,7 @@ function ProposeDrawer({
             setMessage("Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.");
             return;
           }
-          onDone("Đã lưu chỉnh sửa trực tiếp có ghi nhận lý do.");
+          onDone("Đã lưu chỉnh sửa trực tiếp.");
         } catch {
           setBusy(false);
           setMessage("Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.");
@@ -1163,7 +1161,7 @@ function ProposeDrawer({
       const response = await fetch(API + "/change-requests", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items: [item], reason: trimmed, idempotency_key: crypto.randomUUID() }),
+        body: JSON.stringify({ items: [item], reason: actionReason, idempotency_key: crypto.randomUUID() }),
       });
       setBusy(false);
       if (response.status === 409) { onConflict(); return; }
@@ -1206,8 +1204,8 @@ function ProposeDrawer({
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-muted">
                   {mode === "correction"
-                    ? "Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần sửa và nhập lý do."
-                    : "Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần đổi rồi nhập lý do để gửi duyệt."}
+                    ? "Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần sửa. Lý do thao tác không bắt buộc."
+                    : "Dữ liệu hiện tại được nạp sẵn — chỉnh phần cần đổi rồi gửi duyệt. Lý do thao tác không bắt buộc."}
                 </Dialog.Description>
               </div>
               <button type="button" aria-label="Đóng đề xuất" disabled={busy}
@@ -1536,9 +1534,9 @@ function ProposeDrawer({
 
               <div className="flex flex-col gap-1.5">
                 <label htmlFor={reasonId} className="text-sm font-medium">
-                  {mode === "correction" ? "Lý do chỉnh sửa" : "Lý do đề xuất"}
+                  {mode === "correction" ? "Lý do chỉnh sửa (không bắt buộc)" : "Lý do đề xuất (không bắt buộc)"}
                 </label>
-                <textarea id={reasonId} required aria-required="true"
+                <textarea id={reasonId}
                   maxLength={mode === "correction" ? 1000 : 4000}
                   className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
                     text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -1576,7 +1574,7 @@ function downloadFile(blob: Blob, filename: string): void {
 /**
  * PRE-W2-P1 (T1A): hop thoai "Xuat Excel".
  *
- * Chi gui `scope` + bo loc hien tai + `reason` (bat buoc) toi POST /api/direct-entry/workers/export;
+ * Chi gui `scope` + bo loc hien tai + optional `reason` toi POST /api/direct-entry/workers/export;
  * khong gui authority va khong gui PII tu bang. Thanh cong => tai .xlsx tu response Blob. 422
  * row-limit => bao ro gioi han, khong tai file thieu dong. Khong log reason/body/PII.
  */
@@ -1596,7 +1594,9 @@ function WorkerExportDialog({
 
   async function submit(): Promise<void> {
     if (scope === null || busy) return;
-    const request = buildWorkerExportRequest({ scope, filters, reason });
+    const request = buildWorkerExportRequest({
+      scope, filters, reason: reason.trim() === "" ? null : reason.trim(),
+    });
     if (!request.ok) { setMessage(workerExportRequestMessage(request.code)); return; }
     setBusy(true);
     setMessage(null);
@@ -1641,8 +1641,8 @@ function WorkerExportDialog({
               <div>
                 <Dialog.Title className="text-xl font-semibold">Xuất Excel</Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-muted">
-                  Xuất danh sách người lao động theo đúng quan hệ và bộ lọc đang chọn. Nhập lý do
-                  để ghi nhận vào nhật ký truy cập.
+                  Xuất danh sách người lao động theo đúng quan hệ và bộ lọc đang chọn. Lý do không
+                  bắt buộc; thao tác vẫn được ghi nhận vào nhật ký.
                 </Dialog.Description>
               </div>
               <button type="button" aria-label="Đóng xuất Excel" disabled={busy}
@@ -1659,8 +1659,10 @@ function WorkerExportDialog({
                 khoản ngân hàng. Chỉ lưu hoặc chia sẻ với người có thẩm quyền.
               </p>
               <div className="flex flex-col gap-1.5">
-                <label htmlFor={reasonId} className="text-sm font-medium">Lý do xuất</label>
-                <textarea id={reasonId} required aria-required="true"
+                <label htmlFor={reasonId} className="text-sm font-medium">
+                  Lý do xuất (không bắt buộc)
+                </label>
+                <textarea id={reasonId}
                   maxLength={WORKER_EXPORT_REASON_MAX}
                   className="min-h-24 w-full rounded-md border border-border bg-surface p-3 text-sm
                     text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"

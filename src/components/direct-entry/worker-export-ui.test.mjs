@@ -18,7 +18,8 @@ test("T1A: tai su dung API xuat server, khong tao XLSX phia client", () => {
     "khong tao XLSX phia client");
   assert.equal(/server-only/.test(source), false);
   // Body di qua dung builder cua contract, khong tu ghep tay.
-  assert.match(source, /buildWorkerExportRequest\(\{ scope, filters, reason \}\)/);
+  assert.match(source,
+    /buildWorkerExportRequest\(\{[\s\S]{0,100}reason: reason\.trim\(\) === "" \? null : reason\.trim\(\)/);
   assert.match(source, /body: JSON.stringify\(request\.body\)/);
 });
 
@@ -33,6 +34,7 @@ test("PRE-W2 export button: directory export is offered to resolved actors; all 
   assert.match(source, /canExportAll\?: boolean/);
   assert.match(source, /const exportScope = exportScopeForTab\(tab\)/);
   assert.match(source, /const canExportThisTab = exportScope === "all" \? canExportAll : canExport/);
+  assert.match(source, /scope=\{exportScope\}/);
   assert.match(source, /canExportThisTab && exportScope !== null \?/);
   assert.match(source, /Xuất Excel/);
   assert.match(source, /đầy đủ CCCD, ngày sinh, số điện thoại, địa chỉ và thông tin tài/);
@@ -43,9 +45,11 @@ test("PRE-W2 export button: directory export is offered to resolved actors; all 
   }
 });
 
-test("T1A: reason bat buoc trong dialog, chong double-submit", () => {
-  assert.match(source, /Lý do xuất/);
-  assert.match(source, /required aria-required="true"/);
+test("R1.1: export reason is optional, blank becomes null, double-submit remains guarded", () => {
+  assert.match(source, /Lý do xuất \(không bắt buộc\)/);
+  assert.doesNotMatch(source, /<textarea id=\{reasonId\} required/);
+  assert.match(source,
+    /reason: reason\.trim\(\) === "" \? null : reason\.trim\(\)/);
   assert.match(source, /maxLength=\{WORKER_EXPORT_REASON_MAX\}/);
   assert.match(source, /disabled=\{busy \|\| scope === null\}/);
   assert.match(source, /if \(!open && !busy\) onOpenChange\(false\)/);
@@ -72,7 +76,8 @@ test("T1A: khong log reason/body/PII ra console", () => {
   assert.equal(/console\.(log|error|warn|debug|info)/.test(source), false,
     "khong log PII/body trong component");
   // Body xuat chi duoc tao boi model tu scope+filter+reason, khong ghep PII tu bang.
-  assert.match(source, /buildWorkerExportRequest\(\{ scope, filters, reason \}\)/);
+  assert.match(source,
+    /buildWorkerExportRequest\(\{[\s\S]{0,100}reason: reason\.trim\(\) === "" \? null : reason\.trim\(\)/);
   assert.equal(/JSON\.stringify\([^)]*\)[\s\S]{0,80}(display_name|national_id|account_number)/
     .test(source), false, "body xuat khong lay PII tu bang");
 });

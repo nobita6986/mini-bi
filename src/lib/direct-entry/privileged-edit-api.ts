@@ -35,7 +35,7 @@ export type PrivilegedEditDependencies = {
 export type PrivilegedEditRequest = {
   expected_entry_version: number;
   patch: Record<string, unknown>;
-  reason: string;
+  reason: string | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -51,17 +51,20 @@ function fail(code: string, status: number): Response {
 }
 
 /**
- * Strict patch projection. Unknown or authority keys, a malformed CMT/CCCD and a missing reason
- * are refused before any database work; the DB re-validates everything it receives.
+ * Strict patch projection. Unknown or authority keys, a malformed CMT/CCCD and invalid action
+ * reasons are refused before any database work; the DB re-validates everything it receives.
  */
 export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditRequest | null {
   if (!isRecord(body)) return null;
   const keys = Object.keys(body);
-  if (keys.length !== BODY_KEYS.length || !BODY_KEYS.every((key) => keys.includes(key))) return null;
+  if (!keys.includes("expected_entry_version") || !keys.includes("patch") ||
+      !keys.every((key) => (BODY_KEYS as readonly string[]).includes(key))) return null;
   const version = body.expected_entry_version;
   if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return null;
-  const reason = body.reason;
-  if (typeof reason !== "string" || reason.trim().length === 0 || reason.length > 1000) return null;
+  const rawReason = body.reason;
+  if (rawReason !== undefined && rawReason !== null &&
+      (typeof rawReason !== "string" || rawReason.length > 1000)) return null;
+  const reason = typeof rawReason === "string" ? rawReason.trim() || null : null;
   if (!isRecord(body.patch)) return null;
   const patch = body.patch;
   const patchKeys = Object.keys(patch);
@@ -99,7 +102,7 @@ export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditReque
           status.leave_reason.length > 4000) return null;
     } else if (status.leave_reason !== undefined) return null;
   }
-  return { expected_entry_version: version, patch, reason: reason.trim() };
+  return { expected_entry_version: version, patch, reason };
 }
 
 export async function privilegedEditEntry(

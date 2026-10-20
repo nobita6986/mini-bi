@@ -5,6 +5,7 @@
  *   uploader  = lich su nguoi nhap (submission API; created_by chi de liet ke/audit)
  *   recruited = worker directory scope=recruited (recruiter co canonical recruiter_id)
  *   managed   = worker directory scope=managed (PM co assignment hieu luc)
+ *   team      = worker directory scope=team (Team Leader current-team audience)
  *
  * Quyen KHONG bao gio suy dien o client: moi CTA doc tu allowed_actions do server tra.
  */
@@ -28,7 +29,7 @@ import {
 } from "./change-request-read-contract.ts";
 import { WORK_STATUS_UI_LABELS, workStatusUiLabel } from "./display-labels.ts";
 
-export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "all"] as const;
+export const WORKER_OPERATIONS_TABS = ["uploader", "recruited", "managed", "team", "all"] as const;
 export type WorkerOperationsTab = (typeof WORKER_OPERATIONS_TABS)[number];
 
 export const WORKER_OPERATIONS_TAB_LABELS: Readonly<Record<WorkerOperationsTab, string>> =
@@ -36,6 +37,7 @@ export const WORKER_OPERATIONS_TAB_LABELS: Readonly<Record<WorkerOperationsTab, 
     uploader: "Tôi đã nhập",
     recruited: "Người tôi tuyển",
     managed: "Dự án tôi quản lý",
+    team: "Team tôi quản lý",
     all: "Toàn bộ NLĐ",
   });
 
@@ -44,6 +46,7 @@ export const WORKER_OPERATIONS_TAB_HINTS: Readonly<Record<WorkerOperationsTab, s
     uploader: "Hồ sơ bạn đã nhập. Chỉ để tra cứu — không tạo quyền đề xuất thay đổi.",
     recruited: "Người lao động có người tuyển là bạn (theo mã người tuyển trên hồ sơ).",
     managed: "Người lao động thuộc dự án bạn đang quản lý (theo phân công còn hiệu lực).",
+    team: "Người lao động thuộc team bạn đang quản lý theo phân công hiện tại.",
     all: "Toàn bộ người lao động đã gửi.",
   });
 
@@ -51,6 +54,7 @@ export const WORKER_OPERATIONS_TAB_HINTS: Readonly<Record<WorkerOperationsTab, s
 export function tabScope(tab: WorkerOperationsTab): WorkerDirectoryScope | null {
   if (tab === "recruited") return "recruited";
   if (tab === "managed") return "managed";
+  if (tab === "team") return "team";
   if (tab === "all") return "all";
   return null;
 }
@@ -59,8 +63,12 @@ export function tabScope(tab: WorkerOperationsTab): WorkerDirectoryScope | null 
  * Tab "Toan bo NLD" chi duoc OFFER khi server-side actor projection xac nhan
  * (entry_admin | change_review) + effective all scope. RPC W03 van enforce lai.
  */
-export function visibleWorkerTabs(canSeeAllWorkers: boolean): readonly WorkerOperationsTab[] {
-  return WORKER_OPERATIONS_TABS.filter((tab) => tab !== "all" || canSeeAllWorkers);
+export function visibleWorkerTabs(
+  canSeeAllWorkers: boolean,
+  canSeeTeamWorkers = false,
+): readonly WorkerOperationsTab[] {
+  return WORKER_OPERATIONS_TABS.filter((tab) =>
+    (tab !== "all" || canSeeAllWorkers) && (tab !== "team" || canSeeTeamWorkers));
 }
 
 /** Reviewer queue chi hien khi change_review + effective all scope (khop W05 #55). */
@@ -79,12 +87,6 @@ export function canViewGlobalChangeRequestHistory(
 ): boolean {
   if (capabilities === null || !scopes.some((scope) => scope.kind === "all")) return false;
   return capabilities.includes("change_review") || capabilities.includes("entry_admin");
-}
-
-export function canDirectlyCorrectWorkers(input: WorkerOperationsActor | null): boolean {
-  return input !== null && input.scopes.some((scope) => scope.kind === "all") &&
-    input.capabilities.some((capability) =>
-      capability === "entry_admin" || capability === "entry_privileged_edit");
 }
 
 /** Propose targets duoc policy cho phep (khong co DOCUMENT/CCCD). */
@@ -269,6 +271,7 @@ export type WorkerOperationsActor = {
 export function initialWorkerTab(
   actor: WorkerOperationsActor | null,
   canSeeAllWorkers: boolean,
+  canSeeTeamWorkers = false,
 ): WorkerOperationsTab {
   if (actor === null) return "uploader";
   const onlyScopeAll = actor.scopes.some((scope) => scope.kind === "all");
@@ -276,10 +279,9 @@ export function initialWorkerTab(
       actor.capabilities.includes("change_review")) && canSeeAllWorkers) {
     return "all";
   }
+  if (canSeeTeamWorkers) return "team";
   const isEntryActor = actor.capabilities.some((capability) =>
     ["entry_own", "entry_team", "entry_admin"].includes(capability));
-  if (!isEntryActor && actor.capabilities.includes("team_manager_assign") &&
-      actor.scopes.some((scope) => scope.kind === "team")) return "managed";
   if (!isEntryActor && actor.capabilities.includes("change_request_create")) return "managed";
   return "uploader";
 }
