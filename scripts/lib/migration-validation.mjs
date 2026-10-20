@@ -152,7 +152,9 @@ export function migrationSqlForTransaction(sql) {
       ? "Migration transaction wrapper must be exactly BEGIN; ... COMMIT;"
       : "Unsupported transaction control in migration SQL");
   }
-  return wrapped ? sql.slice(first.end + 1, last.start) : sql;
+  return wrapped
+    ? sql.slice(first.end + 1, last.start + skipSqlTrivia(last.text, 0))
+    : sql;
 }
 
 export async function readMigrations(directory) {

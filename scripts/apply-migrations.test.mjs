@@ -18,7 +18,10 @@ test("migration checksum is stable across LF and CRLF checkouts", () => {
 
 test("transaction wrapper removal accepts only an exact outer BEGIN/COMMIT", () => {
   const wrapped = "-- header\nbegin;\nselect $body$begin; commit;$body$;\ncommit; -- trailer\n";
-  assert.equal(migrationSqlForTransaction(wrapped), "\nselect $body$begin; commit;$body$;");
+  assert.equal(migrationSqlForTransaction(wrapped), "\nselect $body$begin; commit;$body$;\n");
+  const commented = "begin;\nselect 1; -- BEGIN; COMMIT; stays in line comment\n/* BEGIN; COMMIT; stays in block comment */\ncommit;\n";
+  assert.equal(migrationSqlForTransaction(commented),
+    "\nselect 1; -- BEGIN; COMMIT; stays in line comment\n/* BEGIN; COMMIT; stays in block comment */\n");
   assert.equal(migrationSqlForTransaction("select 'begin; commit;';\n"), "select 'begin; commit;';\n");
   assert.throws(() => migrationSqlForTransaction("begin; select 1;"), /exactly BEGIN; \.\.\. COMMIT;/);
   assert.throws(() => migrationSqlForTransaction("select 1; commit;"), /transaction wrapper/);
