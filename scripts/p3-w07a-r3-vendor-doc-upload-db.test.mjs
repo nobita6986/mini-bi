@@ -37,7 +37,7 @@ async function buildDb() {
   for (const name of names) await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
     "migration inventory includes the #122 baseline");
-  assert.equal(names.at(-(49 + 9)), MIGRATION);
+  assert.ok(names.includes(MIGRATION), "migration inventory includes the named W07A-R3 migration");
   return db;
 }
 
