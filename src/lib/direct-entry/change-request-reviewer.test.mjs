@@ -17,7 +17,10 @@ import {
   unsupportedReviewerViewModel,
 } from "./change-request-reviewer.ts";
 import { projectProposerEntry } from "./change-request-proposer.ts";
-import { DOCUMENT_STAGING_MESSAGE } from "./change-request-read-projection.ts";
+import {
+  DOCUMENT_STAGING_MESSAGE,
+  projectEntrySensitiveContext,
+} from "./change-request-read-projection.ts";
 
 const REQUEST_ID = "d1000000-0000-4000-8000-00000000000a";
 const ENTRY_A = "c1000000-0000-4000-8000-00000000000a";
@@ -435,6 +438,31 @@ test("PAYMENT full duoc quyet dinh, legacy masked fails closed, bank phai giai d
   });
   assert.equal(unknownBank.kind, "unsupported");
   assert.equal(unknownBank.reason, "CATALOG");
+});
+
+test("PAYMENT reviewer accepts bank-name-only context and keeps partial account text read-only", () => {
+  const entryContext = projectEntrySensitiveContext({
+    entry_id: ENTRY_A,
+    worker_details: workerDetails(),
+    payment: {
+      state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+      account_holder_name: null, version: 3,
+    },
+  });
+  assert.ok(entryContext);
+
+  const model = build({
+    detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {
+      state: "provided", account_number: "ACCT-AB123", bank_id: null,
+      account_holder_name: null,
+    } })] },
+    contexts: contextsOf(ENTRY_A, context({ payment: entryContext.payment })),
+  });
+  assert.equal(model.kind, "readonly",
+    "incomplete persisted PAYMENT proposals remain non-decidable");
+  assert.equal(model.items[0].decidable, false);
+  assert.equal(model.items[0].rows.some((row) => row.field === "account_number" &&
+    row.after === "ACCT-AB123"), true);
 });
 
 test("WORK_STATUS reviewer sees status, effective date and submitted leave reason", () => {

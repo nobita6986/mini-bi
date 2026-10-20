@@ -20,6 +20,8 @@ export type PaymentProjection = PaymentInput & {
 };
 
 const BANK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const PAYMENT_CONTROLS = /[\u0000-\u001F\u007F-\u009F]/;
+const LEGACY_MASKED_ACCOUNT_NUMBER = /^•+.{4}$/u;
 const FULL_KEYS = [
   "state", "account_number", "bank_id", "account_holder_name", "version",
 ];
@@ -38,6 +40,15 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 
 function isPaymentState(value: unknown): value is PaymentState {
   return typeof value === "string" && PAYMENT_STATES.includes(value as PaymentState);
+}
+
+export function isPaymentText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.trim().length > 0 &&
+    [...value].length <= maxLength && !PAYMENT_CONTROLS.test(value);
+}
+
+export function isPaymentAccountNumber(value: unknown): value is string {
+  return isPaymentText(value, 64) && !LEGACY_MASKED_ACCOUNT_NUMBER.test(value);
 }
 
 export function projectPaymentInput(
@@ -71,43 +82,38 @@ export function projectPaymentProjection(value: unknown): PaymentProjection | nu
   if (!isRecord(value) ||
       (!exactKeys(value, FULL_KEYS) && !exactKeys(value, FULL_NAME_KEYS)) ||
       !isPaymentState(value.state) ||
-      (typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1) ||
-      (value.account_number !== null && typeof value.account_number !== "string")) return null;
+      (typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1)) return null;
 
-  if ((value.bank_id !== null && typeof value.bank_id !== "string") ||
-      (value.account_holder_name !== null && typeof value.account_holder_name !== "string")) return null;
-  if ("bank_name" in value && value.bank_name !== null &&
-      (typeof value.bank_name !== "string" || value.bank_name.trim().length < 1 ||
-       value.bank_name.length > 256 || /[\u0000-\u001F\u007F]/.test(value.bank_name))) return null;
-  if ("bank_name" in value) {
-    if (value.state !== "provided") {
-      if (value.account_number !== null || value.bank_id !== null || value.bank_name !== null ||
-          value.account_holder_name !== null) return null;
-      return { state: value.state, account_number: null, bank_id: null, bank_name: null,
+  const accountNumber = value.account_number;
+  const bankId = value.bank_id;
+  const bankName = "bank_name" in value ? value.bank_name : undefined;
+  const holder = value.account_holder_name;
+  if ((accountNumber !== null && !isPaymentAccountNumber(accountNumber)) ||
+      (bankId !== null && (typeof bankId !== "string" || !BANK_ID.test(bankId))) ||
+      ("bank_name" in value && bankName !== null && !isPaymentText(bankName, 256)) ||
+      (holder !== null && !isPaymentText(holder, 256))) return null;
+
+  if (value.state !== "provided") {
+    if (accountNumber !== null || bankId !== null ||
+        ("bank_name" in value && bankName !== null) || holder !== null) return null;
+    return "bank_name" in value
+      ? { state: value.state, account_number: null, bank_id: null, bank_name: null,
+        account_holder_name: null, version: value.version }
+      : { state: value.state, account_number: null, bank_id: null,
         account_holder_name: null, version: value.version };
-    }
-    if (typeof value.account_number !== "string" || !/^\d{1,64}$/.test(value.account_number) ||
-        (value.bank_id !== null && !BANK_ID.test(String(value.bank_id))) ||
-        (value.bank_id === null && value.bank_name === null) ||
-        typeof value.account_holder_name !== "string" ||
-        value.account_holder_name.trim().length < 1 || value.account_holder_name.length > 256) return null;
-    return {
-      state: value.state,
-      account_number: value.account_number,
-      bank_id: value.bank_id as string | null,
-      bank_name: value.bank_name as string | null,
-      account_holder_name: value.account_holder_name,
-      version: value.version,
-    };
   }
-  const payment = projectPaymentInput({
-    state: value.state,
-    account_number: value.account_number,
-    bank_id: value.bank_id,
-    account_holder_name: value.account_holder_name,
-  });
-  if (!payment) return null;
-  return { ...payment, version: value.version };
+
+  // R4 persists partial metadata. The older five-key projection may omit a bank_name-only value.
+  if ("bank_name" in value && accountNumber === null && bankName === null && holder === null) {
+    return null;
+  }
+  return "bank_name" in value
+    ? { state: value.state, account_number: accountNumber as string | null,
+      bank_id: bankId as string | null, bank_name: bankName as string | null,
+      account_holder_name: holder as string | null, version: value.version }
+    : { state: value.state, account_number: accountNumber as string | null,
+      bank_id: bankId as string | null, account_holder_name: holder as string | null,
+      version: value.version };
 }
 
 export function projectPaymentUpdateResult(

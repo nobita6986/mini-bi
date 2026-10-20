@@ -23,6 +23,8 @@ import { isDocumentType } from "./document-upload-contract.ts";
 import { WORK_STATUS_UI_LABELS, genderUiLabel } from "./display-labels.ts";
 import {
   PAYMENT_STATES,
+  isPaymentAccountNumber,
+  isPaymentText,
   projectPaymentProjection,
   type PaymentProjection,
   type PaymentState,
@@ -164,7 +166,7 @@ function isPaymentState(value: unknown): value is PaymentState {
   return typeof value === "string" && PAYMENT_STATES.some((state) => state === value);
 }
 
-/** Strict-project proposal PAYMENT: full authorized values are required for a provided account. */
+/** Strict-project persisted PAYMENT values; incomplete proposals remain read-only in reviewer UI. */
 export function projectPaymentReadProposal(value: unknown): PaymentReadView | null {
   if (!isRecord(value)) return null;
   if (!hasOnlyKeys(value, ["state", "account_number", "bank_id", "account_holder_name"])) {
@@ -173,7 +175,7 @@ export function projectPaymentReadProposal(value: unknown): PaymentReadView | nu
   if (!isPaymentState(value.state)) return null;
   let account: PaymentReadAccount = { mode: "ABSENT" };
   if (typeof value.account_number === "string") {
-    if (!/^\d{1,64}$/.test(value.account_number)) return null;
+    if (!isPaymentAccountNumber(value.account_number)) return null;
     account = { mode: "FULL", value: value.account_number };
   } else if (value.account_number !== null && value.account_number !== undefined) {
     return null;
@@ -186,13 +188,12 @@ export function projectPaymentReadProposal(value: unknown): PaymentReadView | nu
   }
   let holderName: string | null = null;
   if (value.account_holder_name !== undefined && value.account_holder_name !== null) {
-    if (typeof value.account_holder_name !== "string" ||
-        value.account_holder_name.trim().length < 1 || value.account_holder_name.length > 256) return null;
+    if (!isPaymentText(value.account_holder_name, 256)) return null;
     holderName = value.account_holder_name;
   }
   const complete = value.state === "provided" && account.mode === "FULL" &&
     bankId !== null && holderName !== null;
-  if (value.state === "provided" && !complete) return null;
+  if (value.state === "provided" && account.mode === "ABSENT" && holderName === null) return null;
   if (value.state !== "provided" &&
       (account.mode !== "ABSENT" || bankId !== null || holderName !== null)) return null;
   return { state: value.state, account, bankId, holderName, complete };

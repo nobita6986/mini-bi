@@ -187,6 +187,17 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
   });
   assert.deepEqual(projectChangeRequestDetail(payment, { request_id: requestId }), payment);
 
+  const partialPayment = detailBody({
+    items: [{
+      entry_id: entryA, target_kind: "PAYMENT", expected_version: 1,
+      proposal: { state: "provided", account_number: "ACCT-AB123", bank_id: null,
+        account_holder_name: null },
+      labor_type_display: null,
+    }],
+  });
+  assert.deepEqual(projectChangeRequestDetail(partialPayment, { request_id: requestId }), partialPayment,
+    "the persisted review read contract retains valid partial R4 account text");
+
   const onStatusWithCanonicalNull = detailBody({
     items: [{
       entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,

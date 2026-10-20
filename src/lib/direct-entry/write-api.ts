@@ -11,7 +11,7 @@ import {
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import type { DirectEntryRepository, DraftCatalog } from "./write-repository.ts";
-import { PAYMENT_STATES, projectPaymentProjection } from "./payment-contract.ts";
+import { projectPaymentProjection } from "./payment-contract.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -295,33 +295,7 @@ function isGeneralNoteReadProjection(value: unknown): boolean {
 
 /** Current R4 RPC may return bank_name text in addition to the older catalog bank_id shape. */
 function isPaymentReadProjection(value: unknown): boolean {
-  if (value === null) return true;
-  if (!isRecord(value)) return false;
-  if (!("bank_name" in value)) return projectPaymentProjection(value) !== null;
-  if (!hasExactKeys(value, [
-    "state", "account_number", "bank_id", "bank_name", "account_holder_name", "version",
-  ]) || !(PAYMENT_STATES as readonly unknown[]).includes(value.state) ||
-      typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 1 ||
-      (value.account_number !== null && typeof value.account_number !== "string") ||
-      (value.bank_id !== null && typeof value.bank_id !== "string") ||
-      (value.bank_name !== null && typeof value.bank_name !== "string") ||
-      (value.account_holder_name !== null && typeof value.account_holder_name !== "string")) {
-    return false;
-  }
-  const state = value.state as (typeof PAYMENT_STATES)[number];
-  const accountNumber = value.account_number as string | null;
-  const bankId = value.bank_id as string | null;
-  const bankName = value.bank_name as string | null;
-  const holder = value.account_holder_name as string | null;
-  if (state !== "provided") {
-    return accountNumber === null && bankId === null && bankName === null && holder === null;
-  }
-  const cleanText = (text: string | null, max: number) => text === null ||
-    (text.trim().length >= 1 && text.trim().length <= max && !/[\u0000-\u001F\u007F]/.test(text));
-  return accountNumber !== null && /^\d{1,64}$/.test(accountNumber) &&
-    holder !== null && cleanText(holder, 256) && (bankId !== null || bankName !== null) &&
-    (bankId === null || /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(bankId)) &&
-    cleanText(bankName, 256);
+  return value === null || projectPaymentProjection(value) !== null;
 }
 
 export function projectEntry(value: unknown): Record<string, unknown> | null {

@@ -380,6 +380,30 @@ test("read validates UUID before session and keeps the restricted projection", a
   assert.equal(r4PaymentResponse.status, 200,
     "the current R4 bank-name projection is accepted without dropping the text value");
 
+  const bankNameOnly = {
+    state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+    account_holder_name: null, version: 2,
+  };
+  deps.repository.readEntry = async () => ({
+    ok: true, data: { ...projection, payment: bankNameOnly },
+  });
+  const bankNameOnlyResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(bankNameOnlyResponse.status, 200,
+    "a bank-name-only R4 row passes the payment detail read boundary");
+  assert.deepEqual((await bankNameOnlyResponse.json()).entry.payment, bankNameOnly);
+
+  const partialTextPayment = {
+    state: "provided", account_number: "ACCT-AB123", bank_id: null, bank_name: null,
+    account_holder_name: null, version: 2,
+  };
+  deps.repository.readEntry = async () => ({
+    ok: true, data: { ...projection, payment: partialTextPayment },
+  });
+  const partialTextResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(partialTextResponse.status, 200,
+    "R4 account text may be partial and need not be numeric");
+  assert.deepEqual((await partialTextResponse.json()).entry.payment, partialTextPayment);
+
   deps.repository.readEntry = async () => ({ ok: false, kind: "denied" });
   const denied = await getDirectEntryEntry(entryId, "true", deps);
   assert.equal(denied.status, 404);

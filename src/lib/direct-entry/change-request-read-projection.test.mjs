@@ -72,13 +72,28 @@ test("workerDetailsRows chi hien field thuc su thay doi", () => {
     ["Giới tính", "Ngày cấp", "Nơi cấp"]);
 });
 
-test("PAYMENT read projection requires full values, preserves leading zeroes", () => {
+test("PAYMENT read projection preserves full and partial R4 text values", () => {
   const full = projectPaymentReadProposal({
     state: "provided", account_number: "000123", bank_id: "bank_a",
     account_holder_name: "NGUYEN VAN SYNTHETIC",
   });
   assert.equal(full.complete, true);
   assert.deepEqual(full.account, { mode: "FULL", value: "000123" });
+
+  const partial = projectPaymentReadProposal({
+    state: "provided", account_number: "ACCT-AB123", bank_id: null,
+    account_holder_name: null,
+  });
+  assert.equal(partial.complete, false);
+  assert.deepEqual(partial.account, { mode: "FULL", value: "ACCT-AB123" });
+  assert.equal(projectPaymentReadProposal({
+    state: "provided", account_number: "x".repeat(65), bank_id: null,
+    account_holder_name: null,
+  }), null, "R4 account-number maximum is enforced");
+  assert.equal(projectPaymentReadProposal({
+    state: "provided", account_number: "acct\u0001number", bank_id: null,
+    account_holder_name: null,
+  }), null, "R4 control characters are rejected");
 
   const masked = projectPaymentReadProposal({
     state: "provided", account_number: "••••6789",
@@ -92,7 +107,6 @@ test("PAYMENT read projection requires full values, preserves leading zeroes", (
   for (const invalid of [
     { state: "provided", account_number: "000123", bank_id: "b", account_holder_name: "x", extra: 1 },
     { state: "provided", account_number: "••••0123", bank_id: "b", account_holder_name: "x" },
-    { state: "provided", account_number: "000123", bank_id: null, account_holder_name: "x" },
     { state: "pending", account_number: null },
     { state: "provided", account_number: 123 },
     { state: "provided", account_number: "000123", bank_id: "", account_holder_name: "x" },
@@ -136,6 +150,37 @@ test("paymentReadRows dung nhan catalog va fail-closed khi khong giai duoc bank"
   });
   assert.equal(context?.payment?.bank_name, "Ngân hàng Synthetic",
     "review context preserves the existing full R4 bank-name projection");
+
+  const partialContext = projectEntrySensitiveContext({
+    entry_id: "c1000000-0000-4000-8000-000000000001",
+    worker_details: worker(),
+    payment: {
+      state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+      account_holder_name: null, version: 3,
+    },
+  });
+  assert.deepEqual(partialContext?.payment, {
+    state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+    account_holder_name: null, version: 3,
+  }, "review context accepts persisted bank-name-only rows");
+  const textContext = projectEntrySensitiveContext({
+    entry_id: "c1000000-0000-4000-8000-000000000001",
+    worker_details: worker(),
+    payment: {
+      state: "provided", account_number: "ACCT-AB123", bank_id: null,
+      bank_name: null, account_holder_name: null, version: 3,
+    },
+  });
+  assert.equal(textContext?.payment?.account_number, "ACCT-AB123",
+    "review context accepts canonical R4 account text");
+  assert.equal(projectEntrySensitiveContext({
+    entry_id: "c1000000-0000-4000-8000-000000000001",
+    worker_details: worker(),
+    payment: {
+      state: "provided", account_number: "••••0123", bank_id: null,
+      bank_name: "Legacy Bank", account_holder_name: null, version: 3,
+    },
+  }), null, "review context continues to reject masked values");
   assert.deepEqual(paymentReadRows({
     before: context.payment,
     after,

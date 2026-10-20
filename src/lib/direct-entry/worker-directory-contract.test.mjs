@@ -130,6 +130,38 @@ test("row projection accepts the exact server shape and rejects drift", () => {
   }
 });
 
+test("directory accepts partial R4 payment text without changing its exact shape", () => {
+  const bankNameOnly = projectWorkerDirectoryRow({
+    ...row,
+    payment: {
+      state: "provided", account_number: null, bank_id: null,
+      account_holder_name: null, version: 2,
+    },
+  });
+  assert.deepEqual(bankNameOnly.payment, {
+    state: "provided", account_number: null, bank_id: null,
+    account_holder_name: null, version: 2,
+  }, "the frozen directory shape represents bank-name-only rows with nullable old fields");
+  assert.equal("bank_name" in bankNameOnly.payment, false);
+
+  const accountOnly = projectWorkerDirectoryRow({
+    ...row,
+    payment: {
+      state: "provided", account_number: "ACCT-AB123", bank_id: null,
+      account_holder_name: null, version: 2,
+    },
+  });
+  assert.equal(accountOnly.payment.account_number, "ACCT-AB123");
+  assert.equal(projectWorkerDirectoryRow({
+    ...row,
+    payment: { ...row.payment, account_number: "acct\u0001number" },
+  }), null, "R4 control characters remain invalid");
+  assert.equal(projectWorkerDirectoryRow({
+    ...row,
+    payment: { ...row.payment, bank_name: "Unexpected shape change" },
+  }), null, "the directory does not acquire a bank_name field");
+});
+
 test("page projection enforces scope, page size and cursor consistency", () => {
   const projected = projectWorkerDirectoryPage(page, { scope: "managed", page_size: 25 });
   assert.equal(projected.items.length, 1);

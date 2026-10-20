@@ -12,6 +12,7 @@
  * con thuoc W04 (xem migration #52 self-check).
  */
 import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
+import { isPaymentAccountNumber, isPaymentText } from "./payment-contract.ts";
 
 export const WORKER_DIRECTORY_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerDirectoryScope = (typeof WORKER_DIRECTORY_SCOPES)[number];
@@ -225,11 +226,10 @@ function projectPayment(value: unknown): WorkerDirectoryPayment | null | undefin
     return undefined;
   }
   if (value.state === "provided") {
-    if (typeof value.account_number !== "string" || !/^\d{1,64}$/.test(value.account_number) ||
-        typeof value.bank_id !== "string" ||
-        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.bank_id) ||
-        typeof value.account_holder_name !== "string" ||
-        value.account_holder_name.trim().length < 1 || value.account_holder_name.length > 256) {
+    if ((value.account_number !== null && !isPaymentAccountNumber(value.account_number)) ||
+        (value.bank_id !== null && (typeof value.bank_id !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.bank_id))) ||
+        (value.account_holder_name !== null && !isPaymentText(value.account_holder_name, 256))) {
       return undefined;
     }
   } else if (value.account_number !== null || value.bank_id !== null ||
