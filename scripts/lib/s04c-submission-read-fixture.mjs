@@ -19,6 +19,7 @@ export const AUTH_PROLOGUE =
 export const PROJECT_ID = "s02c_project";
 export const TEAM_A = "94000000-0000-4000-8000-0000000000c1";
 export const RECRUITER_A = "93000000-0000-4000-8000-0000000000c1";
+const OWNER_RECRUITER_ID = "93000000-0000-4000-8000-0000000000c2";
 
 export const ACTORS = Object.freeze({
   owner: {
@@ -62,7 +63,7 @@ export async function createMigratedDatabase() {
   return { db, migrationNames: names };
 }
 
-async function insertActor(db, actor, capabilities, scopeKind, teamId) {
+async function insertActor(db, actor, capabilities, scopeKind, teamId, currentState) {
   await db.query("insert into auth.users(id) values ($1)", [actor.auth_subject]);
   // P2.5-HF-R5: display_name exists from #62; earlier partial ledgers
   // (historical contract tests) must keep working without it.
@@ -76,15 +77,17 @@ async function insertActor(db, actor, capabilities, scopeKind, teamId) {
       : "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled) values ($1,$2,true)",
     [actor.app_user_id, actor.auth_subject],
   );
+  const currentColumns = currentState ? ",is_current" : "";
+  const currentValue = currentState ? ",true" : "";
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,$2,'2020-01-01')", [actor.app_user_id, capability]);
+      `insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from${currentColumns})` +
+      ` values ($1,$2,'2020-01-01'${currentValue})`, [actor.app_user_id, capability]);
   }
   if (scopeKind !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
-      " values ($1,$2,$3,'2020-01-01')",
+      `insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from${currentColumns})` +
+      ` values ($1,$2,$3,'2020-01-01'${currentValue})`,
       [actor.app_user_id, scopeKind, scopeKind === "team" ? teamId : null]);
   }
 }
@@ -163,25 +166,46 @@ async function transition(db, actor, submissionId, expectedVersion, targetState,
 }
 
 export async function seedSubmissionReadFixture(db) {
+  const currentState = (await db.query(
+    "select exists (select 1 from information_schema.columns where table_schema='public'" +
+    " and table_name='direct_entry_capability_grants' and column_name='is_current') as present",
+  )).rows[0].present;
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
     [TEAM_A, "s02c_team", "S02C team"]);
-  await db.query("insert into public.recruiters(recruiter_id,display_name) values ($1,$2)",
-    [RECRUITER_A, "S02C recruiter"]);
-  await db.query(
-    "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from)" +
-    " values ($1,'hrp','2020-01-01')", [RECRUITER_A]);
-  await db.query(
-    "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)" +
-    " values ($1,$2,'2020-01-01')", [RECRUITER_A, TEAM_A]);
+  const currentColumns = currentState ? ",is_current" : "";
+  const currentValue = currentState ? ",true" : "";
+  for (const [recruiterId, displayName] of [
+    [RECRUITER_A, "S02C recruiter"], [OWNER_RECRUITER_ID, "S02C project manager"],
+  ]) {
+    await db.query("insert into public.recruiters(recruiter_id,display_name) values ($1,$2)",
+      [recruiterId, displayName]);
+    await db.query(
+      `insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from${currentColumns})` +
+      ` values ($1,'hrp','2020-01-01'${currentValue})`, [recruiterId]);
+    await db.query(
+      `insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from${currentColumns})` +
+      ` values ($1,$2,'2020-01-01'${currentValue})`, [recruiterId, TEAM_A]);
+  }
   await db.query(
     "insert into public.direct_entry_projects(project_id,display_name) values ($1,$2)",
     [PROJECT_ID, "S02C project"]);
 
-  await insertActor(db, ACTORS.owner, ["entry_create", "submission_create", "entry_own"], "own", null);
-  await insertActor(db, ACTORS.noCapability, ["entry_own"], "own", null);
-  await insertActor(db, ACTORS.noScope, ["entry_create", "submission_create", "entry_own"], null, null);
-  await insertActor(db, ACTORS.teamScopeOnly, ["entry_create", "submission_create", "entry_own"], "team", TEAM_A);
-  await insertActor(db, ACTORS.otherOwner, ["entry_create", "submission_create", "entry_own"], "own", null);
+  await insertActor(db, ACTORS.owner, ["entry_create", "submission_create", "entry_own"], "own", null, currentState);
+  await insertActor(db, ACTORS.noCapability, ["entry_own"], "own", null, currentState);
+  await insertActor(db, ACTORS.noScope, ["entry_create", "submission_create", "entry_own"], null, null, currentState);
+  await insertActor(db, ACTORS.teamScopeOnly, ["entry_create", "submission_create", "entry_own"], "team", TEAM_A, currentState);
+  await insertActor(db, ACTORS.otherOwner, ["entry_create", "submission_create", "entry_own"], "own", null, currentState);
+
+  if ((await db.query(
+    "select to_regclass('public.direct_entry_project_manager_assignments') is not null as present",
+  )).rows[0].present) {
+    await db.query(
+      `insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from${currentColumns})` +
+      ` values ($1,$2,true,'2020-01-01'${currentValue})`, [ACTORS.owner.app_user_id, OWNER_RECRUITER_ID]);
+    await db.query(
+      `insert into public.direct_entry_project_manager_assignments(project_id,manager_recruiter_id${currentColumns})` +
+      ` values ($1,$2${currentValue})`, [PROJECT_ID, OWNER_RECRUITER_ID]);
+  }
 
   const draft = await createSubmission(db, ACTORS.owner, ["hrp-2026-400001"], RECRUITER_A, "draft");
   const review = await createSubmission(db, ACTORS.owner, ["hrp-2026-400002"], RECRUITER_A, "review");

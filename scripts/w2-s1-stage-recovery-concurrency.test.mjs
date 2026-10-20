@@ -122,8 +122,8 @@ test("stage recovery and cleanup serialize with completion, batch RPC and stage 
     });
     const entryId = fixture.draft.entryIds[0];
     await setup.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'document_upload','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'document_upload','2020-01-01',true)",
       [OWNER.app_user_id],
     );
     const { rows: [{ version }] } = await setup.query(
