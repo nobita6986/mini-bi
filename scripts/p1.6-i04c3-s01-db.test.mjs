@@ -90,15 +90,14 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   const migrations = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  const totalCount = migrations.length;
   const apply = untilName === null
     ? migrations
     : migrations.slice(0, migrations.indexOf(untilName) + 1);
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
-  assert.equal(totalCount, 122,
-    "the ledger carries W03A account-read repair #84 and append-only migrations through #122");
+  assert.ok(migrations.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
   for (const name of apply) {
     if (crlfLegacyScopeHelpers && name === W07C_R7_MIGRATION) {
       await rewriteLegacyScopeHelpersWithCrlf(db);

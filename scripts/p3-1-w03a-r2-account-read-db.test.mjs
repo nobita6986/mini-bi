@@ -54,9 +54,10 @@ async function denied(operation, code = "42501") {
 
 test("R2 migration #83 is append-only and read RPC ACL/projection is exact", async () => {
   const names = await migrations();
-  assert.equal(names.length, 122);
-  assert.equal(names.at(-39), NEW_MIGRATION);
-  assert.equal(names.at(-24), REAL_NAME_MIGRATION);
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(NEW_MIGRATION), 83, "migration chronology remains append-only");
+  assert.equal(names.indexOf(REAL_NAME_MIGRATION), 98, "migration chronology remains append-only");
   const database = await db();
   await seed(database);
   const result = await rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, null, "all", 1, 25]);

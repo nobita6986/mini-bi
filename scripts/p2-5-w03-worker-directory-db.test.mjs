@@ -54,10 +54,11 @@ async function buildDb() {
   for (const name of names) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
   }
-  assert.equal(names.length, 122, "the ledger includes worker-directory summary #121");
-  assert.equal(names[names.length - (1 + 69)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (1 + 70)], W03_MIGRATION, "W03 is #52");
-  assert.equal(names[names.length - (1 + 71)], W02_MIGRATION, "W03 depends on W02 #51");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(W04_MIGRATION), 52, "W04 is #53");
+  assert.equal(names.indexOf(W03_MIGRATION), 51, "W03 is #52");
+  assert.equal(names.indexOf(W02_MIGRATION), 50, "W03 depends on W02 #51");
   return db;
 }
 

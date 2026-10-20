@@ -1245,12 +1245,12 @@ test("18: the ACL posture is service-role only, with revoked helpers and forced 
 
 test("19: the retired closed set is gone and a legacy value aborts migration #79", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.at(-44), NEW_MIGRATION, "#79 stays the catalog migration");
-  assert.equal(names.at(-43), R2_MIGRATION, "#80 stays the display projection migration");
-  assert.equal(names.at(-42), R3_MIGRATION, "#81 remains before W03A");
-  assert.equal(names.at(-41), "20261011150000_p3_1_w03a_app_user_lifecycle.sql", "#82 is the W03A migration");
-  assert.equal(names.at(-40), "20261011160000_p3_1_w03a_r2_account_read.sql", "#83 is the W03A-R2 read migration");
-  assert.equal(names.at(-39), "20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql", "#84 repairs the W03A-R2 read contract");
+  assert.equal(names.indexOf(NEW_MIGRATION), 78, "#79 stays the catalog migration");
+  assert.equal(names.indexOf(R2_MIGRATION), 79, "#80 stays the display projection migration");
+  assert.equal(names.indexOf(R3_MIGRATION), 80, "#81 remains before W03A");
+  assert.equal(names.indexOf("20261011150000_p3_1_w03a_app_user_lifecycle.sql"), 81, "#82 is the W03A migration");
+  assert.equal(names.indexOf("20261011160000_p3_1_w03a_r2_account_read.sql"), 82, "#83 is the W03A-R2 read migration");
+  assert.equal(names.indexOf("20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql"), 83, "#84 repairs the W03A-R2 read contract");
   assert.equal(new Set(names).size, names.length, "the ledger carries no duplicate slot");
 
   const closedSetQuery =

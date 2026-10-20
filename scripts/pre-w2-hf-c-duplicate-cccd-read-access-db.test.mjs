@@ -54,9 +54,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 122, "the ledger carries the PRE-W2-HF-C migration as #87");
-  assert.equal(names[names.length - (1 + 35)], HF_C_MIGRATION,
-    "HF-C #87 stays before D2 #88, cutoff #89, export #90 and status HF-F #91");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(HF_C_MIGRATION), 86, "HF-C #87 stays before D2 #88, cutoff #89, export #90 and status HF-F #91");
   return db;
 }
 

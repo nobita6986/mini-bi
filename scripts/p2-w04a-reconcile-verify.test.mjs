@@ -301,9 +301,9 @@ test("P2-W04C reconcile tracks the current append-only release inventory", async
   const names = (await readdir(MIGRATION_DIR))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  assert.equal(names.length, 122);
-  assert.equal(names[names.length - (1 + 61)],
-    "20261008210000_p2_5_hf_r3_worker_full_correction.sql");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf("20261008210000_p2_5_hf_r3_worker_full_correction.sql"), 60, "migration chronology remains append-only");
   const w07bIdx = names.indexOf(
     "20261008020000_p3_w07b_project_manager_scope.sql",
   );

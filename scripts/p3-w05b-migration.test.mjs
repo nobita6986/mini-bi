@@ -9,8 +9,9 @@ const FILTER_SOURCE = path.resolve("src/lib/reporting/p1-filter.ts");
 
  test("W05B migration is one append-only patch-live migration with fail-closed drift guards", async () => {
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 122);
-  assert.equal(names.at(-38), "20261011180000_p3_w05b_a_team_reporting.sql");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf("20261011180000_p3_w05b_a_team_reporting.sql"), 84, "migration chronology remains append-only");
   const source = await readFile(MIGRATION, "utf8");
   assert.match(source, /pg_get_viewdef/);
   assert.match(source, /pg_get_functiondef/);

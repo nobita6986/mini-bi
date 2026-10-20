@@ -54,10 +54,9 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 122,
-    "ledger includes worker-data capabilities #100, initial-status hotfix #101 and uploader queues #102");
-  assert.equal(names[names.length - (1 + 36)], EXPORT_MIGRATION_NAME,
-    "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(EXPORT_MIGRATION_NAME), 85, "the export migration stays #86 before HF-C #87, HF-D2 #88, cutoff #89, HF-E #90, HF-F #91, D3-A #92 and HF-G #93");
   return db;
 }
 

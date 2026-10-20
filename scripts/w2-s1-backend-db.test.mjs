@@ -40,17 +40,13 @@ await db.query(
 );
 
 test("migration #115 follows W2S1 recovery without changing earlier guards", async () => {
-  assert.equal(migrations.migrationNames.length, 122);
-  assert.equal(migrations.migrationNames.at(-10),
-    "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql");
-  assert.equal(migrations.migrationNames.at(-9),
-    "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql");
-  assert.equal(migrations.migrationNames.at(-8),
-    "20261018130000_w2_s1_portrait_stage_create_idempotency.sql");
-  assert.equal(migrations.migrationNames.at(-12),
-    "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql");
-  assert.equal(migrations.migrationNames.at(-11),
-    "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql");
+  assert.ok(migrations.migrationNames.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(migrations.migrationNames.indexOf("20261018090000_w2_s1_worker_portrait_enrollment_staging.sql"), 112, "migration chronology remains append-only");
+  assert.equal(migrations.migrationNames.indexOf("20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql"), 113, "migration chronology remains append-only");
+  assert.equal(migrations.migrationNames.indexOf("20261018130000_w2_s1_portrait_stage_create_idempotency.sql"), 114, "migration chronology remains append-only");
+  assert.equal(migrations.migrationNames.indexOf("20261017100000_pre_w2_s1_worker_portrait_private_projection.sql"), 110, "migration chronology remains append-only");
+  assert.equal(migrations.migrationNames.indexOf("20261017110000_pre_w2_s1_document_direct_context_access_guard.sql"), 111, "migration chronology remains append-only");
   for (const role of ["anon", "authenticated", "service_role"]) {
     const { rows } = await db.query(
       "select has_table_privilege($1,'public.direct_entry_candidates','UPDATE') allowed",
