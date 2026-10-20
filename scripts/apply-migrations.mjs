@@ -16,7 +16,11 @@ import process from "node:process";
 import pg from "pg";
 
 import { loadSupabaseConfig } from "./lib/load-supabase-config.mjs";
-import { migrationChecksum, runMigrationValidation } from "./lib/migration-validation.mjs";
+import {
+  migrationChecksum,
+  migrationSqlForTransaction,
+  runMigrationValidation,
+} from "./lib/migration-validation.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
 const MIGRATIONS_DIR = path.join(process.cwd(), "supabase", "migrations");
@@ -84,7 +88,7 @@ async function main() {
 
     try {
       await client.query("begin");
-      await client.query(sql);
+      await client.query(migrationSqlForTransaction(sql));
       await client.query(
         "insert into public.schema_migrations (version, checksum) values ($1, $2)",
         [name, sum]
@@ -93,7 +97,11 @@ async function main() {
       console.log(`APPLY   ${name}`);
       appliedCount += 1;
     } catch (error) {
-      await client.query("rollback");
+      try {
+        await client.query("rollback");
+      } finally {
+        await client.end();
+      }
       console.error(`FAILED  ${name}: ${error.message}`);
       throw error;
     }

@@ -10,7 +10,11 @@ import { PGlite } from "@electric-sql/pglite";
 import { Client } from "pg";
 
 import { checkMigrationLedger, IMPORT_REQUIRED_MIGRATIONS } from "./lib/t0-operator-import.mjs";
-import { migrationChecksum, readMigrations, runMigrationValidation } from "./lib/migration-validation.mjs";
+import {
+  migrationChecksum,
+  readMigrations,
+  runMigrationValidation,
+} from "./lib/migration-validation.mjs";
 
 const MIGRATION = "20261020150000_s0_a_schema_migrations_acl.sql";
 const RUNTIME_ROLES = ["anon", "authenticated", "service_role"];
@@ -331,6 +335,79 @@ test("S0-A revokes ledger access in real PostgreSQL while the migration runner a
         "update public.schema_migrations set checksum = 'after' where version = 'operator_probe'",
       );
       await owner.query("delete from public.schema_migrations where version = 'operator_probe'");
+
+      const transactionRunnerDir = path.join(tempDir, "transaction-runner");
+      const transactionMigrationsDir = path.join(transactionRunnerDir, "supabase", "migrations");
+      const transactionMigrationName = "001_transaction_probe.sql";
+      const transactionMigration = [
+        "begin;",
+        "create table public.transaction_probe (id integer primary key);",
+        "insert into public.transaction_probe values (1);",
+        "commit;",
+        "",
+      ].join("\n");
+      await mkdir(transactionMigrationsDir, { recursive: true });
+      await writeFile(path.join(transactionMigrationsDir, transactionMigrationName), transactionMigration);
+      const transactionConfigFile = path.join(transactionRunnerDir, "supabase-test.config");
+      await writeFile(transactionConfigFile, [
+        "NEXT_PUBLIC_SUPABASE_URL=https://s0test.supabase.co",
+        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test",
+        "SUPABASE_SECRET_KEY=sb_secret_test",
+        `SUPABASE_DB_URL=postgresql://postgres@127.0.0.1:${port}/${databaseName}?sslmode=disable`,
+        "",
+      ].join("\n"));
+      const transactionRunnerEnv = { ...process.env,
+        SUPABASE_CONFIG_FILE: transactionConfigFile,
+        SUPABASE_SECRET_KEY: "sb_secret_test",
+      };
+      delete transactionRunnerEnv.SUPABASE_DB_URL;
+      delete transactionRunnerEnv.SUPABASE_POOLER_HOST;
+      delete transactionRunnerEnv.SUPABASE_POOLER_PORT;
+      const transactionRunnerPath = path.join(process.cwd(), "scripts", "apply-migrations.mjs");
+      const runTransactionMigration = () => spawnSync(process.execPath, [transactionRunnerPath], {
+        cwd: transactionRunnerDir,
+        env: transactionRunnerEnv,
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 60000,
+      });
+
+      await owner.query(`
+        create function public.s0_test_reject_ledger_insert() returns trigger
+          language plpgsql as $$ begin
+            if new.version = '${transactionMigrationName}' then
+              raise exception 'forced S0-C2 ledger failure';
+            end if;
+            return new;
+          end $$;
+        create trigger s0_test_reject_ledger_insert before insert on public.schema_migrations
+          for each row execute function public.s0_test_reject_ledger_insert();
+      `);
+      const failedMigration = runTransactionMigration();
+      assert.equal(failedMigration.status, 1,
+        `forced ledger failure should fail runner:\n${failedMigration.stderr || failedMigration.stdout}`);
+      assert.match(failedMigration.stderr, /forced S0-C2 ledger failure/);
+      const { rows: [rolledBack] } = await owner.query(`
+        select to_regclass('public.transaction_probe') as table_name,
+          (select count(*)::integer from public.schema_migrations
+            where version = $1) as ledger_count
+      `, [transactionMigrationName]);
+      assert.deepEqual(rolledBack, { table_name: null, ledger_count: 0 });
+      await owner.query("drop trigger s0_test_reject_ledger_insert on public.schema_migrations; drop function public.s0_test_reject_ledger_insert()");
+
+      const successfulMigration = runTransactionMigration();
+      assert.equal(successfulMigration.status, 0,
+        `migration runner failed:\n${successfulMigration.stderr || successfulMigration.stdout}`);
+      const expectedTransactionChecksum = migrationChecksum(transactionMigration);
+      const { rows: [transactionLedger] } = await owner.query(
+        "select checksum from public.schema_migrations where version = $1",
+        [transactionMigrationName],
+      );
+      assert.deepEqual(transactionLedger, { checksum: expectedTransactionChecksum });
+      const { rows: [transactionEffect] } = await owner.query(
+        "select count(*)::integer as count from public.transaction_probe",
+      );
+      assert.deepEqual(transactionEffect, { count: 1 });
     } finally {
       await setup?.end().catch(() => {});
       await owner?.end().catch(() => {});
