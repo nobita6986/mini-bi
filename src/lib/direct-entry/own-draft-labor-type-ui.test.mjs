@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { draftRowFromProjection, editableFields } from "./live-controller.ts";
+import { buildDraftUpdatePayload, draftRowFromProjection, editableFields } from "./live-controller.ts";
 import { activeLaborTypeLabel } from "./labor-type-catalog-ui.ts";
 
 const live = readFileSync(
@@ -79,14 +79,20 @@ test("persisted grid stores key but shows active catalog label or authoritative 
   assert.doesNotMatch(grid, /`\$\{key\}\s*·\s*không còn hoạt động`/);
   assert.match(grid, /activeLaborTypeLabel\(row\.catalogOptions\?\.laborTypes \?\? catalogOptions\?\.laborTypes, key\)\s*\?\?\s*"Loại hình không còn hoạt động"/);
   assert.match(grid, /row\.displayValues\[column\.key\]/);
-  const createPayload = live.slice(live.indexOf("function createPayload("), live.indexOf("function updatePayload("));
+  const createStart = live.indexOf("function createPayload(");
+  const createEnd = live.indexOf("\nfunction ", createStart + 1);
+  const createPayload = live.slice(createStart, createEnd);
   assert.match(createPayload, /labor_type:\s*row\.laborType/);
   assert.doesNotMatch(createPayload, /laborTypeDisplay|labor_type_display/);
-  const updateStart = live.indexOf("function updatePayload(");
-  const nextFunction = live.indexOf("\nfunction ", updateStart + 1);
-  const updatePayloadSource = live.slice(updateStart, nextFunction);
+  const updateStart = controller.indexOf("export function buildDraftUpdatePayload(");
+  const updateEnd = controller.indexOf("\nexport function ", updateStart + 1);
+  const updatePayloadSource = controller.slice(updateStart, updateEnd);
   assert.match(updatePayloadSource, /labor_type:\s*fields\.laborType/);
   assert.doesNotMatch(updatePayloadSource, /laborTypeDisplay|labor_type_display/);
+  assert.match(live, /buildDraftUpdatePayload\(/);
+  const updatePayload = buildDraftUpdatePayload(editableFields(draftRowFromProjection(projection)), null);
+  assert.equal(updatePayload?.labor_type, "PROBATION");
+  assert.equal(Object.hasOwn(updatePayload ?? {}, "labor_type_display"), false);
 });
 
 test("desktop inactive option and mobile editor use projection label without making it writable", () => {
