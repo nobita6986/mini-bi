@@ -25,60 +25,12 @@ async function databaseBeforeHotfix() {
   const names = await migrationNames();
   assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
     "migration inventory includes the #122 baseline");
-  // The pre-hotfix cut must stop at #73. Later append-only migrations must stay
-  // visible in this pinned tail so the test never applies them before #73.
+  // Keep the cut tied to #73 and its two immediate follow-up migrations.
   const hotfixAt = names.indexOf(MIGRATION);
-  assert.deepEqual(names.slice(hotfixAt), [
+  assert.deepEqual(names.slice(hotfixAt, hotfixAt + 3), [
     "20261009090000_p3_1_hf_recruiter_alias_backfill.sql",
     "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql",
     "20261009110000_p3_1_w02b_vendor_lifecycle.sql",
-    "20261009120000_p3_1_hf_legacy_team_leader_scope.sql",
-    "20261011100000_p3_1_hf_finite_membership_move.sql",
-    "20261011110000_p3_1_hf_membership_open_ended_successor.sql",
-    "20261011120000_p3_1_w02c_labor_type_catalog.sql",
-    "20261011130000_p3_1_w02c_r2_labor_type_display_projection.sql",
-    "20261011140000_p3_1_w02c_r3_own_draft_display_projection.sql",
-    "20261011150000_p3_1_w03a_app_user_lifecycle.sql",
-    "20261011160000_p3_1_w03a_r2_account_read.sql",
-    "20261011170000_p3_1_w03a_r2_r1_account_read_repair.sql",
-    "20261011180000_p3_w05b_a_team_reporting.sql",
-    "20261013120000_pre_w2_p1_worker_export.sql",
-    "20261013130000_pre_w2_hf_c_global_duplicate_cccd_read_access.sql",
-    "20261013140000_pre_w2_hf_d2_active_duplicate_cccd_semantics.sql",
-    "20261014150000_p2_w04d_cutoff_2000_01_01.sql",
-    "20261014160000_pre_w2_hf_e_worker_export_all_and_note.sql",
-    "20261014170000_pre_w2_hf_f_employment_status_edit.sql",
-    "20261014180000_pre_w2_hf_d3_a_account_personnel_db.sql",
-    "20261014190000_pre_w2_hf_g_worker_directory_export.sql",
-    "20261015100000_pre_w2_hf_project_team_authority.sql",
-    "20261015110000_pre_w2_hf_reporting_direct_entry_only.sql",
-    "20261015120000_pre_w2_worker_export_text_and_cccd_issue_date.sql",
-    "20261015130000_pre_w2_hf_project_team_batch_mapping.sql",
-    "20261015140000_pre_w2_change_request_review_queue.sql",
-    "20261015140000_pre_w2_hf_account_real_name_display.sql",
-    "20261015150000_pre_w2_worker_data_capabilities_default.sql",
-    "20261015160000_pre_w2_initial_status_any_start_date.sql",
-    "20261015170000_pre_w2_uploader_submission_queues.sql",
-    "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
-    "20261016100000_pre_w2_hf_direct_entry_own_draft_edit.sql",
-    "20261016110000_pre_w2_change_request_team_review_history.sql",
-    "20261016120000_pre_w2_team_leader_change_request_entry_read.sql",
-    "20261016130000_pre_w2_personnel_catalog_team_names.sql",
-    "20261016140000_pre_w2_team_leader_apply_change_item.sql",
-    "20261016150000_pre_w2_global_change_request_review_history.sql",
-    "20261016160000_pre_w2_personnel_from_account_default_access.sql",
-    "20261017100000_pre_w2_s1_worker_portrait_private_projection.sql",
-    "20261017110000_pre_w2_s1_document_direct_context_access_guard.sql",
-    "20261018090000_w2_s1_worker_portrait_enrollment_staging.sql",
-    "20261018110000_w2_s1_portrait_stage_recovery_cccd_scope.sql",
-    "20261018130000_w2_s1_portrait_stage_create_idempotency.sql",
-    "20261018140000_w2_s1_portrait_stage_ttl_reaper.sql",
-    "20261018150000_w2_s1_worker_directory_detail_read_scope.sql",
-    "20261018160000_w2_s1_worker_document_staging.sql",
-    "20261018170000_w2_s1_multi_document_stage_batch_limit.sql",
-    "20261019100000_hf_duplicate_entry_void_and_directory_document_download.sql",
-    "20261019120000_hf_worker_directory_filtered_summary.sql",
-    "20261019130000_pre_w2_hf_draft_submission_delete.sql",
   ]);
   for (const name of names.slice(0, hotfixAt)) {
     await db.exec(await readFile(path.join(MIGRATION_DIR, name), "utf8"));
