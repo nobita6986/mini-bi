@@ -43,7 +43,7 @@ This keeps one view action and one export action across list/detail/export witho
 Use the existing business sources of authority and their explicit current state:
 
 - **Own:** the actor’s own resource/uploader ownership when the existing workflow defines that boundary.
-- **Team:** a team the actor is currently assigned to manage or review under the existing team rules.
+- **Team:** a team the actor is currently assigned to manage or review under the existing team rules, including current team-leader assignments.
 - **Project:** a project with a current project-manager assignment.
 - **All:** an explicit current all-scope grant plus whatever existing business action is required for company-wide worker operations.
 
@@ -51,7 +51,7 @@ Do not infer scope from role names, email, UI visibility, labels, client filters
 
 ### Current state and dates
 
-Authorization reads current state, never an interval comparison. Where an existing `enabled`, `active`, or verified-current relationship already expresses that state, reuse it. For authority rows whose current status exists only as `valid_from`/`valid_to`, add the smallest explicit `is_current` marker and make the existing grant/revoke RPCs maintain it. Keep the existing relationship tables and RPC names; do not add a policy engine or a parallel assignment store.
+Authorization reads current state, never an interval comparison. Where an existing `enabled`, `active`, or verified-current relationship already expresses that state, reuse it. For authority rows whose current status exists only as `valid_from`/`valid_to`, add the smallest explicit `is_current` marker and make the existing grant/revoke RPCs maintain it. This includes current team-leader assignments where they guard team access. Keep the existing relationship tables and RPC names; do not add a policy engine or a parallel assignment store.
 
 The forward migration may use the legacy interval once to initialize state: mark a row current only when it was already in force at cutover, has no close/revocation marker, and is not a future assignment. Closed, expired, canceled, revoked, future, disabled, or ambiguous rows remain non-current. Preserve their rows and all business dates. After cutover, `valid_from` and `valid_to` are metadata/history only and must not appear in any authorization predicate. Future-scheduled rows stay non-current; an operator must explicitly create/activate a current assignment through the existing audited grant flow. No clock or scheduler promotes them.
 

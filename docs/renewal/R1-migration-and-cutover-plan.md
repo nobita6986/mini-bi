@@ -7,7 +7,7 @@
 
 Do not implement the authorization migration until all are true:
 
-1. PO accepts `R1-authorization-contract.md`, including reuse of the existing worker `view` decision and `worker_export` route/RPC/audit action. No new worker capability is planned.
+1. The corrected `R1-authorization-contract.md` and reuse of the existing worker `view` decision and `worker_export` route/RPC/audit action are locked. No new worker capability is planned.
 2. S0-C2 has landed and a real PostgreSQL regression proves the runner keeps migration SQL and ledger insert in one outer transaction, including a ledger-write failure.
 3. The current `main` baseline is rechecked immediately before the implementation branch is cut. Do not reset/rebase a hotfix checkout with local changes.
 4. Function owner, ACL, RLS, and role assumptions are verified from the approved TEST metadata snapshot or ephemeral PostgreSQL. Do not infer runtime ACL solely from source SQL.
@@ -18,7 +18,7 @@ S0-C1 is a TEST cutover acceptance gate only; it does not block implementation o
 
 - Put all changes in a new timestamped migration after the selected baseline. Preserve every old file and checksum.
 - Preserve history. Existing `pii_view`, `pii_export`, `payment_view`, and `payment_edit` grant rows remain stored but become unused by authorization. Do not delete or remap them automatically.
-- Use an explicit `is_current` marker only on authority relationships whose current state is presently inferred solely from an interval. Reuse existing `enabled`, `active`, verified-link, and revocation state where sufficient; do not add a parallel assignment table or generic state engine.
+- Use an explicit `is_current` marker only on authority relationships whose current state is presently inferred solely from an interval, including team-leader assignments if their request-time guards depend on them. Reuse existing `enabled`, `active`, verified-link, and revocation state where sufficient; do not add a parallel assignment table or generic state engine.
 - Backfill `is_current` once, conservatively: only an already-started, not-closed/not-revoked/non-canceled relationship that was current at the cutover snapshot can be current. Future, expired, closed, revoked, ambiguous, or disabled relationships remain non-current. Preserve all source dates and history. After cutover, authorization reads only explicit current state and never compares `valid_from`/`valid_to` or worker business dates.
 - Grant mutations explicitly set current state; revoke/disable mutations clear it in the same transaction and the next request reads the new state. A future-scheduled row remains non-current with no automatic clock promotion; a current assignment must be explicitly granted through the existing audited flow.
 - The server-only `direct_entry_resolve_actor_context` currently aggregates stored capabilities. Keep its response shape or prove parser compatibility before changing it; do not make retained legacy rows cause the actor resolver to reject an otherwise valid session.
