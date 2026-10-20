@@ -4,12 +4,29 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { migrationChecksum, runMigrationValidation } from "./lib/migration-validation.mjs";
+import {
+  migrationChecksum,
+  migrationSqlForTransaction,
+  runMigrationValidation,
+} from "./lib/migration-validation.mjs";
 
 test("migration checksum is stable across LF and CRLF checkouts", () => {
   const lf = "create table example (id integer);\nselect 1;\n";
   const crlf = lf.replace(/\n/g, "\r\n");
   assert.equal(migrationChecksum(crlf), migrationChecksum(lf));
+});
+
+test("transaction wrapper removal accepts only an exact outer BEGIN/COMMIT", () => {
+  const wrapped = "-- header\nbegin;\nselect $body$begin; commit;$body$;\ncommit; -- trailer\n";
+  assert.equal(migrationSqlForTransaction(wrapped), "\nselect $body$begin; commit;$body$;\n");
+  const commented = "begin;\nselect 1; -- BEGIN; COMMIT; stays in line comment\n/* BEGIN; COMMIT; stays in block comment */\ncommit;\n";
+  assert.equal(migrationSqlForTransaction(commented),
+    "\nselect 1; -- BEGIN; COMMIT; stays in line comment\n/* BEGIN; COMMIT; stays in block comment */\n");
+  assert.equal(migrationSqlForTransaction("select 'begin; commit;';\n"), "select 'begin; commit;';\n");
+  assert.throws(() => migrationSqlForTransaction("begin; select 1;"), /exactly BEGIN; \.\.\. COMMIT;/);
+  assert.throws(() => migrationSqlForTransaction("select 1; commit;"), /transaction wrapper/);
+  assert.throws(() => migrationSqlForTransaction("start transaction; select 1; commit;"), /transaction wrapper/);
+  assert.throws(() => migrationSqlForTransaction("begin; select 1; commit; select 2; commit;"), /transaction wrapper/);
 });
 
 async function withMigrations(run) {
