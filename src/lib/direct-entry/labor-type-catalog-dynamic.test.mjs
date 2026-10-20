@@ -254,7 +254,7 @@ function directoryRow(laborType, laborTypeDisplay = LABOR_TYPE_DISPLAY_FIXTURE) 
     recruiter_id: "d1000000-0000-4000-8000-000000000001",
     recruiter_display: "Recruiter A",
     payment: {
-      state: "provided", account_number: "••••••••8901", bank_id: null,
+      state: "provided", account_number: "000012348901", bank_id: "bank_synthetic",
       account_holder_name: "Synthetic Holder", version: 1,
     },
     pending_request: { request_id: "e1000000-0000-4000-8000-000000000001", state: "PENDING", version: 1 },
