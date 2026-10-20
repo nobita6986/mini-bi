@@ -132,18 +132,18 @@ async function addAppUser(db, auth, app, { enabled = true, capabilities = [], sc
       + " values ($1,$2,$3,'PT Actor')", [app, auth, enabled]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from)"
-        + " values ($1,$2,$3)", [app, capability, PAST]);
+      "insert into public.direct_entry_capability_grants (app_user_id,capability,valid_from,is_current)"
+        + " values ($1,$2,$3,true)", [app, capability, PAST]);
   }
   if (scope !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id,scope_kind,valid_from)"
-        + " values ($1,$2,$3)", [app, scope, PAST]);
+      "insert into public.direct_entry_scope_grants (app_user_id,scope_kind,valid_from,is_current)"
+        + " values ($1,$2,$3,true)", [app, scope, PAST]);
   }
   if (teamScope !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id,scope_kind,team_id,valid_from)"
-        + " values ($1,'team',$2,$3)", [app, teamScope, PAST]);
+      "insert into public.direct_entry_scope_grants (app_user_id,scope_kind,team_id,valid_from,is_current)"
+        + " values ($1,'team',$2,$3,true)", [app, teamScope, PAST]);
   }
 }
 
@@ -152,19 +152,19 @@ async function addRecruiter(db, recruiter, name, { team = null, active = true } 
     "insert into public.recruiters (recruiter_id,display_name,personnel_code,personnel_position,active)"
       + " values ($1,$2,$3,'STAFF',$4)", [recruiter, name, `code-${name}`, active]);
   await db.query(
-    "insert into public.recruiter_provider_memberships (recruiter_id,provider_type,valid_from)"
-      + " values ($1,'hrp',$2)", [recruiter, PAST]);
+    "insert into public.recruiter_provider_memberships (recruiter_id,provider_type,valid_from,is_current)"
+      + " values ($1,'hrp',$2,true)", [recruiter, PAST]);
   if (team !== null) {
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id,team_id,valid_from)"
-        + " values ($1,$2,$3)", [recruiter, team, PAST]);
+      "insert into public.recruiter_team_memberships (recruiter_id,team_id,valid_from,is_current)"
+        + " values ($1,$2,$3,true)", [recruiter, team, PAST]);
   }
 }
 
 async function linkAccount(db, app, recruiter) {
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links"
-      + " (app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,$3)",
+      + " (app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,$3,true)",
     [app, recruiter, PAST]);
 }
 
@@ -173,7 +173,7 @@ async function designateLeader(db, app, recruiter, team) {
   await db.query("select set_config('direct_entry.team_leader_marker','on',true)");
   await db.query(
     "insert into public.direct_entry_team_leader_assignments"
-      + " (team_id,leader_app_user_id,leader_recruiter_id,valid_from) values ($1,$2,$3,$4)",
+      + " (team_id,leader_app_user_id,leader_recruiter_id,valid_from,is_current) values ($1,$2,$3,$4,true)",
     [team, app, recruiter, PAST]);
   await db.exec("commit");
 }
@@ -678,6 +678,8 @@ test("PRE-W2-HF Project<->Team: leader reads and assignments require an active m
     const leaderAssignments = await assignmentList(db, leaderA, PROJECT_MAPPED);
     assert.deepEqual(leaderAssignments.assignments.map((row) => row.manager_recruiter_id),
       [MANAGER_A_RECRUITER]);
+    assert.equal(leaderAssignments.assignments[0].effective, true,
+      "project-manager effective output comes from the current-state marker");
     await expectDenied(async () => assignmentList(db, leaderA, PROJECT_UNMAPPED), "P0002");
     await expectDenied(async () => assignmentList(db, leaderB, PROJECT_MAPPED), "P0002");
     const wide = await assignmentList(db, leaderA, null);
@@ -764,6 +766,10 @@ test("PRE-W2-HF Project<->Team: revoke fails closed, keeps PM history, and regra
     assert.equal(history.total, 2);
     assert.equal(history.mappings.filter((row) => row.state === "CURRENT").length, 1);
     assert.equal(history.mappings.filter((row) => row.state === "HISTORY").length, 1);
+    const revokedProjection = history.mappings.find((row) => row.mapping_id === grant.mapping_id);
+    assert.equal(revokedProjection.effective, false,
+      "effective output follows the cleared current-state marker");
+    assert.equal(revokedProjection.state, "HISTORY");
   } finally {
     await db.close();
   }
