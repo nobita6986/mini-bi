@@ -214,8 +214,13 @@ test("approved ENTRY_VOID keeps history, accepts only the named reviewers, and d
       [leaderRecruiterId],
     );
     await db.query(
-      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)" +
-        " values ($1,$2,'2020-01-01')",
+      "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from,is_current)" +
+        " values ($1,'hrp','2020-01-01',true)",
+      [leaderRecruiterId],
+    );
+    await db.query(
+      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,is_current)" +
+        " values ($1,$2,'2020-01-01',true)",
       [leaderRecruiterId, fixture.entryA.team_id],
     );
     await db.query(
@@ -291,8 +296,13 @@ test("approved ENTRY_VOID keeps history, accepts only the named reviewers, and d
       [otherLeaderRecruiterId],
     );
     await db.query(
-      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)" +
-        " values ($1,$2,'2020-01-01')",
+      "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from,is_current)" +
+        " values ($1,'hrp','2020-01-01',true)",
+      [otherLeaderRecruiterId],
+    );
+    await db.query(
+      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from,is_current)" +
+        " values ($1,$2,'2020-01-01',true)",
       [otherLeaderRecruiterId, "94000000-0000-4000-8000-00000000000b"],
     );
     await db.query(

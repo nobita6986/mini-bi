@@ -8,8 +8,8 @@
  *   * created_by, team, recruiter attribution and the worker's first_work_date
  *     never grant project authority;
  *   * unassign revokes runtime authority immediately and keeps history;
- *   * the admin RPCs require capability + all scope + reason + OCC and write
- *     immutable audit rows;
+ *   * the admin RPCs require capability + all scope, allow an optional action
+ *     reason, enforce OCC, and write immutable audit rows;
  *   * the #51 expand/backfill preserves existing assignments without inventing
  *     actor or reason history.
  *
@@ -583,9 +583,9 @@ test("P2.5-W02: a duplicate active pair is blocked while other managers are allo
 });
 
 // ---------------------------------------------------------------------------
-// 9. Administration RPCs: capability, all scope, reason, OCC, idempotency, audit.
+// 9. Administration RPCs: capability, all scope, optional reason, OCC, idempotency, audit.
 // ---------------------------------------------------------------------------
-test("P2.5-W02: admin RPCs require capability, all scope, reason and OCC", async () => {
+test("P2.5-W02: admin RPCs require capability and all scope; action reason is optional under OCC", async () => {
   const db = await buildDb();
   try {
     await seedActors(db);
@@ -599,16 +599,39 @@ test("P2.5-W02: admin RPCs require capability, all scope, reason and OCC", async
       () => assign(db, { actor: MGR_NO_SCOPE_APP, auth: MGR_NO_SCOPE_AUTH }),
       (error) => error.code === "42501",
       "project administration needs an effective all scope");
-    // Reason required.
-    await assert.rejects(
-      () => assign(db, { reason: "   " }),
-      (error) => error.code === "22023",
-      "an empty reason is refused");
     // OCC on the project version (row-locked and fail-closed). P2.5-W02-R1
     // replaced the active-assignment count, which could not detect ABA.
     const v0 = await currentProjectVersion(db, PROJ_1);
-    const created = await assign(db, { manager: REC_A, expectedProjectVersion: v0 });
-    assert.equal(created.project_version, v0 + 1, "assign advances the project version");
+    const blankReason = await assign(db, {
+      manager: REC_C, expectedProjectVersion: v0, reason: "   ", key: "blank-reason-key",
+    });
+    assert.equal(blankReason.project_version, v0 + 1,
+      "a blank action reason normalizes to NULL and does not block assignment");
+    assert.equal(await countOf(db,
+      "select count(*)::int as n from public.direct_entry_restricted_reasons"), 0,
+      "blank action reasons do not create restricted-reason rows");
+    const blankReplay = await assign(db, {
+      manager: REC_C, expectedProjectVersion: v0, reason: null, key: "blank-reason-key",
+    });
+    assert.equal(blankReplay.assignment_id, blankReason.assignment_id,
+      "blank and NULL reasons share the canonical idempotency input");
+    assert.equal((await db.query(
+      "select reason_id from public.direct_entry_project_manager_assignments where assignment_id=$1",
+      [blankReason.assignment_id],
+    )).rows[0].reason_id, null, "the assignment stores a real NULL reason reference");
+    assert.equal(await countOf(db,
+      "select count(*)::int as n from public.direct_entry_project_manager_assignments"), 1,
+      "canonical replay does not duplicate the assignment");
+    const blankAudit = await db.query(
+      "select action, reason_id is null as no_reason from public.direct_entry_audit_events" +
+      " where resource_ref = $1", [blankReason.assignment_id]);
+    assert.deepEqual(blankAudit.rows, [{
+      action: "project_manager_assignment_assign", no_reason: true,
+    }], "audit remains while the optional reason is NULL");
+
+    const v1 = await currentProjectVersion(db, PROJ_1);
+    const created = await assign(db, { manager: REC_A, expectedProjectVersion: v1 });
+    assert.equal(created.project_version, v1 + 1, "assign advances the project version");
     await assert.rejects(
       () => assign(db, {
         manager: REC_C, expectedProjectVersion: 5, key: "assign-key-occ",
@@ -632,16 +655,16 @@ test("P2.5-W02: admin RPCs require capability, all scope, reason and OCC", async
       scope_kind: "all", has_reason: true,
     }]);
     // Idempotent replay: same key + same payload => same result, no new rows.
-    const replay = await assign(db, { manager: REC_A, expectedProjectVersion: v0 });
+    const replay = await assign(db, { manager: REC_A, expectedProjectVersion: v1 });
     assert.equal(replay.assignment_id, created.assignment_id);
     assert.equal(replay.project_version, created.project_version);
     assert.equal(await countOf(db,
-      "select count(*)::int as n from public.direct_entry_project_manager_assignments"), 1);
+      "select count(*)::int as n from public.direct_entry_project_manager_assignments"), 2);
     assert.equal(await countOf(db,
       "select count(*)::int as n from public.direct_entry_restricted_reasons"), 1);
     // Same key, different payload => conflict.
     await assert.rejects(
-      () => assign(db, { manager: REC_B, expectedProjectVersion: v0 }),
+      () => assign(db, { manager: REC_B, expectedProjectVersion: v1 }),
       (error) => error.code === "22023",
       "an idempotency key cannot be reused with different input");
     // The list RPC is admin-only too.
