@@ -1077,12 +1077,13 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // #109 adds one service-role RPC; #113 adds five, #114 adds two, #115 adds one,
     // and #116 adds two; #118 adds three service-role-only worker-document
     // staging RPCs and #119 tightens the batch stage-count bound in place. The
-    // R1 adds two internal current-state trigger routines. All 266 direct_entry
-    // signatures split into 106 service-role entry points and 160 internal routines.
+    // R1 adds two internal current-state trigger routines. R1.1 adds one strict
+    // current-team authority helper; it remains internal and adds no service-role surface.
+    // All 267 direct_entry signatures split into 106 service-role entry points and 161 internal routines.
     assert.deepEqual(result.rows[0], {
-      total: 266,
+      total: 267,
       service_role: 106,
-      internal: 160,
+      internal: 161,
       exposed_internal: 0,
     });
   } finally {

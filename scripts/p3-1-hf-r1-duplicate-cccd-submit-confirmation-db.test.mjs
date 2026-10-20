@@ -428,7 +428,7 @@ test("P3.1-HF-R1 A4-A5-A10: OFF never warns, so those transitions run without co
       const audit = await auditRows(db, draft.submissionId);
       assert.equal(audit.length, 1, item.label);
       assert.deepEqual(audit[0].changed_fields, ["state", "version"], item.label);
-      assert.equal(audit[0].reason_text, "Submission state transition", item.label);
+      assert.equal(audit[0].reason_text, null, item.label);
     }
 
     // A10: moi episode trung deu OFF (hai project) - khong canh bao, transition binh thuong.
@@ -731,9 +731,9 @@ test("P3.1-HF-R1 C21-C23: confirmation-required, cancel and a matching acknowled
     assert.equal(audit.length, 1, "C23: dung mot audit");
     assert.equal(audit[0].outcome, "APPLIED", "C23");
     assert.deepEqual(audit[0].changed_fields, ["state", "version"], "C23");
-    assert.match(audit[0].reason_text, /duplicate CCCD acknowledged x1 fp=[0-9a-f]{12}\)$/,
-      "C23: audit chi ghi short code + count + fingerprint");
-    assert.equal(audit[0].reason_text.includes("890123456"), false, "C23: khong ghi CCCD");
+    assert.equal(audit[0].reason_text, null,
+      "C23: transition audit does not create a fake restricted-reason row");
+    assert.equal(audit[0].reason_text?.includes("890123456") ?? false, false, "C23: khong ghi CCCD");
     assert.equal(JSON.stringify(audit).includes("R1 Existing C23"), false,
       "C23: khong ghi ten ho so da ton tai");
     assert.equal(JSON.stringify(audit).includes("Project R1 A"), false,
@@ -741,6 +741,17 @@ test("P3.1-HF-R1 C21-C23: confirmation-required, cancel and a matching acknowled
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_submission_revisions where submission_id = $1",
       [draft.submissionId]), 1, "C23");
+    const revision = (await db.query(
+      "select reason_id, after_snapshot from public.direct_entry_submission_revisions" +
+      " where submission_id=$1 order by version desc limit 1", [draft.submissionId])).rows[0];
+    assert.equal(revision.reason_id, null, "C23: revision retains nullable operation reason");
+    assert.deepEqual(revision.after_snapshot.duplicate_cccd_acknowledgement, {
+      conflict_count: 1, fingerprint_prefix: view.fingerprint.slice(0, 12),
+    }, "C23: revision preserves structured non-PII acknowledgement evidence");
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_restricted_reasons" +
+      " where reason_text like 'Submission state transition%'"), 0,
+      "C23: no server-authored restricted-reason placeholder is stored");
     assert.notEqual(existing.entryId, draft.entryIds[0]);
   } finally {
     await db.close();
@@ -770,7 +781,7 @@ test("P3.1-HF-R1 C24: a conflict set that changes between preflight and confirm 
     assert.equal(applied.state, "SUBMITTED", "C24: het conflict thi transition binh thuong");
     const staleAudit = await auditRows(db, draft.submissionId);
     assert.equal(staleAudit.length, 1, "C24");
-    assert.equal(staleAudit[0].reason_text, "Submission state transition",
+    assert.equal(staleAudit[0].reason_text, null,
       "C24: khong duoc dung lai canh bao cu");
 
     // OFF -> ON (correction) va them mot ho so trung: conflict xuat hien lai, fingerprint doi.
