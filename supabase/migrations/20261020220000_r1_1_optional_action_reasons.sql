@@ -118,7 +118,8 @@ begin
   loop
     v_targets := v_targets + 1;
     v_source := v_row.prosrc;
-    v_next := v_source;
+    -- Existing PostgreSQL functions may retain CRLF from their original migration file.
+    v_next := replace(v_source, E'\r\n', E'\n');
     v_limit := case when v_row.proname = 'direct_entry_privileged_edit' then 1000 else 4000 end;
     v_injection := E'\nbegin\n  if p_reason is not null and length(p_reason) > ' || v_limit || E' then\n'
       || E'    raise exception ''reason exceeds maximum length'' using errcode = ''22023'';\n'

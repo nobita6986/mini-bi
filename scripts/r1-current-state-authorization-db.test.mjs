@@ -18,6 +18,8 @@ const PROJECT = "r1-synthetic-project";
 const PROJECT_PM = "r1-synthetic-pm-project";
 const PRE_R1_BASELINE = "20261019130000_pre_w2_hf_draft_submission_delete.sql";
 const R1_MIGRATION = "20261020200000_r1_current_state_authorization.sql";
+const R1_1_TEAM_LEADER_MIGRATION = "20261020210000_r1_1_team_leader_direct_edit.sql";
+const OPTIONAL_ACTION_REASONS_MIGRATION = "20261020220000_r1_1_optional_action_reasons.sql";
 
 async function addActor(db, auth, app, name) {
   await db.query("insert into auth.users (id) values ($1)", [auth]);
@@ -216,6 +218,56 @@ test("R1 current-state backfill handles an existing project-team mapping", async
       [result.mapping_id],
     )).rows[0], { is_current: true, version: 1 },
     "backfill activates the existing mapping without changing its business pair version");
+  } finally {
+    await db.close();
+  }
+});
+
+test("R1.1 optional-action-reason migration accepts legacy CRLF function bodies", async () => {
+  const { db } = await buildDb({ throughMigration: R1_1_TEAM_LEADER_MIGRATION });
+  try {
+    const functions = await db.query(
+      `select pg_get_functiondef(p.oid) as definition
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         join pg_language l on l.oid = p.prolang
+        where n.nspname = 'public' and p.prokind = 'f' and l.lanname = 'plpgsql'
+          and p.proname like 'direct_entry_%' and p.proname <> 'direct_entry_reason'
+          and p.proargnames @> array['p_reason']::text[]`,
+    );
+    assert.equal(functions.rows.length, 43);
+    for (const { definition } of functions.rows) {
+      await db.exec(definition.replace(/\r?\n/g, "\r\n"));
+    }
+    const crlf = await db.query(
+      `select count(*)::integer as count
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         join pg_language l on l.oid = p.prolang
+        where n.nspname = 'public' and p.prokind = 'f' and l.lanname = 'plpgsql'
+          and p.proname like 'direct_entry_%' and p.proname <> 'direct_entry_reason'
+          and p.proargnames @> array['p_reason']::text[]
+          and position(chr(13) || chr(10) in p.prosrc) > 0`,
+    );
+    assert.equal(crlf.rows[0].count, 43, "fixture reproduces PostgreSQL function bodies stored with CRLF");
+
+    await db.exec(await readFile(path.resolve("supabase/migrations", OPTIONAL_ACTION_REASONS_MIGRATION), "utf8"));
+
+    const normalized = await db.query(
+      `select count(*)::integer as count
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         join pg_language l on l.oid = p.prolang
+        where n.nspname = 'public' and p.prokind = 'f' and l.lanname = 'plpgsql'
+          and p.proname like 'direct_entry_%' and p.proname <> 'direct_entry_reason'
+          and p.proargnames @> array['p_reason']::text[]
+          and position('p_reason := nullif(btrim(p_reason),' in p.prosrc) > 0`,
+    );
+    assert.equal(normalized.rows[0].count, 43, "all intended RPCs receive optional-reason normalization");
+    assert.equal((await db.query(
+      `select is_nullable from information_schema.columns
+        where table_schema='public' and table_name='direct_entry_change_requests' and column_name='reason_id'`,
+    )).rows[0].is_nullable, "YES");
   } finally {
     await db.close();
   }
