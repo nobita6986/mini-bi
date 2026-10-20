@@ -80,10 +80,11 @@ async function migratedDb(untilName = null) {
 
 async function buildDb() {
   const { db, names } = await migratedDb(null);
-  assert.equal(names.length, 122, "the ledger carries the W02-B vendor lifecycle #75 after the P3.1-HF duplicate-CCCD report #74");
-  assert.equal(names[names.length - (1 + 71)], W02_MIGRATION, "W02 is #51");
-  assert.equal(names[names.length - (1 + 69)], W04_MIGRATION, "W04 is #53");
-  assert.equal(names[names.length - (1 + 70)], W03_MIGRATION, "P2.5-W03 stays at #52");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(W02_MIGRATION), 50, "W02 is #51");
+  assert.equal(names.indexOf(W04_MIGRATION), 52, "W04 is #53");
+  assert.equal(names.indexOf(W03_MIGRATION), 51, "P2.5-W03 stays at #52");
   return db;
 }
 

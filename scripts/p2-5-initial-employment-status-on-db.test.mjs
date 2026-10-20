@@ -22,14 +22,12 @@ async function database() {
 test("initial employment status policy is migration #57 and patches every creation path", async () => {
   const { db, names } = await database();
   try {
-    assert.equal(names.length, 122);
-    assert.equal(names.at(-66), MIGRATION);
-    assert.equal(names.at(-22), "20261015160000_pre_w2_initial_status_any_start_date.sql",
-      "initial-status hotfix remains append-only migration #101");
-    assert.equal(names.at(-21), "20261015170000_pre_w2_uploader_submission_queues.sql",
-      "uploader submission queues is append-only migration #102");
-    assert.equal(names.at(-20), "20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql",
-      "direct-entry batch workflow is append-only migration #103");
+    assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+      "migration inventory includes the #122 baseline");
+    assert.equal(names.indexOf(MIGRATION), 56, "migration chronology remains append-only");
+    assert.equal(names.indexOf("20261015160000_pre_w2_initial_status_any_start_date.sql"), 100, "initial-status hotfix remains append-only migration #101");
+    assert.equal(names.indexOf("20261015170000_pre_w2_uploader_submission_queues.sql"), 101, "uploader submission queues is append-only migration #102");
+    assert.equal(names.indexOf("20261015180000_pre_w2_hf_direct_entry_batch_workflow.sql"), 102, "direct-entry batch workflow is append-only migration #103");
     const result = await db.query(`
       select p.proname, p.prosrc
         from pg_proc p join pg_namespace n on n.oid=p.pronamespace

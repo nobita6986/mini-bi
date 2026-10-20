@@ -366,7 +366,8 @@ async function createDatabase(legacyCount = 0, { applyLatest = true } = {}) {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(names.length, 122);
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
   const leaderMigrationAt = names.indexOf(MIGRATION_71);
   const legacyScopeHotfixAt = names.indexOf(LEGACY_SCOPE_HOTFIX);
   assert.equal(leaderMigrationAt, 70);
@@ -1189,9 +1190,10 @@ test("P3.1-W01D-A1b2 designate, replace, revoke, rollback, authority and read li
   const names = state.names;
   const inventoryBefore = state.baseline;
   const allMigrations = state.migrations.slice(0, state.leaderMigrationAt + 1);
-  assert.equal(names.length, 122);
-  assert.equal(names.at(-52), MIGRATION_71);
-  assert.equal(names.at(-47), LEGACY_SCOPE_HOTFIX);
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(MIGRATION_71), 70, "migration chronology remains append-only");
+  assert.equal(names.indexOf(LEGACY_SCOPE_HOTFIX), 75, "migration chronology remains append-only");
   today = (await db.query(
     "select public.direct_entry_authorization_date()::text as today")).rows[0].today;
   assert.equal(state.transitionFixtures.length, 3);

@@ -62,11 +62,12 @@ async function candidates(db, auth, app, search) {
   return res.rows[0].data;
 }
 
-test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the 122-migration ledger", async () => {
+test("P2.5-W06A-R2: migration #54 stays after W04 #53 in the append-only ledger", async () => {
   const { db, names } = await migratedDb();
-  assert.equal(names.length, 122);
-  assert.equal(names[names.length - (1 + 68)], W06A_MIGRATION);
-  assert.equal(names[names.length - (1 + 67)], W05_MIGRATION);
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(W06A_MIGRATION), 53, "migration chronology remains append-only");
+  assert.equal(names.indexOf(W05_MIGRATION), 54, "migration chronology remains append-only");
   await db.close();
 });
 

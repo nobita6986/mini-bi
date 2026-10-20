@@ -87,9 +87,10 @@ async function buildDb() {
       throw new Error(`migration ${name} failed to install: ${error.message}`, { cause: error });
     }
   }
-  assert.equal(names.length, 122, "the ledger carries append-only migrations through #122");
-  assert.equal(names[names.length - (1 + 48)], HOTFIX_MIGRATION, "the contract ships in #74");
-  assert.equal(names[names.length - (1 + 49)], PREVIOUS_MIGRATION, "#74 stays append-only");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf(HOTFIX_MIGRATION), 73, "the contract ships in #74");
+  assert.equal(names.indexOf(PREVIOUS_MIGRATION), 72, "#74 stays append-only");
   return db;
 }
 

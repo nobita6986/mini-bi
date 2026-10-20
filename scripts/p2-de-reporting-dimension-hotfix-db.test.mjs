@@ -91,9 +91,10 @@ async function buildDb() {
   const db = new PGlite();
   await db.exec(AUTH_PROLOGUE);
   const names = (await readdir(MIGRATION_DIR)).filter((n) => n.endsWith(".sql")).sort();
-  assert.equal(names.length, 122, "the ledger carries the W02-B vendor lifecycle #75 after P3.1-HF #74");
-  assert.equal(names.at(-50), "20261009090000_p3_1_hf_recruiter_alias_backfill.sql");
-  assert.equal(names.at(-49), "20261009100000_p3_1_hf_duplicate_cccd_reporting.sql");
+  assert.ok(names.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
+    "migration inventory includes the #122 baseline");
+  assert.equal(names.indexOf("20261009090000_p3_1_hf_recruiter_alias_backfill.sql"), 72, "migration chronology remains append-only");
+  assert.equal(names.indexOf("20261009100000_p3_1_hf_duplicate_cccd_reporting.sql"), 73, "migration chronology remains append-only");
   // This is the regression for the earlier one-off P2 repair. Apply the
   // pre-hotfix ledger so its defect fixture remains reproducible; #73 has its
   // own focused lane and prevents this shape from being created again.
