@@ -330,7 +330,7 @@ test("buildReviewerEntryRows tra null khi thieu du lieu de doi chieu", () => {
   }), null);
 });
 
-test("body quyet dinh dung 4 truong contract va ly do duoc kiem chat", () => {
+test("body quyet dinh dung 4 truong contract va chuan hoa ly do tuy chon", () => {
   const approve = buildDecisionRequest({
     decision: "approve",
     expectedVersion: 1,
@@ -339,7 +339,7 @@ test("body quyet dinh dung 4 truong contract va ly do duoc kiem chat", () => {
   });
   assert.deepEqual(Object.keys(approve).sort(),
     ["decision", "expected_version", "idempotency_key", "reason"]);
-  assert.equal(approve.reason, " Đã kiểm tra thông tin ");
+  assert.equal(approve.reason, "Đã kiểm tra thông tin");
   const reject = buildDecisionRequest({
     decision: "reject",
     expectedVersion: 3,
@@ -348,8 +348,10 @@ test("body quyet dinh dung 4 truong contract va ly do duoc kiem chat", () => {
   });
   assert.equal(reject.decision, "reject");
   assert.equal(reject.expected_version, 3);
-  assert.equal(buildDecisionRequest({
-    decision: "approve", expectedVersion: 1, reason: "   ", idempotencyKey: "key-3" }), null);
+  assert.deepEqual(buildDecisionRequest({
+    decision: "approve", expectedVersion: 1, reason: "   ", idempotencyKey: "key-3" }), {
+    decision: "approve", expected_version: 1, reason: null, idempotency_key: "key-3",
+  });
   assert.equal(buildDecisionRequest({
     decision: "approve", expectedVersion: 1, reason: "ok", idempotencyKey: " " }), null);
   assert.equal(buildDecisionRequest({
