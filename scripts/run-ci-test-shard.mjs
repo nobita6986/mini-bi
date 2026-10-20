@@ -8,6 +8,7 @@ const SHARD_COUNT = 6;
 const POSTGRES_TARGET = "postgres";
 const POSTGRES_TEST_FILES = new Set([
   "scripts/s0-t1-c-rpc-acl.test.mjs",
+  "scripts/s0-a-schema-migrations-acl.test.mjs",
   "scripts/p3-1-w02a-concurrency.test.mjs",
   "scripts/pre-w2-hf-project-team-authority-concurrency.test.mjs",
   "scripts/w2-s1-stage-recovery-concurrency.test.mjs",
