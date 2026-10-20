@@ -50,10 +50,11 @@ test("HF-R3: nut Ngung/Kich hoat tren dong du an gui DUNG cuc tinh active", () =
   }
 });
 
-test("HF-R3: tat/kich hoat du an van bat buoc ly do va version OCC", () => {
+test("HF-R3: tat/kich hoat du an cho phep ly do rong va van yeu cau version OCC", () => {
   const missingReason = buildSetActiveRequest({
     active: false, reason: "   ", expectedVersion: 3, idempotencyKey: IDEMPOTENCY_KEY });
-  assert.equal(missingReason.ok, false);
+  assert.equal(missingReason.ok, true);
+  assert.equal(missingReason.body.reason, null);
   const badVersion = buildSetActiveRequest({
     active: true, reason: REASON, expectedVersion: -1, idempotencyKey: IDEMPOTENCY_KEY });
   assert.equal(badVersion.ok, false);
