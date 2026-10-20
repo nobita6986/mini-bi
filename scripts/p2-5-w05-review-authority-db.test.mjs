@@ -515,6 +515,7 @@ test("W05: directory propose_change follows the assignment, not the placeholder"
     assert.equal(managed.items[0].is_project_manager, true);
     assert.deepEqual(managed.items[0].allowed_actions, {
       view: true, view_pii: true, view_payment: true,
+      direct_edit: false,
       propose_change: true, propose_change_code: null,
     }, "the assigned manager may propose on their SUBMITTED row");
 

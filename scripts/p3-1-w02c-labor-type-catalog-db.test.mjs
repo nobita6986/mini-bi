@@ -507,7 +507,7 @@ test("4: both authority paths may create, and the reporting key is server genera
   assert.equal(after.scope_grants, before.scope_grants);
 });
 
-test("5: create rejects non-canonical keys, duplicates and a non-zero expected version", async () => {
+test("5: create rejects invalid inputs and accepts a missing action reason", async () => {
   const before = await counts(db);
   let suffix = 0;
   for (const laborTypeKey of ["probation", "PROBATION TYPE", "1PROBATION", "PROBATION-TYPE",
@@ -541,12 +541,6 @@ test("5: create rejects non-canonical keys, duplicates and a non-zero expected v
   });
   assert.equal(wrongVersion.code, "22023", "create always opens the aggregate at version zero");
 
-  const noReason = await rpcError(db, "direct_entry_create_labor_type", {
-    p_auth_subject: OPERATOR_FULL_ADMIN.auth, p_app_user_id: OPERATOR_FULL_ADMIN.app,
-    p_expected_version: 0, p_labor_type_key: "W02C_NO_REASON", p_display_name: "No Reason",
-    p_sort_order: 92, p_reason: null, p_idempotency_key: KEY("1d"),
-  });
-  assert.equal(noReason.code, "22023");
   const noKey = await rpcError(db, "direct_entry_create_labor_type", {
     p_auth_subject: OPERATOR_FULL_ADMIN.auth, p_app_user_id: OPERATOR_FULL_ADMIN.app,
     p_expected_version: 0, p_labor_type_key: "W02C_NO_KEY", p_display_name: "No Key",
@@ -555,6 +549,27 @@ test("5: create rejects non-canonical keys, duplicates and a non-zero expected v
   assert.equal(noKey.code, "22023");
 
   assert.deepEqual(await counts(db), before, "rejected creates leave zero residue");
+  const noReason = await rpc(db, "direct_entry_create_labor_type", {
+    p_auth_subject: OPERATOR_FULL_ADMIN.auth, p_app_user_id: OPERATOR_FULL_ADMIN.app,
+    p_expected_version: 0, p_labor_type_key: "W02C_NO_REASON", p_display_name: "No Reason",
+    p_sort_order: 92, p_reason: null, p_idempotency_key: KEY("1d"),
+  });
+  assert.equal(noReason.labor_type_key, "W02C_NO_REASON");
+  assert.equal(noReason.version, 1);
+  const reasonRefs = (await db.query(
+    "select (select reason_id from public.direct_entry_labor_type_revisions"
+    + " where labor_type_key='W02C_NO_REASON' and version=1) as revision_reason_id,"
+    + " (select reason_id from public.direct_entry_audit_events"
+    + " where resource_ref='W02C_NO_REASON' and action='labor_type_create') as audit_reason_id",
+  )).rows[0];
+  assert.equal(reasonRefs.revision_reason_id, null);
+  assert.equal(reasonRefs.audit_reason_id, null);
+  const after = await counts(db);
+  assert.equal(after.labor_types, before.labor_types + 1);
+  assert.equal(after.revisions, before.revisions + 1);
+  assert.equal(after.audits, before.audits + 1);
+  assert.equal(after.reasons, before.reasons, "optional reasons do not create restricted-reason placeholders");
+  assert.equal(after.idempotency, before.idempotency + 1);
 });
 
 test("6: update changes display_name and sort_order under OCC with one revision", async () => {

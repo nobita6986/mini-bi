@@ -327,7 +327,7 @@ test("create writes the whole canonical Vendor aggregate atomically", async () =
   assert.equal(detail.version, 1);
 });
 
-test("create rejects duplicates, the reserved namespace and malformed input with zero residue", async () => {
+test("create rejects invalid inputs without residue and accepts a missing action reason", async () => {
   const before = await counts(db);
 
   const duplicate = await createVendorError(db, CATALOG, {
@@ -359,11 +359,6 @@ test("create rejects duplicates, the reserved namespace and malformed input with
   assert.equal(noValidFrom.code, "22023");
   assert.equal(noValidFrom.message, "vendor valid from required");
 
-  const noReason = await createVendorError(db, CATALOG, {
-    id: "W02B_NOREASON", name: "No Reason", key: KEY("25"), reason: null,
-  });
-  assert.equal(noReason.code, "22023");
-
   const noKey = await createVendorError(db, CATALOG, {
     id: "W02B_NOKEY", name: "No Key", key: null,
   });
@@ -375,6 +370,31 @@ test("create rejects duplicates, the reserved namespace and malformed input with
   assert.equal(noName.code, "22023");
 
   assert.deepEqual(await counts(db), before, "rejected creates leave zero residue");
+
+  const noReason = await rpc(db, "direct_entry_create_vendor", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
+    p_expected_version: 0, p_vendor_id: "W02B_NOREASON",
+    p_display_name: "No Reason", p_valid_from: VALID_FROM,
+    p_reason: null, p_idempotency_key: KEY("25"),
+  });
+  assert.equal(noReason.vendor_id, "W02B_NOREASON");
+  assert.equal(noReason.version, 1);
+  const reasonRefs = (await db.query(
+    "select (select reason_id from public.direct_entry_vendor_revisions"
+    + " where vendor_id='W02B_NOREASON' and version=1) as revision_reason_id,"
+    + " (select reason_id from public.direct_entry_audit_events"
+    + " where resource_ref='W02B_NOREASON' and action='vendor_create') as audit_reason_id",
+  )).rows[0];
+  assert.equal(reasonRefs.revision_reason_id, null);
+  assert.equal(reasonRefs.audit_reason_id, null);
+  const after = await counts(db);
+  assert.equal(after.vendors, before.vendors + 1);
+  assert.equal(after.recruiters, before.recruiters + 1);
+  assert.equal(after.provider_memberships, before.provider_memberships + 1);
+  assert.equal(after.vendor_revisions, before.vendor_revisions + 1);
+  assert.equal(after.audits, before.audits + 1);
+  assert.equal(after.reasons, before.reasons, "optional reasons do not create restricted-reason placeholders");
+  assert.equal(after.idempotency, before.idempotency + 1);
 });
 
 test("create rolls back completely when a late step fails", async () => {
@@ -481,7 +501,7 @@ test("update mutates display_name only, under OCC, with one revision and one aud
   assert.equal(detail.revision_count, 2);
 });
 
-test("update fails closed on stale versions, no-ops, unknown and reserved vendors", async () => {
+test("update fails closed on stale versions, no-ops, unknown and reserved vendors; action reason is optional", async () => {
   const before = await counts(db);
   const update = (options) => rpcError(db, "direct_entry_update_vendor", {
     p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
@@ -507,23 +527,42 @@ test("update fails closed on stale versions, no-ops, unknown and reserved vendor
   assert.equal(missing.code, "22023");
   assert.equal(missing.message, "expected vendor version required");
 
-  const noReason = await update({ id: "W02B_BETA", expected: 2, name: "No Reason Rename",
-    key: KEY("57"), reason: null });
-  assert.equal(noReason.code, "22023");
-  assert.equal(noReason.message, "reason required");
+  const noReason = await rpc(db, "direct_entry_update_vendor", {
+    p_auth_subject: CATALOG.auth, p_app_user_id: CATALOG.app,
+    p_vendor_id: "W02B_BETA", p_expected_version: 2,
+    p_display_name: "No Reason Rename", p_reason: null,
+    p_idempotency_key: KEY("57"),
+  });
+  assert.equal(noReason.display_name, "No Reason Rename");
+  assert.equal(noReason.version, 3);
+  const noReasonHistory = (await db.query(
+    "select reason_id from public.direct_entry_vendor_revisions"
+    + " where vendor_id='W02B_BETA' and version=3",
+  )).rows[0];
+  assert.equal(noReasonHistory.reason_id, null, "a null action reason creates no restricted-reason reference");
+  const noReasonAudit = (await db.query(
+    "select reason_id from public.direct_entry_audit_events"
+    + " where resource_ref='W02B_BETA' and action='vendor_update' order by created_at desc limit 1",
+  )).rows[0];
+  assert.equal(noReasonAudit.reason_id, null, "the audit event remains present with a null action reason");
 
-  const noKey = await update({ id: "W02B_BETA", expected: 2, name: "No Key Rename", key: null });
+  const noKey = await update({ id: "W02B_BETA", expected: 3, name: "No Key Rename", key: null });
   assert.equal(noKey.code, "22023");
   assert.equal(noKey.message, "idempotency key required");
 
   const deniedActor = await rpcError(db, "direct_entry_update_vendor", {
     p_auth_subject: STAFF.auth, p_app_user_id: STAFF.app, p_vendor_id: "W02B_BETA",
-    p_expected_version: 2, p_display_name: "Denied Rename", p_reason: REASON,
+    p_expected_version: 3, p_display_name: "Denied Rename", p_reason: REASON,
     p_idempotency_key: KEY("58"),
   });
   assert.equal(deniedActor.code, "42501", "authorization is evaluated before the input");
 
-  assert.deepEqual(await counts(db), before, "rejected updates leave zero residue");
+  const after = await counts(db);
+  assert.deepEqual({ ...after,
+    vendor_revisions: after.vendor_revisions - 1,
+    audits: after.audits - 1,
+    idempotency: after.idempotency - 1,
+  }, before, "only the successful optional-reason update adds its revision, audit and idempotency record");
 });
 
 async function directEntryProbe(db, recruiterId) {
@@ -971,6 +1010,8 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
   const dirty = git.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   assert.deepEqual(dirty.filter((line) =>
     !line.endsWith(NEW_MIGRATION) &&
+    !line.endsWith("20261020210000_r1_1_team_leader_direct_edit.sql") &&
+    !line.endsWith("20261020220000_r1_1_optional_action_reasons.sql") &&
     !line.endsWith(directEntryWorkflowMigration) &&
     !line.endsWith(LEGACY_SCOPE_HOTFIX) &&
     !line.endsWith(w03aMigration) &&
