@@ -14,6 +14,7 @@ You are T1-A for Mini BI R1. Implement only the TypeScript authorization-contrac
 - `src/lib/auth/p3-w08a-session-revocation-cache.test.mjs` if the central contract change affects its assertions. T1-B owns the shared SQL/TypeScript capability-parity script.
 - `src/lib/auth/direct-entry-page-access.ts` and its tests.
 - `src/lib/navigation/registry-capability.ts` and its tests, only where a central predicate must follow the new contract.
+- `src/lib/reporting/p3-w05a-audience.ts` and its focused test, so report audience kind derives from current actor scopes instead of the requested report date.
 - Directly related actor/scope fixtures required by those tests.
 
 ### Change
