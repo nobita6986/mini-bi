@@ -42,11 +42,11 @@ async function seed(database) {
     values ($1,$2,'Admin',true),($3,$4,'Accounting',true),($5,$6,'Target',true),($7,$8,'Disabled Admin',false)`,
     [ADMIN_APP, ADMIN_AUTH, ACCOUNTING_APP, ACCOUNTING_AUTH, TARGET_APP, TARGET_AUTH, DISABLED_ADMIN_APP, DISABLED_ADMIN_AUTH]);
   for (const capability of ["entry_admin", "recruiter_master_manage", "team_master_manage"]) {
-    await database.query("insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from) values ($1,$2,'2026-01-01')", [ADMIN_APP, capability]);
+    await database.query("insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current) values ($1,$2,'2026-01-01',true)", [ADMIN_APP, capability]);
   }
-  await database.query("insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from) values ($1,'all','2026-01-01')", [ADMIN_APP]);
-  await database.query("insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from) values ($1,'catalog_master_manage','2026-01-01')", [ACCOUNTING_APP]);
-  await database.query("insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from) values ($1,'all','2026-01-01')", [ACCOUNTING_APP]);
+  await database.query("insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current) values ($1,'all','2026-01-01',true)", [ADMIN_APP]);
+  await database.query("insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current) values ($1,'catalog_master_manage','2026-01-01',true)", [ACCOUNTING_APP]);
+  await database.query("insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current) values ($1,'all','2026-01-01',true)", [ACCOUNTING_APP]);
 }
 async function denied(operation, code = "42501") {
   await assert.rejects(operation, (error) => error.code === code);
@@ -115,8 +115,8 @@ test("account read shows linked recruiter real name and only the Auth login loca
   const recruiterId = "30000000-0000-4000-8000-000000000103";
   await database.query("insert into public.recruiters(recruiter_id,display_name) values ($1,'Bạch Thu Lan')", [recruiterId]);
   await database.query(`
-    insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from)
-    values ($1,$2,true,'2026-01-01')`, [TARGET_APP, recruiterId]);
+    insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from,is_current)
+    values ($1,$2,true,'2026-01-01',true)`, [TARGET_APP, recruiterId]);
   const list = await rpc(database, "direct_entry_list_app_users_admin", [ADMIN_AUTH, ADMIN_APP, "Bạch Thu Lan", "all", 1, 25]);
   assert.deepEqual(list.accounts.map(({ display_name, login_id }) => ({ display_name, login_id })), [
     { display_name: "Bạch Thu Lan", login_id: "target.td" },

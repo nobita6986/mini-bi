@@ -39,9 +39,9 @@ async function seed(db) {
     await db.query("insert into auth.users (id) values ($1)", [auth]);
     await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [app, auth]);
   }
-  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from) values ($1,'entry_admin','2020-01-01')", [ADMIN_APP]);
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from) values ($1,'all','2020-01-01')", [ADMIN_APP]);
-  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from) values ($1,'entry_admin','2020-01-01')", [NO_SCOPE_APP]);
+  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current) values ($1,'entry_admin','2020-01-01',true)", [ADMIN_APP]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current) values ($1,'all','2020-01-01',true)", [ADMIN_APP]);
+  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current) values ($1,'entry_admin','2020-01-01',true)", [NO_SCOPE_APP]);
   // recruiters: A verified+active, B active but NO verified link, C verified but INACTIVE
   for (const [rec, name, code, active] of [
     [REC_A, "Nguyễn Văn A", "vinh.ta", true],
@@ -52,8 +52,8 @@ async function seed(db) {
       [rec, name, code, active]);
   }
   // one verified link per app_user (interval overlap guard): ADMIN->REC_A, NO_SCOPE->REC_C.
-  await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [ADMIN_APP, REC_A]);
-  await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [NO_SCOPE_APP, REC_C]);
+  await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)", [ADMIN_APP, REC_A]);
+  await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)", [NO_SCOPE_APP, REC_C]);
 }
 async function candidates(db, auth, app, search) {
   const res = await db.query(
@@ -106,8 +106,8 @@ test("bounds: >100 eligible candidates return at most 100 in stable order", asyn
   const { db } = await migratedDb();
   await db.query("insert into auth.users (id) values ($1)", [ADMIN_AUTH]);
   await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [ADMIN_APP, ADMIN_AUTH]);
-  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from) values ($1,'entry_admin','2020-01-01')", [ADMIN_APP]);
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from) values ($1,'all','2020-01-01')", [ADMIN_APP]);
+  await db.query("insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current) values ($1,'entry_admin','2020-01-01',true)", [ADMIN_APP]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current) values ($1,'all','2020-01-01',true)", [ADMIN_APP]);
   // 150 active recruiters, each with one verified link from a distinct app_user.
   for (let i = 0; i < 150; i += 1) {
     const rec = uuid(200 + i);
@@ -117,7 +117,7 @@ test("bounds: >100 eligible candidates return at most 100 in stable order", asyn
     await db.query("insert into public.recruiters (recruiter_id, display_name, personnel_code, active) values ($1,$2,$3,true)", [rec, name, "code-" + String(i).padStart(3, "0")]);
     await db.query("insert into auth.users (id) values ($1)", [auth]);
     await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [au, auth]);
-    await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [au, rec]);
+    await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)", [au, rec]);
   }
   const all = await candidates(db, ADMIN_AUTH, ADMIN_APP, null);
   assert.equal(all.candidates.length, 100, "must cap at 100");
