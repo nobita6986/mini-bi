@@ -6,7 +6,7 @@
  * - Chi goi change-request detail endpoint khi nguoi dung mo "Xem xet" (khong tai truoc).
  * - Detail duoc strict-project bang projectChangeRequestDetail roi map ngay sang view model an toan;
  *   khong luu/khong render raw JSON, khong hien thi UUID lam noi dung chinh.
- * - Before/after strict-project; ten NLĐ chi lay tu worker projection da redact theo pii_view.
+ * - Before/after strict-project; worker details come only from server-authorized projections.
  * - can_decide chi la display hint; quyet dinh that do server/RPC quyet dinh.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -258,8 +258,7 @@ export function DirectEntryChangeRequestReviewer({
             continue;
           }
           entries.set(entry.entry_id, entry);
-          // Ngu canh nhay cam (worker_details/payment/employment_status) strict-project rieng;
-          // server da redact theo capability nen field khong duoc phep coi nhu KHONG CO.
+          // Sensitive context is strict-projected separately and remains server-authorized.
           if (context) contexts.set(entry.entry_id, context);
         }
         if (cancelled) return;

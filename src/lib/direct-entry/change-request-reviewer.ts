@@ -31,9 +31,7 @@ import type {
 } from "./change-request-read-contract.ts";
 import {
   DOCUMENT_STAGING_MESSAGE,
-  PRESENCE_ONLY_MESSAGE,
   documentReadRows,
-  isPresenceOnlyWorkerDetails,
   paymentReadRows,
   projectDocumentReadProposal,
   projectPaymentReadProposal,
@@ -75,9 +73,9 @@ export type ReviewerItemView = {
   project_name: string | null;
   targetKind: string;
   rows: ReviewerFieldRow[];
-  /** Chi true khi item nay du du lieu + capability hint de quyet dinh. */
+  /** Chi true khi item nay du du lieu de doi chieu va quyet dinh. */
   decidable: boolean;
-  /** Thong bao rieng cua item (vi du presence-only, ly do bi an, tai lieu chua san sang). */
+  /** Thong bao rieng cua item (vi du ly do bi an hoac tai lieu chua san sang). */
   message: string | null;
 };
 
@@ -113,7 +111,7 @@ export function reviewerUnsupportedMessage(reason: ReviewerUnsupportedReason): s
   if (reason === "ENTRY") return "Không tìm thấy dòng hồ sơ tương ứng với yêu cầu thay đổi.";
   if (reason === "STATUS") return "Không đọc được trạng thái làm việc hiện tại của hồ sơ.";
   if (reason === "WORKER") {
-    return "Cần quyền xem thông tin cá nhân người lao động để đối chiếu đề xuất này.";
+    return "Không đọc được thông tin người lao động để đối chiếu đề xuất này.";
   }
   if (reason === "PAYMENT") return "Đề xuất thông tin tài khoản ngân hàng không đọc được.";
   if (reason === "CATALOG") {
@@ -144,10 +142,6 @@ export const REVIEW_TARGET_KIND_LABELS: Readonly<Record<string, string>> = Objec
   DOCUMENT: "Tài liệu",
   ENTRY_VOID: "Đề nghị hủy hồ sơ trùng",
 });
-
-/** Nhan chung khi server chi tra account number da mask (thieu payment_view). */
-export const PAYMENT_MASKED_MESSAGE =
-  "Số tài khoản chỉ hiển thị một phần — cần quyền xem thông tin thanh toán để quyết định.";
 
 /** Doi gia tri thanh nhan hien thi; tra null khi catalog khong giai duoc (fail-closed). */
 export type ReviewerFieldFormatter = (
@@ -265,9 +259,6 @@ function buildReviewerItemView(input: {
     }
     if ("worker_details" in item.proposal) {
       const workerValue = item.proposal.worker_details;
-      if (isPresenceOnlyWorkerDetails(workerValue)) {
-        return { ...base, rows, decidable: false, message: PRESENCE_ONLY_MESSAGE };
-      }
       const after = projectWorkerDetails(workerValue);
       if (!after) return "PROPOSAL";
       const before = context?.workerDetails ?? null;
@@ -281,11 +272,10 @@ function buildReviewerItemView(input: {
     if (!view) return "PAYMENT";
     const rows = paymentReadRows({ before: context?.payment ?? null, after: view, bankLabel });
     if (rows === null) return "CATALOG";
-    const masked = view.account.mode === "MASKED";
     const decidable = view.state !== "provided" || view.complete;
     return {
       ...base, rows, decidable,
-      message: decidable ? null : (masked ? PAYMENT_MASKED_MESSAGE : UNSUPPORTED_REVIEW_MESSAGE),
+      message: decidable ? null : UNSUPPORTED_REVIEW_MESSAGE,
     };
   }
   if (item.target_kind === "WORK_STATUS") {
@@ -308,8 +298,7 @@ function buildReviewerItemView(input: {
 /**
  * Map detail + entry projection + catalog sang view model an toan cho reviewer.
  * All-or-nothing: chi can mot item khong dat thi toan bo request fail-closed, khong co
- * quyet dinh nao duoc phep (khong xu ly mot phan). Item khong du dieu kien quyet dinh
- * (presence-only, masked, DOCUMENT) chi hien thi read-only.
+ * quyết định nào được phép (không xử lý một phần). Unsupported or DOCUMENT items stay read-only.
  */
 export function buildReviewerViewModel(input: {
   detail: ChangeRequestDetail;

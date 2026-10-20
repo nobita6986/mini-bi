@@ -52,7 +52,7 @@ test("provided payment rejects inactive/unknown banks, non-digit values, and ext
   };
   assert.equal(projectPaymentInput(input, new Set()), null);
   assert.equal(projectPaymentInput({ ...input, account_number: 1234 }, activeBanks), null);
-  assert.equal(projectPaymentInput({ ...input, capability: "payment_view" }, activeBanks), null);
+  assert.equal(projectPaymentInput({ ...input, legacy_token: "retired" }, activeBanks), null);
   assert.equal(projectPaymentInput({
     state: "unknown",
     account_number: "masked",
@@ -61,19 +61,23 @@ test("provided payment rejects inactive/unknown banks, non-digit values, and ext
   }), null);
 });
 
-test("accepts only safe masked/full read projections and strict update versions", () => {
+test("accepts full read projections only and keeps strict update versions", () => {
+  assert.equal(projectPaymentProjection({
+    state: "provided",
+    account_number: "••••0056",
+    version: 2,
+  }), null, "legacy masked response fails closed");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: "000012340056", bank_id: "bank_synthetic",
+    account_holder_name: "Synthetic Account Holder", version: 2,
+  })?.account_number, "000012340056");
   assert.deepEqual(projectPaymentProjection({
-    state: "provided",
-    account_number: "••••0056",
-    version: 2,
+    state: "provided", account_number: "000012340056", bank_id: null,
+    bank_name: "Synthetic Bank", account_holder_name: "Synthetic Account Holder", version: 2,
   }), {
-    state: "provided",
-    account_number: "••••0056",
-    bank_id: null,
-    account_holder_name: null,
-    version: 2,
-    masked: true,
-  });
+    state: "provided", account_number: "000012340056", bank_id: null,
+    bank_name: "Synthetic Bank", account_holder_name: "Synthetic Account Holder", version: 2,
+  }, "the existing R4 full bank-name projection remains supported");
   assert.deepEqual(projectPaymentProjection({
     state: "provided",
     account_number: "000012340056",

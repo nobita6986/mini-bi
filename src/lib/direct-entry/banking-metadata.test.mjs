@@ -31,7 +31,7 @@ const NAME = "Nguyễn Văn Giả A";
 const ACCOUNT = "000123456789";
 const BANK_NAME = "Ngân hàng Giả Đông Á";
 const HOLDER = "NGUYỄN VĂN GIẢ A";
-const CAPS = ["entry_create", "submission_create", "payment_view", "payment_edit"];
+const CAPS = ["entry_create", "submission_create"];
 
 function tsv(rows) {
   const header = [];
@@ -256,11 +256,11 @@ test("20. intent digest doi khi metadata doi nhung khong lo raw PII", async () =
   }
 });
 
-test("capability: metadata tai khoan van dung payment_view/payment_edit theo server", () => {
+test("capability: payment metadata uses the existing create actions", () => {
   const withMetadata = buildFullProfileRequestBody(preview(tsv([row("hrp-2026-001101",
     { "Tên ngân hàng": BANK_NAME })])).rows);
   assert.deepEqual(fullProfileRequiredCapabilities(withMetadata.rows),
-    ["entry_create", "submission_create", "payment_view", "payment_edit"]);
+    ["entry_create", "submission_create"]);
   const without = buildFullProfileRequestBody(preview(tsv([row("hrp-2026-001102")])).rows);
   assert.deepEqual(fullProfileRequiredCapabilities(without.rows),
     ["entry_create", "submission_create"]);

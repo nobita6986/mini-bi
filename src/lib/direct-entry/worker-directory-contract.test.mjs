@@ -30,7 +30,7 @@ const row = {
   recruiter_id: recruiterId,
   recruiter_display: "Recruiter A",
   payment: {
-    state: "provided", account_number: "••••••••8901", bank_id: null,
+    state: "provided", account_number: "000012348901", bank_id: "bank_synthetic",
     account_holder_name: "Synthetic Holder", version: 1,
   },
   pending_request: { request_id: requestId, state: "PENDING", version: 1 },
@@ -93,7 +93,11 @@ test("query accepts only the documented scope/filter/paging keys", () => {
 test("row projection accepts the exact server shape and rejects drift", () => {
   const projected = projectWorkerDirectoryRow(row);
   assert.equal(projected.entry_id, entryId);
-  assert.equal(projected.payment.account_number, "••••••••8901");
+  assert.equal(projected.payment.account_number, "000012348901");
+  assert.equal(projected.allowed_actions.view_pii, true,
+    "legacy false is normalized to the authorized view result");
+  assert.equal(projected.allowed_actions.view_payment, true,
+    "legacy response flag is inert");
   assert.equal(projected.allowed_actions.propose_change, false);
 
   const variants = {
@@ -106,6 +110,7 @@ test("row projection accepts the exact server shape and rejects drift", () => {
     "bad employment status": { ...row, employment_status: "MAYBE" },
     "bad project id": { ...row, project_id: "" },
     "bad payment state": { ...row, payment: { ...row.payment, state: "nope" } },
+    "legacy masked payment": { ...row, payment: { ...row.payment, account_number: "••••8901" } },
     "pending not pending": {
       ...row, pending_request: { ...row.pending_request, state: "APPROVED" },
     },

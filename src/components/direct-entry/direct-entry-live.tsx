@@ -3436,7 +3436,6 @@ export function DirectEntryLive() {
                   canEdit={capabilities.includes("entry_own") &&
                     selectedRow.state !== "saving" && selectedRow.state !== "conflict" &&
                     !selectedRowLocked}
-                  canView={capabilities.includes("payment_view")}
                   onEntryVersionChange={onPaymentEntryVersionChange}
                 />}
                 <DirectEntryDocumentEditor

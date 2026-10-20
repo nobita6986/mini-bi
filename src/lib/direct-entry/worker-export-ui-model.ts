@@ -3,7 +3,7 @@
  *
  * Khong React, khong I/O. Client KHONG gui authority: body chi gom `scope` + bo loc + `reason`,
  * dung allowlist cua POST /api/direct-entry/workers/export. Quyen cuoi cung do server session +
- * DB row-audience guard quyet dinh; capability triple van bat buoc voi scope toan cong ty.
+ * DB row-audience guard quyet dinh; all-scope export keeps its existing explicit action gate.
  */
 
 import {
@@ -18,9 +18,6 @@ import type {
 /** Scope xuat duoc server cho phep; `all` chi mo cho Admin/BoD/Kế toán (#90). */
 export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
-
-/** Capability triple remains mandatory for company-wide (`all`) exports. */
-export const WORKER_EXPORT_CAPABILITIES = ["pii_export", "pii_view", "payment_view"] as const;
 
 export const WORKER_EXPORT_REASON_MAX = 4000;
 
@@ -64,14 +61,12 @@ export function canExportWorkers(actor: WorkerOperationsActor | null): boolean {
 }
 
 /**
- * Admin/BoD/Kế toán xuat toan bo (scope=all): can du export caps + effective all scope +
- * (entry_admin OR change_review). KHONG suy quyen tu role/email; row audience van do RPC quyet.
+ * Company-wide export needs current all scope plus an existing admin/reviewer action.
+ * The RPC remains authoritative for the scope and row audience.
  */
 export function canExportAllWorkers(actor: WorkerOperationsActor | null): boolean {
   if (actor === null) return false;
-  return WORKER_EXPORT_CAPABILITIES.every((capability) =>
-      actor.capabilities.includes(capability)) &&
-    actor.scopes.some((scope) => scope.kind === "all") &&
+  return actor.scopes.some((scope) => scope.kind === "all") &&
     actor.capabilities.some((capability) =>
       capability === "entry_admin" || capability === "change_review");
 }

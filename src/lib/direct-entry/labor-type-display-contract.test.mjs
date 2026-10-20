@@ -66,7 +66,7 @@ function workerRow(overrides = {}) {
     last_decision: { state: "REJECTED", decided_at: decidedAt },
     is_project_manager: true,
     allowed_actions: {
-      view: true, view_pii: false, view_payment: true,
+      view: true, view_pii: true, view_payment: true,
       propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
     },
     ...overrides,

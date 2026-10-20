@@ -2,7 +2,7 @@
  * PRE-W2-P2 - De xuat sua ho ten NLĐ qua luong duyet hien co.
  *
  * Pham vi: affordance sua ten (target WORKER) o CA HAI entry point chi mo khi du
- * propose_change + pii_view hoac project-manager assignment + baseline canonical day du;
+ * propose_change + baseline canonical day du;
  * payload gui di la worker_details day du
  * (chi display_name doi); reviewer before/after + OCC/target_kind van dung implementation hien co.
  * Khong tao workflow/direct-write/name-only.
@@ -11,11 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import {
-  WORKER_NAME_DENIED_PII_MESSAGE,
-  WORKER_NAME_NO_BASELINE_MESSAGE,
-  workerNameAvailability,
-} from "./worker-operations-model.ts";
+import { WORKER_NAME_NO_BASELINE_MESSAGE, workerNameAvailability } from "./worker-operations-model.ts";
 import {
   buildChangeRequestItem,
   buildEntryFieldProposal,
@@ -57,40 +53,23 @@ function entryBaseline() {
   };
 }
 
-/* ---------- authority: capability hoac assignment PM do server xac nhan ---------- */
+/* ---------- authority: existing server action + canonical baseline ---------- */
 
-test("P2: affordance sua ten mo theo pii_view hoac PM assignment + baseline", () => {
+test("P2: affordance sua ten dung action hien co va baseline", () => {
   assert.deepEqual(
-    workerNameAvailability({ proposeChange: true, viewPii: true,
-      isProjectManager: false, hasBaseline: true }),
+    workerNameAvailability({ proposeChange: true, hasBaseline: true }),
     { available: true, message: null });
 
-  const noPropose = workerNameAvailability({ proposeChange: false, viewPii: true,
-    isProjectManager: true, hasBaseline: true });
+  const noPropose = workerNameAvailability({ proposeChange: false, hasBaseline: true });
   assert.equal(noPropose.available, false);
   assert.match(noPropose.message, /quyền đề xuất/);
 
-  const manager = workerNameAvailability({ proposeChange: true, viewPii: false,
-    isProjectManager: true, hasBaseline: true });
-  assert.deepEqual(manager, { available: true, message: null },
-    "PM duoc server xac nhan co the xem/de xuat profile trong project minh quan ly");
-
-  const noPii = workerNameAvailability({ proposeChange: true, viewPii: false,
-    isProjectManager: false, hasBaseline: true });
-  assert.equal(noPii.available, false);
-  assert.equal(noPii.message, WORKER_NAME_DENIED_PII_MESSAGE);
-
-  const noBaseline = workerNameAvailability({ proposeChange: true, viewPii: false,
-    isProjectManager: true, hasBaseline: false });
+  const noBaseline = workerNameAvailability({ proposeChange: true, hasBaseline: false });
   assert.equal(noBaseline.available, false);
   assert.equal(noBaseline.message, WORKER_NAME_NO_BASELINE_MESSAGE);
 
-  // Khong suy quyen tu nut de xuat; actor khong co PII grant hay assignment van bi chan.
-  assert.equal(
-    workerNameAvailability({ proposeChange: true, viewPii: false,
-      isProjectManager: false, hasBaseline: true }).available, false);
   // Copy khong lo UUID/raw DB.
-  for (const message of [WORKER_NAME_DENIED_PII_MESSAGE, WORKER_NAME_NO_BASELINE_MESSAGE]) {
+  for (const message of [noPropose.message, WORKER_NAME_NO_BASELINE_MESSAGE]) {
     assert.equal(/[0-9a-f]{8}-[0-9a-f]{4}/i.test(message), false, "khong lo UUID");
     assert.equal(/42501|SQLSTATE|postgres/i.test(message), false, "khong lo raw DB");
   }
@@ -144,11 +123,10 @@ test("P2: reviewer before/after dung projection hien co, hien thay doi ho ten", 
 
 /* ---------- entry point 1: Danh sach nguoi lao dong (WORKER target) ---------- */
 
-test("P2 (Directory): PM server-scoped duoc sua ten; actor khac van can view_pii", () => {
+test("P2 (Directory): worker edit affordance uses the existing action and full baseline", () => {
   assert.match(drawer, /workerNameAvailability\(\{/);
   assert.match(drawer, /proposeChange: mode === "correction" \? true : row\?\.allowed_actions\.propose_change === true/);
-  assert.match(drawer, /viewPii: row\?\.allowed_actions\.view_pii === true/);
-  assert.match(drawer, /isProjectManager: mode === "proposal" && row\?\.is_project_manager === true/);
+  assert.doesNotMatch(drawer, /allowed_actions\.view_pii|isProjectManager/);
   assert.match(drawer, /hasBaseline: entryForm !== null/);
   // Form sua ten chi render khi available; nguoc lai hien giai thich (khong hien form chac chan that bai).
   assert.match(drawer, /entryForm !== null && nameAvailability\.available \?/);
@@ -163,7 +141,7 @@ test("P2 (Directory): PM server-scoped duoc sua ten; actor khac van can view_pii
 
 /* ---------- entry point 2: Nhap lieu (Yeu cau sua/thay doi) ---------- */
 
-test("P2 (Direct Entry): WORKER dung cung builder, denial khi thieu baseline/pii_view", () => {
+test("P2 (Direct Entry): WORKER dùng cùng builder và vẫn cần baseline", () => {
   assert.match(proposer, /buildWorkerDetailsProposal\(/);
   assert.match(proposer, /data-testid="proposer-worker-unavailable"/);
   assert.match(proposer, /disabled=\{!canSubmit\}/);

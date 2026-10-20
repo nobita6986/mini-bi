@@ -4,12 +4,11 @@ import test from "node:test";
 import {
   DOCUMENT_STAGING_MESSAGE,
   LEAVE_REASON_HIDDEN_MESSAGE,
-  PRESENCE_ONLY_MESSAGE,
   documentReadRows,
-  isPresenceOnlyWorkerDetails,
   optionalValueText,
   paymentReadRows,
   projectDocumentReadProposal,
+  projectEntrySensitiveContext,
   projectPaymentReadProposal,
   projectWorkStatusReadProposal,
   projectWorkerDetails,
@@ -30,7 +29,7 @@ function worker(overrides = {}) {
   };
 }
 
-test("worker_details FULL duoc strict-project, presence-only khong bi coi la full", () => {
+test("worker_details must use the canonical full projection", () => {
   assert.deepEqual(projectWorkerDetails(worker()), worker());
   const complete = worker({
     gender: { state: "provided", value: "FEMALE" },
@@ -39,8 +38,6 @@ test("worker_details FULL duoc strict-project, presence-only khong bi coi la ful
   });
   assert.deepEqual(projectWorkerDetails(complete), complete,
     "review projection must retain every editable canonical profile field");
-  assert.equal(isPresenceOnlyWorkerDetails({ present: true }), true);
-  assert.equal(isPresenceOnlyWorkerDetails({ present: false }), false);
   assert.equal(projectWorkerDetails({ present: true }), null);
   assert.equal(projectWorkerDetails(worker({ extra: 1 })), null);
   assert.equal(projectWorkerDetails(worker({ phone: { state: "provided" } })), null);
@@ -75,7 +72,7 @@ test("workerDetailsRows chi hien field thuc su thay doi", () => {
     ["Giới tính", "Ngày cấp", "Nơi cấp"]);
 });
 
-test("PAYMENT read projection: FULL khac MASKED, giu so 0 dau, khong reconstruct", () => {
+test("PAYMENT read projection requires full values, preserves leading zeroes", () => {
   const full = projectPaymentReadProposal({
     state: "provided", account_number: "000123", bank_id: "bank_a",
     account_holder_name: "NGUYEN VAN SYNTHETIC",
@@ -86,10 +83,7 @@ test("PAYMENT read projection: FULL khac MASKED, giu so 0 dau, khong reconstruct
   const masked = projectPaymentReadProposal({
     state: "provided", account_number: "••••6789",
   });
-  assert.equal(masked.complete, false);
-  assert.deepEqual(masked.account, { mode: "MASKED", value: "••••6789" });
-  assert.equal(masked.bankId, null);
-  assert.equal(masked.holderName, null);
+  assert.equal(masked, null, "legacy masked response fails closed");
 
   const omitted = projectPaymentReadProposal({ state: "unknown", account_number: null });
   assert.equal(omitted.complete, false);
@@ -97,6 +91,8 @@ test("PAYMENT read projection: FULL khac MASKED, giu so 0 dau, khong reconstruct
 
   for (const invalid of [
     { state: "provided", account_number: "000123", bank_id: "b", account_holder_name: "x", extra: 1 },
+    { state: "provided", account_number: "••••0123", bank_id: "b", account_holder_name: "x" },
+    { state: "provided", account_number: "000123", bank_id: null, account_holder_name: "x" },
     { state: "pending", account_number: null },
     { state: "provided", account_number: 123 },
     { state: "provided", account_number: "000123", bank_id: "", account_holder_name: "x" },
@@ -109,21 +105,42 @@ test("PAYMENT read projection: FULL khac MASKED, giu so 0 dau, khong reconstruct
 
 test("paymentReadRows dung nhan catalog va fail-closed khi khong giai duoc bank", () => {
   const after = projectPaymentReadProposal({
-    state: "provided", account_number: "••••6789", bank_id: "bank_a",
-    account_holder_name: null,
+    state: "provided", account_number: "00005678", bank_id: "bank_a",
+    account_holder_name: "Synthetic Account Holder",
   });
+  assert.ok(after);
+  const before = {
+    state: "provided", account_number: "00001234", bank_id: "bank_a",
+    account_holder_name: "Synthetic Account Holder",
+  };
   const rows = paymentReadRows({
-    before: { state: "provided", account_number: "••••1234", bank_id: "bank_a",
-      account_holder_name: null, masked: true },
+    before,
     after,
     bankLabel: (bankId) => (bankId === "bank_a" ? "Ngân hàng Synthetic" : null),
   });
   assert.deepEqual(rows.map((row) => row.field), ["account_number"]);
-  assert.equal(rows[0].before, "••••1234");
+  assert.equal(rows[0].before, "00001234");
+  assert.equal(rows[0].after, "00005678");
   assert.equal(JSON.stringify(rows).includes("bank_a"), false);
   assert.equal(paymentReadRows({
     before: null, after, bankLabel: () => null,
   }), null);
+
+  const context = projectEntrySensitiveContext({
+    entry_id: "c1000000-0000-4000-8000-000000000001",
+    worker_details: worker(),
+    payment: {
+      state: "provided", account_number: "00001234", bank_id: null,
+      bank_name: "Ngân hàng Synthetic", account_holder_name: "Synthetic Account Holder", version: 2,
+    },
+  });
+  assert.equal(context?.payment?.bank_name, "Ngân hàng Synthetic",
+    "review context preserves the existing full R4 bank-name projection");
+  assert.deepEqual(paymentReadRows({
+    before: context.payment,
+    after,
+    bankLabel: (bankId) => (bankId === "bank_a" ? "Ngân hàng Synthetic" : null),
+  })?.map((row) => row.field), ["account_number"]);
 });
 
 test("WORK_STATUS read projection omits reason for proposers and accepts it for reviewers", () => {
@@ -185,5 +202,4 @@ test("DOCUMENT read projection chi tra metadata an toan", () => {
   assert.equal(text.includes("storage"), false);
   assert.equal(rows[0].after, "CCCD mặt trước");
   assert.match(DOCUMENT_STAGING_MESSAGE, /chưa sẵn sàng/);
-  assert.match(PRESENCE_ONLY_MESSAGE, /thông tin cá nhân/);
 });

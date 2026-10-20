@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  PAYMENT_MASKED_MESSAGE,
   buildDecisionRequest,
   buildReviewerEntryRows,
   buildReviewerViewModel,
@@ -18,10 +17,7 @@ import {
   unsupportedReviewerViewModel,
 } from "./change-request-reviewer.ts";
 import { projectProposerEntry } from "./change-request-proposer.ts";
-import {
-  DOCUMENT_STAGING_MESSAGE,
-  PRESENCE_ONLY_MESSAGE,
-} from "./change-request-read-projection.ts";
+import { DOCUMENT_STAGING_MESSAGE } from "./change-request-read-projection.ts";
 
 const REQUEST_ID = "d1000000-0000-4000-8000-00000000000a";
 const ENTRY_A = "c1000000-0000-4000-8000-00000000000a";
@@ -116,7 +112,6 @@ function workerDetails(overrides = {}) {
 function context(overrides = {}) {
   return {
     workerDetails: null,
-    workerPresenceOnly: false,
     payment: null,
     employmentStatus: { status: "UNCONFIRMED", effective_date: "2026-10-01" },
     ...overrides,
@@ -407,18 +402,16 @@ test("worker_details FULL hien before/after theo nhan field, khong lo raw JSON",
   assert.equal(model.items[0].message, null);
 });
 
-test("worker_details presence-only: mot nhan chung, khong quyet dinh, khong lo gia tri", () => {
+test("worker_details legacy presence-only projection is unsupported and reveals no values", () => {
   const model = build({
     detail: { items: [detailItem({ proposal: { worker_details: { present: true } } })] },
   });
-  assert.equal(model.kind, "readonly");
-  assert.equal(model.items[0].decidable, false);
-  assert.equal(model.items[0].message, PRESENCE_ONLY_MESSAGE);
-  assert.deepEqual(model.items[0].rows, []);
+  assert.equal(model.kind, "unsupported");
+  assert.equal(model.reason, "PROPOSAL");
   assert.equal(JSON.stringify(model).includes("display_name"), false);
 });
 
-test("PAYMENT full duoc quyet dinh, masked chi read-only, bank phai giai duoc", () => {
+test("PAYMENT full duoc quyet dinh, legacy masked fails closed, bank phai giai duoc", () => {
   const full = build({
     detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {
       state: "provided", account_number: "000123", bank_id: "s02c_bank",
@@ -432,11 +425,8 @@ test("PAYMENT full duoc quyet dinh, masked chi read-only, bank phai giai duoc", 
     detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {
       state: "provided", account_number: "••••6789" } })] },
   });
-  assert.equal(masked.kind, "readonly");
-  assert.equal(masked.items[0].decidable, false);
-  assert.equal(masked.items[0].message, PAYMENT_MASKED_MESSAGE);
-  const text = JSON.stringify(masked.items[0].rows);
-  assert.equal(text.includes("000123"), false);
+  assert.equal(masked.kind, "unsupported");
+  assert.equal(masked.reason, "PAYMENT");
 
   const unknownBank = build({
     detail: { items: [detailItem({ target_kind: "PAYMENT", proposal: {

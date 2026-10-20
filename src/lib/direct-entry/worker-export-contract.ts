@@ -3,7 +3,8 @@
  *
  * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
  * Authority do RPC public.direct_entry_export_workers quyet dinh: recruited/managed require
- * their DB-verified row audience; `all` additionally requires pii_export + pii_view + payment_view.
+ * their DB-verified row audience; `all` additionally requires current all scope and the existing
+ * `entry_admin` or `change_review` action.
  * Client khong bao gio tu khai
  * identity/capability/scope.
  *

@@ -988,13 +988,10 @@ function ProposeDrawer({
   const catalog = catalogFor(today);
   const entryCatalogDate = entryForm?.first_work_date;
   const entryCatalog = catalogFor(entryCatalogDate ?? today);
-  // PM chi duoc xem/de xuat PII tren dong co assignment duoc server xac nhan;
-  // correction (privileged) chi can baseline.
+  // The row has already passed server-side worker view and scope; edits still require the existing action.
   const workerFieldMode = mode === "correction" || target === "WORKER";
   const nameAvailability = workerNameAvailability({
     proposeChange: mode === "correction" ? true : row?.allowed_actions.propose_change === true,
-    viewPii: row?.allowed_actions.view_pii === true,
-    isProjectManager: mode === "proposal" && row?.is_project_manager === true,
     hasBaseline: entryForm !== null,
   });
 

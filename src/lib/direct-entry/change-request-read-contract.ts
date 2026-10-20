@@ -14,7 +14,6 @@ import {
   type ChangeRequestTargetKind,
 } from "./change-request-contract.ts";
 import {
-  isPresenceOnlyWorkerDetails,
   projectDocumentReadProposal,
   projectPaymentReadProposal,
   projectWorkStatusReadProposal,
@@ -264,8 +263,7 @@ function findSensitiveProposalKey(value: unknown, depth = 0): string | null {
 
 /**
  * P1.6-W04-S04C-S03B4A: vocabulary proposal cua RESPONSE DOC (da lam sach o server), khac
- * vocabulary mutation. Vi du PAYMENT co the chi con state + account_number masked; WORK_STATUS
- * khong con leave_reason; DOCUMENT khong con idempotency_key/checksum_sha256.
+ * vocabulary mutation. DOCUMENT omits idempotency_key/checksum_sha256 and storage metadata.
  */
 export const READ_PROPOSAL_KEYS: Readonly<Record<ChangeRequestTargetKind, readonly string[]>> =
   Object.freeze({
@@ -309,9 +307,7 @@ export function projectReadProposal(
       return null;
     }
     if ("worker_details" in value) {
-      const workerDetails = value.worker_details;
-      const full = projectWorkerDetails(workerDetails);
-      if (!full && !isPresenceOnlyWorkerDetails(workerDetails)) return null;
+      if (!projectWorkerDetails(value.worker_details)) return null;
     }
     return { ...value };
   }

@@ -8,8 +8,8 @@
  * scope/project_id/recruiter_id/employment_status/reason, so every client-supplied authority
  * key (auth_subject, app_user_id, capability, scope_kind, ...) is refused as an unknown key.
  *
- * Recruited/managed use the DB-verified row authority; company-wide `all` also requires the
- * pii_export + pii_view + payment_view conjunction. Khong bao gio nhan identity/capability/scope tu client va khong
+ * Recruited/managed use the DB-verified row authority; company-wide `all` also requires current
+ * all scope and the existing entry_admin or change_review action. Khong bao gio nhan identity/capability/scope tu client va khong
  * forward raw DB message, UUID noi bo hay PII trong JSON loi. Khong log body/rows/PII.
  */
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";

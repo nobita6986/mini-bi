@@ -124,10 +124,9 @@ test("projectWorkerDetail: vendor được ghi nhãn từ server, không suy t�
   assert.equal(detail.providerLabel, "Vendor");
 });
 
-test("projectWorkerDetail: worker_details redacted giữ nhận diện mà không lộ PII", () => {
+test("projectWorkerDetail: legacy redacted worker_details fail closed", () => {
   const detail = projectWorkerDetail(entryBody({ worker_details: redactedWorker() }), ENTRY_ID);
-  assert.ok(detail);
-  assert.deepEqual(detail.worker, { kind: "redacted", display_name_present: true });
+  assert.equal(detail, null);
 });
 
 test("projectWorkerDetail: thiếu document_view (worker_portrait null) vẫn chiếu được phần còn lại", () => {

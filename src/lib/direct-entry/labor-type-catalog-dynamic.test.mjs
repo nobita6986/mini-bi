@@ -261,7 +261,7 @@ function directoryRow(laborType, laborTypeDisplay = LABOR_TYPE_DISPLAY_FIXTURE) 
     last_decision: { state: "REJECTED", decided_at: "2026-10-08T09:00:00.000000Z" },
     is_project_manager: true,
     allowed_actions: {
-      view: true, view_pii: false, view_payment: true,
+      view: true, view_pii: true, view_payment: true,
       propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
     },
   };

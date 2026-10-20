@@ -1,14 +1,13 @@
 /**
- * PRE-W2-P1 (T1A) - Pure model cho "Xuat Excel" (recruited / managed).
+ * Pure model cho "Xuat Excel" (recruited / managed / all).
  *
- * Pham vi: dung hai scope, map filter/reason theo contract, gate capability server-side,
+ * Pham vi: dung scope, map filter/reason theo contract, defer row authority to the server,
  * taxonomy loi 400/401/403/404/422/5xx + loi mang, filename an toan. Khong lo PII/UUID/raw DB.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  WORKER_EXPORT_CAPABILITIES,
   WORKER_EXPORT_FALLBACK_LIMIT,
   WORKER_EXPORT_REASON_MAX,
   WORKER_EXPORT_SCOPES,
@@ -110,8 +109,7 @@ test("T1A: request error copy sanitized", () => {
   assert.ok(workerExportRequestMessage("REASON_TOO_LONG").includes(String(WORKER_EXPORT_REASON_MAX)));
 });
 
-test("PRE-W2 export: any resolved actor may export a directory scope", () => {
-  assert.deepEqual([...WORKER_EXPORT_CAPABILITIES], ["pii_export", "pii_view", "payment_view"]);
+test("export UI allows resolved actors to request directory export", () => {
   const scopes = [{ kind: "own" }];
   assert.equal(canExportWorkers(null), false);
   assert.equal(canExportWorkers({ capabilities: [], scopes }), true,
@@ -119,21 +117,15 @@ test("PRE-W2 export: any resolved actor may export a directory scope", () => {
   assert.equal(canExportWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), true);
 });
 
-test("HF-E: canExportAllWorkers chi mo cho Admin/BoD/Kế toán", () => {
-  const caps = ["pii_export", "pii_view", "payment_view"];
+test("all-scope export needs current all scope and an existing admin/reviewer action", () => {
   assert.equal(canExportAllWorkers(null), false);
-  assert.equal(canExportAllWorkers({ capabilities: caps, scopes: [{ kind: "own" }] }), false);
-  assert.equal(canExportAllWorkers({ capabilities: caps, scopes: [{ kind: "all" }] }), false,
+  assert.equal(canExportAllWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "own" }] }), false);
+  assert.equal(canExportAllWorkers({ capabilities: [], scopes: [{ kind: "all" }] }), false,
     "thieu entry_admin/change_review => khong xuat all");
   assert.equal(canExportAllWorkers({
-    capabilities: [...caps, "entry_admin"], scopes: [{ kind: "all" }] }), true);
+    capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), true);
   assert.equal(canExportAllWorkers({
-    capabilities: [...caps, "change_review"], scopes: [{ kind: "all" }] }), true);
-  // Company-wide export still needs the complete capability triple.
-  assert.equal(canExportAllWorkers({
-    capabilities: ["pii_view", "payment_view", "entry_admin"], scopes: [{ kind: "all" }] }), false);
-  // Khong suy quyen tu role/email.
-  assert.equal(canExportAllWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), false);
+    capabilities: ["change_review"], scopes: [{ kind: "all" }] }), true);
 });
 
 test("T1A: 422 row-limit bao ro gioi han, khong tai file thieu dong", () => {

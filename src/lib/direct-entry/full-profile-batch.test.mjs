@@ -78,8 +78,7 @@ function preview(text, options = {}) {
     existing: options.existing, employeeCodeMode: options.employeeCodeMode });
 }
 
-const ALL_CAPS = ["entry_create", "submission_create", "payment_view", "payment_edit",
-  "employment_status.apply"];
+const ALL_CAPS = ["entry_create", "submission_create", "employment_status.apply"];
 
 function blockersFor(p, capabilities = ALL_CAPS) {
   return fullProfileSubmitBlockers({ preview: p, capabilities, submitting: false });
@@ -419,7 +418,7 @@ test("R4-S02: mixed rows van mot batch, khong con blocker ngan hang", () => {
   assert.equal(body.rows[0].payment, null);
   assert.deepEqual(body.rows[1].payment, { state: "provided", bank_name: BANK.label });
   assert.deepEqual(fullProfileRequiredCapabilities(body.rows),
-    ["entry_create", "submission_create", "payment_view", "payment_edit"]);
+    ["entry_create", "submission_create"]);
 });
 
 test("gioi han: 1..100 dong; body limit duoc kiem tra truoc khi gui", async () => {
@@ -613,7 +612,7 @@ test("retry/network: giu key; loi nghiep vu ket thuc intent", async () => {
   assert.equal(badKey.code, "IDEMPOTENCY_KEY_INVALID");
 });
 
-test("capability gate theo RPC: entry_create + submission_create + payment/status khi can", () => {
+test("capability gate theo RPC: payment dùng enclosing create actions; status vẫn cần apply", () => {
   const nonPayment = preview(tsv([row("hrp-2026-000123")]));
   let rows = buildFullProfileRequestBody(nonPayment.rows).rows;
   assert.deepEqual(fullProfileRequiredCapabilities(rows), ["entry_create", "submission_create"]);
@@ -626,11 +625,10 @@ test("capability gate theo RPC: entry_create + submission_create + payment/statu
   const withPayment = preview(tsv([row("hrp-2026-000123", "2026-10-15", { STK: ACCOUNT,
     "Tên ngân hàng": BANK.label, "Tên chủ tài khoản": HOLDER })]));
   rows = buildFullProfileRequestBody(withPayment.rows).rows;
-  assert.deepEqual(fullProfileRequiredCapabilities(rows), ["entry_create", "submission_create",
-    "payment_view", "payment_edit"]);
+  assert.deepEqual(fullProfileRequiredCapabilities(rows), ["entry_create", "submission_create"]);
   assert.equal(fullProfileSubmitBlockers({ preview: withPayment,
-    capabilities: ["entry_create", "submission_create", "payment_view"], submitting: false })
-    .includes("PROFILE_CAPABILITY_MISSING"), true);
+    capabilities: ["entry_create", "submission_create"], submitting: false })
+    .includes("PROFILE_CAPABILITY_MISSING"), false);
 
   const withStatus = preview(tsv([row("hrp-2026-000123", "2026-10-15",
     { "Tình trạng làm việc hiện tại": "Đang làm" })]));

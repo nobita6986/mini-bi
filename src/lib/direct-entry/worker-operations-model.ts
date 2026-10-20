@@ -141,10 +141,6 @@ export function proposeCta(row: Pick<WorkerDirectoryRow, "allowed_actions">): Pr
 
 /* ---------- PRE-W2-P2: sua ho ten NLĐ qua luong duyet (target WORKER) ---------- */
 
-/** Thieu pii_view va khong phai PM cua du an: khong doc duoc baseline de de xuat sua ten. */
-export const WORKER_NAME_DENIED_PII_MESSAGE =
-  "Cần quyền xem thông tin cá nhân để đề xuất sửa họ tên.";
-
 /** Du quyen nhung chua nap duoc baseline canonical day du (khong bia gia tri). */
 export const WORKER_NAME_NO_BASELINE_MESSAGE =
   "Chưa đọc được thông tin người lao động để đề xuất sửa họ tên.";
@@ -158,21 +154,14 @@ export type WorkerNameAvailability = {
 /**
  * Quyet dinh affordance sua ho ten (target WORKER) o ca hai entry point.
  *
- * `propose_change`, `view_pii`, va `is_project_manager` deu do server xac dinh tren tung dong.
- * PM hien tai duoc DB cho doc profile SUBMITTED trong dung du an duoc phan cong; khong suy tu role.
+ * The row has already passed server-side worker view and scope; edits still require the existing action.
  */
 export function workerNameAvailability(input: {
   proposeChange: boolean;
-  viewPii: boolean;
-  /** Assignment PM do server xac nhan tren chinh dong ho so nay. */
-  isProjectManager: boolean;
   hasBaseline: boolean;
 }): WorkerNameAvailability {
   if (!input.proposeChange) {
     return { available: false, message: workerDenialMessage(null) };
-  }
-  if (!input.viewPii && !input.isProjectManager) {
-    return { available: false, message: WORKER_NAME_DENIED_PII_MESSAGE };
   }
   if (!input.hasBaseline) return { available: false, message: WORKER_NAME_NO_BASELINE_MESSAGE };
   return { available: true, message: null };

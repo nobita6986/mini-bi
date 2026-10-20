@@ -33,7 +33,7 @@ const row = {
   last_decision: null,
   is_project_manager: false,
   allowed_actions: {
-    view: true, view_pii: false, view_payment: false,
+    view: true, view_pii: true, view_payment: true,
     propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
   },
 };

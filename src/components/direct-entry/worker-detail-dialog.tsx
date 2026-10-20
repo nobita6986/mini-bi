@@ -8,8 +8,7 @@
  * - Du lieu lay tu dung hai nguon server da phan quyen: row cua worker directory
  *   (`WorkerDirectoryRow`) va projection entry detail (`worker_portrait`). UI KHONG suy
  *   quyen tu tab/role, khong tu ghep du lieu, khong tu tinh lai so lieu.
- * - PII/payment/document duoc redaction doc lap boi server; o day chi hien thi dung
- *   nhung gi server tra ve (redacted => ghi ro "an theo quyen").
+ * - Worker profile and payment fields come from server-authorized row projections.
  * - Anh ho so: upload/xem qua pipeline WORKER_PORTRAIT + private preview route.
  * - CCCD: preview qua route riêng có guard. Hợp đồng: tải qua route download hiện hữu,
  *   giữ nguyên server authorization.
@@ -229,31 +228,24 @@ function WorkerDetailBody({
     <div className={styles.drawerFields}>
       <section className={styles.documentSection} aria-labelledby="worker-detail-person">
         <h3 className={styles.documentTitle} id="worker-detail-person">Thông tin người lao động</h3>
-        {detail.worker.kind === "redacted" ? (
-          <p className={styles.documentStatus} role="status">
-            Thông tin cá nhân (CCCD, ngày sinh, địa chỉ, điện thoại) được ẩn theo quyền
-            {" "}truy cập.
-          </p>
-        ) : (
-          <dl className={styles.profileFieldList}>
-            <dt>Họ tên</dt>
-            <dd>{detail.worker.display_name}</dd>
-            <dt>Giới tính</dt>
-            <dd>{genderUiLabel(detail.worker.gender) || "Chưa khai báo"}</dd>
-            <dt>Ngày sinh</dt>
-            <dd>{fieldValue(detail.worker.date_of_birth)}</dd>
-            <dt>CCCD</dt>
-            <dd>{fieldValue(detail.worker.national_id)}</dd>
-            <dt>Ngày cấp</dt>
-            <dd>{fieldValue(detail.worker.national_id_issued_at)}</dd>
-            <dt>Nơi cấp</dt>
-            <dd>{fieldValue(detail.worker.national_id_issued_place)}</dd>
-            <dt>Địa chỉ</dt>
-            <dd>{fieldValue(detail.worker.address)}</dd>
-            <dt>Số điện thoại</dt>
-            <dd>{fieldValue(detail.worker.phone)}</dd>
-          </dl>
-        )}
+        <dl className={styles.profileFieldList}>
+          <dt>Họ tên</dt>
+          <dd>{detail.worker.display_name}</dd>
+          <dt>Giới tính</dt>
+          <dd>{genderUiLabel(detail.worker.gender) || "Chưa khai báo"}</dd>
+          <dt>Ngày sinh</dt>
+          <dd>{fieldValue(detail.worker.date_of_birth)}</dd>
+          <dt>CCCD</dt>
+          <dd>{fieldValue(detail.worker.national_id)}</dd>
+          <dt>Ngày cấp</dt>
+          <dd>{fieldValue(detail.worker.national_id_issued_at)}</dd>
+          <dt>Nơi cấp</dt>
+          <dd>{fieldValue(detail.worker.national_id_issued_place)}</dd>
+          <dt>Địa chỉ</dt>
+          <dd>{fieldValue(detail.worker.address)}</dd>
+          <dt>Số điện thoại</dt>
+          <dd>{fieldValue(detail.worker.phone)}</dd>
+        </dl>
       </section>
 
       <section className={styles.documentSection} aria-labelledby="worker-detail-job">

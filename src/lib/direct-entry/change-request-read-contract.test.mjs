@@ -197,7 +197,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
   assert.deepEqual(projectChangeRequestDetail(onStatusWithCanonicalNull, { request_id: requestId }),
     onStatusWithCanonicalNull);
 
-  // S03B4A: response doc da lam sach van qua duoc projection (masked/presence-only/omit).
+  // Legacy masked response shape must be rejected at the strict projection boundary.
   const masked = detailBody({
     items: [{
       entry_id: entryA, target_kind: "PAYMENT", expected_version: 1,
@@ -205,7 +205,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
       labor_type_display: null,
     }],
   });
-  assert.deepEqual(projectChangeRequestDetail(masked, { request_id: requestId }), masked);
+  assert.equal(projectChangeRequestDetail(masked, { request_id: requestId }), null);
   const workStatus = detailBody({
     items: [{
       entry_id: entryA, target_kind: "WORK_STATUS", expected_version: 1,
@@ -237,7 +237,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     }],
   }), { request_id: requestId }), null);
 
-  // Presence-only marker cua worker_details (server redact khi thieu pii_view) van la record hop le.
+  // Legacy presence-only marker is not a canonical worker profile and must fail closed.
   const presenceOnly = detailBody({
     items: [{
       entry_id: entryA,
@@ -247,7 +247,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
       labor_type_display: null,
     }],
   });
-  assert.deepEqual(projectChangeRequestDetail(presenceOnly, { request_id: requestId }), presenceOnly);
+  assert.equal(projectChangeRequestDetail(presenceOnly, { request_id: requestId }), null);
 
   const badProposal = {
     entry_id: entryA, target_kind: "ENTRY_FIELD", expected_version: 1,

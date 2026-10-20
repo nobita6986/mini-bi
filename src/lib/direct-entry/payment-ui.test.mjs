@@ -20,17 +20,21 @@ test("synthetic demo shell never invokes the Direct Entry API", () => {
   assert.doesNotMatch(demoShell, /fetch\s*\(|\/api\/direct-entry/);
 });
 
-test("payment editor keeps secrets out of browser storage and masks reveal controls", () => {
+test("payment editor keeps secrets out of browser storage and follows enclosing edit action", () => {
   assert.doesNotMatch(editor, /localStorage|sessionStorage/);
-  assert.match(editor, /type=\{canReveal \? "text" : "password"\}/);
-  assert.match(editor, /onCopy=\{canReveal \? undefined : \(event\) => event\.preventDefault\(\)\}/);
-  assert.match(editor, /onCut=\{canReveal \? undefined : \(event\) => event\.preventDefault\(\)\}/);
-  assert.match(editor, /onContextMenu=\{canReveal \? undefined : \(event\) => event\.preventDefault\(\)\}/);
+  assert.doesNotMatch(editor, /canReveal|payment_view|payment_edit|masked/);
+  assert.match(editor, /type="text"/);
+  assert.match(editor, /account_number: payment\.account_number \?\? ""/);
+  assert.match(editor, /bank_name: payment\.bank_name \?\? ""/);
+  assert.match(editor, /account_holder_name: payment\.account_holder_name \?\? ""/);
+  assert.match(editor, /if \(!entryId \|\| !canEdit/);
   assert.match(editor, /status === "conflict"/);
   assert.match(editor, /Tải bản server/);
   assert.match(editor, /Giữ bản local/);
   assert.match(live, /selectedRow\.state !== "saving" && selectedRow\.state !== "conflict"/);
   assert.match(live, /key=\{`\$\{selectedRow\.rowId\}:\$\{selectedRow\.entryId \?\? "new"\}`\}/);
   assert.match(live, /canEdit=\{capabilities\.includes\("entry_own"\)/);
-  assert.match(live, /canView=\{capabilities\.includes\("payment_view"\)\}/);
+  assert.doesNotMatch(live, /payment_view|payment_edit/);
+  assert.match(editor, /form\.bank_name \|\| "Không có dữ liệu ngân hàng trong projection"/);
+  assert.match(editor, /Ngân hàng đang lưu: \{form\.bank_name\}/);
 });
