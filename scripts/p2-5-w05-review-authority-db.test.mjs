@@ -5,8 +5,7 @@
  *   * review authority (visibility AND decision) = capability change_review plus an
  *     effective all scope grant; team/own scope, a role/email, a reporting audience
  *     and created_by never make an actor a reviewer;
- *   * the reviewer bundle is declared and minimal (change_review + pii_view +
- *     payment_view) and grants nothing to anybody;
+ *   * the reviewer bundle is declared and minimal (change_review) and grants nothing to anybody;
  *   * every direct mutation path stays denied on SUBMITTED, for an actor holding
  *     payment_edit + employment_status.apply + entry_privileged_edit + entry_admin at
  *     all scope, with values/version/audit unchanged; the approval engine is the only
@@ -76,13 +75,13 @@ async function insertActor(db, auth, app, capabilities, scopeKind = null, teamId
     " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   if (scopeKind !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
-      " values ($1,$2,$3,'2020-01-01')", [app, scopeKind, scopeKind === "team" ? teamId : null]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)" +
+      " values ($1,$2,$3,'2020-01-01',true)", [app, scopeKind, scopeKind === "team" ? teamId : null]);
   }
 }
 
@@ -100,11 +99,11 @@ async function seed(db) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, TEAM]);
   }
 
   await insertActor(db, UPLOADER_AUTH, UPLOADER_APP,
@@ -119,14 +118,13 @@ async function seed(db) {
   await insertActor(db, REV_OWN_AUTH, REV_OWN_APP, ["change_review", "pii_view"], "own");
   await insertActor(db, REV_NONE_AUTH, REV_NONE_APP, ["change_review"], null);
   await insertActor(db, ALL_NO_CAP_AUTH, ALL_NO_CAP_APP, [], "all");
-  // The W05 reviewer bundle exactly: change_review + pii_view + payment_view at all scope,
-  // with no apply-side and no export token.
+  // Retired PII/payment grants are unnecessary; change_review plus all scope is sufficient.
   await insertActor(db, REV_BUNDLE_AUTH, REV_BUNDLE_APP,
-    ["change_review", "pii_view", "payment_view"], "all");
+    ["change_review"], "all");
 
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
     [PM_APP, REC_PM]);
   // PM_APP manages PROJ_A: the W04 propose authority.
   await db.query(
@@ -463,7 +461,7 @@ test("W05: the reviewer bundle stays minimal and grants nothing", async () => {
   try {
     const bundle = (await db.query(
       "select public.direct_entry_reviewer_bundle_capabilities() as bundle")).rows[0].bundle;
-    assert.deepEqual(bundle, ["change_review", "pii_view", "payment_view"]);
+    assert.deepEqual(bundle, ["change_review"]);
     for (const forbidden of ["payment_edit", "employment_status.apply", "document_view",
       "document_upload", "entry_privileged_edit", "pii_export", "entry_admin",
       "entry_create", "submission_create", "change_request_create"]) {
@@ -516,7 +514,7 @@ test("W05: directory propose_change follows the assignment, not the placeholder"
     assert.equal(managed.items[0].project_id, PROJ_A);
     assert.equal(managed.items[0].is_project_manager, true);
     assert.deepEqual(managed.items[0].allowed_actions, {
-      view: true, view_pii: false, view_payment: false,
+      view: true, view_pii: true, view_payment: true,
       propose_change: true, propose_change_code: null,
     }, "the assigned manager may propose on their SUBMITTED row");
 
@@ -577,16 +575,16 @@ test("W05-R1: the reviewer bundle decides ENTRY_FIELD, PAYMENT and WORK_STATUS w
     const bundleCapabilities = (await db.query(
       "select array_agg(capability order by capability) as caps from" +
       " public.direct_entry_capability_grants where app_user_id = $1::uuid", [REV_BUNDLE_APP])).rows[0].caps;
-    assert.deepEqual(bundleCapabilities, ["change_review", "payment_view", "pii_view"],
-      "the deciding reviewer holds exactly the W05 bundle");
+    assert.deepEqual(bundleCapabilities, ["change_review"],
+      "the deciding reviewer holds no PII/payment-specific capability");
 
-    // ENTRY_FIELD with worker_details: change_review + pii_view (in the bundle).
+    // ENTRY_FIELD with worker_details: change_review and all scope.
     const entryRequest = await propose(db, { entry: entryField.entry, key: "w05r1-entry" });
     const entryApproved = await decide(db, { requestId: entryRequest.request_id,
       auth: REV_BUNDLE_AUTH, app: REV_BUNDLE_APP, key: "w05r1-entry-approve" });
     assert.equal(entryApproved.state, "APPROVED");
 
-    // PAYMENT: change_review + payment_view, no payment_edit anywhere in the bundle.
+    // PAYMENT: change_review and all scope, with no payment-specific capability.
     const paymentRequest = await propose(db, { entry: payment.entry, key: "w05r1-payment",
       targetKind: "PAYMENT", proposal: { state: "provided", account_number: "012345678901",
         bank_id: null, account_holder_name: "W05-R1 Holder" } });
@@ -624,24 +622,24 @@ test("W05-R1: the reviewer bundle decides ENTRY_FIELD, PAYMENT and WORK_STATUS w
     assert.equal(noAllScope.code, "42501", "change_review without all scope is refused");
     const noPaymentView = await decide(db, { requestId: probeRequest.request_id,
       auth: REV_ALL_AUTH, app: REV_ALL_APP, key: "w05r1-no-pv" }).catch((error) => error);
-    assert.equal(noPaymentView.code, "42501",
-      "an all-scope reviewer without payment_view cannot decide a PAYMENT item");
+    assert.equal(noPaymentView.state, "APPROVED",
+      "an all-scope reviewer with change_review may decide PAYMENT without payment_view");
     const probeState = await db.query(
       "select state, version from public.direct_entry_change_requests where request_id = $1::uuid",
       [probeRequest.request_id]);
-    assert.deepEqual(probeState.rows[0], { state: "PENDING", version: 1 },
-      "every refused reviewer leaves the request untouched");
+    assert.deepEqual(probeState.rows[0], { state: "APPROVED", version: 2 },
+      "only the reviewer without change_review and the out-of-scope reviewer are refused");
 
-    // worker_details still needs pii_view: an all-scope reviewer without it is denied.
+    // An all-scope reviewer without any PII/payment grant can still review worker fields.
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-      " values ($1,'all','2020-01-01')", [REV_NONE_APP]);
-    const noPiiViewRequest = await propose(db, { entry: entryField.entry, expectedVersion: 2,
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+      " values ($1,'all','2020-01-01',true)", [REV_NONE_APP]);
+    const noPiiViewRequest = await propose(db, { entry: documentEntry.entry, expectedVersion: 1,
       key: "w05r1-no-pii" });
     const noPiiView = await decide(db, { requestId: noPiiViewRequest.request_id,
-      auth: REV_NONE_AUTH, app: REV_NONE_APP, key: "w05r1-no-pii-approve" }).catch((error) => error);
-    assert.equal(noPiiView.code, "42501",
-      "an all-scope reviewer without pii_view cannot decide a worker_details item");
+      auth: REV_NONE_AUTH, app: REV_NONE_APP, key: "w05r1-no-pii-approve" });
+    assert.equal(noPiiView.state, "APPROVED",
+      "an all-scope reviewer with change_review may decide worker fields without pii_view");
 
     // DOCUMENT stays closed to the W05 lane: the target cannot even be proposed, and the
     // matrix keeps its own document capabilities for any legacy item.

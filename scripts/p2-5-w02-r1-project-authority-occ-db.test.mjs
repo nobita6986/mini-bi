@@ -75,17 +75,17 @@ async function seed(db) {
   }
   for (const capability of ["entry_admin", "change_request_create", "entry_create"]) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [ADMIN_APP, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [ADMIN_APP, capability]);
   }
   await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+    " values ($1,'all','2020-01-01',true)", [ADMIN_APP]);
   for (const app of [MGR_A_APP, MGR_B_APP, MGR_C_APP]) {
     for (const capability of ["change_request_create", "entry_create"]) {
       await db.query(
-        "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-        " values ($1,$2,'2020-01-01')", [app, capability]);
+        "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+        " values ($1,$2,'2020-01-01',true)", [app, capability]);
     }
   }
   await db.query(
@@ -97,16 +97,16 @@ async function seed(db) {
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)",
       [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, TEAM]);
   }
   for (const [app, recruiter] of [[MGR_A_APP, REC_A], [MGR_B_APP, REC_B], [MGR_C_APP, REC_C]]) {
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-      " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+      " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
       [app, recruiter]);
   }
 }

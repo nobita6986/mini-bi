@@ -89,6 +89,12 @@ async function buildDb() {
 }
 
 async function seedActors(db) {
+  const hasCurrentState = (await db.query(
+    "select 1 from information_schema.columns where table_schema='public'" +
+    " and table_name='direct_entry_capability_grants' and column_name='is_current'",
+  )).rows.length > 0;
+  const markerColumn = hasCurrentState ? ", is_current" : "";
+  const markerValue = hasCurrentState ? ", true" : "";
   const actors = [
     [ADMIN_AUTH, ADMIN_APP], [MGR_A_AUTH, MGR_A_APP], [MGR_B_AUTH, MGR_B_APP],
     [MGR_C_AUTH, MGR_C_APP], [REC_AUTH, REC_APP], [CREATOR_AUTH, CREATOR_APP],
@@ -111,21 +117,21 @@ async function seedActors(db) {
   // entry_admin + all scope: the explicit project-administration bundle.
   for (const capability of ["entry_admin", "change_request_create", "entry_create"]) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [ADMIN_APP, capability]);
+      `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from${markerColumn})` +
+      ` values ($1,$2,'2020-01-01'${markerValue})`, [ADMIN_APP, capability]);
   }
   await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from${markerColumn})` +
+    ` values ($1,'all','2020-01-01'${markerValue})`, [ADMIN_APP]);
   // A manager with entry_admin but WITHOUT the all scope must not administer.
   await db.query(
-    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-    " values ($1,'entry_admin','2020-01-01')", [MGR_NO_SCOPE_APP]);
+    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from${markerColumn})` +
+    ` values ($1,'entry_admin','2020-01-01'${markerValue})`, [MGR_NO_SCOPE_APP]);
   for (const app of [MGR_A_APP, MGR_B_APP, MGR_C_APP, REC_APP, CREATOR_APP]) {
     for (const capability of ["change_request_create", "entry_create"]) {
       await db.query(
-        "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-        " values ($1,$2,'2020-01-01')", [app, capability]);
+        `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from${markerColumn})` +
+        ` values ($1,$2,'2020-01-01'${markerValue})`, [app, capability]);
     }
   }
 
@@ -143,11 +149,11 @@ async function seedActors(db) {
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)",
       [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      `insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from${markerColumn})` +
+      ` values ($1,'hrp','2020-01-01'${markerValue})`, [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      `insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from${markerColumn})` +
+      ` values ($1,$2,'2020-01-01'${markerValue})`, [recruiter, TEAM]);
   }
   const links = [
     [MGR_A_APP, REC_A], [MGR_B_APP, REC_B], [MGR_C_APP, REC_C],
@@ -155,8 +161,8 @@ async function seedActors(db) {
   ];
   for (const [app, recruiter] of links) {
     await db.query(
-      "insert into public.direct_entry_app_user_recruiter_links" +
-      " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+      `insert into public.direct_entry_app_user_recruiter_links` +
+      ` (app_user_id, recruiter_id, verified, valid_from${markerColumn}) values ($1,$2,true,'2020-01-01'${markerValue})`,
       [app, recruiter]);
   }
 }
@@ -764,7 +770,8 @@ test("P2.5-W02: table ACL, helper hardening and W07B reuse stay intact", async (
       "select tgname from pg_trigger where tgrelid =" +
       " 'public.direct_entry_project_manager_assignments'::regclass and not tgisinternal order by tgname");
     assert.deepEqual(triggers.rows.map((r) => r.tgname),
-      ["direct_entry_pm_assignment_no_overlap", "direct_entry_pm_assignment_touch"]);
+      ["direct_entry_pm_assignment_no_overlap", "direct_entry_pm_assignment_touch",
+        "direct_entry_set_current_on_insert"]);
 
     // W07B reuse: the same helper still backs the catalog and the write guard,
     // so no second authorization framework was introduced.

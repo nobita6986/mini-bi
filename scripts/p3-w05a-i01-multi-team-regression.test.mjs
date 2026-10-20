@@ -97,8 +97,8 @@ async function seedFixture(db) {
     [REC_C1, TEAM_C, "Recruiter C1", "rec c1"],
   ]) {
     await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [rec, name]);
-    await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1,'hrp','2020-01-01')", [rec]);
-    await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1,$2,'2020-01-01')", [rec, team]);
+    await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current) values ($1,'hrp','2020-01-01',true)", [rec]);
+    await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current) values ($1,$2,'2020-01-01',true)", [rec, team]);
     await db.query("insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from) values ($1,$2,'2020-01-01')", [rec, key]);
   }
   for (const [project, name] of [["proj_a", "Project A"], ["proj_b", "Project B"], ["proj_c", "Project C"]]) {
@@ -107,17 +107,17 @@ async function seedFixture(db) {
 
   // Multi-team actor: verified link plus a synthetic own grant, then TWO
   // effective team grants and out-of-scope ineffective team grants.
-  await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [APP_MULTI, REC_A1]);
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'own',null,'2020-01-01')", [APP_MULTI]);
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,'2020-01-01')", [APP_MULTI, TEAM_A]);
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,'2020-01-01')", [APP_MULTI, TEAM_B]);
+  await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)", [APP_MULTI, REC_A1]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'own',null,'2020-01-01',true)", [APP_MULTI]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'team',$2,'2020-01-01',true)", [APP_MULTI, TEAM_A]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'team',$2,'2020-01-01',true)", [APP_MULTI, TEAM_B]);
   await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, valid_to) values ($1,'team',$2,'2020-01-01','2021-01-01')", [APP_MULTI, TEAM_C]);
   await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,(select public.direct_entry_authorization_date() + 1))", [APP_MULTI, TEAM_C]);
 
   // Actor whose only team grant is already expired.
   await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, valid_to) values ($1,'team',$2,'2020-01-01','2021-01-01')", [APP_INACTIVE_SCOPE, TEAM_A]);
   // Actor with an explicit own scope but no verified recruiter link.
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'own',null,'2020-01-01')", [APP_OWN_NO_LINK]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'own',null,'2020-01-01',true)", [APP_OWN_NO_LINK]);
   // Disabled actor.
   await db.query("update public.direct_entry_app_users set enabled=false where app_user_id=$1", [APP_DISABLED]);
 
@@ -202,13 +202,34 @@ test("W05A multi-team: no double counting across several scopes or memberships",
   });
 });
 
-test("W05A multi-team: expired and future team grants never widen the scope", async () => {
+test("W05A multi-team: non-current historical and scheduled grants never widen the scope", async () => {
   await withFixture(async (db) => {
     const aud = await audienceOf(db, APP_MULTI, AUTH_MULTI);
     assert.equal(audienceTeamScopeCount(aud), 2, "only the two effective grants count");
     const res = await factsOf(db, APP_MULTI, AUTH_MULTI);
     assert.equal(res.facts.some((f) => f.entry_id === E4), false, "the expired/future team contributes nothing");
     assert.equal(res.facts.some((f) => f.team_id === TEAM_C || f.recruiter_key === "recruiter c1"), false);
+  });
+});
+
+test("W05A R1: current scope marker, not valid_from, controls team authorization", async () => {
+  await withFixture(async (db) => {
+    const futureStart = (await db.query(
+      "select (public.direct_entry_authorization_date() + 1)::text as date",
+    )).rows[0].date;
+    await db.query(
+      `update public.direct_entry_scope_grants set valid_from = $1
+        where app_user_id = $2 and scope_kind = 'team' and team_id = $3`,
+      [futureStart, APP_MULTI, TEAM_A],
+    );
+    assert.equal((await db.query(
+      `select is_current from public.direct_entry_scope_grants
+        where app_user_id = $1 and scope_kind = 'team' and team_id = $2`,
+      [APP_MULTI, TEAM_A],
+    )).rows[0].is_current, true, "the active grant marker survives a date change");
+    const audience = await audienceOf(db, APP_MULTI, AUTH_MULTI);
+    assert.equal(audience.audience, "team");
+    assert.deepEqual([...audience.team_ids].sort(), [TEAM_A, TEAM_B].sort());
   });
 });
 
