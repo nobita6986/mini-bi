@@ -11,8 +11,10 @@ import {
   decidePersonnelCatalogPageAccess,
   decideTeamCatalogPageAccess,
   decideVendorCatalogPageAccess,
+  decideWorkerOperationsPageAccess,
   canManageProjectMasterFromActor,
 } from "./direct-entry-page-access.ts";
+import { workerOperationsNavPredicate } from "../navigation/registry-capability.ts";
 
 function actor(capabilities) {
   return {
@@ -53,8 +55,30 @@ test("capability gating: entry_own/team/admin ALLOW, khong co hoac khong lien qu
     assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: actor([cap]) }), "ALLOW", cap);
   }
   assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: actor(["change_review"]) }), "ACCESS_DENIED");
+  assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: actor([
+    "pii_view", "pii_export", "payment_view", "payment_edit",
+  ]) }), "ACCESS_DENIED");
   assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: actor([]) }), "ACCESS_DENIED");
   assert.equal(decideDirectEntryPageAccess({ uiEnabled: true, actor: actor(["entry_own", "change_review", "entry_admin"]) }), "ALLOW");
+});
+
+test("Worker Operations page gate mirrors the navigation predicate", () => {
+  const cases = [
+    [[], []],
+    [["entry_admin"], [{ kind: "all", reference: "all" }]],
+    [["change_review"], [{ kind: "all", reference: "all" }]],
+    [["change_request_create"], [{ kind: "own", reference: "u" }]],
+    [["team_manager_assign"], [{ kind: "team", reference: "t" }]],
+    [["pii_view", "payment_view"], [{ kind: "all", reference: "all" }]],
+  ];
+  for (const [capabilities, scopes] of cases) {
+    const resolved = actor(capabilities);
+    resolved.actor.scopes = scopes;
+    assert.equal(
+      decideWorkerOperationsPageAccess({ uiEnabled: true, actor: resolved }) === "ALLOW",
+      workerOperationsNavPredicate(resolved.actor),
+    );
+  }
 });
 
 test("output union la gioi han va exhaustive", () => {

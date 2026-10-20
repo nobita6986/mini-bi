@@ -96,7 +96,10 @@ test("Project Operations nav also admits Team Leader; Project Admin remains entr
 test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", () => {
   const all = [{ kind: "all", reference: "all" }];
   // Reviewer bundle toi thieu + all.
-  assert.equal(workerOperationsNavPredicate(makeActor(["change_review", "pii_view", "payment_view"], all)), true);
+  assert.equal(workerOperationsNavPredicate(makeActor(["change_review"], all)), true);
+  assert.equal(workerOperationsNavPredicate(makeActor([
+    "pii_view", "pii_export", "payment_view", "payment_edit",
+  ], all)), false, "retired field tokens do not expose worker operations");
   // Admin entry_admin + all.
   assert.equal(workerOperationsNavPredicate(makeActor(["entry_admin"], all)), true);
   // Nguoi de xuat / PM.

@@ -29,21 +29,14 @@ export const REPORTING_AUDIENCE_ALL_LABEL = "Toàn công ty";
 export const REPORTING_AUDIENCE_OWN_FALLBACK_LABEL = "Cá nhân";
 
 /**
- * Resolve the audience KIND from an actor's effective scopes at the given
- * date. Priority: all > team > own (the resolver always synthesizes own).
+ * Resolve the audience KIND from the actor's already-current scopes.
+ * Priority: all > team > own (the resolver always synthesizes own).
  */
 export function resolveReportingAudienceKind(
   actor: DirectEntryActor,
-  at: string,
 ): ReportingAudienceKind {
-  const date = at.slice(0, 10);
-  const scopes = actor.scopes.filter(
-    (scope) =>
-      scope.valid_from <= date &&
-      (scope.valid_to === null || date < scope.valid_to),
-  );
-  if (scopes.some((scope) => scope.kind === "all")) return "all";
-  if (scopes.some((scope) => scope.kind === "team")) return "team";
+  if (actor.scopes.some((scope) => scope.kind === "all")) return "all";
+  if (actor.scopes.some((scope) => scope.kind === "team")) return "team";
   return "own";
 }
 

@@ -1,11 +1,8 @@
-import {
-  isRealCalendarDate,
-  isWithinInterval,
-} from "../analytics/identity/identity-shared.mjs";
+import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.3" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.4" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -21,12 +18,8 @@ export const CAPABILITIES = [
   "employment_status.apply",
   "document_upload",
   "document_view",
-  "payment_view",
-  "payment_edit",
   "recruiter_master_manage",
   "team_master_manage",
-  "pii_view",
-  "pii_export",
   "audit_view",
   "entry_restore",
   // P3.1-W01A contract foundation. Both tokens are declared here so the DB/TypeScript vocabulary
@@ -165,13 +158,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SAFE_REF = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[a-z][a-z0-9]*_[a-z0-9][a-z0-9._:-]{0,100})$/i;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
+const LEGACY_CAPABILITIES = new Set([
+  "pii_view",
+  "pii_export",
+  "payment_view",
+  "payment_edit",
+]);
 const REASON_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "entry_admin",
   "change_review",
   "entry_privileged_edit",
   "employment_status.review",
   "employment_status.apply",
-  "payment_edit",
   "recruiter_master_manage",
   "team_master_manage",
   "entry_restore",
@@ -183,7 +181,6 @@ const VERSION_REQUIRED_ACTIONS = new Set<AuthorizationAction>([
   "change_review",
   "entry_privileged_edit",
   "employment_status.apply",
-  "payment_edit",
   "recruiter_master_manage",
   "team_master_manage",
   "entry_restore",
@@ -234,34 +231,15 @@ function isSafeRef(value: unknown): value is string {
   return typeof value === "string" && SAFE_REF.test(value);
 }
 
-function isValidInterval(from: unknown, to: unknown): from is string {
-  return typeof from === "string" &&
-    isRealCalendarDate(from) &&
-    (to === null ||
-      (typeof to === "string" && isRealCalendarDate(to) && to > from));
-}
+type CurrentRecruiterLink = Pick<ExplicitRecruiterLink,
+  "app_user_id" | "recruiter_id" | "verified"> &
+  Partial<Pick<ExplicitRecruiterLink, "valid_from" | "valid_to">>;
 
-function isValidScopeGrantInterval(from: unknown, to: unknown): from is string {
-  return typeof from === "string" &&
-    isRealCalendarDate(from) &&
-    (to === null ||
-      (typeof to === "string" && isRealCalendarDate(to) && to >= from));
-}
-
-function isScopeGrantMarker(grant: AllScopeGrant): boolean {
-  return grant.valid_to === grant.valid_from;
-}
-
-function isEffectiveAt(from: string, to: string | null, date: string): boolean {
-  return isWithinInterval(date, from, to);
-}
-
-function isExplicitRecruiterLink(value: unknown): value is ExplicitRecruiterLink {
+function isCurrentRecruiterLink(value: unknown): value is CurrentRecruiterLink {
   return isRecord(value) &&
     isSafeRef(value.app_user_id) &&
     isSafeRef(value.recruiter_id) &&
-    typeof value.verified === "boolean" &&
-    isValidInterval(value.valid_from, value.valid_to);
+    typeof value.verified === "boolean";
 }
 
 function isTeam(value: unknown): value is TeamIdentity {
@@ -275,48 +253,27 @@ function isTeam(value: unknown): value is TeamIdentity {
 function isTeamScopeGrant(value: unknown): value is TeamScopeGrant {
   return isRecord(value) &&
     isSafeRef(value.team_id) &&
-    isValidScopeGrantInterval(value.valid_from, value.valid_to);
+    typeof value.valid_from === "string" &&
+    (value.valid_to === null || typeof value.valid_to === "string");
 }
 
 function isAllScopeGrant(value: unknown): value is AllScopeGrant {
-  return isRecord(value) && isValidScopeGrantInterval(value.valid_from, value.valid_to);
+  return isRecord(value) &&
+    typeof value.valid_from === "string" &&
+    (value.valid_to === null || typeof value.valid_to === "string");
 }
 
-function hasOverlappingTeamScopeGrants(grants: readonly TeamScopeGrant[]): boolean {
-  const byTeam = new Map<string, TeamScopeGrant[]>();
-  for (const grant of grants) {
-    if (isScopeGrantMarker(grant)) continue;
-    const group = byTeam.get(grant.team_id) ?? [];
-    group.push(grant);
-    byTeam.set(grant.team_id, group);
-  }
-
-  for (const teamGrants of byTeam.values()) {
-    teamGrants.sort((a, b) => a.valid_from.localeCompare(b.valid_from));
-    let furthestEnd: string | null | undefined;
-    for (const grant of teamGrants) {
-      if (furthestEnd === undefined) {
-        furthestEnd = grant.valid_to;
-        continue;
-      }
-      if (furthestEnd === null || grant.valid_from < furthestEnd) return true;
-      if (grant.valid_to === null || grant.valid_to > furthestEnd) {
-        furthestEnd = grant.valid_to;
-      }
-    }
-  }
-  return false;
+function hasDuplicateCurrentTeamScope(grants: readonly TeamScopeGrant[]): boolean {
+  return new Set(grants.map((grant) => grant.team_id)).size !== grants.length;
 }
 
 function effectiveRecruiterSuggestion(
   appUserId: string,
-  date: string,
-  links: readonly ExplicitRecruiterLink[],
+  links: readonly CurrentRecruiterLink[],
 ): RecruiterSuggestion {
   const matches = links.filter((link) =>
     link.app_user_id === appUserId &&
-    link.verified &&
-    isEffectiveAt(link.valid_from, link.valid_to, date)
+    link.verified
   );
   if (matches.length > 1) return { kind: "ambiguous", recruiter_id: null };
   if (matches.length === 0) return { kind: "none", recruiter_id: null };
@@ -325,16 +282,15 @@ function effectiveRecruiterSuggestion(
 
 export function resolveSelfRecruiterSuggestion(input: {
   app_user_id: string;
-  date: string;
-  links: readonly ExplicitRecruiterLink[];
+  links: readonly CurrentRecruiterLink[];
 }): RecruiterSuggestion {
-  if (!isRealCalendarDate(input.date) || !UUID.test(input.app_user_id)) {
+  if (!UUID.test(input.app_user_id)) {
     return { kind: "none", recruiter_id: null };
   }
-  if (!input.links.every(isExplicitRecruiterLink)) {
+  if (!input.links.every(isCurrentRecruiterLink)) {
     return { kind: "ambiguous", recruiter_id: null };
   }
-  return effectiveRecruiterSuggestion(input.app_user_id, input.date, input.links);
+  return effectiveRecruiterSuggestion(input.app_user_id, input.links);
 }
 
 export function resolveActor(
@@ -378,16 +334,17 @@ async function resolveActorInternal(input: {
     return { ok: false, reason: "ACTOR_REPOSITORY_INVALID" };
   }
   if (!record.enabled) return { ok: false, reason: "ACTOR_DISABLED" };
-  if (hasOverlappingTeamScopeGrants(record.team_scope_grants as TeamScopeGrant[])) {
+  if (hasDuplicateCurrentTeamScope(record.team_scope_grants as TeamScopeGrant[])) {
     return { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" };
+  }
+  if ((record.all_scope_grants as AllScopeGrant[]).length > 1) {
+    return { ok: false, reason: "ACTOR_REPOSITORY_INVALID" };
   }
 
   const appUserId = record.app_user_id as string;
-  const date = input.at.slice(0, 10);
   const recruiterSuggestion = effectiveRecruiterSuggestion(
     appUserId,
-    date,
-    record.recruiter_links as ExplicitRecruiterLink[],
+    record.recruiter_links as CurrentRecruiterLink[],
   );
   if (recruiterSuggestion.kind === "ambiguous") {
     return { ok: false, reason: "AMBIGUOUS_RECRUITER_LINK" };
@@ -399,12 +356,12 @@ async function resolveActorInternal(input: {
     valid_from: "0001-01-01",
     valid_to: null,
   }];
+  // The actor RPC returns current rows; retained interval fields are metadata only.
   for (const grant of record.team_scope_grants as TeamScopeGrant[]) {
-    if (isScopeGrantMarker(grant)) continue;
     const team = (record.teams as TeamIdentity[]).find((item) =>
       item.team_id === grant.team_id
     );
-    if (!team || (isEffectiveAt(grant.valid_from, grant.valid_to, date) && !team.active)) {
+    if (!team || !team.active) {
       return { ok: false, reason: "ACTOR_REPOSITORY_INVALID" };
     }
     scopes.push({
@@ -415,7 +372,6 @@ async function resolveActorInternal(input: {
     });
   }
   for (const grant of record.all_scope_grants as AllScopeGrant[]) {
-    if (isScopeGrantMarker(grant)) continue;
     scopes.push({
       kind: "all",
       reference: "all",
@@ -431,7 +387,9 @@ async function resolveActorInternal(input: {
       app_user_id: appUserId,
       display_name: record.display_name as string,
       enabled: true,
-      capabilities: record.capabilities as Capability[],
+      capabilities: record.capabilities.filter((capability): capability is Capability =>
+        CAPABILITY_SET.has(capability)
+      ),
       scopes,
       self_recruiter_suggestion: recruiterSuggestion.kind === "suggestion"
         ? recruiterSuggestion.recruiter_id
@@ -452,8 +410,8 @@ function isValidAuthorizationRecord(
   app_user_id: string;
   display_name: string;
   enabled: boolean;
-  capabilities: Capability[];
-  recruiter_links: ExplicitRecruiterLink[];
+  capabilities: string[];
+  recruiter_links: CurrentRecruiterLink[];
   teams: TeamIdentity[];
   team_scope_grants: TeamScopeGrant[];
   all_scope_grants: AllScopeGrant[];
@@ -465,11 +423,12 @@ function isValidAuthorizationRecord(
     typeof value.enabled === "boolean" &&
     Array.isArray(value.capabilities) &&
     value.capabilities.every((capability) =>
-      typeof capability === "string" && CAPABILITY_SET.has(capability)
+      typeof capability === "string" &&
+      (CAPABILITY_SET.has(capability) || LEGACY_CAPABILITIES.has(capability))
     ) &&
     new Set(value.capabilities).size === value.capabilities.length &&
     Array.isArray(value.recruiter_links) &&
-    value.recruiter_links.every(isExplicitRecruiterLink) &&
+    value.recruiter_links.every(isCurrentRecruiterLink) &&
     Array.isArray(value.teams) &&
     value.teams.every(isTeam) &&
     Array.isArray(value.team_scope_grants) &&
@@ -501,28 +460,20 @@ function isAllowedByScope(
   resource: TrustedResourceContext,
 ): boolean {
   const { scope } = resource;
+  if (scope.kind !== "own" && scope.kind !== "team" && scope.kind !== "all") {
+    return false;
+  }
   const validScopeReference = scope.kind === "all"
     ? scope.reference === "all"
     : isSafeRef(scope.reference);
-  if (!validScopeReference ||
-      !isRealCalendarDate(scope.effective_date) ||
-      !isSafeRef(resource.reference)) {
+  if (!validScopeReference || !isSafeRef(resource.reference)) {
     return false;
   }
   if (scope.kind === "own" &&
       scope.reference !== resource.created_by_user_id) {
     return false;
   }
-  if (scope.kind === "team" && !isSafeRef(scope.reference)) return false;
-
-  const effectiveScopes = actor.scopes.filter((effectiveScope) =>
-    isEffectiveAt(
-      effectiveScope.valid_from,
-      effectiveScope.valid_to,
-      scope.effective_date,
-    )
-  );
-  const matchingScopeCount = effectiveScopes.filter((effectiveScope) =>
+  const matchingScopeCount = actor.scopes.filter((effectiveScope) =>
     effectiveScope.kind === scope.kind &&
     effectiveScope.reference === scope.reference
   ).length;
@@ -536,7 +487,8 @@ export function authorizeDirectEntry(input: AuthorizationInput): AuthorizationDe
 
   if (!isValidTimestamp(input.timestamp)) code = "INVALID_TIMESTAMP";
   else if (!actor || !actor.enabled) code = "UNAUTHENTICATED";
-  else if (!actor.capabilities.includes(requiredCapability)) code = "CAPABILITY_DENIED";
+  else if (!CAPABILITY_SET.has(requiredCapability) ||
+      !actor.capabilities.includes(requiredCapability)) code = "CAPABILITY_DENIED";
   else if (REQUIRED_SCOPE_KIND[input.action] !== undefined &&
       input.resource.scope.kind !== REQUIRED_SCOPE_KIND[input.action]) {
     code = "ACTION_SCOPE_MISMATCH";
