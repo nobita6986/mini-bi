@@ -99,6 +99,13 @@ test("row projection accepts the exact server shape and rejects drift", () => {
   assert.equal(projected.allowed_actions.view_payment, true,
     "legacy response flag is inert");
   assert.equal(projected.allowed_actions.propose_change, false);
+  for (const directEdit of [false, true]) {
+    const bridgeProjection = projectWorkerDirectoryRow({
+      ...row, allowed_actions: { ...row.allowed_actions, direct_edit: directEdit },
+    });
+    assert.deepEqual(bridgeProjection.allowed_actions, projected.allowed_actions,
+      "the compatibility bridge accepts but does not expose R1.1 authority");
+  }
 
   const variants = {
     "extra key": { ...row, national_id: "012345678901" },
@@ -122,6 +129,12 @@ test("row projection accepts the exact server shape and rejects drift", () => {
     },
     "actions missing flag": {
       ...row, allowed_actions: { view: true, propose_change: false },
+    },
+    "actions direct_edit wrong type": {
+      ...row, allowed_actions: { ...row.allowed_actions, direct_edit: "true" },
+    },
+    "unknown action key": {
+      ...row, allowed_actions: { ...row.allowed_actions, unknown_action: false },
     },
     "payment string": { ...row, payment: "0912345678" },
   };
