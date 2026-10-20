@@ -23,6 +23,7 @@ begin
       join pg_catalog.pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public'
        and p.prokind in ('f', 'p')
+       and p.proowner <> 'direct_entry_catalog_bootstrap_executor'::regrole
        and p.proname ~ '^(direct_entry_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)'
   loop
     v_object_kind := case when v_proc.prokind = 'p' then 'PROCEDURE' else 'FUNCTION' end;
