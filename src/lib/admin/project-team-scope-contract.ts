@@ -1,3 +1,5 @@
+import { hasExactKeysWithOptionalReason, projectOptionalActionReason } from "../direct-entry/action-reason.ts";
+
 /**
  * PRE-W2-HF Project↔Team authority (T1A) - Strict contract for the mapping
  * admin API. Mirrors the migration #94 read and #97 mutation envelopes exactly.
@@ -217,13 +219,14 @@ function reject(): Parsed<never> {
 export type GrantRequest = {
   team_id: string;
   project_ids: readonly string[];
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 const MAX_PROJECTS_PER_BATCH = 100;
 
 export function parseGrant(body: unknown): Parsed<GrantRequest> {
-  if (!isRecord(body) || !exact(body, ["team_id", "project_ids", "reason", "idempotency_key"]) ||
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body,
+    ["team_id", "project_ids", "reason", "idempotency_key"]) ||
       !Array.isArray(body.project_ids) || body.project_ids.length < 1 ||
       body.project_ids.length > MAX_PROJECTS_PER_BATCH) return reject();
   const team_id = uuid(body.team_id);
@@ -233,34 +236,34 @@ export function parseGrant(body: unknown): Parsed<GrantRequest> {
     if (!id) return reject();
     project_ids.push(id);
   }
-  const reason = text(body.reason, 4000);
+  const reason = projectOptionalActionReason(body.reason, 4000);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!team_id || new Set(project_ids).size !== project_ids.length || !reason || !idempotency_key) {
+  if (!team_id || new Set(project_ids).size !== project_ids.length || !reason.ok || !idempotency_key) {
     return reject();
   }
   return {
-    ok: true, value: { team_id, project_ids, reason, idempotency_key },
+    ok: true, value: { team_id, project_ids, reason: reason.value, idempotency_key },
   };
 }
 
 export type RevokeRequest = {
   mapping_id: string;
   effective_to: string | null;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 export function parseRevoke(body: unknown): Parsed<RevokeRequest> {
-  if (!isRecord(body) || !exact(body, [
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body, [
     "mapping_id", "effective_to", "reason", "idempotency_key",
   ])) return reject();
   const mapping_id = uuid(body.mapping_id);
   const effective_to_raw = body.effective_to;
   const effective_to = effective_to_raw === null ? null : day(effective_to_raw);
-  const reason = text(body.reason, 4000);
+  const reason = projectOptionalActionReason(body.reason, 4000);
   const idempotency_key = uuid(body.idempotency_key);
   if (!mapping_id || effective_to_raw === undefined ||
-      (effective_to_raw !== null && effective_to === null) || !reason || !idempotency_key) {
+      (effective_to_raw !== null && effective_to === null) || !reason.ok || !idempotency_key) {
     return reject();
   }
-  return { ok: true, value: { mapping_id, effective_to, reason, idempotency_key } };
+  return { ok: true, value: { mapping_id, effective_to, reason: reason.value, idempotency_key } };
 }

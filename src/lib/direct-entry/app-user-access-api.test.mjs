@@ -10,6 +10,7 @@ import { createAccountAccessRepository, classifyAccountAccessError } from "./app
 import {
   projectExistingAccount,
   projectExistingAccountList,
+  parseAccountMutation,
 } from "./app-user-access-contract.ts";
 
 const ACTOR = {
@@ -56,6 +57,20 @@ test("strict projection rejects raw identity and extra fields", () => {
   assert.equal(projectExistingAccount({ ...ACCOUNT, account_label: "TK-abcdef12" }), null);
   assert.equal(projectExistingAccount({ ...ACCOUNT, auth_subject: ACTOR.auth_subject }), null);
   assert.equal(projectExistingAccountList({ ...LIST, raw_uuid: ACCOUNT.account_ref }), null);
+});
+
+test("account mutation contract canonicalizes optional reasons and rejects malformed values", () => {
+  for (const reason of [undefined, null, "", "   "]) {
+    const body = { expected_version: 1, idempotency_key: "40000000-0000-4000-8000-000000000201" };
+    if (reason !== undefined) body.reason = reason;
+    assert.deepEqual(parseAccountMutation(body), { ok: true, value: {
+      expected_version: 1, reason: null, idempotency_key: body.idempotency_key,
+    } });
+  }
+  assert.equal(parseAccountMutation({ expected_version: 1, reason: 123,
+    idempotency_key: "40000000-0000-4000-8000-000000000201" }).ok, false);
+  assert.equal(parseAccountMutation({ expected_version: 1, reason: "x".repeat(4001),
+    idempotency_key: "40000000-0000-4000-8000-000000000201" }).ok, false);
 });
 
 test("non-canonical display names and search echoes fail closed through the repository", async () => {
@@ -150,6 +165,26 @@ test("R2 API mutations enforce gate, same-origin, bounded exact body and return 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true });
   assert.deepEqual(called, { auth_subject: ACTOR.auth_subject, app_user_id: ACTOR.app_user_id, target_app_user_id: ACCOUNT.account_ref, expected_version: 1, reason: "R2 reason", idempotency_key: "40000000-0000-4000-8000-000000000201" });
+
+  for (const reason of [undefined, null, "", "   "]) {
+    let optionalCall = null;
+    const body = { expected_version: 1,
+      idempotency_key: "40000000-0000-4000-8000-000000000211" };
+    if (reason !== undefined) body.reason = reason;
+    const optional = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json(body)),
+      ACCOUNT.account_ref, "disable", "true", deps({
+        disableAccount: async (input) => { optionalCall = input; return { ok: true, data: null }; },
+      }));
+    assert.equal(optional.status, 200);
+    assert.equal(optionalCall.reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const invalid = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({
+      expected_version: 1, reason,
+      idempotency_key: "40000000-0000-4000-8000-000000000212",
+    })), ACCOUNT.account_ref, "disable", "true", deps());
+    assert.equal(invalid.status, 400);
+  }
 
   const invalidActor = await mutateAccount(request("/api/admin/access/accounts/ref/disable", json({ expected_version: 1, reason: "x", idempotency_key: "40000000-0000-4000-8000-000000000202" })), ACCOUNT.account_ref, "disable", "true", {
     resolveSession: async () => ({ actor: { ok: true, actor: { ...ACTOR, auth_subject: "not-a-uuid" } } }),

@@ -45,16 +45,16 @@ export type PersonnelCatalogRepository = {
   createPersonnel(input: AdminActorRef & {
     expected_version: number; personnel_code: string; display_name: string;
     personnel_position: PersonnelPosition; valid_from: string;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<PersonnelCatalogOutcome<AdminPersonnelCreateResult>>;
   updatePersonnel(input: AdminActorRef & {
     recruiter_id: string; expected_version: number; display_name: string;
     personnel_code: string; personnel_position: PersonnelPosition;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<PersonnelCatalogOutcome<AdminPersonnelMutation>>;
   setPersonnelActive(input: AdminActorRef & {
     recruiter_id: string; active: boolean; expected_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<PersonnelCatalogOutcome<AdminPersonnelMutation>>;
 };
 

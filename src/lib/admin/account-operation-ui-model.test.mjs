@@ -15,7 +15,7 @@ import {
 const KEY = "91000000-0000-4000-8000-000000000001";
 const ACCOUNT = "92000000-0000-4000-8000-000000000001";
 
-test("D3-B UI: create requires canonical login, matching password and reason", () => {
+test("D3-B UI: create requires canonical login and matching password; action reason is optional", () => {
   const ok = buildCreateAccountRequest({
     loginId: "nv-a", displayName: "Nguyen Van A", password: "strong-pass-123",
     passwordConfirm: "strong-pass-123", reason: "create", idempotencyKey: KEY,
@@ -23,6 +23,10 @@ test("D3-B UI: create requires canonical login, matching password and reason", (
   assert.equal(ok.ok, true);
   assert.equal(ok.body.login_id, "nv-a");
   assert.equal("password" in ok.body && "password_confirm" in ok.body, true);
+  const withoutReason = buildCreateAccountRequest({ loginId: "nv-a", displayName: "A",
+    password: "x1234567", passwordConfirm: "x1234567", idempotencyKey: KEY });
+  assert.equal(withoutReason.ok, true);
+  if (withoutReason.ok) assert.equal(withoutReason.body.reason, null);
 
   assert.equal(buildCreateAccountRequest({ loginId: "Bad Login", displayName: "A", password: "x1234567", passwordConfirm: "x1234567", reason: "r", idempotencyKey: KEY }).ok, false);
   assert.equal(buildCreateAccountRequest({ loginId: "nv-a", displayName: "A", password: "x1234567", passwordConfirm: "different", reason: "r", idempotencyKey: KEY }).ok, false);
@@ -33,10 +37,18 @@ test("D3-B UI: edit display name and reset password build exact bodies", () => {
   const edit = buildEditDisplayNameRequest({ displayName: "New Name", expectedVersion: 2, reason: "rename", idempotencyKey: KEY });
   assert.equal(edit.ok, true);
   assert.deepEqual(edit.body, { display_name: "New Name", expected_version: 2, reason: "rename", idempotency_key: KEY });
+  const editWithoutReason = buildEditDisplayNameRequest({ displayName: "New Name", expectedVersion: 2,
+    idempotencyKey: KEY });
+  assert.equal(editWithoutReason.ok, true);
+  if (editWithoutReason.ok) assert.equal(editWithoutReason.body.reason, null);
 
   const reset = buildResetPasswordRequest({ password: "new-pass-123", passwordConfirm: "new-pass-123", reason: "reset", idempotencyKey: KEY });
   assert.equal(reset.ok, true);
   assert.deepEqual(Object.keys(reset.body).sort(), ["idempotency_key", "password", "password_confirm", "reason"]);
+  const resetWithoutReason = buildResetPasswordRequest({ password: "new-pass-123",
+    passwordConfirm: "new-pass-123", idempotencyKey: KEY });
+  assert.equal(resetWithoutReason.ok, true);
+  if (resetWithoutReason.ok) assert.equal(resetWithoutReason.body.reason, null);
 
   assert.equal(buildReconcileRequest(KEY).ok, true);
 });

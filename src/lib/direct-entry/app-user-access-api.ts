@@ -28,10 +28,6 @@ function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
 }
-function exact(recordValue: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(recordValue).sort().join(",") === [...keys].sort().join(",");
-}
-
 function readPreflight(flag: string | undefined): Response | null {
   return flag === "true" ? null : fail("NOT_FOUND", 404);
 }
@@ -135,7 +131,8 @@ export async function mutateAccount(
   const authorityFields = validateClientBusinessPayload(body.value);
   if (!authorityFields.ok) return fail("ACCOUNT_INVALID", 400);
   const value = record(body.value);
-  if (!value || !exact(value, ["expected_version", "reason", "idempotency_key"])) {
+  if (!value || Object.keys(value).some((key) => !["expected_version", "reason", "idempotency_key"].includes(key)) ||
+      !("expected_version" in value) || !("idempotency_key" in value)) {
     return fail("ACCOUNT_INVALID", 400);
   }
   const parsed = parseAccountMutation(body.value);

@@ -66,7 +66,7 @@ test("search, inactive filter and pagination use bounded explicit API query", ()
   assert.equal(buildLaborTypeListQuery({ search: "x".repeat(257), includeInactive: false, page: 1 }), null);
 });
 
-test("create matches API request contract, requires canonical key, reason and version zero", () => {
+test("create matches API request contract, requires canonical key and version zero", () => {
   const result = buildLaborTypeCreateRequest({
     laborTypeKey: "NIGHT_SHIFT",
     displayName: "Ca đêm",
@@ -97,9 +97,23 @@ test("create matches API request contract, requires canonical key, reason and ve
     laborTypeKey: "NIGHT_SHIFT", displayName: "Ca đêm", sortOrder: "abc",
     reason: "x", idempotencyKey: KEY,
   }).ok, false);
+  const withoutReason = buildLaborTypeCreateRequest({
+    laborTypeKey: "NIGHT_SHIFT", displayName: "Ca đêm", sortOrder: "20", idempotencyKey: KEY,
+  });
+  assert.equal(withoutReason.ok, true);
+  if (withoutReason.ok) assert.equal(withoutReason.body.reason, null);
   assert.equal(buildLaborTypeCreateRequest({
     laborTypeKey: "NIGHT_SHIFT", displayName: "Ca đêm", sortOrder: "20",
     reason: "  ", idempotencyKey: KEY,
+  }).ok, true);
+  const blank = buildLaborTypeCreateRequest({
+    laborTypeKey: "NIGHT_SHIFT", displayName: "Ca đêm", sortOrder: "20",
+    reason: "  ", idempotencyKey: KEY,
+  });
+  if (blank.ok) assert.equal(blank.body.reason, null);
+  assert.equal(buildLaborTypeCreateRequest({
+    laborTypeKey: "NIGHT_SHIFT", displayName: "Ca đêm", sortOrder: "20",
+    reason: "x".repeat(4001), idempotencyKey: KEY,
   }).ok, false);
   assert.equal(buildLaborTypeCreateRequest({
     laborTypeKey: "NIGHT_SHIFT", displayName: "", sortOrder: "20",

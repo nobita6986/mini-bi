@@ -42,15 +42,15 @@ export type VendorCatalogRepository = {
   getVendor(input: AdminActorRef & { vendor_id: string }): Promise<VendorCatalogOutcome<AdminVendor>>;
   createVendor(input: AdminActorRef & {
     expected_version: 0; vendor_id: string; display_name: string; valid_from: string;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<VendorCatalogOutcome<AdminVendorCreateResult>>;
   updateVendor(input: AdminActorRef & {
     vendor_id: string; expected_version: number; display_name: string;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<VendorCatalogOutcome<AdminVendorMutation>>;
   setVendorActive(input: AdminActorRef & {
     vendor_id: string; active: boolean; expected_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<VendorCatalogOutcome<AdminVendorMutation>>;
 };
 

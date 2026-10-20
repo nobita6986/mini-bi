@@ -46,6 +46,11 @@ const mobileEditHandler = slice(
 const reloadDraftHandler = slice("const reloadDrafts = useCallback", "const runTransition = useCallback");
 const editDraftHandler = slice("const reloadSubmissionDraft = useCallback", "const saveRow = useCallback");
 
+test("draft status action sends no synthetic reason and leaves business leave fields unchanged", () => {
+  assert.match(live, /leave_date: null,\s*leave_reason_text: null,\s*reason: null,/);
+  assert.doesNotMatch(live, /reason:\s*"Cập nhật trạng thái trong bản nháp"/);
+});
+
 test("live render spreadsheet grid va khoi tao 30 staged rows client-only", () => {
   assert.match(live, /<DirectEntrySpreadsheetGrid/);
   assert.match(live, /useState<SpreadsheetRowModel>\(\(\) => createSpreadsheetRowModel\(\)\)/);

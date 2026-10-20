@@ -22,6 +22,7 @@ import {
 } from "../direct-entry/team-catalog-contract.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -153,7 +154,7 @@ function validateDisplayName(value: string): string | null {
 export function buildTeamCreateRequest(input: {
   code: string;
   displayName: string;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateTeamCode(input.code) ?? validateDisplayName(input.displayName)
@@ -165,7 +166,7 @@ export function buildTeamCreateRequest(input: {
       expected_version: 0,
       code: input.code.trim(),
       display_name: input.displayName.trim(),
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -175,7 +176,7 @@ export function buildTeamCreateRequest(input: {
 export function buildTeamUpdateRequest(input: {
   displayName: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateDisplayName(input.displayName)
@@ -190,7 +191,7 @@ export function buildTeamUpdateRequest(input: {
     body: {
       expected_version: input.expectedVersion,
       display_name: input.displayName.trim(),
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -199,7 +200,7 @@ export function buildTeamUpdateRequest(input: {
 export function buildTeamSetActiveRequest(input: {
   active: boolean;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = typeof input.active !== "boolean"
@@ -214,7 +215,7 @@ export function buildTeamSetActiveRequest(input: {
     body: {
       active: input.active,
       expected_version: input.expectedVersion,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };

@@ -27,30 +27,30 @@ export function buildMappingListQuery(input: MappingFilter): URLSearchParams | n
 }
 
 export function buildGrantRequest(input: {
-  projectIds: readonly string[]; teamId: string; reason: string; idempotencyKey: string;
+  projectIds: readonly string[]; teamId: string; reason?: string | null; idempotencyKey: string;
 }): { ok: true; body: Record<string, unknown> } | { ok: false; message: string } {
   const raw = {
     team_id: input.teamId,
     project_ids: [...input.projectIds],
-    reason: input.reason.trim(),
+    reason: input.reason,
     idempotency_key: input.idempotencyKey,
   };
   const parsed = parseGrant(raw);
   if (!parsed.ok) return { ok: false, message: "Thông tin gửi lên không hợp lệ. Kiểm tra lại các trường." };
-  return { ok: true, body: raw };
+  return { ok: true, body: parsed.value };
 }
 
 export function buildRevokeRequest(input: {
-  mappingId: string; effectiveTo: string; reason: string; idempotencyKey: string;
+  mappingId: string; effectiveTo: string; reason?: string | null; idempotencyKey: string;
 }): { ok: true; body: Record<string, unknown> } | { ok: false; message: string } {
   const raw = {
     mapping_id: input.mappingId,
     effective_to: input.effectiveTo || null,
-    reason: input.reason.trim(), idempotency_key: input.idempotencyKey,
+    reason: input.reason, idempotency_key: input.idempotencyKey,
   };
   const parsed = parseRevoke(raw);
   if (!parsed.ok) return { ok: false, message: "Thông tin gửi lên không hợp lệ. Kiểm tra lại các trường." };
-  return { ok: true, body: raw };
+  return { ok: true, body: parsed.value };
 }
 
 export type MappingUiOutcome =

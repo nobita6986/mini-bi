@@ -59,6 +59,14 @@ test("draft status API validates the exact status contract before resolving the 
   assert.equal((await applyDraftEmploymentStatus(request({
     ...requestBody, effective_date: "2026-02-30",
   }), entryId, "true", dependencies)).status, 400);
+  assert.equal((await applyDraftEmploymentStatus(request({
+    ...requestBody, leave_reason_text: "  ", reason: null,
+  }), entryId, "true", dependencies)).status, 400,
+  "OFF leave reason remains mandatory even when action reason is optional");
+  assert.equal((await applyDraftEmploymentStatus(request({
+    ...requestBody, status: "ON", leave_date: null, leave_reason_text: null,
+    reason: "x".repeat(4001),
+  }), entryId, "true", dependencies)).status, 400);
   assert.equal(sessions, 0);
 });
 
@@ -111,6 +119,23 @@ test("draft status API resolves actor from session and sends only the supported 
   assert.equal((await applyDraftEmploymentStatus(request(), entryId, "true", denied)).status, 403);
 });
 
+test("draft status action reason may be omitted while ON status has no leave reason", async () => {
+  let called = null;
+  const body = { expected_entry_version: 3, status: "ON", effective_date: "2026-10-20",
+    leave_date: null, leave_reason_text: null };
+  const response = await applyDraftEmploymentStatus(request(body), entryId, "true", {
+    resolveSession: session,
+    repository: { async applyDraftEmploymentStatus(input) {
+      called = input;
+      return { ok: true, data: { entry_id: entryId, entry_version: 4,
+        status_version: 2, status: "ON" } };
+    } },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(called.reason, null);
+  assert.equal(called.leave_reason_text, null);
+});
+
 test("write repository calls the DRAFT-only employment status RPC with mapped error categories", async () => {
   const calls = [];
   const repository = createDirectEntryWriteRepository(async (name, args) => {
@@ -158,6 +183,13 @@ test("write repository calls the DRAFT-only employment status RPC with mapped er
       p_idempotency_key: "draft-status-001",
     },
   }]);
+  const nullCalls = [];
+  const nullRepository = createDirectEntryWriteRepository(async (name, args) => {
+    nullCalls.push({ name, args });
+    return { data: { entry_id: entryId, entry_version: 4, status_version: 2, status: "OFF" }, error: null };
+  });
+  await nullRepository.applyDraftEmploymentStatus({ ...input, reason: null });
+  assert.equal(nullCalls[0].args.p_reason, null);
 
   const conflict = createDirectEntryWriteRepository(async () => ({
     data: null,

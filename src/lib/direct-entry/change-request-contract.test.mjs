@@ -125,15 +125,25 @@ test("empty, oversized and duplicate items fail closed", () => {
   assert.equal(projectChangeRequestItem({ ...item(), extra: 1 }), null);
 });
 
-test("malformed expected_version, reason and idempotency key fail closed", () => {
+test("malformed expected_version, action reason and idempotency key fail closed", () => {
   for (const value of [0, -1, 1.5, "1", null, true, Number.NaN]) {
     assert.equal(projectChangeRequestCreate(createBody({
       items: [item({ expected_version: value })],
     })).ok, false, String(value));
   }
-  for (const value of ["", "   ", null, 12]) {
+  for (const value of [12, "x".repeat(4001)]) {
     assert.equal(projectChangeRequestCreate(createBody({ reason: value })).ok, false, String(value));
   }
+  for (const value of [undefined, null, "", "   "]) {
+    const body = createBody();
+    if (value === undefined) delete body.reason;
+    else body.reason = value;
+    assert.deepEqual(projectChangeRequestCreate(body), {
+      ok: true,
+      value: { items: [item()], reason: null, idempotency_key: "change-request-synthetic-key" },
+    });
+  }
+  assert.equal(projectChangeRequestCreate(createBody({ reason: "  trimmed  " })).value.reason, "trimmed");
   assert.equal(projectChangeRequestCreate(createBody({ reason: "x".repeat(4000) })).ok, true);
   assert.equal(projectChangeRequestCreate(createBody({ reason: "x".repeat(4001) })).ok, false);
   for (const value of ["", "   ", 12, null, "x".repeat(129)]) {
@@ -273,11 +283,15 @@ test("withdraw and decision envelopes are strict", () => {
       decision, expected_version: 2, reason: "x", idempotency_key: "k",
     }).ok, false, String(decision));
   }
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { decision: "approve", expected_version: 2, idempotency_key: "k" };
+    if (reason !== undefined) body.reason = reason;
+    assert.deepEqual(projectChangeRequestDecision(body), {
+      ok: true, value: { decision: "approve", expected_version: 2, reason: null, idempotency_key: "k" },
+    });
+  }
   assert.equal(projectChangeRequestDecision({
-    decision: "approve", expected_version: 2, reason: "", idempotency_key: "k",
-  }).ok, false);
-  assert.equal(projectChangeRequestDecision({
-    decision: "approve", expected_version: 2, idempotency_key: "k",
+    decision: "approve", expected_version: 2, reason: "x".repeat(4001), idempotency_key: "k",
   }).ok, false);
   const decisionAuthority = projectChangeRequestDecision({
     decision: "approve", expected_version: 2, reason: "x", idempotency_key: "k",

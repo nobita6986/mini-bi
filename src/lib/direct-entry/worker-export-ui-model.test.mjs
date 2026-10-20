@@ -25,16 +25,18 @@ import {
 
 const EMPTY_FILTERS = { status: "", projectId: "", recruiterId: "" };
 
-test("T1A: recruited|managed|all duoc xuat, uploader thi khong", () => {
-  assert.deepEqual([...WORKER_EXPORT_SCOPES], ["recruited", "managed", "all"]);
+test("T1A: recruited|managed|team|all duoc xuat, uploader thi khong", () => {
+  assert.deepEqual([...WORKER_EXPORT_SCOPES], ["recruited", "managed", "team", "all"]);
   assert.equal(isWorkerExportScope("recruited"), true);
   assert.equal(isWorkerExportScope("managed"), true);
+  assert.equal(isWorkerExportScope("team"), true);
   assert.equal(isWorkerExportScope("all"), true);
   assert.equal(isWorkerExportScope("uploader"), false);
   assert.equal(isWorkerExportScope(null), false);
   // Tab -> scope: uploader KHONG xuat; all xuat (quyen server se quyet).
   assert.equal(exportScopeForTab("recruited"), "recruited");
   assert.equal(exportScopeForTab("managed"), "managed");
+  assert.equal(exportScopeForTab("team"), "team");
   assert.equal(exportScopeForTab("all"), "all");
   assert.equal(exportScopeForTab("uploader"), null);
   assert.equal(isExportableScope("managed"), true);
@@ -58,6 +60,13 @@ test("T1A: recruited gui dung body, filter rong => null", () => {
     ["employment_status", "project_id", "reason", "recruiter_id", "scope"]);
 });
 
+test("action reason may be omitted and is canonicalized before export submission", () => {
+  assert.deepEqual(buildWorkerExportRequest({ scope: "team", filters: EMPTY_FILTERS }), {
+    ok: true, body: { scope: "team", project_id: null, recruiter_id: null,
+      employment_status: null, reason: null },
+  });
+});
+
 test("T1A: managed gui dung body voi bo loc hien tai", () => {
   const built = buildWorkerExportRequest({
     scope: "managed",
@@ -74,18 +83,23 @@ test("T1A: managed gui dung body voi bo loc hien tai", () => {
   });
 });
 
-test("T1A: scope all duoc gui, scope la/invalid va reason sai bi tu choi fail-closed", () => {
+test("T1A: scope all/team duoc gui; invalid scope va reason bi tu choi fail-closed", () => {
   assert.deepEqual(buildWorkerExportRequest({ scope: "all", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: true, body: { scope: "all", project_id: null, recruiter_id: null,
       employment_status: null, reason: "x" } });
+  assert.deepEqual(buildWorkerExportRequest({ scope: "team", filters: EMPTY_FILTERS, reason: null }),
+    { ok: true, body: { scope: "team", project_id: null, recruiter_id: null,
+      employment_status: null, reason: null } });
   assert.deepEqual(buildWorkerExportRequest({ scope: "everything", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: false, code: "SCOPE_INVALID" });
   assert.deepEqual(buildWorkerExportRequest({ scope: "", filters: EMPTY_FILTERS, reason: "x" }),
     { ok: false, code: "SCOPE_INVALID" });
   assert.deepEqual(buildWorkerExportRequest({ scope: "recruited", filters: EMPTY_FILTERS, reason: "   " }),
-    { ok: false, code: "REASON_REQUIRED" });
+    { ok: true, body: { scope: "recruited", project_id: null, recruiter_id: null,
+      employment_status: null, reason: null } });
   assert.deepEqual(buildWorkerExportRequest({ scope: "recruited", filters: EMPTY_FILTERS, reason: "" }),
-    { ok: false, code: "REASON_REQUIRED" });
+    { ok: true, body: { scope: "recruited", project_id: null, recruiter_id: null,
+      employment_status: null, reason: null } });
   assert.deepEqual(buildWorkerExportRequest({
     scope: "recruited", filters: EMPTY_FILTERS, reason: "x".repeat(WORKER_EXPORT_REASON_MAX + 1),
   }), { ok: false, code: "REASON_TOO_LONG" });
@@ -98,7 +112,7 @@ test("T1A: scope all duoc gui, scope la/invalid va reason sai bi tu choi fail-cl
 test("T1A: request error copy sanitized", () => {
   for (const message of [
     workerExportRequestMessage("SCOPE_INVALID"),
-    workerExportRequestMessage("REASON_REQUIRED"),
+    workerExportRequestMessage("REASON_INVALID"),
     workerExportRequestMessage("REASON_TOO_LONG"),
     workerExportRequestMessage("FILTER_INVALID"),
   ]) {

@@ -593,7 +593,7 @@ export function PersonnelCatalogManager() {
                         dialog?.active ? "Kích hoạt hồ sơ" : "Ngừng hoạt động hồ sơ"}
                   </Dialog.Title>
                   <Dialog.Description id="personnel-dialog-description" className="mt-1 text-sm text-muted">
-                    Mọi thay đổi cần có lý do. Dữ liệu được kiểm tra lại trước khi lưu.
+                    Lý do thao tác không bắt buộc. Dữ liệu được kiểm tra lại trước khi lưu.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -1058,12 +1058,11 @@ function Field({
 function ReasonField({ value, onChange }: { value: string; onChange(value: string): void }) {
   return (
     <label htmlFor="personnel-reason" className="block text-sm font-medium text-foreground">
-      Lý do thay đổi <span aria-hidden="true">*</span>
+      Lý do thay đổi (không bắt buộc)
       <textarea
         id="personnel-reason"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
-        required
         maxLength={4000}
         rows={3}
         className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm"

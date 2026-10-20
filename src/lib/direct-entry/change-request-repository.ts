@@ -45,15 +45,15 @@ export const classifyChangeRequestError = classifySubmissionTransitionError;
 export type ChangeRequestRepository = {
   createChangeRequest(input: ActorRef & {
     items: readonly Record<string, unknown>[];
-    reason: string;
+    reason: string | null;
     idempotency_key: string;
   }): Promise<ChangeRequestOutcome<ChangeRequestCreateResult>>;
   withdrawChangeRequest(input: ActorRef & { request_id: string } & ChangeRequestWithdrawInput):
     Promise<ChangeRequestOutcome<ChangeRequestStateResult>>;
   approveChangeRequest(input: ActorRef & { request_id: string; expected_version: number;
-    reason: string; idempotency_key: string }): Promise<ChangeRequestOutcome<ChangeRequestStateResult>>;
+    reason: string | null; idempotency_key: string }): Promise<ChangeRequestOutcome<ChangeRequestStateResult>>;
   rejectChangeRequest(input: ActorRef & { request_id: string; expected_version: number;
-    reason: string; idempotency_key: string }): Promise<ChangeRequestOutcome<ChangeRequestStateResult>>;
+    reason: string | null; idempotency_key: string }): Promise<ChangeRequestOutcome<ChangeRequestStateResult>>;
 };
 
 function serviceRoleRpc(): Rpc {
@@ -130,7 +130,7 @@ async function decide(
   callRpc: Rpc,
   rpcName: string,
   expectedState: ChangeRequestState,
-  input: ActorRef & { request_id: string; expected_version: number; reason: string; idempotency_key: string },
+  input: ActorRef & { request_id: string; expected_version: number; reason: string | null; idempotency_key: string },
 ): Promise<ChangeRequestOutcome<ChangeRequestStateResult>> {
   try {
     const { data, error } = await callRpc(rpcName, {

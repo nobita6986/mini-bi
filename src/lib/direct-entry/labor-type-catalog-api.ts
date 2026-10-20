@@ -6,7 +6,7 @@
  *   2. same-origin/CSRF (mutation)
  *   3. content-type + JSON bounded
  *   4. quet authority de quy (client khong duoc gui actor/role/capability/scope)
- *   5. strict request projection (reason bat buoc, OCC, idempotency)
+ *   5. strict request projection (optional action reason, OCC, idempotency)
  *   6. resolve session server-side -> actor CHI tu session
  *   7. repository/RPC
  *   8. response sanitized (khong forward raw DB message)
@@ -21,6 +21,7 @@ import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core
 import { readBoundedJson } from "./write-api.ts";
 import { LABOR_TYPE_KEY } from "./labor-type-catalog-contract.ts";
 import type { LaborTypeCatalogRepository } from "./labor-type-catalog-repository.ts";
+import { hasExactKeysWithOptionalReason, projectOptionalActionReason } from "./action-reason.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REASON_MAX = 4000;
@@ -49,7 +50,7 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+  return hasExactKeysWithOptionalReason(value, keys);
 }
 function text(value: unknown, max: number): string | null {
   return typeof value === "string" && value.trim() !== "" && value.length <= max ? value : null;
@@ -185,7 +186,7 @@ export function laborTypeCatalogListQuery(url: URL): Parsed<ListLaborTypesQuery>
 
 export type CreateLaborTypeRequest = {
   expected_version: 0; labor_type_key: string; display_name: string;
-  sort_order: number; reason: string; idempotency_key: string;
+  sort_order: number; reason: string | null; idempotency_key: string;
 };
 export function laborTypeCatalogCreateRequest(body: unknown): Parsed<CreateLaborTypeRequest> {
   const value = record(body);
@@ -198,20 +199,20 @@ export function laborTypeCatalogCreateRequest(body: unknown): Parsed<CreateLabor
   const key = laborTypeKey(value.labor_type_key);
   const display_name = text(value.display_name, NAME_MAX);
   const order = sortOrder(value.sort_order);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
   // create mo mot aggregate moi: expected_version phai dung bang 0.
-  if (expected_version !== 0 || !key || !display_name || order === null || !reason
+  if (expected_version !== 0 || !key || !display_name || order === null || !reason.ok
       || !idempotency_key) {
     return { ok: false, response: fail("LABOR_TYPE_INVALID", 400) };
   }
   return { ok: true, value: { expected_version: 0, labor_type_key: key, display_name,
-    sort_order: order, reason, idempotency_key } };
+    sort_order: order, reason: reason.value, idempotency_key } };
 }
 
 export type UpdateLaborTypeRequest = {
   expected_version: number; display_name: string; sort_order: number;
-  reason: string; idempotency_key: string;
+  reason: string | null; idempotency_key: string;
 };
 export function laborTypeCatalogUpdateRequest(body: unknown): Parsed<UpdateLaborTypeRequest> {
   const value = record(body);
@@ -223,18 +224,18 @@ export function laborTypeCatalogUpdateRequest(body: unknown): Parsed<UpdateLabor
   const expected_version = version(value.expected_version);
   const display_name = text(value.display_name, NAME_MAX);
   const order = sortOrder(value.sort_order);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
   if (expected_version === null || expected_version < 1 || !display_name || order === null
-      || !reason || !idempotency_key) {
+      || !reason.ok || !idempotency_key) {
     return { ok: false, response: fail("LABOR_TYPE_INVALID", 400) };
   }
-  return { ok: true, value: { expected_version, display_name, sort_order: order, reason,
+  return { ok: true, value: { expected_version, display_name, sort_order: order, reason: reason.value,
     idempotency_key } };
 }
 
 export type SetActiveLaborTypeRequest = {
-  active: boolean; expected_version: number; reason: string; idempotency_key: string;
+  active: boolean; expected_version: number; reason: string | null; idempotency_key: string;
 };
 export function laborTypeCatalogSetActiveRequest(body: unknown): Parsed<SetActiveLaborTypeRequest> {
   const value = record(body);
@@ -243,18 +244,18 @@ export function laborTypeCatalogSetActiveRequest(body: unknown): Parsed<SetActiv
     return { ok: false, response: fail("LABOR_TYPE_INVALID", 400) };
   }
   const expected_version = version(value.expected_version);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
-  if (expected_version === null || expected_version < 1 || !reason || !idempotency_key) {
+  if (expected_version === null || expected_version < 1 || !reason.ok || !idempotency_key) {
     return { ok: false, response: fail("LABOR_TYPE_INVALID", 400) };
   }
-  return { ok: true, value: { active: value.active, expected_version, reason, idempotency_key } };
+  return { ok: true, value: { active: value.active, expected_version, reason: reason.value, idempotency_key } };
 }
 
 async function runMutation<T>(
   request: Request,
   dependencies: LaborTypeCatalogDependencies,
-  parsed: Parsed<{ reason: string; idempotency_key: string }>,
+  parsed: Parsed<{ reason: string | null; idempotency_key: string }>,
   run: (actor: TrustedActor) => Promise<{ ok: true; data: T } | { ok: false; kind: string }>,
 ): Promise<Response> {
   if (!parsed.ok) return parsed.response;
@@ -318,7 +319,7 @@ export async function getLaborTypeCatalog(
 
 async function mutationPipeline(
   request: Request, flag: string | undefined, dependencies: LaborTypeCatalogDependencies,
-  parse: (body: unknown) => Parsed<{ reason: string; idempotency_key: string }>,
+  parse: (body: unknown) => Parsed<{ reason: string | null; idempotency_key: string }>,
   run: (actor: TrustedActor, value: never) => Promise<{ ok: true; data: unknown } | { ok: false; kind: string }>,
 ): Promise<Response> {
   const blocked = mutationPreflight(request, flag);

@@ -3,10 +3,11 @@
  * reset password / reconcile / personnel-from-account).
  *
  * Fail-closed: exact-key body allowlist, type/bounds, canonical login_id, password
- * byte bounds (8..1024) + confirm equality (server-side, never logged/stored), reason
- * + idempotency_key required. Strict projection for each RPC envelope; no raw DB
+ * byte bounds (8..1024) + confirm equality (server-side, never logged/stored), optional
+ * normalized action reason, and required idempotency_key. Strict projection for each RPC envelope; no raw DB
  * message, no password/hash, no email/auth payload ever surfaced.
  */
+import { hasExactKeysWithOptionalReason, projectOptionalActionReason } from "../direct-entry/action-reason.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOGIN_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -51,12 +52,12 @@ export type CreateAccountRequest = {
   display_name: string;
   password: string;
   password_confirm: string;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 export function parseCreateAccount(body: unknown): Parsed<CreateAccountRequest> {
-  if (!isRecord(body) ||
-      !exact(body, ["login_id", "display_name", "password", "password_confirm", "reason", "idempotency_key"])) {
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body,
+    ["login_id", "display_name", "password", "password_confirm", "reason", "idempotency_key"])) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
   const login_id = typeof body.login_id === "string" && LOGIN_ID.test(body.login_id) ? body.login_id : null;
@@ -65,56 +66,58 @@ export function parseCreateAccount(body: unknown): Parsed<CreateAccountRequest> 
       body.password !== body.password_confirm || !passwordBytes(body.password)) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
-  const reason = text(body.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(body.reason, REASON_MAX);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!login_id || !display_name || !reason || !idempotency_key) {
+  if (!login_id || !display_name || !reason.ok || !idempotency_key) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
   return { ok: true, value: { login_id, display_name, password: body.password,
-    password_confirm: body.password_confirm, reason, idempotency_key } };
+    password_confirm: body.password_confirm, reason: reason.value, idempotency_key } };
 }
 
 /* ---------- edit display name ---------- */
 export type EditDisplayNameRequest = {
   display_name: string;
   expected_version: number;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 export function parseEditDisplayName(body: unknown): Parsed<EditDisplayNameRequest> {
-  if (!isRecord(body) || !exact(body, ["display_name", "expected_version", "reason", "idempotency_key"])) {
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body,
+    ["display_name", "expected_version", "reason", "idempotency_key"])) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
   const display_name = text(body.display_name, NAME_MAX);
   const expected_version = version(body.expected_version);
-  const reason = text(body.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(body.reason, REASON_MAX);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!display_name || expected_version === null || expected_version < 1 || !reason || !idempotency_key) {
+  if (!display_name || expected_version === null || expected_version < 1 || !reason.ok || !idempotency_key) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
-  return { ok: true, value: { display_name, expected_version, reason, idempotency_key } };
+  return { ok: true, value: { display_name, expected_version, reason: reason.value, idempotency_key } };
 }
 
 /* ---------- reset password ---------- */
 export type ResetPasswordRequest = {
   password: string;
   password_confirm: string;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 export function parseResetPassword(body: unknown): Parsed<ResetPasswordRequest> {
-  if (!isRecord(body) || !exact(body, ["password", "password_confirm", "reason", "idempotency_key"])) {
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body,
+    ["password", "password_confirm", "reason", "idempotency_key"])) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
   if (typeof body.password !== "string" || typeof body.password_confirm !== "string" ||
       body.password !== body.password_confirm || !passwordBytes(body.password)) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
-  const reason = text(body.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(body.reason, REASON_MAX);
   const idempotency_key = uuid(body.idempotency_key);
-  if (!reason || !idempotency_key) return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
+  if (!reason.ok || !idempotency_key) return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   return { ok: true, value: { password: body.password, password_confirm: body.password_confirm,
-    reason, idempotency_key } };
+    reason: reason.value, idempotency_key } };
 }
 
 /* ---------- reconcile intent ---------- */
@@ -135,11 +138,11 @@ export type CreatePersonnelFromAccountRequest = {
   personnel_code: string;
   personnel_position: PersonnelPosition;
   valid_from: string;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 export function parseCreatePersonnelFromAccount(body: unknown): Parsed<CreatePersonnelFromAccountRequest> {
-  if (!isRecord(body) || !exact(body, [
+  if (!isRecord(body) || !hasExactKeysWithOptionalReason(body, [
     "account_ref", "expected_account_version", "personnel_code", "personnel_position",
     "valid_from", "reason", "idempotency_key",
   ])) {
@@ -152,14 +155,14 @@ export function parseCreatePersonnelFromAccount(body: unknown): Parsed<CreatePer
   const personnel_position = body.personnel_position === "STAFF" || body.personnel_position === "TEAM_LEADER"
     ? body.personnel_position : null;
   const valid_from = typeof body.valid_from === "string" && DATE.test(body.valid_from) ? body.valid_from : null;
-  const reason = text(body.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(body.reason, REASON_MAX);
   const idempotency_key = uuid(body.idempotency_key);
   if (!account_ref || expected_account_version === null || expected_account_version < 1 || !personnel_code ||
-      !personnel_position || !valid_from || !reason || !idempotency_key) {
+      !personnel_position || !valid_from || !reason.ok || !idempotency_key) {
     return { ok: false, code: "ACCOUNT_OPERATION_INVALID" };
   }
   return { ok: true, value: { account_ref, expected_account_version, personnel_code,
-    personnel_position, valid_from, reason, idempotency_key } };
+    personnel_position, valid_from, reason: reason.value, idempotency_key } };
 }
 
 /* ---------- envelopes (strict) ---------- */

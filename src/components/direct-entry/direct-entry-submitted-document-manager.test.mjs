@@ -11,11 +11,13 @@ const manager = source("./direct-entry-submitted-document-manager.tsx");
 const list = source("./direct-entry-submission-list.tsx");
 const live = source("./direct-entry-live.tsx");
 
-test("S03B4B-R2C: reserve body gui reason khi bat buoc, khong luon gui", () => {
+test("S03B4B-R2C: optional replacement reason is normalized and bounded", () => {
   assert.match(editor, /requireReason/);
-  assert.match(editor, /\.\.\.\(requireReason && pending\.reason \? \{ reason: pending\.reason \} : \{\}\)/);
+  assert.match(editor, /reason: pending\.reason \|\| null/);
   assert.match(editor, /aria-label="Lý do thay thế tài liệu"/);
-  assert.match(editor, /requireReason && \(trimmedReason === null || trimmedReason\.length < 1/);
+  assert.match(editor, /const trimmedReason = requireReason \? \(reason\.trim\(\) \|\| null\) : null/);
+  assert.match(editor, /requireReason && reason\.length > REASON_MAX_LENGTH/);
+  assert.doesNotMatch(editor, /<textarea[^>]*\brequired\b|Lý do thay thế tài liệu là bắt buộc|trimmedReason === null/);
   assert.doesNotMatch(editor, /encodeURIComponent\(reason\)/);
 });
 

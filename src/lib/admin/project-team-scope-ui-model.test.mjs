@@ -55,6 +55,10 @@ test("batch grant body has only the exact versionless contract keys and enforces
     body: { team_id: TEAM, project_ids: IDS, reason: "reviewed", idempotency_key: KEY },
   });
   assert.deepEqual(Object.keys(request.body).sort(), ["idempotency_key", "project_ids", "reason", "team_id"]);
+  const optional = buildGrantRequest({ projectIds: IDS, teamId: TEAM, idempotencyKey: KEY });
+  assert.deepEqual(optional, { ok: true, body: {
+    team_id: TEAM, project_ids: IDS, reason: null, idempotency_key: KEY,
+  } });
   assert.equal(buildGrantRequest({ projectIds: [], teamId: TEAM, reason: "r", idempotencyKey: KEY }).ok, false);
   assert.equal(buildGrantRequest({ projectIds: Array.from({ length: 101 }, (_, i) => `p-${i}`), teamId: TEAM, reason: "r", idempotencyKey: KEY }).ok, false);
   assert.equal(buildGrantRequest({ projectIds: ["same", "same"], teamId: TEAM, reason: "r", idempotencyKey: KEY }).ok, false);
@@ -72,6 +76,10 @@ test("revoke body is versionless and exactly matches the current contract", () =
     body: { mapping_id: MAPPING, effective_to: null, reason: "same-day", idempotency_key: KEY },
   });
   assert.deepEqual(Object.keys(request.body).sort(), ["effective_to", "idempotency_key", "mapping_id", "reason"]);
+  const optional = buildRevokeRequest({ mappingId: MAPPING, effectiveTo: "2026-10-15", idempotencyKey: KEY });
+  assert.deepEqual(optional, { ok: true, body: {
+    mapping_id: MAPPING, effective_to: "2026-10-15", reason: null, idempotency_key: KEY,
+  } });
 });
 
 test("batch outcome strictly distinguishes created and already-effective projects", () => {

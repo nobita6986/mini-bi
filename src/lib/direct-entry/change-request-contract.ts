@@ -17,6 +17,7 @@ import {
 import { isDocumentType } from "./document-upload-contract.ts";
 import { projectPaymentInput } from "./payment-contract.ts";
 import { findForbiddenClientField as findCoreForbiddenField } from "./submission-transition-contract.ts";
+import { projectOptionalActionReason } from "./action-reason.ts";
 
 export const CHANGE_REQUEST_TARGET_KINDS = [
   "ENTRY_FIELD",
@@ -214,7 +215,7 @@ export type ChangeRequestItem = {
 
 export type ChangeRequestCreateInput = {
   items: ChangeRequestItem[];
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 
@@ -226,7 +227,7 @@ export type ChangeRequestWithdrawInput = {
 export type ChangeRequestDecisionInput = {
   decision: ChangeRequestDecision;
   expected_version: number;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 
@@ -345,7 +346,8 @@ export function projectChangeRequestCreate(
   if (!isRecord(value)) return INVALID;
   const forbidden = findForbiddenChangeRequestField(value, CREATE_REQUEST_KEYS);
   if (forbidden) return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN", field: forbidden.field };
-  if (!hasExactKeys(value, CREATE_REQUEST_KEYS)) return INVALID;
+  if (!hasOnlyKeys(value, CREATE_REQUEST_KEYS) ||
+      !("items" in value) || !("idempotency_key" in value)) return INVALID;
   if (!Array.isArray(value.items) || value.items.length < 1 ||
       value.items.length > CHANGE_REQUEST_MAX_ITEMS) return INVALID;
   if (value.items.some((item) => isRecord(item) && item.target_kind === "DOCUMENT")) {
@@ -363,9 +365,10 @@ export function projectChangeRequestCreate(
     seen.add(item.entry_id);
     items.push(item);
   }
-  if (!isReason(value.reason)) return INVALID;
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX_LENGTH);
+  if (!reason.ok) return INVALID;
   if (!isIdempotencyKey(value.idempotency_key)) return INVALID;
-  return { ok: true, value: { items, reason: value.reason, idempotency_key: value.idempotency_key } };
+  return { ok: true, value: { items, reason: reason.value, idempotency_key: value.idempotency_key } };
 }
 
 export function projectChangeRequestWithdraw(
@@ -389,17 +392,21 @@ export function projectChangeRequestDecision(
   if (!isRecord(value)) return INVALID;
   const forbidden = findForbiddenChangeRequestField(value, DECISION_REQUEST_KEYS);
   if (forbidden) return { ok: false, code: "CLIENT_AUTHORITY_FIELD_FORBIDDEN", field: forbidden.field };
-  if (!hasExactKeys(value, DECISION_REQUEST_KEYS)) return INVALID;
+  if (!hasOnlyKeys(value, DECISION_REQUEST_KEYS) ||
+      !("decision" in value) || !("expected_version" in value) || !("idempotency_key" in value)) {
+    return INVALID;
+  }
   if (!isChangeRequestDecision(value.decision)) return INVALID;
   if (!isPositiveVersion(value.expected_version)) return INVALID;
-  if (!isReason(value.reason)) return INVALID;
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX_LENGTH);
+  if (!reason.ok) return INVALID;
   if (!isIdempotencyKey(value.idempotency_key)) return INVALID;
   return {
     ok: true,
     value: {
       decision: value.decision,
       expected_version: value.expected_version,
-      reason: value.reason,
+      reason: reason.value,
       idempotency_key: value.idempotency_key,
     },
   };

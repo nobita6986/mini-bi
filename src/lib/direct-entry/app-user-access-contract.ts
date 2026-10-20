@@ -1,3 +1,5 @@
+import { projectOptionalActionReason } from "./action-reason.ts";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REASON_MAX = 4000;
 
@@ -71,12 +73,6 @@ export function projectExistingAccountList(value: unknown): ExistingAccountList 
   };
 }
 
-function exact(record: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(record).sort().join(",") === [...keys].sort().join(",");
-}
-function text(value: unknown, max: number): string | null {
-  return typeof value === "string" && value.trim() !== "" && value.length <= max ? value : null;
-}
 function integer(value: unknown, min: number): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= min ? value : null;
 }
@@ -101,20 +97,23 @@ export function parseAccountListQuery(url: URL): AccountAccessParsed<AccountList
 
 export type AccountMutationRequest = {
   expected_version: number;
-  reason: string;
+  reason: string | null;
   idempotency_key: string;
 };
 
 export function parseAccountMutation(body: unknown): AccountAccessParsed<AccountMutationRequest> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return { ok: false, code: "ACCOUNT_INVALID" };
   const record = body as Record<string, unknown>;
-  if (!exact(record, ["expected_version", "reason", "idempotency_key"])) return { ok: false, code: "ACCOUNT_INVALID" };
+  if (Object.keys(record).some((key) => !["expected_version", "reason", "idempotency_key"].includes(key)) ||
+      !("expected_version" in record) || !("idempotency_key" in record)) {
+    return { ok: false, code: "ACCOUNT_INVALID" };
+  }
   const expected_version = integer(record.expected_version, 1);
-  const reason = text(record.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(record.reason, REASON_MAX);
   const idempotency_key = typeof record.idempotency_key === "string" && UUID.test(record.idempotency_key)
     ? record.idempotency_key : null;
-  if (expected_version === null || reason === null || idempotency_key === null) return { ok: false, code: "ACCOUNT_INVALID" };
-  return { ok: true, value: { expected_version, reason, idempotency_key } };
+  if (expected_version === null || !reason.ok || idempotency_key === null) return { ok: false, code: "ACCOUNT_INVALID" };
+  return { ok: true, value: { expected_version, reason: reason.value, idempotency_key } };
 }
 
 export function parseAccountRef(value: string): string | null {

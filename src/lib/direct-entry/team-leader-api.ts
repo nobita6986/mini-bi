@@ -8,6 +8,7 @@ import type {
   TeamLeaderRepository,
 } from "./team-leader-repository.ts";
 import type { TeamLeaderState } from "./team-leader-contract.ts";
+import { hasExactKeysWithOptionalReason, projectOptionalActionReason } from "./action-reason.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const QUERY_KEYS = new Set(["state", "team_id", "search", "page", "page_size"]);
@@ -137,7 +138,7 @@ export function teamLeaderCandidateQuery(url: URL): Parsed<TeamLeaderCandidateQu
 
 type DesignateRequest = {
   leader_app_user_id: string; effective_date: string; expected_version: number;
-  reason: string; idempotency_key: string;
+  reason: string | null; idempotency_key: string;
 };
 type RevokeRequest = Omit<DesignateRequest, "leader_app_user_id">;
 
@@ -169,31 +170,31 @@ async function readMutationBody(request: Request): Promise<Parsed<unknown>> {
 }
 
 function designateRequest(value: unknown): Parsed<DesignateRequest> {
-  if (!record(value) || Object.keys(value).sort().join(",") !== [
+  if (!record(value) || !hasExactKeysWithOptionalReason(value, [
     "effective_date", "expected_version", "idempotency_key", "leader_app_user_id", "reason",
-  ].join(",")) return { ok: false, response: fail("LEADER_INVALID", 400) };
+  ])) return { ok: false, response: fail("LEADER_INVALID", 400) };
   const leader_app_user_id = uuid(value.leader_app_user_id);
   const effective_date = date(value.effective_date);
   const expected_version = version(value.expected_version);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
   if (!leader_app_user_id || !effective_date || expected_version === null ||
-      !reason || !idempotency_key) return { ok: false, response: fail("LEADER_INVALID", 400) };
-  return { ok: true, value: { leader_app_user_id, effective_date, expected_version, reason, idempotency_key } };
+      !reason.ok || !idempotency_key) return { ok: false, response: fail("LEADER_INVALID", 400) };
+  return { ok: true, value: { leader_app_user_id, effective_date, expected_version, reason: reason.value, idempotency_key } };
 }
 
 function revokeRequest(value: unknown): Parsed<RevokeRequest> {
-  if (!record(value) || Object.keys(value).sort().join(",") !== [
+  if (!record(value) || !hasExactKeysWithOptionalReason(value, [
     "effective_date", "expected_version", "idempotency_key", "reason",
-  ].join(",")) return { ok: false, response: fail("LEADER_INVALID", 400) };
+  ])) return { ok: false, response: fail("LEADER_INVALID", 400) };
   const effective_date = date(value.effective_date);
   const expected_version = version(value.expected_version);
-  const reason = text(value.reason, REASON_MAX);
+  const reason = projectOptionalActionReason(value.reason, REASON_MAX);
   const idempotency_key = uuid(value.idempotency_key);
-  if (!effective_date || expected_version === null || !reason || !idempotency_key) {
+  if (!effective_date || expected_version === null || !reason.ok || !idempotency_key) {
     return { ok: false, response: fail("LEADER_INVALID", 400) };
   }
-  return { ok: true, value: { effective_date, expected_version, reason, idempotency_key } };
+  return { ok: true, value: { effective_date, expected_version, reason: reason.value, idempotency_key } };
 }
 
 function idempotencyMismatch(request: Request, key: string): Response | null {
@@ -275,7 +276,7 @@ async function runMutation<T>(
   request: Request,
   teamId: string,
   dependencies: TeamLeaderDependencies,
-  parsed: Parsed<{ reason: string; idempotency_key: string }>,
+  parsed: Parsed<{ reason: string | null; idempotency_key: string }>,
   run: (actor: TrustedActor, value: never) => Promise<{
     ok: true; data: T;
   } | { ok: false; kind: TeamLeaderErrorKind }>,
@@ -302,7 +303,7 @@ async function mutationPipeline<T>(
   teamId: string,
   flag: string | undefined,
   dependencies: TeamLeaderDependencies,
-  parse: (value: unknown) => Parsed<{ reason: string; idempotency_key: string }>,
+  parse: (value: unknown) => Parsed<{ reason: string | null; idempotency_key: string }>,
   run: (actor: TrustedActor, team_id: string, value: never) => Promise<{
     ok: true; data: T;
   } | { ok: false; kind: TeamLeaderErrorKind }>,

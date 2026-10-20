@@ -20,7 +20,7 @@ type Props = {
   showPortrait?: boolean;
   /** Separate server-resolved upload affordance for the portrait panel. */
   portraitCanUpload?: boolean;
-  /** S03B4B-R2C: entry SUBMITTED bat buoc co ly do truoc khi reserve. */
+  /** Render the optional action-reason field for submitted-entry document replacement. */
   requireReason?: boolean;
   /** File picked in the W2S1.1 form before the server entry ID existed. */
   initialFile?: File | null;
@@ -163,11 +163,10 @@ export function DirectEntryDocumentEditor({
     if (!entryId || !entryVersion || !file || !canEdit ||
         file.size < 1 || file.size > MAX_BYTES || !MIME_TYPES.has(file.type) ||
         state === "uploading") return;
-    const trimmedReason = requireReason ? reason.trim() : null;
-    if (requireReason && (trimmedReason === null || trimmedReason.length < 1 ||
-        trimmedReason.length > REASON_MAX_LENGTH)) {
+    const trimmedReason = requireReason ? (reason.trim() || null) : null;
+    if (requireReason && reason.length > REASON_MAX_LENGTH) {
       setState("error");
-      setMessage("Lý do thay thế tài liệu là bắt buộc và tối đa 4000 ký tự.");
+      setMessage("Lý do tối đa 4000 ký tự.");
       return;
     }
     if (!pendingKey.current || pendingKey.current.file !== file ||
@@ -206,7 +205,7 @@ export function DirectEntryDocumentEditor({
         expected_entry_version: pending.expectedEntryVersion,
         size_bytes: file.size,
         mime_type: file.type,
-        ...(requireReason && pending.reason ? { reason: pending.reason } : {}),
+        reason: pending.reason || null,
       });
       if (reserved.response.status === 409) {
         setState("conflict");
@@ -335,7 +334,7 @@ export function DirectEntryDocumentEditor({
       <div className={styles.documentControls}>
         {requireReason && (
           <label className={styles.field}>
-            <span>Lý do thay thế tài liệu</span>
+            <span>Lý do thay thế tài liệu (không bắt buộc)</span>
             <textarea
               aria-label="Lý do thay thế tài liệu"
               rows={3}

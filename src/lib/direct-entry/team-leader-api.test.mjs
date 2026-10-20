@@ -146,6 +146,10 @@ test("same-origin and body shape/authority/idempotency fail before session", asy
     TEAM, "true", d.value)).status, 400);
   assert.equal((await designateTeamLeader(post({ ...DESIGNATE_BODY, team_id: TEAM }),
     TEAM, "true", d.value)).status, 400);
+  for (const reason of [123, "x".repeat(4001)]) {
+    const invalid = await designateTeamLeader(post({ ...DESIGNATE_BODY, reason }), TEAM, "true", d.value);
+    assert.equal(invalid.status, 400);
+  }
   const mismatch = await designateTeamLeader(
     post(DESIGNATE_BODY, undefined, { "idempotency-key": TARGET }),
     TEAM, "true", d.value);
@@ -182,6 +186,16 @@ test("mutation submits only trusted actor and path team, and revocation has no t
     `/api/admin/catalog/teams/${TEAM}/leaders/revoke`), TEAM, "true", d.value)).status, 200);
   assert.equal(d.calls.repository.length, 2);
   assert.equal(Object.hasOwn(d.calls.repository[1][1], "leader_app_user_id"), false);
+
+  for (const reason of [undefined, null, "", "  "]) {
+    const optional = dependencies({ result: { ok: true, data: MUTATION } });
+    const body = { ...DESIGNATE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const response = await designateTeamLeader(post(body), TEAM, "true", optional.value);
+    assert.equal(response.status, 200);
+    assert.equal(optional.calls.repository[0][1].reason, null);
+  }
 });
 
 test("denials, not-found and raw RPC failures have stable sanitized responses", async () => {

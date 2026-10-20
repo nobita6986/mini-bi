@@ -137,7 +137,16 @@ test("request projections are strict; the generic update cannot reach code or ac
   assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, code: "" }).ok, false);
   assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, code: "x".repeat(129) }).ok, false);
   assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, display_name: "" }).ok, false);
-  assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, reason: "" }).ok, false);
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...CREATE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const parsed = teamCatalogCreateRequest(body);
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) assert.equal(parsed.value.reason, null);
+  }
+  assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, reason: 123 }).ok, false);
+  assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, reason: "x".repeat(4001) }).ok, false);
   assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, idempotency_key: "nope" }).ok, false);
   assert.equal(teamCatalogCreateRequest({ ...CREATE_BODY, extra: 1 }).ok, false);
 
@@ -151,6 +160,23 @@ test("request projections are strict; the generic update cannot reach code or ac
   assert.equal(teamCatalogSetActiveRequest(ACTIVE_BODY).ok, true);
   assert.equal(teamCatalogSetActiveRequest({ ...ACTIVE_BODY, active: "false" }).ok, false);
   assert.equal(teamCatalogSetActiveRequest({ ...ACTIVE_BODY, expected_version: null }).ok, false);
+
+  for (const [parse, valid] of [
+    [teamCatalogCreateRequest, CREATE_BODY],
+    [teamCatalogUpdateRequest, UPDATE_BODY],
+    [teamCatalogSetActiveRequest, ACTIVE_BODY],
+  ]) {
+    for (const reason of [undefined, null, "", "  "]) {
+      const body = { ...valid };
+      if (reason === undefined) delete body.reason;
+      else body.reason = reason;
+      const parsed = parse(body);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal(parsed.value.reason, null);
+    }
+    assert.equal(parse({ ...valid, reason: 123 }).ok, false);
+    assert.equal(parse({ ...valid, reason: "x".repeat(4001) }).ok, false);
+  }
 
   const query = teamCatalogListQuery(new URL("https://app.test/x?search=%20abc%20&page=2&page_size=10&include_inactive=false"));
   assert.deepEqual(query.ok && query.value, { search: "abc", include_inactive: false, page: 2, page_size: 10 });
