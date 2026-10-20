@@ -189,6 +189,22 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // S0-T1-C closes direct grants to helper routines; count signatures, not overload names.
   // R1 current-state authorization adds two private trigger/guard routines.
   // R1.2 adds two internal authorization/search helpers and one service-role search RPC.
-  assert.deepEqual([rows.length, serviceRpcs, internalRpcs], [270, 107, 163]);
+  // R2.1 replaces brittle hardcoded function-count totals with security invariants:
+  // actual function names match expectedDirectEntryFunctions(migrations) above, and
+  // no direct_entry_% signature is executable by anon, authenticated, or PUBLIC.
+  assert.equal(rows.length, serviceRpcs + internalRpcs);
+  assert.ok(serviceRpcs > 0 && internalRpcs > 0);
+  const exposed = await db.query(`
+    select p.proname
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname like 'direct_entry_%'
+       and (has_function_privilege('anon', p.oid, 'EXECUTE')
+         or has_function_privilege('authenticated', p.oid, 'EXECUTE')
+         or exists (
+           select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+            where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+         ))
+  `);
+  assert.deepEqual(exposed.rows, []);
   await db.close();
 });

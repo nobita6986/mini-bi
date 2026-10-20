@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { assertZeroOrphanTests } from "./ci-test-manifest.mjs";
+
 const SHARD_COUNT = 6;
 const POSTGRES_TARGET = "postgres";
 const POSTGRES_TEST_FILES = new Set([
@@ -68,6 +70,7 @@ const TEST_WEIGHTS = {
   "test:p3-w07a-r3-vendor-doc-upload": 4.6,
   "test:p1.6-i04c3-r3a": 4.3,
   "test:p3-1-w02c-ui-dynamic-catalog": 4,
+  "test:r2-1": 8.5,
 };
 
 const target = process.argv[2];
@@ -164,6 +167,16 @@ if (postgresTestCount !== POSTGRES_TEST_FILES.size ||
     pgliteTestCount + postgresTestCount !== uniqueTestCount) {
   throw new Error("CI test split must cover every unique test exactly once.");
 }
+
+const allScheduledFiles = new Set(
+  plannedCommands.flatMap((plan) =>
+    plan.commands.flatMap((command) => command.testFiles.map(normalizeTestPath)),
+  ),
+);
+assertZeroOrphanTests({
+  ciTestFiles: allScheduledFiles,
+  postgresTestFiles: POSTGRES_TEST_FILES,
+});
 
 const pgliteShards = Array.from({ length: SHARD_COUNT }, () => ({ plans: [], weight: 0 }));
 for (const plan of [...pglitePlans].sort((left, right) =>

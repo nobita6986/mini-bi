@@ -24,7 +24,15 @@ export const LIST_DEFAULT_PAGE_SIZE = 20;
 export const LIST_MAX_PAGE_SIZE = 50;
 export const LIST_MAX_ENTRY_IDS = 100;
 export const LIST_QUERY_KEYS = ["page_size", "cursor", "state", "days"] as const;
-export const CHANGE_REQUEST_QUEUE_FILTERS = ["PENDING", "RESOLVED", "GLOBAL_AUDIT"] as const;
+export const CHANGE_REQUEST_QUEUE_FILTERS = [
+  "PENDING",
+  "RESOLVED",
+  "PROPOSER_PENDING",
+  "PROPOSER_RESOLVED",
+  "REVIEWER_PENDING",
+  "REVIEWER_RESOLVED",
+  "GLOBAL_AUDIT",
+] as const;
 export type ChangeRequestQueueFilter = (typeof CHANGE_REQUEST_QUEUE_FILTERS)[number];
 
 export const LIST_PAGE_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;

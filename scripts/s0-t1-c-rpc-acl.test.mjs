@@ -18,6 +18,7 @@ const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
 const ACL_MIGRATION = "20261020180000_s0_t1_c_rpc_acl_allowlist.sql";
 const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
+const R2_1_MIGRATION = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
 const R1_2_SERVICE_RPC =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
 const TARGET_PATTERN = "^(direct_entry_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
@@ -316,7 +317,15 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       assert.deepEqual(triggersAfterAcl, triggersBefore, "the ACL migration leaves trigger bindings unchanged");
       assert.deepEqual(defaultsAfterAcl, defaultsBefore,
         "the ACL migration does not alter global or schema default privileges");
-      await applyMigrations(client, names.slice(aclMigrationIndex + 1));
+      const r2_1Index = names.indexOf(R2_1_MIGRATION);
+      assert.notEqual(r2_1Index, -1, "the R2.1 migration is present in the migration chain");
+      await applyMigrations(client, names.slice(aclMigrationIndex + 1, r2_1Index));
+      await client.query("set session authorization s0_t1c_runner");
+      try {
+        await applyMigrations(client, names.slice(r2_1Index));
+      } finally {
+        await client.query("reset session authorization");
+      }
 
       const expectedSignatures = [...migration.matchAll(/^\s+'(public\.[^']+)'[,]?$/gm)]
         .map((match) => match[1]);
@@ -350,7 +359,6 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         .filter((row) => !expectedOidSet.has(String(row.oid))).map((row) => row.signature).sort();
 
       const after = await aclSnapshot(client);
-      const byName = new Map(after.map((row) => [row.signature, row]));
       assert.ok(after.every((row) => !row.anon_exec && !row.authenticated_exec && !row.public_exec),
         "no current or later Mini BI RPC exposes EXECUTE to anon, authenticated or PUBLIC");
       const serviceOids = after.filter((row) => row.service_exec).map((row) => String(row.oid)).sort();

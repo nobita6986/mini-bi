@@ -190,6 +190,7 @@ test("Project Operations page admits Team Leader; mapping page stays Full Admin-
   const source = readFileSync(new URL("../../app/admin/catalog/project-team-scopes/page.tsx", import.meta.url), "utf8");
   assert.match(source, /decideAccountAccessPageAccess\(\{ actor \}\)/);
   assert.doesNotMatch(source, /decideAdminAreaAccess/);
+  assert.match(source, /case "ACCESS_DENIED":\s*return <AccessDenied \/>/);
   const operationsPage = readFileSync(new URL("../../app/direct-entry/projects/page.tsx", import.meta.url), "utf8");
   assert.match(operationsPage, /canManageProjectMasterForEmptyList=\{canManageProjectMasterFromActor\(actor\)\}/);
 });

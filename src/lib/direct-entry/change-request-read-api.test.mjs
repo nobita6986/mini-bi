@@ -161,6 +161,32 @@ test("list success returns the exact projection with no-store", async () => {
     days: null,
   });
   assert.equal(fallback.status, 200);
+
+  for (const queueState of [
+    "PROPOSER_PENDING",
+    "PROPOSER_RESOLVED",
+    "REVIEWER_PENDING",
+    "REVIEWER_RESOLVED",
+  ]) {
+    const queueDeps = dependencies();
+    const queueRes = await listChangeRequests(
+      request(`/api/direct-entry/change-requests?state=${queueState}&page_size=10`),
+      "true",
+      queueDeps,
+    );
+    assert.equal(queueRes.status, 200, queueState);
+    assert.deepEqual(queueDeps.calls, [{
+      name: "list",
+      input: {
+        auth_subject: actor.auth_subject,
+        app_user_id: actor.app_user_id,
+        page_size: 10,
+        cursor: null,
+        state: queueState,
+        days: null,
+      },
+    }]);
+  }
 });
 
 test("detail success returns the exact projection", async () => {

@@ -71,11 +71,24 @@ test("list query accepts the exact state and history-window vocabulary", () => {
   assert.equal(query("page_size=1").value.page_size, 1);
   assert.equal(query("page_size=" + LIST_MAX_PAGE_SIZE).value.page_size, LIST_MAX_PAGE_SIZE);
   assert.equal(query("cursor=" + cursor).value.cursor, cursor);
-  for (const state of ["PENDING", "APPROVED", "REJECTED", "WITHDRAWN", "RESOLVED"]) {
+  for (const state of [
+    "PENDING",
+    "APPROVED",
+    "REJECTED",
+    "WITHDRAWN",
+    "RESOLVED",
+    "PROPOSER_PENDING",
+    "PROPOSER_RESOLVED",
+    "REVIEWER_PENDING",
+    "REVIEWER_RESOLVED",
+  ]) {
     assert.equal(query("state=" + state).value.state, state);
   }
   assert.deepEqual(query("page_size=2&state=PENDING&cursor=" + cursor).value, {
     page_size: 2, cursor, state: "PENDING", days: null,
+  });
+  assert.deepEqual(query("page_size=15&state=REVIEWER_RESOLVED&cursor=" + cursor).value, {
+    page_size: 15, cursor, state: "REVIEWER_RESOLVED", days: null,
   });
   assert.deepEqual(query("state=GLOBAL_AUDIT&days=3").value,
     { page_size: LIST_DEFAULT_PAGE_SIZE, cursor: null, state: "GLOBAL_AUDIT", days: 3 });
@@ -88,8 +101,9 @@ test("invalid or unknown list query parameters fail closed", () => {
     "page_size=0", "page_size=51", "page_size=abc", "page_size=1.5", "page_size=", "page_size=-1",
     "page_size=020",
     "cursor=not-a-cursor", "cursor=20261003100400000000", "cursor=",
-    "state=pending", "state=UNKNOWN", "state=",
-    "state=GLOBAL_AUDIT", "state=GLOBAL_AUDIT&days=2", "state=PENDING&days=3", "days=all",
+    "state=pending", "state=proposer_pending", "state=UNKNOWN", "state=",
+    "state=GLOBAL_AUDIT", "state=GLOBAL_AUDIT&days=2", "state=PENDING&days=3",
+    "state=PROPOSER_PENDING&days=3", "state=REVIEWER_RESOLVED&days=7", "days=all",
     "order=created_at", "offset=10", "limit=5", "column=state", "sql=1",
     "page_size=2&page_size=3",
   ]) {
