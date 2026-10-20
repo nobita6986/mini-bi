@@ -290,6 +290,12 @@ begin
         update public.direct_entry_app_user_recruiter_links set is_current = false where recruiter_id = new.recruiter_id;
         update public.direct_entry_project_manager_assignments set is_current = false where manager_recruiter_id = new.recruiter_id;
         update public.direct_entry_team_leader_assignments set is_current = false where leader_recruiter_id = new.recruiter_id;
+      elsif not old.active and new.active then
+        -- Explicit reactivation restores one open provider mapping; team, account-link and manager grants stay revoked.
+        update public.recruiter_provider_memberships set is_current = true
+         where recruiter_id = new.recruiter_id and valid_to is null
+           and (select count(*) from public.recruiter_provider_memberships m
+                 where m.recruiter_id = new.recruiter_id and m.valid_to is null) = 1;
       end if;
     elsif tg_table_name = 'teams' then
       if old.active and not new.active then
@@ -6533,9 +6539,9 @@ begin
     raise exception 'expected personnel version required' using errcode = '22023';
   end if;
 
-  -- HRP boundary: W01B manages HRP personnel only. A Vendor recruiter, or any
-  -- recruiter without a canonical effective HRP provider membership, is simply not
-  -- found here, so update/set-active fail closed with P0002 before touching a row.
+  -- HRP boundary: W01B manages HRP personnel only. An inactive row can be
+  -- reactivated only with one open HRP membership; closed or ambiguous mappings
+  -- and Vendor recruiters stay out of this catalog.
   select r.* into v_recruiter
     from public.recruiters r
    where r.recruiter_id = p_recruiter_id
@@ -6545,7 +6551,9 @@ begin
         where m.recruiter_id = r.recruiter_id
           and m.provider_type = 'hrp'
           and m.vendor_id is null
-          and m.is_current
+          and (m.is_current or (not r.active and m.valid_to is null
+            and (select count(*) from public.recruiter_provider_memberships x
+                  where x.recruiter_id = r.recruiter_id and x.valid_to is null) = 1))
      )
    for update;
   if not found then

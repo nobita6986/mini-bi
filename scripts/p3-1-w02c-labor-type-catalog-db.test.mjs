@@ -137,15 +137,15 @@ async function addActor(db, actor) {
   );
   for (const capability of actor.capabilities ?? []) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)"
-      + " values ($1::uuid, $2, '2020-01-01')",
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)"
+      + " values ($1::uuid, $2, '2020-01-01', true)",
       [actor.app, capability],
     );
   }
   for (const kind of actor.scopes ?? []) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)"
-      + " values ($1::uuid, $2, $3::uuid, '2020-01-01')",
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)"
+      + " values ($1::uuid, $2, $3::uuid, '2020-01-01', true)",
       [actor.app, kind, kind === "team" ? TEAM_ID : null],
     );
   }
@@ -304,16 +304,16 @@ async function seedFixture(db) {
   await addActor(db, { ...DISABLED_OPERATOR, display_name: "Synthetic Disabled Operator",
     enabled: false, capabilities: ["catalog_master_manage"], scopes: ["all"] });
   await addActor(db, { ...ENTRY_OPERATOR, display_name: "Synthetic Entry Operator",
-    capabilities: ["entry_create", "entry_own", "entry_admin", "pii_view"], scopes: ["all"] });
+    capabilities: ["entry_create", "entry_own", "entry_admin"], scopes: ["all"] });
   // UNMAPPED_OPERATOR intentionally has no direct_entry_app_users row at all.
 
   await db.query("insert into public.recruiters (recruiter_id, display_name, active, version)"
     + " values ($1::uuid, 'Synthetic W02C Recruiter', true, 1)", [RECRUITER_ID]);
   await db.query("insert into public.recruiter_provider_memberships"
-    + " (recruiter_id, provider_type, valid_from) values ($1::uuid, 'hrp', $2::date)",
+    + " (recruiter_id, provider_type, valid_from, is_current) values ($1::uuid, 'hrp', $2::date, true)",
     [RECRUITER_ID, VALID_FROM]);
   await db.query("insert into public.recruiter_team_memberships"
-    + " (recruiter_id, team_id, valid_from) values ($1::uuid, $2::uuid, $3::date)",
+    + " (recruiter_id, team_id, valid_from, is_current) values ($1::uuid, $2::uuid, $3::date, true)",
     [RECRUITER_ID, TEAM_ID, VALID_FROM]);
   await db.query("insert into public.direct_entry_projects (project_id, display_name)"
     + " values ($1, 'Synthetic W02C Project')", [PROJECT_ID]);

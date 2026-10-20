@@ -10,7 +10,7 @@
  *   * all audience      = an effective all scope grant AND (entry_admin OR
  *     change_review); the reporting audience and a team/own scope never open it;
  *   * keyset pagination and every filter are server-side and bounded;
- *   * payment is capability-gated and masked; raw PII is never returned;
+ *   * payment follows the authorized worker audience; raw worker profile PII is never returned;
  *   * allowed_actions is server-supplied; propose_change follows the W04 assignment
  *     authority (P2.5-W05 #55 replaced the PROPOSE_PENDING_W04_POLICY placeholder).
  */
@@ -73,15 +73,15 @@ async function seed(db) {
       " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   }
   await db.query(
-    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-    " values ($1,'entry_admin','2020-01-01')", [ADMIN_APP]);
+    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+    " values ($1,'entry_admin','2020-01-01',true)", [ADMIN_APP]);
   await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+    " values ($1,'all','2020-01-01',true)", [ADMIN_APP]);
   for (const app of [MGR_A_APP, MGR_B_APP, UPLOADER_APP, PLAIN_APP, REVIEWER_APP]) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,'entry_create','2020-01-01')", [app]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,'entry_create','2020-01-01',true)", [app]);
   }
   await db.query(
     "insert into public.teams (team_id, code, display_name) values ($1,'TEAM_W3','Team W3')", [TEAM]);
@@ -94,17 +94,19 @@ async function seed(db) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships" +
+      " (recruiter_id, provider_type, valid_from, is_current) values ($1,'hrp','2020-01-01',true)",
+      [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, TEAM]);
   }
   // MGR_A <-> REC_A, MGR_B <-> REC_B: the verified link is the recruiter identity.
   for (const [app, recruiter] of [[MGR_A_APP, REC_A], [MGR_B_APP, REC_B], [UPLOADER_APP, REC_C]]) {
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-      " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+      " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)",
       [app, recruiter]);
   }
   // PLAIN stays unlinked: it must never resolve to a recruiter audience.
@@ -209,14 +211,15 @@ async function setEmploymentHistory(db, entry, steps) {
 
 async function grantCapability(db, app, capability) {
   await db.query(
-    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-    " values ($1,$2,'2020-01-01')", [app, capability]);
+    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+    " values ($1,$2,'2020-01-01',true)", [app, capability]);
 }
 
 async function grantScope(db, app, scopeKind, teamId = null) {
   await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
-    " values ($1,$2,$3,'2020-01-01')", [app, scopeKind, teamId]);
+    "insert into public.direct_entry_scope_grants" +
+    " (app_user_id, scope_kind, team_id, valid_from, is_current)" +
+    " values ($1,$2,$3,'2020-01-01',true)", [app, scopeKind, teamId]);
 }
 
 async function hasCapability(db, app, capability) {
@@ -478,29 +481,26 @@ test("W03-R1: the all audience accepts entry_admin or change_review, always with
       (error) => error.code === "42501",
       "change_review + own scope is not an all audience");
 
-    // 7. payment/PII stay independently capability-gated for the all audience.
+    // 7. Retired payment/PII capabilities no longer alter an authorized row projection.
     const paidRow = (page) =>
       page.items.find((item) => item.employee_code === "hrp-2026-300001");
-    const withoutGrant = paidRow(await listWorkers(db, {
+    const withoutLegacyGrants = paidRow(await listWorkers(db, {
       auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" }));
-    assert.equal(withoutGrant.payment, null);
+    assert.equal(withoutLegacyGrants.payment.account_number, "012345678901");
     assert.deepEqual(
-      [withoutGrant.allowed_actions.view_payment, withoutGrant.allowed_actions.view_pii],
-      [false, false],
-      "the directory audience never implies payment_view/pii_view");
+      [withoutLegacyGrants.allowed_actions.view_payment, withoutLegacyGrants.allowed_actions.view_pii],
+      [true, true],
+      "payment and profile actions follow the authorized worker audience");
     await grantCapability(db, REVIEWER_APP, "payment_view");
-    const withPayment = paidRow(await listWorkers(db, {
-      auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" }));
-    assert.equal(withPayment.payment.account_number, "••••••••8901");
-    assert.equal(withPayment.allowed_actions.view_payment, true);
-    assert.equal(withPayment.allowed_actions.view_pii, false,
-      "payment_view does not imply pii_view");
     await grantCapability(db, REVIEWER_APP, "pii_view");
-    const withPii = paidRow(await listWorkers(db, {
+    assert.equal(await hasCapability(db, REVIEWER_APP, "payment_view"), false);
+    assert.equal(await hasCapability(db, REVIEWER_APP, "pii_view"), false);
+    const withLegacyGrants = paidRow(await listWorkers(db, {
       auth: REVIEWER_AUTH, app: REVIEWER_APP, scope: "all" }));
-    assert.equal(withPii.allowed_actions.view_pii, true);
+    assert.deepEqual(withLegacyGrants.payment, withoutLegacyGrants.payment);
+    assert.deepEqual(withLegacyGrants.allowed_actions, withoutLegacyGrants.allowed_actions);
     for (const leaked of ["national_id", "date_of_birth", "address", "phone", "worker_details"]) {
-      assert.equal(leaked in withPii, false, leaked + " must never be in a directory row");
+      assert.equal(leaked in withLegacyGrants, false, leaked + " must never be in a directory row");
     }
   } finally {
     await db.close();
@@ -612,9 +612,9 @@ test("W03: the employment status filter reads the latest status event", async ()
 });
 
 // ---------------------------------------------------------------------------
-// 5. PII / payment projection is capability-gated and masked.
+// 5. Worker row scope governs payment; full worker profile PII stays excluded.
 // ---------------------------------------------------------------------------
-test("W03: payment is masked and gated by payment_view; raw PII is never projected", async () => {
+test("W03-R1: payment follows worker scope; raw profile PII is never projected", async () => {
   const db = await buildDb();
   try {
     await seed(db);
@@ -625,26 +625,24 @@ test("W03: payment is masked and gated by payment_view; raw PII is never project
         account_holder_name: "Synthetic Holder" },
     });
 
-    const withoutCapability = await listWorkers(db, { scope: "managed" });
-    const rowWithout = withoutCapability.items[0];
-    assert.equal(rowWithout.payment, null, "no payment_view => no payment object");
-    assert.equal(rowWithout.allowed_actions.view_payment, false);
-    assert.equal(rowWithout.allowed_actions.view_pii, false);
+    const withoutLegacyGrants = await listWorkers(db, { scope: "managed" });
+    const rowWithout = withoutLegacyGrants.items[0];
+    assert.equal(rowWithout.payment.account_number, "012345678901");
+    assert.equal(rowWithout.allowed_actions.view_payment, true);
+    assert.equal(rowWithout.allowed_actions.view_pii, true);
     for (const leaked of ["national_id", "date_of_birth", "address", "phone", "worker_details"]) {
       assert.equal(leaked in rowWithout, false, leaked + " must never be in the directory row");
     }
 
     await grantCapability(db, MGR_A_APP, "payment_view");
     await grantCapability(db, MGR_A_APP, "pii_view");
-    const withCapability = await listWorkers(db, { scope: "managed" });
-    const rowWith = withCapability.items[0];
-    assert.equal(rowWith.allowed_actions.view_payment, true);
-    assert.equal(rowWith.allowed_actions.view_pii, true);
-    assert.equal(rowWith.payment.state, "provided");
-    assert.equal(rowWith.payment.account_number, "••••••••8901",
-      "only the last four digits survive the mask");
-    assert.equal(rowWith.payment.account_number.includes("012345678901"), false,
-      "the raw account number is never returned");
+    assert.equal(await hasCapability(db, MGR_A_APP, "payment_view"), false);
+    assert.equal(await hasCapability(db, MGR_A_APP, "pii_view"), false);
+    const withLegacyGrants = await listWorkers(db, { scope: "managed" });
+    const rowWith = withLegacyGrants.items[0];
+    assert.deepEqual(rowWith.payment, rowWithout.payment,
+      "retired field-level grants do not change the authorized worker projection");
+    assert.deepEqual(rowWith.allowed_actions, rowWithout.allowed_actions);
     assert.deepEqual(Object.keys(rowWithout).sort(), Object.keys(rowWith).sort(),
       "the row key set never changes with capability");
   } finally {
@@ -669,8 +667,8 @@ test("W03: allowed_actions is server-supplied and follows the assignment authori
       for (const row of page.items) {
         assert.deepEqual(row.allowed_actions, {
           view: true,
-          view_pii: false,
-          view_payment: false,
+          view_pii: true,
+          view_payment: true,
           propose_change: true,
           propose_change_code: null,
         }, scope + " must advertise propose_change for the assigned manager");
@@ -680,8 +678,8 @@ test("W03: allowed_actions is server-supplied and follows the assignment authori
     for (const row of admin.items) {
       assert.deepEqual(row.allowed_actions, {
         view: true,
-        view_pii: false,
-        view_payment: false,
+        view_pii: true,
+        view_payment: true,
         propose_change: false,
         propose_change_code: "NOT_PROJECT_MANAGER",
       }, "a non-manager must get the stable denial, never a placeholder");

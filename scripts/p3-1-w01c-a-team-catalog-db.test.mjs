@@ -81,15 +81,15 @@ async function addActor(db, actor) {
   );
   for (const capability of actor.capabilities ?? []) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)"
-      + " values ($1::uuid, $2, '2020-01-01')",
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)"
+      + " values ($1::uuid, $2, '2020-01-01', true)",
       [actor.app, capability],
     );
   }
   for (const kind of actor.scopes ?? []) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)"
-      + " values ($1::uuid, $2, $3::uuid, '2020-01-01')",
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)"
+      + " values ($1::uuid, $2, $3::uuid, '2020-01-01', true)",
       [actor.app, kind, kind === "team" ? TEAM_FIXTURE_ID : null],
     );
   }
