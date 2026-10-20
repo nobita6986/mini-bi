@@ -50,8 +50,8 @@ async function insertActor(db, auth, app, capabilities) {
   );
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1::uuid,$2,'2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1::uuid,$2,'2020-01-01',true)",
       [app, capability],
     );
   }
@@ -86,8 +86,8 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
     );
     await db.query(
       "insert into public.recruiter_provider_memberships" +
-        " (recruiter_id,provider_type,valid_from,vendor_id)" +
-        " values ($1::uuid,'vendor','2020-01-01',$2)",
+        " (recruiter_id,provider_type,valid_from,vendor_id,is_current)" +
+        " values ($1::uuid,'vendor','2020-01-01',$2,true)",
       [RECRUITER, VENDOR],
     );
 
@@ -96,13 +96,13 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
     await insertActor(db, MANAGER_AUTH, MANAGER_APP, ["entry_own", "change_request_create"]);
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-        " (app_user_id,recruiter_id,verified,valid_from)" +
-        " values ($1::uuid,$2::uuid,true,'2020-01-01')",
+        " (app_user_id,recruiter_id,verified,valid_from,is_current)" +
+        " values ($1::uuid,$2::uuid,true,'2020-01-01',true)",
       [MANAGER_APP, RECRUITER],
     );
     await db.query(
       "insert into public.direct_entry_project_manager_assignments" +
-        " (project_id,manager_recruiter_id,valid_from) values ($1,$2::uuid,'2020-01-01')",
+        " (project_id,manager_recruiter_id,valid_from,is_current) values ($1,$2::uuid,'2020-01-01',true)",
       [PROJECT, RECRUITER],
     );
     await insertActor(db, CATALOG_AUTH, CATALOG_APP, ["entry_create"]);
@@ -227,13 +227,13 @@ test("P3-W07A-R3 Vendor stays hidden as a team; assigned PM uploads only on DRAF
       [entryId],
     )).rows[0].submission_id;
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1::uuid,'submission_create','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1::uuid,'submission_create','2020-01-01',true)",
       [MANAGER_APP],
     );
     await db.query(
-      "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
-        " values ($1::uuid,'own','2020-01-01')",
+      "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current)" +
+        " values ($1::uuid,'own','2020-01-01',true)",
       [MANAGER_APP],
     );
     await seedLegacyReviewSubmission(db, submissionId);
