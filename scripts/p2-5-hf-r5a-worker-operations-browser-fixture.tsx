@@ -14,6 +14,8 @@ const TEAM_ID = "00000003-0000-4000-8000-000000000003";
 const AUTHORIZATION_DATE = "2026-10-08";
 const CURSOR_ALL = "20261008:c1000000-0000-4000-8000-000000000025";
 const CURSOR_MANAGED = "20261008:c1000000-0000-4000-8000-000000000031";
+const CURSOR_REQUEST_PAGE_2 = "20261008100400000000:d1000000-0000-4000-8000-000000000002";
+const CURSOR_REQUEST_PAGE_3 = "20261009100400000000:d1000000-0000-4000-8000-000000000003";
 
 type Row = Record<string, unknown>;
 type Call = {
@@ -32,6 +34,8 @@ let conflictNext = false;
 let failSubmissions = false;
 let failRequests = false;
 let directEditAllowed = false;
+let requestResponseGateOpen = false;
+const requestResponseWaiters: Array<() => void> = [];
 
 function row(index: number, name?: string): Row {
   return {
@@ -184,13 +188,33 @@ if (typeof window !== "undefined") {
         next_cursor: "20261004090100000000:b1000000-0000-4000-8000-000000000002" });
     }
     if (url.pathname === "/api/direct-entry/change-requests" && method === "GET") {
+      if (!requestResponseGateOpen) {
+        await new Promise<void>((resolve) => requestResponseWaiters.push(resolve));
+      }
       if (failRequests) throw new TypeError("Failed to fetch");
-      if (url.searchParams.get("cursor") !== null) {
+      if (url.searchParams.get("cursor") === CURSOR_REQUEST_PAGE_2) {
         return json({ ok: true,
-          requests: [{ request_id: "d1000000-0000-4000-8000-000000000002", state: "PENDING",
+          requests: [
+            { request_id: "d1000000-0000-4000-8000-000000000001", state: "PENDING",
+              version: 2, created_at: "2026-10-03T10:00:00.000000Z", item_count: 1,
+              entry_ids: ["c1000000-0000-4000-8000-000000000001"],
+              can_withdraw: true, can_decide: false, proposer_display_name: "Nhân viên TEST",
+              summary: "Cập nhật thông tin hồ sơ" },
+            { request_id: "d1000000-0000-4000-8000-000000000002", state: "PENDING",
             version: 1, created_at: "2026-10-03T09:00:00.000000Z", item_count: 1,
             entry_ids: ["c1000000-0000-4000-8000-000000000002"],
-            can_withdraw: false, can_decide: true }],
+            can_withdraw: false, can_decide: true, proposer_display_name: "Nhân viên TEST",
+              summary: "Điều chỉnh trạng thái làm việc" },
+          ],
+          page_size: 20, has_more: true, next_cursor: CURSOR_REQUEST_PAGE_3 });
+      }
+      if (url.searchParams.get("cursor") === CURSOR_REQUEST_PAGE_3) {
+        return json({ ok: true,
+          requests: [{ request_id: "d1000000-0000-4000-8000-000000000003", state: "PENDING",
+            version: 1, created_at: "2026-10-02T09:00:00.000000Z", item_count: 1,
+            entry_ids: ["c1000000-0000-4000-8000-000000000003"],
+            can_withdraw: false, can_decide: true, proposer_display_name: "Nhân viên TEST",
+            summary: "Điều chỉnh dữ liệu hồ sơ" }],
           page_size: 20, has_more: false, next_cursor: null });
       }
       return json({ ok: true,
@@ -198,7 +222,8 @@ if (typeof window !== "undefined") {
           version: 2, created_at: "2026-10-03T10:00:00.000000Z", item_count: 1,
           entry_ids: ["c1000000-0000-4000-8000-000000000001"],
           // Contract: mot yeu cau khong the vua rut duoc vua duyet duoc.
-          can_withdraw: true, can_decide: false }],
+          can_withdraw: true, can_decide: false, proposer_display_name: "Nhân viên TEST",
+          summary: "Cập nhật thông tin hồ sơ" }],
         page_size: 20, has_more: true,
         next_cursor: "20261008100400000000:d1000000-0000-4000-8000-000000000002" });
     }
@@ -232,10 +257,26 @@ if (typeof window !== "undefined") {
     allowSubmissions: () => { failSubmissions = false; },
     failRequests: () => { failRequests = true; },
     allowRequests: () => { failRequests = false; },
+    releaseRequestResponses: () => {
+      requestResponseGateOpen = true;
+      for (const release of requestResponseWaiters.splice(0)) release();
+    },
     queueText: () => document.querySelector<HTMLElement>(
       'section[aria-label="Danh sách yêu cầu thay đổi"]')?.innerText ?? "",
+    queueSummaryText: () => document.querySelector<HTMLElement>(
+      'section[aria-label="Danh sách yêu cầu thay đổi"]')?.closest("details")
+      ?.querySelector("summary")?.textContent ?? "",
     queueCards: () => document.querySelector<HTMLElement>(
       'section[aria-label="Danh sách yêu cầu thay đổi"]')?.querySelectorAll("li").length ?? 0,
+    queueCardTexts: () => Array.from(document.querySelectorAll<HTMLElement>(
+      'section[aria-label="Danh sách yêu cầu thay đổi"] li'), (item) => item.textContent?.trim() ?? ""),
+    openRequestQueue: () => {
+      const details = document.querySelector<HTMLElement>(
+        'section[aria-label="Danh sách yêu cầu thay đổi"]')?.closest("details");
+      if (!details) return false;
+      if (!details.open) details.querySelector("summary")?.click();
+      return details.open;
+    },
     alertTexts: () => Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]'),
       (alert) => alert.innerText.trim()),
     alertHasButton: (label: string) =>
