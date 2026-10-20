@@ -326,8 +326,8 @@ test("PRE-W2-HF Project<->Team: ledger position, source boundary and ACL posture
                has_function_privilege('service_role', p.oid, 'EXECUTE') as svc_exec
           from pg_proc p where p.oid = to_regprocedure($1)`, [signature]);
       assert.equal(rows.length, 1);
-      assert.deepEqual(rows[0], { anon_exec: false, auth_exec: false, svc_exec: true },
-        `${signature} remains available to the current server caller during coordinated rollout`);
+      assert.deepEqual(rows[0], { anon_exec: false, auth_exec: false, svc_exec: false },
+        `${signature} is a retired overload; current server callers use the batch grant and six-argument revoke RPCs`);
     }
 
     // Internal helpers stay revoked from every role.
