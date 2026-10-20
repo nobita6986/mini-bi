@@ -241,6 +241,11 @@ async function serviceRpc(db, query, args) {
   }
 }
 
+// Exercise internal routine logic as owner; service-role access is tested separately.
+async function ownerRpc(db, query, args) {
+  return (await db.query(query, args)).rows[0].result;
+}
+
 async function listDrafts(db, authSubject, appUserId) {
   await db.exec("begin; set local role service_role;");
   try {
@@ -534,7 +539,7 @@ test("P3-W07C-R7 historical work dates use current recruiter membership and date
        where recruiter_id = $3::uuid and valid_from = $4::date
     `, [recent, today, IDS.recruiter, today]);
 
-    const update = await serviceRpc(db, `
+    const update = await ownerRpc(db, `
       select public.direct_entry_update_draft_row(
         $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text
       ) as result
@@ -831,7 +836,7 @@ test("mutation probes show status, capability and OCC regressions when guards ar
        order by employee_code
     `, [created.entry_ids]);
     const staleEntry = created.entry_ids[2];
-    await serviceRpc(db, `
+    await ownerRpc(db, `
       select public.direct_entry_update_draft_row(
         $1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,$5::text
       ) as result
@@ -841,7 +846,7 @@ test("mutation probes show status, capability and OCC regressions when guards ar
       "public.direct_entry_update_draft_row(uuid,uuid,uuid,integer,jsonb,text)",
       "  if p_expected_version is null or p_expected_version <> v_entry.version then",
       "  if false then");
-    const stale = await serviceRpc(db, `
+    const stale = await ownerRpc(db, `
       select public.direct_entry_update_draft_row(
         $1::uuid,$2::uuid,$3::uuid,1,$4::jsonb,$5::text
       ) as result
@@ -935,7 +940,7 @@ test("P3-W07C-R7 replacement project manager can read and edit an old draft only
     assert.equal(read.scope_kind, "project");
     assert.equal(read.worker_details.display_name, "Synthetic Worker 930002");
 
-    const updated = await serviceRpc(db, `
+    const updated = await ownerRpc(db, `
       select public.direct_entry_update_draft_row(
         $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text
       ) as result
@@ -974,11 +979,11 @@ test("migration #39 keeps the source-derived function inventory and service boun
   const db = await database();
   try {
     const result = await db.query(`
-      select count(distinct p.proname)::integer as total,
-        count(distinct p.proname) filter (
+      select count(*)::integer as total,
+        count(*) filter (
           where has_function_privilege('service_role', p.oid, 'EXECUTE')
         )::integer as service_role,
-        count(distinct p.proname) filter (
+        count(*) filter (
           where not has_function_privilege('service_role', p.oid, 'EXECUTE')
         )::integer as internal,
         count(*) filter (
@@ -1069,13 +1074,12 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // #109 adds one service-role RPC; #113 adds five, #114 adds two, #115 adds one,
     // and #116 adds two; #118 adds three service-role-only worker-document
     // staging RPCs and #119 tightens the batch stage-count bound in place. The
-    // current migration set measures 263 distinct names / 132 service-role /
-    // 131 internal; #120 adds one private download helper and #122 adds three
-    // service-role RPCs plus one internal guard, with no exposed internal functions.
+    // After S0-T1-C, the 264 direct_entry routine signatures split into 106
+    // service-role entry points and 158 internal routines, none exposed to clients.
     assert.deepEqual(result.rows[0], {
-      total: 263,
-      service_role: 132,
-      internal: 131,
+      total: 264,
+      service_role: 106,
+      internal: 158,
       exposed_internal: 0,
     });
   } finally {

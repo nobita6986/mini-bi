@@ -280,17 +280,18 @@ test("E13: disabled actor, forged pair, and expired grant fail closed", async ()
   } finally { await db.close(); }
 });
 
-test("E18: scoped RPC/view ACL is service-role-only and raw tables stay denied", async () => {
+test("E18: reporting entry points are service-role-only and raw tables stay denied", async () => {
   const db = await buildDb();
   try {
-    for (const sig of [
-      "public.direct_entry_reporting_resolve_audience(uuid,uuid)",
-      "public.direct_entry_reporting_scoped_facts(uuid,uuid,jsonb)",
-      "public.direct_entry_reporting_scoped_options(uuid,uuid)",
-      "public.direct_entry_reporting_authorized_entries(uuid,uuid)",
-    ]) {
+    const routines = [
+      ["public.direct_entry_reporting_resolve_audience(uuid,uuid)", false],
+      ["public.direct_entry_reporting_scoped_facts(uuid,uuid,jsonb)", true],
+      ["public.direct_entry_reporting_scoped_options(uuid,uuid)", true],
+      ["public.direct_entry_reporting_authorized_entries(uuid,uuid)", false],
+    ];
+    for (const [sig, serviceAllowed] of routines) {
       const r = await db.query("select has_function_privilege('anon',$1::regprocedure,'EXECUTE') as anon, has_function_privilege('authenticated',$1::regprocedure,'EXECUTE') as auth, has_function_privilege('service_role',$1::regprocedure,'EXECUTE') as svc", [sig]);
-      assert.deepEqual({ anon: r.rows[0].anon, auth: r.rows[0].auth, svc: r.rows[0].svc }, { anon: false, auth: false, svc: true }, sig);
+      assert.deepEqual({ anon: r.rows[0].anon, auth: r.rows[0].auth, svc: r.rows[0].svc }, { anon: false, auth: false, svc: serviceAllowed }, sig);
     }
     const raw = await db.query("select has_table_privilege('service_role','public.direct_entries','SELECT') as sel");
     assert.equal(raw.rows[0].sel, false, "raw direct_entries must stay denied to service_role");

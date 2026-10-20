@@ -148,6 +148,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   const actual = new Set(rows.map((row) => row.proname));
   assert.deepEqual(actual, expected);
   const serviceRpcs = rows.filter((row) => row.service_exec).length;
+  const internalRpcs = rows.length - serviceRpcs;
   // P2-W04A migration #40 added 8 new public.direct_entry_reporting_*
   // helpers (cutoff, source_id, dim_key, recruiter_alias_key,
   // recruiter_provider_key, employment_key, pre_cutover_blocker_count,
@@ -185,6 +186,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // stage-count bound in the batch RPC and adds no function name. #120 adds one
   // private contract-download scope helper; it grants no runtime role access.
   // #122 adds three service-role-only deletion/cleanup RPCs and one internal stage guard.
-  assert.deepEqual([actual.size, serviceRpcs, actual.size - serviceRpcs], [263, 133, 130]);
+  // S0-T1-C closes direct grants to helper routines; count signatures, not overload names.
+  assert.deepEqual([rows.length, serviceRpcs, internalRpcs], [264, 106, 158]);
   await db.close();
 });
