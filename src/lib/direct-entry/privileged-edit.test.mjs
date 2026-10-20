@@ -61,7 +61,8 @@ test("R3: patch projection is strict and refuses authority keys and malformed CM
   for (const bad of [
     { ...validBody, expected_entry_version: 0 },
     { ...validBody, expected_entry_version: "3" },
-    { ...validBody, reason: "   " },
+    { ...validBody, reason: 1 },
+    { ...validBody, reason: "x".repeat(1001) },
     { ...validBody, patch: {} },
     { ...validBody, patch: { team_id: "x" } },
     { ...validBody, patch: { provider_type: "vendor" } },
@@ -84,6 +85,15 @@ test("R3: patch projection is strict and refuses authority keys and malformed CM
   ]) {
     assert.equal(projectPrivilegedEditRequest(bad), null, JSON.stringify(bad));
   }
+  for (const body of [
+    { expected_entry_version: 3, patch: { labor_type: "PERMANENT" } },
+    { ...validBody, reason: null },
+    { ...validBody, reason: "  \t  " },
+  ]) {
+    assert.equal(projectPrivilegedEditRequest(body)?.reason, null);
+  }
+  assert.equal(projectPrivilegedEditRequest({ ...validBody, reason: "  Reviewed  " })?.reason,
+    "Reviewed");
   // The canonical CMT/CCCD rule of P2.5-HF-R2 applies on this path too.
   assert.equal(projectPrivilegedEditRequest({ ...validBody,
     patch: { worker_details: { national_id: { state: "provided", value: "012345678901" } } } }) !== null,
@@ -191,6 +201,11 @@ test("R3: the repository sends only server actor refs and validates the result s
     p_expected_version: 3, p_patch: { labor_type: "PERMANENT" }, p_reason: "R3",
     p_idempotency_key: "00000000-0000-4000-8000-000000000900",
   });
+  await repository.edit({
+    ...actor, entry_id: entryId, expected_version: 3, patch: { labor_type: "PERMANENT" },
+    reason: null, idempotency_key: "00000000-0000-4000-8000-000000000901",
+  });
+  assert.equal(calls[1].args.p_reason, null);
   for (const data of [
     { entry_id: entryId },
     { entry_id: entryId, version: 4, extra: 1 },
@@ -220,6 +235,19 @@ test("R3: a successful edit returns only the identity and the new version", asyn
     expected_version: 3, patch: { labor_type: "PERMANENT" }, reason: "R3 correction",
     idempotency_key: "00000000-0000-4000-8000-000000000900",
   });
+});
+
+test("R1.1: optional direct-edit action reason is normalized to null at the API boundary", async () => {
+  for (const body of [
+    { expected_entry_version: 3, patch: { labor_type: "PERMANENT" } },
+    { ...validBody, reason: null },
+    { ...validBody, reason: "   " },
+  ]) {
+    const deps = dependencies();
+    const response = await privilegedEditEntry(request(body), entryId, "true", deps);
+    assert.equal(response.status, 200);
+    assert.equal(deps.calls[0].reason, null);
+  }
 });
 
 test("R4: repository authorization denial remains an HTTP 403", async () => {

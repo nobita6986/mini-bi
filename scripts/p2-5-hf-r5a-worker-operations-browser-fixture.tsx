@@ -31,6 +31,7 @@ let catalogMode = "ready";
 let conflictNext = false;
 let failSubmissions = false;
 let failRequests = false;
+let directEditAllowed = false;
 
 function row(index: number, name?: string): Row {
   return {
@@ -43,6 +44,7 @@ function row(index: number, name?: string): Row {
     project_display: "Dự án Alpha",
     first_work_date: "2026-02-01",
     labor_type: "TEMPORARY",
+    labor_type_display: "Thời vụ",
     employment_status: "ON",
     recruiter_id: RECRUITER_ID,
     recruiter_display: "Nguyễn An · AN-01",
@@ -52,13 +54,19 @@ function row(index: number, name?: string): Row {
     is_project_manager: true,
     allowed_actions: {
       view: true, view_pii: true, view_payment: true,
-      propose_change: true, propose_change_code: null,
+      propose_change: true, propose_change_code: null, direct_edit: directEditAllowed,
     },
   };
 }
 
-const allRows = Array.from({ length: 30 }, (_, index) => row(index + 1));
-const managedRows = [row(31, "Người lao động quản lý 01"), row(32, "Người lao động quản lý 02")];
+function rowsForScope(scope: string): Row[] {
+  if (scope === "all") return Array.from({ length: 30 }, (_, index) => row(index + 1));
+  if (scope === "managed") return [row(31, "Người lao động quản lý 01"),
+    row(32, "Người lao động quản lý 02")];
+  if (scope === "team") return [row(33, "Người lao động team 01"),
+    row(34, "Người lao động team 02")];
+  return [];
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -72,7 +80,7 @@ function workerPage(scope: string, cursor: string | null): Response {
     failLoadMore = false;
     return json({ ok: false, code: "WORKER_UNAVAILABLE" }, 500);
   }
-  const rows = scope === "all" ? allRows : scope === "managed" ? managedRows : [];
+  const rows = rowsForScope(scope);
   let items = rows;
   let has_more = false;
   let next_cursor: string | null = null;
@@ -84,9 +92,13 @@ function workerPage(scope: string, cursor: string | null): Response {
     items = cursor === null ? rows.slice(0, 1) : rows.slice(1);
     has_more = cursor === null;
     next_cursor = cursor === null ? CURSOR_MANAGED : null;
+  } else if (scope === "team") {
+    items = rows;
   }
   return json({ ok: true, items, scope, page_size: 25, has_more, next_cursor,
-    authorization_date: AUTHORIZATION_DATE });
+    authorization_date: AUTHORIZATION_DATE,
+    summary: { total_workers: rows.length, project_count: rows.length === 0 ? 0 : 1,
+      recruiter_count: rows.length === 0 ? 0 : 1 } });
 }
 
 function catalogBody(effectiveDate: string): unknown {
@@ -114,6 +126,7 @@ function entryBaseline(id: string): unknown {
       employee_code: "hrp-2026-000001",
       recruiter_id: RECRUITER_ID,
       labor_type: "TEMPORARY",
+      labor_type_display: "Thời vụ",
       provider_type: "hrp",
       employment_status: { status: "ON", effective_date: "2026-01-05" },
       payment: { state: "provided", account_number: "0123456789", bank_id: "VCB",
@@ -219,14 +232,10 @@ if (typeof window !== "undefined") {
     allowSubmissions: () => { failSubmissions = false; },
     failRequests: () => { failRequests = true; },
     allowRequests: () => { failRequests = false; },
-    queueText: () => {
-      const heading = document.getElementById("direct-entry-change-requests-heading");
-      return heading?.closest<HTMLElement>("section")?.innerText ?? "";
-    },
-    queueCards: () => {
-      const heading = document.getElementById("direct-entry-change-requests-heading");
-      return heading?.closest<HTMLElement>("section")?.querySelectorAll("li").length ?? 0;
-    },
+    queueText: () => document.querySelector<HTMLElement>(
+      'section[aria-label="Danh sách yêu cầu thay đổi"]')?.innerText ?? "",
+    queueCards: () => document.querySelector<HTMLElement>(
+      'section[aria-label="Danh sách yêu cầu thay đổi"]')?.querySelectorAll("li").length ?? 0,
     alertTexts: () => Array.from(document.querySelectorAll<HTMLElement>('[role="alert"]'),
       (alert) => alert.innerText.trim()),
     alertHasButton: (label: string) =>
@@ -245,10 +254,12 @@ if (typeof window !== "undefined") {
     setCatalogError: (value: boolean) => { catalogMode = value ? "error" : "ready"; },
     conflictNext: () => { conflictNext = true; },
     bodyText: () => document.body.innerText,
-    tabLabels: () => Array.from(document.querySelectorAll<HTMLElement>('[role="tab"]'),
-      (tab) => tab.innerText.trim()),
+    tabLabels: () => Array.from(document.querySelectorAll<HTMLElement>(
+      '[role="tablist"][aria-label="Quan hệ người lao động"] [role="tab"]'),
+    (tab) => tab.innerText.trim()),
     clickTab: (label: string) => {
-      const target = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+      const target = Array.from(document.querySelectorAll<HTMLButtonElement>(
+        '[role="tablist"][aria-label="Quan hệ người lao động"] [role="tab"]'))
         .find((tab) => tab.innerText.trim() === label);
       if (!target) return false;
       target.focus();
@@ -325,14 +336,16 @@ if (typeof window !== "undefined") {
     focusText: () => document.activeElement?.textContent?.trim() ?? null,
     focusedId: () => document.activeElement?.id ?? null,
     queueBeforeList: () => {
-      const heading = document.getElementById("direct-entry-change-requests-heading");
-      const queue = heading?.closest("section") ?? null;
+      const queues = Array.from(document.querySelectorAll<HTMLElement>("main > details"))
+        .filter((panel) => panel.querySelector(
+          'section[aria-label="Danh sách yêu cầu thay đổi"]') !== null);
+      const queue = queues[0] ?? null;
       const nodes = Array.from(document.querySelectorAll("main > *"));
       return {
         present: queue !== null,
         queueIndex: queue === null ? -1 : nodes.indexOf(queue),
         panelIndex: nodes.findIndex((node) => node.getAttribute("role") === "tabpanel"),
-        queueCount: document.querySelectorAll("#direct-entry-change-requests-heading").length,
+        queueCount: queues.length,
       };
     },
     tabpanelSelectCount: () =>
@@ -342,9 +355,9 @@ if (typeof window !== "undefined") {
         .find((item) => item.innerText.trim() === "Trạng thái làm việc");
       return label?.htmlFor ? api.fill("#" + CSS.escape(label.htmlFor), value) : false;
     },
-    setPrivileged: (value: boolean) => {
-      (window as unknown as { __p25r5aPrivileged?: (flag: boolean) => void })
-        .__p25r5aPrivileged?.(value);
+    setDirectEditAllowed: (value: boolean) => {
+      directEditAllowed = value;
+      (window as unknown as { __p25r5aRemount?: () => void }).__p25r5aRemount?.();
     },
     remount: () => {
       (window as unknown as { __p25r5aRemount?: () => void }).__p25r5aRemount?.();
@@ -355,19 +368,16 @@ if (typeof window !== "undefined") {
 
 export default function WorkerOperationsBrowserFixture() {
   const [mountKey, setMountKey] = useState(0);
-  const [privileged, setPrivileged] = useState(true);
   useEffect(() => {
-    const holder = window as unknown as { __p25r5aRemount?: () => void;
-      __p25r5aPrivileged?: (value: boolean) => void };
+    const holder = window as unknown as { __p25r5aRemount?: () => void };
     holder.__p25r5aRemount = () => setMountKey((value) => value + 1);
-    holder.__p25r5aPrivileged = (value: boolean) => setPrivileged(value);
   }, []);
   return (
     <WorkerOperations
       key={mountKey}
       canSeeAllWorkers={true}
+      canSeeTeamWorkers={true}
       canReview={true}
-      canPrivilegedEditWorkers={privileged}
       actor={{ capabilities: ["entry_admin", "change_review"], scopes: [{ kind: "all" }] }}
     />
   );

@@ -25,7 +25,7 @@ test("W06: ba tab khong tron quan he + tablist keyboard arrow/Home/End", () => {
   assert.match(source, /role="tablist"/);
   assert.match(source, /role="tab"/);
   assert.match(source, /role="tabpanel"/);
-  assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers\)/);
+  assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers, canSeeTeamWorkers\)/);
   assert.match(source, /tabs\.map\(/);
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
     assert.ok(source.includes(key), "thieu keyboard " + key);
@@ -53,6 +53,18 @@ test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projec
   assert.match(source, /workersQuery\(\{[\s\S]{0,80}scope, \.\.\.workerFilters, cursor/);
   assert.match(source, /submissionsQuery\(cursor\)/);
   assert.match(source, /requestsQuery\(cursor, queue\)/);
+});
+
+test("R1.1: Team tab uses the server-authorized team scope and direct edit uses the row signal", () => {
+  assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers, canSeeTeamWorkers\)/);
+  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers\)/);
+  assert.match(source, /team: emptyTabPage\(\)/);
+  assert.match(source, /row\.allowed_actions\.direct_edit \? \(/);
+  assert.doesNotMatch(source, /canPrivilegedEditWorkers|canPrivilegedEdit=|canDirectlyCorrectWorkers/);
+  assert.match(source, /scope, \.\.\.workerFilters, cursor/);
+  assert.match(page, /workerOperationsTeamScopePredicate\(projection\)/);
+  assert.match(page, /canSeeTeamWorkers=\{canSeeTeamWorkers\}/);
+  assert.doesNotMatch(page, /canPrivilegedEditWorkers|canDirectlyCorrectWorkers/);
 });
 
 test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi tab/filter", () => {
@@ -123,7 +135,7 @@ test("P2.5-HF-R3: khong con cau hua ve quyen pham vi toan bo", () => {
 });
 
 test("W06-R2: initial tab tu actor projection server-side", () => {
-  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers\)/);
+  assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers\)/);
   assert.match(source, /actor\?: WorkerOperationsActor \| null/);
   assert.equal(/app_user_id|auth_subject/.test(source.split("\n")
     .filter((line) => !/^\s*(\*|\/\/)/.test(line)).join("\n")), false,
@@ -200,11 +212,13 @@ test("W06: page boundary cung flag + actor resolver nhu /direct-entry", () => {
   assert.match(page, /decideWorkerOperationsPageAccess/);
   assert.match(page, /workerOperationsAllScopePredicate/);
   assert.match(page, /workerOperationsReviewPredicate/);
+  assert.match(page, /workerOperationsTeamScopePredicate/);
   assert.match(page, /canSeeAllWorkers=\{canSeeAllWorkers\}/);
+  assert.match(page, /canSeeTeamWorkers=\{canSeeTeamWorkers\}/);
   assert.match(page, /canReview=\{canReview\}/);
   assert.match(page, /case "NOT_FOUND":[\s\S]{0,40}notFound\(\)/);
   assert.match(page, /redirect\("\/login\?next=\/direct-entry\/workers"\)/);
-  assert.match(page, /case "ALLOW":[\s\S]{0,800}<WorkerOperations/);
+  assert.match(page, /case "ALLOW":[\s\S]{0,1200}<WorkerOperations/);
 });
 
 test("W06: nav entry 'worker-operations' duoc dang ky trong registry hien co", () => {
@@ -218,7 +232,7 @@ test("W06-R1: review queue tai su dung list/reviewer hien co cho owner, team lea
   assert.match(source, /DirectEntryChangeRequestReviewer/);
   assert.match(source, /\{canViewRequests \? \(/);
   assert.match(source, /actor\?\.capabilities\.includes\("change_request_create"\)/);
-  assert.match(source, /actor\?\.capabilities\.includes\("team_manager_assign"\)/);
+  assert.match(source, /canReview \|\| canSeeTeamWorkers/);
   assert.match(source, /onReview=\{/);
   // Khong nhung editor Direct Entry.
   assert.equal(/DirectEntryLive|DirectEntryShell|DirectEntrySpreadsheetGrid/.test(source), false);
@@ -276,15 +290,24 @@ test("HF-R4: proposal preloads and exposes each ENTRY_FIELD value", () => {
   assert.match(source, /useState<WorkerProposeTarget>\("WORKER"\)/);
 });
 
-test("HF-R4: direct correction UI is gated by the server capability projection", () => {
-  assert.match(source, /canPrivilegedEditWorkers\?: boolean/);
-  assert.match(source, /canPrivilegedEdit=\{canPrivilegedEditWorkers\}/);
-  assert.match(source, /canPrivilegedEdit \? \(/);
+test("R1.1: direct correction is gated only by server-projected row action", () => {
+  assert.match(source, /row\.allowed_actions\.direct_edit \? \(/);
+  assert.doesNotMatch(source, /canPrivilegedEditWorkers|canPrivilegedEdit=|canDirectlyCorrectWorkers/);
   assert.match(source, /\/privileged-edit/);
-  assert.match(page, /canPrivilegedEditWorkers=\{canPrivilegedEditWorkers\}/);
   assert.match(source, /mode === "correction" \|\| target === "WORK_STATUS"/);
   assert.match(source, /patch\.employment_status = status\.proposal/);
   assert.match(source, /Giữ nguyên trạng thái/);
+});
+
+test("R1.1: B-owned action reasons are optional while OFF leave reason stays required", () => {
+  assert.doesNotMatch(source, /<textarea id=\{reasonId\} required/);
+  assert.doesNotMatch(source, /Lý do là bắt buộc\./);
+  assert.match(source, /const actionReason = trimmed === "" \? null : trimmed/);
+  assert.match(source, /reason: actionReason/);
+  assert.match(source, /buildWorkerExportRequest\(\{[\s\S]{0,100}reason: reason\.trim\(\) === "" \? null : reason\.trim\(\)/);
+  assert.match(source, /exportScopeForTab\(tab\)/);
+  assert.doesNotMatch(source, /<textarea id=\{reasonId\} required aria-required="true"/);
+  assert.match(source, /id="worker-leave-reason"[\s\S]{0,100}required aria-required="true"/);
 });
 
 test("W06: reviewer UI dung authority backend (can_decide), khong suy tu role client", () => {

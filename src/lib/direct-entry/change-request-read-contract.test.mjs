@@ -270,6 +270,7 @@ test("detail projection is exact, vocabulary-bound and never partial", () => {
     detailBody({ state: "pending" }),
     detailBody({ version: 0 }),
     detailBody({ created_at: "03/10/2026 10:00:00" }),
+    detailBody({ request_reason: 123 }),
     detailBody({ request_reason: " " }),
     detailBody({ request_reason: "x".repeat(4001) }),
     detailBody({ items: [] }),

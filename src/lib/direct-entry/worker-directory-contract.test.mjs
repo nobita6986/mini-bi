@@ -39,6 +39,7 @@ const row = {
   allowed_actions: {
     view: true, view_pii: false, view_payment: true,
     propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
+    direct_edit: false,
   },
 };
 const page = {
@@ -68,6 +69,8 @@ test("query accepts only the documented scope/filter/paging keys", () => {
     scope: "recruited", project_id: null, recruiter_id: null,
     employment_status: null, cursor: null, page_size: WORKER_DIRECTORY_DEFAULT_PAGE_SIZE,
   });
+
+  assert.equal(query("scope=team").value.scope, "team");
 
   for (const invalid of [
     "",                                            // scope bat buoc
@@ -99,6 +102,10 @@ test("row projection accepts the exact server shape and rejects drift", () => {
   assert.equal(projected.allowed_actions.view_payment, true,
     "legacy response flag is inert");
   assert.equal(projected.allowed_actions.propose_change, false);
+  assert.equal(projected.allowed_actions.direct_edit, false);
+  assert.equal(projectWorkerDirectoryRow({
+    ...row, allowed_actions: { ...row.allowed_actions, direct_edit: true },
+  }).allowed_actions.direct_edit, true, "the row-level server signal survives projection");
 
   const variants = {
     "extra key": { ...row, national_id: "012345678901" },
@@ -122,6 +129,13 @@ test("row projection accepts the exact server shape and rejects drift", () => {
     },
     "actions missing flag": {
       ...row, allowed_actions: { view: true, propose_change: false },
+    },
+    "actions direct_edit missing": {
+      ...row, allowed_actions: Object.fromEntries(
+        Object.entries(row.allowed_actions).filter(([key]) => key !== "direct_edit")),
+    },
+    "actions direct_edit wrong type": {
+      ...row, allowed_actions: { ...row.allowed_actions, direct_edit: "true" },
     },
     "payment string": { ...row, payment: "0912345678" },
   };

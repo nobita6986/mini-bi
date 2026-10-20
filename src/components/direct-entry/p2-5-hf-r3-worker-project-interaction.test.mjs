@@ -144,6 +144,14 @@ test("HF-R3: o ly do nghi chi hien khi chon Nghi viec, va bat buoc", () => {
   assert.match(workers, /targetKind = "WORK_STATUS"/);
 });
 
+test("R1.1: direct-edit action reason is optional and blank becomes null", () => {
+  assert.match(workers, /const actionReason = trimmed === "" \? null : trimmed/);
+  assert.match(workers, /reason: actionReason/);
+  assert.doesNotMatch(workers, /<textarea id=\{reasonId\} required/);
+  // Keep OFF leave_reason as a required business field, separate from the action reason.
+  assert.match(workers, /id="worker-leave-reason"[\s\S]{0,100}required aria-required="true"/);
+});
+
 test("HF-R3: proposal trang thai di qua DUNG validator cua create contract", () => {
   const built = buildWorkStatusProposal({ baseline: { status: "ON", effective_date: "2026-01-05" },
     status: "OFF", effectiveDate: "2026-02-01", leaveReason: "Ly do nghi", today: TODAY });

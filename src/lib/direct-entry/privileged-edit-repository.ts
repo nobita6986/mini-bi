@@ -76,7 +76,7 @@ function serviceRoleRpc(): Rpc {
 export type PrivilegedEditRepository = {
   edit(input: ActorRef & {
     entry_id: string; expected_version: number; patch: Record<string, unknown>;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<PrivilegedEditOutcome>;
 };
 
