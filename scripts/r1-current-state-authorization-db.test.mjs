@@ -1297,6 +1297,28 @@ test("actor binding and S0 service-role ACLs remain enforced", async () => {
          has_function_privilege('anon', 'public.direct_entry_export_workers(uuid,uuid,text,text,uuid,text,text)', 'EXECUTE') as export_anon,
          has_function_privilege('authenticated', 'public.direct_entry_export_workers(uuid,uuid,text,text,uuid,text,text)', 'EXECUTE') as export_authenticated`,
     );
+    const bootstrap = await db.query(
+      `select
+         (select pg_get_userbyid(proowner) from pg_proc where oid='public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)'::regprocedure) as apply_owner,
+         (select pg_get_userbyid(proowner) from pg_proc where oid='public.direct_entry_catalog_bootstrap_plan(uuid,uuid)'::regprocedure) as plan_owner,
+         has_function_privilege('service_role', 'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)', 'EXECUTE') as service,
+         has_function_privilege('public', 'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)', 'EXECUTE') as public,
+         has_function_privilege('anon', 'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)', 'EXECUTE') as anon,
+         has_function_privilege('authenticated', 'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)', 'EXECUTE') as authenticated,
+         has_schema_privilege('direct_entry_catalog_bootstrap_executor', 'public', 'CREATE') as executor_create
+      `,
+    );
+    assert.deepEqual(bootstrap.rows[0], {
+      apply_owner: "direct_entry_catalog_bootstrap_executor",
+      plan_owner: "direct_entry_catalog_bootstrap_executor",
+      service: true, public: false, anon: false, authenticated: false, executor_create: false,
+    }, "R1 preserves the bootstrap SECURITY DEFINER owner, service ACL and schema boundary");
+    const temporaryMembership = await db.query(
+      `select exists (select 1 from pg_auth_members where member=current_user::regrole
+        and roleid='direct_entry_catalog_bootstrap_executor'::regrole and grantor=current_user::regrole) as exists`,
+    );
+    assert.equal(temporaryMembership.rows[0].exists, false, "migration installer membership is not retained");
+
     assert.deepEqual(rows[0], {
       resolver_service: true,
       resolver_anon: false,
