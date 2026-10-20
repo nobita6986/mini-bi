@@ -1,8 +1,14 @@
 # S0-T1-C — RPC ACL inventory and allowlist
 
-**Status:** implementation candidate for T0 review; no shared database change made.
-**Baseline:** `c29adc58ea2b41d2ed66a908f6a66a545952986f` on `codex/s0-t1-c-rpc-acl`.
-**Scope:** Mini BI-owned RPC EXECUTE ACLs in `public`. The migration does not alter tables, data, ownership, policies, triggers, or default privileges.
+**Status:** S0-T1-C applied successfully to the Product Owner-designated TEST ref only; no production migration or application deployment was made.
+**Baseline:** `c29adc58ea2b41d2ed66a908f6a66a545952986f`; S0-A is merged in `main` at `60cc1fe2968d6085679599139a951eb98f395e39`. S0-T1-C source was tested from PR #79, commit `8ff8b8a94db7e56c49417c13f87cc0f5afc7d23c`.
+**Scope:** Mini BI-owned RPC EXECUTE ACLs in `public` on Supabase ref `oyykqfxkyqhxgrfntokl`, designated TEST by the Product Owner. The migration changes function ACLs and adds its ledger row. It does not change business tables or rows, function ownership, RLS policies, triggers, or default privileges. Its temporary `SET` membership is removed before transaction commit.
+
+## Scope and authorization
+
+- Authorized target: Supabase ref `oyykqfxkyqhxgrfntokl` (Vercel alias `bi2.hrpartner.vn`, labelled Production in Vercel but explicitly designated TEST by the Product Owner). No other ref was used.
+- Allowed operations: catalog metadata reads and the single S0-T1-C migration/ledger insert in one guarded transaction. No worker/personnel rows, live RPC invocations, exploit tests, or production configuration changes were performed.
+- Application actor resolution remains server-side; the S0-T1-C change only narrows database `EXECUTE` grants.
 
 ## Verified caller evidence
 
@@ -30,9 +36,11 @@ The source replay and test-project inventory use the same per-routine ACL snapsh
 | Native source replay before T1-C | 302 / 256 | 1 | 1 | 1 | 171 |
 | Authorized test project observed before T1-C | 302 / 256 | 273 | 273 | 273 | 294 |
 | Native source replay after T1-C | 302 / 256 | 0 | 0 | 0 | 140 |
-| Test project projected after T1-C (not applied) | 302 / 256 | 0 | 0 | 0 | 140 |
+| Authorized TEST project after T1-C apply | 302 / 256 | 0 | 0 | 0 | 140 |
 
-The one open source ACL is the trigger-only `ai_report_audit_immutable()`. The authorized test project's direct ACL inventory also has three EXECUTE entries for `direct_entry_catalog_bootstrap_executor`, which this migration preserves. The post-migration test-project row is a projection from the verified current snapshot and migration semantics; no shared database was changed. Exact test-project permission delta if reviewed and applied: `anon` 273→0 (-273), `authenticated` 273→0 (-273), `PUBLIC` 273→0 (-273), and `service_role` 294→140 (-154). Owner and bootstrap-executor permissions are preserved. In the clean source replay, OID comparison shows 31 service-role grants removed and zero allowlist grants added.
+The one open source ACL before T1-C is the trigger-only `ai_report_audit_immutable()`. Before the successful apply, the authorized TEST project's three routines owned by `direct_entry_catalog_bootstrap_executor` also had EXECUTE ACL entries for `PUBLIC`, `anon`, `authenticated`, and `service_role`. The final migration revokes those entries as the owning role, then restores `service_role` only for the allowlisted `direct_entry_catalog_bootstrap_plan` and `direct_entry_apply_catalog_bootstrap`; the private `direct_entry_catalog_bootstrap_projection` remains owner-only. Function owner and role-membership metadata are unchanged. The verified TEST permission delta is `anon` 273→0 (-273), `authenticated` 273→0 (-273), `PUBLIC` 273→0 (-273), and `service_role` 294→140 (-154). In the clean source replay, OID comparison shows 31 service-role grants removed and zero allowlist grants added.
+
+The initial guarded apply stopped and rolled back because those three owner-granted ACLs survived the first version's ordinary REVOKE. Catalog inspection found the grantor was `direct_entry_catalog_bootstrap_executor`; the migration login `postgres` had ADMIN membership but `SET FALSE`. The final migration adds a transaction-scoped, non-inheriting `SET TRUE` membership only when needed, uses it to revoke the owner's ACL rows, removes that exact temporary grant before commit, and leaves the original membership row unchanged. The native PostgreSQL regression exercises this path with a non-superuser runner.
 
 The 31 removed source service-role signatures are:
 
@@ -94,6 +102,8 @@ supabase_admin tables:   {postgres=arwdDxtm/supabase_admin, anon=arwdDxtm/supaba
 
 The creator-role evidence is the `pg_default_acl.defaclrole` value: the `public` function/table default rows are defined for `postgres` and separately for `supabase_admin` (not a global row). Of the 302 matching routines, 299 are owned by `postgres` and the three catalog-bootstrap routines are owned by `direct_entry_catalog_bootstrap_executor`. `scripts/apply-migrations.mjs` applies each migration over its configured PostgreSQL connection (`scripts/apply-migrations.mjs:86-92`) without issuing `SET ROLE`; when a pooler host is configured, `scripts/lib/load-supabase-config.mjs:98-100` builds the connection as `postgres.<project-ref>`. Together, the default-ACL role, routine ownership distribution, and migration connection configuration are evidence that ordinary Mini BI migrations create routines as `postgres` in the observed test project. They do not show that Mini BI uses the `supabase_admin` defaults, nor prove production has matching defaults.
 
+No `pg_default_acl` row exists for `direct_entry_catalog_bootstrap_executor`. The three runtime grants attributed to that owner therefore are verified per-object ACL state; their historical creation path is unresolved. S0-T1-C does not change creator defaults. The final native regression and guarded TEST transaction both compare RLS policies, triggers, and all default-ACL metadata before and after.
+
 S0-T1-C deliberately changes no default ACL. Do not change `postgres` or `supabase_admin` global defaults based on this one test-project snapshot: PostgreSQL global function defaults also affect functions created outside `public`, and a schema-local REVOKE cannot cancel the built-in global default PUBLIC EXECUTE. Keep S0-B separate. For each new Mini BI RPC, require an object-specific `REVOKE EXECUTE FROM PUBLIC, anon, authenticated` and only the reviewed server `GRANT` in the same migration. The CI regression applies migrations in version order, inserts the broad-grant simulation immediately before T1-C, then applies later migrations before the final catalog checks; a later Mini BI RPC inheriting broad defaults fails the client/PUBLIC checks, while an unreviewed service grant fails the exact service allowlist comparison. T0 should decide separately whether a dedicated migration-owner role or a narrowly reviewed creator-default change is warranted.
 
 ## Regression, integration notes, and recovery
@@ -104,8 +114,67 @@ Run the isolated native PostgreSQL test with:
 node --test scripts/s0-t1-c-rpc-acl.test.mjs
 ```
 
-Latest result: **1 passed, 0 failed**. The harness uses `initdb`/`pg_ctl` in a temporary cluster and a `pg` client. It creates the migration runner's `public.schema_migrations` table first, applies prior migrations in version order (including S0-A when that migration is integrated before T1-C), applies T1-C in a runner-owned transaction, then applies any later migrations before final ACL checks. It verifies allowlist resolution, no additions beyond source service grants, exact effective service permissions, client/PUBLIC denial, unchanged RLS/trigger/default metadata around T1-C, and the scratch trigger behavior. CI wiring is intentionally left to T0.
+Latest local result: **1 passed, 0 failed**. The harness uses `initdb`/`pg_ctl` in a temporary PostgreSQL 18 cluster and a `pg` client. It applies source migrations in order, models bootstrap-owned broad grants, and runs T1-C as a non-superuser migration runner that has ADMIN but not SET on the executor role. It verifies temporary membership cleanup, exact owner and service allowlist permissions, no client/PUBLIC EXECUTE, unchanged policies/triggers/default ACLs, actor source boundary, and trigger behavior. CI run `39360000473` passed all six PGlite shards, real PostgreSQL, static quality/typecheck/lint/build, and Vercel preview.
 
 Existing legacy/dev acceptance scripts and database tests still call some removed legacy RPCs with `SET ROLE service_role`, including `scripts/p1.6-w03-db.test.mjs`, `scripts/p1.6-w03-g3-dev-acceptance.mjs`, and W2 portrait-stage tests. They are not current `src` runtime callers; if T0 includes these specific paths after T1-C in CI, update the tests to use their intended test owner path or explicitly decide to retain a tested RPC in the allowlist. Do not silently restore their grants.
 
-The migration has no nested `BEGIN`/`COMMIT`; `scripts/apply-migrations.mjs` owns each migration transaction and inserts the ledger checksum before committing that same transaction. This keeps the ACL change and its migration-ledger record atomic. If an isolated/staging apply fails, that transaction rolls back. If a deployed ACL decision proves incorrect, use a new forward migration to restore only the reviewed signature/role permission, then rerun the native regression; do not restore the broad ACL snapshot wholesale. Production is not authorized for this change, and no migration was applied to any shared or production database.
+The migration has no nested `BEGIN`/`COMMIT`; `scripts/apply-migrations.mjs` owns each migration transaction and inserts the ledger checksum before committing that same transaction. The authorized TEST apply used a guarded single transaction with preconditions for the exact 123-row S0-A ledger, checksum, role, ACL counts, bootstrap membership, and absence of RLS policy dependencies. Postconditions checked ledger checksum, exact 140-routine service allowlist, zero client/PUBLIC EXECUTE, preserved owners/membership, and unchanged policy/trigger/default-ACL snapshots. The committed TEST ledger now has 124 rows with S0-T1-C checksum `7382013e39521601ae1c08de22e7579dc289a8e113ea8c362f8be6ba66e3417f`. If a future ACL decision proves incorrect, use a new forward migration to restore only a reviewed signature/role permission; do not restore the broad snapshot wholesale. No production migration or application deployment was authorized or performed.
+
+## Evidence, findings, and path
+
+### Evidence
+
+| ID | Evidence | Source and reproduction |
+|---|---|---|
+| E-001 | Source and actor-boundary regression: 302 routines, 256 SECURITY DEFINER; native replay after migration has zero `anon`/`authenticated`/PUBLIC EXECUTE and exactly 140 `service_role` routines. | `scripts/s0-t1-c-rpc-acl.test.mjs`; run `node --test scripts/s0-t1-c-rpc-acl.test.mjs`. |
+| E-002 | Full CI run `39360000473` passed six PGlite shards, real PostgreSQL, static quality, typecheck, lint, build, and Vercel preview. | [GitHub Actions run](https://github.com/nobita6986/mini-bi/actions/runs/39360000473). |
+| E-003 | Before apply, ref `oyykqfxkyqhxgrfntokl` had 123 ledger rows, latest S0-A checksum `f06317af…`, 302 matching routines, 273 EXECUTE-enabled routines for each client/PUBLIC, 294 for `service_role`, and three executor-owned routines. | Supabase CLI catalog-only query; no RPC invocation or business-row SELECT. |
+| E-004 | After apply, ledger is 124 rows, latest migration is `20261020180000_s0_t1_c_rpc_acl_allowlist.sql`, checksum `7382013e…`; ACL counts are `anon=0`, `authenticated=0`, `PUBLIC=0`, `service_role=140`. The three routines remain owned by the executor; plan/apply retain service EXECUTE and projection does not. Original membership remains `postgres → executor`, grantor `supabase_admin`, `ADMIN=true`, `INHERIT=false`, `SET=false`. | Read-only post-apply catalog queries on the same TEST ref; the guarded apply compared policy, trigger, and default-ACL snapshots in-transaction. |
+| E-005 | Server actor binding remains `actor-context-repository.ts:13-19` → `p_auth_subject: authSubject`, sourced from `direct-entry-v2.ts:355-377,430`; secret-key service client is `supabase/server.ts:17-21`. | Source inspection and static assertions in `scripts/s0-t1-c-rpc-acl.test.mjs:419-422`. |
+
+### Findings
+
+#### F-001 — Broad RPC EXECUTE ACLs on the TEST database
+
+- severity: high (exposure), status: validated, confidence: high for database grants; PostgREST reachability remains unverified
+- evidence_ids: E-003, E-004
+- location: `public` Mini BI function/procedure name families; migration `supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql`
+- impact: before the migration, `anon`, `authenticated`, and PUBLIC had EXECUTE on 273 of 302 matching routines, including 256 SECURITY DEFINER routines in the family. The migration now limits database EXECUTE to the explicit service-role allowlist. This confirms privilege exposure, not successful data extraction or an exploitable path; no live RPC or personnel data was accessed.
+- remediation: keep the 140-signature allowlist reviewed, enforce per-object grants for future routines, and resolve PostgREST schema exposure under separate read-only metadata review.
+
+#### F-002 — Three executor-owned ACLs required grantor-aware repair
+
+- severity: high, status: validated, confidence: high
+- evidence_ids: E-003, E-004
+- location: `direct_entry_catalog_bootstrap_projection()`, `direct_entry_catalog_bootstrap_plan(uuid,uuid)`, `direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)`
+- impact: ordinary REVOKE under the migration login left three owner-granted ACLs in place and caused the first guarded apply to fail; that transaction rolled back. The final migration temporarily obtains `SET` only inside the same transaction and removes its own membership before commit. The existing membership grant and function ownership remain unchanged.
+- remediation: retain the non-superuser native regression and require transactional migration execution; do not broaden the persistent role membership.
+
+#### F-003 — Future default-grant cause remains unresolved
+
+- severity: medium, status: accepted risk for separate S0-B review, confidence: high that no executor `pg_default_acl` row exists; historical cause of its ACL entries unresolved
+- evidence_ids: E-004
+- location: `pg_default_acl` and the executor-owned routine ACLs
+- impact: global/schema defaults for `postgres` and `supabase_admin` remain broad for future objects; S0-T1-C changed no defaults. A future Mini BI function still needs a same-migration REVOKE and narrow GRANT, with CI enforcement.
+- remediation: keep S0-B separate and decide on creator-specific policy after independent production metadata and creator attribution; no global default was changed in S0.
+
+### Path
+
+#### P-001 — Server-side API call path protected by the database allowlist
+
+- path_type: callflow
+- start: authenticated UI request to a Mini BI server API
+- goal: invoke an approved Mini BI database routine under the existing server authorization checks
+- steps:
+  1. The API resolves the actor from the authenticated server session; evidence E-005.
+  2. The repository uses `createServiceSupabaseClient()` and passes session-derived actor values to the RPC; evidence E-005.
+  3. `service_role` can execute only the 140 allowlisted routines; direct `anon`, `authenticated`, and PUBLIC EXECUTE is zero after S0-T1-C; evidence E-001 and E-004.
+  4. Whether PostgREST exposes `public` at runtime was not confirmed; no live RPC invocation was made. This remains a reachability limit, not an inferred pass.
+- residual_risks: broad creator defaults remain; PostgREST exposure and application-level workflow smoke tests were not verified in this task.
+
+### Timeline
+
+- 2026-10-20: S0-A merged and applied to the authorized TEST ref; ledger reached 123 rows.
+- 2026-10-20: first T1-C guarded transaction failed its ACL postcondition and rolled back; metadata identified three bootstrap-owner grants.
+- 2026-10-20: migration and regression were updated; native test and CI run `39360000473` passed.
+- 2026-10-20: T1-C applied in a guarded transaction to the same TEST ref; ledger reached 124 and metadata postconditions passed.
