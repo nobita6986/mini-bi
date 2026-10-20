@@ -183,6 +183,16 @@ async function main() {
 
     record("browser fixture hydrates", await waitFor(send,
       "typeof window.__p25r5a === 'object'", 60000), serverLog.slice(-2500));
+    record("review queue exposes loading while its synthetic response is held",
+      await waitFor(send, "window.__p25r5a.calls().some((call) => call.method === 'GET' && " +
+        "call.url.startsWith('/api/direct-entry/change-requests'))") &&
+      await waitFor(send, "window.__p25r5a.queueSummaryText().includes('Đang tải')"),
+      await api(send, "queueSummaryText()"));
+    await api(send, "releaseRequestResponses()");
+    record("synthetic review queue fixture returns strict rows on the first page",
+      await waitFor(send, "window.__p25r5a.queueCards() === 1") &&
+      (await api(send, "queueCardTexts()")).some((text) => text.includes("Cập nhật thông tin hồ sơ")),
+      await api(send, "queueCardTexts()"));
     record("initial tab follows the server actor projection (all)",
       await waitFor(send, "window.__p25r5a.listRowTexts().length === 25") &&
       (await api(send, "tabLabels()")).length === 5 &&
@@ -201,6 +211,8 @@ async function main() {
     record("change-request queue renders exactly once and BEFORE the worker list",
       order.present === true && order.queueCount === 1 &&
       order.queueIndex > -1 && order.queueIndex < order.panelIndex, order);
+    record("review queue compact panel opens for visible list interactions",
+      await api(send, "openRequestQueue()"), await api(send, "queueText()"));
 
     await api(send, "clearCalls()");
     await button(send, 'window.__p25r5a.clickButton("Tải thêm")', "load more page two");
@@ -441,6 +453,7 @@ async function main() {
       (await api(send, "calls()")).some((call) => call.method === "GET" &&
         call.url.startsWith("/api/direct-entry/submissions")),
       (await api(send, "calls()")).map((call) => call.url));
+    await api(send, "clearCalls()");
     await api(send, "failSubmissions()");
     await api(send, "remount()");
     await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
@@ -454,29 +467,80 @@ async function main() {
         rows: await api(send, "listRowTexts()") });
     await api(send, "allowSubmissions()");
     await api(send, 'clickTab("Toàn bộ NLĐ")');
-    await waitFor(send, "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] [role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim() === 'Toàn bộ NLĐ'");
-    await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
-    await waitFor(send, "window.__p25r5a.queueCards() > 0");
+    const selectedAll = await waitFor(send,
+      "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] [role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim() === 'Toàn bộ NLĐ'");
+    const rowsLoaded = await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
+    const queueLoaded = await waitFor(send, "window.__p25r5a.queueCards() > 0");
+    record("synthetic change-request endpoint reloads queue rows after remount",
+      selectedAll && rowsLoaded && queueLoaded,
+      { selected: await evaluate(send,
+        "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] [role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim()"),
+        rows: await api(send, "listRowTexts()"), queue: await api(send, "queueText()"),
+        requests: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
+    record("review queue contains the expected remounted row and opens",
+      (await api(send, "queueCardTexts()")).some((text) => text.includes("Cập nhật thông tin hồ sơ")) &&
+      await api(send, "openRequestQueue()"), await api(send, "queueCardTexts()"));
+    await api(send, "clearCalls()");
+    await button(send, 'window.__p25r5a.clickButton("Tải thêm yêu cầu cũ hơn")',
+      "load older review requests");
+    record("review queue uses the opaque cursor, appends a page, and deduplicates repeated IDs",
+      await waitFor(send, "window.__p25r5a.queueCards() === 2") &&
+      new Set(await api(send, "queueCardTexts()")).size === 2 &&
+      (await api(send, "calls()")).some((call) =>
+        call.method === "GET" && call.url.includes("cursor=20261008100400000000%3Ad1000000-0000-4000-8000-000000000002")),
+      { cards: await api(send, "queueCardTexts()"),
+        calls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
     await api(send, "clearCalls()");
     await api(send, "failRequests()");
-    const queueBeforeFailure = await api(send, "queueCards()");
-    record("review queue keeps its rows when the older-requests refresh fails",
-      await api(send, 'clickButton("Tải thêm yêu cầu cũ hơn")') &&
-      await waitFor(send, "window.__p25r5a.alertTexts().some((t) => t.includes('Không tải được danh sách. Vui lòng thử lại.'))") &&
-      (await api(send, "queueCards()")) === queueBeforeFailure &&
-      (await api(send, "queueText()")).includes("Yêu cầu thay đổi") &&
-      !(await api(send, "queueText()")).includes("()"),
-      { before: queueBeforeFailure, after: await api(send, "queueCards()"),
-        alerts: await api(send, "alertTexts()"), queue: await api(send, "queueText()"),
+    const queueBeforeFailure = await api(send, "queueCardTexts()");
+    await button(send, 'window.__p25r5a.clickButton("Tải thêm yêu cầu cũ hơn")',
+      "fail third review request page");
+    const queueLoadFailed = await waitFor(send,
+      "window.__p25r5a.alertTexts().some((t) => t.includes('Không tải được danh sách. Vui lòng thử lại.'))");
+    const queueAfterFailure = await api(send, "queueCardTexts()");
+    const failedCursorRequested = (await api(send, "calls()")).some((call) => call.method === "GET" &&
+      call.url.includes("cursor=20261009100400000000%3Ad1000000-0000-4000-8000-000000000003"));
+    const queueFailureText = await api(send, "queueText()");
+    record("failed review pagination reports an error and retains loaded unique rows",
+      queueLoadFailed &&
+      JSON.stringify(queueAfterFailure) === JSON.stringify(queueBeforeFailure) &&
+      queueFailureText.includes("Cập nhật thông tin hồ sơ") &&
+      !queueFailureText.includes("()") &&
+      failedCursorRequested,
+      { before: queueBeforeFailure, after: queueAfterFailure, failedCursorRequested,
+        queueLoadFailed, alerts: await api(send, "alertTexts()"), queue: queueFailureText,
         requestCalls: (await api(send, "calls()")).filter((call) =>
           call.url.startsWith("/api/direct-entry/change-requests")) });
+    await api(send, "allowRequests()");
+    await api(send, 'clickAlertButton("Thử lại")');
+    record("review queue retry refreshes the first page and clears the error",
+      await waitFor(send, "window.__p25r5a.alertTexts().length === 0") &&
+      await waitFor(send, "window.__p25r5a.queueCards() === 1") &&
+      (await api(send, "queueCardTexts()")).some((text) => text.includes("Cập nhật thông tin hồ sơ")) &&
+      (await api(send, "calls()")).some((call) => call.method === "GET" &&
+        call.url.startsWith("/api/direct-entry/change-requests") && !call.url.includes("cursor=")),
+      { cards: await api(send, "queueCardTexts()"), alerts: await api(send, "alertTexts()"),
+        calls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
+    await api(send, "clearCalls()");
+    await api(send, "failRequests()");
     await api(send, "remount()");
+    const initialQueueError = await waitFor(send,
+      "window.__p25r5a.queueSummaryText().includes('Không tải được')");
+    await api(send, "openRequestQueue()");
     record("initial queue rejection reports the sanitized message instead of empty parentheses",
+      initialQueueError &&
       await waitFor(send, "window.__p25r5a.queueText().includes('Không tải được danh sách yêu cầu thay đổi')") &&
       (await api(send, "queueText()")).includes("Không tải được danh sách. Vui lòng thử lại.") &&
       !(await api(send, "queueText()")).includes("()") &&
-      (await api(send, "queueCards()")) === 0,
-      await api(send, "queueText()"));
+      (await api(send, "queueCards()")) === 0 &&
+      (await api(send, "calls()")).some((call) => call.method === "GET" &&
+        call.url.startsWith("/api/direct-entry/change-requests")),
+      { queue: await api(send, "queueText()"), summary: await api(send, "queueSummaryText()"),
+        calls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
     await setViewport(send, 1280, 900);
     record("desktop layout has no horizontal overflow",
       await waitFor(send, "document.documentElement.scrollWidth <= window.innerWidth + 1"));
