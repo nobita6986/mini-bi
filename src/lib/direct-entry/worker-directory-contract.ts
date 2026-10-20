@@ -274,7 +274,14 @@ function projectDecision(value: unknown): WorkerDirectoryLastDecision | null | u
 }
 
 function projectActions(value: unknown): WorkerDirectoryAllowedActions | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, WORKER_DIRECTORY_ACTION_KEYS)) return undefined;
+  if (!isRecord(value)) return undefined;
+  const hasDirectEdit = Object.keys(value).includes("direct_edit");
+  const keys = hasDirectEdit
+    ? [...WORKER_DIRECTORY_ACTION_KEYS, "direct_edit"]
+    : WORKER_DIRECTORY_ACTION_KEYS;
+  if (!hasExactKeys(value, keys) || (hasDirectEdit && typeof value.direct_edit !== "boolean")) {
+    return undefined;
+  }
   if (value.view !== true) return undefined;
   for (const flag of ["view_pii", "view_payment", "propose_change"]) {
     if (typeof value[flag] !== "boolean") return undefined;
