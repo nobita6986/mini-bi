@@ -198,12 +198,18 @@ test("S0-A revokes ledger access in real PostgreSQL while the migration runner a
         "--pgdata",
         dataDir,
       ]);
-      runPostgres(pgCtl, [
-        "-D", dataDir,
-        "-l", logFile,
-        "-o", `-h 127.0.0.1 -p ${port}`,
-        "-w", "start",
-      ], { ignoreOutput: process.platform === "win32" });
+      const socketOption = process.platform === "win32" ? "" : ` -k ${dataDir}`;
+      try {
+        runPostgres(pgCtl, [
+          "-D", dataDir,
+          "-l", logFile,
+          "-o", `-h 127.0.0.1 -p ${port}${socketOption}`,
+          "-w", "start",
+        ], { ignoreOutput: process.platform === "win32" });
+      } catch (error) {
+        const log = await readFile(logFile, "utf8").catch(() => "");
+        throw new Error(`${error.message}\nPostgreSQL log:\n${log}`, { cause: error });
+      }
       serverStarted = true;
 
       admin = await connectPostgres(port, "postgres");
