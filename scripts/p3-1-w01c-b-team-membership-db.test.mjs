@@ -520,6 +520,12 @@ test("legacy scheduled moves remain auditable and cancellation never promotes a 
     assert.deepEqual(await unassign(db, CATALOG, { recruiter: HRP_G, to: FUTURE,
       version: firstScheduled.recruiter_version, key: "legacy-move-cancel" }), cancelled);
     assert.deepEqual(await counts(db), countsAfterCancel, "replay writes no second audit or revision");
+    assert.deepEqual((await db.query(
+      "select team_id,valid_to::text as valid_to,is_current from public.recruiter_team_memberships"
+      + " where recruiter_id=$1 order by valid_from", [HRP_G])).rows, [
+      { team_id: TEAM_A, valid_to: null, is_current: true },
+      { team_id: TEAM_B, valid_to: FUTURE, is_current: false },
+    ], "cancelling a legacy scheduled MOVE restores the previously current predecessor");
     assert.equal((await readMemberships(db, "current", { p_recruiter_id: HRP_G })).memberships[0].team_id,
       TEAM_A, "the already-current predecessor remains current after explicit cancellation");
 
@@ -537,12 +543,12 @@ test("legacy scheduled moves remain auditable and cancellation never promotes a 
     await unassign(db, CATALOG, { recruiter: HRP_H, to: FUTURE,
       version: secondScheduled.recruiter_version, key: "legacy-revoked-cancel" });
     const afterRevokedCancel = (await db.query(
-      "select team_id,is_current from public.recruiter_team_memberships"
+      "select team_id,valid_to::text as valid_to,is_current from public.recruiter_team_memberships"
       + " where recruiter_id=$1 order by valid_from", [HRP_H])).rows;
     assert.deepEqual(afterRevokedCancel, [
-      { team_id: TEAM_A, is_current: false },
-      { team_id: TEAM_B, is_current: false },
-    ], "restoring historical dates does not re-grant a marker cleared by explicit revocation");
+      { team_id: TEAM_A, valid_to: null, is_current: false },
+      { team_id: TEAM_B, valid_to: FUTURE, is_current: false },
+    ], "cancellation restores interval dates but never re-grants a marker cleared by explicit revocation");
     assert.equal((await readMemberships(db, "current", { p_recruiter_id: HRP_H })).total, 0);
   } finally {
     await db.exec("rollback");
