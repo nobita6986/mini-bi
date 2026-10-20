@@ -119,6 +119,19 @@ function accepted(overrides = {}) {
   return value[0];
 }
 
+function draftWithPayment(accountNumber, entryId) {
+  const value = draft();
+  value.entry_id = entryId;
+  value.profile.payment = {
+    state: "provided",
+    account_number: accountNumber,
+    bank_name: { state: "provided", value: "Synthetic bank" },
+    account_holder_name: { state: "provided", value: "Synthetic holder" },
+    version: 1,
+  };
+  return value;
+}
+
 test("1: envelope /2 hop le - key va nhan deu duoc tra ve nguyen ven", () => {
   const value = projectOwnDrafts(envelope([draft()]));
   assert.ok(value, "envelope co du labor_type_display phai duoc chap nhan");
@@ -259,6 +272,40 @@ test("6: draft duoc chap nhan khong mang key nao ngoai key set chinh xac", () =>
     .filter((key) => key !== "labor_type_display"), "shape /1 thieu dung mot key");
   assert.equal(projectOwnDrafts(envelope([legacyShape])), null,
     "shape /1 khong duoc chap nhan du envelope da la /2");
+});
+
+test("payment account: preserve safe values, hide unreadable strings, reject malformed objects", () => {
+  const projected = projectOwnDrafts(envelope([
+    draftWithPayment({ state: "provided", value: "000012340056" },
+      "a2000000-0000-4000-8000-000000000002"),
+    draftWithPayment({ state: "masked", value: "•••••234 " },
+      "a2000000-0000-4000-8000-000000000003"),
+    draftWithPayment({ state: "masked", value: "••••5678" },
+      "a2000000-0000-4000-8000-000000000004"),
+    draftWithPayment({ state: "provided", value: "ACCT-private-1234" },
+      "a2000000-0000-4000-8000-000000000005"),
+  ]));
+
+  assert.ok(projected, "one unreadable account string must not reject a mixed draft list");
+  assert.deepEqual(projected.map((value) => value.profile.payment.account_number), [
+    { state: "provided", value: "000012340056" },
+    { state: "masked", value: "•••••234 " },
+    { state: "masked", value: "••••5678" },
+    { state: "redacted", present: true },
+  ]);
+  assert.equal(JSON.stringify(projected).includes("ACCT-private-1234"), false,
+    "unreadable account text must not escape the projector");
+
+  for (const accountNumber of [
+    { state: "masked", value: 1234 },
+    { state: "masked", value: "••••1234", extra: true },
+    { state: "provided", value: "000012340056", extra: true },
+    { state: "unknown_state", value: "00001234" },
+  ]) {
+    assert.equal(projectOwnDrafts(envelope([draftWithPayment(accountNumber,
+      "a2000000-0000-4000-8000-000000000006")])), null,
+    "malformed account object must fail closed");
+  }
 });
 
 test("7: DRAFT_LIST_PROJECTION_VERSION la /2", () => {
