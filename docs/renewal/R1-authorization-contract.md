@@ -79,11 +79,17 @@ Export must use the existing `worker_export` route/RPC action and the same curre
 
 ## 5. Authority by layer
 
+### Frozen cross-layer interfaces
+
+- Keep `direct_entry_resolve_actor_context` name, arguments, top-level JSON keys, and array keys. Its SQL implementation returns only current capability, recruiter-link, team-scope, and project-scope rows using explicit current/active/verified/revocation state. It never selects authority by comparing `valid_from`, `valid_to`, or a worker business date. Existing date fields may remain in returned rows as inert compatibility metadata; TypeScript treats each returned authority row as current and performs no date filtering.
+- Keep worker directory/export RPC names, arguments, and response envelope. The SQL row-audience result remains authoritative for `allowed_actions.view`; legacy `view_pii`/`view_payment` values, if kept, echo the authorized `view` result and are ignored by consumers. Export keeps the existing `worker_export` action and envelope.
+- T1-A owns the TypeScript evaluator, capability union, and page/navigation predicates. T1-B owns resolver SQL, current-state storage/mutation, worker authorization SQL, and the capability-parity test. T1-C owns worker API/projection/UI/export consumers. No two workstreams edit the same module; signature/envelope changes require a written interface proposal to T0 before implementation.
+
 | Layer | Contract |
 |---|---|
 | Browser/UI | Presents actions the actor may attempt. It may use server-derived actor metadata but is never authoritative. |
 | API | Resolves the verified session on the server; validates a strict body/query allowlist; constructs the action and input; rejects client actor/capability/scope authority. |
-| Repository | Server-only service-role boundary; calls only allowlisted RPCs; passes the verified `auth_subject` and mapped `app_user_id`; projects a strict envelope; fails closed. |
+| Repository | Server-only service-role boundary; calls only allowlisted RPCs; passes the verified `auth_subject` and mapped `app_user_id`; projects a strict envelope; fails closed. Actor-context arrays returned by SQL are already current and are consumed without date checks. |
 | SQL/RPC | Rechecks actor mapping, action, explicit current state, row audience, workflow/state, and audit in the same DB boundary. No authorization predicate reads a grant/assignment interval or record business date. SECURITY DEFINER functions keep fixed search paths; internal helpers remain non-executable by API roles. |
 | RLS/ACL | Keep S0 least-privilege grants. No direct browser table access and no new `anon`/`authenticated` EXECUTE grant for internal worker RPCs. |
 

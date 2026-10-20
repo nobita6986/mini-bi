@@ -87,6 +87,8 @@ Current scope is an explicit status on the existing grant/assignment relation. R
 
 T1-A/B/C share this contract but must not concurrently edit the same modules. T1-B owns all `supabase/migrations/**`; T1-A owns the central authorization contract; T1-C owns worker projections and routes. Cross-workstream changes are proposed as small follow-up commits after interface agreement.
 
+The shared interface is frozen: `direct_entry_resolve_actor_context` keeps its RPC name, arguments, JSON envelope, and array keys; SQL returns only explicitly current authority rows, and T1-A consumes those arrays as current without date filtering. Worker list/export RPC names, arguments, and response envelopes remain stable. T1-B may retain inert date fields and legacy view echoes for compatibility; T1-A/T1-C must not consume them as authorization gates.
+
 ## 5. Order and rollout gates
 
 1. **Close S0-C2:** completed by merging PR #80 after manual review and all Node 22 CI checks passed; all R1 branches use the resulting `main` SHA above.
