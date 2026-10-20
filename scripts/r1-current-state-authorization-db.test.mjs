@@ -66,6 +66,84 @@ async function seedActorsAndResources(db) {
   );
 }
 
+async function seedProjectManager(db) {
+  await seedActorsAndResources(db);
+  await db.query(
+    `insert into public.recruiter_provider_memberships
+       (recruiter_id, provider_type, valid_from, is_current)
+     values ($1, 'hrp', '2020-01-01', true)`, [REC_A],
+  );
+  await db.query(
+    `insert into public.recruiter_team_memberships
+       (recruiter_id, team_id, valid_from, is_current)
+     values ($1, $2, '2020-01-01', true)`, [REC_A, TEAM_A],
+  );
+  const managerAuth = uuid(5), managerApp = uuid(6);
+  await addActor(db, managerAuth, managerApp, "Synthetic Project Manager");
+  await db.query(
+    `insert into public.direct_entry_app_user_recruiter_links
+       (app_user_id, recruiter_id, verified, valid_from, is_current)
+     values ($1, $2, true, '2020-01-01', true)`, [managerApp, REC_B],
+  );
+  await db.query(
+    `select public.direct_entry_create_project(
+      $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text)`,
+    [AUTH, APP, PROJECT_PM, "Synthetic PM Project", "create for PM history test", "r1-pm-create"],
+  );
+  const assignment = (await db.query(
+    `select public.direct_entry_assign_project_manager(
+      $1::uuid, $2::uuid, $3::text, $4::uuid, null, 1, $5::text, $6::text) as result`,
+    [AUTH, APP, PROJECT_PM, REC_B, "assign synthetic PM", "r1-pm-assign"],
+  )).rows[0].result;
+  return { assignment, managerAuth, managerApp };
+}
+
+async function insertSyntheticProjectEntry(db, state = "DRAFT", options = {}) {
+  const {
+    entryId = uuid(7), candidateId = uuid(8), submissionId = uuid(9),
+    ownerApp = APP, projectId = PROJECT_PM, employeeSuffix = "000901",
+  } = options;
+  const year = (await db.query(
+    "select to_char(public.direct_entry_authorization_date(), 'YYYY') as year",
+  )).rows[0].year;
+  await db.query("begin");
+  try {
+    await db.query("insert into public.direct_entry_candidates(candidate_id) values ($1)", [candidateId]);
+    await db.query(
+      "insert into public.direct_entry_submissions(submission_id, created_by_user_id) values ($1, $2)",
+      [submissionId, ownerApp],
+    );
+    await db.query(
+      `insert into public.direct_entries (
+         entry_id, submission_id, candidate_id, created_by_user_id, project_id,
+         first_work_date, employee_code, worker_details, recruiter_id, team_id,
+         provider_type, labor_type
+       ) values (
+         $1, $2, $3, $4, $5, public.direct_entry_authorization_date(), $6,
+         $7::jsonb, $8, $9, 'hrp', 'TEMPORARY'
+       )`,
+      [entryId, submissionId, candidateId, ownerApp, projectId, `hrp-${year}-${employeeSuffix}`, JSON.stringify({
+        display_name: "Synthetic PM Draft",
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      }), REC_A, TEAM_A],
+    );
+    if (state === "SUBMITTED") {
+      await db.query(
+        "update public.direct_entry_submissions set state='SUBMITTED', submitted_at=now() where submission_id=$1",
+        [submissionId],
+      );
+    }
+    await db.query("commit");
+  } catch (error) {
+    await db.query("rollback");
+    throw error;
+  }
+  return { entryId, year };
+}
+
 test("actor context and capability/scope helpers use only explicit current rows", async () => {
   const { db } = await buildDb();
   try {
@@ -185,6 +263,16 @@ test("project deactivation preserves PM history authority until explicit unassig
   const { db } = await buildDb();
   try {
     await seedActorsAndResources(db);
+    await db.query(
+      `insert into public.recruiter_provider_memberships
+         (recruiter_id, provider_type, valid_from, is_current)
+       values ($1, 'hrp', '2020-01-01', true)`, [REC_A],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships
+         (recruiter_id, team_id, valid_from, is_current)
+       values ($1, $2, '2020-01-01', true)`, [REC_A, TEAM_A],
+    );
     const managerAuth = uuid(5), managerApp = uuid(6);
     await addActor(db, managerAuth, managerApp, "Synthetic Project Manager");
     await db.query(
@@ -203,11 +291,69 @@ test("project deactivation preserves PM history authority until explicit unassig
         $1::uuid, $2::uuid, $3::text, $4::uuid, null, 1, $5::text, $6::text) as result`,
       [AUTH, APP, PROJECT_PM, REC_B, "assign synthetic PM", "r1-pm-assign"],
     )).rows[0].result;
+    const entryId = uuid(7), candidateId = uuid(8), submissionId = uuid(9);
+    const year = (await db.query(
+      "select to_char(public.direct_entry_authorization_date(), 'YYYY') as year",
+    )).rows[0].year;
+    await db.query("begin");
+    await db.query("insert into public.direct_entry_candidates(candidate_id) values ($1)", [candidateId]);
+    await db.query(
+      "insert into public.direct_entry_submissions(submission_id, created_by_user_id) values ($1, $2)",
+      [submissionId, APP],
+    );
+    await db.query(
+      `insert into public.direct_entries (
+         entry_id, submission_id, candidate_id, created_by_user_id, project_id,
+         first_work_date, employee_code, worker_details, recruiter_id, team_id,
+         provider_type, labor_type
+       ) values (
+         $1, $2, $3, $4, $5, public.direct_entry_authorization_date(),
+         'hrp-' || to_char(public.direct_entry_authorization_date(), 'YYYY') || '-000901',
+         $6::jsonb, $7, $8, 'hrp', 'TEMPORARY'
+       )`,
+      [entryId, submissionId, candidateId, APP, PROJECT_PM, JSON.stringify({
+        display_name: "Synthetic PM Draft",
+        date_of_birth: { state: "omitted" },
+        national_id: { state: "omitted" },
+        address: { state: "omitted" },
+        phone: { state: "omitted" },
+      }), REC_A, TEAM_A],
+    );
+    await db.query("commit");
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_update_draft_row(
+          $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
+        [managerAuth, managerApp, entryId,
+          JSON.stringify({ employee_code: `hrp-${year}-000902` }), "r1-pm-draft-denied"],
+      ),
+      (error) => error.code === "42501",
+      "project-manager assignment alone does not grant draft-row edit authority",
+    );
+    assert.deepEqual((await db.query(
+      "select employee_code, version from public.direct_entries where entry_id = $1", [entryId],
+    )).rows[0], { employee_code: `hrp-${year}-000901`, version: 1 });
+    await addCurrentCapability(db, APP, "submission_create");
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1, 'own', null, '2020-01-01', true)`, [APP],
+    );
+    await db.query(
+      `select public.direct_entry_transition_submission_apply(
+        $1::uuid, $2::uuid, $3::uuid, 1, 'SUBMITTED', $4::text, null, null)`,
+      [AUTH, APP, submissionId, "r1-pm-submit"],
+    );
 
     await db.query(
       `select public.direct_entry_set_project_active(
         $1::uuid, $2::uuid, $3::text, false, 2, $4::text, $5::text)`,
       [AUTH, APP, PROJECT_PM, "deactivate synthetic project", "r1-pm-deactivate"],
+    );
+    await db.query(
+      `update public.direct_entry_project_manager_assignments
+          set version = version + 1 where assignment_id = $1`,
+      [assignment.assignment_id],
     );
     assert.deepEqual((await db.query(
       `select is_current, valid_to::text as valid_to from public.direct_entry_project_manager_assignments
@@ -218,10 +364,17 @@ test("project deactivation preserves PM history authority until explicit unassig
       [managerApp, PROJECT_PM],
     )).rows[0].allowed, true,
     "deactivation hides new-work choices but keeps the manager's history authority");
+    const managedWorkers = (await db.query(
+      `select public.direct_entry_list_workers(
+         $1::uuid, $2::uuid, 'managed', $3::text, null, null, null, 25) as result`,
+      [managerAuth, managerApp, PROJECT_PM],
+    )).rows[0].result.items;
+    assert.deepEqual(managedWorkers.map((worker) => worker.entry_id), [entryId],
+      "managed history read retains the existing row after project deactivation");
 
     await db.query(
       `select public.direct_entry_unassign_project_manager(
-        $1::uuid, $2::uuid, $3::uuid, 1, 3, $4::text, $5::text)`,
+        $1::uuid, $2::uuid, $3::uuid, 2, 3, $4::text, $5::text)`,
       [AUTH, APP, assignment.assignment_id, "unassign synthetic PM", "r1-pm-unassign"],
     );
     assert.deepEqual((await db.query(
@@ -233,6 +386,191 @@ test("project deactivation preserves PM history authority until explicit unassig
       `select public.direct_entry_actor_can_access_project($1, $2) as allowed`,
       [managerApp, PROJECT_PM],
     )).rows[0].allowed, false, "explicit unassign revokes the history authority");
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_list_workers(
+          $1::uuid, $2::uuid, 'managed', $3::text, null, null, null, 25)`,
+        [managerAuth, managerApp, PROJECT_PM],
+      ),
+      (error) => error.code === "42501",
+      "managed history read is denied after explicit unassign",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("PM assignment authority fails closed for ambiguous links and revoked rows", async () => {
+  const { db } = await buildDb();
+  try {
+    const { assignment, managerApp } = await seedProjectManager(db);
+    await db.query(
+      `insert into public.direct_entry_project_manager_assignments (
+         project_id, manager_recruiter_id, valid_from, valid_to, revoked_at, is_current
+       ) values ($1, $2, '2020-01-01', '2020-01-02', now(), true)`,
+      [PROJECT_PM, REC_B],
+    );
+    assert.equal((await db.query(
+      `select is_current from public.direct_entry_project_manager_assignments
+        where project_id=$1 and manager_recruiter_id=$2 and revoked_at is not null`,
+      [PROJECT_PM, REC_B],
+    )).rows[0].is_current, false,
+    "a pre-revoked row cannot be marked current by the insert trigger");
+    assert.equal((await db.query(
+      "select public.direct_entry_project_assignment_effective($1, $2) as allowed",
+      [managerApp, PROJECT_PM],
+    )).rows[0].allowed, true, "the unique current link retains PM authority");
+
+    const duplicateAuth = uuid(30), duplicateApp = uuid(31);
+    await addActor(db, duplicateAuth, duplicateApp, "Synthetic Duplicate PM Link");
+    await db.query(
+      `insert into public.direct_entry_app_user_recruiter_links
+         (app_user_id, recruiter_id, verified, valid_from, valid_to, is_current)
+       values ($1, $2, true, '2015-01-01', '2019-01-01', true)`, [duplicateApp, REC_B],
+    );
+    assert.equal((await db.query(
+      "select public.direct_entry_project_assignment_effective($1, $2) as allowed",
+      [managerApp, PROJECT_PM],
+    )).rows[0].allowed, false,
+    "two current verified links make PM authority ambiguous for the original actor");
+    assert.equal((await db.query(
+      "select public.direct_entry_project_assignment_effective($1, $2) as allowed",
+      [duplicateApp, PROJECT_PM],
+    )).rows[0].allowed, false,
+    "the second linked app user cannot inherit a PM assignment");
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_list_workers(
+          $1::uuid, $2::uuid, 'managed', $3::text, null, null, null, 25)`,
+        [duplicateAuth, duplicateApp, PROJECT_PM],
+      ),
+      (error) => error.code === "42501",
+      "managed directory reads reject ambiguous recruiter links",
+    );
+    const secondProject = `${PROJECT_PM}-duplicate-link`;
+    await db.query(
+      `select public.direct_entry_create_project(
+        $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text)`,
+      [AUTH, APP, secondProject, "Synthetic duplicate-link project", "duplicate-link rejection test", "r1-pm-create-second"],
+    );
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_assign_project_manager(
+          $1::uuid, $2::uuid, $3::text, $4::uuid, null, 1, $5::text, $6::text)`,
+        [AUTH, APP, secondProject, REC_B, "ambiguous PM link must be rejected", "r1-pm-assign-duplicate"],
+      ),
+      (error) => error.code === "22023",
+      "the audited assignment mutation rejects an ambiguous manager link",
+    );
+    assert.equal((await db.query(
+      `select is_current from public.direct_entry_project_manager_assignments where assignment_id=$1`,
+      [assignment.assignment_id],
+    )).rows[0].is_current, true,
+    "the assignment remains current while the helper denies ambiguous link state");
+  } finally {
+    await db.close();
+  }
+});
+
+test("own DRAFT wrapper preserves note/payment updates, OCC, audit and owner/workflow guards", async () => {
+  const { db } = await buildDb();
+  try {
+    await seedActorsAndResources(db);
+    await db.query(
+      `insert into public.recruiter_provider_memberships
+         (recruiter_id, provider_type, valid_from, is_current)
+       values ($1, 'hrp', '2020-01-01', true)`, [REC_A],
+    );
+    await db.query(
+      `insert into public.recruiter_team_memberships
+         (recruiter_id, team_id, valid_from, is_current)
+       values ($1, $2, '2020-01-01', true)`, [REC_A, TEAM_A],
+    );
+    const ownerAuth = uuid(50), ownerApp = uuid(51);
+    await addActor(db, ownerAuth, ownerApp, "Synthetic Own Draft Actor");
+    await addCurrentCapability(db, ownerApp, "entry_own");
+    await db.query(
+      `insert into public.direct_entry_scope_grants
+         (app_user_id, scope_kind, team_id, valid_from, is_current)
+       values ($1, 'own', null, '2020-01-01', true)`, [ownerApp],
+    );
+    const { entryId } = await insertSyntheticProjectEntry(db, "DRAFT", {
+      entryId: uuid(52), candidateId: uuid(53), submissionId: uuid(54),
+      ownerApp, projectId: PROJECT, employeeSuffix: "000952",
+    });
+    const patch = {
+      general_note: "Synthetic note update",
+      payment: {
+        state: "provided",
+        account_number: "000012345678",
+        bank_name: "Synthetic Bank",
+        account_holder_name: "Synthetic Holder",
+      },
+    };
+    await db.query(
+      `select public.direct_entry_update_own_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
+      [ownerAuth, ownerApp, entryId, JSON.stringify(patch), "r1-own-draft-update"],
+    );
+    assert.deepEqual((await db.query(
+      `select general_note, version from public.direct_entries where entry_id=$1`, [entryId],
+    )).rows[0], { general_note: "Synthetic note update", version: 2 });
+    assert.deepEqual((await db.query(
+      `select state, account_number, bank_id, bank_name, account_holder_name, version
+         from public.direct_entry_payments where entry_id=$1`, [entryId],
+    )).rows[0], {
+      state: "provided", account_number: "000012345678", bank_id: null,
+      bank_name: "Synthetic Bank", account_holder_name: "Synthetic Holder", version: 1,
+    });
+    assert.equal((await db.query(
+      `select count(*)::int as n from public.direct_entry_revisions where entry_id=$1`, [entryId],
+    )).rows[0].n, 1, "one row revision records the allowed draft edit");
+    assert.equal((await db.query(
+      `select count(*)::int as n from public.direct_entry_audit_events
+        where resource_ref=$1 and action='draft_row_update' and outcome='APPLIED'`, [entryId],
+    )).rows[0].n, 1, "one applied audit event records the edit");
+
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_update_own_draft_row(
+          $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
+        [ownerAuth, ownerApp, entryId, JSON.stringify({ general_note: "stale" }), "r1-own-draft-stale"],
+      ),
+      (error) => error.code === "40001",
+      "the owner wrapper preserves strict entry OCC",
+    );
+
+    const { entryId: otherEntryId } = await insertSyntheticProjectEntry(db, "DRAFT", {
+      entryId: uuid(55), candidateId: uuid(56), submissionId: uuid(57),
+      ownerApp: APP, projectId: PROJECT, employeeSuffix: "000953",
+    });
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_update_own_draft_row(
+          $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
+        [ownerAuth, ownerApp, otherEntryId, JSON.stringify({ general_note: "other owner" }), "r1-own-draft-other-owner"],
+      ),
+      (error) => error.code === "42501",
+      "the owner wrapper denies another owner's draft row",
+    );
+
+    await db.query(
+      `update public.direct_entry_submissions set state='SUBMITTED', version=version+1
+        where submission_id=$1`, [uuid(54)],
+    );
+    await assert.rejects(
+      db.query(
+        `select public.direct_entry_update_own_draft_row(
+          $1::uuid, $2::uuid, $3::uuid, 2, $4::jsonb, $5::text)`,
+        [ownerAuth, ownerApp, entryId, JSON.stringify({ general_note: "submitted" }), "r1-own-draft-submitted"],
+      ),
+      (error) => error.code === "42501",
+      "the owner wrapper denies submitted rows",
+    );
+    assert.equal((await db.query(
+      `select count(*)::int as n from public.direct_entry_audit_events
+        where resource_ref=$1 and action='draft_row_update' and outcome='APPLIED'`, [entryId],
+    )).rows[0].n, 1, "denied retries do not create extra applied audit events");
   } finally {
     await db.close();
   }
