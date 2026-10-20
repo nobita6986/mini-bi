@@ -2,7 +2,7 @@
  * P3.1-W01A - capability contract foundation (focused lane).
  *
  * Proves the append-only migration #67 (20261009030000_p3_1_w01a_capability_contract_foundation.sql)
- * keeps all stored grant tokens while the active direct-entry-auth/1.3 contract agrees on the
+ * keeps all stored grant tokens while the active direct-entry-auth/1.4 contract agrees on the
  * 19 non-retired capability tokens, that the
  * extension keeps every existing grant, that unknown tokens are still rejected, and that the two
  * new tokens carry the locked reason / expected version / scope-kind policy without opening
@@ -130,8 +130,8 @@ function resourceFor(kind) {
   };
 }
 
-test("the auth contract is versioned as direct-entry-auth/1.3 without retired capabilities", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.3");
+test("the auth contract is versioned as direct-entry-auth/1.4 without retired capabilities", () => {
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.4");
   assert.equal(CAPABILITIES.length, ACTIVE_TOKEN_COUNT);
   for (const token of RETIRED_TOKENS) assert.equal(CAPABILITIES.includes(token), false, token);
   for (const token of NEW_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
@@ -172,7 +172,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   assert.equal(foundationTokens.length, LEGACY_TOKEN_COUNT);
   assert.deepEqual(
     [...foundationTokens].sort(),
-    [...CAPABILITIES].filter((token) => !NEW_TOKENS.includes(token)).sort(),
+    [...CAPABILITIES].filter((token) => !NEW_TOKENS.includes(token)).concat(RETIRED_TOKENS).sort(),
   );
 
   const db = await database(names);
