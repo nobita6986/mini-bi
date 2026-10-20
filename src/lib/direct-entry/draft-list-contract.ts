@@ -270,11 +270,14 @@ function projectDraftPayment(value: unknown): DraftProfileProjection["payment"] 
 function projectDraftPaymentAccount(value: unknown): DraftPaymentAccountField | null {
   if (!isRecord(value) || typeof value.state !== "string") return null;
   if (value.state === "masked") {
-    return hasExactKeys(value, ["state", "value"]) && typeof value.value === "string" &&
-      /^(?:•{1,60})?[0-9]{1,4}$/.test(value.value)
+    if (!hasExactKeys(value, ["state", "value"]) || typeof value.value !== "string") return null;
+    const match = /^(?:•{1,60})?([0-9]{1,4})( *)$/.exec(value.value);
+    return match && match[1].length + match[2].length <= 4
       ? { state: "masked", value: value.value }
-      : null;
+      : { state: "redacted", present: true };
   }
   const field = projectDraftField(value);
-  return field?.state !== "provided" || /^[0-9]{1,64}$/.test(field.value) ? field : null;
+  return !field || field.state !== "provided" || /^[0-9]{1,64}$/.test(field.value)
+    ? field
+    : { state: "redacted", present: true };
 }

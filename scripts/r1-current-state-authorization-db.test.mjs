@@ -470,7 +470,7 @@ test("PM assignment authority fails closed for ambiguous links and revoked rows"
   }
 });
 
-test("own DRAFT wrapper preserves note/payment updates, OCC, audit and owner/workflow guards", async () => {
+test("own DRAFT wrapper preserves omitted payments and explicit updates, OCC, audit and guards", async () => {
   const { db } = await buildDb();
   try {
     await seedActorsAndResources(db);
@@ -496,8 +496,34 @@ test("own DRAFT wrapper preserves note/payment updates, OCC, audit and owner/wor
       entryId: uuid(52), candidateId: uuid(53), submissionId: uuid(54),
       ownerApp, projectId: PROJECT, employeeSuffix: "000952",
     });
+    await db.query(
+      `insert into public.direct_entry_banks (bank_id, display_name)
+       values ('hf2-synthetic-bank', 'HF2 Synthetic Bank')`,
+    );
+    await db.query(
+      `insert into public.direct_entry_payments (
+         entry_id, state, account_number, bank_id, bank_name, account_holder_name, version
+       ) values ($1, 'provided', '000098765432', 'hf2-synthetic-bank',
+         'HF2 Synthetic Bank', 'HF2 Synthetic Holder', 4)`, [entryId],
+    );
+    await db.query(
+      `select public.direct_entry_update_own_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
+      [ownerAuth, ownerApp, entryId, JSON.stringify({ general_note: "Synthetic unrelated edit" }),
+        "r1-own-draft-unrelated-edit"],
+    );
+    assert.deepEqual((await db.query(
+      `select general_note, version from public.direct_entries where entry_id=$1`, [entryId],
+    )).rows[0], { general_note: "Synthetic unrelated edit", version: 2 });
+    assert.deepEqual((await db.query(
+      `select state, account_number, bank_id, bank_name, account_holder_name, version
+         from public.direct_entry_payments where entry_id=$1`, [entryId],
+    )).rows[0], {
+      state: "provided", account_number: "000098765432", bank_id: "hf2-synthetic-bank",
+      bank_name: "HF2 Synthetic Bank", account_holder_name: "HF2 Synthetic Holder", version: 4,
+    }, "an unrelated draft edit leaves the complete saved payment row unchanged");
     const patch = {
-      general_note: "Synthetic note update",
+      general_note: "Synthetic payment edit",
       payment: {
         state: "provided",
         account_number: "000012345678",
@@ -507,26 +533,26 @@ test("own DRAFT wrapper preserves note/payment updates, OCC, audit and owner/wor
     };
     await db.query(
       `select public.direct_entry_update_own_draft_row(
-        $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
+        $1::uuid, $2::uuid, $3::uuid, 2, $4::jsonb, $5::text)`,
       [ownerAuth, ownerApp, entryId, JSON.stringify(patch), "r1-own-draft-update"],
     );
     assert.deepEqual((await db.query(
       `select general_note, version from public.direct_entries where entry_id=$1`, [entryId],
-    )).rows[0], { general_note: "Synthetic note update", version: 2 });
+    )).rows[0], { general_note: "Synthetic payment edit", version: 3 });
     assert.deepEqual((await db.query(
       `select state, account_number, bank_id, bank_name, account_holder_name, version
          from public.direct_entry_payments where entry_id=$1`, [entryId],
     )).rows[0], {
       state: "provided", account_number: "000012345678", bank_id: null,
-      bank_name: "Synthetic Bank", account_holder_name: "Synthetic Holder", version: 1,
-    });
+      bank_name: "Synthetic Bank", account_holder_name: "Synthetic Holder", version: 5,
+    }, "an explicit payment edit keeps leading zeros and increments payment OCC");
     assert.equal((await db.query(
       `select count(*)::int as n from public.direct_entry_revisions where entry_id=$1`, [entryId],
-    )).rows[0].n, 1, "one row revision records the allowed draft edit");
+    )).rows[0].n, 2, "each allowed draft edit records one row revision");
     assert.equal((await db.query(
       `select count(*)::int as n from public.direct_entry_audit_events
         where resource_ref=$1 and action='draft_row_update' and outcome='APPLIED'`, [entryId],
-    )).rows[0].n, 1, "one applied audit event records the edit");
+    )).rows[0].n, 2, "one applied audit event records each edit");
 
     await assert.rejects(
       db.query(
@@ -559,7 +585,7 @@ test("own DRAFT wrapper preserves note/payment updates, OCC, audit and owner/wor
     await assert.rejects(
       db.query(
         `select public.direct_entry_update_own_draft_row(
-          $1::uuid, $2::uuid, $3::uuid, 2, $4::jsonb, $5::text)`,
+          $1::uuid, $2::uuid, $3::uuid, 3, $4::jsonb, $5::text)`,
         [ownerAuth, ownerApp, entryId, JSON.stringify({ general_note: "submitted" }), "r1-own-draft-submitted"],
       ),
       (error) => error.code === "42501",
@@ -568,7 +594,7 @@ test("own DRAFT wrapper preserves note/payment updates, OCC, audit and owner/wor
     assert.equal((await db.query(
       `select count(*)::int as n from public.direct_entry_audit_events
         where resource_ref=$1 and action='draft_row_update' and outcome='APPLIED'`, [entryId],
-    )).rows[0].n, 1, "denied retries do not create extra applied audit events");
+    )).rows[0].n, 2, "denied retries do not create extra applied audit events");
   } finally {
     await db.close();
   }

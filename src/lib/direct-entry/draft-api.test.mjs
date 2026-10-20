@@ -462,6 +462,28 @@ test("PATCH accepts ordinary text fields for bank details without a payment capa
     draft.entry_id, "true", deps(),
   );
   assert.equal(invalid.status, 400);
+
+  const incompleteDependencies = deps();
+  const incomplete = await patchDraftEntry(
+    patchRequest({ expected_version: 1, patch: {
+      payment: { state: "provided", account_number: "00001234", bank_name: "Bank" },
+    } }),
+    draft.entry_id, "true", incompleteDependencies,
+  );
+  assert.equal(incomplete.status, 400);
+  assert.equal(incompleteDependencies.calls.length, 0,
+    "an incomplete explicit payment never reaches the repository");
+
+  const blankDependencies = deps();
+  const blankProvided = await patchDraftEntry(
+    patchRequest({ expected_version: 1, patch: {
+      payment: { state: "provided", account_number: null, bank_name: null, account_holder_name: null },
+    } }),
+    draft.entry_id, "true", blankDependencies,
+  );
+  assert.equal(blankProvided.status, 400);
+  assert.equal(blankDependencies.calls.length, 0,
+    "a provided payment with no value is rejected before the repository");
 });
 
 test("DELETE validates its mutation boundary before session or repository access", async () => {
