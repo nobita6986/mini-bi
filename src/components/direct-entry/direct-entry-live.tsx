@@ -1120,7 +1120,7 @@ export function DirectEntryLive() {
                 effective_date: nextEmployment.effective_date,
                 leave_date: null,
                 leave_reason_text: null,
-                reason: "Cập nhật trạng thái trong bản nháp",
+                reason: null,
               }),
             },
           );

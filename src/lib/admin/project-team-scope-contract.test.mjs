@@ -17,6 +17,14 @@ test("grant request accepts one bounded batch and rejects all client OCC/date fi
     reason: "mapping batch", idempotency_key: KEY,
   };
   assert.deepEqual(parseGrant(request), { ok: true, value: request });
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...request };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    assert.deepEqual(parseGrant(body), { ok: true, value: { ...request, reason: null } });
+  }
+  assert.equal(parseGrant({ ...request, reason: 123 }).ok, false);
+  assert.equal(parseGrant({ ...request, reason: "x".repeat(4001) }).ok, false);
   for (const extra of [
     { expected_pair_version: 0 },
     { expected_version: 1 },
@@ -38,6 +46,14 @@ test("revoke request has no client version and requires a real calendar date", (
     reason: "close mapping", idempotency_key: KEY,
   };
   assert.deepEqual(parseRevoke(request), { ok: true, value: request });
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...request };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    assert.deepEqual(parseRevoke(body), { ok: true, value: { ...request, reason: null } });
+  }
+  assert.equal(parseRevoke({ ...request, reason: 123 }).ok, false);
+  assert.equal(parseRevoke({ ...request, reason: "x".repeat(4001) }).ok, false);
   assert.equal(parseRevoke({ ...request, expected_pair_version: 3 }).ok, false);
   assert.equal(parseRevoke({ ...request, effective_to: "2026-02-29" }).ok, false);
   assert.equal(parseRevoke({ ...request, effective_to: "2026-13-01" }).ok, false);

@@ -133,6 +133,18 @@ test("designation, replacement and revoke requests use exact server contract bod
   assert.deepEqual(Object.keys(revoke.intent.body).sort(), [
     "effective_date", "expected_version", "idempotency_key", "reason",
   ]);
+  const noReason = buildTeamLeaderDesignation({
+    teamId: TEAM_ID, leaderAppUserId: APP_USER_ID, effectiveDate: "2026-10-10",
+    expectedVersion: 3, idempotencyKey: KEY, change: "designate",
+  });
+  assert.equal(noReason.ok, true);
+  if (noReason.ok) assert.equal(noReason.intent.body.reason, null);
+  const blankReason = buildTeamLeaderRevocation({
+    teamId: TEAM_ID, effectiveDate: "2026-10-10", expectedVersion: 3,
+    reason: "  ", idempotencyKey: KEY,
+  });
+  assert.equal(blankReason.ok, true);
+  if (blankReason.ok) assert.equal(blankReason.intent.body.reason, null);
   assert.equal(buildTeamLeaderDesignation({
     teamId: TEAM_ID, leaderAppUserId: APP_USER_ID, effectiveDate: "2026-02-30",
     expectedVersion: 3, reason: "Reason", idempotencyKey: KEY, change: "designate",

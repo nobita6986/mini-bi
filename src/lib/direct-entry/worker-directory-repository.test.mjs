@@ -35,6 +35,7 @@ const row = {
   allowed_actions: {
     view: true, view_pii: true, view_payment: true,
     propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
+    direct_edit: false,
   },
 };
 const payload = {
@@ -89,6 +90,15 @@ test("listWorkers calls only its RPC with the server actor and exact query", asy
       p_page_size: 25,
     },
   }]);
+
+  const teamCalls = [];
+  const teamRepository = createWorkerDirectoryRepository(async (name, args) => {
+    teamCalls.push({ name, args });
+    return { data: { ...payload, scope: "team" }, error: null };
+  });
+  const teamResult = await teamRepository.listWorkers({ ...actor, ...query, scope: "team" });
+  assert.equal(teamResult.ok, true);
+  assert.equal(teamCalls[0].args.p_scope, "team");
 });
 
 test("SQLSTATE classification reuses the shared read/mutation table", () => {

@@ -1,20 +1,19 @@
 /**
- * P2.5-W03 - Hop dong worker directory (recruiter / project / all).
+ * P2.5-W03 - Hop dong worker directory (recruiter / project / team / all).
  *
  * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
- * Authority (mapping actor, recruiter link, current assignment, or all scope +
+ * Authority (mapping actor, recruiter link, current assignment, team scope, or all scope +
  * entry_admin/change_review) do RPC public.direct_entry_list_workers quyet dinh -
  * client khong bao gio tu khai identity/capability/scope.
  *
  * Fail-closed: dung key, dung kieu, khong fallback [], 0, false; khong type assertion.
  * allowed_actions la tin hieu authority duy nhat cua row do server sinh; UI khong tu suy
- * quyen. propose_change hien la false vi policy audience/read/withdraw cua change-request
- * con thuoc W04 (xem migration #52 self-check).
+ * quyen. RPC van kiem tra lai moi mutation.
  */
 import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
 import { isPaymentAccountNumber, isPaymentText } from "./payment-contract.ts";
 
-export const WORKER_DIRECTORY_SCOPES = ["recruited", "managed", "all"] as const;
+export const WORKER_DIRECTORY_SCOPES = ["recruited", "managed", "team", "all"] as const;
 export type WorkerDirectoryScope = (typeof WORKER_DIRECTORY_SCOPES)[number];
 
 export const WORKER_DIRECTORY_DEFAULT_PAGE_SIZE = 25;
@@ -42,7 +41,7 @@ export const WORKER_DIRECTORY_PAYMENT_KEYS = [
 export const WORKER_DIRECTORY_PENDING_KEYS = ["request_id", "state", "version"] as const;
 export const WORKER_DIRECTORY_DECISION_KEYS = ["state", "decided_at"] as const;
 export const WORKER_DIRECTORY_ACTION_KEYS = [
-  "view", "view_pii", "view_payment", "propose_change", "propose_change_code",
+  "view", "view_pii", "view_payment", "propose_change", "propose_change_code", "direct_edit",
 ] as const;
 
 export const WORKER_EMPLOYMENT_STATUSES = ["UNCONFIRMED", "ON", "OFF"] as const;
@@ -166,6 +165,7 @@ export type WorkerDirectoryAllowedActions = {
   view_payment: true;
   propose_change: boolean;
   propose_change_code: string | null;
+  direct_edit: boolean;
 };
 
 export type WorkerDirectoryRow = {
@@ -274,14 +274,7 @@ function projectDecision(value: unknown): WorkerDirectoryLastDecision | null | u
 }
 
 function projectActions(value: unknown): WorkerDirectoryAllowedActions | undefined {
-  if (!isRecord(value)) return undefined;
-  const hasDirectEdit = Object.keys(value).includes("direct_edit");
-  const keys = hasDirectEdit
-    ? [...WORKER_DIRECTORY_ACTION_KEYS, "direct_edit"]
-    : WORKER_DIRECTORY_ACTION_KEYS;
-  if (!hasExactKeys(value, keys) || (hasDirectEdit && typeof value.direct_edit !== "boolean")) {
-    return undefined;
-  }
+  if (!isRecord(value) || !hasExactKeys(value, WORKER_DIRECTORY_ACTION_KEYS)) return undefined;
   if (value.view !== true) return undefined;
   for (const flag of ["view_pii", "view_payment", "propose_change"]) {
     if (typeof value[flag] !== "boolean") return undefined;
@@ -289,12 +282,14 @@ function projectActions(value: unknown): WorkerDirectoryAllowedActions | undefin
   if (value.propose_change_code !== null && typeof value.propose_change_code !== "string") {
     return undefined;
   }
+  if (typeof value.direct_edit !== "boolean") return undefined;
   return {
     view: true,
     view_pii: true,
     view_payment: true,
     propose_change: value.propose_change as boolean,
     propose_change_code: value.propose_change_code as string | null,
+    direct_edit: value.direct_edit,
   };
 }
 

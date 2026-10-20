@@ -204,10 +204,11 @@ test("gan nhieu quan ly: chan trung lap va du lieu sai", () => {
   assert.equal(badDate.ok, false, "ngay phai ISO YYYY-MM-DD");
 });
 
-test("thu hoi: gui CA hai version (assignment + project) va reason bat buoc", () => {
+test("thu hoi: gui CA hai version (assignment + project) va reason nullable", () => {
   const noReason = buildUnassignRequest({ reason: "  ", expectedVersion: 1,
     expectedProjectVersion: 2, idempotencyKey: KEY });
-  assert.equal(noReason.ok, false, "reason rong phai bi chan");
+  assert.equal(noReason.ok, true, "reason rong duoc canonicalize thanh null");
+  if (noReason.ok) assert.equal(noReason.body.reason, null);
 
   const ok = buildUnassignRequest({ reason: "thu hoi", expectedVersion: 1,
     expectedProjectVersion: 2, idempotencyKey: KEY });
@@ -217,9 +218,9 @@ test("thu hoi: gui CA hai version (assignment + project) va reason bat buoc", ()
   assertNoAuthorityFields(ok.body);
 });
 
-test("ly do bat buoc cho MOI thao tac thay doi", () => {
-  assert.notEqual(validateReason(""), null);
-  assert.notEqual(validateReason("   "), null);
+test("ly do thao tac tuy chon cho moi thao tac thay doi", () => {
+  assert.equal(validateReason(""), null);
+  assert.equal(validateReason("   "), null);
   assert.notEqual(validateReason("x".repeat(4001)), null);
   assert.equal(validateReason("hop le"), null);
 
@@ -235,7 +236,13 @@ test("ly do bat buoc cho MOI thao tac thay doi", () => {
     () => buildUnassignRequest({ reason: "", expectedVersion: 1,
       expectedProjectVersion: 1, idempotencyKey: KEY }),
   ];
-  for (const build of builders) assert.equal(build().ok, false, "thieu reason phai bi chan");
+  for (const build of builders) {
+    const result = build();
+    assert.equal(result.ok, true, "reason trong duoc chap nhan");
+    if (result.ok) assert.equal(result.body.reason, null);
+  }
+  assert.equal(buildCreateRequest({ projectId: "p1", displayName: "X", reason: "x".repeat(4001),
+    idempotencyKey: KEY }).ok, false);
 });
 
 test("ma du an: chi chap nhan shape DB cho phep", () => {

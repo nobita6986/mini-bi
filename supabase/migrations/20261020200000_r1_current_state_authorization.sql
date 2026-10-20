@@ -18,6 +18,39 @@ alter table public.direct_entry_project_team_scopes
 alter table public.direct_entry_team_leader_assignments
   add column is_current boolean not null default false;
 
+-- is_current is derived authority state; it must not advance the project/team pair version.
+create or replace function public.direct_entry_project_team_scopes_history_guard()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'project team mapping history is append-only' using errcode = '55000';
+  end if;
+  if (to_jsonb(new) - 'is_current') = (to_jsonb(old) - 'is_current') then
+    return new;
+  end if;
+  if new.mapping_id <> old.mapping_id
+     or new.project_id <> old.project_id
+     or new.team_id <> old.team_id
+     or new.valid_from <> old.valid_from
+     or new.reason_id <> old.reason_id
+     or new.granted_by_user_id <> old.granted_by_user_id
+     or new.created_at <> old.created_at then
+    raise exception 'project team mapping identity is immutable' using errcode = '55000';
+  end if;
+  if old.valid_to is not null and new.valid_to is distinct from old.valid_to then
+    raise exception 'a revoked project team mapping cannot be reopened' using errcode = '55000';
+  end if;
+  if new.version <> old.version + 1 then
+    raise exception 'project team mapping mutation must advance the pair version'
+      using errcode = '55000';
+  end if;
+  return new;
+end;
+$$;
+
 -- Marker map and lifecycle owners:
 -- * capability_grants: account creation/team-leader designation sets true;
 --   team-leader revoke and app-user disable clear it.
@@ -2064,6 +2097,34 @@ begin
 end;
 $function$;
 
+-- Temporarily restore only the migration permissions needed to preserve this SECURITY DEFINER owner.
+do $r1_catalog_executor_setup$
+declare
+  v_executor oid;
+begin
+  if current_user <> session_user then
+    raise exception 'R1 requires the migration login role to remain current_user';
+  end if;
+  select r.oid into v_executor from pg_catalog.pg_roles r where r.rolname = 'direct_entry_catalog_bootstrap_executor';
+  if v_executor is null then raise exception 'R1 catalog bootstrap executor role is missing'; end if;
+  perform pg_catalog.set_config('mini_bi.r1_added_catalog_executor_membership', 'false', true);
+  perform pg_catalog.set_config('mini_bi.r1_added_catalog_executor_create', 'false', true);
+  if not pg_catalog.pg_has_role(session_user, v_executor, 'SET') then
+    if exists (select 1 from pg_catalog.pg_auth_members m where m.member = session_user::regrole and m.roleid = v_executor and m.grantor = current_user::regrole) then
+      raise exception 'R1 found stale migration executor membership';
+    end if;
+    execute pg_catalog.format('GRANT direct_entry_catalog_bootstrap_executor TO %I WITH ADMIN FALSE, INHERIT FALSE, SET TRUE', session_user);
+    perform pg_catalog.set_config('mini_bi.r1_added_catalog_executor_membership', 'true', true);
+  end if;
+  if pg_catalog.has_schema_privilege(v_executor, 'public', 'CREATE') then
+    raise exception 'catalog bootstrap executor unexpectedly has CREATE on public';
+  end if;
+  execute 'GRANT CREATE ON SCHEMA public TO direct_entry_catalog_bootstrap_executor';
+  perform pg_catalog.set_config('mini_bi.r1_added_catalog_executor_create', 'true', true);
+end;
+$r1_catalog_executor_setup$;
+SET LOCAL ROLE direct_entry_catalog_bootstrap_executor;
+
 CREATE OR REPLACE FUNCTION public.direct_entry_apply_catalog_bootstrap(p_auth_subject uuid, p_app_user_id uuid, p_expected_source_fingerprint text, p_idempotency_key text, p_reason text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -2228,6 +2289,8 @@ begin
   );
 end;
 $function$;
+
+RESET ROLE;
 
 CREATE OR REPLACE FUNCTION public.direct_entry_apply_change_item(p_auth_subject uuid, p_app_user_id uuid, p_request_id uuid, p_entry direct_entries, p_target_kind text, p_proposal jsonb, p_reason_id uuid)
  RETURNS uuid
@@ -3428,6 +3491,8 @@ begin
 end;
 $function$;
 
+SET LOCAL ROLE direct_entry_catalog_bootstrap_executor;
+
 CREATE OR REPLACE FUNCTION public.direct_entry_catalog_bootstrap_plan(p_auth_subject uuid, p_app_user_id uuid)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -3483,6 +3548,8 @@ begin
   );
 end;
 $function$;
+
+RESET ROLE;
 
 CREATE OR REPLACE FUNCTION public.direct_entry_claim_worker_portrait_stage(p_auth_subject uuid, p_app_user_id uuid, p_stage_id uuid, p_idempotency_key text)
  RETURNS jsonb
@@ -8473,5 +8540,29 @@ begin
   return v_result;
 end;
 $function$;
+
+RESET ROLE;
+do $r1_catalog_executor_cleanup$
+declare
+  v_executor oid;
+begin
+  select r.oid into v_executor from pg_catalog.pg_roles r where r.rolname = 'direct_entry_catalog_bootstrap_executor';
+  if current_setting('mini_bi.r1_added_catalog_executor_create', true) = 'true' then
+    execute pg_catalog.format('REVOKE CREATE ON SCHEMA public FROM direct_entry_catalog_bootstrap_executor GRANTED BY %I', current_user);
+  end if;
+  if current_setting('mini_bi.r1_added_catalog_executor_membership', true) = 'true' then
+    execute pg_catalog.format('REVOKE direct_entry_catalog_bootstrap_executor FROM %I GRANTED BY %I', session_user, current_user);
+  end if;
+  if pg_catalog.has_schema_privilege(v_executor, 'public', 'CREATE') then
+    raise exception 'catalog bootstrap executor retained CREATE on public';
+  end if;
+  if exists (select 1 from pg_catalog.pg_auth_members m where m.member = session_user::regrole and m.roleid = v_executor and m.grantor = current_user::regrole) then
+    raise exception 'R1 migration executor membership was not removed';
+  end if;
+  if exists (select 1 from pg_catalog.pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('direct_entry_apply_catalog_bootstrap', 'direct_entry_catalog_bootstrap_plan') and (p.proowner <> v_executor or not p.prosecdef)) then
+    raise exception 'R1 changed catalog bootstrap function owner or SECURITY DEFINER';
+  end if;
+end;
+$r1_catalog_executor_cleanup$;
 
 commit;

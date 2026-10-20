@@ -107,11 +107,15 @@ export const workerOperationsReviewPredicate: NavCapabilityPredicate = (actor) =
   actor.scopes.some((scope) => scope.kind === "all") &&
   actor.capabilities.includes("change_review");
 
+/** Team tab visibility only; the directory RPC still checks current assignment per request. */
+export const workerOperationsTeamScopePredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("team_manager_assign") &&
+  actor.scopes.some((scope) => scope.kind === "team");
+
 export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
   if (workerOperationsAllScopePredicate(actor)) return true;
   if (actor.capabilities.includes("change_request_create")) return true;
-  if (actor.capabilities.includes("team_manager_assign") &&
-      actor.scopes.some((scope) => scope.kind === "team")) return true;
+  if (workerOperationsTeamScopePredicate(actor)) return true;
   return actor.capabilities.some((capability) =>
     DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
 };

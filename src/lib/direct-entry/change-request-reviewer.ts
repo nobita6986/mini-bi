@@ -331,11 +331,7 @@ export function buildReviewerViewModel(input: {
     if (isUnsupportedReason(built)) return unsupported(built);
     if (entry.expected_version !== item.expected_version) stale = true;
     const changed = built.decidable ? built.rows.length > 0 : true;
-    if (built.targetKind === "WORK_STATUS") {
-      if (built.rows.length <= 1) stale = true;
-    } else if (built.decidable && !changed) {
-      stale = true;
-    }
+    if (built.decidable && !changed) stale = true;
     items.push(built);
   }
   if (items.length === 0) return unsupported("ENTRY");
@@ -368,7 +364,7 @@ export function reviewDecisionState(decision: ChangeRequestDecision): ChangeRequ
 export function buildDecisionRequest(input: {
   decision: ChangeRequestDecision;
   expectedVersion: number;
-  reason: string;
+  reason: string | null;
   idempotencyKey: string;
 }): ChangeRequestDecisionInput | null {
   const parsed = projectChangeRequestDecision({
@@ -384,9 +380,9 @@ export function buildDecisionRequest(input: {
 export function decisionIntentSignature(
   requestId: string,
   decision: ChangeRequestDecision,
-  reason: string,
+  reason: string | null,
 ): string {
-  return "change_request_decision:" + requestId + ":" + decision + ":" + reason;
+  return "change_request_decision:" + requestId + ":" + decision + ":" + (reason ?? "");
 }
 
 export function reviewDecisionMessage(decision: ChangeRequestDecision, reference: string): string {

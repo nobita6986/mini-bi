@@ -34,15 +34,16 @@ test("account manager wires search, enabled filter, pagination and strict projec
   assert.match(source, /Tìm kiếm theo tên hiển thị/);
 });
 
-test("enable/disable use exact API routes, mandatory reason, authoritative version and idempotency header", () => {
+test("enable/disable use exact API routes, optional reason, authoritative version and idempotency header", () => {
   assert.match(source, /\/api\/admin\/access\/accounts\/\$\{encodeURIComponent\(dialog\.account\.account_ref\)\}\/\$\{dialog\.nextEnabled \? "enable" : "disable"\}/);
   assert.match(source, /method: "POST",\s*operation: dialog\.nextEnabled \? "enable" : "disable"/);
   assert.match(source, /buildAccountStateRequest/);
   assert.match(source, /newAccountIntentKey\(\)/);
   assert.match(source, /"Idempotency-Key": String\(intent\.body\.idempotency_key\)/);
   assert.match(source, /expectedVersion: dialog\.account\.version/);
-  assert.match(source, /Lý do thay đổi/);
-  assert.match(source, /maxLength=\{4000\} required/);
+  assert.match(source, /Lý do thao tác \(không bắt buộc\)/);
+  assert.match(source, /maxLength=\{4000\}/);
+  assert.doesNotMatch(source, /maxLength=\{4000\} required|aria-required="true"/);
   assert.match(source, /Xác nhận kích hoạt/);
   assert.match(source, /Xác nhận ngừng/);
   assert.match(source, /radix-ui\/dialog/);

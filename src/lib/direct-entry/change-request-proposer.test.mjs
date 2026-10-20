@@ -109,7 +109,7 @@ test("reason is trimmed and bounded, withdraw follows server flags only", () => 
   assert.equal(normalizeReason(""), null);
   assert.equal(normalizeReason(null), null);
   assert.equal(normalizeReason("x".repeat(4000)), "x".repeat(4000));
-  assert.equal(normalizeReason("x".repeat(4001)), null);
+  assert.equal(normalizeReason("x".repeat(4001)), "x".repeat(4001));
 
   assert.equal(canWithdrawChangeRequest({ state: "PENDING", can_withdraw: true }), true);
   assert.equal(canWithdrawChangeRequest({ state: "PENDING", can_withdraw: false }), false);

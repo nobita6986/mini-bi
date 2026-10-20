@@ -172,9 +172,9 @@ export function DirectEntryPaymentEditor({
     );
     if (!entryId || !canEdit || status === "saving" || status === "loading" ||
         status === "conflict" || expectedEntryVersion < 1) return;
-    if (reason.trim().length === 0 || reason.length > 4000) {
+    if (reason.length > 4000) {
       setStatus("error");
-      setMessage("Nhập lý do cập nhật (tối đa 4000 ký tự).");
+      setMessage("Lý do tối đa 4000 ký tự.");
       return;
     }
     const activeBankIds = new Set(banks.map(({ bank_id }) => bank_id));
@@ -195,7 +195,7 @@ export function DirectEntryPaymentEditor({
       expected_entry_version: expectedEntryVersion,
       expected_payment_version: paymentVersion,
       payment,
-      reason,
+      reason: reason.trim() || null,
     };
     const fingerprint = JSON.stringify(body);
     const pending = pendingWrite.current;
@@ -378,7 +378,7 @@ export function DirectEntryPaymentEditor({
           {canEdit && (
             <>
               <label className={styles.field}>
-                <span>Lý do cập nhật</span>
+                <span>Lý do cập nhật (không bắt buộc)</span>
                 <textarea
                   aria-label="Lý do cập nhật thanh toán"
                   maxLength={4000}

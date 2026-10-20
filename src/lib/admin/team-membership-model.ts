@@ -15,6 +15,7 @@ import { parseIsoDate } from "../direct-entry/direct-entry-date-format.ts";
 import type { AdminPersonnel } from "../direct-entry/personnel-catalog-contract.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -109,7 +110,7 @@ export function buildAssignMembershipRequest(input: {
   teamId: string;
   validFrom: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
   move?: boolean;
 }): { ok: true; request: MembershipMutationRequest } | { ok: false; message: string } {
@@ -129,7 +130,7 @@ export function buildAssignMembershipRequest(input: {
       body: {
         valid_from: input.validFrom,
         expected_version: input.expectedVersion,
-        reason: input.reason,
+        reason: normalizeOptionalActionReason(input.reason),
         idempotency_key: input.idempotencyKey,
       },
       idempotencyKey: input.idempotencyKey,
@@ -141,7 +142,7 @@ export function buildUnassignMembershipRequest(input: {
   recruiterId: string;
   validTo: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): { ok: true; request: MembershipMutationRequest } | { ok: false; message: string } {
   const url = mutationPath(input.recruiterId);
@@ -160,7 +161,7 @@ export function buildUnassignMembershipRequest(input: {
       body: {
         valid_to: input.validTo,
         expected_version: input.expectedVersion,
-        reason: input.reason,
+        reason: normalizeOptionalActionReason(input.reason),
         idempotency_key: input.idempotencyKey,
       },
       idempotencyKey: input.idempotencyKey,

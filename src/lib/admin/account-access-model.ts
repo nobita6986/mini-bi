@@ -22,6 +22,7 @@ import {
 } from "../direct-entry/app-user-access-contract.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -100,7 +101,7 @@ export function buildAccountListQuery(input: AccountListQuery): URLSearchParams 
 
 export function buildAccountStateRequest(input: {
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateVersion(input.expectedVersion)
@@ -112,7 +113,7 @@ export function buildAccountStateRequest(input: {
     ok: true,
     body: {
       expected_version: input.expectedVersion,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };

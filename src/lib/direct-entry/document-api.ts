@@ -7,6 +7,7 @@ import { DOCUMENT_MIME_TYPES, type DirectEntryDocumentType } from "../contracts/
 import { DOCUMENT_MAX_BYTES, isDirectEntryDocumentType } from "./document-upload-contract.ts";
 import type { DocumentObjectStorage } from "./r2-document-storage.ts";
 import type { DirectEntryRepository, OperationResult } from "./write-repository.ts";
+import { projectOptionalActionReason } from "./action-reason.ts";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RESERVE_KEYS = new Set(["document_type", "expected_entry_version", "size_bytes", "mime_type", "reason"]);
@@ -114,17 +115,14 @@ function parseReserveBody(body: Record<string, unknown>): ReserveBody | { code: 
   if (body.document_type === "WORKER_PORTRAIT" && mime === "application/pdf") {
     return { code: "DOCUMENT_MIME_INVALID" };
   }
-  const reason = body.reason;
-  if (reason !== undefined && reason !== null &&
-      (typeof reason !== "string" || reason.trim().length < 1 || reason.length > 4000)) {
-    return { code: "DOCUMENT_REQUEST_INVALID" };
-  }
+  const reason = projectOptionalActionReason(body.reason);
+  if (!reason.ok) return { code: "DOCUMENT_REQUEST_INVALID" };
   return {
     document_type: body.document_type,
     expected_entry_version: body.expected_entry_version,
     size_bytes: size,
     mime_type: mime,
-    reason: typeof reason === "string" ? reason : null,
+    reason: reason.value,
   };
 }
 

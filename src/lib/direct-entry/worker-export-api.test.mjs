@@ -101,7 +101,7 @@ test("client authority fields and an invalid request body are refused", async ()
   assert.equal((await callApi({ ...VALID_BODY, auth_subject: "x" })).status, 400);
   assert.equal((await callApi({ ...VALID_BODY, app_user_id: "x" })).status, 400);
   assert.equal((await callApi({ ...VALID_BODY, scope: "everything" })).status, 400);
-  assert.equal((await callApi({ scope: "recruited" })).status, 400);
+  assert.equal((await callApi({ scope: "recruited" })).status, 200);
   assert.equal((await callApi({ ...VALID_BODY, employment_status: "MAYBE" })).status, 400);
 });
 
@@ -212,4 +212,19 @@ test("the all scope is accepted by the body allowlist (authority stays server-si
       reason: "audit all",
     },
   }]);
+});
+
+test("team export accepts optional reasons and sends the selected scope to the repository", async () => {
+  for (const reason of [undefined, null, "", "  "]) {
+    const deps = dependencies();
+    const body = { scope: "team" };
+    if (reason !== undefined) body.reason = reason;
+    const response = await callApi(body, { deps });
+    assert.equal(response.status, 200);
+    assert.equal(deps.calls[0].input.scope, "team");
+    assert.equal(deps.calls[0].input.reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    assert.equal((await callApi({ scope: "team", reason })).status, 400);
+  }
 });

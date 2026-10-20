@@ -43,15 +43,15 @@ export type LaborTypeCatalogRepository = {
     Promise<LaborTypeCatalogOutcome<AdminLaborType>>;
   createLaborType(input: AdminActorRef & {
     expected_version: number; labor_type_key: string; display_name: string;
-    sort_order: number; reason: string; idempotency_key: string;
+    sort_order: number; reason: string | null; idempotency_key: string;
   }): Promise<LaborTypeCatalogOutcome<AdminLaborTypeCreateResult>>;
   updateLaborType(input: AdminActorRef & {
     labor_type_key: string; expected_version: number; display_name: string;
-    sort_order: number; reason: string; idempotency_key: string;
+    sort_order: number; reason: string | null; idempotency_key: string;
   }): Promise<LaborTypeCatalogOutcome<AdminLaborTypeMutation>>;
   setLaborTypeActive(input: AdminActorRef & {
     labor_type_key: string; active: boolean; expected_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<LaborTypeCatalogOutcome<AdminLaborTypeMutation>>;
 };
 

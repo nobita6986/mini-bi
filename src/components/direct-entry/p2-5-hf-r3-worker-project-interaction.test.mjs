@@ -50,10 +50,11 @@ test("HF-R3: nut Ngung/Kich hoat tren dong du an gui DUNG cuc tinh active", () =
   }
 });
 
-test("HF-R3: tat/kich hoat du an van bat buoc ly do va version OCC", () => {
+test("HF-R3: tat/kich hoat du an cho phep ly do rong va van yeu cau version OCC", () => {
   const missingReason = buildSetActiveRequest({
     active: false, reason: "   ", expectedVersion: 3, idempotencyKey: IDEMPOTENCY_KEY });
-  assert.equal(missingReason.ok, false);
+  assert.equal(missingReason.ok, true);
+  assert.equal(missingReason.body.reason, null);
   const badVersion = buildSetActiveRequest({
     active: true, reason: REASON, expectedVersion: -1, idempotencyKey: IDEMPOTENCY_KEY });
   assert.equal(badVersion.ok, false);
@@ -141,6 +142,14 @@ test("HF-R3: o ly do nghi chi hien khi chon Nghi viec, va bat buoc", () => {
   assert.match(workers, /id="worker-leave-reason"/);
   assert.match(workers, /required aria-required="true"/);
   assert.match(workers, /targetKind = "WORK_STATUS"/);
+});
+
+test("R1.1: direct-edit action reason is optional and blank becomes null", () => {
+  assert.match(workers, /const actionReason = trimmed === "" \? null : trimmed/);
+  assert.match(workers, /reason: actionReason/);
+  assert.doesNotMatch(workers, /<textarea id=\{reasonId\} required/);
+  // Keep OFF leave_reason as a required business field, separate from the action reason.
+  assert.match(workers, /id="worker-leave-reason"[\s\S]{0,100}required aria-required="true"/);
 });
 
 test("HF-R3: proposal trang thai di qua DUNG validator cua create contract", () => {

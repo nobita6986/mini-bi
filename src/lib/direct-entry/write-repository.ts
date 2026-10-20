@@ -149,7 +149,7 @@ export type DirectEntryRepository = {
     status: "UNCONFIRMED" | "ON" | "OFF";
     effective_date: string;
     leave_reason_text: string | null;
-    reason: string;
+    reason: string | null;
     idempotency_key: string;
   }): Promise<OperationResult<{
     entry_id: string;
@@ -162,7 +162,7 @@ export type DirectEntryRepository = {
     expected_entry_version: number;
     expected_payment_version: number;
     payment: PaymentInput;
-    reason: string;
+    reason: string | null;
     idempotency_key: string;
   }): Promise<OperationResult<{
     entry_id: string;

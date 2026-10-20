@@ -57,24 +57,24 @@ export type ProjectAdminRepository = {
   getProjectDetail(input: AdminActorRef & { project_id: string }):
     Promise<ProjectAdminOutcome<AdminProjectDetail>>;
   createProject(input: AdminActorRef & {
-    project_id: string; display_name: string; reason: string; idempotency_key: string;
+    project_id: string; display_name: string; reason: string | null; idempotency_key: string;
   }): Promise<ProjectAdminOutcome<AdminProjectCreateMutation>>;
   updateProject(input: AdminActorRef & {
     project_id: string; expected_version: number; display_name: string;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<ProjectAdminOutcome<AdminProjectMutation>>;
   /** active=false la deactivate canonical; khong co RPC deactivate rieng. */
   setProjectActive(input: AdminActorRef & {
     project_id: string; active: boolean; expected_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<ProjectAdminOutcome<AdminProjectMutation>>;
   assignManager(input: AdminActorRef & {
     project_id: string; manager_recruiter_id: string; valid_from: string;
-    expected_project_version: number; reason: string; idempotency_key: string;
+    expected_project_version: number; reason: string | null; idempotency_key: string;
   }): Promise<ProjectAdminOutcome<AdminAssignmentMutation>>;
   unassignManager(input: AdminActorRef & {
     assignment_id: string; expected_version: number; expected_project_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<ProjectAdminOutcome<AdminAssignmentMutation>>;
 };
 

@@ -599,7 +599,7 @@ export function PersonnelTeamMembershipManager({
                     title={operation.kind === "assign" ? "Gán nhóm"
                       : operation.kind === "move" ? "Chuyển nhóm"
                         : operation.cancelScheduled ? "Hủy lịch gán nhóm" : "Bỏ gán nhóm"}
-                    description="Lý do bắt buộc. Dữ liệu được kiểm tra lại trước khi lưu thay đổi."
+                    description="Lý do thao tác không bắt buộc. Dữ liệu được kiểm tra lại trước khi lưu thay đổi."
                   />
                   {operation.kind !== "close" ? (
                     <div className="mb-4">
@@ -678,8 +678,8 @@ export function PersonnelTeamMembershipManager({
                         className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3" />
                     </label>
                     <label htmlFor="membership-reason" className="block text-sm font-medium">
-                      Lý do <span aria-hidden="true">*</span>
-                      <textarea id="membership-reason" required maxLength={4000} rows={3} value={form.reason}
+                      Lý do thao tác (không bắt buộc)
+                      <textarea id="membership-reason" maxLength={4000} rows={3} value={form.reason}
                         onChange={(event) => {
                           const reason = event.currentTarget.value;
                           setActiveForm((value) => ({ ...value, reason }));

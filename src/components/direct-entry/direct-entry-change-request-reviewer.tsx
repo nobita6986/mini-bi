@@ -304,10 +304,6 @@ export function DirectEntryChangeRequestReviewer({
     const requestId = request.request_id;
     const expectedVersion = model && "version" in model ? model.version : request.version;
     const trimmed = normalizeReason(reason);
-    if (trimmed === null) {
-      setStatusMessage("Lý do quyết định là bắt buộc và tối đa 4000 ký tự.");
-      return;
-    }
     const intent = decisionIntentSignature(requestId, decision, trimmed);
     const resolved = resolveIntentKey(intentKey.current, intent, () => crypto.randomUUID());
     intentKey.current = resolved.state;
@@ -527,7 +523,9 @@ export function DirectEntryChangeRequestReviewer({
 
                   {(model.kind === "reviewable" || model.kind === "stale") && (
                     <div className={styles.field}>
-                      <label htmlFor="change-request-decision-reason">Lý do quyết định</label>
+                      <label htmlFor="change-request-decision-reason">
+                        Lý do quyết định (không bắt buộc)
+                      </label>
                       <textarea
                         id="change-request-decision-reason"
                         aria-label="Lý do quyết định"
@@ -551,7 +549,9 @@ export function DirectEntryChangeRequestReviewer({
 
               {canReject && !canDecide && model?.kind !== "stale" && (
                 <div className={styles.field}>
-                  <label htmlFor="change-request-decision-reason">Lý do từ chối</label>
+                  <label htmlFor="change-request-decision-reason">
+                    Lý do từ chối (không bắt buộc)
+                  </label>
                   <textarea
                     id="change-request-decision-reason"
                     aria-label="Lý do từ chối"
@@ -593,10 +593,6 @@ export function DirectEntryChangeRequestReviewer({
                     aria-busy={busy === "reject"}
                     disabled={busy !== null}
                     onClick={() => {
-                      if (normalizeReason(reason) === null) {
-                        setStatusMessage("Lý do quyết định là bắt buộc và tối đa 4000 ký tự.");
-                        return;
-                      }
                       setConfirmDecision("reject");
                     }}
                   >
@@ -608,10 +604,6 @@ export function DirectEntryChangeRequestReviewer({
                     aria-busy={busy === "approve"}
                     disabled={busy !== null}
                     onClick={() => {
-                      if (normalizeReason(reason) === null) {
-                        setStatusMessage("Lý do quyết định là bắt buộc và tối đa 4000 ký tự.");
-                        return;
-                      }
                       setConfirmDecision("approve");
                     }}
                   >

@@ -67,7 +67,7 @@ function workerRow(overrides = {}) {
     is_project_manager: true,
     allowed_actions: {
       view: true, view_pii: true, view_payment: true,
-      propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
+      propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY", direct_edit: false,
     },
     ...overrides,
   };

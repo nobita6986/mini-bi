@@ -90,6 +90,9 @@ test("mutation builders emit exact least-authority bodies", () => {
     "code", "display_name", "expected_version", "idempotency_key", "reason",
   ]);
   assert.equal(create.body.expected_version, 0);
+  const noReason = buildTeamCreateRequest({ code: "new-team", displayName: "New Team", idempotencyKey: key });
+  assert.equal(noReason.ok, true);
+  if (noReason.ok) assert.equal(noReason.body.reason, null);
 
   const update = buildTeamUpdateRequest({
     displayName: "Renamed", expectedVersion: 2, reason: "Reason", idempotencyKey: key,
@@ -108,8 +111,13 @@ test("mutation builders emit exact least-authority bodies", () => {
   assert.deepEqual(Object.keys(active.body).sort(), [
     "active", "expected_version", "idempotency_key", "reason",
   ]);
-  assert.equal(buildTeamCreateRequest({
+  const blankReason = buildTeamCreateRequest({
     code: "valid", displayName: "Valid", reason: "", idempotencyKey: key,
+  });
+  assert.equal(blankReason.ok, true);
+  if (blankReason.ok) assert.equal(blankReason.body.reason, null);
+  assert.equal(buildTeamCreateRequest({
+    code: "valid", displayName: "Valid", reason: "x".repeat(4001), idempotencyKey: key,
   }).ok, false);
 });
 

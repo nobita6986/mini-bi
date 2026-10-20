@@ -167,6 +167,24 @@ test("valid create uses only the server actor and returns the exact projection",
   });
 });
 
+test("change-request submission normalizes optional action reasons before repository calls", async () => {
+  for (const reason of [undefined, null, "", "  "]) {
+    const deps = dependencies();
+    const body = createBody();
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const response = await createChangeRequest(request(body), "true", deps);
+    assert.equal(response.status, 200);
+    assert.equal(deps.calls[0].input.reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const deps = dependencies();
+    const response = await createChangeRequest(request(createBody({ reason })), "true", deps);
+    assert.equal(response.status, 400);
+    assert.equal(deps.calls.length, 0);
+  }
+});
+
 test("full-field ENTRY_FIELD builder output reaches create API with reason, OCC and idempotency", async () => {
   const baseline = {
     project_id: "project-old",
@@ -287,6 +305,22 @@ test("withdraw and decision dispatch to the matching repository method only", as
       request({ decision, expected_version: 2, reason: "x", idempotency_key: "k" }),
       requestId, "true", dependencies());
     assert.equal(response.status, 400, String(decision));
+  }
+
+  for (const reason of [undefined, null, "", "  "]) {
+    const deps = dependencies();
+    const body = { decision: "approve", expected_version: 2, idempotency_key: "decision-optional-key" };
+    if (reason !== undefined) body.reason = reason;
+    const response = await decideChangeRequest(request(body), requestId, "true", deps);
+    assert.equal(response.status, 200);
+    assert.equal(deps.calls[0].input.reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const deps = dependencies();
+    const response = await decideChangeRequest(request({ decision: "approve", expected_version: 2,
+      reason, idempotency_key: "decision-invalid-key" }), requestId, "true", deps);
+    assert.equal(response.status, 400);
+    assert.equal(deps.calls.length, 0);
   }
 });
 

@@ -51,7 +51,7 @@ test("search, inactive filter and pagination use bounded explicit API query", ()
   assert.equal(buildVendorListQuery({ search: "x", includeInactive: false, page: 1001 }), null);
 });
 
-test("create matches API request contract, requires reason and keeps create version zero", () => {
+test("create matches API request contract and keeps create version zero", () => {
   const result = buildVendorCreateRequest({
     vendorId: "SUP-02",
     displayName: "Nhà cung cấp B",
@@ -66,6 +66,14 @@ test("create matches API request contract, requires reason and keeps create vers
   ]);
   assert.equal(result.body.expected_version, 0);
   assert.equal(result.body.valid_from, "2032-02-29");
+  const withoutReason = buildVendorCreateRequest({ vendorId: "SUP-01", displayName: "Vendor",
+    effectiveDate: "2032-02-29", idempotencyKey: KEY });
+  assert.equal(withoutReason.ok, true);
+  if (withoutReason.ok) assert.equal(withoutReason.body.reason, null);
+  const blankReason = buildVendorCreateRequest({ vendorId: "SUP-01", displayName: "Vendor",
+    effectiveDate: "2032-02-29", reason: "  ", idempotencyKey: KEY });
+  assert.equal(blankReason.ok, true);
+  if (blankReason.ok) assert.equal(blankReason.body.reason, null);
   assert.equal(buildVendorCreateRequest({
     vendorId: "SUP-02", displayName: "Nhà cung cấp B", effectiveDate: "2026-02-29",
     reason: "Tạo mới", idempotencyKey: KEY,
@@ -93,6 +101,10 @@ test("update and set-active send exact expected-version, reason and idempotency 
   });
   assert.equal(update.ok, true);
   assert.equal(active.ok, true);
+  const withoutReason = buildVendorUpdateRequest({ displayName: "Tên", expectedVersion: 2,
+    idempotencyKey: KEY });
+  assert.equal(withoutReason.ok, true);
+  if (withoutReason.ok) assert.equal(withoutReason.body.reason, null);
   if (update.ok) {
     assert.deepEqual(Object.keys(update.body).sort(),
       ["display_name", "expected_version", "idempotency_key", "reason"]);

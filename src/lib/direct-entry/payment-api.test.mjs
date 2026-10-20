@@ -174,7 +174,7 @@ test("valid update uses only trusted actor IDs and preserves the account string"
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
-test("unknown/inactive bank, invalid versions, and missing reason fail closed", async () => {
+test("unknown/inactive bank and invalid payment fields fail closed; reason stays optional", async () => {
   const invalidBank = dependencies({
     async loadInputCatalog(input) {
       return { ok: true, data: { ...input, projects: [], recruiters: [], banks: [] } };
@@ -190,7 +190,6 @@ test("unknown/inactive bank, invalid versions, and missing reason fail closed", 
   for (const body of [
     validBody({ expected_entry_version: 0 }),
     validBody({ expected_payment_version: -1 }),
-    validBody({ reason: "" }),
     validBody({ payment: { ...payment, account_number: 1234 } }),
     validBody({ payment: { ...payment, account_holder_name: "" } }),
     validBody({ payment: {
@@ -208,6 +207,24 @@ test("unknown/inactive bank, invalid versions, and missing reason fail closed", 
   ]) {
     const response = await patchDraftPayment(
       request(body), entryId, "true", dependencies(),
+    );
+    assert.equal(response.status, 400);
+  }
+});
+
+test("payment action reason absence and blank normalize to null without weakening validation", async () => {
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = validBody();
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const deps = dependencies();
+    const response = await patchDraftPayment(request(body), entryId, "true", deps);
+    assert.equal(response.status, 200);
+    assert.equal(deps.calls[0].reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const response = await patchDraftPayment(
+      request(validBody({ reason })), entryId, "true", dependencies(),
     );
     assert.equal(response.status, 400);
   }

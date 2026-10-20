@@ -350,7 +350,7 @@ export function ProjectTeamScopeManager() {
               </Dialog.Title>
               <Dialog.Close asChild><button type="button" aria-label="Đóng" disabled={busy} className={button}>×</button></Dialog.Close>
             </div>
-            <Dialog.Description id="mapping-dialog-desc" className="mt-1 text-sm text-muted">Mọi thay đổi cần lý do và có audit.</Dialog.Description>
+            <Dialog.Description id="mapping-dialog-desc" className="mt-1 text-sm text-muted">Lý do thao tác không bắt buộc; mọi thay đổi đều có audit.</Dialog.Description>
             <form className="mt-5 space-y-4" onSubmit={(e) => { e.preventDefault(); void submitDialog(); }}>
               {dialog?.kind === "grant" ? (
                 <>
@@ -470,8 +470,8 @@ export function ProjectTeamScopeManager() {
                   </label>
                 </>
               ) : null}
-              <label className="flex flex-col gap-1 text-sm font-medium">Lý do
-                <textarea value={reason} maxLength={4000} required rows={3} onChange={(e) => { setReason(e.target.value); setFormError(null); }} className={input} />
+              <label className="flex flex-col gap-1 text-sm font-medium">Lý do thao tác (không bắt buộc)
+                <textarea value={reason} maxLength={4000} rows={3} onChange={(e) => { setReason(e.target.value); setFormError(null); }} className={input} />
               </label>
               {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
               <div className="flex justify-end gap-2">

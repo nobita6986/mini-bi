@@ -151,7 +151,16 @@ test("request projections are strict about keys, values and OCC", () => {
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, personnel_code: "has space" }).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, personnel_position: "LEAD" }).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, valid_from: "09/10/2026" }).ok, false);
-  assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, reason: "" }).ok, false);
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...CREATE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const parsed = personnelCatalogCreateRequest(body);
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) assert.equal(parsed.value.reason, null);
+  }
+  assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, reason: 123 }).ok, false);
+  assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, reason: "x".repeat(4001) }).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, idempotency_key: "not-a-uuid" }).ok, false);
   assert.equal(personnelCatalogCreateRequest({ ...CREATE_BODY, extra: 1 }).ok, false);
 
@@ -162,6 +171,23 @@ test("request projections are strict about keys, values and OCC", () => {
   assert.equal(personnelCatalogSetActiveRequest(ACTIVE_BODY).ok, true);
   assert.equal(personnelCatalogSetActiveRequest({ ...ACTIVE_BODY, active: "false" }).ok, false);
   assert.equal(personnelCatalogSetActiveRequest({ ...ACTIVE_BODY, expected_version: null }).ok, false);
+
+  for (const [parse, valid] of [
+    [personnelCatalogCreateRequest, CREATE_BODY],
+    [personnelCatalogUpdateRequest, UPDATE_BODY],
+    [personnelCatalogSetActiveRequest, ACTIVE_BODY],
+  ]) {
+    for (const reason of [undefined, null, "", "  "]) {
+      const body = { ...valid };
+      if (reason === undefined) delete body.reason;
+      else body.reason = reason;
+      const parsed = parse(body);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal(parsed.value.reason, null);
+    }
+    assert.equal(parse({ ...valid, reason: 123 }).ok, false);
+    assert.equal(parse({ ...valid, reason: "x".repeat(4001) }).ok, false);
+  }
 
   const query = personnelCatalogListQuery(new URL("https://app.test/x?search=%20abc%20&page=2&page_size=10&include_inactive=false"));
   assert.deepEqual(query.ok && query.value, { search: "abc", include_inactive: false, page: 2, page_size: 10 });

@@ -77,7 +77,7 @@ test("list query always bounds page size and preserves search, inactive and page
   assert.equal(buildPersonnelListQuery({ search: "", includeInactive: false, page: 1001 }), null);
 });
 
-test("create request sends only the canonical W01B create keys and requires reason/date/key", () => {
+test("create request sends only the canonical W01B create keys and requires date/key", () => {
   const request = buildPersonnelCreateRequest({
     personnelCode: "HR/001",
     displayName: "Nguyen Van A",
@@ -103,13 +103,25 @@ test("create request sends only the canonical W01B create keys and requires reas
     reason: "Lý do",
     idempotencyKey: KEY,
   }).ok, false);
-  assert.equal(buildPersonnelCreateRequest({
+  const withoutReason = buildPersonnelCreateRequest({
+    personnelCode: "HR-1", displayName: "A", personnelPosition: "STAFF",
+    validFrom: "2026-02-28", idempotencyKey: KEY,
+  });
+  assert.equal(withoutReason.ok, true);
+  if (withoutReason.ok) assert.equal(withoutReason.body.reason, null);
+  const blankReason = buildPersonnelCreateRequest({
     personnelCode: "HR-1",
     displayName: "A",
     personnelPosition: "STAFF",
     validFrom: "2026-02-28",
     reason: " ",
     idempotencyKey: KEY,
+  });
+  assert.equal(blankReason.ok, true);
+  if (blankReason.ok) assert.equal(blankReason.body.reason, null);
+  assert.equal(buildPersonnelCreateRequest({
+    personnelCode: "HR-1", displayName: "A", personnelPosition: "STAFF",
+    validFrom: "2026-02-28", reason: "x".repeat(4001), idempotencyKey: KEY,
   }).ok, false);
 });
 

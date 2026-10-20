@@ -44,7 +44,7 @@ export type AccountOperationErrorKind =
 export type AccountOperationRepository = {
   begin(input: AccountOperationActor & {
     kind: "CREATE_ACCOUNT" | "RESET_PASSWORD"; login_id: string | null; display_name: string | null;
-    account_ref: string | null; reason: string; idempotency_key: string;
+    account_ref: string | null; reason: string | null; idempotency_key: string;
   }): Promise<AccountOperationOutcome<IntentEnvelope>>;
   claim(input: AccountOperationActor & { intent_id: string; intent_token: string }):
     Promise<AccountOperationOutcome<ClaimEnvelope>>;
@@ -57,11 +57,11 @@ export type AccountOperationRepository = {
   }): Promise<AccountOperationOutcome<FinalizeCreateEnvelope | { intent_id: string; intent_state: string; account_ref: string | null }>>;
   updateDisplayName(input: AccountOperationActor & {
     target_app_user_id: string; display_name: string; expected_app_user_version: number;
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<AccountOperationOutcome<EditNameEnvelope>>;
   createPersonnelFromAccount(input: AccountOperationActor & {
     account_ref: string; expected_account_version: number; personnel_code: string;
-    personnel_position: "STAFF" | "TEAM_LEADER"; valid_from: string; reason: string; idempotency_key: string;
+    personnel_position: "STAFF" | "TEAM_LEADER"; valid_from: string; reason: string | null; idempotency_key: string;
   }): Promise<AccountOperationOutcome<PersonnelFromAccountEnvelope>>;
   listEligibleAccounts(input: AccountOperationActor & { page: number; page_size: number }):
     Promise<AccountOperationOutcome<EligibleAccountsEnvelope>>;

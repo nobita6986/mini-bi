@@ -13,6 +13,7 @@ import {
 } from "./account-operation-contract.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -36,7 +37,7 @@ export function buildCreateAccountRequest(input: {
   displayName: string;
   password: string;
   passwordConfirm: string;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const loginId = input.loginId.trim();
@@ -55,7 +56,7 @@ export function buildCreateAccountRequest(input: {
       display_name: displayName,
       password: input.password,
       password_confirm: input.passwordConfirm,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -64,7 +65,7 @@ export function buildCreateAccountRequest(input: {
 export function buildEditDisplayNameRequest(input: {
   displayName: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const displayName = input.displayName.trim();
@@ -79,7 +80,7 @@ export function buildEditDisplayNameRequest(input: {
     body: {
       display_name: displayName,
       expected_version: input.expectedVersion,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -88,7 +89,7 @@ export function buildEditDisplayNameRequest(input: {
 export function buildResetPasswordRequest(input: {
   password: string;
   passwordConfirm: string;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = (input.password !== input.passwordConfirm ? "Mật khẩu nhập lại không khớp." : passwordOk(input.password))
@@ -99,7 +100,7 @@ export function buildResetPasswordRequest(input: {
     body: {
       password: input.password,
       password_confirm: input.passwordConfirm,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -116,7 +117,7 @@ export function buildPersonnelFromAccountRequest(input: {
   loginId: string;
   personnelPosition: string;
   validFrom: string;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validateUuid(input.accountRef)
@@ -136,7 +137,7 @@ export function buildPersonnelFromAccountRequest(input: {
       personnel_code: input.loginId,
       personnel_position: input.personnelPosition,
       valid_from: input.validFrom,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };

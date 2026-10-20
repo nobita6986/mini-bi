@@ -600,8 +600,8 @@ export function TeamLeaderManager({
                         className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3" />
                     </label>
                     <label htmlFor="team-leader-reason" className="block text-sm font-medium">
-                      Lý do thay đổi
-                      <textarea id="team-leader-reason" value={form.reason} maxLength={4000} required rows={3}
+                      Lý do thay đổi (không bắt buộc)
+                      <textarea id="team-leader-reason" value={form.reason} maxLength={4000} rows={3}
                         onChange={(event) => setForm({ ...form, reason: event.currentTarget.value })}
                         className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2" />
                     </label>

@@ -34,11 +34,11 @@ export type ProjectTeamScopeRepository = {
   }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeList>>;
   grantScope(input: ActorRef & {
     team_id: string; project_ids: readonly string[];
-    reason: string; idempotency_key: string;
+    reason: string | null; idempotency_key: string;
   }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeBatchGrantResult>>;
   revokeScope(input: ActorRef & {
     mapping_id: string;
-    effective_to: string | null; reason: string; idempotency_key: string;
+    effective_to: string | null; reason: string | null; idempotency_key: string;
   }): Promise<ProjectTeamScopeOutcome<ProjectTeamScopeRevokeResult>>;
 };
 

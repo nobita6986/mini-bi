@@ -4,6 +4,11 @@ import test from "node:test";
 import {
   assignProjectManagerAdmin,
   createProjectAdmin,
+  projectAdminAssignRequest,
+  projectAdminCreateRequest,
+  projectAdminSetActiveRequest,
+  projectAdminUnassignRequest,
+  projectAdminUpdateRequest,
   getProjectAdmin,
   listManagerCandidatesAdmin,
   listProjectsAdmin,
@@ -104,12 +109,25 @@ test("client khong duoc gui actor/capability/scope/role", async () => {
   }
 });
 
-test("reason bat buoc va OCC bat buoc", async () => {
-  const d = deps({ ok: true, data: MUTATION });
-  const noReason = await createProjectAdmin(
-    jsonRequest({ project_id: "p1", display_name: "X", idempotency_key: KEY }), "true", d.dependencies);
-  assert.equal(noReason.status, 400);
+test("action reason is optional while OCC and strict request shape stay required", async () => {
+  for (const reason of [undefined, null, "", "   "]) {
+    const d = deps({ ok: true, data: CREATE });
+    const body = { project_id: "p1", display_name: "X", idempotency_key: KEY };
+    if (reason !== undefined) body.reason = reason;
+    const response = await createProjectAdmin(jsonRequest(body), "true", d.dependencies);
+    assert.equal(response.status, 200);
+    assert.equal(d.calls.rpc[0][1].reason, null);
+  }
+  for (const reason of [123, "x".repeat(4001)]) {
+    const d = deps({ ok: true, data: CREATE });
+    const response = await createProjectAdmin(jsonRequest({
+      project_id: "p1", display_name: "X", reason, idempotency_key: KEY,
+    }), "true", d.dependencies);
+    assert.equal(response.status, 400);
+    assert.equal(d.calls.rpc.length, 0);
+  }
 
+  const d = deps({ ok: true, data: MUTATION });
   const noOcc = await updateProjectAdmin(
     jsonRequest({ display_name: "X", reason: "r", idempotency_key: KEY }), "p1", "true", d.dependencies);
   assert.equal(noOcc.status, 400);
@@ -118,6 +136,29 @@ test("reason bat buoc va OCC bat buoc", async () => {
     jsonRequest({ project_id: "p1", display_name: "X", reason: "r", idempotency_key: KEY, extra: 1 }),
     "true", d.dependencies);
   assert.equal(extra.status, 400);
+});
+
+test("all project mutation contracts normalize optional reasons and reject malformed values", () => {
+  const cases = [
+    [projectAdminCreateRequest, { project_id: "p1", display_name: "X", idempotency_key: KEY }],
+    [projectAdminUpdateRequest, { expected_version: 1, display_name: "X", idempotency_key: KEY }],
+    [projectAdminSetActiveRequest, { active: true, expected_version: 1, idempotency_key: KEY }],
+    [projectAdminAssignRequest, { manager_recruiter_id: RECRUITER, valid_from: "2026-10-01",
+      expected_project_version: 1, idempotency_key: KEY }],
+    [projectAdminUnassignRequest, { expected_version: 1, expected_project_version: 1,
+      idempotency_key: KEY }],
+  ];
+  for (const [parse, required] of cases) {
+    for (const reason of [undefined, null, "", "  "]) {
+      const body = { ...required };
+      if (reason !== undefined) body.reason = reason;
+      const parsed = parse(body);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal(parsed.value.reason, null);
+    }
+    assert.equal(parse({ ...required, reason: 123 }).ok, false);
+    assert.equal(parse({ ...required, reason: "x".repeat(4001) }).ok, false);
+  }
 });
 
 test("actor CHI den tu session, khong tu body/header", async () => {

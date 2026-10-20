@@ -330,7 +330,7 @@ test("buildReviewerEntryRows tra null khi thieu du lieu de doi chieu", () => {
   }), null);
 });
 
-test("body quyet dinh dung 4 truong contract va ly do duoc kiem chat", () => {
+test("body quyet dinh dung 4 truong contract va chuan hoa ly do tuy chon", () => {
   const approve = buildDecisionRequest({
     decision: "approve",
     expectedVersion: 1,
@@ -339,7 +339,7 @@ test("body quyet dinh dung 4 truong contract va ly do duoc kiem chat", () => {
   });
   assert.deepEqual(Object.keys(approve).sort(),
     ["decision", "expected_version", "idempotency_key", "reason"]);
-  assert.equal(approve.reason, " Đã kiểm tra thông tin ");
+  assert.equal(approve.reason, "Đã kiểm tra thông tin");
   const reject = buildDecisionRequest({
     decision: "reject",
     expectedVersion: 3,
@@ -349,7 +349,11 @@ test("body quyet dinh dung 4 truong contract va ly do duoc kiem chat", () => {
   assert.equal(reject.decision, "reject");
   assert.equal(reject.expected_version, 3);
   assert.equal(buildDecisionRequest({
-    decision: "approve", expectedVersion: 1, reason: "   ", idempotencyKey: "key-3" }), null);
+    decision: "approve", expectedVersion: 1, reason: null, idempotencyKey: "key-3" }).reason, null);
+  assert.deepEqual(buildDecisionRequest({
+    decision: "approve", expectedVersion: 1, reason: "   ", idempotencyKey: "key-7" }), {
+    decision: "approve", expected_version: 1, reason: null, idempotency_key: "key-7",
+  });
   assert.equal(buildDecisionRequest({
     decision: "approve", expectedVersion: 1, reason: "ok", idempotencyKey: " " }), null);
   assert.equal(buildDecisionRequest({
@@ -485,6 +489,33 @@ test("WORK_STATUS reviewer sees status, effective date and submitted leave reaso
     contexts: contextsOf(ENTRY_A, context()),
   });
   assert.equal(stale.kind, "stale");
+});
+
+test("WORK_STATUS status-only change is reviewable; unchanged and stale versions remain blocked", () => {
+  const statusOnly = build({
+    detail: { items: [detailItem({ target_kind: "WORK_STATUS", proposal: {
+      status: "ON", effective_date: "2026-10-01" } })] },
+    contexts: contextsOf(ENTRY_A, context()),
+  });
+  assert.equal(statusOnly.kind, "reviewable");
+  assert.deepEqual(statusOnly.items[0].rows, [{
+    field: "status", label: "Trạng thái làm việc", before: "Đang chờ việc", after: "Đang làm",
+  }]);
+
+  const unchanged = build({
+    detail: { items: [detailItem({ target_kind: "WORK_STATUS", proposal: {
+      status: "UNCONFIRMED", effective_date: "2026-10-01" } })] },
+    contexts: contextsOf(ENTRY_A, context()),
+  });
+  assert.equal(unchanged.kind, "stale");
+
+  const staleVersion = build({
+    detail: { items: [detailItem({ target_kind: "WORK_STATUS", proposal: {
+      status: "ON", effective_date: "2026-10-01" } })] },
+    entries: entriesOf(entryProjection(ENTRY_A, { version: 9 })),
+    contexts: contextsOf(ENTRY_A, context()),
+  });
+  assert.equal(staleVersion.kind, "stale");
 });
 
 test("DOCUMENT chi read-only, mixed co DOCUMENT thi toan request khong co quyet dinh", () => {

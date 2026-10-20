@@ -11,7 +11,6 @@ import {
   applyPage,
   bankAccountSummary,
   beginLoad,
-  canDirectlyCorrectWorkers,
   canReviewChangeRequests,
   canViewGlobalChangeRequestHistory,
   emptyTabPage,
@@ -48,7 +47,7 @@ const REQUEST = "33333333-3333-4333-8333-333333333333";
 
 function actions(overrides = {}) {
   return { view: true, view_pii: true, view_payment: true,
-    propose_change: false, propose_change_code: "NOT_PROJECT_MANAGER", ...overrides };
+    propose_change: false, propose_change_code: "NOT_PROJECT_MANAGER", direct_edit: false, ...overrides };
 }
 function row(overrides = {}) {
   return {
@@ -69,19 +68,23 @@ function page(items) {
 }
 
 test("W06-R1: bon view khong tron quan he; scope=all chi khi server cho phep", () => {
-  assert.deepEqual([...WORKER_OPERATIONS_TABS], ["uploader", "recruited", "managed", "all"]);
+  assert.deepEqual([...WORKER_OPERATIONS_TABS], ["uploader", "recruited", "managed", "team", "all"]);
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.uploader, "Tôi đã nhập");
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.recruited, "Người tôi tuyển");
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.managed, "Dự án tôi quản lý");
+  assert.equal(WORKER_OPERATIONS_TAB_LABELS.team, "Team tôi quản lý");
   assert.equal(WORKER_OPERATIONS_TAB_LABELS.all, "Toàn bộ NLĐ");
   assert.equal(tabScope("uploader"), null);
   assert.equal(tabScope("recruited"), "recruited");
   assert.equal(tabScope("managed"), "managed");
+  assert.equal(tabScope("team"), "team");
   assert.equal(tabScope("all"), "all");
   assert.equal(isWorkerOperationsTab("recruited"), true);
   // "all" chi duoc OFFER khi server projection xac nhan.
   assert.deepEqual([...visibleWorkerTabs(false)], ["uploader", "recruited", "managed"]);
   assert.deepEqual([...visibleWorkerTabs(true)], ["uploader", "recruited", "managed", "all"]);
+  assert.deepEqual([...visibleWorkerTabs(false, true)], ["uploader", "recruited", "managed", "team"]);
+  assert.deepEqual([...visibleWorkerTabs(true, true)], ["uploader", "recruited", "managed", "team", "all"]);
 });
 
 test("W06-R1: review queue chi khi change_review + all scope", () => {
@@ -100,20 +103,6 @@ test("PRE-W2 global change history is limited to global reviewers and admins", (
   assert.equal(canViewGlobalChangeRequestHistory(["entry_admin"], [{ kind: "all" }]), true);
 });
 
-test("HF-R4: direct correction visibility uses only privileged capability plus all scope", () => {
-  assert.equal(canDirectlyCorrectWorkers({ capabilities: ["entry_admin"], scopes: [{ kind: "all" }] }), true);
-  assert.equal(canDirectlyCorrectWorkers({
-    capabilities: ["entry_privileged_edit"], scopes: [{ kind: "all" }],
-  }), true);
-  assert.equal(canDirectlyCorrectWorkers({
-    capabilities: ["entry_privileged_edit"], scopes: [{ kind: "team" }],
-  }), false);
-  assert.equal(canDirectlyCorrectWorkers({
-    capabilities: ["change_review"], scopes: [{ kind: "all" }], role: "admin",
-  }), false);
-  assert.equal(canDirectlyCorrectWorkers(null), false);
-});
-
 test("W06-R2: helper phan trang ton tai (0e2cbba khong co -> test that bai that su)", () => {
   // Cac ham nay duoc them o R2; o 0e2cbba khong ton tai nen assertion se fail.
   for (const fn of [initialWorkerTab, applyPage, beginLoad, failLoad, resetTabPage, emptyTabPage,
@@ -130,7 +119,9 @@ test("W06-R2: initial tab tu actor projection — reviewer vao thang scope=all",
   assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "all");
   // PM-only (change_request_create, khong phai entry actor) => "managed".
   assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), "managed");
-  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), "managed");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false, true), "team");
+  assert.equal(initialWorkerTab({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }, false), "uploader",
+    "client-side capabilities/scope alone do not enable the team audience tab");
   // entry_* thong thuong => "uploader".
   assert.equal(initialWorkerTab({ capabilities: ["entry_own"], scopes: [{ kind: "own" }] }, false), "uploader");
   assert.equal(initialWorkerTab({ capabilities: ["entry_team"], scopes: [{ kind: "team" }] }, false), "uploader");

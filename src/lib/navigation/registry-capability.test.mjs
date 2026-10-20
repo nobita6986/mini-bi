@@ -27,6 +27,7 @@ const {
   workerOperationsAllScopePredicate,
   workerOperationsNavPredicate,
   workerOperationsReviewPredicate,
+  workerOperationsTeamScopePredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -105,6 +106,12 @@ test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", (
   // Nguoi de xuat / PM.
   assert.equal(workerOperationsNavPredicate(makeActor(["change_request_create"], [{ kind: "own" }])), true);
   assert.equal(workerOperationsNavPredicate(makeActor(["team_manager_assign"], [{ kind: "team", reference: "t" }])), true);
+  assert.equal(workerOperationsTeamScopePredicate(makeActor(["team_manager_assign"],
+    [{ kind: "team", reference: "t" }])), true);
+  assert.equal(workerOperationsTeamScopePredicate(makeActor(["team_manager_assign"],
+    [{ kind: "all", reference: "all" }])), false);
+  assert.equal(workerOperationsTeamScopePredicate(makeActor(["entry_admin"],
+    [{ kind: "team", reference: "t" }])), false);
   // Uploader hien huu.
   assert.equal(workerOperationsNavPredicate(makeActor(["entry_own"], [{ kind: "own" }])), true);
   assert.equal(workerOperationsNavPredicate(makeActor(["entry_team"], [{ kind: "team" }])), true);

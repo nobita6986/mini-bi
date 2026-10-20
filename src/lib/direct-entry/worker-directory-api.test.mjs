@@ -31,6 +31,7 @@ const row = {
   allowed_actions: {
     view: true, view_pii: true, view_payment: true,
     propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
+    direct_edit: false,
   },
 };
 
@@ -89,6 +90,7 @@ test("query validation fails before session, and never accepts client identity",
     "/api/direct-entry/workers?scope=all&app_user_id=" + actor.app_user_id,
     "/api/direct-entry/workers?scope=all&auth_subject=" + actor.auth_subject,
     "/api/direct-entry/workers?scope=all&allowed_actions=propose_change",
+    "/api/direct-entry/workers?scope=team&scope=recruited",
   ]) {
     const response = await listWorkers(request(path), "true", deps);
     assert.equal(response.status, 400, path);
@@ -169,4 +171,9 @@ test("success returns the exact page projection with no-store", async () => {
     cursor: null,
     page_size: 25,
   });
+
+  const team = dependencies();
+  const teamResponse = await listWorkers(request("/api/direct-entry/workers?scope=team"), "true", team);
+  assert.equal(teamResponse.status, 200);
+  assert.equal(team.calls[0].input.scope, "team");
 });

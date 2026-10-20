@@ -161,7 +161,7 @@ async function main() {
   try {
     const port = await pickPort();
     const nextBin = path.join(root, "node_modules", "next", "dist", "bin", "next");
-    server = spawn(process.execPath, [nextBin, "dev", "-p", String(port)], {
+    server = spawn(process.execPath, [nextBin, "dev", "--webpack", "-p", String(port)], {
       cwd: root, stdio: ["ignore", "pipe", "pipe"],
     });
     server.stdout?.on("data", (chunk) => { serverLog += String(chunk); });
@@ -183,18 +183,36 @@ async function main() {
 
     record("browser fixture hydrates", await waitFor(send,
       "typeof window.__p25r5a === 'object'", 60000), serverLog.slice(-2500));
+    record("review queue exposes loading while its synthetic response is held",
+      await waitFor(send, "window.__p25r5a.calls().some((call) => call.method === 'GET' && " +
+        "call.url.startsWith('/api/direct-entry/change-requests'))") &&
+      await waitFor(send, "window.__p25r5a.queueSummaryText().includes('Đang tải')"),
+      await api(send, "queueSummaryText()"));
+    await api(send, "releaseRequestResponses()");
+    record("synthetic review queue fixture returns strict rows on the first page",
+      await waitFor(send, "window.__p25r5a.queueCards() === 1") &&
+      (await api(send, "queueCardTexts()")).some((text) => text.includes("Cập nhật thông tin hồ sơ")),
+      await api(send, "queueCardTexts()"));
     record("initial tab follows the server actor projection (all)",
       await waitFor(send, "window.__p25r5a.listRowTexts().length === 25") &&
-      (await api(send, "tabLabels()")).length === 4 &&
+      (await api(send, "tabLabels()")).length === 5 &&
       (await evaluate(send,
-        "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim()")) ===
+        "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] " +
+        "[role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim()")) ===
         "Toàn bộ NLĐ",
-      await api(send, "tabLabels()"));
+      { tabs: await api(send, "tabLabels()"),
+        selected: await evaluate(send,
+          "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] " +
+          "[role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim()") });
+    record("client admin capability alone cannot expose direct edit without the server row action",
+      await api(send, 'clickRowButton("Người lao động 01", "Sửa trực tiếp")') === false);
 
     const order = await api(send, "queueBeforeList()");
     record("change-request queue renders exactly once and BEFORE the worker list",
       order.present === true && order.queueCount === 1 &&
       order.queueIndex > -1 && order.queueIndex < order.panelIndex, order);
+    record("review queue compact panel opens for visible list interactions",
+      await api(send, "openRequestQueue()"), await api(send, "queueText()"));
 
     await api(send, "clearCalls()");
     await button(send, 'window.__p25r5a.clickButton("Tải thêm")', "load more page two");
@@ -251,7 +269,10 @@ async function main() {
       preloaded && (await api(send, "dialogTitle()")) === "Đề xuất thay đổi" &&
       expectedFields.every((id) => openedFields.includes(id)) &&
       (await evaluate(send, "document.querySelector('#worker-display-name')?.value")) === "Nguyễn Văn A",
-      openedFields);
+      { openedFields, title: await api(send, "dialogTitle()"),
+        errors: await api(send, "errorText()"),
+        entryCalls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/entries/")) });
 
     await api(send, "clearCalls()");
     await api(send, 'fill("#worker-address-state", "provided")');
@@ -329,26 +350,35 @@ async function main() {
     record("Escape closes the drawer and returns focus to the trigger",
       focusRestored, await api(send, "focusText()"));
 
-    await button(send, 'window.__p25r5a.clickRowButton("Người lao động quản lý 01", "Sửa trực tiếp")',
+    await api(send, "setDirectEditAllowed(true)");
+    await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
+    record("Team tab loads only its server-projected team rows",
+      await api(send, 'clickTab("Team tôi quản lý")') &&
+      await waitFor(send, "window.__p25r5a.listRowTexts().length === 2") &&
+      (await api(send, "listRowTexts()")).every((text) => text.includes("team")));
+    await button(send, 'window.__p25r5a.clickRowButton("Người lao động team 01", "Sửa trực tiếp")',
       "open privileged correction drawer");
     await waitFor(send, "window.__p25r5a.dialogOpen()");
     await waitFor(send, "document.querySelector('#worker-phone-state') !== null");
     record("privileged correction is offered in its own mode",
       (await api(send, "dialogTitle()")) === "Sửa trực tiếp hồ sơ" &&
       !(await api(send, "dialogFieldIds()")).includes("propose-target"));
+    const directEditReason = await evaluate(send,
+      "(() => { const f = document.querySelector('[role=\"dialog\"] textarea');" +
+      " return { exists: !!f, required: f?.required === true }; })()");
     await api(send, "clearCalls()");
     await api(send, 'fill("#worker-phone-state", "provided")');
     await api(send, 'fill("#worker-phone", "0901234567")');
-    await api(send, 'fillReason("Sửa số điện thoại theo CCCD")');
     await button(send, 'window.__p25r5a.clickDialogButton("Lưu chỉnh sửa trực tiếp")',
       "submit privileged correction");
     const correctionCall = (await api(send, "calls()")).find((call) =>
       call.method === "POST" && call.url.endsWith("/privileged-edit"));
     const patched = correctionCall?.body?.patch;
-    record("privileged correction sends the changed patch, reason, OCC and idempotency header",
+    record("privileged correction accepts an empty optional reason and sends the changed patch, OCC and idempotency header",
       await waitFor(send, "!window.__p25r5a.dialogOpen()") &&
+      directEditReason.exists && !directEditReason.required &&
       correctionCall?.body?.expected_entry_version === 3 &&
-      correctionCall?.body?.reason === "Sửa số điện thoại theo CCCD" &&
+      correctionCall?.body?.reason === null &&
       JSON.stringify(Object.keys(patched ?? {})) === JSON.stringify(["worker_details"]) &&
       patched?.worker_details?.phone?.state === "provided" &&
       patched?.worker_details?.phone?.value === "0901234567" &&
@@ -376,9 +406,10 @@ async function main() {
     record("denied catalog keeps the drawer fail-closed on the current project and recruiter",
       await waitFor(send, "window.__p25r5a.dialogOpen()") &&
       await waitFor(send, "document.querySelector('#worker-project') !== null") &&
+      await waitFor(send, "window.__p25r5a.bodyText().includes('không có quyền đọc danh mục')") &&
       (await api(send, "dialogDisabledFieldIds()")).includes("worker-project") &&
       (await api(send, "dialogDisabledFieldIds()")).includes("worker-recruiter") &&
-      (await api(send, "bodyText()")).includes("chỉ giữ được dự án và người tuyển hiện tại"),
+      (await api(send, "bodyText()")).includes("không thể chọn giá trị danh mục mới"),
       await api(send, "dialogDisabledFieldIds()"));
     await key(send, "Escape", "Escape", 27);
     await waitFor(send, "!window.__p25r5a.dialogOpen()");
@@ -395,12 +426,13 @@ async function main() {
     await api(send, "setCatalogError(false)");
     await api(send, "remount()");
     await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
-    await api(send, "setPrivileged(false)");
-    await api(send, "remount()");
-    record("privileged correction disappears without the session capability",
-      await waitFor(send, "window.__p25r5a.listRowTexts().length === 25") &&
+    await api(send, "setDirectEditAllowed(false)");
+    await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
+    await api(send, 'clickTab("Team tôi quản lý")');
+    record("direct edit disappears when the server row action is false while client capability remains",
+      await waitFor(send, "window.__p25r5a.listRowTexts().length === 2") &&
       (await api(send, "bodyText()")).includes("Đề xuất thay đổi") &&
-      !(await api(send, "bodyText()")).includes("Sửa trực tiếp"));
+      await api(send, 'clickRowButton("Người lao động team 01", "Sửa trực tiếp")') === false);
 
     // P2.5-HF-R5A-R1: khong con duong network rejection nao im lang.
     await api(send, 'clickTab("Tôi đã nhập")');
@@ -421,35 +453,94 @@ async function main() {
       (await api(send, "calls()")).some((call) => call.method === "GET" &&
         call.url.startsWith("/api/direct-entry/submissions")),
       (await api(send, "calls()")).map((call) => call.url));
-    await api(send, 'clickTab("Toàn bộ NLĐ")');
-    await waitFor(send, "window.__p25r5a.listRowTexts().length > 0");
+    await api(send, "clearCalls()");
     await api(send, "failSubmissions()");
+    await api(send, "remount()");
+    await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
     await api(send, 'clickTab("Tôi đã nhập")');
-    await api(send, "allowSubmissions()");
     record("initial rejection without rows shows the sanitized message, not a blank page",
       await waitFor(send, "window.__p25r5a.alertTexts().some((t) => t.startsWith('Không tải được danh sách. Vui lòng thử lại.'))") &&
-      (await api(send, "tabLabels()")).length === 4 &&
-      (await api(send, "queueText()")).length > 0 &&
-      await api(send, 'alertHasButton("Thử lại")'),
-      await api(send, "alertTexts()"));
+      (await api(send, "tabLabels()")).length === 5 &&
+      await waitFor(send, 'window.__p25r5a.alertHasButton("Thử lại")'),
+      { alerts: await api(send, "alertTexts()"), hasRetry: await api(send, 'alertHasButton("Thử lại")'),
+        tabs: await api(send, "tabLabels()"), queue: await api(send, "queueText()"),
+        rows: await api(send, "listRowTexts()") });
+    await api(send, "allowSubmissions()");
+    await api(send, 'clickTab("Toàn bộ NLĐ")');
+    const selectedAll = await waitFor(send,
+      "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] [role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim() === 'Toàn bộ NLĐ'");
+    const rowsLoaded = await waitFor(send, "window.__p25r5a.listRowTexts().length === 25");
+    const queueLoaded = await waitFor(send, "window.__p25r5a.queueCards() > 0");
+    record("synthetic change-request endpoint reloads queue rows after remount",
+      selectedAll && rowsLoaded && queueLoaded,
+      { selected: await evaluate(send,
+        "document.querySelector('[role=\"tablist\"][aria-label=\"Quan hệ người lao động\"] [role=\"tab\"][aria-selected=\"true\"]')?.innerText.trim()"),
+        rows: await api(send, "listRowTexts()"), queue: await api(send, "queueText()"),
+        requests: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
+    record("review queue contains the expected remounted row and opens",
+      (await api(send, "queueCardTexts()")).some((text) => text.includes("Cập nhật thông tin hồ sơ")) &&
+      await api(send, "openRequestQueue()"), await api(send, "queueCardTexts()"));
+    await api(send, "clearCalls()");
+    await button(send, 'window.__p25r5a.clickButton("Tải thêm yêu cầu cũ hơn")',
+      "load older review requests");
+    record("review queue uses the opaque cursor, appends a page, and deduplicates repeated IDs",
+      await waitFor(send, "window.__p25r5a.queueCards() === 2") &&
+      new Set(await api(send, "queueCardTexts()")).size === 2 &&
+      (await api(send, "calls()")).some((call) =>
+        call.method === "GET" && call.url.includes("cursor=20261008100400000000%3Ad1000000-0000-4000-8000-000000000002")),
+      { cards: await api(send, "queueCardTexts()"),
+        calls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
     await api(send, "clearCalls()");
     await api(send, "failRequests()");
-    const queueBeforeFailure = await api(send, "queueCards()");
-    record("review queue keeps its rows when the older-requests refresh fails",
-      await api(send, 'clickButton("Tải thêm yêu cầu cũ hơn")') &&
-      await waitFor(send, "window.__p25r5a.alertTexts().some((t) => t.includes('Không tải được danh sách. Vui lòng thử lại.'))") &&
-      (await api(send, "queueCards()")) === queueBeforeFailure &&
-      (await api(send, "queueText()")).includes("Yêu cầu thay đổi") &&
-      !(await api(send, "queueText()")).includes("()"),
-      { before: queueBeforeFailure, after: await api(send, "queueCards()"),
-        alerts: await api(send, "alertTexts()") });
+    const queueBeforeFailure = await api(send, "queueCardTexts()");
+    await button(send, 'window.__p25r5a.clickButton("Tải thêm yêu cầu cũ hơn")',
+      "fail third review request page");
+    const queueLoadFailed = await waitFor(send,
+      "window.__p25r5a.alertTexts().some((t) => t.includes('Không tải được danh sách. Vui lòng thử lại.'))");
+    const queueAfterFailure = await api(send, "queueCardTexts()");
+    const failedCursorRequested = (await api(send, "calls()")).some((call) => call.method === "GET" &&
+      call.url.includes("cursor=20261009100400000000%3Ad1000000-0000-4000-8000-000000000003"));
+    const queueFailureText = await api(send, "queueText()");
+    record("failed review pagination reports an error and retains loaded unique rows",
+      queueLoadFailed &&
+      JSON.stringify(queueAfterFailure) === JSON.stringify(queueBeforeFailure) &&
+      queueFailureText.includes("Cập nhật thông tin hồ sơ") &&
+      !queueFailureText.includes("()") &&
+      failedCursorRequested,
+      { before: queueBeforeFailure, after: queueAfterFailure, failedCursorRequested,
+        queueLoadFailed, alerts: await api(send, "alertTexts()"), queue: queueFailureText,
+        requestCalls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
+    await api(send, "allowRequests()");
+    await api(send, 'clickAlertButton("Thử lại")');
+    record("review queue retry refreshes the first page and clears the error",
+      await waitFor(send, "window.__p25r5a.alertTexts().length === 0") &&
+      await waitFor(send, "window.__p25r5a.queueCards() === 1") &&
+      (await api(send, "queueCardTexts()")).some((text) => text.includes("Cập nhật thông tin hồ sơ")) &&
+      (await api(send, "calls()")).some((call) => call.method === "GET" &&
+        call.url.startsWith("/api/direct-entry/change-requests") && !call.url.includes("cursor=")),
+      { cards: await api(send, "queueCardTexts()"), alerts: await api(send, "alertTexts()"),
+        calls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
+    await api(send, "clearCalls()");
+    await api(send, "failRequests()");
     await api(send, "remount()");
+    const initialQueueError = await waitFor(send,
+      "window.__p25r5a.queueSummaryText().includes('Không tải được')");
+    await api(send, "openRequestQueue()");
     record("initial queue rejection reports the sanitized message instead of empty parentheses",
+      initialQueueError &&
       await waitFor(send, "window.__p25r5a.queueText().includes('Không tải được danh sách yêu cầu thay đổi')") &&
       (await api(send, "queueText()")).includes("Không tải được danh sách. Vui lòng thử lại.") &&
       !(await api(send, "queueText()")).includes("()") &&
-      (await api(send, "queueCards()")) === 0,
-      await api(send, "queueText()"));
+      (await api(send, "queueCards()")) === 0 &&
+      (await api(send, "calls()")).some((call) => call.method === "GET" &&
+        call.url.startsWith("/api/direct-entry/change-requests")),
+      { queue: await api(send, "queueText()"), summary: await api(send, "queueSummaryText()"),
+        calls: (await api(send, "calls()")).filter((call) =>
+          call.url.startsWith("/api/direct-entry/change-requests")) });
     await setViewport(send, 1280, 900);
     record("desktop layout has no horizontal overflow",
       await waitFor(send, "document.documentElement.scrollWidth <= window.innerWidth + 1"));

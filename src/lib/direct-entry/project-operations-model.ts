@@ -2,13 +2,15 @@
  * P2.5-W06A - Model thuan cho Project Operations UI (khong phu thuoc React).
  *
  * Vai tro:
- * - Validate input client TRUOC khi goi API (reason bat buoc, OCC version, id shape).
+ * - Validate input client TRUOC khi goi API (optional reason, OCC version, id shape).
  * - Build request body DUNG cac key ma API boundary chap nhan.
  *   Client TUYET DOI khong gui actor/auth_subject/app_user_id/capability/scope/role.
  * - Phan loai response thanh outcome sanitized.
  *
  * Quyen KHONG duoc suy dien o day: server response/RPC la nguon duy nhat.
  */
+
+import { projectOptionalActionReason } from "./action-reason.ts";
 
 export const REASON_MAX = 4000;
 export const PROJECT_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
@@ -196,12 +198,15 @@ export function validateDisplayName(value: string): string | null {
   if (trimmed.length > 200) return "Tên dự án tối đa 200 ký tự.";
   return null;
 }
-/** Ly do la BAT BUOC cho moi thao tac thay doi (create/rename/active/assign/unassign). */
-export function validateReason(value: string): string | null {
-  const trimmed = value.trim();
-  if (trimmed === "") return "Lý do là bắt buộc.";
-  if (value.length > REASON_MAX) return "Lý do tối đa " + String(REASON_MAX) + " ký tự.";
-  return null;
+/** Optional action reason; the API boundary repeats type and length validation. */
+export function validateReason(value: unknown): string | null {
+  return projectOptionalActionReason(value, REASON_MAX).ok
+    ? null
+    : "Lý do tối đa " + String(REASON_MAX) + " ký tự.";
+}
+export function normalizeOptionalActionReason(value: string | null | undefined): string | null {
+  const projected = projectOptionalActionReason(value, REASON_MAX);
+  return projected.ok ? projected.value : null;
 }
 export function validateUuid(value: string): string | null {
   return UUID_PATTERN.test(value.trim()) ? null : "Giá trị không phải định danh hợp lệ.";
@@ -224,38 +229,38 @@ export function newIdempotencyKey(): string {
 }
 
 export function buildCreateRequest(input: {
-  projectId: string; displayName: string; reason: string; idempotencyKey: string;
+  projectId: string; displayName: string; reason?: string | null; idempotencyKey: string;
 }): RequestResult {
   const failure = validateProjectId(input.projectId) ?? validateDisplayName(input.displayName)
     ?? validateReason(input.reason) ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return { ok: true, body: {
     project_id: input.projectId.trim(), display_name: input.displayName.trim(),
-    reason: input.reason, idempotency_key: input.idempotencyKey,
+    reason: normalizeOptionalActionReason(input.reason), idempotency_key: input.idempotencyKey,
   } };
 }
 
 export function buildRenameRequest(input: {
-  displayName: string; reason: string; expectedVersion: number; idempotencyKey: string;
+  displayName: string; reason?: string | null; expectedVersion: number; idempotencyKey: string;
 }): RequestResult {
   const failure = validateDisplayName(input.displayName) ?? validateReason(input.reason)
     ?? validateVersion(input.expectedVersion) ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return { ok: true, body: {
-    display_name: input.displayName.trim(), reason: input.reason,
+    display_name: input.displayName.trim(), reason: normalizeOptionalActionReason(input.reason),
     expected_version: input.expectedVersion, idempotency_key: input.idempotencyKey,
   } };
 }
 
 /** Bat/tat du an: CHI doi co active. Tat du an = active false (khong co RPC rieng). */
 export function buildSetActiveRequest(input: {
-  active: boolean; reason: string; expectedVersion: number; idempotencyKey: string;
+  active: boolean; reason?: string | null; expectedVersion: number; idempotencyKey: string;
 }): RequestResult {
   const failure = validateReason(input.reason) ?? validateVersion(input.expectedVersion)
     ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return { ok: true, body: {
-    active: input.active, reason: input.reason,
+    active: input.active, reason: normalizeOptionalActionReason(input.reason),
     expected_version: input.expectedVersion, idempotency_key: input.idempotencyKey,
   } };
 }
@@ -276,7 +281,7 @@ export function validatePendingAssignments(rows: readonly PendingAssignment[]): 
 }
 
 export function buildAssignRequest(input: {
-  managerRecruiterId: string; validFrom: string; reason: string;
+  managerRecruiterId: string; validFrom: string; reason?: string | null;
   expectedProjectVersion: number; idempotencyKey: string;
 }): RequestResult {
   const failure = validateUuid(input.managerRecruiterId) ?? validateDate(input.validFrom)
@@ -285,20 +290,20 @@ export function buildAssignRequest(input: {
   if (failure) return { ok: false, message: failure };
   return { ok: true, body: {
     manager_recruiter_id: input.managerRecruiterId.trim(),
-    valid_from: input.validFrom.trim(), reason: input.reason,
+    valid_from: input.validFrom.trim(), reason: normalizeOptionalActionReason(input.reason),
     expected_project_version: input.expectedProjectVersion,
     idempotency_key: input.idempotencyKey,
   } };
 }
 
 export function buildUnassignRequest(input: {
-  reason: string; expectedVersion: number; expectedProjectVersion: number; idempotencyKey: string;
+  reason?: string | null; expectedVersion: number; expectedProjectVersion: number; idempotencyKey: string;
 }): RequestResult {
   const failure = validateReason(input.reason) ?? validateVersion(input.expectedVersion)
     ?? validateVersion(input.expectedProjectVersion) ?? validateUuid(input.idempotencyKey);
   if (failure) return { ok: false, message: failure };
   return { ok: true, body: {
-    reason: input.reason, expected_version: input.expectedVersion,
+    reason: normalizeOptionalActionReason(input.reason), expected_version: input.expectedVersion,
     expected_project_version: input.expectedProjectVersion,
     idempotency_key: input.idempotencyKey,
   } };

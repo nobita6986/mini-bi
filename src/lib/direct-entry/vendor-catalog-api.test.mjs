@@ -154,7 +154,16 @@ test("request projections are strict; the generic update cannot reach vendor_id 
   assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, valid_from: "01-01-2024" }).ok, false);
   assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, valid_from: "2024-02-31" }).ok, false);
   assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, valid_from: null }).ok, false);
-  assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, reason: "" }).ok, false);
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...CREATE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const parsed = vendorCatalogCreateRequest(body);
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) assert.equal(parsed.value.reason, null);
+  }
+  assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, reason: 123 }).ok, false);
+  assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, reason: "x".repeat(4001) }).ok, false);
   assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, idempotency_key: "nope" }).ok, false);
   assert.equal(vendorCatalogCreateRequest({ ...CREATE_BODY, extra: 1 }).ok, false);
 
@@ -169,6 +178,23 @@ test("request projections are strict; the generic update cannot reach vendor_id 
   assert.equal(vendorCatalogSetActiveRequest(ACTIVE_BODY).ok, true);
   assert.equal(vendorCatalogSetActiveRequest({ ...ACTIVE_BODY, active: "false" }).ok, false);
   assert.equal(vendorCatalogSetActiveRequest({ ...ACTIVE_BODY, expected_version: null }).ok, false);
+
+  for (const [parse, valid] of [
+    [vendorCatalogCreateRequest, CREATE_BODY],
+    [vendorCatalogUpdateRequest, UPDATE_BODY],
+    [vendorCatalogSetActiveRequest, ACTIVE_BODY],
+  ]) {
+    for (const reason of [undefined, null, "", "  "]) {
+      const body = { ...valid };
+      if (reason === undefined) delete body.reason;
+      else body.reason = reason;
+      const parsed = parse(body);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal(parsed.value.reason, null);
+    }
+    assert.equal(parse({ ...valid, reason: 123 }).ok, false);
+    assert.equal(parse({ ...valid, reason: "x".repeat(4001) }).ok, false);
+  }
 
   const query = vendorCatalogListQuery(
     new URL("https://app.test/x?search=%20abc%20&page=2&page_size=10&include_inactive=false"));

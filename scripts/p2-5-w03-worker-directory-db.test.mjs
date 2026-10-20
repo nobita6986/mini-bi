@@ -669,6 +669,7 @@ test("W03: allowed_actions is server-supplied and follows the assignment authori
           view: true,
           view_pii: true,
           view_payment: true,
+          direct_edit: false,
           propose_change: true,
           propose_change_code: null,
         }, scope + " must advertise propose_change for the assigned manager");
@@ -680,6 +681,7 @@ test("W03: allowed_actions is server-supplied and follows the assignment authori
         view: true,
         view_pii: true,
         view_payment: true,
+        direct_edit: false,
         propose_change: false,
         propose_change_code: "NOT_PROJECT_MANAGER",
       }, "a non-manager must get the stable denial, never a placeholder");

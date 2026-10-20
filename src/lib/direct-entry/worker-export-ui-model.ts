@@ -1,5 +1,5 @@
 /**
- * PRE-W2-P1 (T1A) + HF-E - Pure UI model cho "Xuất Excel" (recruited / managed / all).
+ * PRE-W2-P1 (T1A) + HF-E - Pure UI model cho "Xuất Excel" (recruited / managed / team / all).
  *
  * Khong React, khong I/O. Client KHONG gui authority: body chi gom `scope` + bo loc + `reason`,
  * dung allowlist cua POST /api/direct-entry/workers/export. Quyen cuoi cung do server session +
@@ -14,9 +14,10 @@ import type {
   WorkerDirectoryFilters,
   WorkerOperationsActor,
 } from "./worker-operations-model.ts";
+import { projectOptionalActionReason } from "./action-reason.ts";
 
 /** Scope xuat duoc server cho phep; `all` chi mo cho Admin/BoD/Kế toán (#90). */
-export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "all"] as const;
+export const WORKER_EXPORT_SCOPES = ["recruited", "managed", "team", "all"] as const;
 export type WorkerExportScope = (typeof WORKER_EXPORT_SCOPES)[number];
 
 export const WORKER_EXPORT_REASON_MAX = 4000;
@@ -33,7 +34,7 @@ export type WorkerExportRequestBody = {
   project_id: string | null;
   recruiter_id: string | null;
   employment_status: WorkerExportEmploymentStatus | null;
-  reason: string;
+  reason: string | null;
 };
 
 export function isWorkerExportScope(value: unknown): value is WorkerExportScope {
@@ -47,7 +48,7 @@ export function exportScopeForTab(tab: string): WorkerExportScope | null {
 }
 
 export function isExportableScope(
-  scope: WorkerDirectoryScope | null,
+  scope: WorkerDirectoryScope | "team" | null,
 ): scope is WorkerExportScope {
   return isWorkerExportScope(scope);
 }
@@ -73,7 +74,7 @@ export function canExportAllWorkers(actor: WorkerOperationsActor | null): boolea
 
 export type WorkerExportRequestCode =
   | "SCOPE_INVALID"
-  | "REASON_REQUIRED"
+  | "REASON_INVALID"
   | "REASON_TOO_LONG"
   | "FILTER_INVALID";
 
@@ -87,20 +88,21 @@ function normalizeFilter(value: string): string | null {
 
 /**
  * Body theo dung allowlist cua contract: `scope | project_id | recruiter_id | employment_status |
- * reason`. `scope` phai la recruited|managed; `reason` bat buoc (trim, 1..4000); filter rong => null.
+ * reason`. `scope` la recruited|managed|team|all; action `reason` la tuy chon; filter rong => null.
  * Mot filter trang thai la (khong the xay ra tu select) bi tu choi fail-closed, KHONG bao gio bi
  * am tham bo di (se xuat thua du lieu).
  */
 export function buildWorkerExportRequest(input: {
   scope: string;
   filters: WorkerDirectoryFilters;
-  reason: string;
+  reason?: string | null;
 }): WorkerExportRequestOutcome {
   if (!isWorkerExportScope(input.scope)) return { ok: false, code: "SCOPE_INVALID" };
-
-  const reason = input.reason.trim();
-  if (reason === "") return { ok: false, code: "REASON_REQUIRED" };
-  if (reason.length > WORKER_EXPORT_REASON_MAX) return { ok: false, code: "REASON_TOO_LONG" };
+  if (typeof input.reason === "string" && input.reason.length > WORKER_EXPORT_REASON_MAX) {
+    return { ok: false, code: "REASON_TOO_LONG" };
+  }
+  const reason = projectOptionalActionReason(input.reason, WORKER_EXPORT_REASON_MAX);
+  if (!reason.ok) return { ok: false, code: "REASON_INVALID" };
 
   const status = input.filters.status;
   if (status !== "" &&
@@ -115,7 +117,7 @@ export function buildWorkerExportRequest(input: {
       project_id: normalizeFilter(input.filters.projectId),
       recruiter_id: normalizeFilter(input.filters.recruiterId),
       employment_status: status === "" ? null : (status as WorkerExportEmploymentStatus),
-      reason,
+      reason: reason.value,
     },
   };
 }
@@ -123,7 +125,7 @@ export function buildWorkerExportRequest(input: {
 /** Copy loi request (khong lo UUID/raw DB/PII). */
 export function workerExportRequestMessage(code: WorkerExportRequestCode): string {
   if (code === "SCOPE_INVALID") {
-    return "Chỉ xuất được ở \"Người tôi tuyển\", \"Dự án tôi quản lý\" và \"Toàn bộ NLĐ\".";
+    return "Chỉ xuất được ở \"Người tôi tuyển\", \"Dự án tôi quản lý\", \"Nhóm tôi quản lý\" và \"Toàn bộ NLĐ\".";
   }
   if (code === "REASON_TOO_LONG") {
     return "Lý do xuất tối đa " + String(WORKER_EXPORT_REASON_MAX) + " ký tự.";
@@ -131,7 +133,7 @@ export function workerExportRequestMessage(code: WorkerExportRequestCode): strin
   if (code === "FILTER_INVALID") {
     return "Bộ lọc không hợp lệ. Vui lòng chọn lại rồi thử lại.";
   }
-  return "Lý do xuất là bắt buộc.";
+  return "Lý do xuất không hợp lệ.";
 }
 
 /** Doc `limit` tu envelope 422 cua server; fallback hang so khi thieu/khong hop le. */

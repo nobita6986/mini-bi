@@ -12,6 +12,7 @@ import {
 import { parseIsoDate } from "../direct-entry/direct-entry-date-format.ts";
 import {
   newIdempotencyKey,
+  normalizeOptionalActionReason,
   validateReason,
   validateUuid,
   validateVersion,
@@ -125,7 +126,7 @@ export function buildPersonnelCreateRequest(input: {
   displayName: string;
   personnelPosition: string;
   validFrom: string;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validatePersonnelCode(input.personnelCode) ?? validateName(input.displayName)
@@ -141,7 +142,7 @@ export function buildPersonnelCreateRequest(input: {
       display_name: input.displayName.trim(),
       personnel_position: input.personnelPosition,
       valid_from: input.validFrom,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -152,7 +153,7 @@ export function buildPersonnelUpdateRequest(input: {
   displayName: string;
   personnelPosition: string;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = validatePersonnelCode(input.personnelCode) ?? validateName(input.displayName)
@@ -169,7 +170,7 @@ export function buildPersonnelUpdateRequest(input: {
       display_name: input.displayName.trim(),
       personnel_position: input.personnelPosition,
       expected_version: input.expectedVersion,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };
@@ -178,7 +179,7 @@ export function buildPersonnelUpdateRequest(input: {
 export function buildPersonnelSetActiveRequest(input: {
   active: boolean;
   expectedVersion: number;
-  reason: string;
+  reason?: string | null;
   idempotencyKey: string;
 }): RequestResult {
   const failure = typeof input.active !== "boolean"
@@ -192,7 +193,7 @@ export function buildPersonnelSetActiveRequest(input: {
     body: {
       active: input.active,
       expected_version: input.expectedVersion,
-      reason: input.reason,
+      reason: normalizeOptionalActionReason(input.reason),
       idempotency_key: input.idempotencyKey,
     },
   };

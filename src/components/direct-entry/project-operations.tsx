@@ -767,7 +767,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
                 onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
                 <Dialog.Title className="pr-10 text-lg font-semibold">Đổi tên dự án</Dialog.Title>
                 <Dialog.Description className="text-sm text-muted">
-                  Nhập tên mới và lý do thay đổi.
+                  Nhập tên mới. Lý do thao tác không bắt buộc.
                 </Dialog.Description>
                 <Field id="rename-name" label="Tên dự án">
                   <input ref={focusDialogInput} id="rename-name" className={inputClass}
@@ -944,10 +944,10 @@ function ReasonField({
   inputRef?: (element: HTMLTextAreaElement | null) => void;
 }) {
   return (
-    <Field id={id} label="Lý do" hint="Bắt buộc cho mọi thao tác thay đổi.">
+    <Field id={id} label="Lý do thao tác (không bắt buộc)" hint="Không bắt buộc.">
       <textarea ref={inputRef} id={id} maxLength={REASON_MAX} aria-describedby={id + "-hint"}
         className="min-h-24 w-full rounded-lg border border-border bg-surface p-3 text-sm text-foreground placeholder:text-muted focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-        required aria-required="true" value={value}
+        value={value}
         onChange={(event) => onChange(event.target.value)} />
     </Field>
   );

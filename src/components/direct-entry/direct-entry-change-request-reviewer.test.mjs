@@ -120,6 +120,15 @@ test("decision request dung URL, body contract va header idempotency", () => {
   assert.doesNotMatch(reviewer + helper, RAW_LOGGING);
 });
 
+test("R1.1: reviewer action reason is optional and a blank value reaches the nullable contract", () => {
+  assert.match(reviewer, /Lý do quyết định \(không bắt buộc\)/);
+  assert.match(reviewer, /Lý do từ chối \(không bắt buộc\)/);
+  assert.match(reviewer, /reason: trimmed,/);
+  assert.doesNotMatch(reviewer, /Lý do quyết định là bắt buộc/);
+  assert.doesNotMatch(reviewer, /normalizeReason\(reason\) === null/);
+  assert.match(helper, /reason: string \| null/);
+});
+
 test("idempotency theo intent, 409 khong retry, 5xx giu key", () => {
   assert.match(reviewer, /decisionIntentSignature\(requestId, decision, trimmed\)/);
   assert.match(reviewer, /resolveIntentKey\(intentKey\.current, intent, \(\) => crypto\.randomUUID\(\)\)/);

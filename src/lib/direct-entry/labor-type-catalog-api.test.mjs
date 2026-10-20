@@ -184,7 +184,6 @@ test("W02C create request is strict and never accepts reporting_key", () => {
     { ...CREATE_BODY, sort_order: -1 },
     { ...CREATE_BODY, sort_order: 100001 },
     { ...CREATE_BODY, sort_order: 1.5 },
-    { ...CREATE_BODY, reason: "" },
     { ...CREATE_BODY, idempotency_key: "not-a-uuid" },
     { ...CREATE_BODY, reporting_key: "probation" },
     { ...CREATE_BODY, active: false },
@@ -193,6 +192,16 @@ test("W02C create request is strict and never accepts reporting_key", () => {
     assert.equal(parsed.ok, false, JSON.stringify(bad));
     assert.equal(parsed.response.status, 400);
   }
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...CREATE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    assert.deepEqual(laborTypeCatalogCreateRequest(body), {
+      ok: true, value: { ...CREATE_BODY, reason: null },
+    });
+  }
+  assert.equal(laborTypeCatalogCreateRequest({ ...CREATE_BODY, reason: 123 }).ok, false);
+  assert.equal(laborTypeCatalogCreateRequest({ ...CREATE_BODY, reason: "x".repeat(4001) }).ok, false);
 });
 
 test("W02C update request is strict, needs OCC and cannot move the key", () => {
@@ -217,11 +226,33 @@ test("W02C set-active request is strict and needs OCC", () => {
   for (const bad of [
     { ...ACTIVE_BODY, active: "false" },
     { ...ACTIVE_BODY, expected_version: 0 },
-    { ...ACTIVE_BODY, reason: "" },
     { ...ACTIVE_BODY, display_name: "Gia công" },
   ]) {
     assert.equal(laborTypeCatalogSetActiveRequest(bad).ok, false, JSON.stringify(bad));
   }
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...ACTIVE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    assert.deepEqual(laborTypeCatalogSetActiveRequest(body), {
+      ok: true, value: { ...ACTIVE_BODY, reason: null },
+    });
+  }
+  assert.equal(laborTypeCatalogSetActiveRequest({ ...ACTIVE_BODY, reason: 123 }).ok, false);
+  assert.equal(laborTypeCatalogSetActiveRequest({ ...ACTIVE_BODY, reason: "x".repeat(4001) }).ok, false);
+});
+
+test("W02C update request canonicalizes optional reason and rejects malformed values", () => {
+  for (const reason of [undefined, null, "", "  "]) {
+    const body = { ...UPDATE_BODY };
+    if (reason === undefined) delete body.reason;
+    else body.reason = reason;
+    const parsed = laborTypeCatalogUpdateRequest(body);
+    assert.equal(parsed.ok, true);
+    if (parsed.ok) assert.equal(parsed.value.reason, null);
+  }
+  assert.equal(laborTypeCatalogUpdateRequest({ ...UPDATE_BODY, reason: 123 }).ok, false);
+  assert.equal(laborTypeCatalogUpdateRequest({ ...UPDATE_BODY, reason: "x".repeat(4001) }).ok, false);
 });
 
 test("W02C extensibility: a fourth type passes every shape check with no source vocabulary", () => {
