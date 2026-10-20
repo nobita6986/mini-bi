@@ -480,12 +480,12 @@ test("W05: the reviewer bundle stays minimal and grants nothing", async () => {
         [REV_ALL_APP, REV_TEAM_APP, REV_OWN_APP, REV_NONE_APP, ALL_NO_CAP_APP]]);
     assert.equal(stray, 0, "no reviewer fixture account received apply/export tokens");
 
-    // ACL: the bundle reader is service_role only, the scope reader is internal.
-    for (const [sql, expectedService] of [
-      ["public.direct_entry_reviewer_bundle_capabilities()", true],
-      ["public.direct_entry_has_scope(uuid, text)", false],
+    // Both helpers are private; server entry points expose the required behavior.
+    for (const sql of [
+      "public.direct_entry_reviewer_bundle_capabilities()",
+      "public.direct_entry_has_scope(uuid, text)",
     ]) {
-      for (const [role, expected] of [["service_role", expectedService], ["anon", false],
+      for (const [role, expected] of [["service_role", false], ["anon", false],
         ["authenticated", false]]) {
         const ok = (await db.query(
           "select has_function_privilege($1, $2::regprocedure, 'EXECUTE') as ok", [role, sql])).rows[0].ok;
