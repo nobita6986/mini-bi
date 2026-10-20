@@ -92,6 +92,33 @@ begin
 end;
 $function$;
 
+-- The catalog bootstrap RPC has a restricted owner; grant only its migration-time DDL rights.
+do $optional_reason_executor_setup$
+declare
+  v_executor oid;
+begin
+  if current_user <> session_user then
+    raise exception 'R1.1 reasons requires the migration login role to remain current_user';
+  end if;
+  select r.oid into v_executor from pg_catalog.pg_roles r where r.rolname = 'direct_entry_catalog_bootstrap_executor';
+  if v_executor is null then raise exception 'R1.1 catalog bootstrap executor role is missing'; end if;
+  perform pg_catalog.set_config('mini_bi.r1_1_added_catalog_executor_membership', 'false', true);
+  perform pg_catalog.set_config('mini_bi.r1_1_added_catalog_executor_create', 'false', true);
+  if not pg_catalog.pg_has_role(session_user, v_executor, 'SET') then
+    if exists (select 1 from pg_catalog.pg_auth_members m where m.member = session_user::regrole and m.roleid = v_executor and m.grantor = current_user::regrole) then
+      raise exception 'R1.1 found stale migration executor membership';
+    end if;
+    execute pg_catalog.format('GRANT direct_entry_catalog_bootstrap_executor TO %I WITH ADMIN FALSE, INHERIT FALSE, SET TRUE', session_user);
+    perform pg_catalog.set_config('mini_bi.r1_1_added_catalog_executor_membership', 'true', true);
+  end if;
+  if pg_catalog.has_schema_privilege(v_executor, 'public', 'CREATE') then
+    raise exception 'catalog bootstrap executor unexpectedly has CREATE on public';
+  end if;
+  execute 'GRANT CREATE ON SCHEMA public TO direct_entry_catalog_bootstrap_executor';
+  perform pg_catalog.set_config('mini_bi.r1_1_added_catalog_executor_create', 'true', true);
+end;
+$optional_reason_executor_setup$;
+
 -- Normalize before idempotency hashing and preserve the existing SQL reason limit.
 -- The privileged-edit endpoint has the narrower 1,000 character contract.
 do $normalize_optional_reason_inputs$
@@ -114,6 +141,7 @@ begin
        and l.lanname = 'plpgsql'
        and p.proname like 'direct_entry_%'
        and p.proname <> 'direct_entry_reason'
+       and p.proowner <> 'direct_entry_catalog_bootstrap_executor'::regrole
        and p.proargnames @> array['p_reason']::text[]
   loop
     v_targets := v_targets + 1;
@@ -152,12 +180,64 @@ begin
     execute replace(v_definition, v_source, v_next);
   end loop;
 
-  if v_targets <> 43 then
-    raise exception 'optional reason function inventory drift: expected 43, found %', v_targets
+  if v_targets <> 42 then
+    raise exception 'optional reason function inventory drift: expected 42 non-executor functions, found %', v_targets
       using errcode = '55000';
   end if;
 end;
 $normalize_optional_reason_inputs$;
+
+set local role direct_entry_catalog_bootstrap_executor;
+do $normalize_executor_optional_reason_input$
+declare
+  v_row record;
+  v_source text;
+  v_next text;
+  v_definition text;
+  v_injection text;
+  v_targets integer := 0;
+begin
+  for v_row in
+    select p.oid, p.proname, p.prosrc
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      join pg_language l on l.oid = p.prolang
+     where n.nspname = 'public'
+       and p.prokind = 'f'
+       and l.lanname = 'plpgsql'
+       and p.proname = 'direct_entry_apply_catalog_bootstrap'
+       and p.proargnames @> array['p_reason']::text[]
+       and p.proowner = current_user::regrole
+  loop
+    v_targets := v_targets + 1;
+    v_source := v_row.prosrc;
+    v_next := replace(v_source, E'\r\n', E'\n');
+    v_injection := E'\nbegin\n  if p_reason is not null and length(p_reason) > 4000 then\n'
+      || E'    raise exception ''reason exceeds maximum length'' using errcode = ''22023'';\n'
+      || E'  end if;\n  p_reason := nullif(btrim(p_reason), '''');\n';
+    if position(E'\nbegin\n' in v_next) = 0 then
+      raise exception 'optional reason function body drift: %', v_row.proname using errcode = '55000';
+    end if;
+    v_next := regexp_replace(v_next, E'\nbegin\n', v_injection, '');
+    v_next := regexp_replace(v_next,
+      E'if p_reason is null or length\\(btrim\\(p_reason\\)\\) not between 1 and 4000 then[[:space:]]*raise exception ''reason required'' using errcode = ''22023'';[[:space:]]*end if;',
+      '', 'g');
+    v_next := regexp_replace(v_next,
+      E'\n[[:blank:]]*or p_reason is null\n[[:blank:]]*or length\\(btrim\\(p_reason\\)\\) not between 1 and 4000',
+      '', 'g');
+    if v_next ~ 'p_reason is null' then
+      raise exception 'unremoved optional reason null guard: %', v_row.proname using errcode = '55000';
+    end if;
+    v_definition := pg_get_functiondef(v_row.oid);
+    execute replace(v_definition, v_source, v_next);
+  end loop;
+  if v_targets <> 1 then
+    raise exception 'executor optional reason function inventory drift: expected 1, found %', v_targets
+      using errcode = '55000';
+  end if;
+end;
+$normalize_executor_optional_reason_input$;
+reset role;
 
 -- Calls without a user reason argument were writing server labels into the restricted-reason
 -- table. Keep each operation's revision/audit relationship but use a NULL reason reference.
@@ -301,5 +381,32 @@ begin
   end if;
 end;
 $assert_optional_reason_contract$;
+
+do $optional_reason_executor_cleanup$
+declare
+  v_executor oid;
+begin
+  select r.oid into v_executor from pg_catalog.pg_roles r where r.rolname = 'direct_entry_catalog_bootstrap_executor';
+  if current_setting('mini_bi.r1_1_added_catalog_executor_create', true) = 'true' then
+    execute pg_catalog.format('REVOKE CREATE ON SCHEMA public FROM direct_entry_catalog_bootstrap_executor GRANTED BY %I', current_user);
+  end if;
+  if current_setting('mini_bi.r1_1_added_catalog_executor_membership', true) = 'true' then
+    execute pg_catalog.format('REVOKE direct_entry_catalog_bootstrap_executor FROM %I GRANTED BY %I', session_user, current_user);
+  end if;
+  if pg_catalog.has_schema_privilege(v_executor, 'public', 'CREATE') then
+    raise exception 'catalog bootstrap executor retained CREATE on public';
+  end if;
+  if exists (select 1 from pg_catalog.pg_auth_members m where m.member = session_user::regrole and m.roleid = v_executor and m.grantor = current_user::regrole) then
+    raise exception 'R1.1 migration executor membership was not removed';
+  end if;
+  if not exists (
+    select 1 from pg_catalog.pg_proc p
+     where p.oid = 'public.direct_entry_apply_catalog_bootstrap(uuid,uuid,text,text,text)'::regprocedure
+       and p.proowner = v_executor and p.prosecdef
+  ) then
+    raise exception 'R1.1 changed catalog bootstrap function owner or SECURITY DEFINER';
+  end if;
+end;
+$optional_reason_executor_cleanup$;
 
 commit;
