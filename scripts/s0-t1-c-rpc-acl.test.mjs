@@ -14,6 +14,13 @@ import path from "node:path";
 import { test } from "node:test";
 import { Client } from "pg";
 
+import {
+  migrationChecksum,
+  runMigrationApply,
+  runMigrationValidation,
+  S0_T1_C_PRE_PR92_CHECKSUM,
+} from "./lib/migration-validation.mjs";
+
 const ROOT = process.cwd();
 const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
 const ACL_MIGRATION = "20261020180000_s0_t1_c_rpc_acl_allowlist.sql";
@@ -320,12 +327,89 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const r2_1Index = names.indexOf(R2_1_MIGRATION);
       assert.notEqual(r2_1Index, -1, "the R2.1 migration is present in the migration chain");
       await applyMigrations(client, names.slice(aclMigrationIndex + 1, r2_1Index));
+
+      // Seed schema_migrations for #1..#128 with #124 carrying its pre-PR #92 historical checksum:
+      for (const appliedName of names.slice(0, r2_1Index)) {
+        const sqlText = await readFile(path.join(MIGRATION_DIR, appliedName), "utf8");
+        const checksum =
+          appliedName === ACL_MIGRATION
+            ? S0_T1_C_PRE_PR92_CHECKSUM
+            : migrationChecksum(sqlText);
+        await client.query(
+          "insert into public.schema_migrations (version, checksum) values ($1, $2)",
+          [appliedName, checksum],
+        );
+      }
+
+      const passthroughClient = () => ({
+        async connect() {},
+        query: (sql, params) => client.query(sql, params),
+        async end() {},
+      });
+
+      // Verify fail-closed when an internal helper's ACL is broadened on a DB with #124's pre-PR #92 checksum:
+      await client.query(
+        "grant execute on function public.set_updated_at() to service_role",
+      );
       await client.query("set session authorization s0_t1c_runner");
       try {
-        await applyMigrations(client, names.slice(r2_1Index));
+        const failedPreflight = await runMigrationValidation({
+          mode: "dry-run",
+          directory: MIGRATION_DIR,
+          loadConfig: async () => ({ databaseUrl: "postgres://local" }),
+          createClient: passthroughClient,
+          log() {},
+        });
+        assert.deepEqual(
+          failedPreflight.mismatches,
+          [ACL_MIGRATION],
+          "historical #124 checksum must fail closed when ACL postconditions are violated",
+        );
       } finally {
         await client.query("reset session authorization");
       }
+      await client.query(
+        "revoke execute on function public.set_updated_at() from service_role",
+      );
+
+      // Verify preflight dry-run PASSES and official runMigrationApply applies #129 under non-superuser s0_t1c_runner
+      // without mutating #124's historical ledger checksum or re-executing #124:
+      await client.query("set session authorization s0_t1c_runner");
+      try {
+        const preflight = await runMigrationValidation({
+          mode: "dry-run",
+          directory: MIGRATION_DIR,
+          loadConfig: async () => ({ databaseUrl: "postgres://local" }),
+          createClient: passthroughClient,
+          log() {},
+        });
+        assert.deepEqual(preflight.mismatches, [], "preflight dry-run passes when #124 postconditions hold");
+
+        const applySummary = await runMigrationApply({
+          directory: MIGRATION_DIR,
+          loadConfig: async () => ({ databaseUrl: "postgres://local", projectRef: "s0t1" }),
+          createClient: passthroughClient,
+          log() {},
+        });
+        assert.equal(applySummary.appliedCount, 1, "only #129 is applied");
+        assert.equal(applySummary.skippedCount, r2_1Index, "all 128 prior migrations are skipped");
+      } finally {
+        await client.query("reset session authorization");
+      }
+
+      const { rows: ledger124After } = await client.query(
+        "select checksum from public.schema_migrations where version = $1",
+        [ACL_MIGRATION],
+      );
+      assert.equal(
+        ledger124After[0]?.checksum,
+        S0_T1_C_PRE_PR92_CHECKSUM,
+        "compatibility check never rewrites #124's historical ledger checksum",
+      );
+      const { rows: ledgerCountAfter } = await client.query(
+        "select count(*)::integer as total from public.schema_migrations",
+      );
+      assert.equal(ledgerCountAfter[0]?.total, names.length, "ledger reaches 129/129 after applying #129");
 
       const expectedSignatures = [...migration.matchAll(/^\s+'(public\.[^']+)'[,]?$/gm)]
         .map((match) => match[1]);

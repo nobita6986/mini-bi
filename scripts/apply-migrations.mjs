@@ -4,7 +4,9 @@
  *
  * - Đọc connection string từ file cấu hình ngoài repo (không commit).
  * - Mỗi file chạy trong MỘT transaction, kèm ghi nhận vào public.schema_migrations.
- * - Idempotent: file đã áp dụng sẽ bị bỏ qua; checksum lệch => dừng và báo lỗi.
+ * - Idempotent: file đã áp dụng sẽ bị bỏ qua; checksum lệch => dừng và báo lỗi
+ *   (trừ trường hợp duy nhất được kiểm soát cho migration #124 khi mang checksum
+ *   lịch sử trước PR #92 và vượt qua toàn bộ kiểm tra security postconditions).
  *
  * Dùng:
  *   node scripts/apply-migrations.mjs [--dry-run | --offline]
@@ -20,6 +22,7 @@ import {
   migrationChecksum,
   migrationSqlForTransaction,
   runMigrationValidation,
+  verifyAppliedMigrationChecksum,
 } from "./lib/migration-validation.mjs";
 import { buildSslOptions } from "./lib/supabase-tls.mjs";
 
@@ -75,13 +78,26 @@ async function main() {
     const previous = appliedMap.get(name);
 
     if (previous !== undefined) {
-      if (previous !== sum) {
+      const check = await verifyAppliedMigrationChecksum(
+        client,
+        { name, sql, checksum: sum },
+        previous,
+        appliedMap,
+      );
+      if (check.status === "mismatch") {
+        await client.end();
         throw new Error(
-          `Migration ${name} đã áp dụng nhưng nội dung đã thay đổi (checksum mismatch). ` +
+          `Migration ${name} đã áp dụng nhưng nội dung đã thay đổi (checksum mismatch${check.reason ? `: ${check.reason}` : ""}). ` +
             "Không sửa file migration đã áp dụng — hãy tạo file migration mới."
         );
       }
-      console.log(`SKIP    ${name} (đã áp dụng)`);
+      if (check.status === "compatible_historical") {
+        console.log(
+          `SKIP    ${name} (đã áp dụng — tương thích checksum lịch sử trước PR #92 đã xác minh postconditions)`,
+        );
+      } else {
+        console.log(`SKIP    ${name} (đã áp dụng)`);
+      }
       skippedCount += 1;
       continue;
     }
@@ -94,6 +110,7 @@ async function main() {
         [name, sum]
       );
       await client.query("commit");
+      appliedMap.set(name, sum);
       console.log(`APPLY   ${name}`);
       appliedCount += 1;
     } catch (error) {

@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
+  extractS0T1CAllowlistSignatures,
   migrationChecksum,
   migrationSqlForTransaction,
+  R1_2_MIGRATION_NAME,
+  R1_2_SERVICE_RPC_SIGNATURE,
+  runMigrationApply,
   runMigrationValidation,
+  S0_T1_C_CURRENT_CHECKSUM,
+  S0_T1_C_MIGRATION_NAME,
+  S0_T1_C_PRE_PR92_CHECKSUM,
 } from "./lib/migration-validation.mjs";
 
 test("migration checksum is stable across LF and CRLF checkouts", () => {
@@ -145,4 +152,245 @@ test("dry-run surfaces database connection failures", async () => {
       log() {},
     }), /database unavailable/);
   });
+});
+
+test("migration #124 pre-PR #92 and post-PR #92 checksums are locked to exact verified SHA-256 digests", async () => {
+  const currentSql = await readFile(
+    path.resolve("supabase/migrations", S0_T1_C_MIGRATION_NAME),
+    "utf8",
+  );
+  assert.equal(
+    migrationChecksum(currentSql),
+    S0_T1_C_CURRENT_CHECKSUM,
+    "current #124 source checksum must match S0_T1_C_CURRENT_CHECKSUM",
+  );
+
+  const pr92AddedLine =
+    "       and p.proowner <> 'direct_entry_catalog_bootstrap_executor'::regrole\n";
+  assert.ok(
+    currentSql.replace(/\r\n?/g, "\n").includes(pr92AddedLine),
+    "#124 source contains the single PR #92 executor filter line",
+  );
+  const prePr92Sql = currentSql
+    .replace(/\r\n?/g, "\n")
+    .replace(pr92AddedLine, "");
+  assert.equal(
+    migrationChecksum(prePr92Sql),
+    S0_T1_C_PRE_PR92_CHECKSUM,
+    "reconstructed pre-PR #92 #124 checksum must match S0_T1_C_PRE_PR92_CHECKSUM",
+  );
+  assert.equal(extractS0T1CAllowlistSignatures(currentSql).length, 140);
+});
+
+test("migration #124 compatibility: accepts verified pre-PR #92 checksum only when postconditions pass, never modifies ledger, and fails closed on unknown checksums or other migrations", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "migration-124-compat-"));
+  try {
+    const s0Sql = await readFile(
+      path.resolve("supabase/migrations", S0_T1_C_MIGRATION_NAME),
+      "utf8",
+    );
+    const r21Name = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
+    await writeFile(path.join(directory, "001_init.sql"), "select 1;\n");
+    await writeFile(path.join(directory, S0_T1_C_MIGRATION_NAME), s0Sql);
+    await writeFile(path.join(directory, R1_2_MIGRATION_NAME), "select 2;\n");
+    await writeFile(path.join(directory, r21Name), "select 3;\n");
+
+    const allowlist = [
+      ...extractS0T1CAllowlistSignatures(s0Sql),
+      R1_2_SERVICE_RPC_SIGNATURE,
+    ].sort();
+
+    const makePostconditionRow = (overrides = {}) => ({
+      exposed_client_or_public_count: 0,
+      actual_service_signatures: allowlist,
+      expected_service_signatures: allowlist,
+      missing_allowlist_count: 0,
+      missing_owner_exec_count: 0,
+      unsafe_secdef_search_path_count: 0,
+      bootstrap_executor_intact: true,
+      ...overrides,
+    });
+
+    // 1. Pre-PR #92 checksum + passing postconditions -> dry-run PASS (SELECT-only) & apply skips #124 without touching its ledger row and applies #129:
+    {
+      const statements = [];
+      const dryRunLogs = [];
+      const dryRunResult = await runMigrationValidation({
+        mode: "dry-run",
+        directory,
+        loadConfig: async () => ({ databaseUrl: "postgres://synthetic" }),
+        createClient: () => ({
+          async connect() {},
+          async query(sql) {
+            statements.push(sql);
+            if (sql.includes("to_regclass")) return { rows: [{ exists: true }] };
+            if (sql === "select version, checksum from public.schema_migrations") {
+              return {
+                rows: [
+                  { version: "001_init.sql", checksum: migrationChecksum("select 1;\n") },
+                  { version: S0_T1_C_MIGRATION_NAME, checksum: S0_T1_C_PRE_PR92_CHECKSUM },
+                  { version: R1_2_MIGRATION_NAME, checksum: migrationChecksum("select 2;\n") },
+                ],
+              };
+            }
+            if (sql.includes("exposed_client_or_public_count")) {
+              return { rows: [makePostconditionRow()] };
+            }
+            throw new Error(`Unexpected query: ${sql}`);
+          },
+          async end() {},
+        }),
+        log: (line) => dryRunLogs.push(line),
+      });
+      assert.deepEqual(dryRunResult.mismatches, []);
+      assert.match(
+        dryRunLogs.join("\n"),
+        /APPLIED 20261020180000_s0_t1_c_rpc_acl_allowlist\.sql \(verified pre-PR #92 historical checksum compatibility\)/,
+      );
+      assert.match(dryRunLogs.join("\n"), new RegExp(`PENDING ${r21Name}`));
+      assert.ok(statements.every((sql) => /^\s*select\b/i.test(sql)));
+
+      const insertedLedger = [];
+      const executedMigrations = [];
+      const applyLogs = [];
+      const applyResult = await runMigrationApply({
+        directory,
+        loadConfig: async () => ({ databaseUrl: "postgres://synthetic", projectRef: "oyykqfxkyqhxgrfntokl" }),
+        createClient: () => ({
+          async connect() {},
+          async query(sql, params) {
+            if (sql.includes("create table if not exists public.schema_migrations")) return { rows: [] };
+            if (sql === "select version, checksum from public.schema_migrations") {
+              return {
+                rows: [
+                  { version: "001_init.sql", checksum: migrationChecksum("select 1;\n") },
+                  { version: S0_T1_C_MIGRATION_NAME, checksum: S0_T1_C_PRE_PR92_CHECKSUM },
+                  { version: R1_2_MIGRATION_NAME, checksum: migrationChecksum("select 2;\n") },
+                ],
+              };
+            }
+            if (sql.includes("exposed_client_or_public_count")) {
+              return { rows: [makePostconditionRow()] };
+            }
+            if (sql === "begin" || sql === "commit" || sql === "rollback") return { rows: [] };
+            if (sql.includes("insert into public.schema_migrations")) {
+              insertedLedger.push(params);
+              return { rows: [] };
+            }
+            if (sql.includes("information_schema.tables")) return { rows: [] };
+            if (/\bupdate\b|\bdelete\b/i.test(sql)) {
+              throw new Error(`Forbidden ledger mutation: ${sql}`);
+            }
+            executedMigrations.push(sql);
+            return { rows: [] };
+          },
+          async end() {},
+        }),
+        log: (line) => applyLogs.push(line),
+      });
+      assert.equal(applyResult.appliedCount, 1);
+      assert.equal(applyResult.skippedCount, 3);
+      assert.deepEqual(executedMigrations, ["select 3;\n"]);
+      assert.deepEqual(insertedLedger, [[r21Name, migrationChecksum("select 3;\n")]]);
+      assert.match(applyLogs.join("\n"), /SKIP\s+20261020180000_s0_t1_c_rpc_acl_allowlist\.sql/);
+    }
+
+    // 2. Pre-PR #92 checksum + failing security postconditions -> FAIL CLOSED in both dry-run and apply:
+    for (const [label, brokenOverride] of [
+      ["client exposure", { exposed_client_or_public_count: 1 }],
+      ["service_role allowlist drift", { actual_service_signatures: ["public.unexpected_rpc()"] }],
+      ["missing owner execute", { missing_owner_exec_count: 1 }],
+      ["unsafe SECURITY DEFINER search_path", { unsafe_secdef_search_path_count: 1 }],
+      ["bootstrap executor tampered", { bootstrap_executor_intact: false }],
+    ]) {
+      const dryRun = await runMigrationValidation({
+        mode: "dry-run",
+        directory,
+        loadConfig: async () => ({ databaseUrl: "postgres://synthetic" }),
+        createClient: () => ({
+          async connect() {},
+          async query(sql) {
+            if (sql.includes("to_regclass")) return { rows: [{ exists: true }] };
+            if (sql === "select version, checksum from public.schema_migrations") {
+              return {
+                rows: [
+                  { version: S0_T1_C_MIGRATION_NAME, checksum: S0_T1_C_PRE_PR92_CHECKSUM },
+                  { version: R1_2_MIGRATION_NAME, checksum: migrationChecksum("select 2;\n") },
+                ],
+              };
+            }
+            if (sql.includes("exposed_client_or_public_count")) {
+              return { rows: [makePostconditionRow(brokenOverride)] };
+            }
+            return { rows: [] };
+          },
+          async end() {},
+        }),
+        log() {},
+      });
+      assert.deepEqual(
+        dryRun.mismatches,
+        [S0_T1_C_MIGRATION_NAME],
+        `dry-run must reject #124 historical checksum when ${label}`,
+      );
+
+      await assert.rejects(
+        runMigrationApply({
+          directory,
+          loadConfig: async () => ({ databaseUrl: "postgres://synthetic" }),
+          createClient: () => ({
+            async connect() {},
+            async query(sql) {
+              if (sql === "select version, checksum from public.schema_migrations") {
+                return {
+                  rows: [
+                    { version: S0_T1_C_MIGRATION_NAME, checksum: S0_T1_C_PRE_PR92_CHECKSUM },
+                    { version: R1_2_MIGRATION_NAME, checksum: migrationChecksum("select 2;\n") },
+                  ],
+                };
+              }
+              if (sql.includes("exposed_client_or_public_count")) {
+                return { rows: [makePostconditionRow(brokenOverride)] };
+              }
+              return { rows: [] };
+            },
+            async end() {},
+          }),
+          log() {},
+          errorLog() {},
+        }),
+        /checksum mismatch/,
+        `apply must reject #124 historical checksum when ${label}`,
+      );
+    }
+
+    // 3. Unknown checksum on #124 or modified checksum on another migration -> FAIL CLOSED without running postcondition query:
+    for (const [badVersion, badChecksum] of [
+      [S0_T1_C_MIGRATION_NAME, "0000000000000000000000000000000000000000000000000000000000000000"],
+      ["001_init.sql", S0_T1_C_PRE_PR92_CHECKSUM],
+    ]) {
+      const dryRun = await runMigrationValidation({
+        mode: "dry-run",
+        directory,
+        loadConfig: async () => ({ databaseUrl: "postgres://synthetic" }),
+        createClient: () => ({
+          async connect() {},
+          async query(sql) {
+            if (sql.includes("to_regclass")) return { rows: [{ exists: true }] };
+            if (sql === "select version, checksum from public.schema_migrations") {
+              return {
+                rows: [{ version: badVersion, checksum: badChecksum }],
+              };
+            }
+            throw new Error(`Postcondition query must not run for ${badVersion}: ${sql}`);
+          },
+          async end() {},
+        }),
+        log() {},
+      });
+      assert.deepEqual(dryRun.mismatches, [badVersion]);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
