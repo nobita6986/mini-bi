@@ -188,6 +188,7 @@ test("full migration set preserves the derived direct-entry function and RPC inv
   // #122 adds three service-role-only deletion/cleanup RPCs and one internal stage guard.
   // S0-T1-C closes direct grants to helper routines; count signatures, not overload names.
   // R1 current-state authorization adds two private trigger/guard routines.
-  assert.deepEqual([rows.length, serviceRpcs, internalRpcs], [267, 106, 161]);
+  // R1.2 adds two internal authorization/search helpers and one service-role search RPC.
+  assert.deepEqual([rows.length, serviceRpcs, internalRpcs], [270, 107, 163]);
   await db.close();
 });

@@ -7,7 +7,6 @@ import { decideWorkerOperationsPageAccess } from "@/lib/auth/direct-entry-page-a
 import { canExportAllWorkers, canExportWorkers } from "@/lib/direct-entry/worker-export-ui-model";
 import {
   workerOperationsAllScopePredicate,
-  workerOperationsReviewPredicate,
   workerOperationsTeamScopePredicate,
 } from "@/lib/navigation/registry-capability";
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
@@ -19,9 +18,9 @@ import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
  * Cung boundary voi /direct-entry (flag + actor resolver request-scoped) va CUNG predicate
  * voi nav (workerOperationsNavPredicate) — khong hai logic lech nhau.
  *
- * "Toan bo NLD" (scope=all) va review queue chi duoc BAT khi server-side actor projection
- * xac nhan (entry_admin | change_review) + effective all scope; RPC W03/W05 van la authority
- * cuoi cung. Reviewer KHONG duoc mo /direct-entry editor.
+ * "Toan bo NLD" (scope=all) chi duoc BAT khi server-side actor projection
+ * xac nhan (entry_admin | change_review) + effective all scope; RPC W03 van la authority
+ * cuoi cung. Workflow yêu cầu thay đổi nằm tại /direct-entry.
  */
 export const dynamic = "force-dynamic";
 
@@ -46,7 +45,6 @@ export default async function WorkerOperationsPage() {
       const projection = actor !== null && actor.ok ? actor.actor : null;
       const canSeeAllWorkers = projection !== null &&
         workerOperationsAllScopePredicate(projection);
-      const canReview = projection !== null && workerOperationsReviewPredicate(projection);
       const canSeeTeamWorkers = projection !== null &&
         workerOperationsTeamScopePredicate(projection);
       // Chi truyen capabilities + scope kind: khong lo auth_subject/app_user_id/PII.
@@ -60,7 +58,6 @@ export default async function WorkerOperationsPage() {
         <WorkerOperations
           canSeeAllWorkers={canSeeAllWorkers}
           canSeeTeamWorkers={canSeeTeamWorkers}
-          canReview={canReview}
           canExport={canExport}
           canExportAll={canExportAll}
           actor={actorProjection}

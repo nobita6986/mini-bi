@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
+const directEntry = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const page = readFileSync(
   new URL("../../app/direct-entry/workers/page.tsx", import.meta.url), "utf8");
 const reviewer = readFileSync(
@@ -52,14 +53,14 @@ test("W06-R2: uploader/submission vs recruited|managed|all/directory dung projec
   assert.match(source, /parseWorkerPageResponse/);
   assert.match(source, /workersQuery\(\{[\s\S]{0,80}scope, \.\.\.workerFilters, cursor/);
   assert.match(source, /submissionsQuery\(cursor\)/);
-  assert.match(source, /requestsQuery\(cursor, queue\)/);
 });
 
 test("R1.1: Team tab uses the server-authorized team scope and direct edit uses the row signal", () => {
   assert.match(source, /visibleWorkerTabs\(canSeeAllWorkers, canSeeTeamWorkers\)/);
   assert.match(source, /initialWorkerTab\(actor, canSeeAllWorkers, canSeeTeamWorkers\)/);
   assert.match(source, /team: emptyTabPage\(\)/);
-  assert.match(source, /row\.allowed_actions\.direct_edit \? \(/);
+  assert.match(source, /const canDirectEdit = row\.allowed_actions\.direct_edit/);
+  assert.match(source, /!canDirectEdit && cta\.show \?/);
   assert.doesNotMatch(source, /canPrivilegedEditWorkers|canPrivilegedEdit=|canDirectlyCorrectWorkers/);
   assert.match(source, /scope, \.\.\.workerFilters, cursor/);
   assert.match(page, /workerOperationsTeamScopePredicate\(projection\)/);
@@ -74,7 +75,7 @@ test("W06-R2: phan trang that - cursor, Tai them, append dedupe, reset khi doi t
   assert.match(source, /hasMore=\{/);
   assert.match(source, /Tải thêm/);
   assert.match(source, /loadMore\(/);
-  assert.match(source, /workerRowKey|submissionRowKey|requestRowKey/);
+  assert.match(source, /workerRowKey|submissionRowKey/);
   // Doi tab/filter reset page cua scope tuong ung.
   assert.match(source, /setWorkerPages\(\(pages\) => \(\{ \.\.\.pages, \[next as WorkerScopeTab\]: resetTabPage\(\) \}\)\)/);
   assert.match(source, /setSubmissionPage\(resetTabPage\(\)\)/);
@@ -91,10 +92,15 @@ test("worker directory displays server-filtered totals, not only the loaded page
     "filter/tab changes clear the previous query's summary while the next response loads");
 });
 
-test("W06-R2: review payload di qua projectChangeRequestListPage, khong cast raw", () => {
-  assert.match(source, /parseChangeRequestPageResponse/);
-  assert.match(source, /parsed\.requests/);
-  assert.equal(/as ChangeRequestListItem\[\]/.test(source), false, "khong cast raw payload");
+test("R1.2-B: search is bounded, server-filtered, resets paging and remains visible in summary", () => {
+  assert.match(source, /<input id=\{searchId\} type="search"/);
+  assert.match(source, /maxLength=\{100\}/);
+  assert.match(source, /changeFilter\("search", event\.target\.value\)/);
+  assert.match(source, /Xóa tìm kiếm/);
+  assert.match(source, /Từ khóa/);
+  assert.match(source, /Không tìm thấy người lao động phù hợp với từ khóa/);
+  assert.match(source, /workerQueryGeneration\.current === workerPageGeneration/);
+  assert.match(source, /không áp dụng từ khóa tìm kiếm/);
 });
 
 test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () => {
@@ -117,13 +123,15 @@ test("W06-R3: quan he khong ton tai hien 0; loi that cuc bo va co mau do", () =>
   assert.match(source, /submissionPage\.state/);
 });
 
-test("P2.5-HF-R3: hang doi Yeu cau thay doi nam TRUOC danh sach NLD", () => {
-  const requests = source.indexOf("<DirectEntryChangeRequestList");
-  const panel = source.indexOf("role=\"tabpanel\"");
-  assert.ok(requests !== -1 && panel !== -1);
-  assert.ok(requests < panel, "change-request queue phai render truoc danh sach NLD");
-  // Khong gia lap hang doi yeu cau thay doi DU AN: chi mot danh sach duy nhat.
-  assert.equal((source.match(/<DirectEntryChangeRequestList/g) ?? []).length, 1);
+test("R1.2-A: worker management removes the request panel and keeps Direct Entry workflow", () => {
+  for (const requestOnly of [
+    "DirectEntryChangeRequestList", "DirectEntryChangeRequestReviewer", "requestPage",
+    "reloadRequestPage", "requestsQuery", "WORKER_REQUEST_PAGE_SIZE",
+  ]) assert.doesNotMatch(source, new RegExp(requestOnly), requestOnly);
+  assert.match(directEntry, /<DirectEntryChangeRequestList/);
+  assert.match(directEntry, /<DirectEntryChangeRequestReviewer/);
+  assert.match(source, /buildChangeRequestItem/,
+    "the existing proposal action remains available where direct edit is not authorized");
 });
 
 test("P2.5-HF-R3: khong con cau hua ve quyen pham vi toan bo", () => {
@@ -211,11 +219,10 @@ test("W06: page boundary cung flag + actor resolver nhu /direct-entry", () => {
   assert.match(page, /isDirectEntryUiEnabled\(process\.env\.DIRECT_ENTRY_UI_ENABLED\)/);
   assert.match(page, /decideWorkerOperationsPageAccess/);
   assert.match(page, /workerOperationsAllScopePredicate/);
-  assert.match(page, /workerOperationsReviewPredicate/);
   assert.match(page, /workerOperationsTeamScopePredicate/);
   assert.match(page, /canSeeAllWorkers=\{canSeeAllWorkers\}/);
   assert.match(page, /canSeeTeamWorkers=\{canSeeTeamWorkers\}/);
-  assert.match(page, /canReview=\{canReview\}/);
+  assert.doesNotMatch(page, /workerOperationsReviewPredicate|canReview/);
   assert.match(page, /case "NOT_FOUND":[\s\S]{0,40}notFound\(\)/);
   assert.match(page, /redirect\("\/login\?next=\/direct-entry\/workers"\)/);
   assert.match(page, /case "ALLOW":[\s\S]{0,1200}<WorkerOperations/);
@@ -227,22 +234,17 @@ test("W06: nav entry 'worker-operations' duoc dang ky trong registry hien co", (
   assert.match(registry, /label: "Người lao động"/);
 });
 
-test("W06-R1: review queue tai su dung list/reviewer hien co cho owner, team lead va reviewer", () => {
-  assert.match(source, /DirectEntryChangeRequestList/);
-  assert.match(source, /DirectEntryChangeRequestReviewer/);
-  assert.match(source, /\{canViewRequests \? \(/);
-  assert.match(source, /actor\?\.capabilities\.includes\("change_request_create"\)/);
-  assert.match(source, /canReview \|\| canSeeTeamWorkers/);
-  assert.match(source, /onReview=\{/);
-  // Khong nhung editor Direct Entry.
+test("W06-R1: Worker Operations stays a directory and does not embed the Direct Entry editor", () => {
+  assert.doesNotMatch(source, /DirectEntryChangeRequestList|DirectEntryChangeRequestReviewer/);
+  assert.doesNotMatch(source, /canViewRequests|requestPage|reloadRequestPage/);
   assert.equal(/DirectEntryLive|DirectEntryShell|DirectEntrySpreadsheetGrid/.test(source), false);
 });
 
-test("W06-R2: approve/reject reloads the authoritative review queue", () => {
-  assert.match(source, /const reloadRequestPage = useCallback\(async \(\): Promise<void> =>/);
-  assert.match(source, /onDecided=\{\(message\) => \{[\s\S]*?void reloadRequestPage\(\);[\s\S]*?\}\}/);
+test("W06-R2: Direct Entry approve/reject refreshes authoritative workflow state", () => {
+  assert.match(directEntry, /const reloadAfterChangeRequestMutation = useCallback\(async \(message: string\)/);
+  assert.match(directEntry, /onDecided=\{\(message\) => \{ void reloadAfterChangeRequestMutation\(message\); \}\}/);
   assert.doesNotMatch(
-    source,
+    directEntry,
     /onDecided=\{[\s\S]*?items:\s*requestPage\.items[\s\S]*?\}\}/,
     "decision callback must not re-apply the stale pre-decision page",
   );
@@ -290,8 +292,10 @@ test("HF-R4: proposal preloads and exposes each ENTRY_FIELD value", () => {
   assert.match(source, /useState<WorkerProposeTarget>\("WORKER"\)/);
 });
 
-test("R1.1: direct correction is gated only by server-projected row action", () => {
-  assert.match(source, /row\.allowed_actions\.direct_edit \? \(/);
+test("R1.2-C: direct correction and proposal CTAs follow the server-projected row action", () => {
+  assert.match(source, /const canDirectEdit = row\.allowed_actions\.direct_edit/);
+  assert.match(source, /!canDirectEdit && cta\.show \?/);
+  assert.match(source, /canDirectEdit \? \(/);
   assert.doesNotMatch(source, /canPrivilegedEditWorkers|canPrivilegedEdit=|canDirectlyCorrectWorkers/);
   assert.match(source, /\/privileged-edit/);
   assert.match(source, /mode === "correction" \|\| target === "WORK_STATUS"/);
@@ -324,7 +328,7 @@ test("HF-R5A: loi tai them phai duoc bao cho nguoi dung, khong duoc im lang", ()
   assert.equal(source.includes("message: null"), false, "khong con nhanh nao bo trong message");
   assert.match(source, /message: WORKER_LOAD_FAILED_MESSAGE/);
   assert.match(source, /activePage.state === "ready" && activePage.message !== null/);
-  assert.match(source, /requestPage.state === "ready" && requestPage.message !== null/);
+  assert.doesNotMatch(source, /requestPage.state/);
   assert.match(source, /<span>{activePage.message}<\/span>/);
 });
 
@@ -355,18 +359,16 @@ test("HF-R5A: dong drawer phai tra focus ve dung nut da mo", () => {
   assert.match(source, /openerRef=\{drawerOpenerRef\}/);
 });
 
-test("HF-R5A-R1: moi duong network rejection dung canonical message, khong con null", () => {
+test("HF-R5A-R1: submission network rejection uses the canonical message", () => {
   assert.equal(/failLoad\([^)]*\bnull\b/.test(source), false, "khong con failLoad voi message null");
   assert.equal(source.includes(String.fromCharCode(34) + "unavailable" + String.fromCharCode(34) + ", null"),
     false, "khong con nhanh nao bo trong message");
-  // Hai duong initial rejection (submissions + requests) dung CUNG mot canonical message.
-  assert.equal((source.match(/failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)/g) ?? []).length, 2);
+  // Initial submission rejection uses the shared canonical message.
+  assert.equal((source.match(/failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)/g) ?? []).length, 1);
   assert.match(source, /setSubmissionPage\(\(page\) => failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)\)/);
-  assert.match(source, /setRequestPage\(\(page\) => failLoad\(page, "unavailable", WORKER_LOAD_FAILED_MESSAGE\)\)/);
   // Khong tao message/helper thu hai.
   assert.equal(/const [A-Z_]*LOAD_FAILED[A-Z_]* = "/.test(source), false);
-  // Giu rows da tai + co retry trong ca hai red alert.
+  // Giu rows da tai + co retry trong danh sach va submission.
   assert.equal((source.match(/onClick=\{\(\) => void reload\(\)\}/g) ?? []).length >= 2, true);
-  assert.match(source, /onClick=\{\(\) => void reloadRequestPage\(\)\}/);
-  assert.equal((source.match(/Thử lại/g) ?? []).length >= 3, true);
+  assert.equal((source.match(/Thử lại/g) ?? []).length >= 2, true);
 });

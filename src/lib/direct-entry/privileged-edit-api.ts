@@ -4,8 +4,8 @@
  * Pipeline: gate -> entryId -> CSRF/origin -> content-type -> idempotency key -> body ->
  * strict patch validation -> server session actor -> repository -> sanitized response.
  *
- * Chi Admin (entry_admin) va bundle BoD/Ke toan (entry_privileged_edit) di qua duoc: capability
- * + scope do RPC quyet dinh. Khong bao gio nhan identity tu client va khong forward raw DB message.
+ * Admin, privileged-edit grantees, current Team Leaders and assigned Project Managers are
+ * checked again by the RPC. Khong bao gio nhan identity tu client va khong forward raw DB message.
  */
 import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";

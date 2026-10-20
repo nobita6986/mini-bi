@@ -15,6 +15,12 @@ export function expectedDirectEntryFunctions(migrations) {
       /\bcreate\b[^;]{0,120}?\bfunction\s+public\.(direct_entry_[a-z0-9_]+)\s*\(/gi)) {
       events.push([match.index, true, match[1]]);
     }
+    // R1.2 derives this implementation from pg_get_functiondef, so it has no
+    // literal CREATE FUNCTION statement for the source-based inventory to parse.
+    for (const match of code.matchAll(
+      /replace\s*\(\s*v_helper_definition\s*,\s*'public\.direct_entry_list_workers\('\s*,\s*'public\.(direct_entry_[a-z0-9_]+)\(/gi)) {
+      events.push([match.index, true, match[1]]);
+    }
     // A W07B/W07C style "alter function ... rename to direct_entry_x" also declares the name.
     for (const match of code.matchAll(/\brename\s+to\s+(direct_entry_[a-z0-9_]+)/gi)) {
       events.push([match.index, true, match[1]]);

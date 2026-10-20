@@ -6,7 +6,6 @@ const list = readFileSync(new URL("./direct-entry-change-request-list.tsx", impo
 const reviewer = readFileSync(new URL("./direct-entry-change-request-reviewer.tsx", import.meta.url), "utf8");
 const submissions = readFileSync(new URL("./direct-entry-submission-list.tsx", import.meta.url), "utf8");
 const queueTabs = readFileSync(new URL("./direct-entry-queue-tabs.tsx", import.meta.url), "utf8");
-const workers = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("./direct-entry-compact-panel.tsx", import.meta.url), "utf8");
 const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
@@ -120,7 +119,7 @@ test("review and withdraw continue to use server-projected permission and existi
   assert.match(list, /shortRef\(request\.request_id\)/);
   assert.doesNotMatch(list, />\s*\{request\.request_id\}\s*</);
   assert.match(list, /onClick=\{onLoadMore\}/);
-  assert.match(workers, /onDecided=\{\(message\) => \{[\s\S]{0,180}reloadRequestPage\(\)/);
+  assert.match(live, /onDecided=\{\(message\) => \{[\s\S]{0,160}reloadAfterChangeRequestMutation\(message\)/);
 });
 
 test("Excel CTAs stay hidden at every breakpoint and quick-add remains visible on mobile", () => {
