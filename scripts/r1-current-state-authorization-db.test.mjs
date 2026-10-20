@@ -268,6 +268,17 @@ test("R1.1 optional-action-reason migration accepts legacy CRLF function bodies"
       `select is_nullable from information_schema.columns
         where table_schema='public' and table_name='direct_entry_change_requests' and column_name='reason_id'`,
     )).rows[0].is_nullable, "YES");
+    const reasonAcl = await db.query(
+      `select has_function_privilege('direct_entry_catalog_bootstrap_executor',
+                'public.direct_entry_reason(uuid,text)', 'EXECUTE') as executor,
+              has_function_privilege('service_role', 'public.direct_entry_reason(uuid,text)', 'EXECUTE') as service,
+              has_function_privilege('anon', 'public.direct_entry_reason(uuid,text)', 'EXECUTE') as anon,
+              has_function_privilege('authenticated', 'public.direct_entry_reason(uuid,text)', 'EXECUTE') as authenticated,
+              has_function_privilege('public', 'public.direct_entry_reason(uuid,text)', 'EXECUTE') as public`,
+    );
+    assert.deepEqual(reasonAcl.rows[0], {
+      executor: true, service: false, anon: false, authenticated: false, public: false,
+    }, "reason helper remains private to its restricted server-side caller");
   } finally {
     await db.close();
   }

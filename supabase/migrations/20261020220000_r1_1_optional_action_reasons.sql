@@ -92,6 +92,10 @@ begin
 end;
 $function$;
 
+-- The restricted catalog RPC runs as the executor and needs this private helper.
+grant execute on function public.direct_entry_reason(uuid, text)
+  to direct_entry_catalog_bootstrap_executor;
+
 -- The catalog bootstrap RPC has a restricted owner; grant only its migration-time DDL rights.
 do $optional_reason_executor_setup$
 declare
