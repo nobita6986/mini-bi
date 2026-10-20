@@ -60,25 +60,29 @@ export async function createMigratedDatabase() {
   return { db, migrationNames: names };
 }
 
-async function grantCapabilities(db, actor, capabilities) {
+async function grantCapabilities(db, actor, capabilities, currentState) {
+  const columns = currentState ? ",is_current" : "";
+  const value = currentState ? ",true" : "";
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,$2,'2020-01-01')",
+      `insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from${columns})` +
+      ` values ($1,$2,'2020-01-01'${value})`,
       [actor.app_user_id, capability],
     );
   }
 }
 
-async function grantScope(db, actor, scopeKind, teamId) {
+async function grantScope(db, actor, scopeKind, teamId, currentState) {
+  const columns = currentState ? ",is_current" : "";
+  const value = currentState ? ",true" : "";
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
-    " values ($1,$2,$3,'2020-01-01')",
+    `insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from${columns})` +
+    ` values ($1,$2,$3,'2020-01-01'${value})`,
     [actor.app_user_id, scopeKind, scopeKind === "team" ? teamId : null],
   );
 }
 
-async function insertActor(db, actor, capabilities, scopeKind, teamId) {
+async function insertActor(db, actor, capabilities, scopeKind, teamId, currentState) {
   await db.query("insert into auth.users(id) values ($1)", [actor.auth_subject]);
   // P2.5-HF-R5: display_name exists from #62; earlier partial ledgers
   // (historical contract tests) must keep working without it.
@@ -92,8 +96,8 @@ async function insertActor(db, actor, capabilities, scopeKind, teamId) {
       : "insert into public.direct_entry_app_users(app_user_id,auth_subject,enabled) values ($1,$2,true)",
     [actor.app_user_id, actor.auth_subject],
   );
-  await grantCapabilities(db, actor, capabilities);
-  await grantScope(db, actor, scopeKind, teamId);
+  await grantCapabilities(db, actor, capabilities, currentState);
+  await grantScope(db, actor, scopeKind, teamId, currentState);
 }
 
 function worker(displayName) {
@@ -121,6 +125,11 @@ export async function seedChangeRequestFixture(db, {
   submissionWorkflow = "direct",
 } = {}) {
   if (manageTransaction) await db.query("begin");
+  // Historical-ledger fixtures stop before R1 adds current-state markers.
+  const currentState = (await db.query(
+    "select exists (select 1 from information_schema.columns where table_schema='public'" +
+    " and table_name='direct_entry_capability_grants' and column_name='is_current') as present",
+  )).rows[0].present;
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
     [TEAM_A, "s02b_team_a", "S02B team A"]);
   await db.query("insert into public.teams(team_id,code,display_name) values ($1,$2,$3)",
@@ -130,12 +139,14 @@ export async function seedChangeRequestFixture(db, {
   await db.query("insert into public.recruiters(recruiter_id,display_name) values ($1,$2)",
     [RECRUITER_B, "S02B recruiter B"]);
   for (const [recruiterId, teamId] of [[RECRUITER_A, TEAM_A], [RECRUITER_B, TEAM_B]]) {
+    const currentColumns = currentState ? ",is_current" : "";
+    const currentValue = currentState ? ",true" : "";
     await db.query(
-      "insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiterId]);
+      `insert into public.recruiter_provider_memberships(recruiter_id,provider_type,valid_from${currentColumns})` +
+      ` values ($1,'hrp','2020-01-01'${currentValue})`, [recruiterId]);
     await db.query(
-      "insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiterId, teamId]);
+      `insert into public.recruiter_team_memberships(recruiter_id,team_id,valid_from${currentColumns})` +
+      ` values ($1,$2,'2020-01-01'${currentValue})`, [recruiterId, teamId]);
   }
   await db.query(
     "insert into public.direct_entry_projects(project_id,display_name) values ($1,$2)",
@@ -147,7 +158,7 @@ export async function seedChangeRequestFixture(db, {
 
   await insertActor(db, ACTORS.proposer,
     ["entry_create", "submission_create", "entry_own", "change_request_create", "change_review"],
-    "own", null);
+    "own", null, currentState);
   // P2.5-W02: proposer authority is the EFFECTIVE project-manager assignment; the
   // creator/team/first_work_date fallback is closed by migration #51, so the
   // synthetic proposer is the assigned manager of this project. Historical-ledger
@@ -156,21 +167,24 @@ export async function seedChangeRequestFixture(db, {
   const assignmentTable = await db.query(
     "select to_regclass('public.direct_entry_project_manager_assignments') is not null as present");
   if (assignmentTable.rows[0].present) {
+    const currentColumns = currentState ? ", is_current" : "";
+    const currentValue = currentState ? ", true" : "";
     await db.query(
-      "insert into public.direct_entry_project_manager_assignments" +
-      " (project_id, manager_recruiter_id, valid_from) values ($1,$2,'2020-01-01')",
-      [PROJECT_ID, RECRUITER_A]);
-    await db.query(
-      "insert into public.direct_entry_app_user_recruiter_links" +
-      " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+      `insert into public.direct_entry_app_user_recruiter_links` +
+      ` (app_user_id, recruiter_id, verified, valid_from${currentColumns})` +
+      ` values ($1,$2,true,'2020-01-01'${currentValue})`,
       [ACTORS.proposer.app_user_id, RECRUITER_A]);
+    await db.query(
+      `insert into public.direct_entry_project_manager_assignments` +
+      ` (project_id, manager_recruiter_id, valid_from${currentColumns})` +
+      ` values ($1,$2,'2020-01-01'${currentValue})`,
+      [PROJECT_ID, RECRUITER_A]);
   }
-  await insertActor(db, ACTORS.reviewer, ["change_review"], "team", TEAM_A);
-  // P2.5-W04: ENTRY_FIELD proposals are worker_details, so the all-scope reviewer needs change_review + pii_view.
-  await insertActor(db, ACTORS.reviewerAll, ["change_review", "pii_view"], "all", null);
-  await insertActor(db, ACTORS.reviewerNoCapability, [], "team", TEAM_A);
-  await insertActor(db, ACTORS.outsider, ["change_review"], "own", null);
-  await insertActor(db, ACTORS.admin, ["entry_admin"], "all", null);
+  await insertActor(db, ACTORS.reviewer, ["change_review"], "team", TEAM_A, currentState);
+  await insertActor(db, ACTORS.reviewerAll, ["change_review", "pii_view"], "all", null, currentState);
+  await insertActor(db, ACTORS.reviewerNoCapability, [], "team", TEAM_A, currentState);
+  await insertActor(db, ACTORS.outsider, ["change_review"], "own", null, currentState);
+  await insertActor(db, ACTORS.admin, ["entry_admin"], "all", null, currentState);
 
   const rows = [
     { code: "hrp-2026-300001", recruiterId: RECRUITER_A },

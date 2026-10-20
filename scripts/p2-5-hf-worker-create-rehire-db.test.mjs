@@ -74,30 +74,30 @@ async function insertActor(db, auth, app, capabilities, scopeKind = null, teamId
     " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   if (scopeKind !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
-      " values ($1,$2,$3,'2020-01-01')", [app, scopeKind, scopeKind === "team" ? teamId : null]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)" +
+      " values ($1,$2,$3,'2020-01-01',true)", [app, scopeKind, scopeKind === "team" ? teamId : null]);
   }
 }
 
 async function assignManager(db, { project, recruiter, app, validFrom = "2020-01-01", validTo = null }) {
-  await db.query(
-    "insert into public.direct_entry_project_manager_assignments" +
-    " (project_id, manager_recruiter_id, valid_from, valid_to, revoked_at)" +
-    " values ($1,$2,$3::date,$4::date, case when $4::date is null then null else now() end)",
-    [project, recruiter, validFrom, validTo]);
   if ((await db.query(
     "select count(*)::int as n from public.direct_entry_app_user_recruiter_links" +
-    " where app_user_id = $1::uuid and recruiter_id = $2::uuid", [app, recruiter])).rows[0].n === 0) {
+    " where app_user_id = $1::uuid and recruiter_id = $2::uuid and is_current", [app, recruiter])).rows[0].n === 0) {
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-      " (app_user_id, recruiter_id, verified, valid_from)" +
-      " values ($1,$2,true,'2020-01-01')", [app, recruiter]);
+      " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)", [app, recruiter]);
   }
+  await db.query(
+    "insert into public.direct_entry_project_manager_assignments" +
+    " (project_id, manager_recruiter_id, valid_from, valid_to, revoked_at, is_current)" +
+    " values ($1,$2,$3::date,$4::date, case when $4::date is null then null else now() end,$5)",
+    [project, recruiter, validFrom, validTo, validTo === null]);
 }
 
 async function seed(db) {
@@ -113,19 +113,19 @@ async function seed(db) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, TEAM]);
   }
   // Admin keeps the legacy bundle (entry_create + submission_create + own scope).
   await insertActor(db, ADMIN_AUTH, ADMIN_APP,
-    ["entry_admin", "entry_create", "submission_create", "payment_view", "payment_edit",
+    ["entry_admin", "entry_create", "submission_create",
       "employment_status.apply", "change_request_create"], "own");
   await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+    " values ($1,'all','2020-01-01',true)", [ADMIN_APP]);
   // Managers hold NO global create capability and no scope grant.
   await insertActor(db, MGR_A_AUTH, MGR_A_APP, ["change_request_create"]);
   await insertActor(db, MGR_B_AUTH, MGR_B_APP, ["change_request_create"]);
@@ -141,7 +141,7 @@ async function seed(db) {
   await assignManager(db, { project: PROJ_B, recruiter: REC_D, app: MGR_C_APP });
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
     [RECRUITER_APP, REC_C]);
 }
 

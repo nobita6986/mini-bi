@@ -60,13 +60,13 @@ async function insertActor(db, auth, app, capabilities, scopeKind = null) {
     " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   if (scopeKind !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, scopeKind]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, scopeKind]);
   }
 }
 
@@ -85,11 +85,11 @@ async function seed(db) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, team]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, team]);
   }
   // Admin: entry_admin + entry_privileged_edit at all scope (the locked Admin bundle shape).
   await insertActor(db, ADMIN_AUTH, ADMIN_APP,
@@ -105,12 +105,12 @@ async function seed(db) {
   // proposal needs pii_view), and gets project authority from the assignment only.
   await insertActor(db, MGR_AUTH, MGR_APP, ["change_request_create", "pii_view"]);
   await db.query(
-    "insert into public.direct_entry_project_manager_assignments" +
-    " (project_id, manager_recruiter_id, valid_from) values ($1,$2,'2020-01-01')", [PROJ_A, REC_A]);
-  await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
     [MGR_APP, REC_A]);
+  await db.query(
+    "insert into public.direct_entry_project_manager_assignments" +
+    " (project_id, manager_recruiter_id, valid_from, is_current) values ($1,$2,'2020-01-01',true)", [PROJ_A, REC_A]);
   await insertActor(db, RECRUITER_AUTH, RECRUITER_APP, ["change_request_create"]);
   await insertActor(db, UPLOADER_AUTH, UPLOADER_APP, ["entry_create", "submission_create"], "own");
 }

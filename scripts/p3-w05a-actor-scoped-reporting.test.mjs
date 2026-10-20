@@ -54,8 +54,8 @@ async function seedBase(db) {
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter B1')", [REC_B1]);
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter PM')", [REC_PM]);
   for (const [rec, team] of [[REC_A1, TEAM_A], [REC_A2, TEAM_A], [REC_B1, TEAM_B], [REC_PM, TEAM_A]]) {
-    await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1,'hrp','2020-01-01')", [rec]);
-    await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1,$2,'2020-01-01')", [rec, team]);
+    await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current) values ($1,'hrp','2020-01-01',true)", [rec]);
+    await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current) values ($1,$2,'2020-01-01',true)", [rec, team]);
   }
   for (const [rec, key] of [[REC_A1, "rec a1"], [REC_A2, "rec a2"], [REC_B1, "rec b1"], [REC_PM, "rec pm"]]) {
     await db.query("insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from) values ($1,$2,'2020-01-01')", [rec, key]);
@@ -63,12 +63,12 @@ async function seedBase(db) {
   await db.query("insert into public.direct_entry_projects (project_id, display_name) values ('proj_a','Project A')");
   await db.query("insert into public.direct_entry_projects (project_id, display_name) values ('proj_b','Project B')");
   for (const [app, rec] of [[APP_OWNA1, REC_A1], [APP_OWNB1, REC_B1], [APP_PM, REC_PM]]) {
-    await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')", [app, rec]);
+    await db.query("insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)", [app, rec]);
   }
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'all',null,'2020-01-01')", [APP_ALL]);
-  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,'2020-01-01')", [APP_TEAMA, TEAM_A]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'all',null,'2020-01-01',true)", [APP_ALL]);
+  await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'team',$2,'2020-01-01',true)", [APP_TEAMA, TEAM_A]);
   // project-manager assignment for APP_PM (must NOT confer team scope).
-  await db.query("insert into public.direct_entry_project_manager_assignments (project_id, manager_recruiter_id) values ('proj_a',$1)", [REC_PM]);
+  await db.query("insert into public.direct_entry_project_manager_assignments (project_id, manager_recruiter_id, is_current) values ('proj_a',$1,true)", [REC_PM]);
 }
 
 async function insertEntry(db, { entry, sub, cand, createdBy, project, date, code, recruiter, team, provider, labor }) {
@@ -184,7 +184,7 @@ test("E10: all beats team", async () => {
   const db = await buildDb();
   try {
     await seedBase(db);
-    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,'2020-01-01')", [APP_ALL, TEAM_A]);
+    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'team',$2,'2020-01-01',true)", [APP_ALL, TEAM_A]);
     const aud = await audience(db, APP_ALL, AUTH_ALL);
     assert.equal(aud.audience, "all");
   } finally { await db.close(); }
@@ -274,7 +274,7 @@ test("E13: disabled actor, forged pair, and expired grant fail closed", async ()
     // forged pair
     await assert.rejects(() => audience(db, APP_ALL, AUTH_TEAMA), /reporting actor unavailable/);
     // expired team grant resolves away from team (empty for a no-link actor) -> own
-    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, valid_to) values ($1,'team',$2,'2020-01-01','2021-01-01')", [APP_NOLINK, TEAM_A]);
+    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, valid_to, is_current) values ($1,'team',$2,'2020-01-01','2021-01-01',false)", [APP_NOLINK, TEAM_A]);
     const aud = await audience(db, APP_NOLINK, AUTH_NOLINK);
     assert.equal(aud.audience, "own", "expired team grant must not resolve to team");
   } finally { await db.close(); }
@@ -323,7 +323,7 @@ test("R1: report returns no external-source metadata for any audience", async ()
   } finally { await db.close(); }
 });
 
-test("R1: scope effectiveness follows the HCM authorization date (not UTC)", async () => {
+test("R1: reporting scope authority follows the explicit current marker, not grant dates", async () => {
   const db = await buildDb();
   try {
     await seedBase(db);
@@ -331,14 +331,15 @@ test("R1: scope effectiveness follows the HCM authorization date (not UTC)", asy
     await db.query("insert into auth.users (id) values ($1)", [auth]);
     await db.query("insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name) values ($1,$2,true,'Synthetic Account')", [app, auth]);
 
-    // grant valid from HCM tomorrow => not yet effective => own (empty)
-    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,(select public.direct_entry_authorization_date() + 1))", [app, TEAM_A]);
-    assert.equal((await audience(db, app, auth)).audience, "own", "future-dated team grant is not effective at HCM today");
+    // A scheduled grant remains false even when its date fields are moved into the past.
+    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1,'team',$2,(select public.direct_entry_authorization_date() + 1),false)", [app, TEAM_A]);
+    assert.equal((await audience(db, app, auth)).audience, "own", "a false current marker is not effective");
+    await db.query("update public.direct_entry_scope_grants set valid_from='2020-01-01',valid_to='2021-01-01' where app_user_id=$1", [app]);
+    assert.equal((await audience(db, app, auth)).audience, "own", "date-only updates do not activate authority");
 
-    // grant valid from HCM today => effective => team
-    await db.query("delete from public.direct_entry_scope_grants where app_user_id=$1 and scope_kind='team'", [app]);
-    await db.query("insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from) values ($1,'team',$2,(select public.direct_entry_authorization_date()))", [app, TEAM_A]);
-    assert.equal((await audience(db, app, auth)).audience, "team", "today-dated team grant is effective at HCM today");
+    // Only an explicit current-state transition grants access, even with expired dates.
+    await db.query("update public.direct_entry_scope_grants set is_current=true where app_user_id=$1", [app]);
+    assert.equal((await audience(db, app, auth)).audience, "team", "the current marker stays authoritative after legacy dates expire");
   } finally { await db.close(); }
 });
 

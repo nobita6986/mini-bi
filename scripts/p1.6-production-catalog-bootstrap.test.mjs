@@ -44,19 +44,19 @@ async function database() {
   );
   for (const capability of REQUIRED_CAPABILITIES) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from)" +
-      " values ($1::uuid, $2, '2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current)" +
+      " values ($1::uuid, $2, '2020-01-01', true)",
       [ACTOR.app_user_id, capability],
     );
   }
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from)" +
-    " values ($1::uuid, 'all', '2020-01-01')",
+    "insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from, is_current)" +
+    " values ($1::uuid, 'all', '2020-01-01', true)",
     [ACTOR.app_user_id],
   );
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from)" +
-    " values ($1::uuid, 'entry_create', '2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current)" +
+    " values ($1::uuid, 'entry_create', '2020-01-01', true)",
     [ACTOR.app_user_id],
   );
   await db.query(
@@ -118,6 +118,12 @@ async function seedValidReporting(db) {
     date: "2026-01-01", project: "project-b", projectDisplay: "Synthetic Project B",
     recruiter: "recruiter-b", recruiterDisplay: "Synthetic Recruiter B", provider: "vendor",
     providerDisplay: "Vendor",
+  });
+  await fact(db, { date: "2099-01-01", provider: "hrp", providerDisplay: "HRP" });
+  await fact(db, {
+    date: "2099-01-01", project: "project-b", projectDisplay: "Synthetic Project B",
+    recruiter: "recruiter-c", recruiterDisplay: "Synthetic Recruiter C", provider: "hrp",
+    providerDisplay: "HRP",
   });
 }
 
@@ -290,7 +296,7 @@ test("the migration chain applies from scratch and exposes only the approved RPC
   assert.deepEqual(
     [planned.project_count, planned.recruiter_count, planned.provider_period_count,
       planned.invalid_count, planned.ambiguous_count, planned.catalog_empty],
-    [2, 2, 3, 0, 0, true],
+    [2, 3, 5, 0, 0, true],
   );
   const sanitized = JSON.stringify(planned);
   for (const privateValue of ["Synthetic Project", "Synthetic Recruiter", "project-a", "recruiter-a", ACTOR.app_user_id]) {
@@ -423,11 +429,11 @@ test("apply creates the unassigned catalog once with non-overlapping history; re
   assert.deepEqual(
     [applied.status, applied.project_count, applied.recruiter_count, applied.team_count,
       applied.provider_membership_count, applied.replayed],
-    ["APPLIED", 2, 2, 1, 3, false],
+    ["APPLIED", 2, 3, 1, 5, false],
   );
   assert.deepEqual(await counts(db), {
-    projects: 2, recruiters: 2, teams: 1, aliases: 2, providers: 3,
-    team_memberships: 2, runs: 1, reasons: 1, audits: 1, banks: 0,
+    projects: 2, recruiters: 3, teams: 1, aliases: 3, providers: 5,
+    team_memberships: 3, runs: 1, reasons: 1, audits: 1, banks: 0,
   });
   const { rows: team } = await db.query(
     "select code,display_name from public.teams where active",
@@ -435,14 +441,24 @@ test("apply creates the unassigned catalog once with non-overlapping history; re
   assert.deepEqual(team, [{ code: "unassigned", display_name: "Chưa phân nhóm" }]);
   const { rows: intervals } = await db.query(
     "select provider_type,to_char(valid_from,'YYYY-MM-DD') as valid_from," +
-    " to_char(valid_to,'YYYY-MM-DD') as valid_to from public.recruiter_provider_memberships" +
+    " to_char(valid_to,'YYYY-MM-DD') as valid_to,is_current from public.recruiter_provider_memberships" +
     " where recruiter_id=(select recruiter_id from public.recruiter_aliases where reporting_key='recruiter-a')" +
     " order by valid_from",
   );
   assert.deepEqual(intervals, [
-    { provider_type: "hrp", valid_from: "2026-01-01", valid_to: "2026-02-01" },
-    { provider_type: "vendor", valid_from: "2026-02-01", valid_to: null },
+    { provider_type: "hrp", valid_from: "2026-01-01", valid_to: "2026-02-01", is_current: false },
+    { provider_type: "vendor", valid_from: "2026-02-01", valid_to: "2099-01-01", is_current: true },
+    { provider_type: "hrp", valid_from: "2099-01-01", valid_to: null, is_current: false },
   ]);
+  const { rows: futureOnly } = await db.query(
+    "select p.is_current as provider_current,t.is_current as team_current"
+      + " from public.recruiter_provider_memberships p"
+      + " join public.recruiters r using (recruiter_id)"
+      + " join public.recruiter_team_memberships t using (recruiter_id)"
+      + " where r.display_name='Synthetic Recruiter C'",
+  );
+  assert.deepEqual(futureOnly, [{ provider_current: false, team_current: false }],
+    "future-only imported history does not become current during bootstrap");
   const { rows: overlaps } = await db.query(
     "select count(*)::int as count from public.recruiter_provider_memberships a" +
     " join public.recruiter_provider_memberships b on a.recruiter_id=b.recruiter_id" +
@@ -492,8 +508,8 @@ test("apply creates the unassigned catalog once with non-overlapping history; re
   assert.equal(replay.status, "ALREADY_APPLIED");
   assert.equal(replay.replayed, true);
   assert.deepEqual(await counts(db), {
-    projects: 2, recruiters: 2, teams: 1, aliases: 2, providers: 3,
-    team_memberships: 2, runs: 1, reasons: 1, audits: 1, banks: 0,
+    projects: 2, recruiters: 3, teams: 1, aliases: 3, providers: 5,
+    team_memberships: 3, runs: 1, reasons: 1, audits: 1, banks: 0,
   });
   await assert.rejects(apply(db, planned.source_fingerprint, { key: "different-key" }), {
     code: "23505",

@@ -114,13 +114,13 @@ async function insertActor(db, auth, app, { capabilities = [], scopes = [], enab
     " values ($1,$2,$3,'D3A Account')", [app, auth, enabled]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   for (const scopeKind of scopes) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)" +
-      " values ($1,$2,$3,'2020-01-01')", [app, scopeKind, null]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)" +
+      " values ($1,$2,$3,'2020-01-01',true)", [app, scopeKind, null]);
   }
 }
 
@@ -349,11 +349,11 @@ test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabiliti
     const capabilities = (await db.query(
       "select capability from public.direct_entry_capability_grants where app_user_id=$1 order by capability",
       [f.app_user_id])).rows.map((row) => row.capability);
-    assert.deepEqual(capabilities, ["payment_view", "pii_export", "pii_view"].sort());
+    assert.deepEqual(capabilities, [], "field capabilities are no longer provisioned");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events where app_user_id=$1" +
-      " and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 3,
-    "each default grant is audit-recorded under the creating Full Admin");
+      " and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 0,
+    "retired field capabilities produce no default grant audit");
     assert.equal(await count(db, "select count(*) from public.direct_entry_scope_grants where app_user_id = $1", [f.app_user_id]), 0);
     assert.equal(await count(db, "select count(*) from public.direct_entry_app_user_recruiter_links where app_user_id = $1", [f.app_user_id]), 0);
 
@@ -362,14 +362,16 @@ test("PRE-W2-HF-D3-A: finalize creates the app user with default data capabiliti
     for (const capability of [
       "entry_create", "entry_own", "submission_create", "change_request_create",
       "employment_status.request", "document_upload", "document_view",
-      "pii_view", "payment_view", "pii_export",
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
-        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [f.app_user_id, capability]), 1,
+        " where app_user_id=$1 and capability=$2 and is_current", [f.app_user_id, capability]), 1,
         `${capability} is effective after account creation followed by personnel creation`);
     }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id=$1 and capability in ('pii_view','pii_export','payment_view','payment_edit')",
+      [f.app_user_id]), 0, "retired field capabilities are not provisioned");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
       " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
@@ -559,14 +561,16 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
     for (const capability of [
       "entry_create", "entry_own", "submission_create", "change_request_create",
       "employment_status.request", "document_upload", "document_view",
-      "pii_view", "payment_view", "pii_export",
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
-        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [TARGET_APP, capability]), 1,
+        " where app_user_id=$1 and capability=$2 and is_current", [TARGET_APP, capability]), 1,
         `${capability} is granted to account-created HRP personnel`);
     }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id=$1 and capability in ('pii_view','pii_export','payment_view','payment_edit')",
+      [TARGET_APP]), 0, "retired field capabilities are not provisioned");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
       " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +
@@ -574,7 +578,7 @@ test("PRE-W2-HF-D3-A: create personnel is atomic and records the account lifecyc
     "account-created HRP personnel has own scope");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events" +
-      " where app_user_id=$1 and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 9,
+      " where app_user_id=$1 and action='capability_default_grant' and outcome='APPLIED'", [ADMIN_APP]), 6,
     "each missing baseline capability is audited under the creating admin");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_audit_events" +
@@ -608,13 +612,15 @@ test("PRE-W2-HF: account-created team leaders get only the HRP own-entry baselin
     for (const capability of [
       "entry_create", "entry_own", "submission_create", "change_request_create",
       "employment_status.request", "document_upload", "document_view",
-      "pii_view", "payment_view", "pii_export",
     ]) {
       assert.equal(await count(db,
         "select count(*) from public.direct_entry_capability_grants" +
-        " where app_user_id=$1 and capability=$2 and valid_from <= public.direct_entry_authorization_date()" +
-        " and (valid_to is null or public.direct_entry_authorization_date() < valid_to)", [app, capability]), 1);
+        " where app_user_id=$1 and capability=$2 and is_current", [app, capability]), 1);
     }
+    assert.equal(await count(db,
+      "select count(*) from public.direct_entry_capability_grants" +
+      " where app_user_id=$1 and capability in ('pii_view','pii_export','payment_view','payment_edit')",
+      [app]), 0, "retired field capabilities are not provisioned");
     assert.equal(await count(db,
       "select count(*) from public.direct_entry_scope_grants" +
       " where app_user_id=$1 and scope_kind='own' and valid_from <= public.direct_entry_authorization_date()" +

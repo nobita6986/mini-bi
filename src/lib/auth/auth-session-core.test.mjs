@@ -173,7 +173,7 @@ test("login verifies returned auth id and returns only the minimal actor project
   assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
-test("login accepts an actor with an inert team-scope marker beside its active grant", async () => {
+test("login projects the actor repository's current team scopes", async () => {
   const authSubject = "11111111-1111-4111-8111-111111111111";
   const appUserId = "22222222-2222-4222-8222-222222222222";
   const teamId = "33333333-3333-4333-8333-333333333333";
@@ -194,7 +194,6 @@ test("login accepts an actor with an inert team-scope marker beside its active g
           teams: [{ team_id: teamId, code: "T01", display: "Synthetic team", active: true }],
           team_scope_grants: [
             { team_id: teamId, valid_from: "2026-01-01", valid_to: null },
-            { team_id: teamId, valid_from: "2026-10-19", valid_to: "2026-10-19" },
           ],
           all_scope_grants: [],
         };

@@ -7,13 +7,18 @@ import { PGlite } from "@electric-sql/pglite";
 
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
-test("HRP account bootstrap includes the default PII, payment and export capabilities", async () => {
+test("HRP account bootstrap omits retired PII and payment capabilities", async () => {
   const source = await readFile(path.resolve("scripts/p3-w07b-access-bootstrap.mjs"), "utf8");
   const block = source.match(/const HRP_CAPABILITIES = Object\.freeze\(\[([\s\S]*?)\]\);/)?.[1];
   assert.ok(block, "bootstrap capability set is present");
-  for (const capability of ["pii_view", "payment_view", "pii_export"]) {
-    assert.match(block, new RegExp('"' + capability.replaceAll(".", "\\.") + '"'));
+  for (const capability of ["pii_view", "pii_export", "payment_view", "payment_edit"]) {
+    assert.doesNotMatch(block, new RegExp('"' + capability.replaceAll(".", "\\.") + '"'));
   }
+  assert.match(source, /direct_entry_capability_grants\(app_user_id, capability, valid_from, is_current\)/);
+  assert.match(source, /direct_entry_scope_grants\(app_user_id, scope_kind, team_id, valid_from, is_current\)/);
+  assert.match(source, /direct_entry_app_user_recruiter_links\s*\(app_user_id, recruiter_id, verified, valid_from, is_current\)/);
+  assert.match(source, /project_id, manager_recruiter_id, is_current/);
+  assert.match(source, /do update set is_current = true, updated_at=now\(\)/);
 });
 
 const IDS = {
@@ -50,29 +55,29 @@ async function database() {
     insert into public.recruiters(recruiter_id, display_name, personnel_code) values
       ('${IDS.managerRecruiter}', 'Manager A', 'manager.a'),
       ('${IDS.otherRecruiter}', 'Manager B', 'manager.b');
-    insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from) values
-      ('${IDS.managerRecruiter}', 'hrp', '2020-01-01'),
-      ('${IDS.otherRecruiter}', 'hrp', '2020-01-01');
-    insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from) values
-      ('${IDS.managerRecruiter}', '${IDS.team}', '2020-01-01'),
-      ('${IDS.otherRecruiter}', '${IDS.team}', '2020-01-01');
+    insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from, is_current) values
+      ('${IDS.managerRecruiter}', 'hrp', '2020-01-01', true),
+      ('${IDS.otherRecruiter}', 'hrp', '2020-01-01', true);
+    insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from, is_current) values
+      ('${IDS.managerRecruiter}', '${IDS.team}', '2020-01-01', true),
+      ('${IDS.otherRecruiter}', '${IDS.team}', '2020-01-01', true);
     insert into public.direct_entry_projects(project_id, display_name) values
       ('project_a', 'Project A'), ('project_b', 'Project B'), ('project_unassigned', 'Project Unassigned');
-    insert into public.direct_entry_project_manager_assignments(project_id, manager_recruiter_id) values
-      ('project_a', '${IDS.managerRecruiter}'),
-      ('project_b', '${IDS.otherRecruiter}');
     insert into public.direct_entry_app_user_recruiter_links
-      (app_user_id, recruiter_id, verified, valid_from) values
-      ('${IDS.managerUser}', '${IDS.managerRecruiter}', true, '2020-01-01');
-    insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from) values
-      ('${IDS.managerUser}', 'entry_create', '2020-01-01'),
-      ('${IDS.managerUser}', 'submission_create', '2020-01-01'),
-      ('${IDS.managerUser}', 'entry_own', '2020-01-01'),
-      ('${IDS.adminUser}', 'entry_create', '2020-01-01'),
-      ('${IDS.adminUser}', 'entry_admin', '2020-01-01');
-    insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from) values
-      ('${IDS.managerUser}', 'own', '2020-01-01'),
-      ('${IDS.adminUser}', 'all', '2020-01-01');
+      (app_user_id, recruiter_id, verified, valid_from, is_current) values
+      ('${IDS.managerUser}', '${IDS.managerRecruiter}', true, '2020-01-01', true);
+    insert into public.direct_entry_project_manager_assignments(project_id, manager_recruiter_id, is_current) values
+      ('project_a', '${IDS.managerRecruiter}', true),
+      ('project_b', '${IDS.otherRecruiter}', true);
+    insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current) values
+      ('${IDS.managerUser}', 'entry_create', '2020-01-01', true),
+      ('${IDS.managerUser}', 'submission_create', '2020-01-01', true),
+      ('${IDS.managerUser}', 'entry_own', '2020-01-01', true),
+      ('${IDS.adminUser}', 'entry_create', '2020-01-01', true),
+      ('${IDS.adminUser}', 'entry_admin', '2020-01-01', true);
+    insert into public.direct_entry_scope_grants(app_user_id, scope_kind, valid_from, is_current) values
+      ('${IDS.managerUser}', 'own', '2020-01-01', true),
+      ('${IDS.adminUser}', 'all', '2020-01-01', true);
   `);
   return db;
 }

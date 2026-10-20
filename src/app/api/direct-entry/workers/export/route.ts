@@ -5,7 +5,7 @@ import "server-only";
  *
  * Xuat Excel full-PII cho audience recruited ("Người tôi tuyển") va managed ("Dự án tôi quản lý").
  * Gate DIRECT_ENTRY_API_ENABLED chay TRUOC khi doc body, tao session hay repository. Actor,
- * capability (pii_export + pii_view + payment_view) va row authority do server session + RPC #86
+ * row authority do server session + RPC #86
  * quyet dinh; route khong danh gia quyen va khong forward raw DB message/PII.
  */
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";

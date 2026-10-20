@@ -59,14 +59,14 @@ function workerRow(overrides = {}) {
     recruiter_id: recruiterId,
     recruiter_display: "Recruiter A",
     payment: {
-      state: "provided", account_number: "••••••••8901", bank_id: null,
+      state: "provided", account_number: "000012348901", bank_id: "bank_synthetic",
       account_holder_name: "Synthetic Holder", version: 1,
     },
     pending_request: { request_id: requestId, state: "PENDING", version: 1 },
     last_decision: { state: "REJECTED", decided_at: decidedAt },
     is_project_manager: true,
     allowed_actions: {
-      view: true, view_pii: false, view_payment: true,
+      view: true, view_pii: true, view_payment: true,
       propose_change: false, propose_change_code: "PROPOSE_PENDING_W04_POLICY",
     },
     ...overrides,

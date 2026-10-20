@@ -338,8 +338,29 @@ test("read validates UUID before session and keeps the restricted projection", a
     },
   });
   const redactedResponse = await getDirectEntryEntry(entryId, "true", deps);
-  assert.equal(redactedResponse.status, 200,
-    "the DB-authoritative redacted PII/payment projection remains readable");
+  assert.equal(redactedResponse.status, 500,
+    "a legacy redacted worker/payment projection fails closed");
+  const redactedError = await redactedResponse.json();
+  assert.equal(redactedError.code, "ENTRY_UNAVAILABLE");
+  assert.equal(JSON.stringify(redactedError).includes("••••"), false);
+  assert.equal(JSON.stringify(redactedError).includes("provided"), false);
+
+  deps.repository.readEntry = async () => ({
+    ok: true,
+    data: {
+      ...projection,
+      payment: {
+        state: "provided", account_number: "••••••••3450", bank_id: null,
+        bank_name: "Synthetic Bank", account_holder_name: "Synthetic Holder", version: 1,
+      },
+    },
+  });
+  const maskedPaymentResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(maskedPaymentResponse.status, 500,
+    "a legacy masked payment value fails closed even with a canonical worker profile");
+  const maskedPaymentError = await maskedPaymentResponse.json();
+  assert.equal(maskedPaymentError.code, "ENTRY_UNAVAILABLE");
+  assert.equal(JSON.stringify(maskedPaymentError).includes("3450"), false);
 
   deps.repository.readEntry = async () => ({
     ok: true,
@@ -358,6 +379,30 @@ test("read validates UUID before session and keeps the restricted projection", a
   const r4PaymentResponse = await getDirectEntryEntry(entryId, "true", deps);
   assert.equal(r4PaymentResponse.status, 200,
     "the current R4 bank-name projection is accepted without dropping the text value");
+
+  const bankNameOnly = {
+    state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+    account_holder_name: null, version: 2,
+  };
+  deps.repository.readEntry = async () => ({
+    ok: true, data: { ...projection, payment: bankNameOnly },
+  });
+  const bankNameOnlyResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(bankNameOnlyResponse.status, 200,
+    "a bank-name-only R4 row passes the payment detail read boundary");
+  assert.deepEqual((await bankNameOnlyResponse.json()).entry.payment, bankNameOnly);
+
+  const partialTextPayment = {
+    state: "provided", account_number: "ACCT-AB123", bank_id: null, bank_name: null,
+    account_holder_name: null, version: 2,
+  };
+  deps.repository.readEntry = async () => ({
+    ok: true, data: { ...projection, payment: partialTextPayment },
+  });
+  const partialTextResponse = await getDirectEntryEntry(entryId, "true", deps);
+  assert.equal(partialTextResponse.status, 200,
+    "R4 account text may be partial and need not be numeric");
+  assert.deepEqual((await partialTextResponse.json()).entry.payment, partialTextPayment);
 
   deps.repository.readEntry = async () => ({ ok: false, kind: "denied" });
   const denied = await getDirectEntryEntry(entryId, "true", deps);

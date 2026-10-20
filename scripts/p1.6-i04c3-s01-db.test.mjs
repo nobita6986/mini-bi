@@ -96,6 +96,9 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
   if (untilName !== null && !migrations.includes(untilName)) {
     throw new Error(`databaseUpTo: migration ${untilName} not found in ${MIGRATION_DIR}`);
   }
+  const currentStateColumns = apply.includes("20261020200000_r1_current_state_authorization.sql")
+    ? ", is_current" : "";
+  const currentStateValue = currentStateColumns ? ", true" : "";
   assert.ok(migrations.includes("20261019130000_pre_w2_hf_draft_submission_delete.sql"),
     "migration inventory includes the #122 baseline");
   for (const name of apply) {
@@ -155,48 +158,48 @@ async function databaseUpTo(untilName, { crlfLegacyScopeHelpers = false } = {}) 
              ('${IDS.noProviderRecruiter}', 'Synthetic Recruiter Without Provider', true),
              ('${IDS.projectManagerRecruiter}', 'Synthetic Replacement Project Manager', true);
     insert into public.recruiter_provider_memberships
-      (recruiter_id, provider_type, valid_from)
-      values ('${IDS.recruiter}', 'hrp', '2020-01-01'),
-              ('${IDS.noTeamRecruiter}', 'hrp', '2020-01-01');
+      (recruiter_id, provider_type, valid_from${currentStateColumns})
+      values ('${IDS.recruiter}', 'hrp', '2020-01-01'${currentStateValue}),
+              ('${IDS.noTeamRecruiter}', 'hrp', '2020-01-01'${currentStateValue});
     insert into public.recruiter_team_memberships
-      (recruiter_id, team_id, valid_from)
-      values ('${IDS.recruiter}', '${IDS.team}', '2020-01-01'),
-             ('${IDS.noProviderRecruiter}', '${IDS.team}', '2020-01-01');
+      (recruiter_id, team_id, valid_from${currentStateColumns})
+      values ('${IDS.recruiter}', '${IDS.team}', '2020-01-01'${currentStateValue}),
+             ('${IDS.noProviderRecruiter}', '${IDS.team}', '2020-01-01'${currentStateValue});
     insert into public.direct_entry_projects(project_id, display_name)
       values ('project_i04c3_synthetic', 'Synthetic I04C3 Project');
-    insert into public.direct_entry_project_manager_assignments(project_id, manager_recruiter_id)
-      values ('project_i04c3_synthetic', '${IDS.recruiter}');
     insert into public.direct_entry_app_user_recruiter_links
-      (app_user_id, recruiter_id, verified, valid_from)
-      values ('${IDS.user}', '${IDS.recruiter}', true, '2020-01-01'),
-             ('${IDS.projectManagerUser}', '${IDS.projectManagerRecruiter}', true, '2020-01-01');
+      (app_user_id, recruiter_id, verified, valid_from${currentStateColumns})
+      values ('${IDS.user}', '${IDS.recruiter}', true, '2020-01-01'${currentStateValue}),
+             ('${IDS.projectManagerUser}', '${IDS.projectManagerRecruiter}', true, '2020-01-01'${currentStateValue});
+    insert into public.direct_entry_project_manager_assignments(project_id, manager_recruiter_id${currentStateColumns})
+      values ('project_i04c3_synthetic', '${IDS.recruiter}'${currentStateValue});
     insert into public.direct_entry_banks(bank_id, display_name, active) values
       ('${IDS.bank}', 'Synthetic Active Bank', true),
       ('${IDS.inactiveBank}', 'Synthetic Inactive Bank', false);
     insert into public.direct_entry_capability_grants
-      (app_user_id, capability, valid_from) values
-      ('${IDS.user}', 'entry_create', '2020-01-01'),
-      ('${IDS.user}', 'submission_create', '2020-01-01'),
-      ('${IDS.user}', 'entry_own', '2020-01-01'),
-      ('${IDS.user}', 'employment_status.apply', '2020-01-01'),
-      ('${IDS.user}', 'payment_view', '2020-01-01'),
-      ('${IDS.user}', 'payment_edit', '2020-01-01'),
-      ('${IDS.user}', 'pii_view', '2020-01-01'),
-      ('${IDS.readUser}', 'entry_admin', '2020-01-01'),
-      ('${IDS.teamUser}', 'entry_team', '2020-01-01'),
-      ('${IDS.teamUser}', 'employment_status.apply', '2020-01-01'),
-      ('${IDS.paymentUser}', 'entry_admin', '2020-01-01'),
-      ('${IDS.paymentUser}', 'payment_view', '2020-01-01'),
-      ('${IDS.projectManagerUser}', 'entry_create', '2020-01-01'),
-      ('${IDS.projectManagerUser}', 'pii_view', '2020-01-01'),
-      ('${IDS.outsideUser}', 'entry_team', '2020-01-01');
+      (app_user_id, capability, valid_from${currentStateColumns}) values
+      ('${IDS.user}', 'entry_create', '2020-01-01'${currentStateValue}),
+      ('${IDS.user}', 'submission_create', '2020-01-01'${currentStateValue}),
+      ('${IDS.user}', 'entry_own', '2020-01-01'${currentStateValue}),
+      ('${IDS.user}', 'employment_status.apply', '2020-01-01'${currentStateValue}),
+      ('${IDS.user}', 'payment_view', '2020-01-01'${currentStateValue}),
+      ('${IDS.user}', 'payment_edit', '2020-01-01'${currentStateValue}),
+      ('${IDS.user}', 'pii_view', '2020-01-01'${currentStateValue}),
+      ('${IDS.readUser}', 'entry_admin', '2020-01-01'${currentStateValue}),
+      ('${IDS.teamUser}', 'entry_team', '2020-01-01'${currentStateValue}),
+      ('${IDS.teamUser}', 'employment_status.apply', '2020-01-01'${currentStateValue}),
+      ('${IDS.paymentUser}', 'entry_admin', '2020-01-01'${currentStateValue}),
+      ('${IDS.paymentUser}', 'payment_view', '2020-01-01'${currentStateValue}),
+      ('${IDS.projectManagerUser}', 'entry_create', '2020-01-01'${currentStateValue}),
+      ('${IDS.projectManagerUser}', 'pii_view', '2020-01-01'${currentStateValue}),
+      ('${IDS.outsideUser}', 'entry_team', '2020-01-01'${currentStateValue});
     insert into public.direct_entry_scope_grants
-      (app_user_id, scope_kind, team_id, valid_from) values
-      ('${IDS.user}', 'own', null, '2020-01-01'),
-      ('${IDS.readUser}', 'all', null, '2020-01-01'),
-      ('${IDS.teamUser}', 'team', '${IDS.team}', '2020-01-01'),
-      ('${IDS.paymentUser}', 'all', null, '2020-01-01'),
-      ('${IDS.outsideUser}', 'team', '${IDS.outsideTeam}', '2020-01-01');
+      (app_user_id, scope_kind, team_id, valid_from${currentStateColumns}) values
+      ('${IDS.user}', 'own', null, '2020-01-01'${currentStateValue}),
+      ('${IDS.readUser}', 'all', null, '2020-01-01'${currentStateValue}),
+      ('${IDS.teamUser}', 'team', '${IDS.team}', '2020-01-01'${currentStateValue}),
+      ('${IDS.paymentUser}', 'all', null, '2020-01-01'${currentStateValue}),
+      ('${IDS.outsideUser}', 'team', '${IDS.outsideTeam}', '2020-01-01'${currentStateValue});
   `);
   return db;
 }
@@ -485,21 +488,21 @@ test("P3-W07C-R7 historical work dates use current recruiter membership and date
     // after the worker's historical first_work_date.
     await db.query(`
       update public.recruiter_provider_memberships
-         set valid_to = $1::date
+         set valid_to = $1::date, is_current = false
        where recruiter_id = $2::uuid and valid_to is null
     `, [historical, IDS.recruiter]);
     await db.query(`
       update public.recruiter_team_memberships
-         set valid_to = $1::date
+         set valid_to = $1::date, is_current = false
        where recruiter_id = $2::uuid and valid_to is null
     `, [historical, IDS.recruiter]);
     await db.query(`
       insert into public.recruiter_provider_memberships
-        (recruiter_id, provider_type, valid_from) values ($1::uuid, 'hrp', $2::date)
+        (recruiter_id, provider_type, valid_from, is_current) values ($1::uuid, 'hrp', $2::date, true)
     `, [IDS.recruiter, today]);
     await db.query(`
       insert into public.recruiter_team_memberships
-        (recruiter_id, team_id, valid_from) values ($1::uuid, $2::uuid, $3::date)
+        (recruiter_id, team_id, valid_from, is_current) values ($1::uuid, $2::uuid, $3::date, true)
     `, [IDS.recruiter, IDS.team, today]);
     const historicalMembership = await db.query(`
       select count(*)::integer as count
@@ -1074,12 +1077,12 @@ test("migration #39 keeps the source-derived function inventory and service boun
     // #109 adds one service-role RPC; #113 adds five, #114 adds two, #115 adds one,
     // and #116 adds two; #118 adds three service-role-only worker-document
     // staging RPCs and #119 tightens the batch stage-count bound in place. The
-    // After S0-T1-C, the 264 direct_entry routine signatures split into 106
-    // service-role entry points and 158 internal routines, none exposed to clients.
+    // R1 adds two internal current-state trigger routines. All 266 direct_entry
+    // signatures split into 106 service-role entry points and 160 internal routines.
     assert.deepEqual(result.rows[0], {
-      total: 264,
+      total: 266,
       service_role: 106,
-      internal: 158,
+      internal: 160,
       exposed_internal: 0,
     });
   } finally {
@@ -1350,13 +1353,14 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
       [IDS.readAuth, IDS.readUser, firstResult.entry_ids[0]],
     );
     const projection = read.rows[0].projection;
-    assert.deepEqual(projection.worker_details.display_name, { present: true });
-    assert.deepEqual(projection.worker_details.gender, { state: "provided" });
-    assert.deepEqual(projection.worker_details.national_id, { state: "provided" });
-    assert.deepEqual(projection.general_note, { present: true });
-    assert.equal(projection.payment.account_number, "••••••••5678");
-    assert.equal(JSON.stringify(projection).includes("001234567890"), false);
-    assert.equal(JSON.stringify(projection).includes("Synthetic private note"), false);
+    assert.equal(projection.worker_details.display_name, "Synthetic Worker 000001");
+    assert.deepEqual(projection.worker_details.gender, { state: "provided", value: "MALE" });
+    assert.deepEqual(projection.worker_details.national_id,
+      { state: "provided", value: "001234567890" });
+    assert.equal(projection.general_note, "Synthetic private note");
+    assert.equal(projection.payment.account_number, "000012345678");
+    assert.equal(JSON.stringify(projection).includes("001234567890"), true);
+    assert.equal(JSON.stringify(projection).includes("Synthetic private note"), true);
 
     const snapshots = await db.query(
       "select coalesce(before_snapshot::text, '') || coalesce(after_snapshot::text, '') as snapshots " +
@@ -1495,9 +1499,9 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
     assert.equal(await count(db, "direct_entries"), beforePaymentDenied + 1);
     await db.exec(`
       insert into public.direct_entry_capability_grants
-        (app_user_id, capability, valid_from) values
-        ('${IDS.user}', 'payment_view', '2020-01-01'),
-        ('${IDS.user}', 'payment_edit', '2020-01-01');
+        (app_user_id, capability, valid_from, is_current) values
+        ('${IDS.user}', 'payment_view', '2020-01-01', true),
+        ('${IDS.user}', 'payment_edit', '2020-01-01', true);
     `);
     await assert.rejects(
       rpc(db, [row(301, { payment: {
@@ -1568,7 +1572,7 @@ test("migration #36 installs full-profile boundary and atomic batch semantics", 
   }
 });
 
-test("migration #37 accepts partial banking metadata without a catalog and preserves redaction", async () => {
+test("migration #37 accepts partial banking metadata and projects it after row authorization", async () => {
   const db = await database();
   try {
     await db.exec("delete from public.direct_entry_banks;");
@@ -1621,9 +1625,9 @@ test("migration #37 accepts partial banking metadata without a catalog and prese
       "select public.direct_entry_read_projection($1::uuid,$2::uuid,$3::uuid) as projection",
       [IDS.readAuth, IDS.readUser, result.entry_ids[2]],
     );
-    assert.equal(masked.rows[0].projection.payment.account_number, "••••1234");
-    assert.equal("bank_name" in masked.rows[0].projection.payment, false);
-    assert.equal("account_holder_name" in masked.rows[0].projection.payment, false);
+    assert.equal(masked.rows[0].projection.payment.account_number, "00001234");
+    assert.equal(masked.rows[0].projection.payment.bank_name, null);
+    assert.equal(masked.rows[0].projection.payment.account_holder_name, null);
 
     const protectedData = [
       "00001234", "00005678", "Ngân hàng Á Châu", "Synthetic Bank",

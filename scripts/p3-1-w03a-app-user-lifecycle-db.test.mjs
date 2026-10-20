@@ -64,39 +64,39 @@ async function seed(db) {
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'W03A Recruiter')", [RECRUITER_ID]);
   await db.query(
     `insert into public.direct_entry_app_user_recruiter_links
-       (app_user_id, recruiter_id, verified, valid_from)
-     values ($1,$2,true,'2026-01-01')`, [TARGET_APP, RECRUITER_ID]);
+       (app_user_id, recruiter_id, verified, valid_from, is_current)
+     values ($1,$2,true,'2026-01-01',true)`, [TARGET_APP, RECRUITER_ID]);
 
   const fullAdmin = ["entry_admin", "recruiter_master_manage", "team_master_manage"];
   for (const appUserId of [ADMIN_APP, DISABLED_ADMIN_APP]) {
     for (const [index, capability] of fullAdmin.entries()) {
       await db.query(
-        `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)
-         values ($1,$2,$3::date)`, [appUserId, capability, `2026-01-0${index + 1}`],
+        `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+         values ($1,$2,$3::date,true)`, [appUserId, capability, `2026-01-0${index + 1}`],
       );
     }
     await db.query(
-      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)
-       values ($1,'all','2026-01-01')`, [appUserId]);
+      `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+       values ($1,'all','2026-01-01',true)`, [appUserId]);
   }
   await db.query(
-    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)
-     values ($1,'entry_create','2026-01-01')`, [TARGET_APP]);
+    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+     values ($1,'entry_create','2026-01-01',true)`, [TARGET_APP]);
   await db.query(
-    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)
-     values ($1,'own','2026-01-01')`, [TARGET_APP]);
+    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+     values ($1,'own','2026-01-01',true)`, [TARGET_APP]);
   await db.query(
     `insert into public.direct_entry_team_leader_assignments
-       (team_id, leader_app_user_id, leader_recruiter_id, valid_from)
-     values ($1,$2,$3,'2026-01-01')`, [TEAM_ID, TARGET_APP, RECRUITER_ID]);
+       (team_id, leader_app_user_id, leader_recruiter_id, valid_from, is_current)
+     values ($1,$2,$3,'2026-01-01',true)`, [TEAM_ID, TARGET_APP, RECRUITER_ID]);
   await db.query(
-    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)
-     values ($1,'catalog_master_manage','2026-01-01'),
-            ($2,'team_manager_assign','2026-01-01'),
-            ($3,'entry_create','2026-01-01')`, [ACCOUNTING_APP, LEADER_APP, STAFF_APP]);
+    `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+     values ($1,'catalog_master_manage','2026-01-01',true),
+            ($2,'team_manager_assign','2026-01-01',true),
+            ($3,'entry_create','2026-01-01',true)`, [ACCOUNTING_APP, LEADER_APP, STAFF_APP]);
   await db.query(
-    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)
-     values ($1,'all',null,'2026-01-01'),($2,'team',$3,'2026-01-01'),($4,'own',null,'2026-01-01')`,
+    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)
+     values ($1,'all',null,'2026-01-01',true),($2,'team',$3,'2026-01-01',true),($4,'own',null,'2026-01-01',true)`,
     [ACCOUNTING_APP, LEADER_APP, TEAM_ID, STAFF_APP]);
 }
 

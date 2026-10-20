@@ -85,15 +85,15 @@ async function addActor(db, actor) {
   );
   for (const capability of actor.capabilities ?? []) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)"
-      + " values ($1::uuid, $2, '2020-01-01')",
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)"
+      + " values ($1::uuid, $2, '2020-01-01', true)",
       [actor.app, capability],
     );
   }
   for (const kind of actor.scopes ?? []) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from)"
-      + " values ($1::uuid, $2, $3::uuid, '2020-01-01')",
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current)"
+      + " values ($1::uuid, $2, $3::uuid, '2020-01-01', true)",
       [actor.app, kind, kind === "team" ? TEAM_ID : null],
     );
   }
@@ -162,8 +162,8 @@ for (const [recruiterId, displayName] of [
 }
 await db.query(
   "insert into public.recruiter_provider_memberships"
-  + " (recruiter_id, provider_type, valid_from, vendor_id)"
-  + " values ($1::uuid, 'vendor', '2026-01-01', $2)",
+  + " (recruiter_id, provider_type, valid_from, vendor_id, is_current)"
+  + " values ($1::uuid, 'vendor', '2026-01-01', $2, true)",
   [VENDOR_RECRUITER, VENDOR_ID]);
 await db.query(
   "insert into public.recruiter_provider_memberships"
@@ -403,8 +403,8 @@ test("unassigned personnel stay visible in the admin catalog with bounded search
   assert.equal(detail.personnel_code, "nv.w01b.unassigned");
   await db.exec("begin; savepoint personnel_team_names");
   await db.query(
-    "insert into public.recruiter_team_memberships (recruiter_id,team_id,valid_from)"
-      + " values ($1::uuid,$2::uuid,'2026-01-05')",
+    "insert into public.recruiter_team_memberships (recruiter_id,team_id,valid_from,is_current)"
+      + " values ($1::uuid,$2::uuid,'2026-01-05',true)",
     [detail.recruiter_id, TEAM_ID]);
   const groupedDetail = await rpc(db, "direct_entry_get_personnel_admin", {
     p_auth_subject: FULL_ADMIN.auth, p_app_user_id: FULL_ADMIN.app,
@@ -522,7 +522,8 @@ test("personnel_position is a catalog attribute and grants no authority", async 
   const before = await counts(db);
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links"
-    + " (app_user_id, recruiter_id, verified, valid_from) values ($1::uuid, $2::uuid, true, '2026-01-01')",
+    + " (app_user_id, recruiter_id, verified, valid_from, is_current)"
+    + " values ($1::uuid, $2::uuid, true, '2026-01-01', true)",
     [STAFF.app, leader.recruiter_id],
   );
   const after = await counts(db);
@@ -565,6 +566,10 @@ test("set-active is a soft state change that never deletes or rewrites history",
     "select membership_id, valid_from::text as valid_from from public.recruiter_provider_memberships"
     + " where recruiter_id = $1::uuid", [created.recruiter_id])).rows, membershipBefore,
     "HRP provider history is untouched by deactivation");
+  assert.equal((await db.query(
+    "select is_current from public.recruiter_provider_memberships where recruiter_id = $1::uuid",
+    [created.recruiter_id])).rows[0].is_current, false,
+  "deactivation revokes the current provider mapping");
 
   const unchanged = await rpcError(db, "direct_entry_set_personnel_active", {
     p_auth_subject: FULL_ADMIN.auth, p_app_user_id: FULL_ADMIN.app,
@@ -587,6 +592,10 @@ test("set-active is a soft state change that never deletes or rewrites history",
   });
   assert.equal(reactivated.active, true);
   assert.equal(reactivated.version, created.version + 2);
+  assert.equal((await db.query(
+    "select is_current from public.recruiter_provider_memberships where recruiter_id = $1::uuid",
+    [created.recruiter_id])).rows[0].is_current, true,
+  "explicit activation restores only the open provider mapping");
 
   const revisions = (await db.query(
     "select version from public.direct_entry_personnel_revisions where recruiter_id = $1::uuid"

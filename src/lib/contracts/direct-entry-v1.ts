@@ -164,12 +164,8 @@ export type Capability =
   | "employment_status.apply"
   | "document_upload"
   | "document_view"
-  | "payment_view"
-  | "payment_edit"
   | "recruiter_master_manage"
   | "team_master_manage"
-  | "pii_view"
-  | "pii_export"
   | "audit_view"
   | "catalog_master_manage"
   | "team_manager_assign";

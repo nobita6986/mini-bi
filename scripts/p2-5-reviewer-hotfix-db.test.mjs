@@ -43,13 +43,13 @@ async function insertActor(db, auth, app, capabilities, scopeKind = null) {
     [app, auth]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   if (scopeKind !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, scopeKind]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, scopeKind]);
   }
 }
 
@@ -58,16 +58,16 @@ async function seed(db) {
   await db.query("insert into public.direct_entry_projects (project_id, display_name) values ($1,'Project RV')", [PROJ_A]);
   await db.query("insert into public.direct_entry_banks (bank_id, display_name) values ('bank_rv','Bank RV')");
   await db.query("insert into public.recruiters (recruiter_id, display_name) values ($1,'Recruiter PM')", [REC_PM]);
-  await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from) values ($1,'hrp','2020-01-01')", [REC_PM]);
-  await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from) values ($1,$2,'2020-01-01')", [REC_PM, TEAM]);
+  await db.query("insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current) values ($1,'hrp','2020-01-01',true)", [REC_PM]);
+  await db.query("insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current) values ($1,$2,'2020-01-01',true)", [REC_PM, TEAM]);
   await insertActor(db, UPLOADER_AUTH, UPLOADER_APP, ["entry_create", "submission_create", "entry_own", "change_request_create"], "own");
   await insertActor(db, PM_AUTH, PM_APP, ["entry_create", "change_request_create"], null);
   await insertActor(db, ADMIN_AUTH, ADMIN_APP, ["entry_admin", "change_review", "pii_view", "payment_view"], "all");
   // Exactly the reviewer bundle in Production (lienvu / ngattt): NO entry_admin.
   await insertActor(db, REV_AUTH, REV_APP, ["change_review", "pii_view", "payment_view"], "all");
   await db.query(
-    "insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from)" +
-    " values ($1,$2,true,'2020-01-01')", [PM_APP, REC_PM]);
+    "insert into public.direct_entry_app_user_recruiter_links (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+    " values ($1,$2,true,'2020-01-01',true)", [PM_APP, REC_PM]);
   await db.query(
     "select public.direct_entry_assign_project_manager($1::uuid,$2::uuid,$3::text,$4::uuid,$5::date,$6::integer,$7::text,$8::text)",
     [ADMIN_AUTH, ADMIN_APP, PROJ_A, REC_PM, null, 1, "synthetic assignment", "rv-assign"]);
@@ -158,7 +158,7 @@ test("reviewer bundle CAN read the bounded SUBMITTED entry projection without en
   await db.close();
 });
 
-test("all-scope change reviewers without field capabilities receive a redacted projection", async () => {
+test("all-scope change reviewers use resource scope without PII/payment capabilities", async () => {
   const db = await buildDb();
   await seed(db);
   const restrictedAuth = uuid(50), restrictedApp = uuid(51);
@@ -176,16 +176,14 @@ test("all-scope change reviewers without field capabilities receive a redacted p
   const restricted = await readProjection(db, restrictedAuth, restrictedApp, entry);
   const data = restricted.rows[0].data;
   assert.equal(data.scope_kind, "all");
-  assert.deepEqual(data.worker_details.display_name, { present: true },
-    "missing pii_view returns presence only, not the worker name");
-  assert.equal(data.worker_details.address.value, undefined,
-    "missing pii_view does not expose the address value");
-  assert.equal(data.payment.account_number, "••••5678",
-    "missing payment_view masks the payment account number");
-  assert.equal(data.payment.bank_id, undefined,
-    "missing payment_view does not expose the bank");
-  assert.equal(data.payment.account_holder_name, undefined,
-    "missing payment_view does not expose the account holder");
+  assert.equal(data.worker_details.display_name, "RV Worker 3",
+    "change_review plus all scope exposes the bounded worker detail without pii_view");
+  assert.equal(data.worker_details.address.value, "RV address 3",
+    "worker detail visibility follows the reviewer resource scope");
+  assert.equal(data.payment.account_number, "12345678",
+    "payment visibility no longer depends on payment_view");
+  assert.equal(data.payment.bank_id, "bank_rv");
+  assert.equal(data.payment.account_holder_name, "Synthetic Holder");
   assert.deepEqual(data.documents, [],
     "missing document_view returns no document metadata");
   await db.close();

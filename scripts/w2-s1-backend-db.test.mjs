@@ -24,18 +24,18 @@ await db.query(
   [privileged.app_user_id, privileged.auth_subject],
 );
 await db.query(
-  "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-  " values ($1,'entry_privileged_edit','2020-01-01'),($1,'document_view','2020-01-01')",
+  "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+  " values ($1,'entry_privileged_edit','2020-01-01',true),($1,'document_view','2020-01-01',true)",
   [privileged.app_user_id],
 );
 await db.query(
-  "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
-  " values ($1,'all','2020-01-01')",
+  "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current)" +
+  " values ($1,'all','2020-01-01',true)",
   [privileged.app_user_id],
 );
 await db.query(
-  "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-  " values ($1,'document_view','2020-01-01')",
+  "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+  " values ($1,'document_view','2020-01-01',true)",
   [ACTORS.otherOwner.app_user_id],
 );
 
@@ -82,8 +82,8 @@ test("privileged edit scope reads the entry while an actor outside scope is deni
 
 test("portrait upload uses the existing reservation/finalize lifecycle and snapshots current version", async () => {
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-    " values ($1,'document_upload','2020-01-01'),($1,'document_view','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+    " values ($1,'document_upload','2020-01-01',true),($1,'document_view','2020-01-01',true)",
     [ACTORS.owner.app_user_id],
   );
   const { rows: entryRows } = await db.query(
@@ -174,18 +174,18 @@ test("document context keeps downloads draft-scoped and limits privileged fallba
     [projectManager.app_user_id, projectManager.auth_subject],
   );
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-    " values ($1,'document_view','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+    " values ($1,'document_view','2020-01-01',true)",
     [projectManager.app_user_id],
   );
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    "(app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+    "(app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,'2020-01-01',true)",
     [projectManager.app_user_id, "93000000-0000-4000-8000-0000000000c1"],
   );
   await db.query(
-    "insert into public.direct_entry_project_manager_assignments(project_id,manager_recruiter_id)" +
-    " values ('s02c_project','93000000-0000-4000-8000-0000000000c1')",
+    "insert into public.direct_entry_project_manager_assignments(project_id,manager_recruiter_id,is_current)" +
+    " values ('s02c_project','93000000-0000-4000-8000-0000000000c1',true)",
   );
 
   const submittedEntryId = fixture.submitted.entryIds[0];
@@ -297,10 +297,10 @@ test("document context keeps downloads draft-scoped and limits privileged fallba
 
 test("portrait enrollment stages enforce owner, MIME, replay, cancellation and attachment lifecycle", async () => {
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-    " select $1,'document_upload','2020-01-01' where not exists (" +
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+    " select $1,'document_upload','2020-01-01',true where not exists (" +
     " select 1 from public.direct_entry_capability_grants where app_user_id=$1" +
-    " and capability='document_upload' and valid_to is null)",
+    " and capability='document_upload' and is_current)",
     [ACTORS.owner.app_user_id],
   );
   const stageId = "b5000000-0000-4000-8000-000000000001";
@@ -332,8 +332,8 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
       [uploadActor.app_user_id, uploadActor.auth_subject],
     );
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'document_upload','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'document_upload','2020-01-01',true)",
       [uploadActor.app_user_id],
     );
     const idemKey = "b6000000-0000-4000-8000-000000000001";
@@ -373,8 +373,8 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
       app_user_id: ACTORS.otherOwner.app_user_id,
     };
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'document_upload','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'document_upload','2020-01-01',true)",
       [otherActor.app_user_id],
     );
     const isolated = await rpc(otherActor, "b7000000-0000-4000-8000-000000000005");
@@ -580,8 +580,8 @@ test("portrait enrollment stages enforce owner, MIME, replay, cancellation and a
     [changeRequestActor.app_user_id, changeRequestActor.auth_subject],
   );
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-    " values ($1,'change_request_create','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+    " values ($1,'change_request_create','2020-01-01',true)",
     [changeRequestActor.app_user_id],
   );
   const deniedStage = "b5000000-0000-4000-8000-000000000006";

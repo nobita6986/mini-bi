@@ -89,24 +89,24 @@ test("worker-directory recruiter and all audiences can read matching submitted d
   }
   for (const actor of [recruiterViewer, outOfScopeViewer]) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1,'document_view','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1,'document_view','2020-01-01',true)",
       [actor.app_user_id],
     );
   }
   await db.query(
-    "insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from)" +
-      " values ($1,$2,true,'2020-01-01')",
+    "insert into public.direct_entry_app_user_recruiter_links(app_user_id,recruiter_id,verified,valid_from,is_current)" +
+      " values ($1,$2,true,'2020-01-01',true)",
     [recruiterViewer.app_user_id, RECRUITER_A],
   );
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-      " values ($1,'change_review','2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+      " values ($1,'change_review','2020-01-01',true)",
     [allViewer.app_user_id],
   );
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from)" +
-      " values ($1,'all','2020-01-01')",
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,valid_from,is_current)" +
+      " values ($1,'all','2020-01-01',true)",
     [allViewer.app_user_id],
   );
 

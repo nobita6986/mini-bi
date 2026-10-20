@@ -13,7 +13,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { parseImportArgs, runImport } from "./t0-import-workers.mjs";
 import {
   IMPORT_REQUIRED_MIGRATIONS, IMPORT_WORKER_DETAIL_KEYS, buildImportPlan, deterministicUuid,
-  readImportSource, validateManifest, toContractRow,
+  readImportSource, resolveOperator, validateManifest, toContractRow,
 } from "./lib/t0-operator-import.mjs";
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -73,11 +73,11 @@ async function insertActor(db, auth, app, email, capabilities, scopeKinds) {
     [app, auth, email.split("@")[0]]);
   for (const capability of capabilities) {
     await db.query("insert into public.direct_entry_capability_grants" +
-      " (app_user_id, capability, valid_from) values ($1,$2,'2020-01-01')", [app, capability]);
+      " (app_user_id, capability, valid_from, is_current) values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   for (const scopeKind of scopeKinds) {
     await db.query("insert into public.direct_entry_scope_grants" +
-      " (app_user_id, scope_kind, valid_from) values ($1,$2,'2020-01-01')", [app, scopeKind]);
+      " (app_user_id, scope_kind, valid_from, is_current) values ($1,$2,'2020-01-01',true)", [app, scopeKind]);
   }
 }
 
@@ -93,19 +93,19 @@ async function seed(db) {
     await db.query("insert into public.recruiters (recruiter_id, display_name) values" +
       " (gen_random_uuid(),$1)", [name]);
     await db.query("insert into public.recruiter_provider_memberships" +
-      " (recruiter_id, provider_type, valid_from)" +
-      " select recruiter_id,'hrp','2020-01-01' from public.recruiters where display_name = $1",
+      " (recruiter_id, provider_type, valid_from, is_current)" +
+      " select recruiter_id,'hrp','2020-01-01',true from public.recruiters where display_name = $1",
       [name]);
     await db.query("insert into public.recruiter_team_memberships" +
-      " (recruiter_id, team_id, valid_from)" +
-      " select recruiter_id,$2,'2020-01-01' from public.recruiters where display_name = $1",
+      " (recruiter_id, team_id, valid_from, is_current)" +
+      " select recruiter_id,$2,'2020-01-01',true from public.recruiters where display_name = $1",
       [name, TEAM]);
   }
   await insertActor(db, OPS_AUTH, OPS_APP, OPERATOR_LOGIN, ["entry_admin"], ["all"]);
   // Business uploaders are project managers: lifecycle capabilities only, NO scope grant, so the
   // legacy create path cannot authorise them - authority comes from the assignment.
   // Uploaders are real PMs: assignment gives project authority. The lifecycle capability
-  // submission_create plus exactly ONE effective own scope is the real contract of
+  // submission_create plus exactly ONE current own scope is the real contract of
   // direct_entry_transition_submission (never granted by the operator).
   await insertActor(db, UP_AUTH, UP_APP, UPLOADER_LOGIN, ["entry_create", "submission_create"],
     ["own"]);
@@ -125,31 +125,32 @@ async function seed(db) {
   // Each negative fixture lives on its own project: the canonical assignment guard forbids
   // overlapping intervals on one project, and a single assignment per project is a valid seed.
   await assignProject(db, { project: PROJ_C, recruiterName: REC_FUTURE, app: UP3_APP,
-    validFrom: "2027-01-01" });
+    validFrom: "2027-01-01", isCurrent: false });
   await assignProject(db, { project: PROJ_D, recruiterName: REC_D, app: UP4_APP,
-    validFrom: "2020-01-01", validTo: "2020-06-01" });
+    validFrom: "2020-01-01", validTo: "2020-06-01", isCurrent: false });
   // Manager of project B only, no legacy bundle and no all scope.
   await insertActor(db, MGR_AUTH, MGR_APP, MGR_LOGIN, ["change_request_create"], []);
   // MGR keeps a verified link but NO assignment: the negative fixture for "no project access".
   await db.query("insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from)" +
-    " select $1, recruiter_id, true, '2020-01-01' from public.recruiters where display_name = $2",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+    " select $1, recruiter_id, true, '2020-01-01', true from public.recruiters where display_name = $2",
     [MGR_APP, REC_NO_ACCESS]);
 }
 
 /** Assignment + verified link, seeded trong mot lan (valid_to di kem revoked_at). */
 async function assignProject(db, { project, recruiterName, app, validFrom = "2020-01-01",
-  validTo = null }) {
+  validTo = null, isCurrent = true }) {
+  await db.query("insert into public.direct_entry_app_user_recruiter_links" +
+    " (app_user_id, recruiter_id, verified, valid_from, is_current)" +
+    " select $1, recruiter_id, true, '2020-01-01', true from public.recruiters where display_name = $2",
+    [app, recruiterName]);
   await db.query("insert into public.direct_entry_project_manager_assignments" +
-    " (project_id, manager_recruiter_id, valid_from, valid_to, revoked_at)" +
+    " (project_id, manager_recruiter_id, valid_from, valid_to, revoked_at, is_current)" +
     " select $1, recruiter_id, $3::date, $4::date," +
     " case when $4::date is null then null else now() end" +
+    " ,$5::boolean" +
     " from public.recruiters where display_name = $2",
-    [project, recruiterName, validFrom, validTo]);
-  await db.query("insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from)" +
-    " select $1, recruiter_id, true, '2020-01-01' from public.recruiters where display_name = $2",
-    [app, recruiterName]);
+    [project, recruiterName, validFrom, validTo, isCurrent]);
 }
 
 function clientOf(db, override = null) {
@@ -290,6 +291,29 @@ test("R5B-R2: reason is validated before any connection", async () => {
     assert.equal(denied.code, "CONFIRMATION_REQUIRED");
     assert.equal(missingToken.calls.connect, 0);
     assertNoLeak(denied);
+  } finally {
+    await db.close();
+  }
+});
+
+test("R1: operator import authorization follows current markers, not grant dates", async () => {
+  const db = await buildDb();
+  try {
+    await seed(db);
+    await db.query(
+      `update public.direct_entry_capability_grants set valid_from = '2099-01-01'
+        where app_user_id in ($1, $2)`, [OPS_APP, UP_APP],
+    );
+    await db.query(
+      `update public.direct_entry_scope_grants set valid_from = '2099-01-01'
+        where app_user_id in ($1, $2)`, [OPS_APP, UP_APP],
+    );
+    assert.equal((await resolveOperator(clientOf(db), OPERATOR_LOGIN)).ok, true,
+      "operator access remains while the all-scope and entry_admin markers are current");
+    const input = await manifestFile([row()]);
+    const result = await runImport(await optionsFor(input, BATCH_C, "check"),
+      dependenciesFor(db).deps);
+    assert.equal(result.ok, true, JSON.stringify(result));
   } finally {
     await db.close();
   }

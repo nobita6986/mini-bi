@@ -67,25 +67,25 @@ async function insertActor(db, auth, app, capabilities, scopeKind = null) {
     " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, capability]);
+      "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, capability]);
   }
   if (scopeKind !== null) {
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [app, scopeKind]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [app, scopeKind]);
   }
 }
 
 async function assignManager(db, { project, recruiter, app }) {
   await db.query(
-    "insert into public.direct_entry_project_manager_assignments" +
-    " (project_id, manager_recruiter_id, valid_from)" +
-    " values ($1,$2,'2020-01-01')", [project, recruiter]);
-  await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
     [app, recruiter]);
+  await db.query(
+    "insert into public.direct_entry_project_manager_assignments" +
+    " (project_id, manager_recruiter_id, valid_from, is_current)" +
+    " values ($1,$2,'2020-01-01',true)", [project, recruiter]);
 }
 
 async function seed(db) {
@@ -101,18 +101,15 @@ async function seed(db) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, TEAM]);
   }
   await insertActor(db, ADMIN_AUTH, ADMIN_APP,
     ["entry_admin", "entry_create", "submission_create", "payment_view", "payment_edit",
-      "employment_status.apply", "change_request_create"], "own");
-  await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+      "employment_status.apply", "change_request_create"], "all");
   // The status path needs exactly one effective scope grant, so this actor carries only 'all'.
   await insertActor(db, STATUS_AUTH, STATUS_APP,
     ["employment_status.apply", "change_request_create"], "all");

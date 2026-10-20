@@ -47,7 +47,6 @@ export const PROJECT_MANAGER_BY_ID = Object.freeze({
 const HRP_CAPABILITIES = Object.freeze([
   "entry_create", "entry_own", "submission_create", "change_request_create",
   "employment_status.request", "document_upload", "document_view",
-  "pii_view", "payment_view", "pii_export",
 ]);
 const CONFIRM = "P3_W07B_ACCESS_APPLY";
 const UNASSIGNED_PROJECTS = Object.freeze(["AP", "TSCO"]);
@@ -127,35 +126,35 @@ async function applyPublicMappings(client, authUsersByEmail, recruiterByCode) {
       )).rows[0];
       for (const capability of HRP_CAPABILITIES) {
         await client.query(
-          `insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from)
-           select $1::uuid, $2::text, $3::date
+          `insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current)
+           select $1::uuid, $2::text, $3::date, true
            where not exists (
              select 1 from public.direct_entry_capability_grants g
               where g.app_user_id=$1::uuid and g.capability=$2::text
-                and g.valid_from <= $3::date and (g.valid_to is null or $3::date < g.valid_to)
+                and g.is_current
            )`,
           [appUser.app_user_id, capability, today],
         );
       }
       await client.query(
-        `insert into public.direct_entry_scope_grants(app_user_id, scope_kind, team_id, valid_from)
-         select $1::uuid, 'own', null, $2::date
+        `insert into public.direct_entry_scope_grants(app_user_id, scope_kind, team_id, valid_from, is_current)
+         select $1::uuid, 'own', null, $2::date, true
          where not exists (
            select 1 from public.direct_entry_scope_grants g
             where g.app_user_id=$1::uuid and g.scope_kind='own'
-              and g.valid_from <= $2::date and (g.valid_to is null or $2::date < g.valid_to)
+              and g.is_current
          )`,
         [appUser.app_user_id, today],
       );
       if (recruiterByCode.has(accountId)) {
         await client.query(
           `insert into public.direct_entry_app_user_recruiter_links
-             (app_user_id, recruiter_id, verified, valid_from)
-           select $1::uuid, $2::uuid, true, $3::date
+             (app_user_id, recruiter_id, verified, valid_from, is_current)
+           select $1::uuid, $2::uuid, true, $3::date, true
            where not exists (
              select 1 from public.direct_entry_app_user_recruiter_links l
               where l.app_user_id=$1::uuid and l.recruiter_id=$2::uuid and l.verified
-                and l.valid_from <= $3::date and (l.valid_to is null or $3::date < l.valid_to)
+                and l.is_current
            )`,
           [appUser.app_user_id, recruiterByCode.get(accountId), today],
         );
@@ -164,10 +163,10 @@ async function applyPublicMappings(client, authUsersByEmail, recruiterByCode) {
     for (const [projectId, personnelCode] of Object.entries(PROJECT_MANAGER_BY_ID)) {
       await client.query(
         `insert into public.direct_entry_project_manager_assignments
-           (project_id, manager_recruiter_id)
-         values ($1::text, $2::uuid)
+           (project_id, manager_recruiter_id, is_current)
+         values ($1::text, $2::uuid, true)
          on conflict (project_id, manager_recruiter_id) where valid_to is null
-           do update set updated_at=now()`,
+           do update set is_current = true, updated_at=now()`,
         [projectId, recruiterByCode.get(personnelCode)],
       );
     }

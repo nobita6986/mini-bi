@@ -47,20 +47,18 @@ export type WorkerDetailDocument = {
   validation_status: string;
 };
 
-/** `worker_details` canonical (co pii_view) hoac shape redacted cua server. */
-export type WorkerDetailWorker =
-  | {
-      kind: "full";
-      display_name: string;
-      gender: "MALE" | "FEMALE" | "OTHER" | null;
-      date_of_birth: string | null;
-      national_id: string | null;
-      national_id_issued_at: string | null;
-      national_id_issued_place: string | null;
-      address: string | null;
-      phone: string | null;
-    }
-  | { kind: "redacted"; display_name_present: boolean };
+/** Complete worker profile returned after server-side view and row-scope authorization. */
+export type WorkerDetailWorker = {
+  kind: "full";
+  display_name: string;
+  gender: "MALE" | "FEMALE" | "OTHER" | null;
+  date_of_birth: string | null;
+  national_id: string | null;
+  national_id_issued_at: string | null;
+  national_id_issued_place: string | null;
+  address: string | null;
+  phone: string | null;
+};
 
 export type WorkerDetailEmployment = {
   status: "UNCONFIRMED" | "ON" | "OFF";
@@ -121,19 +119,6 @@ function projectOptionalState(value: unknown): "omitted" | "unknown" | "intentio
     : null;
 }
 
-/**
- * Shape redacted cua server: moi field chi la `{ state }` voi state la
- * null | provided | omitted | unknown | intentionally_blank (`provided` nghia la
- * server CO gia tri nhung da an theo quyen). UI khong suy nguoc gia tri.
- */
-function projectRedactedState(value: unknown): boolean {
-  if (!isRecord(value) || Object.keys(value).length !== 1) return false;
-  if (!("state" in value)) return false;
-  return value.state === null ||
-    (typeof value.state === "string" &&
-      (value.state === "provided" || (OPTIONAL_STATES as readonly string[]).includes(value.state)));
-}
-
 /** Doc mot OptionalValue<string>/<Gender>; `provided` tra value, state khac tra null. */
 function projectOptionalValue(value: unknown, maxLength: number): { ok: true; value: string | null } | { ok: false } {
   if (!isRecord(value)) return { ok: false };
@@ -154,43 +139,33 @@ function projectOptionalField(value: unknown, maxLength: number): { ok: true; va
 
 function projectWorker(value: unknown): WorkerDetailWorker | null {
   if (!isRecord(value)) return null;
-  if (typeof value.display_name === "string") {
-    if (value.display_name.trim().length < 1 || value.display_name.length > 256) return null;
-    if (Object.keys(value).some((key) => !(WORKER_PROJECTION_KEYS as readonly string[]).includes(key))) {
-      return null;
-    }
-    const gender = projectOptionalField(value.gender, 16);
-    if (!gender.ok) return null;
-    if (gender.value !== null && !["MALE", "FEMALE", "OTHER"].includes(gender.value)) return null;
-    const dateOfBirth = projectOptionalField(value.date_of_birth, 32);
-    const nationalId = projectOptionalField(value.national_id, 64);
-    const issuedAt = projectOptionalField(value.national_id_issued_at, 32);
-    const issuedPlace = projectOptionalField(value.national_id_issued_place, 256);
-    const address = projectOptionalField(value.address, 512);
-    const phone = projectOptionalField(value.phone, 64);
-    if (!dateOfBirth.ok || !nationalId.ok || !issuedAt.ok || !issuedPlace.ok ||
-        !address.ok || !phone.ok) return null;
-    return {
-      kind: "full",
-      display_name: value.display_name,
-      gender: gender.value as "MALE" | "FEMALE" | "OTHER" | null,
-      date_of_birth: dateOfBirth.value,
-      national_id: nationalId.value,
-      national_id_issued_at: issuedAt.value,
-      national_id_issued_place: issuedPlace.value,
-      address: address.value,
-      phone: phone.value,
-    };
+  if (typeof value.display_name !== "string" || value.display_name.trim().length < 1 ||
+      value.display_name.length > 256 ||
+      Object.keys(value).some((key) => !(WORKER_PROJECTION_KEYS as readonly string[]).includes(key))) {
+    return null;
   }
-  // Shape redacted: moi field la {state} (display_name la {present}).
-  if (!hasExactKeys(value, WORKER_PROJECTION_KEYS)) return null;
-  if (!isRecord(value.display_name) || !hasExactKeys(value.display_name, ["present"]) ||
-      typeof value.display_name.present !== "boolean") return null;
-  for (const key of WORKER_PROJECTION_KEYS) {
-    if (key === "display_name") continue;
-    if (!projectRedactedState(value[key])) return null;
-  }
-  return { kind: "redacted", display_name_present: value.display_name.present };
+  const gender = projectOptionalField(value.gender, 16);
+  if (!gender.ok) return null;
+  if (gender.value !== null && !["MALE", "FEMALE", "OTHER"].includes(gender.value)) return null;
+  const dateOfBirth = projectOptionalField(value.date_of_birth, 32);
+  const nationalId = projectOptionalField(value.national_id, 64);
+  const issuedAt = projectOptionalField(value.national_id_issued_at, 32);
+  const issuedPlace = projectOptionalField(value.national_id_issued_place, 256);
+  const address = projectOptionalField(value.address, 512);
+  const phone = projectOptionalField(value.phone, 64);
+  if (!dateOfBirth.ok || !nationalId.ok || !issuedAt.ok || !issuedPlace.ok ||
+      !address.ok || !phone.ok) return null;
+  return {
+    kind: "full",
+    display_name: value.display_name,
+    gender: gender.value as "MALE" | "FEMALE" | "OTHER" | null,
+    date_of_birth: dateOfBirth.value,
+    national_id: nationalId.value,
+    national_id_issued_at: issuedAt.value,
+    national_id_issued_place: issuedPlace.value,
+    address: address.value,
+    phone: phone.value,
+  };
 }
 
 function projectPortraitCurrent(value: unknown, origin: WorkerPortraitOrigin | null): WorkerPortraitCurrent | null | undefined {

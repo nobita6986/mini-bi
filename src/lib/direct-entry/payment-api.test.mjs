@@ -23,14 +23,14 @@ const readProjection = {
   first_work_date: "2026-10-15",
   employee_code: "hrp-2026-000001",
   worker_details: {
-    display_name: { present: true },
-    gender: { state: "provided" },
-    date_of_birth: { state: "provided" },
-    national_id: { state: "provided" },
+    display_name: "Synthetic Worker",
+    gender: { state: "omitted" },
+    date_of_birth: { state: "omitted" },
+    national_id: { state: "omitted" },
     national_id_issued_at: { state: "omitted" },
     national_id_issued_place: { state: "omitted" },
-    address: { state: "provided" },
-    phone: { state: "provided" },
+    address: { state: "omitted" },
+    phone: { state: "omitted" },
   },
   recruiter_id: "93000000-0000-4000-8000-000000000001",
   team_id: "94000000-0000-4000-8000-000000000001",
@@ -213,7 +213,7 @@ test("unknown/inactive bank, invalid versions, and missing reason fail closed", 
   }
 });
 
-test("entry_own can update draft payment without payment_edit; database scope remains authoritative", async () => {
+test("entry_own can update draft payment under the existing database scope", async () => {
   const ownDraft = dependencies();
   assert.equal((await patchDraftPayment(
     request(validBody()), entryId, "true", ownDraft,

@@ -2,7 +2,8 @@
  * P3.1-W01A - capability contract foundation (focused lane).
  *
  * Proves the append-only migration #67 (20261009030000_p3_1_w01a_capability_contract_foundation.sql)
- * and the direct-entry-auth/1.3 contract agree on exactly the same 23 capability tokens, that the
+ * keeps all stored grant tokens while the active direct-entry-auth/1.4 contract agrees on the
+ * 19 non-retired capability tokens, that the
  * extension keeps every existing grant, that unknown tokens are still rejected, and that the two
  * new tokens carry the locked reason / expected version / scope-kind policy without opening
  * Direct Entry or full-Admin surfaces.
@@ -41,7 +42,9 @@ const V1_CONTRACT = path.resolve("src/lib/contracts/direct-entry-v1.ts");
 
 const NEW_TOKENS = ["catalog_master_manage", "team_manager_assign"];
 const LEGACY_TOKEN_COUNT = 21;
+const RETIRED_TOKENS = ["pii_view", "pii_export", "payment_view", "payment_edit"];
 const TOKEN_COUNT = 23;
+const ACTIVE_TOKEN_COUNT = 19;
 const UNKNOWN_TOKEN = "unknown_capability_probe";
 
 const AUTH_SUBJECT = "10000000-0000-4000-8000-00000000c001";
@@ -127,22 +130,27 @@ function resourceFor(kind) {
   };
 }
 
-test("the auth contract is versioned as direct-entry-auth/1.3", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.3");
-  assert.equal(CAPABILITIES.length, TOKEN_COUNT);
+test("the auth contract is versioned as direct-entry-auth/1.4 without retired capabilities", () => {
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.4");
+  assert.equal(CAPABILITIES.length, ACTIVE_TOKEN_COUNT);
+  for (const token of RETIRED_TOKENS) assert.equal(CAPABILITIES.includes(token), false, token);
   for (const token of NEW_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
 });
 
-test("database and TypeScript contracts agree on exactly 23 capability tokens", async () => {
+test("database preserves legacy grant storage while active SQL and TypeScript agree", async () => {
   const db = await database(await migrationNames());
   const schemaTokens = await schemaVocabulary(db);
   assert.equal(schemaTokens.length, TOKEN_COUNT);
-  assert.deepEqual([...schemaTokens].sort(), [...CAPABILITIES].sort());
+  assert.deepEqual(
+    schemaTokens.filter((token) => !RETIRED_TOKENS.includes(token)).sort(),
+    [...CAPABILITIES].sort(),
+  );
   for (const token of NEW_TOKENS) assert.ok(schemaTokens.includes(token), token);
   await db.close();
 
   const v1Tokens = v1Vocabulary(await readFile(V1_CONTRACT, "utf8"));
   assert.deepEqual([...v1Tokens].sort(), [...CAPABILITIES].sort());
+  for (const token of RETIRED_TOKENS) assert.equal(v1Tokens.includes(token), false, token);
 });
 
 test("migration 67 is append-only: the frozen foundation vocabulary is untouched", async () => {
@@ -164,7 +172,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   assert.equal(foundationTokens.length, LEGACY_TOKEN_COUNT);
   assert.deepEqual(
     [...foundationTokens].sort(),
-    [...CAPABILITIES].filter((token) => !NEW_TOKENS.includes(token)).sort(),
+    [...CAPABILITIES].filter((token) => !NEW_TOKENS.includes(token)).concat(RETIRED_TOKENS).sort(),
   );
 
   const db = await database(names);

@@ -282,15 +282,13 @@ export type FullProfileBlockerCode =
   | "PROFILE_DIGEST_UNAVAILABLE";
 
 /**
- * Capability that server RPC yeu cau (migration #36 dong 364-374):
- * entry_create + submission_create luon; payment_view + payment_edit khi co payment != omitted;
- * employment_status.apply khi co initial_status.
+ * Existing enclosing actions the server RPC requires; payment data uses the same entry/submission
+ * actions and does not need a separate field capability.
  */
 export function fullProfileRequiredCapabilities(
   rows: readonly (FullProfileRequestRow | ServerGeneratedFullProfileRequestRow)[],
 ): string[] {
   const required = ["entry_create", "submission_create"];
-  if (rows.some((row) => row.payment !== null)) required.push("payment_view", "payment_edit");
   if (rows.some((row) => row.employment !== null)) required.push("employment_status.apply");
   // W2S1: stage/claim/promote anh ho so bat buoc `document_upload`; `change_request_create`
   // khong thay the quyen upload (migration #114).

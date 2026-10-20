@@ -8,8 +8,6 @@ import {
   resolveReportingAudienceKind,
 } from "./p3-w05a-audience.ts";
 
-const AT = "2026-10-06T00:00:00Z";
-
 function actorWith(scopes) {
   return {
     auth_subject: "10000000-0000-4000-8000-000000000001",
@@ -32,7 +30,7 @@ test("audience priority: all beats team and own", () => {
     scope("team", "t1", "2020-01-01"),
     scope("all", "all", "2020-01-01"),
   ]);
-  assert.equal(resolveReportingAudienceKind(actor, AT), "all");
+  assert.equal(resolveReportingAudienceKind(actor), "all");
 });
 
 test("audience priority: team beats synthetic own", () => {
@@ -40,20 +38,20 @@ test("audience priority: team beats synthetic own", () => {
     scope("own", "u1", "0001-01-01"),
     scope("team", "t1", "2020-01-01"),
   ]);
-  assert.equal(resolveReportingAudienceKind(actor, AT), "team");
+  assert.equal(resolveReportingAudienceKind(actor), "team");
 });
 
 test("audience: no all/team resolves to own", () => {
   const actor = actorWith([scope("own", "u1", "0001-01-01")]);
-  assert.equal(resolveReportingAudienceKind(actor, AT), "own");
+  assert.equal(resolveReportingAudienceKind(actor), "own");
 });
 
-test("audience: expired team grant does not resolve to team", () => {
+test("historic report periods do not narrow an already-current team scope", () => {
   const actor = actorWith([
     scope("own", "u1", "0001-01-01"),
-    scope("team", "t1", "2020-01-01", "2021-01-01"),
+    scope("team", "t1", "2026-10-01", "2026-10-07"),
   ]);
-  assert.equal(resolveReportingAudienceKind(actor, AT), "own");
+  assert.equal(resolveReportingAudienceKind(actor), "team");
 });
 
 test("reportingAudienceFromDb: normalizes a team audience", () => {

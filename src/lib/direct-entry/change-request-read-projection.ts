@@ -1,12 +1,11 @@
 /**
  * P1.6-W04-S04C-S03B4A - Read projection (sanitized) cho change request.
  *
- * Server (migration #33) tra proposal da lam sach theo capability: FULL / MASKED / PRESENCE_ONLY /
- * OMIT. Module nay la lop pure phia client: strict-project dung tung hinh dang da lam sach,
+ * Server tra proposal da lam sach. Module nay la lop pure phia client: strict-project dung tung hinh dang da lam sach,
  * KHONG fallback tu malformed sang {}, KHONG reconstruct du lieu server da bo, KHONG doc field
  * ngoai allowlist (checksum, idempotency, storage metadata, URL ky).
  *
- * Khong I/O, khong authority: capability that do DB/RPC quyet dinh.
+ * Khong I/O, khong authority: DB/RPC quyet dinh quyen xem va pham vi.
  */
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import {
@@ -24,6 +23,8 @@ import { isDocumentType } from "./document-upload-contract.ts";
 import { WORK_STATUS_UI_LABELS, genderUiLabel } from "./display-labels.ts";
 import {
   PAYMENT_STATES,
+  isPaymentAccountNumber,
+  isPaymentText,
   projectPaymentProjection,
   type PaymentProjection,
   type PaymentState,
@@ -64,18 +65,12 @@ export const WORKER_FIELD_LABELS = Object.freeze({
 
 export type WorkerFieldName = keyof typeof WORKER_FIELD_LABELS;
 
-/** Nhan chung khi server chi tra presence-only (thieu pii_view). */
-export const PRESENCE_ONLY_MESSAGE =
-  "Có thay đổi thông tin cá nhân — cần quyền xem phù hợp.";
-
 /** Ly do nghi viec da bi server OMIT theo policy T0. */
 export const LEAVE_REASON_HIDDEN_MESSAGE = "Lý do chi tiết được ẩn theo chính sách.";
 
 /** Phase 0 S03B4A: chua co trusted staging boundary cho DOCUMENT change request. */
 export const DOCUMENT_STAGING_MESSAGE =
   "Thay đổi tài liệu qua yêu cầu duyệt chưa sẵn sàng.";
-
-const MASKED_ACCOUNT = new RegExp("^[\u2022]+[0-9]{0,4}$");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -108,11 +103,6 @@ export function projectOptionalValue(
 
 export function optionalValueText(value: OptionalValue<string>): string {
   return value.state === "provided" ? value.value : OPTIONAL_STATE_LABELS[value.state];
-}
-
-/** Presence-only marker: server da bo gia tri that, chi con su hien dien. */
-export function isPresenceOnlyWorkerDetails(value: unknown): boolean {
-  return isRecord(value) && Object.keys(value).length === 1 && value.present === true;
 }
 
 /** Strict-project canonical worker_details, gồm 5 field gốc và 3 field hồ sơ mở rộng. */
@@ -161,7 +151,6 @@ export function projectWorkerDetails(value: unknown): WorkerDetails | null {
 }
 export type PaymentReadAccount =
   | { mode: "FULL"; value: string }
-  | { mode: "MASKED"; value: string }
   | { mode: "ABSENT" };
 
 export type PaymentReadView = {
@@ -177,10 +166,7 @@ function isPaymentState(value: unknown): value is PaymentState {
   return typeof value === "string" && PAYMENT_STATES.some((state) => state === value);
 }
 
-/**
- * Strict-project proposal PAYMENT da lam sach: state luon co; account_number co the FULL hoac
- * MASKED last-4; bank_id/account_holder_name co the OMIT. Masked KHONG bao gio duoc coi la full.
- */
+/** Strict-project persisted PAYMENT values; incomplete proposals remain read-only in reviewer UI. */
 export function projectPaymentReadProposal(value: unknown): PaymentReadView | null {
   if (!isRecord(value)) return null;
   if (!hasOnlyKeys(value, ["state", "account_number", "bank_id", "account_holder_name"])) {
@@ -189,26 +175,27 @@ export function projectPaymentReadProposal(value: unknown): PaymentReadView | nu
   if (!isPaymentState(value.state)) return null;
   let account: PaymentReadAccount = { mode: "ABSENT" };
   if (typeof value.account_number === "string") {
-    if (value.account_number.length < 1) return null;
-    account = MASKED_ACCOUNT.test(value.account_number)
-      ? { mode: "MASKED", value: value.account_number }
-      : { mode: "FULL", value: value.account_number };
+    if (!isPaymentAccountNumber(value.account_number)) return null;
+    account = { mode: "FULL", value: value.account_number };
   } else if (value.account_number !== null && value.account_number !== undefined) {
     return null;
   }
   let bankId: string | null = null;
   if (value.bank_id !== undefined && value.bank_id !== null) {
-    if (typeof value.bank_id !== "string" || value.bank_id.length < 1) return null;
+    if (typeof value.bank_id !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.bank_id)) return null;
     bankId = value.bank_id;
   }
   let holderName: string | null = null;
   if (value.account_holder_name !== undefined && value.account_holder_name !== null) {
-    if (typeof value.account_holder_name !== "string" ||
-        value.account_holder_name.trim().length < 1) return null;
+    if (!isPaymentText(value.account_holder_name, 256)) return null;
     holderName = value.account_holder_name;
   }
   const complete = value.state === "provided" && account.mode === "FULL" &&
     bankId !== null && holderName !== null;
+  if (value.state === "provided" && account.mode === "ABSENT" && holderName === null) return null;
+  if (value.state !== "provided" &&
+      (account.mode !== "ABSENT" || bankId !== null || holderName !== null)) return null;
   return { state: value.state, account, bankId, holderName, complete };
 }
 
@@ -320,7 +307,7 @@ function paymentAccountText(account: PaymentReadAccount): string {
  */
 export function paymentReadRows(input: {
   before: { state: PaymentState; account_number: string | null; bank_id: string | null;
-    account_holder_name: string | null; masked?: boolean } | null;
+    account_holder_name: string | null; bank_name?: string | null } | null;
   after: PaymentReadView;
   bankLabel: (bankId: string) => string | null;
 }): ReadRow[] | null {
@@ -348,6 +335,8 @@ export function paymentReadRows(input: {
     const label = bankLabel(before.bank_id);
     if (label === null) return null;
     beforeBank = label;
+  } else if (before?.bank_name) {
+    beforeBank = before.bank_name;
   }
   if (beforeBank !== afterBank) {
     rows.push({ field: "bank_id", label: "Ngân hàng", before: beforeBank, after: afterBank });
@@ -406,12 +395,10 @@ export const DOCUMENT_TYPE_ORDER: readonly DocumentType[] =
   Object.keys(DOCUMENT_TYPE_LABELS) as DocumentType[];
 /**
  * Ngu canh entry (do GET /api/direct-entry/entries/{id} tra ve) duoc strict-project cho UI nhay cam:
- * chi worker_details / payment / employment_status. Server da redact theo capability; field nao
- * khong duoc phep thi coi nhu KHONG CO (khong reconstruct).
+ * chi worker_details / payment / employment_status. Worker/payment values phai la projection day du.
  */
 export type EntrySensitiveContext = {
   workerDetails: WorkerDetails | null;
-  workerPresenceOnly: boolean;
   payment: PaymentProjection | null;
   employmentStatus: { status: WorkerStatus; effective_date: string } | null;
 };
@@ -420,8 +407,6 @@ export function projectEntrySensitiveContext(value: unknown): EntrySensitiveCont
   if (!isRecord(value)) return null;
   if (typeof value.entry_id !== "string") return null;
   const workerDetails = projectWorkerDetails(value.worker_details);
-  const workerEmpty = isRecord(value.worker_details) &&
-    Object.keys(value.worker_details).length === 0;
   let payment: PaymentProjection | null = null;
   if (value.payment !== undefined && value.payment !== null) {
     payment = projectPaymentProjection(value.payment);
@@ -438,7 +423,6 @@ export function projectEntrySensitiveContext(value: unknown): EntrySensitiveCont
   }
   return {
     workerDetails,
-    workerPresenceOnly: workerEmpty,
     payment,
     employmentStatus,
   };

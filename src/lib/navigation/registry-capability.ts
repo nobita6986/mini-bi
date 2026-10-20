@@ -2,7 +2,7 @@
  * P3-W06A — Capability projection cho navigation.
  *
  * Nguyên tắc (P2-P3 R00 §Reuse matrix + P3-C01 §2.1/§2.1a):
- * - Tái sử dụng `CAPABILITIES` từ src/lib/auth/direct-entry-v2.ts (23 token).
+ * - Tái sử dụng `CAPABILITIES` từ src/lib/auth/direct-entry-v2.ts (19 token).
  * - Tái sử dụng `DirectEntryActor` shape từ cùng module (đã được `actorProjection`
  *   trong auth-session-core.ts sanitize trước khi lộ ra client).
  * - Không tạo role engine mới: mỗi entry khai báo `capability` metadata

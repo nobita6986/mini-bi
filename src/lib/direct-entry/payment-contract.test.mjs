@@ -52,7 +52,7 @@ test("provided payment rejects inactive/unknown banks, non-digit values, and ext
   };
   assert.equal(projectPaymentInput(input, new Set()), null);
   assert.equal(projectPaymentInput({ ...input, account_number: 1234 }, activeBanks), null);
-  assert.equal(projectPaymentInput({ ...input, capability: "payment_view" }, activeBanks), null);
+  assert.equal(projectPaymentInput({ ...input, legacy_token: "retired" }, activeBanks), null);
   assert.equal(projectPaymentInput({
     state: "unknown",
     account_number: "masked",
@@ -61,19 +61,67 @@ test("provided payment rejects inactive/unknown banks, non-digit values, and ext
   }), null);
 });
 
-test("accepts only safe masked/full read projections and strict update versions", () => {
+test("read projections accept R4 partial text values and reject masks", () => {
+  assert.equal(projectPaymentProjection({
+    state: "provided",
+    account_number: "••••0056",
+    version: 2,
+  }), null, "legacy masked response fails closed");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: "000012340056", bank_id: "bank_synthetic",
+    account_holder_name: "Synthetic Account Holder", version: 2,
+  })?.account_number, "000012340056");
   assert.deepEqual(projectPaymentProjection({
-    state: "provided",
-    account_number: "••••0056",
-    version: 2,
+    state: "provided", account_number: "000012340056", bank_id: null,
+    bank_name: "Synthetic Bank", account_holder_name: "Synthetic Account Holder", version: 2,
   }), {
-    state: "provided",
-    account_number: "••••0056",
-    bank_id: null,
-    account_holder_name: null,
-    version: 2,
-    masked: true,
-  });
+    state: "provided", account_number: "000012340056", bank_id: null,
+    bank_name: "Synthetic Bank", account_holder_name: "Synthetic Account Holder", version: 2,
+  }, "the existing R4 full bank-name projection remains supported");
+  assert.deepEqual(projectPaymentProjection({
+    state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+    account_holder_name: null, version: 2,
+  }), {
+    state: "provided", account_number: null, bank_id: null, bank_name: "Legacy Bank",
+    account_holder_name: null, version: 2,
+  }, "R4 bank-name-only rows remain readable");
+  assert.deepEqual(projectPaymentProjection({
+    state: "provided", account_number: "ACCT-AB123", bank_id: null,
+    account_holder_name: null, version: 2,
+  }), {
+    state: "provided", account_number: "ACCT-AB123", bank_id: null,
+    account_holder_name: null, version: 2,
+  }, "R4 account text is not limited to digits");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: "𠀀".repeat(64), bank_id: null,
+    account_holder_name: null, version: 2,
+  })?.account_number, "𠀀".repeat(64), "R4 counts Unicode characters, not UTF-16 units");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: "x".repeat(65), bank_id: null,
+    bank_name: null, account_holder_name: null, version: 2,
+  }), null, "R4 maximum account-number length is enforced");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: "acct\u0001number", bank_id: null,
+    bank_name: null, account_holder_name: null, version: 2,
+  }), null, "R4 control characters are rejected");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: null, bank_id: null,
+    bank_name: "b".repeat(257), account_holder_name: null, version: 2,
+  }), null, "R4 bank-name maximum is enforced");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: null, bank_id: null, bank_name: null,
+    account_holder_name: "holder\u0001name", version: 2,
+  }), null, "R4 holder control characters are rejected");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: null, bank_id: null, bank_name: null,
+    account_holder_name: "holder\u0085name", version: 2,
+  }), null, "R4 C1 control characters are rejected");
+  assert.equal(projectPaymentProjection({ state: "provided", present: true }), null,
+    "presence-only values are not payment projections");
+  assert.equal(projectPaymentProjection({
+    state: "provided", account_number: null, bank_id: null, bank_name: null,
+    account_holder_name: null, version: 2,
+  }), null, "R4 provided payment must retain at least one metadata value");
   assert.deepEqual(projectPaymentProjection({
     state: "provided",
     account_number: "000012340056",

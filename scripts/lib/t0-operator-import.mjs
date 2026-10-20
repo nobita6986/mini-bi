@@ -432,12 +432,10 @@ const ACCOUNT_SQL = "select u.app_user_id::text as app_user_id, u.auth_subject::
 
 const GRANTS_SQL = "select" +
   " coalesce((select array_agg(distinct c.capability) from public.direct_entry_capability_grants c" +
-  "   where c.app_user_id = $1::uuid and c.valid_from <= public.direct_entry_authorization_date()" +
-  "     and (c.valid_to is null or public.direct_entry_authorization_date() < c.valid_to)), '{}')" +
+  "   where c.app_user_id = $1::uuid and c.is_current), '{}')" +
   "   as capabilities," +
   " coalesce((select array_agg(distinct s.scope_kind) from public.direct_entry_scope_grants s" +
-  "   where s.app_user_id = $1::uuid and s.valid_from <= public.direct_entry_authorization_date()" +
-  "     and (s.valid_to is null or public.direct_entry_authorization_date() < s.valid_to)), '{}')" +
+  "   where s.app_user_id = $1::uuid and s.is_current), '{}')" +
   "   as scopes";
 
 async function resolveAccount(client, login) {

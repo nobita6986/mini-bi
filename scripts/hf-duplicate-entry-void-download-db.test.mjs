@@ -25,14 +25,14 @@ async function createActor(db, actor, capabilities, scope = "all", teamId = null
   );
   for (const capability of capabilities) {
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1,$2,'2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1,$2,'2020-01-01',true)",
       [actor.app_user_id, capability],
     );
   }
   await db.query(
-    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from)" +
-      " values ($1,$2,$3,'2020-01-01')",
+    "insert into public.direct_entry_scope_grants(app_user_id,scope_kind,team_id,valid_from,is_current)" +
+      " values ($1,$2,$3,'2020-01-01',true)",
     [actor.app_user_id, scope, scope === "team" ? teamId : null],
   );
 }
@@ -106,13 +106,13 @@ test("#120 preserves document_view while adding bounded submitted-row download f
     };
     await createActor(db, viewer, ["document_view"], "own");
     await db.query(
-      "update public.direct_entry_app_user_recruiter_links set valid_to='2020-01-02'" +
+      "update public.direct_entry_app_user_recruiter_links set valid_to='2020-01-02',is_current=false" +
         " where app_user_id=$1 and recruiter_id=$2",
       [ACTORS.proposer.app_user_id, RECRUITER_A],
     );
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-        "(app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-02')",
+        "(app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,'2020-01-02',true)",
       [viewer.app_user_id, RECRUITER_A],
     );
     const entry = (await db.query(
@@ -145,8 +145,8 @@ test("#120 preserves document_view while adding bounded submitted-row download f
       );
     }
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1,'document_view','2020-01-01') on conflict do nothing",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1,'document_view','2020-01-01',true) on conflict do nothing",
       [ACTORS.proposer.app_user_id],
     );
     const allowed = await db.query(
@@ -219,29 +219,29 @@ test("approved ENTRY_VOID keeps history, accepts only the named reviewers, and d
       [leaderRecruiterId, fixture.entryA.team_id],
     );
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1,'team_manager_assign','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1,'team_manager_assign','2020-01-01',true)",
       [reviewerId],
     );
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-        "(app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+        "(app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,'2020-01-01',true)",
       [reviewerId, leaderRecruiterId],
     );
     await db.exec("begin");
     await db.query("select set_config('direct_entry.team_leader_marker','on',true)");
     await db.query(
       "insert into public.direct_entry_team_leader_assignments" +
-        "(team_id,leader_app_user_id,leader_recruiter_id,valid_from)" +
-        " values ($1,$2,$3,'2020-01-01')",
+        "(team_id,leader_app_user_id,leader_recruiter_id,valid_from,is_current)" +
+        " values ($1,$2,$3,'2020-01-01',true)",
       [fixture.entryA.team_id, reviewerId, leaderRecruiterId],
     );
     await db.exec("commit");
 
     const bod = ACTORS.reviewerAll;
     await db.query(
-      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from)" +
-        " values ($1,'entry_privileged_edit','2020-01-01')",
+      "insert into public.direct_entry_capability_grants(app_user_id,capability,valid_from,is_current)" +
+        " values ($1,'entry_privileged_edit','2020-01-01',true)",
       [bod.app_user_id],
     );
     const accounting = {
@@ -297,15 +297,15 @@ test("approved ENTRY_VOID keeps history, accepts only the named reviewers, and d
     );
     await db.query(
       "insert into public.direct_entry_app_user_recruiter_links" +
-        "(app_user_id,recruiter_id,verified,valid_from) values ($1,$2,true,'2020-01-01')",
+        "(app_user_id,recruiter_id,verified,valid_from,is_current) values ($1,$2,true,'2020-01-01',true)",
       [leadersForOtherTeam.app_user_id, otherLeaderRecruiterId],
     );
     await db.exec("begin");
     await db.query("select set_config('direct_entry.team_leader_marker','on',true)");
     await db.query(
       "insert into public.direct_entry_team_leader_assignments" +
-        "(team_id,leader_app_user_id,leader_recruiter_id,valid_from)" +
-        " values ($1,$2,$3,'2020-01-01')",
+        "(team_id,leader_app_user_id,leader_recruiter_id,valid_from,is_current)" +
+        " values ($1,$2,$3,'2020-01-01',true)",
       ["94000000-0000-4000-8000-00000000000b", leadersForOtherTeam.app_user_id,
         otherLeaderRecruiterId],
     );

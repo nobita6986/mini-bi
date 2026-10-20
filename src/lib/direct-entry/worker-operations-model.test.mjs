@@ -47,7 +47,7 @@ const RECRUITER = "22222222-2222-4222-8222-222222222222";
 const REQUEST = "33333333-3333-4333-8333-333333333333";
 
 function actions(overrides = {}) {
-  return { view: true, view_pii: false, view_payment: false,
+  return { view: true, view_pii: true, view_payment: true,
     propose_change: false, propose_change_code: "NOT_PROJECT_MANAGER", ...overrides };
 }
 function row(overrides = {}) {
@@ -126,7 +126,7 @@ test("W06-R2: helper phan trang ton tai (0e2cbba khong co -> test that bai that 
 test("W06-R2: initial tab tu actor projection — reviewer vao thang scope=all", () => {
   const all = [{ kind: "all" }];
   // Reviewer bundle toi thieu + all => "all" (khong roi vao uploader).
-  assert.equal(initialWorkerTab({ capabilities: ["change_review", "pii_view", "payment_view"], scopes: all }, true), "all");
+  assert.equal(initialWorkerTab({ capabilities: ["change_review"], scopes: all }, true), "all");
   assert.equal(initialWorkerTab({ capabilities: ["entry_admin"], scopes: all }, true), "all");
   // PM-only (change_request_create, khong phai entry actor) => "managed".
   assert.equal(initialWorkerTab({ capabilities: ["change_request_create"], scopes: [{ kind: "own" }] }, false), "managed");

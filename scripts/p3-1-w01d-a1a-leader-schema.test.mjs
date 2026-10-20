@@ -184,6 +184,7 @@ test("assertions 6-7: assignment and revision tables carry the exact shape", asy
     ["valid_from", "date", "NO"],
     ["valid_to", "date", "YES"],
     ["created_at", "timestamp with time zone", "NO"],
+    ["is_current", "boolean", "NO"],
   ]);
 
   const assignmentFks = (await db.query(

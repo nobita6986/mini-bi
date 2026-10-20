@@ -331,7 +331,7 @@ export function DirectEntryChangeRequestProposer({
   const canSubmit = itemsToSend !== null && normalizedReason !== null && !busy &&
     entryState === "ready";
 
-  /** Chon MOT dong cho target kind nhay cam va khoi tao form tu ngu canh server da redact. */
+  /** Chọn một dòng cho target kind nhạy cảm và khởi tạo form từ context server đã xác thực. */
   function selectSingleEntry(entry: ProposerEntryProjection) {
     setSingleEntryId(entry.entry_id);
     const context = contexts[entry.entry_id] ?? null;
@@ -340,9 +340,9 @@ export function DirectEntryChangeRequestProposer({
     setPaymentDraft(payment && payment.state === "provided"
       ? {
         state: "provided",
-        account_number: payment.masked ? null : payment.account_number,
-        bank_id: payment.masked ? null : payment.bank_id,
-        account_holder_name: payment.masked ? null : payment.account_holder_name,
+        account_number: payment.account_number,
+        bank_id: payment.bank_id,
+        account_holder_name: payment.account_holder_name,
       }
       : { state: payment?.state ?? "omitted", account_number: null, bank_id: null,
         account_holder_name: null });

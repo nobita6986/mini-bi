@@ -126,20 +126,20 @@ test("from-scratch apply covers the policy closure migration and its ACLs", asyn
   }
 });
 
-test("P2.5-W04: ENTRY_FIELD carries only worker_details and stays decidable with change_review + pii_view", async () => {
+test("ENTRY_FIELD review uses change_review and scope without a PII capability", async () => {
   const approveKey = "s03b3r1_approve_nonpii";
-  const approved = await decide(db, POLICY_ACTORS.piiView, requests.nonPiiApprove,
+  const approved = await decide(db, POLICY_ACTORS.reviewerAll, requests.nonPiiApprove,
     "approve", 1, "S03B3R1 approved", approveKey);
   assert.equal(approved.error, null);
   assert.deepEqual(approved.data, {
     request_id: requests.nonPiiApprove, state: "APPROVED", version: 2,
   });
   assert.equal((await entryRow(db, entries.nonPiiApprove.entry_id)).version, 2);
-  const replay = await decide(db, POLICY_ACTORS.piiView, requests.nonPiiApprove,
+  const replay = await decide(db, POLICY_ACTORS.reviewerAll, requests.nonPiiApprove,
     "approve", 1, "S03B3R1 approved", approveKey);
   assert.deepEqual(replay.data, approved.data, "replay cung key phai tra cung ket qua");
 
-  const rejected = await decide(db, POLICY_ACTORS.piiView, requests.nonPiiReject,
+  const rejected = await decide(db, POLICY_ACTORS.reviewerAll, requests.nonPiiReject,
     "reject", 1, "S03B3R1 rejected", "s03b3r1_reject_nonpii");
   assert.equal(rejected.error, null);
   assert.equal(rejected.data.state, "REJECTED");
@@ -147,7 +147,7 @@ test("P2.5-W04: ENTRY_FIELD carries only worker_details and stays decidable with
     "reject khong duoc doi du lieu canonical");
 });
 
-test("worker_details requires pii_view for both approve and reject", async () => {
+test("worker_details can be approved without pii_view; reviewer rights still gate the decision", async () => {
   const revisionsBefore = await revisionCount(db, entries.pii.entry_id);
   for (const decision of ["approve", "reject"]) {
     const denied = await decide(db, POLICY_ACTORS.entryOnly, requests.pii,
@@ -159,9 +159,13 @@ test("worker_details requires pii_view for both approve and reject", async () =>
   assert.equal(before.version, 1);
   assert.equal((await requestRow(db, requests.pii)).state, "PENDING");
   assert.equal(await revisionCount(db, entries.pii.entry_id), revisionsBefore);
+  const approved = await decide(db, POLICY_ACTORS.reviewerAll, requests.pii,
+    "approve", 1, "S03B3R1 approved without PII capability", "s03b3r1_pii_no_capability");
+  assert.equal(approved.error, null, json(approved.error));
+  assert.equal(approved.data.state, "APPROVED");
 });
 
-test("PAYMENT requires payment_view (P2.5-W05-R1: never payment_edit)", async () => {
+test("PAYMENT is gated by reviewer rights, while direct apply remains denied", async () => {
   const withoutView = await decide(db, POLICY_ACTORS.entryOnly, requests.payment,
     "approve", 1, "S03B3R1 denied payment view", "s03b3r1_payment_view");
   assert.equal(withoutView.error.code, "42501");
@@ -180,18 +184,17 @@ test("PAYMENT requires payment_view (P2.5-W05-R1: never payment_edit)", async ()
   assert.equal((await entryRow(db, entries.payment.entry_id)).version, 1);
 });
 
-test("WORK_STATUS needs change_review only (P2.5-W05-R1: not employment_status.apply)", async () => {
-  // entryOnly deliberately holds change_review + all scope WITHOUT the apply-side token.
-  const approved = await decide(db, POLICY_ACTORS.entryOnly, requests.status,
+test("WORK_STATUS needs change_review only (not employment_status.apply)", async () => {
+  const approved = await decide(db, POLICY_ACTORS.reviewerAll, requests.status,
     "approve", 1, "S03B3R1 status approved", "s03b3r1_status_approved");
   assert.equal(approved.error, null, json(approved.error));
   assert.equal((await entryRow(db, entries.status.entry_id)).version, 2);
 });
 
-test("mixed request thieu dung mot capability thi khong item nao duoc ap dung", async () => {
+test("reviewer without change_review cannot partially apply a mixed request", async () => {
   const revisionsBefore = await revisionCount(db, entries.nonPiiApprove.entry_id);
   const paymentRevisionsBefore = await revisionCount(db, entries.payment.entry_id);
-  const denied = await decide(db, POLICY_ACTORS.paymentView, requests.mixed,
+  const denied = await decide(db, POLICY_ACTORS.entryOnly, requests.mixed,
     "approve", 1, "S03B3R1 mixed denied", "s03b3r1_mixed");
   assert.equal(denied.error.code, "42501");
   assert.equal((await entryRow(db, entries.payment.entry_id)).version, 1,
@@ -212,33 +215,25 @@ test("self-review van bi cam o DB", async () => {
   assert.equal((await requestRow(db, requests.occ)).state, "PENDING");
 });
 
-test("reviewer du capability thi quyet dinh thanh cong cho tung target kind", async () => {
-  const pii = await decide(db, POLICY_ACTORS.piiView, requests.pii,
-    "approve", 1, "S03B3R1 pii approved", "s03b3r1_pii_approved");
-  assert.equal(pii.error, null, json(pii.error));
-  assert.equal(pii.data.state, "APPROVED");
-  assert.equal((await entryRow(db, entries.pii.entry_id)).version, 2);
-
-  // P2.5-W05-R1: paymentView holds change_review + payment_view and deliberately NO
-  // payment_edit, so this also proves the reviewer never needs the apply-side token.
-  const payment = await decide(db, POLICY_ACTORS.paymentView, requests.payment,
-    "approve", 1, "S03B3R1 payment approved", "s03b3r1_payment_approved");
+test("change_review plus all scope can review payment without payment-specific capabilities", async () => {
+  const payment = await decide(db, POLICY_ACTORS.reviewerAll, requests.payment,
+    "approve", 1, "S03B3R1 payment approved without payment capability", "s03b3r1_payment_approved");
   assert.equal(payment.error, null, json(payment.error));
   assert.equal((await entryRow(db, entries.payment.entry_id)).version, 2);
 });
 
 test("OCC va idempotency khong hoi quy", async () => {
-  const conflict = await decide(db, POLICY_ACTORS.piiView, requests.occ,
+  const conflict = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 99, "S03B3R1 occ conflict", "s03b3r1_occ_conflict");
   assert.equal(conflict.error.code, "40001");
-  const approved = await decide(db, POLICY_ACTORS.piiView, requests.occ,
+  const approved = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_approved");
   assert.equal(approved.error, null, json(approved.error));
   assert.equal(approved.data.version, 2);
-  const replay = await decide(db, POLICY_ACTORS.piiView, requests.occ,
+  const replay = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_approved");
   assert.deepEqual(replay.data, approved.data);
-  const decided = await decide(db, POLICY_ACTORS.piiView, requests.occ,
+  const decided = await decide(db, POLICY_ACTORS.reviewerAll, requests.occ,
     "approve", 1, "S03B3R1 occ approved", "s03b3r1_occ_second_key");
   assert.equal(decided.error.code, "40001");
 });
@@ -282,25 +277,21 @@ test("revision snapshot moi duoc redact co dinh luc ghi", async () => {
     ["effective_date", "status", "version"]);
 });
 
-test("read projection tra FULL / MASKED / PRESENCE_ONLY / OMIT theo capability", async () => {
-  const fullPayment = await readDetail(db, POLICY_ACTORS.paymentFull, requests.payment);
+test("read projection uses resource scope without PII/payment capability masks", async () => {
+  const fullPayment = await readDetail(db, POLICY_ACTORS.reviewerAll, requests.payment);
   assert.equal(fullPayment.error, null);
   assert.deepEqual(fullPayment.data.items[0].proposal, {
     state: "provided", account_number: PAYMENT_PROPOSAL.account_number,
     bank_id: PAYMENT_PROPOSAL.bank_id, account_holder_name: PAYMENT_PROPOSAL.account_holder_name,
   });
 
-  const maskedPayment = await readDetail(db, POLICY_ACTORS.entryOnly, requests.payment);
-  const masked = maskedPayment.data.items[0].proposal;
-  assert.equal(masked.state, "provided");
-  assert.notEqual(masked.account_number, PAYMENT_PROPOSAL.account_number);
-  assert.equal(masked.account_number.endsWith("6789"), true);
-  assert.equal("bank_id" in masked, false);
-  assert.equal("account_holder_name" in masked, false);
+  assert.ok((await readDetail(db, POLICY_ACTORS.entryOnly, requests.payment)).error,
+    "all scope without change_review cannot read reviewer proposals");
 
-  const status = await readDetail(db, ACTORS.proposer, requests.status);
+  const status = await readDetail(db, POLICY_ACTORS.reviewerAll, requests.status);
   assert.deepEqual(status.data.items[0].proposal, {
     status: "OFF", effective_date: seeded.proposals.workStatus.effective_date,
+    leave_reason: LEAVE_REASON_TEXT,
   });
 
   const historicalDocument = await db.query(
@@ -316,21 +307,22 @@ test("read projection tra FULL / MASKED / PRESENCE_ONLY / OMIT theo capability",
   assert.deepEqual(historicalDocument.rows[0].limited,
     { document_type: "EMPLOYMENT_CONTRACT" });
 
-  const fullPii = await readDetail(db, POLICY_ACTORS.piiView, requests.pii);
+  const fullPii = await readDetail(db, POLICY_ACTORS.reviewerAll, requests.pii);
   assert.equal(fullPii.data.items[0].proposal.worker_details.display_name,
     "Synthetic " + entries.pii.employee_code);
-  const presencePii = await readDetail(db, POLICY_ACTORS.entryOnly, requests.pii);
-  assert.deepEqual(presencePii.data.items[0].proposal, { worker_details: { present: true } });
+  assert.ok((await readDetail(db, POLICY_ACTORS.entryOnly, requests.pii)).error,
+    "all scope without change_review cannot read worker proposals");
 
-  const nonPii = await readDetail(db, POLICY_ACTORS.entryOnly, requests.nonPiiApprove);
-  assert.deepEqual(nonPii.data.items[0].proposal, { worker_details: { present: true } });
+  const nonPii = await readDetail(db, POLICY_ACTORS.reviewerAll, requests.nonPiiApprove);
+  assert.equal(nonPii.data.items[0].proposal.worker_details.display_name,
+    "Synthetic " + entries.nonPiiApprove.employee_code);
   assert.deepEqual(Object.keys(nonPii.data.items[0]).sort(),
     ["entry_id", "expected_version", "labor_type_display", "proposal", "target_kind"]);
 
-  for (const detail of [fullPayment, maskedPayment, status, fullPii, presencePii, nonPii]) {
+  for (const detail of [fullPayment, status, fullPii, nonPii]) {
     const text = json(detail.data);
     for (const forbidden of ["checksum_sha256", "idempotency_key", "storage_key",
-      "leave_reason", "reason_id", "auth_subject", "created_by_user_id", "bucket"]) {
+      "reason_id", "auth_subject", "created_by_user_id", "bucket"]) {
       assert.equal(text.includes(forbidden), false, forbidden);
     }
   }

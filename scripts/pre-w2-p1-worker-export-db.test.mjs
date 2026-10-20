@@ -3,7 +3,7 @@
  *
  * Proves the export contract at the DB boundary:
  *   * recruited/managed full-PII export requires the existing row authority, not a
- *     separate export-capability grant; `all` retains the capability conjunction;
+ *     separate field/export capability; `all` retains its explicit scope + action;
  *   * `all` (and any other scope) is denied with 42501;
  *   * one batch read over the authorized set with the directory's eligibility/filter
  *     semantics and deterministic order;
@@ -70,11 +70,11 @@ async function seed(db) {
       " values ($1,$2,true,'Synthetic Account')", [app, auth]);
   }
   await db.query(
-    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-    " values ($1,'entry_admin','2020-01-01')", [ADMIN_APP]);
+    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+    " values ($1,'entry_admin','2020-01-01',true)", [ADMIN_APP]);
   await db.query(
-    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-    " values ($1,'all','2020-01-01')", [ADMIN_APP]);
+    "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+    " values ($1,'all','2020-01-01',true)", [ADMIN_APP]);
   await db.query(
     "insert into public.teams (team_id, code, display_name) values ($1,'TEAM_X','Team X')", [TEAM]);
   for (const [project, name] of [[PROJ_A, "Project A"], [PROJ_B, "Project B"]]) {
@@ -86,26 +86,26 @@ async function seed(db) {
     await db.query(
       "insert into public.recruiters (recruiter_id, display_name) values ($1,$2)", [recruiter, name]);
     await db.query(
-      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from)" +
-      " values ($1,'hrp','2020-01-01')", [recruiter]);
+      "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current)" +
+      " values ($1,'hrp','2020-01-01',true)", [recruiter]);
     await db.query(
-      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from)" +
-      " values ($1,$2,'2020-01-01')", [recruiter, TEAM]);
+      "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current)" +
+      " values ($1,$2,'2020-01-01',true)", [recruiter, TEAM]);
   }
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
     [MGR_APP, REC_A]);
   await db.query(
     "insert into public.direct_entry_app_user_recruiter_links" +
-    " (app_user_id, recruiter_id, verified, valid_from) values ($1,$2,true,'2020-01-01')",
+    " (app_user_id, recruiter_id, verified, valid_from, is_current) values ($1,$2,true,'2020-01-01',true)",
     [UPLOADER_APP, REC_B]);
 }
 
 async function grant(db, app, capability) {
   await db.query(
-    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)" +
-    " values ($1,$2,'2020-01-01')", [app, capability]);
+    "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)" +
+    " values ($1,$2,'2020-01-01',true)", [app, capability]);
 }
 
 async function grantExportCaps(db, app) {
@@ -267,7 +267,7 @@ test("PRE-W2-P1: recruited export returns the full authorized rows and an own/AL
 
     const [audit] = await audits(db);
     assert.equal(audit.action, "worker_export");
-    assert.equal(audit.capability, "pii_export");
+    assert.equal(audit.capability, null);
     assert.equal(audit.scope_kind, "own");
     assert.equal(audit.outcome, "ALLOW");
     assert.equal(audit.denial_code, null);
@@ -310,7 +310,7 @@ test("PRE-W2-P1: managed export logs the project scope_kind", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Row authority gates recruited/managed; the all-scope capability conjunction remains.
+// 3. Row authority gates recruited/managed; all uses explicit scope + action only.
 // ---------------------------------------------------------------------------
 test("PRE-W2-HF-G: directory scopes export full PII without extra grants; all stays restricted", async () => {
   const db = await buildDb();
@@ -332,8 +332,7 @@ test("PRE-W2-HF-G: directory scopes export full PII without extra grants; all st
     await assert.rejects(() => runExport(db, { scope: "everything" }),
       (error) => error.code === "42501", "an unknown scope must be denied");
 
-    // Admin (entry_admin + all scope) with the full export capability triple succeeds.
-    await grantExportCaps(db, ADMIN_APP);
+    // Admin (entry_admin + all scope) succeeds without any field/export capability.
     const directoryAll = await db.query(
       "select public.direct_entry_list_workers($1::uuid,$2::uuid,'all',null,null,null,null,25) as data",
       [ADMIN_AUTH, ADMIN_APP]);
@@ -345,23 +344,21 @@ test("PRE-W2-HF-G: directory scopes export full PII without extra grants; all st
     const allAudit = (await audits(db)).at(-1);
     assert.equal(allAudit.scope_kind, "all");
 
-    // `all` also requires every capability term even for the all-scope admin.
-    for (const missing of ["pii_export", "pii_view", "payment_view"]) {
-      const db2 = await buildDb();
-      try {
-        await seed(db2);
-        for (const cap of ["pii_export", "pii_view", "payment_view"]) {
-          if (cap !== missing) await grant(db2, ADMIN_APP, cap);
-        }
-        await addWorker(db2, { recruiter: REC_A, workDate: "2026-10-01" });
-        await assert.rejects(
-          () => runExport(db2, { auth: ADMIN_AUTH, app: ADMIN_APP, scope: "all" }),
-          (error) => error.code === "42501", "all must deny when missing " + missing);
-        assert.equal((await audits(db2)).length, 0, "no audit on denied all export");
-      } finally {
-        await db2.close();
-      }
-    }
+    // Legacy field/export rows are inert. They cannot substitute for entry_admin
+    // or change_review, even when an actor has explicit all scope.
+    const legacyAuth = uuid(36), legacyApp = uuid(46);
+    await db.query("insert into auth.users (id) values ($1)", [legacyAuth]);
+    await db.query(
+      "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
+      " values ($1,$2,true,'Legacy Capability Account')", [legacyApp, legacyAuth]);
+    await db.query(
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+      " values ($1,'all','2020-01-01',true)", [legacyApp]);
+    await grantExportCaps(db, legacyApp);
+    await assert.rejects(
+      () => runExport(db, { auth: legacyAuth, app: legacyApp, scope: "all" }),
+      (error) => error.code === "42501", "legacy tokens do not grant company-wide export");
+    assert.equal((await audits(db)).length, 2, "denied legacy actor writes no export audit");
 
     // Row authority is still required: a linked recruiter without an assignment
     // cannot use the managed scope.
@@ -468,7 +465,7 @@ test("PRE-W2-P1: the 10,000/10,001 row cap fails closed with a persisted REJECTE
     const rejected = after.filter((a) => a.outcome === "REJECTED");
     assert.equal(rejected.length, 1, "the REJECTED cap audit survives the non-raising return");
     assert.equal(rejected[0].denial_code, "EXPORT_ROW_LIMIT_EXCEEDED");
-    assert.equal(rejected[0].capability, "pii_export");
+    assert.equal(rejected[0].capability, null);
     assert.equal(rejected[0].scope_kind, "own");
     assert.match(rejected[0].resource_ref, /^worker-export:recruited:10001:[0-9a-f]{64}$/);
   } finally {
@@ -518,8 +515,8 @@ test("PRE-W2-HF-E: change_review + all scope exports all workers with the Ghi ch
       "insert into public.direct_entry_app_users (app_user_id,auth_subject,enabled,display_name)" +
       " values ($1,$2,true,'Reviewer Account')", [reviewerApp, reviewerAuth]);
     await db.query(
-      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)" +
-      " values ($1,'all','2020-01-01')", [reviewerApp]);
+      "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)" +
+      " values ($1,'all','2020-01-01',true)", [reviewerApp]);
     await grant(db, reviewerApp, "change_review");
     await grantExportCaps(db, reviewerApp);
 
@@ -535,7 +532,7 @@ test("PRE-W2-HF-E: change_review + all scope exports all workers with the Ghi ch
     assert.equal(audit.outcome, "ALLOW");
     assert.match(audit.resource_ref, /^worker-export:all:2:[0-9a-f]{64}$/);
 
-    // A recruiter/PM with export caps but no all scope is still denied `all`.
+    // A recruiter/PM with legacy field/export rows but no all scope is still denied `all`.
     await grantExportCaps(db, MGR_APP);
     await assert.rejects(() => runExport(db, { scope: "all" }),
       (error) => error.code === "42501", "recruiter/PM must not export all");

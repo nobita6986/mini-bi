@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  CAPABILITIES,
   DIRECT_ENTRY_AUTH_CONTRACT_VERSION,
   authorizeDirectEntry,
   resolveActor,
@@ -19,7 +20,9 @@ const timestamp = fixture.as_of;
 const resourceRef = "00000000-0000-4000-8000-00000000a001";
 
 test("authorization hardening is versioned", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.3");
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.4");
+  const retired = ["pii_view", "pii_export", "payment_view", "payment_edit"];
+  assert.equal(CAPABILITIES.some((capability) => retired.includes(capability)), false);
 });
 
 function repositoryFor(person) {
@@ -74,6 +77,28 @@ test("versioned actor contract resolves only trusted Supabase subject mapping", 
   assert.equal(actor.session.provider, "supabase");
   assert.equal(actor.session.verification, "getUser");
   assert.equal("role" in actor, false);
+});
+
+test("legacy field grants resolve during compatibility but are inert", async () => {
+  const actor = await actorFor(fixture.admin);
+  assert.equal(actor.capabilities.includes("pii_view"), false);
+  assert.equal(actor.capabilities.includes("pii_export"), false);
+  assert.equal(actor.capabilities.includes("payment_view"), false);
+  assert.equal(actor.capabilities.includes("payment_edit"), false);
+  for (const action of ["pii_view", "pii_export", "payment_view", "payment_edit"]) {
+    const decision = authorizeDirectEntry({
+      actor: { ...actor, capabilities: [...actor.capabilities, action] },
+      action,
+      resource: {
+        ...ownResource(fixture.staff.record.app_user_id),
+        scope: { kind: "all", reference: "all", effective_date: "2020-01-01" },
+      },
+      timestamp,
+      reason_ref: "reason_synthetic_01",
+      expected_version: 1,
+    });
+    assert.equal(decision.code, "CAPABILITY_DENIED", action);
+  }
 });
 
 test("missing authentication, disabled actor, and repository failures deny closed", async () => {
@@ -229,26 +254,19 @@ test("client-supplied actor, role, capability, and scope fields are rejected", (
   }), { ok: true });
 });
 
-test("ID equality never links recruiter and app user without a verified effective link", async () => {
+test("ID equality never links recruiter and app user without a verified current link", async () => {
   const actor = await actorFor(fixture.staff);
   assert.equal(actor.self_recruiter_suggestion, null);
   assert.equal(resolveSelfRecruiterSuggestion({
     app_user_id: fixture.staff.record.app_user_id,
-    display_name: "Synthetic Account",
-    date: "2026-10-02",
     links: [],
   }).kind, "none");
   assert.equal(resolveSelfRecruiterSuggestion({
     app_user_id: fixture.staff.record.app_user_id,
-    display_name: "Synthetic Account",
-    date: "2026-10-02",
     links: [{
       app_user_id: fixture.staff.record.app_user_id,
-      display_name: "Synthetic Account",
       recruiter_id: fixture.staff.record.app_user_id,
       verified: false,
-      valid_from: "2026-01-01",
-      valid_to: null,
     }],
   }).kind, "none");
 });
@@ -277,7 +295,7 @@ test("a verified recruiter link gives a suggestion but grants no capability", as
   }]);
 });
 
-test("ambiguous recruiter links and team scope grants fail closed", async () => {
+test("ambiguous current recruiter links and team scopes fail closed", async () => {
   const overlappingLinkPerson = structuredClone(fixture.leader);
   overlappingLinkPerson.record.recruiter_links.push({
     ...overlappingLinkPerson.record.recruiter_links[0],
@@ -296,7 +314,7 @@ test("ambiguous recruiter links and team scope grants fail closed", async () => 
   const overlappingTeamPerson = structuredClone(fixture.leader);
   overlappingTeamPerson.record.team_scope_grants.push({
     ...overlappingTeamPerson.record.team_scope_grants[0],
-    valid_from: "2026-10-01",
+    valid_from: "2026-01-01",
   });
   assert.deepEqual(await resolveActor({
     session: {
@@ -307,211 +325,35 @@ test("ambiguous recruiter links and team scope grants fail closed", async () => 
     repository: repositoryFor(overlappingTeamPerson),
     at: timestamp,
   }), { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" });
-});
 
-test("all team-grant intervals are checked for overlap, independent of session date", async () => {
-  const overlappingAtSessionDate = structuredClone(fixture.leader);
-  overlappingAtSessionDate.record.team_scope_grants.push({
-    team_id: "team_synthetic_01",
-    valid_from: "2026-10-01",
-    valid_to: "2026-10-10",
+  const duplicateAllScope = structuredClone(fixture.admin);
+  duplicateAllScope.record.all_scope_grants.push({
+    ...duplicateAllScope.record.all_scope_grants[0],
   });
   assert.deepEqual(await resolveActor({
     session: {
-      auth_subject: overlappingAtSessionDate.auth_subject,
+      auth_subject: duplicateAllScope.auth_subject,
       provider: "supabase",
       authenticated_at: null,
     },
-    repository: repositoryFor(overlappingAtSessionDate),
-    at: timestamp,
-  }), { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" });
-
-  const futureOverlap = structuredClone(fixture.leader);
-  futureOverlap.record.team_scope_grants = [
-    {
-      team_id: "team_synthetic_01",
-      valid_from: "2026-10-05",
-      valid_to: "2026-10-15",
-    },
-    {
-      team_id: "team_synthetic_01",
-      valid_from: "2026-10-10",
-      valid_to: "2026-10-20",
-    },
-  ];
-  assert.deepEqual(await resolveActor({
-    session: {
-      auth_subject: futureOverlap.auth_subject,
-      provider: "supabase",
-      authenticated_at: null,
-    },
-    repository: repositoryFor(futureOverlap),
-    at: timestamp,
-  }), { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" });
-
-  for (const secondInterval of [
-    { valid_from: "2026-09-01", valid_to: "2026-10-03" },
-    { valid_from: "2026-10-01", valid_to: null },
-  ]) {
-    const person = structuredClone(fixture.leader);
-    person.record.team_scope_grants.push({
-      team_id: "team_synthetic_01",
-      ...secondInterval,
-    });
-    assert.deepEqual(await resolveActor({
-      session: {
-        auth_subject: person.auth_subject,
-        provider: "supabase",
-        authenticated_at: null,
-      },
-      repository: repositoryFor(person),
-      at: timestamp,
-    }), { ok: false, reason: "AMBIGUOUS_TEAM_MEMBERSHIP" });
-  }
-
-  const invertedInterval = structuredClone(fixture.leader);
-  invertedInterval.record.team_scope_grants.push({
-    team_id: "team_synthetic_01",
-    valid_from: "2026-10-10",
-    valid_to: "2026-10-09",
-  });
-  assert.deepEqual(await resolveActor({
-    session: {
-      auth_subject: invertedInterval.auth_subject,
-      provider: "supabase",
-      authenticated_at: null,
-    },
-    repository: repositoryFor(invertedInterval),
+    repository: repositoryFor(duplicateAllScope),
     at: timestamp,
   }), { ok: false, reason: "ACTOR_REPOSITORY_INVALID" });
 });
 
-test("zero-length scope markers are valid, inert, and ignored by overlap checks", async () => {
-  const markerOnly = structuredClone(fixture.leader);
-  markerOnly.record.team_scope_grants = [{
-    team_id: "team_synthetic_01",
-    valid_from: "2026-10-02",
-    valid_to: "2026-10-02",
-  }];
-  markerOnly.record.all_scope_grants = [{
-    valid_from: "2026-10-02",
-    valid_to: "2026-10-02",
-  }];
-  const markerOnlyActor = await actorFor(markerOnly);
-  assert.equal(markerOnlyActor.scopes.some((scope) => scope.kind === "team"), false);
-  assert.equal(markerOnlyActor.scopes.some((scope) => scope.kind === "all"), false);
-
-  const markerWithGrant = structuredClone(fixture.leader);
-  markerWithGrant.record.team_scope_grants.push({
-    team_id: "team_synthetic_01",
-    valid_from: "2026-09-01",
-    valid_to: "2026-09-01",
-  });
-  const actor = await actorFor(markerWithGrant);
-  assert.equal(actor.scopes.filter((scope) => scope.kind === "team").length, 1);
-  assert.equal(authorizeDirectEntry({
-    actor,
-    action: "entry_team",
-    resource: teamResource(),
-    timestamp,
-    expected_version: 1,
-  }).allowed, true);
-
-  const recruiterMarker = structuredClone(fixture.leader);
-  recruiterMarker.record.recruiter_links[0].valid_to =
-    recruiterMarker.record.recruiter_links[0].valid_from;
-  assert.deepEqual(await resolveActor({
-    session: {
-      auth_subject: recruiterMarker.auth_subject,
-      provider: "supabase",
-      authenticated_at: null,
-    },
-    repository: repositoryFor(recruiterMarker),
-    at: timestamp,
-  }), { ok: false, reason: "ACTOR_REPOSITORY_INVALID" });
-});
-
-test("adjacent half-open and distinct-team grants pass; missing resource-date grant denies", async () => {
-  const adjacent = structuredClone(fixture.leader);
-  adjacent.record.team_scope_grants.push({
-    team_id: "team_synthetic_01",
-    valid_from: "2026-10-03",
-    valid_to: "2026-11-01",
-  });
-  const adjacentActor = await actorFor(adjacent);
-  assert.equal(authorizeDirectEntry({
-    actor: adjacentActor,
-    action: "entry_team",
-    resource: teamResource("team_synthetic_01", "2026-10-03"),
-    timestamp,
-    expected_version: 1,
-  }).allowed, true);
-  const duplicateScopeActor = {
-    ...adjacentActor,
-    scopes: [...adjacentActor.scopes, ...adjacentActor.scopes.filter((scope) =>
-      scope.kind === "team" && scope.reference === "team_synthetic_01"
-    )],
-  };
-  assert.equal(authorizeDirectEntry({
-    actor: duplicateScopeActor,
-    action: "entry_team",
-    resource: teamResource("team_synthetic_01", "2026-10-02"),
-    timestamp,
-    expected_version: 1,
-  }).code, "SCOPE_DENIED");
-
-  const multipleTeams = structuredClone(fixture.leader);
-  multipleTeams.record.teams.push({
-    team_id: "team_synthetic_02",
-    code: "T02",
-    display: "Synthetic team 02",
-    active: true,
-  });
-  multipleTeams.record.team_scope_grants.push({
-    team_id: "team_synthetic_02",
-    valid_from: "2026-09-01",
-    valid_to: "2026-10-03",
-  });
-  assert.equal((await resolveActor({
-    session: {
-      auth_subject: multipleTeams.auth_subject,
-      provider: "supabase",
-      authenticated_at: null,
-    },
-    repository: repositoryFor(multipleTeams),
-    at: timestamp,
-  })).ok, true);
-
-  const separated = structuredClone(fixture.leader);
-  separated.record.team_scope_grants[0].valid_to = "2026-10-03";
-  separated.record.team_scope_grants.push({
-    team_id: "team_synthetic_01",
-    valid_from: "2026-10-10",
-    valid_to: "2026-10-20",
-  });
-  const separatedActor = await actorFor(separated);
-  assert.equal(authorizeDirectEntry({
-    actor: separatedActor,
-    action: "entry_team",
-    resource: teamResource("team_synthetic_01", "2026-10-05"),
-    timestamp,
-    expected_version: 1,
-  }).code, "SCOPE_DENIED");
-});
-
-test("leader scope is effective-dated and checks stable P1.5 team IDs", async () => {
+test("current scope rows are authoritative; dates are inert metadata", async () => {
   const actor = await actorFor(fixture.leader);
   assert.equal(authorizeDirectEntry({
     actor,
     action: "entry_team",
-    resource: teamResource(),
+    resource: teamResource("team_synthetic_01", "1999-01-01"),
     timestamp,
     expected_version: 1,
   }).allowed, true);
   assert.equal(authorizeDirectEntry({
     actor,
     action: "change_review",
-    resource: teamResource(),
+    resource: teamResource("team_synthetic_01", "2020-01-01"),
     timestamp,
     reason_ref: "reason_synthetic_01",
     expected_version: 1,
@@ -523,23 +365,38 @@ test("leader scope is effective-dated and checks stable P1.5 team IDs", async ()
     timestamp,
     expected_version: 1,
   }).code, "SCOPE_DENIED");
-  assert.equal(authorizeDirectEntry({
-    actor,
-    action: "entry_team",
-    resource: teamResource("team_synthetic_01", "2026-10-03"),
-    timestamp,
-    expected_version: 1,
-  }).code, "SCOPE_DENIED");
+
+  // Future or revoked rows are excluded by the actor RPC; they stay absent when time advances.
+  const noCurrentGrant = structuredClone(fixture.leader);
+  noCurrentGrant.record.team_scope_grants = [];
+  for (const at of [timestamp, "2030-01-01T00:00:00.000Z"]) {
+    const resolved = await resolveActor({
+      session: {
+        auth_subject: noCurrentGrant.auth_subject,
+        provider: "supabase",
+        authenticated_at: null,
+      },
+      repository: repositoryFor(noCurrentGrant),
+      at,
+    });
+    assert.equal(resolved.ok, true);
+    assert.equal(resolved.actor.scopes.some((scope) => scope.kind === "team"), false);
+    assert.equal(authorizeDirectEntry({
+      actor: resolved.actor,
+      action: "entry_team",
+      resource: teamResource("team_synthetic_01", "2020-01-01"),
+      timestamp: at,
+      expected_version: 1,
+    }).code, "SCOPE_DENIED");
+  }
 });
 
-test("accounting receives only explicitly granted review, status, and payment capabilities", async () => {
+test("accounting receives only explicitly granted review and status capabilities", async () => {
   const actor = await actorFor(fixture.accounting);
   for (const action of [
     "change_review",
     "entry_privileged_edit",
     "employment_status.apply",
-    "payment_view",
-    "payment_edit",
   ]) {
     const decision = authorizeDirectEntry({
       actor,
@@ -557,38 +414,16 @@ test("accounting receives only explicitly granted review, status, and payment ca
   }
   assert.equal(authorizeDirectEntry({
     actor,
-    action: "pii_export",
-    resource: teamResource(),
-    timestamp,
-  }).code, "CAPABILITY_DENIED");
-  assert.equal(authorizeDirectEntry({
-    actor,
     action: "document_view",
     resource: teamResource(),
     timestamp,
   }).code, "CAPABILITY_DENIED");
-  assert.equal(authorizeDirectEntry({
-    actor,
-    action: "payment_view",
-    resource: {
-      ...ownResource(fixture.admin.record.app_user_id, 3),
-      scope: {
-        kind: "own",
-        reference: fixture.admin.record.app_user_id,
-        effective_date: "2025-12-31",
-      },
-    },
-    timestamp,
-  }).code, "SCOPE_DENIED");
 });
 
 test("read actions ignore resource versions while still checking capability and scope", async () => {
   const admin = await actorFor(fixture.admin);
   for (const action of [
-    "payment_view",
     "document_view",
-    "pii_view",
-    "pii_export",
     "audit_view",
   ]) {
     const decision = authorizeDirectEntry({
@@ -610,7 +445,6 @@ test("only version-listed mutations require valid and current versions", async (
     "change_review",
     "entry_privileged_edit",
     "employment_status.apply",
-    "payment_edit",
     "recruiter_master_manage",
     "team_master_manage",
     "entry_restore",
@@ -649,12 +483,11 @@ test("only version-listed mutations require valid and current versions", async (
   }).allowed, true);
 });
 
-test("privileged direct edit, status apply, and payment edit require reason and version", async () => {
+test("privileged direct edit and status apply require reason and version", async () => {
   const accounting = await actorFor(fixture.accounting);
   for (const action of [
     "entry_privileged_edit",
     "employment_status.apply",
-    "payment_edit",
   ]) {
     const common = {
       actor: accounting,
@@ -918,7 +751,7 @@ test("audit envelopes contain opaque references and no body, claim, token, or PI
   const actor = await actorFor(fixture.accounting);
   const decision = authorizeDirectEntry({
     actor,
-    action: "payment_edit",
+    action: "entry_privileged_edit",
     resource: {
       ...ownResource(fixture.admin.record.app_user_id, 3),
       scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },
@@ -946,7 +779,7 @@ test("audit envelopes contain opaque references and no body, claim, token, or PI
 
   const rawIdentifier = authorizeDirectEntry({
     actor,
-    action: "payment_edit",
+    action: "entry_privileged_edit",
     resource: {
       ...ownResource(fixture.admin.record.app_user_id, 3),
       reference: "123456789012",
@@ -960,7 +793,7 @@ test("audit envelopes contain opaque references and no body, claim, token, or PI
   assert.equal(rawIdentifier.audit.resource_ref, null);
   assert.equal(authorizeDirectEntry({
     actor,
-    action: "payment_edit",
+    action: "entry_privileged_edit",
     resource: {
       ...ownResource(fixture.admin.record.app_user_id, 3),
       scope: { kind: "all", reference: "all", effective_date: "2026-10-02" },

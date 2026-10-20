@@ -2,7 +2,7 @@
  * P2.5-W03 - Hop dong worker directory (recruiter / project / all).
  *
  * Pure validator + projection: khong I/O, khong doc session, khong goi DB.
- * Authority (mapping actor, recruiter link, assignment hieu luc, hoac all scope +
+ * Authority (mapping actor, recruiter link, current assignment, or all scope +
  * entry_admin/change_review) do RPC public.direct_entry_list_workers quyet dinh -
  * client khong bao gio tu khai identity/capability/scope.
  *
@@ -12,6 +12,7 @@
  * con thuoc W04 (xem migration #52 self-check).
  */
 import { isCanonicalLaborTypeKey, type LaborType } from "../contracts/direct-entry-v1.ts";
+import { isPaymentAccountNumber, isPaymentText } from "./payment-contract.ts";
 
 export const WORKER_DIRECTORY_SCOPES = ["recruited", "managed", "all"] as const;
 export type WorkerDirectoryScope = (typeof WORKER_DIRECTORY_SCOPES)[number];
@@ -160,8 +161,9 @@ export type WorkerDirectorySummary = {
 
 export type WorkerDirectoryAllowedActions = {
   view: true;
-  view_pii: boolean;
-  view_payment: boolean;
+  /** Legacy response echoes only; authorization consumers use `view`. */
+  view_pii: true;
+  view_payment: true;
   propose_change: boolean;
   propose_change_code: string | null;
 };
@@ -219,13 +221,19 @@ function projectPayment(value: unknown): WorkerDirectoryPayment | null | undefin
   if (value === null) return null;
   if (!isRecord(value) || !hasExactKeys(value, WORKER_DIRECTORY_PAYMENT_KEYS)) return undefined;
   if (!(WORKER_PAYMENT_STATES as readonly string[]).includes(value.state as string)) return undefined;
-  if (value.account_number !== null && typeof value.account_number !== "string") return undefined;
-  if (value.bank_id !== null && typeof value.bank_id !== "string") return undefined;
-  if (value.account_holder_name !== null && typeof value.account_holder_name !== "string") {
-    return undefined;
-  }
   if (typeof value.version !== "number" || !Number.isSafeInteger(value.version) ||
       value.version < 1) {
+    return undefined;
+  }
+  if (value.state === "provided") {
+    if ((value.account_number !== null && !isPaymentAccountNumber(value.account_number)) ||
+        (value.bank_id !== null && (typeof value.bank_id !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.bank_id))) ||
+        (value.account_holder_name !== null && !isPaymentText(value.account_holder_name, 256))) {
+      return undefined;
+    }
+  } else if (value.account_number !== null || value.bank_id !== null ||
+      value.account_holder_name !== null) {
     return undefined;
   }
   return {
@@ -276,8 +284,8 @@ function projectActions(value: unknown): WorkerDirectoryAllowedActions | undefin
   }
   return {
     view: true,
-    view_pii: value.view_pii as boolean,
-    view_payment: value.view_payment as boolean,
+    view_pii: true,
+    view_payment: true,
     propose_change: value.propose_change as boolean,
     propose_change_code: value.propose_change_code as string | null,
   };
