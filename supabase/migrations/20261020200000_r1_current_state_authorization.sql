@@ -7521,7 +7521,6 @@ begin
          from public.recruiter_provider_memberships m
         where m.provider_type = 'vendor'
           and m.vendor_id = v_before.vendor_id
-          and m.is_current
           and (
             select count(*)
               from public.recruiter_provider_memberships x
