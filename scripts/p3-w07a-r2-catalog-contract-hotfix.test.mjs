@@ -61,8 +61,8 @@ async function buildDatabase() {
     [HRP_APP_USER, HRP_AUTH],
   );
   await db.query(
-    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from)" +
-    " values ($1::uuid, 'entry_create', '2020-01-01')",
+    "insert into public.direct_entry_capability_grants(app_user_id, capability, valid_from, is_current)" +
+    " values ($1::uuid, 'entry_create', '2020-01-01', true)",
     [HRP_APP_USER],
   );
   return db;
@@ -122,13 +122,13 @@ test("H2 HRP catalog exposes vendor_id=null, UUID team, and a non-null team_disp
     [HRP_RECRUITER],
   );
   await db.query(
-    "insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from)" +
-    " values ($1::uuid, $2::uuid, '2026-01-01'::date)",
+    "insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from, is_current)" +
+    " values ($1::uuid, $2::uuid, '2026-01-01'::date, true)",
     [HRP_RECRUITER, TEAM_A],
   );
   await db.query(
-    "insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from)" +
-    " values ($1::uuid, 'hrp', '2026-01-01'::date)",
+    "insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from, is_current)" +
+    " values ($1::uuid, 'hrp', '2026-01-01'::date, true)",
     [HRP_RECRUITER],
   );
 
@@ -162,8 +162,8 @@ test("H3 Vendor catalog carries null team and is accepted by the runtime project
     [VENDOR_RECRUITER],
   );
   await db.query(
-    "insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from, vendor_id)" +
-    " values ($1::uuid, 'vendor', '2026-01-01'::date, 'vendor_x')",
+    "insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from, vendor_id, is_current)" +
+    " values ($1::uuid, 'vendor', '2026-01-01'::date, 'vendor_x', true)",
     [VENDOR_RECRUITER],
   );
 
@@ -288,14 +288,14 @@ test("H6 getInputCatalog returns HTTP 200 with the real RPC contract, not a hand
     [HRP_RECRUITER, VENDOR_RECRUITER],
   );
   await db.query(
-    "insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from)" +
-    " values ($1::uuid, $2::uuid, '2026-01-01'::date)",
+    "insert into public.recruiter_team_memberships(recruiter_id, team_id, valid_from, is_current)" +
+    " values ($1::uuid, $2::uuid, '2026-01-01'::date, true)",
     [HRP_RECRUITER, TEAM_A],
   );
   await db.query(
-    "insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from, vendor_id)" +
-    " values ($1::uuid, 'hrp',    '2026-01-01'::date, null)," +
-    "        ($2::uuid, 'vendor', '2026-01-01'::date, null)",
+    "insert into public.recruiter_provider_memberships(recruiter_id, provider_type, valid_from, vendor_id, is_current)" +
+    " values ($1::uuid, 'hrp',    '2026-01-01'::date, null, true)," +
+    "        ($2::uuid, 'vendor', '2026-01-01'::date, null, true)",
     [HRP_RECRUITER, VENDOR_RECRUITER],
   );
   await db.query(

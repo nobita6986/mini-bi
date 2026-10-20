@@ -218,13 +218,13 @@ await db.query(
   [CATALOG_OPERATOR.app_user_id, CATALOG_OPERATOR.auth_subject],
 );
 await db.query(
-  "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from)"
-  + " values ($1::uuid, 'catalog_master_manage', '2020-01-01')",
+  "insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)"
+  + " values ($1::uuid, 'catalog_master_manage', '2020-01-01', true)",
   [CATALOG_OPERATOR.app_user_id],
 );
 await db.query(
-  "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from)"
-  + " values ($1::uuid, 'all', '2020-01-01')",
+  "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)"
+  + " values ($1::uuid, 'all', '2020-01-01', true)",
   [CATALOG_OPERATOR.app_user_id],
 );
 

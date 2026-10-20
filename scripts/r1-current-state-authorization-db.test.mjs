@@ -259,7 +259,7 @@ test("project-team grant/revoke is transactional current state, not an interval 
   }
 });
 
-test("project deactivation preserves PM history authority until explicit unassign", async () => {
+test("project deactivation preserves PM draft and history authority until explicit unassign", async () => {
   const { db } = await buildDb();
   try {
     await seedActorsAndResources(db);
@@ -320,19 +320,17 @@ test("project deactivation preserves PM history authority until explicit unassig
       }), REC_A, TEAM_A],
     );
     await db.query("commit");
-    await assert.rejects(
-      db.query(
-        `select public.direct_entry_update_draft_row(
-          $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text)`,
-        [managerAuth, managerApp, entryId,
-          JSON.stringify({ employee_code: `hrp-${year}-000902` }), "r1-pm-draft-denied"],
-      ),
-      (error) => error.code === "42501",
-      "project-manager assignment alone does not grant draft-row edit authority",
-    );
+    const draftUpdate = (await db.query(
+      `select public.direct_entry_update_draft_row(
+        $1::uuid, $2::uuid, $3::uuid, 1, $4::jsonb, $5::text) as result`,
+      [managerAuth, managerApp, entryId,
+        JSON.stringify({ employee_code: `hrp-${year}-000902` }), "r1-pm-draft-update"],
+    )).rows[0].result;
+    assert.equal(draftUpdate.version, 2,
+      "a current project-manager assignment retains the existing scoped DRAFT edit authority");
     assert.deepEqual((await db.query(
       "select employee_code, version from public.direct_entries where entry_id = $1", [entryId],
-    )).rows[0], { employee_code: `hrp-${year}-000901`, version: 1 });
+    )).rows[0], { employee_code: `hrp-${year}-000902`, version: 2 });
     await addCurrentCapability(db, APP, "submission_create");
     await db.query(
       `insert into public.direct_entry_scope_grants
@@ -341,7 +339,7 @@ test("project deactivation preserves PM history authority until explicit unassig
     );
     await db.query(
       `select public.direct_entry_transition_submission_apply(
-        $1::uuid, $2::uuid, $3::uuid, 1, 'SUBMITTED', $4::text, null, null)`,
+        $1::uuid, $2::uuid, $3::uuid, 2, 'SUBMITTED', $4::text, null, null)`,
       [AUTH, APP, submissionId, "r1-pm-submit"],
     );
 
