@@ -146,6 +146,52 @@ export function editableFields(row: LiveDraftRow): EditableDraftFields {
   };
 }
 
+export function buildDraftUpdatePayload(
+  fields: EditableDraftFields,
+  savedPayment: DraftProfileProjection["payment"] | null,
+): Record<string, unknown> | null {
+  const payment = fields.profile.payment;
+  const paymentChanged = JSON.stringify(payment) !== JSON.stringify(savedPayment);
+  if (paymentChanged && (!payment || [
+    payment.account_number, payment.bank_name, payment.account_holder_name,
+  ].some((field) => field.state === "masked" || field.state === "redacted"))) return null;
+
+  const worker = fields.profile.worker_details;
+  const optional = (field: { state: string; value?: string }) => field.state === "provided"
+    ? { state: "provided", value: field.value }
+    : { state: field.state };
+  const text = (field: { state: string; value?: string }) =>
+    field.state === "provided" ? field.value : null;
+  const paymentText = payment;
+  const hasPaymentText = paymentText && [
+    paymentText.account_number, paymentText.bank_name, paymentText.account_holder_name,
+  ].some((field) => field.state === "provided" && field.value?.trim());
+  return {
+    project_id: fields.projectId,
+    first_work_date: fields.firstWorkDate,
+    employee_code: fields.employeeCode,
+    worker_details: {
+      display_name: fields.workerName,
+      gender: optional(worker.gender),
+      date_of_birth: optional(worker.date_of_birth),
+      national_id: optional(worker.national_id),
+      national_id_issued_at: optional(worker.national_id_issued_at),
+      national_id_issued_place: optional(worker.national_id_issued_place),
+      address: optional(worker.address),
+      phone: optional(worker.phone),
+    },
+    recruiter_id: fields.recruiterId,
+    labor_type: fields.laborType,
+    general_note: text(fields.profile.general_note),
+    ...(paymentChanged && paymentText ? { payment: {
+      state: hasPaymentText ? "provided" : "intentionally_blank",
+      account_number: hasPaymentText ? text(paymentText.account_number) : null,
+      bank_name: hasPaymentText ? text(paymentText.bank_name) : null,
+      account_holder_name: hasPaymentText ? text(paymentText.account_holder_name) : null,
+    } } : {}),
+  };
+}
+
 export function fieldsDiffer(
   left: EditableDraftFields,
   right: EditableDraftFields,

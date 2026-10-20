@@ -5,6 +5,7 @@ import {
   acceptDraftCreate,
   acceptDraftUpdate,
   applyServerDraft,
+  buildDraftUpdatePayload,
   changedDraftFields,
   draftRowFromProjection,
   editableFields,
@@ -54,6 +55,100 @@ const projection = {
     payment: null,
   },
 };
+
+const visiblePayment = {
+  state: "provided",
+  account_number: { state: "provided", value: "000098765432" },
+  bank_name: { state: "provided", value: "Synthetic Bank" },
+  account_holder_name: { state: "provided", value: "Synthetic Holder" },
+  version: 2,
+};
+
+function fieldsWithPayment(payment) {
+  const row = draftRowFromProjection({
+    ...projection,
+    profile: { ...projection.profile, payment },
+  });
+  return editableFields(row);
+}
+
+test("draft update payload omits unchanged payment during unrelated edits", () => {
+  const fields = fieldsWithPayment(visiblePayment);
+  const patch = buildDraftUpdatePayload({
+    ...fields,
+    workerName: "Synthetic renamed worker",
+    firstWorkDate: "2026-10-16",
+  }, visiblePayment);
+  assert.ok(patch);
+  assert.equal(Object.hasOwn(patch, "payment"), false);
+});
+
+test("masked or redacted payment stays omitted and cannot be explicitly blanked", () => {
+  const hiddenPayment = {
+    state: "provided",
+    account_number: { state: "masked", value: "••••5432" },
+    bank_name: { state: "redacted", present: true },
+    account_holder_name: { state: "redacted", present: true },
+    version: 3,
+  };
+  const fields = fieldsWithPayment(hiddenPayment);
+  const unrelated = buildDraftUpdatePayload({ ...fields, workerName: "Synthetic rename" }, hiddenPayment);
+  assert.ok(unrelated);
+  assert.equal(Object.hasOwn(unrelated, "payment"), false);
+
+  const edited = {
+    ...fields,
+    profile: {
+      ...fields.profile,
+      payment: {
+        ...hiddenPayment,
+        account_number: { state: "provided", value: "00001234" },
+      },
+    },
+  };
+  assert.equal(buildDraftUpdatePayload(edited, hiddenPayment), null,
+    "an explicit payment edit is rejected while any source field is unreadable");
+});
+
+test("explicit payment edit keeps leading zeros and explicit clearing remains intentional", () => {
+  const fields = fieldsWithPayment(visiblePayment);
+  const changed = {
+    ...fields,
+    profile: {
+      ...fields.profile,
+      payment: {
+        ...visiblePayment,
+        account_number: { state: "provided", value: "000012340056" },
+      },
+    },
+  };
+  const patch = buildDraftUpdatePayload(changed, visiblePayment);
+  assert.deepEqual(patch?.payment, {
+    state: "provided",
+    account_number: "000012340056",
+    bank_name: "Synthetic Bank",
+    account_holder_name: "Synthetic Holder",
+  });
+
+  const cleared = {
+    ...fields,
+    profile: {
+      ...fields.profile,
+      payment: {
+        ...visiblePayment,
+        account_number: { state: "intentionally_blank" },
+        bank_name: { state: "intentionally_blank" },
+        account_holder_name: { state: "intentionally_blank" },
+      },
+    },
+  };
+  assert.deepEqual(buildDraftUpdatePayload(cleared, visiblePayment)?.payment, {
+    state: "intentionally_blank",
+    account_number: null,
+    bank_name: null,
+    account_holder_name: null,
+  });
+});
 
 test("persisted IDs, versions and fields hydrate from server; unsaved rows use temporary identity", () => {
   const persisted = draftRowFromProjection(projection);
