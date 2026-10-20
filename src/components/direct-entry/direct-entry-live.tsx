@@ -24,6 +24,7 @@ import type { DuplicateCccdPreflight } from "@/lib/direct-entry/submission-dupli
 import {
   acceptDraftCreate,
   acceptDraftUpdate,
+  buildDraftUpdatePayload,
   changedDraftFields,
   draftRowFromProjection,
   editableFields,
@@ -277,43 +278,6 @@ function createPayload(row: LiveDraftRow) {
     worker: optionalWorker(row.workerName),
     recruiter_id: row.recruiterId,
     labor_type: row.laborType,
-  };
-}
-
-function updatePayload(fields: EditableDraftFields) {
-  const worker = fields.profile.worker_details;
-  const optional = (field: { state: string; value?: string }) => field.state === "provided"
-    ? { state: "provided", value: field.value }
-    : { state: field.state };
-  const text = (field: { state: string; value?: string }) =>
-    field.state === "provided" ? field.value : null;
-  const paymentText = fields.profile.payment;
-  const hasPaymentText = paymentText && [
-    paymentText.account_number, paymentText.bank_name, paymentText.account_holder_name,
-  ].some((field) => field.state === "provided" && field.value?.trim());
-  return {
-    project_id: fields.projectId,
-    first_work_date: fields.firstWorkDate,
-    employee_code: fields.employeeCode,
-    worker_details: {
-      display_name: fields.workerName,
-      gender: optional(worker.gender),
-      date_of_birth: optional(worker.date_of_birth),
-      national_id: optional(worker.national_id),
-      national_id_issued_at: optional(worker.national_id_issued_at),
-      national_id_issued_place: optional(worker.national_id_issued_place),
-      address: optional(worker.address),
-      phone: optional(worker.phone),
-    },
-    recruiter_id: fields.recruiterId,
-    labor_type: fields.laborType,
-    general_note: text(fields.profile.general_note),
-    ...(fields.profile.payment ? { payment: {
-      state: hasPaymentText ? "provided" : "intentionally_blank",
-      account_number: hasPaymentText ? text(paymentText.account_number) : null,
-      bank_name: hasPaymentText ? text(paymentText.bank_name) : null,
-      account_holder_name: hasPaymentText ? text(paymentText.account_holder_name) : null,
-    } } : {}),
   };
 }
 
@@ -1065,8 +1029,9 @@ export function DirectEntryLive() {
       ? { ...row, state: "saving", pendingWrite: pending, message: null }
       : row));
     try {
-      const response = pending.expectedVersion === null
-        ? await fetch("/api/direct-entry/batches", {
+      let response: Response;
+      if (pending.expectedVersion === null) {
+        response = await fetch("/api/direct-entry/batches", {
           method: "POST",
           credentials: "same-origin",
           headers: {
@@ -1074,8 +1039,15 @@ export function DirectEntryLive() {
             "Idempotency-Key": pending.key,
           },
           body: JSON.stringify({ rows: [createPayload(rowWithFields(current, pending.fields))] }),
-        })
-        : await fetch(`/api/direct-entry/entries/${encodeURIComponent(current.entryId!)}`, {
+        });
+      } else {
+        const patch = buildDraftUpdatePayload(
+          pending.fields, current.saved?.profile.payment ?? null,
+        );
+        if (!patch) {
+          throw new Error("Không thể cập nhật thanh toán khi một hoặc nhiều trường đang bị ẩn.");
+        }
+        response = await fetch(`/api/direct-entry/entries/${encodeURIComponent(current.entryId!)}`, {
           method: "PATCH",
           credentials: "same-origin",
           headers: {
@@ -1084,9 +1056,10 @@ export function DirectEntryLive() {
           },
           body: JSON.stringify({
             expected_version: pending.expectedVersion,
-            patch: updatePayload(pending.fields),
+            patch,
           }),
         });
+      }
       const payload = await readJson(response);
       if (response.status === 409 && pending.expectedVersion !== null) {
         let conflictCopy: ConflictCopy | null = null;
