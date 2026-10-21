@@ -238,6 +238,26 @@ test("filterEntriesForActor: reader (no capability) → chỉ Dashboard", () => 
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
+test("filterEntriesForActor: Work Reports chỉ hiện với actor có quyền trong scope", () => {
+  const teamReporter = makeActor(["report_view"], [{ kind: "team", reference: "team-1" }]);
+  const permitted = filterEntriesForActor({
+    viewport: "desktop",
+    directEntryEnabled: true,
+    actor: teamReporter,
+    decide: decideFor(teamReporter, "desktop"),
+  });
+  assert.ok(permitted.some((entry) => entry.id === "work-reports"));
+
+  const reader = makeActor([], [{ kind: "team", reference: "team-1" }]);
+  const denied = filterEntriesForActor({
+    viewport: "desktop",
+    directEntryEnabled: true,
+    actor: reader,
+    decide: decideFor(reader, "desktop"),
+  });
+  assert.ok(!denied.some((entry) => entry.id === "work-reports"));
+});
+
 test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Người lao động + Yêu cầu thay đổi", () => {
   // P2.5-W06-R1 & R2.2: reviewer bundle + effective all scope duoc vao Worker Operations
   // va Yêu cầu thay đổi (nhung KHONG duoc vao Direct Entry editor).
@@ -303,9 +323,9 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
-  // Admin and Change Requests are added to the same registry; no separate menu registry is introduced.
+  // Admin, Change Requests and Work Reports share the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============
