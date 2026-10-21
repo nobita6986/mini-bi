@@ -9,6 +9,7 @@ import type { NavCapabilityPredicate } from "../navigation/registry-capability.t
 import {
   adminAreaNavPredicate,
   adminSecurityNavPredicate,
+  changeRequestsNavPredicate,
   projectAdminNavPredicate,
   workerOperationsNavPredicate,
 } from "../navigation/registry-capability.ts";
@@ -156,6 +157,25 @@ export function decideWorkerOperationsPageAccess(input: {
     uiEnabled: input.uiEnabled,
     actor: input.actor,
     allowed: workerOperationsNavPredicate,
+  });
+}
+
+/**
+ * R2.2: quyet dinh truy cap cho /direct-entry/change-requests.
+ * - Cung boundary voi nav (changeRequestsNavPredicate).
+ * - Ngoai ra, actor con active (actor.ok === true) nhung da doi phan cong/thu hoi quyen
+ *   hien tai van duoc vao xem lich su yeu cau do chinh minh da gui khi hasHistoricalRequests === true.
+ */
+export function decideChangeRequestsPageAccess(input: {
+  uiEnabled: boolean;
+  actor: ActorResolution | null;
+  hasHistoricalRequests?: boolean;
+}): DirectEntryPageDecision {
+  return decideUiCapabilityPageAccess({
+    uiEnabled: input.uiEnabled,
+    actor: input.actor,
+    allowed: (actor) =>
+      changeRequestsNavPredicate(actor) || input.hasHistoricalRequests === true,
   });
 }
 

@@ -402,8 +402,54 @@ export function submissionsQuery(cursor: string | null): string {
   return query;
 }
 
-export function requestsQuery(cursor: string | null, state: ChangeRequestQueueFilter = "PENDING"): string {
+export type ChangeRequestWorkspaceMode = "proposer" | "reviewer";
+
+export const CHANGE_REQUEST_PROPOSER_TABS = [
+  { value: "PROPOSER_PENDING", label: "Tôi đã gửi" },
+  { value: "PROPOSER_RESOLVED", label: "Lịch sử gửi" },
+] as const;
+
+export const CHANGE_REQUEST_REVIEWER_TABS = [
+  { value: "REVIEWER_PENDING", label: "Chờ tôi duyệt" },
+  { value: "REVIEWER_RESOLVED", label: "Lịch sử duyệt" },
+] as const;
+
+export const CHANGE_REQUEST_GLOBAL_AUDIT_TAB = {
+  value: "GLOBAL_AUDIT",
+  label: "Lịch sử toàn hệ thống",
+} as const;
+
+export function initialChangeRequestWorkspaceMode(
+  canReview: boolean,
+): ChangeRequestWorkspaceMode {
+  return canReview ? "reviewer" : "proposer";
+}
+
+export function initialChangeRequestQueue(
+  canReview: boolean,
+): ChangeRequestQueueFilter {
+  return canReview ? "REVIEWER_PENDING" : "PROPOSER_PENDING";
+}
+
+export function changeRequestWorkspaceTabs(input: {
+  mode: ChangeRequestWorkspaceMode;
+  canViewGlobalHistory: boolean;
+}): readonly { value: ChangeRequestQueueFilter; label: string }[] {
+  if (input.mode === "proposer") {
+    return CHANGE_REQUEST_PROPOSER_TABS;
+  }
+  return input.canViewGlobalHistory
+    ? [...CHANGE_REQUEST_REVIEWER_TABS, CHANGE_REQUEST_GLOBAL_AUDIT_TAB]
+    : CHANGE_REQUEST_REVIEWER_TABS;
+}
+
+export function requestsQuery(
+  cursor: string | null,
+  state: ChangeRequestQueueFilter = "PENDING",
+  days: "3" | "7" | "30" | "all" = "3",
+): string {
   let query = "?page_size=" + String(WORKER_REQUEST_PAGE_SIZE) + "&state=" + encodeURIComponent(state);
+  if (state === "GLOBAL_AUDIT") query += "&days=" + encodeURIComponent(days);
   if (cursor !== null) query += "&cursor=" + encodeURIComponent(cursor);
   return query;
 }
@@ -420,7 +466,7 @@ export function requestRowKey(item: ChangeRequestListItem): string {
 
 export function parseChangeRequestPageResponse(
   payload: unknown,
-  expected: { page_size: number },
+  expected: { page_size: number; audit?: boolean },
 ): ChangeRequestListPage | null {
   if (typeof payload !== "object" || payload === null) return null;
   const body = payload as Record<string, unknown>;

@@ -31,7 +31,11 @@ const RECRUITER = {
   id: "22222222-2222-4222-8222-222222222222", label: "Tuyển Dụng Giả 1",
   provider_type: "hrp", personnel_code: "vinht.td", vendor_id: null,
 };
-const CURRENT_CATALOG = { projects: [PROJECT], recruiters: [RECRUITER] };
+const CURRENT_CATALOG = {
+  projects: [PROJECT],
+  recruiters: [RECRUITER],
+  labor_types: [{ id: "TEMPORARY", label: "Thời vụ" }],
+};
 
 test("R6-A1: khong con input type=date cho first_work_date tren moi be mat", () => {
   for (const [name, source] of [["live", live], ["grid", grid], ["shell", shell]]) {

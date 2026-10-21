@@ -9,6 +9,8 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./worker-operations.tsx", import.meta.url), "utf8");
 const directEntry = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
+const changeRequestsWorkspace = readFileSync(
+  new URL("./change-requests-workspace.tsx", import.meta.url), "utf8");
 const page = readFileSync(
   new URL("../../app/direct-entry/workers/page.tsx", import.meta.url), "utf8");
 const reviewer = readFileSync(
@@ -128,8 +130,10 @@ test("R1.2-A: worker management removes the request panel and keeps Direct Entry
     "DirectEntryChangeRequestList", "DirectEntryChangeRequestReviewer", "requestPage",
     "reloadRequestPage", "requestsQuery", "WORKER_REQUEST_PAGE_SIZE",
   ]) assert.doesNotMatch(source, new RegExp(requestOnly), requestOnly);
-  assert.match(directEntry, /<DirectEntryChangeRequestList/);
-  assert.match(directEntry, /<DirectEntryChangeRequestReviewer/);
+  assert.doesNotMatch(directEntry, /<DirectEntryChangeRequestList/);
+  assert.doesNotMatch(directEntry, /<DirectEntryChangeRequestReviewer/);
+  assert.match(changeRequestsWorkspace, /<DirectEntryChangeRequestList/);
+  assert.match(changeRequestsWorkspace, /<DirectEntryChangeRequestReviewer/);
   assert.match(source, /buildChangeRequestItem/,
     "the existing proposal action remains available where direct edit is not authorized");
 });
@@ -241,10 +245,10 @@ test("W06-R1: Worker Operations stays a directory and does not embed the Direct 
 });
 
 test("W06-R2: Direct Entry approve/reject refreshes authoritative workflow state", () => {
-  assert.match(directEntry, /const reloadAfterChangeRequestMutation = useCallback\(async \(message: string\)/);
-  assert.match(directEntry, /onDecided=\{\(message\) => \{ void reloadAfterChangeRequestMutation\(message\); \}\}/);
+  assert.match(changeRequestsWorkspace, /const reloadAfterChangeRequestMutation = useCallback\(async \(/);
+  assert.match(changeRequestsWorkspace, /onDecided=\{\(message\) => \{[\s\S]{0,80}reloadAfterChangeRequestMutation\(message/);
   assert.doesNotMatch(
-    directEntry,
+    changeRequestsWorkspace,
     /onDecided=\{[\s\S]*?items:\s*requestPage\.items[\s\S]*?\}\}/,
     "decision callback must not re-apply the stale pre-decision page",
   );

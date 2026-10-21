@@ -102,10 +102,10 @@
   display: block;
   width: 100%;
   padding: 2px 4px;
-  border: 1px solid #dc2626;
+  border: 1px solid var(--semantic-error, #be123c);
   border-radius: 4px;
-  color: #b91c1c;
-  background: #fef2f2;
+  color: var(--semantic-error, #be123c);
+  background: color-mix(in srgb, var(--semantic-error, #be123c) 10%, var(--surface, #fff));
 }
 
 /* P1.7-H05: editor select phu full cell, dropdown arrow can ben phai,
@@ -163,7 +163,7 @@
 }
 
 .requiredMark {
-  color: #dc2626;
+  color: var(--semantic-error, #be123c);
   font-weight: 700;
   margin-left: 2px;
 }
@@ -222,7 +222,7 @@
 }
 
 .searchOptionActive {
-  background: #eef2ff;
+  background: color-mix(in srgb, var(--primary, #333f99) 12%, var(--surface, #fff));
 }
 
 .rowActions {
@@ -242,10 +242,10 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: 1px solid #dc2626;
+  border: 1px solid var(--semantic-error, #be123c);
   border-radius: 999px;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: color-mix(in srgb, var(--semantic-error, #be123c) 10%, var(--surface, #fff));
+  color: var(--semantic-error, #be123c);
   font-size: 18px;
   font-weight: 700;
   line-height: 1;
@@ -254,11 +254,11 @@
 }
 
 .deleteRowButton:hover {
-  background: #fee2e2;
+  background: color-mix(in srgb, var(--semantic-error, #be123c) 18%, var(--surface, #fff));
 }
 
 .deleteRowButton:focus-visible {
-  outline: 3px solid #dc2626;
+  outline: 3px solid var(--semantic-error, #be123c);
   outline-offset: 2px;
 }
 
@@ -280,7 +280,7 @@
 /* P3-W07C: placeholder cho unactivated row. Mau mo de phan biet voi gia tri
    that nhung van dam bao contrast WCAG AA. */
 .cellPlaceholder {
-  color: var(--text-muted, #71717a);
+  color: var(--muted, #64748b);
   font-style: italic;
   opacity: 0.7;
 }
@@ -288,14 +288,14 @@
 /* P3-W07C: phan biet alert (error, do) vs status (success/info, khong do).
    Contrast van dam bao noi dung ro nghia, khong chi dua vao mau sac. */
 .spreadsheetSaveMessageError {
-  color: var(--danger, #b91c1c);
+  color: var(--semantic-error, #be123c);
   font-weight: 600;
 }
 .spreadsheetSaveMessageSuccess {
-  color: var(--success, #15803d);
+  color: var(--semantic-success, #047857);
   font-weight: 500;
 }
 .spreadsheetSaveMessageInfo {
-  color: var(--text-muted, #52525b);
+  color: var(--muted, #64748b);
   font-weight: 500;
 }

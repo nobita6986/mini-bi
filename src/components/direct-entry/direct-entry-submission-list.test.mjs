@@ -233,9 +233,11 @@ test("UI boundary sends only contract fields and never client authority", () => 
   assert.match(liveComponent, /expected_version: submission\.version,/);
   assert.match(liveComponent, /target_state: action\.target_state,/);
   assert.match(liveComponent, /idempotency_key: resolved\.key,/);
-  const bodyStart = liveComponent.indexOf("body: JSON.stringify({") + "body: JSON.stringify({".length;
-  const body = liveComponent.slice(bodyStart, liveComponent.indexOf("}),", bodyStart));
-  assert.equal((body.match(/: /g) ?? []).length, 2, "body chi co dung hai truong contract");
+  const transitionStart = liveComponent.indexOf('"/transition",');
+  const bodyMarker = "acknowledgement === undefined\n            ? {";
+  const bodyStart = liveComponent.indexOf(bodyMarker, transitionStart) + bodyMarker.length;
+  const body = liveComponent.slice(bodyStart, liveComponent.indexOf("}", bodyStart));
+  assert.equal((body.match(/: /g) ?? []).length, 3, "body transition mac dinh chi co dung ba truong contract");
   assert.match(liveComponent, /cache: "no-store"/);
   assert.match(liveComponent, /credentials: "same-origin"/);
 });

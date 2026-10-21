@@ -18,6 +18,7 @@ import type { ComponentType, SVGProps } from "react";
 import {
   Building2,
   ClipboardList,
+  FileDiff,
   LayoutDashboard,
   ShieldCheck,
   Users,
@@ -53,7 +54,8 @@ export type NavCapability =
   | "entry_admin"
   | "project_admin"
   | "admin_area"
-  | "worker_operations";
+  | "worker_operations"
+  | "change_requests";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -148,6 +150,18 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Users,
     status: "current",
     capability: "worker_operations",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "change-requests",
+    label: "Yêu cầu thay đổi",
+    path: "/direct-entry/change-requests",
+    description:
+      "R2.2: theo dõi yêu cầu thay đổi đã gửi, xử lý yêu cầu chờ duyệt theo thẩm quyền " +
+      "hiện tại và tra cứu lịch sử xử lý bất biến.",
+    icon: FileDiff,
+    status: "current",
+    capability: "change_requests",
     visibility: { desktop: true, mobile: true },
   },
   {

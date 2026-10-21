@@ -109,6 +109,7 @@ test("P3 hotfix: du an hien thi ten rut gon nhung editor luu project_id va nhan 
     catalogFor: () => ({
       projects: [{ id: project.id, label: project.keywords }],
       recruiters: [RECRUITERS[0]],
+      labor_types: [{ id: "TEMPORARY", label: "Thời vụ" }],
     }),
   });
   assert.equal(validation.cellIssues.some((issue) =>

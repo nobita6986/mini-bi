@@ -12,9 +12,11 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
 import { Dialog } from "radix-ui";
 
 import { WorkerDetailDialog } from "@/components/direct-entry/worker-detail-dialog";
+import { CursorLoadMore } from "@/components/ui/cursor-load-more";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
   WORKER_CONFLICT_MESSAGE,
@@ -437,7 +439,19 @@ export function WorkerOperations({
       {notice ? (
         <p role={notice.kind === "error" ? "alert" : "status"}
           className={notice.kind === "error" ? errorClass : successClass}>
-          {notice.message}
+          <span>{notice.message}</span>
+          {notice.message.includes("Đã gửi yêu cầu thay đổi") ? (
+            <>
+              {" "}
+              <Link
+                href="/direct-entry/change-requests"
+                className="font-medium underline underline-offset-2"
+                data-testid="worker-change-request-module-link"
+              >
+                Mở Yêu cầu thay đổi
+              </Link>
+            </>
+          ) : null}
         </p>
       ) : null}
 
@@ -655,13 +669,14 @@ export function WorkerOperations({
 function LoadMore({
   state, hasMore, busy, onLoadMore,
 }: { state: PageState; hasMore: boolean; busy: boolean; onLoadMore: () => void }) {
-  if (!hasMore) return null;
   return (
     <div className="flex justify-center">
-      <button type="button" className={buttonClass} disabled={busy || state === "loading"}
-        onClick={onLoadMore}>
-        Tải thêm
-      </button>
+      <CursorLoadMore
+        hasMore={hasMore}
+        loading={busy || state === "loading"}
+        label="Tải thêm"
+        onLoadMore={onLoadMore}
+      />
     </div>
   );
 }

@@ -295,11 +295,12 @@ test("hidden XLSX CTAs retain import/template handlers and mobile staged editor 
 test("khong thao cac duong CCCD/payment/submission/change-request/mobile", () => {
   for (const marker of ["DirectEntryWorkerDocuments", "DirectEntryPaymentEditor",
     "DirectEntryDocumentEditor", "DirectEntrySubmissionList",
-    "DirectEntryChangeRequestList", "DirectEntryChangeRequestProposer",
-    "DirectEntryChangeRequestReviewer", "DirectEntrySubmittedDocumentManager",
+    "DirectEntryChangeRequestProposer", "DirectEntrySubmittedDocumentManager",
     "styles.mobileSection"]) {
     assert.ok(live.includes(marker), "missing " + marker);
   }
+  assert.equal(live.includes("DirectEntryChangeRequestList"), false);
+  assert.equal(live.includes("DirectEntryChangeRequestReviewer"), false);
   assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
   assert.equal(live.includes("DirectEntryExcelPasteDialog"), false);
   // P1.7-H06: DirectEntryCccdManager chi con su dung gian tiep qua DirectEntryWorkerDocuments,

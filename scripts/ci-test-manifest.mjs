@@ -67,37 +67,21 @@ export const NON_CI_CLASSIFIED_TESTS = Object.freeze({
     category: "HISTORICAL_RELEASE_ACCEPTANCE",
     rationale: "P2-W04A cutover source-inspection test superseded by P3-W05A actor-scoped reporting.",
   },
-  "src/components/direct-entry/direct-entry-catalog-retention-search.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Pins legacy SelectCellEditor/spreadsheet markup; scheduled for R2.2 UI/UX test modernization.",
-  },
   "src/components/direct-entry/direct-entry-h05-r1-ui-gaps.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Pins H05-R1 spreadsheet/live TSX strings superseded by later W2/R1 UI updates; scheduled for R2.2.",
+    category: "HISTORICAL_RELEASE_ACCEPTANCE",
+    rationale: "P1.7-H05-R1 historical release acceptance test pinned to pre-W2/P3.1 spreadsheet/live TSX strings.",
   },
   "src/components/direct-entry/direct-entry-h06-row-actions.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Pins H06 row-action TSX strings superseded by W2/R1 UI updates; scheduled for R2.2.",
+    category: "HISTORICAL_RELEASE_ACCEPTANCE",
+    rationale: "P1.7-H06 historical release acceptance test pinned to pre-W2/R1 row-action TSX strings.",
   },
   "src/components/direct-entry/direct-entry-h07-session-grid-ux.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Pins H07 session/grid TSX strings superseded by later UI updates; scheduled for R2.2.",
+    category: "HISTORICAL_RELEASE_ACCEPTANCE",
+    rationale: "P1.7-H07 historical release acceptance test pinned to pre-P3.1 save-button/grid TSX strings.",
   },
   "src/components/direct-entry/direct-entry-h08-r1-defaults-text-regression.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Pins H08-R1 TSX strings superseded by P3.1 dynamic labor-type catalog; scheduled for R2.2.",
-  },
-  "src/components/direct-entry/direct-entry-text-cell-regression.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Source-pinned spreadsheet cell markup regression; tracked for R2.2 UI component consolidation.",
-  },
-  "src/components/direct-entry/direct-entry-w07c-r6-decouple-date-catalog.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Pins W07C-R6 pre-laborTypes catalog shape in preview helper; superseded by P3.1 W02C dynamic catalog tests.",
-  },
-  "src/components/direct-entry/direct-entry-w07c-r6-r1-review-findings.test.mjs": {
-    category: "UI_SOURCE_PINNED",
-    rationale: "Source-pinned W07C-R6-R1 review findings test; tracked for R2.2 UI component consolidation.",
+    category: "HISTORICAL_RELEASE_ACCEPTANCE",
+    rationale: "P1.7-H08-R1 historical release acceptance test superseded by P3.1 dynamic labor-type catalog and R2.2 promoted UI tests.",
   },
 });
 

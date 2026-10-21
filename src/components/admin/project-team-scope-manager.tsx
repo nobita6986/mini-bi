@@ -5,6 +5,8 @@ import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { FormDialog } from "@/components/ui/form-dialog";
+import { OffsetPager } from "@/components/ui/offset-pager";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import {
@@ -327,30 +329,34 @@ export function ProjectTeamScopeManager() {
           </div>
         ) : null}
         {state === "ready" && list && list.total > 0 ? (
-          <div className="mt-3 flex gap-2 items-center text-sm text-muted">
-            <button type="button" className={button} disabled={page <= 1} onClick={() => { setPage((v) => Math.max(1, v - 1)); reloadList(); }}>Trang trước</button>
-            <span>Trang {page} / {pageCount}</span>
-            <button type="button" className={button} disabled={!list.has_more} onClick={() => { setPage((v) => Math.min(1000, v + 1)); reloadList(); }}>Trang sau</button>
-          </div>
+          <OffsetPager
+            page={page}
+            pageCount={pageCount}
+            total={list.total}
+            ariaLabel="Phân trang danh sách mapping"
+            nextDisabled={!list.has_more}
+            onPageChange={(nextPage) => {
+              setPage(Math.min(1000, nextPage));
+              reloadList();
+            }}
+          />
         ) : null}
       </Card>
 
-      <Dialog.Root open={dialog !== null} onOpenChange={(open) => {
-        if (!open && !busy) {
-          pendingIntent.current = null;
-          setDialog(null);
-        }
-      }}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-xl focus:outline-none sm:p-6" aria-describedby="mapping-dialog-desc">
-            <div className="flex items-start justify-between gap-4">
-              <Dialog.Title className="text-xl font-semibold text-foreground">
-                {dialog?.kind === "grant" ? "Cấp mapping Dự án ↔ Nhóm" : "Thu hồi mapping Dự án ↔ Nhóm"}
-              </Dialog.Title>
-              <Dialog.Close asChild><button type="button" aria-label="Đóng" disabled={busy} className={button}>×</button></Dialog.Close>
-            </div>
-            <Dialog.Description id="mapping-dialog-desc" className="mt-1 text-sm text-muted">Lý do thao tác không bắt buộc; mọi thay đổi đều có audit.</Dialog.Description>
+      <FormDialog
+        open={dialog !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            pendingIntent.current = null;
+            setDialog(null);
+          }
+        }}
+        title={dialog?.kind === "grant" ? "Cấp mapping Dự án ↔ Nhóm" : "Thu hồi mapping Dự án ↔ Nhóm"}
+        description="Lý do thao tác không bắt buộc; mọi thay đổi đều có audit."
+        descriptionId="mapping-dialog-desc"
+        closeDisabled={busy}
+        closeAriaLabel="Đóng"
+      >
             <form className="mt-5 space-y-4" onSubmit={(e) => { e.preventDefault(); void submitDialog(); }}>
               {dialog?.kind === "grant" ? (
                 <>
@@ -482,9 +488,7 @@ export function ProjectTeamScopeManager() {
                 ))} className={primary}>{busy ? "Đang lưu…" : dialog?.kind === "grant" ? "Cấp mapping" : "Xác nhận thu hồi"}</button>
               </div>
             </form>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      </FormDialog>
     </div>
   );
 }

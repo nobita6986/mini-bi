@@ -120,6 +120,28 @@ export const workerOperationsNavPredicate: NavCapabilityPredicate = (actor) => {
     DIRECT_ENTRY_ENTRY_CAPABILITIES.includes(capability));
 };
 
+/**
+ * R2.2: Reviewer mode predicate cho module /direct-entry/change-requests.
+ * Actor co tham quyen duyet khi co (entry_admin | change_review) @ all hoac team_manager_assign @ team.
+ */
+export const changeRequestsReviewerPredicate: NavCapabilityPredicate = (actor) =>
+  workerOperationsAllScopePredicate(actor) ||
+  workerOperationsTeamScopePredicate(actor) ||
+  (actor.capabilities.includes("change_review") &&
+    actor.scopes.some((scope) => scope.kind === "team"));
+
+/**
+ * R2.2: Proposer / history mode predicate cho module /direct-entry/change-requests.
+ */
+export const changeRequestsProposerPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("change_request_create") || directEntryNavPredicate(actor);
+
+/**
+ * R2.2: Navigation & default page predicate cho /direct-entry/change-requests.
+ */
+export const changeRequestsNavPredicate: NavCapabilityPredicate = (actor) =>
+  changeRequestsReviewerPredicate(actor) || changeRequestsProposerPredicate(actor);
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -132,6 +154,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   entry_admin: directEntryNavPredicate,
   project_admin: projectAdminNavPredicate,
   worker_operations: workerOperationsNavPredicate,
+  change_requests: changeRequestsNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */
