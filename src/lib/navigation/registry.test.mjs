@@ -17,9 +17,9 @@ const {
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 7, "phải có đúng 7 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 8, "phải có đúng 8 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"],
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-report-reviews", "work-reports", "worker-operations"],
     `got ids: ${ids.join(",")}`);
 });
 
@@ -37,7 +37,7 @@ test("Work Reports nav groups preserve their routes and omit empty groups", () =
       label: "Báo cáo cấp mới",
       children: ["direct-entry", "project-operations", "worker-operations", "change-requests"],
     },
-    { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports"] },
+    { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports", "work-report-reviews"] },
   ]);
   const dashboardOnly = CURRENT_NAV_ENTRIES.filter((entry) => entry.id === "dashboard")
     .map(({ id, label, path, group }) => ({ id, label, path, group }));
@@ -80,12 +80,20 @@ test("Work Reports hiện trong menu hiện hành sau khi F1 được tích hợ
   assert.equal(entry?.path, "/work-reports");
 });
 
+test("Work Report reviews nav points to the F2 review inbox", () => {
+  const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-report-reviews");
+  assert.ok(entry);
+  assert.equal(entry?.path, "/work-reports/reviews");
+  assert.equal(entry?.group, "daily-reports");
+  assert.equal(entry?.capability, "work_report_reviews");
+});
+
 test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
   const desktop = entriesForViewport("desktop", true);
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -93,15 +101,15 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "work-report-reviews", "admin"]);
   }
 });
 
@@ -146,6 +154,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "change_requests",
         "admin_area",
         "work_reports",
+        "work_report_reviews",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );

@@ -55,6 +55,8 @@ test("app-shell lọc nav theo feature flag + capability predicate tại request
   // Mobile viewport trong filterEntriesForActor.
   assert.match(appShellSource, /filterEntriesForActor\(\{[\s\S]{0,200}viewport:\s*"mobile"[\s\S]{0,400}\}/);
   assert.match(appShellSource, /decideNavEntryVisibility\(/);
+  assert.match(appShellSource, /WORK_REPORTS_NAV_ENTRY_IDS\.has\(entry\.id\)/);
+  assert.match(appShellSource, /new Set\(\["work-reports", "work-report-reviews"\]\)/);
   assert.match(appShellSource, /<DesktopNav\s+items=\{desktopItems/);
   assert.match(appShellSource, /items=\{mobileItems\.map\(/);
   // F6: active label duoc tinh client-side, khong con currentPath server.

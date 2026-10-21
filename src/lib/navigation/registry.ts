@@ -57,7 +57,8 @@ export type NavCapability =
   | "admin_area"
   | "worker_operations"
   | "change_requests"
-  | "work_reports";
+  | "work_reports"
+  | "work_report_reviews";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -215,6 +216,18 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: NotebookPen,
     status: "current",
     capability: "work_reports",
+    group: "daily-reports",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "work-report-reviews",
+    label: "Duyệt báo cáo",
+    path: "/work-reports/reviews",
+    description:
+      "Mở hàng đợi báo cáo đang chờ duyệt theo quyền review và phạm vi hiệu lực do máy chủ chiếu.",
+    icon: ClipboardList,
+    status: "current",
+    capability: "work_report_reviews",
     group: "daily-reports",
     visibility: { desktop: true, mobile: true },
   },

@@ -26,6 +26,7 @@ import type { Capability } from "@/lib/auth/direct-entry-v2";
 export type NavActorProjection = {
   capabilities: readonly Capability[];
   scopes: readonly { kind: "own" | "team" | "all" }[];
+  effective_report_review_scopes?: readonly { kind: "all" | "team"; team_id?: string | null; label?: string }[];
   hasHistoricalChangeRequests?: boolean;
   hasWorkReportObligations?: boolean;
 };
@@ -170,13 +171,24 @@ export const workReportAnalyticsPredicate: NavCapabilityPredicate = (actor) =>
     actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all")
   );
 
+export const workReportReviewPredicate: NavCapabilityPredicate = (actor) =>
+  (actor.capabilities.some((capability) => (capability as string) === "report_review") &&
+    actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all")) ||
+  (actor.effective_report_review_scopes?.some((scope) => scope.kind === "all" || scope.kind === "team") ?? false);
+
+export const workReportDelegationPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.some((capability) => (capability as string) === "report_delegate") &&
+  actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all");
+
 /** Staff access is projected by the server from an active obligation, never inferred from role/title. */
 export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>
   actor.hasWorkReportObligations === true ||
   workReportTemplateManagePredicate(actor) ||
   workReportAssignmentPredicate(actor) ||
   workReportViewPredicate(actor) ||
-  workReportAnalyticsPredicate(actor);
+  workReportAnalyticsPredicate(actor) ||
+  workReportReviewPredicate(actor) ||
+  workReportDelegationPredicate(actor);
 
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
@@ -192,6 +204,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   worker_operations: workerOperationsNavPredicate,
   change_requests: changeRequestsNavPredicate,
   work_reports: workReportsNavPredicate,
+  work_report_reviews: workReportReviewPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */

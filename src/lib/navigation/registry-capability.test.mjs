@@ -30,6 +30,8 @@ const {
   workerOperationsTeamScopePredicate,
   workReportAnalyticsPredicate,
   workReportAssignmentPredicate,
+  workReportDelegationPredicate,
+  workReportReviewPredicate,
   workReportTemplateManagePredicate,
   workReportViewPredicate,
   workReportsNavPredicate,
@@ -154,6 +156,45 @@ test("Work Reports predicates enforce capability and compatible scope", () => {
   assert.equal(workReportsNavPredicate(makeActor([], all)), false);
   assert.equal(resolveNavCapabilityPredicate("work_reports")(
     makeActor(["report_assign"], team)), true);
+});
+
+test("F2 review nav includes direct and server-projected delegated reviewers, delegation stays explicit", () => {
+  const team = [{ kind: "team", reference: "team-1" }];
+  assert.equal(workReportReviewPredicate(makeActor(["report_review"], team)), true);
+  const delegated = { capabilities: [], scopes: [{ kind: "own" }], effective_report_review_scopes: [{ kind: "team", team_id: "team-1", label: "Team 1" }] };
+  assert.equal(workReportReviewPredicate(delegated), true);
+  assert.equal(workReportsNavPredicate(delegated), true);
+  assert.equal(resolveNavCapabilityPredicate("work_report_reviews")(delegated), true);
+  const staff = { capabilities: [], scopes: [], hasWorkReportObligations: true };
+  assert.equal(resolveNavCapabilityPredicate("work_reports")(staff), true);
+  assert.equal(resolveNavCapabilityPredicate("work_report_reviews")(staff), false);
+  assert.equal(workReportReviewPredicate(makeActor(["report_review"], [{ kind: "own" }])), false);
+  assert.equal(workReportDelegationPredicate(makeActor(["report_delegate"], team)), true);
+  assert.equal(workReportDelegationPredicate(delegated), false, "effective delegated review does not grant delegation management");
+});
+
+test("review inbox nav link is visible only for directly or effectively projected reviewers", () => {
+  const reviewer = makeActor(["report_review"], [{ kind: "team", reference: "team-1" }]);
+  const directResult = filterEntriesForActor({
+    viewport: "desktop", directEntryEnabled: true, actor: reviewer, decide: decideFor(reviewer, "desktop"),
+  });
+  assert.ok(directResult.some((entry) => entry.path === "/work-reports/reviews"));
+
+  const delegated = {
+    capabilities: [], scopes: [{ kind: "own" }],
+    effective_report_review_scopes: [{ kind: "team", team_id: "team-1", label: "Team 1" }],
+  };
+  const delegatedResult = filterEntriesForActor({
+    viewport: "mobile", directEntryEnabled: true, actor: delegated, decide: decideFor(delegated, "mobile"),
+  });
+  assert.ok(delegatedResult.some((entry) => entry.path === "/work-reports/reviews"));
+
+  const staff = { capabilities: [], scopes: [], hasWorkReportObligations: true };
+  const staffResult = filterEntriesForActor({
+    viewport: "desktop", directEntryEnabled: true, actor: staff, decide: decideFor(staff, "desktop"),
+  });
+  assert.ok(staffResult.some((entry) => entry.path === "/work-reports"));
+  assert.ok(!staffResult.some((entry) => entry.path === "/work-reports/reviews"));
 });
 
 test("decideNavEntryVisibility: viewport false thì luôn ẩn", () => {
@@ -325,7 +366,7 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
   // Admin, Change Requests and Work Reports share the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"]);
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-report-reviews", "work-reports", "worker-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============
