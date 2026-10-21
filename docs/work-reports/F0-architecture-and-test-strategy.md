@@ -2,8 +2,9 @@
 
 > [!NOTE]
 > - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
-> - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 giữ nguyên 129 migrations và toàn bộ DB/auth/navigation contract, đồng thời bổ sung bộ R2.2 shared UI primitives (`button.tsx`, `badge.tsx`, `data-table.tsx`, `filter-toolbar.tsx`, `mobile-action-sheet.tsx`, `page-shell.tsx`, `report-table.tsx`, `toast.tsx`) cùng 3 bài test cổng giao diện R2.2 (`r2-2-grid-no-touch-guard.test.mjs`, `r2-2-theme-mobile-contract.test.mjs`, `r2-2-surface-coverage.test.mjs`).
-> - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Đã khóa toàn bộ `OD-01` → `OD-08` (xem [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L212-L225)).
+> - **Historical Delta #1 (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b` — bổ sung bộ R2.2 shared UI primitives `button.tsx`, `badge.tsx`, `data-table.tsx`, `filter-toolbar.tsx`, `mobile-action-sheet.tsx`, `page-shell.tsx`, `report-table.tsx`, `toast.tsx` cùng 3 bài test cổng giao diện R2.2 `r2-2-grid-no-touch-guard.test.mjs`, `r2-2-theme-mobile-contract.test.mjs`, `r2-2-surface-coverage.test.mjs`; 0 thay đổi lên DB/auth/navigation contract).
+> - **Historical Delta #2 & Effective Baseline (`origin/main` after PR #98 Direct Entry Hotfix):** `7f2b07cf42c5ebca5ae3a1ae12a357e55853d710` (`7f2b07c`). Delta `bd67c4b..7f2b07c` thay đổi 14 file, thêm 1 migration ([`../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql`](../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql#L1-L258)) nâng tổng số migration từ 129 lên **130**, cập nhật [`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs#L26-L549) và [`../../package.json`](../../package.json#L10-L143), không thay đổi auth/navigation/shared UI primitives hay hợp đồng Work Reports.
+> - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Đã khóa toàn bộ `OD-01` → `OD-08` (xem [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L213-L226)).
 
 ## 1. Kiến trúc Hệ thống Đề xuất (OWNER LOCKED)
 
@@ -16,7 +17,7 @@ Toàn bộ module **Work Reports (`F1` → `F5`)** được xây dựng 100% tr�
 - **Charts & Excel:** `recharts@^3.10.1`, `exceljs@4.4.0`
 - **Validation & Testing:** Pure TypeScript projectors + `zod@^4.6.5`, `@electric-sql/pglite@0.5.8`, `pg@^8.23.1`, `node:test`
 
-**Quyết định kỹ thuật về UI & Thông báo (Cập nhật theo PR #97 `bd67c4b`):**
+**Quyết định kỹ thuật về UI & Thông báo (Historical Delta PR #97 `bd67c4b` & Effective Baseline `7f2b07c`):**
 - **Không cài thêm bất kỳ thư viện npm hay UI/toast library mới nào ở F1/F1.5/F2/F3.**
 - **Ưu tiên tái sử dụng bộ R2.2 UI Primitives:** [`PageShell` / `PageHeader`](../../src/components/ui/page-shell.tsx#L5-L74), [`Button` / `buttonClasses`](../../src/components/ui/button.tsx#L42-L81), [`StatusBadge` / `Badge`](../../src/components/ui/badge.tsx#L31-L65), [`DataTableContainer` / `RowActionCluster`](../../src/components/ui/data-table.tsx#L11-L80), [`ReportTableContainer`](../../src/components/ui/report-table.tsx#L9-L48), [`FilterToolbar`](../../src/components/ui/filter-toolbar.tsx#L5-L41), [`RowOverflowMenu`](../../src/components/ui/mobile-action-sheet.tsx#L23-L76), [`FormDialog`](../../src/components/ui/form-dialog.tsx#L14-L88), [`OffsetPager`](../../src/components/ui/offset-pager.tsx#L7-L64), [`CursorLoadMore`](../../src/components/ui/cursor-load-more.tsx#L3-L34), [`Card` / `CardHeader`](../../src/components/ui/card.tsx#L5-L20).
 - **Chuẩn thông báo hai tầng (`FloatingToast` + `StatusBanner`):** Dùng [`FloatingToast`](../../src/components/ui/toast.tsx#L28-L97) cho thông báo tạm thời sau thao tác (lưu nháp, nộp báo cáo, tạo mẫu, giao việc) và dùng [`StatusBanner`](../../src/components/ui/status-banner.tsx#L14-L41) cho trạng thái tồn tại trên trang (cảnh báo quá hạn, lý do bị từ chối, lỗi xác thực biểu mẫu).
@@ -97,7 +98,7 @@ Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
 ### 3.1. Quy tắc Migration Forward-Only & Explicit `work_report_*` ACL Gate
 
 Khi bước sang F1/F1.5/F2/F3 (sau khi có lệnh `START F1` của Owner), các migration SQL phải tuân thủ:
-1. **Forward-Only & Checksum bất biến:** Tạo file mới trong `supabase/migrations/`, không bao giờ chỉnh sửa 129 file migration lịch sử.
+1. **Forward-Only & Checksum bất biến:** Tạo file mới trong `supabase/migrations/`, không bao giờ chỉnh sửa 130 file migration lịch sử.
 2. **Tương thích với 6 bài test Capability P3.1 (`direct-entry-auth/1.5` — `OD-06 = PA2`, `OD-07 = PA1` OWNER LOCKED):**
    - Như đã phát hiện tại [`./F0-codebase-reuse-inventory.md`](./F0-codebase-reuse-inventory.md#L33-L40), 6 file test ([`../../scripts/p3-1-w01a-capability-contract.test.mjs`](../../scripts/p3-1-w01a-capability-contract.test.mjs#L135-L143), [`../../scripts/p3-1-w01b-personnel-catalog-db.test.mjs`](../../scripts/p3-1-w01b-personnel-catalog-db.test.mjs#L835), [`../../scripts/p3-1-w01c-a-team-catalog-db.test.mjs`](../../scripts/p3-1-w01c-a-team-catalog-db.test.mjs#L709), [`../../scripts/p3-1-w01c-b-team-membership-db.test.mjs`](../../scripts/p3-1-w01c-b-team-membership-db.test.mjs#L1086), [`../../scripts/p3-1-w01d-a1a-leader-schema.test.mjs`](../../scripts/p3-1-w01d-a1a-leader-schema.test.mjs#L168), [`../../scripts/p3-1-w01d-a1b1-leader-read.test.mjs`](../../scripts/p3-1-w01d-a1b1-leader-read.test.mjs#L684)) chạy toàn bộ thư mục `supabase/migrations/` rồi kiểm tra `tokens.length === 23` trên constraint `direct_entry_capability_grants_capability_check` và `CAPABILITIES.length === 19` trên TypeScript contract.
    - Theo quyết định đã khóa (`OD-06 = PA2`, `OD-07 = PA1`):
@@ -177,7 +178,7 @@ Khi bước sang F1/F1.5/F2/F3 (sau khi có lệnh `START F1` của Owner), các
 | **AG-17** | **F1 / F1.5** | Vô hiệu hóa tài khoản / Thu hồi quyền Leader tức thì (`OD-04 = PA1`) | Disable user hoặc revoke Team Leader, sau đó gọi lại API bằng session đang mở | Trả `403` ngay lập tức ở request kế tiếp; các nghĩa vụ tương lai chưa nộp của user bị disable chuyển sang `CANCELLED` | PGlite + PG16 |
 | **AG-18** | **F1** | Bảo toàn phiên bản đã Publish | Thử `UPDATE` `schema_json` hoặc `metric_contract_json` của `template_version` đang `PUBLISHED` | Trigger DB chặn cứng với `SQLSTATE 55000`; chỉ cho phép clone sang `version_no + 1` (`DRAFT`) | PGlite + PG16 |
 
-### 4.2. Tích hợp vào CI Test Manifest & Cổng Kiểm tra Giao diện R2.2 (Cập nhật theo PR #97 `bd67c4b`)
+### 4.2. Tích hợp vào CI Test Manifest & Cổng Kiểm tra Giao diện R2.2 (Historical Delta PR #97 `bd67c4b` & Effective Baseline `7f2b07c`)
 
 - Mọi file test mới của Work Reports phải được khai báo vào [`../../package.json`](../../package.json#L10-L143) (`test:work-reports-f1`, `test:work-reports-f1-5`, `test:work-reports-f2`, `test:work-reports-f3`) và nối vào `scripts.test` để vượt qua gate Zero-Orphan [`assertZeroOrphanTests()`](../../scripts/ci-test-manifest.mjs#L101-L160).
 - Các bài test concurrency (race condition khi 2 request cùng tạo nghĩa vụ hoặc cùng nộp báo cáo) và bài test non-superuser ACL ([`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs)) được đăng ký vào `POSTGRES_TEST_FILES` để chạy trên PostgreSQL thực trong CI.

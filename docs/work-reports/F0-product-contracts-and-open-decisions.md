@@ -2,7 +2,8 @@
 
 > [!IMPORTANT]
 > - **Baseline khảo sát ban đầu:** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
-> - **Delta Review & Effective Baseline (`origin/main` sau PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b` — 129 migrations, 0 thay đổi lên DB/auth/navigation contract).
+> - **Historical Delta #1 (`origin/main` sau PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b` — bổ sung R2.2 UI primitives và 3 bài test cổng R2.2; 0 thay đổi lên DB/auth/navigation contract).
+> - **Historical Delta #2 & Effective Baseline (`origin/main` sau PR #98 Direct Entry Hotfix):** `7f2b07cf42c5ebca5ae3a1ae12a357e55853d710` (`7f2b07c` — 14 file thay đổi, thêm 1 migration [`../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql`](../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql#L1-L258) nâng tổng số migration lên **130**; không thay đổi auth/navigation/UI primitives hay hợp đồng Work Reports & `OD-01` → `OD-08`).
 > - **Ngày Product Owner phê duyệt khóa hợp đồng F0 (`OD-01` → `OD-08`):** `21/10/2026` (`Status: OWNER LOCKED`).
 > - Tài liệu này phân biệt rõ 4 trạng thái thông tin:
 >   - **FACT:** Đã xác minh trong codebase/database hoặc trong Master Plan §0.1 ([`./master-plan.md`](./master-plan.md#L14-L33)).

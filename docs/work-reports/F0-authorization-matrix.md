@@ -2,8 +2,9 @@
 
 > [!NOTE]
 > - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
-> - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 không thêm migration và không thay đổi auth capability registry ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)), navigation registry ([`../../src/lib/navigation/registry.ts`](../../src/lib/navigation/registry.ts#L104-L177)), hay DB authorization contract; tổng số migration hiện hữu vẫn là **129**.
-> - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Toàn bộ `OD-01` → `OD-08` đã được Product Owner chính thức khóa ngày `21/10/2026` (xem [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L212-L225)).
+> - **Historical Delta #1 (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b` — bổ sung R2.2 UI primitives và 3 bài test cổng R2.2; 0 thay đổi lên DB/auth/navigation contract).
+> - **Historical Delta #2 & Effective Baseline (`origin/main` after PR #98 Direct Entry Hotfix):** `7f2b07cf42c5ebca5ae3a1ae12a357e55853d710` (`7f2b07c`). Delta `bd67c4b..7f2b07c` thay đổi 14 file, bổ sung 1 migration ([`../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql`](../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql#L1-L258)) nâng tổng số migration hiện hữu từ 129 lên **130**, và không thay đổi auth capability registry ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)), capability vocabulary, navigation registry ([`../../src/lib/navigation/registry.ts`](../../src/lib/navigation/registry.ts#L104-L177)), hay DB authorization contract.
+> - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Toàn bộ `OD-01` → `OD-08` đã được Product Owner chính thức khóa ngày `21/10/2026` (xem [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L213-L226)).
 
 ## 1. Kiến trúc Phân quyền — Tái sử dụng RBAC Hiện hữu (FACT + OWNER LOCKED)
 
@@ -18,7 +19,7 @@ Theo đúng hợp đồng R1 ([`../renewal/R1-authorization-contract.md`](../ren
 6. Thực thi toàn bộ kiểm tra quyền, OCC (`expected_version`), idempotency và ghi audit ngay bên trong hàm `SECURITY DEFINER` của PostgreSQL.
 
 **Bất biến về Legacy DB Tokens & Kiến trúc Grant (`OD-07 = PA1` OWNER LOCKED):**
-- Trên effective baseline (`bd67c4b`), constraint DB `direct_entry_capability_grants_capability_check` có **23 token**, trong khi hằng số TypeScript `CAPABILITIES` ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)) có **19 active token** (chênh lệch đúng **4 legacy DB token đã ngừng cấp ở tầng ứng dụng**: `pii_view`, `pii_export`, `payment_view`, `payment_edit`, được kiểm chứng tại [`../../scripts/p3-1-w01a-capability-contract.test.mjs`](../../scripts/p3-1-w01a-capability-contract.test.mjs#L29-L39)).
+- Trên effective baseline (`7f2b07c`), constraint DB `direct_entry_capability_grants_capability_check` có **23 token**, trong khi hằng số TypeScript `CAPABILITIES` ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)) có **19 active token** (chênh lệch đúng **4 legacy DB token đã ngừng cấp ở tầng ứng dụng**: `pii_view`, `pii_export`, `payment_view`, `payment_edit`, được kiểm chứng tại [`../../scripts/p3-1-w01a-capability-contract.test.mjs`](../../scripts/p3-1-w01a-capability-contract.test.mjs#L29-L39)).
 - **Tuyệt đối giữ nguyên 4 retired legacy DB tokens (không đưa lại vào TypeScript) và không tạo bảng grant hay policy engine thứ hai.**
 
 ### 1.2. Bộ Capability Token theo Phase & Số lượng Token Cố định (`OD-04 = PA1`, `OD-06 = PA2`, `OD-07 = PA1` OWNER LOCKED)
@@ -40,7 +41,7 @@ Theo quyết định đã khóa ngày `21/10/2026` của Product Owner:
 
 | Giai đoạn (Phase) | Các token `report_*` được thêm mới ở phase này | Tổng số token trong DB CHECK `direct_entry_capability_grants_capability_check` (gồm 4 retired legacy DB tokens) | Tổng số active token trong TypeScript `CAPABILITIES` ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)) |
 |---|---|---|---|
-| **Baseline hiện tại (`origin/main` `bd67c4b`)** | *(Chưa thêm)* | **23** (`19 active + 4 retired legacy`) | **19** |
+| **Baseline hiện tại (`origin/main` `7f2b07c`)** | *(Chưa thêm)* | **23** (`19 active + 4 retired legacy`) | **19** |
 | **F1 / F1.5 (`OWNER LOCKED`)** | **+4 token:** `report_form_manage`, `report_assign`, `report_view`, `report_analytics_view` | **27** (`23 + 4`) | **23** (`19 + 4`) |
 | **F2 (Review & Delegation — `OWNER LOCKED`)** | **+2 token:** `report_review`, `report_delegate` | **29** (`27 + 2`) | **25** (`23 + 2`) |
 | **F3 (Advanced Analytics & XLSX — `OWNER LOCKED`)** | **+1 token:** `report_export` | **30** (`29 + 1`) | **26** (`25 + 1`) |

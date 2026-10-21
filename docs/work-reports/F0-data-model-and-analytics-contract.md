@@ -2,7 +2,8 @@
 
 > [!NOTE]
 > - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
-> - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 không thêm migration và không thay đổi bất kỳ bảng, RPC hay DB contract nào; tổng số migration hiện hữu vẫn là **129**.
+> - **Historical Delta #1 (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b` — 0 SQL migrations, 0 DB contract changes).
+> - **Historical Delta #2 & Effective Baseline (`origin/main` after PR #98 Direct Entry Hotfix):** `7f2b07cf42c5ebca5ae3a1ae12a357e55853d710` (`7f2b07c`). Delta `bd67c4b..7f2b07c` thay đổi 14 file, bổ sung 1 migration ([`../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql`](../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql#L1-L258)) nâng tổng số migration hiện hữu từ 129 lên **130** (chỉ tách năm `first_work_date` khỏi prefix năm trong `employee_code` của Direct Entry; không thay đổi auth/navigation/UI primitives hay hợp đồng Work Reports).
 > - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Đã áp dụng quyết định `OD-06 = PA2` (XLSX thuộc F3) và `OD-08 = PA3` (chỉ 8 core field types, loại bỏ hoàn toàn cột/chiều/filter dự án khỏi F1/F1.5).
 
 ## 1. Kiến trúc Mô hình Dữ liệu Logic (Logical Entity Relationship)
@@ -140,7 +141,7 @@ erDiagram
 
 ## 2. Đặc tả Chi tiết Từng Thực thể Database (OWNER LOCKED)
 
-Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_report_` (đã kiểm tra **0% xung đột tên** với 129 migrations hiện có). Mọi bảng bật `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` và thu hồi quyền trực tiếp của `PUBLIC, anon, authenticated, service_role` một cách tường minh trên từng bảng `public.work_report_*` theo chuẩn `S0-T1-C` ([`../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql`](../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql#L15-L281)).
+Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_report_` (đã kiểm tra **0% xung đột tên** với 130 migrations hiện có). Mọi bảng bật `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` và thu hồi quyền trực tiếp của `PUBLIC, anon, authenticated, service_role` một cách tường minh trên từng bảng `public.work_report_*` theo chuẩn `S0-T1-C` ([`../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql`](../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql#L15-L281)).
 
 ### 2.1. `public.work_report_templates` (Định danh Mẫu Báo cáo)
 - **Trách nhiệm:** Lưu danh mục gốc của từng mẫu báo cáo xuyên suốt các phiên bản.
