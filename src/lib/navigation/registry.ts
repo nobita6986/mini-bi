@@ -68,6 +68,13 @@ export type NavVisibility = {
   mobile: boolean;
 };
 
+export type NavGroupId = "new-reports" | "daily-reports";
+
+export const NAV_GROUP_LABELS: Readonly<Record<NavGroupId, string>> = {
+  "new-reports": "Báo cáo cấp mới",
+  "daily-reports": "Báo cáo hàng ngày",
+};
+
 /** Một entry trong navigation registry. */
 export type NavEntry = {
   /** Stable id — dùng làm React key và test selector. */
@@ -88,9 +95,38 @@ export type NavEntry = {
    * - token khác → P3 đối chiếu session đã resolve.
    */
   capability: NavCapability;
+  /** Menu cha; entry vẫn được lọc quyền độc lập trước khi nhóm. */
+  group?: NavGroupId;
   /** Visibility cho desktop + mobile. */
   visibility: NavVisibility;
 };
+
+export type NavMenuEntry = Pick<NavEntry, "id" | "label" | "path" | "group">;
+export type NavMenuNode =
+  | { type: "entry"; entry: NavMenuEntry }
+  | { type: "group"; id: NavGroupId; label: string; entries: NavMenuEntry[] };
+
+/** Nhóm sau khi filter capability/feature flag, nên nhóm rỗng tự biến mất. */
+export function groupNavEntries(entries: readonly NavMenuEntry[]): NavMenuNode[] {
+  const result: NavMenuNode[] = [];
+  for (const entry of entries) {
+    if (!entry.group) {
+      result.push({ type: "entry", entry });
+      continue;
+    }
+    const group = result.find((item): item is Extract<NavMenuNode, { type: "group" }> =>
+      item.type === "group" && item.id === entry.group
+    );
+    if (group) group.entries.push(entry);
+    else result.push({
+      type: "group",
+      id: entry.group,
+      label: NAV_GROUP_LABELS[entry.group],
+      entries: [entry],
+    });
+  }
+  return result;
+}
 
 /**
  * Registry nguồn — chỉ một chỗ để thêm/bớt menu.
@@ -125,6 +161,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: ClipboardList,
     status: "current",
     capability: "entry_admin",
+    group: "new-reports",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -139,6 +176,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Building2,
     status: "current",
     capability: "project_admin",
+    group: "new-reports",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -152,6 +190,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: Users,
     status: "current",
     capability: "worker_operations",
+    group: "new-reports",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -164,6 +203,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: FileDiff,
     status: "current",
     capability: "change_requests",
+    group: "new-reports",
     visibility: { desktop: true, mobile: true },
   },
   {
@@ -175,6 +215,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: NotebookPen,
     status: "current",
     capability: "work_reports",
+    group: "daily-reports",
     visibility: { desktop: true, mobile: true },
   },
   {

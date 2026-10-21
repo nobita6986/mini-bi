@@ -5,7 +5,8 @@
 > - **Historical Delta #1 (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b` — bổ sung R2.2 UI primitives và 3 bài test cổng R2.2; 0 thay đổi lên DB/auth/navigation contract).
 > - **Historical Delta #2 & Effective Baseline (`origin/main` after PR #98 Direct Entry Hotfix):** `7f2b07cf42c5ebca5ae3a1ae12a357e55853d710` (`7f2b07c` — 14 file thay đổi, thêm 1 migration [`../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql`](../../supabase/migrations/20261021140000_hf_decouple_first_work_date_employee_code_year.sql#L1-L258) nâng tổng số migration lên **130**, cập nhật [`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs#L26-L549) và [`../../package.json`](../../package.json#L10-L143); không thay đổi auth/navigation/UI primitives hay hợp đồng Work Reports & `OD-01` → `OD-08`).
 > - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Toàn bộ 8 quyết định `OD-01` → `OD-08` đã được Product Owner chính thức phê duyệt khóa ngày `21/10/2026` tại [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L213-L226).
-> - **Cổng kích hoạt F1:** Dù hợp đồng F0 đã khóa, không một Work Package nào của F1/F1.5 được tự ý bắt đầu trước khi có review cuối của T0 và lệnh `START F1` riêng từ Product Owner.
+> - **Trạng thái hiện tại:** Owner đã xác nhận F1.5 UAT PASS và cho phép bắt đầu F2. F2 là phase cuối; không triển khai F3/F4/F5 trong phạm vi hiện tại.
+> - **Cổng F1 lịch sử:** Hợp đồng F0 đã yêu cầu Owner duyệt trước khi bắt đầu F1; cổng đó đã qua và không còn là trạng thái hiện hành.
 
 ---
 
@@ -27,9 +28,7 @@ flowchart TD
     F15_WP2 --> F15_WP4
     F15_WP3 --> F15_WP4
     F15_WP4 -->|"Owner UAT PASS"| F2["F2: Optional Review Workflow & Delegation (+2 tokens: DB 29 / TS 25)"]
-    F2 -->|"Owner UAT PASS"| F3["F3: Advanced Multi-Period Analytics & XLSX Export (+1 token report_export: DB 30 / TS 26)"]
-    F3 --> F4["F4: Reminder Schedules & Deadline Operations"]
-    F4 --> F5["F5: Post-Operational Extensions (if approved)"]
+    F2 -->|"Owner UAT PASS"| F2_DONE["F2 accepted — close current Work Reports scope; F3–F5 out of scope"]
 ```
 
 ---
@@ -61,14 +60,14 @@ flowchart TD
 
 ---
 
-### 2.3. Các Giai đoạn Tiếp theo (`F2`, `F3`, `F4`, `F5` — `OWNER LOCKED`)
+### 2.3. F2 là phase cuối; các mô tả F3–F5 chỉ lưu làm tham chiếu lịch sử (Owner decision)
 
 | Giai đoạn | Work Packages chính | Điều kiện tiên quyết |
 |---|---|---|
-| **F2: Optional Review Workflow & Delegation** | - **F2-WP1 (T1-A):** Migration bổ sung **2 capability token** (`report_review`, `report_delegate` ⇒ nâng **DB CHECK lên `29`**, nâng **TypeScript `CAPABILITIES` lên `25`** theo `OD-07 = PA1`), cập nhật `direct_entry_apply_team_leader_mutation` để tự động cấp/thu hồi thêm `report_review @ team` cho Team Leader (`OD-04 = PA1`), cài đặt RPC duyệt/từ chối (`work_report_decide_review` với chặn tự duyệt `reviewer <> author`), bảng & RPC ủy quyền `work_report_delegations`, chuyển trạng thái `is_provisional`, `is_final`, `is_eligible`.<br>- **F2-WP2 (T1-B):** Màn hình **Duyệt báo cáo** (`/work-reports/reviews`), hộp thoại phê duyệt/từ chối kèm lý do, giao diện quản lý Ủy quyền có thời hạn.<br>- **F2-WP3 (T1-C):** Cập nhật hiển thị nhãn `Tạm tính (Chờ duyệt)` vs `Chốt (Đã duyệt)` trên Dashboard và bộ test `AG-13`, `SEC-WR-09`, `SEC-WR-10`. | F1.5 đã được Product Owner nghiệm thu PASS. |
-| **F3: Advanced Analytics, Cross-Period Comparison & Excel Export (`OD-06 = PA2` OWNER LOCKED)** | - **F3-WP1 (T1-A):** RPC so sánh liên kỳ (`Period-over-Period`), chỉ số tỷ lệ dẫn xuất (`SUM(num)/SUM(den)`), cảnh báo chất lượng dữ liệu, tùy chọn xem theo cơ cấu nhóm hiện tại vs tại kỳ.<br>- **F3-WP2 (T1-B):** Biểu đồ xu hướng (`TrendChart`), biểu đồ phân bổ theo trường danh mục (`single_select`/`multi_select`), bảng so sánh các Team.<br>- **F3-WP3 (T1-C):** Bổ sung capability `report_export` (**+1 token ⇒ DB CHECK = `30`, TypeScript `CAPABILITIES` = `26`** theo `OD-07 = PA1`), cập nhật `direct_entry_apply_team_leader_mutation` để tự động cấp/thu hồi `report_export @ team` cho Team Leader (`OD-04 = PA1`), cài đặt RPC `work_report_export_data`, route `POST /api/work-reports/analytics/export`, `buildWorkReportExportXlsx` và bộ test `AG-14`, `SEC-WR-04`. | F2 đã được Product Owner nghiệm thu PASS. |
-| **F4: Reminders & Deadline Operations** | - Cấu hình lịch nhắc trước hạn / sắp đến hạn / quá hạn theo `work_report_obligations` (`idempotent reminder log` chống gửi trùng), danh sách nhân sự chưa nộp cho Team Leader hỗ trợ. | F3 hoàn tất. |
-| **F5: Post-Operational Extensions** | - Chỉ triển khai từng hạng mục khi có nhu cầu thực tế từ vận hành và được Product Owner duyệt riêng bằng migration forward-only (repeater rows, file đính kèm R2, công thức nâng cao, hoặc liên kết danh mục dự án nếu Owner yêu cầu về sau). | Theo quyết định thực tế của Owner. |
+| **F2: Optional Review Workflow & Delegation (phase cuối)** | - **F2-WP1 (T1-A):** Migration bổ sung **2 capability token** (`report_review`, `report_delegate` ⇒ nâng **DB CHECK lên `29`**, nâng **TypeScript `CAPABILITIES` lên `25`** theo `OD-07 = PA1`), cập nhật `direct_entry_apply_team_leader_mutation` để tự động cấp/thu hồi thêm `report_review @ team` cho Team Leader (`OD-04 = PA1`), cài đặt RPC duyệt/từ chối (`work_report_decide_review` với chặn tự duyệt `reviewer <> author`), bảng & RPC ủy quyền `work_report_delegations`, chuyển trạng thái `is_provisional`, `is_final`, `is_eligible`.<br>- **F2-WP2 (T1-B):** Màn hình **Duyệt báo cáo** (`/work-reports/reviews`), hộp thoại phê duyệt/từ chối kèm lý do, giao diện quản lý Ủy quyền có thời hạn; cập nhật menu theo cấu trúc **Báo cáo cấp mới** và **Báo cáo hàng ngày → Báo cáo công việc**.<br>- **F2-WP3 (T1-C):** Cập nhật hiển thị nhãn `Tạm tính (Chờ duyệt)` vs `Chốt (Đã duyệt)` trên Dashboard và bộ test `AG-13`, `SEC-WR-09`, `SEC-WR-10`. | F1.5 đã được Product Owner nghiệm thu PASS; Owner UAT PASS F2 để đóng phạm vi. |
+| F3 | Tham chiếu lịch sử: analytics liên kỳ, charts, XLSX (`report_export`) | Ngoài phạm vi hiện tại; không thực hiện sau F2. |
+| F4 | Tham chiếu lịch sử: reminder schedules & deadline operations | Ngoài phạm vi hiện tại; không thực hiện sau F2. |
+| F5 | Tham chiếu lịch sử: post-operational extensions | Ngoài phạm vi hiện tại; không thực hiện sau F2. |
 
 ---
 
@@ -80,4 +79,4 @@ flowchart TD
 | **Rủi ro 2: Tỷ lệ hoàn thành bị tính sai (luôn = 100%) hoặc biến động lịch sử khi nhân sự đổi Team** | Tính mẫu số bằng `COUNT(submissions)` hoặc `JOIN` trực tiếp vào bảng `recruiter_team_memberships` hiện tại. | F0 khóa bảng `work_report_obligations` có `UNIQUE(template_id, assignee_app_user_id, period_key)` và lưu cứng `snapshot_team_id` tại thời điểm kỳ báo cáo phát sinh. |
 | **Rủi ro 3: Sửa báo cáo hoặc nộp lại sau khi bị từ chối làm nhân đôi số liệu KPI** | Lưu mỗi lần nộp lại thành một dòng `submission` mới và cộng tất cả các dòng. | F0 khóa `UNIQUE(obligation_id)` trên `work_report_submissions`, tách lịch sử vào `work_report_submission_revisions`, và dùng bộ cờ `is_current_revision` + `is_eligible = (is_current_revision AND (is_final OR is_provisional))` trên `work_report_metric_values`. |
 | **Rủi ro 4: Đổi tên nhãn hoặc thêm trường ở Version 2 làm hỏng thống kê của Version 1** | Dùng `label` làm key lưu trữ hoặc cho phép sửa đè `schema_json` của version đã publish. | F0 khóa `field_key` và `metric_key` bất biến; `template_version` đã publish bị chặn sửa bằng trigger DB; kiểm tra tương thích đơn vị (`compatible_group`) trước khi cho phép gộp số liệu liên version. |
-| **Rủi ro 5: Mở rộng Capability làm gãy 6 bài test CI hiện hữu của P3.1 hoặc hở quyền PostgREST** | Không kiểm tra các test hiện có trong `scripts/` trước khi sửa constraint `direct_entry_capability_grants_capability_check`, hoặc dùng lệnh `REVOKE` quét toàn schema. | F0 đã chỉ rõ chính xác 6 file test P3.1 (`p3-1-w01a..w01d`), lộ trình số lượng token cố định (`27/23` ở F1/F1.5 → `29/25` ở F2 → `30/26` ở F3), và quy tắc `REVOKE`/`GRANT` tường minh chỉ trên các bảng/sequence/hàm `work_report_*` kèm kiểm tra qua [`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs). |
+| **Rủi ro 5: Mở rộng Capability làm gãy 6 bài test CI hiện hữu của P3.1 hoặc hở quyền PostgREST** | Không kiểm tra các test hiện có trong `scripts/` trước khi sửa constraint `direct_entry_capability_grants_capability_check`, hoặc dùng lệnh `REVOKE` quét toàn schema. | F0 đã chỉ rõ 6 file test P3.1 (`p3-1-w01a..w01d`), số lượng token từ baseline đến F2 (`27/23` ở F1/F1.5 → `29/25` ở F2; F3 `report_export` nằm ngoài phạm vi hiện tại), và quy tắc `REVOKE`/`GRANT` tường minh chỉ trên các bảng/sequence/hàm `work_report_*` kèm kiểm tra qua [`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs). |

@@ -1,11 +1,13 @@
 # MINI BI — WORK REPORTS, FORM BUILDER & REPORTING ANALYTICS
-## Master Plan v1.0 — F1 → F1.5 → F2 → F3 → F4 → F5
+## Master Plan v1.0 — F1 → F1.5 → F2 (phase cuối theo quyết định Owner)
 
 **Ngày lập:** 21/10/2026  
 **Repository:** https://github.com/nobita6986/mini-bi  
 **Source baseline khảo sát:** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (sau PR #96). Khi khởi động coding, T0 phải xác nhận lại `origin/main`, vì R2.2 Visual Completion có thể đang tiếp tục.  
 **Đích tài liệu trong repository (đề xuất):** `docs/work-reports/master-plan.md` (KHÔNG ghi đè master plan Mini BI hiện hữu).  
-**Trạng thái:** Master plan định hướng + hợp đồng nghiệm thu. **Chưa phải xác nhận module đã được code hoặc schema đã được áp dụng.**
+**Trạng thái tài liệu:** Master plan định hướng + hợp đồng nghiệm thu; không dùng tài liệu này làm bằng chứng runtime/DB. F1 và F1.5 đã được Owner nghiệm thu; F2 chưa hoàn tất.
+
+**Quyết định phạm vi hiện tại của Owner (21/10/2026):** F1.5 đã UAT PASS; F2 là phase cuối. Không triển khai F3, F4 hoặc F5 trong phạm vi Work Reports hiện tại. Các mô tả các phase đó dưới đây chỉ còn là tham chiếu lịch sử, không phải backlog.
 
 ---
 
@@ -15,9 +17,9 @@
 
 1. Xây module **Báo cáo công việc (Work Reports)** tích hợp Mini BI; có **Form Builder**, giao mẫu, nhân viên nộp báo cáo, tổng hợp và phân tích cho cấp quản lý.
 2. Mỗi **mẫu báo cáo** được chọn **có duyệt / không duyệt**; **mặc định KHÔNG DUYỆT**. Người được giao nộp báo cáo hợp lệ là hoàn tất nghĩa vụ nếu mẫu không yêu cầu duyệt.
-3. Lộ trình nền: **F1** Form Builder + Assignment + Submission; **F2** Review & Delegation; **F3** Dashboard + Analytics + Excel; **F4** Reminder; **F5** mở rộng.
+3. Lộ trình hiện hành: **F1** Form Builder + Assignment + Submission; **F1.5** tổng hợp; **F2** Review & Delegation và là phase cuối theo quyết định Owner. F3–F5 nằm ngoài phạm vi hiện tại.
 4. Bổ sung **F1.5 Basic Reporting** ngay sau F1: tổng hợp số đã/chưa nộp, chỉ tiêu định lượng theo nhân viên/team/kỳ, xem chi tiết nguồn báo cáo. Không được chỉ xây công cụ thu thập rồi để công đoạn tổng hợp bằng tay.
-5. Dùng **RBAC theo actor + capability + effective scope**, không hardcode theo tên vai trò; **Admin quản lý biểu mẫu không mặc nhiên được đọc toàn bộ nội dung báo cáo**.
+5. Dùng **RBAC theo actor + capability + effective scope**, không suy quyền từ tên vai trò; **Full Admin và BoD (`lienvu`, `ngattt`) có đầy đủ quyền Work Reports** theo capability/scope đã cấp.
 6. **Owner trực tiếp UAT và quyết định PASS/FAIL.** T0/T1/T0-VPS chỉ code, kiểm thử tự động, chuẩn bị TEST và checklist.
 7. Không động vào **Spreadsheet Grid/Form Core** đã khóa của `/direct-entry`; module mới sử dụng UI riêng, không dùng visual redesign làm thay đổi bảng nhập liệu.
 8. Không chạm hoặc deploy Production nếu chưa được Owner phê duyệt riêng.
@@ -65,8 +67,9 @@ Một người quản trị có quyền tạo **mẫu báo cáo tuyển dụng n
 | Nhân viên | Xem nhiệm vụ, lưu nháp, nộp, tra cứu lịch sử của mình | `own` + assignment có hiệu lực |
 | Team Leader | Xem tiến độ và tổng hợp của các nhóm được giao, xem bài nộp thuộc phạm vi, duyệt nếu có quyền riêng | `team` hiện hành, có chính sách lịch sử rõ ràng |
 | Project Manager | Xem báo cáo được giao quản lý, nếu thực sự cần quan hệ dự án | `project` theo quan hệ thực, KHÔNG suy diễn từ `team` |
-| BoD | KPI và drill-down toàn công ty khi có grant | `all` + capability đúng hành động |
-| Admin | Quản trị cấu hình, mẫu, assignment, kỳ báo cáo | Chỉ có dữ liệu chi tiết/analytics nếu được cấp `report_view` ở scope tương ứng |
+| BoD (`lienvu`, `ngattt`) | Đầy đủ quyền Work Reports và drill-down toàn công ty | `all` + các capability Work Reports đã cấp |
+| Full Admin | Đầy đủ quyền Work Reports: quản lý mẫu, giao, đọc, analytics, duyệt và ủy quyền | `all` + các capability Work Reports đã cấp |
+| Form Admin thuần | Quản trị cấu hình/mẫu theo grant; không mặc nhiên có quyền đọc nội dung | `all` + `report_form_manage`; cần grant riêng cho các thao tác đọc |
 | Người được ủy quyền | Giao mẫu, nhắc hoặc duyệt trong thời hạn ủy quyền | Phạm vi đã ủy quyền, không được vượt quyền gốc |
 
 **Hợp đồng quyền ban đầu (cần rà theo capability registry hiện hành):**
@@ -351,7 +354,7 @@ work_report_templates (identity, owner, status)
 
 1. Staff Team A thử xem nộp báo cáo Team B qua ID/URL/API → denied.
 2. Leader A giả `team_id=B` ở query → denied.
-3. Admin không có `report_view` thử mở nội dung nhân viên → denied, vẫn có thể quản trị mẫu theo grant.
+3. Form Admin thuần chỉ có `report_form_manage` và không có `report_view` thử mở nội dung nhân viên → denied; Full Admin và BoD dùng grants hiện hành của mình.
 4. Có `report_analytics_view@team` nhưng không có `report_export` → dashboard đúng scope, export denied.
 5. Disabled actor có cookie cũ → denied.
 6. Người nộp vừa bị chuyển team vẫn xem được lịch sử cá nhân hợp lệ, không sửa được bản khóa.
@@ -416,17 +419,16 @@ work_report_templates (identity, owner, status)
 ### F2 — Work Packages
 
 - **F2-WP1:** Review policy per template version; SQL transitions/authorization/OCC/audit.
-- **F2-WP2:** Reviewer inbox UI, approve/reject/resubmit, delegated review if approved.
+- **F2-WP2:** Reviewer inbox UI, approve/reject/resubmit, delegated review if approved; gom điều hướng hiện hữu vào hai menu **Báo cáo cấp mới** và **Báo cáo hàng ngày → Báo cáo công việc**. Chưa tạo mục Chấm công.
 - **F2-WP3:** Distinguish provisional/final metrics; tests & acceptance.
 
-### F3 — Work Packages
+### F3 — Tham chiếu lịch sử (ngoài phạm vi theo quyết định Owner)
 
-- **F3-WP1:** Cross-period analytics/derived metrics engine.
-- **F3-WP2:** Charting/dashboard/breakdowns & saved filters.
-- **F3-WP3:** Permissioned XLSX summary/detail + reconciled audit.
-- **F3-WP4:** Performance, complex scope and correctness tests.
+Các hạng mục analytics liên kỳ, biểu đồ và XLSX không được triển khai sau F2 trong phạm vi hiện tại.
 
-### F4/F5 — Theo §8/§9 và quyết định mới sau vận hành.
+### F4/F5 — Ngoài phạm vi theo quyết định Owner
+
+Không lập backlog hay triển khai nhắc hạn và mở rộng sau vận hành cho module này.
 
 **Không lập thời lượng cố định khi chưa có F0 code-level estimate.** Để T0 đưa effort theo WP (S/M/L), critical path và kế hoạch branch/PR không xung đột.
 
@@ -504,9 +506,9 @@ work_report_templates (identity, owner, status)
 | F1 | Form Builder + Assignment + Submission chạy TEST; PR/SQL checksum; test + Owner checklist | Tạo/giao/nộp được mẫu và có lưu lịch sử |
 | **F1.5** | **Dashboard tổng hợp + SQL metrics + drill-down + reconciled fixtures** | **Leader/BoD tự UAT và xác nhận số tổng đúng** |
 | F2 | Per-template review/delegation + UI + audit | Có/không duyệt đúng cấu hình, chống tự duyệt |
-| F3 | Analytics nâng cao + charts + Excel | So sánh kỳ, phân tích và export đúng scope |
-| F4 | Reminder config + notification logs | Nhắc đúng hạn, tránh lặp, không vượt scope |
-| F5 | Scope Owner phê duyệt sau vận hành | Riêng từng hạng mục |
+| F3 | Ngoài phạm vi hiện tại theo quyết định Owner | Không triển khai sau F2 |
+| F4 | Ngoài phạm vi hiện tại theo quyết định Owner | Không triển khai sau F2 |
+| F5 | Ngoài phạm vi hiện tại theo quyết định Owner | Không triển khai sau F2 |
 
 ---
 
@@ -545,6 +547,6 @@ work_report_templates (identity, owner, status)
   1. [`F0-codebase-reuse-inventory.md`](./F0-codebase-reuse-inventory.md) — Kiểm kê tái sử dụng codebase kèm bằng chứng file/symbol/line và ranh giới `NO TOUCH`.
   2. [`F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md) — Hợp đồng Form Builder, Versioning, Submission Lifecycle, Reporting Obligations (10 kịch bản) và 08 quyết định mở (`OD-01` → `OD-08`) chờ Product Owner phê duyệt.
   3. [`F0-data-model-and-analytics-contract.md`](./F0-data-model-and-analytics-contract.md) — Mô hình thực thể logic (ERD), hợp đồng `work_report_obligations` & `work_report_metric_values`, quy tắc tổng hợp F1.5/F3.
-  4. [`F0-authorization-matrix.md`](./F0-authorization-matrix.md) — Ma trận phân quyền `Actor × Action × Scope`, nguyên tắc Admin không mặc nhiên đọc báo cáo, quy tắc lịch sử đổi nhóm và 12 phép thử bảo mật phủ định (`SEC-WR-01` → `SEC-WR-12`).
+  4. [`F0-authorization-matrix.md`](./F0-authorization-matrix.md) — Ma trận phân quyền `Actor × Action × Scope`, grants đầy đủ cho Full Admin/BoD, quy tắc lịch sử đổi nhóm và 12 phép thử bảo mật phủ định (`SEC-WR-01` → `SEC-WR-12`).
   5. [`F0-architecture-and-test-strategy.md`](./F0-architecture-and-test-strategy.md) — Kiến trúc zero-dependency mới, idempotency/OCC, chiến lược migration forward-only tương thích `S0-T1-C` & `P3.1`, và ma trận kiểm thử `AG-01` → `AG-18`.
   6. [`F0-execution-roadmap.md`](./F0-execution-roadmap.md) — Phân rã Work Packages `F1` → `F5`, phân công độc quyền file `T1-A/B/C/T0` và bảng kiểm soát rủi ro thiết kế lại.
