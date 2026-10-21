@@ -40,7 +40,7 @@ test("Work Reports nav groups preserve their routes and omit empty groups", () =
     { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports"] },
   ]);
   const dashboardOnly = CURRENT_NAV_ENTRIES.filter((entry) => entry.id === "dashboard")
-    .map(({ id, label, path, group }) => ({ id, label, path, group });
+    .map(({ id, label, path, group }) => ({ id, label, path, group }));
   assert.deepEqual(
     groupNavEntries(dashboardOnly).map((item) => item.type === "entry" ? item.entry.id : item.id),
     ["dashboard"],

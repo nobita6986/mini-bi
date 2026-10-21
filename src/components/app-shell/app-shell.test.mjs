@@ -196,7 +196,7 @@ test("desktop-nav nhận các entry đã filter từ AppShell, không tự quy�
 test("desktop nav client boundary only receives serializable fields; icons stay local", () => {
   assert.match(
     appShellSource,
-    /<DesktopNav\s+items=\{desktopItems\.map\(\(\{ id, label, path \}\) => \(\{ id, label, path \}\)\)\}\s*\/>/
+    /<DesktopNav\s+items=\{desktopItems\.map\(\(\{ id, label, path, group \}\) => \(\{ id, label, path, group \}\)\)\}\s*\/>/
   );
   assert.ok(!desktopNavSource.includes("NavEntry"), "client nav must not accept registry entries with component icons");
   assert.ok(desktopNavSource.includes('"project-operations": Building2'));
