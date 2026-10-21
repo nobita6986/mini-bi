@@ -140,9 +140,9 @@ test("assertions 1-2: the migration chain includes #71 and #72 remains W02-A", a
 });
 
 // ---------------------------------------------------------------------------
-// Assertions 3-5: interval CHECKs and unchanged capability vocabulary.
+// Assertions 3-5: interval CHECKs and capability vocabulary through F2.
 // ---------------------------------------------------------------------------
-test("assertions 3-5: two grant CHECKs widened, membership still >=, vocabulary still 23", async () => {
+test("assertions 3-5: grant CHECKs widened, membership still >=, F2 vocabulary retained", async () => {
   const grants = (await db.query(
     "select c.conname, pg_get_constraintdef(c.oid) as definition from pg_constraint c"
     + " where c.conname in ('direct_entry_scope_grants_check', 'direct_entry_capability_grants_check')"
@@ -165,7 +165,7 @@ test("assertions 3-5: two grant CHECKs widened, membership still >=, vocabulary 
     + " where c.conname = 'direct_entry_capability_grants_capability_check'")).rows;
   const tokens = [...String(vocabulary[0].definition).matchAll(/'([^']+)'::text/g)]
     .map((match) => match[1]);
-  assert.equal(tokens.length, 27, "the capability vocabulary includes W01A and F1 tokens");
+  assert.equal(tokens.length, 29, "the capability vocabulary includes W01A, F1, and F2 tokens");
 });
 
 // ---------------------------------------------------------------------------
