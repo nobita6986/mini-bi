@@ -3,17 +3,23 @@ import { notFound, redirect } from "next/navigation";
 import { AccessDenied, AccountUnavailable } from "@/components/auth/access-denied";
 import { TemporaryUnavailable } from "@/components/auth/temporary-unavailable";
 import { ChangeRequestsWorkspace } from "@/components/direct-entry/change-requests-workspace";
-import { decideChangeRequestsPageAccess } from "@/lib/auth/direct-entry-page-access";
-import { createChangeRequestReadRepository } from "@/lib/direct-entry/change-request-read-repository";
+import {
+  decideChangeRequestsPageAccess,
+  EMPTY_CHANGE_REQUEST_HISTORICAL_PROBE,
+} from "@/lib/auth/direct-entry-page-access";
 import { isDirectEntryUiEnabled } from "@/lib/direct-entry/ui-model";
 import { canViewGlobalChangeRequestHistory } from "@/lib/direct-entry/worker-operations-model";
 import {
   changeRequestsNavPredicate,
+  changeRequestsProposerPredicate,
   changeRequestsReviewerPredicate,
   directEntryNavPredicate,
   workerOperationsNavPredicate,
 } from "@/lib/navigation/registry-capability";
-import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
+import {
+  resolveActorForRequest,
+  resolveChangeRequestHistoricalAccessForRequest,
+} from "@/lib/navigation/resolve-nav-actor";
 
 export const dynamic = "force-dynamic";
 
@@ -23,23 +29,27 @@ export default async function ChangeRequestsPage() {
   const uiEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
   const actor = uiEnabled ? await resolveActorForRequest().catch(() => null) : null;
 
-  let hasHistoricalRequests = false;
-  if (uiEnabled && actor !== null && actor.ok && !changeRequestsNavPredicate(actor.actor)) {
-    const repository = createChangeRequestReadRepository();
-    const probe = await repository
-      .listChangeRequests({
-        auth_subject: actor.actor.auth_subject,
-        app_user_id: actor.actor.app_user_id,
-        page_size: 1,
-        cursor: null,
-        state: null,
-        days: null,
-      })
-      .catch(() => null);
-    hasHistoricalRequests = probe !== null && probe.ok && probe.data.requests.length > 0;
-  }
+  const shouldProbeHistory =
+    uiEnabled &&
+    actor !== null &&
+    actor.ok &&
+    (!changeRequestsNavPredicate(actor.actor) ||
+      !changeRequestsReviewerPredicate(actor.actor));
+  const historicalProbe = shouldProbeHistory
+    ? await resolveChangeRequestHistoricalAccessForRequest().catch(
+        () => EMPTY_CHANGE_REQUEST_HISTORICAL_PROBE,
+      )
+    : EMPTY_CHANGE_REQUEST_HISTORICAL_PROBE;
+  const hasHistoricalRequests = historicalProbe.hasHistoricalRequests;
 
-  switch (decideChangeRequestsPageAccess({ uiEnabled, actor, hasHistoricalRequests })) {
+  switch (
+    decideChangeRequestsPageAccess({
+      uiEnabled,
+      actor,
+      hasHistoricalRequests,
+      historicalProbe,
+    })
+  ) {
     case "NOT_FOUND":
       notFound();
     case "REDIRECT_LOGIN":
@@ -53,6 +63,7 @@ export default async function ChangeRequestsPage() {
     case "ALLOW": {
       const projection = actor !== null && actor.ok ? actor.actor : null;
       const canReview = projection !== null && changeRequestsReviewerPredicate(projection);
+      const canPropose = projection !== null && changeRequestsProposerPredicate(projection);
       const canViewGlobalHistory = projection !== null &&
         canViewGlobalChangeRequestHistory(projection.capabilities, projection.scopes);
       const canAccessDirectEntry = projection !== null && directEntryNavPredicate(projection);
@@ -60,9 +71,13 @@ export default async function ChangeRequestsPage() {
       return (
         <ChangeRequestsWorkspace
           canReview={canReview}
+          canPropose={canPropose}
           canViewGlobalHistory={canViewGlobalHistory}
           canAccessDirectEntry={canAccessDirectEntry}
           canAccessWorkerDirectory={canAccessWorkerDirectory}
+          hasProposerPending={historicalProbe.hasProposerPending}
+          hasProposerResolved={historicalProbe.hasProposerResolved}
+          hasReviewerResolved={historicalProbe.hasReviewerResolved}
         />
       );
     }

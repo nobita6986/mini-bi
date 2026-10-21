@@ -419,16 +419,50 @@ export const CHANGE_REQUEST_GLOBAL_AUDIT_TAB = {
   label: "Lịch sử toàn hệ thống",
 } as const;
 
+export type ChangeRequestWorkspaceInitialAccess = {
+  canReview: boolean;
+  canPropose?: boolean;
+  hasProposerPending?: boolean;
+  hasProposerResolved?: boolean;
+  hasReviewerResolved?: boolean;
+};
+
 export function initialChangeRequestWorkspaceMode(
-  canReview: boolean,
+  input: boolean | ChangeRequestWorkspaceInitialAccess,
 ): ChangeRequestWorkspaceMode {
-  return canReview ? "reviewer" : "proposer";
+  if (typeof input === "boolean") {
+    return input ? "reviewer" : "proposer";
+  }
+  if (input.canReview) return "reviewer";
+  if (
+    input.hasReviewerResolved === true &&
+    !input.canPropose &&
+    !input.hasProposerPending &&
+    !input.hasProposerResolved
+  ) {
+    return "reviewer";
+  }
+  return "proposer";
 }
 
 export function initialChangeRequestQueue(
-  canReview: boolean,
+  input: boolean | ChangeRequestWorkspaceInitialAccess,
 ): ChangeRequestQueueFilter {
-  return canReview ? "REVIEWER_PENDING" : "PROPOSER_PENDING";
+  if (typeof input === "boolean") {
+    return input ? "REVIEWER_PENDING" : "PROPOSER_PENDING";
+  }
+  const mode = initialChangeRequestWorkspaceMode(input);
+  if (mode === "reviewer") {
+    return input.canReview ? "REVIEWER_PENDING" : "REVIEWER_RESOLVED";
+  }
+  if (
+    !input.canPropose &&
+    input.hasProposerPending === false &&
+    input.hasProposerResolved === true
+  ) {
+    return "PROPOSER_RESOLVED";
+  }
+  return "PROPOSER_PENDING";
 }
 
 export function changeRequestWorkspaceTabs(input: {

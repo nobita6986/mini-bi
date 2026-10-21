@@ -26,6 +26,7 @@ import type { Capability } from "@/lib/auth/direct-entry-v2";
 export type NavActorProjection = {
   capabilities: readonly Capability[];
   scopes: readonly { kind: "own" | "team" | "all" }[];
+  hasHistoricalChangeRequests?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -140,7 +141,9 @@ export const changeRequestsProposerPredicate: NavCapabilityPredicate = (actor) =
  * R2.2: Navigation & default page predicate cho /direct-entry/change-requests.
  */
 export const changeRequestsNavPredicate: NavCapabilityPredicate = (actor) =>
-  changeRequestsReviewerPredicate(actor) || changeRequestsProposerPredicate(actor);
+  changeRequestsReviewerPredicate(actor) ||
+  changeRequestsProposerPredicate(actor) ||
+  actor.hasHistoricalChangeRequests === true;
 
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
