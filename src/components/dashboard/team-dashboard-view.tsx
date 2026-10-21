@@ -1,4 +1,5 @@
 import type { ScopedDashboardView } from "@/lib/reporting/p3-w06c-audience-view";
+import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
@@ -29,8 +30,8 @@ function teamReportConfig(view: ScopedDashboardView): TeamReportViewConfig {
     requireTeamSelection: false,
     kpiAriaLabel: "Chỉ số nhóm",
     kpiPrimaryLabel: "Tuyển mới trong nhóm",
-    kpiPrimaryHint: "số người tuyển",
-    kpiSecondaryLabel: "Thành viên có tuyển",
+    kpiPrimaryHint: "lượt tuyển ghi nhận",
+    kpiSecondaryLabel: "Recruiter có phát sinh tuyển",
     kpiSecondaryHint: "trong phạm vi nhóm",
     memberTitle: "Đóng góp của thành viên nhóm",
     memberDescription: "Xếp hạng số người tuyển của từng thành viên trong phạm vi nhóm được cấp.",
@@ -44,11 +45,13 @@ function teamReportConfig(view: ScopedDashboardView): TeamReportViewConfig {
 export function TeamDashboardView({
   data,
   generatedAt,
+  comparison,
   optionsResult,
   view,
 }: {
   data: ReportingData;
   generatedAt: string;
+  comparison?: PeriodComparisonResult;
   optionsResult: ReportingOptionsResult;
   view: ScopedDashboardView;
 }) {
@@ -57,6 +60,7 @@ export function TeamDashboardView({
       <TeamReportView
         data={data}
         generatedAt={generatedAt}
+        comparison={comparison}
         optionsResult={optionsResult}
         view={teamReportConfig(view)}
       />

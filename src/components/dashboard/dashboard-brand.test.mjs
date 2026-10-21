@@ -70,7 +70,16 @@ test("dashboard hero keeps its identity/timestamp and renders the existing compa
   assert.ok(!src.includes("AiReportPanel") && !src.includes("AiSettingsPanel"));
   assert.equal(src.split('label="Tổng tuyển mới"').length - 1, 1);
   assert.equal(src.split('label="Số ngày có tuyển"').length - 1, 1);
-  assert.equal(src.split('variant="compact"').length - 1, 2);
+  const heroStart = src.indexOf("<header ");
+  const heroEnd = src.indexOf("</header>", heroStart);
+  assert.ok(heroStart > 0 && heroEnd > heroStart, "hero header must exist");
+  const hero = src.slice(heroStart, heroEnd);
+  const bodyStart = src.indexOf("function DashboardBody(");
+  assert.ok(bodyStart > heroEnd, "DashboardBody must exist after hero");
+  const body = src.slice(bodyStart);
+  assert.equal(hero.split('variant="compact"').length - 1, 2, "hero must render 2 compact KPIs");
+  assert.equal(body.split('variant="compact"').length - 1, 4, "content body must render 4 summary compact KPIs");
+  assert.equal(src.split('variant="compact"').length - 1, 6);
   assert.ok(src.includes("showKpis ?"));
 });
 

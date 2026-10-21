@@ -2,7 +2,12 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Alert } from "@/components/ui/alert";
+import { StatusBadge } from "@/components/ui/badge";
 import { sortBuckets } from "@/lib/reporting/p1-dashboard";
+import {
+  formatPeriodComparisonSummary,
+  type PeriodComparisonResult,
+} from "@/lib/reporting/p1-period-comparison";
 import type { ReportingBucket } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
@@ -56,6 +61,36 @@ export function ScopeNote({ label, children }: { label: string; children: ReactN
     <p role="note" aria-label={label} className="rounded-2xl border border-border bg-muted/10 px-4 py-2 text-sm text-muted">
       {children}
     </p>
+  );
+}
+
+/**
+ * MBI-DA-2026-01 Wave 3 (Item 1.5) — Equivalent prior-period comparison strip.
+ * Keeps current KPI values intact while showing increase/decrease/equal state,
+ * absolute + percentage delta, and the exact comparison window.
+ */
+export function PeriodComparisonBanner({
+  comparison,
+}: {
+  comparison?: PeriodComparisonResult;
+}) {
+  if (!comparison) return null;
+  const formatted = formatPeriodComparisonSummary(comparison);
+  return (
+    <section
+      aria-label="So sánh với kỳ trước tương đương"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-surface px-4 py-3 text-sm"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge tone={formatted.badgeTone} dot>
+          {formatted.badgeLabel}
+        </StatusBadge>
+        <span className="font-mono font-semibold tabular-nums text-foreground">
+          {formatted.deltaText}
+        </span>
+      </div>
+      <p className="text-xs text-muted">{formatted.detailText}</p>
+    </section>
   );
 }
 
