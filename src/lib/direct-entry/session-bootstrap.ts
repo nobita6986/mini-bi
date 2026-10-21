@@ -29,12 +29,19 @@ export async function createDirectEntrySessionResponse(
 
     const actor: Pick<
       DirectEntryActor,
-      "app_user_id" | "capabilities" | "scopes" | "self_recruiter_suggestion"
+      | "app_user_id"
+      | "capabilities"
+      | "scopes"
+      | "self_recruiter_suggestion"
+      | "effective_report_review_scopes"
     > = {
       app_user_id: result.actor.actor.app_user_id,
       capabilities: result.actor.actor.capabilities,
       scopes: result.actor.actor.scopes,
       self_recruiter_suggestion: result.actor.actor.self_recruiter_suggestion,
+      ...(result.actor.actor.effective_report_review_scopes !== undefined
+        ? { effective_report_review_scopes: result.actor.actor.effective_report_review_scopes }
+        : {}),
     };
     const headers = new Headers({ "Cache-Control": NO_STORE });
     for (const [name, value] of Object.entries(result.response_headers)) {

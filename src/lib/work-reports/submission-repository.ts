@@ -30,6 +30,12 @@ export type WorkReportObligation = {
   schema_json: WorkReportTemplateSchema;
 };
 
+export type WorkReportLatestReviewEvent = {
+  decision: "APPROVED" | "REJECTED";
+  reason: string | null;
+  reviewed_at: string;
+};
+
 export type WorkReportSubmissionDetail = {
   obligation: Record<string, unknown>;
   template: { template_code: string; display_name: string; schema_json: WorkReportTemplateSchema };
@@ -38,6 +44,7 @@ export type WorkReportSubmissionDetail = {
     first_submitted_at: string | null; latest_submitted_at: string | null; is_late: boolean;
     has_post_deadline_amendment: boolean; current_revision_id: string | null; version: number;
   };
+  latest_review_event?: WorkReportLatestReviewEvent | null;
   revisions: Array<{ revision_id: string; revision_no: number; payload_json: Record<string, unknown>; created_at: string }>;
 };
 
@@ -84,12 +91,20 @@ function isObligation(value: unknown): value is WorkReportObligation {
     validateWorkReportSchema(value.schema_json).ok;
 }
 
+function isLatestReviewEvent(value: unknown): value is WorkReportLatestReviewEvent {
+  return isRecord(value) &&
+    (value.decision === "APPROVED" || value.decision === "REJECTED") &&
+    (value.reason === null || typeof value.reason === "string") &&
+    typeof value.reviewed_at === "string";
+}
+
 function isDetail(value: unknown): value is WorkReportSubmissionDetail {
   return isRecord(value) && isRecord(value.obligation) && isRecord(value.template) &&
     typeof value.template.template_code === "string" && typeof value.template.display_name === "string" &&
     validateWorkReportSchema(value.template.schema_json).ok && Array.isArray(value.revisions) && value.revisions.every((revision) =>
       isRecord(revision) && typeof revision.revision_id === "string" && UUID.test(revision.revision_id) &&
       Number.isInteger(revision.revision_no) && isRecord(revision.payload_json) && typeof revision.created_at === "string") &&
+    (value.latest_review_event === undefined || value.latest_review_event === null || isLatestReviewEvent(value.latest_review_event)) &&
     (value.submission === null || (isRecord(value.submission) && typeof value.submission.submission_id === "string" &&
       UUID.test(value.submission.submission_id) && typeof value.submission.state === "string" &&
       (value.submission.draft_payload_json === null || isRecord(value.submission.draft_payload_json)) &&

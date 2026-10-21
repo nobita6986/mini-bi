@@ -140,6 +140,8 @@ export type WorkReportMetricReconciliation = {
   discrepancies: readonly WorkReportMetricReconciliationIssue[];
 };
 
+export type WorkReportAnalyticsFinality = "final" | "provisional_included";
+
 export type WorkReportAnalyticsFilterInput = WorkReportActorRef & {
   template_id: string;
   version_id: string | null;
@@ -147,7 +149,7 @@ export type WorkReportAnalyticsFilterInput = WorkReportActorRef & {
   to: string | null;
   team_id: string | null;
   assignee_id: string | null;
-  finality: "final";
+  finality: WorkReportAnalyticsFinality;
 };
 
 export type WorkReportAnalyticsBreakdownInput = WorkReportAnalyticsFilterInput & {

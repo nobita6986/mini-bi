@@ -47,10 +47,11 @@ const F1_WORK_REPORT_TOKENS = [
   "report_view",
   "report_analytics_view",
 ];
+const F2_WORK_REPORT_TOKENS = ["report_review", "report_delegate"];
 const LEGACY_TOKEN_COUNT = 21;
 const RETIRED_TOKENS = ["pii_view", "pii_export", "payment_view", "payment_edit"];
-const TOKEN_COUNT = 27;
-const ACTIVE_TOKEN_COUNT = 23;
+const TOKEN_COUNT = 29;
+const ACTIVE_TOKEN_COUNT = 25;
 const UNKNOWN_TOKEN = "unknown_capability_probe";
 
 const AUTH_SUBJECT = "10000000-0000-4000-8000-00000000c001";
@@ -142,6 +143,7 @@ test("the auth contract is versioned as direct-entry-auth/1.5 without retired ca
   for (const token of RETIRED_TOKENS) assert.equal(CAPABILITIES.includes(token), false, token);
   for (const token of NEW_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
   for (const token of F1_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
+  for (const token of F2_WORK_REPORT_TOKENS) assert.ok(CAPABILITIES.includes(token), token);
 });
 
 test("database preserves legacy grant storage while active SQL and TypeScript agree", async () => {
@@ -180,7 +182,12 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   assert.deepEqual(
     [...foundationTokens].sort(),
     [...CAPABILITIES]
-      .filter((token) => !NEW_TOKENS.includes(token) && !F1_WORK_REPORT_TOKENS.includes(token))
+      .filter(
+        (token) =>
+          !NEW_TOKENS.includes(token) &&
+          !F1_WORK_REPORT_TOKENS.includes(token) &&
+          !F2_WORK_REPORT_TOKENS.includes(token),
+      )
       .concat(RETIRED_TOKENS)
       .sort(),
   );
@@ -189,7 +196,7 @@ test("migration 67 is append-only: the frozen foundation vocabulary is untouched
   const schemaTokens = await schemaVocabulary(db);
   assert.deepEqual(
     schemaTokens.filter((token) => !foundationTokens.includes(token)).sort(),
-    [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS].sort(),
+    [...NEW_TOKENS, ...F1_WORK_REPORT_TOKENS, ...F2_WORK_REPORT_TOKENS].sort(),
   );
   await db.close();
 });

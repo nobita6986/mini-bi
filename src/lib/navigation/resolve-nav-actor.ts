@@ -105,9 +105,14 @@ export const resolveNavActorForAppShell = cache(
     }
     const actor = await resolveActorForRequest();
     if (!actor.ok) return null;
-    const projection: NavActorProjection = {
+    const projection: NavActorProjection & {
+      effective_report_review_scopes?: typeof actor.actor.effective_report_review_scopes;
+    } = {
       capabilities: actor.actor.capabilities,
       scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
+      ...(actor.actor.effective_report_review_scopes !== undefined
+        ? { effective_report_review_scopes: actor.actor.effective_report_review_scopes }
+        : {}),
     };
     if (process.env.WORK_REPORTS_API_ENABLED === "true" && !workReportsNavPredicate(projection)) {
       const obligations = await createSubmissionRepository().listMine({

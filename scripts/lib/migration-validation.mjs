@@ -30,6 +30,16 @@ export const F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES = Object.freeze([
   "public.work_report_analytics_contributions(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, text, uuid, uuid, text, text, integer)",
   "public.work_report_reconcile_metric_projection(uuid, uuid, uuid)",
 ]);
+export const F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME =
+  "20261022000000_f2_work_reports_review_and_delegation.sql";
+export const F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES = Object.freeze([
+  "public.work_report_create_delegation(uuid, uuid, text, uuid, uuid, text, uuid, timestamp with time zone, timestamp with time zone, text)",
+  "public.work_report_decide_review(uuid, uuid, uuid, text, text, integer, text)",
+  "public.work_report_get_review_submission(uuid, uuid, uuid)",
+  "public.work_report_list_delegations(uuid, uuid)",
+  "public.work_report_list_pending_reviews(uuid, uuid, uuid, text, integer)",
+  "public.work_report_revoke_delegation(uuid, uuid, uuid, integer, text)",
+]);
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -241,7 +251,8 @@ export async function verifyS0T1CHistoricalCompatibility(
   client,
   migrationSql,
   { r1_2Applied = false, f1WorkReportsApplied = false, f1AssignmentOptionsApplied = false,
-    f1AssignmentTrackingApplied = false, f1_5AnalyticsApplied = false } = {},
+    f1AssignmentTrackingApplied = false, f1_5AnalyticsApplied = false,
+    f2ReviewAndDelegationApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -257,6 +268,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(f1AssignmentOptionsApplied ? [F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE] : []),
     ...(f1AssignmentTrackingApplied ? [F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE] : []),
     ...(f1_5AnalyticsApplied ? F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES : []),
+    ...(f2ReviewAndDelegationApplied ? F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES : []),
   ];
 
   const { rows } = await client.query(
@@ -448,6 +460,7 @@ export async function verifyAppliedMigrationChecksum(
         f1AssignmentOptionsApplied: appliedMap.has(F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_MIGRATION_NAME),
         f1AssignmentTrackingApplied: appliedMap.has(F1_WORK_REPORTS_ASSIGNMENT_TRACKING_MIGRATION_NAME),
         f1_5AnalyticsApplied: appliedMap.has(F1_5_WORK_REPORTS_ANALYTICS_MIGRATION_NAME),
+        f2ReviewAndDelegationApplied: appliedMap.has(F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
