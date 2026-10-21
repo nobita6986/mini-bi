@@ -12,7 +12,6 @@ import {
   formatSharePct,
 } from "@/lib/reporting/p1-dashboard-period";
 import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
-import type { WorkforceReportingResult } from "@/lib/reporting/wf01-workforce-snapshot";
 import { buildBarData, buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
 import { resolveDashboardMode } from "@/lib/reporting/p3-w06c-audience-view";
 import type { ReportingAudience } from "@/lib/reporting/p3-w05a-audience";
@@ -24,7 +23,13 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
-import { FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, WorkforceSnapshotSection } from "./dashboard-shared";
+import {
+  FiltersOrError,
+  NoMatchesBlock,
+  PeriodComparisonBanner,
+  WorkforceStatusSection,
+  type WorkforceReportingResult,
+} from "./dashboard-shared";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { OwnDashboardView } from "./own-dashboard-view";
@@ -243,7 +248,7 @@ function DashboardBody({
     return (
       <div className="space-y-4">
         <FiltersOrError optionsResult={optionsResult} />
-        <WorkforceSnapshotSection workforce={workforce} />
+        <WorkforceStatusSection workforce={workforce} />
         <EmptyState title="Chưa có dữ liệu tuyển dụng" description="Hiện chưa có dữ liệu để hiển thị. Hãy điều chỉnh bộ lọc hoặc tải lại trang sau." />
       </div>
     );
@@ -255,7 +260,7 @@ function DashboardBody({
     <div className="space-y-4">
       <FiltersOrError optionsResult={optionsResult} />
       <PeriodComparisonBanner comparison={comparison} />
-      <WorkforceSnapshotSection workforce={workforce} />
+      <WorkforceStatusSection workforce={workforce} />
 
       {data.empty.noMatches ? (
         <NoMatchesBlock />

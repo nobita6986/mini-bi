@@ -21,6 +21,8 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
 import { DashboardFilters } from "./dashboard-filters";
 
+export type { WorkforceReportingResult };
+
 /**
  * P3-W06C - shared dashboard pieces reused by the BoD / Team / Own views.
  * No audience decision lives here: callers pass only the scoped options they
@@ -335,6 +337,8 @@ export function WorkforceSnapshotSection({
     </section>
   );
 }
+
+export const WorkforceStatusSection = WorkforceSnapshotSection;
 
 /**
  * Collapsible full bucket list (shared by the scoped dashboards).
