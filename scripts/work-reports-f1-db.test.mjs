@@ -4,7 +4,7 @@
  * Verifies against PGlite (all migrations through `20261021160000_f1_work_reports_foundation.sql`):
  *   - 27 DB capability tokens / 23 active TS tokens (`direct-entry-auth/1.5`)
  *   - Forced RLS + zero direct table grants on all 10 `work_report_*` tables
- *   - Revoked helper/trigger EXECUTE + exact 15 service-role RPC allowlist
+ *   - Revoked helper/trigger EXECUTE + exact service-role RPC allowlist
  *   - Actor binding (`auth_subject` mismatch, disabled user) & scope enforcement
  *   - Team Leader auto-grant / revoke / same-day re-designation / independent grant preservation (`OD-04`, `AG-14`, `AG-23`)
  *   - Template CRUD, draft update, clone, publish, archive & published version immutability (`AG-07`, `AG-18`)
@@ -30,7 +30,10 @@ import {
   WORK_REPORT_FIELD_TYPES,
 } from "../src/lib/work-reports/contracts.ts";
 import { buildWorkReportMetricContract } from "../src/lib/work-reports/metric-contract.ts";
-import { F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES } from "./lib/migration-validation.mjs";
+import {
+  F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
+  F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
+} from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
 const MIGRATION_DIR = path.resolve("supabase/migrations");
@@ -214,7 +217,7 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
   assert.ok(fnRows.every((r) => !r.anon_exec && !r.auth_exec), "zero client EXECUTE on work_report_*");
   const { rows: expectedFnRows } = await db.query(
     "select to_regprocedure(sig)::regprocedure::text as signature from unnest($1::text[]) as u(sig) order by 1",
-    [F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES],
+    [[...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES, F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());
@@ -577,6 +580,34 @@ test("assignments, obligations, snapshot_team_id immutability, deadline/reopen/e
     [ADMIN.auth, ADMIN.app],
   );
   const templateId = tplList[0].result.items[0].template_id;
+
+  const { rows: leaderOptions } = await db.query(
+    "select public.work_report_list_assignment_options($1::uuid, $2::uuid, null) as result",
+    [LEADER_A.auth, LEADER_A.app],
+  );
+  assert.deepEqual(leaderOptions[0].result.teams.map((team) => team.team_id), [TEAM_A]);
+  assert.ok(leaderOptions[0].result.templates.some((item) => item.template_id === templateId));
+  assert.deepEqual(leaderOptions[0].result.users, [], "unselected team returns no roster");
+
+  const { rows: rosterOptions } = await db.query(
+    "select public.work_report_list_assignment_options($1::uuid, $2::uuid, $3::uuid) as result",
+    [LEADER_A.auth, LEADER_A.app, TEAM_A],
+  );
+  assert.deepEqual(
+    rosterOptions[0].result.users.map((user) => user.app_user_id).sort(),
+    [LEADER_A.app, STAFF_A1.app, STAFF_A2.app].sort(),
+    "Team Leader sees only enabled, verified current members in their authorized team",
+  );
+  await assert.rejects(
+    db.query("select public.work_report_list_assignment_options($1::uuid, $2::uuid, $3::uuid)",
+      [LEADER_A.auth, LEADER_A.app, TEAM_B]),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query("select public.work_report_list_assignment_options($1::uuid, $2::uuid, null)",
+      [ADMIN.auth, LEADER_A.app]),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_ACTOR_DENIED"),
+  );
 
   // OD-03 / AG-09: LEADER_A (team A scope) attempting USER_SET with STAFF_A1 (team A) + STAFF_B1 (team B)
   // must reject the entire transaction with zero rows created

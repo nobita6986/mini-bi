@@ -107,6 +107,23 @@ export async function createWorkReportAssignment(request: Request, enabled: stri
   catch { console.error("[work-reports] assignment create unavailable"); return fail("WORK_REPORT_UNAVAILABLE", 503); }
 }
 
+export async function listWorkReportAssignmentOptions(request: Request, enabled: string | undefined,
+  deps: AssignmentApiDependencies): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  const url = new URL(request.url);
+  const teamId = url.searchParams.get("team_id");
+  if ([...url.searchParams.keys()].some((key) => key !== "team_id") || url.searchParams.size > 1 ||
+      (teamId !== null && !UUID.test(teamId))) return fail("WORK_REPORT_REQUEST_INVALID", 400);
+  const actor = await actorFromSession(deps);
+  if (actor instanceof Response) return actor;
+  try {
+    return mapOutcome(await deps.repository.listOptions({ ...actor, team_id: teamId }));
+  } catch {
+    console.error("[work-reports] assignment options unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
+}
+
 export async function setWorkReportAssignmentState(request: Request, assignmentId: string, enabled: string | undefined,
   deps: AssignmentApiDependencies): Promise<Response> {
   if (enabled !== "true") return fail("NOT_FOUND", 404);

@@ -27,7 +27,18 @@ export type WorkReportRpcOutcome<T> =
   | { ok: true; data: T }
   | { ok: false; kind: "conflict" | "denied" | "invalid" | "not-found" | "unavailable" };
 
+export type WorkReportAssignmentOptions = {
+  templates: readonly {
+    template_id: string; template_code: string; display_name: string;
+    default_frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "ONCE";
+    current_published_version_id: string;
+  }[];
+  teams: readonly { team_id: string; code: string; display_name: string }[];
+  users: readonly { app_user_id: string; display_name: string }[];
+};
+
 export type AssignmentRepository = {
+  listOptions(input: WorkReportActorRef & { team_id: string | null }): Promise<WorkReportRpcOutcome<WorkReportAssignmentOptions>>;
   create(input: AssignmentCreateInput): Promise<WorkReportRpcOutcome<{ assignment_id: string; version: number }>>;
   setState(input: WorkReportActorRef & {
     assignment_id: string; expected_version: number; state: "ACTIVE" | "PAUSED" | "REVOKED"; idempotency_key: string;
@@ -64,6 +75,18 @@ function outcome<T>(data: unknown, error: { code?: string } | null, valid: (valu
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const versioned = (value: unknown): value is Record<string, unknown> => record(value) && Number.isInteger(value.version);
 
+function assignmentOptions(value: unknown): value is WorkReportAssignmentOptions {
+  if (!record(value) || !Array.isArray(value.templates) || !Array.isArray(value.teams) || !Array.isArray(value.users)) return false;
+  return value.templates.every((item) => record(item) && UUID.test(String(item.template_id)) &&
+      typeof item.template_code === "string" && typeof item.display_name === "string" &&
+      ["DAILY", "WEEKLY", "MONTHLY", "ONCE"].includes(String(item.default_frequency)) &&
+      UUID.test(String(item.current_published_version_id))) &&
+    value.teams.every((item) => record(item) && UUID.test(String(item.team_id)) &&
+      typeof item.code === "string" && typeof item.display_name === "string") &&
+    value.users.every((item) => record(item) && UUID.test(String(item.app_user_id)) &&
+      typeof item.display_name === "string");
+}
+
 export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
   let call = rpc;
   const invoke: Rpc = async (name, args) => {
@@ -71,6 +94,17 @@ export function createAssignmentRepository(rpc?: Rpc): AssignmentRepository {
     return call(name, args);
   };
   return {
+    async listOptions(input) {
+      try {
+        const { data, error } = await invoke("work_report_list_assignment_options", {
+          p_auth_subject: input.auth_subject, p_app_user_id: input.app_user_id, p_team_id: input.team_id,
+        });
+        return outcome(data, error, assignmentOptions);
+      } catch {
+        console.error("[work-reports] assignment options RPC failed");
+        return { ok: false, kind: "unavailable" };
+      }
+    },
     async create(input) {
       try {
         const { data, error } = await invoke("work_report_create_assignment", {
