@@ -30,6 +30,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "worker-operations": Users,
   "change-requests": FileDiff,
   "work-reports": NotebookPen,
+  "work-report-reviews": ClipboardList,
   admin: ShieldCheck,
 } as const;
 

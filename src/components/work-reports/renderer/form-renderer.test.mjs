@@ -25,6 +25,14 @@ test("inbox exposes loading and explicit retryable error states", async () => {
   assert.match(source, /Tải lại/);
 });
 
+test("rejected reports show the reviewer reason and can be resubmitted after the deadline", async () => {
+  const source = await readFile(rendererPath, "utf8");
+  assert.match(source, /latest_review_event\?: \{ decision: string; reason: string \| null; reviewed_at: string \}/);
+  assert.match(source, /detail\.submission\?\.state === "REJECTED" \|\| now === null/);
+  assert.match(source, /Báo cáo cần nộp lại/);
+  assert.match(source, /latest_review_event\?\.reason/);
+});
+
 test("assignment page resolves the request actor and requires report_assign scope server-side", async () => {
   const source = await readFile(assignmentPagePath, "utf8");
   assert.match(source, /resolveActorForRequest\(\)/);
