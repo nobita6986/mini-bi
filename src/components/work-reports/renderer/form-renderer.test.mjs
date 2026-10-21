@@ -33,10 +33,12 @@ test("assignment page resolves the request actor and requires report_assign scop
   assert.doesNotMatch(source, /actor\.(?:role|title)|role_name|job_title/i);
 });
 
-test("assignment form reports the scoped template-read denial distinctly", async () => {
+test("assignment form loads scoped templates and targets without accepting client identity", async () => {
   const source = await readFile(assignmentManagerPath, "utf8");
   assert.match(source, /response\.status === 403/);
   assert.match(source, /WORK_REPORT_ACCESS_DENIED/);
-  assert.match(source, /Bạn có quyền giao báo cáo nhưng chưa được phép xem danh sách mẫu/);
-  assert.match(source, /disabled=\{busy \|\| !templates\.length \|\| !templatesLoaded\}/);
+  assert.match(source, /fetch\(`\/api\/work-reports\/assignments\$\{query\}`/);
+  assert.match(source, /Danh sách nhân viên được xác định từ liên kết tài khoản và thành viên nhóm hiện hành/);
+  assert.doesNotMatch(source, /nhập mã định danh|UUID, cách nhau/i);
+  assert.match(source, /disabled=\{busy \|\| !templates\.length \|\| !teamId \|\| !templatesLoaded\}/);
 });

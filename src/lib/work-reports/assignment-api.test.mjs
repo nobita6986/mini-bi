@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWorkReportAssignment, setWorkReportAssignmentState, changeWorkReportObligation } from "./assignment-api.ts";
+import { createWorkReportAssignment, listWorkReportAssignmentOptions, setWorkReportAssignmentState, changeWorkReportObligation } from "./assignment-api.ts";
 
 const actor = { auth_subject: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", app_user_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
 const template = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -9,10 +9,27 @@ function request(path, body) {
   return new Request(`https://bi.test${path}`, { method: "POST", headers: { host: "bi.test", origin: "https://bi.test",
     "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify(body) });
 }
+function getRequest(path) { return new Request(`https://bi.test${path}`); }
 function deps(repository = {}) { return { resolveSession: async () => ({ actor: { ok: true, actor } }), repository }; }
 function assignment() { return { template_id: template, target_kind: "USER", target_user_id: user, target_team_id: null,
   target_user_ids: [], frequency: "DAILY", is_mandatory: true, due_day_offset: 0, due_time_local: "23:59:59",
   exclude_sundays: false, effective_from: "2026-10-21", effective_to: null, idempotency_key: "request-1" }; }
+
+test("assignment options use the session actor and accept only an optional team filter", async () => {
+  let input;
+  const data = { templates: [], teams: [], users: [] };
+  const response = await listWorkReportAssignmentOptions(
+    getRequest(`/api/work-reports/assignments?team_id=${user}`), "true", deps({
+      listOptions: async (value) => { input = value; return { ok: true, data }; },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(input, { ...actor, team_id: user });
+  assert.deepEqual(await response.json(), { ok: true, ...data });
+  assert.equal((await listWorkReportAssignmentOptions(
+    getRequest(`/api/work-reports/assignments?app_user_id=${user}`), "true", deps(),
+  )).status, 400);
+});
 
 test("assignment creation resolves actor from session and validates scope through repository result", async () => {
   let input;
