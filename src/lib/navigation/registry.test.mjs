@@ -11,7 +11,9 @@ import { test } from "node:test";
 // hoặc node loader sẽ compile .ts trong monorepos cấu hình TS).
 // Để chạy độc lập (không qua scripts.test:main), dùng `node --experimental-strip-types`.
 const mod = await import("./registry.ts");
-const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } = mod;
+const {
+  CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath, groupNavEntries,
+} = mod;
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
@@ -19,6 +21,30 @@ test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", 
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
   assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"],
     `got ids: ${ids.join(",")}`);
+});
+
+test("Work Reports nav groups preserve their routes and omit empty groups", () => {
+  const menu = groupNavEntries(CURRENT_NAV_ENTRIES.map(({ id, label, path, group }) => ({
+    id, label, path, group,
+  })));
+  assert.deepEqual(menu.filter((item) => item.type === "group").map((item) => ({
+    id: item.id,
+    label: item.label,
+    children: item.entries.map((entry) => entry.id),
+  })), [
+    {
+      id: "new-reports",
+      label: "Báo cáo cấp mới",
+      children: ["direct-entry", "project-operations", "worker-operations", "change-requests"],
+    },
+    { id: "daily-reports", label: "Báo cáo hàng ngày", children: ["work-reports"] },
+  ]);
+  const dashboardOnly = CURRENT_NAV_ENTRIES.filter((entry) => entry.id === "dashboard")
+    .map(({ id, label, path, group }) => ({ id, label, path, group });
+  assert.deepEqual(
+    groupNavEntries(dashboardOnly).map((item) => item.type === "entry" ? item.entry.id : item.id),
+    ["dashboard"],
+  );
 });
 
 test("Dashboard label là 'Tổng quan' và path '/dashboard'", () => {

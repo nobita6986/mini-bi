@@ -109,7 +109,7 @@ export async function AppShell({
         <div className="mx-auto flex min-h-14 w-full max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:px-6">
           {/* Mobile: hamburger trigger */}
           <MobileNav
-            items={mobileItems.map(({ id, label, path }) => ({ id, label, path }))}
+            items={mobileItems.map(({ id, label, path, group }) => ({ id, label, path, group }))}
           />
 
           {/* Logo HR Partner */}
@@ -123,7 +123,7 @@ export async function AppShell({
 
           {/* Desktop nav — ẩn trên mobile */}
           <DesktopNav
-            items={desktopItems.map(({ id, label, path }) => ({ id, label, path }))}
+            items={desktopItems.map(({ id, label, path, group }) => ({ id, label, path, group }))}
           />
 
           {/* Spacer */}

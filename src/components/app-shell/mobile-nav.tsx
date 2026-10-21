@@ -24,11 +24,11 @@ import { usePathname } from "next/navigation";
 import { Dialog } from "radix-ui";
 import { Building2, ClipboardList, FileDiff, LayoutDashboard, Menu, NotebookPen, ShieldCheck, Users, X } from "lucide-react";
 
-import { findEntryByPath } from "@/lib/navigation/registry";
+import { findEntryByPath, groupNavEntries, type NavMenuEntry } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
 import { ThemeSelector } from "@/components/dashboard/theme-selector";
 
-type MobileNavItem = { id: string; label: string; path: string };
+type MobileNavItem = NavMenuEntry;
 
 const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
@@ -50,6 +50,29 @@ export function MobileNav({
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const pathname = usePathname();
   const active = findEntryByPath(pathname);
+  const renderEntry = (entry: MobileNavItem) => {
+    const Icon = NAV_ICONS[entry.id];
+    if (!Icon) throw new Error(`Missing mobile navigation icon for "${entry.id}"`);
+    const isActive = active?.id === entry.id;
+    return (
+      <Link
+        key={entry.id}
+        href={entry.path}
+        aria-current={isActive ? "page" : undefined}
+        onClick={() => setOpen(false)}
+        className={cn(
+          "inline-flex min-h-11 h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+          isActive
+            ? "bg-primary/10 text-foreground"
+            : "text-muted hover:bg-surface-hover hover:text-foreground"
+        )}
+      >
+        <Icon className="h-4 w-4" aria-hidden />
+        <span>{entry.label}</span>
+      </Link>
+    );
+  };
 
   return (
     <Dialog.Root
@@ -114,29 +137,19 @@ export function MobileNav({
           </div>
 
           <nav aria-label="Điều hướng chính (di động)" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-            {items.map((entry) => {
-              const Icon = NAV_ICONS[entry.id];
-              if (!Icon) throw new Error(`Missing mobile navigation icon for "${entry.id}"`);
-              const isActive = active?.id === entry.id;
-              return (
-                <Link
-                  key={entry.id}
-                  href={entry.path}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => setOpen(false)}
-                  className={cn(
-                    "inline-flex min-h-11 h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-                    isActive
-                      ? "bg-primary/10 text-foreground"
-                      : "text-muted hover:bg-surface-hover hover:text-foreground"
-                  )}
-                >
-                  <Icon className="h-4 w-4" aria-hidden />
-                  <span>{entry.label}</span>
-                </Link>
-              );
-            })}
+            {groupNavEntries(items).map((item) => item.type === "entry"
+              ? renderEntry(item.entry)
+              : (
+                <section key={item.id} aria-label={item.label} className="mt-2">
+                  <h2 className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                    {item.label}
+                  </h2>
+                  <div className="ml-2 flex flex-col gap-1 border-l border-border pl-2">
+                    {item.entries.map(renderEntry)}
+                  </div>
+                </section>
+              )
+            )}
           </nav>
 
           <Dialog.Title className="sr-only">Menu điều hướng chính</Dialog.Title>
