@@ -73,6 +73,7 @@ const TEST_WEIGHTS = {
   "test:r2-1": 8.5,
   "test:r2-2": 2.5,
   "test:f1-work-reports": 6.0,
+  "test:f1-5-work-reports-wp1": 6.0,
 };
 
 const target = process.argv[2];
