@@ -1,17 +1,25 @@
 # F0 — Deliverable E: Architecture & Test Strategy (`F0-architecture-and-test-strategy.md`)
 
+> [!NOTE]
+> - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
+> - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 giữ nguyên 129 migrations và toàn bộ DB/auth/navigation contract, đồng thời bổ sung bộ R2.2 shared UI primitives (`button.tsx`, `badge.tsx`, `data-table.tsx`, `filter-toolbar.tsx`, `mobile-action-sheet.tsx`, `page-shell.tsx`, `report-table.tsx`, `toast.tsx`) cùng 3 bài test cổng giao diện R2.2 (`r2-2-grid-no-touch-guard.test.mjs`, `r2-2-theme-mobile-contract.test.mjs`, `r2-2-surface-coverage.test.mjs`).
+
 ## 1. Kiến trúc Hệ thống Đề xuất (RECOMMENDATION)
 
-### 1.1. Nguyên tắc Kiến trúc Tối thiểu & Zero-Dependency (FACT + RECOMMENDATION)
+### 1.1. Nguyên tắc Kiến trúc Tối thiểu, Zero-Dependency & Tái sử dụng R2.2 Primitives (FACT + RECOMMENDATION)
 
-Toàn bộ module **Work Reports (`F1` → `F5`)** được xây dựng 100% trên các thư viện đã có trong [`package.json`](package.json#L144-L175):
+Toàn bộ module **Work Reports (`F1` → `F5`)** được xây dựng 100% trên các thư viện đã có trong [`../../package.json`](../../package.json#L144-L175):
 - **Framework:** `next@16.3.8` (App Router), `react@19.2.8`
 - **Database & Auth:** `@supabase/ssr@^0.12.7`, `@supabase/supabase-js@^2.117.2`, PostgreSQL 16/17
 - **UI & URL State:** `radix-ui@1.6.7`, `lucide-react@1.50.0`, `nuqs@^2.10.1`, Tailwind CSS v4
-- **Charts & Excel:** `recharts@3.10.1`, `exceljs@4.4.0`
-- **Validation & Testing:** Pure TypeScript projectors + `zod@4.6.5`, `@electric-sql/pglite@0.5.8`, `pg@^8.23.1`, `node:test`
+- **Charts & Excel:** `recharts@^3.10.1`, `exceljs@4.4.0`
+- **Validation & Testing:** Pure TypeScript projectors + `zod@^4.6.5`, `@electric-sql/pglite@0.5.8`, `pg@^8.23.1`, `node:test`
 
-**Quyết định kỹ thuật:** **Không cài thêm bất kỳ thư viện npm mới nào ở F1/F1.5/F2/F3.** Form Builder dùng nút di chuyển thứ tự Lên/Xuống có `aria-label` chuẩn thay vì kéo-thả phức tạp; Form Renderer dùng controlled state + validator đồng nhất giữa client và server.
+**Quyết định kỹ thuật về UI & Thông báo (Cập nhật theo PR #97 `bd67c4b`):**
+- **Không cài thêm bất kỳ thư viện npm hay UI/toast library mới nào ở F1/F1.5/F2/F3.**
+- **Ưu tiên tái sử dụng bộ R2.2 UI Primitives:** [`PageShell` / `PageHeader`](../../src/components/ui/page-shell.tsx#L5-L74), [`Button` / `buttonClasses`](../../src/components/ui/button.tsx#L42-L81), [`StatusBadge` / `Badge`](../../src/components/ui/badge.tsx#L31-L65), [`DataTableContainer` / `RowActionCluster`](../../src/components/ui/data-table.tsx#L11-L80), [`ReportTableContainer`](../../src/components/ui/report-table.tsx#L9-L48), [`FilterToolbar`](../../src/components/ui/filter-toolbar.tsx#L5-L41), [`RowOverflowMenu`](../../src/components/ui/mobile-action-sheet.tsx#L23-L76), [`FormDialog`](../../src/components/ui/form-dialog.tsx#L14-L88), [`OffsetPager`](../../src/components/ui/offset-pager.tsx#L7-L64), [`CursorLoadMore`](../../src/components/ui/cursor-load-more.tsx#L3-L34), [`Card` / `CardHeader`](../../src/components/ui/card.tsx#L5-L20).
+- **Chuẩn thông báo hai tầng (`FloatingToast` + `StatusBanner`):** Dùng [`FloatingToast`](../../src/components/ui/toast.tsx#L28-L97) cho thông báo tạm thời sau thao tác (lưu nháp, nộp báo cáo, tạo mẫu, giao việc) và dùng [`StatusBanner`](../../src/components/ui/status-banner.tsx#L14-L41) cho trạng thái tồn tại trên trang (cảnh báo quá hạn, lý do bị từ chối, lỗi xác thực biểu mẫu).
+- Form Builder dùng nút di chuyển thứ tự Lên/Xuống (`Button`) có `aria-label` chuẩn thay vì kéo-thả phức tạp; Form Renderer dùng controlled state + validator đồng nhất giữa client và server.
 
 ### 1.2. Luồng Thực thi (Request Pipeline) & Ranh giới API / RPC
 
@@ -28,9 +36,9 @@ flowchart LR
 
 Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
 1. **Feature Flag Gate:** Kiểm tra `WORK_REPORTS_API_ENABLED === "true"` (tách riêng với `DIRECT_ENTRY_API_ENABLED` để có thể bật/tắt độc lập, hoặc mặc định kế thừa khi triển khai).
-2. **Same-Origin / CSRF Guard (cho mọi mutation `POST/PUT/PATCH/DELETE`):** Tái sử dụng [`checkSameOriginRequest`](src/lib/ai/gateway/http-guards.mjs) và kiểm tra `Content-Type: application/json`.
-3. **Bounded Body & Exact Allowlist Projector:** Đọc JSON qua [`readBoundedJson`](src/lib/direct-entry/write-api.ts), bác bỏ mọi key lạ và mọi trường quyền hạn từ client (`validateClientBusinessPayload` tại [`src/lib/auth/direct-entry-v2.ts`](src/lib/auth/direct-entry-v2.ts#L550-L580)).
-4. **Server Session Resolution:** Gọi [`resolveTrustedSessionActor`](src/lib/http/direct-entry-api-guard.ts#L32-L66) để lấy cặp `(auth_subject, app_user_id)` đã xác thực từ Supabase Auth + bảng `direct_entry_app_users`.
+2. **Same-Origin / CSRF Guard (cho mọi mutation `POST/PUT/PATCH/DELETE`):** Tái sử dụng [`checkSameOriginRequest`](../../src/lib/ai/gateway/http-guards.mjs) và kiểm tra `Content-Type: application/json`.
+3. **Bounded Body & Exact Allowlist Projector:** Đọc JSON qua [`readBoundedJson`](../../src/lib/direct-entry/write-api.ts), bác bỏ mọi key lạ và mọi trường quyền hạn từ client (`validateClientBusinessPayload` tại [`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L550-L580)).
+4. **Server Session Resolution:** Gọi [`resolveTrustedSessionActor`](../../src/lib/http/direct-entry-api-guard.ts#L32-L66) để lấy cặp `(auth_subject, app_user_id)` đã xác thực từ Supabase Auth + bảng `direct_entry_app_users`.
 5. **Service-Role RPC Call:** Gọi hàm `public.work_report_*` trong allowlist. Không bao giờ dùng PostgREST `.from('work_report_...').select(...)` trực tiếp từ tầng ứng dụng để tránh phân mảnh logic phân quyền giữa TS và SQL.
 6. **Transactional Projection & Audit:** Bên trong RPC, mọi thay đổi trạng thái bài nộp (`COMPLETED`, `PENDING_REVIEW`, `APPROVED`, `REJECTED`) đều cập nhật đồng bộ bảng `work_report_metric_values` (bao gồm cờ `is_eligible`) và ghi `work_report_audit_events` trong **cùng một transaction**.
 7. **Sanitized No-Store Response:** Mọi response trả kèm header `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff`, không bao giờ lộ raw SQL message hay UUID nội bộ khi báo lỗi.
@@ -42,7 +50,7 @@ Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
 ### 2.1. Idempotency & Chống Race Condition / Concurrency
 
 1. **Idempotency khi Nộp / Nộp lại / Tạo mẫu / Giao việc:**
-   - Tái sử dụng bảng [`public.direct_entry_rpc_idempotency`](supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql#L438-L447) (`UNIQUE (app_user_id, action, idempotency_key)`).
+   - Tái sử dụng bảng [`public.direct_entry_rpc_idempotency`](../../supabase/migrations/20261002170000_p1_6_direct_entry_foundation.sql#L438-L447) (`UNIQUE (app_user_id, action, idempotency_key)`).
    - Khi nhân viên bấm nút **Nộp báo cáo** 2 lần liên tiếp (double-click) hoặc mạng chập chờn retry với cùng `idempotency_key`:
      - Nếu `request_hash` giống nhau: trả lại ngay kết quả JSON đã lưu mà không tạo thêm `revision_no` thứ 2.
      - Nếu `request_hash` khác nhau trên cùng `idempotency_key`: trả lỗi `409 IDEMPOTENCY_KEY_REUSED`.
@@ -70,15 +78,15 @@ Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
 ### 2.2. Chiến lược Phân trang, Chỉ mục, Mục tiêu Hiệu năng & Xuất Dữ liệu Lớn
 
 1. **Phân trang (Pagination):**
-   - **Offset Pagination có kiểm soát (`page <= 1000, page_size <= 100`):** Dùng [`OffsetPager`](src/components/ui/offset-pager.tsx#L7-L64) cho danh sách Mẫu báo cáo, danh sách Giao việc (Assignments), danh sách Nghĩa vụ cần làm và bảng Breakdown theo Nhóm/Nhân viên (quy mô 10–200 dòng).
-   - **Keyset Cursor Pagination (`(submitted_at DESC, submission_id DESC)`):** Dùng [`CursorLoadMore`](src/components/ui/cursor-load-more.tsx#L3-L34) cho danh sách Drill-down Contributions (`GET /api/work-reports/analytics/contributions`) và Lịch sử bài nộp dài hạn.
+   - **Offset Pagination có kiểm soát (`page <= 1000, page_size <= 100`):** Dùng [`OffsetPager`](../../src/components/ui/offset-pager.tsx#L7-L64) cho danh sách Mẫu báo cáo, danh sách Giao việc (Assignments), danh sách Nghĩa vụ cần làm và bảng Breakdown theo Nhóm/Nhân viên (quy mô 10–200 dòng).
+   - **Keyset Cursor Pagination (`(submitted_at DESC, submission_id DESC)`):** Dùng [`CursorLoadMore`](../../src/components/ui/cursor-load-more.tsx#L3-L34) cho danh sách Drill-down Contributions (`GET /api/work-reports/analytics/contributions`) và Lịch sử bài nộp dài hạn.
 2. **Mục tiêu Hiệu năng & Giả thuyết cần kiểm chứng (`PERFORMANCE TARGET` & `HYPOTHESIS TO VERIFY` — Chưa báo PASS ở F0):**
    - **Quy mô tham chiếu (`HYPOTHESIS TO VERIFY`):** 50 nhân sự × 365 ngày = **18.250 nghĩa vụ/năm/mẫu** (~54.750 dòng `work_report_metric_values`/năm cho mẫu 3 chỉ tiêu).
    - **`PERFORMANCE TARGET` cần đo kiểm chứng tại `F1.5-WP3` / `F1.5-WP4`:**
-     - Với bộ index `(template_id, period_start_date, period_end_date, obligation_status)` trên `work_report_obligations` và partial index `(template_id, metric_key, period_start_date, snapshot_team_id, assignee_app_user_id) WHERE is_eligible = true` trên `work_report_metric_values`, mục tiêu thiết kế là truy vấn SQL `overview` và `breakdown` cho 1 năm dữ liệu đạt **`< 25ms` trên PostgreSQL** và tổng thời gian phản hồi API đạt **`p95 < 3s`** theo Master Plan §17 (`docs/work-reports/master-plan.md:458-464`).
+     - Với bộ index `(template_id, period_start_date, period_end_date, obligation_status)` trên `work_report_obligations` và partial index `(template_id, metric_key, period_start_date, snapshot_team_id, assignee_app_user_id) WHERE is_eligible = true` trên `work_report_metric_values`, mục tiêu thiết kế là truy vấn SQL `overview` và `breakdown` cho 1 năm dữ liệu đạt **`< 25ms` trên PostgreSQL** và tổng thời gian phản hồi API đạt **`p95 < 3s`** theo Master Plan §17 ([`./master-plan.md`](./master-plan.md#L458-L464)).
      - **Lưu ý phân loại bằng chứng:** Tại F0 chưa có migration hay bảng thực tế, do đó các con số `< 5ms`, `< 10ms`, `< 25ms` và `p95 < 3s` hoàn toàn là **`PERFORMANCE TARGET` / `HYPOTHESIS TO VERIFY`**, tuyệt đối chưa tuyên bố benchmark `PASS` ở F0.
 3. **Xuất Excel (`.xlsx`) an toàn (Phase phụ thuộc `OD-06`: triển khai ở F1.5 nếu `OD-06 = PA1`, hoặc ở F3 nếu `OD-06 = PA2`):**
-   - Giới hạn cứng `WORK_REPORT_EXPORT_ROW_LIMIT = 10_000` dòng chi tiết mỗi lần xuất (giống `WORKER_EXPORT_ROW_LIMIT = 10_000` trong [`src/lib/direct-entry/worker-export-contract.ts`](src/lib/direct-entry/worker-export-contract.ts)); nếu vượt ngưỡng trả `422 WORK_REPORT_EXPORT_ROW_LIMIT_EXCEEDED` yêu cầu thu hẹp khoảng ngày.
+   - Giới hạn cứng `WORK_REPORT_EXPORT_ROW_LIMIT = 10_000` dòng chi tiết mỗi lần xuất (giống `WORKER_EXPORT_ROW_LIMIT = 10_000` trong [`../../src/lib/direct-entry/worker-export-contract.ts`](../../src/lib/direct-entry/worker-export-contract.ts)); nếu vượt ngưỡng trả `422 WORK_REPORT_EXPORT_ROW_LIMIT_EXCEEDED` yêu cầu thu hẹp khoảng ngày.
    - Mọi ô chuỗi bắt đầu bằng `=`, `+`, `-`, `@` hoặc chứa ký tự điều khiển đều được xuất dưới dạng literal string với `numFmt = "@"` để chống CSV/Excel Formula Injection.
 
 ---
@@ -90,9 +98,9 @@ Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
 Khi bước sang F1/F1.5/F2/F3 (sau khi Owner duyệt F0), các migration SQL phải tuân thủ:
 1. **Forward-Only & Checksum bất biến:** Tạo file mới trong `supabase/migrations/`, không bao giờ chỉnh sửa 129 file migration lịch sử.
 2. **Tương thích với 6 bài test Capability P3.1 (`direct-entry-auth/1.5`):**
-   - Như đã phát hiện tại [`docs/work-reports/F0-codebase-reuse-inventory.md`](docs/work-reports/F0-codebase-reuse-inventory.md) §3.1, 6 file test (`scripts/p3-1-w01a-capability-contract.test.mjs`, `w01b`, `w01c-a`, `w01c-b`, `w01d-a1a`, `w01d-a1b1`) chạy toàn bộ thư mục `supabase/migrations/` rồi kiểm tra `tokens.length === 23` trên constraint `direct_entry_capability_grants_capability_check` và `CAPABILITIES.length === 19` trên TypeScript contract.
+   - Như đã phát hiện tại [`./F0-codebase-reuse-inventory.md`](./F0-codebase-reuse-inventory.md#L33-L40), 6 file test ([`../../scripts/p3-1-w01a-capability-contract.test.mjs`](../../scripts/p3-1-w01a-capability-contract.test.mjs#L135-L143), [`../../scripts/p3-1-w01b-personnel-catalog-db.test.mjs`](../../scripts/p3-1-w01b-personnel-catalog-db.test.mjs#L835), [`../../scripts/p3-1-w01c-a-team-catalog-db.test.mjs`](../../scripts/p3-1-w01c-a-team-catalog-db.test.mjs#L709), [`../../scripts/p3-1-w01c-b-team-membership-db.test.mjs`](../../scripts/p3-1-w01c-b-team-membership-db.test.mjs#L1086), [`../../scripts/p3-1-w01d-a1a-leader-schema.test.mjs`](../../scripts/p3-1-w01d-a1a-leader-schema.test.mjs#L168), [`../../scripts/p3-1-w01d-a1b1-leader-read.test.mjs`](../../scripts/p3-1-w01d-a1b1-leader-read.test.mjs#L684)) chạy toàn bộ thư mục `supabase/migrations/` rồi kiểm tra `tokens.length === 23` trên constraint `direct_entry_capability_grants_capability_check` và `CAPABILITIES.length === 19` trên TypeScript contract.
    - Khi migration F1/F1.5 mở rộng constraint này (thêm **4 token** nếu `OD-06 = PA2` ⇒ DB CHECK = `27`, TS = `23`; hoặc thêm **5 token** nếu `OD-06 = PA1` ⇒ DB CHECK = `28`, TS = `24`), Work Package `F1-WP1` phải cập nhật đồng bộ hằng số `TOKEN_COUNT` / `ACTIVE_TOKEN_COUNT` trong `scripts/p3-1-w01a-capability-contract.test.mjs` và cập nhật assertion trong 5 file test P3.1 còn lại theo đúng nhánh `OD-06` đã chốt để toàn bộ CI xanh 100%.
-3. **Explicit Least-Privilege ACL chỉ trên đối tượng `public.work_report_*` (`scripts/s0-t1-c-rpc-acl.test.mjs`):**
+3. **Explicit Least-Privilege ACL chỉ trên đối tượng `public.work_report_*` ([`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs)):**
    - **Cấm tuyệt đối** dùng lệnh thu hồi quyền quét toàn bộ bảng/hàm trong schema `public` vì có thể ảnh hưởng ngoài ý muốn tới các đối tượng hiện hữu của hệ thống.
    - Mọi hàm và bảng SQL của module mới đặt tên theo chuẩn:
      - Bảng dữ liệu: `public.work_report_<table_name>`
@@ -133,7 +141,7 @@ Khi bước sang F1/F1.5/F2/F3 (sau khi Owner duyệt F0), các migration SQL ph
      GRANT EXECUTE ON FUNCTION public.work_report_submit(text, uuid, uuid, jsonb, integer, text)
        TO service_role;
      ```
-   - Mở rộng `TARGET_PATTERN` và danh sách `PROTECTED_RPCS` trong [`scripts/s0-t1-c-rpc-acl.test.mjs`](scripts/s0-t1-c-rpc-acl.test.mjs#L31-L60) thêm tiền tố `work_report_` để bài test PostgreSQL thực (`s0_t1c_runner` non-superuser) tự động kiểm chứng không có hàm, bảng hay sequence `work_report_*` nào bị hở quyền cho `PUBLIC`, `anon`, `authenticated`.
+   - Mở rộng `TARGET_PATTERN` và danh sách `PROTECTED_RPCS` trong [`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs#L31-L60) thêm tiền tố `work_report_` để bài test PostgreSQL thực (`s0_t1c_runner` non-superuser) tự động kiểm chứng không có hàm, bảng hay sequence `work_report_*` nào bị hở quyền cho `PUBLIC`, `anon`, `authenticated`.
 
 ---
 
@@ -162,7 +170,11 @@ Khi bước sang F1/F1.5/F2/F3 (sau khi Owner duyệt F0), các migration SQL ph
 | **AG-17** | **F1 / F1.5** | Vô hiệu hóa tài khoản / Thu hồi quyền Leader tức thì | Disable user hoặc revoke Team Leader, sau đó gọi lại API bằng session đang mở | Trả `403` ngay lập tức ở request kế tiếp; các nghĩa vụ tương lai chưa nộp của user bị disable chuyển sang `CANCELLED` | PGlite + PG16 |
 | **AG-18** | **F1** | Bảo toàn phiên bản đã Publish | Thử `UPDATE` `schema_json` hoặc `metric_contract_json` của `template_version` đang `PUBLISHED` | Trigger DB chặn cứng với `SQLSTATE 55000`; chỉ cho phép clone sang `version_no + 1` (`DRAFT`) | PGlite + PG16 |
 
-### 4.2. Tích hợp vào CI Test Manifest (`scripts/ci-test-manifest.mjs`)
+### 4.2. Tích hợp vào CI Test Manifest & Cổng Kiểm tra Giao diện R2.2 (Cập nhật theo PR #97 `bd67c4b`)
 
-- Mọi file test mới của Work Reports phải được khai báo vào `package.json` (`test:work-reports-f1`, `test:work-reports-f1-5`, `test:work-reports-f2`, `test:work-reports-f3`) và nối vào `scripts.test` để vượt qua gate Zero-Orphan [`assertZeroOrphanTests()`](scripts/ci-test-manifest.mjs#L101-L160).
-- Các bài test concurrency (race condition khi 2 request cùng tạo nghĩa vụ hoặc cùng nộp báo cáo) và bài test non-superuser ACL ([`scripts/s0-t1-c-rpc-acl.test.mjs`](scripts/s0-t1-c-rpc-acl.test.mjs)) được đăng ký vào `POSTGRES_TEST_FILES` để chạy trên PostgreSQL thực trong CI.
+- Mọi file test mới của Work Reports phải được khai báo vào [`../../package.json`](../../package.json#L10-L143) (`test:work-reports-f1`, `test:work-reports-f1-5`, `test:work-reports-f2`, `test:work-reports-f3`) và nối vào `scripts.test` để vượt qua gate Zero-Orphan [`assertZeroOrphanTests()`](../../scripts/ci-test-manifest.mjs#L101-L160).
+- Các bài test concurrency (race condition khi 2 request cùng tạo nghĩa vụ hoặc cùng nộp báo cáo) và bài test non-superuser ACL ([`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs)) được đăng ký vào `POSTGRES_TEST_FILES` để chạy trên PostgreSQL thực trong CI.
+- **Ba bài test cổng giao diện R2.2 được bổ sung ở PR #97 (`bd67c4b`) bắt buộc tiếp tục chạy và PASS khi F1/F1.5/F2/F3 thêm giao diện Work Reports:**
+  1. [`../../scripts/r2-2-grid-no-touch-guard.test.mjs`](../../scripts/r2-2-grid-no-touch-guard.test.mjs#L1-L261) — đảm bảo 100% file bị khóa của `/direct-entry` spreadsheet grid không bị chạm tới.
+  2. [`../../scripts/r2-2-theme-mobile-contract.test.mjs`](../../scripts/r2-2-theme-mobile-contract.test.mjs#L1-L265) — đảm bảo hệ thống 6-theme × 2-mode, độ tương phản WCAG AA và chuẩn mobile touch target được giữ vững.
+  3. [`../../scripts/r2-2-surface-coverage.test.mjs`](../../scripts/r2-2-surface-coverage.test.mjs#L1-L82) — đảm bảo các bề mặt ứng dụng sử dụng đúng shared primitives của R2.2.

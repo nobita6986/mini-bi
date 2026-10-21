@@ -1,5 +1,9 @@
 # F0 — Deliverable C: Data Model & Analytics Contract (`F0-data-model-and-analytics-contract.md`)
 
+> [!NOTE]
+> - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
+> - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 không thêm migration và không thay đổi bất kỳ bảng, RPC hay DB contract nào; tổng số migration hiện hữu vẫn là **129**.
+
 ## 1. Kiến trúc Mô hình Dữ liệu Logic (Logical Entity Relationship)
 
 ### 1.1. Sơ đồ Thực thể Logic (RECOMMENDATION)
@@ -127,15 +131,15 @@ erDiagram
 | Quyết định thiết kế | Lựa chọn bị loại bỏ | Lý do chọn mô hình đề xuất & Tác động tới F1/F1.5 |
 |---|---|---|
 | **Tách `work_report_submissions` (current pointer + draft) và `work_report_submission_revisions` (append-only snapshots)** | Lưu mỗi lần nộp lại thành 1 dòng mới trong `work_report_submissions` | Nếu tạo nhiều dòng `submission` cho 1 `obligation`, các câu query F1.5 rất dễ đếm trùng (`COUNT`, `SUM`) khi có bản sửa đổi hoặc bị từ chối nộp lại. Giữ `UNIQUE(obligation_id)` trên `work_report_submissions` bảo đảm **1 nghĩa vụ = tối đa 1 bài nộp hiệu lực**, còn lịch sử mọi lần nộp/sửa được bảo toàn tuyệt đối trong `work_report_submission_revisions`. |
-| **Chuẩn hóa `USER_SET` bằng bảng `work_report_assignment_targets` thay vì cột mảng `target_user_ids uuid[]`** | Lưu mảng `target_user_ids uuid[]` trực tiếp trên `work_report_assignments` | Mảng `uuid[]` trong PostgreSQL không hỗ trợ khóa ngoại (`REFERENCES direct_entry_app_users`), không chặn trùng phần tử bằng unique constraint chuẩn và khó kiểm tra quyền cấp nhóm (`report_assign @ team`) bằng phép JOIN. Bảng chuẩn hóa `public.work_report_assignment_targets` có FK tường minh, `UNIQUE (assignment_id, target_user_id)` và cho phép kiểm tra 100% người nhận thuộc nhóm của Team Leader ngay trong câu SQL. |
-| **Ghi đồng bộ `work_report_metric_values` (kèm cờ `is_eligible`) ngay trong transaction nộp/duyệt báo cáo** | **PA Loại 1:** Đọc toàn bộ `payload_json` về Node.js để cộng.<br>**PA Loại 2:** Dùng `jsonb_each` / `((payload_json->>'key')::numeric)` trực tiếp lúc `SELECT` trên bảng revision.<br>**PA Loại 3:** Xây dựng OLAP cube / Materialized View bất đồng bộ. | - **PA Loại 1** vi phạm hợp đồng hiệu năng & bảo mật của Master Plan §5.3 (`docs/work-reports/master-plan.md:191-196`).<br>- **PA Loại 2** không thể đánh B-tree index theo `(template_id, metric_key, period_start_date, snapshot_team_id)`, dễ lỗi runtime cast nếu JSON có null/chuỗi rỗng và khó kiểm soát cross-version compatibility.<br>- **PA Loại 3 (Async Cube)** quá phức tạp, gây trễ dữ liệu (eventual consistency) khiến nhân viên vừa nộp xong Leader mở F1.5 chưa thấy số.<br>- **Mô hình chọn (Synchronous Normalized Projection `work_report_metric_values`):** Khi RPC `work_report_submit` hoặc `work_report_decide_review` chạy, hàm SQL bóc các trường `is_metric = true` hoặc `is_dimension = true` đã qua validate, ghi thẳng vào `work_report_metric_values` trong **cùng một PostgreSQL transaction**. Đảm bảo tính nhất quán tức thì (ACID) và có B-tree index chuẩn (`PERFORMANCE TARGET`: truy vấn `SUM/AVG/COUNT` ở F1.5 mục tiêu `< 10ms` — sẽ đo kiểm chứng ở `F1.5-WP3`). |
+| **Chuẩn hóa `USER_SET` bằng bảng `work_report_assignment_targets` thay vì cột mảng `uuid[]`** | Lưu mảng `uuid[]` trực tiếp trên `work_report_assignments` | Mảng `uuid[]` trong PostgreSQL không hỗ trợ khóa ngoại (`REFERENCES direct_entry_app_users`), không chặn trùng phần tử bằng unique constraint chuẩn và khó kiểm tra quyền cấp nhóm (`report_assign @ team`) bằng phép JOIN. Bảng chuẩn hóa `public.work_report_assignment_targets` có FK tường minh, `UNIQUE (assignment_id, target_user_id)` và cho phép kiểm tra 100% người nhận thuộc nhóm của Team Leader ngay trong câu SQL. |
+| **Ghi đồng bộ `work_report_metric_values` (kèm cờ `is_eligible`) ngay trong transaction nộp/duyệt báo cáo** | **PA Loại 1:** Đọc toàn bộ `payload_json` về Node.js để cộng.<br>**PA Loại 2:** Dùng `jsonb_each` / `((payload_json->>'key')::numeric)` trực tiếp lúc `SELECT` trên bảng revision.<br>**PA Loại 3:** Xây dựng OLAP cube / Materialized View bất đồng bộ. | - **PA Loại 1** vi phạm hợp đồng hiệu năng & bảo mật của Master Plan §5.3 ([`./master-plan.md`](./master-plan.md#L191-L196)).<br>- **PA Loại 2** không thể đánh B-tree index theo `(template_id, metric_key, period_start_date, snapshot_team_id)`, dễ lỗi runtime cast nếu JSON có null/chuỗi rỗng và khó kiểm soát cross-version compatibility.<br>- **PA Loại 3 (Async Cube)** quá phức tạp, gây trễ dữ liệu (eventual consistency) khiến nhân viên vừa nộp xong Leader mở F1.5 chưa thấy số.<br>- **Mô hình chọn (Synchronous Normalized Projection `work_report_metric_values`):** Khi RPC `work_report_submit` hoặc `work_report_decide_review` chạy, hàm SQL bóc các trường `is_metric = true` hoặc `is_dimension = true` đã qua validate, ghi thẳng vào `work_report_metric_values` trong **cùng một PostgreSQL transaction**. Đảm bảo tính nhất quán tức thì (ACID) và có B-tree index chuẩn (`PERFORMANCE TARGET`: truy vấn `SUM/AVG/COUNT` ở F1.5 mục tiêu `< 10ms` — sẽ đo kiểm chứng ở `F1.5-WP3`). |
 | **Lưu `draft_payload_json` trên `work_report_submissions` thay vì sinh revision cho mỗi lần autosave nháp** | Tạo dòng `work_report_submission_revisions` mỗi lần nhân viên bấm Lưu nháp | Nhân viên có thể lưu nháp 20 lần trước khi nộp. Chỉ khi bấm **Nộp (`SUBMIT`)** mới đóng băng thành `work_report_submission_revisions` (`revision_no = 1, 2...`) và sinh `work_report_metric_values`. Bản nháp chưa nộp tuyệt đối không sinh dòng nào trong `work_report_metric_values`. |
 
 ---
 
 ## 2. Đặc tả Chi tiết Từng Thực thể Database (RECOMMENDATION)
 
-Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_report_` (đã kiểm tra **0% xung đột tên** với 129 migrations hiện có). Mọi bảng bật `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` và thu hồi quyền trực tiếp của `PUBLIC, anon, authenticated, service_role` một cách tường minh trên từng bảng `public.work_report_*` theo chuẩn `S0-T1-C`.
+Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_report_` (đã kiểm tra **0% xung đột tên** với 129 migrations hiện có). Mọi bảng bật `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` và thu hồi quyền trực tiếp của `PUBLIC, anon, authenticated, service_role` một cách tường minh trên từng bảng `public.work_report_*` theo chuẩn `S0-T1-C` ([`../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql`](../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql#L15-L281)).
 
 ### 2.1. `public.work_report_templates` (Định danh Mẫu Báo cáo)
 - **Trách nhiệm:** Lưu danh mục gốc của từng mẫu báo cáo xuyên suốt các phiên bản.
@@ -219,7 +223,7 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
     - `UNIQUE (assignment_id, target_user_id)` — chặn trùng lặp một người nhận hai lần trong cùng một `USER_SET`.
     - Index `(target_user_id, assignment_id)` — phục vụ tra cứu ngược các assignment `USER_SET` của một nhân sự.
   - **Quy tắc toàn vẹn khi tạo/sửa `USER_SET` trong RPC:**
-    - Nếu `target_kind = 'USER_SET'`, RPC bắt buộc danh sách `target_user_ids` đầu vào sau khi khử trùng có ít nhất `1` phần tử (`cardinality >= 1`) và chèn vào `public.work_report_assignment_targets` trong cùng một transaction.
+    - Nếu `target_kind = 'USER_SET'`, RPC bắt buộc tập `target_user_id` đầu vào sau khi khử trùng có ít nhất `1` phần tử (`cardinality >= 1`) và chèn vào `public.work_report_assignment_targets` trong cùng một transaction.
     - Nếu `target_kind IN ('USER', 'TEAM')`, bảng `public.work_report_assignment_targets` không được chứa dòng nào của `assignment_id` đó.
 
 ### 2.4. `public.work_report_obligations` (Kho Nghĩa vụ Phải nộp theo Kỳ)
@@ -393,7 +397,7 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
 | **Nhân viên (`assignee`)** | `work_report_obligations.assignee_app_user_id` | Join với `direct_entry_app_users.display_name`. |
 | **Mẫu & Phiên bản (`template` / `version`)** | `template_id`, `template_version_id` | Cho phép lọc tất cả version tương thích của 1 mẫu hoặc khóa cứng 1 version. |
 | **Trường lựa chọn (`single_select` / `boolean`)** | `work_report_metric_values.option_key` / `boolean_value` | Chỉ bật cho các field có `is_dimension = true`. |
-| **Dự án (`project_id`) — Phụ thuộc `OD-08`** | `work_report_metric_values.project_id` (`REFERENCES public.direct_entry_projects`) | Phụ thuộc quyết định `OD-08` (`Status: OPEN`): chỉ kích hoạt khi `OD-08` chọn hỗ trợ `project_ref` và mẫu báo cáo có khai báo trường `project_ref` hợp lệ. |
+| **Dự án (`project_id`) — Phụ thuộc `OD-08`** | `work_report_metric_values.project_id` (`REFERENCES public.direct_entry_projects`) | Phụ thuộc quyết định `OD-08` (`Status: OPEN` tại [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L220-L234)): chỉ kích hoạt khi `OD-08` chọn hỗ trợ `project_ref` và mẫu báo cáo có khai báo trường `project_ref` hợp lệ. |
 
 ---
 

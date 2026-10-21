@@ -1,10 +1,14 @@
 # F0 — Deliverable D: Authorization Matrix (`F0-authorization-matrix.md`)
 
+> [!NOTE]
+> - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
+> - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 không thêm migration và không thay đổi auth capability registry ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)), navigation registry ([`../../src/lib/navigation/registry.ts`](../../src/lib/navigation/registry.ts#L104-L177)), hay DB authorization contract; tổng số migration hiện hữu vẫn là **129**.
+
 ## 1. Kiến trúc Phân quyền — Tái sử dụng RBAC Hiện hữu (FACT + RECOMMENDATION)
 
 ### 1.1. Tái sử dụng Hạ tầng RBAC `direct-entry-auth` (FACT)
 
-Theo đúng hợp đồng R1 ([`docs/renewal/R1-authorization-contract.md`](docs/renewal/R1-authorization-contract.md#L6-L59)) và R2.1 ([`docs/renewal/R2.1-authorization-contract.md`](docs/renewal/R2.1-authorization-contract.md#L11-L61)), hệ thống hiện có tại [`src/lib/auth/direct-entry-v2.ts`](src/lib/auth/direct-entry-v2.ts#L7-L103) và [`supabase/migrations/20261020200000_r1_current_state_authorization.sql`](supabase/migrations/20261020200000_r1_current_state_authorization.sql#L361-L652) vận hành theo chuỗi quyết định 6 bước:
+Theo đúng hợp đồng R1 ([`../renewal/R1-authorization-contract.md`](../renewal/R1-authorization-contract.md#L6-L59)) và R2.1 ([`../renewal/R2.1-authorization-contract.md`](../renewal/R2.1-authorization-contract.md#L11-L61)), hệ thống hiện có tại [`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L103) và [`../../supabase/migrations/20261020200000_r1_current_state_authorization.sql`](../../supabase/migrations/20261020200000_r1_current_state_authorization.sql#L361-L652) vận hành theo chuỗi quyết định 6 bước:
 1. Xác thực phiên Supabase qua `auth.getUser()` trên server.
 2. Ánh xạ `auth_subject` sang đúng 01 `direct_entry_app_users` có `enabled = true` (`direct_entry_assert_actor_mapping`).
 3. Bác bỏ mọi trường quyền hạn do client gửi (`validateClientBusinessPayload`).
@@ -13,12 +17,12 @@ Theo đúng hợp đồng R1 ([`docs/renewal/R1-authorization-contract.md`](docs
 6. Thực thi toàn bộ kiểm tra quyền, OCC (`expected_version`), idempotency và ghi audit ngay bên trong hàm `SECURITY DEFINER` của PostgreSQL.
 
 **Bất biến về Legacy DB Tokens (FACT):**
-- Hiện tại trên `origin/main` (`8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c`), constraint DB `direct_entry_capability_grants_capability_check` có **23 token**, trong khi hằng số TypeScript `CAPABILITIES` (`src/lib/auth/direct-entry-v2.ts:7-30`) có **19 active token** (chênh lệch đúng **4 legacy DB token đã ngừng cấp ở tầng ứng dụng**: `pii_view`, `pii_export`, `payment_view`, `payment_edit`, được kiểm chứng tại `scripts/p3-1-w01a-capability-contract.test.mjs:29-39`).
+- Trên cả baseline khảo sát ban đầu (`8bf16afe`) và effective baseline sau PR #97 (`bd67c4b`), constraint DB `direct_entry_capability_grants_capability_check` có **23 token**, trong khi hằng số TypeScript `CAPABILITIES` ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)) có **19 active token** (chênh lệch đúng **4 legacy DB token đã ngừng cấp ở tầng ứng dụng**: `pii_view`, `pii_export`, `payment_view`, `payment_edit`, được kiểm chứng tại [`../../scripts/p3-1-w01a-capability-contract.test.mjs`](../../scripts/p3-1-w01a-capability-contract.test.mjs#L29-L39)).
 - **Tuyệt đối giữ nguyên trạng thái đã loại bỏ của 4 legacy token này khỏi active TypeScript contract; không khôi phục chúng và không xây dựng policy engine thứ hai.**
 
 ### 1.2. Bộ Capability Token theo Phase & Số lượng Token Chính xác cho Từng Nhánh Quyết định (RECOMMENDATION)
 
-Để thỏa mãn đồng thời **Nguyên tắc #3** (*"Admin không mặc nhiên được đọc mọi nội dung báo cáo chỉ vì là Admin"*) và **Nguyên tắc #4** (*"Dashboard, API, drill-down và export phải áp dụng cùng một authorization contract"*), các capability của Work Reports được phân bổ theo đúng phase triển khai (phụ thuộc quyết định `OD-06` và `OD-07`, `Status: OPEN`):
+Để thỏa mãn đồng thời **Nguyên tắc #3** (*"Admin không mặc nhiên được đọc mọi nội dung báo cáo chỉ vì là Admin"*) và **Nguyên tắc #4** (*"Dashboard, API, drill-down và export phải áp dụng cùng một authorization contract"*), các capability của Work Reports được phân bổ theo đúng phase triển khai (phụ thuộc quyết định `OD-06` và `OD-07`, `Status: OPEN` tại [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L220-L234)):
 
 - **`report_submit` tiếp tục là quyền dẫn xuất (Derived Right), KHÔNG phải capability token:** Mọi tài khoản nhân sự đang hoạt động (`u.enabled = true`) được giao nghĩa vụ trong `work_report_obligations` (`assignee_app_user_id = p_app_user_id`) mặc nhiên có quyền xem nghĩa vụ, lưu nháp, nộp/nộp lại báo cáo và xem lịch sử bài nộp cá nhân của chính mình (`own`).
 - **F1 / F1.5 Core chỉ thêm 4 capability token:**
@@ -34,9 +38,9 @@ Theo đúng hợp đồng R1 ([`docs/renewal/R1-authorization-contract.md`](docs
 
 #### Bảng Số lượng Token DB CHECK vs Active TypeScript `CAPABILITIES` theo Phase và Nhánh `OD-06`
 
-| Giai đoạn (Phase) | Nhánh quyết định `OD-06` (`Status: OPEN`) | Các token `report_*` được thêm mới ở phase này | Tổng số token trong DB CHECK `direct_entry_capability_grants_capability_check` (gồm 4 retired legacy DB tokens) | Tổng số active token trong TypeScript `CAPABILITIES` (`src/lib/auth/direct-entry-v2.ts`) |
+| Giai đoạn (Phase) | Nhánh quyết định `OD-06` (`Status: OPEN`) | Các token `report_*` được thêm mới ở phase này | Tổng số token trong DB CHECK `direct_entry_capability_grants_capability_check` (gồm 4 retired legacy DB tokens) | Tổng số active token trong TypeScript `CAPABILITIES` ([`../../src/lib/auth/direct-entry-v2.ts`](../../src/lib/auth/direct-entry-v2.ts#L7-L30)) |
 |---|---|---|---|---|
-| **Baseline hiện tại (`origin/main`)** | — | *(Chưa thêm)* | **23** (`19 active + 4 retired legacy`) | **19** |
+| **Baseline hiện tại (`origin/main` `bd67c4b`)** | — | *(Chưa thêm)* | **23** (`19 active + 4 retired legacy`) | **19** |
 | **F1 / F1.5** | **Nhánh `OD-06 = PA2` (Master Plan baseline — XLSX ở F3)** | **+4 token:** `report_form_manage`, `report_assign`, `report_view`, `report_analytics_view` | **27** (`23 + 4`) | **23** (`19 + 4`) |
 | **F1 / F1.5** | **Nhánh `OD-06 = PA1` (Đưa XLSX cơ bản vào F1.5)** | **+5 token:** `report_form_manage`, `report_assign`, `report_view`, `report_analytics_view`, `report_export` | **28** (`23 + 5`) | **24** (`19 + 5`) |
 | **F2 (Review & Delegation)** | **Nhánh `OD-06 = PA2`** | **+2 token:** `report_review`, `report_delegate` | **29** (`27 + 2`) | **25** (`23 + 2`) |
@@ -83,7 +87,7 @@ Theo đúng hợp đồng R1 ([`docs/renewal/R1-authorization-contract.md`](docs
 
 ## 3. Quyền Hiện hành so với Lịch sử khi Đổi Nhóm / Thu hồi Quyền (RECOMMENDATION)
 
-Áp dụng nhất quán triết lý của **R1** ([`docs/renewal/R1-authorization-contract.md`](docs/renewal/R1-authorization-contract.md#L54-L58)) và **R2.1** ([`docs/renewal/R2.1-authorization-contract.md`](docs/renewal/R2.1-authorization-contract.md#L46-L61)):
+Áp dụng nhất quán triết lý của **R1** ([`../renewal/R1-authorization-contract.md`](../renewal/R1-authorization-contract.md#L54-L58)) và **R2.1** ([`../renewal/R2.1-authorization-contract.md`](../renewal/R2.1-authorization-contract.md#L46-L61)):
 
 1. **Quyền cá nhân của người nộp (`AUTHOR_HISTORY` / `OWN`):**
    - Nhân viên A nộp báo cáo ở Kỳ 10 khi đang thuộc Team Alpha. Sang Kỳ 11, nhân viên A chuyển sang Team Beta.
