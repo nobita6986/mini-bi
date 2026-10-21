@@ -23,6 +23,8 @@ import {
   F1_5_WORK_REPORTS_ANALYTICS_MIGRATION_NAME,
   F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
+  F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME,
+  F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
   migrationChecksum,
   runMigrationApply,
   runMigrationValidation,
@@ -471,10 +473,19 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         /revoke all on function public\.work_report__internal_resolve_analytics_scope\(uuid, uuid, boolean, uuid, uuid, uuid\)\s+from public, anon, authenticated, service_role;/i,
         "F1.5 internal analytics scope helper revokes EXECUTE from all roles including service_role",
       );
+      const f2ReviewAndDelegationMigration = await readFile(
+        path.join(MIGRATION_DIR, F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME), "utf8",
+      );
+      assert.match(
+        f2ReviewAndDelegationMigration,
+        /revoke all on function public\.work_report__internal_resolve_capability_authority\(uuid, text, uuid, uuid, timestamptz\)\s+from public, anon, authenticated, service_role;/i,
+        "F2 internal capability authority helper revokes EXECUTE from all roles including service_role",
+      );
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
-        ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES);
+        ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
+        ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -493,7 +504,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         [R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
           F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
           F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
-          ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES].sort(),
+          ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
+          ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService

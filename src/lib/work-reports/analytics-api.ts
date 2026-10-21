@@ -158,7 +158,7 @@ function parseBaseFilters(
     assigneeId === undefined ||
     from === undefined ||
     to === undefined ||
-    finalityRaw !== "final" ||
+    (finalityRaw !== "final" && finalityRaw !== "provisional_included") ||
     (from !== null && to !== null && from > to)
   ) {
     return null;
@@ -171,7 +171,7 @@ function parseBaseFilters(
     to,
     team_id: teamId,
     assignee_id: assigneeId,
-    finality: "final",
+    finality: finalityRaw,
   };
 }
 

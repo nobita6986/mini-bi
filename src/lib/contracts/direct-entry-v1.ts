@@ -172,7 +172,9 @@ export type Capability =
   | "report_form_manage"
   | "report_assign"
   | "report_view"
-  | "report_analytics_view";
+  | "report_analytics_view"
+  | "report_review"
+  | "report_delegate";
 
 export type ValidationIssue = { code: string; path: string };
 export type ValidationResult =

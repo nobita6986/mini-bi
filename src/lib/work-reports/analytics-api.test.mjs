@@ -173,15 +173,25 @@ test("analytics API enforces feature flag, query allowlist, date/pagination vali
   );
   assert.equal(unknownParam.status, 400);
 
-  // Invalid finality in F1.5 (e.g. provisional_included is F2-only) -> 400
+  // Invalid finality -> 400
   const invalidFinality = await getWorkReportAnalyticsOverview(
+    new Request(
+      `http://localhost/api/work-reports/analytics/overview?template_id=${TEMPLATE_ID}&finality=invalid_finality`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(invalidFinality.status, 400);
+
+  // Valid provisional_included finality -> 200
+  const provisionalOverview = await getWorkReportAnalyticsOverview(
     new Request(
       `http://localhost/api/work-reports/analytics/overview?template_id=${TEMPLATE_ID}&finality=provisional_included`,
     ),
     "true",
     deps,
   );
-  assert.equal(invalidFinality.status, 400);
+  assert.equal(provisionalOverview.status, 200);
 
   // Invalid calendar date or reversed date range -> 400
   const invalidDate = await getWorkReportAnalyticsOverview(
@@ -369,3 +379,5 @@ test("analytics API maps scope denial (SEC-WR-02), capability denial (SEC-WR-03/
   assert.equal(evidenceBody.ok, true);
   assert.equal(evidenceBody.data.submission.submission_id, SUBMISSION_ID);
 });
+
+import "./review-delegation-api.test.mjs";

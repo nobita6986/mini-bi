@@ -31,6 +31,8 @@ export const CAPABILITIES = [
   "report_assign",
   "report_view",
   "report_analytics_view",
+  "report_review",
+  "report_delegate",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -41,6 +43,12 @@ export type EffectiveScope = {
   reference: string;
   valid_from: string;
   valid_to: string | null;
+};
+
+export type EffectiveReportReviewScope = {
+  kind: "all" | "team";
+  team_id?: string | null;
+  label?: string;
 };
 
 export type SessionIdentity = {
@@ -57,6 +65,7 @@ export type DirectEntryActor = {
   enabled: boolean;
   capabilities: readonly Capability[];
   scopes: readonly EffectiveScope[];
+  effective_report_review_scopes?: readonly EffectiveReportReviewScope[];
   self_recruiter_suggestion: string | null;
   session: {
     provider: "supabase";
@@ -385,6 +394,19 @@ async function resolveActorInternal(input: {
     });
   }
 
+  const rawReviewScopes = (record as Record<string, unknown>).effective_report_review_scopes;
+  let effectiveReportReviewScopes: readonly EffectiveReportReviewScope[] | undefined;
+  if (rawReviewScopes !== undefined) {
+    if (!Array.isArray(rawReviewScopes) || !rawReviewScopes.every(isEffectiveReportReviewScope)) {
+      return { ok: false, reason: "ACTOR_REPOSITORY_INVALID" };
+    }
+    effectiveReportReviewScopes = rawReviewScopes.map((item) => ({
+      kind: item.kind,
+      team_id: item.kind === "team" ? (item.team_id ?? null) : null,
+      ...(typeof item.label === "string" ? { label: item.label } : {}),
+    }));
+  }
+
   return {
     ok: true,
     actor: {
@@ -396,6 +418,9 @@ async function resolveActorInternal(input: {
         CAPABILITY_SET.has(capability)
       ),
       scopes,
+      ...(effectiveReportReviewScopes !== undefined
+        ? { effective_report_review_scopes: effectiveReportReviewScopes }
+        : {}),
       self_recruiter_suggestion: recruiterSuggestion.kind === "suggestion"
         ? recruiterSuggestion.recruiter_id
         : null,
@@ -406,6 +431,15 @@ async function resolveActorInternal(input: {
       },
     },
   };
+}
+
+function isEffectiveReportReviewScope(value: unknown): value is EffectiveReportReviewScope {
+  if (!isRecord(value)) return false;
+  if (value.kind !== "all" && value.kind !== "team") return false;
+  if (value.kind === "all" && value.team_id !== undefined && value.team_id !== null) return false;
+  if (value.kind === "team" && !isSafeRef(value.team_id)) return false;
+  if (value.label !== undefined && typeof value.label !== "string") return false;
+  return true;
 }
 
 function isValidAuthorizationRecord(

@@ -35,6 +35,7 @@ import {
   F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
   F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
+  F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
 
@@ -177,7 +178,7 @@ await seedFixtures(db);
 
 test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match locked contract", async () => {
   assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.5");
-  assert.equal(CAPABILITIES.length, 23);
+  assert.equal(CAPABILITIES.length, 25);
   assert.equal(WORK_REPORT_FIELD_TYPES.length, 8);
 
   const { rows: tableRows } = await db.query(
@@ -220,7 +221,8 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
   const { rows: expectedFnRows } = await db.query(
     "select to_regprocedure(sig)::regprocedure::text as signature from unnest($1::text[]) as u(sig) order by 1",
     [[...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES, F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
-      F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE, ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES]],
+      F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE, ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
+      ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());
@@ -250,12 +252,12 @@ test("Team Leader lifecycle auto-grants and revokes only the 3 F1 capabilities w
   );
   assert.deepEqual(
     currentAfterDesignate.map((r) => r.capability),
-    ["report_analytics_view", "report_assign", "report_view", "team_manager_assign"],
+    ["report_analytics_view", "report_assign", "report_review", "report_view", "team_manager_assign"],
   );
   assert.equal(
-    currentAfterDesignate.some((r) => r.capability === "report_form_manage"),
+    currentAfterDesignate.some((r) => r.capability === "report_form_manage" || r.capability === "report_delegate"),
     false,
-    "never auto-grants report_form_manage",
+    "never auto-grants report_form_manage or report_delegate",
   );
 
   // Revoke LEADER_A on the same day (2026-02-01, team version = 2) -> independent report_view stays active, generated grants close cleanly
@@ -294,7 +296,7 @@ test("Team Leader lifecycle auto-grants and revokes only the 3 F1 capabilities w
   );
   assert.deepEqual(
     currentAfterRedesignate.map((r) => r.capability),
-    ["report_analytics_view", "report_assign", "report_view", "team_manager_assign"],
+    ["report_analytics_view", "report_assign", "report_review", "report_view", "team_manager_assign"],
   );
 });
 
@@ -1113,4 +1115,192 @@ test("SQL validators enforce parity with TypeScript for required empty text, pat
   assert.equal(payloadChecks[0].empty_req_draft, true, "empty string allowed on draft save");
   assert.equal(payloadChecks[0].bad_pattern, false, "pattern_preset violation rejected in SQL");
   assert.equal(payloadChecks[0].bad_scale, false, "decimal precision > decimal_places rejected in SQL");
+});
+
+test("F2 review, delegation, effective_report_review_scopes and finality lifecycle", async () => {
+  // 1) Create and publish a template with requires_review = true
+  const schema = structuredClone(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
+  const metrics = buildWorkReportMetricContract(schema);
+  const { rows: tplRows } = await db.query(
+    `select public.work_report_create_template(
+       $1::uuid, $2::uuid, 'RECRUITMENT_DAILY_F2_REV', 'Báo cáo F2 cần duyệt',
+       'Kiểm thử luồng duyệt và ủy quyền F2', 'DAILY', $3::jsonb, $4::jsonb, $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, JSON.stringify(schema), JSON.stringify(metrics), KEY("f2_tpl_create")],
+  );
+  const tplId = tplRows[0].result.template_id;
+  const verId = tplRows[0].result.draft_version_id;
+  await db.query(
+    `update public.work_report_template_versions set requires_review = true where version_id = $1::uuid`,
+    [verId],
+  );
+  await db.query(
+    `select public.work_report_publish_template($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, $5)`,
+    [ADMIN.auth, ADMIN.app, tplId, verId, KEY("f2_tpl_pub")],
+  );
+
+  // 2) Grant ADMIN report_review and report_delegate so ADMIN can review and delegate
+  for (const cap of ["report_review", "report_delegate"]) {
+    await db.query(
+      `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+       values ($1::uuid, $2, '2026-01-01', true)
+       on conflict do nothing`,
+      [ADMIN.app, cap],
+    );
+  }
+
+  // Ensure LEADER_A is active Team Leader on TEAM_A
+  const { rows: teamARows } = await db.query(
+    `select version from public.teams where team_id = $1::uuid`,
+    [TEAM_A],
+  );
+  const { rows: currentLeaderARows } = await db.query(
+    `select assignment_id from public.direct_entry_team_leader_assignments where team_id = $1::uuid and is_current`,
+    [TEAM_A],
+  );
+  if (currentLeaderARows.length === 0) {
+    await db.query(
+      `select public.direct_entry_designate_team_leader(
+         $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-02-01'::date, $5, 'Ensure Leader A for F2', $6
+       )`,
+      [ADMIN.auth, ADMIN.app, TEAM_A, LEADER_A.app, teamARows[0].version, KEY("f2_leader_a")],
+    );
+  }
+
+  // 3) Create assignment on TEAM_A and materialize for 2099-11-02
+  await db.query(
+    `select public.work_report_create_assignment(
+       $1::uuid, $2::uuid, $3::uuid, 'TEAM', null, $4::uuid, null,
+       'DAILY', true, 0, '23:59:00'::time, false, '2099-11-01'::date, '2099-11-05'::date, $5
+     )`,
+    [LEADER_A.auth, LEADER_A.app, tplId, TEAM_A, KEY("f2_assign_a")],
+  );
+  await db.query(
+    `select public.work_report_ensure_obligations_for_window($1::uuid, $2::uuid, '2099-11-02'::date)`,
+    [LEADER_A.auth, LEADER_A.app],
+  );
+
+  const { rows: obRows } = await db.query(
+    `select obligation_id, assignee_app_user_id from public.work_report_obligations
+      where template_id = $1::uuid and period_key = '2099-11-02'`,
+    [tplId],
+  );
+  const staffA1Ob = obRows.find((r) => r.assignee_app_user_id === STAFF_A1.app);
+  const leaderAOb = obRows.find((r) => r.assignee_app_user_id === LEADER_A.app);
+  assert.ok(staffA1Ob && leaderAOb);
+
+  const makePayload = (calls) => ({
+    calls_made: calls,
+    interested_candidates: 4,
+    workers_started: 2,
+    notes: "Báo cáo F2",
+  });
+
+  // 4) Submit STAFF_A1 and LEADER_A -> both enter PENDING_REVIEW with provisional metrics
+  const { rows: subA1Rows } = await db.query(
+    `select public.work_report_submit($1::uuid, $2::uuid, $3::uuid, $4::jsonb, null, $5) as result`,
+    [STAFF_A1.auth, STAFF_A1.app, staffA1Ob.obligation_id, JSON.stringify(makePayload(15)), KEY("f2_sub_a1")],
+  );
+  const subA1 = subA1Rows[0].result;
+  assert.equal(subA1.state, "PENDING_REVIEW");
+
+  const { rows: subLeaderRows } = await db.query(
+    `select public.work_report_submit($1::uuid, $2::uuid, $3::uuid, $4::jsonb, null, $5) as result`,
+    [LEADER_A.auth, LEADER_A.app, leaderAOb.obligation_id, JSON.stringify(makePayload(25)), KEY("f2_sub_la")],
+  );
+  const subLeader = subLeaderRows[0].result;
+  assert.equal(subLeader.state, "PENDING_REVIEW");
+
+  // 5) Self-review by LEADER_A is rejected with WORK_REPORT_SELF_REVIEW_FORBIDDEN
+  await assert.rejects(
+    db.query(
+      `select public.work_report_decide_review($1::uuid, $2::uuid, $3::uuid, 'APPROVED', null, $4, $5)`,
+      [LEADER_A.auth, LEADER_A.app, leaderAOb.obligation_id, subLeader.version, KEY("f2_self_rev")],
+    ),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SELF_REVIEW_FORBIDDEN"),
+  );
+
+  // 6) LEADER_A rejects STAFF_A1 with reason -> state REJECTED; STAFF_A1 sees latest_review_event without reviewer_user_id
+  const { rows: rejRows } = await db.query(
+    `select public.work_report_decide_review($1::uuid, $2::uuid, $3::uuid, 'REJECTED', 'Cần bổ sung số liệu', $4, $5) as result`,
+    [LEADER_A.auth, LEADER_A.app, staffA1Ob.obligation_id, subA1.version, KEY("f2_rej_a1")],
+  );
+  assert.equal(rejRows[0].result.state, "REJECTED");
+
+  // Expire due_at to prove REJECTED submission can be amended and resubmitted after due_at without manual reopen
+  await db.query(
+    `update public.work_report_obligations set due_at = '2020-01-01T00:00:00Z' where obligation_id = $1::uuid`,
+    [staffA1Ob.obligation_id],
+  );
+
+  const { rows: detailAfterRej } = await db.query(
+    `select public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid) as result`,
+    [STAFF_A1.auth, STAFF_A1.app, staffA1Ob.obligation_id],
+  );
+  assert.equal(detailAfterRej[0].result.latest_review_event.decision, "REJECTED");
+  assert.equal(detailAfterRej[0].result.latest_review_event.reason, "Cần bổ sung số liệu");
+  assert.equal("reviewer_user_id" in detailAfterRej[0].result.latest_review_event, false);
+
+  const { rows: resubRows } = await db.query(
+    `select public.work_report_submit($1::uuid, $2::uuid, $3::uuid, $4::jsonb, $5, $6) as result`,
+    [STAFF_A1.auth, STAFF_A1.app, staffA1Ob.obligation_id, JSON.stringify(makePayload(18)), rejRows[0].result.version, KEY("f2_resub_a1")],
+  );
+  assert.equal(resubRows[0].result.state, "PENDING_REVIEW");
+  assert.equal(resubRows[0].result.revision_no, 2);
+  const { rows: detailAfterResub } = await db.query(
+    `select public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid) as result`,
+    [STAFF_A1.auth, STAFF_A1.app, staffA1Ob.obligation_id],
+  );
+  assert.equal(detailAfterResub[0].result.submission.has_post_deadline_amendment, true);
+
+  // 7) Delegation of report_review and effective_report_review_scopes projection in direct_entry_resolve_actor_context
+  const { rows: delRows } = await db.query(
+    `select public.work_report_create_delegation(
+       $1::uuid, $2::uuid, 'report_review', $3::uuid, $4::uuid, 'team', $5::uuid,
+       (now() - interval '1 hour'), (now() + interval '1 day'), $6
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, STAFF_A2.app, tplId, TEAM_A, KEY("f2_del_a2")],
+  );
+  const delegationId = delRows[0].result.delegation_id;
+
+  const { rows: resolvedDelegateCtx } = await db.query(
+    `select public.direct_entry_resolve_actor_context($1::uuid) as ctx`,
+    [STAFF_A2.auth],
+  );
+  assert.equal(resolvedDelegateCtx[0].ctx.app_user_id, STAFF_A2.app);
+  assert.ok(
+    Array.isArray(resolvedDelegateCtx[0].ctx.effective_report_review_scopes) &&
+      resolvedDelegateCtx[0].ctx.effective_report_review_scopes.some(
+        (s) => s.kind === "team" && s.team_id === TEAM_A,
+      ),
+    "delegate without direct report_review receives effective_report_review_scopes from active delegation",
+  );
+
+  // Delegate STAFF_A2 approves STAFF_A1's resubmitted report
+  const { rows: delApproveRows } = await db.query(
+    `select public.work_report_decide_review($1::uuid, $2::uuid, $3::uuid, 'APPROVED', null, $4, $5) as result`,
+    [STAFF_A2.auth, STAFF_A2.app, staffA1Ob.obligation_id, resubRows[0].result.version, KEY("f2_del_app")],
+  );
+  assert.equal(delApproveRows[0].result.state, "APPROVED");
+  assert.equal(delApproveRows[0].result.delegation_id, delegationId);
+
+  // Analytics finality check: final = 18 (only approved STAFF_A1 rev 2), provisional_included = 43 (18 + pending LEADER_A 25)
+  const { rows: ovFinal } = await db.query(
+    `select public.work_report_analytics_overview($1::uuid, $2::uuid, $3::uuid, null, '2099-11-02'::date, '2099-11-02'::date, null, null, 'final') as result`,
+    [ADMIN.auth, ADMIN.app, tplId],
+  );
+  const { rows: ovProv } = await db.query(
+    `select public.work_report_analytics_overview($1::uuid, $2::uuid, $3::uuid, null, '2099-11-02'::date, '2099-11-02'::date, null, null, 'provisional_included') as result`,
+    [ADMIN.auth, ADMIN.app, tplId],
+  );
+  assert.equal(ovFinal[0].result.metrics.find((m) => m.metric_key === "calls_made").sum_value, 18);
+  assert.equal(ovProv[0].result.metrics.find((m) => m.metric_key === "calls_made").sum_value, 43);
+
+  // Reconciliation passes with zero discrepancies across APPROVED, REJECTED (historical), and PENDING_REVIEW revisions
+  const { rows: reconRows } = await db.query(
+    `select public.work_report_reconcile_metric_projection($1::uuid, $2::uuid, $3::uuid) as result`,
+    [ADMIN.auth, ADMIN.app, tplId],
+  );
+  assert.equal(reconRows[0].result.ok, true);
+  assert.equal(reconRows[0].result.total_discrepancy_count, 0);
 });
