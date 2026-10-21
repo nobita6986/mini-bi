@@ -2,7 +2,7 @@
  * F1.5-WP1 Work Reports Analytics — Scoped SQL Aggregation, Breakdown, Contributions,
  * Source Evidence & Metric Projection Reconciliation Suite.
  *
- * Verifies against PGlite (all migrations through `20261021210000_f1_5_work_reports_analytics.sql`):
+ * Verifies against PGlite (all migrations through `20261021230000_f1_5_full_admin_report_read_closure.sql`):
  *   - `SEC-WR-12`: Forced RLS, zero client table/function privileges, exact `service_role` allowlist
  *   - `AG-01`, `AG-02`, `AG-03`, `AG-15`: `due_count`, `completed_count`, `on_time_count`, `late_submitted_count`,
  *     `pending_due_count` vs `overdue_missing_count` across `due_at` and `Asia/Ho_Chi_Minh` (`+07:00`) midnight
@@ -36,6 +36,11 @@ const BOD_ADMIN = {
   auth: "15000000-0000-4000-8000-000000000001",
   app: "25000000-0000-4000-8000-000000000001",
   name: "BoD All Scope",
+};
+const FULL_ADMIN_IMPLICIT = {
+  auth: "15000000-0000-4000-8000-000000000010",
+  app: "25000000-0000-4000-8000-000000000010",
+  name: "Canonical Full Admin Without Report Tokens",
 };
 const FORM_ADMIN_ONLY = {
   auth: "15000000-0000-4000-8000-000000000002",
@@ -107,6 +112,7 @@ async function seedActorsAndTeams(db) {
 
   for (const actor of [
     BOD_ADMIN,
+    FULL_ADMIN_IMPLICIT,
     FORM_ADMIN_ONLY,
     ANALYTICS_ONLY_USER,
     LEADER_A,
@@ -145,6 +151,20 @@ async function seedActorsAndTeams(db) {
     `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
      values ($1::uuid, 'all', '2026-01-01', true)`,
     [BOD_ADMIN.app],
+  );
+
+  // Canonical Full Admin inherits every current Work Reports action without separate report tokens.
+  for (const cap of ["entry_admin", "team_master_manage", "recruiter_master_manage"]) {
+    await db.query(
+      `insert into public.direct_entry_capability_grants (app_user_id, capability, valid_from, is_current)
+       values ($1::uuid, $2, '2026-01-01', true)`,
+      [FULL_ADMIN_IMPLICIT.app, cap],
+    );
+  }
+  await db.query(
+    `insert into public.direct_entry_scope_grants (app_user_id, scope_kind, valid_from, is_current)
+     values ($1::uuid, 'all', '2026-01-01', true)`,
+    [FULL_ADMIN_IMPLICIT.app],
   );
 
   // FORM_ADMIN_ONLY has entry_admin + report_form_manage @ all, but NO report_view or report_analytics_view (SEC-WR-03)
@@ -881,6 +901,30 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   );
   assert.equal(reconcileRestoredRows[0].result.ok, true);
   assert.equal(reconcileRestoredRows[0].result.total_discrepancy_count, 0);
+
+  // Canonical Full Admin can use overview, drill-down, and source evidence without duplicate report grants.
+  const { rows: fullAdminOverviewRows } = await db.query(
+    `select public.work_report_analytics_overview(
+       $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final'
+     ) as result`,
+    [FULL_ADMIN_IMPLICIT.auth, FULL_ADMIN_IMPLICIT.app, templateId],
+  );
+  assert.equal(fullAdminOverviewRows[0].result.effective_scope.kind, "all");
+
+  const { rows: fullAdminContributionRows } = await db.query(
+    `select public.work_report_analytics_contributions(
+       $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final',
+       null, null, null, null, null, null, 50
+     ) as result`,
+    [FULL_ADMIN_IMPLICIT.auth, FULL_ADMIN_IMPLICIT.app, templateId],
+  );
+  assert.ok(fullAdminContributionRows[0].result.items.length > 0);
+
+  const { rows: fullAdminEvidenceRows } = await db.query(
+    `select public.work_report_get_submission($1::uuid, $2::uuid, $3::uuid) as result`,
+    [FULL_ADMIN_IMPLICIT.auth, FULL_ADMIN_IMPLICIT.app, submissionA1Id],
+  );
+  assert.equal(fullAdminEvidenceRows[0].result.submission.submission_id, submissionA1Id);
 
   // SEC-WR-02: Team Leader A spoofing team_id = TEAM_B or assignee_id = STAFF_B1 is rejected with 42501 WORK_REPORT_SCOPE_DENIED
   await assert.rejects(
