@@ -89,7 +89,7 @@ function mapOutcome<T>(result: WorkReportRpcOutcome<T>): Response {
     const [code, status] = codes[result.kind];
     return fail(code, status);
   }
-  return response({ ok: true, ...result.data }, 200);
+  return response({ ok: true, ...(Array.isArray(result.data) ? { items: result.data } : result.data) }, 200);
 }
 
 export async function createWorkReportAssignment(request: Request, enabled: string | undefined,
@@ -120,6 +120,23 @@ export async function listWorkReportAssignmentOptions(request: Request, enabled:
     return mapOutcome(await deps.repository.listOptions({ ...actor, team_id: teamId }));
   } catch {
     console.error("[work-reports] assignment options unavailable");
+    return fail("WORK_REPORT_UNAVAILABLE", 503);
+  }
+}
+
+export async function listWorkReportAssignments(request: Request, enabled: string | undefined,
+  deps: AssignmentApiDependencies): Promise<Response> {
+  if (enabled !== "true") return fail("NOT_FOUND", 404);
+  const url = new URL(request.url);
+  const teamId = url.searchParams.get("team_id");
+  if ([...url.searchParams.keys()].some((key) => key !== "team_id") || url.searchParams.size > 1 ||
+      (teamId !== null && !UUID.test(teamId))) return fail("WORK_REPORT_REQUEST_INVALID", 400);
+  const actor = await actorFromSession(deps);
+  if (actor instanceof Response) return actor;
+  try {
+    return mapOutcome(await deps.repository.listAssignments({ ...actor, team_id: teamId }));
+  } catch {
+    console.error("[work-reports] assignment list unavailable");
     return fail("WORK_REPORT_UNAVAILABLE", 503);
   }
 }

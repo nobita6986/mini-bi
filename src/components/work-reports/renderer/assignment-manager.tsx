@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { StatusBanner } from "@/components/ui/status-banner";
+import type { WorkReportAssignmentSummary } from "@/lib/work-reports/assignment-repository";
 
 type Template = { template_id: string; template_code: string; display_name: string; default_frequency: string; current_published_version_id: string };
 type Team = { team_id: string; code: string; display_name: string };
@@ -12,6 +13,7 @@ export function AssignmentManager() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [assignments, setAssignments] = useState<WorkReportAssignmentSummary[]>([]);
   const [teamId, setTeamId] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [loadedTeamId, setLoadedTeamId] = useState<string | null>(null);
@@ -25,6 +27,9 @@ export function AssignmentManager() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [trackingLoadedTeamId, setTrackingLoadedTeamId] = useState<string | null>(null);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
+  const [trackingBusy, setTrackingBusy] = useState(false);
   const templatesLoaded = loadedTeamId === teamId;
 
   useEffect(() => {
@@ -55,8 +60,75 @@ export function AssignmentManager() {
         : "Không tải được dữ liệu giao báo cáo. Vui lòng thử lại.");
       setLoadedTeamId(teamId);
     });
+    fetch(`/api/work-reports/assignments/tracking${query}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const result = await response.json().catch(() => null);
+        if (!response.ok || result?.ok !== true || !Array.isArray(result.items)) {
+          throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
+        }
+        setAssignments(result.items);
+        setTrackingError(null);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
+        setAssignments([]);
+        setTrackingError(code === "WORK_REPORT_ACCESS_DENIED"
+          ? "Bạn không có quyền theo dõi assignment trong phạm vi này."
+          : "Không tải được danh sách giao báo cáo. Vui lòng thử lại.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setTrackingLoadedTeamId(teamId); });
     return () => controller.abort();
   }, [teamId]);
+
+  async function reloadAssignments() {
+    const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
+    try {
+      const response = await fetch(`/api/work-reports/assignments/tracking${query}`, { cache: "no-store" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.ok !== true || !Array.isArray(result.items)) throw new Error("WORK_REPORT_UNAVAILABLE");
+      setAssignments(result.items);
+      setTrackingError(null);
+    } catch {
+      setTrackingError("Không tải được danh sách giao báo cáo. Vui lòng thử lại.");
+    }
+  }
+
+  async function updateAssignment(assignment: WorkReportAssignmentSummary, state: "ACTIVE" | "PAUSED" | "REVOKED") {
+    if (state === "REVOKED" && !window.confirm("Thu hồi giao báo cáo này? Các nghĩa vụ đã nộp được giữ nguyên.")) return;
+    setTrackingBusy(true); setTrackingError(null); setMessage(null);
+    try {
+      const idempotency_key = crypto.randomUUID();
+      const response = await fetch(`/api/work-reports/assignments/${assignment.assignment_id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotency_key },
+        body: JSON.stringify({ expected_version: assignment.version, state, idempotency_key }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
+      setMessage(state === "PAUSED" ? "Đã tạm dừng giao báo cáo." : state === "REVOKED" ? "Đã thu hồi giao báo cáo." : "Đã kích hoạt lại giao báo cáo.");
+      await reloadAssignments();
+    } catch (cause) {
+      setTrackingError(cause instanceof Error && cause.message === "WORK_REPORT_VERSION_CONFLICT"
+        ? "Giao báo cáo vừa được thay đổi ở nơi khác. Danh sách đã cũ; vui lòng tải lại."
+        : "Không cập nhật được giao báo cáo. Vui lòng thử lại.");
+    } finally { setTrackingBusy(false); }
+  }
+
+  async function refreshProgress() {
+    setTrackingBusy(true); setTrackingError(null); setMessage(null);
+    try {
+      const business_date = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+      const response = await fetch("/api/work-reports/assignments/materialize", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ business_date }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
+      setMessage("Đã cập nhật nghĩa vụ cho kỳ hiện tại.");
+      await reloadAssignments();
+    } catch {
+      setTrackingError("Không cập nhật được tiến độ nghĩa vụ. Vui lòng thử lại.");
+    } finally { setTrackingBusy(false); }
+  }
 
   async function create(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(null); setMessage(null);
@@ -78,6 +150,7 @@ export function AssignmentManager() {
       const result = await response.json();
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
       setMessage(`Đã tạo assignment ${result.assignment_id} (version ${result.version}).`);
+      await reloadAssignments();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
       setError(code === "WORK_REPORT_SCOPE_DENIED" || code === "WORK_REPORT_ACCESS_DENIED"
@@ -88,8 +161,8 @@ export function AssignmentManager() {
   }
 
   return <div className="space-y-5">
-    <StatusBanner tone="warning" title="Phạm vi giao báo cáo">
-      Mẫu, nhóm và nhân viên được tải theo quyền hiện tại. Danh sách theo dõi assignment và tiến độ nghĩa vụ chưa có trong màn hình này.
+    <StatusBanner tone="info" title="Phạm vi giao báo cáo">
+      Mẫu, nhóm, nhân viên và assignment được tải theo quyền hiện tại; máy chủ kiểm tra lại scope trước mọi thao tác.
     </StatusBanner>
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
     {message ? <StatusBanner tone="success">{message}</StatusBanner> : null}
@@ -127,5 +200,50 @@ export function AssignmentManager() {
       </div>
       <Button type="submit" variant="primary" disabled={busy || !templates.length || !teamId || !templatesLoaded}>{busy ? "Đang tạo…" : "Tạo giao việc"}</Button>
     </form>
+    <section className="space-y-3" aria-labelledby="assignment-tracking-title">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 id="assignment-tracking-title" className="text-lg font-semibold">Giao báo cáo đã tạo</h2>
+          <p className="text-sm text-muted">Theo dõi tiến độ nghĩa vụ; danh sách không hiển thị nội dung bài nộp.</p>
+          <p className="text-xs text-muted">Cập nhật sẽ phát sinh nghĩa vụ cho toàn bộ scope hiện được cấp quyền.</p></div>
+        <Button type="button" variant="secondary" disabled={trackingBusy} onClick={() => void refreshProgress()}>
+          {trackingBusy ? "Đang cập nhật…" : "Cập nhật tiến độ kỳ hiện tại"}
+        </Button>
+      </div>
+      {trackingError ? <StatusBanner tone="error">{trackingError}</StatusBanner> : null}
+      {trackingLoadedTeamId !== teamId ? <p role="status" className="text-sm text-muted">Đang tải danh sách giao báo cáo…</p>
+        : assignments.length === 0 ? <p className="rounded-lg border border-border p-4 text-sm text-muted">Chưa có giao báo cáo trong phạm vi này.</p>
+          : <div className="space-y-3">{assignments.map((assignment) => <article key={assignment.assignment_id} className="rounded-xl border border-border p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1"><h3 className="font-semibold">{assignment.template_name}</h3>
+                <p className="text-sm text-muted">{assignment.target_label} · {frequencyLabel(assignment.frequency)} · {stateLabel(assignment.state)}</p>
+                <p className="text-xs text-muted">Từ {assignment.effective_from}{assignment.effective_to ? ` đến ${assignment.effective_to}` : " · không có ngày kết thúc"}</p></div>
+              <div className="flex flex-wrap gap-2">
+                {assignment.state === "ACTIVE" ? <Button type="button" variant="secondary" disabled={trackingBusy} onClick={() => void updateAssignment(assignment, "PAUSED")}>Tạm dừng</Button> : null}
+                {assignment.state === "PAUSED" ? <Button type="button" variant="secondary" disabled={trackingBusy} onClick={() => void updateAssignment(assignment, "ACTIVE")}>Kích hoạt</Button> : null}
+                {assignment.state !== "REVOKED" ? <Button type="button" variant="secondary" disabled={trackingBusy} onClick={() => void updateAssignment(assignment, "REVOKED")}>Thu hồi</Button> : null}
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+              <Progress label="Tổng nghĩa vụ" value={assignment.obligation_total} />
+              <Progress label="Đã nộp" value={assignment.submitted_count} />
+              <Progress label="Chưa bắt đầu" value={assignment.not_started_count} />
+              <Progress label="Đang nháp" value={assignment.draft_count} />
+              <Progress label="Miễn / huỷ" value={assignment.exempted_count + assignment.cancelled_count} />
+            </div>
+            {assignment.obligation_total === 0 ? <p className="mt-2 text-xs text-muted">Chưa có nghĩa vụ được phát sinh cho assignment này.</p> : null}
+          </article>)}</div>}
+    </section>
   </div>;
+}
+
+function frequencyLabel(value: string) {
+  return ({ DAILY: "hằng ngày", WEEKLY: "hằng tuần", MONTHLY: "hằng tháng", ONCE: "một lần" } as Record<string, string>)[value] ?? value;
+}
+
+function stateLabel(value: string) {
+  return ({ ACTIVE: "đang hoạt động", PAUSED: "đã tạm dừng", REVOKED: "đã thu hồi" } as Record<string, string>)[value] ?? value;
+}
+
+function Progress({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-md bg-subtle px-3 py-2"><div className="text-xs text-muted">{label}</div><div className="font-medium tabular-nums">{value}</div></div>;
 }

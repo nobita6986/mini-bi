@@ -32,3 +32,25 @@ test("assignment options reject malformed RPC data and preserve access denials",
   const denied = createAssignmentRepository(async () => ({ data: null, error: { code: "42501" } }));
   assert.deepEqual(await denied.listOptions({ ...actor, team_id: team }), { ok: false, kind: "denied" });
 });
+
+test("assignment tracking calls the scoped service RPC and validates aggregate progress", async () => {
+  let called;
+  const item = {
+    assignment_id: "ffffffff-ffff-4fff-8fff-ffffffffffff", template_id: template,
+    template_code: "DAILY", template_name: "Báo cáo ngày", target_kind: "USER_SET",
+    target_label: "Staff A1, Staff A2", frequency: "DAILY", is_mandatory: true,
+    effective_from: "2026-10-21", effective_to: null, state: "ACTIVE", version: 1,
+    created_at: "2026-10-21T00:00:00Z", obligation_total: 2, submitted_count: 1,
+    not_started_count: 1, draft_count: 0, exempted_count: 0, cancelled_count: 0,
+  };
+  const repository = createAssignmentRepository(async (name, args) => {
+    called = { name, args };
+    return { data: { items: [item] }, error: null };
+  });
+  assert.deepEqual(await repository.listAssignments({ ...actor, team_id: team }), { ok: true, data: [item] });
+  assert.deepEqual(called, { name: "work_report_list_assignments", args: {
+    p_auth_subject: actor.auth_subject, p_app_user_id: actor.app_user_id, p_team_id: team,
+  } });
+  const malformed = createAssignmentRepository(async () => ({ data: { items: [{ ...item, submitted_count: -1 }] }, error: null }));
+  assert.deepEqual(await malformed.listAssignments({ ...actor, team_id: team }), { ok: false, kind: "unavailable" });
+});

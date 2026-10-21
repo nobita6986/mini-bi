@@ -32,6 +32,7 @@ import {
 import { buildWorkReportMetricContract } from "../src/lib/work-reports/metric-contract.ts";
 import {
   F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
+  F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
 } from "./lib/migration-validation.mjs";
 import { AUTH_PROLOGUE } from "./lib/s04c-read-fixture.mjs";
@@ -217,7 +218,8 @@ test("F1 schema, forced RLS, table privilege revocation and RPC allowlist match 
   assert.ok(fnRows.every((r) => !r.anon_exec && !r.auth_exec), "zero client EXECUTE on work_report_*");
   const { rows: expectedFnRows } = await db.query(
     "select to_regprocedure(sig)::regprocedure::text as signature from unnest($1::text[]) as u(sig) order by 1",
-    [[...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES, F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE]],
+    [[...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES, F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
+      F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE]],
   );
   const serviceExec = fnRows.filter((r) => r.service_exec).map((r) => r.signature).sort();
   assert.deepEqual(serviceExec, expectedFnRows.map((r) => r.signature).sort());
@@ -657,6 +659,25 @@ test("assignments, obligations, snapshot_team_id immutability, deadline/reopen/e
   );
   assert.equal(targetRows.length, 2, "normalized work_report_assignment_targets stores both assignees");
 
+  const { rows: leaderAssignments } = await db.query(
+    "select public.work_report_list_assignments($1::uuid, $2::uuid, $3::uuid) as result",
+    [LEADER_A.auth, LEADER_A.app, TEAM_A],
+  );
+  assert.equal(leaderAssignments[0].result.items.length, 1);
+  assert.equal(leaderAssignments[0].result.items[0].assignment_id, assignmentId);
+  assert.equal(leaderAssignments[0].result.items[0].target_label, "Staff A1, Staff A2");
+  assert.equal(leaderAssignments[0].result.items[0].obligation_total, 0);
+  await assert.rejects(
+    db.query("select public.work_report_list_assignments($1::uuid, $2::uuid, $3::uuid)",
+      [LEADER_A.auth, LEADER_A.app, TEAM_B]),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_SCOPE_DENIED"),
+  );
+  await assert.rejects(
+    db.query("select public.work_report_list_assignments($1::uuid, $2::uuid, null)",
+      [ADMIN.auth, LEADER_A.app]),
+    (err) => err.code === "42501" && err.message.includes("WORK_REPORT_ACTOR_DENIED"),
+  );
+
   // Materialize obligations for a future business date so due_at is in the future for normal submit
   const futureDate = "2099-10-21";
   const { rows: matFuture } = await db.query(
@@ -666,6 +687,15 @@ test("assignments, obligations, snapshot_team_id immutability, deadline/reopen/e
     [LEADER_A.auth, LEADER_A.app, futureDate],
   );
   assert.equal(matFuture[0].result.inserted_count, 2);
+
+  const { rows: progressRows } = await db.query(
+    "select public.work_report_list_assignments($1::uuid, $2::uuid, $3::uuid) as result",
+    [LEADER_A.auth, LEADER_A.app, TEAM_A],
+  );
+  const tracked = progressRows[0].result.items.find((item) => item.assignment_id === assignmentId);
+  assert.equal(tracked.obligation_total, 2);
+  assert.equal(tracked.not_started_count, 2);
+  assert.equal(tracked.submitted_count, 0);
 
   // Re-running materialization for the same window is idempotent (inserted_count = 0)
   const { rows: matFutureReplay } = await db.query(

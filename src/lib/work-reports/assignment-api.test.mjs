@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWorkReportAssignment, listWorkReportAssignmentOptions, setWorkReportAssignmentState, changeWorkReportObligation } from "./assignment-api.ts";
+import { createWorkReportAssignment, listWorkReportAssignmentOptions, listWorkReportAssignments,
+  setWorkReportAssignmentState, changeWorkReportObligation } from "./assignment-api.ts";
 
 const actor = { auth_subject: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", app_user_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" };
 const template = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -28,6 +29,21 @@ test("assignment options use the session actor and accept only an optional team 
   assert.deepEqual(await response.json(), { ok: true, ...data });
   assert.equal((await listWorkReportAssignmentOptions(
     getRequest(`/api/work-reports/assignments?app_user_id=${user}`), "true", deps(),
+  )).status, 400);
+});
+
+test("assignment tracking uses the session actor and accepts only the optional team filter", async () => {
+  let input;
+  const response = await listWorkReportAssignments(
+    getRequest(`/api/work-reports/assignments/tracking?team_id=${user}`), "true", deps({
+      listAssignments: async (value) => { input = value; return { ok: true, data: [] }; },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(input, { ...actor, team_id: user });
+  assert.deepEqual(await response.json(), { ok: true, items: [] });
+  assert.equal((await listWorkReportAssignments(
+    getRequest(`/api/work-reports/assignments/tracking?app_user_id=${user}`), "true", deps(),
   )).status, 400);
 });
 
