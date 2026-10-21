@@ -65,8 +65,8 @@ export function MobileNav({
           aria-label="Mở menu điều hướng"
           aria-controls="mobile-nav-sheet"
           className={cn(
-            "inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground",
-            "hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+            "inline-flex min-h-11 min-w-11 h-9 w-9 items-center justify-center rounded-md text-foreground",
+            "hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
             "md:hidden"
           )}
         >
@@ -103,8 +103,8 @@ export function MobileNav({
                 type="button"
                 aria-label="Đóng menu"
                 className={cn(
-                  "inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground",
-                  "hover:bg-muted/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  "inline-flex min-h-11 min-w-11 h-9 w-9 items-center justify-center rounded-md text-foreground",
+                  "hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 )}
               >
                 <X className="h-5 w-5" aria-hidden />
@@ -124,11 +124,11 @@ export function MobileNav({
                   aria-current={isActive ? "page" : undefined}
                   onClick={() => setOpen(false)}
                   className={cn(
-                    "inline-flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium",
+                    "inline-flex min-h-11 h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                     isActive
                       ? "bg-primary/10 text-foreground"
-                      : "text-muted hover:bg-muted/10 hover:text-foreground"
+                      : "text-muted hover:bg-surface-hover hover:text-foreground"
                   )}
                 >
                   <Icon className="h-4 w-4" aria-hidden />

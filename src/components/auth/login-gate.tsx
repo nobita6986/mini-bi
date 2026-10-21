@@ -39,7 +39,7 @@ export function LoginGate() {
   useEffect(() => { return check(); }, [check, attempt]);
 
   if (state === "loading") {
-    return <p aria-live="polite" className="text-sm text-muted-foreground">Đang kiểm tra phiên đăng nhập…</p>;
+    return <p aria-live="polite" className="text-sm text-muted">Đang kiểm tra phiên đăng nhập…</p>;
   }
   async function logout() {
     if (busy) return;
@@ -57,22 +57,22 @@ export function LoginGate() {
 
   if (state === "unavailable") {
     return (
-      <div role="alert" className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      <div role="alert" className="flex flex-col gap-3 rounded-md border border-status-danger-border bg-status-danger-bg px-3 py-2 text-sm text-status-danger-text">
         <p>{authUiErrorMessage("ACCOUNT_NOT_AVAILABLE")}</p>
         <button type="button" onClick={() => void logout()} disabled={busy} aria-busy={busy}
-          className="h-11 rounded-md border border-input px-3 text-sm">Đăng xuất</button>
+          className="min-h-11 h-11 rounded-md border border-border bg-surface px-3 text-sm text-foreground">Đăng xuất</button>
       </div>
     );
   }
   if (state === "error") {
     return (
-      <div role="alert" className="flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      <div role="alert" className="flex flex-col gap-3 rounded-md border border-status-danger-border bg-status-danger-bg px-3 py-2 text-sm text-status-danger-text">
         <p>{authUiErrorMessage("AUTH_UNAVAILABLE")}</p>
         <button type="button" onClick={() => {
           setState("loading");
           setAttempt((value) => value + 1);
         }}
-          className="h-11 rounded-md border border-input px-3 text-sm">Thử lại</button>
+          className="min-h-11 h-11 rounded-md border border-border bg-surface px-3 text-sm text-foreground">Thử lại</button>
       </div>
     );
   }

@@ -40,7 +40,7 @@ export function NoMatchesBlock({ detail }: { detail?: string }) {
         {detail ?? "Không có ngày/dự án/người tuyển/nhóm nào khớp bộ lọc đang chọn."}
       </p>
       <p className="mt-4">
-        <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
+        <Link href="/dashboard" className="inline-flex min-h-11 h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
           Xóa bộ lọc
         </Link>
       </p>
@@ -70,13 +70,13 @@ export function BucketList({ buckets, label = "Xem danh sách đầy đủ" }: {
       <summary className="cursor-pointer text-sm font-medium text-primary">
         {label} ({sorted.length})
       </summary>
-      <div className="mt-2 max-h-72 overflow-y-auto">
-        <table className="w-full text-sm">
+      <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
+        <table className="r22-report-table w-full text-sm">
           <tbody className="divide-y divide-border">
             {sorted.map((b) => (
-              <tr key={b.key} className="text-foreground">
-                <td className="py-1.5">{b.display}</td>
-                <td className="py-1.5 text-right font-mono">{b.recruitedCount}</td>
+              <tr key={b.key} className="text-foreground hover:bg-surface-hover">
+                <td className="px-3 py-1.5">{b.display}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
               </tr>
             ))}
           </tbody>

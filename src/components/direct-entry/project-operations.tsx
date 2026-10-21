@@ -545,7 +545,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
           ) : null}
           {state === "ready" || state === "empty" ? (
             <div className="max-h-[46rem] overflow-x-auto overflow-y-auto">
-              <table className="w-full table-fixed border-collapse text-sm">
+              <table className="w-full table-fixed r22-card-table border-collapse text-sm">
                 <caption className="sr-only">Danh sách dự án và trạng thái</caption>
                 <colgroup>
                   <col />
@@ -581,7 +581,7 @@ export function ProjectOperations({ canManageProjectMasterForEmptyList }: { canM
                           </div>
                           <span className="mt-0.5 block font-mono text-xs text-muted">{project.project_id}</span>
                         </td>
-                        <td className="px-3 py-3"><ProjectStatusBadge active={project.active} /></td>
+                        <td data-label="Trạng thái" className="px-3 py-3"><ProjectStatusBadge active={project.active} /></td>
                         <td className="px-3 py-3">
                           <div className="flex justify-start gap-2 whitespace-nowrap">
                             <button type="button" className={buttonClass}
@@ -992,11 +992,12 @@ function SummaryMetric({
 function ProjectStatusBadge({ active }: { active: boolean }) {
   return (
     <span className={
-      "inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold " +
+      "inline-flex whitespace-nowrap items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold " +
       (active
-        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
-        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200")
+        ? "border-emerald-500/25 bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+        : "border-border bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200")
     }>
+      <span aria-hidden="true" className={"h-1.5 w-1.5 shrink-0 rounded-full " + (active ? "bg-emerald-500" : "bg-slate-400")} />
       {projectStatusLabel(active)}
     </span>
   );
@@ -1049,11 +1050,13 @@ function AssignmentGroup({
                       : "Sắp hiệu lực từ " + assignment.valid_from}
               </span>
               {onRevoke ? (
-                <button type="button" className={dangerClass + " mt-3 w-full"}
-                  disabled={actionsDisabled}
-                  onClick={() => onRevoke(assignment)}>
-                  Thu hồi phân công
-                </button>
+                <div className="mt-2.5 flex justify-end">
+                  <button type="button" className={dangerClass + " min-h-11 whitespace-nowrap px-3 text-xs sm:min-h-9"}
+                    disabled={actionsDisabled}
+                    onClick={() => onRevoke(assignment)}>
+                    Thu hồi phân công
+                  </button>
+                </div>
               ) : null}
             </li>
           ))}

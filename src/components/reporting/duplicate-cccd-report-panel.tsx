@@ -36,8 +36,8 @@ function StatusBadge({ status }: { status: DuplicateCccdReportGroup["episodes"][
   const active = status !== "OFF";
   return (
     <span className={active
-      ? "inline-flex whitespace-nowrap rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-      : "inline-flex whitespace-nowrap rounded-full bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-900 dark:bg-slate-700 dark:text-slate-100"}>
+      ? "inline-flex whitespace-nowrap rounded-full border border-status-success-border bg-status-success-bg px-2.5 py-1 text-xs font-medium text-status-success-text"
+      : "inline-flex whitespace-nowrap rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-muted"}>
       {employmentStatusLabel(status)}
     </span>
   );
@@ -55,14 +55,14 @@ function GroupCard({ group }: { group: DuplicateCccdReportGroup }) {
         }
       />
       <p className="mb-3 text-sm text-muted">
-        Vào làm sớm nhất: {group.first_work_date ?? "—"} · gần nhất: {group.latest_first_work_date ?? "—"}
+        Vào làm sớm nhất: <span className="font-mono tabular-nums whitespace-nowrap">{group.first_work_date ?? "—"}</span> · gần nhất: <span className="font-mono tabular-nums whitespace-nowrap">{group.latest_first_work_date ?? "—"}</span>
       </p>
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[560px] text-left text-sm">
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+        <table className="r22-report-table w-full min-w-[560px] text-left text-sm">
           <caption className="sr-only">
             Các hồ sơ dùng chung số CCCD {masked}
           </caption>
-          <thead className="bg-muted/20 text-xs uppercase tracking-wide text-muted">
+          <thead className="bg-surface-muted text-xs uppercase tracking-wide text-muted">
             <tr>
               <th scope="col" className="px-3 py-3">Họ tên</th>
               <th scope="col" className="px-3 py-3">Mã nhân viên</th>
@@ -73,11 +73,11 @@ function GroupCard({ group }: { group: DuplicateCccdReportGroup }) {
           </thead>
           <tbody className="divide-y divide-border">
             {group.episodes.map((episode, index) => (
-              <tr key={index}>
+              <tr key={index} className="hover:bg-surface-hover">
                 <td className="px-3 py-3 font-medium">{episode.display_name ?? "—"}</td>
-                <td className="px-3 py-3">{episode.employee_code ?? "—"}</td>
+                <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-xs">{episode.employee_code ?? "—"}</td>
                 <td className="px-3 py-3">{episode.project_display ?? "—"}</td>
-                <td className="px-3 py-3 font-mono text-xs">{episode.first_work_date ?? "—"}</td>
+                <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-xs">{episode.first_work_date ?? "—"}</td>
                 <td className="px-3 py-3"><StatusBadge status={episode.latest_status} /></td>
               </tr>
             ))}

@@ -2327,13 +2327,15 @@ export function DirectEntryLive() {
 
   return (
     <main className={styles.page}>
-      <p className={styles.serverStatus} role="status">
-        Dữ liệu chỉ được lưu sau khi máy chủ xác nhận.
-      </p>
       <header className={styles.header}>
-        <div>
-          <h1>Nhập liệu trực tiếp</h1>
-          <p>{rows.length} dòng</p>
+        <div className={styles.headerTitleGroup}>
+          <div className={styles.headerTitleRow}>
+            <h1>Nhập liệu trực tiếp</h1>
+            <span className={styles.headerCountBadge}>{rows.length} dòng</span>
+          </div>
+          <p className={styles.serverStatus} role="status">
+            Dữ liệu chỉ được lưu sau khi máy chủ xác nhận.
+          </p>
         </div>
         <div className={styles.liveHeaderActions}>
           <input

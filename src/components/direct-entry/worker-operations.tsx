@@ -16,7 +16,22 @@ import Link from "next/link";
 import { Dialog } from "radix-ui";
 
 import { WorkerDetailDialog } from "@/components/direct-entry/worker-detail-dialog";
+import { StatusBadge, submissionStateBadgeProps } from "@/components/ui/badge";
+import { buttonClasses } from "@/components/ui/button";
 import { CursorLoadMore } from "@/components/ui/cursor-load-more";
+import {
+  DATA_TABLE_CLASS,
+  DATA_TABLE_HEAD_CLASS,
+  DATA_TABLE_ROW_CLASS,
+  DATA_TABLE_TD_CLASS,
+  DATA_TABLE_TH_CLASS,
+  DataTableContainer,
+  RowActionCluster,
+} from "@/components/ui/data-table";
+import { FilterToolbar } from "@/components/ui/filter-toolbar";
+import { PageHeader } from "@/components/ui/page-shell";
+import { FloatingToast } from "@/components/ui/toast";
+import { formatHcmDateTime, shortRef } from "@/lib/direct-entry/submission-lifecycle";
 import {
   BANK_ACCOUNT_SECTION_LABEL,
   WORKER_CONFLICT_MESSAGE,
@@ -109,34 +124,24 @@ type FetchOutcome<T> = { ok: true; page: Incoming<T> } | { ok: false; state: Pag
 type Notice = { kind: "success" | "error"; message: string };
 
 const tabClass =
-  "inline-flex min-h-11 items-center rounded-md px-3 text-sm font-medium outline-none " +
+  "inline-flex min-h-11 items-center rounded-t-lg px-3.5 text-sm font-medium whitespace-nowrap transition-colors outline-none " +
   "focus-visible:ring-2 focus-visible:ring-ring/40";
-const buttonClass =
-  "inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface " +
-  "px-3 text-sm font-medium text-foreground outline-none hover:bg-muted/10 " +
-  "focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
-const primaryClass =
-  "inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-3 text-sm " +
-  "font-medium text-on-primary outline-none hover:bg-primary/90 focus-visible:ring-2 " +
-  "focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+const buttonClass = buttonClasses({ variant: "secondary", size: "md" });
+const primaryClass = buttonClasses({ variant: "primary", size: "md" });
 const inputClass =
-  "min-h-11 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground " +
-  "outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed " +
+  "min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 text-base sm:text-sm text-foreground " +
+  "outline-none transition-colors focus:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed " +
   "disabled:bg-muted/10 disabled:text-muted";
 const errorClass =
-  "rounded-md border border-red-500/40 bg-red-50 p-3 text-sm text-red-700 " +
+  "rounded-lg border border-red-500/40 bg-red-50 p-3 text-sm text-red-700 " +
   "dark:bg-red-950/40 dark:text-red-300";
 /** Thong tin/huong dan: mau khac han voi loi (do) va voi thanh cong (xanh la). */
 const infoClass =
-  "rounded-md border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-800 " +
+  "rounded-lg border border-sky-500/40 bg-sky-50 p-3 text-sm text-sky-800 " +
   "dark:bg-sky-950/40 dark:text-sky-200";
 /** P2.5-HF-R5A: 403 (khong co quyen doc danh muc) KHAC 5xx/network (loi that). */
 const CATALOG_DENIED = "CATALOG_DENIED";
 const CATALOG_UNAVAILABLE = "CATALOG_UNAVAILABLE";
-
-const successClass =
-  "rounded-md border border-emerald-500/40 bg-emerald-50 p-3 text-sm text-emerald-800 " +
-  "dark:bg-emerald-950/40 dark:text-emerald-300";
 
 async function readJson(response: Response): Promise<unknown> {
   try {
@@ -394,18 +399,41 @@ export function WorkerOperations({
     workerPage ?? submissionPage;
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-4">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">Người lao động</h1>
-        <p className="text-sm text-muted">
-          Tra cứu theo đúng quan hệ của bạn. Quyền sửa và đề xuất thay đổi do hệ thống quyết định.
-        </p>
-        <p className="text-sm text-muted">
-          Các tab là những quan hệ có thể chồng lấp; cùng một NLĐ xuất hiện ở nhiều tab không phải hồ sơ trùng.
-        </p>
-      </header>
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3.5 py-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:gap-5 sm:px-6 sm:py-6 lg:px-8 overflow-x-clip">
+      <PageHeader
+        title="Người lao động"
+        badge={
+          <StatusBadge tone="primary">
+            {tab === "uploader"
+              ? `${submissionPage.items.length} đợt`
+              : workerSummary !== null
+                ? `${workerSummary.total_workers.toLocaleString("vi-VN")} hồ sơ`
+                : `${workerPage?.items.length ?? 0} hồ sơ`}
+          </StatusBadge>
+        }
+        description={
+          <>
+            Tra cứu theo đúng quan hệ của bạn. Quyền sửa và đề xuất thay đổi do hệ thống quyết định.{" "}
+            <span className="hidden sm:inline">
+              Các tab là những quan hệ có thể chồng lấp; cùng một NLĐ xuất hiện ở nhiều tab không phải hồ sơ trùng.
+            </span>
+          </>
+        }
+        actions={
+          canExportThisTab && exportScope !== null ? (
+            <div className="flex flex-col items-start gap-1 sm:items-end">
+              <button type="button" className={primaryClass} onClick={() => setExportOpen(true)}>
+                Xuất Excel
+              </button>
+              <p className="max-w-xs text-[11px] leading-snug text-muted sm:text-right">
+                Xuất theo tab và bộ lọc trạng thái, dự án, người tuyển; không áp dụng từ khóa tìm kiếm.
+              </p>
+            </div>
+          ) : null
+        }
+      />
 
-      <div role="tablist" aria-label="Quan hệ người lao động" className="flex flex-wrap gap-1 border-b">
+      <div role="tablist" aria-label="Quan hệ người lao động" className="flex flex-wrap gap-1 border-b border-border">
         {tabs.map((value, index) => (
           <button
             key={value}
@@ -417,7 +445,7 @@ export function WorkerOperations({
             aria-controls={"workers-panel-" + value}
             tabIndex={tab === value ? 0 : -1}
             className={tabClass + (tab === value
-              ? " border-b-2 border-primary text-foreground" : " text-muted")}
+              ? " border-b-2 border-primary bg-primary/5 text-foreground" : " text-muted hover:text-foreground")}
             onClick={() => selectTab(value, false)}
             onKeyDown={(event) => onTabKeyDown(event, index)}
           >
@@ -437,8 +465,10 @@ export function WorkerOperations({
       ) : null}
 
       {notice ? (
-        <p role={notice.kind === "error" ? "alert" : "status"}
-          className={notice.kind === "error" ? errorClass : successClass}>
+        <FloatingToast
+          tone={notice.kind === "error" ? "error" : "success"}
+          onDismiss={() => setNotice(null)}
+        >
           <span>{notice.message}</span>
           {notice.message.includes("Đã gửi yêu cầu thay đổi") ? (
             <>
@@ -452,73 +482,90 @@ export function WorkerOperations({
               </Link>
             </>
           ) : null}
-        </p>
+        </FloatingToast>
       ) : null}
 
       <section
         role="tabpanel"
         id={"workers-panel-" + tab}
         aria-labelledby={"workers-tab-" + tab}
-        className="flex flex-col gap-3"
+        className="flex flex-col gap-3.5"
         aria-busy={activePage.state === "loading"}
       >
-        <p className="text-sm text-muted">{WORKER_OPERATIONS_TAB_HINTS[tab]}</p>
+        <p className="text-xs sm:text-sm text-muted">{WORKER_OPERATIONS_TAB_HINTS[tab]}</p>
 
         {tab === "uploader" ? null : (
           <>
-            <div className="flex flex-col gap-1">
-              <label htmlFor={searchId} className="text-sm font-medium">Tìm kiếm người lao động</label>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input id={searchId} type="search" className={inputClass}
-                  placeholder="Tìm theo tên hoặc mã người lao động..."
-                  maxLength={100} value={filters.search}
-                  onChange={(event) => changeFilter("search", event.target.value)} />
-                <button type="button" className={buttonClass} disabled={filters.search === ""}
-                  onClick={() => changeFilter("search", "")}>
-                  Xóa tìm kiếm
-                </button>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="flex flex-col gap-1">
-                <label htmlFor={filterId} className="text-sm font-medium">Trạng thái làm việc</label>
-                <select id={filterId} className={inputClass} value={filters.status}
-                  onChange={(event) => changeFilter("status", event.target.value)}>
-                  <option value="">Tất cả</option>
-                  {WORKER_EMPLOYMENT_STATUSES.map((status) => (
-                    <option key={status} value={status}>{workerStatusLabel(status)}</option>
-                  ))}
-                </select>
-              </div>
-              {filterCatalog ? (
-                <>
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor={projectFilterId} className="text-sm font-medium">Dự án</label>
-                    <select id={projectFilterId} className={inputClass} value={filters.projectId}
-                      onChange={(event) => changeFilter("projectId", event.target.value)}>
-                      <option value="">Tất cả dự án</option>
-                      {filterCatalog.projects.map((project) => (
-                        <option key={project.project_id} value={project.project_id}>
-                          {project.display_name}
-                        </option>
-                      ))}
-                    </select>
+            <FilterToolbar
+              summary={
+                <p role="status" aria-live="polite" data-testid="worker-filter-summary"
+                  className="text-xs sm:text-sm text-muted">
+                  {workerSummary === null ? "Đang tính tổng theo bộ lọc…" : (
+                    <>
+                      Tổng số NLĐ: {workerSummary.total_workers.toLocaleString("vi-VN")} — trong{" "}
+                      {workerSummary.project_count.toLocaleString("vi-VN")} dự án và{" "}
+                      {workerSummary.recruiter_count.toLocaleString("vi-VN")} người tuyển; trạng thái làm việc:{" "}
+                      {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}.
+                      {filters.search.trim() === "" ? null : <> Từ khóa: “{filters.search.trim()}”.</>}
+                    </>
+                  )}
+                </p>
+              }
+            >
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end">
+                <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-5">
+                  <label htmlFor={searchId} className="text-xs font-medium text-muted">Tìm kiếm người lao động</label>
+                  <div className="flex items-center gap-2">
+                    <input id={searchId} type="search" className={inputClass}
+                      placeholder="Tìm theo tên hoặc mã người lao động..."
+                      maxLength={100} value={filters.search}
+                      onChange={(event) => changeFilter("search", event.target.value)} />
+                    <button type="button" className={buttonClass} disabled={filters.search === ""}
+                      onClick={() => changeFilter("search", "")}>
+                      Xóa tìm kiếm
+                    </button>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor={recruiterFilterId} className="text-sm font-medium">Người tuyển</label>
-                    <select id={recruiterFilterId} className={inputClass} value={filters.recruiterId}
-                      onChange={(event) => changeFilter("recruiterId", event.target.value)}>
-                      <option value="">Tất cả người tuyển</option>
-                      {filterCatalog.recruiters.map((recruiter) => (
-                        <option key={recruiter.recruiter_id} value={recruiter.recruiter_id}>
-                          {recruiter.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              ) : null}
-            </div>
+                </div>
+                <div className="flex flex-col gap-1 lg:col-span-2">
+                  <label htmlFor={filterId} className="text-xs font-medium text-muted">Trạng thái làm việc</label>
+                  <select id={filterId} className={inputClass} value={filters.status}
+                    onChange={(event) => changeFilter("status", event.target.value)}>
+                    <option value="">Tất cả</option>
+                    {WORKER_EMPLOYMENT_STATUSES.map((status) => (
+                      <option key={status} value={status}>{workerStatusLabel(status)}</option>
+                    ))}
+                  </select>
+                </div>
+                {filterCatalog ? (
+                  <>
+                    <div className="flex flex-col gap-1 lg:col-span-3">
+                      <label htmlFor={projectFilterId} className="text-xs font-medium text-muted">Dự án</label>
+                      <select id={projectFilterId} className={inputClass} value={filters.projectId}
+                        onChange={(event) => changeFilter("projectId", event.target.value)}>
+                        <option value="">Tất cả dự án</option>
+                        {filterCatalog.projects.map((project) => (
+                          <option key={project.project_id} value={project.project_id}>
+                            {project.display_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1 lg:col-span-2">
+                      <label htmlFor={recruiterFilterId} className="text-xs font-medium text-muted">Người tuyển</label>
+                      <select id={recruiterFilterId} className={inputClass} value={filters.recruiterId}
+                        onChange={(event) => changeFilter("recruiterId", event.target.value)}>
+                        <option value="">Tất cả người tuyển</option>
+                        {filterCatalog.recruiters.map((recruiter) => (
+                          <option key={recruiter.recruiter_id} value={recruiter.recruiter_id}>
+                            {recruiter.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </FilterToolbar>
             {filterCatalog === undefined && filterCatalogState === "loading" ? (
               <p role="status" className="text-sm text-blue-700 dark:text-blue-300">
                 Đang tải bộ lọc dự án và người tuyển…
@@ -537,32 +584,6 @@ export function WorkerOperations({
             ) : null}
           </>
         )}
-
-        {tab === "uploader" ? null : (
-          <p role="status" aria-live="polite" data-testid="worker-filter-summary"
-            className="text-sm text-muted">
-            {workerSummary === null ? "Đang tính tổng theo bộ lọc…" : (
-              <>
-                Tổng số NLĐ: {workerSummary.total_workers.toLocaleString("vi-VN")} — trong{" "}
-                {workerSummary.project_count.toLocaleString("vi-VN")} dự án và{" "}
-                {workerSummary.recruiter_count.toLocaleString("vi-VN")} người tuyển; trạng thái làm việc: {" "}
-                {filters.status === "" ? "Tất cả" : workerStatusLabel(filters.status)}.
-                {filters.search.trim() === "" ? null : <> Từ khóa: “{filters.search.trim()}”.</>}
-              </>
-            )}
-          </p>
-        )}
-
-        {canExportThisTab && exportScope !== null ? (
-          <div className="flex flex-col items-start gap-1 sm:items-end">
-            <button type="button" className={primaryClass} onClick={() => setExportOpen(true)}>
-              Xuất Excel
-            </button>
-            <p className="text-xs text-muted">
-              Xuất theo tab và bộ lọc trạng thái, dự án, người tuyển; không áp dụng từ khóa tìm kiếm.
-            </p>
-          </div>
-        ) : null}
 
         {activePage.state === "loading" || activePage.state === "idle" ? (
           <p role="status" className={infoClass}>Đang tải dữ liệu…</p>
@@ -683,27 +704,43 @@ function LoadMore({
 
 function SubmissionTable({ submissions }: { submissions: readonly SubmissionReadItem[] }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-sm">
+    <DataTableContainer className="max-w-5xl" scrollClassName="overflow-x-auto">
+      <table className={DATA_TABLE_CLASS + " min-w-[640px]"}>
         <caption className="sr-only">Hồ sơ bạn đã nhập (chỉ tra cứu)</caption>
-        <thead>
-          <tr className="border-b text-left">
-            <th scope="col" className="p-3">Trạng thái</th>
-            <th scope="col" className="p-3">Số dòng</th>
-            <th scope="col" className="p-3">Cập nhật</th>
+        <thead className={DATA_TABLE_HEAD_CLASS}>
+          <tr>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Trạng thái</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Số dòng</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Cập nhật</th>
           </tr>
         </thead>
         <tbody>
-          {submissions.map((item) => (
-            <tr key={item.submission_id} className="border-b last:border-0">
-              <td className="p-3">{item.state}</td>
-              <td className="p-3">{item.entry_count}</td>
-              <td className="p-3">{item.updated_at.slice(0, 10)}</td>
-            </tr>
-          ))}
+          {submissions.map((item) => {
+            const badge = submissionStateBadgeProps(item.state);
+            const refCode = shortRef(item.submission_id);
+            const formattedUpdatedAt = formatHcmDateTime(item.updated_at);
+            return (
+              <tr key={item.submission_id} className={DATA_TABLE_ROW_CLASS}>
+                <td className={DATA_TABLE_TD_CLASS} data-card-header="true">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge tone={badge.tone} dot>{badge.label}</StatusBadge>
+                    <span className="font-mono text-xs text-muted" title="Mã đợt rút gọn">
+                      #{refCode}
+                    </span>
+                  </div>
+                </td>
+                <td className={DATA_TABLE_TD_CLASS + " font-mono text-xs tabular-nums whitespace-nowrap"} data-label="Số dòng">
+                  {item.entry_count} dòng
+                </td>
+                <td className={DATA_TABLE_TD_CLASS + " font-mono text-xs tabular-nums text-muted whitespace-nowrap"} data-label="Cập nhật">
+                  {formattedUpdatedAt}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
-    </div>
+    </DataTableContainer>
   );
 }
 
@@ -717,20 +754,23 @@ function WorkerTable({
   onPropose: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
   onCorrect: (row: WorkerDirectoryRow, opener: HTMLElement | null) => void;
 }) {
+  const rowSecondaryBtn = buttonClasses({ variant: "secondary", size: "sm" });
+  const rowPrimaryBtn = buttonClasses({ variant: "primary", size: "sm" });
+  const rowSoftBtn = buttonClasses({ variant: "soft", size: "sm" });
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[900px] border-collapse text-sm">
+    <DataTableContainer scrollClassName="overflow-x-auto">
+      <table className={DATA_TABLE_CLASS + " min-w-[900px]"}>
         <caption className="sr-only">Danh sách người lao động theo quan hệ đã chọn</caption>
-        <thead>
-          <tr className="border-b text-left">
-            <th scope="col" className="p-3">Người lao động</th>
-            <th scope="col" className="p-3">Mã</th>
-            <th scope="col" className="p-3">Dự án</th>
-            <th scope="col" className="p-3">Ngày đầu tiên</th>
-            <th scope="col" className="p-3">Người tuyển</th>
-            <th scope="col" className="p-3">Trạng thái</th>
-            <th scope="col" className="p-3">Yêu cầu</th>
-            <th scope="col" className="p-3">Thao tác</th>
+        <thead className={DATA_TABLE_HEAD_CLASS}>
+          <tr>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Người lao động</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Mã</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Dự án</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Ngày đầu tiên</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Người tuyển</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Trạng thái</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS}>Yêu cầu</th>
+            <th scope="col" className={DATA_TABLE_TH_CLASS + " text-right"}>Thao tác</th>
           </tr>
         </thead>
         <tbody>
@@ -738,45 +778,62 @@ function WorkerTable({
             const cta = proposeCta(row);
             const canDirectEdit = row.allowed_actions.direct_edit;
             const bank = bankAccountSummary(row.payment);
+            const statusTone = row.employment_status === "ON"
+              ? "success"
+              : row.employment_status === "UNCONFIRMED"
+                ? "warning"
+                : "neutral";
             return (
-              <tr key={row.entry_id} className="border-b last:border-0 align-top">
-                <td className="p-3 font-medium">{row.display_name}</td>
-                <td className="p-3">{row.employee_code}</td>
-                <td className="p-3">{row.project_display}</td>
-                <td className="p-3">{row.first_work_date}</td>
-                <td className="p-3">{row.recruiter_display}</td>
-                <td className="p-3">
-                  {workerStatusLabel(row.employment_status)}
+              <tr key={row.entry_id} className={DATA_TABLE_ROW_CLASS}>
+                <td className={DATA_TABLE_TD_CLASS + " font-semibold"} data-card-header="true">
+                  {row.display_name}
+                </td>
+                <td className={DATA_TABLE_TD_CLASS + " font-mono text-xs whitespace-nowrap text-muted"} data-label="Mã NLĐ">
+                  {row.employee_code}
+                </td>
+                <td className={DATA_TABLE_TD_CLASS} data-label="Dự án">
+                  {row.project_display}
+                </td>
+                <td className={DATA_TABLE_TD_CLASS + " font-mono text-xs tabular-nums whitespace-nowrap"} data-label="Ngày đầu tiên">
+                  {row.first_work_date}
+                </td>
+                <td className={DATA_TABLE_TD_CLASS} data-label="Người tuyển">
+                  {row.recruiter_display}
+                </td>
+                <td className={DATA_TABLE_TD_CLASS} data-label="Trạng thái">
+                  <StatusBadge tone={statusTone} dot>
+                    {workerStatusLabel(row.employment_status)}
+                  </StatusBadge>
                   {bank ? (
-                    <div className="mt-1 text-xs text-muted">
+                    <div className="mt-1 text-xs text-muted line-clamp-1">
                       <span className="font-medium">{BANK_ACCOUNT_SECTION_LABEL}: </span>
                       {(bank.accountNumber ?? "chưa có") + " · " + (bank.bankId ?? "chưa có") +
                         " · " + (bank.accountHolder ?? "chưa có")}
                     </div>
                   ) : null}
                 </td>
-                <td className="p-3 text-xs">
+                <td className={DATA_TABLE_TD_CLASS + " text-xs"} data-label="Yêu cầu">
                   {pendingRequestLabel(row) ? (
-                    <span className="rounded bg-muted/20 px-2 py-1">{pendingRequestLabel(row)}</span>
+                    <StatusBadge tone="warning">{pendingRequestLabel(row)}</StatusBadge>
                   ) : null}
                   {lastDecisionLabel(row) ? (
                     <div className="mt-1 text-muted">{lastDecisionLabel(row)}</div>
                   ) : null}
                 </td>
-                <td className="p-3">
-                  <div className="flex flex-col items-start gap-2">
-                    <button type="button" className={buttonClass}
+                <td className={DATA_TABLE_TD_CLASS + " text-right"} data-card-actions="true">
+                  <RowActionCluster>
+                    <button type="button" className={rowSecondaryBtn}
                       onClick={(event) => onViewDetail(row, event.currentTarget)}>
                       Xem chi tiết
                     </button>
                     {!canDirectEdit && cta.show ? (
-                      <button type="button" className={primaryClass}
+                      <button type="button" className={rowSoftBtn}
                         onClick={(event) => onPropose(row, event.currentTarget)}>
                         Đề xuất thay đổi
                       </button>
                     ) : null}
                     {canDirectEdit ? (
-                      <button type="button" className={buttonClass}
+                      <button type="button" className={rowPrimaryBtn}
                         onClick={(event) => onCorrect(row, event.currentTarget)}>
                         Sửa trực tiếp
                       </button>
@@ -784,14 +841,14 @@ function WorkerTable({
                     {cta.show || canDirectEdit ? null : (
                       <span className="text-xs text-muted">{cta.message}</span>
                     )}
-                  </div>
+                  </RowActionCluster>
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
-    </div>
+    </DataTableContainer>
   );
 }
 

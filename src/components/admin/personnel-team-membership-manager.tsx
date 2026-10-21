@@ -564,7 +564,7 @@ export function PersonnelTeamMembershipManager({
                 {canAssign && personnel.active ? (
                   <button type="button" disabled={activeListLock}
                     onClick={startAssign}
-                    className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
+                    className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50">
                     Gán nhóm
                   </button>
                 ) : null}
@@ -689,11 +689,11 @@ export function PersonnelTeamMembershipManager({
                     {formError ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{formError}</p> : null}
                     <div className="flex flex-wrap justify-end gap-2">
                       <button type="button" disabled={busy} onClick={() => setActiveOperation(null)}
-                        className="min-h-11 rounded-md border border-border px-4 text-sm">Hủy thao tác</button>
+                        className="min-h-11 whitespace-nowrap shrink-0 rounded-md border border-border px-4 text-sm">Hủy thao tác</button>
                       <button type="submit"
                         disabled={busy || activeListLock || pendingIntent !== null ||
                           (operation.kind !== "close" && teamState.kind !== "loaded")}
-                        className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
+                        className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50">
                         {busy ? "Đang xử lý…" : operation.kind === "assign" ? "Xác nhận gán"
                           : operation.kind === "move" ? "Xác nhận chuyển"
                             : operation.cancelScheduled ? "Xác nhận hủy lịch" : "Xác nhận bỏ gán"}
@@ -783,32 +783,32 @@ function MembershipSection({
       ) : (
         <>
           <div role="region" aria-label={`Bảng ${stateLabel(state).toLowerCase()}`} tabIndex={0}
-            className="overflow-x-auto rounded-md border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
-            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+            className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+            <table className="r22-card-table w-full min-w-[640px] border-collapse text-left text-sm">
               <caption className="sr-only">{stateLabel(state)} của hồ sơ</caption>
-              <thead className="bg-muted/20"><tr>
-                <th scope="col" className="px-3 py-3">Nhóm</th>
-                <th scope="col" className="px-3 py-3">Hiệu lực từ</th>
-                <th scope="col" className="px-3 py-3">Hiệu lực đến</th>
-                <th scope="col" className="px-3 py-3">Trạng thái</th>
-                {state !== "HISTORY" ? <th scope="col" className="px-3 py-3">Thao tác</th> : null}
+              <thead className="border-b border-border bg-surface-muted text-xs font-semibold uppercase tracking-wider text-muted"><tr>
+                <th scope="col" className="px-3.5 py-3">Nhóm</th>
+                <th scope="col" className="px-3.5 py-3">Hiệu lực từ</th>
+                <th scope="col" className="px-3.5 py-3">Hiệu lực đến</th>
+                <th scope="col" className="px-3.5 py-3">Trạng thái</th>
+                {state !== "HISTORY" ? <th scope="col" className="px-3.5 py-3 text-right">Thao tác</th> : null}
               </tr></thead>
               <tbody className="divide-y divide-border">
                 {list.memberships.map((membership) => (
-                  <tr key={membership.membership_id}>
-                    <th scope="row" className="px-3 py-3 font-medium">{membership.team_display_name}</th>
-                    <td className="px-3 py-3">{formatDate(membership.valid_from)}</td>
-                    <td className="px-3 py-3">{membership.valid_to ? formatDate(membership.valid_to) : "Chưa có ngày kết thúc"}</td>
-                    <td className="px-3 py-3">{membership.valid_to === membership.valid_from ? "Đã hủy lịch" : stateLabel(membership.state)}</td>
+                  <tr key={membership.membership_id} className="transition-colors hover:bg-surface-hover">
+                    <td data-card-header="true" className="px-3.5 py-2.5 font-medium">{membership.team_display_name}</td>
+                    <td data-label="Hiệu lực từ" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{formatDate(membership.valid_from)}</td>
+                    <td data-label="Hiệu lực đến" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{membership.valid_to ? formatDate(membership.valid_to) : "Chưa có ngày kết thúc"}</td>
+                    <td data-label="Trạng thái" className="px-3.5 py-2.5">{membership.valid_to === membership.valid_from ? "Đã hủy lịch" : stateLabel(membership.state)}</td>
                     {state !== "HISTORY" ? (
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
+                      <td data-card-actions="true" className="px-3.5 py-2.5 text-right">
+                        <div className="inline-flex flex-wrap md:flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
                           {onMove ? <button type="button" disabled={disabled} onClick={() => onMove(membership)}
-                            className="min-h-10 rounded-md border border-border px-3 text-xs disabled:opacity-50">Chuyển nhóm</button> : null}
+                            className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50">Chuyển nhóm</button> : null}
                           {onClose ? <button type="button" disabled={disabled} onClick={() => onClose(membership)}
-                            className="min-h-10 rounded-md border border-border px-3 text-xs disabled:opacity-50">Bỏ gán</button> : null}
+                            className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50">Bỏ gán</button> : null}
                           {onCancelScheduled ? <button type="button" disabled={disabled} onClick={() => onCancelScheduled(membership)}
-                            className="min-h-10 rounded-md border border-border px-3 text-xs disabled:opacity-50">Hủy lịch</button> : null}
+                            className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50">Hủy lịch</button> : null}
                         </div>
                       </td>
                     ) : null}

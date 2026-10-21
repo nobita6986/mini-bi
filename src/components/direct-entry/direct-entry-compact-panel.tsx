@@ -32,9 +32,9 @@ export function DirectEntryCompactPanel({
         <span id={headingId} className={styles.compactHeading} role="heading" aria-level={2}>
           {title}
         </span>
-        <span>{loadedCount} đã tải</span>
+        <span className={styles.compactCountBadge}>{loadedCount} đã tải</span>
         {badges.filter(({ count }) => count > 0).map(({ count, label }) => (
-          <span key={label}>{count} {label}</span>
+          <span key={label} className={styles.compactStatusBadge}>{count} {label}</span>
         ))}
         {state === "loading" && <span role="status">Đang tải…</span>}
         {state === "error" && (

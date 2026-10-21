@@ -104,20 +104,20 @@ export function OwnDashboardView({
                   <summary className="cursor-pointer text-sm font-medium text-primary">
                     Xem chi tiết {dataDays.length} ngày
                   </summary>
-                  <div className="mt-2 max-h-72 overflow-y-auto">
-                    <table className="w-full text-left text-sm">
+                  <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
+                    <table className="r22-report-table w-full text-left text-sm">
                       <caption className="sr-only">Bảng số người bạn tuyển theo ngày (chỉ các ngày có tuyển dụng)</caption>
-                      <thead className="sticky top-0 bg-surface text-xs uppercase tracking-wide text-muted">
+                      <thead className="sticky top-0 bg-surface-muted text-xs uppercase tracking-wide text-muted">
                         <tr className="border-b border-border">
-                          <th className="py-1.5 font-medium">Ngày</th>
-                          <th className="py-1.5 text-right font-medium">Số người</th>
+                          <th className="px-3 py-1.5 font-medium">Ngày</th>
+                          <th className="px-3 py-1.5 text-right font-medium">Số người</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
                         {dataDays.map((p) => (
-                          <tr key={p.date} className="text-foreground">
-                            <td className="py-1.5 font-mono text-xs">{p.date}</td>
-                            <td className="py-1.5 text-right font-mono">{p.count}</td>
+                          <tr key={p.date} className="text-foreground hover:bg-surface-hover">
+                            <td className="px-3 py-1.5 font-mono tabular-nums whitespace-nowrap text-xs">{p.date}</td>
+                            <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{p.count}</td>
                           </tr>
                         ))}
                       </tbody>

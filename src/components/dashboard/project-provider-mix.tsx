@@ -100,34 +100,34 @@ export function ProjectProviderMixCard({ mix, providerFilterActive }: { mix: Pro
         <summary className="cursor-pointer text-sm font-medium text-primary">
           Xem chi tiết tất cả ({rows.length})
         </summary>
-        <div className="mt-2 max-h-80 overflow-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
+        <div className="mt-2 max-h-80 overflow-auto rounded-xl border border-border bg-surface">
+          <table className="r22-report-table w-full min-w-[640px] text-left text-sm">
             <caption className="sr-only">Tỷ lệ HRP/Vendor theo từng dự án (đầy đủ)</caption>
-            <thead className="sticky top-0 bg-surface text-xs uppercase tracking-wide text-muted">
+            <thead className="sticky top-0 bg-surface-muted text-xs uppercase tracking-wide text-muted">
               <tr className="border-b border-border">
-                <th className="py-1.5 pr-3 font-medium">Dự án</th>
-                <th className="py-1.5 pr-3 text-right font-medium">Tổng</th>
-                <th className="py-1.5 pr-3 text-right font-medium">HRP</th>
-                <th className="py-1.5 pr-3 text-right font-medium">Vendor</th>
-                <th className="py-1.5 pr-3 text-right font-medium">Không xác định</th>
-                <th className="py-1.5 pr-3 text-right font-medium">Không hợp lệ</th>
-                <th className="py-1.5 pr-3 text-right font-medium">Đã phân loại</th>
-                <th className="py-1.5 font-medium">Nhận xét</th>
+                <th className="px-3 py-1.5 font-medium">Dự án</th>
+                <th className="px-3 py-1.5 text-right font-medium">Tổng</th>
+                <th className="px-3 py-1.5 text-right font-medium">HRP</th>
+                <th className="px-3 py-1.5 text-right font-medium">Vendor</th>
+                <th className="px-3 py-1.5 text-right font-medium">Không xác định</th>
+                <th className="px-3 py-1.5 text-right font-medium">Không hợp lệ</th>
+                <th className="px-3 py-1.5 text-right font-medium">Đã phân loại</th>
+                <th className="px-3 py-1.5 font-medium">Nhận xét</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((r) => (
-                <tr key={r.key} className="text-foreground">
-                  <td className="py-1.5 pr-3">
+                <tr key={r.key} className="text-foreground hover:bg-surface-hover">
+                  <td className="px-3 py-1.5">
                     <span className="block max-w-[16rem] truncate" title={r.display}>{r.display}</span>
                   </td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{r.projectTotal}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{r.hrpCount} · {pctText(r.hrpShare)}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{r.vendorCount} · {pctText(r.vendorShare)}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{r.unknownCount}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{r.invalidCount}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{pctText(r.knownCoverage)}</td>
-                  <td className="py-1.5 text-xs text-muted">{mixMajorityLabel(r)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{r.projectTotal}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{r.hrpCount} · {pctText(r.hrpShare)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{r.vendorCount} · {pctText(r.vendorShare)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{r.unknownCount}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{r.invalidCount}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{pctText(r.knownCoverage)}</td>
+                  <td className="px-3 py-1.5 text-xs text-muted">{mixMajorityLabel(r)}</td>
                 </tr>
               ))}
             </tbody>

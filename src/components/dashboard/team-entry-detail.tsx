@@ -42,10 +42,10 @@ function isDetailEnvelope(value: unknown): value is { detail: TeamReportDetail }
 
 function DetailTable({ rows, caption }: { rows: TeamReportRow[]; caption: string }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[760px] text-left text-sm">
+    <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+      <table className="r22-report-table w-full min-w-[760px] text-left text-sm">
         <caption className="sr-only">{caption}</caption>
-        <thead className="bg-muted/20 text-xs uppercase tracking-wide text-muted">
+        <thead className="bg-surface-muted text-xs uppercase tracking-wide text-muted">
           <tr>
             <th scope="col" className="px-3 py-3">Ngày</th>
             <th scope="col" className="px-3 py-3">Dự án</th>
@@ -58,14 +58,14 @@ function DetailTable({ rows, caption }: { rows: TeamReportRow[]; caption: string
         </thead>
         <tbody className="divide-y divide-border">
           {rows.map((row, index) => (
-            <tr key={`${row.business_date}-${row.first_work_date}-${index}`}>
-              <td className="px-3 py-3 font-mono text-xs">{row.business_date}</td>
+            <tr key={`${row.business_date}-${row.first_work_date}-${index}`} className="hover:bg-surface-hover">
+              <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-xs">{row.business_date}</td>
               <td className="px-3 py-3">{row.project_display}</td>
               <td className="px-3 py-3">{row.recruiter_display}</td>
               <td className="px-3 py-3">{row.provider_type_display}</td>
               <td className="px-3 py-3">{row.employment_type_display}</td>
-              <td className="px-3 py-3 text-right font-mono">{row.recruited_count}</td>
-              <td className="px-3 py-3 font-mono text-xs">{row.first_work_date}</td>
+              <td className="px-3 py-3 text-right font-mono tabular-nums whitespace-nowrap">{row.recruited_count}</td>
+              <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-xs">{row.first_work_date}</td>
             </tr>
           ))}
         </tbody>

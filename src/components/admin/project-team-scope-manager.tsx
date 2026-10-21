@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
+import { StatusBadge, scopeMappingStateBadgeProps } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { OffsetPager } from "@/components/ui/offset-pager";
@@ -34,9 +35,9 @@ import {
 } from "@/lib/admin/team-catalog-model";
 import type { AdminTeam, AdminTeamList } from "@/lib/direct-entry/team-catalog-contract";
 
-const button = "inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
-const primary = "inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
-const input = "min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
+const button = "inline-flex min-h-11 md:min-h-8 items-center justify-center whitespace-nowrap shrink-0 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+const primary = "inline-flex min-h-11 sm:min-h-10 items-center justify-center whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+const input = "min-h-11 sm:min-h-10 w-full rounded-md border border-border bg-surface px-3 text-base sm:text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
 
 type DialogState =
   | { kind: "grant" }
@@ -296,31 +297,37 @@ export function ProjectTeamScopeManager() {
         ) : null}
         {state === "ready" && mappings.length === 0 ? <EmptyState title="Chưa có mapping nào" /> : null}
         {state === "ready" && mappings.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-              <thead><tr className="border-b">
-                <th scope="col" className="px-3 py-3 font-semibold">Dự án</th>
-                <th scope="col" className="px-3 py-3 font-semibold">Nhóm</th>
-                <th scope="col" className="px-3 py-3 font-semibold">Hiệu lực</th>
-                <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
-                <th scope="col" className="px-3 py-3 font-semibold">Phiên bản cặp</th>
-                <th scope="col" className="px-3 py-3 text-right">Thao tác</th>
+          <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs">
+            <table className="r22-card-table w-full min-w-[720px] border-collapse text-left text-sm">
+              <thead className="border-b border-border bg-surface-muted text-xs font-semibold uppercase tracking-wider text-muted"><tr>
+                <th scope="col" className="px-3.5 py-3 font-semibold">Dự án</th>
+                <th scope="col" className="px-3.5 py-3 font-semibold">Nhóm</th>
+                <th scope="col" className="px-3.5 py-3 font-semibold">Hiệu lực</th>
+                <th scope="col" className="px-3.5 py-3 font-semibold">Trạng thái</th>
+                <th scope="col" className="px-3.5 py-3 font-semibold">Phiên bản cặp</th>
+                <th scope="col" className="px-3.5 py-3 text-right">Thao tác</th>
               </tr></thead>
-              <tbody>
+              <tbody className="divide-y divide-border">
                 {mappings.map((m) => (
-                  <tr key={m.mapping_id} className="border-b last:border-0">
-                    <td className="px-3 py-3 font-medium">{m.project_display_name}</td>
-                    <td className="px-3 py-3">{m.team_display_name} ({m.team_code})</td>
-                    <td className="px-3 py-3">{m.valid_from} → {m.valid_to ?? "∞"}</td>
-                    <td className="px-3 py-3">{m.state}</td>
-                    <td className="px-3 py-3">{m.version}</td>
-                    <td className="px-3 py-3 text-right">
-                      {m.valid_to === null ? (
-                        <button type="button" className={button} disabled={busy}
-                          onClick={() => { pendingIntent.current = null; setRevokeEffectiveTo(""); setReason(""); setFormError(null); setDialog({ kind: "revoke", mapping: m }); }}>
-                          Thu hồi
-                        </button>
-                      ) : null}
+                  <tr key={m.mapping_id} className="border-b border-border/80 last:border-0 transition-colors hover:bg-surface-hover">
+                    <td data-card-header="true" className="px-3.5 py-2.5 font-medium">{m.project_display_name}</td>
+                    <td data-label="Nhóm" className="px-3.5 py-2.5">{m.team_display_name} ({m.team_code})</td>
+                    <td data-label="Hiệu lực" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{m.valid_from} → {m.valid_to ?? "∞"}</td>
+                    <td data-label="Trạng thái" className="px-3.5 py-2.5">
+                      <StatusBadge tone={scopeMappingStateBadgeProps(m.state).tone} dot>
+                        {scopeMappingStateBadgeProps(m.state).label}
+                      </StatusBadge>
+                    </td>
+                    <td data-label="Phiên bản cặp" className="px-3.5 py-2.5 font-mono tabular-nums">{m.version}</td>
+                    <td data-card-actions="true" className="px-3.5 py-2.5 text-right">
+                      <div className="inline-flex flex-wrap md:flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
+                        {m.valid_to === null ? (
+                          <button type="button" className={button} disabled={busy}
+                            onClick={() => { pendingIntent.current = null; setRevokeEffectiveTo(""); setReason(""); setFormError(null); setDialog({ kind: "revoke", mapping: m }); }}>
+                            Thu hồi
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}

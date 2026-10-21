@@ -1,8 +1,8 @@
 import { cn } from "@/lib/utils";
 
 const PAGER_BUTTON_CLASS =
-  "inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex min-h-11 sm:min-h-9 items-center justify-center rounded-lg border border-border bg-surface px-3.5 text-xs sm:text-sm font-medium text-foreground whitespace-nowrap shrink-0 " +
+  "hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function OffsetPager({
   page,
@@ -33,11 +33,11 @@ export function OffsetPager({
   return (
     <div
       className={cn(
-        "mt-4 flex flex-col gap-3 border-t border-border pt-3 text-sm sm:flex-row sm:items-center sm:justify-between",
+        "mt-4 flex flex-col gap-3 border-t border-border pt-3 text-xs sm:text-sm sm:flex-row sm:items-center sm:justify-between",
         className,
       )}
     >
-      <p aria-live="polite" className="text-muted">
+      <p aria-live="polite" className="text-muted font-mono tabular-nums">
         Trang {page} / {safePageCount}
         {typeof total === "number" ? ` · ${total} kết quả` : ""}
       </p>

@@ -98,13 +98,13 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
             value={currentPassword}
             aria-describedby={error ? "change-password-error" : undefined}
             onChange={(event) => setCurrentPassword(event.target.value)}
-            className="h-11 w-full rounded-md border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="min-h-11 h-11 w-full rounded-md border border-border bg-surface px-3 pr-11 text-base sm:text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           />
           <button
             type="button"
             onClick={() => setShowCurrent((value) => !value)}
             aria-label={showCurrent ? "Ẩn mật khẩu hiện tại" : "Hiện mật khẩu hiện tại"}
-            className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="absolute right-0 top-0 flex min-h-11 min-w-11 h-11 w-11 items-center justify-center rounded-md text-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
           >
             {showCurrent ? <EyeOff aria-hidden className="h-5 w-5" /> : <Eye aria-hidden className="h-5 w-5" />}
           </button>
@@ -126,13 +126,13 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
             value={newPassword}
             aria-describedby={error ? "change-password-error" : "change-password-hint"}
             onChange={(event) => setNewPassword(event.target.value)}
-            className="h-11 w-full rounded-md border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="min-h-11 h-11 w-full rounded-md border border-border bg-surface px-3 pr-11 text-base sm:text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           />
           <button
             type="button"
             onClick={() => setShowNew((value) => !value)}
             aria-label={showNew ? "Ẩn mật khẩu mới" : "Hiện mật khẩu mới"}
-            className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="absolute right-0 top-0 flex min-h-11 min-w-11 h-11 w-11 items-center justify-center rounded-md text-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
           >
             {showNew ? <EyeOff aria-hidden className="h-5 w-5" /> : <Eye aria-hidden className="h-5 w-5" />}
           </button>
@@ -154,13 +154,13 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
             value={confirmPassword}
             aria-describedby={error ? "change-password-error" : undefined}
             onChange={(event) => setConfirmPassword(event.target.value)}
-            className="h-11 w-full rounded-md border border-input bg-background px-3 pr-11 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="min-h-11 h-11 w-full rounded-md border border-border bg-surface px-3 pr-11 text-base sm:text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           />
           <button
             type="button"
             onClick={() => setShowConfirm((value) => !value)}
             aria-label={showConfirm ? "Ẩn xác nhận mật khẩu" : "Hiện xác nhận mật khẩu"}
-            className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="absolute right-0 top-0 flex min-h-11 min-w-11 h-11 w-11 items-center justify-center rounded-md text-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
           >
             {showConfirm ? <EyeOff aria-hidden className="h-5 w-5" /> : <Eye aria-hidden className="h-5 w-5" />}
           </button>
@@ -173,14 +173,14 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
 
       {error && (
         <p id="change-password-error" role="alert" aria-live="polite"
-          className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          className="rounded-md border border-status-danger-border bg-status-danger-bg px-3 py-2 text-sm text-status-danger-text">
           {error}
         </p>
       )}
 
       {success && (
         <p role="status" aria-live="polite"
-          className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
+          className="flex items-center gap-2 rounded-md border border-status-success-border bg-status-success-bg px-3 py-2 text-sm text-status-success-text">
           <Check aria-hidden className="h-4 w-4" />
           Đổi mật khẩu thành công. Hãy dùng mật khẩu mới cho lần đăng nhập sau.
         </p>
@@ -190,7 +190,7 @@ export function ChangePasswordForm({ destination }: { destination: string }) {
         type="submit"
         disabled={busy}
         aria-busy={busy}
-        className="h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring/40"
+        className="min-h-11 h-11 rounded-md bg-primary px-4 text-sm font-medium text-on-primary hover:bg-primary/90 disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring/40"
       >
         {busy ? "Đang đổi mật khẩu…" : "Đổi mật khẩu"}
       </button>

@@ -8,7 +8,10 @@ import {
   type ResolvedAgeFilter,
 } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
+import { StatusBadge } from "@/components/ui/badge";
+import { buttonClasses } from "@/components/ui/button";
 import { CursorLoadMore } from "@/components/ui/cursor-load-more";
+import { PageHeader } from "@/components/ui/page-shell";
 import { StatusBanner, type StatusBannerTone } from "@/components/ui/status-banner";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
 import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
@@ -310,62 +313,64 @@ export function ChangeRequestsWorkspace({
   const tabs = changeRequestWorkspaceTabs({ mode, canViewGlobalHistory });
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8" data-testid="change-requests-workspace">
-      <header className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Yêu cầu thay đổi
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            {mode === "reviewer"
-              ? "Xử lý yêu cầu chờ duyệt theo thẩm quyền hiện tại và tra cứu lịch sử các quyết định bạn đã thực hiện."
-              : "Theo dõi các yêu cầu thay đổi bạn đã gửi và tra cứu lịch sử xử lý bất biến."}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {(canReview || hasReviewerResolved) && (
-            mode === "reviewer" ? (
-              <button
-                type="button"
-                data-testid="toggle-proposer-history-mode"
-                onClick={() => switchWorkspaceMode("proposer")}
-                className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              >
-                Lịch sử đề xuất của tôi
-              </button>
-            ) : (
-              <button
-                type="button"
-                data-testid="toggle-reviewer-mode"
-                onClick={() => switchWorkspaceMode("reviewer")}
-                className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              >
-                {canReview ? "Quay lại hàng đợi duyệt" : "Lịch sử duyệt của tôi"}
-              </button>
-            )
-          )}
-          <button
-            type="button"
-            disabled={listState === "loading"}
-            onClick={() => void loadChangeRequests("replace")}
-            className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
-          >
-            Tải lại danh sách
-          </button>
-        </div>
-      </header>
+    <main
+      className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3.5 py-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:gap-5 sm:px-6 sm:py-6 lg:px-8 overflow-x-clip"
+      data-testid="change-requests-workspace"
+    >
+      <PageHeader
+        className="border-b border-border pb-4"
+        title="Yêu cầu thay đổi"
+        badge={<StatusBadge tone="primary">{requests.length} yêu cầu</StatusBadge>}
+        description={
+          mode === "reviewer"
+            ? "Xử lý yêu cầu chờ duyệt theo thẩm quyền hiện tại và tra cứu lịch sử các quyết định bạn đã thực hiện."
+            : "Theo dõi các yêu cầu thay đổi bạn đã gửi và tra cứu lịch sử xử lý bất biến."
+        }
+        actions={
+          <>
+            {(canReview || hasReviewerResolved) && (
+              mode === "reviewer" ? (
+                <button
+                  type="button"
+                  data-testid="toggle-proposer-history-mode"
+                  onClick={() => switchWorkspaceMode("proposer")}
+                  className={buttonClasses({ variant: "secondary", size: "md" })}
+                >
+                  Lịch sử đề xuất của tôi
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="toggle-reviewer-mode"
+                  onClick={() => switchWorkspaceMode("reviewer")}
+                  className={buttonClasses({ variant: "secondary", size: "md" })}
+                >
+                  {canReview ? "Quay lại hàng đợi duyệt" : "Lịch sử duyệt của tôi"}
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              disabled={listState === "loading"}
+              onClick={() => void loadChangeRequests("replace")}
+              className={buttonClasses({ variant: "secondary", size: "md" })}
+            >
+              Tải lại danh sách
+            </button>
+          </>
+        }
+      />
 
       {(canAccessDirectEntry || canAccessWorkerDirectory) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-muted">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-xs sm:text-sm text-muted shadow-2xs">
           <span>
             Để tạo đề xuất thay đổi mới, hãy mở đợt đã gửi chính thức hoặc chọn trực tiếp người lao động trong phạm vi được phép.
           </span>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             {canAccessDirectEntry && (
               <Link
                 href="/direct-entry"
-                className="inline-flex min-h-9 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-foreground hover:bg-muted/10"
+                className={buttonClasses({ variant: "soft", size: "sm" })}
               >
                 Tới Nhập liệu
               </Link>
@@ -373,7 +378,7 @@ export function ChangeRequestsWorkspace({
             {canAccessWorkerDirectory && (
               <Link
                 href="/direct-entry/workers"
-                className="inline-flex min-h-9 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-foreground hover:bg-muted/10"
+                className={buttonClasses({ variant: "soft", size: "sm" })}
               >
                 Tới Người lao động
               </Link>
