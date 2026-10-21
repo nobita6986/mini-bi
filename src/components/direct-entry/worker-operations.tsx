@@ -49,6 +49,7 @@ import {
   parseSubmissionPageResponse,
   parseWorkerPageResponse,
   pendingRequestLabel,
+  privilegedEditErrorMessage,
   proposeCta,
   relationDenialIsEmpty,
   resetTabPage,
@@ -1067,13 +1068,19 @@ function ProposeDrawer({
             }),
           });
           setBusy(false);
-          if (response.status === 409) { onConflict(); return; }
-          if (response.status === 403) {
-            setMessage("Bạn không còn quyền sửa trực tiếp hồ sơ này.");
-            return;
-          }
           if (response.status !== 200) {
-            setMessage("Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.");
+            const payload = await response.json().catch(() => null);
+            const errorCode =
+              typeof payload === "object" &&
+              payload !== null &&
+              typeof (payload as { code?: unknown }).code === "string"
+                ? (payload as { code: string }).code
+                : undefined;
+            if (response.status === 409 && (errorCode === undefined || errorCode === "VERSION_CONFLICT")) {
+              onConflict();
+              return;
+            }
+            setMessage(privilegedEditErrorMessage(response.status, errorCode));
             return;
           }
           onDone("Đã lưu chỉnh sửa trực tiếp.");

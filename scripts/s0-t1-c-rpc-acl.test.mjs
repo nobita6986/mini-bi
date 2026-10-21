@@ -391,7 +391,11 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           createClient: passthroughClient,
           log() {},
         });
-        assert.equal(applySummary.appliedCount, 1, "only #129 is applied");
+        assert.equal(
+          applySummary.appliedCount,
+          names.length - r2_1Index,
+          "only migrations from #129 onward are applied",
+        );
         assert.equal(applySummary.skippedCount, r2_1Index, "all 128 prior migrations are skipped");
       } finally {
         await client.query("reset session authorization");

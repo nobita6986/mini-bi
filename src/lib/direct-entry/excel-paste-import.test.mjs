@@ -200,10 +200,10 @@ test("catalog: missing / ambiguous bao loi ro tai dung dong va dung cot", () => 
   assert.equal(noCatalog.canSubmit, false);
   assert.ok(noCatalog.issues.some((issue) => issue.column === null && /Chưa tải được danh mục/.test(issue.message)));
 
-  const wrongYear = preview(row("hrp-2025-000123", "2026-10-15", "A", PROJECT_BAC.id,
+  const crossYear = preview(row("hrp-2025-000123", "2026-10-15", "A", PROJECT_BAC.id,
     RECRUITER_HRP.id, "Thời vụ"));
-  assert.equal(wrongYear.canSubmit, false);
-  assert.ok(wrongYear.issues.some((issue) => issue.column === 1 && /năm/.test(issue.message)));
+  assert.equal(crossYear.canSubmit, true);
+  assert.equal(crossYear.issues.length, 0);
 });
 
 test("requiredCatalogDates: moi effective date mot lan, da sap xep", () => {

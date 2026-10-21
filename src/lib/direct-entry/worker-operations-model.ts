@@ -527,6 +527,47 @@ export function workerListErrorMessage(status: number): string {
 }
 
 /**
+ * Ánh xạ mã lỗi sanitized từ POST /api/direct-entry/entries/[entryId]/privileged-edit
+ * sang thông báo tiếng Việt rõ ràng mà không bao giờ lộ raw PostgreSQL message.
+ */
+export function privilegedEditErrorMessage(status: number, code?: string | null): string {
+  if (code === "WORKER_ACTIVE_EPISODE_EXISTS") {
+    return "Người lao động đang có một đợt làm việc hiệu lực khác (trùng CCCD đang làm).";
+  }
+  if (code === "WORKER_EPISODE_REOPEN_FORBIDDEN") {
+    return "Hồ sơ đã nghỉ việc không thể mở lại; vui lòng tạo hồ sơ mới khi tái tuyển.";
+  }
+  if (code === "PRIVILEGED_EDIT_CONFLICT") {
+    return "Dữ liệu bị trùng (ví dụ mã người lao động đã tồn tại). Vui lòng kiểm tra lại.";
+  }
+  if (code === "VERSION_CONFLICT") {
+    return WORKER_CONFLICT_MESSAGE;
+  }
+  if (code === "PRIVILEGED_EDIT_STATE_LOCKED") {
+    return "Trạng thái hồ sơ hiện tại không cho phép chỉnh sửa trực tiếp.";
+  }
+  if (code === "PRIVILEGED_EDIT_DENIED" || code === "ACTOR_NOT_AVAILABLE" || status === 403) {
+    return "Bạn không còn quyền sửa trực tiếp hồ sơ này.";
+  }
+  if (code === "UNAUTHENTICATED" || status === 401) {
+    return "Phiên làm việc đã hết hiệu lực. Vui lòng đăng nhập lại.";
+  }
+  if (code === "ENTRY_NOT_FOUND" || status === 404) {
+    return "Không tìm thấy hồ sơ cần chỉnh sửa hoặc hồ sơ không còn thuộc phạm vi của bạn.";
+  }
+  if (
+    code === "PRIVILEGED_EDIT_INVALID" ||
+    code === "CLIENT_AUTHORITY_FIELD_FORBIDDEN" ||
+    code === "BODY_INVALID" ||
+    code === "ENTRY_ID_INVALID" ||
+    status === 400
+  ) {
+    return "Dữ liệu chỉnh sửa không hợp lệ (kiểm tra định dạng mã NLĐ, ngày làm việc, CCCD, danh mục đang hoạt động hoặc trạng thái làm việc).";
+  }
+  return "Không lưu được chỉnh sửa trực tiếp. Vui lòng thử lại.";
+}
+
+/**
  * Hai audience ca nhan co the khong ton tai voi actor hien tai (khong co recruiter
  * link / khong duoc gan quan ly du an). Do la tap ket qua rong, khong phai loi quyen
  * can hien cho nguoi dung. Scope `all` van giu 403 fail-closed.

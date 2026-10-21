@@ -13,6 +13,7 @@ import {
   DOCUMENT_MAX_BYTES_HARD_LIMIT,
   DOCUMENT_MIME_TYPES,
   isCanonicalLaborTypeKey,
+  validateEmployeeCode,
 } from "../contracts/direct-entry-v1.ts";
 import { isDocumentType } from "./document-upload-contract.ts";
 import { projectPaymentInput } from "./payment-contract.ts";
@@ -138,10 +139,6 @@ function isReason(value: unknown): value is string {
   return typeof value === "string" && value.trim().length >= 1 && value.length <= REASON_MAX_LENGTH;
 }
 
-function isBoundedString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.trim().length >= 1 && value.length <= maxLength;
-}
-
 function isCalendarDate(value: unknown): value is string {
   return typeof value === "string" && isRealCalendarDate(value);
 }
@@ -252,7 +249,11 @@ function projectEntryFieldProposal(value: Record<string, unknown>): Record<strin
     proposal.first_work_date = value.first_work_date;
   }
   if ("employee_code" in value) {
-    if (!isBoundedString(value.employee_code, 64) || hasControlCharacter(value.employee_code)) return null;
+    if (
+      typeof value.employee_code !== "string" ||
+      hasControlCharacter(value.employee_code) ||
+      validateEmployeeCode(value.employee_code).length > 0
+    ) return null;
     proposal.employee_code = value.employee_code;
   }
   if ("worker_details" in value) {

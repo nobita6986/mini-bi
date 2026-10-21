@@ -7,6 +7,7 @@
  */
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import {
+  validateEmployeeCode,
   validateWorkerDetails,
   type LaborType,
   type OptionalState,
@@ -211,6 +212,12 @@ export function buildEntryFieldProposal(input: {
 }): ProposalBuildResult {
   const details = buildWorkerDetailsProposal(input.baseline.worker_details, input.form.workerDetails);
   if (!details.ok && details.code !== "WORKER_UNCHANGED") return details;
+  if (
+    !isRealCalendarDate(input.form.first_work_date) ||
+    validateEmployeeCode(input.form.employee_code).length > 0
+  ) {
+    return { ok: false, code: "WORKER_INVALID" };
+  }
   const fullDetails = details.ok
     ? details.proposal.worker_details as WorkerDetails
     : input.baseline.worker_details;

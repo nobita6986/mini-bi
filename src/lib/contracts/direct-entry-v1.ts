@@ -311,7 +311,7 @@ export function isLegacyEmployeeCode(value: string): boolean {
 
 export function validateEmployeeCode(
   code: string,
-  firstWorkDate: string,
+  _firstWorkDate?: string,
   existingCodes: readonly string[] = [],
 ): ValidationIssue[] {
   const canonical = canonicalizeEmployeeCode(code);
@@ -322,9 +322,6 @@ export function validateEmployeeCode(
         : "EMPLOYEE_CODE_FORMAT",
       path: "employee_code",
     }];
-  }
-  if (!isRealCalendarDate(firstWorkDate) || canonical.slice(4, 8) !== firstWorkDate.slice(0, 4)) {
-    return [{ code: "EMPLOYEE_CODE_YEAR", path: "employee_code" }];
   }
   const duplicate = existingCodes.some((existing) =>
     canonicalizeEmployeeCode(existing) === canonical
