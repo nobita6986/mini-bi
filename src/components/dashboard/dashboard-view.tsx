@@ -1,6 +1,17 @@
 import Link from "next/link";
 
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
+import {
+  computeDashboardSummary,
+  formatAvgPerActiveDay,
+  formatPeakDayHint,
+  type DashboardSummaryMetrics,
+} from "@/lib/reporting/p1-dashboard-summary";
+import {
+  computeCompositionInsights,
+  formatSharePct,
+} from "@/lib/reporting/p1-dashboard-period";
+import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
 import { buildBarData, buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
 import { resolveDashboardMode } from "@/lib/reporting/p3-w06c-audience-view";
 import type { ReportingAudience } from "@/lib/reporting/p3-w05a-audience";
@@ -12,7 +23,7 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
-import { FiltersOrError, NoMatchesBlock } from "./dashboard-shared";
+import { FiltersOrError, NoMatchesBlock, PeriodComparisonBanner } from "./dashboard-shared";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { OwnDashboardView } from "./own-dashboard-view";
@@ -93,6 +104,7 @@ export function DashboardView({
           <TeamDashboardView
             data={report.data}
             generatedAt={report.generatedAt}
+            comparison={report.comparison}
             optionsResult={optionsResult}
             view={mode.view}
           />
@@ -113,6 +125,7 @@ export function DashboardView({
           <OwnDashboardView
             data={report.data}
             generatedAt={report.generatedAt}
+            comparison={report.comparison}
             optionsResult={optionsResult}
             view={mode.view}
           />
@@ -127,6 +140,7 @@ export function DashboardView({
   }
 
   const generatedAt = report.ok ? report.generatedAt : undefined;
+  const summary = computeDashboardSummary(report.data);
   const trend = report.ok ? buildDailyTrend(report.data.byDate, report.data.applied.from, report.data.applied.to) : [];
   const dataDays = trend.filter((p) => p.count > 0);
   const showKpis = report.ok && !report.data.empty.noSources && !report.data.empty.noFacts && !report.data.empty.noMatches;
@@ -143,22 +157,29 @@ export function DashboardView({
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-primary">BoD · Báo cáo điều hành</p>
                 <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">Tổng quan tuyển dụng</h1>
-                <p className="mt-0.5 max-w-2xl text-sm text-muted">Số người tuyển theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
+                <p className="mt-0.5 max-w-2xl text-sm text-muted">Lượt tuyển ghi nhận theo ngày, dự án, người tuyển, HRP/Vendor và loại hình.</p>
                 {generatedAt ? (
                   <p className="mt-1 text-xs text-muted">Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time></p>
                 ) : null}
               </div>
               {showKpis ? (
                 <div aria-label="Chỉ số chính" className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:min-w-72 sm:grid-cols-2">
-                  <KpiCard variant="compact" label="Tổng tuyển mới" value={report.data.recruitedTotal} hint="số người tuyển" accent="var(--primary)" />
-                  <KpiCard variant="compact" label="Số ngày có tuyển" value={dataDays.length} hint="trong khoảng hiển thị" accent="var(--secondary)" />
+                  <KpiCard variant="compact" label="Tổng tuyển mới" value={summary.recruitedTotal} hint="lượt tuyển ghi nhận" accent="var(--primary)" />
+                  <KpiCard variant="compact" label="Số ngày có tuyển" value={summary.activeHiringDays} hint="trong khoảng hiển thị" accent="var(--secondary)" />
                 </div>
               ) : null}
             </div>
           </header>
 
           <div className="mt-4">
-            <DashboardBody data={report.data} optionsResult={optionsResult} trend={trend} dataDays={dataDays} />
+            <DashboardBody
+              data={report.data}
+              summary={summary}
+              comparison={report.comparison}
+              optionsResult={optionsResult}
+              trend={trend}
+              dataDays={dataDays}
+            />
           </div>
         </main>
       }
@@ -198,11 +219,15 @@ function ReportError({ report }: { report: Extract<ReportingFetchResult, { ok: f
 
 function DashboardBody({
   data,
+  summary,
+  comparison,
   optionsResult,
   trend,
   dataDays,
 }: {
   data: ReportingData;
+  summary: DashboardSummaryMetrics;
+  comparison?: PeriodComparisonResult;
   optionsResult: ReportingOptionsResult;
   trend: ReturnType<typeof buildDailyTrend>;
   dataDays: ReturnType<typeof buildDailyTrend>;
@@ -217,18 +242,52 @@ function DashboardBody({
     );
   }
 
+  const insights = computeCompositionInsights(data);
+
   return (
     <div className="space-y-4">
       <FiltersOrError optionsResult={optionsResult} />
+      <PeriodComparisonBanner comparison={comparison} />
 
       {data.empty.noMatches ? (
         <NoMatchesBlock />
       ) : (
         <>
+          <section aria-label="Chỉ số tổng hợp tuyển dụng" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <KpiCard
+              variant="compact"
+              label="Recruiter có phát sinh tuyển"
+              value={summary.activeRecruiterBucketCount}
+              hint="bucket theo khóa báo cáo"
+              accent="var(--primary)"
+            />
+            <KpiCard
+              variant="compact"
+              label="Dự án có tuyển"
+              value={summary.activeProjectBucketCount}
+              hint="dự án có phát sinh"
+              accent="var(--secondary)"
+            />
+            <KpiCard
+              variant="compact"
+              label="Trung bình/ngày có tuyển"
+              value={formatAvgPerActiveDay(summary.avgPerActiveDay)}
+              hint="lượt tuyển / ngày có tuyển"
+              accent="var(--primary)"
+            />
+            <KpiCard
+              variant="compact"
+              label="Đỉnh tuyển/ngày"
+              value={summary.peakDailyCount ?? "—"}
+              hint={formatPeakDayHint(summary)}
+              accent="var(--secondary)"
+            />
+          </section>
+
           <section aria-label="Xu hướng tuyển dụng">
             <Card className="p-4">
               <CardHeader title="Xu hướng tuyển dụng" description="Số người tuyển theo ngày; những ngày không có record thể hiện là 0 trên biểu đồ." />
-              <TrendChart data={trend} />
+              <TrendChart data={trend} from={data.applied.from} to={data.applied.to} />
               <details className="mt-3">
                 <summary className="cursor-pointer text-sm font-medium text-primary">
                   Xem chi tiết {dataDays.length} ngày
@@ -258,12 +317,44 @@ function DashboardBody({
 
           <section aria-label="Phân bổ tuyển dụng" className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             <Card className="p-4 lg:col-span-7">
-              <CardHeader title="Theo dự án" description="Phân bổ tuyển dụng theo dự án." />
+              <CardHeader title="Theo dự án" description="Phân bổ tuyển dụng theo dự án (tỷ trọng trên tập kết quả đang lọc)." />
+              {insights.leadingProject ? (
+                <p className="mb-3 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs text-foreground">
+                  Dự án dẫn đầu (tập đang lọc): <span className="font-semibold">{insights.leadingProject.display}</span>
+                  {" — "}
+                  <span className="font-mono tabular-nums">{insights.leadingProject.count}</span> lượt (
+                  <span className="font-mono tabular-nums">{formatSharePct(insights.leadingProject.shareOfFilteredPct)}</span>)
+                  {insights.leadingProject.tiedOtherCount > 0
+                    ? ` · đồng dẫn đầu với ${insights.leadingProject.tiedOtherCount} dự án khác`
+                    : ""}
+                </p>
+              ) : null}
               <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án" />
               <FullList buckets={data.byProject} />
             </Card>
             <Card className="p-4 lg:col-span-5">
-              <CardHeader title="Theo HRP/Vendor" />
+              <CardHeader title="Theo HRP/Vendor" description="Tỷ trọng trên tập kết quả đang lọc." />
+              <div className="mb-3 space-y-1 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs">
+                <p className="text-foreground">
+                  HRP: <span className="font-mono font-medium">{insights.provider.hrpCount}</span> ({formatSharePct(insights.provider.hrpShareOfTotalPct)})
+                  {" · "}
+                  Vendor: <span className="font-mono font-medium">{insights.provider.vendorCount}</span> ({formatSharePct(insights.provider.vendorShareOfTotalPct)})
+                </p>
+                {insights.provider.unclassifiedTotal > 0 ? (
+                  <p className="text-muted">
+                    Không xác định: <span className="font-mono">{insights.provider.unknownCount}</span>
+                    {" · "}
+                    Không hợp lệ: <span className="font-mono">{insights.provider.invalidCount}</span>
+                    {" · "}
+                    Độ phủ phân loại: <span className="font-mono">{insights.provider.classifiedTotal}/{insights.provider.total}</span> ({formatSharePct(insights.provider.classifiedCoveragePct)})
+                  </p>
+                ) : null}
+                {insights.provider.providerFilterActive ? (
+                  <p className="text-muted">
+                    Đang lọc theo HRP/Vendor (chỉ phản ánh tập đang lọc, không phải cơ cấu toàn công ty).
+                  </p>
+                ) : null}
+              </div>
               <ProviderDonut segments={buildCategorySegments(data.byProvider)} title="Biểu đồ HRP/Vendor" />
             </Card>
             <Card className="p-4 lg:col-span-12">
@@ -279,7 +370,21 @@ function DashboardBody({
               <FullList buckets={data.byRecruiter} />
             </Card>
             <Card className="p-4 lg:col-span-5">
-              <CardHeader title="Theo loại hình làm việc" />
+              <CardHeader title="Theo loại hình làm việc" description="Tỷ trọng trên tập kết quả đang lọc." />
+              <div className="mb-3 space-y-1 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs">
+                <p className="text-foreground">
+                  Thời vụ: <span className="font-mono font-medium">{insights.employment.seasonalCount}</span> ({formatSharePct(insights.employment.seasonalSharePct)})
+                  {" · "}
+                  Chính thức: <span className="font-mono font-medium">{insights.employment.permanentCount}</span> ({formatSharePct(insights.employment.permanentSharePct)})
+                </p>
+                {insights.employment.unclassifiedTotal > 0 ? (
+                  <p className="text-muted">
+                    Không xác định: <span className="font-mono">{insights.employment.unknownCount}</span>
+                    {" · "}
+                    Không hợp lệ: <span className="font-mono">{insights.employment.invalidCount}</span>
+                  </p>
+                ) : null}
+              </div>
               <EmploymentComposition segments={buildCategorySegments(data.byEmployment)} title="Biểu đồ loại hình làm việc" />
             </Card>
           </section>

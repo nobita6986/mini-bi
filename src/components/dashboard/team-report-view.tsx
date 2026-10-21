@@ -4,6 +4,16 @@ import { useEffect, useState } from "react";
 
 import { buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
+import {
+  computeDashboardSummary,
+  formatAvgPerActiveDay,
+  formatPeakDayHint,
+} from "@/lib/reporting/p1-dashboard-summary";
+import {
+  computeCompositionInsights,
+  formatSharePct,
+} from "@/lib/reporting/p1-dashboard-period";
+import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
 import { buildMemberContributions } from "@/lib/reporting/p3-w06c-audience-view";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
@@ -18,7 +28,7 @@ import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { TrendChart } from "./trend-chart";
-import { BucketList, FiltersOrError, NoMatchesBlock, ScopeNote } from "./dashboard-shared";
+import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote } from "./dashboard-shared";
 import { TeamBucketChart } from "./team-bucket-chart";
 import { TeamEntryDetail } from "./team-entry-detail";
 import { teamReportDataSignature, teamReportUrl } from "./team-report-request";
@@ -97,11 +107,13 @@ function isTeamReportPayload(value: unknown): value is { report: ReportingData |
 export function TeamReportView({
   data,
   generatedAt,
+  comparison,
   optionsResult,
   view,
 }: {
   data: ReportingData;
   generatedAt?: string;
+  comparison?: PeriodComparisonResult;
   optionsResult: ReportingOptionsResult;
   view: TeamReportViewConfig;
 }) {
@@ -135,6 +147,9 @@ export function TeamReportView({
       <div className="mt-4 space-y-4">
         <ScopeNote label="Phạm vi báo cáo nhóm">{view.scopeNote}</ScopeNote>
         <FiltersOrError optionsResult={optionsResult} showRecruiter={view.showRecruiterFilter} />
+        {!view.requireTeamSelection && !data.empty.noSources && !data.empty.noFacts ? (
+          <PeriodComparisonBanner comparison={comparison} />
+        ) : null}
 
         {buckets.length > 0 ? (
           <TeamPicker
@@ -269,6 +284,8 @@ function TeamPicker({
 }
 
 function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportViewConfig }) {
+  const summary = computeDashboardSummary(data);
+  const insights = computeCompositionInsights(data);
   const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
   const dataDays = trend.filter((p) => p.count > 0);
   const members = buildMemberContributions(data.byRecruiter);
@@ -285,9 +302,13 @@ function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportV
 
   return (
     <>
-      <dl aria-label={view.kpiAriaLabel} className="grid grid-cols-2 gap-2 sm:grid-cols-2">
-        <KpiCard variant="compact" label={view.kpiPrimaryLabel} value={data.recruitedTotal} hint={view.kpiPrimaryHint} accent="var(--primary)" />
-        <KpiCard variant="compact" label={view.kpiSecondaryLabel} value={members.length} hint={view.kpiSecondaryHint} accent="var(--secondary)" />
+      <dl aria-label={view.kpiAriaLabel} className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <KpiCard variant="compact" label={view.kpiPrimaryLabel} value={summary.recruitedTotal} hint={view.kpiPrimaryHint} accent="var(--primary)" />
+        <KpiCard variant="compact" label={view.kpiSecondaryLabel} value={summary.activeRecruiterBucketCount} hint={view.kpiSecondaryHint} accent="var(--secondary)" />
+        <KpiCard variant="compact" label="Dự án có tuyển" value={summary.activeProjectBucketCount} hint="dự án có phát sinh" accent="var(--primary)" />
+        <KpiCard variant="compact" label="Số ngày có tuyển" value={summary.activeHiringDays} hint="trong khoảng hiển thị" accent="var(--secondary)" />
+        <KpiCard variant="compact" label="Trung bình/ngày có tuyển" value={formatAvgPerActiveDay(summary.avgPerActiveDay)} hint="lượt tuyển / ngày có tuyển" accent="var(--primary)" />
+        <KpiCard variant="compact" label="Đỉnh tuyển/ngày" value={summary.peakDailyCount ?? "—"} hint={formatPeakDayHint(summary)} accent="var(--secondary)" />
       </dl>
 
       {view.showMemberRanking ? (
@@ -337,7 +358,7 @@ function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportV
       <section aria-label="Xu hướng tuyển dụng của nhóm">
         <Card>
           <CardHeader title="Xu hướng tuyển dụng của nhóm" description="Số người tuyển theo ngày; những ngày không có record thể hiện là 0 trên biểu đồ." />
-          <TrendChart data={trend} />
+          <TrendChart data={trend} from={data.applied.from} to={data.applied.to} />
           <details className="mt-3">
             <summary className="cursor-pointer text-sm font-medium text-primary">
               Xem chi tiết {dataDays.length} ngày
@@ -367,12 +388,34 @@ function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportV
 
       <section aria-label="Phân bổ tuyển dụng của nhóm" className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="lg:col-span-7">
-          <CardHeader title="Theo dự án trong nhóm" description="Phân bổ tuyển dụng của nhóm theo dự án." />
+          <CardHeader title="Theo dự án trong nhóm" description="Phân bổ tuyển dụng của nhóm theo dự án (tỷ trọng trên tập đang lọc)." />
+          {insights.leadingProject ? (
+            <p className="mb-3 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs text-foreground">
+              Dự án dẫn đầu (tập đang lọc): <span className="font-semibold">{insights.leadingProject.display}</span>
+              {" — "}
+              <span className="font-mono tabular-nums">{insights.leadingProject.count}</span> lượt (
+              <span className="font-mono tabular-nums">{formatSharePct(insights.leadingProject.shareOfFilteredPct)}</span>)
+            </p>
+          ) : null}
           <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án của nhóm" />
           <BucketList buckets={data.byProject} />
         </Card>
         <Card className="lg:col-span-5">
-          <CardHeader title="Theo loại hình làm việc của nhóm" />
+          <CardHeader title="Theo loại hình làm việc của nhóm" description="Tỷ trọng trên tập đang lọc." />
+          <div className="mb-3 space-y-1 rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs">
+            <p className="text-foreground">
+              Thời vụ: <span className="font-mono font-medium">{insights.employment.seasonalCount}</span> ({formatSharePct(insights.employment.seasonalSharePct)})
+              {" · "}
+              Chính thức: <span className="font-mono font-medium">{insights.employment.permanentCount}</span> ({formatSharePct(insights.employment.permanentSharePct)})
+            </p>
+            {insights.employment.unclassifiedTotal > 0 ? (
+              <p className="text-muted">
+                Không xác định: <span className="font-mono">{insights.employment.unknownCount}</span>
+                {" · "}
+                Không hợp lệ: <span className="font-mono">{insights.employment.invalidCount}</span>
+              </p>
+            ) : null}
+          </div>
           <EmploymentComposition segments={buildCategorySegments(data.byEmployment)} title="Biểu đồ loại hình làm việc của nhóm" />
         </Card>
         {view.showProjectProviderMix ? (

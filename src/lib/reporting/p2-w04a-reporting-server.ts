@@ -5,6 +5,8 @@ import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
 import { parseReportingFilters } from "./p1-filter";
 import type { ReportingFilters } from "./p1-filter";
+import { resolvePriorPeriodComparisonForActor } from "./p1-period-comparison";
+import type { PeriodComparisonResult } from "./p1-period-comparison";
 import { computeReporting, reportingQueryFailed } from "./p1-reporting";
 import type {
   ReportingData,
@@ -37,7 +39,7 @@ type ScopedFactRow = ReportingFact & {
 };
 
 export type CutoverFetchResult =
-  | { ok: true; data: ReportingData; generatedAt: string; audience: ReportingAudience }
+  | { ok: true; data: ReportingData; generatedAt: string; comparison?: PeriodComparisonResult; audience: ReportingAudience }
   | {
       ok: false;
       code: string;
@@ -104,7 +106,15 @@ export async function fetchCutoverReporting(
       return { ok: false, code: built.code, message: built.message, reconciliation: built.reconciliation };
     }
 
-    return { ok: true, data: built.data, generatedAt: new Date().toISOString(), audience };
+    const comparison = await resolvePriorPeriodComparisonForActor({
+      actor,
+      filters,
+      currentTotal: built.data.recruitedTotal,
+      expectedAudienceKind: audience.kind,
+      callScopedFactsRpc: (args) => sb.rpc("direct_entry_reporting_scoped_facts", args),
+    });
+
+    return { ok: true, data: built.data, generatedAt: new Date().toISOString(), comparison, audience };
   } catch (error) {
     logSafeError("p3-w05a-scoped-reporting", error);
     return reportingQueryFailed();
