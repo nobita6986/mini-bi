@@ -69,6 +69,7 @@ const F2_RPC_NAMES = [
   "work_report_list_delegations",
   "work_report_revoke_delegation",
 ];
+const normalizeSignature = (signature) => signature.replace(/,\s*/g, ", ");
 
 async function createDatabase() {
   const db = new PGlite();
@@ -100,7 +101,7 @@ async function requireF2Contract() {
     expected.sort(),
     `F2 regression gate requires the F2 WP1 migration/RPCs; missing: ${expected.filter((name) => !found.has(name)).join(", ") || "none"}. This is expected to fail on a pre-F2 baseline and must not be skipped.`,
   );
-  assert.deepEqual(rows.map((row) => row.signature).sort(), [...F2_RPC_SIGNATURES].sort(),
+  assert.deepEqual(rows.map((row) => normalizeSignature(row.signature)).sort(), [...F2_RPC_SIGNATURES].sort(),
     "F2 RPC argument order is the canonical server-bound ABI");
   return rows;
 }
@@ -128,6 +129,7 @@ async function seedActors() {
   for (const capability of [
     "entry_admin",
     "team_master_manage",
+    "recruiter_master_manage",
     "team_manager_assign",
     "report_form_manage",
     "report_assign",
@@ -299,7 +301,7 @@ test("F2 contract adds exactly the two locked capabilities and RLS-protected tab
 });
 
 test("F2 RPCs are SECURITY DEFINER, owned by migration operator and executable only by service_role", async () => {
-  const rows = await requireF2Contract();
+  await requireF2Contract();
 
   const { rows: rpcRows } = await db.query(`select p.proname, p.oid::regprocedure::text as signature,
       p.prosecdef, pg_get_userbyid(p.proowner) as owner,
@@ -333,7 +335,7 @@ test("F2 RPCs are SECURITY DEFINER, owned by migration operator and executable o
     ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
     ...F2_RPC_SIGNATURES,
   ].map((signature) => signature.replace(/^public\./, "")).sort();
-  assert.deepEqual(serviceRows.map((row) => row.signature).sort(), expectedServiceRpcSignatures,
+  assert.deepEqual(serviceRows.map((row) => normalizeSignature(row.signature)).sort(), expectedServiceRpcSignatures,
     "service_role EXECUTE is limited to the explicit F1/F1.5/F2 API allowlist");
 
   const { rows: helpers } = await db.query(`select p.oid::regprocedure::text as signature,
