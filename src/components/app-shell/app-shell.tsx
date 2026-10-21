@@ -70,6 +70,7 @@ export async function AppShell({
 }) {
   await connection();
   const directEntryEnabled = isDirectEntryUiEnabled(process.env.DIRECT_ENTRY_UI_ENABLED);
+  const workReportsEnabled = process.env.WORK_REPORTS_API_ENABLED === "true";
 
   // P3-W06A R1: phan tach ro rang tang viewport va tang capability.
   // - `filterEntriesForActor` chiu trach nhiem viewport/visibility: loc
@@ -83,7 +84,7 @@ export async function AppShell({
     directEntryEnabled,
     actor,
     decide: (entry) =>
-      decideNavEntryVisibility({
+      (entry.id !== "work-reports" || workReportsEnabled) && decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "desktop",
@@ -95,7 +96,7 @@ export async function AppShell({
     directEntryEnabled,
     actor,
     decide: (entry) =>
-      decideNavEntryVisibility({
+      (entry.id !== "work-reports" || workReportsEnabled) && decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "mobile",

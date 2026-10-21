@@ -147,20 +147,28 @@ export const changeRequestsNavPredicate: NavCapabilityPredicate = (actor) =>
   actor.hasHistoricalChangeRequests === true;
 
 export const workReportTemplateManagePredicate: NavCapabilityPredicate = (actor) =>
-  actor.capabilities.includes("report_form_manage") &&
-  actor.scopes.some((scope) => scope.kind === "all");
+  adminAuthorityNavPredicate(actor) || (
+    actor.capabilities.includes("report_form_manage") &&
+    actor.scopes.some((scope) => scope.kind === "all")
+  );
 
 export const workReportAssignmentPredicate: NavCapabilityPredicate = (actor) =>
-  actor.capabilities.includes("report_assign") &&
-  actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all");
+  adminAuthorityNavPredicate(actor) || (
+    actor.capabilities.includes("report_assign") &&
+    actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all")
+  );
 
 export const workReportViewPredicate: NavCapabilityPredicate = (actor) =>
-  actor.capabilities.includes("report_view") &&
-  actor.scopes.some((scope) => scope.kind === "own" || scope.kind === "team" || scope.kind === "all");
+  adminAuthorityNavPredicate(actor) || (
+    actor.capabilities.includes("report_view") &&
+    actor.scopes.some((scope) => scope.kind === "own" || scope.kind === "team" || scope.kind === "all")
+  );
 
 export const workReportAnalyticsPredicate: NavCapabilityPredicate = (actor) =>
-  actor.capabilities.includes("report_analytics_view") &&
-  actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all");
+  adminAuthorityNavPredicate(actor) || (
+    actor.capabilities.includes("report_analytics_view") &&
+    actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all")
+  );
 
 /** Staff access is projected by the server from an active obligation, never inferred from role/title. */
 export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>

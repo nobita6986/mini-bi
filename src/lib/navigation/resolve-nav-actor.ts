@@ -37,10 +37,12 @@ import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-retry";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
 import { createChangeRequestReadRepository } from "@/lib/direct-entry/change-request-read-repository";
+import { createSubmissionRepository } from "@/lib/work-reports/submission-repository";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
 import {
   changeRequestsNavPredicate,
   type NavActorProjection,
+  workReportsNavPredicate,
 } from "@/lib/navigation/registry-capability";
 
 /**
@@ -69,8 +71,8 @@ export const resolveActorForRequest = cache(
  *
  * Predicate trong `registry-capability.ts` chi dung `capabilities` + `scopes.kind`
  * (xem `decideNavEntryVisibility`, `directEntryNavPredicate`,
- *  `adminAuthorityNavPredicate`). `app_user_id` khong can cho nav; loai bo
- * khoi projection de giam PII surface (P3-C01 R2 chu truong).
+ *  `adminAuthorityNavPredicate`). `app_user_id` chi duoc dung server-side de
+ * probe nghia vu dang hieu luc; van bi loai khoi projection tra cho nav.
  *
  * - Tra ve `null` neu actor resolution fail (UNAUTHENTICATED, ...) hoac
  *   ca Direct Entry va Admin nav deu khong duoc yeu cau.
@@ -107,6 +109,16 @@ export const resolveNavActorForAppShell = cache(
       capabilities: actor.actor.capabilities,
       scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
     };
+    if (process.env.WORK_REPORTS_API_ENABLED === "true" && !workReportsNavPredicate(projection)) {
+      const obligations = await createSubmissionRepository().listMine({
+        auth_subject: actor.actor.auth_subject,
+        app_user_id: actor.actor.app_user_id,
+        status: "ACTIVE",
+      });
+      if (obligations.ok && obligations.data.length > 0) {
+        projection.hasWorkReportObligations = true;
+      }
+    }
     if (input.directEntryEnabled && !changeRequestsNavPredicate(projection)) {
       const historical = await resolveChangeRequestHistoricalAccessForRequest();
       if (historical.hasHistoricalRequests) {
