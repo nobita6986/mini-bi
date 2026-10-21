@@ -10,6 +10,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export function AssignmentManager() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [templateId, setTemplateId] = useState("");
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [targetKind, setTargetKind] = useState<"USER" | "TEAM" | "USER_SET">("USER");
   const [targetId, setTargetId] = useState("");
   const [targetUsers, setTargetUsers] = useState("");
@@ -24,10 +25,24 @@ export function AssignmentManager() {
   useEffect(() => {
     let live = true;
     fetch("/api/work-reports/templates", { cache: "no-store" }).then(async (response) => {
-      const result = await response.json();
-      if (!response.ok || result?.ok !== true || !Array.isArray(result.items)) throw new Error("unavailable");
-      if (live) setTemplates(result.items.filter((item: Template) => item.status === "ACTIVE" && item.current_published_version_id));
-    }).catch(() => { if (live) setError("Không tải được danh sách mẫu. Vui lòng thử lại."); });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.ok !== true || !Array.isArray(result.items)) {
+        const cause = new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
+        if (response.status === 403) cause.message = "WORK_REPORT_ACCESS_DENIED";
+        throw cause;
+      }
+      if (live) {
+        setTemplates(result.items.filter((item: Template) => item.status === "ACTIVE" && item.current_published_version_id));
+        setTemplatesLoaded(true);
+      }
+    }).catch((cause: unknown) => {
+      if (!live) return;
+      const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
+      setError(code === "WORK_REPORT_ACCESS_DENIED"
+        ? "Bạn có quyền giao báo cáo nhưng chưa được phép xem danh sách mẫu. Không thể tạo giao việc cho đến khi API cung cấp mẫu trong scope được phép."
+        : "Không tải được danh sách mẫu báo cáo. Vui lòng thử lại.");
+      setTemplatesLoaded(true);
+    });
     return () => { live = false; };
   }, []);
 
@@ -71,7 +86,7 @@ export function AssignmentManager() {
       <div className="space-y-1.5"><label htmlFor="template" className="text-sm font-medium">Mẫu báo cáo</label>
         <select id="template" required value={templateId} onChange={(event) => setTemplateId(event.target.value)} className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm">
           <option value="">Chọn mẫu đang hoạt động</option>{templates.map((template) => <option key={template.template_id} value={template.template_id}>{template.display_name} ({template.template_code})</option>)}
-        </select>{templates.length === 0 ? <p className="text-xs text-muted">Chưa có mẫu đã publish.</p> : null}</div>
+        </select>{templatesLoaded && !error && templates.length === 0 ? <p className="text-xs text-muted">Chưa có mẫu đã publish.</p> : null}</div>
       <div className="space-y-1.5"><label htmlFor="target-kind" className="text-sm font-medium">Đối tượng</label>
         <select id="target-kind" value={targetKind} onChange={(event) => setTargetKind(event.target.value as typeof targetKind)} className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm">
           <option value="USER">Một nhân viên</option><option value="TEAM">Một nhóm</option><option value="USER_SET">Danh sách nhân viên</option>
@@ -90,7 +105,7 @@ export function AssignmentManager() {
         <label className="space-y-1.5 text-sm font-medium">Số ngày cộng vào kỳ hạn<input type="number" min="0" max="31" required value={dueDayOffset} onChange={(event) => setDueDayOffset(event.target.value)} className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal" /></label>
         <label className="space-y-1.5 text-sm font-medium">Giờ đến hạn (giờ Việt Nam)<input type="time" step="1" required value={dueTime} onChange={(event) => setDueTime(event.target.value)} className="min-h-11 w-full rounded-lg border border-border bg-surface px-3 font-normal" /></label>
       </div>
-      <Button type="submit" variant="primary" disabled={busy || !templates.length}>{busy ? "Đang tạo…" : "Tạo giao việc"}</Button>
+      <Button type="submit" variant="primary" disabled={busy || !templates.length || !templatesLoaded}>{busy ? "Đang tạo…" : "Tạo giao việc"}</Button>
     </form>
   </div>;
 }
