@@ -249,10 +249,13 @@ test("employee code requires lowercase six-digit canonical format and quarantine
     code: "EMPLOYEE_CODE_FORMAT",
     path: "employee_code",
   });
-  assert.equal(validateEmployeeCode("hrp-2025-000001", "2026-10-01")[0].code, "EMPLOYEE_CODE_YEAR");
+  assert.deepEqual(validateEmployeeCode("hrp-2025-000001", "2026-10-01"), []);
   assert.equal(validateEmployeeCode("hrp-2026-000001", "2026-10-01", ["hrp-2026-000001"])[0].code,
     "EMPLOYEE_CODE_DUPLICATE");
-  assert.equal(validateEmployeeCode("hrp-2026-000001", "2026-02-30")[0].code, "EMPLOYEE_CODE_YEAR");
+  assert.equal(validateEntry({
+    entry: { ...entry, first_work_date: "2026-02-30" },
+    ...validationContext,
+  }).issues[0].code, "FIRST_WORK_DATE_INVALID");
 });
 
 test("tri-state worker/payment fields distinguish omitted, unknown, and intentionally blank", () => {

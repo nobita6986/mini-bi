@@ -11,7 +11,7 @@ import { checkSameOriginRequest } from "../ai/gateway/http-guards.mjs";
 import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { DirectEntrySessionResult } from "../auth/direct-entry-session-core.ts";
 import { validateClientBusinessPayload } from "../auth/direct-entry-v2.ts";
-import { isCanonicalLaborTypeKey } from "../contracts/direct-entry-v1.ts";
+import { isCanonicalLaborTypeKey, validateEmployeeCode } from "../contracts/direct-entry-v1.ts";
 import { isCanonicalNationalId } from "../contracts/national-id.ts";
 import {
   failJson as fail,
@@ -69,13 +69,24 @@ export function projectPrivilegedEditRequest(body: unknown): PrivilegedEditReque
       !patchKeys.every((key) => (PRIVILEGED_EDIT_PATCH_KEYS as readonly string[]).includes(key))) {
     return null;
   }
-  if (typeof patch.project_id === "string" && !PROJECT_ID.test(patch.project_id)) return null;
-  if (typeof patch.first_work_date === "string" && !ISO_DATE.test(patch.first_work_date)) return null;
-  if (typeof patch.employee_code === "string" &&
-      (patch.employee_code.trim().length === 0 || patch.employee_code.length > 64)) return null;
-  if (typeof patch.recruiter_id === "string" && !UUID.test(patch.recruiter_id)) return null;
-  if (typeof patch.labor_type === "string" &&
-      !isCanonicalLaborTypeKey(patch.labor_type)) return null;
+  if (patch.project_id !== undefined &&
+      (typeof patch.project_id !== "string" || !PROJECT_ID.test(patch.project_id))) return null;
+  if (patch.first_work_date !== undefined &&
+      (typeof patch.first_work_date !== "string" || !ISO_DATE.test(patch.first_work_date) ||
+       !isRealCalendarDate(patch.first_work_date))) {
+    return null;
+  }
+  if (patch.employee_code !== undefined &&
+      (typeof patch.employee_code !== "string" ||
+       validateEmployeeCode(patch.employee_code).length > 0)) {
+    return null;
+  }
+  if (patch.recruiter_id !== undefined &&
+      (typeof patch.recruiter_id !== "string" || !UUID.test(patch.recruiter_id))) return null;
+  if (patch.labor_type !== undefined &&
+      (typeof patch.labor_type !== "string" || !isCanonicalLaborTypeKey(patch.labor_type))) {
+    return null;
+  }
   if (patch.worker_details !== undefined) {
     if (!isRecord(patch.worker_details)) return null;
     const nationalId = patch.worker_details.national_id;

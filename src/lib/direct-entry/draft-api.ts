@@ -173,8 +173,7 @@ function projectPatch(value: unknown): {
   }
   if (Object.hasOwn(patch, "employee_code")) {
     if (typeof patch.employee_code !== "string" ||
-        (projectedPatch.first_work_date !== undefined &&
-         validateEmployeeCode(patch.employee_code, projectedPatch.first_work_date).length > 0)) {
+        validateEmployeeCode(patch.employee_code).length > 0) {
       return null;
     }
     projectedPatch.employee_code = patch.employee_code;

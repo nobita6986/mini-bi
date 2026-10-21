@@ -99,14 +99,17 @@ test("rejects recursive unknown/authority fields without projecting them", () =>
   }
 });
 
-test("rejects invalid calendar dates, gender, national ID, and employee-code year", () => {
+test("rejects invalid calendar dates, gender, national ID, and non-canonical employee-code format while allowing cross-year canonical codes", () => {
   // P3-W07C-R2: date_of_birth va national_id_issued_at la TEXT thuan. Calendar-
   // invalid text ("31/02/1990", "garbage") van accepted; chi first_work_date
   // (contract ISO DATE) moi reject calendar-invalid. Pa do khong con trong
   // validator nua.
+  assert.equal(parseFullProfilePayload(payload([
+    { ...baseRow, employee_code: "hrp-2024-000001" },
+  ])).ok, true);
   const cases = [
     { ...baseRow, first_work_date: "2025-02-30" },
-    { ...baseRow, employee_code: "hrp-2024-000001" },
+    { ...baseRow, employee_code: "HRP-2025-000001" },
     { ...baseRow, worker: { gender: { state: "provided", value: "UNKNOWN" } } },
     { ...baseRow, worker: { national_id: { state: "provided", value: "12345678" } } },
     // DOB calendar-invalid o R2 duoc accept (pure text); bo khoi day.
