@@ -284,7 +284,7 @@ test("filterEntriesForActor: actor null → chỉ Dashboard (fail-closed cho Dir
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
-test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry + Dự án + Yêu cầu thay đổi", () => {
+test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → các khu vực quản trị gồm Work Reports", () => {
   const ownerActor = makeActor(
     ["entry_admin", "recruiter_master_manage", "team_master_manage"],
     [{ kind: "all", reference: "all" }],
@@ -295,9 +295,9 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboa
     actor: ownerActor,
     decide: decideFor(ownerActor, "mobile"),
   });
-  // Full Admin thấy Admin cùng với các khu vực đã có quyền (CCCD trùng chỉ trong Dashboard).
+  // Full Admin thấy Admin và Work Reports cùng các khu vực đã có quyền.
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
+    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {

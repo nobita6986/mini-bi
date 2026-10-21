@@ -1,4 +1,9 @@
 import {
+  workReportTemplateManagePredicate,
+  type NavActorProjection,
+} from "../navigation/registry-capability.ts";
+
+import {
   WORK_REPORT_FIELD_TYPES,
   RECRUITMENT_DAILY_TEMPLATE_SCHEMA,
   type WorkReportField,
@@ -56,12 +61,8 @@ export function isWorkReportMetricFieldType(value: WorkReportFieldType): boolean
   return METRIC_TYPES.has(value);
 }
 
-export function canManageWorkReportTemplates(actor: {
-  capabilities: readonly string[];
-  scopes: readonly { kind: string }[];
-} | null): boolean {
-  return actor !== null && actor.capabilities.includes("report_form_manage") &&
-    actor.scopes.some((scope) => scope.kind === "all");
+export function canManageWorkReportTemplates(actor: NavActorProjection | null): boolean {
+  return actor !== null && workReportTemplateManagePredicate(actor);
 }
 
 export const workReportFieldTypeLabels: Readonly<Record<WorkReportFieldType, string>> = {
