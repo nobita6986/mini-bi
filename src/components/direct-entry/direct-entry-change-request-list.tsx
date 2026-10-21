@@ -13,6 +13,7 @@ import { AlertDialog } from "radix-ui";
 
 import { DirectEntryCompactPanel } from "@/components/direct-entry/direct-entry-compact-panel";
 import { DirectEntryQueueTabs } from "@/components/direct-entry/direct-entry-queue-tabs";
+import { StatusBadge, changeRequestStateBadgeProps } from "@/components/ui/badge";
 import {
   canWithdrawChangeRequest,
   CHANGE_REQUEST_STATE_LABELS,
@@ -189,13 +190,16 @@ function ChangeRequestListContent({
       <ul className={compact ? styles.compactList : styles.submissionList}>
         {requests.map((request) => {
           const busy = busyRequestId === request.request_id;
+          const badge = changeRequestStateBadgeProps(request.state);
           return (
             <li
               key={request.request_id}
               className={compact ? styles.compactCard : styles.submissionCard}
             >
               <div className={styles.submissionCardTop}>
-                <strong>{CHANGE_REQUEST_STATE_LABELS[request.state]}</strong>
+                <StatusBadge tone={badge.tone} dot>
+                  {CHANGE_REQUEST_STATE_LABELS[request.state]}
+                </StatusBadge>
                 <span className={styles.submissionRef} title="Mã kỹ thuật rút gọn">
                   Mã {shortRef(request.request_id)}
                 </span>

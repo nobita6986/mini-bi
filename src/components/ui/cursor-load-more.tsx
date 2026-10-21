@@ -23,7 +23,7 @@ export function CursorLoadMore({
       aria-busy={loading}
       onClick={onLoadMore}
       className={cn(
-        "inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground",
+        "inline-flex min-h-11 sm:min-h-10 items-center justify-center rounded-lg border border-border bg-surface px-4 text-sm font-medium text-foreground whitespace-nowrap shrink-0",
         "hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}

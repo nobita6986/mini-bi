@@ -5,6 +5,12 @@ import { Dialog } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 
+/**
+ * FormDialog — Adaptive Desktop Centered Modal & Mobile Bottom Sheet (`Modern Soft Enterprise`).
+ * - Desktop (`sm:`): Centered modal (`max-h-[90dvh] rounded-2xl`).
+ * - Mobile (`< 640px`): Bottom Sheet anchored at the bottom (`inset-x-0 bottom-0 max-h-[92dvh] rounded-t-2xl`)
+ *   with sticky header, scrollable content body, and safe-area bottom padding (`env(safe-area-inset-bottom)`).
+ */
 export function FormDialog({
   open,
   onOpenChange,
@@ -36,23 +42,29 @@ export function FormDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       {trigger ? <Dialog.Trigger asChild>{trigger}</Dialog.Trigger> : null}
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[1px]" />
         <Dialog.Content
           data-testid={dataTestId}
           aria-describedby={descriptionId}
           onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-5 text-foreground shadow-xl focus:outline-none sm:p-6",
+            "fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl border border-border bg-surface p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-foreground shadow-xl focus:outline-none",
+            "sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:max-h-[90dvh] sm:w-[min(38rem,calc(100vw-2rem))] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-6",
             contentClassName,
           )}
         >
-          <div className="flex items-start justify-between gap-4">
+          {/* Mobile Bottom Sheet Handle Indicator */}
+          <div
+            aria-hidden="true"
+            className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-border sm:hidden"
+          />
+          <div className="flex items-start justify-between gap-4 border-b border-border pb-3">
             <div>
-              <Dialog.Title className="text-xl font-semibold text-foreground">
+              <Dialog.Title className="text-lg sm:text-xl font-semibold text-foreground">
                 {title}
               </Dialog.Title>
               {description ? (
-                <Dialog.Description id={descriptionId} className="mt-1 text-sm text-muted">
+                <Dialog.Description id={descriptionId} className="mt-1 text-xs sm:text-sm text-muted">
                   {description}
                 </Dialog.Description>
               ) : null}
@@ -62,7 +74,7 @@ export function FormDialog({
                 type="button"
                 aria-label={closeAriaLabel}
                 disabled={closeDisabled}
-                className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-11 min-w-11 sm:min-h-10 sm:min-w-10 items-center justify-center rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 ×
               </button>

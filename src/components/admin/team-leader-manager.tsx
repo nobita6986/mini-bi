@@ -446,16 +446,16 @@ export function TeamLeaderManager({
                 </p>
                 <button type="button" onClick={startDesignation}
                   disabled={!team.active || !readReady || workflow.phase !== "idle" || teamOperationLocked}
-                  className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
+                  className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50">
                   {currentLeaders.length ? "Thay thế trưởng nhóm" : "Chỉ định trưởng nhóm"}
                 </button>
               </div>
 
-              <div role="tablist" aria-label="Lịch sử trưởng nhóm" className="flex flex-wrap gap-2 border-b border-border">
+              <div role="tablist" aria-label="Lịch sử trưởng nhóm" className="flex flex-wrap gap-2 overflow-x-auto whitespace-nowrap border-b border-border">
                 {STATES.map((state) => (
                   <button key={state} type="button" role="tab" aria-selected={activeState === state}
                     onClick={() => setActiveState(state)}
-                    className={`min-h-10 border-b-2 px-3 text-sm ${activeState === state
+                    className={`min-h-11 sm:min-h-10 whitespace-nowrap shrink-0 border-b-2 px-3 text-sm ${activeState === state
                       ? "border-primary font-semibold text-primary" : "border-transparent text-muted"}`}>
                     {stateLabel(state)}
                   </button>
@@ -476,32 +476,34 @@ export function TeamLeaderManager({
                 <Card className="p-5 text-sm text-muted">Chưa có trưởng nhóm trong mục này.</Card>
               ) : null}
               {activeList && activeList.leaders.length > 0 ? (
-                <div className="overflow-x-auto rounded-md border border-border">
-                  <table className="w-full min-w-[430px] text-left text-sm">
+                <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs">
+                  <table className="r22-card-table w-full min-w-[430px] border-collapse text-left text-sm">
                     <caption className="sr-only">{stateLabel(activeState)} của nhóm {team.display_name}</caption>
-                    <thead className="bg-muted/20">
+                    <thead className="border-b border-border bg-surface-muted text-xs font-semibold uppercase tracking-wider text-muted">
                       <tr>
-                        <th scope="col" className="px-3 py-3">Trưởng nhóm</th>
-                        <th scope="col" className="px-3 py-3">Từ ngày</th>
-                        <th scope="col" className="px-3 py-3">Đến ngày</th>
-                        {activeState !== "HISTORY" ? <th scope="col" className="px-3 py-3">Thao tác</th> : null}
+                        <th scope="col" className="px-3.5 py-3">Trưởng nhóm</th>
+                        <th scope="col" className="px-3.5 py-3">Từ ngày</th>
+                        <th scope="col" className="px-3.5 py-3">Đến ngày</th>
+                        {activeState !== "HISTORY" ? <th scope="col" className="px-3.5 py-3 text-right">Thao tác</th> : null}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {activeList.leaders.map((leader) => (
-                        <tr key={leader.assignment_id}>
-                          <th scope="row" className="px-3 py-3 font-medium">{leader.leader_display_name}</th>
-                          <td className="px-3 py-3 tabular-nums">{formatDate(leader.valid_from)}</td>
-                          <td className="px-3 py-3">{formatDate(leader.valid_to)}</td>
+                        <tr key={leader.assignment_id} className="transition-colors hover:bg-surface-hover">
+                          <th scope="row" data-card-header="true" className="px-3.5 py-2.5 font-medium">{leader.leader_display_name}</th>
+                          <td data-label="Từ ngày" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{formatDate(leader.valid_from)}</td>
+                          <td data-label="Đến ngày" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{formatDate(leader.valid_to)}</td>
                           {activeState !== "HISTORY" ? (
-                            <td className="px-3 py-3">
-                              <button type="button" disabled={workflow.phase !== "idle" || teamOperationLocked}
-                                onClick={() => startRevocation(
-                                  leader.state === "SCHEDULED" ? leader.valid_from : activeList.authorization_date,
-                                )}
-                                className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50">
-                                {leader.state === "SCHEDULED" ? "Hủy lịch" : "Thu hồi"}
-                              </button>
+                            <td data-card-actions="true" className="px-3.5 py-2.5 text-right">
+                              <div className="inline-flex flex-wrap md:flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
+                                <button type="button" disabled={workflow.phase !== "idle" || teamOperationLocked}
+                                  onClick={() => startRevocation(
+                                    leader.state === "SCHEDULED" ? leader.valid_from : activeList.authorization_date,
+                                  )}
+                                  className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50">
+                                  {leader.state === "SCHEDULED" ? "Hủy lịch" : "Thu hồi"}
+                                </button>
+                              </div>
                             </td>
                           ) : null}
                         </tr>
@@ -516,10 +518,10 @@ export function TeamLeaderManager({
                   <div className="flex gap-2">
                     <button type="button" disabled={pages[activeState] <= 1}
                       onClick={() => void loadPage(activeState, pages[activeState] - 1)}
-                      className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Trang trước</button>
+                      className="min-h-11 sm:min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-3 disabled:opacity-50">Trang trước</button>
                     <button type="button" disabled={pages[activeState] >= pageCount}
                       onClick={() => void loadPage(activeState, pages[activeState] + 1)}
-                      className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Trang sau</button>
+                      className="min-h-11 sm:min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-3 disabled:opacity-50">Trang sau</button>
                   </div>
                 </div>
               ) : null}
@@ -538,12 +540,12 @@ export function TeamLeaderManager({
                           <span className="mt-1 flex flex-col gap-2 sm:flex-row">
                             <input id="team-leader-search" value={candidateSearchInput} maxLength={256}
                               onChange={(event) => setCandidateSearchInput(event.currentTarget.value)}
-                              className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-3" />
+                              className="min-h-11 sm:min-h-10 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-base sm:text-sm" />
                             <button type="button" onClick={() => {
                               setCandidateSearch(candidateSearchInput.trim());
                               setCandidatePage(1);
                               setCandidateReloadToken((value) => value + 1);
-                            }} className="min-h-11 rounded-md border border-border px-3">Tìm</button>
+                            }} className="min-h-11 sm:min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-3">Tìm</button>
                           </span>
                         </label>
                         {candidateState.kind === "loading" ? <p role="status">Đang tải nhân sự đủ điều kiện…</p> : null}
@@ -567,7 +569,7 @@ export function TeamLeaderManager({
                               <select id="team-leader-candidate" value={form.appUserId}
                                 onChange={(event) => setForm({ ...form, appUserId: event.currentTarget.value })}
                                 required
-                                className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3">
+                                className="mt-1 block min-h-11 sm:min-h-10 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm">
                                 <option value="">Chọn nhân sự</option>
                                 {candidateList.candidates.map((candidate) => (
                                   <option key={candidate.app_user_id} value={candidate.app_user_id}>
@@ -580,13 +582,13 @@ export function TeamLeaderManager({
                             <div className="flex justify-end gap-2">
                               <button type="button" disabled={candidatePage <= 1}
                                 onClick={() => setCandidatePage((value) => value - 1)}
-                                className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Trước</button>
+                                className="min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-3 disabled:opacity-50">Trước</button>
                               <span className="self-center text-sm text-muted">
                                 Trang {candidatePage} / {candidatePageCount}
                               </span>
                               <button type="button" disabled={candidatePage >= candidatePageCount}
                                 onClick={() => setCandidatePage((value) => value + 1)}
-                                className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Sau</button>
+                                className="min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-3 disabled:opacity-50">Sau</button>
                             </div>
                           </>
                         ) : null}
@@ -597,22 +599,22 @@ export function TeamLeaderManager({
                       <input id="team-leader-effective-date" type="date" required
                         value={form.effectiveDate}
                         onChange={(event) => setForm({ ...form, effectiveDate: event.currentTarget.value })}
-                        className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3" />
+                        className="mt-1 block min-h-11 sm:min-h-10 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm" />
                     </label>
                     <label htmlFor="team-leader-reason" className="block text-sm font-medium">
                       Lý do thay đổi (không bắt buộc)
                       <textarea id="team-leader-reason" value={form.reason} maxLength={4000} rows={3}
                         onChange={(event) => setForm({ ...form, reason: event.currentTarget.value })}
-                        className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2" />
+                        className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-base sm:text-sm" />
                     </label>
                     {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
                     <div className="flex flex-wrap justify-end gap-2">
                       <button type="button" onClick={() => setForm(null)}
-                        className="min-h-11 rounded-md border border-border px-4">Hủy</button>
+                        className="min-h-11 whitespace-nowrap shrink-0 rounded-md border border-border px-4">Hủy</button>
                       <button type="submit" disabled={busyTeam !== null || workflow.phase !== "idle" ||
                         teamOperationLocked ||
                         (form.kind !== "revoke" && candidateState.kind !== "loaded")}
-                        className="min-h-11 rounded-md bg-primary px-4 font-medium text-primary-foreground disabled:opacity-50">
+                        className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 font-medium text-on-primary disabled:opacity-50">
                         {busyTeam !== null ? "Đang lưu…" : form.kind === "revoke" ? "Xác nhận thu hồi" : "Xác nhận"}
                       </button>
                     </div>

@@ -3,10 +3,10 @@ import { cn } from "@/lib/utils";
 import type { RunStatus } from "@/lib/reporting/pipeline-check";
 
 const VARIANTS: Record<RunStatus, string> = {
-  succeeded: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-  partial: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-  failed: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-  running: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
+  succeeded: "border border-status-success-border bg-status-success-bg text-status-success-text",
+  partial: "border border-status-warning-border bg-status-warning-bg text-status-warning-text",
+  failed: "border border-status-danger-border bg-status-danger-bg text-status-danger-text",
+  running: "border border-status-info-border bg-status-info-bg text-status-info-text",
 };
 
 const LABELS: Record<RunStatus, string> = {

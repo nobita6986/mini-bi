@@ -28,11 +28,25 @@
   --semantic-error: #be123c;
   --semantic-running: #0369a1;
   --semantic-slate: #64748b;
+
+  /* R2.2 Modern Soft Enterprise — Theme-derived surface & elevation tokens.
+     Tự động thích ứng với cả 5 theme (hr-partner, ocean-trust, emerald-growth,
+     violet-future, executive-gold) mà không ghi đè inline vars của ThemeProvider. */
+  --surface-muted: color-mix(in srgb, var(--surface) 62%, var(--background) 38%);
+  --surface-elevated: color-mix(in srgb, var(--surface) 94%, #ffffff 6%);
+  --surface-hover: color-mix(in srgb, var(--primary) 5%, var(--surface) 95%);
+  --primary-soft: color-mix(in srgb, var(--primary) 10%, transparent);
+  --primary-soft-border: color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
+    --surface-muted: color-mix(in srgb, var(--surface) 78%, var(--border) 22%);
+    --surface-elevated: color-mix(in srgb, var(--surface) 84%, var(--border) 16%);
+    --surface-hover: color-mix(in srgb, var(--primary) 8%, var(--surface) 92%);
+    --primary-soft: color-mix(in srgb, var(--primary) 15%, transparent);
+    --primary-soft-border: color-mix(in srgb, var(--primary) 32%, transparent);
   }
 }
 
@@ -41,7 +55,11 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-hover: var(--surface-hover);
   --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted);
   --color-border: var(--border);
   --color-primary: var(--primary);
   --color-secondary: var(--secondary);
@@ -49,6 +67,7 @@
   --color-ring: var(--ring);
   --color-tooltip: var(--tooltip);
   --color-on-primary: var(--on-primary);
+  --color-primary-foreground: var(--on-primary);
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
@@ -57,6 +76,102 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ============================================================================
+   R2.2 Mobile-First Responsive Table Archetypes (Scoped strictly to .r22-*)
+   Tuyệt đối KHÔNG tác động tới /direct-entry Spreadsheet Grid (.rdg / .grid).
+   ============================================================================ */
+@media (max-width: 767.98px) {
+  table.r22-card-table {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+  }
+  table.r22-card-table > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  table.r22-card-table > tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding: 0.625rem;
+    background: var(--background);
+  }
+  table.r22-card-table > tbody > tr {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1px solid var(--border) !important;
+    border-radius: 0.75rem;
+    background: var(--surface);
+    padding: 0.875rem;
+    box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
+  }
+  table.r22-card-table > tbody > tr > td {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.125rem 0 !important;
+    border: 0 !important;
+    text-align: right;
+    width: 100% !important;
+  }
+  table.r22-card-table > tbody > tr > td[data-card-header="true"] {
+    padding-bottom: 0.5rem !important;
+    border-bottom: 1px solid var(--border) !important;
+    text-align: left;
+    font-size: 0.9375rem;
+  }
+  table.r22-card-table > tbody > tr > td[data-label]::before {
+    content: attr(data-label);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--muted);
+    text-align: left;
+    flex-shrink: 0;
+  }
+  table.r22-card-table > tbody > tr > td[data-card-actions="true"] {
+    padding-top: 0.625rem !important;
+    margin-top: 0.25rem;
+    border-top: 1px solid var(--border) !important;
+    justify-content: flex-end;
+    text-align: left;
+  }
+  table.r22-card-table > tbody > tr > td[data-card-actions="true"] > div {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  table.r22-card-table > tbody > tr > td[data-card-actions="true"] button,
+  table.r22-card-table > tbody > tr > td[data-card-actions="true"] a {
+    min-height: 2.75rem; /* 44px touch target on mobile */
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
+/* Sticky first column for Analytical ReportTables on Mobile (< 768px) */
+table.r22-report-table th:first-child,
+table.r22-report-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  background-color: var(--surface);
+}
+table.r22-report-table thead th:first-child {
+  background-color: var(--surface-muted);
+  z-index: 20;
 }
 
 /* Chart đã tắt animation mặc định của recharts (tôn trọng prefers-reduced-motion). */

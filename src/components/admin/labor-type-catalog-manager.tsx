@@ -479,7 +479,7 @@ export function LaborTypeCatalogManager() {
           <label className="flex flex-col gap-1 text-sm font-medium">
             Tìm kiếm
             <input value={searchInput} maxLength={256} onChange={(event) => setSearchInput(event.target.value)}
-              className="min-h-10 rounded-md border border-border bg-surface px-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
+              className="min-h-11 sm:min-h-10 rounded-md border border-border bg-surface px-3 text-base sm:text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
           </label>
           <label className="flex items-center gap-2 self-end pb-2 text-sm">
             <input type="checkbox" checked={includeInactive} onChange={(event) => {
@@ -489,7 +489,7 @@ export function LaborTypeCatalogManager() {
             }} />
             Bao gồm loại hình lao động ngừng hoạt động
           </label>
-          <button type="submit" className={`${button} self-end`}>Tìm kiếm</button>
+          <button type="submit" className={`${button} min-h-11 sm:min-h-10 self-end`}>Tìm kiếm</button>
         </form>
 
         {listState.kind === "loading" ? <p role="status" className="py-8 text-center text-sm text-muted">Đang tải danh sách loại hình lao động…</p> : null}
@@ -510,10 +510,10 @@ export function LaborTypeCatalogManager() {
           <EmptyState title="Chưa có loại hình lao động phù hợp" description="Thay đổi bộ lọc hoặc thêm loại hình lao động mới." />
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+            <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs">
+              <table className="r22-card-table w-full min-w-[680px] border-collapse text-left text-sm">
                 <caption className="sr-only">Danh sách loại hình lao động và trạng thái</caption>
-                <thead className="border-b border-border text-xs uppercase text-muted">
+                <thead className="border-b border-border bg-surface-muted text-xs uppercase text-muted">
                   <tr>
                     <th scope="col" className="px-3 py-3">Mã loại hình</th>
                     <th scope="col" className="px-3 py-3">Tên hiển thị</th>
@@ -526,16 +526,16 @@ export function LaborTypeCatalogManager() {
                   {list.labor_types.map((laborType) => {
                     const locked = busy || pendingIntent !== null || conflictIntent !== null;
                     return (
-                      <tr key={laborType.labor_type_key} className="border-b border-border/70 last:border-0">
-                        <td className="px-3 py-3 font-mono text-xs">{laborType.labor_type_key}</td>
-                        <td className="px-3 py-3 font-medium">{laborType.display_name}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{laborType.sort_order}</td>
-                        <td className="px-3 py-3"><ActiveBadge active={laborType.active} /></td>
-                        <td className="px-3 py-3">
-                          <div className="flex justify-end gap-2 whitespace-nowrap">
-                            <button type="button" className={button} disabled={locked}
+                      <tr key={laborType.labor_type_key} className="border-b border-border/70 last:border-0 hover:bg-surface-hover">
+                        <td data-card-header="true" className="px-3 py-3 font-mono text-xs">{laborType.labor_type_key}</td>
+                        <td data-label="Tên hiển thị" className="px-3 py-3 font-medium">{laborType.display_name}</td>
+                        <td data-label="Thứ tự" className="px-3 py-3 text-right font-mono tabular-nums">{laborType.sort_order}</td>
+                        <td data-label="Trạng thái" className="px-3 py-3"><ActiveBadge active={laborType.active} /></td>
+                        <td data-card-actions="true" className="px-3 py-3">
+                          <div className="flex flex-wrap justify-end gap-2 whitespace-nowrap">
+                            <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
                               onClick={() => startEdit(laborType)}>Chỉnh sửa</button>
-                            <button type="button" className={button} disabled={locked}
+                            <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
                               onClick={() => startActive(laborType, !laborType.active)}>
                               {laborType.active ? "Ngừng" : "Kích hoạt"}
                             </button>

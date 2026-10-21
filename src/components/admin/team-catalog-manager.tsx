@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
+import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
@@ -65,11 +66,9 @@ function messageForOutcome(outcome: Exclude<TeamMutationOutcome, { kind: "applie
 
 function ActiveBadge({ active }: { active: boolean }) {
   return (
-    <span className={active
-      ? "inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-      : "inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground"}>
+    <StatusBadge tone={active ? "success" : "neutral"} dot>
       {active ? "Đang hoạt động" : "Ngừng hoạt động"}
-    </span>
+    </StatusBadge>
   );
 }
 
@@ -491,7 +490,7 @@ export function TeamCatalogManager() {
               onClick={startCreate}
               disabled={busy || conflictLocks.has("create") ||
                 (pendingIntent !== null && pendingIntent.lockId !== "create")}
-              className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              className="inline-flex min-h-11 whitespace-nowrap shrink-0 items-center rounded-md bg-primary px-4 text-sm font-medium text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             >
               Thêm nhóm
             </button>
@@ -663,10 +662,10 @@ export function TeamCatalogManager() {
                 value={searchInput}
                 maxLength={256}
                 onChange={(event) => setSearchInput(event.currentTarget.value)}
-                className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3 text-sm"
+                className="mt-1 block min-h-11 sm:min-h-10 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
               />
             </label>
-            <label className="flex min-h-11 items-center gap-2 text-sm">
+            <label className="flex min-h-11 sm:min-h-10 items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={includeInactive}
@@ -679,7 +678,7 @@ export function TeamCatalogManager() {
               />
               Hiển thị nhóm ngừng hoạt động
             </label>
-            <button type="submit" className="min-h-11 rounded-md border border-border px-4 text-sm font-medium">
+            <button type="submit" className="min-h-11 sm:min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-4 text-sm font-medium">
               Tìm kiếm
             </button>
           </form>
@@ -718,32 +717,32 @@ export function TeamCatalogManager() {
               />
             ) : (
               <>
-                <div role="region" aria-label="Bảng danh sách nhóm" tabIndex={0} className="overflow-x-auto rounded-md border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
-                  <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                <div role="region" aria-label="Bảng danh sách nhóm" tabIndex={0} className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+                  <table className="r22-card-table w-full min-w-[640px] border-collapse text-left text-sm">
                     <caption className="sr-only">Danh sách nhóm</caption>
-                    <thead className="bg-muted/20">
+                    <thead className="border-b border-border bg-surface-muted text-xs font-semibold uppercase tracking-wider text-muted">
                       <tr>
-                        <th scope="col" className="px-3 py-3 font-semibold">Nhóm</th>
-                        <th scope="col" className="px-3 py-3 font-semibold">Mã nhóm</th>
-                        <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
-                        <th scope="col" className="px-3 py-3 font-semibold">Thao tác</th>
+                        <th scope="col" className="px-3.5 py-3 font-semibold">Nhóm</th>
+                        <th scope="col" className="px-3.5 py-3 font-semibold">Mã nhóm</th>
+                        <th scope="col" className="px-3.5 py-3 font-semibold">Trạng thái</th>
+                        <th scope="col" className="px-3.5 py-3 font-semibold text-right">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {list.teams.map((team) => (
-                        <tr key={team.team_id} className="align-top">
-                          <th scope="row" className="px-3 py-3 font-medium">{team.display_name}</th>
-                          <td className="px-3 py-3">{team.code}</td>
-                          <td className="px-3 py-3"><ActiveBadge active={team.active} /></td>
-                          <td className="px-3 py-3">
-                            <div className="flex flex-wrap gap-2">
+                        <tr key={team.team_id} className="align-middle transition-colors hover:bg-surface-hover">
+                          <td data-card-header="true" className="px-3.5 py-2.5 font-medium">{team.display_name}</td>
+                          <td data-label="Mã nhóm" className="px-3.5 py-2.5 font-mono text-xs">{team.code}</td>
+                          <td data-label="Trạng thái" className="px-3.5 py-2.5"><ActiveBadge active={team.active} /></td>
+                          <td data-card-actions="true" className="px-3.5 py-2.5 text-right">
+                            <div className="inline-flex flex-wrap md:flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
                               <Dialog.Trigger asChild>
                                 <button
                                   type="button"
                                   onClick={() => startEdit(team)}
                                   disabled={busy || conflictLocks.has(team.team_id) || leaderLocks.has(team.team_id) ||
                                     (pendingIntent !== null && pendingIntent.lockId !== team.team_id)}
-                                  className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
+                                  className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                                 >
                                   Chỉnh sửa
                                 </button>
@@ -754,7 +753,7 @@ export function TeamCatalogManager() {
                                   onClick={() => startActiveChange(team, !team.active)}
                                   disabled={busy || conflictLocks.has(team.team_id) || leaderLocks.has(team.team_id) ||
                                     (pendingIntent !== null && pendingIntent.lockId !== team.team_id)}
-                                  className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
+                                  className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                                 >
                                   {team.active ? "Ngừng hoạt động" : "Kích hoạt"}
                                 </button>
@@ -764,7 +763,7 @@ export function TeamCatalogManager() {
                                 onClick={() => setLeaderTeam(team)}
                                 disabled={busy || conflictLocks.has(team.team_id) ||
                                   (pendingIntent !== null && pendingIntent.lockId === team.team_id)}
-                                className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
+                                className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                               >
                                 Trưởng nhóm
                               </button>
@@ -878,7 +877,7 @@ function DialogActions({
       <button
         type="submit"
         disabled={busy || disabled}
-        className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50"
       >
         {children}
       </button>

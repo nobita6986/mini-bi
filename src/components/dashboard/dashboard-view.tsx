@@ -31,13 +31,13 @@ function FullList({ buckets }: { buckets: Record<string, ReportingBucket> }) {
       <summary className="cursor-pointer text-sm font-medium text-primary">
         Xem danh sách đầy đủ ({sorted.length})
       </summary>
-      <div className="mt-2 max-h-72 overflow-y-auto">
-        <table className="w-full text-sm">
+      <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
+        <table className="r22-report-table w-full text-sm">
           <tbody className="divide-y divide-border">
             {sorted.map((b) => (
-              <tr key={b.key} className="text-foreground">
-                <td className="py-1.5">{b.display}</td>
-                <td className="py-1.5 text-right font-mono">{b.recruitedCount}</td>
+              <tr key={b.key} className="text-foreground hover:bg-surface-hover">
+                <td className="px-3 py-1.5">{b.display}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
               </tr>
             ))}
           </tbody>
@@ -169,11 +169,11 @@ export function DashboardView({
 function ReportError({ report }: { report: Extract<ReportingFetchResult, { ok: false }> }) {
   if (report.code === "INVALID_FILTER") {
     return (
-      <div role="alert" className="rounded-2xl border border-red-300 bg-red-50 px-6 py-10 dark:border-red-900 dark:bg-red-950">
-        <p className="mt-2 text-sm font-semibold text-red-800 dark:text-red-200">Bộ lọc không hợp lệ</p>
-        <p className="mt-2 text-sm text-red-700 dark:text-red-300">{report.message}</p>
+      <div role="alert" className="rounded-2xl border border-status-danger-border bg-status-danger-bg px-6 py-10 text-status-danger-text">
+        <p className="mt-2 text-sm font-semibold">Bộ lọc không hợp lệ</p>
+        <p className="mt-2 text-sm">{report.message}</p>
         <p className="mt-4">
-          <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
+          <Link href="/dashboard" className="inline-flex min-h-11 h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
             Xóa bộ lọc
           </Link>
         </p>
@@ -182,11 +182,11 @@ function ReportError({ report }: { report: Extract<ReportingFetchResult, { ok: f
   }
   if (report.code === "REPORTING_CUTOVER_BLOCKER") {
     return (
-      <div role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 px-6 py-10 dark:border-amber-900 dark:bg-amber-950">
-        <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">Cutover đang chặn báo cáo</p>
-        <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{report.message}</p>
+      <div role="alert" className="rounded-2xl border border-status-warning-border bg-status-warning-bg px-6 py-10 text-status-warning-text">
+        <p className="text-sm font-semibold">Cutover đang chặn báo cáo</p>
+        <p className="mt-2 text-sm">{report.message}</p>
         <p className="mt-4">
-          <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
+          <Link href="/dashboard" className="inline-flex min-h-11 h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90">
             Tải lại không kèm bộ lọc
           </Link>
         </p>
@@ -233,20 +233,20 @@ function DashboardBody({
                 <summary className="cursor-pointer text-sm font-medium text-primary">
                   Xem chi tiết {dataDays.length} ngày
                 </summary>
-                <div className="mt-2 max-h-72 overflow-y-auto">
-                  <table className="w-full min-w-[300px] text-left text-sm">
+                <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface">
+                  <table className="r22-report-table w-full min-w-[300px] text-left text-sm">
                     <caption className="sr-only">Bảng số người tuyển theo ngày (chỉ các ngày có tuyển dụng)</caption>
-                    <thead className="sticky top-0 bg-surface text-xs uppercase tracking-wide text-muted">
+                    <thead className="sticky top-0 bg-surface-muted text-xs uppercase tracking-wide text-muted">
                       <tr className="border-b border-border">
-                        <th className="py-1.5 font-medium">Ngày</th>
-                        <th className="py-1.5 text-right font-medium">Số người</th>
+                        <th className="px-3 py-1.5 font-medium">Ngày</th>
+                        <th className="px-3 py-1.5 text-right font-medium">Số người</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {dataDays.map((p) => (
-                        <tr key={p.date} className="text-foreground">
-                          <td className="py-1.5 font-mono text-xs">{p.date}</td>
-                          <td className="py-1.5 text-right font-mono">{p.count}</td>
+                        <tr key={p.date} className="text-foreground hover:bg-surface-hover">
+                          <td className="px-3 py-1.5 font-mono tabular-nums whitespace-nowrap text-xs">{p.date}</td>
+                          <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{p.count}</td>
                         </tr>
                       ))}
                     </tbody>

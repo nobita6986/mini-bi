@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
+import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
@@ -100,6 +101,14 @@ function positionLabel(value: PersonnelPosition | null): string {
   if (value === "TEAM_LEADER") return "Trưởng nhóm";
   if (value === "STAFF") return "Nhân viên";
   return "Chưa xác định";
+}
+
+function ActiveBadge({ active }: { active: boolean }) {
+  return (
+    <StatusBadge tone={active ? "success" : "neutral"} dot>
+      {active ? "Đang hoạt động" : "Ngừng hoạt động"}
+    </StatusBadge>
+  );
 }
 
 export function PersonnelCatalogManager() {
@@ -571,7 +580,7 @@ export function PersonnelCatalogManager() {
             <button
               type="button"
               onClick={startCreate}
-              className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              className="inline-flex min-h-11 whitespace-nowrap shrink-0 items-center rounded-md bg-primary px-4 text-sm font-medium text-on-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
             >
               Tạo nhân sự từ tài khoản
             </button>
@@ -651,7 +660,7 @@ export function PersonnelCatalogManager() {
                       <button
                         type="submit"
                         disabled={busy || isConflictLocked || pendingIntent !== null}
-                        className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                        className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50"
                       >
                         {busy ? "Đang lưu…" : dialog.active ? "Xác nhận kích hoạt" : "Xác nhận ngừng"}
                       </button>
@@ -776,7 +785,7 @@ export function PersonnelCatalogManager() {
                     <button
                       type="submit"
                       disabled={busy || isConflictLocked || pendingIntent !== null}
-                      className="min-h-11 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                      className="min-h-11 whitespace-nowrap shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-on-primary disabled:opacity-50"
                     >
                       {busy ? "Đang lưu…" : dialog?.kind === "create" ? "Tạo nhân sự" : "Lưu thay đổi"}
                     </button>
@@ -842,10 +851,10 @@ export function PersonnelCatalogManager() {
               value={searchInput}
               maxLength={256}
               onChange={(event) => setSearchInput(event.currentTarget.value)}
-              className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-3 text-sm"
+              className="mt-1 block min-h-11 sm:min-h-10 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
             />
           </label>
-          <label className="flex min-h-11 items-center gap-2 text-sm">
+          <label className="flex min-h-11 sm:min-h-10 items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={includeInactive}
@@ -858,7 +867,7 @@ export function PersonnelCatalogManager() {
             />
             Hiển thị hồ sơ ngừng hoạt động
           </label>
-          <button type="submit" className="min-h-11 rounded-md border border-border px-4 text-sm font-medium">
+          <button type="submit" className="min-h-11 sm:min-h-10 whitespace-nowrap shrink-0 rounded-md border border-border px-4 text-sm font-medium">
             Tìm kiếm
           </button>
         </form>
@@ -897,46 +906,42 @@ export function PersonnelCatalogManager() {
             />
           ) : (
             <>
-              <div role="region" aria-label="Bảng danh sách nhân sự" tabIndex={0} className="overflow-x-auto rounded-md border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
-                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+              <div role="region" aria-label="Bảng danh sách nhân sự" tabIndex={0} className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+                <table className="r22-card-table w-full min-w-[860px] border-collapse text-left text-sm">
                   <caption className="sr-only">Danh sách hồ sơ nhân sự</caption>
-                  <thead className="bg-muted/20">
+                  <thead className="border-b border-border bg-surface-muted text-xs font-semibold uppercase tracking-wider text-muted">
                     <tr>
-                      <th scope="col" className="px-3 py-3 font-semibold">Nhân sự</th>
-                      <th scope="col" className="px-3 py-3 font-semibold">Nhóm</th>
-                      <th scope="col" className="px-3 py-3 font-semibold">Vị trí</th>
-                      <th scope="col" className="px-3 py-3 font-semibold">Trạng thái</th>
-                      <th scope="col" className="px-3 py-3 font-semibold">Hiệu lực HRP</th>
-                      <th scope="col" className="px-3 py-3 font-semibold">Thao tác</th>
+                      <th scope="col" className="px-3.5 py-3 font-semibold">Nhân sự</th>
+                      <th scope="col" className="px-3.5 py-3 font-semibold">Nhóm</th>
+                      <th scope="col" className="px-3.5 py-3 font-semibold">Vị trí</th>
+                      <th scope="col" className="px-3.5 py-3 font-semibold">Trạng thái</th>
+                      <th scope="col" className="px-3.5 py-3 font-semibold">Hiệu lực HRP</th>
+                      <th scope="col" className="px-3.5 py-3 font-semibold text-right">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {list.personnel.map((personnel) => (
-                      <tr key={personnel.recruiter_id} className="align-top">
-                        <th scope="row" className="px-3 py-3 font-medium">
+                      <tr key={personnel.recruiter_id} className="align-middle transition-colors hover:bg-surface-hover">
+                        <td data-card-header="true" className="px-3.5 py-2.5 font-medium">
                           <span className="block">{personnel.display_name}</span>
-                          <span className="mt-1 block text-xs text-muted">
+                          <span className="mt-1 block text-xs text-muted font-mono">
                             {personnel.personnel_code ?? "Chưa có mã nhân sự"}
                           </span>
-                        </th>
-                        <td className="px-3 py-3">{personnel.team_names.join(", ") || "Chưa xếp nhóm"}</td>
-                        <td className="px-3 py-3">{positionLabel(personnel.personnel_position)}</td>
-                        <td className="px-3 py-3">
-                          <span className={personnel.active
-                            ? "inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-                            : "inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground"}>
-                            {personnel.active ? "Đang hoạt động" : "Ngừng hoạt động"}
-                          </span>
                         </td>
-                        <td className="px-3 py-3">{formatHrpDate(personnel.hrp_valid_from)}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap gap-2">
+                        <td data-label="Nhóm công tác" className="px-3.5 py-2.5">{personnel.team_names.join(", ") || "Chưa xếp nhóm"}</td>
+                        <td data-label="Vị trí" className="px-3.5 py-2.5">{positionLabel(personnel.personnel_position)}</td>
+                        <td data-label="Trạng thái" className="px-3.5 py-2.5">
+                          <ActiveBadge active={personnel.active} />
+                        </td>
+                        <td data-label="Hiệu lực HRP" className="px-3.5 py-2.5 font-mono tabular-nums whitespace-nowrap">{formatHrpDate(personnel.hrp_valid_from)}</td>
+                        <td data-card-actions="true" className="px-3.5 py-2.5 text-right">
+                          <div className="inline-flex flex-wrap md:flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
                             <Dialog.Trigger asChild>
                               <button
                                 type="button"
                                 onClick={() => startEdit(personnel)}
                                 disabled={conflictLocks.has(personnel.recruiter_id)}
-                                className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
+                                className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                               >
                                 Chỉnh sửa
                               </button>
@@ -946,7 +951,7 @@ export function PersonnelCatalogManager() {
                                 type="button"
                                 onClick={() => startActiveChange(personnel, !personnel.active)}
                                 disabled={conflictLocks.has(personnel.recruiter_id)}
-                                className="min-h-10 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
+                                className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium disabled:opacity-50"
                               >
                                 {personnel.active ? "Ngừng hoạt động" : "Kích hoạt"}
                               </button>
@@ -957,7 +962,7 @@ export function PersonnelCatalogManager() {
                                 membershipTrigger.current = event.currentTarget;
                                 setMembershipPersonnel(personnel);
                               }}
-                              className="min-h-10 rounded-md border border-border px-3 text-xs font-medium"
+                              className="min-h-11 md:min-h-8 whitespace-nowrap shrink-0 rounded-md border border-border px-3 text-xs font-medium"
                             >
                               Quản lý nhóm
                             </button>

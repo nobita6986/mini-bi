@@ -231,7 +231,9 @@ export function DirectEntrySubmissionList({
               className={compact ? styles.compactCard : styles.submissionCard}
             >
               <div className={styles.submissionCardTop}>
-                <strong>{SUBMISSION_STATE_LABELS[submission.state]}</strong>
+                <strong className={styles.submissionStateBadge} data-state={submission.state}>
+                  {SUBMISSION_STATE_LABELS[submission.state]}
+                </strong>
                 <span className={styles.submissionRef} title="Mã kỹ thuật rút gọn">
                   Mã {shortRef(submission.submission_id)}
                 </span>

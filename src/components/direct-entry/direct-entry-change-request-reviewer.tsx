@@ -456,7 +456,7 @@ export function DirectEntryChangeRequestReviewer({
                         <p className={styles.submissionHint}>
                           {REVIEW_TARGET_KIND_LABELS[item.target_kind] ?? "Yêu cầu thay đổi"}
                         </p>
-                        <dl>{historyRows(item, catalogFor(hcmTodayDate())).map(([label, value], index) => (
+                        <dl className={styles.profileFieldList}>{historyRows(item, catalogFor(hcmTodayDate())).map(([label, value], index) => (
                           <div key={label + index}><dt>{label}</dt><dd>{value}</dd></div>
                         ))}</dl>
                       </div>
@@ -474,7 +474,7 @@ export function DirectEntryChangeRequestReviewer({
                       <p className={styles.submissionHint}>
                         {REVIEW_TARGET_KIND_LABELS[item.target_kind] ?? "Yêu cầu thay đổi"}
                       </p>
-                      <dl>{historyRows(item, catalogFor(hcmTodayDate())).map(([label, value], index) => (
+                      <dl className={styles.profileFieldList}>{historyRows(item, catalogFor(hcmTodayDate())).map(([label, value], index) => (
                         <div key={label + index}><dt>{label}</dt><dd>{value}</dd></div>
                       ))}</dl>
                     </div>
@@ -527,8 +527,8 @@ export function DirectEntryChangeRequestReviewer({
                             {entry.rows.map((row) => (
                               <tr key={row.field}>
                                 <th scope="row">{row.label}</th>
-                                <td>{row.before}</td>
-                                <td>{row.after}</td>
+                                <td data-label="Hiện tại" className={styles.reviewerCellBefore}>{row.before}</td>
+                                <td data-label="Đề xuất" className={styles.reviewerCellAfter}>{row.after}</td>
                               </tr>
                             ))}
                           </tbody>

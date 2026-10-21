@@ -58,8 +58,8 @@ const primaryButton = "inline-flex min-h-10 items-center justify-center rounded-
 function ActiveBadge({ active }: { active: boolean }) {
   return (
     <span className={active
-      ? "inline-flex whitespace-nowrap rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-      : "inline-flex whitespace-nowrap rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted"}>
+      ? "inline-flex whitespace-nowrap rounded-full border border-status-success-border bg-status-success-bg px-2.5 py-1 text-xs font-medium text-status-success-text"
+      : "inline-flex whitespace-nowrap rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-muted"}>
       {active ? "Đang hoạt động" : "Ngừng hoạt động"}
     </span>
   );
@@ -460,7 +460,7 @@ export function VendorCatalogManager() {
           <label className="flex flex-col gap-1 text-sm font-medium">
             Tìm kiếm
             <input value={searchInput} maxLength={256} onChange={(event) => setSearchInput(event.target.value)}
-              className="min-h-10 rounded-md border border-border bg-surface px-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
+              className="min-h-11 sm:min-h-10 rounded-md border border-border bg-surface px-3 text-base sm:text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
           </label>
           <label className="flex items-center gap-2 self-end pb-2 text-sm">
             <input type="checkbox" checked={includeInactive} onChange={(event) => {
@@ -470,7 +470,7 @@ export function VendorCatalogManager() {
             }} />
             Bao gồm nhà cung cấp ngừng hoạt động
           </label>
-          <button type="submit" className={`${button} self-end`}>Tìm kiếm</button>
+          <button type="submit" className={`${button} min-h-11 sm:min-h-10 self-end`}>Tìm kiếm</button>
         </form>
 
         {listState.kind === "loading" ? <p role="status" className="py-8 text-center text-sm text-muted">Đang tải danh sách nhà cung cấp…</p> : null}
@@ -491,10 +491,10 @@ export function VendorCatalogManager() {
           <EmptyState title="Chưa có nhà cung cấp phù hợp" description="Thay đổi bộ lọc hoặc thêm nhà cung cấp mới." />
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+            <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-2xs">
+              <table className="r22-card-table w-full min-w-[680px] border-collapse text-left text-sm">
                 <caption className="sr-only">Danh sách nhà cung cấp và trạng thái</caption>
-                <thead className="border-b border-border text-xs uppercase text-muted">
+                <thead className="border-b border-border bg-surface-muted text-xs uppercase text-muted">
                   <tr>
                     <th scope="col" className="px-3 py-3">Mã nhà cung cấp</th>
                     <th scope="col" className="px-3 py-3">Tên nhà cung cấp</th>
@@ -506,15 +506,15 @@ export function VendorCatalogManager() {
                   {list.vendors.map((vendor) => {
                     const locked = busy || pendingIntent !== null || conflictIntent !== null;
                     return (
-                      <tr key={vendor.vendor_id} className="border-b border-border/70 last:border-0">
-                        <td className="px-3 py-3 font-mono text-xs">{vendor.vendor_id}</td>
-                        <td className="px-3 py-3 font-medium">{vendor.display_name}</td>
-                        <td className="px-3 py-3"><ActiveBadge active={vendor.active} /></td>
-                        <td className="px-3 py-3">
-                          <div className="flex justify-end gap-2 whitespace-nowrap">
-                            <button type="button" className={button} disabled={locked}
+                      <tr key={vendor.vendor_id} className="border-b border-border/70 last:border-0 hover:bg-surface-hover">
+                        <td data-card-header="true" className="px-3 py-3 font-mono text-xs">{vendor.vendor_id}</td>
+                        <td data-label="Tên nhà cung cấp" className="px-3 py-3 font-medium">{vendor.display_name}</td>
+                        <td data-label="Trạng thái" className="px-3 py-3"><ActiveBadge active={vendor.active} /></td>
+                        <td data-card-actions="true" className="px-3 py-3">
+                          <div className="flex flex-wrap justify-end gap-2 whitespace-nowrap">
+                            <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
                               onClick={() => startEdit(vendor)}>Chỉnh sửa</button>
-                            <button type="button" className={button} disabled={locked}
+                            <button type="button" className={`${button} min-h-11 md:min-h-8 whitespace-nowrap shrink-0`} disabled={locked}
                               onClick={() => startActive(vendor, !vendor.active)}>
                               {vendor.active ? "Ngừng" : "Kích hoạt"}
                             </button>
