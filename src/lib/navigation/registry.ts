@@ -173,7 +173,7 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     description:
       "Tạo, giao, nộp và tra cứu báo cáo công việc theo capability và resource scope do server xác nhận.",
     icon: NotebookPen,
-    status: "planned",
+    status: "current",
     capability: "work_reports",
     visibility: { desktop: true, mobile: true },
   },

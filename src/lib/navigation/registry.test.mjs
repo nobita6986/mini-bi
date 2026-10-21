@@ -15,9 +15,9 @@ const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } 
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 6, "phải có đúng 6 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 7, "phải có đúng 7 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "worker-operations"],
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "work-reports", "worker-operations"],
     `got ids: ${ids.join(",")}`);
 });
 
@@ -47,10 +47,11 @@ test("Pipeline Check đã bị loại khỏi CURRENT_NAV_ENTRIES và toàn bộ 
   );
 });
 
-test("Work Reports được đăng ký planned và chưa xuất hiện trước khi F1 hoàn chỉnh", () => {
-  const planned = NAV_ENTRIES.filter((e) => e.status === "planned");
-  assert.deepEqual(planned.map((entry) => entry.id), ["work-reports"]);
-  assert.equal(CURRENT_NAV_ENTRIES.some((entry) => entry.id === "work-reports"), false);
+test("Work Reports hiện trong menu hiện hành sau khi F1 được tích hợp", () => {
+  const entry = CURRENT_NAV_ENTRIES.find((item) => item.id === "work-reports");
+  assert.ok(entry);
+  assert.equal(entry?.status, "current");
+  assert.equal(entry?.path, "/work-reports");
 });
 
 test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -58,7 +59,7 @@ test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có P
   assert.ok(!desktop.some((e) => e.id === "pipeline-check"));
   assert.ok(desktop.some((e) => e.id === "dashboard"));
   assert.ok(desktop.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "admin"]);
+  assert.deepEqual(entriesForViewport("desktop", false).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
 });
 
 test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -66,15 +67,15 @@ test("Mobile viewport theo feature flag, luôn giữ Dashboard và không có Pi
   assert.ok(!mobile.some((e) => e.id === "pipeline-check"));
   assert.ok(mobile.some((e) => e.id === "dashboard"));
   assert.ok(mobile.some((e) => e.id === "direct-entry"));
-  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "admin"]);
+  assert.deepEqual(entriesForViewport("mobile", false).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
 });
 
 test("feature flag Direct Entry chỉ mở với giá trị chính xác true", () => {
   assert.equal(isDirectEntryUiEnabled("true"), true);
   for (const flag of [undefined, "", "false", "TRUE", "1", " true "]) {
     assert.equal(isDirectEntryUiEnabled(flag), false, String(flag));
-    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "admin"]);
-    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "admin"]);
+    assert.deepEqual(entriesForViewport("desktop", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
+    assert.deepEqual(entriesForViewport("mobile", isDirectEntryUiEnabled(flag)).map((entry) => entry.id), ["dashboard", "work-reports", "admin"]);
   }
 });
 
@@ -171,9 +172,9 @@ test("findEntryByPath('/direct-entry') trả về direct-entry entry", () => {
   assert.equal(entry?.id, "direct-entry");
 });
 
-test("findEntryByPath('/work-reports') chưa trả planned entry trước khi F1 hoàn chỉnh", () => {
+test("findEntryByPath('/work-reports') trả về Work Reports entry", () => {
   const entry = findEntryByPath("/work-reports");
-  assert.equal(entry, undefined);
+  assert.equal(entry?.id, "work-reports");
 });
 
 test("findEntryByPath('/pipeline-check') trả về undefined (đã retired khỏi navbar)", () => {

@@ -15,7 +15,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ClipboardList, FileDiff, LayoutDashboard, ShieldCheck, Users } from "lucide-react";
+import { Building2, ClipboardList, FileDiff, LayoutDashboard, NotebookPen, ShieldCheck, Users } from "lucide-react";
 
 import { findEntryByPath } from "@/lib/navigation/registry";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ const NAV_ICONS: Record<string, typeof LayoutDashboard> = {
   "project-operations": Building2,
   "worker-operations": Users,
   "change-requests": FileDiff,
+  "work-reports": NotebookPen,
   admin: ShieldCheck,
 } as const;
 
