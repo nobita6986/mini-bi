@@ -47,11 +47,10 @@ test("Pipeline Check đã bị loại khỏi CURRENT_NAV_ENTRIES và toàn bộ 
   );
 });
 
-test("entry 'planned' KHÔNG còn tồn tại trong registry sau App-NAV-02A", () => {
-  // Sau App-NAV-02A: cả Dashboard và Direct Entry đều 'current'; planned reserve đã bỏ.
-  // Khi P2/P3 cần entry mới sẽ thêm vào NAV_ENTRIES với status thực tế.
+test("Work Reports được đăng ký planned và chưa xuất hiện trước khi F1 hoàn chỉnh", () => {
   const planned = NAV_ENTRIES.filter((e) => e.status === "planned");
-  assert.equal(planned.length, 0, "registry không còn entry 'planned'");
+  assert.deepEqual(planned.map((entry) => entry.id), ["work-reports"]);
+  assert.equal(CURRENT_NAV_ENTRIES.some((entry) => entry.id === "work-reports"), false);
 });
 
 test("Desktop viewport theo feature flag, luôn giữ Dashboard và không có Pipeline Check", () => {
@@ -119,6 +118,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "worker_operations",
         "change_requests",
         "admin_area",
+        "work_reports",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`
     );
@@ -169,6 +169,11 @@ test("findEntryByPath('/direct-entry') trả về direct-entry entry", () => {
   const entry = findEntryByPath("/direct-entry");
   assert.ok(entry);
   assert.equal(entry?.id, "direct-entry");
+});
+
+test("findEntryByPath('/work-reports') chưa trả planned entry trước khi F1 hoàn chỉnh", () => {
+  const entry = findEntryByPath("/work-reports");
+  assert.equal(entry, undefined);
 });
 
 test("findEntryByPath('/pipeline-check') trả về undefined (đã retired khỏi navbar)", () => {

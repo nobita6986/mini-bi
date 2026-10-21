@@ -11,6 +11,10 @@ import {
   adminSecurityNavPredicate,
   changeRequestsNavPredicate,
   projectAdminNavPredicate,
+  workReportAnalyticsPredicate,
+  workReportAssignmentPredicate,
+  workReportTemplateManagePredicate,
+  workReportsNavPredicate,
   workerOperationsNavPredicate,
 } from "../navigation/registry-capability.ts";
 
@@ -158,6 +162,37 @@ export function decideWorkerOperationsPageAccess(input: {
     actor: input.actor,
     allowed: workerOperationsNavPredicate,
   });
+}
+
+export function decideWorkReportsPageAccess(input: {
+  actor: ActorResolution | null;
+  hasWorkReportObligations?: boolean;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({
+    actor: input.actor,
+    allowed: (actor) => workReportsNavPredicate({
+      ...actor,
+      hasWorkReportObligations: input.hasWorkReportObligations === true,
+    }),
+  });
+}
+
+export function decideWorkReportTemplatesPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({ actor: input.actor, allowed: workReportTemplateManagePredicate });
+}
+
+export function decideWorkReportAssignmentsPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({ actor: input.actor, allowed: workReportAssignmentPredicate });
+}
+
+export function decideWorkReportAnalyticsPageAccess(input: {
+  actor: ActorResolution | null;
+}): DirectEntryPageDecision {
+  return decideCapabilityPageAccess({ actor: input.actor, allowed: workReportAnalyticsPredicate });
 }
 
 export const HISTORICAL_CHANGE_REQUEST_QUEUES = [

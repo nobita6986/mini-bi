@@ -12,8 +12,27 @@ export const R1_2_MIGRATION_NAME =
   "20261021100000_r1_2_worker_management_uat_fixes.sql";
 export const R1_2_SERVICE_RPC_SIGNATURE =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
+export const F1_WORK_REPORTS_MIGRATION_NAME =
+  "20261021160000_f1_work_reports_foundation.sql";
+export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
+  "public.work_report_list_templates(uuid, uuid)",
+  "public.work_report_get_template(uuid, uuid, uuid)",
+  "public.work_report_create_template(uuid, uuid, text, text, text, text, jsonb, jsonb, text)",
+  "public.work_report_update_template_draft(uuid, uuid, uuid, uuid, integer, text, text, text, jsonb, jsonb, text)",
+  "public.work_report_clone_template_draft(uuid, uuid, uuid, integer, text)",
+  "public.work_report_publish_template(uuid, uuid, uuid, uuid, integer, text)",
+  "public.work_report_archive_template(uuid, uuid, uuid, integer, text)",
+  "public.work_report_create_assignment(uuid, uuid, uuid, text, uuid, uuid, uuid[], text, boolean, integer, time without time zone, boolean, date, date, text)",
+  "public.work_report_set_assignment_state(uuid, uuid, uuid, integer, text, text)",
+  "public.work_report_ensure_obligations_for_window(uuid, uuid, date)",
+  "public.work_report_change_obligation_status(uuid, uuid, uuid, integer, text, text, timestamp with time zone, text)",
+  "public.work_report_list_my_obligations(uuid, uuid, text)",
+  "public.work_report_get_submission(uuid, uuid, uuid)",
+  "public.work_report_save_draft(uuid, uuid, uuid, jsonb, integer, text)",
+  "public.work_report_submit(uuid, uuid, uuid, jsonb, integer, text)",
+]);
 export const S0_T1_C_TARGET_ROUTINE_PATTERN =
-  "^(direct_entry_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
+  "^(direct_entry_|work_report_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 export function migrationChecksum(text) {
   // Git may materialize SQL files as CRLF on Windows even though the same
@@ -205,7 +224,7 @@ export function extractS0T1CAllowlistSignatures(migrationSql) {
 export async function verifyS0T1CHistoricalCompatibility(
   client,
   migrationSql,
-  { r1_2Applied = false } = {},
+  { r1_2Applied = false, f1WorkReportsApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -214,9 +233,11 @@ export async function verifyS0T1CHistoricalCompatibility(
       reason: "S0-T1-C source allowlist could not be parsed",
     };
   }
-  const expectedAllowlist = r1_2Applied
-    ? [...baseAllowlist, R1_2_SERVICE_RPC_SIGNATURE]
-    : baseAllowlist;
+  const expectedAllowlist = [
+    ...baseAllowlist,
+    ...(r1_2Applied ? [R1_2_SERVICE_RPC_SIGNATURE] : []),
+    ...(f1WorkReportsApplied ? F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES : []),
+  ];
 
   const { rows } = await client.query(
     `select
@@ -401,7 +422,10 @@ export async function verifyAppliedMigrationChecksum(
     const postconditions = await verifyS0T1CHistoricalCompatibility(
       client,
       migration.sql,
-      { r1_2Applied: appliedMap.has(R1_2_MIGRATION_NAME) },
+      {
+        r1_2Applied: appliedMap.has(R1_2_MIGRATION_NAME),
+        f1WorkReportsApplied: appliedMap.has(F1_WORK_REPORTS_MIGRATION_NAME),
+      },
     );
     if (postconditions.ok) {
       return { status: "compatible_historical" };

@@ -2,7 +2,7 @@
  * P3-W06A — Capability projection cho navigation.
  *
  * Nguyên tắc (P2-P3 R00 §Reuse matrix + P3-C01 §2.1/§2.1a):
- * - Tái sử dụng `CAPABILITIES` từ src/lib/auth/direct-entry-v2.ts (19 token).
+ * - Tái sử dụng `CAPABILITIES` từ src/lib/auth/direct-entry-v2.ts.
  * - Tái sử dụng `DirectEntryActor` shape từ cùng module (đã được `actorProjection`
  *   trong auth-session-core.ts sanitize trước khi lộ ra client).
  * - Không tạo role engine mới: mỗi entry khai báo `capability` metadata
@@ -27,6 +27,7 @@ export type NavActorProjection = {
   capabilities: readonly Capability[];
   scopes: readonly { kind: "own" | "team" | "all" }[];
   hasHistoricalChangeRequests?: boolean;
+  hasWorkReportObligations?: boolean;
 };
 
 /** Predicate phụ thuộc entry — registry.ts có metadata `capability`. */
@@ -145,6 +146,30 @@ export const changeRequestsNavPredicate: NavCapabilityPredicate = (actor) =>
   changeRequestsProposerPredicate(actor) ||
   actor.hasHistoricalChangeRequests === true;
 
+export const workReportTemplateManagePredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("report_form_manage") &&
+  actor.scopes.some((scope) => scope.kind === "all");
+
+export const workReportAssignmentPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("report_assign") &&
+  actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all");
+
+export const workReportViewPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("report_view") &&
+  actor.scopes.some((scope) => scope.kind === "own" || scope.kind === "team" || scope.kind === "all");
+
+export const workReportAnalyticsPredicate: NavCapabilityPredicate = (actor) =>
+  actor.capabilities.includes("report_analytics_view") &&
+  actor.scopes.some((scope) => scope.kind === "team" || scope.kind === "all");
+
+/** Staff access is projected by the server from an active obligation, never inferred from role/title. */
+export const workReportsNavPredicate: NavCapabilityPredicate = (actor) =>
+  actor.hasWorkReportObligations === true ||
+  workReportTemplateManagePredicate(actor) ||
+  workReportAssignmentPredicate(actor) ||
+  workReportViewPredicate(actor) ||
+  workReportAnalyticsPredicate(actor);
+
 /** Bảng ánh xạ `entry.capability` metadata → predicate tương ứng. */
 export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPredicate>> = {
   any: () => true,
@@ -158,6 +183,7 @@ export const NAV_CAPABILITY_PREDICATES: Readonly<Record<string, NavCapabilityPre
   project_admin: projectAdminNavPredicate,
   worker_operations: workerOperationsNavPredicate,
   change_requests: changeRequestsNavPredicate,
+  work_reports: workReportsNavPredicate,
 };
 
 /** Resolver trung tâm — đảm bảo mỗi entry luôn có predicate. */
