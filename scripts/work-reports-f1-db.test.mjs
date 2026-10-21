@@ -292,6 +292,150 @@ test("Team Leader lifecycle auto-grants and revokes only the 3 F1 capabilities w
   );
 });
 
+test("closed overlapping independent Work Reports grants are never resurrected or overwritten across designate, revoke, disable and re-designate", async () => {
+  // STAFF_B1 is a valid candidate on TEAM_B (version = 1).
+  // 1) Give STAFF_B1 a CLOSED independent report_assign grant [2026-01-10, 2026-06-01) (is_current = false)
+  //    that overlaps the upcoming Team Leader assignment effective 2026-02-01, AND an ACTIVE independent
+  //    report_view grant [2026-01-10, null) (is_current = true).
+  const { rows: closedIndRows } = await db.query(
+    `insert into public.direct_entry_capability_grants
+       (app_user_id, capability, valid_from, valid_to, is_current)
+     values ($1::uuid, 'report_assign', '2026-01-10'::date, '2026-06-01'::date, false)
+     returning grant_id, valid_from::text, valid_to::text, is_current`,
+    [STAFF_B1.app],
+  );
+  const closedIndependentGrantId = closedIndRows[0].grant_id;
+
+  const { rows: activeIndRows } = await db.query(
+    `insert into public.direct_entry_capability_grants
+       (app_user_id, capability, valid_from, valid_to, is_current)
+     values ($1::uuid, 'report_view', '2026-01-10'::date, null, true)
+     returning grant_id`,
+    [STAFF_B1.app],
+  );
+  const activeIndependentGrantId = activeIndRows[0].grant_id;
+
+  // 2) Designate STAFF_B1 on TEAM_B effective 2026-02-01 (overlaps [2026-01-10, 2026-06-01))
+  const { rows: desigB1 } = await db.query(
+    `select public.direct_entry_designate_team_leader(
+       $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-02-01'::date, 1, 'Designate B1 with closed overlapping grant', $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, TEAM_B, STAFF_B1.app, KEY("leader_b1_desig_1")],
+  );
+  const assignmentId1 = desigB1[0].result.assignment_id;
+
+  // Verify the closed independent report_assign grant was NOT resurrected, NOT modified, and NOT linked to leader grants
+  const { rows: checkClosedAfterDesig } = await db.query(
+    `select g.grant_id, g.valid_from::text as valid_from, g.valid_to::text as valid_to, g.is_current,
+            exists (
+              select 1 from public.work_report_team_leader_capability_grants x
+               where x.capability_grant_id = g.grant_id
+            ) as linked_to_leader
+       from public.direct_entry_capability_grants g
+      where g.grant_id = $1::uuid`,
+    [closedIndependentGrantId],
+  );
+  assert.deepEqual(checkClosedAfterDesig[0], {
+    grant_id: closedIndependentGrantId,
+    valid_from: "2026-01-10",
+    valid_to: "2026-06-01",
+    is_current: false,
+    linked_to_leader: false,
+  });
+
+  // Verify a separate current leader-owned report_assign grant was created starting at 2026-06-01
+  const { rows: leaderOwnedAfterDesig } = await db.query(
+    `select g.grant_id, g.valid_from::text as valid_from, g.valid_to::text as valid_to, g.is_current
+       from public.work_report_team_leader_capability_grants x
+       join public.direct_entry_capability_grants g on g.grant_id = x.capability_grant_id
+      where x.leader_assignment_id = $1::uuid and x.capability = 'report_assign'`,
+    [assignmentId1],
+  );
+  assert.equal(leaderOwnedAfterDesig.length, 1);
+  assert.notEqual(leaderOwnedAfterDesig[0].grant_id, closedIndependentGrantId);
+  assert.equal(leaderOwnedAfterDesig[0].valid_from, "2026-06-01");
+  assert.equal(leaderOwnedAfterDesig[0].valid_to, null);
+  assert.equal(leaderOwnedAfterDesig[0].is_current, true);
+
+  // 3) Revoke STAFF_B1 on TEAM_B on 2026-02-15 (team version = 2)
+  await db.query(
+    `select public.direct_entry_revoke_team_leader(
+       $1::uuid, $2::uuid, $3::uuid, '2026-02-15'::date, 2, 'Revoke B1 before closed grant valid_to', $4
+     )`,
+    [ADMIN.auth, ADMIN.app, TEAM_B, KEY("leader_b1_revoke_1")],
+  );
+
+  // Closed independent report_assign stays [2026-01-10, 2026-06-01) with is_current = false;
+  // active independent report_view stays is_current = true; leader-owned grants are closed.
+  const { rows: b1CurrentAfterRevoke } = await db.query(
+    `select grant_id, capability from public.direct_entry_capability_grants
+      where app_user_id = $1::uuid and is_current
+      order by capability`,
+    [STAFF_B1.app],
+  );
+  assert.deepEqual(b1CurrentAfterRevoke, [
+    { grant_id: activeIndependentGrantId, capability: "report_view" },
+  ]);
+
+  const { rows: checkClosedAfterRevoke } = await db.query(
+    `select valid_from::text as valid_from, valid_to::text as valid_to, is_current
+       from public.direct_entry_capability_grants
+      where grant_id = $1::uuid`,
+    [closedIndependentGrantId],
+  );
+  assert.deepEqual(checkClosedAfterRevoke[0], {
+    valid_from: "2026-01-10",
+    valid_to: "2026-06-01",
+    is_current: false,
+  });
+
+  // 4) Re-designate STAFF_B1 on TEAM_B effective 2026-03-01 (team version = 3), then disable via assignment is_current=false,
+  //    then revoke & re-designate again -> closed independent grant remains intact and active independent grant survives.
+  const { rows: desigB2 } = await db.query(
+    `select public.direct_entry_designate_team_leader(
+       $1::uuid, $2::uuid, $3::uuid, $4::uuid, '2026-03-01'::date, 3, 'Re-designate B1', $5
+     ) as result`,
+    [ADMIN.auth, ADMIN.app, TEAM_B, STAFF_B1.app, KEY("leader_b1_desig_2")],
+  );
+  const assignmentId2 = desigB2[0].result.assignment_id;
+
+  // Simulate disable clearing assignment is_current (as direct_entry_clear_authority_on_disable does)
+  await db.query(
+    `update public.direct_entry_team_leader_assignments set is_current = false where assignment_id = $1::uuid`,
+    [assignmentId2],
+  );
+
+  const { rows: b1CurrentAfterDisable } = await db.query(
+    `select grant_id, capability from public.direct_entry_capability_grants
+      where app_user_id = $1::uuid and capability like 'report_%' and is_current
+      order by capability`,
+    [STAFF_B1.app],
+  );
+  assert.deepEqual(
+    b1CurrentAfterDisable,
+    [{ grant_id: activeIndependentGrantId, capability: "report_view" }],
+    "disabling leader assignment closes leader-owned Work Reports grants without closing active independent report_view",
+  );
+
+  // Restore assignmentId2 to current so we can cleanly revoke TEAM_B via canonical RPC
+  await db.query(
+    `update public.direct_entry_team_leader_assignments set is_current = true where assignment_id = $1::uuid`,
+    [assignmentId2],
+  );
+  await db.query(
+    `select public.direct_entry_revoke_team_leader(
+       $1::uuid, $2::uuid, $3::uuid, '2026-03-10'::date, 4, 'Clean revoke B1 after disable test', $4
+     )`,
+    [ADMIN.auth, ADMIN.app, TEAM_B, KEY("leader_b1_revoke_2")],
+  );
+
+  // Clean up STAFF_B1 independent grants so subsequent tests see STAFF_B1 with no special grants
+  await db.query(
+    `delete from public.direct_entry_capability_grants where grant_id = any($1::uuid[])`,
+    [[closedIndependentGrantId, activeIndependentGrantId]],
+  );
+});
+
 test("actor binding rejects auth_subject mismatch, disabled user, and non-form-manager", async () => {
   const metricContract = buildWorkReportMetricContract(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
 
@@ -743,4 +887,168 @@ test("Vietnam timezone boundary (00:00 Asia/Ho_Chi_Minh) and Sunday deadline rul
   );
   assert.equal(new Date(rows[0].shifted_sunday).toISOString(), "2026-10-25T17:00:00.000Z");
   assert.equal(new Date(rows[0].exact_midnight_vn).toISOString(), "2026-10-20T17:00:00.000Z");
+});
+
+test("SQL validators enforce parity with TypeScript for required empty text, pattern_preset, decimal precision and field_type aggregations", async () => {
+  const technicalSchema = {
+    version: "work-report-schema/1.0",
+    sections: [
+      {
+        section_key: "parity_sec",
+        label: "Kiểm tra đồng bộ SQL/TS",
+        description: null,
+        sort_order: 10,
+        fields: [
+          {
+            field_key: "required_note",
+            section_key: "parity_sec",
+            sort_order: 10,
+            label: "Ghi chú bắt buộc",
+            description: null,
+            field_type: "text",
+            required: true,
+            default_value: null,
+            validation: { min_length: 0, max_length: 100, pattern_preset: "none" },
+            options: null,
+            is_metric: false,
+            metric_spec: null,
+            is_dimension: false,
+          },
+          {
+            field_key: "emp_code",
+            section_key: "parity_sec",
+            sort_order: 20,
+            label: "Mã nhân sự",
+            description: null,
+            field_type: "text",
+            required: true,
+            default_value: null,
+            validation: { min_length: 1, max_length: 20, pattern_preset: "code" },
+            options: null,
+            is_metric: false,
+            metric_spec: null,
+            is_dimension: false,
+          },
+          {
+            field_key: "conversion_rate",
+            section_key: "parity_sec",
+            sort_order: 30,
+            label: "Tỷ lệ chuyển đổi",
+            description: null,
+            field_type: "decimal",
+            required: true,
+            default_value: 0,
+            validation: { min_value: 0, max_value: 100, decimal_places: 2, allow_zero: true },
+            options: null,
+            is_metric: true,
+            metric_spec: {
+              metric_key: "conversion_rate",
+              unit: "%",
+              aggregations: ["AVG", "MAX", "COUNT_VALID"],
+              null_policy: "EXCLUDE_FROM_AVG",
+              zero_policy: "INCLUDE_AS_ZERO",
+              compatible_group: "parity_conversion_rate_v1",
+            },
+            is_dimension: false,
+          },
+          {
+            field_key: "is_verified",
+            section_key: "parity_sec",
+            sort_order: 40,
+            label: "Đã xác minh",
+            description: null,
+            field_type: "boolean",
+            required: true,
+            default_value: false,
+            validation: {},
+            options: null,
+            is_metric: true,
+            metric_spec: {
+              metric_key: "is_verified",
+              unit: "báo cáo",
+              aggregations: ["TRUE_COUNT", "TRUE_RATE"],
+              null_policy: "EXCLUDE_FROM_AVG",
+              zero_policy: "INCLUDE_AS_ZERO",
+              compatible_group: "parity_is_verified_v1",
+            },
+            is_dimension: true,
+          },
+        ],
+      },
+    ],
+  };
+
+  const validContract = buildWorkReportMetricContract(technicalSchema);
+
+  const { rows: schemaValid } = await db.query(
+    `select public.work_report_valid_template_schema($1::jsonb) as valid_schema,
+            public.work_report_valid_metric_contract($1::jsonb, $2::jsonb) as valid_contract`,
+    [JSON.stringify(technicalSchema), JSON.stringify(validContract)],
+  );
+  assert.equal(schemaValid[0].valid_schema, true);
+  assert.equal(schemaValid[0].valid_contract, true);
+
+  // 1) Invalid decimal_places (5 > 4) and invalid pattern_preset in schema are rejected by SQL
+  const badDecimalSchema = structuredClone(technicalSchema);
+  badDecimalSchema.sections[0].fields[2].validation.decimal_places = 5;
+  const badPatternSchema = structuredClone(technicalSchema);
+  badPatternSchema.sections[0].fields[1].validation.pattern_preset = "invalid_preset";
+
+  const { rows: badSchemas } = await db.query(
+    `select public.work_report_valid_template_schema($1::jsonb) as bad_decimal,
+            public.work_report_valid_template_schema($2::jsonb) as bad_pattern`,
+    [JSON.stringify(badDecimalSchema), JSON.stringify(badPatternSchema)],
+  );
+  assert.equal(badSchemas[0].bad_decimal, false, "decimal_places > 4 rejected in SQL schema validator");
+  assert.equal(badSchemas[0].bad_pattern, false, "unknown pattern_preset rejected in SQL schema validator");
+
+  // 2) Invalid aggregation for field_type (e.g., SUM on boolean) is rejected by SQL metric contract validator
+  const badAggSchema = structuredClone(technicalSchema);
+  badAggSchema.sections[0].fields[3].metric_spec.aggregations = ["SUM"];
+  const badAggContract = buildWorkReportMetricContract(badAggSchema);
+  const { rows: badMetricRows } = await db.query(
+    `select public.work_report_valid_metric_contract($1::jsonb, $2::jsonb) as valid`,
+    [JSON.stringify(badAggSchema), JSON.stringify(badAggContract)],
+  );
+  assert.equal(badMetricRows[0].valid, false, "SUM aggregation on boolean field rejected in SQL");
+
+  // 3) Payload checks: valid payload, required empty text "", pattern_preset violation, decimal scale violation
+  const validPayload = {
+    required_note: "OK",
+    emp_code: "NV-01",
+    conversion_rate: 99.25,
+    is_verified: true,
+  };
+  const emptyRequiredTextPayload = {
+    ...validPayload,
+    required_note: "",
+  };
+  const badPatternPayload = {
+    ...validPayload,
+    emp_code: "NV 01",
+  };
+  const badDecimalScalePayload = {
+    ...validPayload,
+    conversion_rate: 99.251,
+  };
+
+  const { rows: payloadChecks } = await db.query(
+    `select public.work_report_valid_submission_payload($1::jsonb, $2::jsonb, '2026-10-21'::date, '2026-10-21'::date, true) as ok_payload,
+            public.work_report_valid_submission_payload($1::jsonb, $3::jsonb, '2026-10-21'::date, '2026-10-21'::date, true) as empty_req_submit,
+            public.work_report_valid_submission_payload($1::jsonb, $3::jsonb, '2026-10-21'::date, '2026-10-21'::date, false) as empty_req_draft,
+            public.work_report_valid_submission_payload($1::jsonb, $4::jsonb, '2026-10-21'::date, '2026-10-21'::date, true) as bad_pattern,
+            public.work_report_valid_submission_payload($1::jsonb, $5::jsonb, '2026-10-21'::date, '2026-10-21'::date, true) as bad_scale`,
+    [
+      JSON.stringify(technicalSchema),
+      JSON.stringify(validPayload),
+      JSON.stringify(emptyRequiredTextPayload),
+      JSON.stringify(badPatternPayload),
+      JSON.stringify(badDecimalScalePayload),
+    ],
+  );
+  assert.equal(payloadChecks[0].ok_payload, true);
+  assert.equal(payloadChecks[0].empty_req_submit, false, "required empty string rejected on submit");
+  assert.equal(payloadChecks[0].empty_req_draft, true, "empty string allowed on draft save");
+  assert.equal(payloadChecks[0].bad_pattern, false, "pattern_preset violation rejected in SQL");
+  assert.equal(payloadChecks[0].bad_scale, false, "decimal precision > decimal_places rejected in SQL");
 });
