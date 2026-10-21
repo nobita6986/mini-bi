@@ -3,10 +3,11 @@
 > [!NOTE]
 > - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
 > - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 không thêm migration và không thay đổi bất kỳ bảng, RPC hay DB contract nào; tổng số migration hiện hữu vẫn là **129**.
+> - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Đã áp dụng quyết định `OD-06 = PA2` (XLSX thuộc F3) và `OD-08 = PA3` (chỉ 8 core field types, loại bỏ hoàn toàn cột/chiều/filter dự án khỏi F1/F1.5).
 
 ## 1. Kiến trúc Mô hình Dữ liệu Logic (Logical Entity Relationship)
 
-### 1.1. Sơ đồ Thực thể Logic (RECOMMENDATION)
+### 1.1. Sơ đồ Thực thể Logic (OWNER LOCKED)
 
 ```mermaid
 erDiagram
@@ -89,6 +90,7 @@ erDiagram
         timestamptz first_submitted_at
         timestamptz latest_submitted_at
         boolean is_late
+        boolean has_post_deadline_amendment
         integer version "OCC >= 1"
     }
     work_report_submission_revisions {
@@ -109,7 +111,6 @@ erDiagram
         uuid template_version_id FK
         uuid assignee_app_user_id FK
         uuid snapshot_team_id FK
-        text project_id FK "nullable (OD-08)"
         date period_start_date
         date period_end_date
         text period_key
@@ -126,18 +127,18 @@ erDiagram
     }
 ```
 
-### 1.2. Tại sao chọn mô hình này? So sánh các phương án kiến trúc (RECOMMENDATION)
+### 1.2. Tại sao chọn mô hình này? So sánh các phương án kiến trúc (OWNER LOCKED)
 
 | Quyết định thiết kế | Lựa chọn bị loại bỏ | Lý do chọn mô hình đề xuất & Tác động tới F1/F1.5 |
 |---|---|---|
 | **Tách `work_report_submissions` (current pointer + draft) và `work_report_submission_revisions` (append-only snapshots)** | Lưu mỗi lần nộp lại thành 1 dòng mới trong `work_report_submissions` | Nếu tạo nhiều dòng `submission` cho 1 `obligation`, các câu query F1.5 rất dễ đếm trùng (`COUNT`, `SUM`) khi có bản sửa đổi hoặc bị từ chối nộp lại. Giữ `UNIQUE(obligation_id)` trên `work_report_submissions` bảo đảm **1 nghĩa vụ = tối đa 1 bài nộp hiệu lực**, còn lịch sử mọi lần nộp/sửa được bảo toàn tuyệt đối trong `work_report_submission_revisions`. |
-| **Chuẩn hóa `USER_SET` bằng bảng `work_report_assignment_targets` thay vì cột mảng `uuid[]`** | Lưu mảng `uuid[]` trực tiếp trên `work_report_assignments` | Mảng `uuid[]` trong PostgreSQL không hỗ trợ khóa ngoại (`REFERENCES direct_entry_app_users`), không chặn trùng phần tử bằng unique constraint chuẩn và khó kiểm tra quyền cấp nhóm (`report_assign @ team`) bằng phép JOIN. Bảng chuẩn hóa `public.work_report_assignment_targets` có FK tường minh, `UNIQUE (assignment_id, target_user_id)` và cho phép kiểm tra 100% người nhận thuộc nhóm của Team Leader ngay trong câu SQL. |
+| **Chuẩn hóa `USER_SET` bằng bảng `work_report_assignment_targets` thay vì cột mảng `uuid[]`** | Lưu mảng `uuid[]` trực tiếp trên `work_report_assignments` | Mảng `uuid[]` trong PostgreSQL không hỗ trợ khóa ngoại (`REFERENCES direct_entry_app_users`), không chặn trùng phần tử bằng unique constraint chuẩn và khó kiểm tra quyền cấp nhóm (`report_assign @ team`) bằng phép JOIN. Bảng chuẩn hóa `public.work_report_assignment_targets` có FK tường minh, `UNIQUE (assignment_id, target_user_id)` và cho phép kiểm tra 100% người nhận thuộc nhóm của Team Leader ngay trong câu SQL (`OD-03 = PA1`). |
 | **Ghi đồng bộ `work_report_metric_values` (kèm cờ `is_eligible`) ngay trong transaction nộp/duyệt báo cáo** | **PA Loại 1:** Đọc toàn bộ `payload_json` về Node.js để cộng.<br>**PA Loại 2:** Dùng `jsonb_each` / `((payload_json->>'key')::numeric)` trực tiếp lúc `SELECT` trên bảng revision.<br>**PA Loại 3:** Xây dựng OLAP cube / Materialized View bất đồng bộ. | - **PA Loại 1** vi phạm hợp đồng hiệu năng & bảo mật của Master Plan §5.3 ([`./master-plan.md`](./master-plan.md#L191-L196)).<br>- **PA Loại 2** không thể đánh B-tree index theo `(template_id, metric_key, period_start_date, snapshot_team_id)`, dễ lỗi runtime cast nếu JSON có null/chuỗi rỗng và khó kiểm soát cross-version compatibility.<br>- **PA Loại 3 (Async Cube)** quá phức tạp, gây trễ dữ liệu (eventual consistency) khiến nhân viên vừa nộp xong Leader mở F1.5 chưa thấy số.<br>- **Mô hình chọn (Synchronous Normalized Projection `work_report_metric_values`):** Khi RPC `work_report_submit` hoặc `work_report_decide_review` chạy, hàm SQL bóc các trường `is_metric = true` hoặc `is_dimension = true` đã qua validate, ghi thẳng vào `work_report_metric_values` trong **cùng một PostgreSQL transaction**. Đảm bảo tính nhất quán tức thì (ACID) và có B-tree index chuẩn (`PERFORMANCE TARGET`: truy vấn `SUM/AVG/COUNT` ở F1.5 mục tiêu `< 10ms` — sẽ đo kiểm chứng ở `F1.5-WP3`). |
 | **Lưu `draft_payload_json` trên `work_report_submissions` thay vì sinh revision cho mỗi lần autosave nháp** | Tạo dòng `work_report_submission_revisions` mỗi lần nhân viên bấm Lưu nháp | Nhân viên có thể lưu nháp 20 lần trước khi nộp. Chỉ khi bấm **Nộp (`SUBMIT`)** mới đóng băng thành `work_report_submission_revisions` (`revision_no = 1, 2...`) và sinh `work_report_metric_values`. Bản nháp chưa nộp tuyệt đối không sinh dòng nào trong `work_report_metric_values`. |
 
 ---
 
-## 2. Đặc tả Chi tiết Từng Thực thể Database (RECOMMENDATION)
+## 2. Đặc tả Chi tiết Từng Thực thể Database (OWNER LOCKED)
 
 Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_report_` (đã kiểm tra **0% xung đột tên** với 129 migrations hiện có). Mọi bảng bật `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` và thu hồi quyền trực tiếp của `PUBLIC, anon, authenticated, service_role` một cách tường minh trên từng bảng `public.work_report_*` theo chuẩn `S0-T1-C` ([`../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql`](../../supabase/migrations/20261020180000_s0_t1_c_rpc_acl_allowlist.sql#L15-L281)).
 
@@ -160,7 +161,7 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
 - **Quy tắc bảo toàn lịch sử:** Không bao giờ `DELETE` mẫu đã tạo; ngừng sử dụng chuyển sang `status = 'ARCHIVED'`.
 
 ### 2.2. `public.work_report_template_versions` (Phiên bản Schema & Hợp đồng Chỉ tiêu)
-- **Trách nhiệm:** Lưu cấu trúc biểu mẫu (`schema_json`), hợp đồng chỉ tiêu (`metric_contract_json`) và cờ `requires_review`.
+- **Trách nhiệm:** Lưu cấu trúc biểu mẫu (`schema_json` gồm 8 kiểu trường core), hợp đồng chỉ tiêu (`metric_contract_json`) và cờ `requires_review`.
 - **Khóa chính / Khóa ngoại:**
   - `version_id uuid primary key default gen_random_uuid()`
   - `template_id uuid not null references public.work_report_templates(template_id) on delete restrict`
@@ -222,8 +223,9 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
   - **Uniqueness & Indexes:**
     - `UNIQUE (assignment_id, target_user_id)` — chặn trùng lặp một người nhận hai lần trong cùng một `USER_SET`.
     - Index `(target_user_id, assignment_id)` — phục vụ tra cứu ngược các assignment `USER_SET` của một nhân sự.
-  - **Quy tắc toàn vẹn khi tạo/sửa `USER_SET` trong RPC:**
+  - **Quy tắc toàn vẹn khi tạo/sửa `USER_SET` trong RPC (`OD-03 = PA1` OWNER LOCKED):**
     - Nếu `target_kind = 'USER_SET'`, RPC bắt buộc tập `target_user_id` đầu vào sau khi khử trùng có ít nhất `1` phần tử (`cardinality >= 1`) và chèn vào `public.work_report_assignment_targets` trong cùng một transaction.
+    - Khi người gọi chỉ có `report_assign @ team`, nếu có bất kỳ `target_user_id` nào không thuộc nhóm hiện hành của người gọi thì từ chối toàn bộ transaction (`SQLSTATE 42501`).
     - Nếu `target_kind IN ('USER', 'TEAM')`, bảng `public.work_report_assignment_targets` không được chứa dòng nào của `assignment_id` đó.
 
 ### 2.4. `public.work_report_obligations` (Kho Nghĩa vụ Phải nộp theo Kỳ)
@@ -247,6 +249,7 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
   - `snapshot_team_display_name text`
   - `is_mandatory boolean not null default true`
   - `obligation_status text not null default 'ACTIVE' check (obligation_status in ('ACTIVE', 'EXEMPTED', 'CANCELLED'))`
+  - `reopened_until timestamptz` (cho phép người có `report_assign` mở lại nghĩa vụ sau `due_at` theo `OD-02 = PA1`)
   - `version integer not null default 1 check (version >= 1)`
 - **Unique constraints & Indexes:**
   - **`UNIQUE (template_id, assignee_app_user_id, period_key)`** — Bảo đảm tuyệt đối 1 nhân sự không bao giờ bị tính 2 nghĩa vụ cho cùng 1 mẫu trong cùng 1 kỳ dù có nhiều assignment (`TEAM`, `USER_SET`, `USER`) chồng lấp.
@@ -270,8 +273,8 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
   - `draft_payload_json jsonb` (lưu nháp trước khi nộp hoặc nháp sửa đổi)
   - `first_submitted_at timestamptz`
   - `latest_submitted_at timestamptz`
-  - `is_late boolean not null default false` (`first_submitted_at > obligation.due_at`)
-  - `has_post_deadline_amendment boolean not null default false`
+  - `is_late boolean not null default false` (`first_submitted_at > obligation.due_at` theo `OD-05 = PA1`)
+  - `has_post_deadline_amendment boolean not null default false` (`true` khi có revision nộp sau `due_at` theo `OD-05 = PA1`)
   - `reviewed_by_user_id uuid references public.direct_entry_app_users(app_user_id) on delete restrict`
   - `reviewed_at timestamptz`
   - `review_reason_id uuid references public.direct_entry_restricted_reasons(reason_id) on delete restrict`
@@ -300,7 +303,7 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
   - `UNIQUE (submission_id, revision_no)`
 - **Quy tắc bảo toàn lịch sử:** Trigger DB chặn mọi lệnh `UPDATE` và `DELETE`.
 
-### 2.7. `public.work_report_metric_values` (Bảng Projection Chuẩn hóa cho Tổng hợp F1.5 & F3)
+### 2.7. `public.work_report_metric_values` (Bảng Projection Chuẩn hóa cho Tổng hợp F1.5 & F3 — `OD-08 = PA3` OWNER LOCKED)
 - **Trách nhiệm:** Lưu các giá trị metric và dimension đã chuẩn hóa từ từng `revision_id` để các RPC tổng hợp F1.5/F3 thực thi bằng SQL có chỉ mục mà không cần đọc/parse `payload_json`.
 - **Khóa chính / Khóa ngoại:**
   - `metric_value_id uuid primary key default gen_random_uuid()`
@@ -311,7 +314,6 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
   - `template_version_id uuid not null references public.work_report_template_versions(version_id) on delete restrict`
   - `assignee_app_user_id uuid not null references public.direct_entry_app_users(app_user_id) on delete restrict`
   - `snapshot_team_id uuid references public.teams(team_id) on delete restrict`
-  - `project_id text references public.direct_entry_projects(project_id) on delete restrict` (nullable — chỉ có giá trị khi `OD-08` được chọn và mẫu có trường `project_ref` hợp lệ)
 - **Trường nghiệp vụ quan trọng:**
   - `period_type text not null`
   - `period_key text not null`
@@ -354,13 +356,13 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
 ### 2.8. `public.work_report_review_events` (F2 — Lịch sử Duyệt / Từ chối) & `public.work_report_delegations` (F2 — Ủy quyền) & `public.work_report_audit_events` (F1+ — Nhật ký Bảo mật)
 - `work_report_review_events`: Lưu append-only mọi quyết định `APPROVE` / `REJECT` gắn với `submission_id`, `revision_id`, `reviewer_user_id` (`CHECK (reviewer_user_id <> author_user_id)`), `decision`, `reason_id`, `acting_scope_kind`, `acting_team_id`, `delegation_id`.
 - `work_report_delegations`: Lưu ủy quyền có thời hạn (`grantor_user_id`, `grantee_user_id`, `capability in ('report_assign', 'report_review')`, `scope_kind`, `scope_team_id`, `template_id`, `valid_from`, `valid_to`, `is_current`, `revoked_at`).
-- `work_report_audit_events`: Lưu append-only mọi hành động tạo/publish/archive mẫu, giao việc, miễn nghĩa vụ, nộp, sửa, duyệt, ủy quyền và xuất file Excel (`action`, `actor_user_id`, `capability`, `scope_kind`, `scope_team_id`, `template_id`, `obligation_id`, `submission_id`, `outcome`, `reason_id`, `metadata_json`).
+- `work_report_audit_events`: Lưu append-only mọi hành động tạo/publish/archive mẫu, giao việc, miễn nghĩa vụ (`EXEMPT`), mở lại nghĩa vụ sau hạn (`REOPEN`), nộp, sửa sau hạn (`POST_DEADLINE_AMEND`), duyệt, ủy quyền và xuất file Excel ở F3 (`action`, `actor_user_id`, `capability`, `scope_kind`, `scope_team_id`, `template_id`, `obligation_id`, `submission_id`, `outcome`, `reason_id`, `metadata_json`).
 
 ---
 
 ## 3. Hợp đồng Metric, Dimensions & Quy tắc Tổng hợp (Analytics Contract)
 
-### 3.1. Quy tắc Tổng hợp theo Kiểu Dữ liệu & Chính sách `NULL` / `0` (RECOMMENDATION)
+### 3.1. Quy tắc Tổng hợp theo Kiểu Dữ liệu & Chính sách `NULL` / `0` (OWNER LOCKED)
 
 1. **Không tự động coi mọi trường số đều là metric:** Chỉ những trường được người thiết kế mẫu bật `is_metric = true` và khai báo `metric_key`, `unit`, `aggregations` mới được chiếu sang `work_report_metric_values`.
 2. **Điều kiện lọc chuẩn trên mọi câu truy vấn tổng hợp:**
@@ -386,7 +388,7 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
    - Mỗi metric có thuộc tính `compatible_group` (mặc định `template_code || ':' || metric_key || ':' || lower(unit)`).
    - RPC tổng hợp chỉ cho phép `GROUP BY metric_key, unit, compatible_group`. Nếu hai version của mẫu đổi `unit` hoặc `compatible_group`, kết quả trả về tách thành 2 dòng chỉ tiêu riêng biệt kèm nhãn version, không bao giờ cộng lẫn.
 
-### 3.2. Các Chiều Phân tích (Dimensions) & Bộ lọc Hỗ trợ (RECOMMENDATION)
+### 3.2. Các Chiều Phân tích (Dimensions) & Bộ lọc Hỗ trợ (`OD-08 = PA3` OWNER LOCKED)
 
 | Chiều phân tích (Dimension) | Cột nguồn chuẩn | Ghi chú nghiệp vụ |
 |---|---|---|
@@ -397,18 +399,19 @@ Mọi bảng mới đều đặt tại schema `public` với tiền tố `work_r
 | **Nhân viên (`assignee`)** | `work_report_obligations.assignee_app_user_id` | Join với `direct_entry_app_users.display_name`. |
 | **Mẫu & Phiên bản (`template` / `version`)** | `template_id`, `template_version_id` | Cho phép lọc tất cả version tương thích của 1 mẫu hoặc khóa cứng 1 version. |
 | **Trường lựa chọn (`single_select` / `boolean`)** | `work_report_metric_values.option_key` / `boolean_value` | Chỉ bật cho các field có `is_dimension = true`. |
-| **Dự án (`project_id`) — Phụ thuộc `OD-08`** | `work_report_metric_values.project_id` (`REFERENCES public.direct_entry_projects`) | Phụ thuộc quyết định `OD-08` (`Status: OPEN` tại [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L220-L234)): chỉ kích hoạt khi `OD-08` chọn hỗ trợ `project_ref` và mẫu báo cáo có khai báo trường `project_ref` hợp lệ. |
+
+*(Theo quyết định `OD-08 = PA3` `OWNER LOCKED`, F1/F1.5 không triển khai chiều phân tích hay bộ lọc dự án).*
 
 ---
 
-## 4. Phân định Phạm vi F1.5 (Basic Reporting) và F3 (Advanced Analytics)
+## 4. Phân định Phạm vi F1.5 (Basic Reporting) và F3 (Advanced Analytics & Excel Export — `OD-06 = PA2` OWNER LOCKED)
 
-### 4.1. Hợp đồng API & Chức năng của F1.5 (Bắt buộc có ngay sau F1)
+### 4.1. Hợp đồng API & Chức năng của F1.5 (Không có XLSX — chỉ KPI, Metric Summary, Breakdown, Drill-down & Source Evidence)
 
-Các API của Work Reports đặt dưới namespace `/api/work-reports/*` (tách biệt hoàn toàn với `/api/reporting/*` của Dashboard Tuyển dụng):
+Các API của Work Reports ở F1.5 đặt dưới namespace `/api/work-reports/*` (tách biệt hoàn toàn với `/api/reporting/*` của Dashboard Tuyển dụng):
 
 1. `GET /api/work-reports/analytics/overview`
-   - **Input (Query params đã qua allowlist):** `template_id` (bắt buộc), `version_id` (tùy chọn), `from` (`YYYY-MM-DD`), `to` (`YYYY-MM-DD`), `team_id` (tùy chọn), `assignee_id` (tùy chọn), `project_id` (tùy chọn nếu `OD-08` bật `project_ref`), `finality` (`final` mặc định | `provisional_included` ở F2).
+   - **Input (Query params đã qua allowlist):** `template_id` (bắt buộc), `version_id` (tùy chọn), `from` (`YYYY-MM-DD`), `to` (`YYYY-MM-DD`), `team_id` (tùy chọn), `assignee_id` (tùy chọn), `finality` (`final` mặc định | `provisional_included` ở F2).
    - **Output:**
      - `effective_scope`: `{ kind: 'all' | 'team', label: string }`
      - `compliance`: `{ due_count, completed_count, on_time_count, late_submitted_count, pending_due_count, overdue_missing_count, exempted_count, pending_review_count, completion_rate }`
@@ -418,18 +421,17 @@ Các API của Work Reports đặt dưới namespace `/api/work-reports/*` (tác
    - **Output:** Bảng tổng hợp theo từng Nhân viên / Nhóm / Kỳ (gồm cả số nghĩa vụ phải nộp, đã nộp, quá hạn VÀ giá trị `SUM`/`AVG` của các chỉ tiêu chính trên từng dòng).
 3. `GET /api/work-reports/analytics/contributions` (Drill-down từ KPI / Breakdown xuống bài nộp nguồn)
    - **Input:** Cùng bộ lọc + `metric_key` (tùy chọn) + `target_team_id` / `target_assignee_id` / `target_period_key` + `cursor`, `limit`.
-   - **Output:** Danh sách các dòng nghĩa vụ/bài nộp đóng góp trực tiếp vào con số KPI đó (kèm `obligation_id`, `submission_id`, `revision_no`, `assignee_display_name`, `team_display_name`, `period_key`, `state`, `submitted_at`, `is_late`, `metric_contribution_value`), đảm bảo **tổng các dòng contribution khớp 100% với KPI trên thẻ tổng hợp**.
+   - **Output:** Danh sách các dòng nghĩa vụ/bài nộp đóng góp trực tiếp vào con số KPI đó (kèm `obligation_id`, `submission_id`, `revision_no`, `assignee_display_name`, `team_display_name`, `period_key`, `state`, `submitted_at`, `is_late`, `has_post_deadline_amendment`, `metric_contribution_value`), đảm bảo **tổng các dòng contribution khớp 100% với KPI trên thẻ tổng hợp**.
 4. `GET /api/work-reports/submissions/[submissionId]`
-   - **Output:** Snapshot chi tiết của bài nộp (chỉ trả về khi bài nộp nằm trong `effective_scope` của người gọi).
-5. **Endpoint Xuất Excel (`POST /api/work-reports/analytics/export` & RPC `public.work_report_export_data`) — Phụ thuộc kết quả `OD-06` (`Status: OPEN`):**
-   - **Nhánh `OD-06 = PA2` (Master Plan baseline — XLSX ở F3):** Không mở endpoint này ở F1.5; toàn bộ chức năng xuất `.xlsx` được triển khai ở **F3 (`F3-WP3`)**.
-   - **Nhánh `OD-06 = PA1` (Đưa XLSX cơ bản vào F1.5):** Triển khai ở **F1.5** (`F1.5-WP1` / `F1.5-WP2`), xuất file `.xlsx` gồm Sheet 1 (*Tổng hợp Tuân thủ & Chỉ tiêu theo Nhóm/Nhân viên*) và Sheet 2 (*Chi tiết từng Nghĩa vụ & Bài nộp trong phạm vi quyền*), kiểm tra capability `report_export` và ghi nhận bắt buộc vào `work_report_audit_events`.
+   - **Output:** Snapshot chi tiết của bài nộp nguồn (source evidence, chỉ trả về khi bài nộp nằm trong `effective_scope` của người gọi).
 
-### 4.2. Phạm vi mở rộng ở F3 (Advanced Analytics)
+### 4.2. Phạm vi mở rộng ở F3 (Advanced Analytics & Excel Export — `OD-06 = PA2` OWNER LOCKED)
 
 - So sánh kỳ này với kỳ trước (`Period-over-Period`: `delta_abs`, `delta_pct` có xử lý mẫu số `= 0`).
 - Biểu đồ xu hướng chuỗi thời gian (`TrendChart` theo Ngày/Tuần/Tháng/Quý/Năm) và biểu đồ phân bổ theo trường `single_select`/`multi_select`.
 - Chỉ số dẫn xuất (Derived Ratio Metrics `SUM(A)/SUM(B)` cấu hình declarative qua whitelist).
 - Cảnh báo chất lượng dữ liệu (Data Quality Alerts: kỳ thiếu bài nộp, biến động bất thường, mẫu có nhiều version không tương thích đơn vị).
 - Chế độ chuyển đổi xem theo *Cơ cấu tổ chức tại kỳ (`snapshot_team_id`)* vs *Cơ cấu tổ chức hiện tại (`current_team_id`)*.
-- Xuất Excel (`.xlsx`) tổng hợp và chi tiết theo phạm vi quyền (toàn bộ chức năng XLSX nếu `OD-06 = PA2`, hoặc phần mở rộng xuất đa kỳ so sánh nếu `OD-06 = PA1`).
+- **Xuất Excel (`.xlsx`) tổng hợp và chi tiết (`POST /api/work-reports/analytics/export` & RPC `public.work_report_export_data` — `OD-06 = PA2` OWNER LOCKED):**
+  - Triển khai tại **F3 (`F3-WP3`)**.
+  - Kiểm tra đồng thời `report_export` + `report_analytics_view` + `report_view` ở cùng `effective_scope`, giới hạn `10,000` dòng, chống formula injection (`numFmt = "@"`) và ghi bắt buộc vào `work_report_audit_events`.

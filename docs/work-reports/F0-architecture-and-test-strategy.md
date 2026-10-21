@@ -3,10 +3,11 @@
 > [!NOTE]
 > - **Initial Survey Baseline (`origin/main`):** `8bf16afe9360e5eebe0dd9183c8ef9d85fc39b0c` (`8bf16afe`)
 > - **Delta Review & Effective Baseline (`origin/main` after PR #97 R2.2 Visual Completion):** `bd67c4b88106d6147b1fd043fadc4326366a0e69` (`bd67c4b`). Delta PR #97 giữ nguyên 129 migrations và toàn bộ DB/auth/navigation contract, đồng thời bổ sung bộ R2.2 shared UI primitives (`button.tsx`, `badge.tsx`, `data-table.tsx`, `filter-toolbar.tsx`, `mobile-action-sheet.tsx`, `page-shell.tsx`, `report-table.tsx`, `toast.tsx`) cùng 3 bài test cổng giao diện R2.2 (`r2-2-grid-no-touch-guard.test.mjs`, `r2-2-theme-mobile-contract.test.mjs`, `r2-2-surface-coverage.test.mjs`).
+> - **Owner Decisions Locked (`21/10/2026` — `OWNER LOCKED`):** Đã khóa toàn bộ `OD-01` → `OD-08` (xem [`./F0-product-contracts-and-open-decisions.md`](./F0-product-contracts-and-open-decisions.md#L212-L225)).
 
-## 1. Kiến trúc Hệ thống Đề xuất (RECOMMENDATION)
+## 1. Kiến trúc Hệ thống Đề xuất (OWNER LOCKED)
 
-### 1.1. Nguyên tắc Kiến trúc Tối thiểu, Zero-Dependency & Tái sử dụng R2.2 Primitives (FACT + RECOMMENDATION)
+### 1.1. Nguyên tắc Kiến trúc Tối thiểu, Zero-Dependency & Tái sử dụng R2.2 Primitives (FACT + OWNER LOCKED)
 
 Toàn bộ module **Work Reports (`F1` → `F5`)** được xây dựng 100% trên các thư viện đã có trong [`../../package.json`](../../package.json#L144-L175):
 - **Framework:** `next@16.3.8` (App Router), `react@19.2.8`
@@ -19,7 +20,7 @@ Toàn bộ module **Work Reports (`F1` → `F5`)** được xây dựng 100% tr�
 - **Không cài thêm bất kỳ thư viện npm hay UI/toast library mới nào ở F1/F1.5/F2/F3.**
 - **Ưu tiên tái sử dụng bộ R2.2 UI Primitives:** [`PageShell` / `PageHeader`](../../src/components/ui/page-shell.tsx#L5-L74), [`Button` / `buttonClasses`](../../src/components/ui/button.tsx#L42-L81), [`StatusBadge` / `Badge`](../../src/components/ui/badge.tsx#L31-L65), [`DataTableContainer` / `RowActionCluster`](../../src/components/ui/data-table.tsx#L11-L80), [`ReportTableContainer`](../../src/components/ui/report-table.tsx#L9-L48), [`FilterToolbar`](../../src/components/ui/filter-toolbar.tsx#L5-L41), [`RowOverflowMenu`](../../src/components/ui/mobile-action-sheet.tsx#L23-L76), [`FormDialog`](../../src/components/ui/form-dialog.tsx#L14-L88), [`OffsetPager`](../../src/components/ui/offset-pager.tsx#L7-L64), [`CursorLoadMore`](../../src/components/ui/cursor-load-more.tsx#L3-L34), [`Card` / `CardHeader`](../../src/components/ui/card.tsx#L5-L20).
 - **Chuẩn thông báo hai tầng (`FloatingToast` + `StatusBanner`):** Dùng [`FloatingToast`](../../src/components/ui/toast.tsx#L28-L97) cho thông báo tạm thời sau thao tác (lưu nháp, nộp báo cáo, tạo mẫu, giao việc) và dùng [`StatusBanner`](../../src/components/ui/status-banner.tsx#L14-L41) cho trạng thái tồn tại trên trang (cảnh báo quá hạn, lý do bị từ chối, lỗi xác thực biểu mẫu).
-- Form Builder dùng nút di chuyển thứ tự Lên/Xuống (`Button`) có `aria-label` chuẩn thay vì kéo-thả phức tạp; Form Renderer dùng controlled state + validator đồng nhất giữa client và server.
+- Form Builder dùng nút di chuyển thứ tự Lên/Xuống (`Button`) có `aria-label` chuẩn thay vì kéo-thả phức tạp; Form Renderer dùng controlled state + validator đồng nhất giữa client và server cho đúng 8 kiểu trường core (`OD-08 = PA3`).
 
 ### 1.2. Luồng Thực thi (Request Pipeline) & Ranh giới API / RPC
 
@@ -45,7 +46,7 @@ Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
 
 ---
 
-## 2. Bảo mật, Concurrency, Idempotency & Mục tiêu Hiệu năng (RECOMMENDATION)
+## 2. Bảo mật, Concurrency, Idempotency & Mục tiêu Hiệu năng (OWNER LOCKED)
 
 ### 2.1. Idempotency & Chống Race Condition / Concurrency
 
@@ -85,21 +86,24 @@ Mọi route `/api/work-reports/*` tuân thủ nghiêm ngặt 7 bước:
    - **`PERFORMANCE TARGET` cần đo kiểm chứng tại `F1.5-WP3` / `F1.5-WP4`:**
      - Với bộ index `(template_id, period_start_date, period_end_date, obligation_status)` trên `work_report_obligations` và partial index `(template_id, metric_key, period_start_date, snapshot_team_id, assignee_app_user_id) WHERE is_eligible = true` trên `work_report_metric_values`, mục tiêu thiết kế là truy vấn SQL `overview` và `breakdown` cho 1 năm dữ liệu đạt **`< 25ms` trên PostgreSQL** và tổng thời gian phản hồi API đạt **`p95 < 3s`** theo Master Plan §17 ([`./master-plan.md`](./master-plan.md#L458-L464)).
      - **Lưu ý phân loại bằng chứng:** Tại F0 chưa có migration hay bảng thực tế, do đó các con số `< 5ms`, `< 10ms`, `< 25ms` và `p95 < 3s` hoàn toàn là **`PERFORMANCE TARGET` / `HYPOTHESIS TO VERIFY`**, tuyệt đối chưa tuyên bố benchmark `PASS` ở F0.
-3. **Xuất Excel (`.xlsx`) an toàn (Phase phụ thuộc `OD-06`: triển khai ở F1.5 nếu `OD-06 = PA1`, hoặc ở F3 nếu `OD-06 = PA2`):**
-   - Giới hạn cứng `WORK_REPORT_EXPORT_ROW_LIMIT = 10_000` dòng chi tiết mỗi lần xuất (giống `WORKER_EXPORT_ROW_LIMIT = 10_000` trong [`../../src/lib/direct-entry/worker-export-contract.ts`](../../src/lib/direct-entry/worker-export-contract.ts)); nếu vượt ngưỡng trả `422 WORK_REPORT_EXPORT_ROW_LIMIT_EXCEEDED` yêu cầu thu hẹp khoảng ngày.
+3. **Xuất Excel (`.xlsx`) an toàn (Thuộc F3 theo `OD-06 = PA2` OWNER LOCKED):**
+   - F1.5 không có XLSX. Tại **F3 (`F3-WP3`)**, giới hạn cứng `WORK_REPORT_EXPORT_ROW_LIMIT = 10_000` dòng chi tiết mỗi lần xuất (giống `WORKER_EXPORT_ROW_LIMIT = 10_000` trong [`../../src/lib/direct-entry/worker-export-contract.ts`](../../src/lib/direct-entry/worker-export-contract.ts)); nếu vượt ngưỡng trả `422 WORK_REPORT_EXPORT_ROW_LIMIT_EXCEEDED` yêu cầu thu hẹp khoảng ngày.
    - Mọi ô chuỗi bắt đầu bằng `=`, `+`, `-`, `@` hoặc chứa ký tự điều khiển đều được xuất dưới dạng literal string với `numFmt = "@"` để chống CSV/Excel Formula Injection.
 
 ---
 
-## 3. Chiến lược Migration & Tương thích Hệ thống Hiện hữu (RECOMMENDATION)
+## 3. Chiến lược Migration & Tương thích Hệ thống Hiện hữu (OWNER LOCKED)
 
 ### 3.1. Quy tắc Migration Forward-Only & Explicit `work_report_*` ACL Gate
 
-Khi bước sang F1/F1.5/F2/F3 (sau khi Owner duyệt F0), các migration SQL phải tuân thủ:
+Khi bước sang F1/F1.5/F2/F3 (sau khi có lệnh `START F1` của Owner), các migration SQL phải tuân thủ:
 1. **Forward-Only & Checksum bất biến:** Tạo file mới trong `supabase/migrations/`, không bao giờ chỉnh sửa 129 file migration lịch sử.
-2. **Tương thích với 6 bài test Capability P3.1 (`direct-entry-auth/1.5`):**
+2. **Tương thích với 6 bài test Capability P3.1 (`direct-entry-auth/1.5` — `OD-06 = PA2`, `OD-07 = PA1` OWNER LOCKED):**
    - Như đã phát hiện tại [`./F0-codebase-reuse-inventory.md`](./F0-codebase-reuse-inventory.md#L33-L40), 6 file test ([`../../scripts/p3-1-w01a-capability-contract.test.mjs`](../../scripts/p3-1-w01a-capability-contract.test.mjs#L135-L143), [`../../scripts/p3-1-w01b-personnel-catalog-db.test.mjs`](../../scripts/p3-1-w01b-personnel-catalog-db.test.mjs#L835), [`../../scripts/p3-1-w01c-a-team-catalog-db.test.mjs`](../../scripts/p3-1-w01c-a-team-catalog-db.test.mjs#L709), [`../../scripts/p3-1-w01c-b-team-membership-db.test.mjs`](../../scripts/p3-1-w01c-b-team-membership-db.test.mjs#L1086), [`../../scripts/p3-1-w01d-a1a-leader-schema.test.mjs`](../../scripts/p3-1-w01d-a1a-leader-schema.test.mjs#L168), [`../../scripts/p3-1-w01d-a1b1-leader-read.test.mjs`](../../scripts/p3-1-w01d-a1b1-leader-read.test.mjs#L684)) chạy toàn bộ thư mục `supabase/migrations/` rồi kiểm tra `tokens.length === 23` trên constraint `direct_entry_capability_grants_capability_check` và `CAPABILITIES.length === 19` trên TypeScript contract.
-   - Khi migration F1/F1.5 mở rộng constraint này (thêm **4 token** nếu `OD-06 = PA2` ⇒ DB CHECK = `27`, TS = `23`; hoặc thêm **5 token** nếu `OD-06 = PA1` ⇒ DB CHECK = `28`, TS = `24`), Work Package `F1-WP1` phải cập nhật đồng bộ hằng số `TOKEN_COUNT` / `ACTIVE_TOKEN_COUNT` trong `scripts/p3-1-w01a-capability-contract.test.mjs` và cập nhật assertion trong 5 file test P3.1 còn lại theo đúng nhánh `OD-06` đã chốt để toàn bộ CI xanh 100%.
+   - Theo quyết định đã khóa (`OD-06 = PA2`, `OD-07 = PA1`):
+     - Ở **F1/F1.5 (`F1-WP1`):** mở rộng thêm **4 token** (`report_form_manage`, `report_assign`, `report_view`, `report_analytics_view`) ⇒ cập nhật đồng bộ 6 file test P3.1 lên **DB CHECK = `27`** và **TypeScript `CAPABILITIES` = `23`**.
+     - Ở **F2 (`F2-WP1`):** mở rộng thêm **2 token** (`report_review`, `report_delegate`) ⇒ cập nhật lên **DB CHECK = `29`** và **TypeScript `CAPABILITIES` = `25`**.
+     - Ở **F3 (`F3-WP3`):** mở rộng thêm **1 token** (`report_export`) ⇒ cập nhật lên **DB CHECK = `30`** và **TypeScript `CAPABILITIES` = `26`**.
 3. **Explicit Least-Privilege ACL chỉ trên đối tượng `public.work_report_*` ([`../../scripts/s0-t1-c-rpc-acl.test.mjs`](../../scripts/s0-t1-c-rpc-acl.test.mjs)):**
    - **Cấm tuyệt đối** dùng lệnh thu hồi quyền quét toàn bộ bảng/hàm trong schema `public` vì có thể ảnh hưởng ngoài ý muốn tới các đối tượng hiện hữu của hệ thống.
    - Mọi hàm và bảng SQL của module mới đặt tên theo chuẩn:
@@ -147,7 +151,10 @@ Khi bước sang F1/F1.5/F2/F3 (sau khi Owner duyệt F0), các migration SQL ph
 
 ## 4. Ma trận Kiểm thử Toàn diện (Test Matrix) & Chiến lược CI
 
-### 4.1. Bảng Ánh xạ 18 Kịch bản Nghiệp vụ & Phân tích Bắt buộc (`AG-01` → `AG-18`)
+### 4.1. Bảng Ánh xạ 18 Kịch bản Nghiệp vụ & Phân tích Bắt buộc (`AG-01` → `AG-18` — `OWNER LOCKED`)
+
+- **Fixture nghiệp vụ thực tế (`OD-01` OWNER LOCKED):** Sử dụng duy nhất **Mẫu #1: Báo cáo công việc tuyển dụng ngày** (`calls_made`, `interested_candidates`, `workers_started`, `notes`).
+- **Technical fixtures (`OD-01` OWNER LOCKED):** Các kiểu trường còn lại trong 8 kiểu trường core (`decimal`, `date`, `boolean`, `single_select`, `multi_select`) và các chu kỳ `WEEKLY`, `MONTHLY`, `ONCE` được kiểm tra bằng technical fixtures chuyên biệt trong bài test, không mô tả là mẫu nghiệp vụ thực tế.
 
 | Mã Test | Phase kiểm thử | Kịch bản kiểm thử | Đầu vào (Fixture) | Kết quả kỳ vọng (Oracle) | Tầng Test |
 |---|---|---|---|---|---|
@@ -159,15 +166,15 @@ Khi bước sang F1/F1.5/F2/F3 (sau khi Owner duyệt F0), các migration SQL ph
 | **AG-06** | **F1.5 / F3** | Tỷ lệ nhóm có trọng số (`SUM/SUM`) | Người A: `interested=1, calls=2` (50%); Người B: `interested=9, calls=18` (50%); Người C: `interested=0, calls=20` (0%) | Tỷ lệ nhóm = `(1+9+0)/(2+18+20) = 10/40 = 25.00%` (không lấy trung bình cộng `(50+50+0)/3 = 33.33%`) | PGlite + Unit |
 | **AG-07** | **F1 / F1.5** | Tương thích giữa 2 version của mẫu | `v1` và `v2` đổi nhãn hiển thị nhưng giữ `metric_key='calls_made'`, `unit='cuộc'`; `v3` đổi đơn vị sang `'giờ'` | `v1` + `v2` cộng gộp được; `v3` bị chặn dùng lại cùng `metric_key`/`compatible_group` khi publish | PGlite + Unit |
 | **AG-08** | **F1 / F1.5** | Nhân sự chuyển nhóm giữa hai kỳ | Nhân viên X thuộc Team A ở Kỳ 1 (`2026-10-20`), chuyển sang Team B ở Kỳ 2 (`2026-10-21`) | Kỳ 1 giữ `snapshot_team_id = Team A`; Kỳ 2 giữ `snapshot_team_id = Team B`. Leader Team A xem Kỳ 1 thấy X, xem Kỳ 2 không thấy X | PGlite + PG16 |
-| **AG-09** | **F1 / F1.5** | Chặn truy cập chéo phạm vi & kiểm tra `work_report_assignment_targets` (`USER_SET`) | Staff A, Leader Team A, Form Admin (không có `report_view`) thử đọc dữ liệu Team B; Leader Team A tạo `USER_SET` chứa người thuộc Team B hoặc truyền trùng `target_user_id` trong cùng `USER_SET` | Mọi truy cập chéo phạm vi trả `403` (`SEC-WR-01` .. `SEC-WR-04`); `work_report_assignment_targets` chặn `UNIQUE (assignment_id, target_user_id)` và sinh đúng 1 nghĩa vụ cho mỗi người hợp lệ | PGlite + PG16 + API Route Tests |
+| **AG-09** | **F1 / F1.5** | Chặn truy cập chéo phạm vi & kiểm tra `work_report_assignment_targets` (`USER_SET` — `OD-03 = PA1`) | Staff A, Leader Team A, Form Admin (không có `report_view`) thử đọc dữ liệu Team B; Leader Team A tạo `USER_SET` chứa người thuộc Team B hoặc truyền trùng `target_user_id` trong cùng `USER_SET` | Mọi truy cập chéo phạm vi trả `403` (`SEC-WR-01` .. `SEC-WR-03`); `work_report_assignment_targets` từ chối toàn bộ transaction nếu có người ngoài scope và chặn `UNIQUE (assignment_id, target_user_id)` | PGlite + PG16 + API Route Tests |
 | **AG-10** | **F1** | Idempotency khi double-click / retry nộp báo cáo | Gửi 2 request `POST /api/work-reports/submissions` cùng `idempotency_key` hoặc 2 giao dịch song song trên cùng `obligation_id` | Chỉ có 1 dòng `work_report_submissions`, 1 `revision_no = 1`, `work_report_metric_values` không bị nhân đôi | PGlite + PG16 Concurrency Test |
-| **AG-11** | **F1 / F1.5** | Sửa báo cáo / Nộp lại sau khi bị từ chối | Nhân viên nộp Revision 1 (`calls_made = 10`), sau đó nộp bản sửa Revision 2 (`calls_made = 15`) | Revision 1 vẫn còn nguyên trong `work_report_submission_revisions`, nhưng trên `work_report_metric_values` các dòng của Revision 1 bị chuyển thành `is_current_revision = false, is_eligible = false`, chỉ Revision 2 có `is_current_revision = true, is_eligible = true` (`SUM = 15`, không phải `25`) | PGlite + PG16 |
+| **AG-11** | **F1 / F1.5** | Sửa báo cáo trước `due_at` & mở lại sau `due_at` (`OD-02 = PA1`, `OD-05 = PA1`) | Nhân viên nộp Revision 1 (`calls_made = 10`) trước `due_at`; nộp Revision 2 (`calls_made = 15`) trước `due_at`; sau `due_at` thử tự sửa (bị chặn `403`), sau đó được người có `report_assign` mở lại (có reason + audit) và nộp Revision 3 (`calls_made = 20`) | Cả 3 revision được bảo toàn trong `work_report_submission_revisions`; chỉ Revision 3 có `is_current_revision = true, is_eligible = true` (`SUM = 20`); `is_late` vẫn bằng `false` (tính theo `first_submitted_at <= due_at`) và `has_post_deadline_amendment = true` | PGlite + PG16 |
 | **AG-12** | **F1 / F1.5** | Mẫu không yêu cầu duyệt (`requires_review = false`) | Nhân viên bấm Nộp | Trạng thái chuyển thẳng `DRAFT → COMPLETED`, `is_final = true, is_provisional = false, is_eligible = true`, hiện ngay trên Dashboard F1.5 mà không vào hàng đợi duyệt | PGlite + API Test |
 | **AG-13** | **F2** | Mẫu yêu cầu duyệt (`requires_review = true` — F2) | Nhân viên nộp → `PENDING_REVIEW` (`is_provisional=true, is_final=false, is_eligible=true`); Reviewer duyệt → `APPROVED` (`is_provisional=false, is_final=true, is_eligible=true`); nếu `REJECTED` → `is_provisional=false, is_final=false, is_eligible=false` | Chế độ `final` (`WHERE is_eligible = true AND is_final = true`) không cộng bài `PENDING_REVIEW` hay `REJECTED`; chế độ `provisional_included` (`WHERE is_eligible = true`) cộng bài `PENDING_REVIEW` nhưng loại bài `REJECTED` | PGlite + PG16 (F2) |
-| **AG-14** | **F1.5** *(nếu `OD-06 = PA1`)* hoặc **F3** *(nếu `OD-06 = PA2`)* | Xuất Excel (`.xlsx`) đúng quyền & có Audit | Actor có `report_export` xuất file vs Actor thiếu `report_export` hoặc truyền `team_id` ngoài scope | Có quyền: trả file `.xlsx` hợp lệ (`numFmt="@"` chống formula injection) + thêm 1 dòng `work_report_audit_events`. Không quyền: `403`, không tạo file | PGlite + Unit (`exceljs`) |
+| **AG-14** | **F3 (`OD-06 = PA2`)** | Xuất Excel (`.xlsx`) đúng quyền & có Audit ở F3 | Tại F3, Actor có `report_export` xuất file vs Actor thiếu `report_export` hoặc truyền `team_id` ngoài scope (`SEC-WR-04`) | Có quyền: trả file `.xlsx` hợp lệ (`numFmt="@"` chống formula injection) + thêm 1 dòng `work_report_audit_events`. Không quyền: `403`, không tạo file | PGlite + Unit (`exceljs` — F3) |
 | **AG-15** | **F1 / F1.5** | Ranh giới múi giờ `00:00 Asia/Ho_Chi_Minh` | Bài nộp lúc `2026-10-21T23:30:00+07:00` (`16:30 UTC`) và `2026-10-22T00:15:00+07:00` (`17:15 UTC` ngày 21) | Cả ranh giới kỳ `period_key` và kiểm tra `first_submitted_at <= due_at` đều tính đúng theo `+07:00`, không lệch ngày UTC | PGlite + Unit |
 | **AG-16** | **F1.5** | Đối soát tổng KPI và danh sách Drill-down (`Reconciliation`) | Gọi `overview` lấy `SUM(workers_started)` = $S$ và gọi `contributions` lấy danh sách bài nộp đóng góp | $\sum \text{contributions.metric\_contribution\_value} \equiv S$ và `contributions.length === count_valid` | PGlite + API Test |
-| **AG-17** | **F1 / F1.5** | Vô hiệu hóa tài khoản / Thu hồi quyền Leader tức thì | Disable user hoặc revoke Team Leader, sau đó gọi lại API bằng session đang mở | Trả `403` ngay lập tức ở request kế tiếp; các nghĩa vụ tương lai chưa nộp của user bị disable chuyển sang `CANCELLED` | PGlite + PG16 |
+| **AG-17** | **F1 / F1.5** | Vô hiệu hóa tài khoản / Thu hồi quyền Leader tức thì (`OD-04 = PA1`) | Disable user hoặc revoke Team Leader, sau đó gọi lại API bằng session đang mở | Trả `403` ngay lập tức ở request kế tiếp; các nghĩa vụ tương lai chưa nộp của user bị disable chuyển sang `CANCELLED` | PGlite + PG16 |
 | **AG-18** | **F1** | Bảo toàn phiên bản đã Publish | Thử `UPDATE` `schema_json` hoặc `metric_contract_json` của `template_version` đang `PUBLISHED` | Trigger DB chặn cứng với `SQLSTATE 55000`; chỉ cho phép clone sang `version_no + 1` (`DRAFT`) | PGlite + PG16 |
 
 ### 4.2. Tích hợp vào CI Test Manifest & Cổng Kiểm tra Giao diện R2.2 (Cập nhật theo PR #97 `bd67c4b`)
