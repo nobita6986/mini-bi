@@ -197,8 +197,7 @@ create or replace function public.work_report_analytics_overview(
   p_to date default null,
   p_team_id uuid default null,
   p_assignee_id uuid default null,
-  p_finality text default 'final',
-  p_as_of timestamptz default null
+  p_finality text default 'final'
 )
 returns jsonb
 language plpgsql
@@ -210,7 +209,7 @@ declare
   v_scope_kind text;
   v_scope_label text;
   v_team_ids uuid[];
-  v_as_of timestamptz := coalesce(p_as_of, statement_timestamp());
+  v_as_of timestamptz := statement_timestamp();
   v_compliance jsonb;
   v_metrics jsonb;
   v_ratios jsonb;
@@ -496,6 +495,7 @@ begin
     into v_metrics, v_ratios;
 
   return jsonb_build_object(
+    'as_of', to_char(v_as_of at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'effective_scope', jsonb_build_object('kind', v_scope_kind, 'label', v_scope_label),
     'compliance', v_compliance,
     'metrics', v_metrics,
@@ -516,8 +516,7 @@ create or replace function public.work_report_analytics_breakdown(
   p_finality text default 'final',
   p_group_by text default 'team',
   p_page integer default 1,
-  p_page_size integer default 50,
-  p_as_of timestamptz default null
+  p_page_size integer default 50
 )
 returns jsonb
 language plpgsql
@@ -529,7 +528,7 @@ declare
   v_scope_kind text;
   v_scope_label text;
   v_team_ids uuid[];
-  v_as_of timestamptz := coalesce(p_as_of, statement_timestamp());
+  v_as_of timestamptz := statement_timestamp();
   v_offset integer;
   v_total_groups integer := 0;
   v_items jsonb;
@@ -798,6 +797,7 @@ begin
     from enriched_groups eg;
 
   return jsonb_build_object(
+    'as_of', to_char(v_as_of at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'effective_scope', jsonb_build_object('kind', v_scope_kind, 'label', v_scope_label),
     'group_by', p_group_by,
     'page', p_page,
@@ -836,9 +836,15 @@ declare
   v_scope_kind text;
   v_scope_label text;
   v_team_ids uuid[];
+  v_as_of timestamptz := statement_timestamp();
   v_effective_team_filter uuid := coalesce(p_target_team_id, p_team_id);
   v_effective_assignee_filter uuid := coalesce(p_target_assignee_id, p_assignee_id);
-  v_cursor_id uuid;
+  v_cursor_parts text[];
+  v_has_cursor boolean := false;
+  v_cursor_has_submitted_at boolean := false;
+  v_cursor_submitted_at timestamptz;
+  v_cursor_period_start_date date;
+  v_cursor_obligation_id uuid;
   v_items jsonb;
   v_next_cursor text;
 begin
@@ -898,9 +904,28 @@ begin
     raise exception 'WORK_REPORT_PAGINATION_INVALID' using errcode = '22023';
   end if;
 
-  if p_cursor is not null then
+  if p_cursor is not null and btrim(p_cursor) <> '' then
+    v_cursor_parts := string_to_array(p_cursor, '|');
+    if coalesce(array_length(v_cursor_parts, 1), 0) <> 3 then
+      raise exception 'WORK_REPORT_CURSOR_INVALID' using errcode = '22023';
+    end if;
     begin
-      v_cursor_id := p_cursor::uuid;
+      if v_cursor_parts[1] = 'null' then
+        v_cursor_submitted_at := null;
+        v_cursor_has_submitted_at := false;
+      else
+        if v_cursor_parts[1] !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$' then
+          raise exception 'WORK_REPORT_CURSOR_INVALID' using errcode = '22023';
+        end if;
+        v_cursor_submitted_at := v_cursor_parts[1]::timestamptz;
+        v_cursor_has_submitted_at := true;
+      end if;
+      if v_cursor_parts[2] !~ '^\d{4}-\d{2}-\d{2}$' then
+        raise exception 'WORK_REPORT_CURSOR_INVALID' using errcode = '22023';
+      end if;
+      v_cursor_period_start_date := v_cursor_parts[2]::date;
+      v_cursor_obligation_id := v_cursor_parts[3]::uuid;
+      v_has_cursor := true;
     exception when others then
       raise exception 'WORK_REPORT_CURSOR_INVALID' using errcode = '22023';
     end;
@@ -920,10 +945,7 @@ begin
            s.latest_submitted_at as submitted_at,
            coalesce(s.is_late, false) as is_late,
            coalesce(s.has_post_deadline_amendment, false) as has_post_deadline_amendment,
-           metric_contrib.metric_contribution_value,
-           row_number() over (
-             order by s.latest_submitted_at desc nulls last, o.period_start_date desc, o.obligation_id desc
-           )::int as rn
+           metric_contrib.metric_contribution_value
       from public.work_report_obligations o
       join public.direct_entry_app_users u on u.app_user_id = o.assignee_app_user_id
       left join public.teams t on t.team_id = o.snapshot_team_id
@@ -968,24 +990,39 @@ begin
          )
        )
   ),
-  cursor_anchor as (
-    select coalesce(
-      (select c.rn from candidate_rows c where v_cursor_id is not null and c.obligation_id = v_cursor_id),
-      0
-    )::int as anchor_rn
-  ),
   window_rows as (
     select c.*
       from candidate_rows c
-      cross join cursor_anchor ca
-     where c.rn > ca.anchor_rn
-     order by c.rn
+     where not v_has_cursor
+        or (
+          v_cursor_has_submitted_at
+          and (
+            c.submitted_at is null
+            or c.submitted_at < v_cursor_submitted_at
+            or (
+              c.submitted_at = v_cursor_submitted_at
+              and (
+                c.period_start_date < v_cursor_period_start_date
+                or (c.period_start_date = v_cursor_period_start_date and c.obligation_id < v_cursor_obligation_id)
+              )
+            )
+          )
+        )
+        or (
+          not v_cursor_has_submitted_at
+          and c.submitted_at is null
+          and (
+            c.period_start_date < v_cursor_period_start_date
+            or (c.period_start_date = v_cursor_period_start_date and c.obligation_id < v_cursor_obligation_id)
+          )
+        )
+     order by c.submitted_at desc nulls last, c.period_start_date desc, c.obligation_id desc
      limit (p_limit + 1)
   ),
   page_rows as (
     select *
       from window_rows
-     order by rn
+     order by submitted_at desc nulls last, period_start_date desc, obligation_id desc
      limit p_limit
   )
   select coalesce((
@@ -1003,17 +1040,25 @@ begin
              'is_late', pr.is_late,
              'has_post_deadline_amendment', pr.has_post_deadline_amendment,
              'metric_contribution_value', pr.metric_contribution_value
-           ) order by pr.rn)
+           ) order by pr.submitted_at desc nulls last, pr.period_start_date desc, pr.obligation_id desc)
            from page_rows pr
          ), '[]'::jsonb),
          case
-           when (select count(*) from window_rows) > p_limit then
-             (select pr.obligation_id::text from page_rows pr order by pr.rn desc limit 1)
+           when (select count(*) from window_rows) > p_limit then (
+             select case
+                      when pr.submitted_at is null then 'null'
+                      else to_char(pr.submitted_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                    end || '|' || pr.period_start_date::text || '|' || pr.obligation_id::text
+               from page_rows pr
+              order by pr.submitted_at asc nulls first, pr.period_start_date asc, pr.obligation_id asc
+              limit 1
+           )
            else null
          end
     into v_items, v_next_cursor;
 
   return jsonb_build_object(
+    'as_of', to_char(v_as_of at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'effective_scope', jsonb_build_object('kind', v_scope_kind, 'label', v_scope_label),
     'next_cursor', v_next_cursor,
     'items', v_items
@@ -1257,9 +1302,9 @@ revoke all on function public.work_report_get_submission(uuid, uuid, uuid)
   from public, anon, authenticated, service_role;
 revoke all on function public.work_report__internal_resolve_analytics_scope(uuid, uuid, boolean, uuid, uuid, uuid)
   from public, anon, authenticated, service_role;
-revoke all on function public.work_report_analytics_overview(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, timestamptz)
+revoke all on function public.work_report_analytics_overview(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text)
   from public, anon, authenticated, service_role;
-revoke all on function public.work_report_analytics_breakdown(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, integer, integer, timestamptz)
+revoke all on function public.work_report_analytics_breakdown(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, integer, integer)
   from public, anon, authenticated, service_role;
 revoke all on function public.work_report_analytics_contributions(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, text, uuid, uuid, text, text, integer)
   from public, anon, authenticated, service_role;
@@ -1267,8 +1312,8 @@ revoke all on function public.work_report_reconcile_metric_projection(uuid, uuid
   from public, anon, authenticated, service_role;
 
 grant execute on function public.work_report_get_submission(uuid, uuid, uuid) to service_role;
-grant execute on function public.work_report_analytics_overview(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, timestamptz) to service_role;
-grant execute on function public.work_report_analytics_breakdown(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, integer, integer, timestamptz) to service_role;
+grant execute on function public.work_report_analytics_overview(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text) to service_role;
+grant execute on function public.work_report_analytics_breakdown(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, integer, integer) to service_role;
 grant execute on function public.work_report_analytics_contributions(uuid, uuid, uuid, uuid, date, date, uuid, uuid, text, text, text, uuid, uuid, text, text, integer) to service_role;
 grant execute on function public.work_report_reconcile_metric_projection(uuid, uuid, uuid) to service_role;
 

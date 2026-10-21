@@ -30,6 +30,7 @@ const activeSession = async () => ({
 });
 
 const SAMPLE_OVERVIEW = {
+  as_of: "2026-10-21T12:00:00.000000Z",
   effective_scope: { kind: "team", label: "Team Tuyển Dụng A" },
   compliance: {
     due_count: 20,
@@ -71,6 +72,7 @@ const SAMPLE_OVERVIEW = {
 };
 
 const SAMPLE_BREAKDOWN = {
+  as_of: "2026-10-21T12:00:00.000000Z",
   effective_scope: { kind: "team", label: "Team Tuyển Dụng A" },
   group_by: "team",
   page: 1,
@@ -95,8 +97,9 @@ const SAMPLE_BREAKDOWN = {
 };
 
 const SAMPLE_CONTRIBUTIONS = {
+  as_of: "2026-10-21T12:00:00.000000Z",
   effective_scope: { kind: "team", label: "Team Tuyển Dụng A" },
-  next_cursor: null,
+  next_cursor: `2026-10-20T10:00:00.000000Z|2026-10-20|${OBLIGATION_ID}`,
   items: [
     {
       obligation_id: OBLIGATION_ID,
@@ -199,7 +202,28 @@ test("analytics API enforces feature flag, query allowlist, date/pagination vali
   );
   assert.equal(reversedRange.status, 400);
 
-  // Valid overview call -> 200 with Cache-Control: private, no-store
+  // Client-supplied as_of is forbidden -> 400 WORK_REPORT_QUERY_INVALID
+  const clientAsOfOverview = await getWorkReportAnalyticsOverview(
+    new Request(
+      `http://localhost/api/work-reports/analytics/overview?template_id=${TEMPLATE_ID}&as_of=2020-01-01T00:00:00Z`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(clientAsOfOverview.status, 400);
+  assert.equal((await clientAsOfOverview.json()).code, "WORK_REPORT_QUERY_INVALID");
+
+  const clientAsOfBreakdown = await getWorkReportAnalyticsBreakdown(
+    new Request(
+      `http://localhost/api/work-reports/analytics/breakdown?template_id=${TEMPLATE_ID}&group_by=team&as_of=2020-01-01T00:00:00Z`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(clientAsOfBreakdown.status, 400);
+  assert.equal((await clientAsOfBreakdown.json()).code, "WORK_REPORT_QUERY_INVALID");
+
+  // Valid overview call -> 200 with Cache-Control: private, no-store and DB as_of in response
   const okOverview = await getWorkReportAnalyticsOverview(
     new Request(
       `http://localhost/api/work-reports/analytics/overview?template_id=${TEMPLATE_ID}&version_id=${VERSION_ID}&from=2026-10-01&to=2026-10-31&team_id=${TEAM_A}&assignee_id=${ASSIGNEE_A}&finality=final`,
@@ -211,6 +235,7 @@ test("analytics API enforces feature flag, query allowlist, date/pagination vali
   assert.equal(okOverview.headers.get("cache-control"), "private, no-store");
   const overviewBody = await okOverview.json();
   assert.equal(overviewBody.ok, true);
+  assert.equal(overviewBody.data.as_of, SAMPLE_OVERVIEW.as_of);
   assert.equal(overviewBody.data.compliance.completion_rate, 90);
 
   // Invalid breakdown group_by or page_size -> 400
@@ -232,18 +257,33 @@ test("analytics API enforces feature flag, query allowlist, date/pagination vali
   );
   assert.equal(okBreakdown.status, 200);
   const breakdownBody = await okBreakdown.json();
+  assert.equal(breakdownBody.data.as_of, SAMPLE_BREAKDOWN.as_of);
   assert.equal(breakdownBody.data.items.length, 1);
 
-  // Valid contributions call -> 200
+  // Bare UUID cursor or malformed keyset cursor -> 400 WORK_REPORT_QUERY_INVALID
+  const bareUuidCursor = await getWorkReportAnalyticsContributions(
+    new Request(
+      `http://localhost/api/work-reports/analytics/contributions?template_id=${TEMPLATE_ID}&cursor=${OBLIGATION_ID}`,
+    ),
+    "true",
+    deps,
+  );
+  assert.equal(bareUuidCursor.status, 400);
+  assert.equal((await bareUuidCursor.json()).code, "WORK_REPORT_QUERY_INVALID");
+
+  // Valid contributions call with keyset cursor -> 200
+  const validCursor = encodeURIComponent(`2026-10-20T10:00:00.000000Z|2026-10-20|${OBLIGATION_ID}`);
   const okContrib = await getWorkReportAnalyticsContributions(
     new Request(
-      `http://localhost/api/work-reports/analytics/contributions?template_id=${TEMPLATE_ID}&metric_key=calls_made&target_team_id=${TEAM_A}&limit=100`,
+      `http://localhost/api/work-reports/analytics/contributions?template_id=${TEMPLATE_ID}&metric_key=calls_made&target_team_id=${TEAM_A}&cursor=${validCursor}&limit=100`,
     ),
     "true",
     deps,
   );
   assert.equal(okContrib.status, 200);
   const contribBody = await okContrib.json();
+  assert.equal(contribBody.data.as_of, SAMPLE_CONTRIBUTIONS.as_of);
+  assert.equal(contribBody.data.next_cursor, SAMPLE_CONTRIBUTIONS.next_cursor);
   assert.equal(contribBody.data.items[0].submission_id, SUBMISSION_ID);
   assert.equal(contribBody.data.items[0].metric_contribution_value, 30);
 });

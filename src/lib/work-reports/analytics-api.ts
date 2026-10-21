@@ -13,6 +13,8 @@ import type {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,63}$/;
 const PERIOD_KEY = /^[A-Za-z0-9-]{7,32}$/;
+const KEYSET_CURSOR =
+  /^(null|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2}))\|(\d{4}-\d{2}-\d{2})\|([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
 const OVERVIEW_KEYS = new Set([
   "template_id",
@@ -22,7 +24,6 @@ const OVERVIEW_KEYS = new Set([
   "team_id",
   "assignee_id",
   "finality",
-  "as_of",
 ]);
 
 const BREAKDOWN_KEYS = new Set([
@@ -121,9 +122,14 @@ function parseOptionalDate(value: string | null): string | null | undefined {
   return isRealCalendarDate(value) ? value : undefined;
 }
 
-function parseOptionalTimestamp(value: string | null): string | null | undefined {
+function parseOptionalCursor(value: string | null): string | null | undefined {
   if (value === null || value === "") return null;
-  return !Number.isNaN(Date.parse(value)) ? value : undefined;
+  const match = KEYSET_CURSOR.exec(value);
+  if (!match) return undefined;
+  const [, tsPart, periodStartDate] = match;
+  if (!isRealCalendarDate(periodStartDate)) return undefined;
+  if (tsPart !== "null" && Number.isNaN(Date.parse(tsPart))) return undefined;
+  return value;
 }
 
 function parsePositiveInt(value: string | null, defaultValue: number, min: number, max: number): number | undefined {
@@ -144,7 +150,6 @@ function parseBaseFilters(
   const assigneeId = parseOptionalUuid(searchParams.get("assignee_id"));
   const from = parseOptionalDate(searchParams.get("from"));
   const to = parseOptionalDate(searchParams.get("to"));
-  const asOf = parseOptionalTimestamp(searchParams.get("as_of"));
   const finalityRaw = searchParams.get("finality") ?? "final";
 
   if (
@@ -153,7 +158,6 @@ function parseBaseFilters(
     assigneeId === undefined ||
     from === undefined ||
     to === undefined ||
-    asOf === undefined ||
     finalityRaw !== "final" ||
     (from !== null && to !== null && from > to)
   ) {
@@ -168,7 +172,6 @@ function parseBaseFilters(
     team_id: teamId,
     assignee_id: assigneeId,
     finality: "final",
-    as_of: asOf,
   };
 }
 
@@ -255,7 +258,7 @@ export async function getWorkReportAnalyticsContributions(
   const targetTeamId = parseOptionalUuid(searchParams.get("target_team_id"));
   const targetAssigneeId = parseOptionalUuid(searchParams.get("target_assignee_id"));
   const targetPeriodKeyRaw = searchParams.get("target_period_key");
-  const cursor = parseOptionalUuid(searchParams.get("cursor"));
+  const cursor = parseOptionalCursor(searchParams.get("cursor"));
   const limit = parsePositiveInt(searchParams.get("limit"), 100, 1, 200);
 
   const metricKey = metricKeyRaw === null || metricKeyRaw === "" ? null : IDENTIFIER.test(metricKeyRaw) ? metricKeyRaw : undefined;

@@ -62,6 +62,7 @@ export type WorkReportRatioAggregate = {
 };
 
 export type WorkReportAnalyticsOverview = {
+  as_of: string;
   effective_scope: WorkReportEffectiveScope;
   compliance: WorkReportComplianceSummary;
   metrics: readonly WorkReportMetricAggregate[];
@@ -86,6 +87,7 @@ export type WorkReportAnalyticsBreakdownItem = {
 };
 
 export type WorkReportAnalyticsBreakdown = {
+  as_of: string;
   effective_scope: WorkReportEffectiveScope;
   group_by: WorkReportAnalyticsGroupBy;
   page: number;
@@ -111,6 +113,7 @@ export type WorkReportAnalyticsContributionItem = {
 };
 
 export type WorkReportAnalyticsContributions = {
+  as_of: string;
   effective_scope: WorkReportEffectiveScope;
   next_cursor: string | null;
   items: readonly WorkReportAnalyticsContributionItem[];
@@ -145,7 +148,6 @@ export type WorkReportAnalyticsFilterInput = WorkReportActorRef & {
   team_id: string | null;
   assignee_id: string | null;
   finality: "final";
-  as_of?: string | null;
 };
 
 export type WorkReportAnalyticsBreakdownInput = WorkReportAnalyticsFilterInput & {
@@ -181,6 +183,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const KEYSET_CURSOR =
+  /^(?:null|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2}))\|\d{4}-\d{2}-\d{2}\|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && !Number.isNaN(Date.parse(value));
+}
 
 function isNonNegativeInt(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 0;
@@ -247,6 +255,7 @@ function isRatioAggregate(value: unknown): value is WorkReportRatioAggregate {
 function isOverview(value: unknown): value is WorkReportAnalyticsOverview {
   return (
     isRecord(value) &&
+    isIsoTimestamp(value.as_of) &&
     isEffectiveScope(value.effective_scope) &&
     isComplianceSummary(value.compliance) &&
     Array.isArray(value.metrics) &&
@@ -277,6 +286,7 @@ function isBreakdownItem(value: unknown): value is WorkReportAnalyticsBreakdownI
 function isBreakdown(value: unknown): value is WorkReportAnalyticsBreakdown {
   return (
     isRecord(value) &&
+    isIsoTimestamp(value.as_of) &&
     isEffectiveScope(value.effective_scope) &&
     ["team", "assignee", "period"].includes(String(value.group_by)) &&
     Number.isInteger(value.page) &&
@@ -313,8 +323,9 @@ function isContributionItem(value: unknown): value is WorkReportAnalyticsContrib
 function isContributions(value: unknown): value is WorkReportAnalyticsContributions {
   return (
     isRecord(value) &&
+    isIsoTimestamp(value.as_of) &&
     isEffectiveScope(value.effective_scope) &&
-    (value.next_cursor === null || typeof value.next_cursor === "string") &&
+    (value.next_cursor === null || (typeof value.next_cursor === "string" && KEYSET_CURSOR.test(value.next_cursor))) &&
     Array.isArray(value.items) &&
     value.items.every(isContributionItem)
   );
@@ -398,7 +409,6 @@ export function createAnalyticsRepository(rpc?: Rpc): AnalyticsRepository {
           p_team_id: input.team_id,
           p_assignee_id: input.assignee_id,
           p_finality: input.finality,
-          p_as_of: input.as_of ?? null,
         },
         isOverview,
       );
@@ -419,7 +429,6 @@ export function createAnalyticsRepository(rpc?: Rpc): AnalyticsRepository {
           p_group_by: input.group_by,
           p_page: input.page,
           p_page_size: input.page_size,
-          p_as_of: input.as_of ?? null,
         },
         isBreakdown,
       );

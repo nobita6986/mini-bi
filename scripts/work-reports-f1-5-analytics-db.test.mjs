@@ -358,14 +358,23 @@ test("AG-01, AG-02, AG-03, AG-15: compliance due/completed/on-time/late/pending/
     }
   }
 
-  // AG-03 & AG-15: At 2026-10-21T23:59:59+07:00 (2026-10-21T16:59:59Z = exact due_at), the 2 unsubmitted obligations are pending_due, NOT overdue
+  // AG-03 & AG-15: When due_at on the 2 unsubmitted obligations is ahead of DB statement_timestamp(), they are pending_due, NOT overdue
+  await db.query(
+    `update public.work_report_obligations
+        set due_at = statement_timestamp() + interval '1 hour'
+      where template_id = $1::uuid
+        and obligation_id in ('76000000-0000-4000-8000-000000000019', '76000000-0000-4000-8000-000000000020')`,
+    [templateId],
+  );
   const { rows: beforeDeadlineRows } = await db.query(
     `select public.work_report_analytics_overview(
        $1::uuid, $2::uuid, $3::uuid, null, '2026-10-20'::date, '2026-10-20'::date,
-       $4::uuid, null, 'final', '2026-10-21T16:59:59Z'::timestamptz
+       $4::uuid, null, 'final'
      ) as result`,
     [LEADER_A.auth, LEADER_A.app, templateId, TEAM_A],
   );
+  assert.equal(typeof beforeDeadlineRows[0].result.as_of, "string");
+  assert.equal(Number.isNaN(Date.parse(beforeDeadlineRows[0].result.as_of)), false);
   assert.deepEqual(beforeDeadlineRows[0].result.compliance, {
     due_count: 20,
     completed_count: 18,
@@ -378,14 +387,23 @@ test("AG-01, AG-02, AG-03, AG-15: compliance due/completed/on-time/late/pending/
     completion_rate: 90,
   });
 
-  // AG-01, AG-02 & AG-15: 1 second after HCM midnight (2026-10-22T00:00:00+07:00 = 2026-10-21T17:00:00Z), the 2 unsubmitted become overdue_missing
+  // AG-01, AG-02 & AG-15: Once due_at is behind DB statement_timestamp(), the 2 unsubmitted become overdue_missing
+  await db.query(
+    `update public.work_report_obligations
+        set due_at = statement_timestamp() - interval '1 second'
+      where template_id = $1::uuid
+        and obligation_id in ('76000000-0000-4000-8000-000000000019', '76000000-0000-4000-8000-000000000020')`,
+    [templateId],
+  );
   const { rows: afterDeadlineRows } = await db.query(
     `select public.work_report_analytics_overview(
        $1::uuid, $2::uuid, $3::uuid, null, '2026-10-20'::date, '2026-10-20'::date,
-       $4::uuid, null, 'final', '2026-10-21T17:00:00Z'::timestamptz
+       $4::uuid, null, 'final'
      ) as result`,
     [LEADER_A.auth, LEADER_A.app, templateId, TEAM_A],
   );
+  assert.equal(typeof afterDeadlineRows[0].result.as_of, "string");
+  assert.equal(Number.isNaN(Date.parse(afterDeadlineRows[0].result.as_of)), false);
   assert.deepEqual(afterDeadlineRows[0].result.compliance, {
     due_count: 20,
     completed_count: 18,
@@ -541,11 +559,13 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   // - interested_per_call_rate (AG-06 weighted ratio): 10 / 40 * 100 = 25 (NOT average of 50%, 50%, 0% = 33.33%)
   const { rows: teamAOverviewRows } = await db.query(
     `select public.work_report_analytics_overview(
-       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $4::date, null, null, 'final', null
+       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $4::date, null, null, 'final'
      ) as result`,
     [LEADER_A.auth, LEADER_A.app, templateId, period1],
   );
   const teamAOverview = teamAOverviewRows[0].result;
+  assert.equal(typeof teamAOverview.as_of, "string");
+  assert.equal(Number.isNaN(Date.parse(teamAOverview.as_of)), false);
   assert.deepEqual(teamAOverview.effective_scope, {
     kind: "team",
     label: "Nhóm Tuyển Dụng A",
@@ -704,7 +724,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   // - In Period 2, STAFF_A1's submission belongs to TEAM_B (LEADER_A sees 0 calls_made in Period 2; LEADER_B sees 15 calls_made in Period 2)
   const { rows: leaderAP2Rows } = await db.query(
     `select public.work_report_analytics_overview(
-       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $4::date, null, null, 'final', null
+       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $4::date, null, null, 'final'
      ) as result`,
     [LEADER_A.auth, LEADER_A.app, templateId, period2],
   );
@@ -712,7 +732,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
 
   const { rows: leaderBP2Rows } = await db.query(
     `select public.work_report_analytics_overview(
-       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $4::date, null, null, 'final', null
+       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $4::date, null, null, 'final'
      ) as result`,
     [LEADER_B.auth, LEADER_B.app, templateId, period2],
   );
@@ -725,7 +745,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   // AG-07 compatible versions (v1 + v2): BoD viewing across Period 1..Period 2 sees v1 (90) + v2 (15) = 105 in a single calls_made row
   const { rows: bodCombinedRows } = await db.query(
     `select public.work_report_analytics_overview(
-       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $5::date, null, null, 'final', null
+       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $5::date, null, null, 'final'
      ) as result`,
     [BOD_ADMIN.auth, BOD_ADMIN.app, templateId, period1, period2],
   );
@@ -737,10 +757,12 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   // Breakdown by team, assignee, and period
   const { rows: breakdownByTeam } = await db.query(
     `select public.work_report_analytics_breakdown(
-       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $5::date, null, null, 'final', 'team', 1, 50, null
+       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $5::date, null, null, 'final', 'team', 1, 50
      ) as result`,
     [BOD_ADMIN.auth, BOD_ADMIN.app, templateId, period1, period2],
   );
+  assert.equal(typeof breakdownByTeam[0].result.as_of, "string");
+  assert.equal(Number.isNaN(Date.parse(breakdownByTeam[0].result.as_of)), false);
   assert.equal(breakdownByTeam[0].result.items.length, 2);
   const teamABreakdown = breakdownByTeam[0].result.items.find((i) => i.group_id === TEAM_A);
   const teamBBreakdown = breakdownByTeam[0].result.items.find((i) => i.group_id === TEAM_B);
@@ -793,7 +815,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
 
   const { rows: bodAllThreePeriods } = await db.query(
     `select public.work_report_analytics_overview(
-       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $5::date, null, null, 'final', null
+       $1::uuid, $2::uuid, $3::uuid, null, $4::date, $5::date, null, null, 'final'
      ) as result`,
     [BOD_ADMIN.auth, BOD_ADMIN.app, templateId, period1, period3],
   );
@@ -864,7 +886,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   await assert.rejects(
     db.query(
       `select public.work_report_analytics_overview(
-         $1::uuid, $2::uuid, $3::uuid, null, null, null, $4::uuid, null, 'final', null
+         $1::uuid, $2::uuid, $3::uuid, null, null, null, $4::uuid, null, 'final'
        )`,
       [LEADER_A.auth, LEADER_A.app, templateId, TEAM_B],
     ),
@@ -873,7 +895,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   await assert.rejects(
     db.query(
       `select public.work_report_analytics_overview(
-         $1::uuid, $2::uuid, $3::uuid, null, null, null, null, $4::uuid, 'final', null
+         $1::uuid, $2::uuid, $3::uuid, null, null, null, null, $4::uuid, 'final'
        )`,
       [LEADER_A.auth, LEADER_A.app, templateId, STAFF_B1.app],
     ),
@@ -894,7 +916,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   await assert.rejects(
     db.query(
       `select public.work_report_analytics_overview(
-         $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final', null
+         $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final'
        )`,
       [FORM_ADMIN_ONLY.auth, FORM_ADMIN_ONLY.app, templateId],
     ),
@@ -904,7 +926,7 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   // ANALYTICS_ONLY_USER can read overview & breakdown, but is denied contributions (requires report_view)
   const { rows: analyticsOnlyOverview } = await db.query(
     `select public.work_report_analytics_overview(
-       $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final', null
+       $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final'
      ) as result`,
     [ANALYTICS_ONLY_USER.auth, ANALYTICS_ONLY_USER.app, templateId],
   );
@@ -930,10 +952,211 @@ test("AG-04, AG-05, AG-06, AG-07, AG-08, AG-09, AG-11, AG-16, AG-17 & SEC-WR mat
   await assert.rejects(
     db.query(
       `select public.work_report_analytics_overview(
-         $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final', null
+         $1::uuid, $2::uuid, $3::uuid, null, null, null, null, null, 'final'
        )`,
       [LEADER_A.auth, LEADER_A.app, templateId],
     ),
     (err) => err.code === "42501",
+  );
+});
+
+test("contributions keyset pagination neither skips nor duplicates rows when a new submission arrives or the cursor row is updated between pages", async () => {
+  const contract = buildWorkReportMetricContract(RECRUITMENT_DAILY_TEMPLATE_SCHEMA);
+  const { rows: tplRows } = await db.query(
+    `select public.work_report_create_template(
+       $1::uuid, $2::uuid, 'RECRUITMENT_DAILY_KEYSET', 'Báo cáo kiểm thử keyset cursor',
+       'Kiểm thử keyset pagination ổn định giữa các trang', 'DAILY', $3::jsonb, $4::jsonb, $5
+     ) as result`,
+    [
+      BOD_ADMIN.auth,
+      BOD_ADMIN.app,
+      JSON.stringify(RECRUITMENT_DAILY_TEMPLATE_SCHEMA),
+      JSON.stringify(contract),
+      KEY("tpl_keyset_create"),
+    ],
+  );
+  const templateId = tplRows[0].result.template_id;
+  const versionId = tplRows[0].result.draft_version_id;
+  await db.query(
+    `select public.work_report_publish_template($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, $5)`,
+    [BOD_ADMIN.auth, BOD_ADMIN.app, templateId, versionId, KEY("tpl_keyset_pub")],
+  );
+
+  const { rows: assignRows } = await db.query(
+    `select public.work_report_create_assignment(
+       $1::uuid, $2::uuid, $3::uuid, 'TEAM', null, $4::uuid, null,
+       'DAILY', true, 1, '23:59:59'::time, false, '2026-10-01'::date, null, $5
+     ) as result`,
+    [BOD_ADMIN.auth, BOD_ADMIN.app, templateId, TEAM_B, KEY("assign_keyset")],
+  );
+  const assignmentId = assignRows[0].result.assignment_id;
+
+  // Seed 5 obligations O1..O5 on TEAM_B:
+  // Initially O1..O4 are COMPLETED with distinct submitted_at descending:
+  //   O1: 2026-10-21T10:04:00Z (calls_made = 40)
+  //   O2: 2026-10-21T10:03:00Z (calls_made = 30)  <-- last row of Page 1 (limit = 2)
+  //   O3: 2026-10-21T10:02:00Z (calls_made = 20)
+  //   O4: 2026-10-21T10:01:00Z (calls_made = 10)
+  //   O5: unsubmitted initially (will be submitted between Page 1 and Page 2!)
+  const obIds = [];
+  const subIds = [];
+  for (let i = 1; i <= 5; i++) {
+    const authId = `17000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const appId = `27000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const obId = `77000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const subId = `87000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const revId = `97000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    obIds.push(obId);
+    subIds.push(subId);
+
+    await db.query("insert into auth.users (id) values ($1::uuid)", [authId]);
+    await db.query(
+      `insert into public.direct_entry_app_users (app_user_id, auth_subject, display_name, enabled)
+       values ($1::uuid, $2::uuid, $3, true)`,
+      [appId, authId, `Keyset Member ${i}`],
+    );
+    await db.query(
+      `insert into public.work_report_obligations
+         (obligation_id, template_id, template_version_id, assignment_id, assignee_app_user_id,
+          snapshot_team_id, snapshot_team_code, snapshot_team_display_name,
+          period_type, period_key, period_start_date, period_end_date, due_at, is_mandatory, obligation_status)
+       values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+               $6::uuid, 'WR15_TEAM_B', 'Nhóm Tuyển Dụng B',
+               'DAILY', '2026-10-20', '2026-10-20'::date, '2026-10-20'::date, '2099-10-21T16:59:59Z'::timestamptz, true, 'ACTIVE')`,
+      [obId, templateId, versionId, assignmentId, appId, TEAM_B],
+    );
+
+    if (i <= 4) {
+      const minute = 5 - i; // i=1 -> 10:04, i=2 -> 10:03, i=3 -> 10:02, i=4 -> 10:01
+      const submittedAt = `2026-10-21T10:0${minute}:00.000000Z`;
+      const callsVal = (5 - i) * 10;
+      const payload = { calls_made: callsVal, interested_candidates: 1, workers_started: 0 };
+      await db.query(
+        `insert into public.work_report_submissions
+           (submission_id, obligation_id, template_id, template_version_id, assignee_app_user_id,
+            submitted_by_user_id, submitted_team_id, state, draft_payload_json,
+            first_submitted_at, latest_submitted_at, is_late)
+         values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+                 $5::uuid, $6::uuid, 'COMPLETED', $7::jsonb,
+                 $8::timestamptz, $8::timestamptz, false)`,
+        [subId, obId, templateId, versionId, appId, TEAM_B, JSON.stringify(payload), submittedAt],
+      );
+      await db.query(
+        `insert into public.work_report_submission_revisions
+           (revision_id, submission_id, obligation_id, template_version_id, revision_no,
+            payload_json, payload_checksum, created_by_user_id, created_at)
+         values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1,
+                 $5::jsonb, repeat('b', 64), $6::uuid, $7::timestamptz)`,
+        [revId, subId, obId, versionId, JSON.stringify(payload), appId, submittedAt],
+      );
+      await db.query(
+        `update public.work_report_submissions set current_revision_id = $1::uuid where submission_id = $2::uuid`,
+        [revId, subId],
+      );
+      await db.query(
+        `insert into public.work_report_metric_values
+           (submission_id, revision_id, obligation_id, template_id, template_version_id,
+            assignee_app_user_id, snapshot_team_id, period_type, period_key,
+            period_start_date, period_end_date, field_key, metric_key, compatible_group,
+            value_type, unit, numeric_value, is_current_revision, is_provisional, is_final, is_eligible)
+         values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+                 $6::uuid, $7::uuid, 'DAILY', '2026-10-20',
+                 '2026-10-20'::date, '2026-10-20'::date, 'calls_made', 'calls_made', 'recruitment_daily_calls_made_v1',
+                 'INTEGER', 'cuộc', $8, true, false, true, true)`,
+        [subId, revId, obId, templateId, versionId, appId, TEAM_B, callsVal],
+      );
+    }
+  }
+
+  // 1) Fetch Page 1 (limit = 2, cursor = null) -> returns [O1, O2]
+  const { rows: page1Rows } = await db.query(
+    `select public.work_report_analytics_contributions(
+       $1::uuid, $2::uuid, $3::uuid, null, null, null, $4::uuid, null, 'final',
+       'calls_made', null, null, null, null, null, 2
+     ) as result`,
+    [LEADER_B.auth, LEADER_B.app, templateId, TEAM_B],
+  );
+  const page1 = page1Rows[0].result;
+  assert.equal(typeof page1.as_of, "string");
+  assert.deepEqual(
+    page1.items.map((item) => item.obligation_id),
+    [obIds[0], obIds[1]],
+  );
+  assert.equal(page1.next_cursor, `2026-10-21T10:03:00.000000Z|2026-10-20|${obIds[1]}`);
+
+  // 2) Between Page 1 and Page 2:
+  //    a) O5 submits a brand-new report at 2026-10-21T10:05:00Z (sorts before O1!)
+  //    b) O2 (the anchor row of Page 1!) submits a new revision at 2026-10-21T10:06:00Z (moves O2 to row 1!)
+  const appId5 = "27000000-0000-4000-8000-000000000005";
+  const revId5 = "97000000-0000-4000-8000-000000000005";
+  await db.query(
+    `insert into public.work_report_submissions
+       (submission_id, obligation_id, template_id, template_version_id, assignee_app_user_id,
+        submitted_by_user_id, submitted_team_id, state, draft_payload_json,
+        first_submitted_at, latest_submitted_at, is_late)
+     values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+             $5::uuid, $6::uuid, 'COMPLETED', '{"calls_made":50,"interested_candidates":1,"workers_started":0}'::jsonb,
+             '2026-10-21T10:05:00.000000Z'::timestamptz, '2026-10-21T10:05:00.000000Z'::timestamptz, false)`,
+    [subIds[4], obIds[4], templateId, versionId, appId5, TEAM_B],
+  );
+  await db.query(
+    `insert into public.work_report_submission_revisions
+       (revision_id, submission_id, obligation_id, template_version_id, revision_no,
+        payload_json, payload_checksum, created_by_user_id, created_at)
+     values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1,
+             '{"calls_made":50,"interested_candidates":1,"workers_started":0}'::jsonb, repeat('c', 64), $5::uuid, '2026-10-21T10:05:00.000000Z'::timestamptz)`,
+    [revId5, subIds[4], obIds[4], versionId, appId5],
+  );
+  await db.query(
+    `update public.work_report_submissions set current_revision_id = $1::uuid where submission_id = $2::uuid`,
+    [revId5, subIds[4]],
+  );
+  await db.query(
+    `insert into public.work_report_metric_values
+       (submission_id, revision_id, obligation_id, template_id, template_version_id,
+        assignee_app_user_id, snapshot_team_id, period_type, period_key,
+        period_start_date, period_end_date, field_key, metric_key, compatible_group,
+        value_type, unit, numeric_value, is_current_revision, is_provisional, is_final, is_eligible)
+     values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+             $6::uuid, $7::uuid, 'DAILY', '2026-10-20',
+             '2026-10-20'::date, '2026-10-20'::date, 'calls_made', 'calls_made', 'recruitment_daily_calls_made_v1',
+             'INTEGER', 'cuộc', 50, true, false, true, true)`,
+    [subIds[4], revId5, obIds[4], templateId, versionId, appId5, TEAM_B],
+  );
+
+  // Update O2's latest_submitted_at to 10:06:00Z (simulating resubmission of the cursor anchor row between Page 1 and Page 2)
+  await db.query(
+    `update public.work_report_submissions
+        set latest_submitted_at = '2026-10-21T10:06:00.000000Z'::timestamptz
+      where submission_id = $1::uuid`,
+    [subIds[1]],
+  );
+
+  // 3) Fetch Page 2 using page1.next_cursor (limit = 2) -> must return [O3, O4] with zero skipped or duplicated rows!
+  const { rows: page2Rows } = await db.query(
+    `select public.work_report_analytics_contributions(
+       $1::uuid, $2::uuid, $3::uuid, null, null, null, $4::uuid, null, 'final',
+       'calls_made', null, null, null, null, $5, 2
+     ) as result`,
+    [LEADER_B.auth, LEADER_B.app, templateId, TEAM_B, page1.next_cursor],
+  );
+  const page2 = page2Rows[0].result;
+  assert.deepEqual(
+    page2.items.map((item) => item.obligation_id),
+    [obIds[2], obIds[3]],
+    "Page 2 must return [O3, O4] without duplicating O1/O2 or skipping O3",
+  );
+  assert.equal(page2.next_cursor, null);
+
+  // 4) Malformed or legacy bare-UUID cursor must be rejected with 22023 WORK_REPORT_CURSOR_INVALID
+  await assert.rejects(
+    db.query(
+      `select public.work_report_analytics_contributions(
+         $1::uuid, $2::uuid, $3::uuid, null, null, null, $4::uuid, null, 'final',
+         'calls_made', null, null, null, null, $5, 2
+       )`,
+      [LEADER_B.auth, LEADER_B.app, templateId, TEAM_B, obIds[1]],
+    ),
+    (err) => err.code === "22023" && err.message.includes("WORK_REPORT_CURSOR_INVALID"),
   );
 });
