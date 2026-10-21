@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DataTableContainer, DATA_TABLE_CLASS, DATA_TABLE_HEAD_CLASS, DATA_TABLE_ROW_CLASS, DATA_TABLE_TD_CLASS, DATA_TABLE_TH_CLASS } from "@/components/ui/data-table";
+import { CursorLoadMore } from "@/components/ui/cursor-load-more";
 import { FilterToolbar } from "@/components/ui/filter-toolbar";
 import { StatusBanner } from "@/components/ui/status-banner";
+import { appendUniqueContributions, contributionPageUrl } from "@/lib/work-reports/analytics-ui-model.mjs";
 
 type Filters = { template_id: string; version_id: string; from: string; to: string; team_id: string; assignee_id: string };
 type Metric = { metric_key: string; label: string; unit: string; compatible_group: string; sum_value: number | null; avg_value: number | null; min_value: number | null; max_value: number | null; count_valid: number; missing_value_count: number };
@@ -39,12 +41,14 @@ export function WorkReportAnalytics() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [rows, setRows] = useState<Breakdown[]>([]);
   const [contributions, setContributions] = useState<Contribution[] | null>(null);
+  const [contributionQuery, setContributionQuery] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function load(nextFilters: Filters, nextGroup: GroupBy = groupBy) {
-    setBusy(true); setError(null); setContributions(null); setEvidence(null);
+    setBusy(true); setError(null); setContributions(null); setContributionQuery(null); setNextCursor(null); setEvidence(null);
     const query = queryString(nextFilters);
     try {
       const [summary, breakdown] = await Promise.all([
@@ -64,11 +68,25 @@ export function WorkReportAnalytics() {
     if (row?.group_id && groupBy === "team") query.set("target_team_id", row.group_id);
     if (row?.group_id && groupBy === "assignee") query.set("target_assignee_id", row.group_id);
     if (row?.group_id && groupBy === "period") query.set("target_period_key", row.group_id);
-    setBusy(true); setError(null); setEvidence(null);
+    setBusy(true); setError(null); setContributions(null); setContributionQuery(null); setNextCursor(null); setEvidence(null);
     try {
-      const result = await getData<{ items: Contribution[] }>(`/api/work-reports/analytics/contributions?${query}&limit=100`);
+      const baseQuery = query.toString();
+      const result = await getData<{ items: Contribution[]; next_cursor: string | null }>(contributionPageUrl(baseQuery));
       setContributions(result.items);
+      setContributionQuery(baseQuery);
+      setNextCursor(result.next_cursor);
     } catch { setError("Không tải được danh sách bài nộp đóng góp trong phạm vi quyền hiện hành."); }
+    finally { setBusy(false); }
+  }
+
+  async function loadMoreContributions() {
+    if (!contributionQuery || !nextCursor) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await getData<{ items: Contribution[]; next_cursor: string | null }>(contributionPageUrl(contributionQuery, nextCursor));
+      setContributions((current) => current ? appendUniqueContributions(current, result.items) : result.items);
+      setNextCursor(result.next_cursor);
+    } catch { setError("Không tải được trang tiếp theo. Vui lòng thử lại."); }
     finally { setBusy(false); }
   }
 
@@ -107,7 +125,7 @@ export function WorkReportAnalytics() {
       </section>
     </> : <p className="rounded-xl border border-border bg-surface p-4 text-sm text-muted">Nhập mã mẫu rồi áp dụng bộ lọc để xem tổng hợp.</p>}
 
-    {contributions ? <section aria-label="Bài nộp nguồn" className="space-y-2"><h2 className="text-lg font-semibold">Bài nộp đóng góp ({contributions.length})</h2><DataTableContainer><table className={DATA_TABLE_CLASS}><thead className={DATA_TABLE_HEAD_CLASS}><tr><th className={DATA_TABLE_TH_CLASS}>Mã bài nộp</th><th className={DATA_TABLE_TH_CLASS}>Nhân viên</th><th className={DATA_TABLE_TH_CLASS}>Nhóm / kỳ</th><th className={DATA_TABLE_TH_CLASS}>Trạng thái</th><th className={DATA_TABLE_TH_CLASS}>Nộp lúc</th><th className={DATA_TABLE_TH_CLASS}>Giá trị</th><th className={DATA_TABLE_TH_CLASS}>Nguồn</th></tr></thead><tbody>{contributions.map((item) => <tr key={item.obligation_id} className={DATA_TABLE_ROW_CLASS}><td className={DATA_TABLE_TD_CLASS}>{item.submission_id ? `${item.submission_id} · rev ${item.revision_no ?? "—"}` : item.obligation_id}</td><td className={DATA_TABLE_TD_CLASS}>{item.assignee_display_name}</td><td className={DATA_TABLE_TD_CLASS}>{item.team_display_name ?? "—"} / {item.period_key}</td><td className={DATA_TABLE_TD_CLASS}>{item.state}{item.is_late ? " · Nộp muộn" : ""}{item.has_post_deadline_amendment ? " · Có bổ sung sau hạn" : ""}</td><td className={DATA_TABLE_TD_CLASS}>{dateTime(item.submitted_at)}</td><td className={DATA_TABLE_TD_CLASS}>{number(item.metric_contribution_value, 2)}</td><td className={DATA_TABLE_TD_CLASS}>{item.submission_id ? <Button size="sm" onClick={() => void openEvidence(item)}>Mở bài nộp</Button> : "—"}</td></tr>)}</tbody></table>{contributions.length === 0 ? <p className="p-4 text-sm text-muted">Không có bài nộp phù hợp.</p> : null}</DataTableContainer></section> : null}
+    {contributions ? <section aria-label="Bài nộp nguồn" className="space-y-2"><h2 className="text-lg font-semibold">Bài nộp đóng góp ({contributions.length})</h2><DataTableContainer><table className={DATA_TABLE_CLASS}><thead className={DATA_TABLE_HEAD_CLASS}><tr><th className={DATA_TABLE_TH_CLASS}>Mã bài nộp</th><th className={DATA_TABLE_TH_CLASS}>Nhân viên</th><th className={DATA_TABLE_TH_CLASS}>Nhóm / kỳ</th><th className={DATA_TABLE_TH_CLASS}>Trạng thái</th><th className={DATA_TABLE_TH_CLASS}>Nộp lúc</th><th className={DATA_TABLE_TH_CLASS}>Giá trị</th><th className={DATA_TABLE_TH_CLASS}>Nguồn</th></tr></thead><tbody>{contributions.map((item) => <tr key={item.obligation_id} className={DATA_TABLE_ROW_CLASS}><td className={DATA_TABLE_TD_CLASS}>{item.submission_id ? `${item.submission_id} · rev ${item.revision_no ?? "—"}` : item.obligation_id}</td><td className={DATA_TABLE_TD_CLASS}>{item.assignee_display_name}</td><td className={DATA_TABLE_TD_CLASS}>{item.team_display_name ?? "—"} / {item.period_key}</td><td className={DATA_TABLE_TD_CLASS}>{item.state}{item.is_late ? " · Nộp muộn" : ""}{item.has_post_deadline_amendment ? " · Có bổ sung sau hạn" : ""}</td><td className={DATA_TABLE_TD_CLASS}>{dateTime(item.submitted_at)}</td><td className={DATA_TABLE_TD_CLASS}>{number(item.metric_contribution_value, 2)}</td><td className={DATA_TABLE_TD_CLASS}>{item.submission_id ? <Button size="sm" onClick={() => void openEvidence(item)}>Mở bài nộp</Button> : "—"}</td></tr>)}</tbody></table>{contributions.length === 0 ? <p className="p-4 text-sm text-muted">Không có bài nộp phù hợp.</p> : null}</DataTableContainer><div className="flex justify-center"><CursorLoadMore hasMore={nextCursor !== null} loading={busy} onLoadMore={() => void loadMoreContributions()} /></div></section> : null}
     {evidence ? <section aria-label="Bằng chứng bài nộp" className="space-y-2 rounded-xl border border-border bg-surface p-4"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">Bài nộp nguồn</h2><Button size="sm" onClick={() => setEvidence(null)}>Đóng</Button></div><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-muted p-3 text-xs">{JSON.stringify(evidence, null, 2)}</pre></section> : null}
   </div>;
 }

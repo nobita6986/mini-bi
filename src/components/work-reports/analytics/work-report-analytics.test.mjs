@@ -4,13 +4,14 @@ import { readFile } from "node:fs/promises";
 
 const component = await readFile(new URL("./work-report-analytics.tsx", import.meta.url), "utf8");
 const page = await readFile(new URL("../../../app/work-reports/analytics/page.tsx", import.meta.url), "utf8");
+const uiModel = await readFile(new URL("../../../lib/work-reports/analytics-ui-model.mjs", import.meta.url), "utf8");
 
 test("analytics page is capability gated and consumes only the F1.5 API contract", () => {
   assert.match(page, /decideWorkReportAnalyticsPageAccess/);
   assert.match(page, /WORK_REPORTS_API_ENABLED/);
   assert.match(component, /\/api\/work-reports\/analytics\/overview/);
   assert.match(component, /\/api\/work-reports\/analytics\/breakdown/);
-  assert.match(component, /\/api\/work-reports\/analytics\/contributions/);
+  assert.match(uiModel, /\/api\/work-reports\/analytics\/contributions/);
   assert.match(component, /\/api\/work-reports\/submissions/);
   assert.match(component, /finality: "final"/);
   assert.match(component, /effective_scope\.label/);
