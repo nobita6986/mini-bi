@@ -194,7 +194,7 @@ function decideFor(actor, viewport) {
     });
 }
 
-test("filterEntriesForActor: valid actor + hrp role → Dashboard + Direct Entry", () => {
+test("filterEntriesForActor: valid actor + hrp role → Dashboard + Direct Entry + Người lao động + Yêu cầu thay đổi", () => {
   const hrpActor = makeActor(["entry_own"]);
   const result = filterEntriesForActor({
     viewport: "desktop",
@@ -203,7 +203,7 @@ test("filterEntriesForActor: valid actor + hrp role → Dashboard + Direct Entry
     decide: decideFor(hrpActor, "desktop"),
   });
   const ids = result.map((e) => e.id);
-  assert.deepEqual(ids, ["dashboard", "direct-entry", "worker-operations"]);
+  assert.deepEqual(ids, ["dashboard", "direct-entry", "worker-operations", "change-requests"]);
 });
 
 test("filterEntriesForActor: reader (no capability) → chỉ Dashboard", () => {
@@ -217,9 +217,9 @@ test("filterEntriesForActor: reader (no capability) → chỉ Dashboard", () => 
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
-test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Người lao động", () => {
-  // P2.5-W06-R1: reviewer bundle + effective all scope duoc vao Worker Operations
-  // (nhung KHONG duoc vao Direct Entry editor: khong co entry_own|entry_team|entry_admin).
+test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Người lao động + Yêu cầu thay đổi", () => {
+  // P2.5-W06-R1 & R2.2: reviewer bundle + effective all scope duoc vao Worker Operations
+  // va Yêu cầu thay đổi (nhung KHONG duoc vao Direct Entry editor).
   const reviewerActor = makeActor(["change_review", "document_view"]);
   const result = filterEntriesForActor({
     viewport: "mobile",
@@ -227,7 +227,7 @@ test("filterEntriesForActor: reviewer (change_review + all) → Dashboard + Ngư
     actor: reviewerActor,
     decide: decideFor(reviewerActor, "mobile"),
   });
-  assert.deepEqual(result.map((e) => e.id), ["dashboard", "worker-operations"]);
+  assert.deepEqual(result.map((e) => e.id), ["dashboard", "worker-operations", "change-requests"]);
   // Reviewer KHONG thay entry Direct Entry / Du an.
   assert.equal(result.some((e) => e.id === "direct-entry"), false);
   assert.equal(result.some((e) => e.id === "project-operations"), false);
@@ -243,7 +243,7 @@ test("filterEntriesForActor: actor null → chỉ Dashboard (fail-closed cho Dir
   assert.deepEqual(result.map((e) => e.id), ["dashboard"]);
 });
 
-test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry + Dự án", () => {
+test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboard + Direct Entry + Dự án + Yêu cầu thay đổi", () => {
   const ownerActor = makeActor(
     ["entry_admin", "recruiter_master_manage", "team_master_manage"],
     [{ kind: "all", reference: "all" }],
@@ -256,7 +256,7 @@ test("filterEntriesForActor: owner (đủ 3 admin) + viewport=mobile → Dashboa
   });
   // Full Admin thấy Admin cùng với các khu vực đã có quyền (CCCD trùng chỉ trong Dashboard).
   assert.deepEqual(result.map((e) => e.id).sort(),
-    ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
+    ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
 });
 
 test("filterEntriesForActor: Direct Entry off bởi env → chỉ Dashboard dù actor có quyền", () => {
@@ -282,9 +282,9 @@ test("Admin catalog navigation remains available when Direct Entry UI is disable
 });
 
 test("CURRENT_NAV_ENTRIES giữ nguyên (không tạo registry thứ hai)", () => {
-  // Admin is added to the same registry; no separate menu registry is introduced.
+  // Admin and Change Requests are added to the same registry; no separate menu registry is introduced.
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "worker-operations"]);
 });
 
 // ===== P3-W06A R1 Gap 2: asymmetric desktop/mobile visibility ============

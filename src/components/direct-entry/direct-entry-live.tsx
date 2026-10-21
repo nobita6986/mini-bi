@@ -1,20 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Dialog } from "radix-ui";
+import Link from "next/link";
+import { AlertDialog, Dialog } from "radix-ui";
 
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
 import { DirectEntryPaymentEditor } from "@/components/direct-entry/direct-entry-payment-editor";
 import { DirectEntryDocumentEditor } from "@/components/direct-entry/direct-entry-document-editor";
 import { DirectEntryMultiEntryForm } from "@/components/direct-entry/direct-entry-multi-entry-form";
 import { DirectEntryInitialWorkerUploads } from "@/components/direct-entry/direct-entry-initial-worker-uploads";
-import { DirectEntryChangeRequestList } from "@/components/direct-entry/direct-entry-change-request-list";
 import { DirectEntryChangeRequestProposer } from "@/components/direct-entry/direct-entry-change-request-proposer";
-import { DirectEntryChangeRequestReviewer } from "@/components/direct-entry/direct-entry-change-request-reviewer";
 import { DirectEntrySubmittedDocumentManager } from "@/components/direct-entry/direct-entry-submitted-document-manager";
 import { DirectEntrySubmissionList, type SubmissionTransitionRequest,
   type TransitionOutcome } from "@/components/direct-entry/direct-entry-submission-list";
 import { DirectEntryWorkerDocuments } from "@/components/direct-entry/direct-entry-worker-documents";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { isRealCalendarDate } from "@/lib/analytics/identity/identity-shared.mjs";
 import {
   validateEmployeeCode,
@@ -64,13 +64,6 @@ import {
 import type { CccdDocumentSummary } from "@/lib/direct-entry/cccd-document-pair";
 import type { CccdDocumentType } from "@/lib/direct-entry/cccd-document-pair";
 import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
-import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
-import { canViewGlobalChangeRequestHistory } from "@/lib/direct-entry/worker-operations-model";
-import {
-  projectChangeRequestListPage,
-  type ChangeRequestListItem,
-  type ChangeRequestQueueFilter,
-} from "@/lib/direct-entry/change-request-read-contract";
 import {
   projectSubmissionListPage,
   type SubmissionQueueFilter,
@@ -168,10 +161,6 @@ const PASTE_REJECTION_MESSAGES: Record<SpreadsheetPasteRejection, string> = {
 };
 
 const SUBMISSION_PAGE_SIZE = 50;
-const CHANGE_REQUEST_PAGE_SIZE = 50;
-type ChangeRequestAgeFilter = "3" | "7" | "30" | "all";
-const CHANGE_REQUEST_LIST_KEYS = ["requests", "page_size", "has_more", "next_cursor"] as const;
-const CHANGE_REQUEST_RESULT_KEYS = ["request_id", "state", "version"] as const;
 const SUBMISSION_LIST_KEYS = ["items", "page_size", "has_more", "next_cursor"] as const;
 const SUBMISSION_TRANSITION_KEYS = ["submission_id", "state", "version"] as const;
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -338,7 +327,6 @@ export function DirectEntryLive() {
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadMessage, setLoadMessage] = useState("");
   const [capabilities, setCapabilities] = useState<string[]>([]);
-  const [canViewGlobalHistory, setCanViewGlobalHistory] = useState(false);
   const inFlight = useRef(new Set<string>());
   const [submissions, setSubmissions] = useState<SubmissionReadItem[]>([]);
   const submissionsRef = useRef<SubmissionReadItem[]>([]);
@@ -359,6 +347,7 @@ export function DirectEntryLive() {
   const deleteIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const deleteSubmissionIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [confirmDeleteRowId, setConfirmDeleteRowId] = useState<string | null>(null);
   const [stagedUndo, setStagedUndo] = useState<LiveGridPasteUndoSnapshot | null>(null);
   const [stagedCanUndo, setStagedCanUndo] = useState(false);
   const invalidateStagedUndo = useCallback(() => {
@@ -366,23 +355,11 @@ export function DirectEntryLive() {
     setStagedCanUndo(false);
   }, []);
   const lifecycleStatusRef = useRef<HTMLParagraphElement | null>(null);
-  const [changeRequests, setChangeRequests] = useState<ChangeRequestListItem[]>([]);
-  const [changeRequestQueue, setChangeRequestQueue] = useState<ChangeRequestQueueFilter>("PENDING");
-  const changeRequestQueueRef = useRef<ChangeRequestQueueFilter>("PENDING");
-  const changeRequestHistoryAgeRef = useRef<ChangeRequestAgeFilter>("3");
-  const [changeRequestListState, setChangeRequestListState] =
-    useState<"loading" | "ready" | "error">("loading");
-  const [changeRequestListMessage, setChangeRequestListMessage] = useState("");
-  const [changeRequestHasMore, setChangeRequestHasMore] = useState(false);
-  const [busyChangeRequestId, setBusyChangeRequestId] = useState<string | null>(null);
   const [changeRequestNotice, setChangeRequestNotice] = useState("");
   const [proposerSubmission, setProposerSubmission] = useState<SubmissionReadItem | null>(null);
-  const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
   const [manageDocumentsSubmission, setManageDocumentsSubmission] =
     useState<SubmissionReadItem | null>(null);
-  const changeRequestCursorRef = useRef<string | null>(null);
-  const changeRequestLoadRef = useRef(0);
-  const changeRequestIntentKeys = useRef(new Map<string, TransitionIntentKeyState>());
+  const confirmDeleteRow = rows.find(({ rowId }) => rowId === confirmDeleteRowId) ?? null;
   const [cccdCache, setCccdCache] = useState<CccdStatusCache>(EMPTY_CCCD_STATUS_CACHE);
   /**
    * P1.7-H06: selection di theo clientRowId (khong phai row index), dung cho
@@ -667,127 +644,10 @@ export function DirectEntryLive() {
     }
   }, [loadSubmissions]);
 
-  const loadChangeRequests = useCallback(async (
-    mode: "replace" | "append", queue = changeRequestQueueRef.current,
-    age = changeRequestHistoryAgeRef.current,
-  ) => {
-    const loadId = ++changeRequestLoadRef.current;
-    setChangeRequestListState("loading");
-    if (mode === "replace") {
-      setChangeRequests([]);
-      setChangeRequestHasMore(false);
-    }
-    try {
-      const params = new URLSearchParams({ page_size: String(CHANGE_REQUEST_PAGE_SIZE), state: queue });
-      if (queue === "GLOBAL_AUDIT") params.set("days", age);
-      if (mode === "append" && changeRequestCursorRef.current) {
-        params.set("cursor", changeRequestCursorRef.current);
-      }
-      const response = await fetch("/api/direct-entry/change-requests?" + params.toString(), {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-      const body = await readJson(response);
-      const page = projectChangeRequestListPage(
-        projectionSlice(body, CHANGE_REQUEST_LIST_KEYS),
-        { page_size: CHANGE_REQUEST_PAGE_SIZE, audit: queue === "GLOBAL_AUDIT" },
-      );
-      if (!response.ok || !page) throw new Error("CHANGE_REQUESTS_UNAVAILABLE");
-      if (loadId !== changeRequestLoadRef.current) return;
-      setChangeRequests((current) => {
-        if (mode === "replace") return page.requests;
-        const seen = new Set(current.map((item) => item.request_id));
-        return [...current, ...page.requests.filter((item) => !seen.has(item.request_id))];
-      });
-      changeRequestCursorRef.current = page.next_cursor;
-      setChangeRequestHasMore(page.has_more);
-      setChangeRequestListState("ready");
-      setChangeRequestListMessage("");
-    } catch (cause) {
-      if (loadId !== changeRequestLoadRef.current) return;
-      setChangeRequestListState("error");
-      setChangeRequestListMessage(
-        cause instanceof Error ? cause.message : "CHANGE_REQUESTS_UNAVAILABLE",
-      );
-    }
-  }, []);
-
-  const withdrawChangeRequest = useCallback(async (request: ChangeRequestListItem) => {
-    const intent = "change_request_withdraw:" + request.request_id + ":" + request.version;
-    const resolved = resolveIntentKey(
-      changeRequestIntentKeys.current.get(request.request_id) ?? EMPTY_INTENT_KEY,
-      intent,
-      () => crypto.randomUUID(),
-    );
-    changeRequestIntentKeys.current.set(request.request_id, resolved.state);
-    setBusyChangeRequestId(request.request_id);
-    try {
-      const response = await fetch(
-        "/api/direct-entry/change-requests/" + encodeURIComponent(request.request_id) + "/withdraw",
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": resolved.key,
-          },
-          body: JSON.stringify({
-            expected_version: request.version,
-            idempotency_key: resolved.key,
-          }),
-        },
-      );
-      const body = await readJson(response);
-      if (response.ok) {
-        const updated = projectChangeRequestStateResult(
-          projectionSlice(body, CHANGE_REQUEST_RESULT_KEYS),
-          { request_id: request.request_id, expected_version: request.version, state: "WITHDRAWN" },
-        );
-        if (!updated) {
-          setChangeRequestNotice(changeRequestErrorMessage(500));
-          return;
-        }
-        changeRequestIntentKeys.current.set(
-          request.request_id,
-          clearIntentKey(resolved.state, intent),
-        );
-        setChangeRequestNotice("Đã rút yêu cầu " + shortRef(updated.request_id) + ".");
-        await loadChangeRequests("replace");
-        return;
-      }
-      const status = response.status;
-      if (status === 409) {
-        changeRequestIntentKeys.current.set(
-          request.request_id,
-          clearIntentKey(resolved.state, intent),
-        );
-        setChangeRequestNotice(changeRequestErrorMessage(409));
-        await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
-        return;
-      }
-      if (status >= 500) {
-        setChangeRequestNotice(changeRequestErrorMessage(status));
-        return;
-      }
-      changeRequestIntentKeys.current.set(
-        request.request_id,
-        clearIntentKey(resolved.state, intent),
-      );
-      setChangeRequestNotice(changeRequestErrorMessage(status));
-      if (status === 401 || status === 403) {
-        await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
-      }
-    } catch {
-      setChangeRequestNotice(changeRequestErrorMessage(0));
-    } finally {
-      setBusyChangeRequestId(null);
-    }
-  }, [loadChangeRequests, loadSubmissions]);
-
   const reloadAfterChangeRequestMutation = useCallback(async (message: string) => {
     setChangeRequestNotice(message);
-    await Promise.all([loadSubmissions("replace"), loadChangeRequests("replace")]);
-  }, [loadChangeRequests, loadSubmissions]);
+    await loadSubmissions("replace");
+  }, [loadSubmissions]);
 
   const blockedSubmissionIds = useMemo(() => {
     const blocked = new Set<string>();
@@ -829,14 +689,7 @@ export function DirectEntryLive() {
           throw new Error("SESSION_UNAVAILABLE");
         }
         setCapabilities(session.actor.capabilities);
-        const scopes = Array.isArray(session.actor.scopes)
-          ? session.actor.scopes.flatMap((scope) => isRecord(scope) && typeof scope.kind === "string"
-            ? [{ kind: scope.kind }]
-            : [])
-          : [];
-        setCanViewGlobalHistory(canViewGlobalChangeRequestHistory(session.actor.capabilities, scopes));
         void loadSubmissions("replace");
-        void loadChangeRequests("replace");
         const [draftResponse, catalog] = await Promise.all([
           fetch("/api/direct-entry/drafts", { cache: "no-store", credentials: "same-origin" }),
           ensureCatalog(today),
@@ -862,7 +715,7 @@ export function DirectEntryLive() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [ensureCatalog, loadChangeRequests, loadSubmissions, today]);
+  }, [ensureCatalog, loadSubmissions, today]);
 
   // P3-W07C-R6: da bo effect tai catalog theo row.firstWorkDate. Effect cu vua
   // phat request catalog theo ngay cua tung dong, vua XOA recruiterId khi danh muc
@@ -1858,7 +1711,7 @@ export function DirectEntryLive() {
     setStagedModel((current) => deleteSpreadsheetRow(current, clientRowId));
   }, [invalidateStagedUndo]);
 
-  const onPersistedDelete = useCallback(async (rowId: string) => {
+  const onPersistedDelete = useCallback(async (rowId: string, confirmed = false) => {
     if (deletingRowId !== null) return;
     const row = rowsRef.current.find((candidate) => candidate.rowId === rowId);
     const submission = row?.submissionId
@@ -1880,9 +1733,11 @@ export function DirectEntryLive() {
       setStagedMessageWithTone(message, "error");
       return;
     }
-    if (!window.confirm(`Xóa dòng ${row.employeeCode || row.workerName}? Thao tác này không thể hoàn tác.`)) {
+    if (!confirmed) {
+      setConfirmDeleteRowId(rowId);
       return;
     }
+    setConfirmDeleteRowId(null);
     invalidateStagedUndo();
     const intent = `delete_draft_row:${row.entryId}:${row.entryVersion}`;
     const resolved = resolveIntentKey(
@@ -2561,36 +2416,21 @@ export function DirectEntryLive() {
               {submissionDeleteNotice.message}
             </p>
           )}
-          {changeRequestNotice !== "" && <p role="alert">{changeRequestNotice}</p>}
-          <DirectEntryChangeRequestList
-            compact
-            queueFilter={changeRequestQueue}
-            canViewGlobalHistory={canViewGlobalHistory}
-            onQueueFilterChange={(queue) => {
-              if (queue === changeRequestQueue) return;
-              changeRequestCursorRef.current = null;
-              changeRequestQueueRef.current = queue;
-              setChangeRequests([]);
-              setChangeRequestHasMore(false);
-              setChangeRequestQueue(queue);
-              void loadChangeRequests("replace", queue);
-            }}
-            onGlobalHistoryAgeFilterChange={(age) => {
-              changeRequestHistoryAgeRef.current = age;
-              if (changeRequestQueueRef.current === "GLOBAL_AUDIT") {
-                changeRequestCursorRef.current = null;
-                void loadChangeRequests("replace", "GLOBAL_AUDIT", age);
-              }
-            }}
-            state={changeRequestListState}
-            message={changeRequestListMessage}
-            requests={changeRequests}
-            hasMore={changeRequestHasMore}
-            busyRequestId={busyChangeRequestId}
-            onLoadMore={() => void loadChangeRequests("append")}
-            onWithdraw={(request) => void withdrawChangeRequest(request)}
-            onReview={(request) => setReviewRequest(request)}
-          />
+          {changeRequestNotice !== "" && (
+            <StatusBanner
+              tone={changeRequestNotice.startsWith("Đã tạo yêu cầu thay đổi") ? "success" : "error"}
+              dataTestId="change-request-notice"
+            >
+              <span>{changeRequestNotice} </span>
+              <Link
+                href="/direct-entry/change-requests"
+                className="font-medium underline underline-offset-2"
+                data-testid="change-request-module-link"
+              >
+                Mở Yêu cầu thay đổi
+              </Link>
+            </StatusBanner>
+          )}
           <div className={styles.inputModeSwitch} role="group" aria-label="Cách nhập liệu">
             <button type="button" className={inputMode === "form" ? styles.primaryButton : styles.secondaryButton}
               data-testid="input-mode-form" aria-pressed={inputMode === "form"}
@@ -2867,14 +2707,6 @@ export function DirectEntryLive() {
             onOpenChange={(next) => { if (!next) setManageDocumentsSubmission(null); }}
             canUpload={capabilities.includes("document_upload")}
             canView={capabilities.includes("document_view")}
-          />
-          <DirectEntryChangeRequestReviewer
-            request={reviewRequest}
-            onOpenChange={(next) => { if (!next) setReviewRequest(null); }}
-            catalogFor={catalogFor}
-            ensureCatalog={ensureCatalog}
-            onDecided={(message) => { void reloadAfterChangeRequestMutation(message); }}
-            onConflict={(message) => { void reloadAfterChangeRequestMutation(message); }}
           />
           <DirectEntryChangeRequestProposer
             open={proposerSubmission !== null}
@@ -3480,6 +3312,49 @@ export function DirectEntryLive() {
           )}
         </Dialog.Portal>
       </Dialog.Root>
+
+      <AlertDialog.Root open={confirmDeleteRow !== null} onOpenChange={(open) => {
+        if (!open) setConfirmDeleteRowId(null);
+      }}>
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={styles.drawerOverlay} />
+          <AlertDialog.Content
+            className={styles.confirmDialog}
+            aria-describedby="confirm-delete-draft-row-description"
+            data-testid="confirm-delete-draft-row-dialog"
+          >
+            <AlertDialog.Title className={styles.drawerTitle}>
+              Xác nhận xóa dòng bản nháp
+            </AlertDialog.Title>
+            <AlertDialog.Description
+              id="confirm-delete-draft-row-description"
+              className={styles.drawerDescription}
+            >
+              {confirmDeleteRow
+                ? `Xóa dòng ${confirmDeleteRow.employeeCode || confirmDeleteRow.workerName}? Thao tác này không thể hoàn tác.`
+                : ""}
+            </AlertDialog.Description>
+            <div className={styles.drawerActions}>
+              <AlertDialog.Cancel asChild>
+                <button type="button" className={styles.secondaryButton}>Hủy</button>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button
+                  type="button"
+                  className={styles.dangerButton}
+                  data-testid="confirm-delete-draft-row-action"
+                  onClick={() => {
+                    if (!confirmDeleteRow) return;
+                    void onPersistedDelete(confirmDeleteRow.rowId, true);
+                  }}
+                >
+                  Xóa dòng
+                </button>
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </main>
   );
 }

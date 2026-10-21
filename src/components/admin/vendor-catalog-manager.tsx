@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { FormDialog } from "@/components/ui/form-dialog";
+import { OffsetPager } from "@/components/ui/offset-pager";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import type {
@@ -346,101 +347,87 @@ export function VendorCatalogManager() {
           <h1 className="text-2xl font-bold text-foreground">Danh mục nhà cung cấp</h1>
           <p className="mt-1 text-sm text-muted">Quản lý thông tin hiển thị và trạng thái nhà cung cấp.</p>
         </div>
-        <Dialog.Root open={dialog?.kind === "create" || dialog?.kind === "edit" || dialog?.kind === "active"}
-          onOpenChange={(open) => { if (!open && !busy && !conflictIntent) setDialog(null); }}>
-          <Dialog.Trigger asChild>
+        <FormDialog
+          open={dialog?.kind === "create" || dialog?.kind === "edit" || dialog?.kind === "active"}
+          onOpenChange={(open) => { if (!open && !busy && !conflictIntent) setDialog(null); }}
+          onCloseAutoFocus={(event) => { if (busy || conflictIntent) event.preventDefault(); }}
+          descriptionId="vendor-dialog-description"
+          closeDisabled={busy || conflictIntent !== null}
+          title={
+            dialog?.kind === "create" ? "Thêm nhà cung cấp"
+              : dialog?.kind === "edit" ? "Chỉnh sửa nhà cung cấp"
+                : dialog?.active ? "Kích hoạt nhà cung cấp" : "Ngừng hoạt động nhà cung cấp"
+          }
+          description="Lý do thao tác không bắt buộc; mã nhà cung cấp không thể thay đổi sau khi tạo."
+          trigger={
             <button type="button" onClick={startCreate}
               disabled={busy || conflictIntent !== null || pendingIntent !== null || list === null}
               className={primaryButton}>
               Thêm nhà cung cấp
             </button>
-          </Dialog.Trigger>
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
-            <Dialog.Content
-              onCloseAutoFocus={(event) => { if (busy || conflictIntent) event.preventDefault(); }}
-              className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-5 shadow-xl focus:outline-none sm:p-6"
-              aria-describedby="vendor-dialog-description"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <Dialog.Title className="text-xl font-semibold text-foreground">
-                    {dialog?.kind === "create" ? "Thêm nhà cung cấp"
-                      : dialog?.kind === "edit" ? "Chỉnh sửa nhà cung cấp"
-                        : dialog?.active ? "Kích hoạt nhà cung cấp" : "Ngừng hoạt động nhà cung cấp"}
-                  </Dialog.Title>
-                  <Dialog.Description id="vendor-dialog-description" className="mt-1 text-sm text-muted">
-                    Lý do thao tác không bắt buộc; mã nhà cung cấp không thể thay đổi sau khi tạo.
-                  </Dialog.Description>
-                </div>
-                <Dialog.Close asChild>
-                  <button type="button" aria-label="Đóng hộp thoại" disabled={busy || conflictIntent !== null}
-                    className={button}>×</button>
-                </Dialog.Close>
-              </div>
-              {pendingIntent?.retry && (dialog?.kind === "create"
-                ? pendingIntent.lockId === "create"
-                : dialog && "vendor" in dialog && pendingIntent.lockId === dialog.vendor.vendor_id) ? (
-                <Alert tone="warning" title="Thao tác chưa có kết quả xác nhận">
-                  <p>Thử lại đúng thao tác với cùng khóa idempotency.</p>
-                  <button type="button" disabled={busy} className={`${button} mt-2`}
-                    onClick={() => void sendIntent(pendingIntent)}>Thử lại thao tác</button>
-                </Alert>
-              ) : null}
-              {conflictIntent && dialog && conflictIntent.lockId ===
-                (dialog.kind === "create" ? "create" : dialog.vendor.vendor_id) ? (
-                <ConflictReload
-                  message={conflictError}
-                  busy={busy}
-                  onReload={() => void reloadAuthoritative(conflictIntent)}
-                />
-              ) : null}
-              {dialog?.kind === "active" ? (
-                <div className="mt-5 space-y-4">
-                  <p>
-                    Bạn sắp {dialog.active ? "kích hoạt" : "ngừng hoạt động"} nhà cung cấp{" "}
-                    <strong>{dialog.vendor.display_name}</strong> ({dialog.vendor.vendor_id}).
-                    Thao tác này không xóa dữ liệu hay lịch sử.
-                  </p>
-                  <form onSubmit={submit} className="space-y-4">
-                    <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
-                    {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
-                    <button type="submit" disabled={busy || pendingIntent !== null || conflictIntent !== null}
-                      className={primaryButton}>
-                      {busy ? "Đang lưu…" : dialog.active ? "Xác nhận kích hoạt" : "Xác nhận ngừng"}
-                    </button>
-                  </form>
-                </div>
+          }
+        >
+          {pendingIntent?.retry && (dialog?.kind === "create"
+            ? pendingIntent.lockId === "create"
+            : dialog && "vendor" in dialog && pendingIntent.lockId === dialog.vendor.vendor_id) ? (
+            <Alert tone="warning" title="Thao tác chưa có kết quả xác nhận">
+              <p>Thử lại đúng thao tác với cùng khóa idempotency.</p>
+              <button type="button" disabled={busy} className={`${button} mt-2`}
+                onClick={() => void sendIntent(pendingIntent)}>Thử lại thao tác</button>
+            </Alert>
+          ) : null}
+          {conflictIntent && dialog && conflictIntent.lockId ===
+            (dialog.kind === "create" ? "create" : dialog.vendor.vendor_id) ? (
+            <ConflictReload
+              message={conflictError}
+              busy={busy}
+              onReload={() => void reloadAuthoritative(conflictIntent)}
+            />
+          ) : null}
+          {dialog?.kind === "active" ? (
+            <div className="mt-5 space-y-4">
+              <p>
+                Bạn sắp {dialog.active ? "kích hoạt" : "ngừng hoạt động"} nhà cung cấp{" "}
+                <strong>{dialog.vendor.display_name}</strong> ({dialog.vendor.vendor_id}).
+                Thao tác này không xóa dữ liệu hay lịch sử.
+              </p>
+              <form onSubmit={submit} className="space-y-4">
+                <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
+                {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
+                <button type="submit" disabled={busy || pendingIntent !== null || conflictIntent !== null}
+                  className={primaryButton}>
+                  {busy ? "Đang lưu…" : dialog.active ? "Xác nhận kích hoạt" : "Xác nhận ngừng"}
+                </button>
+              </form>
+            </div>
+          ) : (
+            <form onSubmit={submit} className="mt-5 space-y-4">
+              {dialog?.kind === "create" ? (
+                <Field id="vendor-id" label="Mã nhà cung cấp" value={form.vendorId}
+                  maxLength={128} required onChange={(value) => changeForm("vendorId", value)} />
               ) : (
-                <form onSubmit={submit} className="mt-5 space-y-4">
-                  {dialog?.kind === "create" ? (
-                    <Field id="vendor-id" label="Mã nhà cung cấp" value={form.vendorId}
-                      maxLength={128} required onChange={(value) => changeForm("vendorId", value)} />
-                  ) : (
-                    <div className="text-sm">
-                      <span className="font-medium text-foreground">Mã nhà cung cấp</span>
-                      <p className="mt-1 text-muted">{dialog?.kind === "edit" ? dialog.vendor.vendor_id : "—"}</p>
-                      <span className="mt-1 block text-xs text-muted">Mã không thể thay đổi sau khi tạo.</span>
-                    </div>
-                  )}
-                  <Field id="vendor-name" label="Tên nhà cung cấp" value={form.displayName}
-                    maxLength={256} required onChange={(value) => changeForm("displayName", value)} />
-                  {dialog?.kind === "create" ? (
-                    <Field id="vendor-valid-from" label="Ngày hiệu lực" type="date"
-                      value={form.validFrom} maxLength={10} required
-                      onChange={(value) => changeForm("validFrom", value)} />
-                  ) : null}
-                  <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
-                  {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
-                  <button type="submit" disabled={busy || pendingIntent !== null || conflictIntent !== null}
-                    className={primaryButton}>
-                    {busy ? "Đang lưu…" : dialog?.kind === "create" ? "Tạo nhà cung cấp" : "Lưu thay đổi"}
-                  </button>
-                </form>
+                <div className="text-sm">
+                  <span className="font-medium text-foreground">Mã nhà cung cấp</span>
+                  <p className="mt-1 text-muted">{dialog?.kind === "edit" ? dialog.vendor.vendor_id : "—"}</p>
+                  <span className="mt-1 block text-xs text-muted">Mã không thể thay đổi sau khi tạo.</span>
+                </div>
               )}
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+              <Field id="vendor-name" label="Tên nhà cung cấp" value={form.displayName}
+                maxLength={256} required onChange={(value) => changeForm("displayName", value)} />
+              {dialog?.kind === "create" ? (
+                <Field id="vendor-valid-from" label="Ngày hiệu lực" type="date"
+                  value={form.validFrom} maxLength={10} required
+                  onChange={(value) => changeForm("validFrom", value)} />
+              ) : null}
+              <ReasonField value={form.reason} onChange={(value) => changeForm("reason", value)} />
+              {formError ? <p role="alert" className="text-sm text-red-700">{formError}</p> : null}
+              <button type="submit" disabled={busy || pendingIntent !== null || conflictIntent !== null}
+                className={primaryButton}>
+                {busy ? "Đang lưu…" : dialog?.kind === "create" ? "Tạo nhà cung cấp" : "Lưu thay đổi"}
+              </button>
+            </form>
+          )}
+        </FormDialog>
       </header>
 
       {pendingIntent?.retry && dialog === null ? (
@@ -539,19 +526,18 @@ export function VendorCatalogManager() {
                 </tbody>
               </table>
             </div>
-            <div className="mt-4 flex flex-col gap-3 border-t border-border pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-              <p aria-live="polite">Trang {page} / {pageCount} · {list.total} kết quả</p>
-              <nav aria-label="Phân trang danh sách nhà cung cấp" className="flex items-center gap-2">
-                <button type="button" className={button} disabled={page <= 1}
-                  onClick={() => { setPage((value) => value - 1); setListState({ kind: "loading" }); }}>
-                  Trang trước
-                </button>
-                <button type="button" className={button} disabled={page >= pageCount}
-                  onClick={() => { setPage((value) => value + 1); setListState({ kind: "loading" }); }}>
-                  Trang sau
-                </button>
-              </nav>
-            </div>
+            <OffsetPager
+              page={page}
+              pageCount={pageCount}
+              total={list.total}
+              ariaLabel="Phân trang danh sách nhà cung cấp"
+              previousLabel="Trang trước"
+              nextLabel="Trang sau"
+              onPageChange={(nextPage) => {
+                setPage(nextPage);
+                setListState({ kind: "loading" });
+              }}
+            />
           </>
         ) : null}
       </Card>

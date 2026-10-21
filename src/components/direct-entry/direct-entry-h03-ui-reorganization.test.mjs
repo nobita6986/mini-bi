@@ -16,6 +16,7 @@ import {
 
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
 const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
+const changeRequestsWorkspace = readFileSync(new URL("./change-requests-workspace.tsx", import.meta.url), "utf8");
 
 test("header keeps quick-add; Excel CTAs are hidden while import/template handlers remain", () => {
   const headerStart = live.indexOf("<header className={styles.header}>");
@@ -42,15 +43,14 @@ test("header keeps quick-add; Excel CTAs are hidden while import/template handle
   assert.equal(live.includes("DirectEntryWorkerProfilePasteDialog"), false);
 });
 
-test("compact submission and change-request panels render immediately before the grid", () => {
+test("compact submission panel renders immediately before the grid while change-request list lives in its own module", () => {
   const submissionList = live.indexOf("<DirectEntrySubmissionList");
-  const changeList = live.indexOf("<DirectEntryChangeRequestList", submissionList);
-  const gridSection = live.indexOf("<section className={styles.gridSection", changeList);
+  const gridSection = live.indexOf("<section className={styles.gridSection", submissionList);
   const gridComponent = live.indexOf("<DirectEntrySpreadsheetGrid", gridSection);
-  assert.ok(submissionList > 0 && changeList > submissionList);
-  assert.ok(gridSection > changeList && gridComponent > gridSection);
+  assert.ok(submissionList > 0 && gridSection > submissionList && gridComponent > gridSection);
+  assert.equal(live.includes("<DirectEntryChangeRequestList"), false);
+  assert.match(changeRequestsWorkspace, /<DirectEntryChangeRequestList/);
   assert.match(live.slice(submissionList, live.indexOf("/>", submissionList)), /\bcompact\b/);
-  assert.match(live.slice(changeList, live.indexOf("/>", changeList)), /\bcompact\b/);
   assert.doesNotMatch(live, /<details className=\{styles\.secondaryPanel\}/);
 });
 

@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   decideAccountAccessPageAccess,
   decideAdminAreaAccess,
+  decideChangeRequestsPageAccess,
   decideDirectEntryPageAccess,
   decideLaborTypeCatalogPageAccess,
   decideProjectOperationsPageAccess,
@@ -14,7 +15,10 @@ import {
   decideWorkerOperationsPageAccess,
   canManageProjectMasterFromActor,
 } from "./direct-entry-page-access.ts";
-import { workerOperationsNavPredicate } from "../navigation/registry-capability.ts";
+import {
+  changeRequestsNavPredicate,
+  workerOperationsNavPredicate,
+} from "../navigation/registry-capability.ts";
 
 function actor(capabilities) {
   return {
@@ -79,6 +83,36 @@ test("Worker Operations page gate mirrors the navigation predicate", () => {
       workerOperationsNavPredicate(resolved.actor),
     );
   }
+});
+
+test("Change Requests page gate mirrors navigation predicate and admits active historical proposers", () => {
+  const cases = [
+    [[], []],
+    [["entry_admin"], [{ kind: "all", reference: "all" }]],
+    [["change_review"], [{ kind: "team", reference: "t" }]],
+    [["change_request_create"], [{ kind: "own", reference: "u" }]],
+    [["team_manager_assign"], [{ kind: "team", reference: "t" }]],
+    [["pii_view", "payment_view"], [{ kind: "all", reference: "all" }]],
+  ];
+  for (const [capabilities, scopes] of cases) {
+    const resolved = actor(capabilities);
+    resolved.actor.scopes = scopes;
+    assert.equal(
+      decideChangeRequestsPageAccess({ uiEnabled: true, actor: resolved }) === "ALLOW",
+      changeRequestsNavPredicate(resolved.actor),
+    );
+  }
+  const reassignedProposer = actor([]);
+  assert.equal(
+    decideChangeRequestsPageAccess({ uiEnabled: true, actor: reassignedProposer, hasHistoricalRequests: true }),
+    "ALLOW",
+    "active actor with historical requests retains read-only access to their request history",
+  );
+  assert.equal(
+    decideChangeRequestsPageAccess({ uiEnabled: true, actor: denied("ACTOR_DISABLED"), hasHistoricalRequests: true }),
+    "ACCOUNT_UNAVAILABLE",
+    "disabled actor never bypasses account status via historical requests",
+  );
 });
 
 test("output union la gioi han va exhaustive", () => {

@@ -11,6 +11,7 @@ const list = source("./direct-entry-change-request-list.tsx");
 const styles = source("./direct-entry-shell.module.css");
 const submissionList = source("./direct-entry-submission-list.tsx");
 const live = source("./direct-entry-live.tsx");
+const workspace = source("./change-requests-workspace.tsx");
 const helper = source("../../lib/direct-entry/change-request-proposer.ts");
 const builder = source("../../lib/direct-entry/change-request-proposal-builders.ts");
 
@@ -19,14 +20,15 @@ const CLIENT_AUTHORITY = /(?:actor_id|auth_subject|app_user_id|capability|capabi
 const RAW_LOGGING = /console\.(?:log|error|warn|info)\(/;
 
 test("S03B1 list/proposer never fetch the change-request detail endpoint", () => {
-  const changeRequestFetches = live.split("\n").filter((line) =>
+  const changeRequestFetches = workspace.split("\n").filter((line) =>
     line.includes("/api/direct-entry/change-requests"));
   assert.equal(changeRequestFetches.length > 0, true);
   for (const line of changeRequestFetches) {
-    const isList = line.includes("/api/direct-entry/change-requests?");
+    const isList = line.includes("/api/direct-entry/change-requests");
     const isWithdraw = line.includes("/withdraw");
     assert.equal(isList || isWithdraw, true, line.trim());
   }
+  assert.equal(live.includes("/api/direct-entry/change-requests"), false);
   // Detail endpoint chi duoc goi tu dialog reviewer (S03B2) khi nguoi dung mo "Xem xet";
   // danh sach va proposer khong duoc tai truoc chi tiet.
   assert.doesNotMatch(proposer + list, /change-requests\/" \+ encodeURIComponent\(/);
@@ -70,11 +72,11 @@ test("create and withdraw requests carry exact URL, body and idempotency header"
   assert.match(proposer, /body: JSON\.stringify\(validated\.value\)/);
   assert.match(proposer, /projectChangeRequestCreate\(body\)/);
   assert.match(proposer, /projectChangeRequestCreated\(/);
-  assert.match(live, /\/withdraw",/);
-  assert.match(live, /expected_version: request\.version,/);
-  assert.match(live, /idempotency_key: resolved\.key,/);
-  assert.match(live, /projectChangeRequestStateResult\(/);
-  assert.match(live, /projectChangeRequestListPage\(/);
+  assert.match(workspace, /\/withdraw",/);
+  assert.match(workspace, /expected_version: request\.version,/);
+  assert.match(workspace, /idempotency_key: resolved\.key,/);
+  assert.match(workspace, /projectChangeRequestStateResult\(/);
+  assert.match(workspace, /projectChangeRequestListPage\(/);
 });
 
 test("idempotency intent covers payload, 409 does not retry, 5xx keeps the key", () => {

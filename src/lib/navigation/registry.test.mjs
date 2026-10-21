@@ -15,9 +15,9 @@ const { CURRENT_NAV_ENTRIES, NAV_ENTRIES, entriesForViewport, findEntryByPath } 
 const { isDirectEntryUiEnabled } = await import("../direct-entry/ui-model.ts");
 
 test("CURRENT_NAV_ENTRIES chứa các entry hiện hành trong một registry", () => {
-  assert.equal(CURRENT_NAV_ENTRIES.length, 5, "phải có đúng 5 entries current");
+  assert.equal(CURRENT_NAV_ENTRIES.length, 6, "phải có đúng 6 entries current");
   const ids = CURRENT_NAV_ENTRIES.map((e) => e.id).sort();
-  assert.deepEqual(ids, ["admin", "dashboard", "direct-entry", "project-operations", "worker-operations"],
+  assert.deepEqual(ids, ["admin", "change-requests", "dashboard", "direct-entry", "project-operations", "worker-operations"],
     `got ids: ${ids.join(",")}`);
 });
 
@@ -117,6 +117,7 @@ test("registry: mỗi entry có id ổn định, label, path, icon, status, capa
         "entry_admin",
         "project_admin",
         "worker_operations",
+        "change_requests",
         "admin_area",
       ].includes(entry.capability),
       `entry '${entry.id}' capability không hợp lệ: ${entry.capability}`

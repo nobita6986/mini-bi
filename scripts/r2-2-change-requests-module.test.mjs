@@ -1,0 +1,216 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import {
+  decideChangeRequestsPageAccess,
+} from "../src/lib/auth/direct-entry-page-access.ts";
+import {
+  changeRequestWorkspaceTabs,
+  canReviewChangeRequests,
+  canViewGlobalChangeRequestHistory,
+  initialChangeRequestQueue,
+  initialChangeRequestWorkspaceMode,
+  requestsQuery,
+} from "../src/lib/direct-entry/worker-operations-model.ts";
+import {
+  CURRENT_NAV_ENTRIES,
+  filterEntriesForActor,
+} from "../src/lib/navigation/registry.ts";
+import {
+  changeRequestsNavPredicate,
+  changeRequestsReviewerPredicate,
+  decideNavEntryVisibility,
+} from "../src/lib/navigation/registry-capability.ts";
+
+function readRepoFile(relPath) {
+  return readFileSync(new URL("../" + relPath, import.meta.url), "utf8");
+}
+
+function makeActor(capabilities, scopes = []) {
+  return {
+    auth_subject: "sub-1",
+    app_user_id: "user-1",
+    enabled: true,
+    capabilities,
+    scopes,
+    self_recruiter_suggestion: null,
+    session: { provider: "supabase", verification: "getUser", authenticated_at: null },
+  };
+}
+
+test("WP-2.2.1: navigation registry declares independent /direct-entry/change-requests menu item", () => {
+  const item = CURRENT_NAV_ENTRIES.find((entry) => entry.id === "change-requests");
+  assert.ok(item, "change-requests nav item exists");
+  assert.equal(item.label, "Yêu cầu thay đổi");
+  assert.equal(item.path, "/direct-entry/change-requests");
+  assert.equal(item.capability, "change_requests");
+
+  const staff = makeActor(["entry_own", "change_request_create"], [{ kind: "own", reference: "user-1" }]);
+  const leader = makeActor(["team_manager_assign", "change_review"], [{ kind: "team", reference: "team-a" }]);
+  const admin = makeActor(["entry_admin", "change_review"], [{ kind: "all", reference: "all" }]);
+  const noAccess = makeActor(["pii_view"], [{ kind: "own", reference: "user-1" }]);
+
+  assert.equal(changeRequestsNavPredicate(staff), true);
+  assert.equal(changeRequestsNavPredicate(leader), true);
+  assert.equal(changeRequestsNavPredicate(admin), true);
+  assert.equal(changeRequestsNavPredicate(noAccess), false);
+
+  const visibleIds = filterEntriesForActor({
+    viewport: "desktop",
+    directEntryEnabled: true,
+    actor: staff,
+    decide: (entry) =>
+      decideNavEntryVisibility({
+        capabilityKey: entry.capability,
+        actor: staff,
+        viewport: "desktop",
+        entryVisibleInViewport: entry.visibility.desktop,
+      }),
+  }).map((nav) => nav.id);
+  assert.ok(visibleIds.includes("change-requests"));
+});
+
+test("WP-2.2.1: server page gate admits current proposers/reviewers and active historical proposers fail-closed", () => {
+  const proposer = { ok: true, actor: makeActor(["change_request_create"], [{ kind: "own", reference: "user-1" }]) };
+  const reviewer = { ok: true, actor: makeActor(["change_review"], [{ kind: "team", reference: "team-a" }]) };
+  const reassignedActive = { ok: true, actor: makeActor(["pii_view"], []) };
+  const disabled = { ok: false, reason: "ACTOR_DISABLED" };
+
+  assert.equal(decideChangeRequestsPageAccess({ uiEnabled: false, actor: proposer }), "NOT_FOUND");
+  assert.equal(decideChangeRequestsPageAccess({ uiEnabled: true, actor: proposer }), "ALLOW");
+  assert.equal(decideChangeRequestsPageAccess({ uiEnabled: true, actor: reviewer }), "ALLOW");
+  assert.equal(decideChangeRequestsPageAccess({ uiEnabled: true, actor: reassignedActive }), "ACCESS_DENIED");
+  assert.equal(
+    decideChangeRequestsPageAccess({ uiEnabled: true, actor: reassignedActive, hasHistoricalRequests: true }),
+    "ALLOW",
+    "active actor who previously submitted requests can view their immutable request history",
+  );
+  assert.equal(
+    decideChangeRequestsPageAccess({ uiEnabled: true, actor: disabled, hasHistoricalRequests: true }),
+    "ACCOUNT_UNAVAILABLE",
+  );
+
+  const pageSource = readRepoFile("src/app/direct-entry/change-requests/page.tsx");
+  assert.match(pageSource, /decideChangeRequestsPageAccess/);
+  assert.match(pageSource, /createChangeRequestReadRepository/);
+  assert.match(pageSource, /listChangeRequests\(/);
+  assert.match(pageSource, /<ChangeRequestsWorkspace/);
+});
+
+test("WP-2.2.1: 4 business queues + GLOBAL_AUDIT tabs and query builder match R2.1/R2.2 contract", () => {
+  assert.equal(initialChangeRequestWorkspaceMode(false), "proposer");
+  assert.equal(initialChangeRequestWorkspaceMode(true), "reviewer");
+  assert.equal(initialChangeRequestQueue(false), "PROPOSER_PENDING");
+  assert.equal(initialChangeRequestQueue(true), "REVIEWER_PENDING");
+
+  const proposerTabs = changeRequestWorkspaceTabs({ mode: "proposer", canViewGlobalHistory: false });
+  assert.deepEqual(proposerTabs, [
+    { value: "PROPOSER_PENDING", label: "Tôi đã gửi" },
+    { value: "PROPOSER_RESOLVED", label: "Lịch sử gửi" },
+  ]);
+
+  const teamReviewerTabs = changeRequestWorkspaceTabs({ mode: "reviewer", canViewGlobalHistory: false });
+  assert.deepEqual(teamReviewerTabs, [
+    { value: "REVIEWER_PENDING", label: "Chờ tôi duyệt" },
+    { value: "REVIEWER_RESOLVED", label: "Lịch sử duyệt" },
+  ]);
+
+  const globalReviewerTabs = changeRequestWorkspaceTabs({ mode: "reviewer", canViewGlobalHistory: true });
+  assert.deepEqual(globalReviewerTabs, [
+    { value: "REVIEWER_PENDING", label: "Chờ tôi duyệt" },
+    { value: "REVIEWER_RESOLVED", label: "Lịch sử duyệt" },
+    { value: "GLOBAL_AUDIT", label: "Lịch sử toàn hệ thống" },
+  ]);
+
+  assert.equal(requestsQuery(null, "PROPOSER_PENDING"), "?page_size=20&state=PROPOSER_PENDING");
+  assert.equal(requestsQuery(null, "PROPOSER_RESOLVED"), "?page_size=20&state=PROPOSER_RESOLVED");
+  assert.equal(requestsQuery(null, "REVIEWER_PENDING"), "?page_size=20&state=REVIEWER_PENDING");
+  assert.equal(requestsQuery(null, "REVIEWER_RESOLVED"), "?page_size=20&state=REVIEWER_RESOLVED");
+  assert.equal(requestsQuery(null, "GLOBAL_AUDIT", "7"), "?page_size=20&state=GLOBAL_AUDIT&days=7");
+
+  assert.equal(
+    changeRequestsReviewerPredicate({ capabilities: ["change_review"], scopes: [{ kind: "team" }] }),
+    true,
+    "Team Leader with change_review@team enters reviewer mode",
+  );
+  assert.equal(
+    changeRequestsReviewerPredicate({ capabilities: ["team_manager_assign"], scopes: [{ kind: "team" }] }),
+    true,
+    "Team Leader with team_manager_assign@team enters reviewer mode",
+  );
+  assert.equal(
+    canReviewChangeRequests({ capabilities: ["change_review"], scopes: [{ kind: "all" }] }),
+    true,
+    "All-scope reviewer passes canReviewChangeRequests",
+  );
+  assert.equal(
+    canViewGlobalChangeRequestHistory(["change_review"], [{ kind: "team" }]),
+    false,
+    "Team Leader does not receive global audit tab",
+  );
+  assert.equal(
+    canViewGlobalChangeRequestHistory(["change_review"], [{ kind: "all" }]),
+    true,
+    "All-scope reviewer receives global audit tab",
+  );
+});
+
+test("WP-2.2.1 P0: DirectEntryChangeRequestReviewer enforces read-only snapshot mode when state !== PENDING or !can_decide", () => {
+  const reviewerSource = readRepoFile("src/components/direct-entry/direct-entry-change-request-reviewer.tsx");
+  assert.match(reviewerSource, /const terminal = detail\.state !== "PENDING"/);
+  assert.match(reviewerSource, /const readOnlyView = terminal \|\| !detail\.can_decide/);
+  const readOnlyBranchIndex = reviewerSource.indexOf("if (readOnlyView)");
+  const entryFetchIndex = reviewerSource.indexOf('"/api/direct-entry/entries/"');
+  assert.ok(readOnlyBranchIndex > 0 && entryFetchIndex > readOnlyBranchIndex,
+    "readOnlyView branch returns before /api/direct-entry/entries/[entryId] is ever called");
+  const readOnlyBlock = reviewerSource.slice(readOnlyBranchIndex, entryFetchIndex);
+  assert.match(readOnlyBlock, /kind:\s*"terminal"/);
+  assert.match(readOnlyBlock, /return;/);
+  assert.match(reviewerSource, /const canDecide = loadState === "ready" && model\?\.kind === "reviewable"/);
+  assert.match(reviewerSource, /const canReject = request\?\.state === "PENDING" && request\.can_decide === true/);
+});
+
+test("WP-2.2.2: /direct-entry removes queue/reviewer, keeps contextual proposer, replaces window.confirm, and polishes CSS tokens", () => {
+  const liveSource = readRepoFile("src/components/direct-entry/direct-entry-live.tsx");
+  const workerOpsSource = readRepoFile("src/components/direct-entry/worker-operations.tsx");
+  const shellCss = readRepoFile("src/components/direct-entry/direct-entry-shell.module.css");
+  const gridCss = readRepoFile("src/components/direct-entry/direct-entry-spreadsheet-grid.module.css");
+
+  assert.equal(liveSource.includes("DirectEntryChangeRequestList"), false);
+  assert.equal(liveSource.includes("DirectEntryChangeRequestReviewer"), false);
+  assert.equal(liveSource.includes("DirectEntryChangeRequestProposer"), true);
+  assert.match(liveSource, /href="\/direct-entry\/change-requests"/);
+  assert.match(workerOpsSource, /href="\/direct-entry\/change-requests"/);
+
+  assert.equal(liveSource.includes("window.confirm"), false, "no native window.confirm in direct-entry-live.tsx");
+  assert.match(liveSource, /data-testid="confirm-delete-draft-row-dialog"/);
+
+  assert.equal(shellCss.includes("var(--destructive"), false);
+  assert.equal(shellCss.includes("var(--danger"), false);
+  assert.equal(shellCss.includes("var(--success"), false);
+  assert.equal(shellCss.includes("var(--text-muted"), false);
+  assert.equal(gridCss.includes("var(--destructive"), false);
+  assert.match(shellCss, /var\(--semantic-error/);
+  assert.match(gridCss, /var\(--semantic-error/);
+});
+
+test("WP-2.2.3: shared UI primitives are genuinely reused across >= 2 consumer modules", () => {
+  const workspaceSource = readRepoFile("src/components/direct-entry/change-requests-workspace.tsx");
+  const liveSource = readRepoFile("src/components/direct-entry/direct-entry-live.tsx");
+  const workerOpsSource = readRepoFile("src/components/direct-entry/worker-operations.tsx");
+  const vendorManager = readRepoFile("src/components/admin/vendor-catalog-manager.tsx");
+  const projectTeamManager = readRepoFile("src/components/admin/project-team-scope-manager.tsx");
+
+  assert.match(workspaceSource, /from "@\/components\/ui\/status-banner"/);
+  assert.match(liveSource, /from "@\/components\/ui\/status-banner"/);
+
+  assert.match(workspaceSource, /from "@\/components\/ui\/cursor-load-more"/);
+  assert.match(workerOpsSource, /from "@\/components\/ui\/cursor-load-more"/);
+
+  assert.match(vendorManager, /from "@\/components\/ui\/offset-pager"/);
+  assert.match(projectTeamManager, /from "@\/components\/ui\/offset-pager"/);
+
+  assert.match(vendorManager, /from "@\/components\/ui\/form-dialog"/);
+  assert.match(projectTeamManager, /from "@\/components\/ui\/form-dialog"/);
+});

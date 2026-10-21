@@ -71,6 +71,7 @@ const TEST_WEIGHTS = {
   "test:p1.6-i04c3-r3a": 4.3,
   "test:p3-1-w02c-ui-dynamic-catalog": 4,
   "test:r2-1": 8.5,
+  "test:r2-2": 2.5,
 };
 
 const target = process.argv[2];

@@ -224,6 +224,21 @@ export function DirectEntryChangeRequestReviewer({
         setHistoryItems(detail.items);
         setCanViewOwnRequest(detail.can_withdraw);
         const terminal = detail.state !== "PENDING";
+        const readOnlyView = terminal || !detail.can_decide;
+        if (readOnlyView) {
+          // R2.2 Read-only mode P0: render truc tiep tu detail.items[].proposal immutable,
+          // KHONG goi /api/direct-entry/entries/[entryId] de tranh 403 lam gay lich su sau khi doi phan cong.
+          await ensureCatalog(hcmTodayDate()).catch(() => null);
+          if (cancelled) return;
+          setHistoryNames(new Map());
+          if (terminal) {
+            setModel({ kind: "terminal", request_id: detail.request_id, state: detail.state });
+          } else {
+            setModel({ kind: "terminal", request_id: detail.request_id, state: detail.state });
+          }
+          setLoadState("ready");
+          return;
+        }
         const entries = new Map<string, ProposerEntryProjection>();
         const contexts = new Map<string, EntrySensitiveContext>();
         const names = new Map<string, string>();
@@ -429,8 +444,9 @@ export function DirectEntryChangeRequestReviewer({
               {model?.kind === "terminal" && (
                 <>
                   <p className={styles.submissionTerminalNote} data-testid="reviewer-terminal">
-                    Yêu cầu đã ở trạng thái {CHANGE_REQUEST_STATE_LABELS[model.state]} và không còn chờ
-                    quyết định.
+                    {model.state === "PENDING"
+                      ? "Yêu cầu đang ở trạng thái chờ duyệt. Nội dung bên dưới là bản chụp đề xuất đã gửi."
+                      : `Yêu cầu đã ở trạng thái ${CHANGE_REQUEST_STATE_LABELS[model.state]} và không còn chờ quyết định.`}
                   </p>
                   <section aria-label="Nội dung đề xuất" data-testid="change-request-history-detail">
                     <strong>Nội dung đề xuất</strong>

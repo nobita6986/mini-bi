@@ -29,6 +29,26 @@ const QUEUE_TABS = [
   { value: "GLOBAL_AUDIT", label: "Lịch sử duyệt" },
 ] as const;
 
+export const PROPOSER_QUEUE_TABS = [
+  { value: "PROPOSER_PENDING", label: "Tôi đã gửi" },
+  { value: "PROPOSER_RESOLVED", label: "Lịch sử gửi" },
+] as const;
+
+export const REVIEWER_QUEUE_TABS = [
+  { value: "REVIEWER_PENDING", label: "Chờ tôi duyệt" },
+  { value: "REVIEWER_RESOLVED", label: "Lịch sử duyệt" },
+] as const;
+
+export const GLOBAL_AUDIT_QUEUE_TAB = {
+  value: "GLOBAL_AUDIT",
+  label: "Lịch sử toàn hệ thống",
+} as const;
+
+export type ChangeRequestQueueTabItem = {
+  value: ChangeRequestQueueFilter;
+  label: string;
+};
+
 export type ChangeRequestListProps = {
   state: "loading" | "ready" | "error";
   message: string;
@@ -37,6 +57,7 @@ export type ChangeRequestListProps = {
   busyRequestId: string | null;
   compact?: boolean;
   queueFilter: ChangeRequestQueueFilter;
+  tabs?: readonly ChangeRequestQueueTabItem[];
   canViewGlobalHistory?: boolean;
   onQueueFilterChange: (filter: ChangeRequestQueueFilter) => void;
   onGlobalHistoryAgeFilterChange?: (filter: ResolvedAgeFilter) => void;
@@ -45,7 +66,7 @@ export type ChangeRequestListProps = {
   onReview: (request: ChangeRequestListItem) => void;
 };
 
-type ResolvedAgeFilter = "3" | "7" | "30" | "all";
+export type ResolvedAgeFilter = "3" | "7" | "30" | "all";
 
 function isWithinResolvedAge(
   request: ChangeRequestListItem,
@@ -73,6 +94,7 @@ function ChangeRequestListContent({
   busyRequestId,
   compact = false,
   queueFilter,
+  tabs,
   canViewGlobalHistory,
   resolvedAgeFilter,
   onResolvedAgeFilterChange,
@@ -125,12 +147,12 @@ function ChangeRequestListContent({
         ariaLabel="Trạng thái yêu cầu thay đổi"
         panelId="change-request-queue-panel"
         value={queueFilter}
-        tabs={canViewGlobalHistory ? QUEUE_TABS : QUEUE_TABS.slice(0, 2)}
+        tabs={tabs ?? (canViewGlobalHistory ? QUEUE_TABS : QUEUE_TABS.slice(0, 2))}
         onChange={onQueueFilterChange}
       >
       {(queueFilter === "RESOLVED" || queueFilter === "GLOBAL_AUDIT") && (
         <label className={styles.field}>
-          {queueFilter === "GLOBAL_AUDIT" ? "Lịch sử duyệt" : "Lịch sử đã xử lý"}
+          {queueFilter === "GLOBAL_AUDIT" ? "Lịch sử toàn hệ thống" : "Lịch sử đã xử lý"}
           <select aria-label="Khoảng thời gian đề xuất đã xử lý" value={resolvedAgeFilter}
             onChange={(event) => {
               const filter = event.target.value as ResolvedAgeFilter;
@@ -150,7 +172,13 @@ function ChangeRequestListContent({
         {state === "ready" && requests.length === 0 && loadedRequestCount === 0 &&
           (queueFilter === "GLOBAL_AUDIT"
             ? "Chưa có lịch sử duyệt trong khoảng thời gian đang chọn."
-            : "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi.")}
+            : queueFilter === "REVIEWER_PENDING"
+              ? "Chưa có yêu cầu thay đổi nào đang chờ bạn duyệt."
+              : queueFilter === "REVIEWER_RESOLVED"
+                ? "Bạn chưa duyệt hoặc từ chối yêu cầu thay đổi nào."
+                : queueFilter === "PROPOSER_RESOLVED"
+                  ? "Chưa có lịch sử yêu cầu thay đổi đã gửi."
+                  : "Chưa có yêu cầu thay đổi nào. Mở một đợt ở trạng thái đã gửi chính thức để đề xuất thay đổi.")}
         {state === "ready" && requests.length === 0 && loadedRequestCount > 0 &&
           (queueFilter === "GLOBAL_AUDIT"
             ? "Chưa có lịch sử duyệt trong khoảng thời gian đang chọn."
@@ -292,7 +320,9 @@ export function DirectEntryChangeRequestList(props: ChangeRequestListProps) {
       title="Yêu cầu thay đổi"
       loadedCount={visibleRequests.length}
       badges={[{ count: displayedCount,
-        label: props.queueFilter === "PENDING" ? "đang chờ xử lý"
+        label: props.queueFilter === "PENDING" || props.queueFilter === "PROPOSER_PENDING" ||
+          props.queueFilter === "REVIEWER_PENDING"
+          ? "đang chờ xử lý"
           : props.queueFilter === "GLOBAL_AUDIT" ? "lịch sử duyệt" : "đã xử lý" }]}
       state={props.state}
     >

@@ -7,21 +7,21 @@ const reviewer = readFileSync(new URL("./direct-entry-change-request-reviewer.ts
 const submissions = readFileSync(new URL("./direct-entry-submission-list.tsx", import.meta.url), "utf8");
 const queueTabs = readFileSync(new URL("./direct-entry-queue-tabs.tsx", import.meta.url), "utf8");
 const live = readFileSync(new URL("./direct-entry-live.tsx", import.meta.url), "utf8");
+const workspace = readFileSync(new URL("./change-requests-workspace.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("./direct-entry-compact-panel.tsx", import.meta.url), "utf8");
 const grid = readFileSync(new URL("./direct-entry-spreadsheet-grid.tsx", import.meta.url), "utf8");
 const gridCss = readFileSync(new URL("./direct-entry-spreadsheet-grid.module.css", import.meta.url), "utf8");
 const css = readFileSync(new URL("./direct-entry-shell.module.css", import.meta.url), "utf8");
 const compactStyles = css.slice(css.indexOf(".compactPanel"), css.indexOf("@media (min-width: 640px)"));
 
-test("live keeps one compact panel of each kind before the worker grid", () => {
+test("live keeps compact submission panel before the worker grid and change-request list lives in dedicated workspace", () => {
   const submission = live.indexOf("<DirectEntrySubmissionList");
-  const request = live.indexOf("<DirectEntryChangeRequestList");
-  const workerGrid = live.indexOf("<section className={styles.gridSection", request);
-  assert.ok(submission > 0 && submission < request && request < workerGrid);
+  const workerGrid = live.indexOf("<section className={styles.gridSection", submission);
+  assert.ok(submission > 0 && submission < workerGrid);
   assert.equal((live.match(/<DirectEntrySubmissionList/g) ?? []).length, 1);
-  assert.equal((live.match(/<DirectEntryChangeRequestList/g) ?? []).length, 1);
+  assert.equal((live.match(/<DirectEntryChangeRequestList/g) ?? []).length, 0);
+  assert.equal((workspace.match(/<DirectEntryChangeRequestList/g) ?? []).length, 1);
   assert.match(live.slice(submission, live.indexOf("/>", submission)), /\bcompact\b/);
-  assert.match(live.slice(request, live.indexOf("/>", request)), /\bcompact\b/);
   assert.match(panel, /<details className=\{styles\.compactPanel\} aria-labelledby=\{headingId\}>/);
   assert.doesNotMatch(panel, /<details[^>]*\bopen(?:=|\s|>)/);
   assert.doesNotMatch(panel, /<details[^>]*\bkey=/);
@@ -67,7 +67,8 @@ test("review queue separates pending/history and fits compact cards in a scrolla
   assert.match(queueTabs, /onChange\(tabs\[next\]\.value\)/);
   assert.match(reviewer, /request_reason/);
   assert.match(reviewer, /const terminal = detail\.state !== "PENDING"/);
-  assert.match(reviewer, /if \(terminal\) \{[\s\S]*kind: "terminal"/);
+  assert.match(reviewer, /const readOnlyView = terminal \|\| !detail\.can_decide/);
+  assert.match(reviewer, /if \(readOnlyView\) \{[\s\S]*kind: "terminal"/);
   assert.match(css, /\.compactListViewport\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.compactList\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /@media \(min-width:\s*640px\)[\s\S]*?\.compactList\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
@@ -119,7 +120,7 @@ test("review and withdraw continue to use server-projected permission and existi
   assert.match(list, /shortRef\(request\.request_id\)/);
   assert.doesNotMatch(list, />\s*\{request\.request_id\}\s*</);
   assert.match(list, /onClick=\{onLoadMore\}/);
-  assert.match(live, /onDecided=\{\(message\) => \{[\s\S]{0,160}reloadAfterChangeRequestMutation\(message\)/);
+  assert.match(workspace, /onDecided=\{\(message\) => \{[\s\S]{0,160}reloadAfterChangeRequestMutation\(message/);
 });
 
 test("Excel CTAs stay hidden at every breakpoint and quick-add remains visible on mobile", () => {
