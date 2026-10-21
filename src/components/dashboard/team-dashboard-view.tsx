@@ -1,5 +1,6 @@
 import type { ScopedDashboardView } from "@/lib/reporting/p3-w06c-audience-view";
 import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
+import type { WorkforceReportingResult } from "@/lib/reporting/wf01-workforce-snapshot";
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
@@ -46,12 +47,14 @@ export function TeamDashboardView({
   data,
   generatedAt,
   comparison,
+  workforce,
   optionsResult,
   view,
 }: {
   data: ReportingData;
   generatedAt: string;
   comparison?: PeriodComparisonResult;
+  workforce?: WorkforceReportingResult;
   optionsResult: ReportingOptionsResult;
   view: ScopedDashboardView;
 }) {
@@ -61,6 +64,7 @@ export function TeamDashboardView({
         data={data}
         generatedAt={generatedAt}
         comparison={comparison}
+        workforce={workforce}
         optionsResult={optionsResult}
         view={teamReportConfig(view)}
       />

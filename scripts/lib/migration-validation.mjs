@@ -40,6 +40,10 @@ export const F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES = Object.freez
   "public.work_report_list_pending_reviews(uuid, uuid, uuid, text, integer)",
   "public.work_report_revoke_delegation(uuid, uuid, uuid, integer, text)",
 ]);
+export const WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME =
+  "20261022090000_wf01_workforce_snapshot_and_transitions.sql";
+export const WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE =
+  "public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -252,7 +256,7 @@ export async function verifyS0T1CHistoricalCompatibility(
   migrationSql,
   { r1_2Applied = false, f1WorkReportsApplied = false, f1AssignmentOptionsApplied = false,
     f1AssignmentTrackingApplied = false, f1_5AnalyticsApplied = false,
-    f2ReviewAndDelegationApplied = false } = {},
+    f2ReviewAndDelegationApplied = false, wf01WorkforceSnapshotApplied = false } = {},
 ) {
   const baseAllowlist = extractS0T1CAllowlistSignatures(migrationSql);
   if (baseAllowlist.length === 0) {
@@ -269,6 +273,7 @@ export async function verifyS0T1CHistoricalCompatibility(
     ...(f1AssignmentTrackingApplied ? [F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE] : []),
     ...(f1_5AnalyticsApplied ? F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES : []),
     ...(f2ReviewAndDelegationApplied ? F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES : []),
+    ...(wf01WorkforceSnapshotApplied ? [WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE] : []),
   ];
 
   const { rows } = await client.query(
@@ -461,6 +466,7 @@ export async function verifyAppliedMigrationChecksum(
         f1AssignmentTrackingApplied: appliedMap.has(F1_WORK_REPORTS_ASSIGNMENT_TRACKING_MIGRATION_NAME),
         f1_5AnalyticsApplied: appliedMap.has(F1_5_WORK_REPORTS_ANALYTICS_MIGRATION_NAME),
         f2ReviewAndDelegationApplied: appliedMap.has(F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME),
+        wf01WorkforceSnapshotApplied: appliedMap.has(WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {
