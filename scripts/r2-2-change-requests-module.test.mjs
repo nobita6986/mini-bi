@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
   decideChangeRequestsPageAccess,
+  HISTORICAL_CHANGE_REQUEST_QUEUES,
+  probeHistoricalChangeRequestAccess,
 } from "../src/lib/auth/direct-entry-page-access.ts";
 import {
   changeRequestWorkspaceTabs,
@@ -93,9 +95,137 @@ test("WP-2.2.1: server page gate admits current proposers/reviewers and active h
 
   const pageSource = readRepoFile("src/app/direct-entry/change-requests/page.tsx");
   assert.match(pageSource, /decideChangeRequestsPageAccess/);
-  assert.match(pageSource, /createChangeRequestReadRepository/);
-  assert.match(pageSource, /listChangeRequests\(/);
+  assert.match(pageSource, /resolveChangeRequestHistoricalAccessForRequest/);
+  assert.doesNotMatch(pageSource, /state:\s*null/);
   assert.match(pageSource, /<ChangeRequestsWorkspace/);
+});
+
+test("R2.2 Post-merge P0: explicit historical queue probe preserves access for active proposers and deciders after losing current authority", async () => {
+  assert.deepEqual(HISTORICAL_CHANGE_REQUEST_QUEUES, [
+    "PROPOSER_PENDING",
+    "PROPOSER_RESOLVED",
+    "REVIEWER_RESOLVED",
+  ]);
+
+  const noCurrentAuthority = { ok: true, actor: makeActor([], []) };
+
+  const pendingProposerProbe = await probeHistoricalChangeRequestAccess({
+    auth_subject: "sub-p1",
+    app_user_id: "user-p1",
+    listChangeRequests: async (query) => ({
+      ok: true,
+      data: { requests: query.state === "PROPOSER_PENDING" ? [{ request_id: "r1" }] : [] },
+    }),
+  });
+  assert.equal(
+    decideChangeRequestsPageAccess({
+      uiEnabled: true,
+      actor: noCurrentAuthority,
+      historicalProbe: pendingProposerProbe,
+    }),
+    "ALLOW",
+  );
+  assert.equal(
+    initialChangeRequestWorkspaceMode({
+      canReview: false,
+      canPropose: false,
+      ...pendingProposerProbe,
+    }),
+    "proposer",
+  );
+  assert.equal(
+    initialChangeRequestQueue({
+      canReview: false,
+      canPropose: false,
+      ...pendingProposerProbe,
+    }),
+    "PROPOSER_PENDING",
+  );
+
+  const resolvedProposerProbe = await probeHistoricalChangeRequestAccess({
+    auth_subject: "sub-p2",
+    app_user_id: "user-p2",
+    listChangeRequests: async (query) => ({
+      ok: true,
+      data: { requests: query.state === "PROPOSER_RESOLVED" ? [{ request_id: "r2" }] : [] },
+    }),
+  });
+  assert.equal(
+    decideChangeRequestsPageAccess({
+      uiEnabled: true,
+      actor: noCurrentAuthority,
+      historicalProbe: resolvedProposerProbe,
+    }),
+    "ALLOW",
+  );
+  assert.equal(
+    initialChangeRequestWorkspaceMode({
+      canReview: false,
+      canPropose: false,
+      ...resolvedProposerProbe,
+    }),
+    "proposer",
+  );
+  assert.equal(
+    initialChangeRequestQueue({
+      canReview: false,
+      canPropose: false,
+      ...resolvedProposerProbe,
+    }),
+    "PROPOSER_RESOLVED",
+  );
+
+  const formerDeciderProbe = await probeHistoricalChangeRequestAccess({
+    auth_subject: "sub-d1",
+    app_user_id: "user-d1",
+    listChangeRequests: async (query) => ({
+      ok: true,
+      data: { requests: query.state === "REVIEWER_RESOLVED" ? [{ request_id: "r3" }] : [] },
+    }),
+  });
+  assert.equal(
+    decideChangeRequestsPageAccess({
+      uiEnabled: true,
+      actor: noCurrentAuthority,
+      historicalProbe: formerDeciderProbe,
+    }),
+    "ALLOW",
+  );
+  assert.equal(
+    initialChangeRequestWorkspaceMode({
+      canReview: false,
+      canPropose: false,
+      ...formerDeciderProbe,
+    }),
+    "reviewer",
+  );
+  assert.equal(
+    initialChangeRequestQueue({
+      canReview: false,
+      canPropose: false,
+      ...formerDeciderProbe,
+    }),
+    "REVIEWER_RESOLVED",
+  );
+
+  const navActorWithHistory = {
+    capabilities: [],
+    scopes: [],
+    hasHistoricalChangeRequests: true,
+  };
+  assert.equal(
+    changeRequestsNavPredicate(navActorWithHistory),
+    true,
+    "navigation predicate keeps change-requests menu visible when active actor has historical requests",
+  );
+});
+
+test("R2.2 Post-merge P1: DirectEntryChangeRequestList exposes Xem chi tiết for all non-decidable items including PENDING", () => {
+  const listSource = readRepoFile("src/components/direct-entry/direct-entry-change-request-list.tsx");
+  assert.match(listSource, /canReviewChangeRequest\(request\) && \([\s\S]{0,350}Xem xét/);
+  assert.match(listSource, /!canReviewChangeRequest\(request\) && \([\s\S]{0,350}Xem chi tiết/);
+  assert.match(listSource, /canWithdrawChangeRequest\(request\) && \([\s\S]{0,400}Rút yêu cầu/);
+  assert.doesNotMatch(listSource, /request\.state !== "PENDING" && \([\s\S]{0,200}Xem chi tiết/);
 });
 
 test("WP-2.2.1: 4 business queues + GLOBAL_AUDIT tabs and query builder match R2.1/R2.2 contract", () => {

@@ -28,11 +28,20 @@ import "server-only";
 
 import { cache } from "react";
 
+import {
+  EMPTY_CHANGE_REQUEST_HISTORICAL_PROBE,
+  probeHistoricalChangeRequestAccess,
+  type ChangeRequestHistoricalAccessProbe,
+} from "@/lib/auth/direct-entry-page-access";
 import { getDirectEntryActor } from "@/lib/auth/direct-entry-session";
 import { resolveSessionWithBoundedRetry } from "@/lib/auth/direct-entry-session-retry";
 import { createDirectEntryActorRepository } from "@/lib/direct-entry/actor-context-repository";
+import { createChangeRequestReadRepository } from "@/lib/direct-entry/change-request-read-repository";
 import type { ActorResolution } from "@/lib/auth/direct-entry-v2";
-import type { NavActorProjection } from "@/lib/navigation/registry-capability";
+import {
+  changeRequestsNavPredicate,
+  type NavActorProjection,
+} from "@/lib/navigation/registry-capability";
 
 /**
  * Request-scoped resolver: tra ve `ActorResolution` day du (goc tu
@@ -69,6 +78,21 @@ export const resolveActorForRequest = cache(
  * - Cung dung React cache nhu `resolveActorForRequest` de tranh duplicate
  *   getUser + repository resolution.
  */
+export const resolveChangeRequestHistoricalAccessForRequest = cache(
+  async (): Promise<ChangeRequestHistoricalAccessProbe> => {
+    const actor = await resolveActorForRequest();
+    if (!actor.ok) {
+      return EMPTY_CHANGE_REQUEST_HISTORICAL_PROBE;
+    }
+    const repository = createChangeRequestReadRepository();
+    return probeHistoricalChangeRequestAccess({
+      auth_subject: actor.actor.auth_subject,
+      app_user_id: actor.actor.app_user_id,
+      listChangeRequests: (query) => repository.listChangeRequests(query),
+    });
+  },
+);
+
 export const resolveNavActorForAppShell = cache(
   async (input: {
     directEntryEnabled: boolean;
@@ -79,9 +103,19 @@ export const resolveNavActorForAppShell = cache(
     }
     const actor = await resolveActorForRequest();
     if (!actor.ok) return null;
-    return {
+    const projection: NavActorProjection = {
       capabilities: actor.actor.capabilities,
       scopes: actor.actor.scopes.map((scope) => ({ kind: scope.kind })),
     };
+    if (input.directEntryEnabled && !changeRequestsNavPredicate(projection)) {
+      const historical = await resolveChangeRequestHistoricalAccessForRequest();
+      if (historical.hasHistoricalRequests) {
+        return {
+          ...projection,
+          hasHistoricalChangeRequests: true,
+        };
+      }
+    }
+    return projection;
   },
 );

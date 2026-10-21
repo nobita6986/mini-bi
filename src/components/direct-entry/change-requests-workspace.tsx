@@ -67,24 +67,39 @@ async function readJson(response: Response): Promise<unknown> {
 
 export type ChangeRequestsWorkspaceProps = {
   canReview: boolean;
+  canPropose?: boolean;
   canViewGlobalHistory: boolean;
   canAccessDirectEntry?: boolean;
   canAccessWorkerDirectory?: boolean;
+  hasProposerPending?: boolean;
+  hasProposerResolved?: boolean;
+  hasReviewerResolved?: boolean;
 };
 
 export function ChangeRequestsWorkspace({
   canReview,
+  canPropose = false,
   canViewGlobalHistory,
   canAccessDirectEntry = false,
   canAccessWorkerDirectory = false,
+  hasProposerPending = false,
+  hasProposerResolved = false,
+  hasReviewerResolved = false,
 }: ChangeRequestsWorkspaceProps) {
+  const initialAccess = {
+    canReview,
+    canPropose,
+    hasProposerPending,
+    hasProposerResolved,
+    hasReviewerResolved,
+  };
   const [mode, setMode] = useState<ChangeRequestWorkspaceMode>(() =>
-    initialChangeRequestWorkspaceMode(canReview),
+    initialChangeRequestWorkspaceMode(initialAccess),
   );
   const [queueFilter, setQueueFilter] = useState<ChangeRequestQueueFilter>(() =>
-    initialChangeRequestQueue(canReview),
+    initialChangeRequestQueue(initialAccess),
   );
-  const queueFilterRef = useRef<ChangeRequestQueueFilter>(initialChangeRequestQueue(canReview));
+  const queueFilterRef = useRef<ChangeRequestQueueFilter>(initialChangeRequestQueue(initialAccess));
   const historyAgeRef = useRef<ResolvedAgeFilter>("3");
   const cursorRef = useRef<string | null>(null);
   const loadRef = useRef(0);
@@ -198,12 +213,16 @@ export function ChangeRequestsWorkspace({
     if (nextMode === mode) return;
     setMode(nextMode);
     const nextQueue: ChangeRequestQueueFilter =
-      nextMode === "reviewer" ? "REVIEWER_PENDING" : "PROPOSER_PENDING";
+      nextMode === "reviewer"
+        ? (canReview ? "REVIEWER_PENDING" : "REVIEWER_RESOLVED")
+        : (!canPropose && !hasProposerPending && hasProposerResolved
+            ? "PROPOSER_RESOLVED"
+            : "PROPOSER_PENDING");
     cursorRef.current = null;
     queueFilterRef.current = nextQueue;
     setQueueFilter(nextQueue);
     void loadChangeRequests("replace", nextQueue, historyAgeRef.current);
-  }, [loadChangeRequests, mode]);
+  }, [canPropose, canReview, hasProposerPending, hasProposerResolved, loadChangeRequests, mode]);
 
   const withdrawChangeRequest = useCallback(async (request: ChangeRequestListItem) => {
     const intent = "change_request_withdraw:" + request.request_id + ":" + request.version;
@@ -305,7 +324,7 @@ export function ChangeRequestsWorkspace({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {canReview && (
+          {(canReview || hasReviewerResolved) && (
             mode === "reviewer" ? (
               <button
                 type="button"
@@ -322,7 +341,7 @@ export function ChangeRequestsWorkspace({
                 onClick={() => switchWorkspaceMode("reviewer")}
                 className="inline-flex min-h-10 items-center justify-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               >
-                Quay lại hàng đợi duyệt
+                {canReview ? "Quay lại hàng đợi duyệt" : "Lịch sử duyệt của tôi"}
               </button>
             )
           )}

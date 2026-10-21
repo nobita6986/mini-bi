@@ -217,21 +217,6 @@ function ChangeRequestListContent({
                 <div><dt>Tạo lúc</dt><dd>{formatHcmDateTime(request.created_at)}</dd></div>
               </dl>
               <div className={compact ? styles.compactActions : styles.submissionActions}>
-                {canWithdrawChangeRequest(request) && (
-                  <>
-                    <button type="button" className={styles.secondaryButton}
-                      onClick={() => onReview(request)}>Xem chi tiết</button>
-                    <button
-                      type="button"
-                      className={styles.secondaryButton}
-                      aria-busy={busy}
-                      disabled={busy}
-                      onClick={() => setPendingWithdraw(request)}
-                    >
-                      {busy ? "Đang rút…" : "Rút yêu cầu"}
-                    </button>
-                  </>
-                )}
                 {canReviewChangeRequest(request) && (
                   <button
                     type="button"
@@ -241,9 +226,25 @@ function ChangeRequestListContent({
                     Xem xét
                   </button>
                 )}
-                {request.state !== "PENDING" && (
-                  <button type="button" className={styles.secondaryButton}
-                    onClick={() => onReview(request)}>Xem chi tiết</button>
+                {!canReviewChangeRequest(request) && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => onReview(request)}
+                  >
+                    Xem chi tiết
+                  </button>
+                )}
+                {canWithdrawChangeRequest(request) && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    aria-busy={busy}
+                    disabled={busy}
+                    onClick={() => setPendingWithdraw(request)}
+                  >
+                    {busy ? "Đang rút…" : "Rút yêu cầu"}
+                  </button>
                 )}
                 {!canWithdrawChangeRequest(request) && !canReviewChangeRequest(request) &&
                   request.state === "PENDING" && (

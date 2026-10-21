@@ -160,22 +160,104 @@ export function decideWorkerOperationsPageAccess(input: {
   });
 }
 
+export const HISTORICAL_CHANGE_REQUEST_QUEUES = [
+  "PROPOSER_PENDING",
+  "PROPOSER_RESOLVED",
+  "REVIEWER_RESOLVED",
+] as const;
+
+export type HistoricalChangeRequestQueue =
+  (typeof HISTORICAL_CHANGE_REQUEST_QUEUES)[number];
+
+export type ChangeRequestHistoricalAccessProbe = {
+  hasProposerPending: boolean;
+  hasProposerResolved: boolean;
+  hasReviewerResolved: boolean;
+  hasHistoricalRequests: boolean;
+};
+
+export const EMPTY_CHANGE_REQUEST_HISTORICAL_PROBE: ChangeRequestHistoricalAccessProbe =
+  Object.freeze({
+    hasProposerPending: false,
+    hasProposerResolved: false,
+    hasReviewerResolved: false,
+    hasHistoricalRequests: false,
+  });
+
+/**
+ * R2.2 Post-merge P0: probe cac queue lich su tuong minh theo R2.1 contract (#129)
+ * thay vi state=null (vi state=null chi tra cac request co audience <> 'NONE').
+ * - PROPOSER_PENDING: yeu cau dang cho do chinh actor gui (ke ca khi da mat assignment hien tai).
+ * - PROPOSER_RESOLVED: lich su yeu cau da xu ly do chinh actor gui.
+ * - REVIEWER_RESOLVED: lich su yeu cau do chinh actor da quyet dinh (decided_by_user_id).
+ */
+export async function probeHistoricalChangeRequestAccess(input: {
+  auth_subject: string;
+  app_user_id: string;
+  listChangeRequests: (query: {
+    auth_subject: string;
+    app_user_id: string;
+    page_size: number;
+    cursor: null;
+    state: HistoricalChangeRequestQueue;
+    days: null;
+  }) => Promise<
+    | { ok: true; data: { requests: readonly unknown[] } }
+    | { ok: false; reason?: string }
+    | null
+  >;
+}): Promise<ChangeRequestHistoricalAccessProbe> {
+  const probeQueue = async (state: HistoricalChangeRequestQueue): Promise<boolean> => {
+    try {
+      const result = await input.listChangeRequests({
+        auth_subject: input.auth_subject,
+        app_user_id: input.app_user_id,
+        page_size: 1,
+        cursor: null,
+        state,
+        days: null,
+      });
+      return result !== null && result.ok === true && result.data.requests.length > 0;
+    } catch {
+      return false;
+    }
+  };
+  const [hasProposerPending, hasProposerResolved, hasReviewerResolved] =
+    await Promise.all([
+      probeQueue("PROPOSER_PENDING"),
+      probeQueue("PROPOSER_RESOLVED"),
+      probeQueue("REVIEWER_RESOLVED"),
+    ]);
+  return {
+    hasProposerPending,
+    hasProposerResolved,
+    hasReviewerResolved,
+    hasHistoricalRequests:
+      hasProposerPending || hasProposerResolved || hasReviewerResolved,
+  };
+}
+
 /**
  * R2.2: quyet dinh truy cap cho /direct-entry/change-requests.
  * - Cung boundary voi nav (changeRequestsNavPredicate).
  * - Ngoai ra, actor con active (actor.ok === true) nhung da doi phan cong/thu hoi quyen
- *   hien tai van duoc vao xem lich su yeu cau do chinh minh da gui khi hasHistoricalRequests === true.
+ *   hien tai van duoc vao xem lich su yeu cau do chinh minh da gui hoac da duyet
+ *   khi hasHistoricalRequests === true (hoac historicalProbe.hasHistoricalRequests === true).
  */
 export function decideChangeRequestsPageAccess(input: {
   uiEnabled: boolean;
   actor: ActorResolution | null;
   hasHistoricalRequests?: boolean;
+  historicalProbe?: ChangeRequestHistoricalAccessProbe;
 }): DirectEntryPageDecision {
+  const hasHistory =
+    input.hasHistoricalRequests === true ||
+    input.historicalProbe?.hasHistoricalRequests === true;
   return decideUiCapabilityPageAccess({
     uiEnabled: input.uiEnabled,
     actor: input.actor,
     allowed: (actor) =>
-      changeRequestsNavPredicate(actor) || input.hasHistoricalRequests === true,
+      changeRequestsNavPredicate(actor) || hasHistory,
   });
 }
 

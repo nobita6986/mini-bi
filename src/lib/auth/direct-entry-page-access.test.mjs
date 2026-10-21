@@ -14,6 +14,8 @@ import {
   decideVendorCatalogPageAccess,
   decideWorkerOperationsPageAccess,
   canManageProjectMasterFromActor,
+  HISTORICAL_CHANGE_REQUEST_QUEUES,
+  probeHistoricalChangeRequestAccess,
 } from "./direct-entry-page-access.ts";
 import {
   changeRequestsNavPredicate,
@@ -112,6 +114,66 @@ test("Change Requests page gate mirrors navigation predicate and admits active h
     decideChangeRequestsPageAccess({ uiEnabled: true, actor: denied("ACTOR_DISABLED"), hasHistoricalRequests: true }),
     "ACCOUNT_UNAVAILABLE",
     "disabled actor never bypasses account status via historical requests",
+  );
+  assert.equal(
+    decideChangeRequestsPageAccess({ uiEnabled: true, actor: denied("ACTOR_MAPPING_MISSING"), hasHistoricalRequests: true }),
+    "ACCOUNT_UNAVAILABLE",
+    "unmapped actor never bypasses account status via historical requests",
+  );
+});
+
+test("probeHistoricalChangeRequestAccess queries explicit R2.1 queues and never state=null", async () => {
+  assert.deepEqual(HISTORICAL_CHANGE_REQUEST_QUEUES, [
+    "PROPOSER_PENDING",
+    "PROPOSER_RESOLVED",
+    "REVIEWER_RESOLVED",
+  ]);
+
+  for (const activeQueue of HISTORICAL_CHANGE_REQUEST_QUEUES) {
+    const queriedStates = [];
+    const probe = await probeHistoricalChangeRequestAccess({
+      auth_subject: "sub-hist",
+      app_user_id: "user-hist",
+      listChangeRequests: async (query) => {
+        assert.notEqual(query.state, null, "must never probe with state=null");
+        assert.equal(query.page_size, 1);
+        queriedStates.push(query.state);
+        return {
+          ok: true,
+          data: {
+            requests: query.state === activeQueue ? [{ request_id: "req-1" }] : [],
+          },
+        };
+      },
+    });
+    assert.deepEqual(queriedStates.sort(), [...HISTORICAL_CHANGE_REQUEST_QUEUES].sort());
+    assert.equal(probe.hasHistoricalRequests, true, `active queue ${activeQueue} grants historical access`);
+    assert.equal(probe.hasProposerPending, activeQueue === "PROPOSER_PENDING");
+    assert.equal(probe.hasProposerResolved, activeQueue === "PROPOSER_RESOLVED");
+    assert.equal(probe.hasReviewerResolved, activeQueue === "REVIEWER_RESOLVED");
+    assert.equal(
+      decideChangeRequestsPageAccess({
+        uiEnabled: true,
+        actor: actor([]),
+        historicalProbe: probe,
+      }),
+      "ALLOW",
+    );
+  }
+
+  const emptyProbe = await probeHistoricalChangeRequestAccess({
+    auth_subject: "sub-none",
+    app_user_id: "user-none",
+    listChangeRequests: async () => ({ ok: true, data: { requests: [] } }),
+  });
+  assert.equal(emptyProbe.hasHistoricalRequests, false);
+  assert.equal(
+    decideChangeRequestsPageAccess({
+      uiEnabled: true,
+      actor: actor([]),
+      historicalProbe: emptyProbe,
+    }),
+    "ACCESS_DENIED",
   );
 });
 
