@@ -20,6 +20,7 @@ import {
   ClipboardList,
   FileDiff,
   LayoutDashboard,
+  NotebookPen,
   ShieldCheck,
   Users,
   type LucideIcon,
@@ -55,7 +56,8 @@ export type NavCapability =
   | "project_admin"
   | "admin_area"
   | "worker_operations"
-  | "change_requests";
+  | "change_requests"
+  | "work_reports";
 
 /** Icon component type — accept cả LucideIcon và custom SVG component. */
 export type NavIcon = LucideIcon | ComponentType<SVGProps<SVGSVGElement>>;
@@ -162,6 +164,17 @@ export const NAV_ENTRIES: ReadonlyArray<NavEntry> = [
     icon: FileDiff,
     status: "current",
     capability: "change_requests",
+    visibility: { desktop: true, mobile: true },
+  },
+  {
+    id: "work-reports",
+    label: "Báo cáo công việc",
+    path: "/work-reports",
+    description:
+      "Tạo, giao, nộp và tra cứu báo cáo công việc theo capability và resource scope do server xác nhận.",
+    icon: NotebookPen,
+    status: "planned",
+    capability: "work_reports",
     visibility: { desktop: true, mobile: true },
   },
   {

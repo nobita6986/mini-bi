@@ -72,6 +72,7 @@ const TEST_WEIGHTS = {
   "test:p3-1-w02c-ui-dynamic-catalog": 4,
   "test:r2-1": 8.5,
   "test:r2-2": 2.5,
+  "test:f1-work-reports": 6.0,
 };
 
 const target = process.argv[2];

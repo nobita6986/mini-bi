@@ -28,6 +28,11 @@ const {
   workerOperationsNavPredicate,
   workerOperationsReviewPredicate,
   workerOperationsTeamScopePredicate,
+  workReportAnalyticsPredicate,
+  workReportAssignmentPredicate,
+  workReportTemplateManagePredicate,
+  workReportViewPredicate,
+  workReportsNavPredicate,
   resolveNavCapabilityPredicate,
 } = cap;
 const { CURRENT_NAV_ENTRIES, filterEntriesForActor } = reg;
@@ -133,6 +138,22 @@ test("W06-R1: worker operations audience matrix (reviewer/admin/PM/uploader)", (
 test("resolveNavCapabilityPredicate: token không xác định fail-closed", () => {
   assert.equal(resolveNavCapabilityPredicate("entry_own")(makeActor(["entry_own"])), true);
   assert.equal(resolveNavCapabilityPredicate("bogus_token")(makeActor(["entry_admin"])), false);
+});
+
+test("Work Reports predicates enforce capability and compatible scope", () => {
+  const all = [{ kind: "all", reference: "all" }];
+  const team = [{ kind: "team", reference: "team-1" }];
+  assert.equal(workReportTemplateManagePredicate(makeActor(["report_form_manage"], all)), true);
+  assert.equal(workReportTemplateManagePredicate(makeActor(["report_form_manage"], team)), false);
+  assert.equal(workReportAssignmentPredicate(makeActor(["report_assign"], team)), true);
+  assert.equal(workReportAssignmentPredicate(makeActor(["report_assign"], [{ kind: "own" }])), false);
+  assert.equal(workReportViewPredicate(makeActor(["report_view"], team)), true);
+  assert.equal(workReportAnalyticsPredicate(makeActor(["report_analytics_view"], all)), true);
+  assert.equal(workReportAnalyticsPredicate(makeActor(["report_analytics_view"], [{ kind: "own" }])), false);
+  assert.equal(workReportsNavPredicate({ capabilities: [], scopes: [], hasWorkReportObligations: true }), true);
+  assert.equal(workReportsNavPredicate(makeActor([], all)), false);
+  assert.equal(resolveNavCapabilityPredicate("work_reports")(
+    makeActor(["report_assign"], team)), true);
 });
 
 test("decideNavEntryVisibility: viewport false thì luôn ẩn", () => {

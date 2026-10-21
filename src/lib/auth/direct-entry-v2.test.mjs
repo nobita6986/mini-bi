@@ -20,7 +20,7 @@ const timestamp = fixture.as_of;
 const resourceRef = "00000000-0000-4000-8000-00000000a001";
 
 test("authorization hardening is versioned", () => {
-  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.4");
+  assert.equal(DIRECT_ENTRY_AUTH_CONTRACT_VERSION, "direct-entry-auth/1.5");
   const retired = ["pii_view", "pii_export", "payment_view", "payment_edit"];
   assert.equal(CAPABILITIES.some((capability) => retired.includes(capability)), false);
 });

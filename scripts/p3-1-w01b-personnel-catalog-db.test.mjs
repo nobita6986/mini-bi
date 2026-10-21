@@ -832,7 +832,7 @@ test("migration #68 is appended once and the W01A 23-token vocabulary is unchang
     + " where n.nspname = 'public' and t.relname = 'direct_entry_capability_grants'"
     + " and c.conname = 'direct_entry_capability_grants_capability_check'");
   const tokens = [...String(rows[0].definition).matchAll(/'([^']+)'::text/g)].map((m) => m[1]);
-  assert.equal(tokens.length, 23);
+  assert.equal(tokens.length, 27);
   assert.ok(tokens.includes("catalog_master_manage"));
   assert.ok(tokens.includes("team_manager_assign"));
 

@@ -2,7 +2,7 @@ import { isRealCalendarDate } from "../analytics/identity/identity-shared.mjs";
 import type { TeamIdentity } from "../analytics/identity/contracts.ts";
 import type { ExplicitRecruiterLink } from "../contracts/direct-entry-v1.ts";
 
-export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.4" as const;
+export const DIRECT_ENTRY_AUTH_CONTRACT_VERSION = "direct-entry-auth/1.5" as const;
 
 export const CAPABILITIES = [
   "entry_create",
@@ -27,6 +27,10 @@ export const CAPABILITIES = [
   // the full-Admin triple on its own.
   "catalog_master_manage",
   "team_manager_assign",
+  "report_form_manage",
+  "report_assign",
+  "report_view",
+  "report_analytics_view",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -196,6 +200,7 @@ const REQUIRED_SCOPE_KIND: Partial<Record<AuthorizationAction, ScopeKind>> = {
   // scope of team_manager_assign and vice versa.
   catalog_master_manage: "all",
   team_manager_assign: "team",
+  report_form_manage: "all",
 };
 const FORBIDDEN_CLIENT_FIELDS = new Set([
   "authsubject",

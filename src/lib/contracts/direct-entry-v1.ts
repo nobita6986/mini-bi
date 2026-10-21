@@ -168,7 +168,11 @@ export type Capability =
   | "team_master_manage"
   | "audit_view"
   | "catalog_master_manage"
-  | "team_manager_assign";
+  | "team_manager_assign"
+  | "report_form_manage"
+  | "report_assign"
+  | "report_view"
+  | "report_analytics_view";
 
 export type ValidationIssue = { code: string; path: string };
 export type ValidationResult =
