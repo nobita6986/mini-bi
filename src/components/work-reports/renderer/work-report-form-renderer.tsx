@@ -13,6 +13,7 @@ export type WorkReportRendererDetail = {
   submission: { submission_id: string; state: string; draft_payload_json: Record<string, unknown> | null;
     first_submitted_at: string | null; latest_submitted_at: string | null; is_late: boolean;
     has_post_deadline_amendment: boolean; version: number } | null;
+  latest_review_event?: { decision: string; reason: string | null; reviewed_at: string } | null;
   revisions: Array<{ revision_id: string; revision_no: number; payload_json: Record<string, unknown>; created_at: string }>;
 };
 
@@ -68,7 +69,7 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
   }, []);
 
   // The RPC remains authoritative; this clock only hides actions known to be closed.
-  const canEdit = detail.obligation.obligation_status === "ACTIVE" && (now === null ||
+  const canEdit = detail.obligation.obligation_status === "ACTIVE" && (detail.submission?.state === "REJECTED" || now === null ||
     now <= Date.parse(detail.obligation.due_at) ||
     (detail.obligation.reopened_until !== null && now <= Date.parse(detail.obligation.reopened_until)));
 
@@ -107,6 +108,9 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
       <p className="mt-1 text-sm text-muted">Kỳ {detail.obligation.period_key} · Hạn nộp {new Date(detail.obligation.due_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p>
       {detail.submission ? <p className="mt-1 text-sm text-muted">Trạng thái: {detail.submission.state}{detail.submission.is_late ? " · Nộp muộn" : ""}{detail.submission.has_post_deadline_amendment ? " · Có chỉnh sửa sau hạn" : ""}</p> : null}
     </div>
+    {detail.submission?.state === "REJECTED" ? <StatusBanner tone="warning" title="Báo cáo cần nộp lại">
+      {detail.latest_review_event?.reason?.trim() || "Báo cáo đã bị từ chối. Hãy chỉnh sửa và nộp lại."}
+    </StatusBanner> : null}
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
     {notice ? <StatusBanner tone="success">{notice}</StatusBanner> : null}
     {!canEdit ? <StatusBanner tone="warning">Nghĩa vụ đã đóng hoặc quá hạn. Chỉ có thể xem.</StatusBanner> : null}

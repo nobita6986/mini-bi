@@ -48,6 +48,8 @@ import { DesktopNav } from "./desktop-nav";
 import { MobileNav } from "./mobile-nav";
 import { UserSessionControl } from "./user-session-control";
 
+const WORK_REPORTS_NAV_ENTRY_IDS = new Set(["work-reports", "work-report-reviews"]);
+
 /**
  * Props:
  * - children: nội dung trang.
@@ -84,7 +86,7 @@ export async function AppShell({
     directEntryEnabled,
     actor,
     decide: (entry) =>
-      (entry.id !== "work-reports" || workReportsEnabled) && decideNavEntryVisibility({
+      (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) && decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "desktop",
@@ -96,7 +98,7 @@ export async function AppShell({
     directEntryEnabled,
     actor,
     decide: (entry) =>
-      (entry.id !== "work-reports" || workReportsEnabled) && decideNavEntryVisibility({
+      (!WORK_REPORTS_NAV_ENTRY_IDS.has(entry.id) || workReportsEnabled) && decideNavEntryVisibility({
         capabilityKey: entry.capability,
         actor,
         viewport: "mobile",

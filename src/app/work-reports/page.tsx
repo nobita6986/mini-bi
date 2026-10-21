@@ -6,6 +6,8 @@ import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 import {
   workReportAnalyticsPredicate,
   workReportAssignmentPredicate,
+  workReportDelegationPredicate,
+  workReportReviewPredicate,
   workReportTemplateManagePredicate,
 } from "@/lib/navigation/registry-capability";
 
@@ -22,6 +24,8 @@ export default async function WorkReportsPage() {
       {actor && workReportAnalyticsPredicate(actor) ? <Link className="text-primary underline-offset-4 hover:underline" href="/work-reports/analytics">Tổng hợp báo cáo</Link> : null}
       {actor && workReportAssignmentPredicate(actor) ? <Link className="text-primary underline-offset-4 hover:underline" href="/work-reports/assignments">Giao báo cáo</Link> : null}
       {actor && workReportTemplateManagePredicate(actor) ? <Link className="text-primary underline-offset-4 hover:underline" href="/work-reports/templates">Quản lý mẫu</Link> : null}
+      {actor && workReportReviewPredicate(actor) ? <Link className="text-primary underline-offset-4 hover:underline" href="/work-reports/reviews">Duyệt báo cáo</Link> : null}
+      {actor && workReportDelegationPredicate(actor) ? <Link className="text-primary underline-offset-4 hover:underline" href="/work-reports/delegations">Ủy quyền</Link> : null}
     </nav>
     <MyObligations />
   </PageShell>;

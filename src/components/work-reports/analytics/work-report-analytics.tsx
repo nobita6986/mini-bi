@@ -9,6 +9,7 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import { appendUniqueContributions, contributionPageUrl } from "@/lib/work-reports/analytics-ui-model.mjs";
 
 type Filters = { template_id: string; version_id: string; from: string; to: string; team_id: string; assignee_id: string };
+type Finality = "final" | "provisional_included";
 type Metric = { metric_key: string; label: string; unit: string; compatible_group: string; sum_value: number | null; avg_value: number | null; min_value: number | null; max_value: number | null; count_valid: number; missing_value_count: number };
 type Compliance = { due_count: number; completed_count: number; on_time_count: number; late_submitted_count: number; pending_due_count: number; overdue_missing_count: number; exempted_count: number; pending_review_count: number; completion_rate: number | null };
 type Overview = { effective_scope: { kind: "all" | "team"; label: string }; compliance: Compliance; metrics: Metric[] };
@@ -28,8 +29,8 @@ async function getData<T>(url: string): Promise<T> {
   return result.data as T;
 }
 
-function queryString(filters: Filters) {
-  const query = new URLSearchParams({ finality: "final" });
+function queryString(filters: Filters, finality: Finality) {
+  const query = new URLSearchParams({ finality });
   for (const key of Object.keys(filters) as (keyof Filters)[]) if (filters[key].trim()) query.set(key, filters[key].trim());
   return query.toString();
 }
@@ -37,6 +38,7 @@ function queryString(filters: Filters) {
 export function WorkReportAnalytics() {
   const [draft, setDraft] = useState(initialFilters);
   const [filters, setFilters] = useState<Filters | null>(null);
+  const [finality, setFinality] = useState<Finality>("final");
   const [groupBy, setGroupBy] = useState<GroupBy>("team");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [rows, setRows] = useState<Breakdown[]>([]);
@@ -47,15 +49,15 @@ export function WorkReportAnalytics() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function load(nextFilters: Filters, nextGroup: GroupBy = groupBy) {
+  async function load(nextFilters: Filters, nextGroup: GroupBy = groupBy, nextFinality: Finality = finality) {
     setBusy(true); setError(null); setContributions(null); setContributionQuery(null); setNextCursor(null); setEvidence(null);
-    const query = queryString(nextFilters);
+    const query = queryString(nextFilters, nextFinality);
     try {
       const [summary, breakdown] = await Promise.all([
         getData<Overview>(`/api/work-reports/analytics/overview?${query}`),
         getData<{ items: Breakdown[] }>(`/api/work-reports/analytics/breakdown?${query}&group_by=${nextGroup}&page=1&page_size=50`),
       ]);
-      setFilters(nextFilters); setGroupBy(nextGroup); setOverview(summary); setRows(breakdown.items);
+      setFilters(nextFilters); setGroupBy(nextGroup); setFinality(nextFinality); setOverview(summary); setRows(breakdown.items);
     } catch {
       setOverview(null); setRows([]); setError("Không tải được dữ liệu tổng hợp. Hãy kiểm tra mẫu và bộ lọc trong phạm vi quyền hiện hành rồi thử lại.");
     } finally { setBusy(false); }
@@ -63,7 +65,7 @@ export function WorkReportAnalytics() {
 
   async function openContributions(metricKey?: string, row?: Breakdown) {
     if (!filters) return;
-    const query = new URLSearchParams(queryString(filters));
+    const query = new URLSearchParams(queryString(filters, finality));
     if (metricKey) query.set("metric_key", metricKey);
     if (row?.group_id && groupBy === "team") query.set("target_team_id", row.group_id);
     if (row?.group_id && groupBy === "assignee") query.set("target_assignee_id", row.group_id);
@@ -99,7 +101,20 @@ export function WorkReportAnalytics() {
   }
 
   return <div className="space-y-4" data-testid="work-report-analytics">
-    <FilterToolbar summary="Chỉ tiêu dùng finality=final và snapshot_team mặc định. ID là mã mẫu, phiên bản, nhóm hoặc nhân viên." actions={<Button variant="primary" disabled={busy || !draft.template_id.trim()} onClick={() => void load(draft)}>Áp dụng bộ lọc</Button>}>
+    <FilterToolbar summary="Chỉ tiêu được tính theo dữ liệu tạm tính hoặc đã chốt; phạm vi do máy chủ kiểm tra. ID là mã mẫu, phiên bản, nhóm hoặc nhân viên." actions={<Button variant="primary" disabled={busy || !draft.template_id.trim()} onClick={() => void load(draft)}>Áp dụng bộ lọc</Button>}>
+      <fieldset className="mb-3 space-y-2" aria-label="Trạng thái dữ liệu báo cáo">
+        <legend className="text-xs font-medium">Trạng thái dữ liệu</legend>
+        <div className="flex flex-wrap gap-2">
+          <label className="flex min-h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm">
+            <input type="radio" name="work-report-finality" value="final" checked={finality === "final"} onChange={() => filters ? void load(filters, groupBy, "final") : setFinality("final")} />
+            Chốt (Đã duyệt)
+          </label>
+          <label className="flex min-h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm">
+            <input type="radio" name="work-report-finality" value="provisional_included" checked={finality === "provisional_included"} onChange={() => filters ? void load(filters, groupBy, "provisional_included") : setFinality("provisional_included")} />
+            Tạm tính (Chờ duyệt)
+          </label>
+        </div>
+      </fieldset>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <label className="space-y-1 text-xs font-medium">Mã mẫu (bắt buộc)<input className={inputClass} value={draft.template_id} onChange={(e) => setDraft({ ...draft, template_id: e.target.value })} aria-label="Mã mẫu" /></label>
         <label className="space-y-1 text-xs font-medium">Mã phiên bản<input className={inputClass} value={draft.version_id} onChange={(e) => setDraft({ ...draft, version_id: e.target.value })} aria-label="Mã phiên bản" /></label>
@@ -113,7 +128,7 @@ export function WorkReportAnalytics() {
     {error ? <StatusBanner tone="error" title="Có lỗi khi tải dữ liệu">{error}</StatusBanner> : null}
     {overview ? <>
       <section aria-label="Phạm vi và KPI" className="space-y-3">
-        <p className="text-sm text-muted">Phạm vi do máy chủ xác định: <strong className="text-foreground">{overview.effective_scope.label}</strong> · Nhóm theo snapshot tại kỳ · Chỉ bài hoàn tất</p>
+        <p className="text-sm text-muted">Phạm vi do máy chủ xác định: <strong className="text-foreground">{overview.effective_scope.label}</strong> · {finality === "final" ? "Chốt (Đã duyệt)" : "Tạm tính (Chờ duyệt)"} · Nhóm theo snapshot tại kỳ</p>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[["Phải nộp", overview.compliance.due_count], ["Đã nộp", overview.compliance.completed_count], ["Hoàn thành", overview.compliance.completion_rate === null ? null : `${number(overview.compliance.completion_rate, 2)}%`], ["Quá hạn, chưa nộp", overview.compliance.overdue_missing_count], ["Đúng hạn", overview.compliance.on_time_count], ["Nộp muộn", overview.compliance.late_submitted_count], ["Chưa đến hạn", overview.compliance.pending_due_count], ["Được miễn", overview.compliance.exempted_count], ["Chờ duyệt", overview.compliance.pending_review_count]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-border bg-surface p-4 shadow-2xs"><p className="text-xs text-muted">{label}</p><p className="mt-1 text-2xl font-semibold tabular-nums">{value === null ? "—" : value}</p></div>)}
         </div>
