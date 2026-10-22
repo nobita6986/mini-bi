@@ -10,12 +10,20 @@ import {
   type PeriodComparisonResult,
 } from "@/lib/reporting/p1-period-comparison";
 import {
+  WORKFORCE_BALANCE_COLUMN_LABELS,
   WORKFORCE_INITIAL_STATUS_LABELS,
+  WORKFORCE_NON_ATTENDANCE_NOTE,
   WORKFORCE_SNAPSHOT_STATUS_LABELS,
   WORKFORCE_TRANSITION_PAIR_LABELS,
   WORKFORCE_UNIT_METADATA_NOTE,
+  WORKFORCE_WAITING_SAMPLE_LABELS,
   type WorkforceReportingResult,
 } from "@/lib/reporting/wf01-workforce-snapshot";
+import {
+  formatPlacementRatePercent,
+  formatSignedBalanceDelta,
+  formatWaitingDaysAverage,
+} from "@/lib/reporting/wf02-workforce-balance-waiting";
 import type { ReportingBucket } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
@@ -105,8 +113,9 @@ export function PeriodComparisonBanner({
 }
 
 /**
- * MBI-DA-2026-01 Chặng 2 / WF-01 (Items 2.1 & 2.2):
- * Workforce snapshot as-of date D and period status transitions [from, to].
+ * MBI-DA-2026-01 Chặng 2 / WF-01 & WF-02 (Items 2.1, 2.2, 2.3 & 2.4):
+ * Workforce snapshot as-of date D, period status transitions [from, to],
+ * opening/closing balance reconciliation, and UNCONFIRMED waiting duration & placement rate.
  */
 export function WorkforceSnapshotSection({
   workforce,
@@ -128,13 +137,13 @@ export function WorkforceSnapshotSection({
           </StatusBadge>
         </div>
         <p className="mt-1 text-xs">
-          Không tải được dữ liệu snapshot trạng thái lao động (as-of) và chuyển tiếp trạng thái. Các chỉ số tuyển dụng theo ngày báo cáo bên dưới vẫn giữ nguyên.
+          Không tải được dữ liệu snapshot trạng thái lao động (as-of), cân bằng đầu/cuối kỳ và thời gian chờ việc. Các chỉ số tuyển dụng theo ngày báo cáo bên dưới vẫn giữ nguyên.
         </p>
       </section>
     );
   }
 
-  const { snapshot, transitions } = workforce;
+  const { snapshot, transitions, balance, waiting } = workforce;
   const asOfSourceLabel =
     snapshot.asOfSource === "filter_to"
       ? "Theo ngày kết thúc bộ lọc"
@@ -175,6 +184,59 @@ export function WorkforceSnapshotSection({
           : []),
       ]
     : [];
+
+  const balanceRows = balance.applicable
+    ? [
+        {
+          key: "on",
+          label: WORKFORCE_SNAPSHOT_STATUS_LABELS.ON,
+          row: balance.byStatus.on,
+        },
+        {
+          key: "unconfirmed",
+          label: WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED,
+          row: balance.byStatus.unconfirmed,
+        },
+        {
+          key: "off",
+          label: WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF,
+          row: balance.byStatus.off,
+        },
+        {
+          key: "unknown",
+          label: WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN,
+          row: balance.byStatus.unknown,
+        },
+      ]
+    : [];
+
+  const waitingSampleRows = [
+    {
+      key: "all_waiting",
+      label: WORKFORCE_WAITING_SAMPLE_LABELS.ALL_WAITING,
+      sample: waiting.allWaiting,
+    },
+    {
+      key: "completed_waiting",
+      label: WORKFORCE_WAITING_SAMPLE_LABELS.COMPLETED_WAITING,
+      sample: waiting.completedWaiting,
+    },
+    {
+      key: "placed_to_on",
+      label: WORKFORCE_WAITING_SAMPLE_LABELS.PLACED_TO_ON,
+      sample: waiting.placedToOn,
+    },
+    {
+      key: "exited_without_on",
+      label: WORKFORCE_WAITING_SAMPLE_LABELS.EXITED_WITHOUT_ON,
+      sample: waiting.exitedWithoutOn,
+    },
+    {
+      key: "currently_waiting",
+      label: WORKFORCE_WAITING_SAMPLE_LABELS.CURRENTLY_WAITING,
+      sample: waiting.currentlyWaiting,
+    },
+  ];
 
   return (
     <section aria-label="Hiện trạng và biến động trạng thái lao động">
@@ -331,6 +393,250 @@ export function WorkforceSnapshotSection({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* WF-02 (2.3 & 2.4): Cân bằng biến động đầu/cuối kỳ & Thời gian chờ việc / Tỷ lệ bố trí được việc */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Đối soát cân bằng đầu kỳ / cuối kỳ
+                </h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Công thức bảo toàn mỗi trạng thái: Đầu kỳ + Mở mới + Chuyển vào − Chuyển ra = Cuối kỳ.
+                </p>
+              </div>
+              {balance.applicable ? (
+                <StatusBadge tone="success" dot>
+                  Đã đối soát cân bằng
+                </StatusBadge>
+              ) : null}
+            </div>
+
+            {!balance.applicable ? (
+              <p className="mt-2 rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-xs text-muted">
+                {balance.windowLabel}
+              </p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
+                  <span>
+                    Mốc đầu kỳ:{" "}
+                    <strong className="font-mono text-foreground">{balance.openingAsOfDate}</strong> (trước kỳ 1 ngày)
+                  </span>
+                  <span>
+                    Mốc cuối kỳ:{" "}
+                    <strong className="font-mono text-foreground">{balance.closingAsOfDate}</strong>
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+                  <table className="r22-report-table w-full text-left text-xs">
+                    <caption className="sr-only">
+                      Bảng đối soát cân bằng biến động trạng thái đầu kỳ {balance.openingAsOfDate} và cuối kỳ {balance.closingAsOfDate}
+                    </caption>
+                    <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                      <tr className="border-b border-border">
+                        <th scope="col" className="px-2.5 py-1.5 font-medium">
+                          Trạng thái
+                        </th>
+                        <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                          {WORKFORCE_BALANCE_COLUMN_LABELS.OPENING}
+                        </th>
+                        <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                          {WORKFORCE_BALANCE_COLUMN_LABELS.NEW_INFLOW}
+                        </th>
+                        <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                          {WORKFORCE_BALANCE_COLUMN_LABELS.TRANSITION_INFLOW}
+                        </th>
+                        <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                          {WORKFORCE_BALANCE_COLUMN_LABELS.OUTFLOW}
+                        </th>
+                        <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                          {WORKFORCE_BALANCE_COLUMN_LABELS.NET_CHANGE}
+                        </th>
+                        <th scope="col" className="px-2.5 py-1.5 text-right font-medium">
+                          {WORKFORCE_BALANCE_COLUMN_LABELS.CLOSING}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {balanceRows.map((item) => (
+                        <tr key={item.key} className="text-foreground hover:bg-surface-hover">
+                          <td className="px-2.5 py-1.5 font-medium">{item.label}</td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                            {item.row.openingCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                            +{item.row.newEpisodeInflowCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                            +{item.row.transitionInflowCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                            −{item.row.outflowCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatSignedBalanceDelta(item.row.netChange)}
+                          </td>
+                          <td className="px-2.5 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                            {item.row.closingCount}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
+                      <tr>
+                        <td className="px-2.5 py-1.5">Tổng hồ sơ đủ điều kiện</td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          {balance.totals.openingEligibleTotal}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          +{balance.totals.newEpisodeTotal}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          +{balance.totals.transitionInflowTotal}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          −{balance.totals.transitionOutflowTotal}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          {formatSignedBalanceDelta(balance.totals.netEligibleChange)}
+                        </td>
+                        <td className="px-2.5 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                          {balance.totals.closingEligibleTotal}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Thời gian chờ việc &amp; tỷ lệ bố trí việc
+                </h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Đo trên các khoảng {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED} liên tiếp đã khử hiệu chỉnh tính đến {waiting.asOfDate}.
+                </p>
+              </div>
+              <span className="font-mono text-xs text-muted">
+                Vào thẳng {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {waiting.directOnEpisodeCount} hồ sơ
+              </span>
+            </div>
+
+            <dl className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Tỷ lệ bố trí việc (trên tổng có chờ việc)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatPlacementRatePercent(waiting.placementRateOfWaiting)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {waiting.placedToOn.episodeCount} / {waiting.waitingEpisodeTotal} hồ sơ qua {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Tỷ lệ bố trí việc (trên hồ sơ đã kết thúc chờ)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatPlacementRatePercent(waiting.placementRateOfCompletedWaiting)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {waiting.placedToOn.episodeCount} / {waiting.completedWaiting.episodeCount} hồ sơ đã kết thúc chờ
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Chờ việc TB (hồ sơ đã bố trí sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON})</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatWaitingDaysAverage(waiting.placedToOn.avgWaitingDaysPerEpisode)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {waiting.placedToOn.episodeCount} hồ sơ ({waiting.placedToOn.totalWaitingDays} ngày chờ)
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Chờ việc TB (hồ sơ đang còn chờ việc)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatWaitingDaysAverage(waiting.currentlyWaiting.avgWaitingDaysPerEpisode)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {waiting.currentlyWaiting.episodeCount} hồ sơ ({waiting.currentlyWaiting.totalWaitingDays} ngày chờ)
+                </p>
+              </div>
+            </dl>
+
+            <div className="mt-2 overflow-x-auto rounded-lg border border-border bg-surface">
+              <table className="r22-report-table w-full text-left text-xs">
+                <caption className="sr-only">
+                  Bảng phân rã thời gian chờ việc theo từng nhóm mẫu tại ngày {waiting.asOfDate}
+                </caption>
+                <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                  <tr className="border-b border-border">
+                    <th scope="col" className="px-2.5 py-1.5 font-medium">
+                      Nhóm mẫu (mẫu số tính trung bình)
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Số hồ sơ
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Tổng ngày chờ
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      TB / hồ sơ
+                    </th>
+                    <th scope="col" className="px-2.5 py-1.5 text-right font-medium">
+                      Tối đa
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {waitingSampleRows.map((item) => (
+                    <tr key={item.key} className="text-foreground hover:bg-surface-hover">
+                      <td className="px-2.5 py-1.5">{item.label}</td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.sample.episodeCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.sample.totalWaitingDays}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatWaitingDaysAverage(item.sample.avgWaitingDaysPerEpisode)}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.sample.maxWaitingDays === null ? "—" : `${item.sample.maxWaitingDays} ngày`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {waiting.periodWaiting.applicable ? (
+              <p className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
+                Trong kỳ lọc ({waiting.periodWaiting.fromDate} → {waiting.periodWaiting.toDate}):{" "}
+                <strong className="font-mono text-foreground">{waiting.periodWaiting.activeWaitingEpisodeCount}</strong> hồ sơ có ngày chờ (
+                <strong className="font-mono text-foreground">{waiting.periodWaiting.inPeriodWaitingDays}</strong> ngày chờ trong kỳ, TB{" "}
+                <strong className="font-mono text-foreground">
+                  {formatWaitingDaysAverage(waiting.periodWaiting.avgInPeriodWaitingDaysPerActiveEpisode)}
+                </strong>
+                /hồ sơ) · Bố trí sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} trong kỳ:{" "}
+                <strong className="font-mono text-foreground">{waiting.periodWaiting.placedInPeriod.eventCount}</strong> lần (
+                <span className="font-mono">{waiting.periodWaiting.placedInPeriod.episodeCount}</span> hồ sơ, TB{" "}
+                <span className="font-mono">
+                  {formatWaitingDaysAverage(waiting.periodWaiting.placedInPeriod.avgWaitingDaysPerEvent)}
+                </span>
+                /lần).
+              </p>
+            ) : null}
+
+            <p className="mt-2 text-[11px] text-muted">
+              {WORKFORCE_NON_ATTENDANCE_NOTE}
+            </p>
           </div>
         </div>
       </Card>

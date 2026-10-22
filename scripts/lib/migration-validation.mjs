@@ -44,6 +44,8 @@ export const WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME =
   "20261022090000_wf01_workforce_snapshot_and_transitions.sql";
 export const WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE =
   "public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)";
+export const WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME =
+  "20261022110000_wf02_workforce_balance_and_waiting_metrics.sql";
 export const F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES = Object.freeze([
   "public.work_report_list_templates(uuid, uuid)",
   "public.work_report_get_template(uuid, uuid, uuid)",
@@ -466,7 +468,9 @@ export async function verifyAppliedMigrationChecksum(
         f1AssignmentTrackingApplied: appliedMap.has(F1_WORK_REPORTS_ASSIGNMENT_TRACKING_MIGRATION_NAME),
         f1_5AnalyticsApplied: appliedMap.has(F1_5_WORK_REPORTS_ANALYTICS_MIGRATION_NAME),
         f2ReviewAndDelegationApplied: appliedMap.has(F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME),
-        wf01WorkforceSnapshotApplied: appliedMap.has(WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME),
+        wf01WorkforceSnapshotApplied:
+          appliedMap.has(WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME) ||
+          appliedMap.has(WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME),
       },
     );
     if (postconditions.ok) {

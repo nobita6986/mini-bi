@@ -588,6 +588,16 @@ test("WF-01 ephemeral DB integration: snapshot as-of, status transitions, supers
         tsExpected.transitions,
         `DB transitions must match TS evaluator for ${from}..${to}`,
       );
+      assert.deepEqual(
+        parsed.balance,
+        tsExpected.balance,
+        `DB balance must match TS evaluator for ${from}..${to}`,
+      );
+      assert.deepEqual(
+        parsed.waiting,
+        tsExpected.waiting,
+        `DB waiting metrics must match TS evaluator for ${from}..${to}`,
+      );
     }
 
     // Verify exact numbers on 2026-03-01 .. 2026-03-15 for `all`:

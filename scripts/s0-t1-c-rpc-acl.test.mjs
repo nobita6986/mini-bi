@@ -27,6 +27,7 @@ import {
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
   WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME,
   WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
+  WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME,
   migrationChecksum,
   migrationSqlForTransaction,
   runMigrationApply,
@@ -495,6 +496,15 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "WF-01 workforce reporting RPC is explicitly granted only to service_role");
       assert.ok(wf01Normalized.includes(wf01Revoke),
         "WF-01 workforce reporting RPC revokes client and inherited EXECUTE before granting service_role");
+      const wf02Migration = await readFile(
+        path.join(MIGRATION_DIR, WF02_WORKFORCE_BALANCE_WAITING_MIGRATION_NAME), "utf8",
+      );
+      const wf02Normalized = wf02Migration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      assert.ok(wf02Normalized.includes(wf01Grant),
+        "WF-02 workforce reporting RPC is explicitly granted only to service_role");
+      assert.ok(wf02Normalized.includes(wf01Revoke),
+        "WF-02 workforce reporting RPC revokes client and inherited EXECUTE before granting service_role");
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
@@ -769,6 +779,10 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
             assert.equal(wf01Probe[0]?.payload?.snapshot?.on_count, 1, "SECURITY DEFINER owner must read ON event across FORCE RLS");
             assert.equal(wf01Probe[0]?.payload?.snapshot?.unknown_count, 0);
             assert.equal(wf01Probe[0]?.payload?.transitions?.initial?.on?.event_count, 1);
+            assert.equal(wf01Probe[0]?.payload?.balance?.applicable, true);
+            assert.equal(wf01Probe[0]?.payload?.balance?.by_status?.on?.new_episode_inflow_count, 1);
+            assert.equal(wf01Probe[0]?.payload?.balance?.by_status?.on?.closing_count, 1);
+            assert.equal(wf01Probe[0]?.payload?.waiting?.direct_on_episode_count, 1);
           } finally {
             await client.query("reset role");
           }
@@ -798,8 +812,23 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         await client.query("rollback");
       }
 
+      await client.query("begin");
+      try {
+        await client.query("alter role s0_t1c_runner nobypassrls");
+        await client.query("set local session authorization s0_t1c_runner");
+        await assert.rejects(
+          client.query(migrationSqlForTransaction(wf02Migration)),
+          (error) =>
+            error?.code === "55000" &&
+            String(error?.message).includes("WF-02 RPC security definer owner/RLS/ACL boundary drift"),
+          "WF-02 migration must fail closed if function owner cannot bypass FORCE RLS on direct_entry_employment_status_events",
+        );
+      } finally {
+        await client.query("rollback");
+      }
+
       // Verify owner alignment to `postgres` when the runner has SET on `postgres` (or connects as `postgres` per `load-supabase-config.mjs`):
-      await client.query(migrationSqlForTransaction(wf01Migration));
+      await client.query(migrationSqlForTransaction(wf02Migration));
       await assertWf01CatalogInvariants("postgres");
       await assertWf01RuntimeReadUnderServiceRole();
 
