@@ -307,3 +307,16 @@ export function decideChangeRequestsPageAccess(input: {
 export function canViewDuplicateCccdReport(actor: ActorResolution | null): boolean {
   return actor !== null && actor.ok;
 }
+
+/**
+ * WF-04 Post-Merge Hotfix: Quyết định actor có được thấy tab "Báo cáo chuyên sâu"
+ * và khu vực "Hiện trạng & biến động trạng thái lao động" trên Dashboard hay không.
+ *
+ * Chỉ actor đã xác thực hợp lệ có `scope = "all"` (Admin / BoD) mới được xem.
+ * Team Leader (`scope = "team"`) và Recruiter (`scope = "own"`) bị ẩn tab và không gọi API/RPC.
+ * Quyền thực tế vẫn được kiểm tra lại tại API `/api/reporting/workforce-deep` và RPC PostgreSQL.
+ */
+export function canViewDeepWorkforceReport(actor: ActorResolution | null): boolean {
+  if (actor === null || !actor.ok) return false;
+  return actor.actor.scopes.some((scope) => scope.kind === "all");
+}

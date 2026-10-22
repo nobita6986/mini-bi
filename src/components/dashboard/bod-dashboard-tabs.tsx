@@ -6,6 +6,7 @@ import { parseAsString, useQueryStates } from "nuqs";
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { DuplicateCccdReportPanel } from "@/components/reporting/duplicate-cccd-report-panel";
+import { WorkforceDeepReportPanel } from "./dashboard-shared";
 import { TeamReportView, type TeamReportViewConfig } from "./team-report-view";
 
 /**
@@ -42,17 +43,20 @@ const queryParsers = {
   source: parseAsString,
 };
 
-type TabKey = "general" | "team" | "duplicate-cccd";
+type TabKey = "general" | "deep" | "team" | "duplicate-cccd";
 
 type TabDef = { key: TabKey; label: string; panelId: string };
 
 /**
- * P3.1-HF-R3-R1: "Báo cáo CCCD trùng" is a sibling tab right after "Báo cáo theo nhóm".
- * It is only rendered when the server-derived `canViewDuplicateCccd` is true; the CCCD API/RPC
- * remains the real authority.
+ * P3.1-HF-R3-R1 / WF-04 Hotfix:
+ * 1. "Báo cáo tổng quát" (mặc định)
+ * 2. "Báo cáo chuyên sâu" (chỉ hiển thị cho actor có scope = "all", tức primaryTabLabel === undefined)
+ * 3. "Báo cáo theo nhóm" (chỉ hiển thị cho actor có scope = "all")
+ * 4. "Báo cáo CCCD trùng" (hiển thị khi canViewDuplicateCccd === true)
  */
 const tabs: readonly TabDef[] = [
   { key: "general", label: "Báo cáo tổng quát", panelId: "bod-panel-general" },
+  { key: "deep", label: "Báo cáo chuyên sâu", panelId: "bod-panel-deep" },
   { key: "team", label: "Báo cáo theo nhóm", panelId: "bod-panel-team" },
   { key: "duplicate-cccd", label: "Báo cáo CCCD trùng", panelId: "bod-panel-duplicate-cccd" },
 ];
@@ -66,7 +70,7 @@ export function BodDashboardTabs({
   canViewDuplicateCccd,
 }: {
   general: ReactNode;
-  /** Scoped dashboards get their own first tab, never the all-scope team report. */
+  /** Scoped dashboards get their own first tab, never the all-scope deep or team report. */
   primaryTabLabel?: string;
   data: ReportingData;
   generatedAt?: string;
@@ -83,21 +87,25 @@ export function BodDashboardTabs({
   const visibleTabs = tabs.filter((tab) =>
     tab.key === "duplicate-cccd"
       ? canViewDuplicateCccd
-      : tab.key === "team"
+      : tab.key === "deep"
         ? primaryTabLabel === undefined
-        : true,
+        : tab.key === "team"
+          ? primaryTabLabel === undefined
+          : true,
   ).map((tab) => tab.key === "general" && primaryTabLabel
     ? { ...tab, label: primaryTabLabel }
     : tab);
   const activeTab: TabKey =
-    primaryTabLabel === undefined && rawTab === "team"
-      ? "team"
-      : rawTab === "duplicate-cccd" && canViewDuplicateCccd
-        ? "duplicate-cccd"
-        : "general";
+    primaryTabLabel === undefined && rawTab === "deep"
+      ? "deep"
+      : primaryTabLabel === undefined && rawTab === "team"
+        ? "team"
+        : rawTab === "duplicate-cccd" && canViewDuplicateCccd
+          ? "duplicate-cccd"
+          : "general";
 
   function selectTab(next: TabKey): void {
-    const needsAuthoritativeReload = next === "team" && source !== null;
+    const needsAuthoritativeReload = (next === "deep" || next === "team") && source !== null;
     startTransition(() => {
       void setQuery(
         { tab: next, source: next === "general" ? source : null },
@@ -145,6 +153,14 @@ export function BodDashboardTabs({
       {activeTab === "general" ? (
         <div id="bod-panel-general" role="tabpanel" aria-labelledby="bod-tab-general" tabIndex={0} className="pt-4">
           {general}
+        </div>
+      ) : activeTab === "deep" && primaryTabLabel === undefined ? (
+        <div id="bod-panel-deep" role="tabpanel" aria-labelledby="bod-tab-deep" tabIndex={0} className="pt-4">
+          <WorkforceDeepReportPanel
+            data={data}
+            generatedAt={generatedAt}
+            optionsResult={optionsResult}
+          />
         </div>
       ) : activeTab === "team" && primaryTabLabel === undefined ? (
         <div id="bod-panel-team" role="tabpanel" aria-labelledby="bod-tab-team" tabIndex={0} className="pt-4">

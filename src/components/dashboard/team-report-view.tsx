@@ -14,7 +14,6 @@ import {
   formatSharePct,
 } from "@/lib/reporting/p1-dashboard-period";
 import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
-import type { WorkforceReportingResult } from "@/lib/reporting/wf01-workforce-snapshot";
 import { buildMemberContributions } from "@/lib/reporting/p3-w06c-audience-view";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
@@ -29,7 +28,7 @@ import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { TrendChart } from "./trend-chart";
-import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote, WorkforceSnapshotSection } from "./dashboard-shared";
+import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote } from "./dashboard-shared";
 import { TeamBucketChart } from "./team-bucket-chart";
 import { TeamEntryDetail } from "./team-entry-detail";
 import { teamReportDataSignature, teamReportUrl } from "./team-report-request";
@@ -88,7 +87,6 @@ export interface TeamReportViewConfig {
 
 function isTeamReportPayload(value: unknown): value is {
   report: ReportingData | null;
-  workforce?: WorkforceReportingResult | null;
   detail: TeamReportDetail;
 } {
   if (typeof value !== "object" || value === null) return false;
@@ -113,14 +111,12 @@ export function TeamReportView({
   data,
   generatedAt,
   comparison,
-  workforce,
   optionsResult,
   view,
 }: {
   data: ReportingData;
   generatedAt?: string;
   comparison?: PeriodComparisonResult;
-  workforce?: WorkforceReportingResult;
   optionsResult: ReportingOptionsResult;
   view: TeamReportViewConfig;
 }) {
@@ -179,10 +175,7 @@ export function TeamReportView({
             Chọn một nhóm trong danh sách để xem báo cáo chi tiết của nhóm đó.
           </p>
         ) : (
-          <>
-            <TeamReportBody data={data} view={view} />
-            <WorkforceSnapshotSection workforce={workforce} />
-          </>
+          <TeamReportBody data={data} view={view} />
         )}
       </div>
     </>
@@ -205,7 +198,6 @@ function TeamReportSelection({
   view: TeamReportViewConfig;
 }) {
   const [report, setReport] = useState<ReportingData | null>(null);
-  const [selectedWorkforce, setSelectedWorkforce] = useState<WorkforceReportingResult | null | undefined>(undefined);
   const [detail, setDetail] = useState<TeamReportDetail | null>(null);
   const [error, setError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
@@ -226,7 +218,6 @@ function TeamReportSelection({
           return;
         }
         setReport(payload.report);
-        setSelectedWorkforce(payload.workforce);
         setDetail(payload.detail);
       })
       .catch(() => {
@@ -252,7 +243,6 @@ function TeamReportSelection({
       <section aria-label="Danh sách chi tiết từng dòng">
         <TeamEntryDetail data={data} bucket={bucket} initialDetail={detail} />
       </section>
-      <WorkforceSnapshotSection workforce={selectedWorkforce} />
     </>
   );
 }

@@ -651,9 +651,9 @@ test("WF-03 (5): UI copy cleanup removes technical tokens, uses 'Duy trì liên 
     new URL("../../components/dashboard/dashboard-shared.tsx", import.meta.url),
     "utf8",
   );
-  // Extract WorkforceSnapshotSection block from dashboard-shared.tsx
+  // Extract WorkforceSnapshotSection + WorkforceDeepSection blocks from dashboard-shared.tsx
   const wfStart = sharedUi.indexOf("export function WorkforceSnapshotSection");
-  const wfEnd = sharedUi.indexOf("export const WorkforceStatusSection");
+  const wfEnd = sharedUi.indexOf("export function WorkforceDeepReportPanel");
   const wfSectionSource = sharedUi.slice(wfStart, wfEnd);
   // Strip identifier property accesses (e.g. .episodeCount, .eligibleEpisodeTotal, .futureEpisodeCount, .activeWaitingEpisodeCount, .activeOnEpisodeCount, .avgOnDaysPerEpisode, .avgWaitingDaysPerEpisode, .unknownStatusEpisodeCount, .everOnEpisodeCount, .neverOnEpisodeCount, .cohortEpisodeTotal, .transitionEpisodeCount, .newEpisodeInflowCount, .newEpisodeTotal) before checking visible copy
   const wfVisibleCopy = wfSectionSource.replace(
@@ -689,7 +689,8 @@ test("WF-03 (5): UI copy cleanup removes technical tokens, uses 'Duy trì liên 
   assert.equal(explicitAllTime.to, null);
   assert.equal(explicitAllTime.isExplicitAllTime, true);
 
-  // 3. Verify Workforce Analytics is placed at the bottom of all 4 dashboard views:
+  // 3. Verify Workforce Analytics overview is placed at the bottom of BoD dashboard-view.tsx,
+  // and scoped views (own-dashboard-view.tsx, team-report-view.tsx) do not render WorkforceSnapshotSection:
   const bodView = readFileSync(
     new URL("../../components/dashboard/dashboard-view.tsx", import.meta.url),
     "utf8",
@@ -705,28 +706,19 @@ test("WF-03 (5): UI copy cleanup removes technical tokens, uses 'Duy trì liên 
     new URL("../../components/dashboard/own-dashboard-view.tsx", import.meta.url),
     "utf8",
   );
-  const lastSectionInOwn = ownView.lastIndexOf('aria-label="Loại hình làm việc của tôi"');
-  const lastWfInOwn = ownView.lastIndexOf("<WorkforceSnapshotSection");
-  assert.ok(
-    lastSectionInOwn > 0 && lastWfInOwn > lastSectionInOwn,
-    "WorkforceSnapshotSection must appear after 'Loại hình làm việc của tôi' at the bottom of own-dashboard-view.tsx",
+  assert.doesNotMatch(
+    ownView,
+    /<WorkforceSnapshotSection/,
+    "own-dashboard-view.tsx must not render WorkforceSnapshotSection",
   );
 
   const teamReportView = readFileSync(
     new URL("../../components/dashboard/team-report-view.tsx", import.meta.url),
     "utf8",
   );
-  const fallbackBodyIdx = teamReportView.indexOf("<TeamReportBody data={data} view={view} />");
-  const firstWfIdx = teamReportView.indexOf("<WorkforceSnapshotSection workforce={workforce} />");
-  assert.ok(
-    fallbackBodyIdx > 0 && firstWfIdx > fallbackBodyIdx,
-    "WorkforceSnapshotSection must appear after TeamReportBody in unselected TeamReportView",
-  );
-
-  const detailIdx = teamReportView.indexOf("<TeamEntryDetail");
-  const selectedWfIdx = teamReportView.indexOf("<WorkforceSnapshotSection workforce={selectedWorkforce} />");
-  assert.ok(
-    detailIdx > 0 && selectedWfIdx > detailIdx,
-    "WorkforceSnapshotSection must appear after TeamEntryDetail at the bottom of TeamReportSelection",
+  assert.doesNotMatch(
+    teamReportView,
+    /<WorkforceSnapshotSection/,
+    "team-report-view.tsx must not render WorkforceSnapshotSection",
   );
 });

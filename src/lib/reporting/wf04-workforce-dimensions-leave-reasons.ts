@@ -12,8 +12,13 @@ export {
   evaluateWorkforceSnapshotAndTransitions,
   formatWorkforceBalanceNotApplicableLabel,
   formatWorkforceTransitionsNotApplicableLabel,
+  parseWorkforceOverviewPayload,
+  parseWorkforceProjectPagePayload,
   parseWorkforceReportingPayload,
   resolveWorkforceAsOfDate,
+  resolveWorkforceDeepReportingForActor,
+  resolveWorkforceOverviewForActor,
+  resolveWorkforceProjectPageForActor,
   resolveWorkforceReportingForActor,
   shiftYmdDays,
   WORKER_STATUS_FROZEN_LABELS,
@@ -26,6 +31,7 @@ export {
   WORKFORCE_LEAVE_REASON_CATEGORY_LABELS,
   WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE,
   WORKFORCE_NON_ATTENDANCE_NOTE,
+  WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE,
   WORKFORCE_RETENTION_CHECKPOINT_LABELS,
   WORKFORCE_SNAPSHOT_STATUS_LABELS,
   WORKFORCE_TRANSITION_PAIR_LABELS,
@@ -46,6 +52,7 @@ export {
   type WorkforceLeaveReasonCategoryKey,
   type WorkforceLeaveReasonKind,
   type WorkforceLeaveReasonsMetrics,
+  type WorkforceOverviewResult,
   type WorkforcePeriodBalance,
   type WorkforcePeriodCohortMetrics,
   type WorkforcePeriodLeaveReasonCategoryRow,
@@ -54,6 +61,9 @@ export {
   type WorkforcePeriodTransitions,
   type WorkforcePeriodWaitingMetrics,
   type WorkforcePeriodWaitingTransitionSummary,
+  type WorkforceProjectPageAttentionCandidates,
+  type WorkforceProjectPageResult,
+  type WorkforceProjectPaginationState,
   type WorkforceReportingResult,
   type WorkforceRetentionCheckpointMetrics,
   type WorkforceRetentionMetrics,
@@ -218,10 +228,16 @@ export function deriveWorkforceAttentionInsights(
   });
 
   // 2. Giữ chân mốc 30 ngày (D30) theo Dự án / Nhóm (có ngưỡng mẫu tối thiểu)
-  const lowestProjectD30 = pickLowestD30RetentionBucket(
-    dimensions.byProject.buckets,
-    minSampleSize,
-  );
+  const projectD30Candidates = [...dimensions.byProject.buckets];
+  const serverLowestProjectD30 =
+    dimensions.byProject.pagination?.attentionCandidates?.lowestD30Bucket ?? null;
+  if (
+    serverLowestProjectD30 &&
+    !projectD30Candidates.some((b) => b.key === serverLowestProjectD30.key)
+  ) {
+    projectD30Candidates.push(serverLowestProjectD30);
+  }
+  const lowestProjectD30 = pickLowestD30RetentionBucket(projectD30Candidates, minSampleSize);
   const lowestTeamD30 = pickLowestD30RetentionBucket(dimensions.byTeam.buckets, minSampleSize);
   const pickTeamForD30 =
     lowestTeamD30 !== null &&
@@ -256,8 +272,17 @@ export function deriveWorkforceAttentionInsights(
 
   // 3. Thời gian chờ việc theo Nhóm / Dự án (có ngưỡng mẫu tối thiểu)
   const highestTeamWaiting = pickHighestWaitingBucket(dimensions.byTeam.buckets, minSampleSize);
+  const projectWaitingCandidates = [...dimensions.byProject.buckets];
+  const serverHighestProjectWaiting =
+    dimensions.byProject.pagination?.attentionCandidates?.highestWaitingBucket ?? null;
+  if (
+    serverHighestProjectWaiting &&
+    !projectWaitingCandidates.some((b) => b.key === serverHighestProjectWaiting.key)
+  ) {
+    projectWaitingCandidates.push(serverHighestProjectWaiting);
+  }
   const highestProjectWaiting = pickHighestWaitingBucket(
-    dimensions.byProject.buckets,
+    projectWaitingCandidates,
     minSampleSize,
   );
   const pickProjectForWaiting =

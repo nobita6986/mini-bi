@@ -545,6 +545,19 @@ export interface WorkforceDimensionBucketMetrics {
   };
 }
 
+export interface WorkforceProjectPageAttentionCandidates {
+  lowestD30Bucket: WorkforceDimensionBucketMetrics | null;
+  highestWaitingBucket: WorkforceDimensionBucketMetrics | null;
+}
+
+export interface WorkforceProjectPaginationState {
+  totalCount: number;
+  pageSize: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  attentionCandidates?: WorkforceProjectPageAttentionCandidates;
+}
+
 export interface WorkforceDimensionGroupSummary {
   dimensionKind: WorkforceDimensionKind;
   eligibleEpisodeTotal: number;
@@ -552,6 +565,7 @@ export interface WorkforceDimensionGroupSummary {
   unknownEpisodeCount: number;
   coverageRate: number | null;
   buckets: WorkforceDimensionBucketMetrics[];
+  pagination?: WorkforceProjectPaginationState;
 }
 
 export interface WorkforceDimensionsMetrics {
@@ -652,6 +666,33 @@ export type WorkforceReportingResult =
       retention: WorkforceRetentionMetrics;
       dimensions: WorkforceDimensionsMetrics;
       leaveReasons: WorkforceLeaveReasonsMetrics;
+    }
+  | {
+      status: "unavailable";
+      reason?: string;
+    };
+
+export type WorkforceOverviewResult =
+  | {
+      status: "ready";
+      snapshot: WorkforceAsOfSnapshot;
+      transitions: WorkforcePeriodTransitions;
+    }
+  | {
+      status: "unavailable";
+      reason?: string;
+    };
+
+export type WorkforceProjectPageResult =
+  | {
+      status: "ready";
+      asOfDate: string;
+      asOfSource: WorkforceAsOfSource;
+      totalCount: number;
+      pageSize: number;
+      hasMore: boolean;
+      nextCursor: string | null;
+      rows: WorkforceDimensionBucketMetrics[];
     }
   | {
       status: "unavailable";
@@ -4313,6 +4354,249 @@ function parseDimensionGroup(
   };
 }
 
+function decodeWorkforceProjectCursor(cursor: string): {
+  isUnknown: boolean;
+  eligibleEpisodeCount: number;
+  onCount: number;
+  everOnEpisodeCount: number;
+  key: string;
+} | null {
+  const trimmed = cursor.trim();
+  if (!trimmed || !/^[A-Za-z0-9+/=]+$/.test(trimmed)) {
+    return null;
+  }
+  try {
+    const jsonText =
+      typeof Buffer !== "undefined"
+        ? Buffer.from(trimmed, "base64").toString("utf8")
+        : typeof atob === "function"
+          ? decodeURIComponent(
+              Array.from(atob(trimmed))
+                .map((ch) => `%${ch.charCodeAt(0).toString(16).padStart(2, "0")}`)
+                .join(""),
+            )
+          : "";
+    if (!jsonText) {
+      return null;
+    }
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null) {
+      return null;
+    }
+    const u = parsed.u;
+    const e = nonNegativeInt(parsed.e);
+    const o = nonNegativeInt(parsed.o);
+    const v = nonNegativeInt(parsed.v);
+    const k = typeof parsed.k === "string" ? parsed.k.trim() : "";
+    if ((u !== 0 && u !== 1) || e === null || o === null || v === null || !k) {
+      return null;
+    }
+    return {
+      isUnknown: u === 1,
+      eligibleEpisodeCount: e,
+      onCount: o,
+      everOnEpisodeCount: v,
+      key: k,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parsePagedProjectDimensionGroup(
+  rawArr: unknown,
+  rawPageMeta: unknown,
+  snapshot: WorkforceAsOfSnapshot,
+  waiting: WorkforceWaitingMetrics,
+  duration: WorkforceDurationMetrics,
+  retention: WorkforceRetentionMetrics,
+): { ok: true; group: WorkforceDimensionGroupSummary } | { ok: false; reason: string } {
+  if (!Array.isArray(rawArr)) {
+    return { ok: false, reason: "invalid_dimension_bucket_array" };
+  }
+  if (typeof rawPageMeta !== "object" || rawPageMeta === null) {
+    return { ok: false, reason: "invalid_project_pagination_meta" };
+  }
+
+  const pageMeta = rawPageMeta as Record<string, unknown>;
+  const totalCount = nonNegativeInt(pageMeta.total_count);
+  const pageSize = nonNegativeInt(pageMeta.page_size);
+  const hasMore = typeof pageMeta.has_more === "boolean" ? pageMeta.has_more : null;
+  const nextCursor: string | null | undefined =
+    pageMeta.next_cursor === null
+      ? null
+      : typeof pageMeta.next_cursor === "string" && pageMeta.next_cursor.trim().length > 0
+        ? pageMeta.next_cursor.trim()
+        : undefined;
+
+  if (
+    totalCount === null ||
+    pageSize === null ||
+    pageSize < 1 ||
+    pageSize > 50 ||
+    hasMore === null ||
+    nextCursor === undefined
+  ) {
+    return { ok: false, reason: "invalid_project_pagination_meta" };
+  }
+
+  if ((hasMore && nextCursor === null) || (!hasMore && nextCursor !== null)) {
+    return { ok: false, reason: "invalid_project_pagination_cursor" };
+  }
+  if (nextCursor !== null && decodeWorkforceProjectCursor(nextCursor) === null) {
+    return { ok: false, reason: "invalid_project_pagination_cursor" };
+  }
+
+  const seenKeys = new Set<string>();
+  const buckets: WorkforceDimensionBucketMetrics[] = [];
+  for (const item of rawArr) {
+    const parsed = parseDimensionBucket(item);
+    if (!parsed) {
+      return { ok: false, reason: "invalid_dimension_bucket_metrics" };
+    }
+    if (seenKeys.has(parsed.key)) {
+      return { ok: false, reason: "duplicate_dimension_bucket_key" };
+    }
+    seenKeys.add(parsed.key);
+    buckets.push(parsed);
+  }
+
+  if (buckets.length > pageSize || buckets.length > totalCount) {
+    return { ok: false, reason: "invalid_project_pagination_meta" };
+  }
+
+  const reconRaw =
+    typeof pageMeta.reconciliation_totals === "object" && pageMeta.reconciliation_totals !== null
+      ? (pageMeta.reconciliation_totals as Record<string, unknown>)
+      : null;
+  if (!reconRaw) {
+    return { ok: false, reason: "missing_project_reconciliation_totals" };
+  }
+
+  const reconKnownEpisodeCount = nonNegativeInt(reconRaw.known_episode_count);
+  const reconUnknownEpisodeCount = nonNegativeInt(reconRaw.unknown_episode_count);
+  const sumEligible = nonNegativeInt(reconRaw.eligible_episode_count);
+  const sumOn = nonNegativeInt(reconRaw.on_count);
+  const sumUnconfirmed = nonNegativeInt(reconRaw.unconfirmed_count);
+  const sumOff = nonNegativeInt(reconRaw.off_count);
+  const sumUnknown = nonNegativeInt(reconRaw.unknown_count);
+
+  const sumWaiting = nonNegativeInt(reconRaw.waiting_episode_count);
+  const sumCompletedWaiting = nonNegativeInt(reconRaw.completed_waiting_episode_count);
+  const sumPlacedToOn = nonNegativeInt(reconRaw.placed_to_on_episode_count);
+  const sumExitedWithoutOn = nonNegativeInt(reconRaw.exited_without_on_episode_count);
+  const sumCurrentlyWaiting = nonNegativeInt(reconRaw.currently_waiting_episode_count);
+  const sumWaitingDays = nonNegativeInt(reconRaw.total_waiting_days);
+
+  const sumEverOn = nonNegativeInt(reconRaw.ever_on_episode_count);
+  const sumNeverOn = nonNegativeInt(reconRaw.never_on_episode_count);
+  const sumContinuouslyRetained = nonNegativeInt(reconRaw.continuously_retained_count);
+  const sumExitedFromOn = nonNegativeInt(reconRaw.exited_from_on_count);
+  const sumOnDays = nonNegativeInt(reconRaw.total_on_days);
+
+  const sumD7Matured = nonNegativeInt(reconRaw.d7_matured_count);
+  const sumD7Immature = nonNegativeInt(reconRaw.d7_immature_count);
+  const sumD7Retained = nonNegativeInt(reconRaw.d7_retained_count);
+  const sumD7Exited = nonNegativeInt(reconRaw.d7_exited_count);
+
+  const sumD30Matured = nonNegativeInt(reconRaw.d30_matured_count);
+  const sumD30Immature = nonNegativeInt(reconRaw.d30_immature_count);
+  const sumD30Retained = nonNegativeInt(reconRaw.d30_retained_count);
+  const sumD30Exited = nonNegativeInt(reconRaw.d30_exited_count);
+
+  const sumD90Matured = nonNegativeInt(reconRaw.d90_matured_count);
+  const sumD90Immature = nonNegativeInt(reconRaw.d90_immature_count);
+  const sumD90Retained = nonNegativeInt(reconRaw.d90_retained_count);
+  const sumD90Exited = nonNegativeInt(reconRaw.d90_exited_count);
+
+  if (
+    reconKnownEpisodeCount === null ||
+    reconUnknownEpisodeCount === null ||
+    sumEligible === null ||
+    reconKnownEpisodeCount + reconUnknownEpisodeCount !== sumEligible ||
+    sumEligible !== snapshot.eligibleEpisodeTotal ||
+    sumOn !== snapshot.onCount ||
+    sumUnconfirmed !== snapshot.unconfirmedCount ||
+    sumOff !== snapshot.offCount ||
+    sumUnknown !== snapshot.unknownCount ||
+    sumWaiting !== waiting.waitingEpisodeTotal ||
+    sumCompletedWaiting !== waiting.completedWaiting.episodeCount ||
+    sumPlacedToOn !== waiting.placedToOn.episodeCount ||
+    sumExitedWithoutOn !== waiting.exitedWithoutOn.episodeCount ||
+    sumCurrentlyWaiting !== waiting.currentlyWaiting.episodeCount ||
+    sumWaitingDays !== waiting.allWaiting.totalWaitingDays ||
+    sumEverOn !== duration.everOnEpisodeCount ||
+    sumNeverOn !== duration.neverOnEpisodeCount ||
+    sumOnDays !== duration.allEverOn.totalOnDays ||
+    sumEverOn !== retention.cohortEpisodeTotal ||
+    sumContinuouslyRetained !== retention.continuouslyRetainedCount ||
+    sumExitedFromOn !== retention.exitedFromOnTotal ||
+    sumD7Matured !== retention.checkpoints.d7.maturedCount ||
+    sumD7Immature !== retention.checkpoints.d7.immatureCount ||
+    sumD7Retained !== retention.checkpoints.d7.retainedCount ||
+    sumD7Exited !== retention.checkpoints.d7.exitedCount ||
+    sumD30Matured !== retention.checkpoints.d30.maturedCount ||
+    sumD30Immature !== retention.checkpoints.d30.immatureCount ||
+    sumD30Retained !== retention.checkpoints.d30.retainedCount ||
+    sumD30Exited !== retention.checkpoints.d30.exitedCount ||
+    sumD90Matured !== retention.checkpoints.d90.maturedCount ||
+    sumD90Immature !== retention.checkpoints.d90.immatureCount ||
+    sumD90Retained !== retention.checkpoints.d90.retainedCount ||
+    sumD90Exited !== retention.checkpoints.d90.exitedCount
+  ) {
+    return { ok: false, reason: "dimension_reconciliation_invariant_violated" };
+  }
+
+  let attentionCandidates: WorkforceProjectPageAttentionCandidates | undefined;
+  if (typeof pageMeta.attention_candidates === "object" && pageMeta.attention_candidates !== null) {
+    const attRaw = pageMeta.attention_candidates as Record<string, unknown>;
+    const lowestD30Bucket =
+      attRaw.lowest_d30_bucket === null || attRaw.lowest_d30_bucket === undefined
+        ? null
+        : parseDimensionBucket(attRaw.lowest_d30_bucket);
+    const highestWaitingBucket =
+      attRaw.highest_waiting_bucket === null || attRaw.highest_waiting_bucket === undefined
+        ? null
+        : parseDimensionBucket(attRaw.highest_waiting_bucket);
+    if (
+      (attRaw.lowest_d30_bucket !== null &&
+        attRaw.lowest_d30_bucket !== undefined &&
+        lowestD30Bucket === null) ||
+      (attRaw.highest_waiting_bucket !== null &&
+        attRaw.highest_waiting_bucket !== undefined &&
+        highestWaitingBucket === null)
+    ) {
+      return { ok: false, reason: "invalid_project_attention_candidates" };
+    }
+    attentionCandidates = {
+      lowestD30Bucket,
+      highestWaitingBucket,
+    };
+  }
+
+  return {
+    ok: true,
+    group: {
+      dimensionKind: "project",
+      eligibleEpisodeTotal: snapshot.eligibleEpisodeTotal,
+      knownEpisodeCount: reconKnownEpisodeCount,
+      unknownEpisodeCount: reconUnknownEpisodeCount,
+      coverageRate:
+        snapshot.eligibleEpisodeTotal > 0
+          ? reconKnownEpisodeCount / snapshot.eligibleEpisodeTotal
+          : null,
+      buckets,
+      pagination: {
+        totalCount,
+        pageSize,
+        hasMore,
+        nextCursor,
+        ...(attentionCandidates ? { attentionCandidates } : {}),
+      },
+    },
+  };
+}
+
 function parseDimensionsSection(
   dimRaw: unknown,
   snapshot: WorkforceAsOfSnapshot,
@@ -4373,14 +4657,24 @@ function parseDimensionsSection(
   );
   if (!provParsed.ok) return provParsed;
 
-  const projParsed = parseDimensionGroup(
-    d.by_project,
-    "project",
-    snapshot,
-    waiting,
-    duration,
-    retention,
-  );
+  const projParsed =
+    d.by_project_page !== undefined && d.by_project_page !== null
+      ? parsePagedProjectDimensionGroup(
+          d.by_project,
+          d.by_project_page,
+          snapshot,
+          waiting,
+          duration,
+          retention,
+        )
+      : parseDimensionGroup(
+          d.by_project,
+          "project",
+          snapshot,
+          waiting,
+          duration,
+          retention,
+        );
   if (!projParsed.ok) return projParsed;
 
   return {
@@ -4711,58 +5005,55 @@ function parseLeaveReasonsSection(
   };
 }
 
-/**
- * Parse và kiểm tra toàn vẹn payload trả về từ RPC `direct_entry_workforce_reporting_scoped`.
- * Fail-closed (`status: "unavailable"`) nếu thiếu trường hoặc vi phạm bất biến tổng snapshot,
- * bất biến bảo toàn cân bằng đầu/cuối kỳ (2.3), phân hoạch mẫu chờ việc (2.4),
- * thâm niên & hiện diện theo trạng thái (2.5) hoặc đoàn hệ giữ chân D7/D30/D90 (2.6).
- */
-export function parseWorkforceReportingPayload(raw: unknown): WorkforceReportingResult {
-  if (typeof raw !== "object" || raw === null) {
-    return { status: "unavailable", reason: "empty_payload" };
+function parseTransitionsSection(
+  transRaw: unknown,
+): { ok: true; transitions: WorkforcePeriodTransitions } | { ok: false; reason: string } {
+  if (typeof transRaw !== "object" || transRaw === null) {
+    return { ok: false, reason: "missing_sections" };
   }
-  const root = raw as Record<string, unknown>;
-  const snapRaw = root.snapshot;
-  const transRaw = root.transitions;
-  if (typeof snapRaw !== "object" || snapRaw === null || typeof transRaw !== "object" || transRaw === null) {
-    return { status: "unavailable", reason: "missing_sections" };
-  }
-
-  const snapParsed = parseSnapshotSection(snapRaw);
-  if (!snapParsed.ok) {
-    return { status: "unavailable", reason: snapParsed.reason };
-  }
-  const snapshot = snapParsed.snapshot;
-
   const t = transRaw as Record<string, unknown>;
-  let transitions: WorkforcePeriodTransitions;
   if (t.applicable === false) {
     const reasonRaw = t.reason;
     const reason: WorkforceTransitionsNotApplicableReason =
       reasonRaw === "all_time" || reasonRaw === "one_sided" || reasonRaw === "invalid_range"
         ? reasonRaw
         : "all_time";
-    const fromDate = typeof t.from_date === "string" && isRealCalendarDate(t.from_date) ? t.from_date : null;
-    const toDate = typeof t.to_date === "string" && isRealCalendarDate(t.to_date) ? t.to_date : null;
-    transitions = {
-      applicable: false,
-      reason,
-      fromDate,
-      toDate,
-      windowLabel: formatWorkforceTransitionsNotApplicableLabel(reason),
+    const fromDate =
+      typeof t.from_date === "string" && isRealCalendarDate(t.from_date) ? t.from_date : null;
+    const toDate =
+      typeof t.to_date === "string" && isRealCalendarDate(t.to_date) ? t.to_date : null;
+    return {
+      ok: true,
+      transitions: {
+        applicable: false,
+        reason,
+        fromDate,
+        toDate,
+        windowLabel: formatWorkforceTransitionsNotApplicableLabel(reason),
+      },
     };
-  } else if (t.applicable === true) {
+  }
+  if (t.applicable === true) {
     const fromDate = typeof t.from_date === "string" ? t.from_date : "";
     const toDate = typeof t.to_date === "string" ? t.to_date : "";
     if (!isRealCalendarDate(fromDate) || !isRealCalendarDate(toDate) || fromDate > toDate) {
-      return { status: "unavailable", reason: "invalid_transitions_dates" };
+      return { ok: false, reason: "invalid_transitions_dates" };
     }
 
-    const initRaw = typeof t.initial === "object" && t.initial !== null ? (t.initial as Record<string, unknown>) : null;
-    const pairsRaw = typeof t.pairs === "object" && t.pairs !== null ? (t.pairs as Record<string, unknown>) : null;
-    const totalsRaw = typeof t.totals === "object" && t.totals !== null ? (t.totals as Record<string, unknown>) : null;
+    const initRaw =
+      typeof t.initial === "object" && t.initial !== null
+        ? (t.initial as Record<string, unknown>)
+        : null;
+    const pairsRaw =
+      typeof t.pairs === "object" && t.pairs !== null
+        ? (t.pairs as Record<string, unknown>)
+        : null;
+    const totalsRaw =
+      typeof t.totals === "object" && t.totals !== null
+        ? (t.totals as Record<string, unknown>)
+        : null;
     if (!initRaw || !pairsRaw || !totalsRaw) {
-      return { status: "unavailable", reason: "missing_transitions_nested" };
+      return { ok: false, reason: "missing_transitions_nested" };
     }
 
     const initTotal = parseCountPair(initRaw.total);
@@ -4794,11 +5085,11 @@ export function parseWorkforceReportingPayload(raw: unknown): WorkforceReporting
       noopRepeatEventCount === null ||
       noopRepeatEpisodeCount === null
     ) {
-      return { status: "unavailable", reason: "invalid_transitions_counts" };
+      return { ok: false, reason: "invalid_transitions_counts" };
     }
 
     if (initOn.eventCount + initUnconfirmed.eventCount !== initTotal.eventCount) {
-      return { status: "unavailable", reason: "initial_event_sum_invariant_violated" };
+      return { ok: false, reason: "initial_event_sum_invariant_violated" };
     }
 
     const pairEventSum =
@@ -4808,35 +5099,180 @@ export function parseWorkforceReportingPayload(raw: unknown): WorkforceReporting
       offToOn.eventCount +
       otherPair.eventCount;
     if (pairEventSum !== transitionEventCount) {
-      return { status: "unavailable", reason: "transition_event_sum_invariant_violated" };
+      return { ok: false, reason: "transition_event_sum_invariant_violated" };
     }
 
-    transitions = {
-      applicable: true,
-      fromDate,
-      toDate,
-      initial: {
-        total: initTotal,
-        on: initOn,
-        unconfirmed: initUnconfirmed,
-      },
-      pairs: {
-        unconfirmedToOn,
-        unconfirmedToOff,
-        onToOff,
-        offToOn,
-        other: otherPair,
-      },
-      totals: {
-        transitionEventCount,
-        transitionEpisodeCount,
-        noopRepeatEventCount,
-        noopRepeatEpisodeCount,
+    return {
+      ok: true,
+      transitions: {
+        applicable: true,
+        fromDate,
+        toDate,
+        initial: {
+          total: initTotal,
+          on: initOn,
+          unconfirmed: initUnconfirmed,
+        },
+        pairs: {
+          unconfirmedToOn,
+          unconfirmedToOff,
+          onToOff,
+          offToOn,
+          other: otherPair,
+        },
+        totals: {
+          transitionEventCount,
+          transitionEpisodeCount,
+          noopRepeatEventCount,
+          noopRepeatEpisodeCount,
+        },
       },
     };
-  } else {
-    return { status: "unavailable", reason: "invalid_transitions_applicable" };
   }
+  return { ok: false, reason: "invalid_transitions_applicable" };
+}
+
+/**
+ * Parse payload `mode = "overview"` trả về cho tab Báo cáo tổng quát.
+ * Chỉ chứa `snapshot` (2.1) và `transitions` (2.2); tuyệt đối từ chối nếu payload có
+ * các trường deep analytics hoặc không khớp bất biến tổng snapshot / biến động.
+ */
+export function parseWorkforceOverviewPayload(raw: unknown): WorkforceOverviewResult {
+  if (typeof raw !== "object" || raw === null) {
+    return { status: "unavailable", reason: "empty_payload" };
+  }
+  const root = raw as Record<string, unknown>;
+  const snapRaw = root.snapshot;
+  const transRaw = root.transitions;
+  if (
+    typeof snapRaw !== "object" ||
+    snapRaw === null ||
+    typeof transRaw !== "object" ||
+    transRaw === null
+  ) {
+    return { status: "unavailable", reason: "missing_sections" };
+  }
+
+  const snapParsed = parseSnapshotSection(snapRaw);
+  if (!snapParsed.ok) {
+    return { status: "unavailable", reason: snapParsed.reason };
+  }
+  const transParsed = parseTransitionsSection(transRaw);
+  if (!transParsed.ok) {
+    return { status: "unavailable", reason: transParsed.reason };
+  }
+
+  return {
+    status: "ready",
+    snapshot: snapParsed.snapshot,
+    transitions: transParsed.transitions,
+  };
+}
+
+/**
+ * Parse payload `mode = "project_page"` trả về khi nhấn "Tải thêm" trên bảng Theo dự án (2.7).
+ */
+export function parseWorkforceProjectPagePayload(raw: unknown): WorkforceProjectPageResult {
+  if (typeof raw !== "object" || raw === null) {
+    return { status: "unavailable", reason: "empty_payload" };
+  }
+  const root = raw as Record<string, unknown>;
+  if (typeof root.by_project_page !== "object" || root.by_project_page === null) {
+    return { status: "unavailable", reason: "missing_project_page_section" };
+  }
+  const pageRaw = root.by_project_page as Record<string, unknown>;
+  const asOfDate = typeof pageRaw.as_of_date === "string" ? pageRaw.as_of_date : "";
+  const asOfSourceRaw = pageRaw.as_of_source;
+  const asOfSource: WorkforceAsOfSource | null =
+    asOfSourceRaw === "filter_to" ||
+    asOfSourceRaw === "current_hcm_date" ||
+    asOfSourceRaw === "explicit_as_of"
+      ? asOfSourceRaw
+      : null;
+  const totalCount = nonNegativeInt(pageRaw.total_count);
+  const pageSize = nonNegativeInt(pageRaw.page_size);
+  const hasMore = typeof pageRaw.has_more === "boolean" ? pageRaw.has_more : null;
+  const nextCursor =
+    pageRaw.next_cursor === null || typeof pageRaw.next_cursor === "string"
+      ? (pageRaw.next_cursor as string | null)
+      : undefined;
+
+  if (
+    !isRealCalendarDate(asOfDate) ||
+    asOfSource === null ||
+    totalCount === null ||
+    pageSize === null ||
+    pageSize <= 0 ||
+    hasMore === null ||
+    nextCursor === undefined ||
+    !Array.isArray(pageRaw.rows)
+  ) {
+    return { status: "unavailable", reason: "invalid_project_page_metadata" };
+  }
+
+  if (hasMore && (!nextCursor || nextCursor.trim() === "")) {
+    return { status: "unavailable", reason: "missing_project_page_next_cursor" };
+  }
+  if (!hasMore && nextCursor !== null) {
+    return { status: "unavailable", reason: "unexpected_project_page_next_cursor" };
+  }
+
+  const rows: WorkforceDimensionBucketMetrics[] = [];
+  for (let i = 0; i < pageRaw.rows.length; i += 1) {
+    const bucket = parseDimensionBucket(pageRaw.rows[i]);
+    if (!bucket) {
+      return { status: "unavailable", reason: "invalid_project_page_row" };
+    }
+    if (i > 0 && compareDimensionBuckets(rows[i - 1], bucket) > 0) {
+      return { status: "unavailable", reason: "project_page_sort_order_violated" };
+    }
+    rows.push(bucket);
+  }
+
+  if (rows.length > pageSize || rows.length > totalCount) {
+    return { status: "unavailable", reason: "project_page_row_count_exceeds_limit" };
+  }
+
+  return {
+    status: "ready",
+    asOfDate,
+    asOfSource,
+    totalCount,
+    pageSize,
+    hasMore,
+    nextCursor,
+    rows,
+  };
+}
+
+/**
+ * Parse và kiểm tra toàn vẹn payload trả về từ RPC `direct_entry_workforce_reporting_scoped`.
+ * Fail-closed (`status: "unavailable"`) nếu thiếu trường hoặc vi phạm bất biến tổng snapshot,
+ * bất biến bảo toàn cân bằng đầu/cuối kỳ (2.3), phân hoạch mẫu chờ việc (2.4),
+ * thâm niên & hiện diện theo trạng thái (2.5) hoặc đoàn hệ giữ chân D7/D30/D90 (2.6).
+ */
+export function parseWorkforceReportingPayload(raw: unknown): WorkforceReportingResult {
+  if (typeof raw !== "object" || raw === null) {
+    return { status: "unavailable", reason: "empty_payload" };
+  }
+  const root = raw as Record<string, unknown>;
+  const snapRaw = root.snapshot;
+  const transRaw = root.transitions;
+  if (typeof snapRaw !== "object" || snapRaw === null || typeof transRaw !== "object" || transRaw === null) {
+    return { status: "unavailable", reason: "missing_sections" };
+  }
+
+  const snapParsed = parseSnapshotSection(snapRaw);
+  if (!snapParsed.ok) {
+    return { status: "unavailable", reason: snapParsed.reason };
+  }
+  const snapshot = snapParsed.snapshot;
+
+  const transParsed = parseTransitionsSection(transRaw);
+  if (!transParsed.ok) {
+    return { status: "unavailable", reason: transParsed.reason };
+  }
+  const transitions = transParsed.transitions;
 
   const balanceParsed = parseBalanceSection(root.balance, transitions);
   if (!balanceParsed.ok) {
@@ -4907,6 +5343,29 @@ export interface WorkforceScopedRpcResult {
   error?: unknown;
 }
 
+function buildWorkforceRpcFilterRecord(
+  filters: ReportingFilters,
+  teamBucketKey?: string,
+  extra?: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const rpcFilters: Record<string, string | undefined> = {};
+  if (filters.from) rpcFilters.from = filters.from;
+  if (filters.to) rpcFilters.to = filters.to;
+  if (filters.project) rpcFilters.project = filters.project;
+  if (filters.recruiter) rpcFilters.recruiter = filters.recruiter;
+  if (filters.provider) rpcFilters.provider = filters.provider;
+  if (filters.employment) rpcFilters.employment = filters.employment;
+  if (teamBucketKey) rpcFilters.team_bucket = teamBucketKey;
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined) {
+        rpcFilters[k] = v;
+      }
+    }
+  }
+  return rpcFilters;
+}
+
 /**
  * Truy vấn WF-01 & WF-02 Workforce Analytics cho actor hiện hành qua RPC
  * `direct_entry_workforce_reporting_scoped`.
@@ -4919,14 +5378,7 @@ export async function resolveWorkforceReportingForActor(input: {
   expectedAudienceKind?: ReportingAudienceKind;
   callWorkforceRpc: (args: WorkforceScopedRpcArgs) => PromiseLike<WorkforceScopedRpcResult>;
 }): Promise<WorkforceReportingResult> {
-  const rpcFilters: Record<string, string | undefined> = {};
-  if (input.filters.from) rpcFilters.from = input.filters.from;
-  if (input.filters.to) rpcFilters.to = input.filters.to;
-  if (input.filters.project) rpcFilters.project = input.filters.project;
-  if (input.filters.recruiter) rpcFilters.recruiter = input.filters.recruiter;
-  if (input.filters.provider) rpcFilters.provider = input.filters.provider;
-  if (input.filters.employment) rpcFilters.employment = input.filters.employment;
-  if (input.teamBucketKey) rpcFilters.team_bucket = input.teamBucketKey;
+  const rpcFilters = buildWorkforceRpcFilterRecord(input.filters, input.teamBucketKey);
 
   try {
     const res = await input.callWorkforceRpc({
@@ -4949,6 +5401,136 @@ export async function resolveWorkforceReportingForActor(input: {
       return { status: "unavailable", reason: "audience_mismatch" };
     }
     return parseWorkforceReportingPayload(payload);
+  } catch {
+    return { status: "unavailable", reason: "exception" };
+  }
+}
+
+/**
+ * Truy vấn phần tổng quát (`mode = "overview"` — chỉ 2.1 Snapshot & 2.2 Biến động)
+ * cho tab Báo cáo tổng quát. Chỉ cho phép actor có `scope = "all"` (Admin/BoD).
+ * Tuyệt đối không tính hoặc tải dữ liệu của tab Báo cáo chuyên sâu.
+ */
+export async function resolveWorkforceOverviewForActor(input: {
+  actor: { auth_subject: string; app_user_id: string };
+  filters: ReportingFilters;
+  callWorkforceRpc: (args: WorkforceScopedRpcArgs) => PromiseLike<WorkforceScopedRpcResult>;
+}): Promise<WorkforceOverviewResult> {
+  const rpcFilters = buildWorkforceRpcFilterRecord(input.filters, undefined, {
+    mode: "overview",
+  });
+
+  try {
+    const res = await input.callWorkforceRpc({
+      p_auth_subject: input.actor.auth_subject,
+      p_app_user_id: input.actor.app_user_id,
+      p_filters: rpcFilters,
+    });
+    if (!res || typeof res !== "object" || res.error) {
+      return { status: "unavailable", reason: "rpc_error" };
+    }
+    const payload = (res.data ?? null) as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") {
+      return { status: "unavailable", reason: "empty_data" };
+    }
+    const audience = resolveReportingAudienceProjection(payload.audience);
+    if (audience === null || audience.kind !== "all") {
+      return { status: "unavailable", reason: "audience_mismatch" };
+    }
+    return parseWorkforceOverviewPayload(payload);
+  } catch {
+    return { status: "unavailable", reason: "exception" };
+  }
+}
+
+export const WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE = 5;
+
+/**
+ * Truy vấn phần chuyên sâu (`mode = "deep"` — 2.3 đến 2.8 với phân trang server-side
+ * 5 dòng đầu cho bảng Theo dự án) khi người dùng mở tab `Báo cáo chuyên sâu`.
+ * Chỉ cho phép actor có `scope = "all"`.
+ */
+export async function resolveWorkforceDeepReportingForActor(input: {
+  actor: { auth_subject: string; app_user_id: string };
+  filters: ReportingFilters;
+  projectLimit?: number;
+  callWorkforceRpc: (args: WorkforceScopedRpcArgs) => PromiseLike<WorkforceScopedRpcResult>;
+}): Promise<WorkforceReportingResult> {
+  const pageSize = Math.min(
+    50,
+    Math.max(1, Math.trunc(input.projectLimit ?? WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE)),
+  );
+  const rpcFilters = buildWorkforceRpcFilterRecord(input.filters, undefined, {
+    mode: "deep",
+    project_limit: String(pageSize),
+  });
+
+  try {
+    const res = await input.callWorkforceRpc({
+      p_auth_subject: input.actor.auth_subject,
+      p_app_user_id: input.actor.app_user_id,
+      p_filters: rpcFilters,
+    });
+    if (!res || typeof res !== "object" || res.error) {
+      return { status: "unavailable", reason: "rpc_error" };
+    }
+    const payload = (res.data ?? null) as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") {
+      return { status: "unavailable", reason: "empty_data" };
+    }
+    const audience = resolveReportingAudienceProjection(payload.audience);
+    if (audience === null || audience.kind !== "all") {
+      return { status: "unavailable", reason: "audience_mismatch" };
+    }
+    return parseWorkforceReportingPayload(payload);
+  } catch {
+    return { status: "unavailable", reason: "exception" };
+  }
+}
+
+/**
+ * Truy vấn trang tiếp theo của bảng Theo dự án (`mode = "project_page"`)
+ * bằng keyset cursor tất định từ server. Chỉ cho phép actor có `scope = "all"`.
+ */
+export async function resolveWorkforceProjectPageForActor(input: {
+  actor: { auth_subject: string; app_user_id: string };
+  filters: ReportingFilters;
+  cursor: string;
+  projectLimit?: number;
+  callWorkforceRpc: (args: WorkforceScopedRpcArgs) => PromiseLike<WorkforceScopedRpcResult>;
+}): Promise<WorkforceProjectPageResult> {
+  const trimmedCursor = input.cursor?.trim() || "";
+  if (!trimmedCursor) {
+    return { status: "unavailable", reason: "missing_cursor" };
+  }
+  const pageSize = Math.min(
+    50,
+    Math.max(1, Math.trunc(input.projectLimit ?? WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE)),
+  );
+  const rpcFilters = buildWorkforceRpcFilterRecord(input.filters, undefined, {
+    mode: "project_page",
+    project_limit: String(pageSize),
+    project_cursor: trimmedCursor,
+  });
+
+  try {
+    const res = await input.callWorkforceRpc({
+      p_auth_subject: input.actor.auth_subject,
+      p_app_user_id: input.actor.app_user_id,
+      p_filters: rpcFilters,
+    });
+    if (!res || typeof res !== "object" || res.error) {
+      return { status: "unavailable", reason: "rpc_error" };
+    }
+    const payload = (res.data ?? null) as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") {
+      return { status: "unavailable", reason: "empty_data" };
+    }
+    const audience = resolveReportingAudienceProjection(payload.audience);
+    if (audience === null || audience.kind !== "all") {
+      return { status: "unavailable", reason: "audience_mismatch" };
+    }
+    return parseWorkforceProjectPagePayload(payload);
   } catch {
     return { status: "unavailable", reason: "exception" };
   }

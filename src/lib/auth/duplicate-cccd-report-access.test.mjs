@@ -76,10 +76,10 @@ test("the CCCD report is the Dashboard tab right after the team tab", () => {
 test("the Dashboard page + view server-gate the CCCD tab for every audience", () => {
   const page = readFileSync(new URL("../../app/dashboard/page.tsx", import.meta.url), "utf8");
   assert.match(page, /canViewDuplicateCccdReport\(actor\)/);
-  assert.match(page, /type DashboardTab = "general" \| "team" \| "duplicate-cccd"/);
+  assert.match(page, /type DashboardTab = "general" \| "deep" \| "team" \| "duplicate-cccd"/);
   assert.match(page, /tab === "duplicate-cccd" && !canViewDuplicateCccd/);
-  // `source` (a general-only filter) is stripped before the CCCD/team tab renders.
-  assert.match(page, /\(tab === "team" \|\| tab === "duplicate-cccd"\) && sourcePresent/);
+  // `source` (a general-only filter) is stripped before the deep/CCCD/team tab renders.
+  assert.match(page, /\(tab === "deep" \|\| tab === "team" \|\| tab === "duplicate-cccd"\) && sourcePresent/);
   assert.match(page, /normalizedDashboardPath\(params, tab, true\)/);
   assert.match(page, /canViewDuplicateCccd=\{canViewDuplicateCccd\}/);
 
