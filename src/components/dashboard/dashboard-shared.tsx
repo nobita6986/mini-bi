@@ -11,8 +11,11 @@ import {
 } from "@/lib/reporting/p1-period-comparison";
 import {
   WORKFORCE_BALANCE_COLUMN_LABELS,
+  WORKFORCE_DURATION_BUCKET_LABELS,
+  WORKFORCE_DURATION_SAMPLE_LABELS,
   WORKFORCE_INITIAL_STATUS_LABELS,
   WORKFORCE_NON_ATTENDANCE_NOTE,
+  WORKFORCE_RETENTION_CHECKPOINT_LABELS,
   WORKFORCE_SNAPSHOT_STATUS_LABELS,
   WORKFORCE_TRANSITION_PAIR_LABELS,
   WORKFORCE_UNIT_METADATA_NOTE,
@@ -24,6 +27,10 @@ import {
   formatSignedBalanceDelta,
   formatWaitingDaysAverage,
 } from "@/lib/reporting/wf02-workforce-balance-waiting";
+import {
+  formatDurationDaysAverage,
+  formatRetentionRatePercent,
+} from "@/lib/reporting/wf03-workforce-tenure-retention";
 import type { ReportingBucket } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
@@ -137,13 +144,13 @@ export function WorkforceSnapshotSection({
           </StatusBadge>
         </div>
         <p className="mt-1 text-xs">
-          Không tải được dữ liệu snapshot trạng thái lao động (as-of), cân bằng đầu/cuối kỳ và thời gian chờ việc. Các chỉ số tuyển dụng theo ngày báo cáo bên dưới vẫn giữ nguyên.
+          Không tải được dữ liệu hiện trạng trạng thái lao động tại ngày mốc, cân bằng đầu/cuối kỳ, thời gian chờ việc, thâm niên làm việc và tỷ lệ giữ chân. Các chỉ số tuyển dụng theo ngày ghi nhận tuyển dụng vẫn giữ nguyên.
         </p>
       </section>
     );
   }
 
-  const { snapshot, transitions, balance, waiting } = workforce;
+  const { snapshot, transitions, balance, waiting, duration, retention } = workforce;
   const asOfSourceLabel =
     snapshot.asOfSource === "filter_to"
       ? "Theo ngày kết thúc bộ lọc"
@@ -238,6 +245,65 @@ export function WorkforceSnapshotSection({
     },
   ];
 
+  const durationSampleRows = [
+    {
+      key: "all_ever_on",
+      label: WORKFORCE_DURATION_SAMPLE_LABELS.ALL_EVER_ON,
+      sample: duration.allEverOn,
+    },
+    {
+      key: "currently_on",
+      label: WORKFORCE_DURATION_SAMPLE_LABELS.CURRENTLY_ON,
+      sample: duration.currentlyOn,
+    },
+    {
+      key: "exited_after_on",
+      label: WORKFORCE_DURATION_SAMPLE_LABELS.EXITED_AFTER_ON,
+      sample: duration.exitedAfterOn,
+    },
+  ];
+
+  const durationBucketRows = [
+    {
+      key: "days_0_to_7",
+      label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_0_TO_7,
+      count: duration.distribution.days0To7Count,
+    },
+    {
+      key: "days_8_to_30",
+      label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_8_TO_30,
+      count: duration.distribution.days8To30Count,
+    },
+    {
+      key: "days_31_to_90",
+      label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_31_TO_90,
+      count: duration.distribution.days31To90Count,
+    },
+    {
+      key: "days_91_plus",
+      label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_91_PLUS,
+      count: duration.distribution.days91PlusCount,
+    },
+  ];
+
+  const retentionCheckpointRows = [
+    {
+      key: "d7",
+      label: WORKFORCE_RETENTION_CHECKPOINT_LABELS.D7,
+      checkpoint: retention.checkpoints.d7,
+    },
+    {
+      key: "d30",
+      label: WORKFORCE_RETENTION_CHECKPOINT_LABELS.D30,
+      checkpoint: retention.checkpoints.d30,
+    },
+    {
+      key: "d90",
+      label: WORKFORCE_RETENTION_CHECKPOINT_LABELS.D90,
+      checkpoint: retention.checkpoints.d90,
+    },
+  ];
+
   return (
     <section aria-label="Hiện trạng và biến động trạng thái lao động">
       <Card className="p-4">
@@ -264,46 +330,46 @@ export function WorkforceSnapshotSection({
               </span>
             </div>
             <p className="mt-0.5 text-xs text-muted">
-              Hồ sơ hợp lệ trong phạm vi có ngày bắt đầu làm việc ≤ {snapshot.asOfDate} (business-effective as-of).
+              Các đợt làm việc hợp lệ trong phạm vi có ngày bắt đầu làm việc ≤ {snapshot.asOfDate} (tính theo ngày trạng thái có hiệu lực).
             </p>
 
             <dl className="mt-3 grid grid-cols-2 gap-2">
               <div className="col-span-2 flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs font-medium text-muted">Tổng hồ sơ đủ điều kiện tại ngày mốc</dt>
+                <dt className="text-xs font-medium text-muted">Tổng đợt làm việc đủ điều kiện tại ngày mốc</dt>
                 <dd className="font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.eligibleEpisodeTotal} <span className="text-xs font-normal text-muted">hồ sơ</span>
+                  {snapshot.eligibleEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}</dt>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.onCount} <span className="text-xs font-normal text-muted">hồ sơ</span>
+                  {snapshot.onCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}</dt>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.unconfirmedCount} <span className="text-xs font-normal text-muted">hồ sơ</span>
+                  {snapshot.unconfirmedCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}</dt>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.offCount} <span className="text-xs font-normal text-muted">hồ sơ</span>
+                  {snapshot.offCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}</dt>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.unknownCount} <span className="text-xs font-normal text-muted">hồ sơ</span>
+                  {snapshot.unknownCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
             </dl>
 
             {snapshot.futureEpisodeCount > 0 ? (
               <p className="mt-2 text-xs text-muted">
-                Chưa bắt đầu làm việc tại ngày {snapshot.asOfDate} (first_work_date &gt; {snapshot.asOfDate}):{" "}
-                <span className="font-mono font-medium text-foreground">{snapshot.futureEpisodeCount}</span> hồ sơ (tách riêng, không cộng vào snapshot).
+                Chưa bắt đầu làm việc tại ngày {snapshot.asOfDate} (ngày bắt đầu làm việc sau {snapshot.asOfDate}):{" "}
+                <span className="font-mono font-medium text-foreground">{snapshot.futureEpisodeCount}</span> đợt làm việc (tách riêng, không cộng vào snapshot).
               </p>
             ) : null}
           </div>
@@ -329,21 +395,21 @@ export function WorkforceSnapshotSection({
                 <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium text-foreground">
-                      Khởi tạo hồ sơ mới trong kỳ (sự kiện đầu tiên của episode)
+                      Khởi tạo đợt làm việc mới trong kỳ (lần thay đổi trạng thái đầu tiên)
                     </span>
                     <span className="font-mono tabular-nums text-muted">
-                      Tổng: <strong className="text-foreground">{transitions.initial.total.eventCount}</strong> sự kiện /{" "}
-                      <strong className="text-foreground">{transitions.initial.total.episodeCount}</strong> hồ sơ
+                      Tổng: <strong className="text-foreground">{transitions.initial.total.eventCount}</strong> lần /{" "}
+                      <strong className="text-foreground">{transitions.initial.total.episodeCount}</strong> đợt làm việc
                     </span>
                   </div>
                   <p className="mt-1 text-muted">
                     {WORKFORCE_INITIAL_STATUS_LABELS.INITIAL_ON}:{" "}
-                    <span className="font-mono font-medium text-foreground">{transitions.initial.on.eventCount}</span> sự kiện (
-                    <span className="font-mono">{transitions.initial.on.episodeCount}</span> hồ sơ)
+                    <span className="font-mono font-medium text-foreground">{transitions.initial.on.eventCount}</span> lần (
+                    <span className="font-mono">{transitions.initial.on.episodeCount}</span> đợt làm việc)
                     {" · "}
                     {WORKFORCE_INITIAL_STATUS_LABELS.INITIAL_UNCONFIRMED}:{" "}
-                    <span className="font-mono font-medium text-foreground">{transitions.initial.unconfirmed.eventCount}</span> sự kiện (
-                    <span className="font-mono">{transitions.initial.unconfirmed.episodeCount}</span> hồ sơ)
+                    <span className="font-mono font-medium text-foreground">{transitions.initial.unconfirmed.eventCount}</span> lần (
+                    <span className="font-mono">{transitions.initial.unconfirmed.episodeCount}</span> đợt làm việc)
                   </p>
                 </div>
 
@@ -637,6 +703,255 @@ export function WorkforceSnapshotSection({
             <p className="mt-2 text-[11px] text-muted">
               {WORKFORCE_NON_ATTENDANCE_NOTE}
             </p>
+          </div>
+        </div>
+
+        {/* WF-03 (2.5 & 2.6): Thâm niên & ngày hiện diện theo trạng thái + Nghỉ sớm & giữ chân theo mốc D7 / D30 / D90 */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Thâm niên làm việc &amp; ngày hiện diện theo trạng thái
+                </h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Tính trên các khoảng {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} liên tiếp (đã loại các bản ghi bị thay thế hoặc điều chỉnh) đến ngày {duration.asOfDate}.
+                </p>
+              </div>
+              <span className="font-mono text-xs text-muted">
+                Từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {duration.everOnEpisodeCount} / {duration.eligibleEpisodeTotal} đợt làm việc
+              </span>
+            </div>
+
+            <dl className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Thâm niên TB (tất cả đợt từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON})</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatDurationDaysAverage(duration.allEverOn.avgOnDaysPerEpisode)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {duration.allEverOn.episodeCount} đợt làm việc ({duration.allEverOn.totalOnDays} ngày hiện diện theo trạng thái)
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Thâm niên TB (đang làm việc tại ngày mốc)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatDurationDaysAverage(duration.currentlyOn.avgOnDaysPerEpisode)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {duration.currentlyOn.episodeCount} đợt làm việc ({duration.currentlyOn.totalOnDays} ngày hiện diện theo trạng thái)
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Thâm niên TB (đã rời {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} sau khi vào làm)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatDurationDaysAverage(duration.exitedAfterOn.avgOnDaysPerEpisode)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Mẫu: {duration.exitedAfterOn.episodeCount} đợt làm việc ({duration.exitedAfterOn.totalOnDays} ngày hiện diện theo trạng thái)
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Chưa từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} / Chưa xác định</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {duration.neverOnEpisodeCount} / {duration.unknownStatusEpisodeCount}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Tách riêng khỏi mẫu số thâm niên ({duration.neverOnEpisodeCount} chưa vào làm, {duration.unknownStatusEpisodeCount} chưa xác định)
+                </p>
+              </div>
+            </dl>
+
+            <div className="mt-2 overflow-x-auto rounded-lg border border-border bg-surface">
+              <table className="r22-report-table w-full text-left text-xs">
+                <caption className="sr-only">
+                  Bảng phân rã thâm niên làm việc theo nhóm mẫu tại ngày {duration.asOfDate}
+                </caption>
+                <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                  <tr className="border-b border-border">
+                    <th scope="col" className="px-2.5 py-1.5 font-medium">
+                      Nhóm mẫu thâm niên
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Số đợt làm việc
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Tổng ngày {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      TB / đợt làm việc
+                    </th>
+                    <th scope="col" className="px-2.5 py-1.5 text-right font-medium">
+                      Tối đa
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {durationSampleRows.map((item) => (
+                    <tr key={item.key} className="text-foreground hover:bg-surface-hover">
+                      <td className="px-2.5 py-1.5">{item.label}</td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.sample.episodeCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.sample.totalOnDays}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatDurationDaysAverage(item.sample.avgOnDaysPerEpisode)}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.sample.maxOnDays === null ? "—" : `${item.sample.maxOnDays} ngày`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {durationBucketRows.map((bucket) => (
+                <div key={bucket.key} className="rounded-lg border border-border bg-surface px-2.5 py-1.5">
+                  <p className="text-[11px] text-muted">{bucket.label}</p>
+                  <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+                    {bucket.count} <span className="text-[11px] font-normal text-muted">đợt</span>
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            {duration.periodPresence.applicable ? (
+              <p className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
+                Ngày hiện diện theo trạng thái trong kỳ ({duration.periodPresence.fromDate} → {duration.periodPresence.toDate}):{" "}
+                <strong className="font-mono text-foreground">{duration.periodPresence.activeOnEpisodeCount}</strong> đợt làm việc có mặt ở {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} (
+                <strong className="font-mono text-foreground">{duration.periodPresence.inPeriodOnDays}</strong> ngày hiện diện theo trạng thái trong kỳ, TB{" "}
+                <strong className="font-mono text-foreground">
+                  {formatDurationDaysAverage(duration.periodPresence.avgInPeriodOnDaysPerActiveEpisode)}
+                </strong>
+                /đợt làm việc).
+              </p>
+            ) : (
+              <p className="mt-2 rounded-lg border border-dashed border-border bg-surface px-3 py-1.5 text-xs text-muted">
+                {duration.periodPresence.windowLabel}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Nghỉ sớm &amp; giữ chân theo mốc D7 / D30 / D90
+                </h3>
+                <p className="mt-0.5 text-xs text-muted">
+                  Đoàn hệ tính từ ngày thực tế vào trạng thái {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} lần đầu của từng đợt làm việc (tính đến {retention.asOfDate}).
+                </p>
+              </div>
+              <span className="font-mono text-xs text-muted">
+                Đoàn hệ {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {retention.cohortEpisodeTotal} đợt làm việc
+              </span>
+            </div>
+
+            <dl className="mt-2 grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Giữ chân D7 (7 ngày)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatRetentionRatePercent(retention.checkpoints.d7.retentionRate)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Còn làm: {retention.checkpoints.d7.retainedCount} / {retention.checkpoints.d7.maturedCount} đã đủ tuổi ({retention.checkpoints.d7.immatureCount} chưa đủ tuổi)
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Giữ chân D30 (30 ngày)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatRetentionRatePercent(retention.checkpoints.d30.retentionRate)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Còn làm: {retention.checkpoints.d30.retainedCount} / {retention.checkpoints.d30.maturedCount} đã đủ tuổi ({retention.checkpoints.d30.immatureCount} chưa đủ tuổi)
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs text-muted">Giữ chân D90 (90 ngày)</dt>
+                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                  {formatRetentionRatePercent(retention.checkpoints.d90.retentionRate)}
+                </dd>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Còn làm: {retention.checkpoints.d90.retainedCount} / {retention.checkpoints.d90.maturedCount} đã đủ tuổi ({retention.checkpoints.d90.immatureCount} chưa đủ tuổi)
+                </p>
+              </div>
+            </dl>
+
+            <div className="mt-2 overflow-x-auto rounded-lg border border-border bg-surface">
+              <table className="r22-report-table w-full text-left text-xs">
+                <caption className="sr-only">
+                  Bảng giữ chân và nghỉ sớm theo mốc D7, D30, D90 tính đến ngày {retention.asOfDate}
+                </caption>
+                <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                  <tr className="border-b border-border">
+                    <th scope="col" className="px-2.5 py-1.5 font-medium">
+                      Mốc đánh giá
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Đã đủ tuổi
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Còn làm
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Nghỉ trước mốc
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">
+                      Chưa đủ tuổi
+                    </th>
+                    <th scope="col" className="px-2.5 py-1.5 text-right font-medium">
+                      Tỷ lệ giữ chân
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {retentionCheckpointRows.map((item) => (
+                    <tr key={item.key} className="text-foreground hover:bg-surface-hover">
+                      <td className="px-2.5 py-1.5 font-medium">{item.label}</td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.checkpoint.maturedCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.checkpoint.retainedCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.checkpoint.exitedCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {item.checkpoint.immatureCount}
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                        {formatRetentionRatePercent(item.checkpoint.retentionRate)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
+              <span>
+                Loại khỏi đoàn hệ {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}:{" "}
+                <strong className="font-mono text-foreground">{retention.neverEnteredOnCount}</strong> đợt chưa từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} ·{" "}
+                <strong className="font-mono text-foreground">{retention.unknownStatusEpisodeCount}</strong> đợt chưa xác định trạng thái.
+              </span>
+              {retention.periodCohort.applicable ? (
+                <span className="mt-1 block">
+                  Đoàn hệ bắt đầu vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} trong kỳ ({retention.periodCohort.fromDate} → {retention.periodCohort.toDate}):{" "}
+                  <strong className="font-mono text-foreground">{retention.periodCohort.enteredOnCount}</strong> đợt làm việc (duy trì đến cuối kỳ:{" "}
+                  <strong className="font-mono text-foreground">{retention.periodCohort.retainedAtToCount}</strong>, đã rời trước cuối kỳ:{" "}
+                  <strong className="font-mono text-foreground">{retention.periodCohort.exitedByToCount}</strong>, tỷ lệ duy trì cuối kỳ:{" "}
+                  <strong className="font-mono text-foreground">
+                    {formatRetentionRatePercent(retention.periodCohort.inPeriodRetentionRate)}
+                  </strong>
+                  ).
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
       </Card>

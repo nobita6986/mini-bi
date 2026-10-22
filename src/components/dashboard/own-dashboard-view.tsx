@@ -82,7 +82,6 @@ export function OwnDashboardView({
         <ScopeNote label="Phạm vi báo cáo cá nhân">{view.scopeNote}</ScopeNote>
         <FiltersOrError optionsResult={optionsResult} showRecruiter={view.showRecruiterFilter} />
         {!noData ? <PeriodComparisonBanner comparison={comparison} /> : null}
-        <WorkforceSnapshotSection workforce={workforce} />
 
         {noData ? (
           <EmptyState title={view.emptyTitle} description={view.emptyDescription} />
@@ -213,6 +212,8 @@ export function OwnDashboardView({
             </section>
           </>
         )}
+
+        <WorkforceSnapshotSection workforce={workforce} />
       </div>
     </main>
   );

@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  applyDashboardDefaultDateParams,
   computeDatePresets,
   countActiveFilterCriteria,
+  EXPLICIT_ALL_TIME_RANGE_PARAM,
+  getThisMonthDateRange,
   isAllTimeActive,
   matchDatePreset,
+  resolveDashboardDateRange,
   todayInHoChiMinh,
 } from "./p1-date-presets.ts";
 
@@ -97,4 +101,52 @@ test("15. countActiveFilterCriteria: date range là một tiêu chí", () => {
   assert.equal(countActiveFilterCriteria({ from: "2026-09-26", to: "2026-10-02", project: "p", provider: "hrp" }), 3);
   assert.equal(countActiveFilterCriteria({ project: "p", recruiter: "r", source: "s" }), 3);
   assert.equal(countActiveFilterCriteria({}), 0);
+});
+
+test("16. WF-03 default date filter: khi URL chưa có from/to/range thì mặc định là Tháng này theo Asia/Ho_Chi_Minh", () => {
+  assert.deepEqual(getThisMonthDateRange(REF), { from: "2026-10-01", to: "2026-10-02" });
+  const def = resolveDashboardDateRange({}, REF);
+  assert.deepEqual(def, {
+    from: "2026-10-01",
+    to: "2026-10-02",
+    isExplicitAllTime: false,
+    isDefaultThisMonth: true,
+  });
+  assert.equal(matchDatePreset(def.from, def.to, REF), "this-month");
+
+  // Server searchParams without date or range=all receives Tháng này:
+  assert.deepEqual(applyDashboardDefaultDateParams({ project: "proj-a" }, REF), {
+    project: "proj-a",
+    from: "2026-10-01",
+    to: "2026-10-02",
+  });
+});
+
+test("17. WF-03 default date filter: giữ nguyên from/to trên URL và phân biệt rõ khi người dùng chủ động chọn Tất cả thời gian", () => {
+  const explicitRange = resolveDashboardDateRange({ from: "2026-09-01", to: "2026-09-30" }, REF);
+  assert.deepEqual(explicitRange, {
+    from: "2026-09-01",
+    to: "2026-09-30",
+    isExplicitAllTime: false,
+    isDefaultThisMonth: false,
+  });
+  assert.deepEqual(
+    applyDashboardDefaultDateParams({ from: "2026-09-01", to: "2026-09-30" }, REF),
+    { from: "2026-09-01", to: "2026-09-30" },
+  );
+
+  const explicitAllTime = resolveDashboardDateRange(
+    { range: EXPLICIT_ALL_TIME_RANGE_PARAM },
+    REF,
+  );
+  assert.deepEqual(explicitAllTime, {
+    from: null,
+    to: null,
+    isExplicitAllTime: true,
+    isDefaultThisMonth: false,
+  });
+  assert.deepEqual(
+    applyDashboardDefaultDateParams({ range: EXPLICIT_ALL_TIME_RANGE_PARAM, project: "p1" }, REF),
+    { range: EXPLICIT_ALL_TIME_RANGE_PARAM, project: "p1" },
+  );
 });

@@ -78,18 +78,37 @@ export const WORKFORCE_BALANCE_COLUMN_LABELS = Object.freeze({
 } as const);
 
 export const WORKFORCE_WAITING_SAMPLE_LABELS = Object.freeze({
-  ALL_WAITING: "Tất cả hồ sơ có qua Đang chờ việc",
+  ALL_WAITING: "Tất cả đợt làm việc có qua Đang chờ việc",
   COMPLETED_WAITING: "Đã kết thúc chờ việc (Đang làm + Đã nghỉ)",
   PLACED_TO_ON: "Đã kết thúc chờ — Bố trí sang Đang làm",
   EXITED_WITHOUT_ON: "Đã kết thúc chờ — Chuyển sang Đã nghỉ",
   CURRENTLY_WAITING: "Đang còn chờ việc tại ngày mốc",
 } as const);
 
+export const WORKFORCE_DURATION_SAMPLE_LABELS = Object.freeze({
+  ALL_EVER_ON: "Tất cả đợt làm việc từng vào Đang làm",
+  CURRENTLY_ON: "Đang làm việc tại ngày mốc",
+  EXITED_AFTER_ON: "Đã rời trạng thái Đang làm sau khi vào làm",
+} as const);
+
+export const WORKFORCE_DURATION_BUCKET_LABELS = Object.freeze({
+  DAYS_0_TO_7: "Từ 0 đến 7 ngày",
+  DAYS_8_TO_30: "Từ 8 đến 30 ngày",
+  DAYS_31_TO_90: "Từ 31 đến 90 ngày",
+  DAYS_91_PLUS: "Từ 91 ngày trở lên",
+} as const);
+
+export const WORKFORCE_RETENTION_CHECKPOINT_LABELS = Object.freeze({
+  D7: "Mốc 7 ngày (D7)",
+  D30: "Mốc 30 ngày (D30)",
+  D90: "Mốc 90 ngày (D90)",
+} as const);
+
 export const WORKFORCE_UNIT_METADATA_NOTE =
-  "Đơn vị: hồ sơ lao động (entry_id) / sự kiện trạng thái (event_id) — không đồng nhất với người duy nhất. Tái tuyển dụng (rehire) tạo hồ sơ mới (entry_id riêng); chuyển tiếp Đã nghỉ → Đang làm trong cùng một entry_id không phải rehire. Khác với khối tuyển dụng Chặng 1 (lọc theo ngày báo cáo business_date), khối biến động nhân sự tính theo ngày bắt đầu làm việc (first_work_date) và ngày hiệu lực trạng thái (effective_date).";
+  "Đơn vị thống kê: từng đợt làm việc và từng lần thay đổi trạng thái — không gộp theo người lao động duy nhất. Tái tuyển dụng được ghi nhận thành một đợt làm việc mới; lần chuyển từ Đã nghỉ sang Đang làm trong cùng một đợt làm việc không tính là tái tuyển dụng. Khác với khối tuyển dụng (lọc theo ngày ghi nhận tuyển dụng), khối biến động nhân sự tính theo ngày bắt đầu làm việc và ngày trạng thái có hiệu lực.";
 
 export const WORKFORCE_NON_ATTENDANCE_NOTE =
-  "Lưu ý nghiệp vụ: Số ngày chờ việc và thời gian duy trì trạng thái được tính từ khoảng cách ngày hiệu lực sự kiện (effective_date) trên chuỗi trạng thái Đang chờ việc / Đang làm đã khử hiệu chỉnh (non-superseded), hoàn toàn không phải dữ liệu chấm công hay ngày đi làm thực tế.";
+  "Lưu ý nghiệp vụ: Số ngày chờ việc, thâm niên làm việc và ngày hiện diện theo trạng thái được tính từ khoảng cách giữa các ngày trạng thái có hiệu lực trên chuỗi Đang chờ việc / Đang làm (đã loại các bản ghi bị thay thế hoặc điều chỉnh), hoàn toàn không phải dữ liệu chấm công hay ngày đi làm thực tế.";
 
 export type WorkforceAsOfSource = "filter_to" | "current_hcm_date" | "explicit_as_of";
 
@@ -321,6 +340,147 @@ export interface WorkforceWaitingMetrics {
   periodWaiting: WorkforcePeriodWaitingMetrics;
 }
 
+/**
+ * WF-03 (2.5): Chỉ số thâm niên tích lũy ở trạng thái Đang làm (ON) cho một tập mẫu xác định.
+ */
+export interface WorkforceDurationSampleMetrics {
+  /** Số đợt làm việc thuộc nhóm mẫu. */
+  episodeCount: number;
+  /** Tổng số khoảng Đang làm (ON) liên tiếp (đã gộp no-op repeat) của nhóm mẫu. */
+  intervalCount: number;
+  /** Tổng số ngày ở trạng thái Đang làm (ON) tích lũy tính đến ngày mốc. */
+  totalOnDays: number;
+  /** Trung bình số ngày Đang làm / đợt làm việc trong nhóm mẫu (null nếu episodeCount === 0). */
+  avgOnDaysPerEpisode: number | null;
+  /** Trung bình số ngày Đang làm / khoảng Đang làm trong nhóm mẫu (null nếu intervalCount === 0). */
+  avgOnDaysPerInterval: number | null;
+  /** Số ngày Đang làm lớn nhất của một đợt làm việc trong nhóm mẫu (null nếu episodeCount === 0). */
+  maxOnDays: number | null;
+}
+
+export interface WorkforceDurationDistribution {
+  /** Số đợt làm việc từng vào Đang làm có tổng ngày Đang làm từ 0 đến 7 ngày. */
+  days0To7Count: number;
+  /** Số đợt làm việc từng vào Đang làm có tổng ngày Đang làm từ 8 đến 30 ngày. */
+  days8To30Count: number;
+  /** Số đợt làm việc từng vào Đang làm có tổng ngày Đang làm từ 31 đến 90 ngày. */
+  days31To90Count: number;
+  /** Số đợt làm việc từng vào Đang làm có tổng ngày Đang làm từ 91 ngày trở lên. */
+  days91PlusCount: number;
+}
+
+export type WorkforcePeriodPresenceMetrics =
+  | {
+      applicable: true;
+      fromDate: string;
+      toDate: string;
+      /** Số đợt làm việc có khoảng Đang làm (ON) giao với kỳ [fromDate, toDate]. */
+      activeOnEpisodeCount: number;
+      /** Tổng số ngày hiện diện theo trạng thái Đang làm (ON) cắt trong cửa sổ [fromDate, toDate]. */
+      inPeriodOnDays: number;
+      /** Trung bình số ngày hiện diện theo trạng thái trong kỳ / đợt làm việc có mặt (null nếu activeOnEpisodeCount === 0). */
+      avgInPeriodOnDaysPerActiveEpisode: number | null;
+    }
+  | {
+      applicable: false;
+      reason: WorkforceTransitionsNotApplicableReason;
+      fromDate: string | null;
+      toDate: string | null;
+      windowLabel: string;
+    };
+
+export interface WorkforceDurationMetrics {
+  asOfDate: string;
+  asOfSource: WorkforceAsOfSource;
+  /** Tổng số đợt làm việc hợp lệ tại ngày mốc (bằng snapshot.eligibleEpisodeTotal). */
+  eligibleEpisodeTotal: number;
+  /** Số đợt làm việc hợp lệ đã có chuỗi trạng thái xác định <= asOfDate. */
+  knownStatusEpisodeCount: number;
+  /** Số đợt làm việc hợp lệ chưa có sự kiện trạng thái <= asOfDate (bằng snapshot.unknownCount). */
+  unknownStatusEpisodeCount: number;
+  /** Số đợt làm việc hợp lệ từng vào trạng thái Đang làm (ON) ít nhất 1 lần <= asOfDate. */
+  everOnEpisodeCount: number;
+  /** Số đợt làm việc có chuỗi trạng thái xác định nhưng chưa từng vào Đang làm (ON) <= asOfDate. */
+  neverOnEpisodeCount: number;
+  /** Mẫu 1: Tất cả đợt làm việc từng vào Đang làm (episodeCount === everOnEpisodeCount). */
+  allEverOn: WorkforceDurationSampleMetrics;
+  /** Mẫu 2: Đợt làm việc hiện vẫn đang ở trạng thái Đang làm tại ngày mốc (episodeCount === snapshot.onCount). */
+  currentlyOn: WorkforceDurationSampleMetrics;
+  /** Mẫu 3: Đợt làm việc từng vào Đang làm nhưng tại ngày mốc đã rời trạng thái Đang làm. */
+  exitedAfterOn: WorkforceDurationSampleMetrics;
+  /** Phân bổ thâm niên tích lũy theo nhóm ngày của tất cả đợt làm việc từng vào Đang làm. */
+  distribution: WorkforceDurationDistribution;
+  /** Số ngày hiện diện theo trạng thái Đang làm (ON) cắt trong kỳ lọc [from, to]. */
+  periodPresence: WorkforcePeriodPresenceMetrics;
+}
+
+/**
+ * WF-03 (2.6): Chỉ số giữ chân và nghỉ sớm tại một mốc đánh giá k ngày (D7, D30, D90).
+ */
+export interface WorkforceRetentionCheckpointMetrics {
+  /** Số ngày của mốc giữ chân (7, 30 hoặc 90). */
+  checkpointDays: 7 | 30 | 90;
+  /** Số đợt làm việc trong đoàn hệ đã đủ tuổi đánh giá tại ngày mốc (cohort_start_date + k <= asOfDate). */
+  maturedCount: number;
+  /** Số đợt làm việc trong đoàn hệ chưa đủ tuổi đánh giá tại ngày mốc (cohort_start_date + k > asOfDate). */
+  immatureCount: number;
+  /** Số đợt làm việc đã đủ tuổi và duy trì Đang làm liên tục qua mốc k ngày. */
+  retainedCount: number;
+  /** Số đợt làm việc đã đủ tuổi nhưng đã rời trạng thái Đang làm từ hoặc trước mốc k ngày. */
+  exitedCount: number;
+  /** Tỷ lệ giữ chân trên tập đã đủ tuổi: retainedCount / maturedCount (null nếu maturedCount === 0). */
+  retentionRate: number | null;
+  /** Tỷ lệ nghỉ sớm tại mốc k ngày trên tập đã đủ tuổi: exitedCount / maturedCount (null nếu maturedCount === 0). */
+  attritionRate: number | null;
+}
+
+export type WorkforcePeriodCohortMetrics =
+  | {
+      applicable: true;
+      fromDate: string;
+      toDate: string;
+      /** Số đợt làm việc có ngày bắt đầu vào Đang làm lần đầu nằm trong kỳ [fromDate, toDate]. */
+      enteredOnCount: number;
+      /** Số đợt làm việc thuộc nhóm trên vẫn duy trì Đang làm liên tục đến hết ngày toDate. */
+      retainedAtToCount: number;
+      /** Số đợt làm việc thuộc nhóm trên đã rời Đang làm từ hoặc trước ngày toDate. */
+      exitedByToCount: number;
+      /** Tỷ lệ duy trì đến cuối kỳ của đoàn hệ vào làm trong kỳ (null nếu enteredOnCount === 0). */
+      inPeriodRetentionRate: number | null;
+    }
+  | {
+      applicable: false;
+      reason: WorkforceTransitionsNotApplicableReason;
+      fromDate: string | null;
+      toDate: string | null;
+      windowLabel: string;
+    };
+
+export interface WorkforceRetentionMetrics {
+  asOfDate: string;
+  asOfSource: WorkforceAsOfSource;
+  /** Tổng số đợt làm việc hợp lệ tại ngày mốc (bằng snapshot.eligibleEpisodeTotal). */
+  eligibleEpisodeTotal: number;
+  /** Tổng số đợt làm việc hợp lệ đã từng vào Đang làm (ON) <= asOfDate (thuộc đoàn hệ giữ chân). */
+  cohortEpisodeTotal: number;
+  /** Số đợt làm việc có trạng thái xác định nhưng chưa từng vào Đang làm <= asOfDate (loại khỏi đoàn hệ ON). */
+  neverEnteredOnCount: number;
+  /** Số đợt làm việc chưa xác định trạng thái <= asOfDate (loại khỏi đoàn hệ ON). */
+  unknownStatusEpisodeCount: number;
+  /** Số đợt làm việc trong đoàn hệ hiện vẫn duy trì liên tục ở lần vào Đang làm đầu tiên đến ngày mốc. */
+  currentlyRetainedCount: number;
+  /** Số đợt làm việc trong đoàn hệ đã rời khỏi lần vào Đang làm đầu tiên tính đến ngày mốc. */
+  exitedFromOnTotal: number;
+  /** Các mốc đánh giá giữ chân D7, D30, D90 tính từ ngày thực tế vào trạng thái Đang làm lần đầu. */
+  checkpoints: {
+    d7: WorkforceRetentionCheckpointMetrics;
+    d30: WorkforceRetentionCheckpointMetrics;
+    d90: WorkforceRetentionCheckpointMetrics;
+  };
+  /** Đoàn hệ các đợt làm việc bắt đầu vào Đang làm trong kỳ lọc [from, to]. */
+  periodCohort: WorkforcePeriodCohortMetrics;
+}
+
 export type WorkforceReportingResult =
   | {
       status: "ready";
@@ -328,6 +488,8 @@ export type WorkforceReportingResult =
       transitions: WorkforcePeriodTransitions;
       balance: WorkforcePeriodBalance;
       waiting: WorkforceWaitingMetrics;
+      duration: WorkforceDurationMetrics;
+      retention: WorkforceRetentionMetrics;
     }
   | {
       status: "unavailable";
@@ -829,12 +991,440 @@ function computeWaitingMetricsAtAsOf(input: {
   };
 }
 
+function buildDurationSampleMetrics(
+  episodeCount: number,
+  intervalCount: number,
+  totalOnDays: number,
+  maxOnDays: number | null,
+): WorkforceDurationSampleMetrics {
+  if (episodeCount <= 0) {
+    return {
+      episodeCount: 0,
+      intervalCount: 0,
+      totalOnDays: 0,
+      avgOnDaysPerEpisode: null,
+      avgOnDaysPerInterval: null,
+      maxOnDays: null,
+    };
+  }
+  return {
+    episodeCount,
+    intervalCount,
+    totalOnDays,
+    avgOnDaysPerEpisode: totalOnDays / episodeCount,
+    avgOnDaysPerInterval: intervalCount > 0 ? totalOnDays / intervalCount : null,
+    maxOnDays: maxOnDays ?? 0,
+  };
+}
+
+function computeDurationMetricsAtAsOf(input: {
+  eligibleEpisodes: ReadonlyMap<string, WorkforceEpisodeRecord>;
+  eventsByEntry: ReadonlyMap<string, readonly WorkforceStatusEventRecord[]>;
+  snapshot: WorkforceAsOfSnapshot;
+  statusByEntryAtAsOf: ReadonlyMap<string, WorkforceStatusBucket | "FUTURE">;
+  periodWindow:
+    | { applicable: true; fromDate: string; toDate: string }
+    | {
+        applicable: false;
+        reason: WorkforceTransitionsNotApplicableReason;
+        fromDate: string | null;
+        toDate: string | null;
+      };
+}): WorkforceDurationMetrics {
+  const { eligibleEpisodes, eventsByEntry, snapshot, statusByEntryAtAsOf, periodWindow } = input;
+  const asOfDate = snapshot.asOfDate;
+
+  let allEpCount = 0;
+  let allIntervalCount = 0;
+  let allOnDays = 0;
+  let allMaxOnDays: number | null = null;
+
+  let currentEpCount = 0;
+  let currentIntervalCount = 0;
+  let currentOnDays = 0;
+  let currentMaxOnDays: number | null = null;
+
+  let exitedEpCount = 0;
+  let exitedIntervalCount = 0;
+  let exitedOnDays = 0;
+  let exitedMaxOnDays: number | null = null;
+
+  let days0To7Count = 0;
+  let days8To30Count = 0;
+  let days31To90Count = 0;
+  let days91PlusCount = 0;
+
+  for (const ep of eligibleEpisodes.values()) {
+    const asOfStatus = statusByEntryAtAsOf.get(ep.entry_id) ?? "FUTURE";
+    if (asOfStatus === "FUTURE") continue;
+
+    const fullChain = eventsByEntry.get(ep.entry_id) ?? [];
+    const distinctEvents: WorkforceStatusEventRecord[] = [];
+    for (let i = 0; i < fullChain.length; i += 1) {
+      const ev = fullChain[i];
+      if (ev.effective_date > asOfDate) continue;
+      const prevStatus = i === 0 ? null : fullChain[i - 1].status;
+      if (prevStatus === null || prevStatus !== ev.status) {
+        distinctEvents.push(ev);
+      }
+    }
+
+    let intervalCount = 0;
+    let totalEpisodeOnDays = 0;
+
+    for (let i = 0; i < distinctEvents.length; i += 1) {
+      const ev = distinctEvents[i];
+      if (ev.status !== "ON") continue;
+      const nextEv = i + 1 < distinctEvents.length ? distinctEvents[i + 1] : null;
+      const endDate = nextEv ? nextEv.effective_date : asOfDate;
+      const days = Math.max(0, diffYmdDays(ev.effective_date, endDate));
+      intervalCount += 1;
+      totalEpisodeOnDays += days;
+    }
+
+    if (intervalCount > 0) {
+      allEpCount += 1;
+      allIntervalCount += intervalCount;
+      allOnDays += totalEpisodeOnDays;
+      allMaxOnDays =
+        allMaxOnDays === null ? totalEpisodeOnDays : Math.max(allMaxOnDays, totalEpisodeOnDays);
+
+      if (totalEpisodeOnDays <= 7) {
+        days0To7Count += 1;
+      } else if (totalEpisodeOnDays <= 30) {
+        days8To30Count += 1;
+      } else if (totalEpisodeOnDays <= 90) {
+        days31To90Count += 1;
+      } else {
+        days91PlusCount += 1;
+      }
+
+      if (asOfStatus === "ON") {
+        currentEpCount += 1;
+        currentIntervalCount += intervalCount;
+        currentOnDays += totalEpisodeOnDays;
+        currentMaxOnDays =
+          currentMaxOnDays === null
+            ? totalEpisodeOnDays
+            : Math.max(currentMaxOnDays, totalEpisodeOnDays);
+      } else {
+        exitedEpCount += 1;
+        exitedIntervalCount += intervalCount;
+        exitedOnDays += totalEpisodeOnDays;
+        exitedMaxOnDays =
+          exitedMaxOnDays === null
+            ? totalEpisodeOnDays
+            : Math.max(exitedMaxOnDays, totalEpisodeOnDays);
+      }
+    }
+  }
+
+  let periodPresence: WorkforcePeriodPresenceMetrics;
+  if (!periodWindow.applicable) {
+    periodPresence = {
+      applicable: false,
+      reason: periodWindow.reason,
+      fromDate: periodWindow.fromDate,
+      toDate: periodWindow.toDate,
+      windowLabel: formatWorkforceTransitionsNotApplicableLabel(periodWindow.reason),
+    };
+  } else {
+    const { fromDate, toDate } = periodWindow;
+    const activeOnEpisodes = new Set<string>();
+    let inPeriodOnDays = 0;
+
+    for (const ep of eligibleEpisodes.values()) {
+      if (ep.first_work_date > toDate) continue;
+      const fullChain = eventsByEntry.get(ep.entry_id) ?? [];
+      const distinctEvents: WorkforceStatusEventRecord[] = [];
+      for (let i = 0; i < fullChain.length; i += 1) {
+        const ev = fullChain[i];
+        if (ev.effective_date > toDate) continue;
+        const prevStatus = i === 0 ? null : fullChain[i - 1].status;
+        if (prevStatus === null || prevStatus !== ev.status) {
+          distinctEvents.push(ev);
+        }
+      }
+
+      for (let i = 0; i < distinctEvents.length; i += 1) {
+        const ev = distinctEvents[i];
+        if (ev.status !== "ON") continue;
+        const nextEv = i + 1 < distinctEvents.length ? distinctEvents[i + 1] : null;
+        const endDate = nextEv ? nextEv.effective_date : toDate;
+        const clippedStart = ev.effective_date > fromDate ? ev.effective_date : fromDate;
+        const clippedEnd = endDate < toDate ? endDate : toDate;
+        const clippedDays = Math.max(0, diffYmdDays(clippedStart, clippedEnd));
+
+        if (ev.effective_date <= toDate && endDate >= fromDate) {
+          activeOnEpisodes.add(ep.entry_id);
+          inPeriodOnDays += clippedDays;
+        }
+      }
+    }
+
+    const activeOnEpisodeCount = activeOnEpisodes.size;
+    periodPresence = {
+      applicable: true,
+      fromDate,
+      toDate,
+      activeOnEpisodeCount,
+      inPeriodOnDays,
+      avgInPeriodOnDaysPerActiveEpisode:
+        activeOnEpisodeCount > 0 ? inPeriodOnDays / activeOnEpisodeCount : null,
+    };
+  }
+
+  const knownStatusEpisodeCount = snapshot.eligibleEpisodeTotal - snapshot.unknownCount;
+  const neverOnEpisodeCount = Math.max(0, knownStatusEpisodeCount - allEpCount);
+
+  return {
+    asOfDate,
+    asOfSource: snapshot.asOfSource,
+    eligibleEpisodeTotal: snapshot.eligibleEpisodeTotal,
+    knownStatusEpisodeCount,
+    unknownStatusEpisodeCount: snapshot.unknownCount,
+    everOnEpisodeCount: allEpCount,
+    neverOnEpisodeCount,
+    allEverOn: buildDurationSampleMetrics(allEpCount, allIntervalCount, allOnDays, allMaxOnDays),
+    currentlyOn: buildDurationSampleMetrics(
+      currentEpCount,
+      currentIntervalCount,
+      currentOnDays,
+      currentMaxOnDays,
+    ),
+    exitedAfterOn: buildDurationSampleMetrics(
+      exitedEpCount,
+      exitedIntervalCount,
+      exitedOnDays,
+      exitedMaxOnDays,
+    ),
+    distribution: {
+      days0To7Count,
+      days8To30Count,
+      days31To90Count,
+      days91PlusCount,
+    },
+    periodPresence,
+  };
+}
+
+function buildRetentionCheckpointMetrics(
+  checkpointDays: 7 | 30 | 90,
+  maturedCount: number,
+  immatureCount: number,
+  retainedCount: number,
+  exitedCount: number,
+): WorkforceRetentionCheckpointMetrics {
+  return {
+    checkpointDays,
+    maturedCount,
+    immatureCount,
+    retainedCount,
+    exitedCount,
+    retentionRate: maturedCount > 0 ? retainedCount / maturedCount : null,
+    attritionRate: maturedCount > 0 ? exitedCount / maturedCount : null,
+  };
+}
+
+function computeRetentionMetricsAtAsOf(input: {
+  eligibleEpisodes: ReadonlyMap<string, WorkforceEpisodeRecord>;
+  eventsByEntry: ReadonlyMap<string, readonly WorkforceStatusEventRecord[]>;
+  snapshot: WorkforceAsOfSnapshot;
+  statusByEntryAtAsOf: ReadonlyMap<string, WorkforceStatusBucket | "FUTURE">;
+  periodWindow:
+    | { applicable: true; fromDate: string; toDate: string }
+    | {
+        applicable: false;
+        reason: WorkforceTransitionsNotApplicableReason;
+        fromDate: string | null;
+        toDate: string | null;
+      };
+}): WorkforceRetentionMetrics {
+  const { eligibleEpisodes, eventsByEntry, snapshot, statusByEntryAtAsOf, periodWindow } = input;
+  const asOfDate = snapshot.asOfDate;
+
+  let cohortEpisodeTotal = 0;
+  let currentlyRetainedCount = 0;
+  let exitedFromOnTotal = 0;
+
+  let d7Matured = 0;
+  let d7Immature = 0;
+  let d7Retained = 0;
+  let d7Exited = 0;
+
+  let d30Matured = 0;
+  let d30Immature = 0;
+  let d30Retained = 0;
+  let d30Exited = 0;
+
+  let d90Matured = 0;
+  let d90Immature = 0;
+  let d90Retained = 0;
+  let d90Exited = 0;
+
+  for (const ep of eligibleEpisodes.values()) {
+    const asOfStatus = statusByEntryAtAsOf.get(ep.entry_id) ?? "FUTURE";
+    if (asOfStatus === "FUTURE") continue;
+
+    const fullChain = eventsByEntry.get(ep.entry_id) ?? [];
+    const distinctEvents: WorkforceStatusEventRecord[] = [];
+    for (let i = 0; i < fullChain.length; i += 1) {
+      const ev = fullChain[i];
+      if (ev.effective_date > asOfDate) continue;
+      const prevStatus = i === 0 ? null : fullChain[i - 1].status;
+      if (prevStatus === null || prevStatus !== ev.status) {
+        distinctEvents.push(ev);
+      }
+    }
+
+    let firstOnIndex = -1;
+    for (let i = 0; i < distinctEvents.length; i += 1) {
+      if (distinctEvents[i].status === "ON") {
+        firstOnIndex = i;
+        break;
+      }
+    }
+    if (firstOnIndex === -1) continue;
+
+    cohortEpisodeTotal += 1;
+    const cohortStartDate = distinctEvents[firstOnIndex].effective_date;
+    const nextAfterFirstOn =
+      firstOnIndex + 1 < distinctEvents.length ? distinctEvents[firstOnIndex + 1] : null;
+    const firstExitDate = nextAfterFirstOn ? nextAfterFirstOn.effective_date : null;
+
+    if (firstExitDate === null) {
+      currentlyRetainedCount += 1;
+    } else {
+      exitedFromOnTotal += 1;
+    }
+
+    const d7Date = shiftYmdDays(cohortStartDate, 7);
+    if (d7Date <= asOfDate) {
+      d7Matured += 1;
+      if (firstExitDate === null || firstExitDate > d7Date) {
+        d7Retained += 1;
+      } else {
+        d7Exited += 1;
+      }
+    } else {
+      d7Immature += 1;
+    }
+
+    const d30Date = shiftYmdDays(cohortStartDate, 30);
+    if (d30Date <= asOfDate) {
+      d30Matured += 1;
+      if (firstExitDate === null || firstExitDate > d30Date) {
+        d30Retained += 1;
+      } else {
+        d30Exited += 1;
+      }
+    } else {
+      d30Immature += 1;
+    }
+
+    const d90Date = shiftYmdDays(cohortStartDate, 90);
+    if (d90Date <= asOfDate) {
+      d90Matured += 1;
+      if (firstExitDate === null || firstExitDate > d90Date) {
+        d90Retained += 1;
+      } else {
+        d90Exited += 1;
+      }
+    } else {
+      d90Immature += 1;
+    }
+  }
+
+  let periodCohort: WorkforcePeriodCohortMetrics;
+  if (!periodWindow.applicable) {
+    periodCohort = {
+      applicable: false,
+      reason: periodWindow.reason,
+      fromDate: periodWindow.fromDate,
+      toDate: periodWindow.toDate,
+      windowLabel: formatWorkforceTransitionsNotApplicableLabel(periodWindow.reason),
+    };
+  } else {
+    const { fromDate, toDate } = periodWindow;
+    let enteredOnCount = 0;
+    let retainedAtToCount = 0;
+    let exitedByToCount = 0;
+
+    for (const ep of eligibleEpisodes.values()) {
+      if (ep.first_work_date > toDate) continue;
+      const fullChain = eventsByEntry.get(ep.entry_id) ?? [];
+      const distinctEvents: WorkforceStatusEventRecord[] = [];
+      for (let i = 0; i < fullChain.length; i += 1) {
+        const ev = fullChain[i];
+        if (ev.effective_date > toDate) continue;
+        const prevStatus = i === 0 ? null : fullChain[i - 1].status;
+        if (prevStatus === null || prevStatus !== ev.status) {
+          distinctEvents.push(ev);
+        }
+      }
+
+      let firstOnIndex = -1;
+      for (let i = 0; i < distinctEvents.length; i += 1) {
+        if (distinctEvents[i].status === "ON") {
+          firstOnIndex = i;
+          break;
+        }
+      }
+      if (firstOnIndex === -1) continue;
+
+      const cohortStartDate = distinctEvents[firstOnIndex].effective_date;
+      if (cohortStartDate < fromDate || cohortStartDate > toDate) continue;
+
+      enteredOnCount += 1;
+      const nextAfterFirstOn =
+        firstOnIndex + 1 < distinctEvents.length ? distinctEvents[firstOnIndex + 1] : null;
+      if (nextAfterFirstOn === null) {
+        retainedAtToCount += 1;
+      } else {
+        exitedByToCount += 1;
+      }
+    }
+
+    periodCohort = {
+      applicable: true,
+      fromDate,
+      toDate,
+      enteredOnCount,
+      retainedAtToCount,
+      exitedByToCount,
+      inPeriodRetentionRate: enteredOnCount > 0 ? retainedAtToCount / enteredOnCount : null,
+    };
+  }
+
+  const knownStatusEpisodeCount = snapshot.eligibleEpisodeTotal - snapshot.unknownCount;
+  const neverEnteredOnCount = Math.max(0, knownStatusEpisodeCount - cohortEpisodeTotal);
+
+  return {
+    asOfDate,
+    asOfSource: snapshot.asOfSource,
+    eligibleEpisodeTotal: snapshot.eligibleEpisodeTotal,
+    cohortEpisodeTotal,
+    neverEnteredOnCount,
+    unknownStatusEpisodeCount: snapshot.unknownCount,
+    currentlyRetainedCount,
+    exitedFromOnTotal,
+    checkpoints: {
+      d7: buildRetentionCheckpointMetrics(7, d7Matured, d7Immature, d7Retained, d7Exited),
+      d30: buildRetentionCheckpointMetrics(30, d30Matured, d30Immature, d30Retained, d30Exited),
+      d90: buildRetentionCheckpointMetrics(90, d90Matured, d90Immature, d90Retained, d90Exited),
+    },
+    periodCohort,
+  };
+}
+
 /**
  * Hàm thuần tính toán:
  * - 2.1 Workforce Snapshot `as-of`
  * - 2.2 Status Transitions trong kỳ `[from, to]`
  * - 2.3 Cân bằng biến động đầu kỳ (`from - 1`) / cuối kỳ (`to`)
  * - 2.4 Thời gian chờ việc (`UNCONFIRMED`) và tỷ lệ bố trí được việc (`UNCONFIRMED -> ON`)
+ * - 2.5 Thâm niên tích lũy ở trạng thái Đang làm (`ON`) và ngày hiện diện theo trạng thái trong kỳ
+ * - 2.6 Nghỉ sớm và giữ chân theo mốc D7 / D30 / D90 tính từ ngày thực tế vào Đang làm lần đầu
  * theo đúng hợp đồng business-effective `effective_date <= asOfDate` trên chuỗi sự kiện đã khử `superseded`.
  */
 export function evaluateWorkforceSnapshotAndTransitions(input: {
@@ -848,6 +1438,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
   transitions: WorkforcePeriodTransitions;
   balance: WorkforcePeriodBalance;
   waiting: WorkforceWaitingMetrics;
+  duration: WorkforceDurationMetrics;
+  retention: WorkforceRetentionMetrics;
 } {
   const { asOfDate, asOfSource } = resolveWorkforceAsOfDate(input.filters, {
     asOfOverride: input.asOfOverride,
@@ -901,17 +1493,37 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
     asOfSource,
   );
 
-  // 4. Kiểm tra tính hợp lệ của kỳ [from, to] cho 2.2, 2.3 và 2.4:
+  // 4. Kiểm tra tính hợp lệ của kỳ [from, to] cho 2.2, 2.3, 2.4, 2.5 và 2.6:
   const rawFrom = input.filters.from?.trim() || "";
   const rawTo = input.filters.to?.trim() || "";
 
   if (!rawFrom && !rawTo) {
+    const periodWindow = {
+      applicable: false as const,
+      reason: "all_time" as const,
+      fromDate: null,
+      toDate: null,
+    };
     const waiting = computeWaitingMetricsAtAsOf({
       eligibleEpisodes,
       eventsByEntry,
       snapshot,
       statusByEntryAtAsOf,
-      periodWindow: { applicable: false, reason: "all_time", fromDate: null, toDate: null },
+      periodWindow,
+    });
+    const duration = computeDurationMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
+    });
+    const retention = computeRetentionMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
     });
     return {
       snapshot,
@@ -930,21 +1542,38 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
         windowLabel: formatWorkforceBalanceNotApplicableLabel("all_time"),
       },
       waiting,
+      duration,
+      retention,
     };
   }
 
   if (!rawFrom || !rawTo) {
+    const periodWindow = {
+      applicable: false as const,
+      reason: "one_sided" as const,
+      fromDate: rawFrom || null,
+      toDate: rawTo || null,
+    };
     const waiting = computeWaitingMetricsAtAsOf({
       eligibleEpisodes,
       eventsByEntry,
       snapshot,
       statusByEntryAtAsOf,
-      periodWindow: {
-        applicable: false,
-        reason: "one_sided",
-        fromDate: rawFrom || null,
-        toDate: rawTo || null,
-      },
+      periodWindow,
+    });
+    const duration = computeDurationMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
+    });
+    const retention = computeRetentionMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
     });
     return {
       snapshot,
@@ -963,21 +1592,38 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
         windowLabel: formatWorkforceBalanceNotApplicableLabel("one_sided"),
       },
       waiting,
+      duration,
+      retention,
     };
   }
 
   if (!isRealCalendarDate(rawFrom) || !isRealCalendarDate(rawTo) || rawFrom > rawTo) {
+    const periodWindow = {
+      applicable: false as const,
+      reason: "invalid_range" as const,
+      fromDate: rawFrom,
+      toDate: rawTo,
+    };
     const waiting = computeWaitingMetricsAtAsOf({
       eligibleEpisodes,
       eventsByEntry,
       snapshot,
       statusByEntryAtAsOf,
-      periodWindow: {
-        applicable: false,
-        reason: "invalid_range",
-        fromDate: rawFrom,
-        toDate: rawTo,
-      },
+      periodWindow,
+    });
+    const duration = computeDurationMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
+    });
+    const retention = computeRetentionMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
     });
     return {
       snapshot,
@@ -996,6 +1642,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
         windowLabel: formatWorkforceBalanceNotApplicableLabel("invalid_range"),
       },
       waiting,
+      duration,
+      retention,
     };
   }
 
@@ -1290,12 +1938,31 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
   };
 
   // 7. Tính 2.4 Thời gian chờ việc và tỷ lệ bố trí được việc:
+  const periodWindow = { applicable: true as const, fromDate: rawFrom, toDate: rawTo };
   const waiting = computeWaitingMetricsAtAsOf({
     eligibleEpisodes,
     eventsByEntry,
     snapshot,
     statusByEntryAtAsOf,
-    periodWindow: { applicable: true, fromDate: rawFrom, toDate: rawTo },
+    periodWindow,
+  });
+
+  // 8. Tính 2.5 Thâm niên tích lũy ở trạng thái Đang làm (ON) và ngày hiện diện theo trạng thái trong kỳ:
+  const duration = computeDurationMetricsAtAsOf({
+    eligibleEpisodes,
+    eventsByEntry,
+    snapshot,
+    statusByEntryAtAsOf,
+    periodWindow,
+  });
+
+  // 9. Tính 2.6 Nghỉ sớm và giữ chân theo mốc D7 / D30 / D90:
+  const retention = computeRetentionMetricsAtAsOf({
+    eligibleEpisodes,
+    eventsByEntry,
+    snapshot,
+    statusByEntryAtAsOf,
+    periodWindow,
   });
 
   return {
@@ -1325,6 +1992,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
     },
     balance,
     waiting,
+    duration,
+    retention,
   };
 }
 
@@ -1955,10 +2624,423 @@ function parseWaitingSection(
   };
 }
 
+function parseDurationSample(raw: unknown): WorkforceDurationSampleMetrics | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const episodeCount = nonNegativeInt(r.episode_count);
+  const intervalCount = nonNegativeInt(r.interval_count);
+  const totalOnDays = nonNegativeInt(r.total_on_days);
+  const maxRaw = r.max_on_days;
+  const maxOnDays = maxRaw === null || maxRaw === undefined ? null : nonNegativeInt(maxRaw);
+
+  if (episodeCount === null || intervalCount === null || totalOnDays === null) {
+    return null;
+  }
+  if (maxRaw !== null && maxRaw !== undefined && maxOnDays === null) {
+    return null;
+  }
+
+  if (episodeCount === 0) {
+    if (intervalCount !== 0 || totalOnDays !== 0 || maxOnDays !== null) {
+      return null;
+    }
+    return buildDurationSampleMetrics(0, 0, 0, null);
+  }
+
+  if (intervalCount < episodeCount || maxOnDays === null || maxOnDays > totalOnDays) {
+    return null;
+  }
+
+  return buildDurationSampleMetrics(episodeCount, intervalCount, totalOnDays, maxOnDays);
+}
+
+function parseDurationSection(
+  durRaw: unknown,
+  snapshot: WorkforceAsOfSnapshot,
+  transitions: WorkforcePeriodTransitions,
+): { ok: true; duration: WorkforceDurationMetrics } | { ok: false; reason: string } {
+  if (typeof durRaw !== "object" || durRaw === null) {
+    return { ok: false, reason: "missing_duration_section" };
+  }
+  const d = durRaw as Record<string, unknown>;
+  const asOfDate = typeof d.as_of_date === "string" ? d.as_of_date : "";
+  const asOfSourceRaw = d.as_of_source;
+  const asOfSource: WorkforceAsOfSource | null =
+    asOfSourceRaw === "filter_to" ||
+    asOfSourceRaw === "current_hcm_date" ||
+    asOfSourceRaw === "explicit_as_of"
+      ? asOfSourceRaw
+      : null;
+
+  const eligibleEpisodeTotal = nonNegativeInt(d.eligible_episode_total);
+  const knownStatusEpisodeCount = nonNegativeInt(d.known_status_episode_count);
+  const unknownStatusEpisodeCount = nonNegativeInt(d.unknown_status_episode_count);
+  const everOnEpisodeCount = nonNegativeInt(d.ever_on_episode_count);
+  const neverOnEpisodeCount = nonNegativeInt(d.never_on_episode_count);
+
+  if (
+    asOfDate !== snapshot.asOfDate ||
+    asOfSource !== snapshot.asOfSource ||
+    eligibleEpisodeTotal === null ||
+    eligibleEpisodeTotal !== snapshot.eligibleEpisodeTotal ||
+    knownStatusEpisodeCount === null ||
+    unknownStatusEpisodeCount === null ||
+    unknownStatusEpisodeCount !== snapshot.unknownCount ||
+    everOnEpisodeCount === null ||
+    neverOnEpisodeCount === null
+  ) {
+    return { ok: false, reason: "invalid_duration_header_fields" };
+  }
+
+  if (
+    knownStatusEpisodeCount + unknownStatusEpisodeCount !== eligibleEpisodeTotal ||
+    everOnEpisodeCount + neverOnEpisodeCount !== knownStatusEpisodeCount
+  ) {
+    return { ok: false, reason: "duration_episode_sum_invariant_violated" };
+  }
+
+  const allEverOn = parseDurationSample(d.all_ever_on);
+  const currentlyOn = parseDurationSample(d.currently_on);
+  const exitedAfterOn = parseDurationSample(d.exited_after_on);
+  if (!allEverOn || !currentlyOn || !exitedAfterOn) {
+    return { ok: false, reason: "invalid_duration_sample_metrics" };
+  }
+
+  if (
+    allEverOn.episodeCount !== everOnEpisodeCount ||
+    currentlyOn.episodeCount !== snapshot.onCount ||
+    currentlyOn.episodeCount + exitedAfterOn.episodeCount !== allEverOn.episodeCount ||
+    currentlyOn.intervalCount + exitedAfterOn.intervalCount !== allEverOn.intervalCount ||
+    currentlyOn.totalOnDays + exitedAfterOn.totalOnDays !== allEverOn.totalOnDays
+  ) {
+    return { ok: false, reason: "duration_sample_partition_invariant_violated" };
+  }
+
+  const distRaw =
+    typeof d.distribution === "object" && d.distribution !== null
+      ? (d.distribution as Record<string, unknown>)
+      : null;
+  if (!distRaw) {
+    return { ok: false, reason: "missing_duration_distribution" };
+  }
+
+  const days0To7Count = nonNegativeInt(distRaw.days_0_to_7_count);
+  const days8To30Count = nonNegativeInt(distRaw.days_8_to_30_count);
+  const days31To90Count = nonNegativeInt(distRaw.days_31_to_90_count);
+  const days91PlusCount = nonNegativeInt(distRaw.days_91_plus_count);
+  if (
+    days0To7Count === null ||
+    days8To30Count === null ||
+    days31To90Count === null ||
+    days91PlusCount === null
+  ) {
+    return { ok: false, reason: "invalid_duration_distribution_fields" };
+  }
+
+  if (
+    days0To7Count + days8To30Count + days31To90Count + days91PlusCount !==
+    allEverOn.episodeCount
+  ) {
+    return { ok: false, reason: "duration_distribution_sum_invariant_violated" };
+  }
+
+  const ppRaw =
+    typeof d.period_presence === "object" && d.period_presence !== null
+      ? (d.period_presence as Record<string, unknown>)
+      : null;
+  if (!ppRaw) {
+    return { ok: false, reason: "missing_period_presence" };
+  }
+
+  let periodPresence: WorkforcePeriodPresenceMetrics;
+  if (ppRaw.applicable === false) {
+    if (transitions.applicable) {
+      return { ok: false, reason: "period_presence_applicability_mismatch" };
+    }
+    const reasonRaw = ppRaw.reason;
+    const reason: WorkforceTransitionsNotApplicableReason =
+      reasonRaw === "all_time" || reasonRaw === "one_sided" || reasonRaw === "invalid_range"
+        ? reasonRaw
+        : transitions.reason;
+    const fromDate =
+      typeof ppRaw.from_date === "string" && isRealCalendarDate(ppRaw.from_date)
+        ? ppRaw.from_date
+        : null;
+    const toDate =
+      typeof ppRaw.to_date === "string" && isRealCalendarDate(ppRaw.to_date)
+        ? ppRaw.to_date
+        : null;
+    periodPresence = {
+      applicable: false,
+      reason,
+      fromDate,
+      toDate,
+      windowLabel: formatWorkforceTransitionsNotApplicableLabel(reason),
+    };
+  } else if (ppRaw.applicable === true) {
+    if (!transitions.applicable) {
+      return { ok: false, reason: "period_presence_applicability_mismatch" };
+    }
+    const fromDate = typeof ppRaw.from_date === "string" ? ppRaw.from_date : "";
+    const toDate = typeof ppRaw.to_date === "string" ? ppRaw.to_date : "";
+    const activeOnEpisodeCount = nonNegativeInt(ppRaw.active_on_episode_count);
+    const inPeriodOnDays = nonNegativeInt(ppRaw.in_period_on_days);
+
+    if (
+      fromDate !== transitions.fromDate ||
+      toDate !== transitions.toDate ||
+      activeOnEpisodeCount === null ||
+      inPeriodOnDays === null
+    ) {
+      return { ok: false, reason: "invalid_period_presence_fields" };
+    }
+    if (activeOnEpisodeCount === 0 && inPeriodOnDays !== 0) {
+      return { ok: false, reason: "invalid_period_presence_fields" };
+    }
+
+    periodPresence = {
+      applicable: true,
+      fromDate,
+      toDate,
+      activeOnEpisodeCount,
+      inPeriodOnDays,
+      avgInPeriodOnDaysPerActiveEpisode:
+        activeOnEpisodeCount > 0 ? inPeriodOnDays / activeOnEpisodeCount : null,
+    };
+  } else {
+    return { ok: false, reason: "invalid_period_presence_applicable" };
+  }
+
+  return {
+    ok: true,
+    duration: {
+      asOfDate,
+      asOfSource,
+      eligibleEpisodeTotal,
+      knownStatusEpisodeCount,
+      unknownStatusEpisodeCount,
+      everOnEpisodeCount,
+      neverOnEpisodeCount,
+      allEverOn,
+      currentlyOn,
+      exitedAfterOn,
+      distribution: {
+        days0To7Count,
+        days8To30Count,
+        days31To90Count,
+        days91PlusCount,
+      },
+      periodPresence,
+    },
+  };
+}
+
+function parseRetentionCheckpoint(
+  raw: unknown,
+  expectedDays: 7 | 30 | 90,
+  cohortEpisodeTotal: number,
+): WorkforceRetentionCheckpointMetrics | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const checkpointDays = nonNegativeInt(r.checkpoint_days);
+  const maturedCount = nonNegativeInt(r.matured_count);
+  const immatureCount = nonNegativeInt(r.immature_count);
+  const retainedCount = nonNegativeInt(r.retained_count);
+  const exitedCount = nonNegativeInt(r.exited_count);
+
+  if (
+    checkpointDays !== expectedDays ||
+    maturedCount === null ||
+    immatureCount === null ||
+    retainedCount === null ||
+    exitedCount === null
+  ) {
+    return null;
+  }
+
+  if (
+    maturedCount + immatureCount !== cohortEpisodeTotal ||
+    retainedCount + exitedCount !== maturedCount
+  ) {
+    return null;
+  }
+
+  return buildRetentionCheckpointMetrics(
+    expectedDays,
+    maturedCount,
+    immatureCount,
+    retainedCount,
+    exitedCount,
+  );
+}
+
+function parseRetentionSection(
+  retRaw: unknown,
+  snapshot: WorkforceAsOfSnapshot,
+  transitions: WorkforcePeriodTransitions,
+  duration: WorkforceDurationMetrics,
+): { ok: true; retention: WorkforceRetentionMetrics } | { ok: false; reason: string } {
+  if (typeof retRaw !== "object" || retRaw === null) {
+    return { ok: false, reason: "missing_retention_section" };
+  }
+  const r = retRaw as Record<string, unknown>;
+  const asOfDate = typeof r.as_of_date === "string" ? r.as_of_date : "";
+  const asOfSourceRaw = r.as_of_source;
+  const asOfSource: WorkforceAsOfSource | null =
+    asOfSourceRaw === "filter_to" ||
+    asOfSourceRaw === "current_hcm_date" ||
+    asOfSourceRaw === "explicit_as_of"
+      ? asOfSourceRaw
+      : null;
+
+  const eligibleEpisodeTotal = nonNegativeInt(r.eligible_episode_total);
+  const cohortEpisodeTotal = nonNegativeInt(r.cohort_episode_total);
+  const neverEnteredOnCount = nonNegativeInt(r.never_entered_on_count);
+  const unknownStatusEpisodeCount = nonNegativeInt(r.unknown_status_episode_count);
+  const currentlyRetainedCount = nonNegativeInt(r.currently_retained_count);
+  const exitedFromOnTotal = nonNegativeInt(r.exited_from_on_total);
+
+  if (
+    asOfDate !== snapshot.asOfDate ||
+    asOfSource !== snapshot.asOfSource ||
+    eligibleEpisodeTotal === null ||
+    eligibleEpisodeTotal !== snapshot.eligibleEpisodeTotal ||
+    cohortEpisodeTotal === null ||
+    neverEnteredOnCount === null ||
+    unknownStatusEpisodeCount === null ||
+    unknownStatusEpisodeCount !== snapshot.unknownCount ||
+    currentlyRetainedCount === null ||
+    exitedFromOnTotal === null
+  ) {
+    return { ok: false, reason: "invalid_retention_header_fields" };
+  }
+
+  if (
+    cohortEpisodeTotal + neverEnteredOnCount + unknownStatusEpisodeCount !== eligibleEpisodeTotal ||
+    cohortEpisodeTotal !== duration.everOnEpisodeCount ||
+    currentlyRetainedCount + exitedFromOnTotal !== cohortEpisodeTotal
+  ) {
+    return { ok: false, reason: "retention_cohort_sum_invariant_violated" };
+  }
+
+  const cpRaw =
+    typeof r.checkpoints === "object" && r.checkpoints !== null
+      ? (r.checkpoints as Record<string, unknown>)
+      : null;
+  if (!cpRaw) {
+    return { ok: false, reason: "missing_retention_checkpoints" };
+  }
+
+  const d7 = parseRetentionCheckpoint(cpRaw.d7, 7, cohortEpisodeTotal);
+  const d30 = parseRetentionCheckpoint(cpRaw.d30, 30, cohortEpisodeTotal);
+  const d90 = parseRetentionCheckpoint(cpRaw.d90, 90, cohortEpisodeTotal);
+  if (!d7 || !d30 || !d90) {
+    return { ok: false, reason: "invalid_retention_checkpoint_metrics" };
+  }
+
+  // Bất biến độ trưởng thành theo thời gian: tập đã đủ 90 ngày <= đã đủ 30 ngày <= đã đủ 7 ngày
+  if (
+    d90.maturedCount > d30.maturedCount ||
+    d30.maturedCount > d7.maturedCount ||
+    d90.retainedCount > d30.retainedCount ||
+    d30.retainedCount > d7.retainedCount
+  ) {
+    return { ok: false, reason: "retention_checkpoint_monotonicity_violated" };
+  }
+
+  const pcRaw =
+    typeof r.period_cohort === "object" && r.period_cohort !== null
+      ? (r.period_cohort as Record<string, unknown>)
+      : null;
+  if (!pcRaw) {
+    return { ok: false, reason: "missing_period_cohort" };
+  }
+
+  let periodCohort: WorkforcePeriodCohortMetrics;
+  if (pcRaw.applicable === false) {
+    if (transitions.applicable) {
+      return { ok: false, reason: "period_cohort_applicability_mismatch" };
+    }
+    const reasonRaw = pcRaw.reason;
+    const reason: WorkforceTransitionsNotApplicableReason =
+      reasonRaw === "all_time" || reasonRaw === "one_sided" || reasonRaw === "invalid_range"
+        ? reasonRaw
+        : transitions.reason;
+    const fromDate =
+      typeof pcRaw.from_date === "string" && isRealCalendarDate(pcRaw.from_date)
+        ? pcRaw.from_date
+        : null;
+    const toDate =
+      typeof pcRaw.to_date === "string" && isRealCalendarDate(pcRaw.to_date)
+        ? pcRaw.to_date
+        : null;
+    periodCohort = {
+      applicable: false,
+      reason,
+      fromDate,
+      toDate,
+      windowLabel: formatWorkforceTransitionsNotApplicableLabel(reason),
+    };
+  } else if (pcRaw.applicable === true) {
+    if (!transitions.applicable) {
+      return { ok: false, reason: "period_cohort_applicability_mismatch" };
+    }
+    const fromDate = typeof pcRaw.from_date === "string" ? pcRaw.from_date : "";
+    const toDate = typeof pcRaw.to_date === "string" ? pcRaw.to_date : "";
+    const enteredOnCount = nonNegativeInt(pcRaw.entered_on_count);
+    const retainedAtToCount = nonNegativeInt(pcRaw.retained_at_to_count);
+    const exitedByToCount = nonNegativeInt(pcRaw.exited_by_to_count);
+
+    if (
+      fromDate !== transitions.fromDate ||
+      toDate !== transitions.toDate ||
+      enteredOnCount === null ||
+      retainedAtToCount === null ||
+      exitedByToCount === null ||
+      retainedAtToCount + exitedByToCount !== enteredOnCount
+    ) {
+      return { ok: false, reason: "invalid_period_cohort_fields" };
+    }
+
+    periodCohort = {
+      applicable: true,
+      fromDate,
+      toDate,
+      enteredOnCount,
+      retainedAtToCount,
+      exitedByToCount,
+      inPeriodRetentionRate: enteredOnCount > 0 ? retainedAtToCount / enteredOnCount : null,
+    };
+  } else {
+    return { ok: false, reason: "invalid_period_cohort_applicable" };
+  }
+
+  return {
+    ok: true,
+    retention: {
+      asOfDate,
+      asOfSource,
+      eligibleEpisodeTotal,
+      cohortEpisodeTotal,
+      neverEnteredOnCount,
+      unknownStatusEpisodeCount,
+      currentlyRetainedCount,
+      exitedFromOnTotal,
+      checkpoints: {
+        d7,
+        d30,
+        d90,
+      },
+      periodCohort,
+    },
+  };
+}
+
 /**
  * Parse và kiểm tra toàn vẹn payload trả về từ RPC `direct_entry_workforce_reporting_scoped`.
  * Fail-closed (`status: "unavailable"`) nếu thiếu trường hoặc vi phạm bất biến tổng snapshot,
- * bất biến bảo toàn cân bằng đầu/cuối kỳ (2.3) hoặc phân hoạch mẫu chờ việc (2.4).
+ * bất biến bảo toàn cân bằng đầu/cuối kỳ (2.3), phân hoạch mẫu chờ việc (2.4),
+ * thâm niên & hiện diện theo trạng thái (2.5) hoặc đoàn hệ giữ chân D7/D30/D90 (2.6).
  */
 export function parseWorkforceReportingPayload(raw: unknown): WorkforceReportingResult {
   if (typeof raw !== "object" || raw === null) {
@@ -2091,12 +3173,29 @@ export function parseWorkforceReportingPayload(raw: unknown): WorkforceReporting
     return { status: "unavailable", reason: waitingParsed.reason };
   }
 
+  const durationParsed = parseDurationSection(root.duration, snapshot, transitions);
+  if (!durationParsed.ok) {
+    return { status: "unavailable", reason: durationParsed.reason };
+  }
+
+  const retentionParsed = parseRetentionSection(
+    root.retention,
+    snapshot,
+    transitions,
+    durationParsed.duration,
+  );
+  if (!retentionParsed.ok) {
+    return { status: "unavailable", reason: retentionParsed.reason };
+  }
+
   return {
     status: "ready",
     snapshot,
     transitions,
     balance: balanceParsed.balance,
     waiting: waitingParsed.waiting,
+    duration: durationParsed.duration,
+    retention: retentionParsed.retention,
   };
 }
 

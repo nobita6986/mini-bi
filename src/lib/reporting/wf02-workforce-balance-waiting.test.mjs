@@ -450,6 +450,54 @@ test("WF-02 (5): Fail-closed payload validation rejects broken balance conservat
         exited_in_period: { event_count: 0, episode_count: 0, total_waiting_days: 0 },
       },
     },
+    duration: {
+      as_of_date: "2026-10-15",
+      as_of_source: "filter_to",
+      eligible_episode_total: 2,
+      known_status_episode_count: 2,
+      unknown_status_episode_count: 0,
+      ever_on_episode_count: 1,
+      never_on_episode_count: 1,
+      all_ever_on: { episode_count: 1, interval_count: 1, total_on_days: 10, max_on_days: 10 },
+      currently_on: { episode_count: 1, interval_count: 1, total_on_days: 10, max_on_days: 10 },
+      exited_after_on: { episode_count: 0, interval_count: 0, total_on_days: 0, max_on_days: null },
+      distribution: {
+        days_0_to_7_count: 0,
+        days_8_to_30_count: 1,
+        days_31_to_90_count: 0,
+        days_91_plus_count: 0,
+      },
+      period_presence: {
+        applicable: true,
+        from_date: "2026-10-01",
+        to_date: "2026-10-15",
+        active_on_episode_count: 1,
+        in_period_on_days: 10,
+      },
+    },
+    retention: {
+      as_of_date: "2026-10-15",
+      as_of_source: "filter_to",
+      eligible_episode_total: 2,
+      cohort_episode_total: 1,
+      never_entered_on_count: 1,
+      unknown_status_episode_count: 0,
+      currently_retained_count: 1,
+      exited_from_on_total: 0,
+      checkpoints: {
+        d7: { checkpoint_days: 7, matured_count: 1, immature_count: 0, retained_count: 1, exited_count: 0 },
+        d30: { checkpoint_days: 30, matured_count: 0, immature_count: 1, retained_count: 0, exited_count: 0 },
+        d90: { checkpoint_days: 90, matured_count: 0, immature_count: 1, retained_count: 0, exited_count: 0 },
+      },
+      period_cohort: {
+        applicable: true,
+        from_date: "2026-10-01",
+        to_date: "2026-10-15",
+        entered_on_count: 1,
+        retained_at_to_count: 1,
+        exited_by_to_count: 0,
+      },
+    },
   };
 
   const okParsed = parseWorkforceReportingPayload(validRpcPayload);
@@ -493,7 +541,7 @@ test("WF-02 (6): Formatting helpers, non-attendance disclaimer, and UI contract 
   assert.match(formatPlacementRatePercent(0.625), /62[,.]5%/);
   assert.match(formatWorkforceBalanceNotApplicableLabel("all_time"), /Tất cả thời gian/);
 
-  assert.ok(WORKFORCE_NON_ATTENDANCE_NOTE.includes("effective_date"));
+  assert.ok(WORKFORCE_NON_ATTENDANCE_NOTE.includes("ngày trạng thái có hiệu lực"));
   assert.ok(WORKFORCE_NON_ATTENDANCE_NOTE.includes("không phải dữ liệu chấm công"));
   assert.equal(WORKFORCE_BALANCE_COLUMN_LABELS.OPENING, "Đầu kỳ");
   assert.equal(WORKFORCE_BALANCE_COLUMN_LABELS.CLOSING, "Cuối kỳ");

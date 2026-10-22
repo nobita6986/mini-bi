@@ -6,12 +6,20 @@ import { parseAsString, useQueryStates } from "nuqs";
 import { buildCompanyDisplayNames } from "@/lib/display/company-display-name";
 import { EMPLOYMENT_OPTIONS, PROVIDER_OPTIONS } from "@/lib/reporting/p1-dashboard";
 import type { ReportingOptionsCatalog } from "@/lib/reporting/p1-dashboard";
-import { computeDatePresets, countActiveFilterCriteria, isAllTimeActive, matchDatePreset } from "@/lib/reporting/p1-date-presets";
+import {
+  computeDatePresets,
+  countActiveFilterCriteria,
+  EXPLICIT_ALL_TIME_RANGE_PARAM,
+  isAllTimeActive,
+  matchDatePreset,
+  resolveDashboardDateRange,
+} from "@/lib/reporting/p1-date-presets";
 import { cn } from "@/lib/utils";
 
 const parsers = {
   from: parseAsString,
   to: parseAsString,
+  range: parseAsString,
   project: parseAsString,
   recruiter: parseAsString,
   provider: parseAsString,
@@ -48,9 +56,19 @@ export function DashboardFilters({
 
   const now = new Date();
   const presets = computeDatePresets(now);
-  const activePresetKey = matchDatePreset(filters.from, filters.to, now);
-  const allTime = isAllTimeActive(filters.from, filters.to);
-  const activeCount = countActiveFilterCriteria(filters);
+  const resolvedDate = resolveDashboardDateRange(
+    { from: filters.from, to: filters.to, range: filters.range },
+    now,
+  );
+  const effectiveFrom = resolvedDate.from;
+  const effectiveTo = resolvedDate.to;
+  const activePresetKey = matchDatePreset(effectiveFrom, effectiveTo, now);
+  const allTime = isAllTimeActive(effectiveFrom, effectiveTo);
+  const activeCount = countActiveFilterCriteria({
+    ...filters,
+    from: effectiveFrom,
+    to: effectiveTo,
+  });
   const countLabel = activeCount === 1 ? "1 tiêu chí đang áp dụng" : activeCount + " tiêu chí đang áp dụng";
 
   const chip = (active: boolean) =>
@@ -74,7 +92,7 @@ export function DashboardFilters({
               <span aria-hidden className="mr-1">{advancedOpen ? "▾" : "▸"}</span>
               Bộ lọc nâng cao
             </button>
-            {activeCount > 0 ? (
+            {activeCount > 0 || allTime ? (
               <button type="button" onClick={() => setFilters(null)} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-medium text-on-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring/40">
                 Xóa bộ lọc
               </button>
@@ -84,11 +102,11 @@ export function DashboardFilters({
 
         <div role="group" aria-label="Khoảng thời gian nhanh" className="mt-2.5 flex gap-1.5 overflow-x-auto pb-1">
           {presets.map((p) => (
-            <button key={p.key} type="button" aria-pressed={activePresetKey === p.key} onClick={() => setFilters({ from: p.from, to: p.to })} className={chip(activePresetKey === p.key)}>
+            <button key={p.key} type="button" aria-pressed={activePresetKey === p.key} onClick={() => setFilters({ from: p.from, to: p.to, range: null })} className={chip(activePresetKey === p.key)}>
               {p.label}
             </button>
           ))}
-          <button type="button" aria-pressed={allTime} onClick={() => setFilters({ from: null, to: null })} className={chip(allTime)}>
+          <button type="button" aria-pressed={allTime} onClick={() => setFilters({ from: null, to: null, range: EXPLICIT_ALL_TIME_RANGE_PARAM })} className={chip(allTime)}>
             Tất cả thời gian
           </button>
         </div>
@@ -97,10 +115,38 @@ export function DashboardFilters({
       <div id="advanced-filters" hidden={!advancedOpen} className="mt-2 rounded-2xl border border-border bg-surface p-3.5 shadow-sm">
         <div className="grid max-h-[70vh] grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-4">
           <Field id="f-from" label="Từ ngày">
-            <input id="f-from" type="date" className={inputClass} value={filters.from ?? ""} onChange={(e) => setFilters({ from: e.target.value || null })} />
+            <input
+              id="f-from"
+              type="date"
+              className={inputClass}
+              value={effectiveFrom ?? ""}
+              onChange={(e) => {
+                const nextFrom = e.target.value || null;
+                const nextTo = effectiveTo;
+                setFilters({
+                  from: nextFrom,
+                  to: nextTo,
+                  range: nextFrom === null && nextTo === null ? EXPLICIT_ALL_TIME_RANGE_PARAM : null,
+                });
+              }}
+            />
           </Field>
           <Field id="f-to" label="Đến ngày">
-            <input id="f-to" type="date" className={inputClass} value={filters.to ?? ""} onChange={(e) => setFilters({ to: e.target.value || null })} />
+            <input
+              id="f-to"
+              type="date"
+              className={inputClass}
+              value={effectiveTo ?? ""}
+              onChange={(e) => {
+                const nextFrom = effectiveFrom;
+                const nextTo = e.target.value || null;
+                setFilters({
+                  from: nextFrom,
+                  to: nextTo,
+                  range: nextFrom === null && nextTo === null ? EXPLICIT_ALL_TIME_RANGE_PARAM : null,
+                });
+              }}
+            />
           </Field>
           <Field id="f-project" label="Dự án">
             <select id="f-project" className={inputClass} value={filters.project ?? ""} onChange={(e) => setFilters({ project: e.target.value || null })}>
