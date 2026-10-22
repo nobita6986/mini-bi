@@ -7,11 +7,11 @@ const ROOT = process.cwd();
 const read = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
 
 describe("R2.2 — 28/28 Table & List Surface Adoption + 4 Owner Screenshot Fixes", () => {
-  test("Screenshot 1 & 2 & 3 Fix: worker-operations.tsx uses PageHeader, FilterToolbar, FloatingToast, DataTableContainer, r22-card-table, StatusBadge, and never renders raw {item.state}", () => {
+  test("Screenshot 1 & 2 & 3 Fix: worker-operations.tsx uses PageHeader, FilterToolbar, useNotify, DataTableContainer, r22-card-table, StatusBadge, and never renders raw {item.state}", () => {
     const src = read("src/components/direct-entry/worker-operations.tsx");
     assert.match(src, /PageHeader/, "must use PageHeader");
     assert.match(src, /FilterToolbar/, "must use FilterToolbar");
-    assert.match(src, /FloatingToast/, "must use FloatingToast for non-disruptive notice");
+    assert.match(src, /useNotify/, "must use useNotify for non-disruptive notice");
     assert.match(src, /DataTableContainer/, "must use DataTableContainer");
     assert.match(src, /StatusBadge/, "must use StatusBadge");
     assert.match(src, /RowActionCluster/, "must use RowActionCluster for single-line actions");
