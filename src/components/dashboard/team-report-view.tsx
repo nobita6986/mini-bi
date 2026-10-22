@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { buildCategorySegments, buildProjectDonutData } from "@/lib/reporting/p1-chart-data";
 import { buildDailyTrend, sortBuckets } from "@/lib/reporting/p1-dashboard";
@@ -22,6 +22,7 @@ import type { TeamReportDetail } from "@/lib/reporting/p3-w06d-team-report-serve
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
@@ -197,6 +198,11 @@ function TeamReportSelection({
   bucket: ReportingBucket;
   view: TeamReportViewConfig;
 }) {
+  const notify = useNotify();
+  const notifyRef = useRef(notify);
+  useEffect(() => {
+    notifyRef.current = notify;
+  }, [notify]);
   const [report, setReport] = useState<ReportingData | null>(null);
   const [detail, setDetail] = useState<TeamReportDetail | null>(null);
   const [error, setError] = useState(false);
@@ -215,13 +221,30 @@ function TeamReportSelection({
         if (controller.signal.aborted) return;
         if (!response.ok || !isTeamReportPayload(payload) || payload.report === null) {
           setError(true);
+          if (reloadToken > 0) {
+            notifyRef.current.error({
+              title: "Không tải được báo cáo nhóm",
+              description: "Không tải được báo cáo của nhóm đã chọn. Hãy thử lại.",
+              dedupeKey: `team-report-retry:${bucket.key}`,
+            });
+          }
           return;
         }
+        setError(false);
         setReport(payload.report);
         setDetail(payload.detail);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError(true);
+        if (!controller.signal.aborted) {
+          setError(true);
+          if (reloadToken > 0) {
+            notifyRef.current.error({
+              title: "Không tải được báo cáo nhóm",
+              description: "Không tải được báo cáo của nhóm đã chọn. Hãy thử lại.",
+              dedupeKey: `team-report-retry:${bucket.key}`,
+            });
+          }
+        }
       });
     return () => controller.abort();
   }, [data, bucket, reloadToken]);

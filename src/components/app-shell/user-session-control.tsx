@@ -106,7 +106,7 @@ export function UserSessionControl() {
   }
 
   if (state === "loading") {
-    return <span aria-hidden className="inline-block h-11 w-28 animate-pulse rounded bg-muted" />;
+    return <span aria-hidden className="inline-block h-11 w-28 animate-pulse motion-reduce:animate-none rounded bg-muted" />;
   }
   if (state !== "auth" || displayName === null) {
     return <Link href="/login" className={linkClass}>Đăng nhập</Link>;
