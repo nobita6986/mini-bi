@@ -39,8 +39,15 @@ const MIGRATION_DIR = path.join(ROOT, "supabase", "migrations");
 const ACL_MIGRATION = "20261020180000_s0_t1_c_rpc_acl_allowlist.sql";
 const R1_2_MIGRATION = "20261021100000_r1_2_worker_management_uat_fixes.sql";
 const R2_1_MIGRATION = "20261021120000_r2_1_change_request_queues_and_project_team_guard.sql";
+const BOT_REPORTING_ACL_MIGRATION = "20261022100000_bot_reporting_service_role_acl.sql";
 const R1_2_SERVICE_RPC =
   "public.direct_entry_list_workers(uuid, uuid, text, text, uuid, text, text, integer, text)";
+const BOT_REPORTING_VIEW_HELPER_RPCS = [
+  "public.direct_entry_reporting_source_id()",
+  "public.direct_entry_reporting_dim_key(text)",
+  "public.direct_entry_reporting_employment_key(text)",
+  "public.direct_entry_reporting_employment_display(text)",
+];
 const TARGET_PATTERN = "^(direct_entry_|work_report_|ai_report_|ai_provider_config_|recruitment_|(expand|replace|reject|upsert)_daily_recruitment|record_recruitment_source_failure_|set_updated_at$)";
 
 function binary(name) {
@@ -518,12 +525,29 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "WF-01 workforce reporting RPC is explicitly granted only to service_role");
       assert.ok(wf01Normalized.includes(wf01Revoke),
         "WF-01 workforce reporting RPC revokes client and inherited EXECUTE before granting service_role");
+      const botReportingAclMigration = await readFile(
+        path.join(MIGRATION_DIR, BOT_REPORTING_ACL_MIGRATION), "utf8",
+      );
+      const botReportingAclNormalized = botReportingAclMigration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      assert.ok(botReportingAclNormalized.includes(
+        "revoke all on table public.direct_entry_reporting_facts_v01 from public, anon, authenticated;"),
+        "BI bot reporting view remains denied to browser-facing roles");
+      assert.ok(botReportingAclNormalized.includes(
+        "grant select on table public.direct_entry_reporting_facts_v01 to service_role;"),
+        "BI bot reporting view is explicitly readable by service_role");
+      for (const signature of BOT_REPORTING_VIEW_HELPER_RPCS) {
+        assert.match(botReportingAclNormalized,
+          new RegExp(`grant execute on function [^;]*${signature.replace(/[()]/g, "\\$&")}[^;]* to service_role;`),
+          `BI bot view helper ${signature} is explicitly executable by service_role`);
+      }
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
         ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
         ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
-        WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE);
+        WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
+        ...BOT_REPORTING_VIEW_HELPER_RPCS);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -556,6 +580,28 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const serviceOids = after.filter((row) => row.service_exec).map((row) => String(row.oid)).sort();
       assert.deepEqual(serviceOids, expectedOids, "service_role EXECUTE exactly matches the explicit allowlist");
       assert.ok(after.every((row) => row.owner_exec), "function owners retain owner EXECUTE");
+
+      await client.query("set role service_role");
+      const sourceId = await client.query("select public.direct_entry_reporting_source_id()::text as value");
+      await client.query("select * from public.direct_entry_reporting_facts_v01 limit 0");
+      await client.query("reset role");
+      assert.equal(sourceId.rows[0]?.value, "00000000-0000-4000-8000-0000de000001",
+        "service_role can execute the exact view helper used by the BI bot");
+
+      for (const deniedRole of ["anon", "authenticated"]) {
+        await client.query(`set role ${deniedRole}`);
+        await assert.rejects(
+          client.query("select * from public.direct_entry_reporting_facts_v01 limit 0"),
+          (error) => error?.code === "42501",
+          `${deniedRole} cannot select the BI bot reporting view`,
+        );
+        await assert.rejects(
+          client.query("select public.direct_entry_reporting_source_id()"),
+          (error) => error?.code === "42501",
+          `${deniedRole} cannot execute the BI bot source-id helper`,
+        );
+        await client.query("reset role");
+      }
 
       const { rows: bootstrapOwner } = await client.query(
         `select pg_catalog.has_function_privilege('direct_entry_catalog_bootstrap_executor',
