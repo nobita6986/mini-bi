@@ -12,7 +12,7 @@ import { StatusBadge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { CursorLoadMore } from "@/components/ui/cursor-load-more";
 import { PageHeader } from "@/components/ui/page-shell";
-import { StatusBanner, type StatusBannerTone } from "@/components/ui/status-banner";
+import { useNotify, type NotifyTone } from "@/components/ui/notify-provider";
 import { parseDirectEntryCatalogResponse } from "@/lib/direct-entry/catalog-response";
 import { projectChangeRequestStateResult } from "@/lib/direct-entry/change-request-contract";
 import { changeRequestErrorMessage } from "@/lib/direct-entry/change-request-proposer";
@@ -114,7 +114,7 @@ export function ChangeRequestsWorkspace({
   const [hasMore, setHasMore] = useState(false);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [reviewRequest, setReviewRequest] = useState<ChangeRequestListItem | null>(null);
-  const [notice, setNotice] = useState<{ tone: StatusBannerTone; text: string } | null>(null);
+  const notify = useNotify();
 
   const [catalogs, setCatalogs] = useState<Record<string, DraftCatalog>>({});
   const catalogCache = useRef(new Map<string, DraftCatalog>());
@@ -259,16 +259,19 @@ export function ChangeRequestsWorkspace({
           { request_id: request.request_id, expected_version: request.version, state: "WITHDRAWN" },
         );
         if (!updated) {
-          setNotice({ tone: "error", text: changeRequestErrorMessage(500) });
+          notify.error({
+            title: changeRequestErrorMessage(500),
+            dedupeKey: "cr-withdraw-err:" + request.request_id,
+          });
           return;
         }
         intentKeys.current.set(
           request.request_id,
           clearIntentKey(resolved.state, intent),
         );
-        setNotice({
-          tone: "success",
-          text: "Đã rút yêu cầu " + shortRef(updated.request_id) + ".",
+        notify.success({
+          title: "Đã rút yêu cầu " + shortRef(updated.request_id) + ".",
+          dedupeKey: "cr-withdraw:" + updated.request_id,
         });
         await loadChangeRequests("replace");
         return;
@@ -279,36 +282,51 @@ export function ChangeRequestsWorkspace({
           request.request_id,
           clearIntentKey(resolved.state, intent),
         );
-        setNotice({ tone: "warning", text: changeRequestErrorMessage(409) });
+        notify.warning({
+          title: changeRequestErrorMessage(409),
+          dedupeKey: "cr-withdraw-conflict:" + request.request_id,
+        });
         await loadChangeRequests("replace");
         return;
       }
       if (status >= 500) {
-        setNotice({ tone: "error", text: changeRequestErrorMessage(status) });
+        notify.error({
+          title: changeRequestErrorMessage(status),
+          dedupeKey: "cr-withdraw-err:" + request.request_id,
+        });
         return;
       }
       intentKeys.current.set(
         request.request_id,
         clearIntentKey(resolved.state, intent),
       );
-      setNotice({ tone: "error", text: changeRequestErrorMessage(status) });
+      notify.error({
+        title: changeRequestErrorMessage(status),
+        dedupeKey: "cr-withdraw-err:" + request.request_id,
+      });
       if (status === 401 || status === 403) {
         await loadChangeRequests("replace");
       }
     } catch {
-      setNotice({ tone: "error", text: changeRequestErrorMessage(0) });
+      notify.error({
+        title: changeRequestErrorMessage(0),
+        dedupeKey: "cr-withdraw-err:" + request.request_id,
+      });
     } finally {
       setBusyRequestId(null);
     }
-  }, [loadChangeRequests]);
+  }, [loadChangeRequests, notify]);
 
   const reloadAfterChangeRequestMutation = useCallback(async (
     message: string,
-    tone: StatusBannerTone = "info",
+    tone: NotifyTone = "info",
   ) => {
-    setNotice({ tone, text: message });
+    notify[tone]({
+      title: message,
+      dedupeKey: `cr-mutation:${tone}:${message}`,
+    });
     await loadChangeRequests("replace");
-  }, [loadChangeRequests]);
+  }, [loadChangeRequests, notify]);
 
   const tabs = changeRequestWorkspaceTabs({ mode, canViewGlobalHistory });
 
@@ -387,15 +405,6 @@ export function ChangeRequestsWorkspace({
         </div>
       )}
 
-      {notice !== null && (
-        <StatusBanner
-          tone={notice.tone}
-          dataTestId="change-request-workspace-notice"
-        >
-          {notice.text}
-        </StatusBanner>
-      )}
-
       <div className={styles.shell}>
         <DirectEntryChangeRequestList
           queueFilter={queueFilter}
@@ -440,7 +449,8 @@ export function ChangeRequestsWorkspace({
           void reloadAfterChangeRequestMutation(message, "success");
         }}
         onConflict={(message) => {
-          void reloadAfterChangeRequestMutation(message, "warning");
+          const tone: NotifyTone = message.includes("quyền") ? "error" : "warning";
+          void reloadAfterChangeRequestMutation(message, tone);
         }}
       />
     </main>

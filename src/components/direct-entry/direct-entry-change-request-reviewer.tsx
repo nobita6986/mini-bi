@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog, Dialog } from "radix-ui";
 
+import { useNotify } from "@/components/ui/notify-provider";
 import { hcmTodayDate } from "@/lib/direct-entry/change-request-proposal-builders";
 
 import {
@@ -151,6 +152,7 @@ export function DirectEntryChangeRequestReviewer({
   const [busy, setBusy] = useState<ChangeRequestDecision | null>(null);
   const [confirmDecision, setConfirmDecision] = useState<ChangeRequestDecision | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const notify = useNotify();
   const intentKey = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const lastRequestId = useRef<string | null>(null);
   // Radix Dialog khong tu tra focus khi khong dung Dialog.Trigger; ghi lai nut da mo dialog.
@@ -359,36 +361,48 @@ export function DirectEntryChangeRequestReviewer({
         );
         if (!updated) {
           // 2xx nhung ket qua khong doc duoc: giu nguyen key de lan thu lai van idempotent.
-          setStatusMessage(reviewerErrorMessage(500));
+          notify.error({
+            title: reviewerErrorMessage(500),
+            dedupeKey: "cr-review-err:" + requestId,
+          });
           return;
         }
         intentKey.current = clearIntentKey(resolved.state, intent);
         setModel({ kind: "terminal", request_id: updated.request_id, state: updated.state });
         const message = reviewDecisionMessage(decision, shortRef(updated.request_id));
-        setStatusMessage(message);
         onDecided(message);
         onOpenChange(false);
         return;
       }
       const status = response.status;
       if (status >= 500) {
-        setStatusMessage(reviewerErrorMessage(status));
+        notify.error({
+          title: reviewerErrorMessage(status),
+          dedupeKey: "cr-review-err:" + requestId,
+        });
         return;
       }
       intentKey.current = clearIntentKey(resolved.state, intent);
-      setStatusMessage(reviewerErrorMessage(status));
       if (status === 409) {
         onConflict(reviewerErrorMessage(status));
         setReloadToken((current) => current + 1);
       } else if (status === 401 || status === 403) {
         onConflict(reviewerErrorMessage(status));
+      } else {
+        notify.error({
+          title: reviewerErrorMessage(status),
+          dedupeKey: "cr-review-err:" + requestId,
+        });
       }
     } catch {
-      setStatusMessage(reviewerErrorMessage(0));
+      notify.error({
+        title: reviewerErrorMessage(0),
+        dedupeKey: "cr-review-err:" + requestId,
+      });
     } finally {
       setBusy(null);
     }
-  }, [canDecide, canReject, model, onConflict, onDecided, onOpenChange, reason, request]);
+  }, [canDecide, canReject, model, notify, onConflict, onDecided, onOpenChange, reason, request]);
 
   const entryCount = useMemo(
     () => (model && "items" in model ? model.items.length : 0),

@@ -13,6 +13,7 @@ import { AlertDialog, Dialog } from "radix-ui";
 
 import { DdmmDateInput } from "@/components/direct-entry/direct-entry-ddmm-date-input";
 import { RecruiterTypeahead, type PickerOption } from "@/components/direct-entry/typeahead-picker-smoke";
+import { useNotify } from "@/components/ui/notify-provider";
 import {
   buildProposerItems,
   changeRequestErrorMessage,
@@ -159,6 +160,7 @@ export function DirectEntryChangeRequestProposer({
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const notify = useNotify();
   const intentKey = useRef<TransitionIntentKeyState>(EMPTY_INTENT_KEY);
   const loadedSubmission = useRef<string | null>(null);
   // S03B4A: target kind nhay cam (worker_details/PAYMENT/WORK_STATUS) dung MOT dong moi request.
@@ -397,7 +399,7 @@ export function DirectEntryChangeRequestProposer({
       return;
     }
     setBusy(true);
-    setStatusMessage("Đang gửi yêu cầu thay đổi…");
+    setStatusMessage("");
     try {
       const response = await fetch("/api/direct-entry/change-requests", {
         method: "POST",
@@ -415,7 +417,10 @@ export function DirectEntryChangeRequestProposer({
           itemsToSend.length,
         );
         if (!created) {
-          setStatusMessage(changeRequestErrorMessage(500));
+          notify.error({
+            title: changeRequestErrorMessage(500),
+            dedupeKey: "cr-propose-err",
+          });
           return;
         }
         intentKey.current = clearIntentKey(resolved.state, intent);
@@ -426,23 +431,35 @@ export function DirectEntryChangeRequestProposer({
       const status = response.status;
       if (status === 409) {
         intentKey.current = clearIntentKey(resolved.state, intent);
-        setStatusMessage(changeRequestErrorMessage(409));
+        notify.warning({
+          title: changeRequestErrorMessage(409),
+          dedupeKey: "cr-propose-conflict",
+        });
         onConflict();
         return;
       }
       if (status >= 500) {
-        setStatusMessage(changeRequestErrorMessage(status));
+        notify.error({
+          title: changeRequestErrorMessage(status),
+          dedupeKey: "cr-propose-err",
+        });
         return;
       }
       intentKey.current = clearIntentKey(resolved.state, intent);
-      setStatusMessage(changeRequestErrorMessage(status));
+      notify.error({
+        title: changeRequestErrorMessage(status),
+        dedupeKey: "cr-propose-err",
+      });
       if (status === 401 || status === 403) onUnauthorized();
     } catch {
-      setStatusMessage(changeRequestErrorMessage(0));
+      notify.error({
+        title: changeRequestErrorMessage(0),
+        dedupeKey: "cr-propose-err",
+      });
     } finally {
       setBusy(false);
     }
-  }, [buildResult, itemsToSend, kind, onConflict, onCreated, onOpenChange, onUnauthorized,
+  }, [buildResult, itemsToSend, kind, notify, onConflict, onCreated, onOpenChange, onUnauthorized,
     reason, sensitiveBuild]);
 
   const summaryLines = kind === "ENTRY_VOID"
