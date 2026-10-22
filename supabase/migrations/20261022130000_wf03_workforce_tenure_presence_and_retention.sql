@@ -1,12 +1,13 @@
 -- MBI-DA-2026-01 Chặng 2 / WF-03 (Items 2.5 & 2.6):
 --   2.5 Workforce Tenure / Active ON Duration & In-Period Status Presence Days:
---       evaluates contiguous ON intervals on non-superseded events (never naive as_of - first_work_date
---       when status changed or had UNCONFIRMED waiting / prior OFF), grouped by explicit sample populations
+--       evaluates contiguous ON intervals on non-superseded events using half-open intervals
+--       ([start, next_effective_date) for closed intervals, [start, as_of + 1 day) for intervals still active at as_of,
+--       and [from, to + 1 day) for the filter period window), grouped by explicit sample populations
 --       (all_ever_on, currently_on, exited_after_on), duration distribution buckets, and period presence window.
---   2.6 Early Attrition & D7/D30/D90 Cohort Retention:
+--   2.6 Early Attrition & Continuous D7/D30/D90 Cohort Retention:
 --       evaluates ON cohorts starting from each episode's first actual ON effective_date on the non-superseded
 --       event chain (excluding UNCONFIRMED-only or UNKNOWN episodes), strictly separating matured vs immature
---       checkpoints (cohort_start_date + k <= as_of vs > as_of) and retained vs exited episodes.
+--       checkpoints (cohort_start_date + k <= as_of vs > as_of) and continuously retained vs exited episodes.
 begin;
 
 create or replace function public.direct_entry_workforce_reporting_scoped(
@@ -596,13 +597,15 @@ begin
     from period_waiting_intervals pwi
   ),
   -- WF-03 (2.5): Active ON tenure / duration intervals and in-period status presence days
+  -- Closed ON intervals use half-open [start_date, next_effective_date);
+  -- Active ON intervals at v_as_of use half-open [start_date, v_as_of + 1).
   as_of_on_intervals as (
     select
       dse.entry_id,
       dse.event_id,
       dse.effective_date as start_date,
-      coalesce(dse.next_effective_date, v_as_of) as end_date,
-      greatest(0, (coalesce(dse.next_effective_date, v_as_of) - dse.effective_date)::int) as on_days
+      coalesce(dse.next_effective_date, (v_as_of + 1)) as end_exclusive_date,
+      greatest(0, (coalesce(dse.next_effective_date, (v_as_of + 1)) - dse.effective_date)::int) as on_days
     from as_of_distinct_state_events dse
     where dse.status = 'ON'
   ),
@@ -639,16 +642,21 @@ begin
       count(*) filter (where oe.total_on_days >= 91)::int as days_91_plus_count
     from as_of_on_episodes oe
   ),
+  -- Period presence window uses half-open [v_from, v_to + 1) intersected with [start_date, end_exclusive_date).
+  -- Only intervals with strictly positive overlap (> 0 days) count as present in the period.
   period_on_intervals as (
     select
       pdse.entry_id,
       pdse.effective_date as start_date,
-      coalesce(pdse.next_effective_date, v_to) as end_date,
+      coalesce(pdse.next_effective_date, (v_to + 1)) as end_exclusive_date,
       greatest(
         0,
-        (least(coalesce(pdse.next_effective_date, v_to), v_to) - greatest(pdse.effective_date, v_from))::int
+        (least(coalesce(pdse.next_effective_date, (v_to + 1)), (v_to + 1)) - greatest(pdse.effective_date, v_from))::int
       ) as clipped_period_on_days,
-      (pdse.effective_date <= v_to and coalesce(pdse.next_effective_date, v_to) >= v_from) as overlaps_period
+      (
+        least(coalesce(pdse.next_effective_date, (v_to + 1)), (v_to + 1))
+        > greatest(pdse.effective_date, v_from)
+      ) as overlaps_period
     from period_distinct_state_events pdse
     where pdse.status = 'ON'
   ),
@@ -658,7 +666,7 @@ begin
       coalesce(sum(poi.clipped_period_on_days) filter (where poi.overlaps_period), 0)::int as in_period_on_days
     from period_on_intervals poi
   ),
-  -- WF-03 (2.6): Early attrition and D7 / D30 / D90 cohort retention from first ON effective_date
+  -- WF-03 (2.6): Early attrition and continuous D7 / D30 / D90 cohort retention from first ON effective_date
   cohort_episodes as (
     select distinct on (dse.entry_id)
       dse.entry_id,
@@ -674,7 +682,7 @@ begin
   retention_agg as (
     select
       count(*)::int as cohort_episode_total,
-      count(*) filter (where ce.first_exit_date is null)::int as currently_retained_count,
+      count(*) filter (where ce.first_exit_date is null)::int as continuously_retained_count,
       count(*) filter (where ce.first_exit_date is not null)::int as exited_from_on_total,
 
       count(*) filter (where ce.d7_date <= v_as_of)::int as d7_matured_count,
@@ -1044,7 +1052,7 @@ begin
       'cohort_episode_total', ra.cohort_episode_total,
       'never_entered_on_count', greatest(0, (sa.eligible_episode_total - sa.unknown_count) - ra.cohort_episode_total),
       'unknown_status_episode_count', sa.unknown_count,
-      'currently_retained_count', ra.currently_retained_count,
+      'continuously_retained_count', ra.continuously_retained_count,
       'exited_from_on_total', ra.exited_from_on_total,
       'checkpoints', jsonb_build_object(
         'd7', jsonb_build_object(

@@ -843,7 +843,7 @@ export function WorkforceSnapshotSection({
                   Nghỉ sớm &amp; giữ chân theo mốc D7 / D30 / D90
                 </h3>
                 <p className="mt-0.5 text-xs text-muted">
-                  Đoàn hệ tính từ ngày thực tế vào trạng thái {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} lần đầu của từng đợt làm việc (tính đến {retention.asOfDate}).
+                  Đoàn hệ tính theo duy trì liên tục ở trạng thái {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} từ lần đầu vào làm của từng đợt làm việc (tính đến {retention.asOfDate}).
                 </p>
               </div>
               <span className="font-mono text-xs text-muted">
@@ -858,7 +858,7 @@ export function WorkforceSnapshotSection({
                   {formatRetentionRatePercent(retention.checkpoints.d7.retentionRate)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
-                  Còn làm: {retention.checkpoints.d7.retainedCount} / {retention.checkpoints.d7.maturedCount} đã đủ tuổi ({retention.checkpoints.d7.immatureCount} chưa đủ tuổi)
+                  Duy trì liên tục: {retention.checkpoints.d7.retainedCount} / {retention.checkpoints.d7.maturedCount} đã đủ tuổi ({retention.checkpoints.d7.immatureCount} chưa đủ tuổi)
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
@@ -867,7 +867,7 @@ export function WorkforceSnapshotSection({
                   {formatRetentionRatePercent(retention.checkpoints.d30.retentionRate)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
-                  Còn làm: {retention.checkpoints.d30.retainedCount} / {retention.checkpoints.d30.maturedCount} đã đủ tuổi ({retention.checkpoints.d30.immatureCount} chưa đủ tuổi)
+                  Duy trì liên tục: {retention.checkpoints.d30.retainedCount} / {retention.checkpoints.d30.maturedCount} đã đủ tuổi ({retention.checkpoints.d30.immatureCount} chưa đủ tuổi)
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
@@ -876,7 +876,7 @@ export function WorkforceSnapshotSection({
                   {formatRetentionRatePercent(retention.checkpoints.d90.retentionRate)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
-                  Còn làm: {retention.checkpoints.d90.retainedCount} / {retention.checkpoints.d90.maturedCount} đã đủ tuổi ({retention.checkpoints.d90.immatureCount} chưa đủ tuổi)
+                  Duy trì liên tục: {retention.checkpoints.d90.retainedCount} / {retention.checkpoints.d90.maturedCount} đã đủ tuổi ({retention.checkpoints.d90.immatureCount} chưa đủ tuổi)
                 </p>
               </div>
             </dl>
@@ -884,7 +884,7 @@ export function WorkforceSnapshotSection({
             <div className="mt-2 overflow-x-auto rounded-lg border border-border bg-surface">
               <table className="r22-report-table w-full text-left text-xs">
                 <caption className="sr-only">
-                  Bảng giữ chân và nghỉ sớm theo mốc D7, D30, D90 tính đến ngày {retention.asOfDate}
+                  Bảng giữ chân liên tục và nghỉ sớm theo mốc D7, D30, D90 tính đến ngày {retention.asOfDate}
                 </caption>
                 <thead className="bg-surface-muted uppercase tracking-wide text-muted">
                   <tr className="border-b border-border">
@@ -895,7 +895,7 @@ export function WorkforceSnapshotSection({
                       Đã đủ tuổi
                     </th>
                     <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                      Còn làm
+                      Duy trì liên tục
                     </th>
                     <th scope="col" className="px-2 py-1.5 text-right font-medium">
                       Nghỉ trước mốc
@@ -942,9 +942,9 @@ export function WorkforceSnapshotSection({
               {retention.periodCohort.applicable ? (
                 <span className="mt-1 block">
                   Đoàn hệ bắt đầu vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} trong kỳ ({retention.periodCohort.fromDate} → {retention.periodCohort.toDate}):{" "}
-                  <strong className="font-mono text-foreground">{retention.periodCohort.enteredOnCount}</strong> đợt làm việc (duy trì đến cuối kỳ:{" "}
+                  <strong className="font-mono text-foreground">{retention.periodCohort.enteredOnCount}</strong> đợt làm việc (duy trì liên tục đến cuối kỳ:{" "}
                   <strong className="font-mono text-foreground">{retention.periodCohort.retainedAtToCount}</strong>, đã rời trước cuối kỳ:{" "}
-                  <strong className="font-mono text-foreground">{retention.periodCohort.exitedByToCount}</strong>, tỷ lệ duy trì cuối kỳ:{" "}
+                  <strong className="font-mono text-foreground">{retention.periodCohort.exitedByToCount}</strong>, tỷ lệ duy trì liên tục cuối kỳ:{" "}
                   <strong className="font-mono text-foreground">
                     {formatRetentionRatePercent(retention.periodCohort.inPeriodRetentionRate)}
                   </strong>

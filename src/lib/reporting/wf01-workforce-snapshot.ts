@@ -467,11 +467,11 @@ export interface WorkforceRetentionMetrics {
   neverEnteredOnCount: number;
   /** Số đợt làm việc chưa xác định trạng thái <= asOfDate (loại khỏi đoàn hệ ON). */
   unknownStatusEpisodeCount: number;
-  /** Số đợt làm việc trong đoàn hệ hiện vẫn duy trì liên tục ở lần vào Đang làm đầu tiên đến ngày mốc. */
-  currentlyRetainedCount: number;
+  /** Số đợt làm việc trong đoàn hệ duy trì liên tục ở trạng thái Đang làm kể từ lần vào Đang làm đầu tiên đến ngày mốc (chưa từng rời ON). */
+  continuouslyRetainedCount: number;
   /** Số đợt làm việc trong đoàn hệ đã rời khỏi lần vào Đang làm đầu tiên tính đến ngày mốc. */
   exitedFromOnTotal: number;
-  /** Các mốc đánh giá giữ chân D7, D30, D90 tính từ ngày thực tế vào trạng thái Đang làm lần đầu. */
+  /** Các mốc đánh giá giữ chân liên tục D7, D30, D90 tính từ ngày thực tế vào trạng thái Đang làm lần đầu. */
   checkpoints: {
     d7: WorkforceRetentionCheckpointMetrics;
     d30: WorkforceRetentionCheckpointMetrics;
@@ -1071,13 +1071,14 @@ function computeDurationMetricsAtAsOf(input: {
 
     let intervalCount = 0;
     let totalEpisodeOnDays = 0;
+    const asOfExclusiveEnd = shiftYmdDays(asOfDate, 1);
 
     for (let i = 0; i < distinctEvents.length; i += 1) {
       const ev = distinctEvents[i];
       if (ev.status !== "ON") continue;
       const nextEv = i + 1 < distinctEvents.length ? distinctEvents[i + 1] : null;
-      const endDate = nextEv ? nextEv.effective_date : asOfDate;
-      const days = Math.max(0, diffYmdDays(ev.effective_date, endDate));
+      const endExclusiveDate = nextEv ? nextEv.effective_date : asOfExclusiveEnd;
+      const days = Math.max(0, diffYmdDays(ev.effective_date, endExclusiveDate));
       intervalCount += 1;
       totalEpisodeOnDays += days;
     }
@@ -1130,6 +1131,7 @@ function computeDurationMetricsAtAsOf(input: {
     };
   } else {
     const { fromDate, toDate } = periodWindow;
+    const toExclusiveEnd = shiftYmdDays(toDate, 1);
     const activeOnEpisodes = new Set<string>();
     let inPeriodOnDays = 0;
 
@@ -1150,12 +1152,13 @@ function computeDurationMetricsAtAsOf(input: {
         const ev = distinctEvents[i];
         if (ev.status !== "ON") continue;
         const nextEv = i + 1 < distinctEvents.length ? distinctEvents[i + 1] : null;
-        const endDate = nextEv ? nextEv.effective_date : toDate;
+        const endExclusiveDate = nextEv ? nextEv.effective_date : toExclusiveEnd;
         const clippedStart = ev.effective_date > fromDate ? ev.effective_date : fromDate;
-        const clippedEnd = endDate < toDate ? endDate : toDate;
-        const clippedDays = Math.max(0, diffYmdDays(clippedStart, clippedEnd));
+        const clippedEndExclusive =
+          endExclusiveDate < toExclusiveEnd ? endExclusiveDate : toExclusiveEnd;
+        const clippedDays = Math.max(0, diffYmdDays(clippedStart, clippedEndExclusive));
 
-        if (ev.effective_date <= toDate && endDate >= fromDate) {
+        if (clippedDays > 0) {
           activeOnEpisodes.add(ep.entry_id);
           inPeriodOnDays += clippedDays;
         }
@@ -1244,7 +1247,7 @@ function computeRetentionMetricsAtAsOf(input: {
   const asOfDate = snapshot.asOfDate;
 
   let cohortEpisodeTotal = 0;
-  let currentlyRetainedCount = 0;
+  let continuouslyRetainedCount = 0;
   let exitedFromOnTotal = 0;
 
   let d7Matured = 0;
@@ -1293,7 +1296,7 @@ function computeRetentionMetricsAtAsOf(input: {
     const firstExitDate = nextAfterFirstOn ? nextAfterFirstOn.effective_date : null;
 
     if (firstExitDate === null) {
-      currentlyRetainedCount += 1;
+      continuouslyRetainedCount += 1;
     } else {
       exitedFromOnTotal += 1;
     }
@@ -1406,7 +1409,7 @@ function computeRetentionMetricsAtAsOf(input: {
     cohortEpisodeTotal,
     neverEnteredOnCount,
     unknownStatusEpisodeCount: snapshot.unknownCount,
-    currentlyRetainedCount,
+    continuouslyRetainedCount,
     exitedFromOnTotal,
     checkpoints: {
       d7: buildRetentionCheckpointMetrics(7, d7Matured, d7Immature, d7Retained, d7Exited),
@@ -2794,7 +2797,10 @@ function parseDurationSection(
     ) {
       return { ok: false, reason: "invalid_period_presence_fields" };
     }
-    if (activeOnEpisodeCount === 0 && inPeriodOnDays !== 0) {
+    if (
+      (activeOnEpisodeCount === 0 && inPeriodOnDays !== 0) ||
+      (activeOnEpisodeCount > 0 && inPeriodOnDays < activeOnEpisodeCount)
+    ) {
       return { ok: false, reason: "invalid_period_presence_fields" };
     }
 
@@ -2897,7 +2903,7 @@ function parseRetentionSection(
   const cohortEpisodeTotal = nonNegativeInt(r.cohort_episode_total);
   const neverEnteredOnCount = nonNegativeInt(r.never_entered_on_count);
   const unknownStatusEpisodeCount = nonNegativeInt(r.unknown_status_episode_count);
-  const currentlyRetainedCount = nonNegativeInt(r.currently_retained_count);
+  const continuouslyRetainedCount = nonNegativeInt(r.continuously_retained_count);
   const exitedFromOnTotal = nonNegativeInt(r.exited_from_on_total);
 
   if (
@@ -2909,7 +2915,7 @@ function parseRetentionSection(
     neverEnteredOnCount === null ||
     unknownStatusEpisodeCount === null ||
     unknownStatusEpisodeCount !== snapshot.unknownCount ||
-    currentlyRetainedCount === null ||
+    continuouslyRetainedCount === null ||
     exitedFromOnTotal === null
   ) {
     return { ok: false, reason: "invalid_retention_header_fields" };
@@ -2918,7 +2924,7 @@ function parseRetentionSection(
   if (
     cohortEpisodeTotal + neverEnteredOnCount + unknownStatusEpisodeCount !== eligibleEpisodeTotal ||
     cohortEpisodeTotal !== duration.everOnEpisodeCount ||
-    currentlyRetainedCount + exitedFromOnTotal !== cohortEpisodeTotal
+    continuouslyRetainedCount + exitedFromOnTotal !== cohortEpisodeTotal
   ) {
     return { ok: false, reason: "retention_cohort_sum_invariant_violated" };
   }
@@ -3024,7 +3030,7 @@ function parseRetentionSection(
       cohortEpisodeTotal,
       neverEnteredOnCount,
       unknownStatusEpisodeCount,
-      currentlyRetainedCount,
+      continuouslyRetainedCount,
       exitedFromOnTotal,
       checkpoints: {
         d7,

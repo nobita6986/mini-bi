@@ -175,16 +175,19 @@ test("WF-03 ephemeral DB integration: 2.5 active ON tenure & status presence, 2.
     [REASON_ID, USER_BOD],
     );
 
-    // Seed 9 episodes covering:
-    // 1. EP_D90_RETAINED (Team A, Rec A1): ON 2026-06-01 -> still ON at 2026-10-15 (136 days ON, matured & retained at D7/D30/D90)
+    // Seed 12 episodes covering:
+    // 1. EP_D90_RETAINED (Team A, Rec A1): ON 2026-06-01 -> still ON at 2026-10-15 ([06-01, 10-16) = 137 days ON, matured & retained at D7/D30/D90)
     // 2. EP_D90_EXITED_DAY90 (Team B, Rec B1): ON 2026-06-01 -> OFF 2026-08-30 (90 days ON, retained D7 & D30, exited at D90)
     // 3. EP_D30_EXITED_DAY30 (Team A, Rec A2): ON 2026-06-01 -> OFF 2026-07-01 (30 days ON, retained D7, exited at D30 & D90)
     // 4. EP_D7_EXITED_DAY6 (Team A, Rec A1): ON 2026-06-01 -> OFF 2026-06-07 (6 days ON, exited at D7/D30/D90)
-    // 5. EP_REHIRE_NEW_EPISODE (Team A, Rec A1): Rehire with new entry_id on 2026-10-12 -> ON 2026-10-12 (3 days ON, immature for D7/D30/D90; never rescues EP_D7_EXITED_DAY6)
-    // 6. EP_WAIT_THEN_ON (Team A, Rec A2): UNCONFIRMED 2026-09-10 -> ON 2026-09-20 (cohort_start_date = 2026-09-20 => at 2026-10-15 age=25d: matured D7, immature D30/D90)
+    // 5. EP_REHIRE_NEW_EPISODE (Team A, Rec A1): Rehire with new entry_id on 2026-10-12 -> ON 2026-10-12 ([10-12, 10-16) = 4 days ON, immature for D7/D30/D90; never rescues EP_D7_EXITED_DAY6)
+    // 6. EP_WAIT_THEN_ON (Team A, Rec A2): UNCONFIRMED 2026-09-10 -> ON 2026-09-20 ([09-20, 10-16) = 26 days ON; cohort_start_date = 2026-09-20 => matured D7, immature D30/D90)
     // 7. EP_NEVER_ON (Team B, Rec B1): UNCONFIRMED 2026-10-02 -> OFF 2026-10-09 (never entered ON)
     // 8. EP_UNKNOWN (Team A, Rec A2): first_work_date 2026-10-04, no status event
     // 9. EP_FUTURE (Team A, Rec A1): first_work_date 2026-10-25, ON 2026-10-25
+    // 10. EP_ON_AT_TO (Team B, Rec B1): ON starting right on `to` / `as_of` (2026-10-15) -> 1 day ON & 1 day in period
+    // 11. EP_END_AT_FROM (Team B, Rec B1): ON 2026-09-25 -> OFF right on `from` (2026-10-01) -> 6 days total ON, 0 days in [10-01, 10-16) and NOT in activeOnEpisodeCount
+    // 12. EP_OFF_THEN_ON_BEFORE_D7 (Team B, Rec B1): ON 2026-06-01 -> OFF 2026-06-04 (day 3) -> ON 2026-06-06 (day 5 before D7) -> still exited at D7/D30/D90
     const EP_D90_RETAINED = uuid(101);
     const EP_D90_EXITED_DAY90 = uuid(102);
     const EP_D30_EXITED_DAY30 = uuid(103);
@@ -194,6 +197,9 @@ test("WF-03 ephemeral DB integration: 2.5 active ON tenure & status presence, 2.
     const EP_NEVER_ON = uuid(107);
     const EP_UNKNOWN = uuid(108);
     const EP_FUTURE = uuid(109);
+    const EP_ON_AT_TO = uuid(110);
+    const EP_END_AT_FROM = uuid(111);
+    const EP_OFF_THEN_ON_BEFORE_D7 = uuid(112);
 
     const entriesToInsert = [
       { entry: EP_D90_RETAINED, sub: uuid(201), cand: uuid(301), project: "proj_a", date: "2026-06-01", code: "hrp-2026-000301", recruiter: REC_A1_ID, team: TEAM_A_ID },
@@ -205,6 +211,9 @@ test("WF-03 ephemeral DB integration: 2.5 active ON tenure & status presence, 2.
       { entry: EP_NEVER_ON, sub: uuid(207), cand: uuid(307), project: "proj_b", date: "2026-10-02", code: "hrp-2026-000307", recruiter: REC_B1_ID, team: TEAM_B_ID },
       { entry: EP_UNKNOWN, sub: uuid(208), cand: uuid(308), project: "proj_a", date: "2026-10-04", code: "hrp-2026-000308", recruiter: REC_A2_ID, team: TEAM_A_ID },
       { entry: EP_FUTURE, sub: uuid(209), cand: uuid(309), project: "proj_a", date: "2026-10-25", code: "hrp-2026-000309", recruiter: REC_A1_ID, team: TEAM_A_ID },
+      { entry: EP_ON_AT_TO, sub: uuid(210), cand: uuid(310), project: "proj_b", date: "2026-10-15", code: "hrp-2026-000310", recruiter: REC_B1_ID, team: TEAM_B_ID },
+      { entry: EP_END_AT_FROM, sub: uuid(211), cand: uuid(311), project: "proj_b", date: "2026-09-25", code: "hrp-2026-000311", recruiter: REC_B1_ID, team: TEAM_B_ID },
+      { entry: EP_OFF_THEN_ON_BEFORE_D7, sub: uuid(212), cand: uuid(312), project: "proj_b", date: "2026-06-01", code: "hrp-2026-000312", recruiter: REC_B1_ID, team: TEAM_B_ID },
     ];
 
     for (const item of entriesToInsert) {
@@ -232,27 +241,45 @@ test("WF-03 ephemeral DB integration: 2.5 active ON tenure & status presence, 2.
       { event_id: uuid(462), entry_id: EP_NEVER_ON, status: "OFF", effective_date: "2026-10-09", leave_date: "2026-10-09", reason: "Từ chối", version: 2, supersedes_event_id: null },
 
       { event_id: uuid(481), entry_id: EP_FUTURE, status: "ON", effective_date: "2026-10-25", leave_date: null, reason: null, version: 1, supersedes_event_id: null },
+
+      { event_id: uuid(491), entry_id: EP_ON_AT_TO, status: "ON", effective_date: "2026-10-15", leave_date: null, reason: null, version: 1, supersedes_event_id: null },
+
+      { event_id: uuid(501), entry_id: EP_END_AT_FROM, status: "ON", effective_date: "2026-09-25", leave_date: null, reason: null, version: 1, supersedes_event_id: null },
+      { event_id: uuid(502), entry_id: EP_END_AT_FROM, status: "OFF", effective_date: "2026-10-01", leave_date: "2026-10-01", reason: "Nghỉ đúng ngày đầu kỳ", version: 2, supersedes_event_id: null },
+
+      { event_id: uuid(511), entry_id: EP_OFF_THEN_ON_BEFORE_D7, status: "ON", effective_date: "2026-06-01", leave_date: null, reason: null, version: 1, supersedes_event_id: null },
+      { event_id: uuid(512), entry_id: EP_OFF_THEN_ON_BEFORE_D7, status: "OFF", effective_date: "2026-06-04", leave_date: "2026-06-04", reason: "Nghỉ ngày 3", version: 2, supersedes_event_id: null },
+      { event_id: uuid(513), entry_id: EP_OFF_THEN_ON_BEFORE_D7, status: "ON", effective_date: "2026-06-06", leave_date: null, reason: null, version: 3, supersedes_event_id: null, legacyBypassGuard: true },
     ];
 
     for (const ev of statusEvents) {
-      await db.query(
-        `insert into public.direct_entry_employment_status_events (
-           event_id, entry_id, status, effective_date, leave_date, leave_reason_text,
-           version, actor_user_id, reason_id, supersedes_event_id
-         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          ev.event_id,
-          ev.entry_id,
-          ev.status,
-          ev.effective_date,
-          ev.leave_date,
-          ev.reason,
-          ev.version,
-          USER_BOD,
-          REASON_ID,
-          ev.supersedes_event_id,
-        ],
-      );
+      if (ev.legacyBypassGuard) {
+        await db.exec("set session_replication_role = replica");
+      }
+      try {
+        await db.query(
+          `insert into public.direct_entry_employment_status_events (
+             event_id, entry_id, status, effective_date, leave_date, leave_reason_text,
+             version, actor_user_id, reason_id, supersedes_event_id
+           ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            ev.event_id,
+            ev.entry_id,
+            ev.status,
+            ev.effective_date,
+            ev.leave_date,
+            ev.reason,
+            ev.version,
+            USER_BOD,
+            REASON_ID,
+            ev.supersedes_event_id,
+          ],
+        );
+      } finally {
+        if (ev.legacyBypassGuard) {
+          await db.exec("set session_replication_role = origin");
+        }
+      }
     }
 
     const callRpc = async (authSubject, appUserId, filters) => {
@@ -308,68 +335,69 @@ test("WF-03 ephemeral DB integration: 2.5 active ON tenure & status presence, 2.
     );
     assert.equal(oct15.status, "ready");
     if (oct15.status === "ready") {
-      assert.equal(oct15.duration.eligibleEpisodeTotal, 8);
-      assert.equal(oct15.duration.knownStatusEpisodeCount, 7);
+      assert.equal(oct15.duration.eligibleEpisodeTotal, 11);
+      assert.equal(oct15.duration.knownStatusEpisodeCount, 10);
       assert.equal(oct15.duration.unknownStatusEpisodeCount, 1);
-      assert.equal(oct15.duration.everOnEpisodeCount, 6);
+      assert.equal(oct15.duration.everOnEpisodeCount, 9);
       assert.equal(oct15.duration.neverOnEpisodeCount, 1);
 
-      // Currently ON at 2026-10-15: EP_D90_RETAINED (136d), EP_REHIRE_NEW_EPISODE (3d), EP_WAIT_THEN_ON (25d) => 3 episodes, 164 days
-      assert.equal(oct15.duration.currentlyOn.episodeCount, 3);
-      assert.equal(oct15.duration.currentlyOn.totalOnDays, 136 + 3 + 25);
-      // Exited after ON: EP_D90_EXITED_DAY90 (90d), EP_D30_EXITED_DAY30 (30d), EP_D7_EXITED_DAY6 (6d) => 3 episodes, 126 days
-      assert.equal(oct15.duration.exitedAfterOn.episodeCount, 3);
-      assert.equal(oct15.duration.exitedAfterOn.totalOnDays, 90 + 30 + 6);
-      // Distribution: 0..7 => 2 (6d, 3d), 8..30 => 2 (30d, 25d), 31..90 => 1 (90d), 91+ => 1 (136d)
+      // Currently ON at 2026-10-15:
+      // EP_D90_RETAINED (137d), EP_REHIRE_NEW_EPISODE (4d), EP_WAIT_THEN_ON (26d), EP_ON_AT_TO (1d), EP_OFF_THEN_ON_BEFORE_D7 (3 + 132 = 135d)
+      assert.equal(oct15.duration.currentlyOn.episodeCount, 5);
+      assert.equal(oct15.duration.currentlyOn.intervalCount, 6);
+      assert.equal(oct15.duration.currentlyOn.totalOnDays, 137 + 4 + 26 + 1 + 135);
+      // Exited after ON: EP_D90_EXITED_DAY90 (90d), EP_D30_EXITED_DAY30 (30d), EP_D7_EXITED_DAY6 (6d), EP_END_AT_FROM (6d)
+      assert.equal(oct15.duration.exitedAfterOn.episodeCount, 4);
+      assert.equal(oct15.duration.exitedAfterOn.totalOnDays, 90 + 30 + 6 + 6);
+      // Distribution: 0..7 => 4 (6d, 4d, 1d, 6d), 8..30 => 2 (30d, 26d), 31..90 => 1 (90d), 91+ => 2 (137d, 135d)
       assert.deepEqual(oct15.duration.distribution, {
-        days0To7Count: 2,
+        days0To7Count: 4,
         days8To30Count: 2,
         days31To90Count: 1,
-        days91PlusCount: 1,
+        days91PlusCount: 2,
       });
 
-      // Period presence in [2026-10-01 .. 2026-10-15]:
-      // EP_D90_RETAINED = 14d, EP_WAIT_THEN_ON = 14d, EP_REHIRE_NEW_EPISODE = 3d => 3 active ON episodes, 31 days
+      // Period presence in half-open [2026-10-01, 2026-10-16):
+      // EP_D90_RETAINED = 15d, EP_WAIT_THEN_ON = 15d, EP_REHIRE_NEW_EPISODE = 4d, EP_ON_AT_TO = 1d, EP_OFF_THEN_ON_BEFORE_D7 = 15d
+      // (EP_END_AT_FROM ended on 2026-10-01 => 0 days and excluded from activeOnEpisodeCount!)
       assert.equal(oct15.duration.periodPresence.applicable, true);
       if (oct15.duration.periodPresence.applicable) {
-        assert.equal(oct15.duration.periodPresence.activeOnEpisodeCount, 3);
-        assert.equal(oct15.duration.periodPresence.inPeriodOnDays, 14 + 14 + 3);
+        assert.equal(oct15.duration.periodPresence.activeOnEpisodeCount, 5);
+        assert.equal(oct15.duration.periodPresence.inPeriodOnDays, 15 + 15 + 4 + 1 + 15);
       }
 
-      // Retention checkpoints at 2026-10-15:
-      // Cohort = 6 episodes:
-      //   D7: matured = 5 (all except EP_REHIRE_NEW_EPISODE), immature = 1, retained = 4, exited = 1 (EP_D7_EXITED_DAY6)
-      //   D30: matured = 4 (EP_WAIT_THEN_ON is 25d from ON => immature!), immature = 2, retained = 2, exited = 2 (EP_D7_EXITED_DAY6, EP_D30_EXITED_DAY30)
-      //   D90: matured = 4, immature = 2, retained = 1 (EP_D90_RETAINED), exited = 3 (EP_D7_EXITED_DAY6, EP_D30_EXITED_DAY30, EP_D90_EXITED_DAY90)
-      assert.equal(oct15.retention.cohortEpisodeTotal, 6);
+      // Continuous retention checkpoints at 2026-10-15:
+      assert.equal(oct15.retention.cohortEpisodeTotal, 9);
       assert.equal(oct15.retention.neverEnteredOnCount, 1);
       assert.equal(oct15.retention.unknownStatusEpisodeCount, 1);
+      assert.equal(oct15.retention.continuouslyRetainedCount, 4);
+      assert.equal(oct15.retention.exitedFromOnTotal, 5);
       assert.deepEqual(oct15.retention.checkpoints.d7, {
         checkpointDays: 7,
-        maturedCount: 5,
-        immatureCount: 1,
+        maturedCount: 7,
+        immatureCount: 2,
         retainedCount: 4,
-        exitedCount: 1,
-        retentionRate: 4 / 5,
-        attritionRate: 1 / 5,
+        exitedCount: 3,
+        retentionRate: 4 / 7,
+        attritionRate: 3 / 7,
       });
       assert.deepEqual(oct15.retention.checkpoints.d30, {
         checkpointDays: 30,
-        maturedCount: 4,
-        immatureCount: 2,
+        maturedCount: 5,
+        immatureCount: 4,
         retainedCount: 2,
-        exitedCount: 2,
-        retentionRate: 2 / 4,
-        attritionRate: 2 / 4,
+        exitedCount: 3,
+        retentionRate: 2 / 5,
+        attritionRate: 3 / 5,
       });
       assert.deepEqual(oct15.retention.checkpoints.d90, {
         checkpointDays: 90,
-        maturedCount: 4,
-        immatureCount: 2,
+        maturedCount: 5,
+        immatureCount: 4,
         retainedCount: 1,
-        exitedCount: 3,
-        retentionRate: 1 / 4,
-        attritionRate: 3 / 4,
+        exitedCount: 4,
+        retentionRate: 1 / 5,
+        attritionRate: 4 / 5,
       });
     }
 

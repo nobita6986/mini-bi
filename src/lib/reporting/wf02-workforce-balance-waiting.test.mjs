@@ -482,7 +482,7 @@ test("WF-02 (5): Fail-closed payload validation rejects broken balance conservat
       cohort_episode_total: 1,
       never_entered_on_count: 1,
       unknown_status_episode_count: 0,
-      currently_retained_count: 1,
+      continuously_retained_count: 1,
       exited_from_on_total: 0,
       checkpoints: {
         d7: { checkpoint_days: 7, matured_count: 1, immature_count: 0, retained_count: 1, exited_count: 0 },
