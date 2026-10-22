@@ -1,26 +1,68 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 
-import {
+const ROOT = process.cwd();
+const readRel = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "next/link") {
+      return nextResolve("next/link.js", context);
+    }
+    if (specifier === "next/navigation") {
+      return nextResolve("next/navigation.js", context);
+    }
+    if (specifier.startsWith("@/")) {
+      const target = path.join(ROOT, "src", specifier.slice(2));
+      for (const ext of ["", ".ts", ".tsx", ".js"]) {
+        try {
+          return nextResolve(pathToFileURL(target + ext).href, context);
+        } catch {
+          // continue searching extensions
+        }
+      }
+    }
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url.endsWith(".tsx") || url.endsWith(".ts")) {
+      const source = readFileSync(new URL(url), "utf8");
+      const { outputText } = ts.transpileModule(source, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ESNext,
+          jsx: ts.JsxEmit.ReactJSX,
+        },
+        fileName: url,
+      });
+      return { format: "module", shortCircuit: true, source: outputText };
+    }
+    return nextLoad(url, context);
+  },
+});
+
+const {
   bindNotifyTimerScheduler,
   createNotifyStore,
   DEFAULT_NOTIFY_DURATIONS,
-  executeSessionLogout,
   MAX_PENDING_TOASTS,
   MAX_VISIBLE_TOASTS,
-  renderNotifyViewportElement,
   resolveNotifyDuration,
   sanitizeNotifyText,
   syncNotifyPathname,
   TOAST_ENTER_DURATION_MS,
   TOAST_EXIT_DURATION_MS,
-} from "./notify-store.ts";
+} = await import("./notify-store.ts");
 
-const ROOT = process.cwd();
-const readRel = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
+const { ToastViewport } = await import("./toast.tsx");
+const { executeSessionLogout } = await import("../app-shell/user-session-control.tsx");
 
 /**
  * Deterministic fake clock for testing per-Toast deadlines, enter/exit transitions,
@@ -80,8 +122,12 @@ function createFakeClock({ reducedMotion = false } = {}) {
 }
 
 function renderViewportHtml(store) {
-  const element = renderNotifyViewportElement(store);
-  return element ? renderToStaticMarkup(element) : "";
+  return renderToStaticMarkup(
+    createElement(ToastViewport, {
+      items: store.getSnapshot().visible,
+      onDismiss: store.dismiss,
+    }),
+  );
 }
 
 describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit Lifecycle, A11y & Logout Contract", () => {
@@ -502,19 +548,20 @@ describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit L
     const layoutSrc = readRel("src/app/layout.tsx");
     const appShellSrc = readRel("src/components/app-shell/app-shell.tsx");
     const providerSrc = readRel("src/components/ui/notify-provider.tsx");
+    const storeSrc = readRel("src/components/ui/notify-store.ts");
     const toastSrc = readRel("src/components/ui/toast.tsx");
 
     assert.ok(!layoutSrc.includes('"use client"'), "RootLayout must remain a Server Component");
     assert.ok(!appShellSrc.includes('"use client"'), "AppShell must remain a Server Component");
     assert.match(layoutSrc, /<ThemeProvider>[\s\S]*<NotifyProvider>[\s\S]*<NuqsAdapter>/);
 
-    assert.match(providerSrc, /data-testid="app-notify-viewport"/);
+    assert.match(providerSrc, /<ToastViewport\s+items=\{snapshot\.visible\}\s+onDismiss=\{store\.dismiss\}\s*\/>/);
     assert.match(providerSrc, /bindNotifyTimerScheduler\(store\)/);
-    assert.ok(
-      !providerSrc.includes("aria-live="),
-      "NotifyProvider viewport wrapper must not declare aria-live so each ToastCard announces itself once",
-    );
+    assert.ok(!storeSrc.includes("from \"react\""), "notify-store.ts must not depend on React");
+    assert.ok(!storeSrc.includes("renderNotifyViewportElement"), "notify-store.ts must not contain a shadow UI renderer");
 
+    assert.match(toastSrc, /export function ToastViewport/);
+    assert.match(toastSrc, /data-testid="app-notify-viewport"/);
     assert.match(toastSrc, /aria-label="Đóng thông báo"/);
     assert.match(toastSrc, /min-h-11\s+min-w-11/);
     assert.match(toastSrc, /motion-reduce:transition-none/);

@@ -7,6 +7,7 @@ import {
   resolveToastAria,
   TOAST_PHASE_CLASSES,
   TOAST_TONE_STYLES as STORE_TONE_STYLES,
+  type NotifyItem,
   type NotifyPhase,
 } from "@/components/ui/notify-store";
 import { cn } from "@/lib/utils";
@@ -113,6 +114,38 @@ export function ToastCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+export function ToastViewport({
+  items,
+  onDismiss,
+}: {
+  items: readonly NotifyItem[];
+  onDismiss: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <section
+      aria-label="Thông báo hệ thống"
+      data-testid="app-notify-viewport"
+      data-ui-toast-viewport="true"
+      className="pointer-events-none fixed top-[max(0.75rem,env(safe-area-inset-top))] sm:top-16 right-3 left-3 sm:left-auto sm:right-4 z-[80] flex flex-col gap-2.5 sm:w-full sm:max-w-[420px]"
+    >
+      {items.map((item) => (
+        <ToastCard
+          key={item.id}
+          tone={item.tone}
+          phase={item.phase}
+          title={item.title}
+          description={item.description}
+          action={item.action}
+          dataTestId={item.dataTestId ?? `toast-item-${item.tone}`}
+          onDismiss={() => onDismiss(item.id)}
+        />
+      ))}
+    </section>
   );
 }
 

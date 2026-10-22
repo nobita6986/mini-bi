@@ -1,11 +1,11 @@
 # MINI BI — MASTER PLAN THỰC THI UI/UX & MOTION (AGENT-READY)
 
-**Phiên bản:** 2.0 — đặc tả giao việc trực tiếp cho Coding Agent  
-**Ngày:** 21/10/2026  
-**Repository:** `nobita6986/mini-bi` — https://github.com/nobita6986/mini-bi  
-**Mốc mã nguồn đã kiểm tra:** `main` tại commit `9eb7228e0cbe815983d6705345e4b0c09cdc7c4b` (21/10/2026).  
-**Đường dẫn đề xuất trong repo:** `docs/plans/mini-bi-ui-ux-agent-ready-masterplan.md`  
-**Loại tài liệu:** Product specification + technical work order + acceptance criteria + regression checklist.  
+**Phiên bản:** 2.0 — đặc tả giao việc trực tiếp cho Coding Agent
+**Ngày:** 21/10/2026
+**Repository:** `nobita6986/mini-bi` — https://github.com/nobita6986/mini-bi
+**Mốc mã nguồn đã kiểm tra:** `main` tại commit `9eb7228e0cbe815983d6705345e4b0c09cdc7c4b` (21/10/2026).
+**Đường dẫn đề xuất trong repo:** `docs/plans/mini-bi-ui-ux-agent-ready-masterplan.md`
+**Loại tài liệu:** Product specification + technical work order + acceptance criteria + regression checklist.
 **Trạng thái:** Đặc tả triển khai, **chưa** đồng nghĩa mã nguồn đã được sửa.
 
 > **LỆNH GIAO VIỆC:** Coding Agent phải triển khai theo **chính file này**, dùng repo làm nguồn xác minh kỹ thuật. **Không cần, không được yêu cầu lại clip, hình ảnh, ảnh chụp màn hình hoặc truy cập Vessa demo** để hiểu yêu cầu. Các đặc điểm thị giác và hiệu ứng cần triển khai đã được mô tả bằng văn bản và thông số trong file. Nếu repo thay đổi sau commit tham chiếu, kiểm tra đường dẫn mới và ghi lại sai khác; không tự ý đổi yêu cầu sản phẩm.
@@ -519,10 +519,10 @@ Nếu đã có các token tương đương trong branch mới, **tái sử dụn
 
 ### 10.3. Coverage phải kiểm tra
 
-**Thiết bị/viewport:** desktop 1440px, tablet 768px, mobile 375px và 320px.  
-**Theme:** `hr-partner`, `ocean-trust`, `emerald-growth`, `violet-future`, `executive-gold`, sáng/tối.  
-**Tương tác:** mouse, touch, keyboard-only; `prefers-reduced-motion` normal/reduce.  
-**Quyền:** BoD / Team / Own / không có quyền, các tab có gate quyền.  
+**Thiết bị/viewport:** desktop 1440px, tablet 768px, mobile 375px và 320px.
+**Theme:** `hr-partner`, `ocean-trust`, `emerald-growth`, `violet-future`, `executive-gold`, sáng/tối.
+**Tương tác:** mouse, touch, keyboard-only; `prefers-reduced-motion` normal/reduce.
+**Quyền:** BoD / Team / Own / không có quyền, các tab có gate quyền.
 **Các case nhạy cảm:** Radix dialog đang mở, submit thất bại, reload 409, logout, thay đổi query, pagination, mobile keyboard.
 
 **Không được ghi là đã test 5×2×4×... nếu chỉ chạy một cấu hình.** Ghi environment và những trường hợp chưa thể test thực tế.

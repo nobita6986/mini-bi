@@ -16,12 +16,33 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
 
-import { useNotify } from "@/components/ui/notify-provider";
+import { useNotify, type NotifyApi } from "@/components/ui/notify-provider";
 
 type SessionState = "loading" | "auth" | "anon" | "unavailable";
 
 const linkClass =
   "inline-flex h-11 items-center rounded-md px-3 text-sm font-medium text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40";
+
+export async function executeSessionLogout({
+  fetchImpl = fetch,
+  notify,
+  router,
+}: {
+  fetchImpl?: typeof fetch;
+  notify: Pick<NotifyApi, "clear">;
+  router: { replace: (href: string) => void; refresh: () => void };
+}): Promise<boolean> {
+  const res = await fetchImpl("/api/auth/logout", {
+    method: "POST", credentials: "same-origin",
+  });
+  if (res.status === 204) {
+    notify.clear();
+    router.replace("/login");
+    router.refresh();
+    return true;
+  }
+  return false;
+}
 
 /**
  * Strict projection of the session payload. A missing, non-string, untrimmed or
@@ -88,15 +109,8 @@ export function UserSessionControl() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/logout", {
-        method: "POST", credentials: "same-origin",
-      });
-      if (res.status === 204) {
-        notify.clear();
-        router.replace("/login");
-        router.refresh();
-        return;
-      }
+      const ok = await executeSessionLogout({ notify, router });
+      if (ok) return;
       setError("Không thể đăng xuất lúc này. Vui lòng thử lại.");
     } catch {
       setError("Không thể đăng xuất lúc này. Vui lòng thử lại.");
