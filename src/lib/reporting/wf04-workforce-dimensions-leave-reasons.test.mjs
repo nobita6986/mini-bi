@@ -10,13 +10,20 @@ import {
   evaluateWorkforceSnapshotAndTransitions,
   formatCoverageRatePercent,
   formatShareRatePercent,
+  parseWorkforceOverviewPayload,
+  parseWorkforceProjectPagePayload,
   parseWorkforceReportingPayload,
+  resolveWorkforceDeepReportingForActor,
+  resolveWorkforceOverviewForActor,
+  resolveWorkforceProjectPageForActor,
   WORKFORCE_DIMENSION_ATTRIBUTION_NOTE,
   WORKFORCE_DIMENSION_KIND_LABELS,
   WORKFORCE_HIGHLIGHT_MIN_SAMPLE_SIZE,
   WORKFORCE_LEAVE_REASON_CATEGORY_LABELS,
   WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE,
+  WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE,
 } from "./wf04-workforce-dimensions-leave-reasons.ts";
+import { canViewDeepWorkforceReport } from "../auth/direct-entry-page-access.ts";
 
 function uuid(n) {
   return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -813,3 +820,253 @@ test("WF-04 (5): Visual clarity UI contract guards in dashboard-shared.tsx", () 
   assert.ok(WORKFORCE_DIMENSION_ATTRIBUTION_NOTE.includes("(Ngừng hoạt động)"));
   assert.ok(WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE.includes("đã xác minh"));
 });
+
+test("WF-04 Hotfix (6): Tab navigation order, content split (Báo cáo tổng quát vs Báo cáo chuyên sâu), font unification, and lazy-loading contract", () => {
+  const pageSrc = fs.readFileSync(path.resolve(process.cwd(), "src/app/dashboard/page.tsx"), "utf8");
+  const tabsSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/dashboard/bod-dashboard-tabs.tsx"),
+    "utf8",
+  );
+  const sharedSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/dashboard/dashboard-shared.tsx"),
+    "utf8",
+  );
+  const serverSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/lib/reporting/p2-w04a-reporting-server.ts"),
+    "utf8",
+  );
+  const teamViewSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/dashboard/team-dashboard-view.tsx"),
+    "utf8",
+  );
+  const teamReportSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/dashboard/team-report-view.tsx"),
+    "utf8",
+  );
+  const ownViewSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/components/dashboard/own-dashboard-view.tsx"),
+    "utf8",
+  );
+  const routeSrc = fs.readFileSync(
+    path.resolve(process.cwd(), "src/app/api/reporting/workforce-deep/route.ts"),
+    "utf8",
+  );
+
+  // 1. Tab order: Báo cáo tổng quát -> Báo cáo chuyên sâu -> Báo cáo theo nhóm -> Báo cáo CCCD trùng
+  const idxGeneral = tabsSrc.indexOf('key: "general", label: "Báo cáo tổng quát"');
+  const idxDeep = tabsSrc.indexOf('key: "deep", label: "Báo cáo chuyên sâu"');
+  const idxTeam = tabsSrc.indexOf('key: "team", label: "Báo cáo theo nhóm"');
+  const idxCccd = tabsSrc.indexOf('key: "duplicate-cccd", label: "Báo cáo CCCD trùng"');
+  assert.ok(idxGeneral >= 0 && idxDeep > idxGeneral && idxTeam > idxDeep && idxCccd > idxTeam);
+
+  // 2. WorkforceSnapshotSection on Báo cáo tổng quát only renders Trạng thái lao động tại ngày chốt + Biến động trạng thái trong kỳ
+  const snapshotFnStart = sharedSrc.indexOf("export function WorkforceSnapshotSection");
+  const snapshotFnEnd = sharedSrc.indexOf("export const WorkforceStatusSection");
+  const deepFnStart = sharedSrc.indexOf("export function WorkforceDeepSection");
+  assert.ok(snapshotFnStart >= 0 && snapshotFnEnd > snapshotFnStart && deepFnStart > snapshotFnEnd);
+  const snapshotSectionCode = sharedSrc.slice(snapshotFnStart, snapshotFnEnd);
+
+  assert.ok(snapshotSectionCode.includes("Hiện trạng & biến động trạng thái lao động"));
+  assert.ok(snapshotSectionCode.includes("Trạng thái lao động tại ngày chốt"));
+  assert.ok(snapshotSectionCode.includes("Biến động trạng thái trong kỳ"));
+  assert.ok(!snapshotSectionCode.includes("Snapshot trạng thái lao động"));
+  // Full-width separate row for business note
+  assert.ok(
+    snapshotSectionCode.includes("mt-2 w-full rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs text-muted"),
+  );
+  // Deep sections MUST NOT exist inside WorkforceSnapshotSection
+  assert.ok(!snapshotSectionCode.includes("Đối soát cân bằng đầu kỳ / cuối kỳ"));
+  assert.ok(!snapshotSectionCode.includes("Thời gian chờ việc &amp; tỷ lệ bố trí việc"));
+  assert.ok(!snapshotSectionCode.includes("Thâm niên làm việc &amp; ngày hiện diện theo trạng thái"));
+  assert.ok(!snapshotSectionCode.includes("Nghỉ sớm &amp; giữ chân theo mốc D7 / D30 / D90"));
+  assert.ok(!snapshotSectionCode.includes("Chất lượng lực lượng theo chiều phân tích"));
+  assert.ok(!snapshotSectionCode.includes("Phân tích lý do nghỉ việc &amp; độ phủ dữ liệu"));
+
+  // 3. WorkforceDeepSection renders all moved deep sections + server-side project pagination ("Tải thêm")
+  const deepSectionCode = sharedSrc.slice(deepFnStart);
+  assert.ok(deepSectionCode.includes("Điểm cần chú ý tại ngày mốc"));
+  assert.ok(deepSectionCode.includes("Đối soát cân bằng đầu kỳ / cuối kỳ"));
+  assert.ok(deepSectionCode.includes("Thời gian chờ việc &amp; tỷ lệ bố trí việc"));
+  assert.ok(deepSectionCode.includes("Thâm niên làm việc &amp; ngày hiện diện theo trạng thái"));
+  assert.ok(deepSectionCode.includes("Nghỉ sớm &amp; giữ chân theo mốc D7 / D30 / D90"));
+  assert.ok(deepSectionCode.includes("Chất lượng lực lượng theo chiều phân tích"));
+  assert.ok(deepSectionCode.includes("Phân tích lý do nghỉ việc &amp; độ phủ dữ liệu"));
+  assert.ok(deepSectionCode.includes("Tải thêm"));
+  assert.ok(deepSectionCode.includes("/api/reporting/workforce-deep"));
+  assert.ok(deepSectionCode.includes("AbortController"));
+  assert.ok(deepSectionCode.includes("requestSeqRef"));
+
+  // 4. Font unification: no font-mono inside dashboard-shared.tsx
+  assert.ok(!sharedSrc.includes("font-mono"), "dashboard-shared.tsx must not use font-mono");
+  assert.ok(sharedSrc.includes("tabular-nums"), "dashboard-shared.tsx keeps tabular-nums for numbers");
+
+  // 5. Lazy loading & scope=all guard on server and client
+  assert.ok(serverSrc.includes("resolveWorkforceOverviewForActor"));
+  assert.ok(!serverSrc.includes("resolveWorkforceReportingForActor"));
+  assert.ok(serverSrc.includes('audience.kind === "all"'));
+  assert.ok(pageSrc.includes("canViewDeepWorkforceReport(actor)"));
+  assert.ok(routeSrc.includes("guardApiSession"));
+  assert.ok(routeSrc.includes("fetchWorkforceDeepReport"));
+
+  // 6. Team Leader & Recruiter views do not render WorkforceSnapshotSection or fallback card
+  assert.ok(!teamViewSrc.includes("WorkforceSnapshotSection"));
+  assert.ok(!teamReportSrc.includes("WorkforceSnapshotSection"));
+  assert.ok(!ownViewSrc.includes("WorkforceSnapshotSection"));
+});
+
+test("WF-04 Hotfix (7): Authority helper, overview/project_page parsers, and paged attention insights", async () => {
+  // 1. canViewDeepWorkforceReport authority matrix
+  const makeActor = (scopes) => ({
+    ok: true,
+    actor: {
+      auth_subject: uuid(900),
+      app_user_id: uuid(901),
+      display_name: "Test User",
+      enabled: true,
+      capabilities: ["reporting_view"],
+      scopes,
+      self_recruiter_suggestion: null,
+      session: { provider: "supabase", verification: "getUser", authenticated_at: null },
+    },
+  });
+  assert.equal(canViewDeepWorkforceReport(makeActor([{ kind: "all", reference: "all" }])), true);
+  assert.equal(canViewDeepWorkforceReport(makeActor([{ kind: "team", reference: uuid(10) }])), false);
+  assert.equal(canViewDeepWorkforceReport(makeActor([{ kind: "own", reference: "own" }])), false);
+  assert.equal(canViewDeepWorkforceReport(null), false);
+  assert.equal(canViewDeepWorkforceReport({ ok: false, reason: "UNAUTHENTICATED" }), false);
+
+  // 2. Overview parser & resolver (only snapshot + transitions, requires audience === "all")
+  const overviewPayload = {
+    audience: { audience: "all" },
+    mode: "overview",
+    snapshot: {
+      as_of_date: "2026-10-15",
+      as_of_source: "filter_to",
+      eligible_episode_total: 3,
+      on_count: 2,
+      unconfirmed_count: 1,
+      off_count: 0,
+      unknown_count: 0,
+      future_episode_count: 0,
+    },
+    transitions: {
+      applicable: false,
+      reason: "all_time",
+      from_date: null,
+      to_date: null,
+    },
+  };
+  const parsedOverview = parseWorkforceOverviewPayload(overviewPayload);
+  assert.equal(parsedOverview.status, "ready");
+  if (parsedOverview.status === "ready") {
+    assert.equal(parsedOverview.snapshot.eligibleEpisodeTotal, 3);
+    assert.equal(parsedOverview.snapshot.onCount, 2);
+    assert.equal("balance" in parsedOverview, false);
+    assert.equal("dimensions" in parsedOverview, false);
+  }
+
+  let capturedOverviewArgs = null;
+  const overviewForAll = await resolveWorkforceOverviewForActor({
+    actor: { auth_subject: uuid(1), app_user_id: uuid(2) },
+    filters: { from: "2026-10-01", to: "2026-10-15" },
+    callWorkforceRpc: async (args) => {
+      capturedOverviewArgs = args;
+      return { data: overviewPayload };
+    },
+  });
+  assert.equal(overviewForAll.status, "ready");
+  assert.equal(capturedOverviewArgs.p_filters.mode, "overview");
+
+  // Team audience must be rejected by resolveWorkforceOverviewForActor even if RPC were called
+  const overviewForTeam = await resolveWorkforceOverviewForActor({
+    actor: { auth_subject: uuid(1), app_user_id: uuid(2) },
+    filters: { from: "2026-10-01", to: "2026-10-15" },
+    callWorkforceRpc: async () => ({
+      data: {
+        ...overviewPayload,
+        audience: { audience: "team", team_id: uuid(10), team_code: "T1", team_display_name: "Team 1" },
+      },
+    }),
+  });
+  assert.equal(overviewForTeam.status, "unavailable");
+  assert.equal(overviewForTeam.reason, "audience_mismatch");
+
+  // 3. Project page parser & resolver (5 rows/page default)
+  assert.equal(WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE, 5);
+  const sampleProjectBucket = {
+    key: "prj-6",
+    display: "Dự án 6",
+    is_unknown: false,
+    active: true,
+    eligible_episode_count: 4,
+    on_count: 2,
+    unconfirmed_count: 1,
+    off_count: 1,
+    unknown_count: 0,
+    waiting_episode_count: 2,
+    completed_waiting_episode_count: 1,
+    placed_to_on_episode_count: 1,
+    exited_without_on_episode_count: 0,
+    currently_waiting_episode_count: 1,
+    total_waiting_days: 6,
+    avg_waiting_days_per_episode: 3,
+    placement_rate_of_waiting: 0.5,
+    placement_rate_of_completed_waiting: 1,
+    ever_on_episode_count: 3,
+    never_on_episode_count: 1,
+    continuously_retained_count: 2,
+    exited_from_on_count: 1,
+    total_on_days: 45,
+    avg_on_days_per_episode: 15,
+    checkpoints: {
+      d7: { checkpoint_days: 7, matured_count: 3, immature_count: 0, retained_count: 3, exited_count: 0, retention_rate: 1, attrition_rate: 0 },
+      d30: { checkpoint_days: 30, matured_count: 3, immature_count: 0, retained_count: 2, exited_count: 1, retention_rate: 2 / 3, attrition_rate: 1 / 3 },
+      d90: { checkpoint_days: 90, matured_count: 0, immature_count: 3, retained_count: 0, exited_count: 0, retention_rate: null, attrition_rate: null },
+    },
+  };
+  const projectPagePayload = {
+    audience: { audience: "all" },
+    mode: "project_page",
+    by_project_page: {
+      as_of_date: "2026-10-15",
+      as_of_source: "filter_to",
+      total_count: 6,
+      page_size: 5,
+      has_more: false,
+      next_cursor: null,
+      rows: [sampleProjectBucket],
+    },
+  };
+  const parsedPage = parseWorkforceProjectPagePayload(projectPagePayload);
+  assert.equal(parsedPage.status, "ready");
+  if (parsedPage.status === "ready") {
+    assert.equal(parsedPage.totalCount, 6);
+    assert.equal(parsedPage.pageSize, 5);
+    assert.equal(parsedPage.hasMore, false);
+    assert.equal(parsedPage.nextCursor, null);
+    assert.equal(parsedPage.rows.length, 1);
+    assert.equal(parsedPage.rows[0].key, "prj-6");
+  }
+
+  const missingCursorRes = await resolveWorkforceProjectPageForActor({
+    actor: { auth_subject: uuid(1), app_user_id: uuid(2) },
+    filters: {},
+    cursor: "   ",
+    callWorkforceRpc: async () => ({ data: projectPagePayload }),
+  });
+  assert.equal(missingCursorRes.status, "unavailable");
+  assert.equal(missingCursorRes.reason, "missing_cursor");
+
+  let capturedDeepArgs = null;
+  await resolveWorkforceDeepReportingForActor({
+    actor: { auth_subject: uuid(1), app_user_id: uuid(2) },
+    filters: { from: "2026-10-01", to: "2026-10-15" },
+    callWorkforceRpc: async (args) => {
+      capturedDeepArgs = args;
+      return { data: null };
+    },
+  });
+  assert.equal(capturedDeepArgs.p_filters.mode, "deep");
+  assert.equal(capturedDeepArgs.p_filters.project_limit, "5");
+});
+

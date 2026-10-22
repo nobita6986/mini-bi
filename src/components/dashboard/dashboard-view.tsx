@@ -28,6 +28,7 @@ import {
   NoMatchesBlock,
   PeriodComparisonBanner,
   WorkforceStatusSection,
+  type WorkforceOverviewResult,
   type WorkforceReportingResult,
 } from "./dashboard-shared";
 import { EmploymentComposition } from "./employment-composition";
@@ -111,7 +112,6 @@ export function DashboardView({
             data={report.data}
             generatedAt={report.generatedAt}
             comparison={report.comparison}
-            workforce={report.workforce}
             optionsResult={optionsResult}
             view={mode.view}
           />
@@ -133,7 +133,6 @@ export function DashboardView({
             data={report.data}
             generatedAt={report.generatedAt}
             comparison={report.comparison}
-            workforce={report.workforce}
             optionsResult={optionsResult}
             view={mode.view}
           />
@@ -238,7 +237,7 @@ function DashboardBody({
   data: ReportingData;
   summary: DashboardSummaryMetrics;
   comparison?: PeriodComparisonResult;
-  workforce?: WorkforceReportingResult;
+  workforce?: WorkforceOverviewResult | WorkforceReportingResult;
   optionsResult: ReportingOptionsResult;
   trend: ReturnType<typeof buildDailyTrend>;
   dataDays: ReturnType<typeof buildDailyTrend>;

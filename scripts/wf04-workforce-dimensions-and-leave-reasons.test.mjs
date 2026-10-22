@@ -19,7 +19,11 @@ import { seedLegacyReviewSubmission } from "./lib/seed-legacy-review-submission.
 import {
   deriveWorkforceAttentionInsights,
   evaluateWorkforceSnapshotAndTransitions,
+  parseWorkforceOverviewPayload,
   parseWorkforceReportingPayload,
+  resolveWorkforceDeepReportingForActor,
+  resolveWorkforceOverviewForActor,
+  resolveWorkforceProjectPageForActor,
   resolveWorkforceReportingForActor,
 } from "../src/lib/reporting/wf04-workforce-dimensions-leave-reasons.ts";
 
@@ -435,6 +439,141 @@ test("WF-04 ephemeral DB integration: 2.7 dimensional quality, 2.8 leave reasons
       });
       assert.deepEqual(ownRes.dimensions, tsOwn.dimensions);
       assert.deepEqual(ownRes.leaveReasons, tsOwn.leaveReasons);
+    }
+
+    // 4. WF-04 Post-Merge Hotfix:
+    //    4a. `mode = 'overview'` returns ONLY snapshot (2.1) & transitions (2.2) for `all` scope,
+    //        and never includes balance, waiting, duration, retention, dimensions, or leave_reasons:
+    const overviewRaw = await callRpc(AUTH_BOD, USER_BOD, {
+      from: "2026-10-01",
+      to: "2026-10-15",
+      mode: "overview",
+    });
+    assert.equal(overviewRaw.mode, "overview");
+    assert.ok(overviewRaw.snapshot && overviewRaw.transitions);
+    assert.equal("balance" in overviewRaw, false);
+    assert.equal("waiting" in overviewRaw, false);
+    assert.equal("duration" in overviewRaw, false);
+    assert.equal("retention" in overviewRaw, false);
+    assert.equal("dimensions" in overviewRaw, false);
+    assert.equal("leave_reasons" in overviewRaw, false);
+
+    const parsedOverview = parseWorkforceOverviewPayload(overviewRaw);
+    assert.equal(parsedOverview.status, "ready");
+    if (parsedOverview.status === "ready" && oct15.status === "ready") {
+      assert.deepEqual(parsedOverview.snapshot, oct15.snapshot);
+      assert.deepEqual(parsedOverview.transitions, oct15.transitions);
+    }
+
+    //    4b. `mode = 'overview' | 'deep' | 'project_page'` must reject `team` and `own` actors with 42501:
+    for (const [authSub, appUser] of [
+      [AUTH_LEAD_A, USER_LEAD_A],
+      [AUTH_REC_A1, USER_REC_A1],
+    ]) {
+      for (const mode of ["overview", "deep", "project_page"]) {
+        await assert.rejects(
+          () => callRpc(authSub, appUser, { from: "2026-10-01", to: "2026-10-15", mode }),
+          (err) => err && (err.code === "42501" || String(err.message).includes("require all scope")),
+          `Actor ${appUser} must be denied mode=${mode} at PostgreSQL RPC boundary`,
+        );
+      }
+      const deniedOverview = await resolveWorkforceOverviewForActor({
+        actor: { auth_subject: authSub, app_user_id: appUser },
+        filters: { from: "2026-10-01", to: "2026-10-15" },
+        callWorkforceRpc: async (args) => {
+          try {
+            return { data: await callRpc(args.p_auth_subject, args.p_app_user_id, args.p_filters) };
+          } catch (error) {
+            return { error };
+          }
+        },
+      });
+      assert.equal(deniedOverview.status, "unavailable");
+    }
+
+    //    4c. Server-side pagination for `by_project` (5 rows per page + "Tải thêm" cursor paging):
+    //        Seed 5 additional projects (total 7 projects) and verify page 1 returns 5 projects
+    //        and page 2 returns the remaining 2 projects with zero duplicates and zero omissions.
+    for (let idx = 1; idx <= 5; idx += 1) {
+      const pCode = `proj_extra_${idx}`;
+      const pName = `Project Extra ${idx}`;
+      await db.query(
+        "insert into public.direct_entry_projects (project_id, display_name) values ($1, $2)",
+        [pCode, pName],
+      );
+      const epId = uuid(600 + idx);
+      const subId = uuid(700 + idx);
+      const candId = uuid(750 + idx);
+      const evId = uuid(800 + idx);
+      await insertEntry(db, {
+        entry: epId,
+        sub: subId,
+        cand: candId,
+        createdBy: USER_BOD,
+        project: pCode,
+        date: "2026-10-02",
+        code: `hrp-2026-00050${idx}`,
+        recruiter: REC_A1_ID,
+        team: TEAM_A_ID,
+        provider: "hrp",
+      });
+      await db.query(
+        `insert into public.direct_entry_employment_status_events (
+           event_id, entry_id, status, effective_date, leave_date, leave_reason_text,
+           version, actor_user_id, reason_id, supersedes_event_id
+         ) values ($1::uuid, $2::uuid, 'ON', '2026-10-02'::date, null, null, 1, $3::uuid, $4::uuid, null)`,
+        [evId, epId, USER_BOD, REASON_ID],
+      );
+    }
+
+    const fullWith7Projects = parseWorkforceReportingPayload(
+      await callRpc(AUTH_BOD, USER_BOD, { from: "2026-10-01", to: "2026-10-15" }),
+    );
+    assert.equal(fullWith7Projects.status, "ready");
+
+    const deepPage1 = await resolveWorkforceDeepReportingForActor({
+      actor: { auth_subject: AUTH_BOD, app_user_id: USER_BOD },
+      filters: { from: "2026-10-01", to: "2026-10-15" },
+      callWorkforceRpc: async (args) => ({
+        data: await callRpc(args.p_auth_subject, args.p_app_user_id, args.p_filters),
+      }),
+    });
+    assert.equal(deepPage1.status, "ready");
+
+    if (fullWith7Projects.status === "ready" && deepPage1.status === "ready") {
+      assert.equal(fullWith7Projects.dimensions.byProject.buckets.length, 7);
+      assert.equal(deepPage1.dimensions.byProject.buckets.length, 5);
+      assert.ok(deepPage1.dimensions.byProject.pagination);
+      assert.equal(deepPage1.dimensions.byProject.pagination.totalCount, 7);
+      assert.equal(deepPage1.dimensions.byProject.pagination.pageSize, 5);
+      assert.equal(deepPage1.dimensions.byProject.pagination.hasMore, true);
+      assert.ok(deepPage1.dimensions.byProject.pagination.nextCursor);
+
+      const page2 = await resolveWorkforceProjectPageForActor({
+        actor: { auth_subject: AUTH_BOD, app_user_id: USER_BOD },
+        filters: { from: "2026-10-01", to: "2026-10-15" },
+        cursor: deepPage1.dimensions.byProject.pagination.nextCursor,
+        callWorkforceRpc: async (args) => ({
+          data: await callRpc(args.p_auth_subject, args.p_app_user_id, args.p_filters),
+        }),
+      });
+      assert.equal(page2.status, "ready");
+      if (page2.status === "ready") {
+        assert.equal(page2.totalCount, 7);
+        assert.equal(page2.pageSize, 5);
+        assert.equal(page2.hasMore, false);
+        assert.equal(page2.nextCursor, null);
+        assert.equal(page2.rows.length, 2);
+
+        const combined = [...deepPage1.dimensions.byProject.buckets, ...page2.rows];
+        assert.deepEqual(combined, fullWith7Projects.dimensions.byProject.buckets);
+      }
+
+      // Attention insights on paged deepPage1 must match fullWith7Projects 100%
+      assert.deepEqual(
+        deriveWorkforceAttentionInsights(deepPage1),
+        deriveWorkforceAttentionInsights(fullWith7Projects),
+      );
     }
   } finally {
     await db.close();

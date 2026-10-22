@@ -8,8 +8,8 @@ import { parseReportingFilters } from "./p1-filter";
 import type { ReportingFilters } from "./p1-filter";
 import { resolvePriorPeriodComparisonForActor } from "./p1-period-comparison";
 import type { PeriodComparisonResult } from "./p1-period-comparison";
-import { resolveWorkforceReportingForActor } from "./wf01-workforce-snapshot";
-import type { WorkforceReportingResult } from "./wf01-workforce-snapshot";
+import { resolveWorkforceOverviewForActor } from "./wf01-workforce-snapshot";
+import type { WorkforceOverviewResult } from "./wf01-workforce-snapshot";
 import { computeReporting, reportingQueryFailed } from "./p1-reporting";
 import type {
   ReportingData,
@@ -42,7 +42,7 @@ type ScopedFactRow = ReportingFact & {
 };
 
 export type CutoverFetchResult =
-  | { ok: true; data: ReportingData; generatedAt: string; comparison?: PeriodComparisonResult; workforce?: WorkforceReportingResult; audience: ReportingAudience }
+  | { ok: true; data: ReportingData; generatedAt: string; comparison?: PeriodComparisonResult; workforce?: WorkforceOverviewResult; audience: ReportingAudience }
   | {
       ok: false;
       code: string;
@@ -119,12 +119,13 @@ export async function fetchCutoverReporting(
         expectedAudienceKind: audience.kind,
         callScopedFactsRpc: (args) => sb.rpc("direct_entry_reporting_scoped_facts", args),
       }),
-      resolveWorkforceReportingForActor({
-        actor,
-        filters,
-        expectedAudienceKind: audience.kind,
-        callWorkforceRpc: (args) => sb.rpc("direct_entry_workforce_reporting_scoped", args),
-      }),
+      audience.kind === "all"
+        ? resolveWorkforceOverviewForActor({
+            actor,
+            filters,
+            callWorkforceRpc: (args) => sb.rpc("direct_entry_workforce_reporting_scoped", args),
+          })
+        : Promise.resolve(undefined),
     ]);
 
     return { ok: true, data: built.data, generatedAt: new Date().toISOString(), comparison, workforce, audience };

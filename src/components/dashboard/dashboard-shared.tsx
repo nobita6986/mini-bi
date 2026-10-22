@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
+import { formatTimestamp } from "@/lib/format";
 import { sortBuckets } from "@/lib/reporting/p1-dashboard";
 import {
   formatPeriodComparisonSummary,
@@ -20,12 +21,16 @@ import {
   WORKFORCE_INITIAL_STATUS_LABELS,
   WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE,
   WORKFORCE_NON_ATTENDANCE_NOTE,
+  WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE,
   WORKFORCE_RETENTION_CHECKPOINT_LABELS,
   WORKFORCE_SNAPSHOT_STATUS_LABELS,
   WORKFORCE_TRANSITION_PAIR_LABELS,
   WORKFORCE_UNIT_METADATA_NOTE,
   WORKFORCE_WAITING_SAMPLE_LABELS,
+  type WorkforceDimensionBucketMetrics,
   type WorkforceDimensionKind,
+  type WorkforceOverviewResult,
+  type WorkforceProjectPageResult,
   type WorkforceReportingResult,
 } from "@/lib/reporting/wf01-workforce-snapshot";
 import {
@@ -43,12 +48,12 @@ import {
   formatShareRatePercent,
   WORKFORCE_HIGHLIGHT_MIN_SAMPLE_SIZE,
 } from "@/lib/reporting/wf04-workforce-dimensions-leave-reasons";
-import type { ReportingBucket } from "@/lib/reporting/p1-reporting";
+import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
 import { DashboardFilters } from "./dashboard-filters";
 
-export type { WorkforceReportingResult };
+export type { WorkforceOverviewResult, WorkforceReportingResult };
 
 /**
  * P3-W06C - shared dashboard pieces reused by the BoD / Team / Own views.
@@ -122,7 +127,7 @@ export function PeriodComparisonBanner({
         <StatusBadge tone={formatted.badgeTone} dot>
           {formatted.badgeLabel}
         </StatusBadge>
-        <span className="font-mono font-semibold tabular-nums text-foreground">
+        <span className="font-semibold tabular-nums text-foreground">
           {formatted.deltaText}
         </span>
       </div>
@@ -132,18 +137,19 @@ export function PeriodComparisonBanner({
 }
 
 /**
- * MBI-DA-2026-01 Chặng 2 / WF-01 & WF-02 (Items 2.1, 2.2, 2.3 & 2.4):
- * Workforce snapshot as-of date D, period status transitions [from, to],
- * opening/closing balance reconciliation, and UNCONFIRMED waiting duration & placement rate.
+ * WF-04 Post-Merge Hotfix — Khu vực Workforce trên tab `Báo cáo tổng quát`:
+ * Chỉ hiển thị phần đầu:
+ * - Header `Hiện trạng & biến động trạng thái lao động`
+ * - Dòng chú thích nghiệp vụ ở hàng riêng chiếm toàn bộ chiều rộng card (`w-full`)
+ * - `Trạng thái lao động tại ngày chốt` (2.1)
+ * - `Biến động trạng thái trong kỳ` (2.2)
+ * Toàn bộ các phần chuyên sâu (2.3–2.8 & Điểm cần chú ý) được tách sang tab `Báo cáo chuyên sâu`.
  */
 export function WorkforceSnapshotSection({
   workforce,
 }: {
-  workforce?: WorkforceReportingResult | null;
+  workforce?: WorkforceOverviewResult | WorkforceReportingResult | null;
 }) {
-  const [activeDimensionKind, setActiveDimensionKind] =
-    useState<WorkforceDimensionKind>("project");
-
   if (!workforce) return null;
 
   if (workforce.status === "unavailable") {
@@ -159,22 +165,13 @@ export function WorkforceSnapshotSection({
           </StatusBadge>
         </div>
         <p className="mt-1 text-xs">
-          Không tải được dữ liệu hiện trạng trạng thái lao động tại ngày mốc, cân bằng đầu/cuối kỳ, thời gian chờ việc, thâm niên làm việc, tỷ lệ giữ chân, chất lượng theo chiều và lý do nghỉ việc. Các chỉ số tuyển dụng theo ngày ghi nhận tuyển dụng vẫn giữ nguyên.
+          Không tải được dữ liệu trạng thái lao động tại ngày chốt và biến động trạng thái trong kỳ. Các chỉ số tuyển dụng theo ngày ghi nhận tuyển dụng vẫn giữ nguyên.
         </p>
       </section>
     );
   }
 
-  const {
-    snapshot,
-    transitions,
-    balance,
-    waiting,
-    duration,
-    retention,
-    dimensions,
-    leaveReasons,
-  } = workforce;
+  const { snapshot, transitions } = workforce;
 
   const asOfSourceLabel =
     snapshot.asOfSource === "filter_to"
@@ -182,8 +179,6 @@ export function WorkforceSnapshotSection({
       : snapshot.asOfSource === "explicit_as_of"
         ? "Theo ngày mốc chỉ định"
         : "Theo ngày hiện hành (GMT+7)";
-
-  const attentionInsights = deriveWorkforceAttentionInsights(workforce);
 
   const snapshotShare = (count: number) =>
     snapshot.eligibleEpisodeTotal > 0 ? count / snapshot.eligibleEpisodeTotal : null;
@@ -236,6 +231,428 @@ export function WorkforceSnapshotSection({
     (acc, r) => Math.max(acc, r.pair.eventCount),
     0,
   );
+
+  return (
+    <section aria-label="Hiện trạng và biến động trạng thái lao động">
+      <Card className="p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <CardHeader title="Hiện trạng & biến động trạng thái lao động" />
+          <div className="shrink-0">
+            <StatusBadge tone="neutral" dot>
+              Tính đến ngày {snapshot.asOfDate} ({asOfSourceLabel})
+            </StatusBadge>
+          </div>
+        </div>
+
+        {/* Dòng chú thích nghiệp vụ nằm ở hàng riêng và chiếm toàn bộ chiều rộng card */}
+        <div className="mt-2 w-full rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs text-muted">
+          {WORKFORCE_UNIT_METADATA_NOTE}
+        </div>
+
+        {/* WF-01 (2.1 & 2.2): Trạng thái lao động tại ngày chốt & Biến động trạng thái trong kỳ */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-foreground">
+                Trạng thái lao động tại ngày chốt
+              </h3>
+              <span className="text-xs tabular-nums text-muted">
+                Tính đến ngày {snapshot.asOfDate}
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-muted">
+              Các đợt làm việc hợp lệ trong phạm vi có ngày bắt đầu làm việc ≤ {snapshot.asOfDate} (tính theo ngày trạng thái có hiệu lực).
+            </p>
+
+            {/* Thanh cơ cấu 100% trạng thái tại ngày mốc */}
+            <div className="mt-3 rounded-lg border border-border bg-surface p-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-foreground">
+                  Cơ cấu 100% trạng thái tại ngày mốc
+                </span>
+                <span className="font-semibold tabular-nums text-foreground">
+                  {snapshot.eligibleEpisodeTotal}{" "}
+                  <span className="font-normal text-muted">đợt đủ điều kiện</span>
+                </span>
+              </div>
+              <div
+                aria-label="Thanh cơ cấu tỷ trọng trạng thái tại ngày mốc"
+                className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-muted/20"
+              >
+                {snapshot.onCount > 0 ? (
+                  <div
+                    className="bg-emerald-500 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.onCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: ${snapshot.onCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.onCount))})`}
+                  />
+                ) : null}
+                {snapshot.unconfirmedCount > 0 ? (
+                  <div
+                    className="bg-amber-500 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.unconfirmedCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}: ${snapshot.unconfirmedCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))})`}
+                  />
+                ) : null}
+                {snapshot.offCount > 0 ? (
+                  <div
+                    className="bg-rose-500 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.offCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}: ${snapshot.offCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.offCount))})`}
+                  />
+                ) : null}
+                {snapshot.unknownCount > 0 ? (
+                  <div
+                    className="bg-slate-400 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.unknownCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}: ${snapshot.unknownCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.unknownCount))})`}
+                  />
+                ) : null}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} ({formatShareRatePercent(snapshotShare(snapshot.onCount))})
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED} ({formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))})
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} ({formatShareRatePercent(snapshotShare(snapshot.offCount))})
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-slate-400" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN} ({formatShareRatePercent(snapshotShare(snapshot.unknownCount))})
+                </span>
+              </div>
+            </div>
+
+            <dl className="mt-2.5 grid grid-cols-2 gap-2">
+              <div className="col-span-2 flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
+                <dt className="text-xs font-medium text-muted">Tổng đợt làm việc đủ điều kiện tại ngày mốc</dt>
+                <dd className="text-base font-semibold tabular-nums text-foreground">
+                  {snapshot.eligibleEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc (100%)</span>
+                </dd>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}</dt>
+                  <span className="text-[11px] font-medium tabular-nums text-emerald-700 dark:text-emerald-300">
+                    {formatShareRatePercent(snapshotShare(snapshot.onCount))}
+                  </span>
+                </div>
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
+                  {snapshot.onCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+                </dd>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}</dt>
+                  <span className="text-[11px] font-medium tabular-nums text-amber-700 dark:text-amber-300">
+                    {formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))}
+                  </span>
+                </div>
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
+                  {snapshot.unconfirmedCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+                </dd>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}</dt>
+                  <span className="text-[11px] font-medium tabular-nums text-rose-700 dark:text-rose-300">
+                    {formatShareRatePercent(snapshotShare(snapshot.offCount))}
+                  </span>
+                </div>
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
+                  {snapshot.offCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+                </dd>
+              </div>
+              <div className="rounded-lg border border-border bg-surface px-3 py-2">
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}</dt>
+                  <span className="text-[11px] font-medium tabular-nums text-muted">
+                    {formatShareRatePercent(snapshotShare(snapshot.unknownCount))}
+                  </span>
+                </div>
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
+                  {snapshot.unknownCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+                </dd>
+              </div>
+            </dl>
+
+            {snapshot.futureEpisodeCount > 0 ? (
+              <p className="mt-2 text-xs text-muted">
+                Chưa bắt đầu làm việc tại ngày {snapshot.asOfDate} (ngày bắt đầu làm việc sau {snapshot.asOfDate}):{" "}
+                <span className="font-medium tabular-nums text-foreground">{snapshot.futureEpisodeCount}</span> đợt làm việc (tách riêng, không cộng vào snapshot).
+              </p>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-7">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-semibold text-foreground">
+                Biến động trạng thái trong kỳ
+              </h3>
+              {transitions.applicable ? (
+                <span className="text-xs tabular-nums text-muted">
+                  Kỳ {transitions.fromDate} → {transitions.toDate}
+                </span>
+              ) : null}
+            </div>
+
+            {!transitions.applicable ? (
+              <p className="mt-2 rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-xs text-muted">
+                {transitions.windowLabel}
+              </p>
+            ) : (
+              <div className="mt-2 space-y-3">
+                <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-foreground">
+                      Khởi tạo đợt làm việc mới trong kỳ (lần thay đổi trạng thái đầu tiên)
+                    </span>
+                    <span className="tabular-nums text-muted">
+                      Tổng: <strong className="text-foreground">{transitions.initial.total.eventCount}</strong> lần /{" "}
+                      <strong className="text-foreground">{transitions.initial.total.episodeCount}</strong> đợt làm việc
+                    </span>
+                  </div>
+                  <p className="mt-1 text-muted">
+                    {WORKFORCE_INITIAL_STATUS_LABELS.INITIAL_ON}:{" "}
+                    <span className="font-medium tabular-nums text-foreground">{transitions.initial.on.eventCount}</span> lần (
+                    <span className="tabular-nums">{transitions.initial.on.episodeCount}</span> đợt làm việc)
+                    {" · "}
+                    {WORKFORCE_INITIAL_STATUS_LABELS.INITIAL_UNCONFIRMED}:{" "}
+                    <span className="font-medium tabular-nums text-foreground">{transitions.initial.unconfirmed.eventCount}</span> lần (
+                    <span className="tabular-nums">{transitions.initial.unconfirmed.episodeCount}</span> đợt làm việc)
+                  </p>
+                </div>
+
+                {/* Biểu đồ thanh ngang so sánh các luồng chuyển tiếp trạng thái */}
+                <div className="rounded-lg border border-border bg-surface p-2.5">
+                  <p className="text-xs font-medium text-foreground">
+                    So sánh trực quan các luồng chuyển trạng thái trong kỳ
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {transitionRows.map((row) => {
+                      const barPct =
+                        maxTransitionEvents > 0
+                          ? Math.max(2, Math.round((row.pair.eventCount / maxTransitionEvents) * 100))
+                          : 0;
+                      const shareRate =
+                        transitions.totals.transitionEventCount > 0
+                          ? row.pair.eventCount / transitions.totals.transitionEventCount
+                          : null;
+                      return (
+                        <div key={`bar-${row.key}`} className="text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted">{row.label}</span>
+                            <span className="tabular-nums text-foreground">
+                              <strong>{row.pair.eventCount}</strong> lần ({row.pair.episodeCount} đợt · {formatShareRatePercent(shareRate)})
+                            </span>
+                          </div>
+                          <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/20">
+                            {row.pair.eventCount > 0 ? (
+                              <div
+                                className={`h-full rounded-full ${row.barColor}`}
+                                style={{ width: `${barPct}%` }}
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+                  <table className="r22-report-table w-full text-left text-xs">
+                    <caption className="sr-only">
+                      Bảng chuyển tiếp trạng thái lao động trong kỳ {transitions.fromDate} đến {transitions.toDate}
+                    </caption>
+                    <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                      <tr className="border-b border-border">
+                        <th scope="col" className="px-3 py-1.5 font-medium">
+                          Chuyển tiếp trạng thái (không tính khởi tạo)
+                        </th>
+                        <th scope="col" className="px-3 py-1.5 text-right font-medium">
+                          Số sự kiện
+                        </th>
+                        <th scope="col" className="px-3 py-1.5 text-right font-medium">
+                          Số hồ sơ
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {transitionRows.map((row) => (
+                        <tr key={row.key} className="text-foreground hover:bg-surface-hover">
+                          <td className="px-3 py-1.5">{row.label}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
+                            {row.pair.eventCount}
+                          </td>
+                          <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
+                            {row.pair.episodeCount}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
+                      <tr>
+                        <td className="px-3 py-1.5">Tổng biến động chuyển trạng thái trong kỳ</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
+                          {transitions.totals.transitionEventCount}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
+                          {transitions.totals.transitionEpisodeCount}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+export const WorkforceStatusSection = WorkforceSnapshotSection;
+
+export function buildWorkforceDeepFilterSignature(data: ReportingData): string {
+  const a = data.applied;
+  return [
+    a.from ?? "",
+    a.to ?? "",
+    a.project ?? "",
+    a.recruiter ?? "",
+    a.provider ?? "",
+    a.employment ?? "",
+  ].join("|");
+}
+
+export function buildWorkforceDeepUrl(
+  data: ReportingData,
+  options?: { mode?: "deep" | "project_page"; cursor?: string | null },
+): string {
+  const query = new URLSearchParams();
+  const a = data.applied;
+  if (a.from) query.set("from", a.from);
+  else if (!a.to) query.set("range", "all");
+  if (a.to) query.set("to", a.to);
+  if (a.project) query.set("project", a.project);
+  if (a.recruiter) query.set("recruiter", a.recruiter);
+  if (a.provider) query.set("provider", a.provider);
+  if (a.employment) query.set("employment", a.employment);
+  if (options?.mode && options.mode !== "deep") {
+    query.set("mode", options.mode);
+  }
+  if (options?.cursor) {
+    query.set("cursor", options.cursor);
+  }
+  return "/api/reporting/workforce-deep?" + query.toString();
+}
+
+function isReadyWorkforceDeepEnvelope(value: unknown): value is {
+  ok: true;
+  mode: "deep";
+  workforce: Extract<WorkforceReportingResult, { status: "ready" }>;
+} {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  if (r.ok !== true || r.mode !== "deep") return false;
+  const wf = r.workforce as Record<string, unknown> | null | undefined;
+  return Boolean(wf && typeof wf === "object" && wf.status === "ready");
+}
+
+function isReadyWorkforceProjectPageEnvelope(value: unknown): value is {
+  ok: true;
+  mode: "project_page";
+  projectPage: Extract<WorkforceProjectPageResult, { status: "ready" }>;
+} {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  if (r.ok !== true || r.mode !== "project_page") return false;
+  const pp = r.projectPage as Record<string, unknown> | null | undefined;
+  return Boolean(pp && typeof pp === "object" && pp.status === "ready" && Array.isArray(pp.rows));
+}
+
+/**
+ * WF-04 Post-Merge Hotfix — Nội dung hiển thị trong tab `Báo cáo chuyên sâu`:
+ * Bao gồm:
+ * - Điểm cần chú ý tại ngày mốc
+ * - Đối soát cân bằng đầu kỳ / cuối kỳ (2.3)
+ * - Thời gian chờ việc & tỷ lệ bố trí việc (2.4)
+ * - Thâm niên làm việc & ngày hiện diện theo trạng thái (2.5)
+ * - Nghỉ sớm & giữ chân theo mốc D7 / D30 / D90 (2.6)
+ * - Chất lượng lực lượng theo chiều phân tích (2.7) kèm phân trang server-side 5 dự án/lần ("Tải thêm")
+ * - Phân tích lý do nghỉ việc & độ phủ dữ liệu (2.8)
+ */
+export function WorkforceDeepSection({
+  workforce,
+  extraProjectBuckets = [],
+  projectPaginationOverride,
+  isLoadingMoreProjects = false,
+  loadMoreProjectsError = false,
+  onLoadMoreProjects,
+}: {
+  workforce: Extract<WorkforceReportingResult, { status: "ready" }>;
+  extraProjectBuckets?: readonly WorkforceDimensionBucketMetrics[];
+  projectPaginationOverride?: {
+    totalCount: number;
+    pageSize: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+  isLoadingMoreProjects?: boolean;
+  loadMoreProjectsError?: boolean;
+  onLoadMoreProjects?: () => void;
+}) {
+  const [activeDimensionKind, setActiveDimensionKind] =
+    useState<WorkforceDimensionKind>("project");
+
+  const {
+    snapshot,
+    balance,
+    waiting,
+    duration,
+    retention,
+    dimensions,
+    leaveReasons,
+  } = workforce;
+
+  const asOfSourceLabel =
+    snapshot.asOfSource === "filter_to"
+      ? "Theo ngày kết thúc bộ lọc"
+      : snapshot.asOfSource === "explicit_as_of"
+        ? "Theo ngày mốc chỉ định"
+        : "Theo ngày hiện hành (GMT+7)";
+
+  const attentionInsights = deriveWorkforceAttentionInsights(workforce);
+
+  // Gộp các trang dự án đã tải từ server mà không bao giờ trùng lặp khóa (dim_key)
+  const mergedProjectBuckets: WorkforceDimensionBucketMetrics[] = [];
+  const seenProjectKeys = new Set<string>();
+  for (const b of [...dimensions.byProject.buckets, ...extraProjectBuckets]) {
+    if (!seenProjectKeys.has(b.key)) {
+      seenProjectKeys.add(b.key);
+      mergedProjectBuckets.push(b);
+    }
+  }
+
+  const effectiveProjectPagination = projectPaginationOverride ??
+    dimensions.byProject.pagination ?? {
+      totalCount: mergedProjectBuckets.length,
+      pageSize: WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE,
+      hasMore: false,
+      nextCursor: null,
+    };
+
+  const pagedProjectGroup = {
+    ...dimensions.byProject,
+    buckets: mergedProjectBuckets,
+  };
 
   const balanceRows = balance.applicable
     ? [
@@ -360,26 +777,31 @@ export function WorkforceSnapshotSection({
   const dimensionTabs: Array<{
     kind: WorkforceDimensionKind;
     label: string;
+    totalUnits: number;
     group: typeof dimensions.byProject;
   }> = [
     {
       kind: "project",
       label: WORKFORCE_DIMENSION_KIND_LABELS.PROJECT,
-      group: dimensions.byProject,
+      totalUnits: effectiveProjectPagination.totalCount,
+      group: pagedProjectGroup,
     },
     {
       kind: "team",
       label: WORKFORCE_DIMENSION_KIND_LABELS.TEAM,
+      totalUnits: dimensions.byTeam.buckets.length,
       group: dimensions.byTeam,
     },
     {
       kind: "recruiter",
       label: WORKFORCE_DIMENSION_KIND_LABELS.RECRUITER,
+      totalUnits: dimensions.byRecruiter.buckets.length,
       group: dimensions.byRecruiter,
     },
     {
       kind: "provider",
       label: WORKFORCE_DIMENSION_KIND_LABELS.PROVIDER,
+      totalUnits: dimensions.byProvider.buckets.length,
       group: dimensions.byProvider,
     },
   ];
@@ -405,13 +827,10 @@ export function WorkforceSnapshotSection({
   );
 
   return (
-    <section aria-label="Hiện trạng và biến động trạng thái lao động">
+    <section aria-label="Báo cáo chuyên sâu lực lượng lao động" className="space-y-4">
       <Card className="p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <CardHeader
-            title="Hiện trạng & biến động trạng thái lao động"
-            description={WORKFORCE_UNIT_METADATA_NOTE}
-          />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <CardHeader title="Phân tích chuyên sâu vòng đời & chất lượng lao động" />
           <div className="shrink-0">
             <StatusBadge tone="neutral" dot>
               Tính đến ngày {snapshot.asOfDate} ({asOfSourceLabel})
@@ -419,10 +838,15 @@ export function WorkforceSnapshotSection({
           </div>
         </div>
 
+        {/* Dòng chú thích nghiệp vụ nằm ở hàng riêng và chiếm toàn bộ chiều rộng card */}
+        <div className="mt-2 w-full rounded-lg border border-border bg-muted/10 px-3 py-2 text-xs text-muted">
+          {WORKFORCE_UNIT_METADATA_NOTE}
+        </div>
+
         {/* Khối tóm tắt tất định: Điểm cần chú ý */}
         <div
           aria-label="Điểm cần chú ý về nhân sự"
-          className="mt-3 rounded-xl border border-border bg-muted/5 p-3"
+          className="mt-4 rounded-xl border border-border bg-muted/5 p-3"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -433,7 +857,7 @@ export function WorkforceSnapshotSection({
                 Tổng hợp tự động theo quy tắc tất định từ số liệu đang hiển thị (ngưỡng mẫu tối thiểu ≥ {WORKFORCE_HIGHLIGHT_MIN_SAMPLE_SIZE} đợt làm việc khi xếp hạng dự án/nhóm).
               </p>
             </div>
-            <span className="font-mono text-xs text-muted">
+            <span className="text-xs tabular-nums text-muted">
               Tổng mẫu: {snapshot.eligibleEpisodeTotal} đợt làm việc đủ điều kiện
             </span>
           </div>
@@ -468,272 +892,7 @@ export function WorkforceSnapshotSection({
           </div>
         </div>
 
-        {/* WF-01 (2.1 & 2.2): Snapshot trạng thái lao động & Biến động chuyển trạng thái */}
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-5">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="text-sm font-semibold text-foreground">
-                Snapshot trạng thái lao động
-              </h3>
-              <span className="font-mono text-xs text-muted">
-                Tính đến ngày {snapshot.asOfDate}
-              </span>
-            </div>
-            <p className="mt-0.5 text-xs text-muted">
-              Các đợt làm việc hợp lệ trong phạm vi có ngày bắt đầu làm việc ≤ {snapshot.asOfDate} (tính theo ngày trạng thái có hiệu lực).
-            </p>
-
-            {/* Thanh cơ cấu 100% trạng thái tại ngày mốc */}
-            <div className="mt-3 rounded-lg border border-border bg-surface p-2.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-medium text-foreground">
-                  Cơ cấu 100% trạng thái tại ngày mốc
-                </span>
-                <span className="font-mono font-semibold tabular-nums text-foreground">
-                  {snapshot.eligibleEpisodeTotal}{" "}
-                  <span className="font-normal text-muted">đợt đủ điều kiện</span>
-                </span>
-              </div>
-              <div
-                aria-label="Thanh cơ cấu tỷ trọng trạng thái tại ngày mốc"
-                className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-muted/20"
-              >
-                {snapshot.onCount > 0 ? (
-                  <div
-                    className="bg-emerald-500 transition-all"
-                    style={{ width: `${snapshotPctWidth(snapshot.onCount)}%` }}
-                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: ${snapshot.onCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.onCount))})`}
-                  />
-                ) : null}
-                {snapshot.unconfirmedCount > 0 ? (
-                  <div
-                    className="bg-amber-500 transition-all"
-                    style={{ width: `${snapshotPctWidth(snapshot.unconfirmedCount)}%` }}
-                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}: ${snapshot.unconfirmedCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))})`}
-                  />
-                ) : null}
-                {snapshot.offCount > 0 ? (
-                  <div
-                    className="bg-rose-500 transition-all"
-                    style={{ width: `${snapshotPctWidth(snapshot.offCount)}%` }}
-                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}: ${snapshot.offCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.offCount))})`}
-                  />
-                ) : null}
-                {snapshot.unknownCount > 0 ? (
-                  <div
-                    className="bg-slate-400 transition-all"
-                    style={{ width: `${snapshotPctWidth(snapshot.unknownCount)}%` }}
-                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}: ${snapshot.unknownCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.unknownCount))})`}
-                  />
-                ) : null}
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} ({formatShareRatePercent(snapshotShare(snapshot.onCount))})
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-amber-500" />
-                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED} ({formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))})
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-rose-500" />
-                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} ({formatShareRatePercent(snapshotShare(snapshot.offCount))})
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-slate-400" />
-                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN} ({formatShareRatePercent(snapshotShare(snapshot.unknownCount))})
-                </span>
-              </div>
-            </div>
-
-            <dl className="mt-2.5 grid grid-cols-2 gap-2">
-              <div className="col-span-2 flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs font-medium text-muted">Tổng đợt làm việc đủ điều kiện tại ngày mốc</dt>
-                <dd className="font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.eligibleEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc (100%)</span>
-                </dd>
-              </div>
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <div className="flex items-center justify-between gap-1">
-                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}</dt>
-                  <span className="font-mono text-[11px] font-medium text-emerald-700">
-                    {formatShareRatePercent(snapshotShare(snapshot.onCount))}
-                  </span>
-                </div>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.onCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
-                </dd>
-              </div>
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <div className="flex items-center justify-between gap-1">
-                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}</dt>
-                  <span className="font-mono text-[11px] font-medium text-amber-700">
-                    {formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))}
-                  </span>
-                </div>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.unconfirmedCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
-                </dd>
-              </div>
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <div className="flex items-center justify-between gap-1">
-                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}</dt>
-                  <span className="font-mono text-[11px] font-medium text-rose-700">
-                    {formatShareRatePercent(snapshotShare(snapshot.offCount))}
-                  </span>
-                </div>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.offCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
-                </dd>
-              </div>
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <div className="flex items-center justify-between gap-1">
-                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}</dt>
-                  <span className="font-mono text-[11px] font-medium text-muted">
-                    {formatShareRatePercent(snapshotShare(snapshot.unknownCount))}
-                  </span>
-                </div>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.unknownCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
-                </dd>
-              </div>
-            </dl>
-
-            {snapshot.futureEpisodeCount > 0 ? (
-              <p className="mt-2 text-xs text-muted">
-                Chưa bắt đầu làm việc tại ngày {snapshot.asOfDate} (ngày bắt đầu làm việc sau {snapshot.asOfDate}):{" "}
-                <span className="font-mono font-medium text-foreground">{snapshot.futureEpisodeCount}</span> đợt làm việc (tách riêng, không cộng vào snapshot).
-              </p>
-            ) : null}
-          </div>
-
-          <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-7">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="text-sm font-semibold text-foreground">
-                Biến động trạng thái trong kỳ
-              </h3>
-              {transitions.applicable ? (
-                <span className="font-mono text-xs text-muted">
-                  Kỳ {transitions.fromDate} → {transitions.toDate}
-                </span>
-              ) : null}
-            </div>
-
-            {!transitions.applicable ? (
-              <p className="mt-2 rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-xs text-muted">
-                {transitions.windowLabel}
-              </p>
-            ) : (
-              <div className="mt-2 space-y-3">
-                <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-foreground">
-                      Khởi tạo đợt làm việc mới trong kỳ (lần thay đổi trạng thái đầu tiên)
-                    </span>
-                    <span className="font-mono tabular-nums text-muted">
-                      Tổng: <strong className="text-foreground">{transitions.initial.total.eventCount}</strong> lần /{" "}
-                      <strong className="text-foreground">{transitions.initial.total.episodeCount}</strong> đợt làm việc
-                    </span>
-                  </div>
-                  <p className="mt-1 text-muted">
-                    {WORKFORCE_INITIAL_STATUS_LABELS.INITIAL_ON}:{" "}
-                    <span className="font-mono font-medium text-foreground">{transitions.initial.on.eventCount}</span> lần (
-                    <span className="font-mono">{transitions.initial.on.episodeCount}</span> đợt làm việc)
-                    {" · "}
-                    {WORKFORCE_INITIAL_STATUS_LABELS.INITIAL_UNCONFIRMED}:{" "}
-                    <span className="font-mono font-medium text-foreground">{transitions.initial.unconfirmed.eventCount}</span> lần (
-                    <span className="font-mono">{transitions.initial.unconfirmed.episodeCount}</span> đợt làm việc)
-                  </p>
-                </div>
-
-                {/* Biểu đồ thanh ngang so sánh các luồng chuyển tiếp trạng thái */}
-                <div className="rounded-lg border border-border bg-surface p-2.5">
-                  <p className="text-xs font-medium text-foreground">
-                    So sánh trực quan các luồng chuyển trạng thái trong kỳ
-                  </p>
-                  <div className="mt-2 space-y-1.5">
-                    {transitionRows.map((row) => {
-                      const barPct =
-                        maxTransitionEvents > 0
-                          ? Math.max(2, Math.round((row.pair.eventCount / maxTransitionEvents) * 100))
-                          : 0;
-                      const shareRate =
-                        transitions.totals.transitionEventCount > 0
-                          ? row.pair.eventCount / transitions.totals.transitionEventCount
-                          : null;
-                      return (
-                        <div key={`bar-${row.key}`} className="text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-muted">{row.label}</span>
-                            <span className="font-mono tabular-nums text-foreground">
-                              <strong>{row.pair.eventCount}</strong> lần ({row.pair.episodeCount} đợt · {formatShareRatePercent(shareRate)})
-                            </span>
-                          </div>
-                          <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/20">
-                            {row.pair.eventCount > 0 ? (
-                              <div
-                                className={`h-full rounded-full ${row.barColor}`}
-                                style={{ width: `${barPct}%` }}
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-                  <table className="r22-report-table w-full text-left text-xs">
-                    <caption className="sr-only">
-                      Bảng chuyển tiếp trạng thái lao động trong kỳ {transitions.fromDate} đến {transitions.toDate}
-                    </caption>
-                    <thead className="bg-surface-muted uppercase tracking-wide text-muted">
-                      <tr className="border-b border-border">
-                        <th scope="col" className="px-3 py-1.5 font-medium">
-                          Chuyển tiếp trạng thái (không tính khởi tạo)
-                        </th>
-                        <th scope="col" className="px-3 py-1.5 text-right font-medium">
-                          Số sự kiện
-                        </th>
-                        <th scope="col" className="px-3 py-1.5 text-right font-medium">
-                          Số hồ sơ
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {transitionRows.map((row) => (
-                        <tr key={row.key} className="text-foreground hover:bg-surface-hover">
-                          <td className="px-3 py-1.5">{row.label}</td>
-                          <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
-                            {row.pair.eventCount}
-                          </td>
-                          <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
-                            {row.pair.episodeCount}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
-                      <tr>
-                        <td className="px-3 py-1.5">Tổng biến động chuyển trạng thái trong kỳ</td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
-                          {transitions.totals.transitionEventCount}
-                        </td>
-                        <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
-                          {transitions.totals.transitionEpisodeCount}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* WF-02 (2.3 & 2.4): Cân bằng biến động đầu/cuối kỳ & Thời gian chờ việc / Tỷ lệ bố trí được việc */}
+        {/* WF-02 (2.3 & 2.4): Đối soát cân bằng đầu kỳ / cuối kỳ & Thời gian chờ việc / Tỷ lệ bố trí việc */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
           <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -761,11 +920,11 @@ export function WorkforceSnapshotSection({
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
                   <span>
                     Mốc đầu kỳ:{" "}
-                    <strong className="font-mono text-foreground">{balance.openingAsOfDate}</strong> (trước kỳ 1 ngày)
+                    <strong className="tabular-nums text-foreground">{balance.openingAsOfDate}</strong> (trước kỳ 1 ngày)
                   </span>
                   <span>
                     Mốc cuối kỳ:{" "}
-                    <strong className="font-mono text-foreground">{balance.closingAsOfDate}</strong>
+                    <strong className="tabular-nums text-foreground">{balance.closingAsOfDate}</strong>
                   </span>
                 </div>
 
@@ -780,7 +939,7 @@ export function WorkforceSnapshotSection({
                         <span className={`h-2 w-2 rounded-full ${item.dotClass}`} />
                         <span className="truncate font-medium text-muted">{item.label}</span>
                       </div>
-                      <div className="mt-1 flex items-baseline justify-between gap-1 font-mono tabular-nums">
+                      <div className="mt-1 flex items-baseline justify-between gap-1 tabular-nums">
                         <span className="text-muted">
                           {item.row.openingCount} → <strong className="text-foreground">{item.row.closingCount}</strong>
                         </span>
@@ -826,22 +985,22 @@ export function WorkforceSnapshotSection({
                       {balanceRows.map((item) => (
                         <tr key={item.key} className="text-foreground hover:bg-surface-hover">
                           <td className="px-2.5 py-1.5 font-medium">{item.label}</td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                             {item.row.openingCount}
                           </td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                             +{item.row.newEpisodeInflowCount}
                           </td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                             +{item.row.transitionInflowCount}
                           </td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                             −{item.row.outflowCount}
                           </td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                             {formatSignedBalanceDelta(item.row.netChange)}
                           </td>
-                          <td className="px-2.5 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                          <td className="px-2.5 py-1.5 text-right font-semibold tabular-nums whitespace-nowrap">
                             {item.row.closingCount}
                           </td>
                         </tr>
@@ -850,22 +1009,22 @@ export function WorkforceSnapshotSection({
                     <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
                       <tr>
                         <td className="px-2.5 py-1.5">Tổng hồ sơ đủ điều kiện</td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           {balance.totals.openingEligibleTotal}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           +{balance.totals.newEpisodeTotal}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           +{balance.totals.transitionInflowTotal}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           −{balance.totals.transitionOutflowTotal}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           {formatSignedBalanceDelta(balance.totals.netEligibleChange)}
                         </td>
-                        <td className="px-2.5 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                        <td className="px-2.5 py-1.5 text-right font-semibold tabular-nums whitespace-nowrap">
                           {balance.totals.closingEligibleTotal}
                         </td>
                       </tr>
@@ -886,7 +1045,7 @@ export function WorkforceSnapshotSection({
                   Đo trên các khoảng {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED} liên tiếp đã khử hiệu chỉnh tính đến {waiting.asOfDate}.
                 </p>
               </div>
-              <span className="font-mono text-xs text-muted">
+              <span className="text-xs tabular-nums text-muted">
                 Vào thẳng {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {waiting.directOnEpisodeCount} hồ sơ
               </span>
             </div>
@@ -897,7 +1056,7 @@ export function WorkforceSnapshotSection({
                 <span className="font-medium text-foreground">
                   Phân rã kết quả trên tổng mẫu từng chờ việc ({waiting.waitingEpisodeTotal} đợt)
                 </span>
-                <span className="font-mono text-muted">
+                <span className="tabular-nums text-muted">
                   Đã kết thúc chờ: <strong className="text-foreground">{waiting.completedWaiting.episodeCount}</strong> · Đang còn chờ:{" "}
                   <strong className="text-foreground">{waiting.currentlyWaiting.episodeCount}</strong>
                 </span>
@@ -947,7 +1106,7 @@ export function WorkforceSnapshotSection({
             <dl className="mt-2 grid grid-cols-2 gap-2">
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Tỷ lệ bố trí việc (trên tổng có chờ việc)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatPlacementRatePercent(waiting.placementRateOfWaiting)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -956,7 +1115,7 @@ export function WorkforceSnapshotSection({
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Tỷ lệ bố trí việc (trên hồ sơ đã kết thúc chờ)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatPlacementRatePercent(waiting.placementRateOfCompletedWaiting)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -965,7 +1124,7 @@ export function WorkforceSnapshotSection({
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Chờ việc TB (hồ sơ đã bố trí sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON})</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatWaitingDaysAverage(waiting.placedToOn.avgWaitingDaysPerEpisode)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -974,7 +1133,7 @@ export function WorkforceSnapshotSection({
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Chờ việc TB (hồ sơ đang còn chờ việc)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatWaitingDaysAverage(waiting.currentlyWaiting.avgWaitingDaysPerEpisode)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -1011,16 +1170,16 @@ export function WorkforceSnapshotSection({
                   {waitingSampleRows.map((item) => (
                     <tr key={item.key} className="text-foreground hover:bg-surface-hover">
                       <td className="px-2.5 py-1.5">{item.label}</td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.sample.episodeCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.sample.totalWaitingDays}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatWaitingDaysAverage(item.sample.avgWaitingDaysPerEpisode)}
                       </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.sample.maxWaitingDays === null ? "—" : `${item.sample.maxWaitingDays} ngày`}
                       </td>
                     </tr>
@@ -1032,15 +1191,15 @@ export function WorkforceSnapshotSection({
             {waiting.periodWaiting.applicable ? (
               <p className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
                 Trong kỳ lọc ({waiting.periodWaiting.fromDate} → {waiting.periodWaiting.toDate}):{" "}
-                <strong className="font-mono text-foreground">{waiting.periodWaiting.activeWaitingEpisodeCount}</strong> hồ sơ có ngày chờ (
-                <strong className="font-mono text-foreground">{waiting.periodWaiting.inPeriodWaitingDays}</strong> ngày chờ trong kỳ, TB{" "}
-                <strong className="font-mono text-foreground">
+                <strong className="tabular-nums text-foreground">{waiting.periodWaiting.activeWaitingEpisodeCount}</strong> hồ sơ có ngày chờ (
+                <strong className="tabular-nums text-foreground">{waiting.periodWaiting.inPeriodWaitingDays}</strong> ngày chờ trong kỳ, TB{" "}
+                <strong className="tabular-nums text-foreground">
                   {formatWaitingDaysAverage(waiting.periodWaiting.avgInPeriodWaitingDaysPerActiveEpisode)}
                 </strong>
                 /hồ sơ) · Bố trí sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} trong kỳ:{" "}
-                <strong className="font-mono text-foreground">{waiting.periodWaiting.placedInPeriod.eventCount}</strong> lần (
-                <span className="font-mono">{waiting.periodWaiting.placedInPeriod.episodeCount}</span> hồ sơ, TB{" "}
-                <span className="font-mono">
+                <strong className="tabular-nums text-foreground">{waiting.periodWaiting.placedInPeriod.eventCount}</strong> lần (
+                <span className="tabular-nums">{waiting.periodWaiting.placedInPeriod.episodeCount}</span> hồ sơ, TB{" "}
+                <span className="tabular-nums">
                   {formatWaitingDaysAverage(waiting.periodWaiting.placedInPeriod.avgWaitingDaysPerEvent)}
                 </span>
                 /lần).
@@ -1065,7 +1224,7 @@ export function WorkforceSnapshotSection({
                   Tính trên các khoảng {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} liên tiếp (đã loại các bản ghi bị thay thế hoặc điều chỉnh) đến ngày {duration.asOfDate}.
                 </p>
               </div>
-              <span className="font-mono text-xs text-muted">
+              <span className="text-xs tabular-nums text-muted">
                 Từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {duration.everOnEpisodeCount} / {duration.eligibleEpisodeTotal} đợt làm việc
               </span>
             </div>
@@ -1073,7 +1232,7 @@ export function WorkforceSnapshotSection({
             <dl className="mt-2 grid grid-cols-2 gap-2">
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Thâm niên TB (tất cả đợt từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON})</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatDurationDaysAverage(duration.allEverOn.avgOnDaysPerEpisode)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -1082,7 +1241,7 @@ export function WorkforceSnapshotSection({
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Thâm niên TB (đang làm việc tại ngày mốc)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatDurationDaysAverage(duration.currentlyOn.avgOnDaysPerEpisode)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -1091,7 +1250,7 @@ export function WorkforceSnapshotSection({
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Thâm niên TB (đã rời {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} sau khi vào làm)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {formatDurationDaysAverage(duration.exitedAfterOn.avgOnDaysPerEpisode)}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -1100,7 +1259,7 @@ export function WorkforceSnapshotSection({
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs text-muted">Chưa từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} / Chưa xác định</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                   {duration.neverOnEpisodeCount} / {duration.unknownStatusEpisodeCount}
                 </dd>
                 <p className="mt-0.5 text-[11px] text-muted">
@@ -1137,16 +1296,16 @@ export function WorkforceSnapshotSection({
                   {durationSampleRows.map((item) => (
                     <tr key={item.key} className="text-foreground hover:bg-surface-hover">
                       <td className="px-2.5 py-1.5">{item.label}</td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.sample.episodeCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.sample.totalOnDays}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatDurationDaysAverage(item.sample.avgOnDaysPerEpisode)}
                       </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.sample.maxOnDays === null ? "—" : `${item.sample.maxOnDays} ngày`}
                       </td>
                     </tr>
@@ -1169,11 +1328,11 @@ export function WorkforceSnapshotSection({
                   <div key={bucket.key} className="rounded-lg border border-border bg-surface px-2.5 py-1.5">
                     <div className="flex items-center justify-between gap-1">
                       <p className="text-[11px] text-muted">{bucket.label}</p>
-                      <span className="font-mono text-[10px] text-muted">
+                      <span className="text-[10px] tabular-nums text-muted">
                         {formatShareRatePercent(bucketRate)}
                       </span>
                     </div>
-                    <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-foreground">
                       {bucket.count} <span className="text-[11px] font-normal text-muted">đợt</span>
                     </p>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/20">
@@ -1192,9 +1351,9 @@ export function WorkforceSnapshotSection({
             {duration.periodPresence.applicable ? (
               <p className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
                 Ngày hiện diện theo trạng thái trong kỳ ({duration.periodPresence.fromDate} → {duration.periodPresence.toDate}):{" "}
-                <strong className="font-mono text-foreground">{duration.periodPresence.activeOnEpisodeCount}</strong> đợt làm việc có mặt ở {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} (
-                <strong className="font-mono text-foreground">{duration.periodPresence.inPeriodOnDays}</strong> ngày hiện diện theo trạng thái trong kỳ, TB{" "}
-                <strong className="font-mono text-foreground">
+                <strong className="tabular-nums text-foreground">{duration.periodPresence.activeOnEpisodeCount}</strong> đợt làm việc có mặt ở {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} (
+                <strong className="tabular-nums text-foreground">{duration.periodPresence.inPeriodOnDays}</strong> ngày hiện diện theo trạng thái trong kỳ, TB{" "}
+                <strong className="tabular-nums text-foreground">
                   {formatDurationDaysAverage(duration.periodPresence.avgInPeriodOnDaysPerActiveEpisode)}
                 </strong>
                 /đợt làm việc).
@@ -1216,7 +1375,7 @@ export function WorkforceSnapshotSection({
                   Đoàn hệ tính theo duy trì liên tục ở trạng thái {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} từ lần đầu vào làm của từng đợt làm việc (tính đến {retention.asOfDate}).
                 </p>
               </div>
-              <span className="font-mono text-xs text-muted">
+              <span className="text-xs tabular-nums text-muted">
                 Đoàn hệ {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {retention.cohortEpisodeTotal} đợt làm việc
               </span>
             </div>
@@ -1231,7 +1390,7 @@ export function WorkforceSnapshotSection({
                 return (
                   <div key={`card-${item.key}`} className="rounded-lg border border-border bg-surface px-3 py-2">
                     <dt className="text-xs text-muted">{item.label}</dt>
-                    <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                    <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                       {formatRetentionRatePercent(cp.retentionRate)}
                     </dd>
                     <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-full bg-muted/20">
@@ -1296,19 +1455,19 @@ export function WorkforceSnapshotSection({
                   {retentionCheckpointRows.map((item) => (
                     <tr key={item.key} className="text-foreground hover:bg-surface-hover">
                       <td className="px-2.5 py-1.5 font-medium">{item.label}</td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.checkpoint.maturedCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.checkpoint.retainedCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.checkpoint.exitedCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {item.checkpoint.immatureCount}
                       </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                      <td className="px-2.5 py-1.5 text-right font-semibold tabular-nums whitespace-nowrap">
                         {formatRetentionRatePercent(item.checkpoint.retentionRate)}
                       </td>
                     </tr>
@@ -1320,16 +1479,16 @@ export function WorkforceSnapshotSection({
             <div className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
               <span>
                 Loại khỏi đoàn hệ {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}:{" "}
-                <strong className="font-mono text-foreground">{retention.neverEnteredOnCount}</strong> đợt chưa từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} ·{" "}
-                <strong className="font-mono text-foreground">{retention.unknownStatusEpisodeCount}</strong> đợt chưa xác định trạng thái.
+                <strong className="tabular-nums text-foreground">{retention.neverEnteredOnCount}</strong> đợt chưa từng vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} ·{" "}
+                <strong className="tabular-nums text-foreground">{retention.unknownStatusEpisodeCount}</strong> đợt chưa xác định trạng thái.
               </span>
               {retention.periodCohort.applicable ? (
                 <span className="mt-1 block">
                   Đoàn hệ bắt đầu vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} trong kỳ ({retention.periodCohort.fromDate} → {retention.periodCohort.toDate}):{" "}
-                  <strong className="font-mono text-foreground">{retention.periodCohort.enteredOnCount}</strong> đợt làm việc (duy trì liên tục đến cuối kỳ:{" "}
-                  <strong className="font-mono text-foreground">{retention.periodCohort.retainedAtToCount}</strong>, đã rời trước cuối kỳ:{" "}
-                  <strong className="font-mono text-foreground">{retention.periodCohort.exitedByToCount}</strong>, tỷ lệ duy trì liên tục cuối kỳ:{" "}
-                  <strong className="font-mono text-foreground">
+                  <strong className="tabular-nums text-foreground">{retention.periodCohort.enteredOnCount}</strong> đợt làm việc (duy trì liên tục đến cuối kỳ:{" "}
+                  <strong className="tabular-nums text-foreground">{retention.periodCohort.retainedAtToCount}</strong>, đã rời trước cuối kỳ:{" "}
+                  <strong className="tabular-nums text-foreground">{retention.periodCohort.exitedByToCount}</strong>, tỷ lệ duy trì liên tục cuối kỳ:{" "}
+                  <strong className="tabular-nums text-foreground">
                     {formatRetentionRatePercent(retention.periodCohort.inPeriodRetentionRate)}
                   </strong>
                   ).
@@ -1367,11 +1526,11 @@ export function WorkforceSnapshotSection({
                     onClick={() => setActiveDimensionKind(tab.kind)}
                     className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                       isSelected
-                        ? "bg-primary text-white shadow-xs"
+                        ? "bg-primary text-on-primary shadow-xs"
                         : "text-muted hover:bg-surface-hover hover:text-foreground"
                     }`}
                   >
-                    {tab.label} ({tab.group.buckets.length})
+                    {tab.label} ({tab.totalUnits})
                   </button>
                 );
               })}
@@ -1381,13 +1540,17 @@ export function WorkforceSnapshotSection({
           <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
             <span>
               Chiều đang xem:{" "}
-              <strong className="text-foreground">{activeDimensionTab.label}</strong> ({activeDimensionGroup.buckets.length} đơn vị/nhóm)
+              <strong className="text-foreground">{activeDimensionTab.label}</strong> (
+              {activeDimensionTab.kind === "project"
+                ? `hiển thị ${activeDimensionGroup.buckets.length} / ${effectiveProjectPagination.totalCount} dự án`
+                : `${activeDimensionGroup.buckets.length} đơn vị/nhóm`}
+              )
             </span>
             <span>
               Tổng đợt đối soát:{" "}
-              <strong className="font-mono text-foreground">{activeDimensionGroup.eligibleEpisodeTotal}</strong> đợt (Đã gán chiều:{" "}
-              <strong className="font-mono text-foreground">{activeDimensionGroup.knownEpisodeCount}</strong> · Không xác định:{" "}
-              <strong className="font-mono text-foreground">{activeDimensionGroup.unknownEpisodeCount}</strong>)
+              <strong className="tabular-nums text-foreground">{activeDimensionGroup.eligibleEpisodeTotal}</strong> đợt (Đã gán chiều:{" "}
+              <strong className="tabular-nums text-foreground">{activeDimensionGroup.knownEpisodeCount}</strong> · Không xác định:{" "}
+              <strong className="tabular-nums text-foreground">{activeDimensionGroup.unknownEpisodeCount}</strong>)
             </span>
           </div>
 
@@ -1437,7 +1600,7 @@ export function WorkforceSnapshotSection({
                           <div className="flex items-center gap-1.5">
                             <span className="font-medium text-foreground">{bucket.display}</span>
                             {bucket.active === false ? (
-                              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
                                 Ngừng hoạt động
                               </span>
                             ) : null}
@@ -1447,7 +1610,7 @@ export function WorkforceSnapshotSection({
                               </span>
                             ) : null}
                           </div>
-                          <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] tabular-nums text-muted">
+                          <div className="flex flex-wrap items-center gap-3 text-[11px] tabular-nums text-muted">
                             <span>
                               Tổng: <strong className="text-foreground">{bucket.eligibleEpisodeCount}</strong> đợt
                             </span>
@@ -1545,25 +1708,25 @@ export function WorkforceSnapshotSection({
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span>{bucket.display}</span>
                             {bucket.unknownCount > 0 ? (
-                              <span className="font-mono text-[10px] font-normal text-muted">
+                              <span className="text-[10px] font-normal tabular-nums text-muted">
                                 ({bucket.unknownCount} chưa rõ trạng thái)
                               </span>
                             ) : null}
                           </div>
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right font-semibold tabular-nums whitespace-nowrap">
                           {bucket.eligibleEpisodeCount}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap text-emerald-700">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap text-emerald-700 dark:text-emerald-300">
                           {bucket.onCount}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap text-amber-700">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap text-amber-700 dark:text-amber-300">
                           {bucket.unconfirmedCount}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap text-rose-700">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap text-rose-700 dark:text-rose-300">
                           {bucket.offCount}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           <span className="font-semibold">
                             {formatPlacementRatePercent(bucket.placementRateOfWaiting)}
                           </span>{" "}
@@ -1571,14 +1734,14 @@ export function WorkforceSnapshotSection({
                             ({bucket.placedToOnEpisodeCount}/{bucket.waitingEpisodeCount})
                           </span>
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           {formatWaitingDaysAverage(bucket.avgWaitingDaysPerEpisode)}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           {formatDurationDaysAverage(bucket.avgOnDaysPerEpisode)}{" "}
                           <span className="text-[11px] text-muted">({bucket.everOnEpisodeCount} đợt)</span>
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           <span className="font-semibold">
                             {formatRetentionRatePercent(bucket.checkpoints.d7.retentionRate)}
                           </span>{" "}
@@ -1586,7 +1749,7 @@ export function WorkforceSnapshotSection({
                             ({bucket.checkpoints.d7.retainedCount}/{bucket.checkpoints.d7.maturedCount})
                           </span>
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                           <span className="font-semibold">
                             {formatRetentionRatePercent(bucket.checkpoints.d30.retentionRate)}
                           </span>{" "}
@@ -1594,7 +1757,7 @@ export function WorkforceSnapshotSection({
                             ({bucket.checkpoints.d30.retainedCount}/{bucket.checkpoints.d30.maturedCount})
                           </span>
                         </td>
-                        <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap">
                           <span className="font-semibold">
                             {formatRetentionRatePercent(bucket.checkpoints.d90.retentionRate)}
                           </span>{" "}
@@ -1608,46 +1771,46 @@ export function WorkforceSnapshotSection({
                   <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
                     <tr>
                       <td className="px-2.5 py-1.5">Tổng đối soát toàn chiều (khớp 100% Snapshot)</td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {snapshot.eligibleEpisodeTotal}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {snapshot.onCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {snapshot.unconfirmedCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {snapshot.offCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatPlacementRatePercent(waiting.placementRateOfWaiting)}{" "}
                         <span className="text-[11px] font-normal text-muted">
                           ({waiting.placedToOn.episodeCount}/{waiting.waitingEpisodeTotal})
                         </span>
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatWaitingDaysAverage(waiting.allWaiting.avgWaitingDaysPerEpisode)}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatDurationDaysAverage(duration.allEverOn.avgOnDaysPerEpisode)}{" "}
                         <span className="text-[11px] font-normal text-muted">
                           ({duration.everOnEpisodeCount} đợt)
                         </span>
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatRetentionRatePercent(retention.checkpoints.d7.retentionRate)}{" "}
                         <span className="text-[11px] font-normal text-muted">
                           ({retention.checkpoints.d7.retainedCount}/{retention.checkpoints.d7.maturedCount})
                         </span>
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatRetentionRatePercent(retention.checkpoints.d30.retentionRate)}{" "}
                         <span className="text-[11px] font-normal text-muted">
                           ({retention.checkpoints.d30.retainedCount}/{retention.checkpoints.d30.maturedCount})
                         </span>
                       </td>
-                      <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatRetentionRatePercent(retention.checkpoints.d90.retentionRate)}{" "}
                         <span className="text-[11px] font-normal text-muted">
                           ({retention.checkpoints.d90.retainedCount}/{retention.checkpoints.d90.maturedCount})
@@ -1657,6 +1820,33 @@ export function WorkforceSnapshotSection({
                   </tfoot>
                 </table>
               </div>
+
+              {/* Phân trang server-side cho bảng Theo dự án (5 dòng/trang) */}
+              {activeDimensionTab.kind === "project" &&
+              (effectiveProjectPagination.hasMore ||
+                effectiveProjectPagination.totalCount > WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE) ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs">
+                  <span className="tabular-nums text-muted">
+                    Đang hiển thị <strong className="text-foreground">{mergedProjectBuckets.length}</strong> /{" "}
+                    <strong className="text-foreground">{effectiveProjectPagination.totalCount}</strong> dự án
+                    {loadMoreProjectsError ? (
+                      <span className="ml-2 text-status-danger-text">
+                        · Không tải được trang dự án tiếp theo, vui lòng thử lại.
+                      </span>
+                    ) : null}
+                  </span>
+                  {effectiveProjectPagination.hasMore && onLoadMoreProjects ? (
+                    <button
+                      type="button"
+                      onClick={onLoadMoreProjects}
+                      disabled={isLoadingMoreProjects}
+                      className="inline-flex min-h-9 items-center rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50"
+                    >
+                      {isLoadingMoreProjects ? "Đang tải thêm…" : "Tải thêm"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -1676,7 +1866,7 @@ export function WorkforceSnapshotSection({
                 Tổng hợp từ các đợt làm việc đang ở trạng thái {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc {leaveReasons.asOfDate} và các lần chuyển sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} trong kỳ lọc.
               </p>
             </div>
-            <span className="font-mono text-xs text-muted">
+            <span className="text-xs tabular-nums text-muted">
               Tổng {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc: {leaveReasons.offEpisodeTotal} đợt làm việc
             </span>
           </div>
@@ -1684,7 +1874,7 @@ export function WorkforceSnapshotSection({
           <dl className="mt-2.5 grid grid-cols-2 gap-2 lg:grid-cols-4">
             <div className="rounded-lg border border-border bg-surface px-3 py-2">
               <dt className="text-xs text-muted">Tổng đợt {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc</dt>
-              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                 {leaveReasons.offEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc</span>
               </dd>
               <p className="mt-0.5 text-[11px] text-muted">
@@ -1694,7 +1884,7 @@ export function WorkforceSnapshotSection({
 
             <div className="rounded-lg border border-border bg-surface px-3 py-2">
               <dt className="text-xs text-muted">Độ phủ có ghi nhận lý do nghỉ</dt>
-              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                 {formatCoverageRatePercent(leaveReasons.reasonCoverageRate)}
               </dd>
               <p className="mt-0.5 text-[11px] text-muted">
@@ -1704,7 +1894,7 @@ export function WorkforceSnapshotSection({
 
             <div className="rounded-lg border border-border bg-surface px-3 py-2">
               <dt className="text-xs text-muted">Tỷ lệ khớp danh mục chuẩn hóa</dt>
-              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                 {formatCoverageRatePercent(leaveReasons.standardizationRate)}
               </dd>
               <p className="mt-0.5 text-[11px] text-muted">
@@ -1714,7 +1904,7 @@ export function WorkforceSnapshotSection({
 
             <div className="rounded-lg border border-border bg-surface px-3 py-2">
               <dt className="text-xs text-muted">Thiếu hoặc chưa xác định lý do</dt>
-              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-foreground">
                 {leaveReasons.missingReasonEpisodeCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
               </dd>
               <p className="mt-0.5 text-[11px] text-muted">
@@ -1752,7 +1942,7 @@ export function WorkforceSnapshotSection({
                       <div key={`lr-bar-${row.key}`} className="text-xs">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-foreground">{row.label}</span>
-                          <span className="font-mono tabular-nums text-muted">
+                          <span className="tabular-nums text-muted">
                             <strong className="text-foreground">{row.episodeCount}</strong> đợt ({formatShareRatePercent(row.shareOfOffRate)})
                           </span>
                         </div>
@@ -1814,20 +2004,20 @@ export function WorkforceSnapshotSection({
                     <tr key={row.key} className="text-foreground hover:bg-surface-hover">
                       <td className="px-2.5 py-1.5 font-medium">{row.label}</td>
                       <td className="px-2 py-1.5 text-muted">{kindLabel}</td>
-                      <td className="px-2 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right font-semibold tabular-nums whitespace-nowrap">
                         {row.episodeCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {row.fromOnCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {row.fromUnconfirmedWithoutOnCount}
                       </td>
-                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                         {formatShareRatePercent(row.shareOfOffRate)}
                       </td>
                       {leaveReasons.periodLeaveReasons.applicable ? (
-                        <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap">
                           {periodRow ? `${periodRow.eventCount} lần (${periodRow.episodeCount} đợt)` : "0 lần"}
                         </td>
                       ) : null}
@@ -1840,23 +2030,23 @@ export function WorkforceSnapshotSection({
                   <td className="px-2.5 py-1.5" colSpan={2}>
                     Tổng cộng đối soát lý do nghỉ việc
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                     {leaveReasons.offEpisodeTotal}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                     {leaveReasons.byCategory.reduce((acc, r) => acc + r.fromOnCount, 0)}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                     {leaveReasons.byCategory.reduce(
                       (acc, r) => acc + r.fromUnconfirmedWithoutOnCount,
                       0,
                     )}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
                     {leaveReasons.offEpisodeTotal > 0 ? "100%" : "—"}
                   </td>
                   {leaveReasons.periodLeaveReasons.applicable ? (
-                    <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                    <td className="px-2.5 py-1.5 text-right tabular-nums whitespace-nowrap">
                       {leaveReasons.periodLeaveReasons.offTransitionEventTotal} lần ({leaveReasons.periodLeaveReasons.offTransitionEpisodeTotal} đợt)
                     </td>
                   ) : null}
@@ -1868,11 +2058,11 @@ export function WorkforceSnapshotSection({
           {leaveReasons.periodLeaveReasons.applicable ? (
             <p className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
               Biến động chuyển sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} trong kỳ ({leaveReasons.periodLeaveReasons.fromDate} → {leaveReasons.periodLeaveReasons.toDate}):{" "}
-              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.offTransitionEventTotal}</strong> lần chuyển trên{" "}
-              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.offTransitionEpisodeTotal}</strong> đợt làm việc ({WORKFORCE_TRANSITION_PAIR_LABELS.ON_TO_OFF}:{" "}
-              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.onToOffEventTotal}</strong> lần · {WORKFORCE_TRANSITION_PAIR_LABELS.UNCONFIRMED_TO_OFF}:{" "}
-              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.unconfirmedToOffEventTotal}</strong> lần) · Độ phủ có lý do trong kỳ:{" "}
-              <strong className="font-mono text-foreground">
+              <strong className="tabular-nums text-foreground">{leaveReasons.periodLeaveReasons.offTransitionEventTotal}</strong> lần chuyển trên{" "}
+              <strong className="tabular-nums text-foreground">{leaveReasons.periodLeaveReasons.offTransitionEpisodeTotal}</strong> đợt làm việc ({WORKFORCE_TRANSITION_PAIR_LABELS.ON_TO_OFF}:{" "}
+              <strong className="tabular-nums text-foreground">{leaveReasons.periodLeaveReasons.onToOffEventTotal}</strong> lần · {WORKFORCE_TRANSITION_PAIR_LABELS.UNCONFIRMED_TO_OFF}:{" "}
+              <strong className="tabular-nums text-foreground">{leaveReasons.periodLeaveReasons.unconfirmedToOffEventTotal}</strong> lần) · Độ phủ có lý do trong kỳ:{" "}
+              <strong className="tabular-nums text-foreground">
                 {formatCoverageRatePercent(leaveReasons.periodLeaveReasons.reasonCoverageRate)}
               </strong>{" "}
               ({leaveReasons.periodLeaveReasons.withReasonEventCount}/{leaveReasons.periodLeaveReasons.offTransitionEventTotal} lần).
@@ -1892,7 +2082,255 @@ export function WorkforceSnapshotSection({
   );
 }
 
-export const WorkforceStatusSection = WorkforceSnapshotSection;
+type CachedDeepFilterState = {
+  workforce: Extract<WorkforceReportingResult, { status: "ready" }>;
+  extraProjects: WorkforceDimensionBucketMetrics[];
+  projectPagination: {
+    totalCount: number;
+    pageSize: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+};
+
+/**
+ * WF-04 Post-Merge Hotfix — Panel lazy-loading cho tab `Báo cáo chuyên sâu`.
+ * Chỉ mount và gọi `GET /api/reporting/workforce-deep` khi người dùng mở tab `Báo cáo chuyên sâu`.
+ * Có session cache theo `filterSignature`, `AbortController` + request sequence guard chống ghi đè
+ * dữ liệu cũ khi đổi bộ lọc nhanh, và hỗ trợ tải thêm từng trang 5 dự án từ server.
+ */
+export function WorkforceDeepReportPanel({
+  data,
+  generatedAt,
+  optionsResult,
+}: {
+  data: ReportingData;
+  generatedAt?: string;
+  optionsResult: ReportingOptionsResult;
+}) {
+  const filterSignature = buildWorkforceDeepFilterSignature(data);
+  const cacheRef = useRef<Map<string, CachedDeepFilterState>>(new Map());
+  const requestSeqRef = useRef(0);
+  const pageAbortRef = useRef<AbortController | null>(null);
+
+  const [state, setState] = useState<{
+    signature: string;
+    status: "loading" | "ready" | "error";
+    payload: CachedDeepFilterState | null;
+  }>({
+    signature: filterSignature,
+    status: "loading",
+    payload: null,
+  });
+  const [reloadToken, setReloadToken] = useState(0);
+  const [loadingMoreState, setLoadingMoreState] = useState<{
+    signature: string;
+    loading: boolean;
+    error: boolean;
+  }>({ signature: filterSignature, loading: false, error: false });
+
+  useEffect(() => {
+    if (pageAbortRef.current) {
+      pageAbortRef.current.abort();
+      pageAbortRef.current = null;
+    }
+
+    const cached = reloadToken === 0 ? cacheRef.current.get(filterSignature) : undefined;
+    if (cached) {
+      setState({
+        signature: filterSignature,
+        status: "ready",
+        payload: cached,
+      });
+      return;
+    }
+
+    const seq = ++requestSeqRef.current;
+    const controller = new AbortController();
+    setState({ signature: filterSignature, status: "loading", payload: null });
+
+    fetch(buildWorkforceDeepUrl(data, { mode: "deep" }), {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const json: unknown = await response.json().catch(() => null);
+        if (controller.signal.aborted || seq !== requestSeqRef.current) return;
+        if (!response.ok || !isReadyWorkforceDeepEnvelope(json)) {
+          setState({ signature: filterSignature, status: "error", payload: null });
+          return;
+        }
+        const wf = json.workforce;
+        const pageMeta = wf.dimensions.byProject.pagination ?? {
+          totalCount: wf.dimensions.byProject.buckets.length,
+          pageSize: WORKFORCE_PROJECT_DEFAULT_PAGE_SIZE,
+          hasMore: false,
+          nextCursor: null,
+        };
+        const entry: CachedDeepFilterState = {
+          workforce: wf,
+          extraProjects: [],
+          projectPagination: {
+            totalCount: pageMeta.totalCount,
+            pageSize: pageMeta.pageSize,
+            hasMore: pageMeta.hasMore,
+            nextCursor: pageMeta.nextCursor,
+          },
+        };
+        cacheRef.current.set(filterSignature, entry);
+        setState({ signature: filterSignature, status: "ready", payload: entry });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && seq === requestSeqRef.current) {
+          setState({ signature: filterSignature, status: "error", payload: null });
+        }
+      });
+
+    return () => controller.abort();
+  }, [data, filterSignature, reloadToken]);
+
+  function handleRetry(): void {
+    cacheRef.current.delete(filterSignature);
+    setReloadToken((n) => n + 1);
+  }
+
+  function handleLoadMoreProjects(): void {
+    const current =
+      state.signature === filterSignature && state.status === "ready" ? state.payload : null;
+    if (!current) return;
+    const cursor = current.projectPagination.nextCursor;
+    if (!current.projectPagination.hasMore || !cursor) return;
+    if (loadingMoreState.signature === filterSignature && loadingMoreState.loading) return;
+
+    if (pageAbortRef.current) {
+      pageAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    pageAbortRef.current = controller;
+    const activeSignature = filterSignature;
+
+    setLoadingMoreState({ signature: activeSignature, loading: true, error: false });
+
+    fetch(buildWorkforceDeepUrl(data, { mode: "project_page", cursor }), {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const json: unknown = await response.json().catch(() => null);
+        if (controller.signal.aborted) return;
+        if (!response.ok || !isReadyWorkforceProjectPageEnvelope(json)) {
+          setLoadingMoreState({ signature: activeSignature, loading: false, error: true });
+          return;
+        }
+        const page = json.projectPage;
+        const latestCached = cacheRef.current.get(activeSignature);
+        if (!latestCached) return;
+
+        const existingKeys = new Set<string>([
+          ...latestCached.workforce.dimensions.byProject.buckets.map((b) => b.key),
+          ...latestCached.extraProjects.map((b) => b.key),
+        ]);
+        const appended = [...latestCached.extraProjects];
+        for (const row of page.rows) {
+          if (!existingKeys.has(row.key)) {
+            existingKeys.add(row.key);
+            appended.push(row);
+          }
+        }
+
+        const updated: CachedDeepFilterState = {
+          workforce: latestCached.workforce,
+          extraProjects: appended,
+          projectPagination: {
+            totalCount: page.totalCount,
+            pageSize: page.pageSize,
+            hasMore: page.hasMore,
+            nextCursor: page.nextCursor,
+          },
+        };
+        cacheRef.current.set(activeSignature, updated);
+        setLoadingMoreState({ signature: activeSignature, loading: false, error: false });
+        setState((prev) =>
+          prev.signature === activeSignature
+            ? { signature: activeSignature, status: "ready", payload: updated }
+            : prev,
+        );
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setLoadingMoreState({ signature: activeSignature, loading: false, error: true });
+        }
+      });
+  }
+
+  const isCurrentSignature = state.signature === filterSignature;
+  const effectiveStatus = isCurrentSignature ? state.status : "loading";
+  const effectivePayload = isCurrentSignature ? state.payload : null;
+  const isMoreLoading =
+    loadingMoreState.signature === filterSignature && loadingMoreState.loading;
+  const isMoreError =
+    loadingMoreState.signature === filterSignature && loadingMoreState.error;
+
+  return (
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6">
+      <header className="rounded-2xl border border-border bg-gradient-to-r from-primary/10 via-surface to-secondary/10 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">
+            BoD · Báo cáo chuyên sâu
+          </p>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">
+            Báo cáo chuyên sâu lực lượng lao động
+          </h1>
+          <p className="mt-0.5 max-w-2xl text-sm text-muted">
+            Đối soát cân bằng đầu kỳ/cuối kỳ, thời gian chờ việc, thâm niên hiện diện, tỷ lệ giữ chân D7/D30/D90, chất lượng theo chiều và lý do nghỉ việc.
+          </p>
+          {generatedAt ? (
+            <p className="mt-1 text-xs text-muted">
+              Báo cáo tạo lúc: <time>{formatTimestamp(generatedAt)}</time>
+            </p>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="mt-4 space-y-4">
+        <FiltersOrError optionsResult={optionsResult} />
+
+        {effectiveStatus === "loading" ? (
+          <div
+            role="status"
+            className="rounded-2xl border border-border bg-surface px-6 py-10 text-center text-sm text-muted"
+          >
+            Đang tải báo cáo chuyên sâu…
+          </div>
+        ) : effectiveStatus === "error" || !effectivePayload ? (
+          <Alert tone="error" role="alert" title="Không tải được báo cáo chuyên sâu">
+            <p>Không tải được dữ liệu báo cáo chuyên sâu cho bộ lọc hiện tại. Vui lòng thử lại.</p>
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="mt-2 min-h-10 rounded-md border border-current px-3 text-xs font-medium"
+            >
+              Thử tải lại
+            </button>
+          </Alert>
+        ) : (
+          <WorkforceDeepSection
+            workforce={effectivePayload.workforce}
+            extraProjectBuckets={effectivePayload.extraProjects}
+            projectPaginationOverride={effectivePayload.projectPagination}
+            isLoadingMoreProjects={isMoreLoading}
+            loadMoreProjectsError={isMoreError}
+            onLoadMoreProjects={handleLoadMoreProjects}
+          />
+        )}
+      </div>
+    </main>
+  );
+}
 
 /**
  * Collapsible full bucket list (shared by the scoped dashboards).
@@ -1911,7 +2349,7 @@ export function BucketList({ buckets, label = "Xem danh sách đầy đủ" }: {
             {sorted.map((b) => (
               <tr key={b.key} className="text-foreground hover:bg-surface-hover">
                 <td className="px-3 py-1.5">{b.display}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">{b.recruitedCount}</td>
               </tr>
             ))}
           </tbody>

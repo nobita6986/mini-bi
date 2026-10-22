@@ -1013,6 +1013,10 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
     "20261022110000_wf02_workforce_balance_and_waiting_aging.sql";
   const wf03Migration =
     "20261022130000_wf03_workforce_tenure_presence_and_retention.sql";
+  const wf04Migration =
+    "20261022150000_wf04_workforce_dimensions_and_leave_reasons.sql";
+  const wf04HotfixMigration =
+    "20261022170000_wf04_hotfix_workforce_overview_and_project_pagination.sql";
   const dirty = git.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   assert.deepEqual(dirty.filter((line) =>
     !line.endsWith(NEW_MIGRATION) &&
@@ -1041,7 +1045,9 @@ test("the vendor slot remains append-only and no earlier migration is touched", 
     !line.endsWith(draftSubmissionDeleteMigration) &&
     !line.endsWith(wf01Migration) &&
     !line.endsWith(wf02Migration) &&
-    !line.endsWith(wf03Migration)), [],
+    !line.endsWith(wf03Migration) &&
+    !line.endsWith(wf04Migration) &&
+    !line.endsWith(wf04HotfixMigration)), [],
     "no earlier migration may be modified, deleted or renamed");
 
   const committed = spawnSync("git", ["show", `HEAD:supabase/migrations/${PREVIOUS_MIGRATION}`],
