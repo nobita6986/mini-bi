@@ -118,6 +118,70 @@ async function insertEntry(
 test("WF-01 ephemeral DB integration: snapshot as-of, status transitions, supersession, scopes, and TS parity", async () => {
   const db = await buildDb();
   try {
+    // Regression assertions on SECURITY DEFINER owner, status events FORCE RLS/privileges, search_path, and EXECUTE ACL:
+    const { rows: catalogRows } = await db.query(`
+      select
+        p.oid::pg_catalog.regprocedure::text as signature,
+        p.prosecdef,
+        p.proconfig,
+        owner_role.rolname as proc_owner,
+        owner_role.rolsuper as owner_is_super,
+        owner_role.rolbypassrls as owner_bypassrls,
+        table_owner_role.rolname as status_table_owner,
+        facts_owner_role.rolname as facts_rpc_owner,
+        c.relrowsecurity as status_rls_enabled,
+        c.relforcerowsecurity as status_rls_forced,
+        (
+          select count(*)::int
+          from pg_catalog.pg_policy pol
+          where pol.polrelid = c.oid
+        ) as status_policy_count,
+        pg_catalog.has_table_privilege(p.proowner, c.oid, 'SELECT') as owner_status_select,
+        pg_catalog.has_table_privilege('anon', c.oid, 'SELECT') as anon_status_select,
+        pg_catalog.has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_status_select,
+        pg_catalog.has_table_privilege('service_role', c.oid, 'SELECT') as service_status_select,
+        pg_catalog.has_function_privilege(p.proowner, p.oid, 'EXECUTE') as owner_exec,
+        pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE') as service_exec,
+        pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+        pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_exec,
+        pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') as public_role_exec,
+        exists (
+          select 1
+          from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+          where a.grantee = 0
+            and a.privilege_type = 'EXECUTE'
+        ) as public_acl_exec
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_roles owner_role on owner_role.oid = p.proowner
+      join pg_catalog.pg_class c on c.oid = 'public.direct_entry_employment_status_events'::pg_catalog.regclass
+      join pg_catalog.pg_roles table_owner_role on table_owner_role.oid = c.relowner
+      join pg_catalog.pg_proc facts_proc on facts_proc.oid = 'public.direct_entry_reporting_scoped_facts(uuid, uuid, jsonb)'::pg_catalog.regprocedure
+      join pg_catalog.pg_roles facts_owner_role on facts_owner_role.oid = facts_proc.proowner
+      where p.oid = 'public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)'::pg_catalog.regprocedure
+    `);
+    assert.equal(catalogRows.length, 1, "direct_entry_workforce_reporting_scoped must exist in pg_proc");
+    const cat = catalogRows[0];
+    assert.equal(cat.signature, "direct_entry_workforce_reporting_scoped(uuid,uuid,jsonb)");
+    assert.equal(cat.prosecdef, true, "RPC must be SECURITY DEFINER");
+    assert.equal(cat.proc_owner, "postgres", "RPC owner must be the privileged migration owner role");
+    assert.equal(cat.proc_owner, cat.status_table_owner, "RPC owner must match direct_entry_employment_status_events table owner");
+    assert.equal(cat.proc_owner, cat.facts_rpc_owner, "RPC owner must match direct_entry_reporting_scoped_facts RPC owner");
+    assert.equal(cat.status_rls_enabled, true, "direct_entry_employment_status_events must have RLS enabled");
+    assert.equal(cat.status_rls_forced, true, "direct_entry_employment_status_events must have FORCE RLS enabled");
+    assert.equal(cat.status_policy_count, 0, "direct_entry_employment_status_events must remain default-deny (zero permissive RLS policies)");
+    assert.equal(cat.owner_status_select, true, "RPC owner must hold SELECT privilege on direct_entry_employment_status_events");
+    assert.equal(Boolean(cat.owner_is_super || cat.owner_bypassrls), true, "RPC owner must bypass FORCE RLS on direct_entry_employment_status_events");
+    assert.equal(cat.anon_status_select, false, "anon must not have SELECT on direct_entry_employment_status_events");
+    assert.equal(cat.authenticated_status_select, false, "authenticated must not have SELECT on direct_entry_employment_status_events");
+    assert.equal(cat.service_status_select, false, "service_role must not have direct SELECT on direct_entry_employment_status_events");
+    assert.deepEqual(cat.proconfig, ["search_path=pg_catalog, public"], "search_path must be locked to pg_catalog, public");
+    assert.equal(cat.owner_exec, true, "RPC owner retains EXECUTE");
+    assert.equal(cat.service_exec, true, "service_role must have EXECUTE");
+    assert.equal(cat.anon_exec, false, "anon must not have EXECUTE");
+    assert.equal(cat.authenticated_exec, false, "authenticated must not have EXECUTE");
+    assert.equal(cat.public_role_exec, false, "PUBLIC must not have EXECUTE");
+    assert.equal(cat.public_acl_exec, false, "proacl must not contain a PUBLIC (grantee=0) EXECUTE entry");
+
     const TEAM_A_ID = uuid(11);
     const TEAM_B_ID = uuid(12);
     const REC_A1_ID = uuid(21);
@@ -451,12 +515,44 @@ test("WF-01 ephemeral DB integration: snapshot as-of, status transitions, supers
       );
     }
 
-    const callRpc = async (authSubject, appUserId, filters) => {
-      const { rows } = await db.query(
-        "select public.direct_entry_workforce_reporting_scoped($1::uuid, $2::uuid, $3::jsonb) as payload",
-        [authSubject, appUserId, JSON.stringify(filters)],
+    for (const clientRole of ["anon", "authenticated"]) {
+      await db.exec(`set role ${clientRole}`);
+      try {
+        await assert.rejects(
+          db.query(
+            "select public.direct_entry_workforce_reporting_scoped($1::uuid, $2::uuid, '{}'::jsonb)",
+            [AUTH_BOD, USER_BOD],
+          ),
+          (err) => err?.code === "42501",
+          `${clientRole} must be denied EXECUTE on direct_entry_workforce_reporting_scoped`,
+        );
+      } finally {
+        await db.exec("reset role");
+      }
+    }
+
+    await db.exec("set role service_role");
+    try {
+      await assert.rejects(
+        db.query("select count(*) from public.direct_entry_employment_status_events"),
+        (err) => err?.code === "42501",
+        "service_role must not have direct table SELECT on direct_entry_employment_status_events",
       );
-      return rows[0].payload;
+    } finally {
+      await db.exec("reset role");
+    }
+
+    const callRpc = async (authSubject, appUserId, filters) => {
+      await db.exec("set role service_role");
+      try {
+        const { rows } = await db.query(
+          "select public.direct_entry_workforce_reporting_scoped($1::uuid, $2::uuid, $3::jsonb) as payload",
+          [authSubject, appUserId, JSON.stringify(filters)],
+        );
+        return rows[0].payload;
+      } finally {
+        await db.exec("reset role");
+      }
     };
 
     const allEpisodesForTs = [

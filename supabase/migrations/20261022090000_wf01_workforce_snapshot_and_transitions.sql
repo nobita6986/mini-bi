@@ -315,9 +315,134 @@ $function$;
 comment on function public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb) is
   'WF-01 (MBI-DA-2026-01): Actor-scoped business-effective workforce snapshot as-of and period status transitions on non-superseded direct_entry_employment_status_events.';
 
+do $align_wf01_rpc_owner$
+declare
+  v_table_owner_oid oid;
+  v_table_owner name;
+  v_facts_rpc_owner name;
+  v_proc_owner_oid oid;
+  v_proc_owner name;
+begin
+  select c.relowner, r.rolname
+    into v_table_owner_oid, v_table_owner
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_roles r on r.oid = c.relowner
+   where c.oid = 'public.direct_entry_employment_status_events'::pg_catalog.regclass;
+
+  select r.rolname
+    into v_facts_rpc_owner
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_roles r on r.oid = p.proowner
+   where p.oid = 'public.direct_entry_reporting_scoped_facts(uuid, uuid, jsonb)'::pg_catalog.regprocedure;
+
+  if v_table_owner is null or v_facts_rpc_owner is null or v_table_owner <> v_facts_rpc_owner then
+    raise exception 'WF-01 expected owner mismatch between status events table and reporting facts RPC'
+      using errcode = '55000';
+  end if;
+
+  select p.proowner, r.rolname
+    into v_proc_owner_oid, v_proc_owner
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_roles r on r.oid = p.proowner
+   where p.oid = 'public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)'::pg_catalog.regprocedure;
+
+  if v_proc_owner_oid is distinct from v_table_owner_oid
+     and pg_catalog.pg_has_role(current_user, v_table_owner_oid, 'SET') then
+    execute pg_catalog.format(
+      'alter function public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb) owner to %I',
+      v_table_owner
+    );
+    v_proc_owner_oid := v_table_owner_oid;
+    v_proc_owner := v_table_owner;
+  end if;
+
+  if v_proc_owner_oid is distinct from v_table_owner_oid then
+    execute pg_catalog.format(
+      'grant execute on function public.direct_entry_reporting_resolve_audience(uuid, uuid) to %I',
+      v_proc_owner
+    );
+    execute pg_catalog.format(
+      'grant execute on function public.direct_entry_reporting_authorized_entries(uuid, uuid) to %I',
+      v_proc_owner
+    );
+    execute pg_catalog.format(
+      'grant execute on function public.direct_entry_authorization_date() to %I',
+      v_proc_owner
+    );
+  end if;
+end;
+$align_wf01_rpc_owner$;
+
 revoke all on function public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)
   from public, anon, authenticated, service_role;
 grant execute on function public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)
   to service_role;
+
+do $assert_wf01_rpc_boundary$
+declare
+  v_proc constant pg_catalog.regprocedure :=
+    'public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)'::pg_catalog.regprocedure;
+  v_status_table constant pg_catalog.regclass :=
+    'public.direct_entry_employment_status_events'::pg_catalog.regclass;
+  v_table_owner oid;
+  v_proc_owner oid;
+  v_prosecdef boolean;
+  v_proconfig text[];
+  v_owner_can_bypass_rls boolean;
+  v_status_rls_forced boolean;
+  v_status_policy_count integer;
+  v_public_exec boolean;
+begin
+  select c.relowner,
+         (c.relrowsecurity and c.relforcerowsecurity),
+         (select count(*)::integer from pg_catalog.pg_policy pol where pol.polrelid = c.oid)
+    into v_table_owner, v_status_rls_forced, v_status_policy_count
+    from pg_catalog.pg_class c
+   where c.oid = v_status_table;
+
+  select p.proowner,
+         p.prosecdef,
+         coalesce(p.proconfig, array[]::text[]),
+         (r.rolsuper or r.rolbypassrls),
+         exists (
+           select 1
+             from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+            where a.grantee = 0
+              and a.privilege_type = 'EXECUTE'
+         )
+    into v_proc_owner, v_prosecdef, v_proconfig, v_owner_can_bypass_rls, v_public_exec
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_roles r on r.oid = p.proowner
+   where p.oid = v_proc;
+
+  if v_proc_owner is null
+     or not pg_catalog.pg_has_role(v_proc_owner, v_table_owner, 'USAGE')
+     or not coalesce(v_prosecdef, false)
+     or not (v_proconfig @> array['search_path=pg_catalog, public'])
+     or not coalesce(v_status_rls_forced, false)
+     or coalesce(v_status_policy_count, -1) <> 0
+     or not coalesce(v_owner_can_bypass_rls, false)
+     or pg_catalog.has_table_privilege('anon', v_status_table, 'SELECT')
+     or pg_catalog.has_table_privilege('authenticated', v_status_table, 'SELECT')
+     or pg_catalog.has_table_privilege('service_role', v_status_table, 'SELECT')
+     or not pg_catalog.has_table_privilege(v_proc_owner, v_status_table, 'SELECT')
+     or not pg_catalog.has_table_privilege(v_proc_owner, 'public.direct_entries'::pg_catalog.regclass, 'SELECT')
+     or not pg_catalog.has_table_privilege(v_proc_owner, 'public.direct_entry_submissions'::pg_catalog.regclass, 'SELECT')
+     or not pg_catalog.has_table_privilege(v_proc_owner, 'public.direct_entry_reporting_facts_v01'::pg_catalog.regclass, 'SELECT')
+     or not pg_catalog.has_table_privilege(v_proc_owner, 'public.teams'::pg_catalog.regclass, 'SELECT')
+     or not pg_catalog.has_function_privilege(v_proc_owner, 'public.direct_entry_reporting_resolve_audience(uuid, uuid)'::pg_catalog.regprocedure, 'EXECUTE')
+     or not pg_catalog.has_function_privilege(v_proc_owner, 'public.direct_entry_reporting_authorized_entries(uuid, uuid)'::pg_catalog.regprocedure, 'EXECUTE')
+     or not pg_catalog.has_function_privilege(v_proc_owner, 'public.direct_entry_authorization_date()'::pg_catalog.regprocedure, 'EXECUTE')
+     or not pg_catalog.has_function_privilege(v_proc_owner, v_proc, 'EXECUTE')
+     or not pg_catalog.has_function_privilege('service_role', v_proc, 'EXECUTE')
+     or coalesce(v_public_exec, true)
+     or pg_catalog.has_function_privilege('public', v_proc, 'EXECUTE')
+     or pg_catalog.has_function_privilege('anon', v_proc, 'EXECUTE')
+     or pg_catalog.has_function_privilege('authenticated', v_proc, 'EXECUTE') then
+    raise exception 'WF-01 RPC security definer owner/RLS/ACL boundary drift'
+      using errcode = '55000';
+  end if;
+end;
+$assert_wf01_rpc_boundary$;
 
 commit;
