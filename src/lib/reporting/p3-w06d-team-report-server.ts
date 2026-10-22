@@ -11,6 +11,8 @@ import { computeScopedReportingData } from "./p2-w04a-reporting-server";
 import { parseTeamDrillDownRequest } from "./p2-w05b-team-drill-down-parser";
 import type { RequestParams } from "./p2-w05b-team-drill-down-parser";
 import { resolveReportingAudienceProjection } from "./p3-w05a-audience";
+import { resolveWorkforceReportingForActor } from "./wf01-workforce-snapshot";
+import type { WorkforceReportingResult } from "./wf01-workforce-snapshot";
 import {
   authorizeBucket,
   buildTeamDetail,
@@ -43,6 +45,8 @@ export type { TeamReportDetail, TeamReportRow } from "./p3-w06d-team-report-core
 export type TeamReportEnvelope = {
   /** The scoped aggregate; null on a "load more" request (cursor present). */
   report: ReportingData | null;
+  /** Scoped WF-01 workforce snapshot and transitions for the selected team bucket; null on "load more". */
+  workforce?: WorkforceReportingResult | null;
   bucket: { key: string; display: string };
   detail: TeamReportDetail;
 };
@@ -117,10 +121,22 @@ export async function fetchCutoverTeamReport(
       ? "Không xác định"
       : (anchor?.team_display_name ?? "") + (anchor?.team_active === false ? " (Đã ngừng hoạt động)" : "");
 
+    const workforce =
+      cursor === null
+        ? await resolveWorkforceReportingForActor({
+            actor,
+            filters,
+            teamBucketKey: bucketKey,
+            expectedAudienceKind: audience.kind,
+            callWorkforceRpc: (args) => sb.rpc("direct_entry_workforce_reporting_scoped", args),
+          })
+        : null;
+
     return {
       ok: true,
       data: {
         report: cursor === null ? built.data : null,
+        workforce,
         bucket: { key: bucketKey, display },
         detail: buildTeamDetail({ facts: teamFacts, cursor, limit }),
       },

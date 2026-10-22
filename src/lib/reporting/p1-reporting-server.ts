@@ -10,10 +10,17 @@ import {
 } from "./p1-reporting";
 import type { ReportingData, ReportingFact, ReportingSource, RunStatus } from "./p1-reporting";
 import type { PeriodComparisonResult } from "./p1-period-comparison";
+import type { WorkforceReportingResult } from "./wf01-workforce-snapshot";
 import { paginateAll, REPORTING_FACT_ORDER, REPORTING_PAGE_SIZE } from "./p1-reporting-pagination";
 
 export type ReportingFetchResult =
-  | { ok: true; data: ReportingData; generatedAt: string; comparison?: PeriodComparisonResult }
+  | {
+      ok: true;
+      data: ReportingData;
+      generatedAt: string;
+      comparison?: PeriodComparisonResult;
+      workforce?: WorkforceReportingResult;
+    }
   | { ok: false; code: string; message: string };
 
 const FACT_COLUMNS =

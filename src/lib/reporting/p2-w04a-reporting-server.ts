@@ -7,6 +7,8 @@ import { parseReportingFilters } from "./p1-filter";
 import type { ReportingFilters } from "./p1-filter";
 import { resolvePriorPeriodComparisonForActor } from "./p1-period-comparison";
 import type { PeriodComparisonResult } from "./p1-period-comparison";
+import { resolveWorkforceReportingForActor } from "./wf01-workforce-snapshot";
+import type { WorkforceReportingResult } from "./wf01-workforce-snapshot";
 import { computeReporting, reportingQueryFailed } from "./p1-reporting";
 import type {
   ReportingData,
@@ -39,7 +41,7 @@ type ScopedFactRow = ReportingFact & {
 };
 
 export type CutoverFetchResult =
-  | { ok: true; data: ReportingData; generatedAt: string; comparison?: PeriodComparisonResult; audience: ReportingAudience }
+  | { ok: true; data: ReportingData; generatedAt: string; comparison?: PeriodComparisonResult; workforce?: WorkforceReportingResult; audience: ReportingAudience }
   | {
       ok: false;
       code: string;
@@ -106,15 +108,23 @@ export async function fetchCutoverReporting(
       return { ok: false, code: built.code, message: built.message, reconciliation: built.reconciliation };
     }
 
-    const comparison = await resolvePriorPeriodComparisonForActor({
-      actor,
-      filters,
-      currentTotal: built.data.recruitedTotal,
-      expectedAudienceKind: audience.kind,
-      callScopedFactsRpc: (args) => sb.rpc("direct_entry_reporting_scoped_facts", args),
-    });
+    const [comparison, workforce] = await Promise.all([
+      resolvePriorPeriodComparisonForActor({
+        actor,
+        filters,
+        currentTotal: built.data.recruitedTotal,
+        expectedAudienceKind: audience.kind,
+        callScopedFactsRpc: (args) => sb.rpc("direct_entry_reporting_scoped_facts", args),
+      }),
+      resolveWorkforceReportingForActor({
+        actor,
+        filters,
+        expectedAudienceKind: audience.kind,
+        callWorkforceRpc: (args) => sb.rpc("direct_entry_workforce_reporting_scoped", args),
+      }),
+    ]);
 
-    return { ok: true, data: built.data, generatedAt: new Date().toISOString(), comparison, audience };
+    return { ok: true, data: built.data, generatedAt: new Date().toISOString(), comparison, workforce, audience };
   } catch (error) {
     logSafeError("p3-w05a-scoped-reporting", error);
     return reportingQueryFailed();

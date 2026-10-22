@@ -10,6 +10,7 @@ import {
   formatSharePct,
 } from "@/lib/reporting/p1-dashboard-period";
 import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
+import type { WorkforceReportingResult } from "@/lib/reporting/wf01-workforce-snapshot";
 import type { ScopedDashboardView } from "@/lib/reporting/p3-w06c-audience-view";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingData } from "@/lib/reporting/p1-reporting";
@@ -22,7 +23,7 @@ import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
 import { ProviderDonut } from "./provider-donut";
 import { TrendChart } from "./trend-chart";
-import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote } from "./dashboard-shared";
+import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote, WorkforceSnapshotSection } from "./dashboard-shared";
 
 /**
  * P3-W06C - Own dashboard (audience `own`).
@@ -36,12 +37,14 @@ export function OwnDashboardView({
   data,
   generatedAt,
   comparison,
+  workforce,
   optionsResult,
   view,
 }: {
   data: ReportingData;
   generatedAt: string;
   comparison?: PeriodComparisonResult;
+  workforce?: WorkforceReportingResult;
   optionsResult: ReportingOptionsResult;
   view: ScopedDashboardView;
 }) {
@@ -79,6 +82,7 @@ export function OwnDashboardView({
         <ScopeNote label="Phạm vi báo cáo cá nhân">{view.scopeNote}</ScopeNote>
         <FiltersOrError optionsResult={optionsResult} showRecruiter={view.showRecruiterFilter} />
         {!noData ? <PeriodComparisonBanner comparison={comparison} /> : null}
+        <WorkforceSnapshotSection workforce={workforce} />
 
         {noData ? (
           <EmptyState title={view.emptyTitle} description={view.emptyDescription} />

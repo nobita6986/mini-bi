@@ -25,7 +25,10 @@ import {
   F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_MIGRATION_NAME,
   F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+  WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME,
+  WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE,
   migrationChecksum,
+  migrationSqlForTransaction,
   runMigrationApply,
   runMigrationValidation,
   S0_T1_C_PRE_PR92_CHECKSUM,
@@ -257,7 +260,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const defaultsBefore = await aclDefaultsSnapshot(client);
 
       await client.query(
-        "create role s0_t1c_runner nologin;"
+        "create role s0_t1c_runner nologin bypassrls;"
           + " grant postgres to s0_t1c_runner with admin false, inherit true, set false;"
           + " grant direct_entry_catalog_bootstrap_executor to s0_t1c_runner"
           + " with admin true, inherit false, set false;",
@@ -481,11 +484,23 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         /revoke all on function public\.work_report__internal_resolve_capability_authority\(uuid, text, uuid, uuid, timestamptz\)\s+from public, anon, authenticated, service_role;/i,
         "F2 internal capability authority helper revokes EXECUTE from all roles including service_role",
       );
+      const wf01Migration = await readFile(
+        path.join(MIGRATION_DIR, WF01_WORKFORCE_SNAPSHOT_MIGRATION_NAME), "utf8",
+      );
+      const wf01Normalized = wf01Migration.replace(/\s+/g, " ")
+        .replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").toLowerCase();
+      const wf01Grant = `grant execute on function ${WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE.toLowerCase()} to service_role;`;
+      const wf01Revoke = `revoke all on function ${WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE.toLowerCase()} from public, anon, authenticated, service_role;`;
+      assert.ok(wf01Normalized.includes(wf01Grant),
+        "WF-01 workforce reporting RPC is explicitly granted only to service_role");
+      assert.ok(wf01Normalized.includes(wf01Revoke),
+        "WF-01 workforce reporting RPC revokes client and inherited EXECUTE before granting service_role");
       expectedSignatures.push(R1_2_SERVICE_RPC, ...F1_WORK_REPORTS_SERVICE_RPC_SIGNATURES,
         F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
         F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
         ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
-        ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES);
+        ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+        WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE);
       assert.ok(expectedSignatures.length > 0, "the explicit server/invoker allowlist is not empty");
       assert.equal(new Set(expectedSignatures).size, expectedSignatures.length, "the allowlist has no duplicates");
       const { rows: resolvedExpected } = await client.query(
@@ -505,7 +520,8 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
           F1_WORK_REPORTS_ASSIGNMENT_OPTIONS_RPC_SIGNATURE,
           F1_WORK_REPORTS_ASSIGNMENT_TRACKING_RPC_SIGNATURE,
           ...F1_5_WORK_REPORTS_ANALYTICS_RPC_SIGNATURES,
-          ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES].sort(),
+          ...F2_WORK_REPORTS_REVIEW_AND_DELEGATION_RPC_SIGNATURES,
+          WF01_WORKFORCE_SNAPSHOT_RPC_SIGNATURE].sort(),
         "only explicitly reviewed post-S0 RPCs add service_role grants after the S0 baseline",
       );
       const removedSourceService = sourceService
@@ -558,6 +574,234 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const capability = await client.query("select public.ai_report_review_capability() as value");
       await client.query("reset role");
       assert.equal(capability.rows[0].value.ok, true, "service_role can still call an allowlisted server RPC");
+
+      // WF-01 regression on ephemeral native PostgreSQL:
+      // 1. Verify catalog invariants for direct_entry_workforce_reporting_scoped (SECURITY DEFINER, owner privileges
+      //    on FORCE RLS table direct_entry_employment_status_events, locked search_path, and strict EXECUTE ACL).
+      const assertWf01CatalogInvariants = async (expectedOwnerName) => {
+        const { rows: wf01Catalog } = await client.query(
+          `select
+             p.oid::pg_catalog.regprocedure::text as signature,
+             p.prosecdef,
+             p.proconfig,
+             owner_role.rolname as proc_owner,
+             owner_role.rolsuper as owner_is_super,
+             owner_role.rolbypassrls as owner_bypassrls,
+             table_owner_role.rolname as status_table_owner,
+             facts_owner_role.rolname as facts_rpc_owner,
+             pg_catalog.pg_has_role(p.proowner, c.relowner, 'USAGE') as owner_has_table_owner_privs,
+             c.relrowsecurity as status_rls_enabled,
+             c.relforcerowsecurity as status_rls_forced,
+             (select count(*)::integer from pg_catalog.pg_policy pol where pol.polrelid = c.oid) as status_policy_count,
+             pg_catalog.has_table_privilege(p.proowner, c.oid, 'SELECT') as owner_status_select,
+             pg_catalog.has_table_privilege('anon', c.oid, 'SELECT') as anon_status_select,
+             pg_catalog.has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_status_select,
+             pg_catalog.has_table_privilege('service_role', c.oid, 'SELECT') as service_status_select,
+             pg_catalog.has_function_privilege(p.proowner, 'public.direct_entry_reporting_resolve_audience(uuid, uuid)'::pg_catalog.regprocedure, 'EXECUTE') as owner_resolve_audience_exec,
+             pg_catalog.has_function_privilege(p.proowner, 'public.direct_entry_reporting_authorized_entries(uuid, uuid)'::pg_catalog.regprocedure, 'EXECUTE') as owner_authorized_entries_exec,
+             pg_catalog.has_function_privilege(p.proowner, 'public.direct_entry_authorization_date()'::pg_catalog.regprocedure, 'EXECUTE') as owner_auth_date_exec,
+             pg_catalog.has_function_privilege(p.proowner, p.oid, 'EXECUTE') as owner_exec,
+             pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE') as service_exec,
+             pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+             pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_exec,
+             pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') as public_role_exec,
+             exists (
+               select 1
+                 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+                where a.grantee = 0
+                  and a.privilege_type = 'EXECUTE'
+             ) as public_acl_exec
+           from pg_catalog.pg_proc p
+           join pg_catalog.pg_roles owner_role on owner_role.oid = p.proowner
+           join pg_catalog.pg_class c on c.oid = 'public.direct_entry_employment_status_events'::pg_catalog.regclass
+           join pg_catalog.pg_roles table_owner_role on table_owner_role.oid = c.relowner
+           join pg_catalog.pg_proc facts_proc on facts_proc.oid = 'public.direct_entry_reporting_scoped_facts(uuid, uuid, jsonb)'::pg_catalog.regprocedure
+           join pg_catalog.pg_roles facts_owner_role on facts_owner_role.oid = facts_proc.proowner
+           where p.oid = 'public.direct_entry_workforce_reporting_scoped(uuid, uuid, jsonb)'::pg_catalog.regprocedure`,
+        );
+        assert.equal(wf01Catalog.length, 1, "direct_entry_workforce_reporting_scoped exists in pg_proc");
+        const row = wf01Catalog[0];
+        assert.equal(row.signature, "direct_entry_workforce_reporting_scoped(uuid,uuid,jsonb)");
+        assert.equal(row.prosecdef, true, "direct_entry_workforce_reporting_scoped must be SECURITY DEFINER");
+        assert.equal(row.proc_owner, expectedOwnerName, `expected owner ${expectedOwnerName}`);
+        assert.equal(row.status_table_owner, "postgres");
+        assert.equal(row.facts_rpc_owner, "postgres");
+        assert.equal(row.owner_has_table_owner_privs, true, "RPC owner must hold table owner privileges");
+        assert.equal(row.status_rls_enabled, true, "direct_entry_employment_status_events has RLS enabled");
+        assert.equal(row.status_rls_forced, true, "direct_entry_employment_status_events has FORCE RLS enabled");
+        assert.equal(row.status_policy_count, 0, "direct_entry_employment_status_events is default-deny (0 permissive policies)");
+        assert.equal(row.owner_status_select, true, "RPC owner has SELECT on direct_entry_employment_status_events");
+        assert.equal(Boolean(row.owner_is_super || row.owner_bypassrls), true, "RPC owner bypasses FORCE RLS on direct_entry_employment_status_events");
+        assert.equal(row.anon_status_select, false, "anon has no SELECT on direct_entry_employment_status_events");
+        assert.equal(row.authenticated_status_select, false, "authenticated has no SELECT on direct_entry_employment_status_events");
+        assert.equal(row.service_status_select, false, "service_role has no direct SELECT on direct_entry_employment_status_events");
+        assert.equal(row.owner_resolve_audience_exec, true, "RPC owner can execute direct_entry_reporting_resolve_audience");
+        assert.equal(row.owner_authorized_entries_exec, true, "RPC owner can execute direct_entry_reporting_authorized_entries");
+        assert.equal(row.owner_auth_date_exec, true, "RPC owner can execute direct_entry_authorization_date");
+        assert.deepEqual(row.proconfig, ["search_path=pg_catalog, public"], "search_path is locked to pg_catalog, public");
+        assert.equal(row.owner_exec, true, "RPC owner retains EXECUTE");
+        assert.equal(row.service_exec, true, "service_role has EXECUTE");
+        assert.equal(row.anon_exec, false, "anon does not have EXECUTE");
+        assert.equal(row.authenticated_exec, false, "authenticated does not have EXECUTE");
+        assert.equal(row.public_role_exec, false, "PUBLIC does not have EXECUTE");
+        assert.equal(row.public_acl_exec, false, "proacl has no PUBLIC (grantee=0) EXECUTE grant");
+      };
+
+      const assertWf01RuntimeReadUnderServiceRole = async () => {
+        for (const role of ["anon", "authenticated"]) {
+          await client.query(`set role ${role}`);
+          try {
+            await assert.rejects(
+              client.query(
+                "select public.direct_entry_workforce_reporting_scoped($1::uuid, $2::uuid, '{}'::jsonb)",
+                ["00000000-0000-4000-8000-000000000901", "00000000-0000-4000-8000-000000000902"],
+              ),
+              (error) => error?.code === "42501",
+              `${role} must be rejected by function EXECUTE ACL on direct_entry_workforce_reporting_scoped`,
+            );
+          } finally {
+            await client.query("reset role");
+          }
+        }
+
+        await client.query("set role service_role");
+        try {
+          await assert.rejects(
+            client.query("select count(*) from public.direct_entry_employment_status_events"),
+            (error) => error?.code === "42501",
+            "service_role must not have direct table SELECT on direct_entry_employment_status_events",
+          );
+        } finally {
+          await client.query("reset role");
+        }
+
+        await client.query("begin");
+        try {
+          const authSub = "00000000-0000-4000-8000-000000000901";
+          const appUser = "00000000-0000-4000-8000-000000000902";
+          const teamId = "00000000-0000-4000-8000-000000000903";
+          const recId = "00000000-0000-4000-8000-000000000904";
+          const candId = "00000000-0000-4000-8000-000000000905";
+          const subId = "00000000-0000-4000-8000-000000000906";
+          const entryId = "00000000-0000-4000-8000-000000000907";
+          const reasonId = "00000000-0000-4000-8000-000000000908";
+          const eventId = "00000000-0000-4000-8000-000000000909";
+
+          await client.query("insert into auth.users (id) values ($1)", [authSub]);
+          await client.query(
+            "insert into public.direct_entry_app_users (app_user_id, auth_subject, enabled, display_name) values ($1, $2, true, 'WF01 Probe Actor')",
+            [appUser, authSub],
+          );
+          await client.query(
+            "insert into public.direct_entry_scope_grants (app_user_id, scope_kind, team_id, valid_from, is_current) values ($1, 'all', null, '2020-01-01', true)",
+            [appUser],
+          );
+          await client.query(
+            "insert into public.teams (team_id, code, display_name) values ($1, 'WF01_T', 'WF01 Team')",
+            [teamId],
+          );
+          await client.query(
+            "insert into public.recruiters (recruiter_id, display_name) values ($1, 'WF01 Recruiter')",
+            [recId],
+          );
+          await client.query(
+            "insert into public.recruiter_provider_memberships (recruiter_id, provider_type, valid_from, is_current) values ($1, 'hrp', '2020-01-01', true)",
+            [recId],
+          );
+          await client.query(
+            "insert into public.recruiter_team_memberships (recruiter_id, team_id, valid_from, is_current) values ($1, $2, '2020-01-01', true)",
+            [recId, teamId],
+          );
+          await client.query(
+            "insert into public.recruiter_aliases (recruiter_id, reporting_key, valid_from) values ($1, 'wf01 rec', '2020-01-01')",
+            [recId],
+          );
+          await client.query(
+            "insert into public.direct_entry_projects (project_id, display_name) values ('wf01_proj', 'WF01 Project')",
+          );
+          await client.query("insert into public.direct_entry_candidates (candidate_id) values ($1)", [candId]);
+          await client.query(
+            "insert into public.direct_entry_submissions (submission_id, created_by_user_id, state) values ($1, $2, 'DRAFT')",
+            [subId, appUser],
+          );
+          await client.query(
+            `insert into public.direct_entries (
+               entry_id, submission_id, candidate_id, created_by_user_id, project_id,
+               first_work_date, employee_code, worker_details, recruiter_id, team_id, provider_type, labor_type
+             ) values (
+               $1, $2, $3, $4, 'wf01_proj', '2026-03-05', 'hrp-2026-990001',
+               '{"display_name":"WF01 Worker","date_of_birth":{"state":"omitted"},"national_id":{"state":"omitted"},"address":{"state":"omitted"},"phone":{"state":"omitted"}}'::jsonb,
+               $5, $6, 'hrp', 'TEMPORARY'
+             )`,
+            [entryId, subId, candId, appUser, recId, teamId],
+          );
+          await client.query("set constraints all immediate");
+          await client.query(
+            "alter table public.direct_entry_submissions disable trigger direct_entry_submission_transition",
+          );
+          await client.query(
+            "update public.direct_entry_submissions set state = 'SUBMITTED', submitted_at = now(), version = 2 where submission_id = $1",
+            [subId],
+          );
+          await client.query(
+            "alter table public.direct_entry_submissions enable trigger direct_entry_submission_transition",
+          );
+          await client.query("set constraints all deferred");
+          await client.query(
+            "insert into public.direct_entry_restricted_reasons (reason_id, actor_user_id, reason_text) values ($1, $2, 'WF01 probe')",
+            [reasonId, appUser],
+          );
+          await client.query(
+            `insert into public.direct_entry_employment_status_events (
+               event_id, entry_id, status, effective_date, leave_date, leave_reason_text,
+               version, actor_user_id, reason_id, supersedes_event_id
+             ) values ($1, $2, 'ON', '2026-03-05', null, null, 1, $3, $4, null)`,
+            [eventId, entryId, appUser, reasonId],
+          );
+
+          await client.query("set role service_role");
+          try {
+            const { rows: wf01Probe } = await client.query(
+              "select public.direct_entry_workforce_reporting_scoped($1::uuid, $2::uuid, $3::jsonb) as payload",
+              [authSub, appUser, JSON.stringify({ from: "2026-03-01", to: "2026-03-10", project: "wf01 project" })],
+            );
+            assert.equal(wf01Probe[0]?.payload?.snapshot?.eligible_episode_total, 1);
+            assert.equal(wf01Probe[0]?.payload?.snapshot?.on_count, 1, "SECURITY DEFINER owner must read ON event across FORCE RLS");
+            assert.equal(wf01Probe[0]?.payload?.snapshot?.unknown_count, 0);
+            assert.equal(wf01Probe[0]?.payload?.transitions?.initial?.on?.event_count, 1);
+          } finally {
+            await client.query("reset role");
+          }
+        } finally {
+          await client.query("rollback");
+        }
+      };
+
+      // Verify both under non-superuser BYPASSRLS migration runner (`s0_t1c_runner`) and under the
+      // `load-supabase-config.mjs` `postgres` owner alignment path:
+      await assertWf01CatalogInvariants("s0_t1c_runner");
+      await assertWf01RuntimeReadUnderServiceRole();
+
+      // Verify fail-closed migration self-check when an operator role lacks BYPASSRLS and cannot align owner to `postgres`:
+      await client.query("begin");
+      try {
+        await client.query("alter role s0_t1c_runner nobypassrls");
+        await client.query("set local session authorization s0_t1c_runner");
+        await assert.rejects(
+          client.query(migrationSqlForTransaction(wf01Migration)),
+          (error) =>
+            error?.code === "55000" &&
+            String(error?.message).includes("WF-01 RPC security definer owner/RLS/ACL boundary drift"),
+          "WF-01 migration must fail closed if function owner cannot bypass FORCE RLS on direct_entry_employment_status_events",
+        );
+      } finally {
+        await client.query("rollback");
+      }
+
+      // Verify owner alignment to `postgres` when the runner has SET on `postgres` (or connects as `postgres` per `load-supabase-config.mjs`):
+      await client.query(migrationSqlForTransaction(wf01Migration));
+      await assertWf01CatalogInvariants("postgres");
+      await assertWf01RuntimeReadUnderServiceRole();
 
       // Trigger calls do not consult function EXECUTE ACL at row-update time.
       await client.query(

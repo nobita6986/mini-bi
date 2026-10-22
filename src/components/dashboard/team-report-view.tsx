@@ -14,6 +14,7 @@ import {
   formatSharePct,
 } from "@/lib/reporting/p1-dashboard-period";
 import type { PeriodComparisonResult } from "@/lib/reporting/p1-period-comparison";
+import type { WorkforceReportingResult } from "@/lib/reporting/wf01-workforce-snapshot";
 import { buildMemberContributions } from "@/lib/reporting/p3-w06c-audience-view";
 import { formatTimestamp } from "@/lib/format";
 import type { ReportingBucket, ReportingData } from "@/lib/reporting/p1-reporting";
@@ -28,7 +29,7 @@ import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
 import { ProjectProviderMixCard } from "./project-provider-mix";
 import { TrendChart } from "./trend-chart";
-import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote } from "./dashboard-shared";
+import { BucketList, FiltersOrError, NoMatchesBlock, PeriodComparisonBanner, ScopeNote, WorkforceSnapshotSection } from "./dashboard-shared";
 import { TeamBucketChart } from "./team-bucket-chart";
 import { TeamEntryDetail } from "./team-entry-detail";
 import { teamReportDataSignature, teamReportUrl } from "./team-report-request";
@@ -85,7 +86,11 @@ export interface TeamReportViewConfig {
   pickerTitle: string;
 }
 
-function isTeamReportPayload(value: unknown): value is { report: ReportingData | null; detail: TeamReportDetail } {
+function isTeamReportPayload(value: unknown): value is {
+  report: ReportingData | null;
+  workforce?: WorkforceReportingResult | null;
+  detail: TeamReportDetail;
+} {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   const detail = record.detail;
@@ -108,12 +113,14 @@ export function TeamReportView({
   data,
   generatedAt,
   comparison,
+  workforce,
   optionsResult,
   view,
 }: {
   data: ReportingData;
   generatedAt?: string;
   comparison?: PeriodComparisonResult;
+  workforce?: WorkforceReportingResult;
   optionsResult: ReportingOptionsResult;
   view: TeamReportViewConfig;
 }) {
@@ -149,6 +156,9 @@ export function TeamReportView({
         <FiltersOrError optionsResult={optionsResult} showRecruiter={view.showRecruiterFilter} />
         {!view.requireTeamSelection && !data.empty.noSources && !data.empty.noFacts ? (
           <PeriodComparisonBanner comparison={comparison} />
+        ) : null}
+        {!view.requireTeamSelection && selectedBucket === null ? (
+          <WorkforceSnapshotSection workforce={workforce} />
         ) : null}
 
         {buckets.length > 0 ? (
@@ -195,6 +205,7 @@ function TeamReportSelection({
   view: TeamReportViewConfig;
 }) {
   const [report, setReport] = useState<ReportingData | null>(null);
+  const [selectedWorkforce, setSelectedWorkforce] = useState<WorkforceReportingResult | null | undefined>(undefined);
   const [detail, setDetail] = useState<TeamReportDetail | null>(null);
   const [error, setError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
@@ -215,6 +226,7 @@ function TeamReportSelection({
           return;
         }
         setReport(payload.report);
+        setSelectedWorkforce(payload.workforce);
         setDetail(payload.detail);
       })
       .catch(() => {
@@ -236,6 +248,7 @@ function TeamReportSelection({
   }
   return (
     <>
+      <WorkforceSnapshotSection workforce={selectedWorkforce} />
       <TeamReportBody data={report} view={view} />
       <section aria-label="Danh sách chi tiết từng dòng">
         <TeamEntryDetail data={data} bucket={bucket} initialDetail={detail} />

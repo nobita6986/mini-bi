@@ -23,7 +23,13 @@ import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
-import { FiltersOrError, NoMatchesBlock, PeriodComparisonBanner } from "./dashboard-shared";
+import {
+  FiltersOrError,
+  NoMatchesBlock,
+  PeriodComparisonBanner,
+  WorkforceStatusSection,
+  type WorkforceReportingResult,
+} from "./dashboard-shared";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { OwnDashboardView } from "./own-dashboard-view";
@@ -105,6 +111,7 @@ export function DashboardView({
             data={report.data}
             generatedAt={report.generatedAt}
             comparison={report.comparison}
+            workforce={report.workforce}
             optionsResult={optionsResult}
             view={mode.view}
           />
@@ -126,6 +133,7 @@ export function DashboardView({
             data={report.data}
             generatedAt={report.generatedAt}
             comparison={report.comparison}
+            workforce={report.workforce}
             optionsResult={optionsResult}
             view={mode.view}
           />
@@ -176,6 +184,7 @@ export function DashboardView({
               data={report.data}
               summary={summary}
               comparison={report.comparison}
+              workforce={report.workforce}
               optionsResult={optionsResult}
               trend={trend}
               dataDays={dataDays}
@@ -221,6 +230,7 @@ function DashboardBody({
   data,
   summary,
   comparison,
+  workforce,
   optionsResult,
   trend,
   dataDays,
@@ -228,6 +238,7 @@ function DashboardBody({
   data: ReportingData;
   summary: DashboardSummaryMetrics;
   comparison?: PeriodComparisonResult;
+  workforce?: WorkforceReportingResult;
   optionsResult: ReportingOptionsResult;
   trend: ReturnType<typeof buildDailyTrend>;
   dataDays: ReturnType<typeof buildDailyTrend>;
@@ -237,6 +248,7 @@ function DashboardBody({
     return (
       <div className="space-y-4">
         <FiltersOrError optionsResult={optionsResult} />
+        <WorkforceStatusSection workforce={workforce} />
         <EmptyState title="Chưa có dữ liệu tuyển dụng" description="Hiện chưa có dữ liệu để hiển thị. Hãy điều chỉnh bộ lọc hoặc tải lại trang sau." />
       </div>
     );
@@ -248,6 +260,7 @@ function DashboardBody({
     <div className="space-y-4">
       <FiltersOrError optionsResult={optionsResult} />
       <PeriodComparisonBanner comparison={comparison} />
+      <WorkforceStatusSection workforce={workforce} />
 
       {data.empty.noMatches ? (
         <NoMatchesBlock />
