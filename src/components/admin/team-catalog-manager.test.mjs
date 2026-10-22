@@ -26,6 +26,8 @@ test("applied changes stay locked until authoritative detail/list reload confirm
   assert.match(manager, /teamListConfirmsCode\(list, code\)/);
   assert.match(manager, /clearConflict\(intent\.lockId\)/);
   assert.match(manager, /Không tải được dữ liệu có thẩm quyền/);
+  assert.match(manager, /useNotify\(\)/);
+  assert.doesNotMatch(manager, /title="Trạng thái thao tác"/);
 });
 
 test("conflict alerts are scoped to the open team and remain available after closing", () => {

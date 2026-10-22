@@ -8,7 +8,7 @@ const personnelManager = readFileSync(new URL("./personnel-catalog-manager.tsx",
 test("successful refresh is informational, warnings are reserved for stopped reloads", () => {
   assert.match(component, /activeConflict && busy \?/);
   assert.match(component, /tone="info" title="Đang cập nhật danh sách"/);
-  assert.match(component, /message && !activeConflict/);
+  assert.match(component, /useNotify\(\)/);
   assert.match(component, /Chưa có ngày kết thúc/);
   assert.match(component, /membership\.valid_to === membership\.valid_from \? "Đã hủy lịch"/);
   assert.match(component, /Phân công mới không có ngày kết thúc/);

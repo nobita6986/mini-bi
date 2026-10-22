@@ -5,6 +5,7 @@ import * as Dialog from "radix-ui/dialog";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import type {
@@ -65,6 +66,7 @@ function ActiveBadge({ active }: { active: boolean }) {
 }
 
 export function LaborTypeCatalogManager() {
+  const notify = useNotify();
   const [listState, setListState] = useState<ListState>({ kind: "loading" });
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -74,7 +76,6 @@ export function LaborTypeCatalogManager() {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [pendingIntent, setPendingIntent] = useState<MutationIntent | null>(null);
   const [conflictIntent, setConflictIntent] = useState<MutationIntent | null>(null);
   const [conflictError, setConflictError] = useState<string | null>(null);
@@ -141,7 +142,6 @@ export function LaborTypeCatalogManager() {
   const changeForm = (field: keyof FormState, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
     setFormError(null);
-    setNotice(null);
   };
 
   const startCreate = () => {
@@ -167,7 +167,7 @@ export function LaborTypeCatalogManager() {
     setDialog({ kind: "active", laborType, active });
   };
 
-  const reloadAuthoritative = async (intent: MutationIntent) => {
+  const reloadAuthoritative = async (intent: MutationIntent): Promise<boolean> => {
     setConflictError(null);
     setBusy(true);
     try {
@@ -180,9 +180,9 @@ export function LaborTypeCatalogManager() {
           setConflictIntent(null);
           setPendingIntent(null);
           setDialog(null);
-          setNotice("Loại hình lao động không còn khả dụng. Danh sách đang được cập nhật.");
+          notify.warning({ title: "Loại hình lao động không còn khả dụng. Danh sách đang được cập nhật." });
           reloadList();
-          return;
+          return false;
         }
         const laborType = response.status === 200
           ? projectLaborTypeItem(await response.json())
@@ -212,10 +212,13 @@ export function LaborTypeCatalogManager() {
       setConflictError(null);
       setPendingIntent(null);
       setDialog(null);
-      setNotice("Đã tải dữ liệu mới nhất từ máy chủ.");
       reloadList();
+      return true;
     } catch {
-      setConflictError("Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.");
+      const errMsg = "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.";
+      setConflictError(errMsg);
+      notify.error({ title: errMsg });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -223,7 +226,6 @@ export function LaborTypeCatalogManager() {
 
   const sendIntent = async (intent: MutationIntent) => {
     setBusy(true);
-    setNotice(null);
     try {
       let response: Response;
       try {
@@ -239,7 +241,7 @@ export function LaborTypeCatalogManager() {
         });
       } catch {
         setPendingIntent({ ...intent, retry: true });
-        setNotice("Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency.");
+        notify.error({ title: "Không nhận được phản hồi. Có thể thử lại đúng thao tác với cùng khóa idempotency." });
         return;
       }
       let payload: unknown = null;
@@ -253,25 +255,29 @@ export function LaborTypeCatalogManager() {
         setPendingIntent(null);
         setConflictIntent(intent);
         setConflictError(null);
-        if (outcome.kind === "applied") {
-          setNotice("Đã lưu thay đổi. Đang xác minh dữ liệu mới nhất.");
-        } else {
-          setNotice(outcome.message);
+        if (outcome.kind === "conflict") {
+          notify.warning({ title: outcome.message });
         }
-        await reloadAuthoritative(intent);
+        const reloaded = await reloadAuthoritative(intent);
+        if (outcome.kind === "applied" && reloaded) {
+          notify.success({ title: "Đã lưu thay đổi. Đã tải dữ liệu mới nhất từ máy chủ." });
+        }
         return;
       }
       if (outcome.kind === "unavailable") {
         setPendingIntent({ ...intent, retry: true });
-        setNotice(outcome.message);
+        notify.error({ title: outcome.message });
         return;
       }
       setPendingIntent(null);
       setFormError(outcome.message);
       if (outcome.kind === "not-found" && intent.laborTypeKey !== null) {
+        notify.warning({ title: outcome.message });
         setDialog(null);
         reloadList();
+        return;
       }
+      notify.error({ title: outcome.message });
     } finally {
       setBusy(false);
     }
@@ -400,7 +406,9 @@ export function LaborTypeCatalogManager() {
                 <ConflictReload
                   message={conflictError}
                   busy={busy}
-                  onReload={() => void reloadAuthoritative(conflictIntent)}
+                  onReload={() => void reloadAuthoritative(conflictIntent).then((ok) => {
+                    if (ok) notify.success({ title: "Đã tải dữ liệu mới nhất từ máy chủ." });
+                  })}
                 />
               ) : null}
               {dialog?.kind === "active" ? (
@@ -458,9 +466,10 @@ export function LaborTypeCatalogManager() {
       ) : null}
       {conflictIntent && dialog === null ? (
         <ConflictReload message={conflictError} busy={busy}
-          onReload={() => void reloadAuthoritative(conflictIntent)} />
+          onReload={() => void reloadAuthoritative(conflictIntent).then((ok) => {
+            if (ok) notify.success({ title: "Đã tải dữ liệu mới nhất từ máy chủ." });
+          })} />
       ) : null}
-      {notice ? <Alert tone="info" title="Trạng thái thao tác">{notice}</Alert> : null}
 
       <Card>
         <CardHeader title="Danh sách loại hình lao động"

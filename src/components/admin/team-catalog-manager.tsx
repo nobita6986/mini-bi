@@ -6,6 +6,7 @@ import * as Dialog from "radix-ui/dialog";
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import { TeamLeaderManager } from "@/components/admin/team-leader-manager";
@@ -82,13 +83,13 @@ export function TeamCatalogManager() {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [form, setForm] = useState<TeamForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
-  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
   const [pendingIntent, setPendingIntent] = useState<MutationIntent | null>(null);
   const [conflictIntents, setConflictIntents] = useState<ReadonlyMap<string, ConflictEntry>>(new Map());
   const [busy, setBusy] = useState(false);
   const [conflictLocks, setConflictLocks] = useState<ReadonlySet<string>>(new Set());
   const [leaderLocks, setLeaderLocks] = useState<ReadonlySet<string>>(new Set());
   const [leaderTeam, setLeaderTeam] = useState<AdminTeam | null>(null);
+  const notify = useNotify();
 
   useEffect(() => {
     const listQuery = buildTeamListQuery({ search, includeInactive, page });
@@ -166,27 +167,23 @@ export function TeamCatalogManager() {
   const changeForm = useCallback(<K extends keyof TeamForm>(field: K, value: TeamForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
     setFormError(null);
-    setMutationMessage(null);
   }, []);
 
   const startCreate = () => {
     setForm(EMPTY_FORM);
     setFormError(null);
-    setMutationMessage(null);
     setDialog({ kind: "create" });
   };
 
   const startEdit = (team: AdminTeam) => {
     setForm({ code: team.code, displayName: team.display_name, reason: "" });
     setFormError(null);
-    setMutationMessage(null);
     setDialog({ kind: "edit", team });
   };
 
   const startActiveChange = (team: AdminTeam, active: boolean) => {
     setForm({ ...EMPTY_FORM, reason: "" });
     setFormError(null);
-    setMutationMessage(null);
     setDialog({ kind: "active", team, active });
   };
 
@@ -215,7 +212,7 @@ export function TeamCatalogManager() {
         );
         if (response.status === 404) {
           clearConflict(intent.lockId);
-          setMutationMessage("Nhóm không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật.");
+          notify.warning({ title: "Nhóm không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật." });
           setPendingIntent((current) => current?.lockId === intent.lockId ? null : current);
           setDialog((current) => current && (
             current.kind === "create" ? "create" : current.team.team_id
@@ -262,7 +259,7 @@ export function TeamCatalogManager() {
         }
       }
       clearConflict(intent.lockId);
-      setMutationMessage("Đã tải dữ liệu mới nhất. Bạn có thể bắt đầu thao tác mới.");
+      notify.info({ title: "Đã tải dữ liệu mới nhất. Bạn có thể bắt đầu thao tác mới." });
       setPendingIntent((current) => current?.lockId === intent.lockId ? null : current);
       setDialog((current) => current && (
         current.kind === "create" ? "create" : current.team.team_id
@@ -270,25 +267,26 @@ export function TeamCatalogManager() {
       setListState({ kind: "loading" });
       setReloadToken((value) => value + 1);
     } catch {
+      const reloadError = "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.";
       setConflictIntents((current) => {
         const next = new Map(current);
         const entry = next.get(intent.lockId);
         if (entry) {
           next.set(intent.lockId, {
             ...entry,
-            error: "Không tải được dữ liệu có thẩm quyền. Thao tác vẫn đang bị khóa; hãy thử tải lại.",
+            error: reloadError,
           });
         }
         return next;
       });
+      notify.error({ title: reloadError });
     } finally {
       setBusy(false);
     }
-  }, [clearConflict]);
+  }, [clearConflict, notify]);
 
   const sendIntent = useCallback(async (intent: MutationIntent) => {
     setBusy(true);
-    setMutationMessage(null);
     try {
       let response: Response;
       try {
@@ -304,7 +302,7 @@ export function TeamCatalogManager() {
         });
       } catch {
         setPendingIntent({ ...intent, retryState: "retry" });
-        setMutationMessage("Không nhận được phản hồi. Có thể thử lại đúng thao tác này.");
+        notify.warning({ title: "Không nhận được phản hồi. Có thể thử lại đúng thao tác này." });
         return;
       }
       let payload: unknown = null;
@@ -319,7 +317,7 @@ export function TeamCatalogManager() {
         setConflictIntents((current) => new Map(current).set(intent.lockId, { intent, error: null }));
         setConflictLocks((current) => setTeamConflictLock(current, intent.lockId, true));
         setForm(EMPTY_FORM);
-        setMutationMessage("Đã lưu thay đổi. Đang xác minh dữ liệu mới nhất.");
+        notify.success({ title: "Đã lưu thay đổi. Đang xác minh dữ liệu mới nhất." });
         await reloadConflictedTeam(intent);
         return;
       }
@@ -327,7 +325,7 @@ export function TeamCatalogManager() {
         setPendingIntent(null);
         setConflictIntents((current) => new Map(current).set(intent.lockId, { intent, error: null }));
         setConflictLocks((current) => setTeamConflictLock(current, intent.lockId, true));
-        setMutationMessage(messageForOutcome(outcome));
+        notify.warning({ title: messageForOutcome(outcome) });
         return;
       }
       if (outcome.kind === "not-found" && intent.teamId !== null) {
@@ -336,22 +334,23 @@ export function TeamCatalogManager() {
         setDialog((current) => current && (
           current.kind === "create" ? "create" : current.team.team_id
         ) === intent.lockId ? null : current);
-        setMutationMessage("Nhóm không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật.");
+        notify.warning({ title: "Nhóm không còn tồn tại hoặc không còn khả dụng. Danh sách đang được cập nhật." });
         setListState({ kind: "loading" });
         setReloadToken((value) => value + 1);
         return;
       }
       if (outcome.kind === "unavailable") {
         setPendingIntent({ ...intent, retryState: "retry" });
+        notify.warning({ title: messageForOutcome(outcome) });
       } else {
         setPendingIntent(null);
         setFormError(messageForOutcome(outcome));
+        notify.error({ title: messageForOutcome(outcome) });
       }
-      setMutationMessage(outcome.kind === "unavailable" ? messageForOutcome(outcome) : null);
     } finally {
       setBusy(false);
     }
-  }, [clearConflict, reloadConflictedTeam]);
+  }, [clearConflict, notify, reloadConflictedTeam]);
 
   const submitMutation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -632,8 +631,6 @@ export function TeamCatalogManager() {
             />
           ))
         ) : null}
-
-        {mutationMessage ? <Alert tone="info" title="Trạng thái thao tác">{mutationMessage}</Alert> : null}
 
         <Card>
           <CardHeader

@@ -83,6 +83,8 @@ test("OCC and applied writes stay locked until strict authoritative reload succe
   assert.match(source, /setConflictIntent\(null\)[\s\S]{0,100}setConflictError\(null\)/);
   assert.match(source, /Thao tác vẫn đang bị khóa/);
   assert.match(source, /pendingIntent \|\| conflictIntent/);
+  assert.match(source, /useNotify\(\)/);
+  assert.doesNotMatch(source, /title="Trạng thái thao tác"/);
 });
 
 test("page gate resolves actor server-side and uses the explicit labor-type access decision", () => {
