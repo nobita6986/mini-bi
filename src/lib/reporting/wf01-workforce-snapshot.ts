@@ -104,6 +104,32 @@ export const WORKFORCE_RETENTION_CHECKPOINT_LABELS = Object.freeze({
   D90: "Mốc 90 ngày (D90)",
 } as const);
 
+export const WORKFORCE_DIMENSION_KIND_LABELS = Object.freeze({
+  PROJECT: "Theo dự án",
+  TEAM: "Theo nhóm",
+  RECRUITER: "Theo người tuyển",
+  PROVIDER: "Theo HRP / Vendor",
+} as const);
+
+export const WORKFORCE_LEAVE_REASON_CATEGORY_LABELS = Object.freeze({
+  personal_or_family: "Lý do cá nhân & gia đình",
+  health: "Sức khỏe & ốm đau",
+  compensation_or_benefits: "Thu nhập, lương & chế độ",
+  work_conditions_or_shift: "Công việc, ca kíp & môi trường",
+  relocation_or_distance: "Đi lại, chỗ ở & khoảng cách",
+  contract_or_project_end: "Kết thúc đợt, hợp đồng hoặc dự án",
+  discipline_or_performance: "Kỷ luật, chuyên cần & đạt yêu cầu",
+  other_career_or_study: "Chuyển việc khác hoặc đi học",
+  unclassified_free_text: "Ghi nhận tự do khác (chưa chuẩn hóa danh mục)",
+  missing_or_unknown: "Thiếu hoặc chưa xác định lý do",
+} as const);
+
+export const WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE =
+  "Nguồn dữ liệu lý do nghỉ việc (đã xác minh): tổng hợp từ nội dung lý do nghỉ việc của người lao động trên lần chuyển sang Đã nghỉ còn hiệu lực (tách biệt hoàn toàn với lý do thao tác nghiệp vụ và ghi chú hồ sơ chung). Do hệ thống hiện nhập lý do nghỉ dạng văn bản tự do và chưa có danh mục chuẩn hóa cố định, báo cáo tự động gom nhóm theo từ khóa nghiệp vụ chuẩn, đồng thời tách riêng nhóm 'Ghi nhận tự do khác (chưa chuẩn hóa danh mục)' và ẩn hoàn toàn nội dung văn bản gốc để bảo mật thông tin cá nhân.";
+
+export const WORKFORCE_DIMENSION_ATTRIBUTION_NOTE =
+  "Quy ước quy thuộc chiều phân tích: Dự án, Người tuyển, Nhóm và HRP/Vendor được tính theo thông tin quy thuộc lưu trên từng đợt làm việc hợp lệ. Các nhóm ngừng hoạt động vẫn được giữ nguyên lịch sử kèm nhãn '(Ngừng hoạt động)'; các đợt thiếu thông tin chiều được tách riêng vào dòng 'Không xác định' để tổng từng chiều luôn khớp 100% với tổng đợt làm việc đủ điều kiện.";
+
 export const WORKFORCE_UNIT_METADATA_NOTE =
   "Đơn vị thống kê: từng đợt làm việc và từng lần thay đổi trạng thái — không gộp theo người lao động duy nhất. Tái tuyển dụng được ghi nhận thành một đợt làm việc mới; lần chuyển từ Đã nghỉ sang Đang làm trong cùng một đợt làm việc không tính là tái tuyển dụng. Khác với khối tuyển dụng (lọc theo ngày ghi nhận tuyển dụng), khối biến động nhân sự tính theo ngày bắt đầu làm việc và ngày trạng thái có hiệu lực.";
 
@@ -481,6 +507,140 @@ export interface WorkforceRetentionMetrics {
   periodCohort: WorkforcePeriodCohortMetrics;
 }
 
+export type WorkforceDimensionKind = "recruiter" | "team" | "provider" | "project";
+
+/**
+ * WF-04 (2.7): Chỉ số quy mô và chất lượng lao động cho một bucket của chiều phân tích
+ * (Recruiter / Nhóm / HRP-Vendor / Dự án) tại ngày mốc `asOfDate`.
+ */
+export interface WorkforceDimensionBucketMetrics {
+  key: string;
+  display: string;
+  isUnknown: boolean;
+  active: boolean | null;
+  eligibleEpisodeCount: number;
+  onCount: number;
+  unconfirmedCount: number;
+  offCount: number;
+  unknownCount: number;
+  waitingEpisodeCount: number;
+  completedWaitingEpisodeCount: number;
+  placedToOnEpisodeCount: number;
+  exitedWithoutOnEpisodeCount: number;
+  currentlyWaitingEpisodeCount: number;
+  totalWaitingDays: number;
+  avgWaitingDaysPerEpisode: number | null;
+  placementRateOfWaiting: number | null;
+  placementRateOfCompletedWaiting: number | null;
+  everOnEpisodeCount: number;
+  neverOnEpisodeCount: number;
+  continuouslyRetainedCount: number;
+  exitedFromOnCount: number;
+  totalOnDays: number;
+  avgOnDaysPerEpisode: number | null;
+  checkpoints: {
+    d7: WorkforceRetentionCheckpointMetrics;
+    d30: WorkforceRetentionCheckpointMetrics;
+    d90: WorkforceRetentionCheckpointMetrics;
+  };
+}
+
+export interface WorkforceDimensionGroupSummary {
+  dimensionKind: WorkforceDimensionKind;
+  eligibleEpisodeTotal: number;
+  knownEpisodeCount: number;
+  unknownEpisodeCount: number;
+  coverageRate: number | null;
+  buckets: WorkforceDimensionBucketMetrics[];
+}
+
+export interface WorkforceDimensionsMetrics {
+  asOfDate: string;
+  asOfSource: WorkforceAsOfSource;
+  eligibleEpisodeTotal: number;
+  byRecruiter: WorkforceDimensionGroupSummary;
+  byTeam: WorkforceDimensionGroupSummary;
+  byProvider: WorkforceDimensionGroupSummary;
+  byProject: WorkforceDimensionGroupSummary;
+}
+
+export type WorkforceLeaveReasonCategoryKey =
+  | "personal_or_family"
+  | "health"
+  | "compensation_or_benefits"
+  | "work_conditions_or_shift"
+  | "relocation_or_distance"
+  | "contract_or_project_end"
+  | "discipline_or_performance"
+  | "other_career_or_study"
+  | "unclassified_free_text"
+  | "missing_or_unknown";
+
+export type WorkforceLeaveReasonKind =
+  | "standardized"
+  | "unclassified_free_text"
+  | "missing_or_unknown";
+
+export interface WorkforceAsOfLeaveReasonCategoryRow {
+  key: WorkforceLeaveReasonCategoryKey;
+  label: string;
+  kind: WorkforceLeaveReasonKind;
+  episodeCount: number;
+  fromOnCount: number;
+  fromUnconfirmedWithoutOnCount: number;
+  shareOfOffRate: number | null;
+}
+
+export interface WorkforcePeriodLeaveReasonCategoryRow {
+  key: WorkforceLeaveReasonCategoryKey;
+  label: string;
+  kind: WorkforceLeaveReasonKind;
+  eventCount: number;
+  episodeCount: number;
+  onToOffEventCount: number;
+  unconfirmedToOffEventCount: number;
+  shareOfOffEventsRate: number | null;
+}
+
+export type WorkforcePeriodLeaveReasonsMetrics =
+  | {
+      applicable: true;
+      fromDate: string;
+      toDate: string;
+      offTransitionEventTotal: number;
+      offTransitionEpisodeTotal: number;
+      onToOffEventTotal: number;
+      unconfirmedToOffEventTotal: number;
+      withReasonEventCount: number;
+      standardizedEventCount: number;
+      unclassifiedFreeTextEventCount: number;
+      missingReasonEventCount: number;
+      reasonCoverageRate: number | null;
+      standardizationRate: number | null;
+      byCategory: WorkforcePeriodLeaveReasonCategoryRow[];
+    }
+  | {
+      applicable: false;
+      reason: WorkforceTransitionsNotApplicableReason;
+      fromDate: string | null;
+      toDate: string | null;
+      windowLabel: string;
+    };
+
+export interface WorkforceLeaveReasonsMetrics {
+  asOfDate: string;
+  asOfSource: WorkforceAsOfSource;
+  offEpisodeTotal: number;
+  withReasonEpisodeCount: number;
+  standardizedEpisodeCount: number;
+  unclassifiedFreeTextEpisodeCount: number;
+  missingReasonEpisodeCount: number;
+  reasonCoverageRate: number | null;
+  standardizationRate: number | null;
+  byCategory: WorkforceAsOfLeaveReasonCategoryRow[];
+  periodLeaveReasons: WorkforcePeriodLeaveReasonsMetrics;
+}
+
 export type WorkforceReportingResult =
   | {
       status: "ready";
@@ -490,6 +650,8 @@ export type WorkforceReportingResult =
       waiting: WorkforceWaitingMetrics;
       duration: WorkforceDurationMetrics;
       retention: WorkforceRetentionMetrics;
+      dimensions: WorkforceDimensionsMetrics;
+      leaveReasons: WorkforceLeaveReasonsMetrics;
     }
   | {
       status: "unavailable";
@@ -503,6 +665,15 @@ export interface WorkforceEpisodeRecord {
   deleted_at?: string | null;
   voided_at?: string | null;
   scope_allowed?: boolean;
+  recruiter_key?: string | null;
+  recruiter_display?: string | null;
+  team_code?: string | null;
+  team_display_name?: string | null;
+  team_active?: boolean | null;
+  provider_key?: string | null;
+  provider_display?: string | null;
+  project_key?: string | null;
+  project_display?: string | null;
 }
 
 export interface WorkforceStatusEventRecord {
@@ -513,6 +684,7 @@ export interface WorkforceStatusEventRecord {
   version: number;
   supersedes_event_id?: string | null;
   applied_at?: string | null;
+  leave_reason_text?: string | null;
 }
 
 /**
@@ -1420,6 +1592,790 @@ function computeRetentionMetricsAtAsOf(input: {
   };
 }
 
+export const CANONICAL_LEAVE_REASON_CATALOG: readonly {
+  key: WorkforceLeaveReasonCategoryKey;
+  kind: WorkforceLeaveReasonKind;
+  label: string;
+}[] = Object.freeze([
+  {
+    key: "personal_or_family",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.personal_or_family,
+  },
+  {
+    key: "health",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.health,
+  },
+  {
+    key: "compensation_or_benefits",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.compensation_or_benefits,
+  },
+  {
+    key: "work_conditions_or_shift",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.work_conditions_or_shift,
+  },
+  {
+    key: "relocation_or_distance",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.relocation_or_distance,
+  },
+  {
+    key: "contract_or_project_end",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.contract_or_project_end,
+  },
+  {
+    key: "discipline_or_performance",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.discipline_or_performance,
+  },
+  {
+    key: "other_career_or_study",
+    kind: "standardized",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.other_career_or_study,
+  },
+  {
+    key: "unclassified_free_text",
+    kind: "unclassified_free_text",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.unclassified_free_text,
+  },
+  {
+    key: "missing_or_unknown",
+    kind: "missing_or_unknown",
+    label: WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.missing_or_unknown,
+  },
+]);
+
+const LEAVE_REASON_RULES: readonly {
+  key: WorkforceLeaveReasonCategoryKey;
+  pattern: RegExp;
+}[] = [
+  {
+    key: "personal_or_family",
+    pattern:
+      /(gia đình|gia dinh|cá nhân|ca nhan|việc riêng|viec rieng|con nhỏ|con nho|chăm con|cham con|chăm bố|cham bo|chăm mẹ|cham me|kết hôn|ket hon|đám cưới|dam cuoi|thai sản|thai san|sinh con|về quê|ve que)/,
+  },
+  {
+    key: "health",
+    pattern:
+      /(sức khỏe|suc khoe|ốm đau|om dau|bị ốm|bi om|bệnh|benh|tai nạn|tai nan|điều trị|dieu tri|nhập viện|nhap vien|khám bệnh|kham benh|đau lưng|dau lung|dị ứng|di ung|không đủ sức|khong du suc)/,
+  },
+  {
+    key: "compensation_or_benefits",
+    pattern:
+      /(lương|luong|thu nhập|thu nhap|chế độ|che do|phụ cấp|phu cap|thưởng|thuong|bảo hiểm|bao hiem|bhxh|công nợ|cong no|chậm lương|cham luong)/,
+  },
+  {
+    key: "work_conditions_or_shift",
+    pattern:
+      /(ca đêm|ca dem|xoay ca|tăng ca|tang ca|áp lực|ap luc|nặng nhọc|nang nhoc|vất vả|vat va|môi trường|moi truong|không hợp việc|khong hop viec|không phù hợp|khong phu hop|tiếng ồn|tieng on|đứng nhiều|dung nhieu|công việc nặng|cong viec nang)/,
+  },
+  {
+    key: "relocation_or_distance",
+    pattern:
+      /(xa nhà|xa nha|đi lại|di lai|chỗ ở|cho o|phòng trọ|phong tro|nhà trọ|nha tro|chuyển chỗ|chuyen cho|chuyển nhà|chuyen nha|xe đưa đón|xe dua don|tuyến xe|tuyen xe|khoảng cách|khoang cach)/,
+  },
+  {
+    key: "contract_or_project_end",
+    pattern:
+      /(hết hạn|het han|hết hợp đồng|het hop dong|kết thúc dự án|ket thuc du an|kết thúc đợt|ket thuc dot|hết việc|het viec|giảm sản lượng|giam san luong|cắt giảm|cat giam|hoàn thành đợt|hoan thanh dot|hết thời vụ|het thoi vu)/,
+  },
+  {
+    key: "discipline_or_performance",
+    pattern:
+      /(kỷ luật|ky luat|vi phạm|vi pham|tự ý nghỉ|tu y nghi|bỏ việc|bo viec|không báo trước|khong bao truoc|không đạt|khong dat|sa thải|sa thai|nghỉ quá ngày|nghi qua ngay|nội quy|noi quy)/,
+  },
+  {
+    key: "other_career_or_study",
+    pattern:
+      /(đi học|di hoc|nhập học|nhap hoc|nhập ngũ|nhap ngu|nghĩa vụ|nghia vu|chuyển công ty|chuyen cong ty|công việc mới|cong viec moi|tìm việc khác|tim viec khac|đổi nghề|doi nghe)/,
+  },
+];
+
+const MISSING_OR_UNKNOWN_LEAVE_REASON_EXACT =
+  /^(chưa rõ|chua ro|không rõ|khong ro|chưa xác định|chua xac dinh|không xác định|khong xac dinh|chưa biết|chua biet|không biết|khong biet|n\/a|na|-|\?|\.+)$/;
+const MISSING_OR_UNKNOWN_LEAVE_REASON_PHRASE =
+  /(chưa rõ lý do|chua ro ly do|không rõ lý do|khong ro ly do)/;
+
+/**
+ * Phân loại tất định văn bản `leave_reason_text` trên sự kiện `OFF` vào 1 trong 10 nhóm chuẩn.
+ * Không bao giờ trả về chuỗi văn bản gốc để tránh rò rỉ dữ liệu nhạy cảm/PII.
+ */
+export function classifyLeaveReasonCategory(
+  rawText: string | null | undefined,
+): WorkforceLeaveReasonCategoryKey {
+  const trimmed = typeof rawText === "string" ? rawText.trim() : "";
+  if (!trimmed) {
+    return "missing_or_unknown";
+  }
+  const norm = trimmed.toLowerCase();
+  if (
+    MISSING_OR_UNKNOWN_LEAVE_REASON_EXACT.test(norm) ||
+    MISSING_OR_UNKNOWN_LEAVE_REASON_PHRASE.test(norm)
+  ) {
+    return "missing_or_unknown";
+  }
+  for (const rule of LEAVE_REASON_RULES) {
+    if (rule.pattern.test(norm)) {
+      return rule.key;
+    }
+  }
+  return "unclassified_free_text";
+}
+
+interface DimensionIdentity {
+  key: string;
+  display: string;
+  isUnknown: boolean;
+  active: boolean | null;
+}
+
+function resolveEpisodeDimensionIdentities(ep: WorkforceEpisodeRecord): Record<
+  WorkforceDimensionKind,
+  DimensionIdentity
+> {
+  const rawRecKey = (ep.recruiter_key ?? "").trim().toLowerCase();
+  const recruiter: DimensionIdentity =
+    !rawRecKey || rawRecKey === "unknown"
+      ? { key: "unknown", display: "Không xác định", isUnknown: true, active: null }
+      : {
+          key: rawRecKey,
+          display: (ep.recruiter_display ?? "").trim() || rawRecKey,
+          isUnknown: false,
+          active: null,
+        };
+
+  const rawTeamCode = (ep.team_code ?? "").trim();
+  const rawTeamKey = rawTeamCode.toLowerCase();
+  let team: DimensionIdentity;
+  if (!rawTeamKey || rawTeamKey === "unknown") {
+    team = {
+      key: "unknown",
+      display: "Chưa phân nhóm / Không xác định",
+      isUnknown: true,
+      active: null,
+    };
+  } else {
+    const baseDisplay = (ep.team_display_name ?? "").trim() || rawTeamCode;
+    const isActive = ep.team_active !== false;
+    team = {
+      key: rawTeamKey,
+      display: ep.team_active === false ? `${baseDisplay} (Ngừng hoạt động)` : baseDisplay,
+      isUnknown: false,
+      active: isActive,
+    };
+  }
+
+  const rawProvKey = (ep.provider_key ?? "").trim().toLowerCase();
+  const provider: DimensionIdentity =
+    rawProvKey === "hrp"
+      ? { key: "hrp", display: "HRP", isUnknown: false, active: null }
+      : rawProvKey === "vendor"
+        ? { key: "vendor", display: "Vendor", isUnknown: false, active: null }
+        : { key: "unknown", display: "Không xác định", isUnknown: true, active: null };
+
+  const rawProjKey = (ep.project_key ?? "").trim().toLowerCase();
+  const project: DimensionIdentity =
+    !rawProjKey || rawProjKey === "unknown"
+      ? { key: "unknown", display: "Không xác định", isUnknown: true, active: null }
+      : {
+          key: rawProjKey,
+          display: (ep.project_display ?? "").trim() || rawProjKey,
+          isUnknown: false,
+          active: null,
+        };
+
+  return { recruiter, team, provider, project };
+}
+
+interface DimensionBucketAccumulator {
+  key: string;
+  display: string;
+  isUnknown: boolean;
+  active: boolean | null;
+  eligibleEpisodeCount: number;
+  onCount: number;
+  unconfirmedCount: number;
+  offCount: number;
+  unknownCount: number;
+  waitingEpisodeCount: number;
+  completedWaitingEpisodeCount: number;
+  placedToOnEpisodeCount: number;
+  exitedWithoutOnEpisodeCount: number;
+  currentlyWaitingEpisodeCount: number;
+  totalWaitingDays: number;
+  everOnEpisodeCount: number;
+  neverOnEpisodeCount: number;
+  continuouslyRetainedCount: number;
+  exitedFromOnCount: number;
+  totalOnDays: number;
+  d7Matured: number;
+  d7Immature: number;
+  d7Retained: number;
+  d7Exited: number;
+  d30Matured: number;
+  d30Immature: number;
+  d30Retained: number;
+  d30Exited: number;
+  d90Matured: number;
+  d90Immature: number;
+  d90Retained: number;
+  d90Exited: number;
+}
+
+function buildDimensionBucketMetrics(
+  acc: DimensionBucketAccumulator,
+): WorkforceDimensionBucketMetrics {
+  return {
+    key: acc.key,
+    display: acc.display,
+    isUnknown: acc.isUnknown,
+    active: acc.active,
+    eligibleEpisodeCount: acc.eligibleEpisodeCount,
+    onCount: acc.onCount,
+    unconfirmedCount: acc.unconfirmedCount,
+    offCount: acc.offCount,
+    unknownCount: acc.unknownCount,
+    waitingEpisodeCount: acc.waitingEpisodeCount,
+    completedWaitingEpisodeCount: acc.completedWaitingEpisodeCount,
+    placedToOnEpisodeCount: acc.placedToOnEpisodeCount,
+    exitedWithoutOnEpisodeCount: acc.exitedWithoutOnEpisodeCount,
+    currentlyWaitingEpisodeCount: acc.currentlyWaitingEpisodeCount,
+    totalWaitingDays: acc.totalWaitingDays,
+    avgWaitingDaysPerEpisode:
+      acc.waitingEpisodeCount > 0 ? acc.totalWaitingDays / acc.waitingEpisodeCount : null,
+    placementRateOfWaiting:
+      acc.waitingEpisodeCount > 0
+        ? acc.placedToOnEpisodeCount / acc.waitingEpisodeCount
+        : null,
+    placementRateOfCompletedWaiting:
+      acc.completedWaitingEpisodeCount > 0
+        ? acc.placedToOnEpisodeCount / acc.completedWaitingEpisodeCount
+        : null,
+    everOnEpisodeCount: acc.everOnEpisodeCount,
+    neverOnEpisodeCount: acc.neverOnEpisodeCount,
+    continuouslyRetainedCount: acc.continuouslyRetainedCount,
+    exitedFromOnCount: acc.exitedFromOnCount,
+    totalOnDays: acc.totalOnDays,
+    avgOnDaysPerEpisode:
+      acc.everOnEpisodeCount > 0 ? acc.totalOnDays / acc.everOnEpisodeCount : null,
+    checkpoints: {
+      d7: buildRetentionCheckpointMetrics(
+        7,
+        acc.d7Matured,
+        acc.d7Immature,
+        acc.d7Retained,
+        acc.d7Exited,
+      ),
+      d30: buildRetentionCheckpointMetrics(
+        30,
+        acc.d30Matured,
+        acc.d30Immature,
+        acc.d30Retained,
+        acc.d30Exited,
+      ),
+      d90: buildRetentionCheckpointMetrics(
+        90,
+        acc.d90Matured,
+        acc.d90Immature,
+        acc.d90Retained,
+        acc.d90Exited,
+      ),
+    },
+  };
+}
+
+function buildDimensionGroupSummary(
+  dimensionKind: WorkforceDimensionKind,
+  eligibleEpisodeTotal: number,
+  buckets: WorkforceDimensionBucketMetrics[],
+): WorkforceDimensionGroupSummary {
+  let knownEpisodeCount = 0;
+  let unknownEpisodeCount = 0;
+  for (const b of buckets) {
+    if (b.isUnknown) {
+      unknownEpisodeCount += b.eligibleEpisodeCount;
+    } else {
+      knownEpisodeCount += b.eligibleEpisodeCount;
+    }
+  }
+  return {
+    dimensionKind,
+    eligibleEpisodeTotal,
+    knownEpisodeCount,
+    unknownEpisodeCount,
+    coverageRate: eligibleEpisodeTotal > 0 ? knownEpisodeCount / eligibleEpisodeTotal : null,
+    buckets,
+  };
+}
+
+function compareDimensionBuckets(
+  a: WorkforceDimensionBucketMetrics,
+  b: WorkforceDimensionBucketMetrics,
+): number {
+  if (a.isUnknown !== b.isUnknown) {
+    return a.isUnknown ? 1 : -1;
+  }
+  if (a.eligibleEpisodeCount !== b.eligibleEpisodeCount) {
+    return b.eligibleEpisodeCount - a.eligibleEpisodeCount;
+  }
+  if (a.onCount !== b.onCount) {
+    return b.onCount - a.onCount;
+  }
+  if (a.everOnEpisodeCount !== b.everOnEpisodeCount) {
+    return b.everOnEpisodeCount - a.everOnEpisodeCount;
+  }
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+function computeDimensionsMetricsAtAsOf(input: {
+  eligibleEpisodes: ReadonlyMap<string, WorkforceEpisodeRecord>;
+  eventsByEntry: ReadonlyMap<string, readonly WorkforceStatusEventRecord[]>;
+  snapshot: WorkforceAsOfSnapshot;
+  statusByEntryAtAsOf: ReadonlyMap<string, WorkforceStatusBucket | "FUTURE">;
+}): WorkforceDimensionsMetrics {
+  const { eligibleEpisodes, eventsByEntry, snapshot, statusByEntryAtAsOf } = input;
+  const asOfDate = snapshot.asOfDate;
+  const asOfExclusiveEnd = shiftYmdDays(asOfDate, 1);
+
+  const maps: Record<WorkforceDimensionKind, Map<string, DimensionBucketAccumulator>> = {
+    recruiter: new Map(),
+    team: new Map(),
+    provider: new Map(),
+    project: new Map(),
+  };
+
+  for (const ep of eligibleEpisodes.values()) {
+    const asOfStatus = statusByEntryAtAsOf.get(ep.entry_id) ?? "FUTURE";
+    if (asOfStatus === "FUTURE") continue;
+
+    const fullChain = eventsByEntry.get(ep.entry_id) ?? [];
+    const distinctEvents: WorkforceStatusEventRecord[] = [];
+    for (let i = 0; i < fullChain.length; i += 1) {
+      const ev = fullChain[i];
+      if (ev.effective_date > asOfDate) continue;
+      const prevStatus = i === 0 ? null : fullChain[i - 1].status;
+      if (prevStatus === null || prevStatus !== ev.status) {
+        distinctEvents.push(ev);
+      }
+    }
+
+    let waitingIntervalCount = 0;
+    let totalWaitingDays = 0;
+    let placedToOnFlag = false;
+
+    let onIntervalCount = 0;
+    let totalOnDays = 0;
+    let firstOnIndex = -1;
+
+    for (let i = 0; i < distinctEvents.length; i += 1) {
+      const ev = distinctEvents[i];
+      const nextEv = i + 1 < distinctEvents.length ? distinctEvents[i + 1] : null;
+      if (ev.status === "UNCONFIRMED") {
+        const endDate = nextEv ? nextEv.effective_date : asOfDate;
+        const wDays = Math.max(0, diffYmdDays(ev.effective_date, endDate));
+        waitingIntervalCount += 1;
+        totalWaitingDays += wDays;
+        if (nextEv && nextEv.status === "ON") {
+          placedToOnFlag = true;
+        }
+      } else if (ev.status === "ON") {
+        if (firstOnIndex === -1) {
+          firstOnIndex = i;
+        }
+        const endExclusive = nextEv ? nextEv.effective_date : asOfExclusiveEnd;
+        const oDays = Math.max(0, diffYmdDays(ev.effective_date, endExclusive));
+        onIntervalCount += 1;
+        totalOnDays += oDays;
+      }
+    }
+
+    const hadWaiting = waitingIntervalCount > 0;
+    const completedWaiting = hadWaiting && asOfStatus !== "UNCONFIRMED";
+    const placedToOn = completedWaiting && placedToOnFlag;
+    const exitedWithoutOn = completedWaiting && !placedToOnFlag;
+    const currentlyWaiting = hadWaiting && asOfStatus === "UNCONFIRMED";
+
+    const everOn = onIntervalCount > 0;
+    const neverOn = asOfStatus !== "UNKNOWN" && !everOn;
+
+    let continuouslyRetained = false;
+    let exitedFromOn = false;
+    let d7Matured = false;
+    let d7Immature = false;
+    let d7Retained = false;
+    let d7Exited = false;
+    let d30Matured = false;
+    let d30Immature = false;
+    let d30Retained = false;
+    let d30Exited = false;
+    let d90Matured = false;
+    let d90Immature = false;
+    let d90Retained = false;
+    let d90Exited = false;
+
+    if (firstOnIndex !== -1) {
+      const cohortStartDate = distinctEvents[firstOnIndex].effective_date;
+      const nextAfterFirstOn =
+        firstOnIndex + 1 < distinctEvents.length ? distinctEvents[firstOnIndex + 1] : null;
+      const firstExitDate = nextAfterFirstOn ? nextAfterFirstOn.effective_date : null;
+
+      if (firstExitDate === null) {
+        continuouslyRetained = true;
+      } else {
+        exitedFromOn = true;
+      }
+
+      const d7Date = shiftYmdDays(cohortStartDate, 7);
+      if (d7Date <= asOfDate) {
+        d7Matured = true;
+        if (firstExitDate === null || firstExitDate > d7Date) d7Retained = true;
+        else d7Exited = true;
+      } else {
+        d7Immature = true;
+      }
+
+      const d30Date = shiftYmdDays(cohortStartDate, 30);
+      if (d30Date <= asOfDate) {
+        d30Matured = true;
+        if (firstExitDate === null || firstExitDate > d30Date) d30Retained = true;
+        else d30Exited = true;
+      } else {
+        d30Immature = true;
+      }
+
+      const d90Date = shiftYmdDays(cohortStartDate, 90);
+      if (d90Date <= asOfDate) {
+        d90Matured = true;
+        if (firstExitDate === null || firstExitDate > d90Date) d90Retained = true;
+        else d90Exited = true;
+      } else {
+        d90Immature = true;
+      }
+    }
+
+    const identities = resolveEpisodeDimensionIdentities(ep);
+    for (const kind of ["recruiter", "team", "provider", "project"] as const) {
+      const id = identities[kind];
+      const map = maps[kind];
+      let acc = map.get(id.key);
+      if (!acc) {
+        acc = {
+          key: id.key,
+          display: id.display,
+          isUnknown: id.isUnknown,
+          active: id.active,
+          eligibleEpisodeCount: 0,
+          onCount: 0,
+          unconfirmedCount: 0,
+          offCount: 0,
+          unknownCount: 0,
+          waitingEpisodeCount: 0,
+          completedWaitingEpisodeCount: 0,
+          placedToOnEpisodeCount: 0,
+          exitedWithoutOnEpisodeCount: 0,
+          currentlyWaitingEpisodeCount: 0,
+          totalWaitingDays: 0,
+          everOnEpisodeCount: 0,
+          neverOnEpisodeCount: 0,
+          continuouslyRetainedCount: 0,
+          exitedFromOnCount: 0,
+          totalOnDays: 0,
+          d7Matured: 0,
+          d7Immature: 0,
+          d7Retained: 0,
+          d7Exited: 0,
+          d30Matured: 0,
+          d30Immature: 0,
+          d30Retained: 0,
+          d30Exited: 0,
+          d90Matured: 0,
+          d90Immature: 0,
+          d90Retained: 0,
+          d90Exited: 0,
+        };
+        map.set(id.key, acc);
+      } else {
+        if (id.display > acc.display) {
+          acc.display = id.display;
+        }
+        if (acc.active !== null && id.active !== null) {
+          acc.active = acc.active && id.active;
+        }
+      }
+
+      acc.eligibleEpisodeCount += 1;
+      if (asOfStatus === "ON") acc.onCount += 1;
+      else if (asOfStatus === "UNCONFIRMED") acc.unconfirmedCount += 1;
+      else if (asOfStatus === "OFF") acc.offCount += 1;
+      else acc.unknownCount += 1;
+
+      if (hadWaiting) {
+        acc.waitingEpisodeCount += 1;
+        acc.totalWaitingDays += totalWaitingDays;
+      }
+      if (completedWaiting) acc.completedWaitingEpisodeCount += 1;
+      if (placedToOn) acc.placedToOnEpisodeCount += 1;
+      if (exitedWithoutOn) acc.exitedWithoutOnEpisodeCount += 1;
+      if (currentlyWaiting) acc.currentlyWaitingEpisodeCount += 1;
+
+      if (everOn) {
+        acc.everOnEpisodeCount += 1;
+        acc.totalOnDays += totalOnDays;
+      }
+      if (neverOn) acc.neverOnEpisodeCount += 1;
+      if (continuouslyRetained) acc.continuouslyRetainedCount += 1;
+      if (exitedFromOn) acc.exitedFromOnCount += 1;
+
+      if (d7Matured) acc.d7Matured += 1;
+      if (d7Immature) acc.d7Immature += 1;
+      if (d7Retained) acc.d7Retained += 1;
+      if (d7Exited) acc.d7Exited += 1;
+
+      if (d30Matured) acc.d30Matured += 1;
+      if (d30Immature) acc.d30Immature += 1;
+      if (d30Retained) acc.d30Retained += 1;
+      if (d30Exited) acc.d30Exited += 1;
+
+      if (d90Matured) acc.d90Matured += 1;
+      if (d90Immature) acc.d90Immature += 1;
+      if (d90Retained) acc.d90Retained += 1;
+      if (d90Exited) acc.d90Exited += 1;
+    }
+  }
+
+  const buildSortedGroup = (kind: WorkforceDimensionKind): WorkforceDimensionGroupSummary => {
+    const buckets = Array.from(maps[kind].values())
+      .map(buildDimensionBucketMetrics)
+      .sort(compareDimensionBuckets);
+    return buildDimensionGroupSummary(kind, snapshot.eligibleEpisodeTotal, buckets);
+  };
+
+  return {
+    asOfDate,
+    asOfSource: snapshot.asOfSource,
+    eligibleEpisodeTotal: snapshot.eligibleEpisodeTotal,
+    byRecruiter: buildSortedGroup("recruiter"),
+    byTeam: buildSortedGroup("team"),
+    byProvider: buildSortedGroup("provider"),
+    byProject: buildSortedGroup("project"),
+  };
+}
+
+function computeLeaveReasonsMetricsAtAsOf(input: {
+  eligibleEpisodes: ReadonlyMap<string, WorkforceEpisodeRecord>;
+  eventsByEntry: ReadonlyMap<string, readonly WorkforceStatusEventRecord[]>;
+  snapshot: WorkforceAsOfSnapshot;
+  statusByEntryAtAsOf: ReadonlyMap<string, WorkforceStatusBucket | "FUTURE">;
+  periodWindow:
+    | { applicable: true; fromDate: string; toDate: string }
+    | {
+        applicable: false;
+        reason: WorkforceTransitionsNotApplicableReason;
+        fromDate: string | null;
+        toDate: string | null;
+      };
+}): WorkforceLeaveReasonsMetrics {
+  const { eligibleEpisodes, eventsByEntry, snapshot, statusByEntryAtAsOf, periodWindow } = input;
+  const asOfDate = snapshot.asOfDate;
+
+  const asOfCounts = new Map<
+    WorkforceLeaveReasonCategoryKey,
+    { episodeCount: number; fromOnCount: number; fromUnconfirmedWithoutOnCount: number }
+  >();
+  for (const item of CANONICAL_LEAVE_REASON_CATALOG) {
+    asOfCounts.set(item.key, {
+      episodeCount: 0,
+      fromOnCount: 0,
+      fromUnconfirmedWithoutOnCount: 0,
+    });
+  }
+
+  for (const ep of eligibleEpisodes.values()) {
+    const asOfStatus = statusByEntryAtAsOf.get(ep.entry_id) ?? "FUTURE";
+    if (asOfStatus !== "OFF") continue;
+
+    const fullChain = eventsByEntry.get(ep.entry_id) ?? [];
+    let latestEv: WorkforceStatusEventRecord | null = null;
+    let everOn = false;
+    for (let i = 0; i < fullChain.length; i += 1) {
+      const ev = fullChain[i];
+      if (ev.effective_date <= asOfDate) {
+        latestEv = ev;
+        if (ev.status === "ON") {
+          everOn = true;
+        }
+      }
+    }
+
+    const catKey = latestEv
+      ? classifyLeaveReasonCategory(latestEv.leave_reason_text)
+      : "missing_or_unknown";
+    const row = asOfCounts.get(catKey)!;
+    row.episodeCount += 1;
+    if (everOn) {
+      row.fromOnCount += 1;
+    } else {
+      row.fromUnconfirmedWithoutOnCount += 1;
+    }
+  }
+
+  const offEpisodeTotal = snapshot.offCount;
+  let standardizedEpisodeCount = 0;
+  let unclassifiedFreeTextEpisodeCount = 0;
+  let missingReasonEpisodeCount = 0;
+
+  const byCategory: WorkforceAsOfLeaveReasonCategoryRow[] = CANONICAL_LEAVE_REASON_CATALOG.map(
+    (meta) => {
+      const counts = asOfCounts.get(meta.key)!;
+      if (meta.kind === "standardized") {
+        standardizedEpisodeCount += counts.episodeCount;
+      } else if (meta.kind === "unclassified_free_text") {
+        unclassifiedFreeTextEpisodeCount += counts.episodeCount;
+      } else {
+        missingReasonEpisodeCount += counts.episodeCount;
+      }
+      return {
+        key: meta.key,
+        label: meta.label,
+        kind: meta.kind,
+        episodeCount: counts.episodeCount,
+        fromOnCount: counts.fromOnCount,
+        fromUnconfirmedWithoutOnCount: counts.fromUnconfirmedWithoutOnCount,
+        shareOfOffRate: offEpisodeTotal > 0 ? counts.episodeCount / offEpisodeTotal : null,
+      };
+    },
+  );
+
+  const withReasonEpisodeCount = standardizedEpisodeCount + unclassifiedFreeTextEpisodeCount;
+
+  let periodLeaveReasons: WorkforcePeriodLeaveReasonsMetrics;
+  if (!periodWindow.applicable) {
+    periodLeaveReasons = {
+      applicable: false,
+      reason: periodWindow.reason,
+      fromDate: periodWindow.fromDate,
+      toDate: periodWindow.toDate,
+      windowLabel: formatWorkforceTransitionsNotApplicableLabel(periodWindow.reason),
+    };
+  } else {
+    const { fromDate, toDate } = periodWindow;
+    const periodCounts = new Map<
+      WorkforceLeaveReasonCategoryKey,
+      {
+        eventCount: number;
+        episodes: Set<string>;
+        onToOffEventCount: number;
+        unconfirmedToOffEventCount: number;
+      }
+    >();
+    for (const item of CANONICAL_LEAVE_REASON_CATALOG) {
+      periodCounts.set(item.key, {
+        eventCount: 0,
+        episodes: new Set(),
+        onToOffEventCount: 0,
+        unconfirmedToOffEventCount: 0,
+      });
+    }
+
+    let offTransitionEventTotal = 0;
+    const allOffTransitionEpisodes = new Set<string>();
+    let onToOffEventTotal = 0;
+    let unconfirmedToOffEventTotal = 0;
+
+    for (const ep of eligibleEpisodes.values()) {
+      if (ep.first_work_date > toDate) continue;
+      const chain = eventsByEntry.get(ep.entry_id) ?? [];
+      for (let i = 0; i < chain.length; i += 1) {
+        const ev = chain[i];
+        if (ev.effective_date < fromDate || ev.effective_date > toDate) continue;
+        const prevStatus = i === 0 ? null : chain[i - 1].status;
+        if (prevStatus === null || prevStatus === ev.status || ev.status !== "OFF") continue;
+
+        const catKey = classifyLeaveReasonCategory(ev.leave_reason_text);
+        const bucket = periodCounts.get(catKey)!;
+        bucket.eventCount += 1;
+        bucket.episodes.add(ep.entry_id);
+        if (prevStatus === "ON") {
+          bucket.onToOffEventCount += 1;
+          onToOffEventTotal += 1;
+        } else if (prevStatus === "UNCONFIRMED") {
+          bucket.unconfirmedToOffEventCount += 1;
+          unconfirmedToOffEventTotal += 1;
+        }
+
+        offTransitionEventTotal += 1;
+        allOffTransitionEpisodes.add(ep.entry_id);
+      }
+    }
+
+    let standardizedEventCount = 0;
+    let unclassifiedFreeTextEventCount = 0;
+    let missingReasonEventCount = 0;
+
+    const periodByCategory: WorkforcePeriodLeaveReasonCategoryRow[] =
+      CANONICAL_LEAVE_REASON_CATALOG.map((meta) => {
+        const b = periodCounts.get(meta.key)!;
+        if (meta.kind === "standardized") {
+          standardizedEventCount += b.eventCount;
+        } else if (meta.kind === "unclassified_free_text") {
+          unclassifiedFreeTextEventCount += b.eventCount;
+        } else {
+          missingReasonEventCount += b.eventCount;
+        }
+        return {
+          key: meta.key,
+          label: meta.label,
+          kind: meta.kind,
+          eventCount: b.eventCount,
+          episodeCount: b.episodes.size,
+          onToOffEventCount: b.onToOffEventCount,
+          unconfirmedToOffEventCount: b.unconfirmedToOffEventCount,
+          shareOfOffEventsRate:
+            offTransitionEventTotal > 0 ? b.eventCount / offTransitionEventTotal : null,
+        };
+      });
+
+    const withReasonEventCount = standardizedEventCount + unclassifiedFreeTextEventCount;
+    periodLeaveReasons = {
+      applicable: true,
+      fromDate,
+      toDate,
+      offTransitionEventTotal,
+      offTransitionEpisodeTotal: allOffTransitionEpisodes.size,
+      onToOffEventTotal,
+      unconfirmedToOffEventTotal,
+      withReasonEventCount,
+      standardizedEventCount,
+      unclassifiedFreeTextEventCount,
+      missingReasonEventCount,
+      reasonCoverageRate:
+        offTransitionEventTotal > 0 ? withReasonEventCount / offTransitionEventTotal : null,
+      standardizationRate:
+        withReasonEventCount > 0 ? standardizedEventCount / withReasonEventCount : null,
+      byCategory: periodByCategory,
+    };
+  }
+
+  return {
+    asOfDate,
+    asOfSource: snapshot.asOfSource,
+    offEpisodeTotal,
+    withReasonEpisodeCount,
+    standardizedEpisodeCount,
+    unclassifiedFreeTextEpisodeCount,
+    missingReasonEpisodeCount,
+    reasonCoverageRate: offEpisodeTotal > 0 ? withReasonEpisodeCount / offEpisodeTotal : null,
+    standardizationRate:
+      withReasonEpisodeCount > 0 ? standardizedEpisodeCount / withReasonEpisodeCount : null,
+    byCategory,
+    periodLeaveReasons,
+  };
+}
+
 /**
  * Hàm thuần tính toán:
  * - 2.1 Workforce Snapshot `as-of`
@@ -1443,6 +2399,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
   waiting: WorkforceWaitingMetrics;
   duration: WorkforceDurationMetrics;
   retention: WorkforceRetentionMetrics;
+  dimensions: WorkforceDimensionsMetrics;
+  leaveReasons: WorkforceLeaveReasonsMetrics;
 } {
   const { asOfDate, asOfSource } = resolveWorkforceAsOfDate(input.filters, {
     asOfOverride: input.asOfOverride,
@@ -1496,7 +2454,15 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
     asOfSource,
   );
 
-  // 4. Kiểm tra tính hợp lệ của kỳ [from, to] cho 2.2, 2.3, 2.4, 2.5 và 2.6:
+  // 3b. Tính 2.7 Chất lượng theo chiều tại asOfDate:
+  const dimensions = computeDimensionsMetricsAtAsOf({
+    eligibleEpisodes,
+    eventsByEntry,
+    snapshot,
+    statusByEntryAtAsOf,
+  });
+
+  // 4. Kiểm tra tính hợp lệ của kỳ [from, to] cho 2.2, 2.3, 2.4, 2.5, 2.6 và 2.8:
   const rawFrom = input.filters.from?.trim() || "";
   const rawTo = input.filters.to?.trim() || "";
 
@@ -1528,6 +2494,13 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
       statusByEntryAtAsOf,
       periodWindow,
     });
+    const leaveReasons = computeLeaveReasonsMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
+    });
     return {
       snapshot,
       transitions: {
@@ -1547,6 +2520,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
       waiting,
       duration,
       retention,
+      dimensions,
+      leaveReasons,
     };
   }
 
@@ -1578,6 +2553,13 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
       statusByEntryAtAsOf,
       periodWindow,
     });
+    const leaveReasons = computeLeaveReasonsMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
+    });
     return {
       snapshot,
       transitions: {
@@ -1597,6 +2579,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
       waiting,
       duration,
       retention,
+      dimensions,
+      leaveReasons,
     };
   }
 
@@ -1628,6 +2612,13 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
       statusByEntryAtAsOf,
       periodWindow,
     });
+    const leaveReasons = computeLeaveReasonsMetricsAtAsOf({
+      eligibleEpisodes,
+      eventsByEntry,
+      snapshot,
+      statusByEntryAtAsOf,
+      periodWindow,
+    });
     return {
       snapshot,
       transitions: {
@@ -1647,6 +2638,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
       waiting,
       duration,
       retention,
+      dimensions,
+      leaveReasons,
     };
   }
 
@@ -1968,6 +2961,15 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
     periodWindow,
   });
 
+  // 10. Tính 2.8 Phân tích lý do nghỉ việc tại asOfDate và trong kỳ [rawFrom, rawTo]:
+  const leaveReasons = computeLeaveReasonsMetricsAtAsOf({
+    eligibleEpisodes,
+    eventsByEntry,
+    snapshot,
+    statusByEntryAtAsOf,
+    periodWindow,
+  });
+
   return {
     snapshot,
     transitions: {
@@ -1997,6 +2999,8 @@ export function evaluateWorkforceSnapshotAndTransitions(input: {
     waiting,
     duration,
     retention,
+    dimensions,
+    leaveReasons,
   };
 }
 
@@ -3042,6 +4046,671 @@ function parseRetentionSection(
   };
 }
 
+function parseDimensionBucket(raw: unknown): WorkforceDimensionBucketMetrics | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const key = typeof r.key === "string" ? r.key.trim() : "";
+  const display = typeof r.display === "string" ? r.display.trim() : "";
+  const isUnknown = typeof r.is_unknown === "boolean" ? r.is_unknown : null;
+  const activeRaw = r.active;
+  const active: boolean | null =
+    activeRaw === null || activeRaw === undefined
+      ? null
+      : typeof activeRaw === "boolean"
+        ? activeRaw
+        : (undefined as unknown as null);
+
+  if (!key || !display || isUnknown === null || active === undefined) {
+    return null;
+  }
+  if (isUnknown !== (key === "unknown")) {
+    return null;
+  }
+
+  const eligibleEpisodeCount = nonNegativeInt(r.eligible_episode_count);
+  const onCount = nonNegativeInt(r.on_count);
+  const unconfirmedCount = nonNegativeInt(r.unconfirmed_count);
+  const offCount = nonNegativeInt(r.off_count);
+  const unknownCount = nonNegativeInt(r.unknown_count);
+
+  const waitingEpisodeCount = nonNegativeInt(r.waiting_episode_count);
+  const completedWaitingEpisodeCount = nonNegativeInt(r.completed_waiting_episode_count);
+  const placedToOnEpisodeCount = nonNegativeInt(r.placed_to_on_episode_count);
+  const exitedWithoutOnEpisodeCount = nonNegativeInt(r.exited_without_on_episode_count);
+  const currentlyWaitingEpisodeCount = nonNegativeInt(r.currently_waiting_episode_count);
+  const totalWaitingDays = nonNegativeInt(r.total_waiting_days);
+
+  const everOnEpisodeCount = nonNegativeInt(r.ever_on_episode_count);
+  const neverOnEpisodeCount = nonNegativeInt(r.never_on_episode_count);
+  const continuouslyRetainedCount = nonNegativeInt(r.continuously_retained_count);
+  const exitedFromOnCount = nonNegativeInt(r.exited_from_on_count);
+  const totalOnDays = nonNegativeInt(r.total_on_days);
+
+  if (
+    eligibleEpisodeCount === null ||
+    onCount === null ||
+    unconfirmedCount === null ||
+    offCount === null ||
+    unknownCount === null ||
+    waitingEpisodeCount === null ||
+    completedWaitingEpisodeCount === null ||
+    placedToOnEpisodeCount === null ||
+    exitedWithoutOnEpisodeCount === null ||
+    currentlyWaitingEpisodeCount === null ||
+    totalWaitingDays === null ||
+    everOnEpisodeCount === null ||
+    neverOnEpisodeCount === null ||
+    continuouslyRetainedCount === null ||
+    exitedFromOnCount === null ||
+    totalOnDays === null
+  ) {
+    return null;
+  }
+
+  if (
+    onCount + unconfirmedCount + offCount + unknownCount !== eligibleEpisodeCount ||
+    completedWaitingEpisodeCount + currentlyWaitingEpisodeCount !== waitingEpisodeCount ||
+    placedToOnEpisodeCount + exitedWithoutOnEpisodeCount !== completedWaitingEpisodeCount ||
+    currentlyWaitingEpisodeCount !== unconfirmedCount ||
+    (waitingEpisodeCount === 0 && totalWaitingDays !== 0) ||
+    everOnEpisodeCount + neverOnEpisodeCount + unknownCount !== eligibleEpisodeCount ||
+    continuouslyRetainedCount + exitedFromOnCount !== everOnEpisodeCount ||
+    (everOnEpisodeCount === 0 && totalOnDays !== 0)
+  ) {
+    return null;
+  }
+
+  const cpRaw =
+    typeof r.checkpoints === "object" && r.checkpoints !== null
+      ? (r.checkpoints as Record<string, unknown>)
+      : null;
+  if (!cpRaw) return null;
+
+  const d7 = parseRetentionCheckpoint(cpRaw.d7, 7, everOnEpisodeCount);
+  const d30 = parseRetentionCheckpoint(cpRaw.d30, 30, everOnEpisodeCount);
+  const d90 = parseRetentionCheckpoint(cpRaw.d90, 90, everOnEpisodeCount);
+  if (!d7 || !d30 || !d90) return null;
+
+  if (
+    d90.maturedCount > d30.maturedCount ||
+    d30.maturedCount > d7.maturedCount ||
+    d90.retainedCount > d30.retainedCount ||
+    d30.retainedCount > d7.retainedCount
+  ) {
+    return null;
+  }
+
+  return {
+    key,
+    display,
+    isUnknown,
+    active,
+    eligibleEpisodeCount,
+    onCount,
+    unconfirmedCount,
+    offCount,
+    unknownCount,
+    waitingEpisodeCount,
+    completedWaitingEpisodeCount,
+    placedToOnEpisodeCount,
+    exitedWithoutOnEpisodeCount,
+    currentlyWaitingEpisodeCount,
+    totalWaitingDays,
+    avgWaitingDaysPerEpisode:
+      waitingEpisodeCount > 0 ? totalWaitingDays / waitingEpisodeCount : null,
+    placementRateOfWaiting:
+      waitingEpisodeCount > 0 ? placedToOnEpisodeCount / waitingEpisodeCount : null,
+    placementRateOfCompletedWaiting:
+      completedWaitingEpisodeCount > 0
+        ? placedToOnEpisodeCount / completedWaitingEpisodeCount
+        : null,
+    everOnEpisodeCount,
+    neverOnEpisodeCount,
+    continuouslyRetainedCount,
+    exitedFromOnCount,
+    totalOnDays,
+    avgOnDaysPerEpisode: everOnEpisodeCount > 0 ? totalOnDays / everOnEpisodeCount : null,
+    checkpoints: {
+      d7,
+      d30,
+      d90,
+    },
+  };
+}
+
+function parseDimensionGroup(
+  rawArr: unknown,
+  dimensionKind: WorkforceDimensionKind,
+  snapshot: WorkforceAsOfSnapshot,
+  waiting: WorkforceWaitingMetrics,
+  duration: WorkforceDurationMetrics,
+  retention: WorkforceRetentionMetrics,
+): { ok: true; group: WorkforceDimensionGroupSummary } | { ok: false; reason: string } {
+  if (!Array.isArray(rawArr)) {
+    return { ok: false, reason: "invalid_dimension_bucket_array" };
+  }
+
+  const seenKeys = new Set<string>();
+  const buckets: WorkforceDimensionBucketMetrics[] = [];
+
+  let sumEligible = 0;
+  let sumOn = 0;
+  let sumUnconfirmed = 0;
+  let sumOff = 0;
+  let sumUnknown = 0;
+
+  let sumWaiting = 0;
+  let sumCompletedWaiting = 0;
+  let sumPlacedToOn = 0;
+  let sumExitedWithoutOn = 0;
+  let sumCurrentlyWaiting = 0;
+  let sumWaitingDays = 0;
+
+  let sumEverOn = 0;
+  let sumNeverOn = 0;
+  let sumContinuouslyRetained = 0;
+  let sumExitedFromOn = 0;
+  let sumOnDays = 0;
+
+  let sumD7Matured = 0;
+  let sumD7Immature = 0;
+  let sumD7Retained = 0;
+  let sumD7Exited = 0;
+
+  let sumD30Matured = 0;
+  let sumD30Immature = 0;
+  let sumD30Retained = 0;
+  let sumD30Exited = 0;
+
+  let sumD90Matured = 0;
+  let sumD90Immature = 0;
+  let sumD90Retained = 0;
+  let sumD90Exited = 0;
+
+  for (const item of rawArr) {
+    const parsed = parseDimensionBucket(item);
+    if (!parsed) {
+      return { ok: false, reason: "invalid_dimension_bucket_metrics" };
+    }
+    if (seenKeys.has(parsed.key)) {
+      return { ok: false, reason: "duplicate_dimension_bucket_key" };
+    }
+    seenKeys.add(parsed.key);
+    buckets.push(parsed);
+
+    sumEligible += parsed.eligibleEpisodeCount;
+    sumOn += parsed.onCount;
+    sumUnconfirmed += parsed.unconfirmedCount;
+    sumOff += parsed.offCount;
+    sumUnknown += parsed.unknownCount;
+
+    sumWaiting += parsed.waitingEpisodeCount;
+    sumCompletedWaiting += parsed.completedWaitingEpisodeCount;
+    sumPlacedToOn += parsed.placedToOnEpisodeCount;
+    sumExitedWithoutOn += parsed.exitedWithoutOnEpisodeCount;
+    sumCurrentlyWaiting += parsed.currentlyWaitingEpisodeCount;
+    sumWaitingDays += parsed.totalWaitingDays;
+
+    sumEverOn += parsed.everOnEpisodeCount;
+    sumNeverOn += parsed.neverOnEpisodeCount;
+    sumContinuouslyRetained += parsed.continuouslyRetainedCount;
+    sumExitedFromOn += parsed.exitedFromOnCount;
+    sumOnDays += parsed.totalOnDays;
+
+    sumD7Matured += parsed.checkpoints.d7.maturedCount;
+    sumD7Immature += parsed.checkpoints.d7.immatureCount;
+    sumD7Retained += parsed.checkpoints.d7.retainedCount;
+    sumD7Exited += parsed.checkpoints.d7.exitedCount;
+
+    sumD30Matured += parsed.checkpoints.d30.maturedCount;
+    sumD30Immature += parsed.checkpoints.d30.immatureCount;
+    sumD30Retained += parsed.checkpoints.d30.retainedCount;
+    sumD30Exited += parsed.checkpoints.d30.exitedCount;
+
+    sumD90Matured += parsed.checkpoints.d90.maturedCount;
+    sumD90Immature += parsed.checkpoints.d90.immatureCount;
+    sumD90Retained += parsed.checkpoints.d90.retainedCount;
+    sumD90Exited += parsed.checkpoints.d90.exitedCount;
+  }
+
+  if (
+    sumEligible !== snapshot.eligibleEpisodeTotal ||
+    sumOn !== snapshot.onCount ||
+    sumUnconfirmed !== snapshot.unconfirmedCount ||
+    sumOff !== snapshot.offCount ||
+    sumUnknown !== snapshot.unknownCount ||
+    sumWaiting !== waiting.waitingEpisodeTotal ||
+    sumCompletedWaiting !== waiting.completedWaiting.episodeCount ||
+    sumPlacedToOn !== waiting.placedToOn.episodeCount ||
+    sumExitedWithoutOn !== waiting.exitedWithoutOn.episodeCount ||
+    sumCurrentlyWaiting !== waiting.currentlyWaiting.episodeCount ||
+    sumWaitingDays !== waiting.allWaiting.totalWaitingDays ||
+    sumEverOn !== duration.everOnEpisodeCount ||
+    sumNeverOn !== duration.neverOnEpisodeCount ||
+    sumOnDays !== duration.allEverOn.totalOnDays ||
+    sumEverOn !== retention.cohortEpisodeTotal ||
+    sumContinuouslyRetained !== retention.continuouslyRetainedCount ||
+    sumExitedFromOn !== retention.exitedFromOnTotal ||
+    sumD7Matured !== retention.checkpoints.d7.maturedCount ||
+    sumD7Immature !== retention.checkpoints.d7.immatureCount ||
+    sumD7Retained !== retention.checkpoints.d7.retainedCount ||
+    sumD7Exited !== retention.checkpoints.d7.exitedCount ||
+    sumD30Matured !== retention.checkpoints.d30.maturedCount ||
+    sumD30Immature !== retention.checkpoints.d30.immatureCount ||
+    sumD30Retained !== retention.checkpoints.d30.retainedCount ||
+    sumD30Exited !== retention.checkpoints.d30.exitedCount ||
+    sumD90Matured !== retention.checkpoints.d90.maturedCount ||
+    sumD90Immature !== retention.checkpoints.d90.immatureCount ||
+    sumD90Retained !== retention.checkpoints.d90.retainedCount ||
+    sumD90Exited !== retention.checkpoints.d90.exitedCount
+  ) {
+    return { ok: false, reason: "dimension_reconciliation_invariant_violated" };
+  }
+
+  return {
+    ok: true,
+    group: buildDimensionGroupSummary(dimensionKind, snapshot.eligibleEpisodeTotal, buckets),
+  };
+}
+
+function parseDimensionsSection(
+  dimRaw: unknown,
+  snapshot: WorkforceAsOfSnapshot,
+  waiting: WorkforceWaitingMetrics,
+  duration: WorkforceDurationMetrics,
+  retention: WorkforceRetentionMetrics,
+): { ok: true; dimensions: WorkforceDimensionsMetrics } | { ok: false; reason: string } {
+  if (typeof dimRaw !== "object" || dimRaw === null) {
+    return { ok: false, reason: "missing_dimensions_section" };
+  }
+  const d = dimRaw as Record<string, unknown>;
+  const asOfDate = typeof d.as_of_date === "string" ? d.as_of_date : "";
+  const asOfSourceRaw = d.as_of_source;
+  const asOfSource: WorkforceAsOfSource | null =
+    asOfSourceRaw === "filter_to" ||
+    asOfSourceRaw === "current_hcm_date" ||
+    asOfSourceRaw === "explicit_as_of"
+      ? asOfSourceRaw
+      : null;
+  const eligibleEpisodeTotal = nonNegativeInt(d.eligible_episode_total);
+
+  if (
+    asOfDate !== snapshot.asOfDate ||
+    asOfSource !== snapshot.asOfSource ||
+    eligibleEpisodeTotal === null ||
+    eligibleEpisodeTotal !== snapshot.eligibleEpisodeTotal
+  ) {
+    return { ok: false, reason: "invalid_dimensions_header_fields" };
+  }
+
+  const recParsed = parseDimensionGroup(
+    d.by_recruiter,
+    "recruiter",
+    snapshot,
+    waiting,
+    duration,
+    retention,
+  );
+  if (!recParsed.ok) return recParsed;
+
+  const teamParsed = parseDimensionGroup(
+    d.by_team,
+    "team",
+    snapshot,
+    waiting,
+    duration,
+    retention,
+  );
+  if (!teamParsed.ok) return teamParsed;
+
+  const provParsed = parseDimensionGroup(
+    d.by_provider,
+    "provider",
+    snapshot,
+    waiting,
+    duration,
+    retention,
+  );
+  if (!provParsed.ok) return provParsed;
+
+  const projParsed = parseDimensionGroup(
+    d.by_project,
+    "project",
+    snapshot,
+    waiting,
+    duration,
+    retention,
+  );
+  if (!projParsed.ok) return projParsed;
+
+  return {
+    ok: true,
+    dimensions: {
+      asOfDate,
+      asOfSource,
+      eligibleEpisodeTotal,
+      byRecruiter: recParsed.group,
+      byTeam: teamParsed.group,
+      byProvider: provParsed.group,
+      byProject: projParsed.group,
+    },
+  };
+}
+
+const FORBIDDEN_RAW_REASON_KEYS = [
+  "leave_reason_text",
+  "raw_reason",
+  "reason_text",
+  "general_note",
+] as const;
+
+function parseLeaveReasonsSection(
+  lrRaw: unknown,
+  snapshot: WorkforceAsOfSnapshot,
+  transitions: WorkforcePeriodTransitions,
+): { ok: true; leaveReasons: WorkforceLeaveReasonsMetrics } | { ok: false; reason: string } {
+  if (typeof lrRaw !== "object" || lrRaw === null) {
+    return { ok: false, reason: "missing_leave_reasons_section" };
+  }
+  const lr = lrRaw as Record<string, unknown>;
+  for (const forbidden of FORBIDDEN_RAW_REASON_KEYS) {
+    if (forbidden in lr) {
+      return { ok: false, reason: "leave_reason_raw_text_leak_detected" };
+    }
+  }
+
+  const asOfDate = typeof lr.as_of_date === "string" ? lr.as_of_date : "";
+  const asOfSourceRaw = lr.as_of_source;
+  const asOfSource: WorkforceAsOfSource | null =
+    asOfSourceRaw === "filter_to" ||
+    asOfSourceRaw === "current_hcm_date" ||
+    asOfSourceRaw === "explicit_as_of"
+      ? asOfSourceRaw
+      : null;
+
+  const offEpisodeTotal = nonNegativeInt(lr.off_episode_total);
+  const withReasonEpisodeCount = nonNegativeInt(lr.with_reason_episode_count);
+  const standardizedEpisodeCount = nonNegativeInt(lr.standardized_episode_count);
+  const unclassifiedFreeTextEpisodeCount = nonNegativeInt(lr.unclassified_free_text_episode_count);
+  const missingReasonEpisodeCount = nonNegativeInt(lr.missing_reason_episode_count);
+
+  if (
+    asOfDate !== snapshot.asOfDate ||
+    asOfSource !== snapshot.asOfSource ||
+    offEpisodeTotal === null ||
+    offEpisodeTotal !== snapshot.offCount ||
+    withReasonEpisodeCount === null ||
+    standardizedEpisodeCount === null ||
+    unclassifiedFreeTextEpisodeCount === null ||
+    missingReasonEpisodeCount === null
+  ) {
+    return { ok: false, reason: "invalid_leave_reasons_header_fields" };
+  }
+
+  if (
+    standardizedEpisodeCount + unclassifiedFreeTextEpisodeCount !== withReasonEpisodeCount ||
+    withReasonEpisodeCount + missingReasonEpisodeCount !== offEpisodeTotal
+  ) {
+    return { ok: false, reason: "leave_reasons_header_sum_invariant_violated" };
+  }
+
+  if (
+    !Array.isArray(lr.by_category) ||
+    lr.by_category.length !== CANONICAL_LEAVE_REASON_CATALOG.length
+  ) {
+    return { ok: false, reason: "invalid_leave_reasons_category_array" };
+  }
+
+  const byCategory: WorkforceAsOfLeaveReasonCategoryRow[] = [];
+  let sumCatEpisodes = 0;
+  let sumStandardized = 0;
+  let sumUnclassified = 0;
+  let sumMissing = 0;
+
+  for (let i = 0; i < CANONICAL_LEAVE_REASON_CATALOG.length; i += 1) {
+    const expected = CANONICAL_LEAVE_REASON_CATALOG[i];
+    const item = lr.by_category[i];
+    if (typeof item !== "object" || item === null) {
+      return { ok: false, reason: "invalid_leave_reason_category_row" };
+    }
+    const row = item as Record<string, unknown>;
+    for (const forbidden of FORBIDDEN_RAW_REASON_KEYS) {
+      if (forbidden in row) {
+        return { ok: false, reason: "leave_reason_raw_text_leak_detected" };
+      }
+    }
+    const key = row.key;
+    const kind = row.kind;
+    const episodeCount = nonNegativeInt(row.episode_count);
+    const fromOnCount = nonNegativeInt(row.from_on_count);
+    const fromUnconfirmedWithoutOnCount = nonNegativeInt(row.from_unconfirmed_without_on_count);
+
+    if (
+      key !== expected.key ||
+      kind !== expected.kind ||
+      episodeCount === null ||
+      fromOnCount === null ||
+      fromUnconfirmedWithoutOnCount === null ||
+      fromOnCount + fromUnconfirmedWithoutOnCount !== episodeCount
+    ) {
+      return { ok: false, reason: "invalid_leave_reason_category_row" };
+    }
+
+    sumCatEpisodes += episodeCount;
+    if (expected.kind === "standardized") sumStandardized += episodeCount;
+    else if (expected.kind === "unclassified_free_text") sumUnclassified += episodeCount;
+    else sumMissing += episodeCount;
+
+    byCategory.push({
+      key: expected.key,
+      label: expected.label,
+      kind: expected.kind,
+      episodeCount,
+      fromOnCount,
+      fromUnconfirmedWithoutOnCount,
+      shareOfOffRate: offEpisodeTotal > 0 ? episodeCount / offEpisodeTotal : null,
+    });
+  }
+
+  if (
+    sumCatEpisodes !== offEpisodeTotal ||
+    sumStandardized !== standardizedEpisodeCount ||
+    sumUnclassified !== unclassifiedFreeTextEpisodeCount ||
+    sumMissing !== missingReasonEpisodeCount
+  ) {
+    return { ok: false, reason: "leave_reasons_category_sum_invariant_violated" };
+  }
+
+  const plrRaw =
+    typeof lr.period_leave_reasons === "object" && lr.period_leave_reasons !== null
+      ? (lr.period_leave_reasons as Record<string, unknown>)
+      : null;
+  if (!plrRaw) {
+    return { ok: false, reason: "missing_period_leave_reasons" };
+  }
+
+  let periodLeaveReasons: WorkforcePeriodLeaveReasonsMetrics;
+  if (plrRaw.applicable === false) {
+    if (transitions.applicable) {
+      return { ok: false, reason: "period_leave_reasons_applicability_mismatch" };
+    }
+    const reasonRaw = plrRaw.reason;
+    const reason: WorkforceTransitionsNotApplicableReason =
+      reasonRaw === "all_time" || reasonRaw === "one_sided" || reasonRaw === "invalid_range"
+        ? reasonRaw
+        : transitions.reason;
+    const fromDate =
+      typeof plrRaw.from_date === "string" && isRealCalendarDate(plrRaw.from_date)
+        ? plrRaw.from_date
+        : null;
+    const toDate =
+      typeof plrRaw.to_date === "string" && isRealCalendarDate(plrRaw.to_date)
+        ? plrRaw.to_date
+        : null;
+    periodLeaveReasons = {
+      applicable: false,
+      reason,
+      fromDate,
+      toDate,
+      windowLabel: formatWorkforceTransitionsNotApplicableLabel(reason),
+    };
+  } else if (plrRaw.applicable === true) {
+    if (!transitions.applicable) {
+      return { ok: false, reason: "period_leave_reasons_applicability_mismatch" };
+    }
+    const fromDate = typeof plrRaw.from_date === "string" ? plrRaw.from_date : "";
+    const toDate = typeof plrRaw.to_date === "string" ? plrRaw.to_date : "";
+    const offTransitionEventTotal = nonNegativeInt(plrRaw.off_transition_event_total);
+    const offTransitionEpisodeTotal = nonNegativeInt(plrRaw.off_transition_episode_total);
+    const onToOffEventTotal = nonNegativeInt(plrRaw.on_to_off_event_total);
+    const unconfirmedToOffEventTotal = nonNegativeInt(plrRaw.unconfirmed_to_off_event_total);
+    const withReasonEventCount = nonNegativeInt(plrRaw.with_reason_event_count);
+    const standardizedEventCount = nonNegativeInt(plrRaw.standardized_event_count);
+    const unclassifiedFreeTextEventCount = nonNegativeInt(
+      plrRaw.unclassified_free_text_event_count,
+    );
+    const missingReasonEventCount = nonNegativeInt(plrRaw.missing_reason_event_count);
+
+    if (
+      fromDate !== transitions.fromDate ||
+      toDate !== transitions.toDate ||
+      offTransitionEventTotal === null ||
+      offTransitionEpisodeTotal === null ||
+      offTransitionEpisodeTotal > offTransitionEventTotal ||
+      onToOffEventTotal === null ||
+      unconfirmedToOffEventTotal === null ||
+      onToOffEventTotal !== transitions.pairs.onToOff.eventCount ||
+      unconfirmedToOffEventTotal !== transitions.pairs.unconfirmedToOff.eventCount ||
+      onToOffEventTotal + unconfirmedToOffEventTotal > offTransitionEventTotal ||
+      withReasonEventCount === null ||
+      standardizedEventCount === null ||
+      unclassifiedFreeTextEventCount === null ||
+      missingReasonEventCount === null ||
+      standardizedEventCount + unclassifiedFreeTextEventCount !== withReasonEventCount ||
+      withReasonEventCount + missingReasonEventCount !== offTransitionEventTotal
+    ) {
+      return { ok: false, reason: "invalid_period_leave_reasons_fields" };
+    }
+
+    if (
+      !Array.isArray(plrRaw.by_category) ||
+      plrRaw.by_category.length !== CANONICAL_LEAVE_REASON_CATALOG.length
+    ) {
+      return { ok: false, reason: "invalid_period_leave_reasons_category_array" };
+    }
+
+    const periodByCategory: WorkforcePeriodLeaveReasonCategoryRow[] = [];
+    let sumEvents = 0;
+    let sumOnToOff = 0;
+    let sumUnconfirmedToOff = 0;
+    let sumStdEv = 0;
+    let sumUnclassEv = 0;
+    let sumMissingEv = 0;
+
+    for (let i = 0; i < CANONICAL_LEAVE_REASON_CATALOG.length; i += 1) {
+      const expected = CANONICAL_LEAVE_REASON_CATALOG[i];
+      const item = plrRaw.by_category[i];
+      if (typeof item !== "object" || item === null) {
+        return { ok: false, reason: "invalid_period_leave_reason_category_row" };
+      }
+      const row = item as Record<string, unknown>;
+      for (const forbidden of FORBIDDEN_RAW_REASON_KEYS) {
+        if (forbidden in row) {
+          return { ok: false, reason: "leave_reason_raw_text_leak_detected" };
+        }
+      }
+      const key = row.key;
+      const kind = row.kind;
+      const eventCount = nonNegativeInt(row.event_count);
+      const episodeCount = nonNegativeInt(row.episode_count);
+      const onToOffEventCount = nonNegativeInt(row.on_to_off_event_count);
+      const unconfirmedToOffEventCount = nonNegativeInt(row.unconfirmed_to_off_event_count);
+
+      if (
+        key !== expected.key ||
+        kind !== expected.kind ||
+        eventCount === null ||
+        episodeCount === null ||
+        episodeCount > eventCount ||
+        onToOffEventCount === null ||
+        unconfirmedToOffEventCount === null ||
+        onToOffEventCount + unconfirmedToOffEventCount > eventCount
+      ) {
+        return { ok: false, reason: "invalid_period_leave_reason_category_row" };
+      }
+
+      sumEvents += eventCount;
+      sumOnToOff += onToOffEventCount;
+      sumUnconfirmedToOff += unconfirmedToOffEventCount;
+      if (expected.kind === "standardized") sumStdEv += eventCount;
+      else if (expected.kind === "unclassified_free_text") sumUnclassEv += eventCount;
+      else sumMissingEv += eventCount;
+
+      periodByCategory.push({
+        key: expected.key,
+        label: expected.label,
+        kind: expected.kind,
+        eventCount,
+        episodeCount,
+        onToOffEventCount,
+        unconfirmedToOffEventCount,
+        shareOfOffEventsRate:
+          offTransitionEventTotal > 0 ? eventCount / offTransitionEventTotal : null,
+      });
+    }
+
+    if (
+      sumEvents !== offTransitionEventTotal ||
+      sumOnToOff !== onToOffEventTotal ||
+      sumUnconfirmedToOff !== unconfirmedToOffEventTotal ||
+      sumStdEv !== standardizedEventCount ||
+      sumUnclassEv !== unclassifiedFreeTextEventCount ||
+      sumMissingEv !== missingReasonEventCount
+    ) {
+      return { ok: false, reason: "period_leave_reasons_category_sum_invariant_violated" };
+    }
+
+    periodLeaveReasons = {
+      applicable: true,
+      fromDate,
+      toDate,
+      offTransitionEventTotal,
+      offTransitionEpisodeTotal,
+      onToOffEventTotal,
+      unconfirmedToOffEventTotal,
+      withReasonEventCount,
+      standardizedEventCount,
+      unclassifiedFreeTextEventCount,
+      missingReasonEventCount,
+      reasonCoverageRate:
+        offTransitionEventTotal > 0 ? withReasonEventCount / offTransitionEventTotal : null,
+      standardizationRate:
+        withReasonEventCount > 0 ? standardizedEventCount / withReasonEventCount : null,
+      byCategory: periodByCategory,
+    };
+  } else {
+    return { ok: false, reason: "invalid_period_leave_reasons_applicable" };
+  }
+
+  return {
+    ok: true,
+    leaveReasons: {
+      asOfDate,
+      asOfSource,
+      offEpisodeTotal,
+      withReasonEpisodeCount,
+      standardizedEpisodeCount,
+      unclassifiedFreeTextEpisodeCount,
+      missingReasonEpisodeCount,
+      reasonCoverageRate: offEpisodeTotal > 0 ? withReasonEpisodeCount / offEpisodeTotal : null,
+      standardizationRate:
+        withReasonEpisodeCount > 0 ? standardizedEpisodeCount / withReasonEpisodeCount : null,
+      byCategory,
+      periodLeaveReasons,
+    },
+  };
+}
+
 /**
  * Parse và kiểm tra toàn vẹn payload trả về từ RPC `direct_entry_workforce_reporting_scoped`.
  * Fail-closed (`status: "unavailable"`) nếu thiếu trường hoặc vi phạm bất biến tổng snapshot,
@@ -3194,6 +4863,26 @@ export function parseWorkforceReportingPayload(raw: unknown): WorkforceReporting
     return { status: "unavailable", reason: retentionParsed.reason };
   }
 
+  const dimensionsParsed = parseDimensionsSection(
+    root.dimensions,
+    snapshot,
+    waitingParsed.waiting,
+    durationParsed.duration,
+    retentionParsed.retention,
+  );
+  if (!dimensionsParsed.ok) {
+    return { status: "unavailable", reason: dimensionsParsed.reason };
+  }
+
+  const leaveReasonsParsed = parseLeaveReasonsSection(
+    root.leave_reasons,
+    snapshot,
+    transitions,
+  );
+  if (!leaveReasonsParsed.ok) {
+    return { status: "unavailable", reason: leaveReasonsParsed.reason };
+  }
+
   return {
     status: "ready",
     snapshot,
@@ -3202,6 +4891,8 @@ export function parseWorkforceReportingPayload(raw: unknown): WorkforceReporting
     waiting: waitingParsed.waiting,
     duration: durationParsed.duration,
     retention: retentionParsed.retention,
+    dimensions: dimensionsParsed.dimensions,
+    leaveReasons: leaveReasonsParsed.leaveReasons,
   };
 }
 
