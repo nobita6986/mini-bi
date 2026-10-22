@@ -125,6 +125,22 @@ export interface WorkforceAttentionInsight {
   detail: string;
 }
 
+function compareLowestD30RetentionBuckets(
+  a: WorkforceDimensionBucketMetrics,
+  b: WorkforceDimensionBucketMetrics,
+): number {
+  const rateA = a.checkpoints.d30.retentionRate ?? 1;
+  const rateB = b.checkpoints.d30.retentionRate ?? 1;
+  if (rateA !== rateB) return rateA - rateB;
+  if (b.checkpoints.d30.exitedCount !== a.checkpoints.d30.exitedCount) {
+    return b.checkpoints.d30.exitedCount - a.checkpoints.d30.exitedCount;
+  }
+  if (b.checkpoints.d30.maturedCount !== a.checkpoints.d30.maturedCount) {
+    return b.checkpoints.d30.maturedCount - a.checkpoints.d30.maturedCount;
+  }
+  return a.key.localeCompare(b.key);
+}
+
 function pickLowestD30RetentionBucket(
   buckets: WorkforceDimensionBucketMetrics[],
   minSample: number,
@@ -133,19 +149,22 @@ function pickLowestD30RetentionBucket(
     (b) => b.checkpoints.d30.maturedCount >= minSample && b.checkpoints.d30.retentionRate !== null,
   );
   if (qualified.length === 0) return null;
-  qualified.sort((a, b) => {
-    const rateA = a.checkpoints.d30.retentionRate ?? 1;
-    const rateB = b.checkpoints.d30.retentionRate ?? 1;
-    if (rateA !== rateB) return rateA - rateB;
-    if (b.checkpoints.d30.exitedCount !== a.checkpoints.d30.exitedCount) {
-      return b.checkpoints.d30.exitedCount - a.checkpoints.d30.exitedCount;
-    }
-    if (b.checkpoints.d30.maturedCount !== a.checkpoints.d30.maturedCount) {
-      return b.checkpoints.d30.maturedCount - a.checkpoints.d30.maturedCount;
-    }
-    return a.key.localeCompare(b.key);
-  });
+  qualified.sort(compareLowestD30RetentionBuckets);
   return qualified[0] ?? null;
+}
+
+function compareHighestWaitingBuckets(
+  a: WorkforceDimensionBucketMetrics,
+  b: WorkforceDimensionBucketMetrics,
+): number {
+  const avgA = a.avgWaitingDaysPerEpisode ?? 0;
+  const avgB = b.avgWaitingDaysPerEpisode ?? 0;
+  if (avgB !== avgA) return avgB - avgA;
+  if (b.totalWaitingDays !== a.totalWaitingDays) return b.totalWaitingDays - a.totalWaitingDays;
+  if (b.currentlyWaitingEpisodeCount !== a.currentlyWaitingEpisodeCount) {
+    return b.currentlyWaitingEpisodeCount - a.currentlyWaitingEpisodeCount;
+  }
+  return a.key.localeCompare(b.key);
 }
 
 function pickHighestWaitingBucket(
@@ -156,16 +175,7 @@ function pickHighestWaitingBucket(
     (b) => b.waitingEpisodeCount >= minSample && b.avgWaitingDaysPerEpisode !== null,
   );
   if (qualified.length === 0) return null;
-  qualified.sort((a, b) => {
-    const avgA = a.avgWaitingDaysPerEpisode ?? 0;
-    const avgB = b.avgWaitingDaysPerEpisode ?? 0;
-    if (avgB !== avgA) return avgB - avgA;
-    if (b.totalWaitingDays !== a.totalWaitingDays) return b.totalWaitingDays - a.totalWaitingDays;
-    if (b.currentlyWaitingEpisodeCount !== a.currentlyWaitingEpisodeCount) {
-      return b.currentlyWaitingEpisodeCount - a.currentlyWaitingEpisodeCount;
-    }
-    return a.key.localeCompare(b.key);
-  });
+  qualified.sort(compareHighestWaitingBuckets);
   return qualified[0] ?? null;
 }
 
@@ -213,8 +223,12 @@ export function deriveWorkforceAttentionInsights(
     minSampleSize,
   );
   const lowestTeamD30 = pickLowestD30RetentionBucket(dimensions.byTeam.buckets, minSampleSize);
-  const targetD30 = lowestProjectD30 ?? lowestTeamD30;
-  const targetD30DimLabel = lowestProjectD30 ? "Dự án" : "Nhóm";
+  const pickTeamForD30 =
+    lowestTeamD30 !== null &&
+    (lowestProjectD30 === null ||
+      compareLowestD30RetentionBuckets(lowestTeamD30, lowestProjectD30) < 0);
+  const targetD30 = pickTeamForD30 ? lowestTeamD30 : lowestProjectD30;
+  const targetD30DimLabel = pickTeamForD30 ? "Nhóm" : "Dự án";
 
   if (targetD30) {
     const cp = targetD30.checkpoints.d30;
@@ -246,8 +260,12 @@ export function deriveWorkforceAttentionInsights(
     dimensions.byProject.buckets,
     minSampleSize,
   );
-  const targetWaiting = highestTeamWaiting ?? highestProjectWaiting;
-  const targetWaitingDimLabel = highestTeamWaiting ? "Nhóm" : "Dự án";
+  const pickProjectForWaiting =
+    highestProjectWaiting !== null &&
+    (highestTeamWaiting === null ||
+      compareHighestWaitingBuckets(highestProjectWaiting, highestTeamWaiting) < 0);
+  const targetWaiting = pickProjectForWaiting ? highestProjectWaiting : highestTeamWaiting;
+  const targetWaitingDimLabel = pickProjectForWaiting ? "Dự án" : "Nhóm";
 
   if (targetWaiting) {
     insights.push({

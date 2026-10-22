@@ -338,6 +338,9 @@ test("WF-04 (3): Deterministic 'Điểm cần chú ý' (deriveWorkforceAttention
         voided_at: null,
         project_key: "prj-a",
         project_display: "PRJ-A · Dự án Đủ Mẫu Alpha",
+        team_code: "TEAM-1",
+        team_display_name: "Nhóm 1",
+        team_active: true,
       },
       {
         entry_id: uuid(2),
@@ -347,6 +350,9 @@ test("WF-04 (3): Deterministic 'Điểm cần chú ý' (deriveWorkforceAttention
         voided_at: null,
         project_key: "prj-a",
         project_display: "PRJ-A · Dự án Đủ Mẫu Alpha",
+        team_code: "TEAM-1",
+        team_display_name: "Nhóm 1",
+        team_active: true,
       },
       {
         entry_id: uuid(3),
@@ -356,6 +362,9 @@ test("WF-04 (3): Deterministic 'Điểm cần chú ý' (deriveWorkforceAttention
         voided_at: null,
         project_key: "prj-a",
         project_display: "PRJ-A · Dự án Đủ Mẫu Alpha",
+        team_code: "TEAM-2",
+        team_display_name: "Nhóm 2",
+        team_active: true,
       },
       {
         entry_id: uuid(4),
@@ -365,6 +374,9 @@ test("WF-04 (3): Deterministic 'Điểm cần chú ý' (deriveWorkforceAttention
         voided_at: null,
         project_key: "prj-b",
         project_display: "PRJ-B · Dự án Một Người Beta",
+        team_code: "TEAM-2",
+        team_display_name: "Nhóm 2",
+        team_active: true,
       },
     ],
     events: [
@@ -388,6 +400,240 @@ test("WF-04 (3): Deterministic 'Điểm cần chú ý' (deriveWorkforceAttention
   const leaveTop = qualifiedInsights.find((i) => i.id === "leave-reason-top");
   assert.ok(leaveTop);
   assert.ok(leaveTop.title.includes(WORKFORCE_LEAVE_REASON_CATEGORY_LABELS.compensation_or_benefits));
+
+  // Case C (Regression Blocker 1 — Cross-dimension D30 retention):
+  // Both a Project (PRJ-ALPHA: 2/3 retained = 66,7%) and a Team (Nhóm Cần Lưu Ý: 1/3 retained = 33,3%)
+  // pass the minimum sample guard (>= 3), and the Team has a strictly lower D30 retention rate than the Project.
+  // Result MUST select the Team ("Nhóm"), NOT the Project just because Project is evaluated first.
+  const crossDimD30Res = evaluateWorkforceSnapshotAndTransitions({
+    episodes: [
+      {
+        entry_id: uuid(11),
+        first_work_date: "2026-06-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-alpha",
+        project_display: "PRJ-ALPHA · Dự án Alpha",
+        team_code: "TEAM-CORE",
+        team_display_name: "Nhóm Core",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(12),
+        first_work_date: "2026-06-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-alpha",
+        project_display: "PRJ-ALPHA · Dự án Alpha",
+        team_code: "TEAM-RISK",
+        team_display_name: "Nhóm Cần Lưu Ý",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(13),
+        first_work_date: "2026-06-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-alpha",
+        project_display: "PRJ-ALPHA · Dự án Alpha",
+        team_code: "TEAM-RISK",
+        team_display_name: "Nhóm Cần Lưu Ý",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(14),
+        first_work_date: "2026-06-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-beta",
+        project_display: "PRJ-BETA · Dự án Beta",
+        team_code: "TEAM-CORE",
+        team_display_name: "Nhóm Core",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(15),
+        first_work_date: "2026-06-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-beta",
+        project_display: "PRJ-BETA · Dự án Beta",
+        team_code: "TEAM-CORE",
+        team_display_name: "Nhóm Core",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(16),
+        first_work_date: "2026-06-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-beta",
+        project_display: "PRJ-BETA · Dự án Beta",
+        team_code: "TEAM-RISK",
+        team_display_name: "Nhóm Cần Lưu Ý",
+        team_active: true,
+      },
+    ],
+    events: [
+      // Ep 11 (prj-alpha, TEAM-CORE): retained D30
+      { event_id: uuid(1101), entry_id: uuid(11), status: "ON", effective_date: "2026-06-01", version: 1 },
+      // Ep 12 (prj-alpha, TEAM-RISK): exited before D30
+      { event_id: uuid(1201), entry_id: uuid(12), status: "ON", effective_date: "2026-06-01", version: 1 },
+      { event_id: uuid(1202), entry_id: uuid(12), status: "OFF", effective_date: "2026-06-10", version: 2, leave_reason_text: "Lương thấp" },
+      // Ep 13 (prj-alpha, TEAM-RISK): retained D30
+      { event_id: uuid(1301), entry_id: uuid(13), status: "ON", effective_date: "2026-06-01", version: 1 },
+      // Ep 14 (prj-beta, TEAM-CORE): retained D30
+      { event_id: uuid(1401), entry_id: uuid(14), status: "ON", effective_date: "2026-06-01", version: 1 },
+      // Ep 15 (prj-beta, TEAM-CORE): retained D30
+      { event_id: uuid(1501), entry_id: uuid(15), status: "ON", effective_date: "2026-06-01", version: 1 },
+      // Ep 16 (prj-beta, TEAM-RISK): exited before D30
+      { event_id: uuid(1601), entry_id: uuid(16), status: "ON", effective_date: "2026-06-01", version: 1 },
+      { event_id: uuid(1602), entry_id: uuid(16), status: "OFF", effective_date: "2026-06-12", version: 2, leave_reason_text: "Lương thấp" },
+    ],
+    filters: { from: "2026-10-01", to: "2026-10-15" },
+  });
+
+  const crossDimD30Insights = deriveWorkforceAttentionInsights({
+    status: "ready",
+    ...crossDimD30Res,
+  });
+  const crossDimD30Focus = crossDimD30Insights.find((i) => i.id === "d30-retention-focus");
+  assert.ok(crossDimD30Focus);
+  assert.equal(
+    crossDimD30Focus.title,
+    "Nhóm có tỷ lệ duy trì D30 thấp nhất: Nhóm Cần Lưu Ý (33,3%)",
+  );
+  assert.ok(
+    crossDimD30Focus.detail.includes("Duy trì liên tục 1/3 đợt đã đủ tuổi D30 (rời sớm 2 đợt"),
+  );
+  assert.ok(!crossDimD30Focus.title.includes("Dự án"));
+
+  // Case D (Regression Blocker 2 — Cross-dimension Waiting duration):
+  // Both a Team (Nhóm Tuyển Dụng 2: 3 waiting episodes, avg 7,3 ngày) and a Project (PRJ-SLOW · Dự án Chờ Lâu: 3 waiting episodes, avg 10,0 ngày)
+  // pass the minimum sample guard (>= 3), and the Project has a strictly higher average waiting duration than the Team.
+  // Result MUST select the Project ("Dự án"), NOT the Team just because Team is evaluated first.
+  const crossDimWaitingRes = evaluateWorkforceSnapshotAndTransitions({
+    episodes: [
+      {
+        entry_id: uuid(21),
+        first_work_date: "2026-10-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-fast",
+        project_display: "PRJ-FAST · Dự án Nhanh",
+        team_code: "TEAM-1",
+        team_display_name: "Nhóm Tuyển Dụng 1",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(22),
+        first_work_date: "2026-10-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-slow",
+        project_display: "PRJ-SLOW · Dự án Chờ Lâu",
+        team_code: "TEAM-1",
+        team_display_name: "Nhóm Tuyển Dụng 1",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(23),
+        first_work_date: "2026-10-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-slow",
+        project_display: "PRJ-SLOW · Dự án Chờ Lâu",
+        team_code: "TEAM-2",
+        team_display_name: "Nhóm Tuyển Dụng 2",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(24),
+        first_work_date: "2026-10-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-fast",
+        project_display: "PRJ-FAST · Dự án Nhanh",
+        team_code: "TEAM-1",
+        team_display_name: "Nhóm Tuyển Dụng 1",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(25),
+        first_work_date: "2026-10-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-fast",
+        project_display: "PRJ-FAST · Dự án Nhanh",
+        team_code: "TEAM-2",
+        team_display_name: "Nhóm Tuyển Dụng 2",
+        team_active: true,
+      },
+      {
+        entry_id: uuid(26),
+        first_work_date: "2026-10-01",
+        submission_state: "SUBMITTED",
+        deleted_at: null,
+        voided_at: null,
+        project_key: "prj-slow",
+        project_display: "PRJ-SLOW · Dự án Chờ Lâu",
+        team_code: "TEAM-2",
+        team_display_name: "Nhóm Tuyển Dụng 2",
+        team_active: true,
+      },
+    ],
+    events: [
+      // Ep 21 (prj-fast, TEAM-1): 2 waiting days
+      { event_id: uuid(2101), entry_id: uuid(21), status: "UNCONFIRMED", effective_date: "2026-10-01", version: 1 },
+      { event_id: uuid(2102), entry_id: uuid(21), status: "ON", effective_date: "2026-10-03", version: 2 },
+      // Ep 22 (prj-slow, TEAM-1): 10 waiting days
+      { event_id: uuid(2201), entry_id: uuid(22), status: "UNCONFIRMED", effective_date: "2026-10-01", version: 1 },
+      { event_id: uuid(2202), entry_id: uuid(22), status: "ON", effective_date: "2026-10-11", version: 2 },
+      // Ep 23 (prj-slow, TEAM-2): 10 waiting days
+      { event_id: uuid(2301), entry_id: uuid(23), status: "UNCONFIRMED", effective_date: "2026-10-01", version: 1 },
+      { event_id: uuid(2302), entry_id: uuid(23), status: "ON", effective_date: "2026-10-11", version: 2 },
+      // Ep 24 (prj-fast, TEAM-1): 2 waiting days
+      { event_id: uuid(2401), entry_id: uuid(24), status: "UNCONFIRMED", effective_date: "2026-10-01", version: 1 },
+      { event_id: uuid(2402), entry_id: uuid(24), status: "ON", effective_date: "2026-10-03", version: 2 },
+      // Ep 25 (prj-fast, TEAM-2): 2 waiting days
+      { event_id: uuid(2501), entry_id: uuid(25), status: "UNCONFIRMED", effective_date: "2026-10-01", version: 1 },
+      { event_id: uuid(2502), entry_id: uuid(25), status: "ON", effective_date: "2026-10-03", version: 2 },
+      // Ep 26 (prj-slow, TEAM-2): 10 waiting days
+      { event_id: uuid(2601), entry_id: uuid(26), status: "UNCONFIRMED", effective_date: "2026-10-01", version: 1 },
+      { event_id: uuid(2602), entry_id: uuid(26), status: "ON", effective_date: "2026-10-11", version: 2 },
+    ],
+    filters: { from: "2026-10-01", to: "2026-10-15" },
+  });
+
+  const crossDimWaitingInsights = deriveWorkforceAttentionInsights({
+    status: "ready",
+    ...crossDimWaitingRes,
+  });
+  const crossDimWaitingFocus = crossDimWaitingInsights.find(
+    (i) => i.id === "waiting-duration-focus",
+  );
+  assert.ok(crossDimWaitingFocus);
+  assert.equal(
+    crossDimWaitingFocus.title,
+    "Dự án có thời gian chờ trung bình cao nhất: PRJ-SLOW · Dự án Chờ Lâu (10 ngày)",
+  );
+  assert.ok(
+    crossDimWaitingFocus.detail.includes(
+      "Tổng 30 ngày chờ trên 3 đợt từng chờ việc (hiện còn chờ 0 đợt",
+    ),
+  );
+  assert.ok(!crossDimWaitingFocus.title.includes("Nhóm"));
 });
 
 test("WF-04 (4): Fail-closed payload validation rejects broken dimension reconciliation, duplicate bucket keys, or raw leave reason leaks", () => {
