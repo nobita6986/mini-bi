@@ -18,10 +18,10 @@ function DonutTooltip({ active, payload }: { active?: boolean; payload?: Tooltip
   const d = payload[0].payload;
   if (!d) return null;
   return (
-    <div className="rounded-lg border border-border bg-tooltip px-3 py-2 text-sm shadow-md">
-      <p className="font-medium text-foreground">{d.display}</p>
+    <div className="rounded-xl border border-border bg-tooltip px-3 py-2 text-sm shadow-md transition-opacity duration-[var(--ui-motion-hover,160ms)] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none">
+      <p className="text-sm font-semibold text-foreground">{d.display}</p>
       <p className="mt-0.5 text-muted">
-        <span className="font-mono">{d.value}</span> người · <span className="font-mono">{Math.round(d.percent)}%</span>
+        <span className="font-mono tabular-nums">{d.value}</span> người · <span className="font-mono tabular-nums">{Math.round(d.percent)}%</span>
       </p>
     </div>
   );
@@ -48,13 +48,13 @@ export function ProjectDonut({ slices, title }: { slices: ProjectDonutSlice[]; t
           <span className="text-xs text-muted">người</span>
         </div>
       </div>
-      <ul className="space-y-1.5 text-sm text-foreground">
+      <ul className="max-h-56 space-y-1.5 overflow-y-auto text-sm text-foreground">
         {slices.map((s) => (
           <li key={s.key} className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: resolveColor(s.color) }} />
             <span className="min-w-0 flex-1 truncate" title={s.display}>{s.display}</span>
-            <span className="ml-auto shrink-0 font-mono">{s.value}</span>
-            <span className="w-11 shrink-0 text-right text-xs text-muted">{Math.round(s.percent)}%</span>
+            <span className="ml-auto shrink-0 font-mono tabular-nums">{s.value}</span>
+            <span className="w-11 shrink-0 text-right font-mono tabular-nums text-xs text-muted">{Math.round(s.percent)}%</span>
           </li>
         ))}
       </ul>
