@@ -1,5 +1,7 @@
+"use client";
+
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/ui/badge";
@@ -11,15 +13,19 @@ import {
 } from "@/lib/reporting/p1-period-comparison";
 import {
   WORKFORCE_BALANCE_COLUMN_LABELS,
+  WORKFORCE_DIMENSION_ATTRIBUTION_NOTE,
+  WORKFORCE_DIMENSION_KIND_LABELS,
   WORKFORCE_DURATION_BUCKET_LABELS,
   WORKFORCE_DURATION_SAMPLE_LABELS,
   WORKFORCE_INITIAL_STATUS_LABELS,
+  WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE,
   WORKFORCE_NON_ATTENDANCE_NOTE,
   WORKFORCE_RETENTION_CHECKPOINT_LABELS,
   WORKFORCE_SNAPSHOT_STATUS_LABELS,
   WORKFORCE_TRANSITION_PAIR_LABELS,
   WORKFORCE_UNIT_METADATA_NOTE,
   WORKFORCE_WAITING_SAMPLE_LABELS,
+  type WorkforceDimensionKind,
   type WorkforceReportingResult,
 } from "@/lib/reporting/wf01-workforce-snapshot";
 import {
@@ -31,6 +37,12 @@ import {
   formatDurationDaysAverage,
   formatRetentionRatePercent,
 } from "@/lib/reporting/wf03-workforce-tenure-retention";
+import {
+  deriveWorkforceAttentionInsights,
+  formatCoverageRatePercent,
+  formatShareRatePercent,
+  WORKFORCE_HIGHLIGHT_MIN_SAMPLE_SIZE,
+} from "@/lib/reporting/wf04-workforce-dimensions-leave-reasons";
 import type { ReportingBucket } from "@/lib/reporting/p1-reporting";
 import type { ReportingOptionsResult } from "@/lib/reporting/p1-options-server";
 
@@ -129,6 +141,9 @@ export function WorkforceSnapshotSection({
 }: {
   workforce?: WorkforceReportingResult | null;
 }) {
+  const [activeDimensionKind, setActiveDimensionKind] =
+    useState<WorkforceDimensionKind>("project");
+
   if (!workforce) return null;
 
   if (workforce.status === "unavailable") {
@@ -144,13 +159,23 @@ export function WorkforceSnapshotSection({
           </StatusBadge>
         </div>
         <p className="mt-1 text-xs">
-          Không tải được dữ liệu hiện trạng trạng thái lao động tại ngày mốc, cân bằng đầu/cuối kỳ, thời gian chờ việc, thâm niên làm việc và tỷ lệ giữ chân. Các chỉ số tuyển dụng theo ngày ghi nhận tuyển dụng vẫn giữ nguyên.
+          Không tải được dữ liệu hiện trạng trạng thái lao động tại ngày mốc, cân bằng đầu/cuối kỳ, thời gian chờ việc, thâm niên làm việc, tỷ lệ giữ chân, chất lượng theo chiều và lý do nghỉ việc. Các chỉ số tuyển dụng theo ngày ghi nhận tuyển dụng vẫn giữ nguyên.
         </p>
       </section>
     );
   }
 
-  const { snapshot, transitions, balance, waiting, duration, retention } = workforce;
+  const {
+    snapshot,
+    transitions,
+    balance,
+    waiting,
+    duration,
+    retention,
+    dimensions,
+    leaveReasons,
+  } = workforce;
+
   const asOfSourceLabel =
     snapshot.asOfSource === "filter_to"
       ? "Theo ngày kết thúc bộ lọc"
@@ -158,27 +183,41 @@ export function WorkforceSnapshotSection({
         ? "Theo ngày mốc chỉ định"
         : "Theo ngày hiện hành (GMT+7)";
 
+  const attentionInsights = deriveWorkforceAttentionInsights(workforce);
+
+  const snapshotShare = (count: number) =>
+    snapshot.eligibleEpisodeTotal > 0 ? count / snapshot.eligibleEpisodeTotal : null;
+
+  const snapshotPctWidth = (count: number) =>
+    snapshot.eligibleEpisodeTotal > 0
+      ? Math.max(0, Math.min(100, (count / snapshot.eligibleEpisodeTotal) * 100))
+      : 0;
+
   const transitionRows = transitions.applicable
     ? [
         {
           key: "unconfirmed_to_on",
           label: WORKFORCE_TRANSITION_PAIR_LABELS.UNCONFIRMED_TO_ON,
           pair: transitions.pairs.unconfirmedToOn,
+          barColor: "bg-emerald-500",
         },
         {
           key: "unconfirmed_to_off",
           label: WORKFORCE_TRANSITION_PAIR_LABELS.UNCONFIRMED_TO_OFF,
           pair: transitions.pairs.unconfirmedToOff,
+          barColor: "bg-amber-500",
         },
         {
           key: "on_to_off",
           label: WORKFORCE_TRANSITION_PAIR_LABELS.ON_TO_OFF,
           pair: transitions.pairs.onToOff,
+          barColor: "bg-rose-500",
         },
         {
           key: "off_to_on",
           label: WORKFORCE_TRANSITION_PAIR_LABELS.OFF_TO_ON,
           pair: transitions.pairs.offToOn,
+          barColor: "bg-sky-500",
         },
         ...(transitions.pairs.other.eventCount > 0
           ? [
@@ -186,11 +225,17 @@ export function WorkforceSnapshotSection({
                 key: "other",
                 label: WORKFORCE_TRANSITION_PAIR_LABELS.OTHER,
                 pair: transitions.pairs.other,
+                barColor: "bg-slate-400",
               },
             ]
           : []),
       ]
     : [];
+
+  const maxTransitionEvents = transitionRows.reduce(
+    (acc, r) => Math.max(acc, r.pair.eventCount),
+    0,
+  );
 
   const balanceRows = balance.applicable
     ? [
@@ -198,21 +243,25 @@ export function WorkforceSnapshotSection({
           key: "on",
           label: WORKFORCE_SNAPSHOT_STATUS_LABELS.ON,
           row: balance.byStatus.on,
+          dotClass: "bg-emerald-500",
         },
         {
           key: "unconfirmed",
           label: WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED,
           row: balance.byStatus.unconfirmed,
+          dotClass: "bg-amber-500",
         },
         {
           key: "off",
           label: WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF,
           row: balance.byStatus.off,
+          dotClass: "bg-rose-500",
         },
         {
           key: "unknown",
           label: WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN,
           row: balance.byStatus.unknown,
+          dotClass: "bg-slate-400",
         },
       ]
     : [];
@@ -268,21 +317,25 @@ export function WorkforceSnapshotSection({
       key: "days_0_to_7",
       label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_0_TO_7,
       count: duration.distribution.days0To7Count,
+      barColor: "bg-sky-500",
     },
     {
       key: "days_8_to_30",
       label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_8_TO_30,
       count: duration.distribution.days8To30Count,
+      barColor: "bg-emerald-500",
     },
     {
       key: "days_31_to_90",
       label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_31_TO_90,
       count: duration.distribution.days31To90Count,
+      barColor: "bg-indigo-500",
     },
     {
       key: "days_91_plus",
       label: WORKFORCE_DURATION_BUCKET_LABELS.DAYS_91_PLUS,
       count: duration.distribution.days91PlusCount,
+      barColor: "bg-violet-500",
     },
   ];
 
@@ -304,6 +357,53 @@ export function WorkforceSnapshotSection({
     },
   ];
 
+  const dimensionTabs: Array<{
+    kind: WorkforceDimensionKind;
+    label: string;
+    group: typeof dimensions.byProject;
+  }> = [
+    {
+      kind: "project",
+      label: WORKFORCE_DIMENSION_KIND_LABELS.PROJECT,
+      group: dimensions.byProject,
+    },
+    {
+      kind: "team",
+      label: WORKFORCE_DIMENSION_KIND_LABELS.TEAM,
+      group: dimensions.byTeam,
+    },
+    {
+      kind: "recruiter",
+      label: WORKFORCE_DIMENSION_KIND_LABELS.RECRUITER,
+      group: dimensions.byRecruiter,
+    },
+    {
+      kind: "provider",
+      label: WORKFORCE_DIMENSION_KIND_LABELS.PROVIDER,
+      group: dimensions.byProvider,
+    },
+  ];
+
+  const activeDimensionTab =
+    dimensionTabs.find((tab) => tab.kind === activeDimensionKind) ?? dimensionTabs[0];
+  const activeDimensionGroup = activeDimensionTab.group;
+  const topVisualBuckets = activeDimensionGroup.buckets.slice(0, 6);
+  const maxDimensionBucketEligible = topVisualBuckets.reduce(
+    (acc, b) => Math.max(acc, b.eligibleEpisodeCount),
+    0,
+  );
+
+  const periodLeaveCategoryByKey = new Map(
+    leaveReasons.periodLeaveReasons.applicable
+      ? leaveReasons.periodLeaveReasons.byCategory.map((row) => [row.key, row])
+      : [],
+  );
+
+  const maxLeaveReasonCategoryCount = leaveReasons.byCategory.reduce(
+    (acc, row) => Math.max(acc, row.episodeCount),
+    0,
+  );
+
   return (
     <section aria-label="Hiện trạng và biến động trạng thái lao động">
       <Card className="p-4">
@@ -319,7 +419,57 @@ export function WorkforceSnapshotSection({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-12">
+        {/* Khối tóm tắt tất định: Điểm cần chú ý */}
+        <div
+          aria-label="Điểm cần chú ý về nhân sự"
+          className="mt-3 rounded-xl border border-border bg-muted/5 p-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">
+                Điểm cần chú ý tại ngày mốc {snapshot.asOfDate}
+              </h3>
+              <p className="mt-0.5 text-xs text-muted">
+                Tổng hợp tự động theo quy tắc tất định từ số liệu đang hiển thị (ngưỡng mẫu tối thiểu ≥ {WORKFORCE_HIGHLIGHT_MIN_SAMPLE_SIZE} đợt làm việc khi xếp hạng dự án/nhóm).
+              </p>
+            </div>
+            <span className="font-mono text-xs text-muted">
+              Tổng mẫu: {snapshot.eligibleEpisodeTotal} đợt làm việc đủ điều kiện
+            </span>
+          </div>
+
+          <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+            {attentionInsights.map((insight) => {
+              const borderClass =
+                insight.tone === "emerald"
+                  ? "border-l-4 border-l-emerald-500"
+                  : insight.tone === "amber"
+                    ? "border-l-4 border-l-amber-500"
+                    : insight.tone === "sky"
+                      ? "border-l-4 border-l-sky-500"
+                      : "border-l-4 border-l-slate-400";
+              return (
+                <div
+                  key={insight.id}
+                  className={`rounded-lg border border-border bg-surface px-3 py-2.5 ${borderClass}`}
+                >
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                    {insight.badgeLabel}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-foreground">
+                    {insight.title}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                    {insight.detail}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* WF-01 (2.1 & 2.2): Snapshot trạng thái lao động & Biến động chuyển trạng thái */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
           <div className="rounded-xl border border-border bg-muted/5 p-3 lg:col-span-5">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="text-sm font-semibold text-foreground">
@@ -333,33 +483,117 @@ export function WorkforceSnapshotSection({
               Các đợt làm việc hợp lệ trong phạm vi có ngày bắt đầu làm việc ≤ {snapshot.asOfDate} (tính theo ngày trạng thái có hiệu lực).
             </p>
 
-            <dl className="mt-3 grid grid-cols-2 gap-2">
+            {/* Thanh cơ cấu 100% trạng thái tại ngày mốc */}
+            <div className="mt-3 rounded-lg border border-border bg-surface p-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-foreground">
+                  Cơ cấu 100% trạng thái tại ngày mốc
+                </span>
+                <span className="font-mono font-semibold tabular-nums text-foreground">
+                  {snapshot.eligibleEpisodeTotal}{" "}
+                  <span className="font-normal text-muted">đợt đủ điều kiện</span>
+                </span>
+              </div>
+              <div
+                aria-label="Thanh cơ cấu tỷ trọng trạng thái tại ngày mốc"
+                className="mt-2 flex h-3 w-full overflow-hidden rounded-full bg-muted/20"
+              >
+                {snapshot.onCount > 0 ? (
+                  <div
+                    className="bg-emerald-500 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.onCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: ${snapshot.onCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.onCount))})`}
+                  />
+                ) : null}
+                {snapshot.unconfirmedCount > 0 ? (
+                  <div
+                    className="bg-amber-500 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.unconfirmedCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}: ${snapshot.unconfirmedCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))})`}
+                  />
+                ) : null}
+                {snapshot.offCount > 0 ? (
+                  <div
+                    className="bg-rose-500 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.offCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}: ${snapshot.offCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.offCount))})`}
+                  />
+                ) : null}
+                {snapshot.unknownCount > 0 ? (
+                  <div
+                    className="bg-slate-400 transition-all"
+                    style={{ width: `${snapshotPctWidth(snapshot.unknownCount)}%` }}
+                    title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}: ${snapshot.unknownCount} đợt (${formatShareRatePercent(snapshotShare(snapshot.unknownCount))})`}
+                  />
+                ) : null}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} ({formatShareRatePercent(snapshotShare(snapshot.onCount))})
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED} ({formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))})
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} ({formatShareRatePercent(snapshotShare(snapshot.offCount))})
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-slate-400" />
+                  {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN} ({formatShareRatePercent(snapshotShare(snapshot.unknownCount))})
+                </span>
+              </div>
+            </div>
+
+            <dl className="mt-2.5 grid grid-cols-2 gap-2">
               <div className="col-span-2 flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2">
                 <dt className="text-xs font-medium text-muted">Tổng đợt làm việc đủ điều kiện tại ngày mốc</dt>
                 <dd className="font-mono text-base font-semibold tabular-nums text-foreground">
-                  {snapshot.eligibleEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+                  {snapshot.eligibleEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc (100%)</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}</dt>
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}</dt>
+                  <span className="font-mono text-[11px] font-medium text-emerald-700">
+                    {formatShareRatePercent(snapshotShare(snapshot.onCount))}
+                  </span>
+                </div>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
                   {snapshot.onCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}</dt>
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}</dt>
+                  <span className="font-mono text-[11px] font-medium text-amber-700">
+                    {formatShareRatePercent(snapshotShare(snapshot.unconfirmedCount))}
+                  </span>
+                </div>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
                   {snapshot.unconfirmedCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}</dt>
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}</dt>
+                  <span className="font-mono text-[11px] font-medium text-rose-700">
+                    {formatShareRatePercent(snapshotShare(snapshot.offCount))}
+                  </span>
+                </div>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
                   {snapshot.offCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
               </div>
               <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}</dt>
+                <div className="flex items-center justify-between gap-1">
+                  <dt className="text-xs text-muted">{WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}</dt>
+                  <span className="font-mono text-[11px] font-medium text-muted">
+                    {formatShareRatePercent(snapshotShare(snapshot.unknownCount))}
+                  </span>
+                </div>
                 <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
                   {snapshot.unknownCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
                 </dd>
@@ -411,6 +645,43 @@ export function WorkforceSnapshotSection({
                     <span className="font-mono font-medium text-foreground">{transitions.initial.unconfirmed.eventCount}</span> lần (
                     <span className="font-mono">{transitions.initial.unconfirmed.episodeCount}</span> đợt làm việc)
                   </p>
+                </div>
+
+                {/* Biểu đồ thanh ngang so sánh các luồng chuyển tiếp trạng thái */}
+                <div className="rounded-lg border border-border bg-surface p-2.5">
+                  <p className="text-xs font-medium text-foreground">
+                    So sánh trực quan các luồng chuyển trạng thái trong kỳ
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {transitionRows.map((row) => {
+                      const barPct =
+                        maxTransitionEvents > 0
+                          ? Math.max(2, Math.round((row.pair.eventCount / maxTransitionEvents) * 100))
+                          : 0;
+                      const shareRate =
+                        transitions.totals.transitionEventCount > 0
+                          ? row.pair.eventCount / transitions.totals.transitionEventCount
+                          : null;
+                      return (
+                        <div key={`bar-${row.key}`} className="text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-muted">{row.label}</span>
+                            <span className="font-mono tabular-nums text-foreground">
+                              <strong>{row.pair.eventCount}</strong> lần ({row.pair.episodeCount} đợt · {formatShareRatePercent(shareRate)})
+                            </span>
+                          </div>
+                          <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/20">
+                            {row.pair.eventCount > 0 ? (
+                              <div
+                                className={`h-full rounded-full ${row.barColor}`}
+                                style={{ width: `${barPct}%` }}
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -496,6 +767,29 @@ export function WorkforceSnapshotSection({
                     Mốc cuối kỳ:{" "}
                     <strong className="font-mono text-foreground">{balance.closingAsOfDate}</strong>
                   </span>
+                </div>
+
+                {/* Tóm tắt trực quan biến động ròng Đầu kỳ -> Cuối kỳ */}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {balanceRows.map((item) => (
+                    <div
+                      key={`net-${item.key}`}
+                      className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className={`h-2 w-2 rounded-full ${item.dotClass}`} />
+                        <span className="truncate font-medium text-muted">{item.label}</span>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between gap-1 font-mono tabular-nums">
+                        <span className="text-muted">
+                          {item.row.openingCount} → <strong className="text-foreground">{item.row.closingCount}</strong>
+                        </span>
+                        <span className="font-semibold text-foreground">
+                          {formatSignedBalanceDelta(item.row.netChange)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -595,6 +889,59 @@ export function WorkforceSnapshotSection({
               <span className="font-mono text-xs text-muted">
                 Vào thẳng {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {waiting.directOnEpisodeCount} hồ sơ
               </span>
+            </div>
+
+            {/* Thanh phân bổ kết quả của tập từng chờ việc */}
+            <div className="mt-2 rounded-lg border border-border bg-surface p-2.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium text-foreground">
+                  Phân rã kết quả trên tổng mẫu từng chờ việc ({waiting.waitingEpisodeTotal} đợt)
+                </span>
+                <span className="font-mono text-muted">
+                  Đã kết thúc chờ: <strong className="text-foreground">{waiting.completedWaiting.episodeCount}</strong> · Đang còn chờ:{" "}
+                  <strong className="text-foreground">{waiting.currentlyWaiting.episodeCount}</strong>
+                </span>
+              </div>
+              <div className="mt-2 flex h-2.5 w-full overflow-hidden rounded-full bg-muted/20">
+                {waiting.waitingEpisodeTotal > 0 && waiting.placedToOn.episodeCount > 0 ? (
+                  <div
+                    className="bg-emerald-500"
+                    style={{
+                      width: `${(waiting.placedToOn.episodeCount / waiting.waitingEpisodeTotal) * 100}%`,
+                    }}
+                  />
+                ) : null}
+                {waiting.waitingEpisodeTotal > 0 && waiting.exitedWithoutOn.episodeCount > 0 ? (
+                  <div
+                    className="bg-rose-500"
+                    style={{
+                      width: `${(waiting.exitedWithoutOn.episodeCount / waiting.waitingEpisodeTotal) * 100}%`,
+                    }}
+                  />
+                ) : null}
+                {waiting.waitingEpisodeTotal > 0 && waiting.currentlyWaiting.episodeCount > 0 ? (
+                  <div
+                    className="bg-amber-500"
+                    style={{
+                      width: `${(waiting.currentlyWaiting.episodeCount / waiting.waitingEpisodeTotal) * 100}%`,
+                    }}
+                  />
+                ) : null}
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Đã bố trí vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: {waiting.placedToOn.episodeCount}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  Nghỉ khi đang chờ: {waiting.exitedWithoutOn.episodeCount}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Đang còn chờ tại ngày mốc: {waiting.currentlyWaiting.episodeCount}
+                </span>
+              </div>
             </div>
 
             <dl className="mt-2 grid grid-cols-2 gap-2">
@@ -809,14 +1156,37 @@ export function WorkforceSnapshotSection({
             </div>
 
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {durationBucketRows.map((bucket) => (
-                <div key={bucket.key} className="rounded-lg border border-border bg-surface px-2.5 py-1.5">
-                  <p className="text-[11px] text-muted">{bucket.label}</p>
-                  <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
-                    {bucket.count} <span className="text-[11px] font-normal text-muted">đợt</span>
-                  </p>
-                </div>
-              ))}
+              {durationBucketRows.map((bucket) => {
+                const bucketRate =
+                  duration.everOnEpisodeCount > 0
+                    ? bucket.count / duration.everOnEpisodeCount
+                    : null;
+                const bucketWidth =
+                  duration.everOnEpisodeCount > 0
+                    ? Math.round((bucket.count / duration.everOnEpisodeCount) * 100)
+                    : 0;
+                return (
+                  <div key={bucket.key} className="rounded-lg border border-border bg-surface px-2.5 py-1.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <p className="text-[11px] text-muted">{bucket.label}</p>
+                      <span className="font-mono text-[10px] text-muted">
+                        {formatShareRatePercent(bucketRate)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">
+                      {bucket.count} <span className="text-[11px] font-normal text-muted">đợt</span>
+                    </p>
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/20">
+                      {bucket.count > 0 ? (
+                        <div
+                          className={`h-full rounded-full ${bucket.barColor}`}
+                          style={{ width: `${bucketWidth}%` }}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {duration.periodPresence.applicable ? (
@@ -852,33 +1222,47 @@ export function WorkforceSnapshotSection({
             </div>
 
             <dl className="mt-2 grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">Giữ chân D7 (7 ngày)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {formatRetentionRatePercent(retention.checkpoints.d7.retentionRate)}
-                </dd>
-                <p className="mt-0.5 text-[11px] text-muted">
-                  Duy trì liên tục: {retention.checkpoints.d7.retainedCount} / {retention.checkpoints.d7.maturedCount} đã đủ tuổi ({retention.checkpoints.d7.immatureCount} chưa đủ tuổi)
-                </p>
-              </div>
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">Giữ chân D30 (30 ngày)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {formatRetentionRatePercent(retention.checkpoints.d30.retentionRate)}
-                </dd>
-                <p className="mt-0.5 text-[11px] text-muted">
-                  Duy trì liên tục: {retention.checkpoints.d30.retainedCount} / {retention.checkpoints.d30.maturedCount} đã đủ tuổi ({retention.checkpoints.d30.immatureCount} chưa đủ tuổi)
-                </p>
-              </div>
-              <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                <dt className="text-xs text-muted">Giữ chân D90 (90 ngày)</dt>
-                <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
-                  {formatRetentionRatePercent(retention.checkpoints.d90.retentionRate)}
-                </dd>
-                <p className="mt-0.5 text-[11px] text-muted">
-                  Duy trì liên tục: {retention.checkpoints.d90.retainedCount} / {retention.checkpoints.d90.maturedCount} đã đủ tuổi ({retention.checkpoints.d90.immatureCount} chưa đủ tuổi)
-                </p>
-              </div>
+              {retentionCheckpointRows.map((item) => {
+                const cp = item.checkpoint;
+                const cohortTotal = retention.cohortEpisodeTotal;
+                const retainedPct = cohortTotal > 0 ? (cp.retainedCount / cohortTotal) * 100 : 0;
+                const exitedPct = cohortTotal > 0 ? (cp.exitedCount / cohortTotal) * 100 : 0;
+                const immaturePct = cohortTotal > 0 ? (cp.immatureCount / cohortTotal) * 100 : 0;
+                return (
+                  <div key={`card-${item.key}`} className="rounded-lg border border-border bg-surface px-3 py-2">
+                    <dt className="text-xs text-muted">{item.label}</dt>
+                    <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                      {formatRetentionRatePercent(cp.retentionRate)}
+                    </dd>
+                    <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-full bg-muted/20">
+                      {cp.retainedCount > 0 ? (
+                        <div
+                          className="bg-emerald-500"
+                          style={{ width: `${retainedPct}%` }}
+                          title={`Duy trì liên tục: ${cp.retainedCount}`}
+                        />
+                      ) : null}
+                      {cp.exitedCount > 0 ? (
+                        <div
+                          className="bg-rose-500"
+                          style={{ width: `${exitedPct}%` }}
+                          title={`Nghỉ trước mốc: ${cp.exitedCount}`}
+                        />
+                      ) : null}
+                      {cp.immatureCount > 0 ? (
+                        <div
+                          className="bg-slate-300"
+                          style={{ width: `${immaturePct}%` }}
+                          title={`Chưa đủ tuổi: ${cp.immatureCount}`}
+                        />
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted">
+                      Duy trì liên tục: {cp.retainedCount} / {cp.maturedCount} đã đủ tuổi ({cp.immatureCount} chưa đủ tuổi)
+                    </p>
+                  </div>
+                );
+              })}
             </dl>
 
             <div className="mt-2 overflow-x-auto rounded-lg border border-border bg-surface">
@@ -953,6 +1337,555 @@ export function WorkforceSnapshotSection({
               ) : null}
             </div>
           </div>
+        </div>
+
+        {/* WF-04 (2.7): Chất lượng lực lượng theo chiều Dự án / Nhóm / Người tuyển / HRP-Vendor */}
+        <div className="mt-4 rounded-xl border border-border bg-muted/5 p-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">
+                Chất lượng lực lượng theo chiều phân tích (Dự án / Nhóm / Người tuyển / HRP-Vendor)
+              </h3>
+              <p className="mt-0.5 text-xs text-muted">
+                Đối soát đồng nhất hiện trạng tại ngày {dimensions.asOfDate}, tỷ lệ bố trí việc từ chờ việc, thâm niên {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON} và giữ chân liên tục D7 / D30 / D90 theo từng chiều.
+              </p>
+            </div>
+
+            <div
+              role="tablist"
+              aria-label="Chọn chiều phân tích chất lượng nhân sự"
+              className="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-surface p-1"
+            >
+              {dimensionTabs.map((tab) => {
+                const isSelected = tab.kind === activeDimensionTab.kind;
+                return (
+                  <button
+                    key={tab.kind}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => setActiveDimensionKind(tab.kind)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      isSelected
+                        ? "bg-primary text-white shadow-xs"
+                        : "text-muted hover:bg-surface-hover hover:text-foreground"
+                    }`}
+                  >
+                    {tab.label} ({tab.group.buckets.length})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
+            <span>
+              Chiều đang xem:{" "}
+              <strong className="text-foreground">{activeDimensionTab.label}</strong> ({activeDimensionGroup.buckets.length} đơn vị/nhóm)
+            </span>
+            <span>
+              Tổng đợt đối soát:{" "}
+              <strong className="font-mono text-foreground">{activeDimensionGroup.eligibleEpisodeTotal}</strong> đợt (Đã gán chiều:{" "}
+              <strong className="font-mono text-foreground">{activeDimensionGroup.knownEpisodeCount}</strong> · Không xác định:{" "}
+              <strong className="font-mono text-foreground">{activeDimensionGroup.unknownEpisodeCount}</strong>)
+            </span>
+          </div>
+
+          {activeDimensionGroup.buckets.length === 0 ? (
+            <p className="mt-2 rounded-lg border border-dashed border-border bg-surface px-3 py-4 text-xs text-muted">
+              Chưa có đợt làm việc đủ điều kiện tại ngày mốc {dimensions.asOfDate} cho chiều phân tích này.
+            </p>
+          ) : (
+            <div className="mt-2.5 space-y-3">
+              {/* Biểu đồ thanh ngang so sánh trực quan các đơn vị/nhóm hàng đầu */}
+              <div className="rounded-lg border border-border bg-surface p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="font-medium text-foreground">
+                    So sánh cơ cấu trạng thái &amp; tỷ lệ giữ chân D30 ({activeDimensionTab.label})
+                  </span>
+                  <span className="text-[11px] text-muted">
+                    Màu thanh: Xanh ({WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}) · Vàng ({WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}) · Đỏ ({WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}) · Xám ({WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN})
+                  </span>
+                </div>
+
+                <div className="mt-2.5 space-y-2">
+                  {topVisualBuckets.map((bucket) => {
+                    const widthScale =
+                      maxDimensionBucketEligible > 0
+                        ? (bucket.eligibleEpisodeCount / maxDimensionBucketEligible) * 100
+                        : 0;
+                    const onSeg =
+                      bucket.eligibleEpisodeCount > 0
+                        ? (bucket.onCount / bucket.eligibleEpisodeCount) * widthScale
+                        : 0;
+                    const waitSeg =
+                      bucket.eligibleEpisodeCount > 0
+                        ? (bucket.unconfirmedCount / bucket.eligibleEpisodeCount) * widthScale
+                        : 0;
+                    const offSeg =
+                      bucket.eligibleEpisodeCount > 0
+                        ? (bucket.offCount / bucket.eligibleEpisodeCount) * widthScale
+                        : 0;
+                    const unkSeg =
+                      bucket.eligibleEpisodeCount > 0
+                        ? (bucket.unknownCount / bucket.eligibleEpisodeCount) * widthScale
+                        : 0;
+
+                    return (
+                      <div key={`viz-${bucket.key}`} className="text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">{bucket.display}</span>
+                            {bucket.active === false ? (
+                              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                Ngừng hoạt động
+                              </span>
+                            ) : null}
+                            {bucket.isUnknown ? (
+                              <span className="rounded bg-slate-500/15 px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                                Thiếu quy thuộc
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] tabular-nums text-muted">
+                            <span>
+                              Tổng: <strong className="text-foreground">{bucket.eligibleEpisodeCount}</strong> đợt
+                            </span>
+                            <span>
+                              Bố trí việc: <strong className="text-foreground">{formatPlacementRatePercent(bucket.placementRateOfWaiting)}</strong>
+                            </span>
+                            <span>
+                              Giữ chân D30: <strong className="text-foreground">{formatRetentionRatePercent(bucket.checkpoints.d30.retentionRate)}</strong> ({bucket.checkpoints.d30.retainedCount}/{bucket.checkpoints.d30.maturedCount})
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-1 flex h-2.5 w-full overflow-hidden rounded-full bg-muted/20">
+                          {onSeg > 0 ? (
+                            <div
+                              className="bg-emerald-500"
+                              style={{ width: `${onSeg}%` }}
+                              title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}: ${bucket.onCount}`}
+                            />
+                          ) : null}
+                          {waitSeg > 0 ? (
+                            <div
+                              className="bg-amber-500"
+                              style={{ width: `${waitSeg}%` }}
+                              title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}: ${bucket.unconfirmedCount}`}
+                            />
+                          ) : null}
+                          {offSeg > 0 ? (
+                            <div
+                              className="bg-rose-500"
+                              style={{ width: `${offSeg}%` }}
+                              title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}: ${bucket.offCount}`}
+                            />
+                          ) : null}
+                          {unkSeg > 0 ? (
+                            <div
+                              className="bg-slate-400"
+                              style={{ width: `${unkSeg}%` }}
+                              title={`${WORKFORCE_SNAPSHOT_STATUS_LABELS.UNKNOWN}: ${bucket.unknownCount}`}
+                            />
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bảng đối soát chi tiết theo chiều */}
+              <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+                <table className="r22-report-table w-full text-left text-xs">
+                  <caption className="sr-only">
+                    Bảng chất lượng lực lượng lao động {activeDimensionTab.label} tính đến ngày {dimensions.asOfDate}
+                  </caption>
+                  <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                    <tr className="border-b border-border">
+                      <th scope="col" className="px-2.5 py-2 font-medium">
+                        {activeDimensionTab.label}
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        Tổng đợt
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        Bố trí từ chờ việc
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        TB ngày chờ
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        TB ngày {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        Giữ chân D7
+                      </th>
+                      <th scope="col" className="px-2 py-2 text-right font-medium">
+                        Giữ chân D30
+                      </th>
+                      <th scope="col" className="px-2.5 py-2 text-right font-medium">
+                        Giữ chân D90
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {activeDimensionGroup.buckets.map((bucket) => (
+                      <tr key={bucket.key} className="text-foreground hover:bg-surface-hover">
+                        <td className="px-2.5 py-1.5 font-medium">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>{bucket.display}</span>
+                            {bucket.unknownCount > 0 ? (
+                              <span className="font-mono text-[10px] font-normal text-muted">
+                                ({bucket.unknownCount} chưa rõ trạng thái)
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                          {bucket.eligibleEpisodeCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap text-emerald-700">
+                          {bucket.onCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap text-amber-700">
+                          {bucket.unconfirmedCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap text-rose-700">
+                          {bucket.offCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <span className="font-semibold">
+                            {formatPlacementRatePercent(bucket.placementRateOfWaiting)}
+                          </span>{" "}
+                          <span className="text-[11px] text-muted">
+                            ({bucket.placedToOnEpisodeCount}/{bucket.waitingEpisodeCount})
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          {formatWaitingDaysAverage(bucket.avgWaitingDaysPerEpisode)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          {formatDurationDaysAverage(bucket.avgOnDaysPerEpisode)}{" "}
+                          <span className="text-[11px] text-muted">({bucket.everOnEpisodeCount} đợt)</span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <span className="font-semibold">
+                            {formatRetentionRatePercent(bucket.checkpoints.d7.retentionRate)}
+                          </span>{" "}
+                          <span className="text-[11px] text-muted">
+                            ({bucket.checkpoints.d7.retainedCount}/{bucket.checkpoints.d7.maturedCount})
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <span className="font-semibold">
+                            {formatRetentionRatePercent(bucket.checkpoints.d30.retentionRate)}
+                          </span>{" "}
+                          <span className="text-[11px] text-muted">
+                            ({bucket.checkpoints.d30.retainedCount}/{bucket.checkpoints.d30.maturedCount})
+                          </span>
+                        </td>
+                        <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          <span className="font-semibold">
+                            {formatRetentionRatePercent(bucket.checkpoints.d90.retentionRate)}
+                          </span>{" "}
+                          <span className="text-[11px] text-muted">
+                            ({bucket.checkpoints.d90.retainedCount}/{bucket.checkpoints.d90.maturedCount})
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
+                    <tr>
+                      <td className="px-2.5 py-1.5">Tổng đối soát toàn chiều (khớp 100% Snapshot)</td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {snapshot.eligibleEpisodeTotal}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {snapshot.onCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {snapshot.unconfirmedCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {snapshot.offCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatPlacementRatePercent(waiting.placementRateOfWaiting)}{" "}
+                        <span className="text-[11px] font-normal text-muted">
+                          ({waiting.placedToOn.episodeCount}/{waiting.waitingEpisodeTotal})
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatWaitingDaysAverage(waiting.allWaiting.avgWaitingDaysPerEpisode)}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatDurationDaysAverage(duration.allEverOn.avgOnDaysPerEpisode)}{" "}
+                        <span className="text-[11px] font-normal text-muted">
+                          ({duration.everOnEpisodeCount} đợt)
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatRetentionRatePercent(retention.checkpoints.d7.retentionRate)}{" "}
+                        <span className="text-[11px] font-normal text-muted">
+                          ({retention.checkpoints.d7.retainedCount}/{retention.checkpoints.d7.maturedCount})
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatRetentionRatePercent(retention.checkpoints.d30.retentionRate)}{" "}
+                        <span className="text-[11px] font-normal text-muted">
+                          ({retention.checkpoints.d30.retainedCount}/{retention.checkpoints.d30.maturedCount})
+                        </span>
+                      </td>
+                      <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatRetentionRatePercent(retention.checkpoints.d90.retentionRate)}{" "}
+                        <span className="text-[11px] font-normal text-muted">
+                          ({retention.checkpoints.d90.retainedCount}/{retention.checkpoints.d90.maturedCount})
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <p className="mt-2 text-[11px] text-muted">
+            {WORKFORCE_DIMENSION_ATTRIBUTION_NOTE}
+          </p>
+        </div>
+
+        {/* WF-04 (2.8): Phân tích lý do nghỉ việc & độ phủ chuẩn hóa */}
+        <div className="mt-4 rounded-xl border border-border bg-muted/5 p-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">
+                Phân tích lý do nghỉ việc &amp; độ phủ dữ liệu
+              </h3>
+              <p className="mt-0.5 text-xs text-muted">
+                Tổng hợp từ các đợt làm việc đang ở trạng thái {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc {leaveReasons.asOfDate} và các lần chuyển sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} trong kỳ lọc.
+              </p>
+            </div>
+            <span className="font-mono text-xs text-muted">
+              Tổng {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc: {leaveReasons.offEpisodeTotal} đợt làm việc
+            </span>
+          </div>
+
+          <dl className="mt-2.5 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-border bg-surface px-3 py-2">
+              <dt className="text-xs text-muted">Tổng đợt {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc</dt>
+              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                {leaveReasons.offEpisodeTotal} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+              </dd>
+              <p className="mt-0.5 text-[11px] text-muted">
+                Khớp 100% với số lượng {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} trên Snapshot
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border bg-surface px-3 py-2">
+              <dt className="text-xs text-muted">Độ phủ có ghi nhận lý do nghỉ</dt>
+              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                {formatCoverageRatePercent(leaveReasons.reasonCoverageRate)}
+              </dd>
+              <p className="mt-0.5 text-[11px] text-muted">
+                Có lý do: {leaveReasons.withReasonEpisodeCount} / {leaveReasons.offEpisodeTotal} đợt {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border bg-surface px-3 py-2">
+              <dt className="text-xs text-muted">Tỷ lệ khớp danh mục chuẩn hóa</dt>
+              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                {formatCoverageRatePercent(leaveReasons.standardizationRate)}
+              </dd>
+              <p className="mt-0.5 text-[11px] text-muted">
+                Chuẩn hóa: {leaveReasons.standardizedEpisodeCount} · Tự do khác: {leaveReasons.unclassifiedFreeTextEpisodeCount}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border bg-surface px-3 py-2">
+              <dt className="text-xs text-muted">Thiếu hoặc chưa xác định lý do</dt>
+              <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">
+                {leaveReasons.missingReasonEpisodeCount} <span className="text-xs font-normal text-muted">đợt làm việc</span>
+              </dd>
+              <p className="mt-0.5 text-[11px] text-muted">
+                Tỷ trọng thiếu lý do:{" "}
+                {formatShareRatePercent(
+                  leaveReasons.offEpisodeTotal > 0
+                    ? leaveReasons.missingReasonEpisodeCount / leaveReasons.offEpisodeTotal
+                    : null,
+                )}
+              </p>
+            </div>
+          </dl>
+
+          {/* Biểu đồ thanh ngang phân bổ theo nhóm lý do nghỉ việc */}
+          {leaveReasons.offEpisodeTotal > 0 ? (
+            <div className="mt-2.5 rounded-lg border border-border bg-surface p-3">
+              <p className="text-xs font-medium text-foreground">
+                Phân bổ tỷ trọng các nhóm lý do nghỉ việc tại ngày mốc ({leaveReasons.asOfDate})
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {leaveReasons.byCategory
+                  .filter((row) => row.episodeCount > 0)
+                  .map((row) => {
+                    const barWidth =
+                      maxLeaveReasonCategoryCount > 0
+                        ? Math.max(3, Math.round((row.episodeCount / maxLeaveReasonCategoryCount) * 100))
+                        : 0;
+                    const barColor =
+                      row.kind === "standardized"
+                        ? "bg-sky-500"
+                        : row.kind === "unclassified_free_text"
+                          ? "bg-amber-500"
+                          : "bg-slate-400";
+                    return (
+                      <div key={`lr-bar-${row.key}`} className="text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-foreground">{row.label}</span>
+                          <span className="font-mono tabular-nums text-muted">
+                            <strong className="text-foreground">{row.episodeCount}</strong> đợt ({formatShareRatePercent(row.shareOfOffRate)})
+                          </span>
+                        </div>
+                        <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/20">
+                          <div
+                            className={`h-full rounded-full ${barColor}`}
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-2.5 overflow-x-auto rounded-lg border border-border bg-surface">
+            <table className="r22-report-table w-full text-left text-xs">
+              <caption className="sr-only">
+                Bảng phân tích lý do nghỉ việc theo 10 nhóm chuẩn hóa tại ngày {leaveReasons.asOfDate}
+              </caption>
+              <thead className="bg-surface-muted uppercase tracking-wide text-muted">
+                <tr className="border-b border-border">
+                  <th scope="col" className="px-2.5 py-2 font-medium">
+                    Nhóm lý do nghỉ việc
+                  </th>
+                  <th scope="col" className="px-2 py-2 font-medium">
+                    Mức độ chuẩn hóa
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-right font-medium">
+                    Đợt {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} tại ngày mốc
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-right font-medium">
+                    Nghỉ sau khi vào {WORKFORCE_SNAPSHOT_STATUS_LABELS.ON}
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-right font-medium">
+                    Nghỉ từ {WORKFORCE_SNAPSHOT_STATUS_LABELS.UNCONFIRMED}
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-right font-medium">
+                    Tỷ trọng / {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF}
+                  </th>
+                  {leaveReasons.periodLeaveReasons.applicable ? (
+                    <th scope="col" className="px-2.5 py-2 text-right font-medium">
+                      Lần chuyển sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} trong kỳ
+                    </th>
+                  ) : null}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {leaveReasons.byCategory.map((row) => {
+                  const periodRow = periodLeaveCategoryByKey.get(row.key);
+                  const kindLabel =
+                    row.kind === "standardized"
+                      ? "Nhóm chuẩn hóa"
+                      : row.kind === "unclassified_free_text"
+                        ? "Tự do chưa chuẩn hóa"
+                        : "Thiếu dữ liệu";
+                  return (
+                    <tr key={row.key} className="text-foreground hover:bg-surface-hover">
+                      <td className="px-2.5 py-1.5 font-medium">{row.label}</td>
+                      <td className="px-2 py-1.5 text-muted">{kindLabel}</td>
+                      <td className="px-2 py-1.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">
+                        {row.episodeCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {row.fromOnCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {row.fromUnconfirmedWithoutOnCount}
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        {formatShareRatePercent(row.shareOfOffRate)}
+                      </td>
+                      {leaveReasons.periodLeaveReasons.applicable ? (
+                        <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                          {periodRow ? `${periodRow.eventCount} lần (${periodRow.episodeCount} đợt)` : "0 lần"}
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="border-t border-border bg-muted/10 font-medium text-foreground">
+                <tr>
+                  <td className="px-2.5 py-1.5" colSpan={2}>
+                    Tổng cộng đối soát lý do nghỉ việc
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                    {leaveReasons.offEpisodeTotal}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                    {leaveReasons.byCategory.reduce((acc, r) => acc + r.fromOnCount, 0)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                    {leaveReasons.byCategory.reduce(
+                      (acc, r) => acc + r.fromUnconfirmedWithoutOnCount,
+                      0,
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                    {leaveReasons.offEpisodeTotal > 0 ? "100%" : "—"}
+                  </td>
+                  {leaveReasons.periodLeaveReasons.applicable ? (
+                    <td className="px-2.5 py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                      {leaveReasons.periodLeaveReasons.offTransitionEventTotal} lần ({leaveReasons.periodLeaveReasons.offTransitionEpisodeTotal} đợt)
+                    </td>
+                  ) : null}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {leaveReasons.periodLeaveReasons.applicable ? (
+            <p className="mt-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-muted">
+              Biến động chuyển sang {WORKFORCE_SNAPSHOT_STATUS_LABELS.OFF} trong kỳ ({leaveReasons.periodLeaveReasons.fromDate} → {leaveReasons.periodLeaveReasons.toDate}):{" "}
+              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.offTransitionEventTotal}</strong> lần chuyển trên{" "}
+              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.offTransitionEpisodeTotal}</strong> đợt làm việc ({WORKFORCE_TRANSITION_PAIR_LABELS.ON_TO_OFF}:{" "}
+              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.onToOffEventTotal}</strong> lần · {WORKFORCE_TRANSITION_PAIR_LABELS.UNCONFIRMED_TO_OFF}:{" "}
+              <strong className="font-mono text-foreground">{leaveReasons.periodLeaveReasons.unconfirmedToOffEventTotal}</strong> lần) · Độ phủ có lý do trong kỳ:{" "}
+              <strong className="font-mono text-foreground">
+                {formatCoverageRatePercent(leaveReasons.periodLeaveReasons.reasonCoverageRate)}
+              </strong>{" "}
+              ({leaveReasons.periodLeaveReasons.withReasonEventCount}/{leaveReasons.periodLeaveReasons.offTransitionEventTotal} lần).
+            </p>
+          ) : (
+            <p className="mt-2 rounded-lg border border-dashed border-border bg-surface px-3 py-1.5 text-xs text-muted">
+              {leaveReasons.periodLeaveReasons.windowLabel}
+            </p>
+          )}
+
+          <p className="mt-2 text-[11px] text-muted">
+            {WORKFORCE_LEAVE_REASON_STANDARDIZATION_NOTE}
+          </p>
         </div>
       </Card>
     </section>
