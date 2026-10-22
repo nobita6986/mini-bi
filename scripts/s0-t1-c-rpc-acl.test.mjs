@@ -386,7 +386,12 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         "revoke execute on function public.set_updated_at() from service_role",
       );
 
-      // Verify preflight dry-run PASSES and official runMigrationApply applies #129 under non-superuser s0_t1c_runner
+      // Reproduce the broad staging table ACL before WF-01, then verify the forward migration removes it.
+      await client.query(
+        "grant all on table public.direct_entry_employment_status_events to public, anon, authenticated, service_role",
+      );
+
+      // Verify preflight dry-run PASSES and official runMigrationApply applies #129 onward under non-superuser s0_t1c_runner
       // without mutating #124's historical ledger checksum or re-executing #124:
       await client.query("set session authorization s0_t1c_runner");
       try {
@@ -415,6 +420,24 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
         await client.query("reset session authorization");
       }
 
+      const { rows: statusTableAclAfter } = await client.query(
+        `select coalesce(grantee_role.rolname, 'PUBLIC') as grantee, acl.privilege_type
+           from pg_catalog.pg_class c
+           cross join lateral pg_catalog.aclexplode(
+             coalesce(c.relacl, pg_catalog.acldefault('r', c.relowner))
+           ) acl
+           left join pg_catalog.pg_roles grantee_role on grantee_role.oid = acl.grantee
+          where c.oid = 'public.direct_entry_employment_status_events'::pg_catalog.regclass
+            and (acl.grantee = 0 or acl.grantee in (
+              'anon'::pg_catalog.regrole,
+              'authenticated'::pg_catalog.regrole,
+              'service_role'::pg_catalog.regrole
+            ))
+          order by grantee, acl.privilege_type`,
+      );
+      assert.deepEqual(statusTableAclAfter, [],
+        "the forward migration removes every direct table privilege from PUBLIC and client/service roles");
+
       const { rows: ledger124After } = await client.query(
         "select checksum from public.schema_migrations where version = $1",
         [ACL_MIGRATION],
@@ -427,7 +450,7 @@ test("S0-T1-C revokes broad Mini BI RPC ACLs while preserving the server allowli
       const { rows: ledgerCountAfter } = await client.query(
         "select count(*)::integer as total from public.schema_migrations",
       );
-      assert.equal(ledgerCountAfter[0]?.total, names.length, "ledger reaches 129/129 after applying #129");
+      assert.equal(ledgerCountAfter[0]?.total, names.length, "ledger reaches every migration source entry after applying the pending tail");
 
       const expectedSignatures = [...migration.matchAll(/^\s+'(public\.[^']+)'[,]?$/gm)]
         .map((match) => match[1]);
