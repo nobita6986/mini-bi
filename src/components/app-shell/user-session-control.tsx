@@ -16,6 +16,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
 
+import { useNotify } from "@/components/ui/notify-provider";
+
 type SessionState = "loading" | "auth" | "anon" | "unavailable";
 
 const linkClass =
@@ -38,6 +40,7 @@ function readDisplayName(payload: unknown): string | null {
 
 export function UserSessionControl() {
   const router = useRouter();
+  const notify = useNotify();
   const [state, setState] = useState<SessionState>("loading");
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,6 +92,7 @@ export function UserSessionControl() {
         method: "POST", credentials: "same-origin",
       });
       if (res.status === 204) {
+        notify.clear();
         router.replace("/login");
         router.refresh();
         return;

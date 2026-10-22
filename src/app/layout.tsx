@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import Script from "next/script";
 
+import { NotifyProvider } from "@/components/ui/notify-provider";
 import { ThemeProvider } from "@/lib/theme/theme-provider";
 import { buildThemeInitScript } from "@/lib/theme/theme-registry";
 import "./globals.css";
@@ -32,7 +33,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <Script id="theme-init" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }} />
         <ThemeProvider>
-          <NuqsAdapter>{children}</NuqsAdapter>
+          <NotifyProvider>
+            <NuqsAdapter>{children}</NuqsAdapter>
+          </NotifyProvider>
         </ThemeProvider>
       </body>
     </html>

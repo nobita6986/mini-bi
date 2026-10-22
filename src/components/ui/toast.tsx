@@ -1,29 +1,124 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import { Toast as RadixToast } from "radix-ui";
 
+import {
+  resolveToastAria,
+  TOAST_PHASE_CLASSES,
+  TOAST_TONE_STYLES as STORE_TONE_STYLES,
+  type NotifyPhase,
+} from "@/components/ui/notify-store";
 import { cn } from "@/lib/utils";
 
 export type ToastTone = "success" | "info" | "warning" | "error";
 
-const TOAST_TONE_STYLES: Readonly<Record<ToastTone, string>> = {
-  success:
-    "border-l-4 border-l-emerald-500 border-border bg-surface text-foreground",
-  info:
-    "border-l-4 border-l-sky-500 border-border bg-surface text-foreground",
-  warning:
-    "border-l-4 border-l-amber-500 border-border bg-surface text-foreground",
-  error:
-    "border-l-4 border-l-rose-500 border-border bg-surface text-foreground",
+export const TOAST_TONE_STYLES: Readonly<Record<ToastTone, string>> = STORE_TONE_STYLES;
+
+export type ToastActionProps = {
+  label: string;
+  onClick?: () => void;
+  href?: string;
+  dataTestId?: string;
 };
 
+export function ToastCard({
+  tone = "success",
+  phase = "open",
+  title,
+  description,
+  children,
+  action,
+  onDismiss,
+  dataTestId,
+  className,
+}: {
+  tone?: ToastTone;
+  phase?: NotifyPhase;
+  title?: string;
+  description?: string;
+  children?: ReactNode;
+  action?: ToastActionProps;
+  onDismiss?: () => void;
+  dataTestId?: string;
+  className?: string;
+}) {
+  const { role: resolvedRole, ariaLive: resolvedLive } = resolveToastAria(tone);
+
+  return (
+    <div
+      role={resolvedRole}
+      aria-live={resolvedLive}
+      aria-atomic="true"
+      data-testid={dataTestId}
+      data-toast-tone={tone}
+      data-state={phase}
+      className={cn(
+        "pointer-events-auto w-full rounded-xl border p-3.5 shadow-lg transition-[opacity,transform] ease-[var(--ui-motion-ease,cubic-bezier(0.22,1,0.36,1))] motion-reduce:transition-none motion-reduce:transform-none motion-reduce:animate-none",
+        TOAST_PHASE_CLASSES[phase],
+        TOAST_TONE_STYLES[tone],
+        className,
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 break-words text-xs sm:text-sm">
+          {title ? <p className="font-semibold text-foreground">{title}</p> : null}
+          {description ? (
+            <p className={cn("text-foreground/90", title ? "mt-0.5" : "font-medium")}>
+              {description}
+            </p>
+          ) : null}
+          {children ? (
+            <div className={cn((title || description) ? "mt-1 opacity-90" : "font-medium")}>
+              {children}
+            </div>
+          ) : null}
+          {action ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {action.href ? (
+                <Link
+                  href={action.href}
+                  data-testid={action.dataTestId}
+                  onClick={() => {
+                    action.onClick?.();
+                  }}
+                  className="inline-flex min-h-11 sm:min-h-8 items-center rounded-md border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground whitespace-nowrap hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  {action.label}
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  data-testid={action.dataTestId}
+                  onClick={() => {
+                    action.onClick?.();
+                  }}
+                  className="inline-flex min-h-11 sm:min-h-8 items-center rounded-md border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground whitespace-nowrap hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  {action.label}
+                </button>
+              )}
+            </div>
+          ) : null}
+        </div>
+        {onDismiss ? (
+          <button
+            type="button"
+            aria-label="Đóng thông báo"
+            onClick={onDismiss}
+            className="inline-flex min-h-11 min-w-11 sm:min-h-8 sm:min-w-8 shrink-0 items-center justify-center rounded-md text-xs text-muted whitespace-nowrap hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            ✕
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /**
- * Floating Toast Banner (`Modern Soft Enterprise`).
- * - Replaces full-width inline banners that push the entire page down (Screenshot 2 fix).
- * - Safe-area aware on mobile (`top-[max(0.75rem,env(safe-area-inset-top))]`), floating top-right on desktop.
- * - Preserves `role="status"` / `role="alert"` and `data-testid` in the DOM so all existing unit/DOM tests
- *   asserting notice text or links (`data-testid="worker-change-request-module-link"`) pass 100%!
+ * Adapter tương thích tạm cho các call-site đang chờ migrate sang `useNotify()`.
+ * Không tạo provider hay viewport lồng nhau ở từng instance.
  */
 export function FloatingToast({
   open = true,
@@ -31,7 +126,7 @@ export function FloatingToast({
   tone = "success",
   title,
   children,
-  autoHideMs = 5000,
+  autoHideMs = 4000,
   dataTestId,
   className,
 }: {
@@ -57,41 +152,20 @@ export function FloatingToast({
 
   if (!open || dismissed) return null;
 
-  const resolvedRole = tone === "error" ? "alert" : "status";
-
   return (
-    <RadixToast.Provider swipeDirection="right">
-      <div
-        role={resolvedRole}
-        aria-live={resolvedRole === "status" ? "polite" : "assertive"}
-        data-testid={dataTestId}
-        className={cn(
-          "fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 left-3 sm:left-auto z-50 sm:w-full sm:max-w-md rounded-xl border p-3.5 shadow-lg transition-all",
-          TOAST_TONE_STYLES[tone],
-          className,
-        )}
+    <div className="pointer-events-none fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 left-3 sm:left-auto sm:right-4 z-[80] sm:w-full sm:max-w-[420px]">
+      <ToastCard
+        tone={tone}
+        title={title}
+        dataTestId={dataTestId}
+        className={className}
+        onDismiss={() => {
+          if (onDismiss) onDismiss();
+          else setDismissed(true);
+        }}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1 text-xs sm:text-sm">
-            {title ? <p className="font-semibold">{title}</p> : null}
-            <div className={cn(title ? "mt-0.5 opacity-90" : "font-medium")}>
-              {children}
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label="Đóng thông báo"
-            onClick={() => {
-              if (onDismiss) onDismiss();
-              else setDismissed(true);
-            }}
-            className="inline-flex min-h-9 min-w-9 sm:min-h-7 sm:min-w-7 items-center justify-center rounded-md text-xs text-muted hover:bg-muted/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-      <RadixToast.Viewport className="sr-only" />
-    </RadixToast.Provider>
+        {children}
+      </ToastCard>
+    </div>
   );
 }
