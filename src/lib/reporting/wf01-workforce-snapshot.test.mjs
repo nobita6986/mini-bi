@@ -319,9 +319,11 @@ test("WF-01 (10): Frozen status vocabulary uses 'Đang chờ việc' for UNCONFI
   assert.ok(!Object.values(WORKFORCE_TRANSITION_PAIR_LABELS).some((v) => v.includes("Chưa xác nhận")));
   assert.ok(!Object.values(WORKFORCE_TRANSITION_PAIR_LABELS).some((v) => /rehire|tái tuyển dụng|tái kích hoạt/i.test(v)));
   assert.ok(!Object.values(WORKFORCE_INITIAL_STATUS_LABELS).some((v) => v.includes("Chưa xác nhận")));
-  assert.ok(WORKFORCE_UNIT_METADATA_NOTE.includes("entry_id"));
-  assert.ok(WORKFORCE_UNIT_METADATA_NOTE.includes("rehire"));
-  assert.ok(WORKFORCE_UNIT_METADATA_NOTE.includes("business_date"));
+  assert.ok(WORKFORCE_UNIT_METADATA_NOTE.includes("đợt làm việc"));
+  assert.ok(WORKFORCE_UNIT_METADATA_NOTE.includes("Tái tuyển dụng"));
+  assert.ok(WORKFORCE_UNIT_METADATA_NOTE.includes("ngày ghi nhận tuyển dụng"));
+  assert.ok(!WORKFORCE_UNIT_METADATA_NOTE.includes("entry_id"));
+  assert.ok(!WORKFORCE_UNIT_METADATA_NOTE.includes("business_date"));
 
   const sharedUi = readFileSync(new URL("../../components/dashboard/dashboard-shared.tsx", import.meta.url), "utf8");
   assert.ok(!sharedUi.includes("Chưa xác nhận"), "dashboard-shared.tsx must never render 'Chưa xác nhận'");

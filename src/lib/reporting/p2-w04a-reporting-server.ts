@@ -3,6 +3,7 @@ import "server-only";
 import type { DirectEntryActor } from "@/lib/auth/direct-entry-v2";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 
+import { applyDashboardDefaultDateParams } from "./p1-date-presets";
 import { parseReportingFilters } from "./p1-filter";
 import type { ReportingFilters } from "./p1-filter";
 import { resolvePriorPeriodComparisonForActor } from "./p1-period-comparison";
@@ -69,7 +70,9 @@ export async function fetchCutoverReporting(
     const sb = createServiceSupabaseClient();
 
     // Parse only business dimensions; this report is based on Direct Entry.
-    const parsed = parseReportingFilters(params, undefined);
+    // Default date filter on /dashboard is "Tháng này" (Asia/Ho_Chi_Minh) when URL has no explicit date or range=all.
+    const effectiveParams = applyDashboardDefaultDateParams(params);
+    const parsed = parseReportingFilters(effectiveParams, undefined);
     if (!parsed.ok) return { ok: false, code: parsed.code, message: parsed.message };
     const filters = parsed.filters;
     filters.source = undefined;

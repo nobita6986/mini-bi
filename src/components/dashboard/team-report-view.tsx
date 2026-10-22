@@ -157,9 +157,6 @@ export function TeamReportView({
         {!view.requireTeamSelection && !data.empty.noSources && !data.empty.noFacts ? (
           <PeriodComparisonBanner comparison={comparison} />
         ) : null}
-        {!view.requireTeamSelection && selectedBucket === null ? (
-          <WorkforceSnapshotSection workforce={workforce} />
-        ) : null}
 
         {buckets.length > 0 ? (
           <TeamPicker
@@ -182,7 +179,10 @@ export function TeamReportView({
             Chọn một nhóm trong danh sách để xem báo cáo chi tiết của nhóm đó.
           </p>
         ) : (
-          <TeamReportBody data={data} view={view} />
+          <>
+            <TeamReportBody data={data} view={view} />
+            <WorkforceSnapshotSection workforce={workforce} />
+          </>
         )}
       </div>
     </>
@@ -248,11 +248,11 @@ function TeamReportSelection({
   }
   return (
     <>
-      <WorkforceSnapshotSection workforce={selectedWorkforce} />
       <TeamReportBody data={report} view={view} />
       <section aria-label="Danh sách chi tiết từng dòng">
         <TeamEntryDetail data={data} bucket={bucket} initialDetail={detail} />
       </section>
+      <WorkforceSnapshotSection workforce={selectedWorkforce} />
     </>
   );
 }

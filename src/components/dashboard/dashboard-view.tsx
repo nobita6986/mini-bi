@@ -248,8 +248,8 @@ function DashboardBody({
     return (
       <div className="space-y-4">
         <FiltersOrError optionsResult={optionsResult} />
-        <WorkforceStatusSection workforce={workforce} />
         <EmptyState title="Chưa có dữ liệu tuyển dụng" description="Hiện chưa có dữ liệu để hiển thị. Hãy điều chỉnh bộ lọc hoặc tải lại trang sau." />
+        <WorkforceStatusSection workforce={workforce} />
       </div>
     );
   }
@@ -260,7 +260,6 @@ function DashboardBody({
     <div className="space-y-4">
       <FiltersOrError optionsResult={optionsResult} />
       <PeriodComparisonBanner comparison={comparison} />
-      <WorkforceStatusSection workforce={workforce} />
 
       {data.empty.noMatches ? (
         <NoMatchesBlock />
@@ -403,6 +402,8 @@ function DashboardBody({
           </section>
         </>
       )}
+
+      <WorkforceStatusSection workforce={workforce} />
     </div>
   );
 }
