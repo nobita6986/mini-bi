@@ -107,6 +107,7 @@ test("the panel keeps masked CCCD + states and never consumes dashboard filters"
   assert.match(panel, /nextDuplicateCccdReportPage/);
   assert.match(panel, /\/api\/direct-entry\/duplicate-cccd-report/);
   assert.match(panel, /buildDuplicateCccdReportQuery\(\{ page, page_size: pageSize \}\)/);
+  assert.match(panel, /useNotify\(\)/);
   // The panel is independent of dashboard URL filters: it never reads them.
   assert.doesNotMatch(panel, /useQueryStates|useSearchParams|nuqs|bucket_key/);
   assert.doesNotMatch(panel, /project_id|authority/);

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
+import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
 import { ErrorState } from "@/components/reporting/error-state";
 import {
@@ -99,13 +100,29 @@ export function DuplicateCccdReportPanel() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DUPLICATE_CCCD_REPORT_DEFAULT_PAGE_SIZE);
   const [reloadToken, setReloadToken] = useState(0);
+  const userActionRef = useRef(false);
+  const notify = useNotify();
 
   useEffect(() => {
     const controller = new AbortController();
+    const isUserInitiated = userActionRef.current;
     void (async () => {
+      const failWith = (nextState: Exclude<ReportState, { kind: "loading" | "loaded" }>) => {
+        setState(nextState);
+        if (isUserInitiated) {
+          userActionRef.current = false;
+          const title = nextState.kind === "denied"
+            ? "Bạn không có quyền xem báo cáo CCCD trùng."
+            : nextState.kind === "unavailable"
+              ? "Báo cáo CCCD trùng hiện không khả dụng. Hãy thử tải lại."
+              : "Không tải được báo cáo CCCD trùng. Hãy thử tải lại.";
+          notify.error({ title });
+        }
+      };
+
       const query = buildDuplicateCccdReportQuery({ page, page_size: pageSize });
       if (!query) {
-        setState({ kind: "error" });
+        failWith({ kind: "error" });
         return;
       }
       let response: Response;
@@ -118,15 +135,15 @@ export function DuplicateCccdReportPanel() {
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setState({ kind: "unavailable" });
+        failWith({ kind: "unavailable" });
         return;
       }
       if (response.status === 401 || response.status === 403) {
-        setState({ kind: "denied" });
+        failWith({ kind: "denied" });
         return;
       }
       if (response.status !== 200) {
-        setState(response.status === 404 || response.status >= 500
+        failWith(response.status === 404 || response.status >= 500
           ? { kind: "unavailable" }
           : { kind: "error" });
         return;
@@ -137,7 +154,7 @@ export function DuplicateCccdReportPanel() {
           page_size: pageSize,
         });
         if (!loaded) {
-          setState({ kind: "error" });
+          failWith({ kind: "error" });
           return;
         }
         const pageCount = Math.min(DUPLICATE_CCCD_REPORT_MAX_PAGE, Math.max(1,
@@ -146,15 +163,17 @@ export function DuplicateCccdReportPanel() {
           setPage(pageCount);
           return;
         }
+        userActionRef.current = false;
         setState({ kind: "loaded", page: loaded });
       } catch {
-        setState({ kind: "error" });
+        failWith({ kind: "error" });
       }
     })();
     return () => controller.abort();
-  }, [page, pageSize, reloadToken]);
+  }, [notify, page, pageSize, reloadToken]);
 
   const reload = () => {
+    userActionRef.current = true;
     setState({ kind: "loading" });
     setReloadToken((value) => value + 1);
   };
@@ -187,6 +206,7 @@ export function DuplicateCccdReportPanel() {
             <select
               value={pageSize}
               onChange={(event) => {
+                userActionRef.current = true;
                 setPageSize(Number(event.target.value));
                 setPage(1);
                 setState({ kind: "loading" });
@@ -251,11 +271,11 @@ export function DuplicateCccdReportPanel() {
               <p aria-live="polite">Trang {loaded.page} / {pageCount}</p>
               <div className="flex items-center gap-2">
                 <button type="button" className={button} disabled={previousPage === null}
-                  onClick={() => { if (previousPage !== null) { setPage(previousPage); setState({ kind: "loading" }); } }}>
+                  onClick={() => { if (previousPage !== null) { userActionRef.current = true; setPage(previousPage); setState({ kind: "loading" }); } }}>
                   Trang trước
                 </button>
                 <button type="button" className={button} disabled={nextPage === null}
-                  onClick={() => { if (nextPage !== null) { setPage(nextPage); setState({ kind: "loading" }); } }}>
+                  onClick={() => { if (nextPage !== null) { userActionRef.current = true; setPage(nextPage); setState({ kind: "loading" }); } }}>
                   Trang sau
                 </button>
               </div>

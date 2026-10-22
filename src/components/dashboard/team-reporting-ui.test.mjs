@@ -257,6 +257,7 @@ test("W06D: unknown split, load-more/end and retry are explicit", () => {
   assert.match(detail, /Đã hiển thị hết kết quả/);
   assert.match(detail, /requestId\.current/);
   assert.match(detail, /AbortController/);
+  assert.match(detail, /useNotify\(\)/);
   assert.doesNotMatch(detail, /IntersectionObserver|setInterval|setTimeout/);
   assert.match(report, /Đang tải báo cáo nhóm/);
   assert.match(report, /Không tải được báo cáo nhóm/);
