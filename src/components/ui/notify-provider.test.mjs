@@ -525,4 +525,65 @@ describe("UIUX-S1-02 — Global NotifyProvider, Independent Timers, Enter/Exit L
       "Toast item must not mount nested RadixToast.Provider per instance",
     );
   });
+
+  it("enforces Chặng 1 Release Gate (UIUX-S1-08): motion tokens, reduced-motion, static Recharts, CSS chart guard, no new animation deps, and 24/24 completed action feedback inventory", () => {
+    const globalsCss = readRel("src/app/globals.css");
+    for (const token of [
+      "--ui-motion-fast: 120ms;",
+      "--ui-motion-hover: 160ms;",
+      "--ui-motion-tab: 200ms;",
+      "--ui-motion-reveal: 200ms;",
+      "--ui-motion-toast-in: 200ms;",
+      "--ui-motion-toast-out: 160ms;",
+      "--ui-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);",
+    ]) {
+      assert.ok(globalsCss.includes(token), `globals.css missing motion token ${token}`);
+    }
+    assert.match(globalsCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+
+    // Button / Tab / Nav / Filter token verification (S1-05 & S1-06)
+    const buttonSrc = readRel("src/components/ui/button.tsx");
+    assert.match(buttonSrc, /duration-\[var\(--ui-motion-hover,160ms\)\]/);
+    assert.match(buttonSrc, /active:duration-\[var\(--ui-motion-fast,120ms\)\]/);
+    assert.doesNotMatch(buttonSrc, /transition-all/);
+
+    const tabsSrc = readRel("src/components/dashboard/bod-dashboard-tabs.tsx");
+    assert.match(tabsSrc, /duration-\[var\(--ui-motion-tab,200ms\)\]/);
+
+    const filtersSrc = readRel("src/components/dashboard/dashboard-filters.tsx");
+    assert.match(filtersSrc, /duration-\[180ms\]/);
+
+    // Recharts data animation must remain disabled in Chặng 1 (only on components actually rendering Recharts)
+    for (const chartRel of [
+      "src/components/dashboard/trend-chart.tsx",
+      "src/components/dashboard/recruiter-bar-chart.tsx",
+      "src/components/dashboard/project-donut.tsx",
+      "src/components/dashboard/provider-donut.tsx",
+    ]) {
+      const chartSrc = readRel(chartRel);
+      assert.match(chartSrc, /from\s+["']recharts["']/);
+      assert.match(chartSrc, /isAnimationActive=\{false\}/, `${chartRel} must keep isAnimationActive={false} in Chặng 1`);
+      assert.doesNotMatch(chartSrc, /isAnimationActive=\{true\}/);
+    }
+
+    // CSS chart (team-bucket-chart.tsx) does not use Recharts and must not add data animation in Chặng 1
+    const cssChartSrc = readRel("src/components/dashboard/team-bucket-chart.tsx");
+    assert.doesNotMatch(cssChartSrc, /from\s+["']recharts["']/);
+    assert.doesNotMatch(cssChartSrc, /transition-all|animate-/);
+
+    // No new animation/toast dependencies in package.json
+    const pkg = JSON.parse(readRel("package.json"));
+    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+    for (const forbiddenDep of ["framer-motion", "motion", "sonner", "react-hot-toast"]) {
+      assert.ok(!(forbiddenDep in allDeps), `Forbidden dependency ${forbiddenDep} found in package.json`);
+    }
+
+    // Notification inventory must have all 40 action-feedback table rows completed and 0 migrate rows remaining in Section 3
+    const inventory = readRel("docs/plans/uiux/notification-inventory.md");
+    const routeInventorySection = inventory.split("## 3. Bảng Kiểm Kê Chi Tiết Toàn Bộ Route Hoạt Động")[1] ?? "";
+    const completedRows = routeInventorySection.match(/\|\s*`completed(?:\s*\(UIUX-S1-[^`]+\))?`\s*\|/g) ?? [];
+    const migrateRows = routeInventorySection.match(/\|\s*`migrate[^`]*`\s*\|/g) ?? [];
+    assert.equal(completedRows.length, 40, "Expected all 40 action feedback rows in notification-inventory.md Section 3 to be completed");
+    assert.equal(migrateRows.length, 0, "Expected 0 unmigrated action feedback entries in notification-inventory.md");
+  });
 });
