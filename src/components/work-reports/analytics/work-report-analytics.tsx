@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { DataTableContainer, DATA_TABLE_CLASS, DATA_TABLE_HEAD_CLASS, DATA_TABLE_ROW_CLASS, DATA_TABLE_TD_CLASS, DATA_TABLE_TH_CLASS } from "@/components/ui/data-table";
 import { CursorLoadMore } from "@/components/ui/cursor-load-more";
 import { FilterToolbar } from "@/components/ui/filter-toolbar";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { appendUniqueContributions, contributionPageUrl } from "@/lib/work-reports/analytics-ui-model.mjs";
 
@@ -36,6 +37,7 @@ function queryString(filters: Filters, finality: Finality) {
 }
 
 export function WorkReportAnalytics() {
+  const notify = useNotify();
   const [draft, setDraft] = useState(initialFilters);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [finality, setFinality] = useState<Finality>("final");
@@ -77,7 +79,11 @@ export function WorkReportAnalytics() {
       setContributions(result.items);
       setContributionQuery(baseQuery);
       setNextCursor(result.next_cursor);
-    } catch { setError("Không tải được danh sách bài nộp đóng góp trong phạm vi quyền hiện hành."); }
+    } catch {
+      const msg = "Không tải được danh sách bài nộp đóng góp trong phạm vi quyền hiện hành.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
     finally { setBusy(false); }
   }
 
@@ -88,7 +94,11 @@ export function WorkReportAnalytics() {
       const result = await getData<{ items: Contribution[]; next_cursor: string | null }>(contributionPageUrl(contributionQuery, nextCursor));
       setContributions((current) => current ? appendUniqueContributions(current, result.items) : result.items);
       setNextCursor(result.next_cursor);
-    } catch { setError("Không tải được trang tiếp theo. Vui lòng thử lại."); }
+    } catch {
+      const msg = "Không tải được trang tiếp theo. Vui lòng thử lại.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
     finally { setBusy(false); }
   }
 
@@ -96,7 +106,11 @@ export function WorkReportAnalytics() {
     if (!item.submission_id) return;
     setBusy(true); setError(null);
     try { setEvidence(await getData(`/api/work-reports/submissions/${encodeURIComponent(item.submission_id)}`)); }
-    catch { setError("Không mở được bài nộp nguồn trong phạm vi quyền hiện hành."); }
+    catch {
+      const msg = "Không mở được bài nộp nguồn trong phạm vi quyền hiện hành.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
     finally { setBusy(false); }
   }
 

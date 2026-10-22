@@ -27,6 +27,7 @@ import {
 } from "@/lib/ai-report/report-export";
 import { formatTimestamp, todayDateIso } from "@/lib/format";
 import { resolveTabTarget } from "@/components/dashboard/ai-settings-panel-logic";
+import { useNotify } from "@/components/ui/notify-provider";
 import { ReportView } from "./report-view";
 
 const POLL_INTERVAL_MS = 2000;
@@ -84,6 +85,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 export function AiReportPanel() {
+  const notify = useNotify();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [capability, setCapability] = useState<CapabilityView | null>(null);
@@ -243,9 +245,10 @@ export function AiReportPanel() {
     const body = buildReportRequest({ period_type: periodType, as_of_date: asOf.trim(), custom_from: customFrom.trim() || undefined, custom_to: customTo.trim() || undefined, dimensions, focus: focus.trim() || undefined });
     const result = await getController().enqueue(body);
     setBusy(false);
-    if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); return; }
+    if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo được báo cáo AI."); notify.error({ title: result.message }); return; }
     setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu. Đang theo dõi trạng thái…");
+    notify.info({ title: "Đã gửi yêu cầu tạo báo cáo AI." });
     void loadHistory(null);
   }
 
@@ -257,9 +260,10 @@ export function AiReportPanel() {
     const period = periodType === "custom" ? { type: periodType, as_of_date: asOf.trim(), custom_from: customFrom.trim(), custom_to: customTo.trim() } : { type: periodType, as_of_date: asOf.trim() };
     const result = await getController().enqueue({ regenerate_of: jobId, reason: regenerateReason.trim(), period, scope: { dimensions } });
     setBusy(false);
-    if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); return; }
+    if (!result.ok) { setErrorText(result.message); setStatusText("Không tạo lại được báo cáo."); notify.error({ title: result.message }); return; }
     setRegenerateOpen(false); setRegenerateReason(""); setJobId(result.jobId); setAnalysis(null); setLifecycle(null); setRevisionNumber(null); setRevisionCreatedAt(null); setExportData(null);
     setStatusText("Đã gửi yêu cầu tạo lại. Đang theo dõi…");
+    notify.info({ title: "Đã gửi yêu cầu tạo lại báo cáo AI." });
     void loadHistory(null);
   }
 
@@ -274,14 +278,22 @@ export function AiReportPanel() {
       setErrorText(result.message);
       setStatusText(result.code === "AI_VERSION_CONFLICT" || result.code === "AI_REVIEW_CONFLICT" ? "Quyết định không áp dụng được, đang tải lại…" : "Duyệt báo cáo thất bại.");
       setReviewOpen(null);
-      if (result.code === "AI_VERSION_CONFLICT" || result.code === "AI_REVIEW_CONFLICT") { getController().startPolling(jobId); void loadHistory(null); }
+      if (result.code === "AI_VERSION_CONFLICT" || result.code === "AI_REVIEW_CONFLICT") {
+        notify.warning({ title: result.message });
+        getController().startPolling(jobId);
+        void loadHistory(null);
+      } else {
+        notify.error({ title: result.message });
+      }
       return;
     }
     const record = result.record as Record<string, unknown>;
     const newLifecycle = typeof record.lifecycle_status === "string" ? record.lifecycle_status : reviewOpen === "approve" ? "approved" : "rejected";
     setLifecycle(newLifecycle);
     setReviewOpen(null); setRejectReason("");
-    setStatusText(newLifecycle === "approved" ? "Đã duyệt báo cáo." : "Đã từ chối báo cáo.");
+    const successMsg = newLifecycle === "approved" ? "Đã duyệt báo cáo." : "Đã từ chối báo cáo.";
+    setStatusText(successMsg);
+    notify.success({ title: successMsg });
     void loadHistory(null);
   }
 
@@ -313,6 +325,7 @@ export function AiReportPanel() {
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
     setStatusText("Đã xuất báo cáo HTML kèm biểu đồ. Có thể mở ngoại tuyến hoặc in thành PDF.");
+    notify.success({ title: "Đã xuất báo cáo HTML kèm biểu đồ." });
   }
 
   return (

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { validateWorkReportSubmission } from "@/lib/work-reports/schema-validator.ts";
 import type { WorkReportTemplateSchema, WorkReportField } from "@/lib/work-reports/contracts.ts";
@@ -56,11 +57,11 @@ function fieldControl(field: WorkReportField, value: unknown, setValue: (value: 
 }
 
 export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReportRendererDetail; onSaved?: () => void }) {
+  const notify = useNotify();
   const schema = detail.template.schema_json;
   const [payload, setPayload] = useState<Record<string, unknown>>(() => initialPayload(detail));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
@@ -74,7 +75,7 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
     (detail.obligation.reopened_until !== null && now <= Date.parse(detail.obligation.reopened_until)));
 
   async function save(action: "draft" | "submit") {
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null);
     if (action === "submit") {
       const validation = validateWorkReportSubmission(schema, payload, {
         period_start_date: detail.obligation.period_start_date,
@@ -93,13 +94,16 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
       });
       const result = await response.json();
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      setNotice(action === "draft" ? "Đã lưu bản nháp." : "Đã nộp báo cáo.");
+      notify.success({ title: action === "draft" ? "Đã lưu bản nháp." : "Đã nộp báo cáo." });
       onSaved?.();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
-      setError(code === "WORK_REPORT_VERSION_CONFLICT" ? "Bản báo cáo đã được cập nhật ở nơi khác. Tải lại trước khi tiếp tục."
+      const msg = code === "WORK_REPORT_VERSION_CONFLICT" ? "Bản báo cáo đã được cập nhật ở nơi khác. Tải lại trước khi tiếp tục."
         : code === "WORK_REPORT_DEADLINE_PASSED" ? "Đã quá hạn nộp báo cáo."
-          : "Không lưu được báo cáo. Vui lòng thử lại.");
+          : "Không lưu được báo cáo. Vui lòng thử lại.";
+      setError(msg);
+      if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
+      else notify.error({ title: msg });
     } finally { setBusy(false); }
   }
 
@@ -112,7 +116,6 @@ export function WorkReportFormRenderer({ detail, onSaved }: { detail: WorkReport
       {detail.latest_review_event?.reason?.trim() || "Báo cáo đã bị từ chối. Hãy chỉnh sửa và nộp lại."}
     </StatusBanner> : null}
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
-    {notice ? <StatusBanner tone="success">{notice}</StatusBanner> : null}
     {!canEdit ? <StatusBanner tone="warning">Nghĩa vụ đã đóng hoặc quá hạn. Chỉ có thể xem.</StatusBanner> : null}
     {schema.sections.map((section) => <fieldset key={section.section_key} className="space-y-4 rounded-xl border border-border p-4" disabled={!canEdit || busy}>
       <legend className="px-1 font-medium">{section.label}</legend>

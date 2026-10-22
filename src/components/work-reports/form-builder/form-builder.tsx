@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { DataTableContainer } from "@/components/ui/data-table";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { PageHeader, PageShell } from "@/components/ui/page-shell";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
-import { FloatingToast } from "@/components/ui/toast";
 import type { WorkReportField, WorkReportFieldType, WorkReportTemplateSchema } from "@/lib/work-reports/contracts";
 import {
   allWorkReportFieldTypes,
@@ -31,7 +31,6 @@ type Editor = {
   default_frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "ONCE";
   schema: WorkReportTemplateSchema;
 };
-type Notice = { tone: "success" | "error"; text: string } | null;
 const inputClass = "min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
 const frequencies = { DAILY: "Hằng ngày", WEEKLY: "Hằng tuần", MONTHLY: "Hằng tháng", ONCE: "Một lần" } as const;
 
@@ -52,12 +51,12 @@ function keyFromLabel(value: string, fallback: string): string {
 }
 
 export function FormBuilder() {
+  const notify = useNotify();
   const [items, setItems] = useState<TemplateListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState<TemplateVersion | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -87,7 +86,11 @@ export function FormBuilder() {
       setEditor({ template, draftVersionId: draft.version_id, expectedVersion: detail.version,
         template_code: detail.template_code, display_name: detail.display_name, description: detail.description ?? "",
         default_frequency: detail.default_frequency as Editor["default_frequency"], schema: draft.schema_json });
-    } catch { setError("Không tải được bản nháp. Hãy tạo bản nháp mới từ phiên bản đã phát hành."); }
+    } catch {
+      const msg = "Không tải được bản nháp. Hãy tạo bản nháp mới từ phiên bản đã phát hành.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
   }
 
   async function showPreview(template: TemplateListItem, versionId: string) {
@@ -95,7 +98,11 @@ export function FormBuilder() {
     try {
       const body = await jsonResponse(await fetch(`/api/work-reports/templates/${template.template_id}/preview?version_id=${encodeURIComponent(versionId)}`, { cache: "no-store" }));
       setPreview(body.version as TemplateVersion);
-    } catch { setError("Không tải được bản xem trước."); }
+    } catch {
+      const msg = "Không tải được bản xem trước.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
   }
 
   async function mutate(path: string, body: Record<string, unknown>, successText: string) {
@@ -105,9 +112,13 @@ export function FormBuilder() {
         "content-type": "application/json", "idempotency-key": String(body.idempotency_key),
       }, body: JSON.stringify(body) }));
       setError(null);
-      setNotice({ tone: "success", text: successText });
+      notify.success({ title: successText });
       await refresh();
-    } catch { setError("Thao tác không thành công. Kiểm tra quyền hoặc phiên bản hiện tại rồi thử lại."); }
+    } catch {
+      const msg = "Thao tác không thành công. Kiểm tra quyền hoặc phiên bản hiện tại rồi thử lại.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
     finally { setSaving(false); }
   }
 
@@ -131,9 +142,13 @@ export function FormBuilder() {
       }
       setEditor(null);
       setError(null);
-      setNotice({ tone: "success", text: "Đã lưu bản nháp mẫu báo cáo." });
+      notify.success({ title: "Đã lưu bản nháp mẫu báo cáo." });
       await refresh();
-    } catch { setError("Không lưu được bản nháp. Kiểm tra mã mẫu, nội dung và phiên bản hiện tại."); }
+    } catch {
+      const msg = "Không lưu được bản nháp. Kiểm tra mã mẫu, nội dung và phiên bản hiện tại.";
+      setError(msg);
+      notify.error({ title: msg });
+    }
     finally { setSaving(false); }
   }
 
@@ -228,7 +243,6 @@ export function FormBuilder() {
         <h2 className="font-semibold">{section.label}</h2>{section.fields.map((field) => <PreviewField key={field.field_key} field={field} />)}
       </section>)}<div className="flex justify-end"><Button onClick={() => setPreview(null)}>Đóng</Button></div></div> : null}
     </FormDialog>
-    {notice ? <FloatingToast tone={notice.tone} onDismiss={() => setNotice(null)}>{notice.text}</FloatingToast> : null}
   </PageShell>;
 }
 

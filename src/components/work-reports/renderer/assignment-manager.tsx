@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useNotify } from "@/components/ui/notify-provider";
 import { StatusBanner } from "@/components/ui/status-banner";
 import type { WorkReportAssignmentSummary } from "@/lib/work-reports/assignment-repository";
 
@@ -10,6 +11,7 @@ type Team = { team_id: string; code: string; display_name: string };
 type User = { app_user_id: string; display_name: string };
 
 export function AssignmentManager() {
+  const notify = useNotify();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -26,7 +28,6 @@ export function AssignmentManager() {
   const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [trackingLoadedTeamId, setTrackingLoadedTeamId] = useState<string | null>(null);
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [trackingBusy, setTrackingBusy] = useState(false);
@@ -96,7 +97,7 @@ export function AssignmentManager() {
 
   async function updateAssignment(assignment: WorkReportAssignmentSummary, state: "ACTIVE" | "PAUSED" | "REVOKED") {
     if (state === "REVOKED" && !window.confirm("Thu hồi giao báo cáo này? Các nghĩa vụ đã nộp được giữ nguyên.")) return;
-    setTrackingBusy(true); setTrackingError(null); setMessage(null);
+    setTrackingBusy(true); setTrackingError(null);
     try {
       const idempotency_key = crypto.randomUUID();
       const response = await fetch(`/api/work-reports/assignments/${assignment.assignment_id}`, {
@@ -105,17 +106,27 @@ export function AssignmentManager() {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      setMessage(state === "PAUSED" ? "Đã tạm dừng giao báo cáo." : state === "REVOKED" ? "Đã thu hồi giao báo cáo." : "Đã kích hoạt lại giao báo cáo.");
+      notify.success({
+        title: state === "PAUSED"
+          ? "Đã tạm dừng giao báo cáo."
+          : state === "REVOKED"
+            ? "Đã thu hồi giao báo cáo."
+            : "Đã kích hoạt lại giao báo cáo.",
+      });
       await reloadAssignments();
     } catch (cause) {
-      setTrackingError(cause instanceof Error && cause.message === "WORK_REPORT_VERSION_CONFLICT"
+      const isConflict = cause instanceof Error && cause.message === "WORK_REPORT_VERSION_CONFLICT";
+      const msg = isConflict
         ? "Giao báo cáo vừa được thay đổi ở nơi khác. Danh sách đã cũ; vui lòng tải lại."
-        : "Không cập nhật được giao báo cáo. Vui lòng thử lại.");
+        : "Không cập nhật được giao báo cáo. Vui lòng thử lại.";
+      setTrackingError(msg);
+      if (isConflict) notify.warning({ title: msg });
+      else notify.error({ title: msg });
     } finally { setTrackingBusy(false); }
   }
 
   async function refreshProgress() {
-    setTrackingBusy(true); setTrackingError(null); setMessage(null);
+    setTrackingBusy(true); setTrackingError(null);
     try {
       const business_date = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
       const response = await fetch("/api/work-reports/assignments/materialize", {
@@ -123,15 +134,17 @@ export function AssignmentManager() {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      setMessage("Đã cập nhật nghĩa vụ cho kỳ hiện tại.");
+      notify.success({ title: "Đã cập nhật nghĩa vụ cho kỳ hiện tại." });
       await reloadAssignments();
     } catch {
-      setTrackingError("Không cập nhật được tiến độ nghĩa vụ. Vui lòng thử lại.");
+      const msg = "Không cập nhật được tiến độ nghĩa vụ. Vui lòng thử lại.";
+      setTrackingError(msg);
+      notify.error({ title: msg });
     } finally { setTrackingBusy(false); }
   }
 
   async function create(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError(null); setMessage(null);
+    event.preventDefault(); setBusy(true); setError(null);
     const ids = targetKind === "USER_SET" ? targetUsers : [];
     if (!templateId || !teamId || (targetKind === "USER" && !targetId) ||
         (targetKind === "USER_SET" && ids.length === 0)) {
@@ -149,14 +162,17 @@ export function AssignmentManager() {
       });
       const result = await response.json();
       if (!response.ok || result?.ok !== true) throw new Error(result?.code ?? "WORK_REPORT_UNAVAILABLE");
-      setMessage(`Đã tạo assignment ${result.assignment_id} (version ${result.version}).`);
+      notify.success({ title: `Đã tạo assignment ${result.assignment_id} (version ${result.version}).` });
       await reloadAssignments();
     } catch (cause) {
       const code = cause instanceof Error ? cause.message : "WORK_REPORT_UNAVAILABLE";
-      setError(code === "WORK_REPORT_SCOPE_DENIED" || code === "WORK_REPORT_ACCESS_DENIED"
+      const msg = code === "WORK_REPORT_SCOPE_DENIED" || code === "WORK_REPORT_ACCESS_DENIED"
         ? "Bạn không có quyền giao báo cáo cho toàn bộ đối tượng đã chọn. Không có assignment nào được tạo."
         : code === "WORK_REPORT_VERSION_CONFLICT" ? "Mẫu đã thay đổi. Tải lại và thử lại."
-          : "Không tạo được giao việc. Vui lòng kiểm tra thông tin hoặc thử lại.");
+          : "Không tạo được giao việc. Vui lòng kiểm tra thông tin hoặc thử lại.";
+      setError(msg);
+      if (code === "WORK_REPORT_VERSION_CONFLICT") notify.warning({ title: msg });
+      else notify.error({ title: msg });
     } finally { setBusy(false); }
   }
 
@@ -165,7 +181,6 @@ export function AssignmentManager() {
       Mẫu, nhóm, nhân viên và assignment được tải theo quyền hiện tại; máy chủ kiểm tra lại scope trước mọi thao tác.
     </StatusBanner>
     {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
-    {message ? <StatusBanner tone="success">{message}</StatusBanner> : null}
     <form onSubmit={(event) => void create(event)} className="max-w-2xl space-y-4 rounded-xl border border-border p-4 sm:p-6">
       <h2 className="font-semibold">Tạo giao báo cáo</h2>
       <div className="space-y-1.5"><label htmlFor="team" className="text-sm font-medium">Nhóm trong phạm vi được giao</label>
