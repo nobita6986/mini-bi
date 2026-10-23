@@ -1,11 +1,23 @@
 export type NotifyTone = "success" | "info" | "warning" | "error";
 export type NotifyPhase = "entering" | "open" | "exiting";
+export type NotifyActionKind = "action" | "link" | "retry";
 
 export type NotifyActionProps = {
   label: string;
-  onClick?: () => void;
+  onClick?: () => void | Promise<void>;
   href?: string;
   dataTestId?: string;
+  /**
+   * Phân loại hành động trên Toast:
+   * - `"retry"` bắt buộc `safeToRetry: true` và `onClick` hợp lệ (chỉ dùng cho tác vụ đọc/xuất/idempotent an toàn).
+   * - Không hỗ trợ `"undo"` vì Mini BI không có RPC hoàn tác an toàn phía backend.
+   */
+  kind?: NotifyActionKind;
+  safeToRetry?: boolean;
+  /** Kiểm tra callback còn hợp lệ tại thời điểm tạo và thời điểm bấm nút. */
+  isValid?: () => boolean;
+  /** Tự đóng Toast sau khi người dùng kích hoạt action (mặc định false). */
+  dismissOnAction?: boolean;
 };
 
 export type NotifyOptions = {
@@ -13,7 +25,20 @@ export type NotifyOptions = {
   description?: string;
   dedupeKey?: string;
   durationMs?: number | null;
+  pending?: boolean;
+  /** Khi trùng `dedupeKey` của cùng nghiệp vụ, tăng bộ đếm lặp (mặc định true). */
+  countBurst?: boolean;
   action?: NotifyActionProps;
+  dataTestId?: string;
+};
+
+export type NotifyUpdateOptions = {
+  tone?: NotifyTone;
+  title?: string;
+  description?: string | null;
+  durationMs?: number | null;
+  pending?: boolean;
+  action?: NotifyActionProps | null;
   dataTestId?: string;
 };
 
@@ -24,6 +49,8 @@ export type NotifyItem = {
   description?: string;
   dedupeKey?: string;
   durationMs: number | null;
+  pending: boolean;
+  repeatCount: number;
   createdAt: number;
   updatedAt: number;
   visibleAt: number | null;
@@ -46,6 +73,8 @@ export type NotifyApi = {
   info: (options: NotifyOptions) => string;
   warning: (options: NotifyOptions) => string;
   error: (options: NotifyOptions) => string;
+  pending: (options: NotifyOptions) => string;
+  update: (id: string, patch: NotifyUpdateOptions) => boolean;
   dismiss: (id: string) => void;
   clear: () => void;
 };
@@ -116,14 +145,59 @@ export function sanitizeNotifyText(raw: string | undefined | null): string {
   return `${cleaned.slice(0, MAX_TEXT_LENGTH - 1)}…`;
 }
 
+/**
+ * Lọc và xác thực action gắn trên Toast (S2-05):
+ * - Cấm tuyệt đối `"undo"` giả khi backend không có cơ chế hoàn tác thật.
+ * - Với `"retry"`, chỉ chấp nhận khi `safeToRetry === true` và có `onClick` còn hợp lệ.
+ * - Chuẩn hóa nhãn qua `sanitizeNotifyText`.
+ */
+export function resolveSafeNotifyAction(
+  action: NotifyActionProps | undefined | null,
+): NotifyActionProps | undefined {
+  if (!action) return undefined;
+  const rawKind = (action as { kind?: string }).kind;
+  if (rawKind === "undo") {
+    return undefined;
+  }
+
+  const label = sanitizeNotifyText(action.label);
+  if (!label) return undefined;
+
+  const hasHref = typeof action.href === "string" && action.href.trim().length > 0;
+  const hasOnClick = typeof action.onClick === "function";
+  if (!hasHref && !hasOnClick) return undefined;
+
+  if (action.isValid) {
+    try {
+      if (!action.isValid()) return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (action.kind === "retry") {
+    if (action.safeToRetry !== true || !hasOnClick) {
+      return undefined;
+    }
+  }
+
+  return {
+    ...action,
+    label,
+    href: hasHref ? action.href!.trim() : undefined,
+  };
+}
+
 export function resolveNotifyDuration(
   tone: NotifyTone,
   durationMs?: number | null,
+  pending = false,
 ): number | null {
   if (durationMs === null) return null;
   if (typeof durationMs === "number") {
     return Number.isFinite(durationMs) && durationMs > 0 ? Math.floor(durationMs) : null;
   }
+  if (pending) return null;
   return DEFAULT_NOTIFY_DURATIONS[tone];
 }
 
@@ -157,6 +231,7 @@ export type NotifyStore = {
   getSnapshot: () => NotifySnapshot;
   subscribe: (listener: () => void) => () => void;
   enqueue: (tone: NotifyTone, options: NotifyOptions) => string;
+  update: (id: string, patch: NotifyUpdateOptions) => boolean;
   completeEnter: (id: string, expectedRevision?: number) => void;
   dismiss: (id: string, expectedRevision?: number) => void;
   finalizeDismiss: (id: string, expectedRevision?: number) => void;
@@ -204,6 +279,18 @@ export function createNotifyStore(
     };
   }
 
+  function resolveNextRepeatCount(
+    existing: NotifyItem,
+    nextPending: boolean,
+    countBurst: boolean | undefined,
+  ): number {
+    if (countBurst === false) return existing.repeatCount;
+    // Khi một Toast đang pending chuyển sang trạng thái kết thúc thông qua cùng dedupeKey,
+    // đây là cập nhật vòng đời 1 tác vụ chứ không phải sự kiện lặp burst.
+    if (existing.pending && !nextPending) return existing.repeatCount;
+    return existing.repeatCount + 1;
+  }
+
   function enqueue(tone: NotifyTone, options: NotifyOptions): string {
     const title = sanitizeNotifyText(options.title) || "Thông báo hệ thống";
     const descriptionRaw = sanitizeNotifyText(options.description);
@@ -212,7 +299,9 @@ export function createNotifyStore(
       typeof options.dedupeKey === "string" && options.dedupeKey.trim().length > 0
         ? options.dedupeKey.trim()
         : undefined;
-    const durationMs = resolveNotifyDuration(tone, options.durationMs);
+    const pending = options.pending === true;
+    const durationMs = resolveNotifyDuration(tone, options.durationMs, pending);
+    const safeAction = resolveSafeNotifyAction(options.action);
     const timestamp = nowFn();
 
     if (dedupeKey) {
@@ -229,6 +318,8 @@ export function createNotifyStore(
           title,
           description,
           durationMs,
+          pending,
+          repeatCount: resolveNextRepeatCount(existing, pending, options.countBurst),
           updatedAt: timestamp,
           visibleAt: timestamp,
           phase: nextPhase,
@@ -239,7 +330,7 @@ export function createNotifyStore(
           deadlineAt: durationMs !== null ? timestamp + durationMs : null,
           exitDeadlineAt: null,
           revision: existing.revision + 1,
-          action: options.action,
+          action: safeAction,
           dataTestId: options.dataTestId ?? existing.dataTestId,
         };
         const nextVisible = [...snapshot.visible];
@@ -261,9 +352,11 @@ export function createNotifyStore(
           title,
           description,
           durationMs,
+          pending,
+          repeatCount: resolveNextRepeatCount(existing, pending, options.countBurst),
           updatedAt: timestamp,
           revision: existing.revision + 1,
-          action: options.action,
+          action: safeAction,
           dataTestId: options.dataTestId ?? existing.dataTestId,
         };
         const nextQueue = [...snapshot.queue];
@@ -285,6 +378,8 @@ export function createNotifyStore(
       description,
       dedupeKey,
       durationMs,
+      pending,
+      repeatCount: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
       visibleAt: null,
@@ -293,7 +388,7 @@ export function createNotifyStore(
       exitDeadlineAt: null,
       phase: "entering",
       revision: 1,
-      action: options.action,
+      action: safeAction,
       dataTestId: options.dataTestId,
     };
 
@@ -309,7 +404,9 @@ export function createNotifyStore(
 
     const nextQueue = [...snapshot.queue];
     if (nextQueue.length >= MAX_PENDING_TOASTS) {
-      const lowPriorityIdx = nextQueue.findIndex((item) => !isHighPriorityTone(item.tone));
+      const lowPriorityIdx = nextQueue.findIndex(
+        (item) => !isHighPriorityTone(item.tone) && !item.pending,
+      );
       if (lowPriorityIdx !== -1) {
         nextQueue.splice(lowPriorityIdx, 1);
       } else if (isHighPriorityTone(tone)) {
@@ -325,6 +422,138 @@ export function createNotifyStore(
     };
     emit();
     return id;
+  }
+
+  function update(id: string, patch: NotifyUpdateOptions): boolean {
+    if (!id) return false;
+    const timestamp = nowFn();
+
+    const visibleIdx = snapshot.visible.findIndex((item) => item.id === id);
+    if (visibleIdx !== -1) {
+      const existing = snapshot.visible[visibleIdx]!;
+      const nextTone: NotifyTone = patch.tone ?? existing.tone;
+      const nextPending: boolean =
+        patch.pending !== undefined
+          ? patch.pending
+          : patch.tone !== undefined
+            ? false
+            : existing.pending;
+      const nextTitle =
+        patch.title !== undefined
+          ? sanitizeNotifyText(patch.title) || existing.title
+          : existing.title;
+      const nextDescription =
+        patch.description === null
+          ? undefined
+          : patch.description !== undefined
+            ? (() => {
+                const cleaned = sanitizeNotifyText(patch.description);
+                return cleaned.length > 0 ? cleaned : undefined;
+              })()
+            : existing.description;
+      const nextDurationMs =
+        patch.durationMs !== undefined || patch.tone !== undefined || patch.pending !== undefined
+          ? resolveNotifyDuration(nextTone, patch.durationMs, nextPending)
+          : existing.durationMs;
+      const nextAction =
+        patch.action === null
+          ? undefined
+          : patch.action !== undefined
+            ? resolveSafeNotifyAction(patch.action)
+            : existing.action;
+      const nextPhase: NotifyPhase =
+        existing.phase === "exiting"
+          ? (prefersReducedMotionFn() ? "open" : "entering")
+          : existing.phase;
+
+      const updatedItem: NotifyItem = {
+        ...existing,
+        tone: nextTone,
+        title: nextTitle,
+        description: nextDescription,
+        durationMs: nextDurationMs,
+        pending: nextPending,
+        updatedAt: timestamp,
+        phase: nextPhase,
+        enterDeadlineAt:
+          nextPhase === "entering"
+            ? (existing.enterDeadlineAt ?? timestamp + TOAST_ENTER_DURATION_MS)
+            : null,
+        deadlineAt: nextDurationMs !== null ? timestamp + nextDurationMs : null,
+        exitDeadlineAt: null,
+        revision: existing.revision + 1,
+        action: nextAction,
+        dataTestId: patch.dataTestId ?? existing.dataTestId,
+      };
+
+      const nextVisible = [...snapshot.visible];
+      nextVisible[visibleIdx] = updatedItem;
+      snapshot = {
+        ...snapshot,
+        visible: nextVisible,
+      };
+      emit();
+      return true;
+    }
+
+    const queueIdx = snapshot.queue.findIndex((item) => item.id === id);
+    if (queueIdx !== -1) {
+      const existing = snapshot.queue[queueIdx]!;
+      const nextTone: NotifyTone = patch.tone ?? existing.tone;
+      const nextPending: boolean =
+        patch.pending !== undefined
+          ? patch.pending
+          : patch.tone !== undefined
+            ? false
+            : existing.pending;
+      const nextTitle =
+        patch.title !== undefined
+          ? sanitizeNotifyText(patch.title) || existing.title
+          : existing.title;
+      const nextDescription =
+        patch.description === null
+          ? undefined
+          : patch.description !== undefined
+            ? (() => {
+                const cleaned = sanitizeNotifyText(patch.description);
+                return cleaned.length > 0 ? cleaned : undefined;
+              })()
+            : existing.description;
+      const nextDurationMs =
+        patch.durationMs !== undefined || patch.tone !== undefined || patch.pending !== undefined
+          ? resolveNotifyDuration(nextTone, patch.durationMs, nextPending)
+          : existing.durationMs;
+      const nextAction =
+        patch.action === null
+          ? undefined
+          : patch.action !== undefined
+            ? resolveSafeNotifyAction(patch.action)
+            : existing.action;
+
+      const updatedItem: NotifyItem = {
+        ...existing,
+        tone: nextTone,
+        title: nextTitle,
+        description: nextDescription,
+        durationMs: nextDurationMs,
+        pending: nextPending,
+        updatedAt: timestamp,
+        revision: existing.revision + 1,
+        action: nextAction,
+        dataTestId: patch.dataTestId ?? existing.dataTestId,
+      };
+
+      const nextQueue = [...snapshot.queue];
+      nextQueue[queueIdx] = updatedItem;
+      snapshot = {
+        ...snapshot,
+        queue: nextQueue,
+      };
+      emit();
+      return true;
+    }
+
+    return false;
   }
 
   function completeEnter(id: string, expectedRevision?: number) {
@@ -437,6 +666,13 @@ export function createNotifyStore(
     info: (options: NotifyOptions) => enqueue("info", options),
     warning: (options: NotifyOptions) => enqueue("warning", options),
     error: (options: NotifyOptions) => enqueue("error", options),
+    pending: (options: NotifyOptions) =>
+      enqueue("info", {
+        ...options,
+        pending: true,
+        durationMs: options.durationMs ?? null,
+      }),
+    update: (id: string, patch: NotifyUpdateOptions) => update(id, patch),
     dismiss: (id: string) => dismiss(id),
     clear,
   });
@@ -450,6 +686,7 @@ export function createNotifyStore(
       };
     },
     enqueue,
+    update,
     completeEnter,
     dismiss,
     finalizeDismiss,
@@ -545,7 +782,7 @@ export function bindNotifyTimerScheduler(
         clearMapEntry(enterTimers, item.id);
       }
 
-      // 2. Auto-dismiss deadline timer (4s/5s/7s; null for persistent error)
+      // 2. Auto-dismiss deadline timer (4s/5s/7s; null for persistent error or pending)
       if (item.phase !== "exiting" && item.deadlineAt !== null) {
         const currentAuto = autoDismissTimers.get(item.id);
         if (
