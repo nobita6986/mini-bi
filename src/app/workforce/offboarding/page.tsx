@@ -5,7 +5,7 @@ import { decideWorkforceOffboardingPageAccess } from "@/lib/auth/direct-entry-pa
 import { resolveActorForRequest } from "@/lib/navigation/resolve-nav-actor";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "NLĐ nghỉ việc — Mini BI" };
+export const metadata = { title: "Báo cáo NLĐ nghỉ việc — Mini BI" };
 
 export default async function WorkforceOffboardingPage() {
   if (process.env.DIRECT_ENTRY_API_ENABLED !== "true") notFound();

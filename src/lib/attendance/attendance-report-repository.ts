@@ -18,6 +18,7 @@ export type GetAttendanceAdminReportInput = {
   page: number;
   page_size: number;
   search: string | null;
+  employee_id?: string | null;
 };
 
 export type GetAttendanceAdminReportResult =
@@ -76,6 +77,7 @@ const KNOWN_REPORT_RPC_TOKENS: ReadonlyMap<string, AttendanceReportErrorCode> = 
   ["ATTENDANCE_REPORT_RANGE_INVALID", "ATTENDANCE_REPORT_RANGE_INVALID"],
   ["ATTENDANCE_REPORT_PAGINATION_INVALID", "ATTENDANCE_REPORT_PAGINATION_INVALID"],
   ["ATTENDANCE_REPORT_SEARCH_INVALID", "ATTENDANCE_REPORT_SEARCH_INVALID"],
+  ["ATTENDANCE_REPORT_FILTER_CONFLICT", "ATTENDANCE_REPORT_FILTER_CONFLICT"],
   ["ATTENDANCE_HQ_COORDINATES_INVALID", "ATTENDANCE_HQ_COORDINATES_INVALID"],
   ["ATTENDANCE_HQ_VERSION_CONFLICT", "ATTENDANCE_HQ_VERSION_CONFLICT"],
   ["IDEMPOTENCY_CONFLICT", "IDEMPOTENCY_CONFLICT"],
@@ -141,6 +143,7 @@ export function createServiceAttendanceAdminReportRepository(
           p_page: input.page,
           p_page_size: input.page_size,
           p_search: input.search,
+          p_employee_id: input.employee_id ?? null,
         });
 
         if (result.error) {

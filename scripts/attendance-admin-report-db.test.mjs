@@ -286,28 +286,52 @@ async function seedRoleMatrixActors(db) {
 }
 
 async function callReportAsServiceRole(db, args) {
+  const useEightArg = "employee_id" in args || args.use_eight_arg === true;
   await db.exec("begin; set local role service_role;");
   try {
-    const res = await db.query(
-      `select public.attendance_admin_report(
-        $1::uuid,
-        $2::uuid,
-        $3::date,
-        $4::date,
-        $5::integer,
-        $6::integer,
-        $7::text
-      ) as data`,
-      [
-        args.auth_subject,
-        args.app_user_id,
-        args.from_date ?? null,
-        args.to_date ?? null,
-        args.page ?? 1,
-        args.page_size ?? 25,
-        args.search ?? null,
-      ],
-    );
+    const res = useEightArg
+      ? await db.query(
+          `select public.attendance_admin_report(
+            $1::uuid,
+            $2::uuid,
+            $3::date,
+            $4::date,
+            $5::integer,
+            $6::integer,
+            $7::text,
+            $8::uuid
+          ) as data`,
+          [
+            args.auth_subject,
+            args.app_user_id,
+            args.from_date ?? null,
+            args.to_date ?? null,
+            args.page ?? 1,
+            args.page_size ?? 25,
+            args.search ?? null,
+            args.employee_id ?? null,
+          ],
+        )
+      : await db.query(
+          `select public.attendance_admin_report(
+            $1::uuid,
+            $2::uuid,
+            $3::date,
+            $4::date,
+            $5::integer,
+            $6::integer,
+            $7::text
+          ) as data`,
+          [
+            args.auth_subject,
+            args.app_user_id,
+            args.from_date ?? null,
+            args.to_date ?? null,
+            args.page ?? 1,
+            args.page_size ?? 25,
+            args.search ?? null,
+          ],
+        );
     await db.exec("commit;");
     return res.rows[0].data;
   } catch (err) {
@@ -1127,7 +1151,89 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
     const pagedIds = [...page1.items, ...page2.items, ...page3.items].map((i) => i.checkin_id);
     assert.deepEqual(pagedIds, fullReport.items.map((i) => i.checkin_id));
 
-    // Verify SQL-level range/pagination/search guards & zero internal field leakage
+    // Verify SQL-level range/pagination/search/employee_id guards, employee_options contract & zero internal field leakage
+    const expectedEmployeeOptions = [
+      {
+        app_user_id: ACTORS.STAFF_A.app,
+        display_name: ACTORS.STAFF_A.name,
+        personnel_code: ACTORS.STAFF_A.code,
+      },
+      {
+        app_user_id: ACTORS.STAFF_B.app,
+        display_name: ACTORS.STAFF_B.name,
+        personnel_code: null,
+      },
+    ];
+    assert.deepEqual(fullReport.employee_options, expectedEmployeeOptions);
+    assert.deepEqual(
+      wildcardSearch.employee_options,
+      expectedEmployeeOptions,
+      "employee_options stays scoped to [from_date, to_date] and is not narrowed by search",
+    );
+
+    const staffAFiltered = await callReportAsServiceRole(db, {
+      auth_subject: ACTORS.FULL_ADMIN.auth,
+      app_user_id: ACTORS.FULL_ADMIN.app,
+      from_date: minDate,
+      to_date: maxDate,
+      employee_id: ACTORS.STAFF_A.app,
+    });
+    assert.ok(projectAttendanceAdminReport(staffAFiltered) !== null);
+    assert.equal(staffAFiltered.filters.employee_id, ACTORS.STAFF_A.app);
+    assert.equal(staffAFiltered.filters.search, null);
+    assert.equal(staffAFiltered.overview.total_checkins, 4);
+    assert.equal(staffAFiltered.overview.unique_employees, 1);
+    assert.equal(staffAFiltered.pagination.total_rows, 4);
+    assert.ok(
+      staffAFiltered.items.every((item) => item.employee_display_name === ACTORS.STAFF_A.name),
+    );
+    assert.deepEqual(
+      staffAFiltered.employee_options,
+      expectedEmployeeOptions,
+      "employee_options includes all date-range employees even when filtered by employee_id",
+    );
+
+    const noCheckinEmployeeFiltered = await callReportAsServiceRole(db, {
+      auth_subject: ACTORS.BOD_EXECUTIVE_REPORTS.auth,
+      app_user_id: ACTORS.BOD_EXECUTIVE_REPORTS.app,
+      from_date: minDate,
+      to_date: maxDate,
+      employee_id: ACTORS.FULL_ADMIN.app,
+    });
+    assert.equal(noCheckinEmployeeFiltered.overview.total_checkins, 0);
+    assert.equal(noCheckinEmployeeFiltered.pagination.total_rows, 0);
+    assert.deepEqual(noCheckinEmployeeFiltered.items, []);
+    assert.deepEqual(noCheckinEmployeeFiltered.employee_options, expectedEmployeeOptions);
+
+    await assert.rejects(
+      () =>
+        callReportAsServiceRole(db, {
+          auth_subject: ACTORS.FULL_ADMIN.auth,
+          app_user_id: ACTORS.FULL_ADMIN.app,
+          from_date: minDate,
+          to_date: maxDate,
+          search: "NV",
+          employee_id: ACTORS.STAFF_A.app,
+        }),
+      (err) =>
+        err.code === "22023" &&
+        String(err.message).includes("ATTENDANCE_REPORT_FILTER_CONFLICT"),
+    );
+
+    await assert.rejects(
+      () =>
+        callReportAsServiceRole(db, {
+          auth_subject: ACTORS.TEAM_LEADER.auth,
+          app_user_id: ACTORS.TEAM_LEADER.app,
+          from_date: minDate,
+          to_date: maxDate,
+          employee_id: ACTORS.STAFF_A.app,
+        }),
+      (err) =>
+        err.code === "42501" &&
+        String(err.message).includes("ATTENDANCE_REPORT_ACCESS_DENIED"),
+    );
+
     await assert.rejects(
       () =>
         callReportAsServiceRole(db, {
@@ -1141,7 +1247,7 @@ test("Attendance Admin Report SQL enforces ACL/immutability, role matrix, HQ rev
 
     const serialized = JSON.stringify(fullReport);
     assert.equal(serialized.includes("photo_storage_key"), false);
-    assert.equal(serialized.includes(ACTORS.STAFF_A.app), false);
+    assert.equal(JSON.stringify(fullReport.items).includes(ACTORS.STAFF_A.app), false);
     assert.equal(serialized.includes(ACTORS.STAFF_A.auth), false);
     assert.equal(serialized.includes(TOKEN_DIGEST), false);
   } finally {

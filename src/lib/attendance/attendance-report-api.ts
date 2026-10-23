@@ -215,6 +215,7 @@ export async function getAttendanceAdminReport(
     page: parsedQuery.value.page,
     page_size: parsedQuery.value.page_size,
     search: parsedQuery.value.search,
+    employee_id: parsedQuery.value.employee_id,
   });
 
   if (!result.ok) {

@@ -79,6 +79,7 @@ const TEST_WEIGHTS = {
   "test:work-reports-reader-contract": 7.0,
   "test:attendance-wp1": 9.0,
   "test:attendance-admin-report": 9.0,
+  "test:offboarding-report": 9.0,
 };
 
 const target = process.argv[2];
