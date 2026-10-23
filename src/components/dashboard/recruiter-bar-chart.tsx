@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Too
 import { useTheme } from "@/lib/theme/theme-provider";
 import { useMounted } from "@/lib/theme/use-mounted";
 import type { BarDatum } from "@/lib/reporting/p1-chart-data";
+import { useBiHighlight } from "./bi-cross-highlight";
 import {
   buildBarDatasetSignature,
   CHART_MAX_ANIMATED_BAR_ITEMS,
@@ -20,6 +21,9 @@ function truncateTick(s: string) {
 export function RecruiterBarChart({ data, title }: { data: BarDatum[]; title: string }) {
   const { resolveColor, tokens } = useTheme();
   const mounted = useMounted();
+  const barKeys = useMemo(() => data.map((d) => d.key), [data]);
+  const highlight = useBiHighlight(barKeys);
+
   const dataset = useMemo(() => buildBarDatasetSignature(data), [data]);
   const chartMotion = useChartDataAnimation({
     chartId: `recruiter-bar:${title}`,
@@ -29,6 +33,7 @@ export function RecruiterBarChart({ data, title }: { data: BarDatum[]; title: st
     itemCount: dataset.itemCount,
     maxItems: CHART_MAX_ANIMATED_BAR_ITEMS,
   });
+
   if (!mounted) return <div className="h-72 w-full" role="img" aria-label={title} />;
   return (
     <div className="h-72 w-full" role="img" aria-label={title}>
@@ -47,11 +52,28 @@ export function RecruiterBarChart({ data, title }: { data: BarDatum[]; title: st
             name="Số người"
             radius={[0, 6, 6, 0]}
             barSize={18}
+            onMouseEnter={(_, index) => {
+              const key = data[index]?.key ?? null;
+              highlight.onHover(key);
+            }}
+            onMouseLeave={() => highlight.onHover(null)}
             isAnimationActive={chartMotion.isAnimationActive}
             animationDuration={chartMotion.animationDuration}
             animationEasing={chartMotion.animationEasing}
           >
-            {data.map((d) => <Cell key={d.key} fill={resolveColor(d.color)} />)}
+            {data.map((d) => {
+              const isHighlighted = highlight.activeKey === d.key;
+              const isDimmed = highlight.activeKey !== null && !isHighlighted;
+              return (
+                <Cell
+                  key={d.key}
+                  fill={resolveColor(d.color)}
+                  fillOpacity={isDimmed ? 0.35 : 1}
+                  stroke={isHighlighted ? "var(--foreground)" : "none"}
+                  strokeWidth={isHighlighted ? 1.5 : 0}
+                />
+              );
+            })}
             <LabelList key={chartMotion.signature} dataKey="value" position="right" formatter={(v) => String(v)} style={{ fontSize: 11, fill: tokens.muted }} />
           </Bar>
         </BarChart>

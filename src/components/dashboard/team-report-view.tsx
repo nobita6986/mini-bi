@@ -24,6 +24,7 @@ import { Alert } from "@/components/ui/alert";
 import { Card, CardHeader } from "@/components/ui/card";
 import { useNotify } from "@/components/ui/notify-provider";
 import { EmptyState } from "@/components/reporting/empty-state";
+import { BiHighlightScope } from "./bi-cross-highlight";
 import { EmploymentComposition } from "./employment-composition";
 import { KpiCard } from "./kpi-card";
 import { ProjectDonut } from "./project-donut";
@@ -281,28 +282,53 @@ function TeamPicker({
   view: TeamReportViewConfig;
   onSelect(key: string): void;
 }) {
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const validBucketKeys = new Set(buckets.map((b) => b.key));
+  const activeHighlightKey =
+    hoveredKey !== null && validBucketKeys.has(hoveredKey)
+      ? hoveredKey
+      : focusedKey !== null && validBucketKeys.has(focusedKey)
+        ? focusedKey
+        : selectedKey !== null && validBucketKeys.has(selectedKey)
+          ? selectedKey
+          : null;
+
   return (
     <Card>
       <CardHeader title={view.pickerHeading} description={view.pickerDescription} />
-      <TeamBucketChart buckets={buckets} />
+      <TeamBucketChart
+        buckets={buckets}
+        highlightedKey={activeHighlightKey}
+        onHoverKey={setHoveredKey}
+      />
       <div className="mt-5 border-t border-border pt-4">
         <h3 className="text-sm font-semibold text-foreground">{view.pickerTitle}</h3>
         <ul aria-label="Danh sách nhóm báo cáo" className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {buckets.map((bucket) => (
-            <li key={bucket.key}>
-              <button
-                type="button"
-                aria-pressed={selectedKey === bucket.key}
-                onClick={() => onSelect(bucket.key)}
-                className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 ${selectedKey === bucket.key
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border bg-surface text-foreground hover:bg-muted/10"}`}
-              >
-                <span className="min-w-0 break-words">{bucket.display}</span>
-                <span className="shrink-0 font-mono">{bucket.recruitedCount}</span>
-              </button>
-            </li>
-          ))}
+          {buckets.map((bucket) => {
+            const isHighlighted = activeHighlightKey === bucket.key && selectedKey !== bucket.key;
+            return (
+              <li key={bucket.key}>
+                <button
+                  type="button"
+                  aria-pressed={selectedKey === bucket.key}
+                  onMouseEnter={() => setHoveredKey(bucket.key)}
+                  onMouseLeave={() => setHoveredKey(null)}
+                  onFocus={() => setFocusedKey(bucket.key)}
+                  onBlur={() => setFocusedKey(null)}
+                  onClick={() => onSelect(bucket.key)}
+                  className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors duration-[var(--ui-motion-hover,160ms)] focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 ${selectedKey === bucket.key
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : isHighlighted
+                      ? "border-primary/40 bg-primary/5 text-foreground"
+                      : "border-border bg-surface text-foreground hover:bg-muted/10"}`}
+                >
+                  <span className="min-w-0 break-words">{bucket.display}</span>
+                  <span className="shrink-0 font-mono tabular-nums">{bucket.recruitedCount}</span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </div>
     </Card>
@@ -312,6 +338,7 @@ function TeamPicker({
 function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportViewConfig }) {
   const summary = computeDashboardSummary(data);
   const insights = computeCompositionInsights(data);
+  const projectSlices = buildProjectDonutData(data.byProject);
   const trend = buildDailyTrend(data.byDate, data.applied.from, data.applied.to);
   const dataDays = trend.filter((p) => p.count > 0);
   const members = buildMemberContributions(data.byRecruiter);
@@ -423,8 +450,13 @@ function TeamReportBody({ data, view }: { data: ReportingData; view: TeamReportV
               <span className="font-mono tabular-nums">{formatSharePct(insights.leadingProject.shareOfFilteredPct)}</span>)
             </p>
           ) : null}
-          <ProjectDonut slices={buildProjectDonutData(data.byProject)} title="Biểu đồ theo dự án của nhóm" />
-          <BucketList buckets={data.byProject} />
+          <BiHighlightScope
+            validKeys={Object.keys(data.byProject)}
+            topSliceKeys={projectSlices.filter((s) => s.key !== "__other__").map((s) => s.key)}
+          >
+            <ProjectDonut slices={projectSlices} title="Biểu đồ theo dự án của nhóm" />
+            <BucketList buckets={data.byProject} />
+          </BiHighlightScope>
         </Card>
         <Card className="lg:col-span-5">
           <CardHeader title="Theo loại hình làm việc của nhóm" description="Tỷ trọng trên tập đang lọc." />
