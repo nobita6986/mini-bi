@@ -46,6 +46,7 @@
   --ui-motion-toast-in: 200ms;
   --ui-motion-toast-out: 160ms;
   --ui-motion-chart: 340ms;
+  --ui-motion-kpi: 220ms;
   --ui-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -194,6 +195,7 @@ table.r22-report-table thead th:first-child {
     --ui-motion-toast-in: 0ms;
     --ui-motion-toast-out: 0ms;
     --ui-motion-chart: 0ms;
+    --ui-motion-kpi: 0ms;
   }
   .recharts-wrapper *,
   [data-ui-toast-viewport] * {
