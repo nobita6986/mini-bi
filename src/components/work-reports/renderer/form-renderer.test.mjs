@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { renderWorkReportFieldValue } from "../../../lib/work-reports/reader-ui-model.ts";
+import { parseReaderDetail, renderWorkReportFieldValue } from "../../../lib/work-reports/reader-ui-model.ts";
+import { RECRUITMENT_DAILY_TEMPLATE_SCHEMA } from "../../../lib/work-reports/contracts.ts";
 
 const rendererPath = new URL("./work-report-form-renderer.tsx", import.meta.url);
 const inboxPath = new URL("./my-obligations.tsx", import.meta.url);
@@ -69,6 +70,34 @@ test("read-only value renderer covers all eight field types without raw JSON or 
   assert.equal(renderWorkReportFieldValue({ field_type: "integer" }, undefined), "—");
   // Never echo a technical option key when a label exists.
   assert.equal(renderWorkReportFieldValue(selectField, "opt_a").includes("opt_a"), false);
+});
+
+test("reader detail parser fails closed on malformed schema and revisions", () => {
+  const base = {
+    obligation: {
+      period_key: "2026-10", period_start_date: "2026-10-01", period_end_date: "2026-10-31",
+      due_at: "2026-10-31T00:00:00Z", snapshot_team_display_name: null, snapshot_team_code: null,
+      obligation_status: "ACTIVE",
+    },
+    template: { template_code: "T1", display_name: "Tên mẫu", schema_json: {} },
+    submission: null,
+    latest_review_event: null,
+    revisions: [],
+  };
+  assert.equal(parseReaderDetail({ ok: true, data: base }), null, "schema_json:{} must be rejected");
+
+  const badRevision = {
+    ...base,
+    template: { ...base.template, schema_json: RECRUITMENT_DAILY_TEMPLATE_SCHEMA },
+    revisions: [{ revision_id: "not-a-uuid", revision_no: 1, payload_json: {}, created_at: "2026-10-01T00:00:00Z" }],
+  };
+  assert.equal(parseReaderDetail({ ok: true, data: badRevision }), null, "invalid revision must be rejected");
+
+  const valid = {
+    ...badRevision,
+    revisions: [{ revision_id: "11111111-1111-4111-8111-111111111111", revision_no: 1, payload_json: {}, created_at: "2026-10-01T00:00:00Z" }],
+  };
+  assert.ok(parseReaderDetail({ ok: true, data: valid }), "valid detail projects");
 });
 
 test("shared read-only renderer reuses the model and never renders raw JSON", async () => {

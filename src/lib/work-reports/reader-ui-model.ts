@@ -1,4 +1,5 @@
-import type { WorkReportField } from "./contracts.ts";
+import type { WorkReportField, WorkReportTemplateSchema } from "./contracts.ts";
+import { validateWorkReportSchema } from "./schema-validator.ts";
 
 export const WORK_REPORT_READABLE_STATE_LABELS: Readonly<Record<string, string>> = {
   COMPLETED: "Đã nộp",
@@ -271,4 +272,138 @@ export function findCurrentRevision(
   }
   // The reader RPC returns revisions ordered revision_no DESC; the head is current.
   return revisions[0];
+}
+
+export type ReaderDetail = {
+  obligation: {
+    period_key: string;
+    period_start_date: string;
+    period_end_date: string;
+    due_at: string;
+    snapshot_team_display_name: string | null;
+    snapshot_team_code: string | null;
+    obligation_status: string;
+  };
+  template: { template_code: string; display_name: string; schema_json: WorkReportTemplateSchema };
+  submission: {
+    submission_id: string;
+    state: string;
+    draft_payload_json: Record<string, unknown> | null;
+    first_submitted_at: string | null;
+    latest_submitted_at: string | null;
+    is_late: boolean;
+    has_post_deadline_amendment: boolean;
+    current_revision_id: string | null;
+    version: number;
+  } | null;
+  latest_review_event: { decision: string; reason: string | null; reviewed_at: string; revision_no?: number } | null;
+  revisions: ReaderRevision[];
+};
+
+const DETAIL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isReaderRevision(value: unknown): value is ReaderRevision {
+  return (
+    isRecord(value) &&
+    typeof value.revision_id === "string" &&
+    DETAIL_UUID.test(value.revision_id) &&
+    Number.isInteger(value.revision_no) &&
+    Number(value.revision_no) >= 1 &&
+    isRecord(value.payload_json) &&
+    typeof value.created_at === "string" &&
+    value.created_at.length > 0
+  );
+}
+
+/**
+ * Fail-closed detail parser: reuses the existing schema validator and mirrors the
+ * submission/revision contract, so a malformed `schema_json` (e.g. `{}`) or an invalid
+ * revision never reaches the renderer.
+ */
+export function parseReaderDetail(body: unknown): ReaderDetail | null {
+  if (!isRecord(body) || body.ok !== true || !isRecord(body.data)) return null;
+  const d = body.data;
+  if (!isRecord(d.obligation) || !isRecord(d.template)) return null;
+
+  const obligation = d.obligation;
+  if (
+    typeof obligation.period_key !== "string" ||
+    typeof obligation.period_start_date !== "string" ||
+    typeof obligation.period_end_date !== "string" ||
+    typeof obligation.due_at !== "string" ||
+    typeof obligation.obligation_status !== "string" ||
+    (obligation.snapshot_team_display_name !== null && typeof obligation.snapshot_team_display_name !== "string") ||
+    (obligation.snapshot_team_code !== null && typeof obligation.snapshot_team_code !== "string")
+  ) {
+    return null;
+  }
+
+  const template = d.template;
+  if (typeof template.display_name !== "string" || typeof template.template_code !== "string") return null;
+  if (!validateWorkReportSchema(template.schema_json).ok) return null;
+
+  if (!Array.isArray(d.revisions) || !d.revisions.every(isReaderRevision)) return null;
+
+  const submission = d.submission === null
+    ? null
+    : isRecord(d.submission) &&
+        typeof d.submission.submission_id === "string" && DETAIL_UUID.test(d.submission.submission_id) &&
+        typeof d.submission.state === "string" &&
+        Number.isInteger(d.submission.version) &&
+        (d.submission.draft_payload_json === null || isRecord(d.submission.draft_payload_json)) &&
+        (d.submission.first_submitted_at === null || typeof d.submission.first_submitted_at === "string") &&
+        (d.submission.latest_submitted_at === null || typeof d.submission.latest_submitted_at === "string") &&
+        typeof d.submission.is_late === "boolean" &&
+        typeof d.submission.has_post_deadline_amendment === "boolean" &&
+        (d.submission.current_revision_id === null ||
+          (typeof d.submission.current_revision_id === "string" && DETAIL_UUID.test(d.submission.current_revision_id)))
+      ? d.submission
+      : undefined;
+  if (submission === undefined) return null;
+
+  const latest = d.latest_review_event === undefined || d.latest_review_event === null
+    ? null
+    : isRecord(d.latest_review_event) &&
+        typeof d.latest_review_event.decision === "string" &&
+        (d.latest_review_event.reason === null || typeof d.latest_review_event.reason === "string") &&
+        typeof d.latest_review_event.reviewed_at === "string" &&
+        (d.latest_review_event.revision_no === undefined || typeof d.latest_review_event.revision_no === "number")
+      ? d.latest_review_event
+      : undefined;
+  if (latest === undefined) return null;
+
+  return {
+    obligation: {
+      period_key: obligation.period_key,
+      period_start_date: obligation.period_start_date,
+      period_end_date: obligation.period_end_date,
+      due_at: obligation.due_at,
+      snapshot_team_display_name: obligation.snapshot_team_display_name as string | null,
+      snapshot_team_code: obligation.snapshot_team_code as string | null,
+      obligation_status: obligation.obligation_status,
+    },
+    template: {
+      template_code: template.template_code,
+      display_name: template.display_name,
+      schema_json: template.schema_json as WorkReportTemplateSchema,
+    },
+    submission: submission === null ? null : {
+      submission_id: String(submission.submission_id),
+      state: String(submission.state),
+      draft_payload_json: submission.draft_payload_json as Record<string, unknown> | null,
+      first_submitted_at: submission.first_submitted_at as string | null,
+      latest_submitted_at: submission.latest_submitted_at as string | null,
+      is_late: submission.is_late as boolean,
+      has_post_deadline_amendment: submission.has_post_deadline_amendment as boolean,
+      current_revision_id: submission.current_revision_id as string | null,
+      version: Number(submission.version),
+    },
+    latest_review_event: latest === null ? null : {
+      decision: String(latest.decision),
+      reason: latest.reason as string | null,
+      reviewed_at: String(latest.reviewed_at),
+      ...(typeof latest.revision_no === "number" ? { revision_no: latest.revision_no } : {}),
+    },
+    revisions: d.revisions as ReaderRevision[],
+  };
 }

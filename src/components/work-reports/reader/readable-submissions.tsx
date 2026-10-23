@@ -8,110 +8,27 @@ import { DataTableContainer, DATA_TABLE_CLASS, DATA_TABLE_HEAD_CLASS, DATA_TABLE
 import { FilterToolbar } from "@/components/ui/filter-toolbar";
 import { FormDialog } from "@/components/ui/form-dialog";
 import { StatusBanner } from "@/components/ui/status-banner";
-import type { WorkReportTemplateSchema } from "@/lib/work-reports/contracts.ts";
 import {
   findCurrentRevision,
   formatReaderDateTime,
   mergeReaderItems,
+  parseReaderDetail,
   parseReaderList,
   readerListQuery,
   readerStateLabel,
   WORK_REPORT_READABLE_STATE_LABELS,
+  type ReaderDetail,
   type ReaderListFilters,
   type ReaderListItem,
   type ReaderListPayload,
-  type ReaderRevision,
 } from "@/lib/work-reports/reader-ui-model.ts";
 import { ReportReadonlyContent, ReportReviewHistory, ReportRevisionList } from "./report-readonly-content";
-
-type ReaderDetail = {
-  obligation: {
-    period_key: string;
-    period_start_date: string;
-    period_end_date: string;
-    due_at: string;
-    snapshot_team_display_name: string | null;
-    snapshot_team_code: string | null;
-    obligation_status: string;
-  };
-  template: { template_code: string; display_name: string; schema_json: WorkReportTemplateSchema };
-  submission: {
-    submission_id: string;
-    state: string;
-    draft_payload_json: Record<string, unknown> | null;
-    first_submitted_at: string | null;
-    latest_submitted_at: string | null;
-    is_late: boolean;
-    has_post_deadline_amendment: boolean;
-    current_revision_id: string | null;
-    version: number;
-  } | null;
-  latest_review_event: { decision: string; reason: string | null; reviewed_at: string; revision_no?: number } | null;
-  revisions: ReaderRevision[];
-};
 
 const EMPTY_FILTERS: ReaderListFilters = {
   templateId: "", versionId: "", from: "", to: "", teamId: "", assigneeId: "", state: "",
 };
 
 const inputClass = "min-h-11 sm:min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
-function parseReaderDetail(body: unknown): ReaderDetail | null {
-  if (!isRecord(body) || body.ok !== true || !isRecord(body.data)) return null;
-  const d = body.data;
-  if (!isRecord(d.obligation) || !isRecord(d.template) || !Array.isArray(d.revisions)) return null;
-  const template = d.template;
-  if (typeof template.display_name !== "string" || !isRecord(template.schema_json)) return null;
-  const submission = d.submission === null ? null : isRecord(d.submission) ? d.submission : null;
-  const latest = d.latest_review_event === undefined || d.latest_review_event === null
-    ? null : isRecord(d.latest_review_event) ? d.latest_review_event : null;
-  return {
-    obligation: {
-      period_key: String(d.obligation.period_key ?? ""),
-      period_start_date: String(d.obligation.period_start_date ?? ""),
-      period_end_date: String(d.obligation.period_end_date ?? ""),
-      due_at: String(d.obligation.due_at ?? ""),
-      snapshot_team_display_name: typeof d.obligation.snapshot_team_display_name === "string"
-        ? d.obligation.snapshot_team_display_name : null,
-      snapshot_team_code: typeof d.obligation.snapshot_team_code === "string"
-        ? d.obligation.snapshot_team_code : null,
-      obligation_status: String(d.obligation.obligation_status ?? ""),
-    },
-    template: {
-      template_code: String(template.template_code ?? ""),
-      display_name: template.display_name,
-      schema_json: template.schema_json as WorkReportTemplateSchema,
-    },
-    submission: submission === null ? null : {
-      submission_id: String(submission.submission_id ?? ""),
-      state: String(submission.state ?? ""),
-      draft_payload_json: isRecord(submission.draft_payload_json) || submission.draft_payload_json === null
-        ? submission.draft_payload_json as Record<string, unknown> | null : null,
-      first_submitted_at: typeof submission.first_submitted_at === "string" ? submission.first_submitted_at : null,
-      latest_submitted_at: typeof submission.latest_submitted_at === "string" ? submission.latest_submitted_at : null,
-      is_late: submission.is_late === true,
-      has_post_deadline_amendment: submission.has_post_deadline_amendment === true,
-      current_revision_id: typeof submission.current_revision_id === "string" ? submission.current_revision_id : null,
-      version: Number(submission.version ?? 0),
-    },
-    latest_review_event: latest === null ? null : {
-      decision: String(latest.decision ?? ""),
-      reason: typeof latest.reason === "string" ? latest.reason : null,
-      reviewed_at: String(latest.reviewed_at ?? ""),
-      ...(typeof latest.revision_no === "number" ? { revision_no: latest.revision_no } : {}),
-    },
-    revisions: d.revisions.map((revision) => ({
-      revision_id: String((revision as Record<string, unknown>).revision_id ?? ""),
-      revision_no: Number((revision as Record<string, unknown>).revision_no ?? 0),
-      payload_json: isRecord((revision as Record<string, unknown>).payload_json)
-        ? (revision as Record<string, unknown>).payload_json as Record<string, unknown> : {},
-      created_at: String((revision as Record<string, unknown>).created_at ?? ""),
-    })),
-  };
-}
 
 function readerStateTone(state: string): BadgeTone {
   switch (state) {
@@ -135,8 +52,11 @@ export function ReadableSubmissions() {
   const [detail, setDetail] = useState<{ item: ReaderListItem; value: ReaderDetail } | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailView, setDetailView] = useState<"loading" | "ready" | "error">("loading");
+  const [reloadToken, setReloadToken] = useState(0);
   const generation = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
+  const detailGeneration = useRef(0);
+  const detailControllerRef = useRef<AbortController | null>(null);
 
   const fetchList = useCallback(async (nextFilters: ReaderListFilters, nextCursor: string | null, append: boolean) => {
     controllerRef.current?.abort();
@@ -182,28 +102,39 @@ export function ReadableSubmissions() {
   useEffect(() => {
     const timer = setTimeout(() => { void fetchList(filters, null, false); }, 0);
     return () => { clearTimeout(timer); generation.current += 1; controllerRef.current?.abort(); };
-  }, [filters, fetchList]);
+  }, [filters, fetchList, reloadToken]);
+
+  useEffect(() => {
+    return () => { detailGeneration.current += 1; detailControllerRef.current?.abort(); };
+  }, []);
 
   async function openDetail(item: ReaderListItem) {
+    detailControllerRef.current?.abort();
+    const controller = new AbortController();
+    detailControllerRef.current = controller;
+    const gen = ++detailGeneration.current;
     setDetail(null);
     setDetailOpen(true);
     setDetailView("loading");
     try {
       const response = await fetch(`/api/work-reports/submissions/${encodeURIComponent(item.obligation_id)}`, {
-        cache: "no-store", headers: { accept: "application/json" },
+        cache: "no-store", signal: controller.signal, headers: { accept: "application/json" },
       });
       const body = await response.json().catch(() => null);
       const value = response.ok ? parseReaderDetail(body) : null;
+      if (gen !== detailGeneration.current) return;
       if (!value) { setDetailView("error"); return; }
       setDetail({ item, value });
       setDetailView("ready");
-    } catch {
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      if (gen !== detailGeneration.current) return;
       setDetailView("error");
     }
   }
 
   const templates = payload?.filter_options.templates ?? [];
-  const selectedTemplate = templates.find((template) => template.template_id === filters.templateId);
+  const selectedTemplate = templates.find((template) => template.template_id === draft.templateId);
   const versionOptions = selectedTemplate?.versions ?? [];
   const teams = payload?.filter_options.teams ?? [];
   const assignees = payload?.filter_options.assignees ?? [];
@@ -283,10 +214,16 @@ export function ReadableSubmissions() {
         </div>
       </FilterToolbar>
 
-      {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
       {view === "loading" ? <p role="status" className="py-8 text-center text-sm text-muted">Đang tải bài nộp…</p> : null}
       {view === "denied" ? <StatusBanner tone="warning">Bạn không có quyền xem danh sách bài nộp trong phạm vi này.</StatusBanner> : null}
-      {view === "error" ? <StatusBanner tone="error">Không tải được danh sách bài nộp.</StatusBanner> : null}
+      {view === "error" ? (
+        <StatusBanner tone="error">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{error ?? "Không tải được danh sách bài nộp."}</span>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setReloadToken((value) => value + 1)}>Thử lại</Button>
+          </div>
+        </StatusBanner>
+      ) : null}
       {view === "ready" && items.length === 0 ? <StatusBanner>Không có bài nộp nào phù hợp với bộ lọc.</StatusBanner> : null}
 
       {view === "ready" && items.length > 0 ? (

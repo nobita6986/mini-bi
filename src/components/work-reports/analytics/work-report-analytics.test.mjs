@@ -32,7 +32,7 @@ test("analytics page stays capability gated and hosts two server-scoped tabs", (
 
 test("reader list uses body.data, human labels, server cursor and stale-request isolation", () => {
   assert.match(reader, /parseReaderList\(body\)/);
-  assert.match(reader, /body\.data/);
+  assert.match(readerModel, /body\.data/);
   assert.match(reader, /filter_options\.templates/);
   assert.match(reader, /\/api\/work-reports\/submissions/);
   assert.match(reader, /CursorLoadMore/);
@@ -52,6 +52,28 @@ test("reader list uses body.data, human labels, server cursor and stale-request 
   assert.match(readerModel, /Không/);
   assert.match(readerModel, /option\.option_key === code\)\?\.label/);
   assert.match(readerModel, /return "—"/);
+});
+
+test("reader version filter follows the draft template and detail requests guard against races", () => {
+  // Version options must follow the draft (unsubmitted) template, not the applied filters,
+  // so choosing a template immediately reveals its versions without a second Lọc step.
+  assert.match(reader, /template\.template_id === draft\.templateId/);
+  assert.doesNotMatch(reader, /template\.template_id === filters\.templateId/);
+  assert.match(reader, /templateId: event\.target\.value, versionId: ""/);
+  // Detail fetches carry their own controller + generation and only commit when current.
+  assert.match(reader, /detailControllerRef/);
+  assert.match(reader, /detailGeneration/);
+  assert.match(reader, /gen !== detailGeneration\.current/);
+  assert.match(reader, /cause instanceof DOMException && cause\.name === "AbortError"/);
+  assert.match(reader, /detailControllerRef\.current\?\.abort\(\)/);
+});
+
+test("reader list shows a single retryable error state", () => {
+  assert.match(reader, /view === "error"/);
+  assert.match(reader, /Thử lại/);
+  assert.match(reader, /setReloadToken/);
+  // The list no longer renders a second standalone `{error ? ...}` banner.
+  assert.doesNotMatch(reader, /\{error \? <StatusBanner tone="error">/);
 });
 
 test("review inbox loads the full scoped queue without a template UUID input", () => {
