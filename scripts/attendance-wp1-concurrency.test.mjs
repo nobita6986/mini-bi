@@ -308,17 +308,58 @@ test("concurrent check-ins allocate distinct sequence_in_day and concurrent same
     assert.equal(followerCheckin.daily_count, 3);
     assert.equal(followerCheckin.replayed, true);
 
+    // -------------------------------------------------------------------------
+    // Race 3: Pre-R2 lookup (`attendance_lookup_checkin_idempotency`) arriving
+    // past 168h while initial `attendance_record_checkin` (at 168h boundary)
+    // is still in-flight serializes on the per-actor advisory lock and replays!
+    // -------------------------------------------------------------------------
+    const keyBoundaryRace = "f1000000-0000-4000-8000-000000000004";
+    const boundaryParams = buildParams({
+      idempotencyKey: keyBoundaryRace,
+      anchorIso: "2026-10-10T01:00:00.000Z",
+      elapsedMs: 3_600_000, // captured_at = 2026-10-10T02:00:00.000Z
+      receivedIso: "2026-10-17T02:00:00.000Z", // exact 168h boundary
+      shaChar: "4",
+    });
+
+    await worker1.query("begin");
+    await worker1.query("set local role service_role");
+    const boundaryInsertRes = await worker1.query(CALL_RPC_SQL, boundaryParams);
+    const boundaryCheckin = boundaryInsertRes.rows[0].data;
+    assert.equal(boundaryCheckin.replayed, false);
+
+    await worker2.query("begin");
+    await worker2.query("set local role service_role");
+    const lookupPromise = worker2.query(
+      "select public.attendance_lookup_checkin_idempotency($1::uuid, $2::uuid, $3::uuid, $4::text) as data",
+      boundaryParams.slice(0, 4),
+    );
+
+    await waitUntilBlocked(observer, "att-wp1-worker-2");
+    await worker1.query("commit");
+
+    const lookupRes = await lookupPromise;
+    await worker2.query("commit");
+    assert.deepEqual(lookupRes.rows[0].data, {
+      found: true,
+      checkin: {
+        ...boundaryCheckin,
+        replayed: true,
+      },
+    });
+
     const { rows: finalRows } = await observer.query(
-      "select sequence_in_day, idempotency_key from public.attendance_checkins" +
-        " where app_user_id = $1 order by sequence_in_day asc",
+      "select business_date::text as bdate, sequence_in_day, idempotency_key from public.attendance_checkins" +
+        " where app_user_id = $1 order by business_date asc, sequence_in_day asc",
       [ACTOR.app],
     );
     assert.deepEqual(
-      finalRows.map((r) => ({ seq: r.sequence_in_day, key: r.idempotency_key })),
+      finalRows.map((r) => ({ bdate: r.bdate, seq: r.sequence_in_day, key: r.idempotency_key })),
       [
-        { seq: 1, key: keyA },
-        { seq: 2, key: keyB },
-        { seq: 3, key: keySame },
+        { bdate: "2026-10-10", seq: 1, key: keyBoundaryRace },
+        { bdate: "2026-10-20", seq: 1, key: keyA },
+        { bdate: "2026-10-20", seq: 2, key: keyB },
+        { bdate: "2026-10-20", seq: 3, key: keySame },
       ],
     );
   } finally {

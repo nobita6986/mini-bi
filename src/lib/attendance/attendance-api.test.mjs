@@ -156,13 +156,36 @@ function createFakeR2Harness(env = VALID_ENV) {
 function createInMemoryCheckInRepo() {
   const byActorKey = new Map();
   const byActorDay = new Map();
+  const lookups = [];
   const calls = [];
   let seqCounter = 0;
 
   return {
+    lookups,
     calls,
     byActorKey,
     repository: {
+      async lookupCheckInIdempotency(input) {
+        lookups.push(input);
+        const compositeKey = `${input.app_user_id}:${input.idempotency_key}`;
+        const existing = byActorKey.get(compositeKey);
+        if (!existing) {
+          return { ok: true, found: false };
+        }
+        if (existing.request_fingerprint !== input.request_fingerprint) {
+          return { ok: false, code: "IDEMPOTENCY_CONFLICT" };
+        }
+        const dayRows = byActorDay.get(`${input.app_user_id}:${existing.business_date}`) ?? [];
+        return {
+          ok: true,
+          found: true,
+          checkin: {
+            ...existing.projection,
+            daily_count: dayRows.length,
+            replayed: true,
+          },
+        };
+      },
       async recordCheckIn(input) {
         calls.push(input);
         const compositeKey = `${input.app_user_id}:${input.idempotency_key}`;
@@ -1131,6 +1154,9 @@ test("SERVER_ANCHORED and DEVICE_CLOCK_UNVERIFIED succeed with deterministic R2 
     KEY_2,
   );
   const failingRepo = {
+    async lookupCheckInIdempotency() {
+      return { ok: true, found: false };
+    },
     async recordCheckIn() {
       return { ok: false, code: "ATTENDANCE_UNAVAILABLE" };
     },
@@ -1462,6 +1488,325 @@ test("SERVER_ANCHORED offline sync grace enforces 24h capture ceiling, determini
   assert.equal(repo.calls.length, repoCallsBeforeRejects);
 });
 
+test("post-168h idempotency precedes sync-window rejection: replays saved SERVER_ANCHORED check-in after >7 days, returns 409 on fingerprint mismatch, and rejects unsaved stale keys without R2/DB writes", async () => {
+  const jpegA = await realJpegA();
+  const shaA = sha256Hex(jpegA);
+  const jpegB = await realJpegB();
+  const shaB = sha256Hex(jpegB);
+
+  const r2 = createFakeR2Harness();
+  const repo = createInMemoryCheckInRepo();
+
+  const anchorMs = Date.parse("2026-10-01T01:00:00.000Z"); // 08:00:00.000+07:00
+  const issuedA = issueAttendanceTimeToken({
+    secret: Buffer.from(DEDICATED_SECRET, "utf8"),
+    app_user_id: ACTOR_A.app_user_id,
+    now_ms: anchorMs,
+    nonce_hex: "11223344556677889900aabbccddeeff",
+  });
+  const issuedB = issueAttendanceTimeToken({
+    secret: Buffer.from(DEDICATED_SECRET, "utf8"),
+    app_user_id: ACTOR_B.app_user_id,
+    now_ms: anchorMs,
+    nonce_hex: "ffeeddccbbaa00998877665544332211",
+  });
+
+  const keySaved = "d3000000-0000-4000-8000-000000000001";
+  const elapsedMs = 3_600_000; // +1h => captured_at = 2026-10-01T02:00:00.000Z (09:00+07:00)
+  const capturedAtMs = anchorMs + elapsedMs;
+  const initialReceivedAtMs = capturedAtMs + 48 * 3_600_000; // synced +48h later (within 7d; HTTP response lost on client)
+
+  const savedMeta = {
+    latitude: 21.0285,
+    longitude: 105.8542,
+    accuracy_meters: 9.0,
+    address_hint: "KCN Bắc Thăng Long",
+    client_captured_at: new Date(capturedAtMs + 1_000).toISOString(), // +1s skew
+    note: "Chấm công đầu ca (mất response mạng)",
+    idempotency_key: keySaved,
+    photo_sha256: shaA,
+    time_source: "SERVER_ANCHORED",
+    time_token: issuedA.time_token,
+    elapsed_since_anchor_ms: elapsedMs,
+  };
+
+  // Initial write succeeds within 168h (simulating lost HTTP response before client marks SYNCED)
+  const initialRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keySaved,
+      metadataObj: savedMeta,
+      photoBytes: jpegA,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => initialReceivedAtMs,
+    },
+  );
+  assert.equal(initialRes.status, 201);
+  const initialBody = await initialRes.json();
+  assert.equal(initialBody.checkin.replayed, false);
+  assert.equal(initialBody.checkin.captured_at, new Date(capturedAtMs).toISOString());
+  assert.equal(initialBody.checkin.received_at, new Date(initialReceivedAtMs).toISOString());
+  assert.equal(initialBody.checkin.business_date, "2026-10-01");
+
+  const r2CommandsAfterInitial = r2.commands.length;
+  const repoWriteCallsAfterInitial = repo.calls.length;
+
+  // 1. Retry of the ALREADY-SAVED check-in past 168h (+168h + 1ms, +10 days, and +30 days):
+  //    MUST return 200 with exact saved projection (`replayed: true`), zero R2 commands, zero DB writes!
+  for (const postWindowDelayMs of [
+    ATTENDANCE_MAX_SYNC_WINDOW_MS + 1,
+    10 * 86_400_000,
+    30 * 86_400_000,
+  ]) {
+    const replayPast7dRes = await postAttendanceCheckIn(
+      buildMultipartCheckInRequest({
+        idempotencyHeader: keySaved,
+        metadataObj: savedMeta,
+        photoBytes: jpegA,
+      }),
+      VALID_ENV,
+      {
+        resolveSession: activeSession(ACTOR_A),
+        repository: repo.repository,
+        storage: r2.storage,
+        now: () => capturedAtMs + postWindowDelayMs,
+      },
+    );
+    assert.equal(
+      replayPast7dRes.status,
+      200,
+      `saved check-in retried at +${postWindowDelayMs}ms must replay 200 instead of 422`,
+    );
+    const replayPast7dBody = await replayPast7dRes.json();
+    assert.deepEqual(replayPast7dBody, {
+      ok: true,
+      checkin: {
+        ...initialBody.checkin,
+        replayed: true,
+      },
+    });
+  }
+  assert.equal(
+    r2.commands.length,
+    r2CommandsAfterInitial,
+    "post-168h replay must not issue HeadObject, PutObject, or DeleteObject to R2",
+  );
+  assert.equal(
+    repo.calls.length,
+    repoWriteCallsAfterInitial,
+    "post-168h replay must resolve via idempotency lookup without calling recordCheckIn",
+  );
+
+  // 2. Same actor + saved idempotency_key after >7 days with DIFFERENT fingerprint (metadata OR photo):
+  //    MUST return 409 IDEMPOTENCY_CONFLICT (not 422), with zero R2 writes/deletes and zero DB mutations!
+  const tenDaysAfterCaptureMs = capturedAtMs + 10 * 86_400_000;
+
+  const noteConflictPast7dRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keySaved,
+      metadataObj: { ...savedMeta, note: "Sửa ghi chú sau 10 ngày" },
+      photoBytes: jpegA,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => tenDaysAfterCaptureMs,
+    },
+  );
+  assert.equal(noteConflictPast7dRes.status, 409);
+  assert.deepEqual(await noteConflictPast7dRes.json(), {
+    ok: false,
+    code: "IDEMPOTENCY_CONFLICT",
+  });
+
+  const photoConflictPast7dRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keySaved,
+      metadataObj: { ...savedMeta, photo_sha256: shaB },
+      photoBytes: jpegB,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => tenDaysAfterCaptureMs,
+    },
+  );
+  assert.equal(photoConflictPast7dRes.status, 409);
+  assert.deepEqual(await photoConflictPast7dRes.json(), {
+    ok: false,
+    code: "IDEMPOTENCY_CONFLICT",
+  });
+
+  // Spoofing original metadata.photo_sha256 while sending different JPEG bytes after >7 days
+  // is still caught by byte hash verification before replay (422 PHOTO_HASH_MISMATCH)
+  const spoofedPhotoBytesPast7dRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keySaved,
+      metadataObj: savedMeta,
+      photoBytes: jpegB,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => tenDaysAfterCaptureMs,
+    },
+  );
+  assert.equal(spoofedPhotoBytesPast7dRes.status, 422);
+  assert.deepEqual(await spoofedPhotoBytesPast7dRes.json(), {
+    ok: false,
+    code: "PHOTO_HASH_MISMATCH",
+  });
+
+  const savedStorageKey = attendancePhotoObjectKey("preview", ACTOR_A.app_user_id, keySaved);
+  assert.deepEqual(r2.objects.get(savedStorageKey).bytes, jpegA);
+  assert.equal(r2.commands.length, r2CommandsAfterInitial);
+  assert.equal(repo.calls.length, repoWriteCallsAfterInitial);
+
+  // 3. Unsaved/new idempotency_key arriving past 168h (+168h + 1ms and +10 days):
+  //    MUST still be rejected with 422 ATTENDANCE_SYNC_WINDOW_EXPIRED, zero R2 upload, zero DB insert!
+  const keyUnsavedStale = "d3000000-0000-4000-8000-000000000002";
+  for (const staleDelayMs of [ATTENDANCE_MAX_SYNC_WINDOW_MS + 1, 10 * 86_400_000]) {
+    const staleUnsavedRes = await postAttendanceCheckIn(
+      buildMultipartCheckInRequest({
+        idempotencyHeader: keyUnsavedStale,
+        metadataObj: {
+          ...savedMeta,
+          idempotency_key: keyUnsavedStale,
+          photo_sha256: shaB,
+        },
+        photoBytes: jpegB,
+      }),
+      VALID_ENV,
+      {
+        resolveSession: activeSession(ACTOR_A),
+        repository: repo.repository,
+        storage: r2.storage,
+        now: () => capturedAtMs + staleDelayMs,
+      },
+    );
+    assert.equal(staleUnsavedRes.status, 422);
+    assert.deepEqual(await staleUnsavedRes.json(), {
+      ok: false,
+      code: "ATTENDANCE_SYNC_WINDOW_EXPIRED",
+    });
+  }
+
+  // Different actor (ACTOR_B) reusing ACTOR_A's saved UUID with ACTOR_B's own token past 168h
+  // has no saved row for ACTOR_B and is rejected with 422 (isolated per actor, zero cross-actor leak)
+  const otherActorSameUuidStaleRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keySaved,
+      metadataObj: {
+        ...savedMeta,
+        time_token: issuedB.time_token,
+      },
+      photoBytes: jpegA,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_B),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => tenDaysAfterCaptureMs,
+    },
+  );
+  assert.equal(otherActorSameUuidStaleRes.status, 422);
+  assert.deepEqual(await otherActorSameUuidStaleRes.json(), {
+    ok: false,
+    code: "ATTENDANCE_SYNC_WINDOW_EXPIRED",
+  });
+
+  assert.equal(
+    r2.objects.size,
+    1,
+    "unsaved stale requests must never create objects in R2",
+  );
+  assert.equal(
+    r2.commands.length,
+    r2CommandsAfterInitial,
+    "unsaved stale requests must not issue HeadObject or PutObject to R2",
+  );
+  assert.equal(
+    repo.calls.length,
+    repoWriteCallsAfterInitial,
+    "unsaved stale requests must never invoke recordCheckIn",
+  );
+  assert.equal(repo.byActorKey.size, 1);
+
+  // 4. Pre-DB-commit interrupted R2 object safety (within 168h window):
+  //    If an earlier attempt uploaded to R2 (`keyInterrupted`) and crashed before DB commit,
+  //    matching photo SHA reuses R2 object (`created_now = false`), while mismatched SHA returns 409!
+  const keyInterrupted = "d3000000-0000-4000-8000-000000000003";
+  const preStaged = await r2.storage.ensureCheckInPhoto({
+    app_user_id: ACTOR_A.app_user_id,
+    idempotency_key: keyInterrupted,
+    photo_sha256: shaA,
+    bytes: jpegA,
+  });
+  assert.equal(preStaged.ok, true);
+  assert.equal(preStaged.created_now, true);
+
+  const preStagedConflictRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyInterrupted,
+      metadataObj: {
+        ...savedMeta,
+        idempotency_key: keyInterrupted,
+        photo_sha256: shaB,
+      },
+      photoBytes: jpegB,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => initialReceivedAtMs,
+    },
+  );
+  assert.equal(preStagedConflictRes.status, 409);
+  assert.deepEqual(await preStagedConflictRes.json(), {
+    ok: false,
+    code: "IDEMPOTENCY_CONFLICT",
+  });
+
+  const putCountBeforeResume = r2.commands.filter((c) => c.op === "put").length;
+  const preStagedResumeRes = await postAttendanceCheckIn(
+    buildMultipartCheckInRequest({
+      idempotencyHeader: keyInterrupted,
+      metadataObj: {
+        ...savedMeta,
+        idempotency_key: keyInterrupted,
+        photo_sha256: shaA,
+      },
+      photoBytes: jpegA,
+    }),
+    VALID_ENV,
+    {
+      resolveSession: activeSession(ACTOR_A),
+      repository: repo.repository,
+      storage: r2.storage,
+      now: () => initialReceivedAtMs,
+    },
+  );
+  assert.equal(preStagedResumeRes.status, 201);
+  assert.equal(
+    r2.commands.filter((c) => c.op === "put").length,
+    putCountBeforeResume,
+    "resuming an interrupted upload with matching SHA reuses pre-existing R2 object without PutObject",
+  );
+});
+
 test("createServiceAttendanceRepository maps SQL errors without leaking details and route handlers enforce nodejs/force-dynamic/RPC-only boundary", async () => {
   const { readFileSync } = await import("node:fs");
   const { createServiceAttendanceRepository } = await import("./attendance-repository.ts");
@@ -1548,6 +1893,73 @@ test("createServiceAttendanceRepository maps SQL errors without leaking details 
     },
   }));
   assert.deepEqual(await unexpectedSqlRepo.recordCheckIn(baseInput), {
+    ok: false,
+    code: "ATTENDANCE_UNAVAILABLE",
+  });
+
+  const lookupBaseInput = {
+    auth_subject: ACTOR_A.auth_subject,
+    app_user_id: ACTOR_A.app_user_id,
+    idempotency_key: KEY_1,
+    request_fingerprint: "a".repeat(64),
+  };
+
+  const notFoundLookupRepo = createServiceAttendanceRepository(async () => ({
+    data: { found: false },
+    error: null,
+  }));
+  assert.deepEqual(await notFoundLookupRepo.lookupCheckInIdempotency(lookupBaseInput), {
+    ok: true,
+    found: false,
+  });
+
+  const foundLookupRepo = createServiceAttendanceRepository(async () => ({
+    data: {
+      found: true,
+      checkin: {
+        checkin_id: "d2000000-0000-4000-8000-000000000099",
+        business_date: "2026-10-01",
+        sequence_in_day: 1,
+        daily_count: 2,
+        captured_at: "2026-10-01T02:00:00.000Z",
+        received_at: "2026-10-03T02:00:00.000Z",
+        time_source: "SERVER_ANCHORED",
+        replayed: true,
+      },
+    },
+    error: null,
+  }));
+  const foundLookup = await foundLookupRepo.lookupCheckInIdempotency(lookupBaseInput);
+  assert.equal(foundLookup.ok, true);
+  assert.equal(foundLookup.found, true);
+  assert.equal(foundLookup.checkin.replayed, true);
+
+  assert.deepEqual(await conflictRepo.lookupCheckInIdempotency(lookupBaseInput), {
+    ok: false,
+    code: "IDEMPOTENCY_CONFLICT",
+  });
+  assert.deepEqual(await deniedRepo.lookupCheckInIdempotency(lookupBaseInput), {
+    ok: false,
+    code: "ACTOR_NOT_AVAILABLE",
+  });
+
+  const nonReplayedLookupRepo = createServiceAttendanceRepository(async () => ({
+    data: {
+      found: true,
+      checkin: {
+        checkin_id: "d2000000-0000-4000-8000-000000000099",
+        business_date: "2026-10-01",
+        sequence_in_day: 1,
+        daily_count: 1,
+        captured_at: "2026-10-01T02:00:00.000Z",
+        received_at: "2026-10-03T02:00:00.000Z",
+        time_source: "SERVER_ANCHORED",
+        replayed: false,
+      },
+    },
+    error: null,
+  }));
+  assert.deepEqual(await nonReplayedLookupRepo.lookupCheckInIdempotency(lookupBaseInput), {
     ok: false,
     code: "ATTENDANCE_UNAVAILABLE",
   });

@@ -449,6 +449,97 @@ comment on function public.attendance_record_checkin(
   'Service-role-only Attendance WP1 check-in writer. Enforces server-bound actor mapping, per-actor advisory locking, Asia/Ho_Chi_Minh business_date, SERVER_ANCHORED (24h capture / 7d sync window) vs DEVICE_CLOCK_UNVERIFIED evidence, and idempotent replay/conflict.';
 
 -- -----------------------------------------------------------------------------
+-- 3b. Service-role-only idempotency lookup RPC (`public.attendance_lookup_checkin_idempotency`).
+--     Allows pre-R2 / post-168h retries to replay an already-committed check-in or
+--     raise IDEMPOTENCY_CONFLICT without uploading duplicate/orphan objects to R2.
+-- -----------------------------------------------------------------------------
+create or replace function public.attendance_lookup_checkin_idempotency(
+  p_auth_subject uuid,
+  p_app_user_id uuid,
+  p_idempotency_key uuid,
+  p_request_fingerprint text
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_existing public.attendance_checkins%rowtype;
+  v_daily_count integer;
+begin
+  if p_auth_subject is null or p_app_user_id is null then
+    raise exception 'ACTOR_NOT_AVAILABLE' using errcode = '42501';
+  end if;
+
+  perform public.direct_entry_assert_actor_mapping(p_auth_subject, p_app_user_id);
+
+  if not exists (
+    select 1
+      from public.direct_entry_app_users u
+     where u.app_user_id = p_app_user_id
+       and u.auth_subject = p_auth_subject
+       and u.enabled = true
+  ) then
+    raise exception 'ACTOR_NOT_AVAILABLE' using errcode = '42501';
+  end if;
+
+  if p_idempotency_key is null then
+    raise exception 'IDEMPOTENCY_KEY_INVALID' using errcode = '22023';
+  end if;
+
+  if p_request_fingerprint is null or p_request_fingerprint !~ '^[0-9a-f]{64}$' then
+    raise exception 'ATTENDANCE_REQUEST_INVALID' using errcode = '22023';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext('attendance_checkin_v1'),
+    pg_catalog.hashtext(p_app_user_id::text)
+  );
+
+  select *
+    into v_existing
+    from public.attendance_checkins c
+   where c.app_user_id = p_app_user_id
+     and c.idempotency_key = p_idempotency_key;
+
+  if not found then
+    return pg_catalog.jsonb_build_object('found', false);
+  end if;
+
+  if v_existing.request_fingerprint <> p_request_fingerprint then
+    raise exception 'IDEMPOTENCY_CONFLICT' using errcode = '40001';
+  end if;
+
+  select count(*)::integer
+    into v_daily_count
+    from public.attendance_checkins c
+   where c.app_user_id = p_app_user_id
+     and c.business_date = v_existing.business_date;
+
+  return pg_catalog.jsonb_build_object(
+    'found', true,
+    'checkin', pg_catalog.jsonb_build_object(
+      'checkin_id', v_existing.checkin_id,
+      'business_date', v_existing.business_date::text,
+      'sequence_in_day', v_existing.sequence_in_day,
+      'daily_count', v_daily_count,
+      'captured_at', pg_catalog.to_char(v_existing.captured_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'received_at', pg_catalog.to_char(v_existing.received_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'time_source', v_existing.time_source,
+      'replayed', true
+    )
+  );
+end;
+$function$;
+
+comment on function public.attendance_lookup_checkin_idempotency(
+  uuid, uuid, uuid, text
+) is
+  'Service-role-only Attendance WP1 pre-write idempotency probe. Serializes per actor, replays committed check-ins even past the 168h sync window, and raises IDEMPOTENCY_CONFLICT on fingerprint mismatch.';
+
+-- -----------------------------------------------------------------------------
 -- 4. Owner alignment and helper privileges (`s0_t1c_runner` & `postgres` safe).
 -- -----------------------------------------------------------------------------
 do $align_attendance_wp1_owners$
@@ -481,6 +572,7 @@ begin
 
   foreach v_sig in array array[
     'public.attendance__internal_immutable_guard()',
+    'public.attendance_lookup_checkin_idempotency(uuid,uuid,uuid,text)',
     'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'
   ]
   loop
@@ -499,7 +591,10 @@ begin
     select distinct r.rolname
       from pg_catalog.pg_proc p
       join pg_catalog.pg_roles r on r.oid = p.proowner
-     where p.oid = 'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'::pg_catalog.regprocedure
+     where p.oid in (
+       'public.attendance_lookup_checkin_idempotency(uuid,uuid,uuid,text)'::pg_catalog.regprocedure,
+       'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'::pg_catalog.regprocedure
+     )
   loop
     execute pg_catalog.format(
       'grant execute on function public.direct_entry_assert_actor_mapping(uuid,uuid) to %I',
@@ -518,6 +613,14 @@ revoke all on table public.attendance_checkins
 revoke all on function public.attendance__internal_immutable_guard()
   from public, anon, authenticated, service_role;
 
+revoke all on function public.attendance_lookup_checkin_idempotency(
+  uuid, uuid, uuid, text
+) from public, anon, authenticated, service_role;
+
+grant execute on function public.attendance_lookup_checkin_idempotency(
+  uuid, uuid, uuid, text
+) to service_role;
+
 revoke all on function public.attendance_record_checkin(
   uuid, uuid, uuid, text, double precision, double precision, double precision, text, text, timestamp with time zone, text, timestamp with time zone, bigint, text, text, text, integer, text, timestamp with time zone
 ) from public, anon, authenticated, service_role;
@@ -534,8 +637,12 @@ declare
   v_table constant pg_catalog.regclass := 'public.attendance_checkins'::pg_catalog.regclass;
   v_guard constant pg_catalog.regprocedure :=
     'public.attendance__internal_immutable_guard()'::pg_catalog.regprocedure;
+  v_lookup_rpc constant pg_catalog.regprocedure :=
+    'public.attendance_lookup_checkin_idempotency(uuid,uuid,uuid,text)'::pg_catalog.regprocedure;
   v_rpc constant pg_catalog.regprocedure :=
     'public.attendance_record_checkin(uuid,uuid,uuid,text,double precision,double precision,double precision,text,text,timestamp with time zone,text,timestamp with time zone,bigint,text,text,text,integer,text,timestamp with time zone)'::pg_catalog.regprocedure;
+  v_target_rpc pg_catalog.regprocedure;
+  v_need_insert boolean;
   v_rls boolean;
   v_force_rls boolean;
   v_policy_count integer;
@@ -573,33 +680,6 @@ begin
       using errcode = '55000';
   end if;
 
-  select p.prosecdef,
-         coalesce(pg_catalog.array_to_string(p.proconfig, ','), ''),
-         (r.rolsuper or r.rolbypassrls),
-         (
-           pg_catalog.has_table_privilege(p.proowner, v_table, 'SELECT')
-           and pg_catalog.has_table_privilege(p.proowner, v_table, 'INSERT')
-           and pg_catalog.has_table_privilege(p.proowner, 'public.direct_entry_app_users'::pg_catalog.regclass, 'SELECT')
-         ),
-         pg_catalog.has_function_privilege(
-           p.proowner,
-           'public.direct_entry_assert_actor_mapping(uuid,uuid)'::pg_catalog.regprocedure,
-           'EXECUTE'
-         )
-    into v_secdef, v_config, v_owner_bypasses_rls, v_owner_table_privs, v_owner_helper_exec
-    from pg_catalog.pg_proc p
-    join pg_catalog.pg_roles r on r.oid = p.proowner
-   where p.oid = v_rpc;
-
-  if not coalesce(v_secdef, false)
-     or v_config <> 'search_path=pg_catalog, public'
-     or not coalesce(v_owner_bypasses_rls, false)
-     or not coalesce(v_owner_table_privs, false)
-     or not coalesce(v_owner_helper_exec, false) then
-    raise exception 'Attendance WP1 RPC security definer owner/RLS/search_path drift on %', v_rpc
-      using errcode = '55000';
-  end if;
-
   if pg_catalog.has_function_privilege('public', v_guard, 'EXECUTE')
      or pg_catalog.has_function_privilege('anon', v_guard, 'EXECUTE')
      or pg_catalog.has_function_privilege('authenticated', v_guard, 'EXECUTE')
@@ -616,21 +696,52 @@ begin
       using errcode = '55000';
   end if;
 
-  if pg_catalog.has_function_privilege('public', v_rpc, 'EXECUTE')
-     or pg_catalog.has_function_privilege('anon', v_rpc, 'EXECUTE')
-     or pg_catalog.has_function_privilege('authenticated', v_rpc, 'EXECUTE')
-     or exists (
-       select 1
-         from pg_catalog.aclexplode(coalesce(
-           (select p2.proacl from pg_catalog.pg_proc p2 where p2.oid = v_rpc),
-           pg_catalog.acldefault('f', (select p2.proowner from pg_catalog.pg_proc p2 where p2.oid = v_rpc))
-         )) a
-        where a.grantee = 0 and a.privilege_type = 'EXECUTE'
-     )
-     or not pg_catalog.has_function_privilege('service_role', v_rpc, 'EXECUTE') then
-    raise exception 'Attendance WP1 RPC EXECUTE ACL drift on %', v_rpc
-      using errcode = '55000';
-  end if;
+  foreach v_target_rpc in array array[v_lookup_rpc, v_rpc]
+  loop
+    v_need_insert := (v_target_rpc = v_rpc);
+    select p.prosecdef,
+           coalesce(pg_catalog.array_to_string(p.proconfig, ','), ''),
+           (r.rolsuper or r.rolbypassrls),
+           (
+             pg_catalog.has_table_privilege(p.proowner, v_table, 'SELECT')
+             and (not v_need_insert or pg_catalog.has_table_privilege(p.proowner, v_table, 'INSERT'))
+             and pg_catalog.has_table_privilege(p.proowner, 'public.direct_entry_app_users'::pg_catalog.regclass, 'SELECT')
+           ),
+           pg_catalog.has_function_privilege(
+             p.proowner,
+             'public.direct_entry_assert_actor_mapping(uuid,uuid)'::pg_catalog.regprocedure,
+             'EXECUTE'
+           )
+      into v_secdef, v_config, v_owner_bypasses_rls, v_owner_table_privs, v_owner_helper_exec
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_roles r on r.oid = p.proowner
+     where p.oid = v_target_rpc;
+
+    if not coalesce(v_secdef, false)
+       or v_config <> 'search_path=pg_catalog, public'
+       or not coalesce(v_owner_bypasses_rls, false)
+       or not coalesce(v_owner_table_privs, false)
+       or not coalesce(v_owner_helper_exec, false) then
+      raise exception 'Attendance WP1 RPC security definer owner/RLS/search_path drift on %', v_target_rpc
+        using errcode = '55000';
+    end if;
+
+    if pg_catalog.has_function_privilege('public', v_target_rpc, 'EXECUTE')
+       or pg_catalog.has_function_privilege('anon', v_target_rpc, 'EXECUTE')
+       or pg_catalog.has_function_privilege('authenticated', v_target_rpc, 'EXECUTE')
+       or exists (
+         select 1
+           from pg_catalog.aclexplode(coalesce(
+             (select p2.proacl from pg_catalog.pg_proc p2 where p2.oid = v_target_rpc),
+             pg_catalog.acldefault('f', (select p2.proowner from pg_catalog.pg_proc p2 where p2.oid = v_target_rpc))
+           )) a
+          where a.grantee = 0 and a.privilege_type = 'EXECUTE'
+       )
+       or not pg_catalog.has_function_privilege('service_role', v_target_rpc, 'EXECUTE') then
+      raise exception 'Attendance WP1 RPC EXECUTE ACL drift on %', v_target_rpc
+        using errcode = '55000';
+    end if;
+  end loop;
 end;
 $check_attendance_wp1$;
 

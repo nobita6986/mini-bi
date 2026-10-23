@@ -355,6 +355,7 @@ export async function postAttendanceCheckIn(
   let timeAnchorIssuedAtIso: string | null = null;
   let elapsedSinceAnchorMs: number | null = null;
   let timeTokenDigest: string | null = null;
+  let isSyncWindowExpired = false;
 
   if (meta.time_source === "SERVER_ANCHORED") {
     const verifiedToken = verifyAttendanceTimeToken({
@@ -384,9 +385,7 @@ export async function postAttendanceCheckIn(
       return attendanceError("CAPTURED_AT_FUTURE");
     }
 
-    if (nowMs - serverComputedCapturedAtMs > ATTENDANCE_MAX_SYNC_WINDOW_MS) {
-      return attendanceError("ATTENDANCE_SYNC_WINDOW_EXPIRED");
-    }
+    isSyncWindowExpired = nowMs - serverComputedCapturedAtMs > ATTENDANCE_MAX_SYNC_WINDOW_MS;
 
     timeAnchorIssuedAtIso = verifiedToken.issued_at_iso;
     elapsedSinceAnchorMs = meta.elapsed_since_anchor_ms;
@@ -448,6 +447,43 @@ export async function postAttendanceCheckIn(
     photo_size_bytes: photoBytes.byteLength,
     photo_mime_type: ATTENDANCE_PHOTO_MIME_TYPE,
   });
+
+  // Check committed DB idempotency BEFORE enforcing the 168-hour sync cutoff and BEFORE R2 upload:
+  // - Same actor + idempotency_key + matching fingerprint replays the committed record (`200`),
+  //   even when retried > 168 hours later after a lost initial HTTP response.
+  // - Same actor + idempotency_key + different fingerprint returns `409 IDEMPOTENCY_CONFLICT`.
+  // - Uncommitted key past 168 hours returns `422 ATTENDANCE_SYNC_WINDOW_EXPIRED` without
+  //   uploading any photo to R2 or inserting any row into DB.
+  let existingCheckIn: Awaited<ReturnType<AttendanceRepository["lookupCheckInIdempotency"]>>;
+  try {
+    existingCheckIn = await dependencies.repository.lookupCheckInIdempotency({
+      auth_subject: actorResult.actor.auth_subject,
+      app_user_id: actorResult.actor.app_user_id,
+      idempotency_key: meta.idempotency_key,
+      request_fingerprint: requestFingerprint,
+    });
+  } catch {
+    console.error("[attendance] idempotency lookup failed");
+    return attendanceError("ATTENDANCE_UNAVAILABLE");
+  }
+
+  if (!existingCheckIn.ok) {
+    return attendanceError(existingCheckIn.code);
+  }
+
+  if (existingCheckIn.found) {
+    return noStoreJson(
+      {
+        ok: true,
+        checkin: existingCheckIn.checkin,
+      },
+      200,
+    );
+  }
+
+  if (isSyncWindowExpired) {
+    return attendanceError("ATTENDANCE_SYNC_WINDOW_EXPIRED");
+  }
 
   let ensuredPhoto: Awaited<ReturnType<AttendanceObjectStorage["ensureCheckInPhoto"]>>;
   try {

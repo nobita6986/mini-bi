@@ -15,6 +15,18 @@ export type AttendanceRpcCaller = (
   error: { code?: string; message?: string } | null;
 }>;
 
+export type LookupAttendanceCheckInInput = {
+  auth_subject: string;
+  app_user_id: string;
+  idempotency_key: string;
+  request_fingerprint: string;
+};
+
+export type LookupAttendanceCheckInResult =
+  | { ok: true; found: false }
+  | { ok: true; found: true; checkin: AttendanceCheckInProjection }
+  | { ok: false; code: AttendanceErrorCode };
+
 export type RecordAttendanceCheckInInput = {
   auth_subject: string;
   app_user_id: string;
@@ -42,6 +54,9 @@ export type RecordAttendanceCheckInResult =
   | { ok: false; code: AttendanceErrorCode };
 
 export type AttendanceRepository = {
+  lookupCheckInIdempotency(
+    input: LookupAttendanceCheckInInput,
+  ): Promise<LookupAttendanceCheckInResult>;
   recordCheckIn(input: RecordAttendanceCheckInInput): Promise<RecordAttendanceCheckInResult>;
 };
 
@@ -99,6 +114,48 @@ export function createServiceAttendanceRepository(
   let resolvedRpc = rpc;
 
   return {
+    async lookupCheckInIdempotency(input) {
+      try {
+        resolvedRpc ??= serviceRoleRpc();
+        const result = await resolvedRpc("attendance_lookup_checkin_idempotency", {
+          p_auth_subject: input.auth_subject,
+          p_app_user_id: input.app_user_id,
+          p_idempotency_key: input.idempotency_key,
+          p_request_fingerprint: input.request_fingerprint,
+        });
+
+        if (result.error) {
+          return { ok: false, code: classifyRpcError(result.error) };
+        }
+
+        const raw = result.data;
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+          console.error("[attendance] idempotency lookup RPC returned non-object payload");
+          return { ok: false, code: "ATTENDANCE_UNAVAILABLE" };
+        }
+
+        const record = raw as Record<string, unknown>;
+        if (record.found === false && Object.getOwnPropertyNames(record).length === 1) {
+          return { ok: true, found: false };
+        }
+
+        if (record.found === true && Object.getOwnPropertyNames(record).length === 2) {
+          const projected = projectCheckInRecord(record.checkin);
+          if (!projected || projected.replayed !== true) {
+            console.error("[attendance] idempotency lookup RPC returned non-canonical projection");
+            return { ok: false, code: "ATTENDANCE_UNAVAILABLE" };
+          }
+          return { ok: true, found: true, checkin: projected };
+        }
+
+        console.error("[attendance] idempotency lookup RPC returned unexpected shape");
+        return { ok: false, code: "ATTENDANCE_UNAVAILABLE" };
+      } catch {
+        console.error("[attendance] idempotency lookup RPC call failed");
+        return { ok: false, code: "ATTENDANCE_UNAVAILABLE" };
+      }
+    },
+
     async recordCheckIn(input) {
       try {
         resolvedRpc ??= serviceRoleRpc();

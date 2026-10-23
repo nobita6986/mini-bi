@@ -91,6 +91,31 @@ async function seedActors(db) {
   }
 }
 
+async function callLookupAsServiceRole(db, args) {
+  await db.exec("begin; set local role service_role;");
+  try {
+    const res = await db.query(
+      `select public.attendance_lookup_checkin_idempotency(
+        $1::uuid,
+        $2::uuid,
+        $3::uuid,
+        $4::text
+      ) as data`,
+      [
+        args.auth_subject,
+        args.app_user_id,
+        args.idempotency_key,
+        args.request_fingerprint,
+      ],
+    );
+    await db.exec("commit;");
+    return res.rows[0].data;
+  } catch (err) {
+    await db.exec("rollback;");
+    throw err;
+  }
+}
+
 async function callCheckInAsServiceRole(db, args) {
   await db.exec("begin; set local role service_role;");
   try {
@@ -204,23 +229,24 @@ test("migration checksum is LF-stable and transactional rollback leaves zero res
     );
     await db.exec("rollback;");
 
+    assert.equal(ATTENDANCE_WP1_RPC_SIGNATURES.length, 2);
     const { rows } = await db.query(
       "select to_regclass('public.attendance_checkins') as tbl," +
-        " to_regprocedure($1) as rpc",
-      [ATTENDANCE_WP1_RPC_SIGNATURES[0]],
+        " to_regprocedure($1) as lookup_rpc," +
+        " to_regprocedure($2) as record_rpc",
+      [ATTENDANCE_WP1_RPC_SIGNATURES[0], ATTENDANCE_WP1_RPC_SIGNATURES[1]],
     );
     assert.equal(rows[0].tbl, null);
-    assert.equal(rows[0].rpc, null);
+    assert.equal(rows[0].lookup_rpc, null);
+    assert.equal(rows[0].record_rpc, null);
   } finally {
     await db.close();
   }
 });
 
-test("database ACLs deny direct table access to PUBLIC, anon, authenticated, and service_role; only service_role executes RPC", async () => {
+test("database ACLs deny direct table access to PUBLIC, anon, authenticated, and service_role; only service_role executes RPCs", async () => {
   const { db } = await createDatabase();
   try {
-    const rpcSig = ATTENDANCE_WP1_RPC_SIGNATURES[0];
-
     for (const role of ["public", "anon", "authenticated", "service_role"]) {
       const { rows } = await db.query(
         "select has_table_privilege($1, 'public.attendance_checkins'::regclass," +
@@ -234,19 +260,21 @@ test("database ACLs deny direct table access to PUBLIC, anon, authenticated, and
       );
     }
 
-    for (const deniedRole of ["public", "anon", "authenticated"]) {
-      const { rows } = await db.query(
-        "select has_function_privilege($1, $2::regprocedure, 'EXECUTE') as exec_priv",
-        [deniedRole, rpcSig],
-      );
-      assert.equal(rows[0].exec_priv, false, `${deniedRole} must not execute RPC`);
-    }
+    for (const rpcSig of ATTENDANCE_WP1_RPC_SIGNATURES) {
+      for (const deniedRole of ["public", "anon", "authenticated"]) {
+        const { rows } = await db.query(
+          "select has_function_privilege($1, $2::regprocedure, 'EXECUTE') as exec_priv",
+          [deniedRole, rpcSig],
+        );
+        assert.equal(rows[0].exec_priv, false, `${deniedRole} must not execute ${rpcSig}`);
+      }
 
-    const { rows: serviceExec } = await db.query(
-      "select has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') as exec_priv",
-      [rpcSig],
-    );
-    assert.equal(serviceExec[0].exec_priv, true);
+      const { rows: serviceExec } = await db.query(
+        "select has_function_privilege('service_role', $1::regprocedure, 'EXECUTE') as exec_priv",
+        [rpcSig],
+      );
+      assert.equal(serviceExec[0].exec_priv, true, `service_role must execute ${rpcSig}`);
+    }
 
     // Runtime role verification: service_role cannot SELECT directly from attendance_checkins
     await db.exec("begin; set local role service_role;");
@@ -256,7 +284,14 @@ test("database ACLs deny direct table access to PUBLIC, anon, authenticated, and
     );
     await db.exec("rollback;");
 
-    // Runtime role verification: authenticated cannot call attendance_record_checkin
+    // Runtime role verification: authenticated cannot call either Attendance WP1 RPC
+    await db.exec("begin; set local role authenticated;");
+    await assert.rejects(
+      db.query("select public.attendance_lookup_checkin_idempotency(null,null,null,null)"),
+      (err) => err.code === "42501",
+    );
+    await db.exec("rollback;");
+
     await db.exec("begin; set local role authenticated;");
     await assert.rejects(
       db.query(
@@ -419,20 +454,84 @@ test("SERVER_ANCHORED, DEVICE_CLOCK_UNVERIFIED, Asia/Ho_Chi_Minh business_date b
     assert.equal(exact7dRow.business_date, "2026-10-11");
     assert.equal(exact7dRow.replayed, false);
 
-    //    - 1 millisecond past 7-day sync window: REJECTED with 22023 ATTENDANCE_SYNC_WINDOW_EXPIRED
+    //    - 1 millisecond past 7-day sync window for a NEW key:
+    //      lookup returns { found: false } and record RPC rejects with 22023 ATTENDANCE_SYNC_WINDOW_EXPIRED
+    const staleNewKeyArgs = buildRpcArgs({
+      idempotency_key: "e1000000-0000-4000-8000-000000000021",
+      time_anchor_issued_at: new Date(anchorBoundaryMs).toISOString(),
+      elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS,
+      device_claimed_at: new Date(exactMaxCapturedMs).toISOString(),
+      received_at: new Date(exact7dReceivedMs + 1).toISOString(),
+      photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_A.app}/e1000000-0000-4000-8000-000000000021.jpg`,
+    });
+    assert.deepEqual(
+      await callLookupAsServiceRole(db, staleNewKeyArgs),
+      { found: false },
+    );
     await assert.rejects(
-      callCheckInAsServiceRole(
-        db,
-        buildRpcArgs({
-          idempotency_key: "e1000000-0000-4000-8000-000000000021",
-          time_anchor_issued_at: new Date(anchorBoundaryMs).toISOString(),
-          elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS,
-          device_claimed_at: new Date(exactMaxCapturedMs).toISOString(),
-          received_at: new Date(exact7dReceivedMs + 1).toISOString(),
-          photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_A.app}/e1000000-0000-4000-8000-000000000021.jpg`,
-        }),
-      ),
+      callCheckInAsServiceRole(db, staleNewKeyArgs),
       (err) => err.code === "22023" && err.message.includes("ATTENDANCE_SYNC_WINDOW_EXPIRED"),
+    );
+
+    //    - Post-168h idempotency replay & conflict on ALREADY-SAVED SERVER_ANCHORED row:
+    //      (a) Disabled/mismatched actor rejected on attendance_lookup_checkin_idempotency
+    await assert.rejects(
+      callLookupAsServiceRole(db, {
+        auth_subject: DISABLED_ACTOR.auth,
+        app_user_id: DISABLED_ACTOR.app,
+        idempotency_key: "e1000000-0000-4000-8000-000000000020",
+        request_fingerprint: PHOTO_SHA_1,
+      }),
+      (err) => err.code === "42501",
+    );
+    await assert.rejects(
+      callLookupAsServiceRole(db, {
+        auth_subject: ACTIVE_ACTOR_A.auth,
+        app_user_id: ACTIVE_ACTOR_B.app,
+        idempotency_key: "e1000000-0000-4000-8000-000000000020",
+        request_fingerprint: PHOTO_SHA_1,
+      }),
+      (err) => err.code === "42501",
+    );
+
+    //      (b) Retry 14 days (336 hours) after captured_at with matching fingerprint replays exact row
+    //          in BOTH attendance_lookup_checkin_idempotency and attendance_record_checkin!
+    const exact7dSavedArgs = buildRpcArgs({
+      idempotency_key: "e1000000-0000-4000-8000-000000000020",
+      time_anchor_issued_at: new Date(anchorBoundaryMs).toISOString(),
+      elapsed_since_anchor_ms: ATTENDANCE_TIME_TOKEN_TTL_MS,
+      device_claimed_at: new Date(exactMaxCapturedMs).toISOString(),
+      received_at: new Date(exactMaxCapturedMs + 14 * 86_400_000).toISOString(),
+      photo_storage_key: `preview/attendance-checkins/${ACTIVE_ACTOR_A.app}/e1000000-0000-4000-8000-000000000020.jpg`,
+    });
+    const post7dLookup = await callLookupAsServiceRole(db, exact7dSavedArgs);
+    assert.deepEqual(post7dLookup, {
+      found: true,
+      checkin: {
+        ...exact7dRow,
+        replayed: true,
+      },
+    });
+    const post7dRecordReplay = await callCheckInAsServiceRole(db, exact7dSavedArgs);
+    assert.deepEqual(post7dRecordReplay, {
+      ...exact7dRow,
+      replayed: true,
+    });
+
+    //      (c) Retry > 7 days later with same key + different fingerprint fails with 40001 IDEMPOTENCY_CONFLICT
+    await assert.rejects(
+      callLookupAsServiceRole(db, {
+        ...exact7dSavedArgs,
+        request_fingerprint: "8".repeat(64),
+      }),
+      (err) => err.code === "40001" && err.message.includes("IDEMPOTENCY_CONFLICT"),
+    );
+    await assert.rejects(
+      callCheckInAsServiceRole(db, {
+        ...exact7dSavedArgs,
+        request_fingerprint: "8".repeat(64),
+      }),
+      (err) => err.code === "40001" && err.message.includes("IDEMPOTENCY_CONFLICT"),
     );
 
     //    - elapsed_since_anchor_ms > 24h (86,400,001 ms) rejected even when received_at - captured_at <= 7d
